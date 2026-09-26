@@ -5127,10 +5127,11 @@ impl Drop for SubshStateGuard {
 /// The entry-directory descriptor `SubshForkCopy` holds for the in-process
 /// subshell. A forked child can never move its parent; zshrs's body shares
 /// the process cwd, so the parent must be put back into the same directory
-/// object, not the same path. The fd is moved to 10 and up and recorded
-/// `FDT_INTERNAL`, like every other descriptor the shell keeps for itself
-/// (`movefd`, `Src/utils.c:1990-2011`), and is close-on-exec so an external
-/// command run by the body never inherits it. Dropping closes it.
+/// object, not the same path. The fd is recorded `FDT_INTERNAL`, like every
+/// other descriptor the shell keeps for itself (`movefd`,
+/// `Src/utils.c:1990-2011`), but sits past the script's `{var}` range
+/// (`lowfd::movefd_past_script`), and is close-on-exec so an external command
+/// run by the body never inherits it. Dropping closes it.
 struct SubshCwdFd(i32);
 
 impl SubshCwdFd {
@@ -5139,10 +5140,12 @@ impl SubshCwdFd {
         if fd < 0 {
             return SubshCwdFd(-1);
         }
-        let moved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
-        unsafe { libc::close(fd) };
-        if moved >= 0 {
-            crate::ported::utils::fdtable_set(moved, crate::ported::zsh_h::FDT_INTERNAL);
+        // Moved past the script's `{var}` range as well: a forked child has
+        // no such descriptor, so `(exec {v}>f; print $v)` must still get 11.
+        let moved = crate::lowfd::movefd_past_script(fd);
+        if moved == fd {
+            unsafe { libc::close(fd) };
+            return SubshCwdFd(-1);
         }
         SubshCwdFd(moved)
     }
@@ -5432,8 +5435,9 @@ impl SubshForkCopy {
     }
 }
 
-/// The descriptors 0-9 a bare `exec` redirection moved inside an
-/// in-process subshell, each with a copy of what it was before.
+/// The descriptors a bare `exec` redirection moved inside an in-process
+/// subshell, each with a copy of what it was before, and the ones the body
+/// opened for itself (`{var}`, `sysopen -u`, `zsystem flock -f`).
 ///
 /// !!! WARNING: RUST-ONLY TYPE — C forks and needs none of this !!!
 /// `exec 3>file` / `exec 3>&-` with no command is permanent — c:4035
@@ -5442,8 +5446,10 @@ impl SubshForkCopy {
 /// (`Src/exec.c:4816`, `c:2880`), whose fd table dies with it. zshrs runs
 /// the body in process, so the parent's descriptors are saved here the
 /// first time the body's permanent redirection touches each one, and put
-/// back when the frame is dropped. A body that redirects nothing
-/// permanently costs nothing.
+/// back when the frame is dropped; a descriptor from 10 up that the body
+/// allocated is closed, as the child's exit would (`(exec {v}>f); exec
+/// {w}>g` gives `w` 11 in zsh). A body that redirects nothing permanently
+/// costs nothing.
 pub struct SubshFdFrame {
     /// Only `enter` builds one, so every frame on `SUBSH_FD_FRAMES` has
     /// exactly one owner to pop it.
@@ -5451,10 +5457,10 @@ pub struct SubshFdFrame {
 }
 
 thread_local! {
-    /// `(fd, copy)` per frame, innermost last; a copy of -1 means the fd
-    /// was closed on entry. Thread-local: a frame is entered and left on
+    /// `(fd, copy, fdtable kind)` per frame, innermost last; a copy of -1
+    /// means the fd was closed on entry. Thread-local: a frame is entered and left on
     /// the thread that runs the body.
-    static SUBSH_FD_FRAMES: std::cell::RefCell<Vec<Vec<(i32, i32)>>> =
+    static SUBSH_FD_FRAMES: std::cell::RefCell<Vec<Vec<(i32, i32, i32)>>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -5466,18 +5472,38 @@ impl SubshFdFrame {
     }
 
     /// Called before a permanent redirection changes `fd`: keep a copy
-    /// (at fd >= 10, where shell-internal descriptors live — see `mpipe`)
+    /// (past the script's `{var}` range — see `lowfd::movefd_past_script`)
     /// unless the innermost frame already has one. Outside any frame
     /// the redirection really is permanent and nothing is kept.
     pub fn touch(fd: i32) {
-        if !(0..10).contains(&fd) {
+        if fd < 0 {
             return;
         }
         SUBSH_FD_FRAMES.with(|f| {
             if let Some(frame) = f.borrow_mut().last_mut() {
-                if !frame.iter().any(|(saved_fd, _)| *saved_fd == fd) {
-                    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
-                    frame.push((fd, copy));
+                if !frame.iter().any(|(saved_fd, _, _)| *saved_fd == fd) {
+                    let copy = unsafe {
+                        libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, crate::lowfd::EXTENSION_FD_FLOOR)
+                    };
+                    frame.push((fd, copy, crate::ported::utils::fdtable_get(fd)));
+                }
+            }
+        });
+    }
+
+    /// Called when the body takes a descriptor from 10 up for the script
+    /// (fdtable_set to a user kind): it did not exist for the parent, so
+    /// the frame closes it on the way out.
+    pub fn opened(fd: i32) {
+        if fd < 10 {
+            return;
+        }
+        SUBSH_FD_FRAMES.with(|f| {
+            if let Ok(mut frames) = f.try_borrow_mut() {
+                if let Some(frame) = frames.last_mut() {
+                    if !frame.iter().any(|(saved_fd, _, _)| *saved_fd == fd) {
+                        frame.push((fd, -1, crate::ported::zsh_h::FDT_UNUSED));
+                    }
                 }
             }
         });
@@ -5493,14 +5519,19 @@ impl Drop for SubshFdFrame {
         }
         // Bytes the body printed belong to the body's fd 1.
         let _ = std::io::Write::flush(&mut std::io::stdout());
-        for (fd, copy) in frame.into_iter().rev() {
-            unsafe {
-                if copy >= 0 {
+        for (fd, copy, kind) in frame.into_iter().rev() {
+            if copy >= 0 {
+                unsafe {
                     libc::dup2(copy, fd);
                     libc::close(copy);
-                } else {
-                    libc::close(fd);
                 }
+                if fd >= 10 {
+                    crate::ported::utils::fdtable_set(fd, kind);
+                }
+            } else if fd >= 10 {
+                crate::ported::utils::zclose(fd); // also drops the fdtable mark
+            } else {
+                unsafe { libc::close(fd) };
             }
         }
     }

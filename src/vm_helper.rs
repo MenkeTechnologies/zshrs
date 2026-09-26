@@ -5976,6 +5976,8 @@ impl ShellExecutor {
             // for `time true` (builtin, never reaches this point). The
             // subshell entry counts separately (fusevm_bridge.rs:9573).
             FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
+            crate::lowfd::cloexec_internal_fds();
 
             return if background {
                 match command.spawn() {
@@ -6541,17 +6543,22 @@ impl ShellExecutor {
             if crate::ported::exec::mpipe(&mut fds) < 0 {
                 return String::new();
             }
-            (fds[0], fds[1])
+            // The read end stays open while the body runs in process; C's
+            // forked body closes it (c:Src/exec.c:4839), so it must not sit
+            // where the body's `{var}` allocations land.
+            (crate::lowfd::movefd_past_script(fds[0]), fds[1])
         };
         // c:Src/utils.c:1996 — `movefd(dup(fd))`: saved copies of the
-        // user-visible fds are shell-internal, so they too must live
-        // at fd >= 10 / FDT_INTERNAL.
+        // user-visible fds are shell-internal (FDT_INTERNAL), and since
+        // they exist only for the in-process body they sit past the
+        // script's `{var}` range too (movefd_past_script).
         // A CLOSED stdout saves as -1 and is closed again on the way out
         // (c:Src/utils.c:2047-2048 redup `if (x < 0) zclose(y)`). C's forked
         // getoutput child needs no save at all (c:4840 `redup(pipes[1], 1)`),
         // so the body runs either way: bailing out here lost everything the
         // body did, `{ x=$(print b >&2) } >&-` never printed `b`.
-        let saved_stdout = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDOUT_FILENO) });
+        let saved_stdout =
+            crate::lowfd::movefd_past_script(unsafe { libc::dup(libc::STDOUT_FILENO) });
         // Flush Rust's stdout BufWriter against the ORIGINAL fd before
         // dup2 swaps fd 1 to the capture pipe. Without this, bytes left
         // buffered by a prior `print -n` get drained to fd 1 AFTER the
@@ -6569,9 +6576,9 @@ impl ShellExecutor {
         // c:Bug #56 — publish the saved outer stdout so a trap firing
         // during the nested run routes body output to the parent's
         // real stdout instead of the cmdsub's pipe-bound fd 1.
-        // c:Src/utils.c:1996 — movefd(dup(fd)): internal fd, keep >= 10.
+        // Same as saved_stdout above.
         let saved_stderr_for_trap =
-            crate::ported::utils::movefd(unsafe { libc::dup(libc::STDERR_FILENO) });
+            crate::lowfd::movefd_past_script(unsafe { libc::dup(libc::STDERR_FILENO) });
         crate::fusevm_bridge::CMDSUBST_OUTER_FDS
             .with(|s| s.borrow_mut().push((saved_stdout, saved_stderr_for_trap)));
         unsafe {

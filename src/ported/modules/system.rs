@@ -575,6 +575,8 @@ pub fn bin_sysopen(
     // descriptor N used by shell, not closed", killing gitstatus init.
     // Bug #648.
     crate::ported::utils::fdtable_set(moved_fd, crate::ported::zsh_h::FDT_EXTERNAL);
+    // In an in-process subshell the descriptor dies with the body.
+    crate::ported::exec::SubshFdFrame::opened(moved_fd);
 
     // c:413-418 — `if (explicit == -1) { setiparam(fdvar, moved_fd); ... }`
     if explicit == -1 {
@@ -1033,6 +1035,9 @@ pub fn bin_zsystem_flock(
     }
     // c:703 — `addlockfd(flock_fd, cloexec);`
     crate::ported::utils::addlockfd(flock_fd, cloexec); // c:703
+    // In an in-process subshell the lock is released with the body, as the
+    // forked child's exit would release it.
+    crate::ported::exec::SubshFdFrame::opened(flock_fd);
 
     // c:705-708 — assemble struct flock.
     let lock_type: libc::c_short = if readlock {

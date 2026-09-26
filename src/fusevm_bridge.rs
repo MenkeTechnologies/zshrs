@@ -3194,6 +3194,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // subshell_end will pop the snapshot and resume the parent).
         let in_subshell = with_executor(|exec| !exec.subshell_snapshots.is_empty());
         if in_subshell {
+            // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
+            crate::lowfd::cloexec_internal_fds();
             let mut command = std::process::Command::new(&cmd);
             command.arg0(&display_argv0);
             command.args(&rest);
@@ -3301,6 +3303,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // it never returns. Match zsh: print the error to stderr with
         // the `exec` prefix and exit 127 (cmd not found) or 126 (not
         // executable).
+        // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
+        crate::lowfd::cloexec_internal_fds();
         let err = command.exec();
         // c:Src/exec.c:797 / c:872-876 — same format as in-subshell
         // branch. arg0-has-/ → `<strerror>: <cmd>`; arg0-no-/ +
@@ -4130,7 +4134,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // producer side gets EOF when the last upstream stage exits.
         // Shell-internal save — keep it out of the script's fd range (movefd,
         // c:Src/exec.c:2425).
-        let saved_stdin = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD, 10) };
+        let saved_stdin = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 10) };
         let last_in_fd = if last_idx > 0 {
             pipes[last_idx - 1].0
         } else {
@@ -9423,6 +9427,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 // c:3870-3873 — close; report failure (varid form
                 // always reports, unlike bare `N>&-`).
+                // In an in-process subshell only the body's copy closes.
+                crate::ported::exec::SubshFdFrame::touch(fd1);
                 if crate::ported::utils::zclose(fd1) < 0 {
                     crate::ported::utils::zwarn(&format!(
                         "failed to close file descriptor {}: {}",
@@ -9454,6 +9460,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:2404-2412 addfd varid arm — movefd + FDT_EXTERNAL.
                 let final_fd = crate::ported::utils::movefd(dup);
                 crate::ported::utils::fdtable_set(final_fd, crate::ported::zsh_h::FDT_EXTERNAL);
+                // In an in-process subshell the descriptor dies with the body.
+                crate::ported::exec::SubshFdFrame::opened(final_fd);
                 with_executor(|exec| {
                     exec.set_scalar(varid, final_fd.to_string());
                 });
@@ -9533,6 +9541,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Value::Status(1);
             }
             crate::ported::utils::fdtable_set(final_fd, crate::ported::zsh_h::FDT_EXTERNAL);
+            // In an in-process subshell the descriptor dies with the body.
+            crate::ported::exec::SubshFdFrame::opened(final_fd);
             with_executor(|exec| {
                 exec.set_scalar(varid, final_fd.to_string());
             });
@@ -9616,6 +9626,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(1);
         }
         crate::ported::utils::fdtable_set(final_fd, crate::ported::zsh_h::FDT_EXTERNAL);
+        // In an in-process subshell the descriptor dies with the body.
+        crate::ported::exec::SubshFdFrame::opened(final_fd);
         let _ = Ordering::Relaxed;
         with_executor(|exec| {
             exec.set_scalar(varid, final_fd.to_string());
@@ -11850,7 +11862,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // only for the subshell (see SubshFdFrame), as for a single target.
             crate::ported::exec::SubshFdFrame::touch(fd);
         }
-        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
         // c:2426-2437 — "fd1 may already be closed here, so ignore bad
         // file descriptor error": `save[fd1] = fdN` stores -1 for a closed
         // fd, and the scope-end restore (c:Src/utils.c:2047 `if (x < 0)
@@ -11889,7 +11901,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // stdout + f.
         let mut target_fds: Vec<i32> = Vec::with_capacity(entries.len() + 1);
         if pipe_seed {
-            let p = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+            let p = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
             if p >= 0 {
                 target_fds.push(p);
             }
@@ -11903,7 +11915,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // earlier member's replace).
                     match target.trim_start_matches('&').parse::<i32>() {
                         Ok(src) => {
-                            let d = unsafe { libc::fcntl(src, libc::F_DUPFD, 10) };
+                            let d = unsafe { libc::fcntl(src, libc::F_DUPFD_CLOEXEC, 10) };
                             if d >= 0 {
                                 Ok(d)
                             } else {
@@ -12057,7 +12069,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // uses for every multio; it reads until the shell's last copy
             // of the pipe write end closes, i.e. after the shell exits.
             // c:4045 — "We're done with this job, no need to wait for it."
-            let write_dup = unsafe { libc::fcntl(pipe_write_raw, libc::F_DUPFD, 10) };
+            let write_dup = unsafe { libc::fcntl(pipe_write_raw, libc::F_DUPFD_CLOEXEC, 10) };
             drop(write_end);
             if write_dup < 0 {
                 for f in &target_fds {
@@ -12123,7 +12135,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Dup the pipe write-end onto the target fd; close the
         // original write_end so EOF arrives when host_redirect_scope_end
         // closes our tracked pipe_write_fd.
-        let write_dup = unsafe { libc::fcntl(pipe_write_raw, libc::F_DUPFD, 10) };
+        let write_dup = unsafe { libc::fcntl(pipe_write_raw, libc::F_DUPFD_CLOEXEC, 10) };
         drop(write_end);
         if write_dup < 0 {
             return Value::Status(1);
@@ -12138,7 +12150,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // way to send EOF. Solution: track the write_dup we just
         // closed; instead keep a second dup for the close-on-end.
         // Shell-internal bookkeeping fd — above the script's range (movefd).
-        let close_on_end = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+        let close_on_end = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
         with_executor(|exec| {
             if let Some(top) = exec.multios_scope_stack.last_mut() {
                 top.push((close_on_end, handle));
@@ -12232,7 +12244,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // on fd 3, so `print -u 3 -r -- X 2>/dev/null` wrote into the shell's own
         // saved descriptor and reported success where zsh says `bad file number`.
         // F_DUPFD with a floor of 10 is exactly what movefd does.
-        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
         // c:2426-2437 — a closed fd saves -1, restored by closing it (see
         // the write-side multio above).
         let saved_slot = if saved >= 0 {
@@ -12261,7 +12273,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let open_result: std::io::Result<i32> = match *op_byte {
                 r::DUP_READ | r::DUP_WRITE => match source.trim_start_matches('&').parse::<i32>() {
                     Ok(src) => {
-                        let d = unsafe { libc::fcntl(src, libc::F_DUPFD, 10) };
+                        let d = unsafe { libc::fcntl(src, libc::F_DUPFD_CLOEXEC, 10) };
                         if d >= 0 {
                             Ok(d)
                         } else {
@@ -16631,6 +16643,8 @@ fn exec_system_command(name: &str, args: &[String]) -> i32 {
     // job and stayed silent. (Builtins that don't reach a spawn never
     // hit this fn.)
     crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
+    crate::lowfd::cloexec_internal_fds();
     // Queue signals across the wait, and claim the status back when the
     // reaper wins anyway — see foreground_status.
     let status = foreground_status(
@@ -19743,15 +19757,21 @@ impl fusevm::ShellHost for ZshrsHost {
             Err(_) => return String::new(),
         };
         let read_end = unsafe {
-            <os_pipe::PipeReader as std::os::fd::FromRawFd>::from_raw_fd(crate::ported::utils::movefd(
+            <os_pipe::PipeReader as std::os::fd::FromRawFd>::from_raw_fd(crate::lowfd::movefd_past_script(
                 std::os::fd::IntoRawFd::into_raw_fd(read_end),
             ))
         };
         // A closed fd 1 is saved as -1 and restored by closing it again
         // (c:Src/utils.c:2047-2048 redup: `if (x < 0) zclose(y)`). Bailing out
         // here skipped the body entirely: `{ x=$(print b >&2) } >&-` lost `b`.
-        let saved_stdout = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_DUPFD, 10) };
-        let saved_stderr = unsafe { libc::fcntl(libc::STDERR_FILENO, libc::F_DUPFD, 10) };
+        // The saves exist only because the body runs in process (C's forked
+        // child saves nothing): keep them past the script's `{var}` range.
+        let saved_stdout = unsafe {
+            libc::fcntl(libc::STDOUT_FILENO, libc::F_DUPFD_CLOEXEC, crate::lowfd::EXTENSION_FD_FLOOR)
+        };
+        let saved_stderr = unsafe {
+            libc::fcntl(libc::STDERR_FILENO, libc::F_DUPFD_CLOEXEC, crate::lowfd::EXTENSION_FD_FLOOR)
+        };
         let write_fd = AsRawFd::as_raw_fd(&write_end);
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO); // c:4840 redup(pipes[1], 1)
@@ -20214,7 +20234,7 @@ impl ShellExecutor {
         // c:2425 `movefd(fd1)` — zshrs keeps the original fd open and
         // dups it aside instead (the caller's dup2 overwrites it), so
         // F_DUPFD stands in for movefd's dup-then-close.
-        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
         // c:2422-2423 / c:2430-2436 — a closed fd1 parks -1, not a dup.
         let slot = if saved >= 0 { saved } else { -1 };
         if let Some(top) = self.redirect_scope_stack.last_mut() {
@@ -20462,7 +20482,7 @@ impl ShellExecutor {
                     target
                         .trim_start_matches('&')
                         .parse::<i32>()
-                        .map(|src| unsafe { libc::fcntl(src, libc::F_DUPFD, 10) })
+                        .map(|src| unsafe { libc::fcntl(src, libc::F_DUPFD_CLOEXEC, 10) })
                         .unwrap_or(-1)
                 }
                 r::WRITE | r::CLOBBER => fs::File::create(target)
@@ -20477,7 +20497,7 @@ impl ShellExecutor {
                 _ => -1,
             };
             if new_target_fd >= 0 {
-                let pipe_dup = unsafe { libc::fcntl(1, libc::F_DUPFD, 10) };
+                let pipe_dup = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
                 match (pipe_dup >= 0).then(os_pipe::pipe) {
                     Some(Ok((read_end, write_end))) => {
                         // c:Src/exec.c:5222 / Src/utils.c:1990-2012 —
@@ -20549,7 +20569,7 @@ impl ShellExecutor {
                         drop(write_end);
                         // Scope-end closes this dup (the last writer once
                         // the saved fd 1 is restored) → EOF → join.
-                        let close_on_end = unsafe { libc::fcntl(1, libc::F_DUPFD, 10) };
+                        let close_on_end = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
                         if let Some(top) = self.multios_scope_stack.last_mut() {
                             top.push((close_on_end, handle));
                         } else {
@@ -20973,7 +20993,7 @@ impl ShellExecutor {
         };
         // c:4678 — `unlink(s);` — fd stays valid, name disappears.
         let _ = std::fs::remove_file(&tmp);
-        let saved = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD, 10) };
+        let saved = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 10) };
         if saved >= 0 {
             if let Some(top) = self.redirect_scope_stack.last_mut() {
                 top.push((libc::STDIN_FILENO, saved));

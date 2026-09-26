@@ -611,3 +611,48 @@ mod bare_exec_multios {
         assert_parity_in(d.path(), "(exec 3>/dev/null 3>/dev/null; print -u3 sub); print -u3 after 2>/dev/null; print st=$?");
     }
 }
+
+/// c:Src/exec.c:4839 + 4816 / c:2880 — C forks `$( … )` and `( … )`, and the
+/// child holds no descriptor of its own from 10 up except the parent's, so a
+/// `{var}` allocation inside still gets 11. zshrs's in-process stand-ins (the
+/// capture pipe's read end, the saved stdout/stderr, the subshell's
+/// entry-directory handle) sat at 11-14 and pushed it to 12 or 15.
+mod varid_numbers_inside_subshells {
+    use super::*;
+
+    #[test]
+    fn subshell_and_substitution_allocate_like_the_parent() {
+        let d = tdir();
+        assert_parity_in(d.path(), "(exec {v}>f; print $v)");
+        assert_parity_in(d.path(), "print $(exec {v}>/dev/null; print $v)");
+        assert_parity_in(d.path(), "exec 3<&0; (exec {v}<&3; print $v); print $(print $(exec {w}>/dev/null; print $w))");
+    }
+
+    /// A descriptor the body allocates dies with it, and the body closing a
+    /// parent's `{var}` closes only its own copy.
+    #[test]
+    fn body_descriptors_do_not_outlive_the_subshell() {
+        let d = tdir();
+        assert_parity_in(d.path(), "(exec {v}>f); exec {w}>g; print $w; x=$(exec {v}>f); exec {u}>h; print $u");
+        assert_parity_in(d.path(), "exec {v}>f; (exec {v}>&-); print -u $v ok; cat f");
+        assert_parity_in(d.path(), "zmodload zsh/system; (sysopen -w -u g f); exec {h}>h; print $h");
+    }
+}
+
+/// c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` — the shell's own descriptors
+/// (SHIN, a redirection's saved fd, a multio member) are closed in the child
+/// before execve; the script's `{var}` fds (FDT_EXTERNAL) are not. zshrs
+/// leaked fd 10 and every saved copy into external commands.
+mod internal_fds_closed_at_exec {
+    use super::*;
+
+    #[test]
+    fn externals_see_only_script_fds() {
+        let d = tdir();
+        assert_parity_in(d.path(), "ls /dev/fd");
+        assert_parity_in(d.path(), "ls /dev/fd > out; cat out");
+        assert_parity_in(d.path(), "ls /dev/fd 2>&1 >o1 >o2; cat o1");
+        assert_parity_in(d.path(), "print -r -- $(ls /dev/fd)");
+        assert_parity_in(d.path(), "exec {v}>f; ls /dev/fd; /bin/sh -c \"echo x >&$v\"; cat f");
+    }
+}

@@ -71,7 +71,7 @@ const FIRST_SCRIPT_FD: RawFd = 3;
 /// !!! WARNING: RUST-ONLY CONSTANT — NO C COUNTERPART !!! The guard holds
 /// everything below this floor during an extension open, so the kernel's
 /// lowest-free-descriptor rule hands out >= 50.
-const EXTENSION_FD_FLOOR: RawFd = 50;
+pub const EXTENSION_FD_FLOOR: RawFd = 50;
 
 /// How many slots the guard can hold at most: everything from the first
 /// script descriptor up to [`EXTENSION_FD_FLOOR`].
@@ -280,6 +280,63 @@ pub fn register_internal_fds() {
         crate::ported::utils::fdtable_set(fd, crate::ported::zsh_h::FDT_INTERNAL); // c:2009
         tracing::debug!(fd, "lowfd: registered shell-internal descriptor");
     }
+}
+
+/// Give every descriptor the fdtable records as the shell's own
+/// (`FDT_INTERNAL`, `FDT_XTRACE`) close-on-exec, right before an external
+/// command is spawned.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!! C closes them in the forked child just
+/// before execve: c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` and c:786
+/// `closem(FDT_XTRACE, 0)` (closem, c:4601-4618, spares FDT_EXTERNAL and
+/// FDT_PROC_SUBST, the script's own). zshrs spawns without a child-side hook
+/// (posix_spawn), so the flag does the closing. An internal descriptor is
+/// never meant to reach an exec'd program, so the flag is never cleared;
+/// SHIN (fd 10) and a redirection's saved copies used to show up in `ls
+/// /dev/fd`.
+pub fn cloexec_internal_fds() {
+    let max = crate::ported::utils::MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+    for fd in FIRST_INTERNAL_FD..=max {
+        let kind = crate::ported::utils::fdtable_get(fd) & crate::ported::zsh_h::FDT_TYPE_MASK;
+        if kind != crate::ported::zsh_h::FDT_INTERNAL && kind != crate::ported::zsh_h::FDT_XTRACE {
+            continue;
+        }
+        let fl = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if fl >= 0 && fl & libc::FD_CLOEXEC == 0 {
+            unsafe { libc::fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC) };
+        }
+    }
+}
+
+/// Move a descriptor that exists only because zshrs runs a subshell body in
+/// process — the `$( … )` capture pipe's read end and the parent's saved
+/// stdout/stderr, `( … )`'s entry-directory handle, SubshFdFrame's copies —
+/// to [`EXTENSION_FD_FLOOR`] and up, close-on-exec, and record it
+/// `FDT_INTERNAL`. Returns the new descriptor (or `fd` unchanged if it is
+/// negative or the move fails).
+///
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!! C forks the body:
+/// getoutput's child closes the pipe's read end (c:Src/exec.c:4839) and
+/// saves nothing, so from 10 up the body sees only the parent's own
+/// descriptors, and `{var}` (movefd, c:Src/exec.c:2404) takes the first free
+/// one: `$(exec {v}>/dev/null; print $v)` prints 11. Parked at 10+ these
+/// in-process stand-ins pushed it to 15.
+pub fn movefd_past_script(fd: RawFd) -> RawFd {
+    if fd < 0 {
+        return fd;
+    }
+    let moved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, EXTENSION_FD_FLOOR) };
+    if moved < 0 {
+        return fd;
+    }
+    if crate::ported::utils::fdtable_get(fd) != crate::ported::zsh_h::FDT_UNUSED {
+        crate::ported::utils::zclose(fd); // clears the old slot's mark
+    } else {
+        unsafe { libc::close(fd) };
+    }
+    crate::ported::utils::check_fd_table(moved);
+    crate::ported::utils::fdtable_set(moved, crate::ported::zsh_h::FDT_INTERNAL);
+    moved
 }
 
 impl Default for LowFdGuard {
