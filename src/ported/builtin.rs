@@ -14232,6 +14232,18 @@ pub fn bin_dot(
     // absolute path; C uses the user-supplied `s` (the bin_dot
     // argv[0]) but `arg0` (the user-supplied name) is what zsh
     // actually shows in diagnostics, so use arg0.
+    // c:Src/init.c:1566 — `source()` tries the compiled form FIRST:
+    // `!(prog = try_source_file((us = unmeta(s)))) && (tempfd =
+    // open(us, ...)) == -1` — a sibling `<file>.zwc` newer than the
+    // file (or `s` itself being a `.zwc`) short-circuits the plain
+    // read. zshrs executes through the fusevm text pipeline, so the
+    // dump's wordcode bridges via getpermtext (same bridge as the
+    // `.zwc` autoload path in exec.rs::loadautofn).
+    // It runs BEFORE `scriptname = s` (c:1591), so a load diagnostic
+    // such as parse.c:3746 check_dump_file's "invalid description" is
+    // prefixed with the CALLER's scriptname (`zsh:21:`), not the file's.
+    let zwc_src = crate::ported::parse::try_source_file(&path)
+        .map(|prog| crate::ported::text::getpermtext(Box::new(prog), None, 0));
     let old_scriptname = crate::ported::utils::scriptname_get(); // c:1557
     let old_scriptfilename = crate::ported::utils::scriptfilename_get(); // c:1558
     crate::ported::utils::set_scriptname(Some(arg0.clone())); // c:1591
@@ -14308,15 +14320,6 @@ pub fn bin_dot(
         true
     };
 
-    // c:Src/init.c:1566 — `source()` tries the compiled form FIRST:
-    // `!(prog = try_source_file((us = unmeta(s)))) && (tempfd =
-    // open(us, ...)) == -1` — a sibling `<file>.zwc` newer than the
-    // file (or `s` itself being a `.zwc`) short-circuits the plain
-    // read. zshrs executes through the fusevm text pipeline, so the
-    // dump's wordcode bridges via getpermtext (same bridge as the
-    // `.zwc` autoload path in exec.rs::loadautofn).
-    let zwc_src = crate::ported::parse::try_source_file(&path)
-        .map(|prog| crate::ported::text::getpermtext(Box::new(prog), None, 0));
     // c:Src/init.c:1620 — `errflag &= ~ERRFLAG_ERROR;` before
     // executing the sourced body, so a stale flag from the caller's
     // context can't abort the file's first list.

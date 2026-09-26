@@ -796,3 +796,36 @@ kf
     assert_eq!(r.stderr, z.stderr);
     assert_eq!(r.exit, z.exit);
 }
+
+/// c:Src/init.c:1566 — `source()` calls `try_source_file()` BEFORE it sets
+/// `scriptname = s` (c:1591), so a `.zwc` load diagnostic such as
+/// check_dump_file's "invalid description" (c:Src/parse.c:3746) carries the
+/// CALLER's name (`zsh:1:`), not the sourced file's. A04/A09zwc.ztst
+/// workers/54571: a dump whose npats is implausible must not crash, and the
+/// plain file then runs.
+#[test]
+fn source_corrupt_zwc_diagnostic_names_the_caller() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("victim"), "print victim ran\n").unwrap();
+    let z = run_zsh_in(d.path(), "zcompile victim");
+    assert_eq!(z.exit, 0, "zsh zcompile sanity");
+    let zwc = d.path().join("victim.zwc");
+    // zcompile writes the dump read-only (A09zwc.ztst `chmod u+w`).
+    let mut perm = std::fs::metadata(&zwc).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o644);
+    std::fs::set_permissions(&zwc, perm).unwrap();
+    let mut bytes = std::fs::read(&zwc).unwrap();
+    // FD_MAGIC's first byte is 0x07 on a little-endian dump (A09zwc.ztst).
+    let npats: [u8; 4] = if bytes[0] == 0x07 { [0, 0, 0, 0x40] } else { [0x40, 0, 0, 0] };
+    bytes[56..60].copy_from_slice(&npats);
+    std::fs::write(&zwc, &bytes).unwrap();
+    let z = run_zsh_in(d.path(), "source ./victim");
+    let r = run_zshrs_in(d.path(), "source ./victim");
+    assert_eq!(z.stdout, "victim ran\n", "zsh sanity");
+    assert_eq!(r.stdout, z.stdout);
+    assert_eq!(r.stderr.replacen("zshrs:", "zsh:", 1), z.stderr);
+    assert_eq!(r.exit, z.exit);
+}
