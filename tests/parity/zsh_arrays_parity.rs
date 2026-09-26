@@ -1356,3 +1356,23 @@ mod assoc_missing_key_word {
         assert_parity(r#"typeset -A e=(k ""); print -l -- $e[k] v "$e[k]""#);
     }
 }
+
+/// c:Src/subst.c:4271-4294 — `if ((!aval[0] || !aval[1]) && !plan9)`: an
+/// EMPTY array reference still yields one word, the text around it. The
+/// unbraced `$a[i,j]` walk returned no node at all for an empty slice, so
+/// `echo .$foo[2,1].` printed an empty line (D05array "This should be empty").
+mod unbraced_empty_slice_keeps_the_affix {
+    use super::*;
+
+    #[test]
+    fn prefix_and_suffix_survive() {
+        assert_parity("foo=(a b c d); echo .$foo[1,0]. .$foo[4,1]. .$foo[1,-8]. .$foo[0,0].");
+        assert_parity("foo=(a b c); x=(.$foo[2,1].); print $#x $x");
+        assert_parity("foo=(a b c); x=($foo[2,1]); print $#x");
+    }
+
+    #[test]
+    fn rc_expand_param_still_drops_the_word() {
+        assert_parity("setopt rcexpandparam; foo=(a b c); x=(.$foo[2,1].); print $#x");
+    }
+}

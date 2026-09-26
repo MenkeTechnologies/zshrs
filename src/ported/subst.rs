@@ -25972,6 +25972,16 @@ pub fn paramsubst(
                 };
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect(); // c:3950
+                // c:4271 — `if ((!aval[0] || !aval[1]) && !plan9)`: an EMPTY
+                // array still yields ONE word, the text around the reference
+                // (c:4284-4294 copies ostr + fstr into the node). Returning no
+                // node deleted the word, so `echo .$foo[2,1].` printed an empty
+                // line where zsh prints `..`. Only RC_EXPAND_PARAM's cross
+                // product (c:4327) removes the word for zero elements.
+                if arr.is_empty() && !isset(RCEXPANDPARAM) {
+                    let result = format!("{}{}", prefix, suffix); // c:4290-4292
+                    return (result.clone(), prefix.chars().count(), vec![result]); // c:4287
+                }
                 let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
                 for (i, part) in arr.iter().enumerate() {
                     // c:3950
