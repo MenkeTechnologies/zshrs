@@ -316,3 +316,50 @@ mod failed_assignment_status {
         assert_parity("(typeset -r y; read x y) <<<'a b' 2>/dev/null; echo rc=$?");
     }
 }
+
+/// `-k` / `-q` at end of input. The raw-character loop sets `eof = 1` when
+/// `read(2)` returns 0 (c:Src/builtin.c:6674-6677) and returns it; `-q` turns
+/// that into status 2 (c:6737-6740, "If we timed out, status is 2"). The port
+/// dropped the flag, so `read -k2` at EOF exited 0 and `read -q` exited 1.
+mod raw_char_eof_status {
+    use super::*;
+
+    #[test]
+    fn q_at_eof_is_2_and_reply_n() {
+        assert_parity(r#"read -q -u0 mb </dev/null; print $? "[$mb]""#);
+    }
+
+    #[test]
+    fn k_at_eof_is_1() {
+        assert_parity(r#"read -k2 -u0 mb </dev/null; print $? "[$mb]""#);
+    }
+
+    #[test]
+    fn k_short_read_keeps_the_bytes_and_is_1() {
+        assert_parity(r#"print -n a | read -k2 -u0 mb; print $? "[$mb]""#);
+    }
+
+    /// Not EOF: a multibyte answer is simply "not y" (D07multibyte.ztst).
+    #[test]
+    fn q_multibyte_answer_is_1() {
+        assert_parity(r#"print -n « | read -q -u0 mb; print $? "[$mb]""#);
+    }
+}
+
+/// `read -A` into an existing associative array. `setaparam` keeps a
+/// PM_HASHED target hashed (c:Src/params.c:3341-3342) and `setarrvalue`
+/// reads the words as key/value pairs; the port reset it to a plain array.
+/// The `-A` arm then returns `c == EOF` (c:Src/builtin.c:6964), not errflag.
+mod array_into_assoc {
+    use super::*;
+
+    #[test]
+    fn pairs_land_as_keys() {
+        assert_parity(r#"typeset -A g; read -A g <<< "x 1 y 2"; typeset -p g"#);
+    }
+
+    #[test]
+    fn odd_count_errors_but_status_is_c_eq_eof() {
+        assert_parity(r#"typeset -A o; read -A o <<< "x 1 y" 2>/dev/null; print unreached"#);
+    }
+}

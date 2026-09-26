@@ -524,6 +524,19 @@ mod stat_module {
             "zstat /tmp /tmp 2>/dev/null | grep '^/tmp:' | head -2",
         ));
     }
+
+    /// `zstat -A NAME -n` on a declared assoc: c:Src/Modules/stat.c:618
+    /// `setaparam(arrnam, array)` keeps a PM_HASHED target hashed
+    /// (c:Src/params.c:3341-3342), so the name/value list lands as keys.
+    /// D07multibyte.ztst (workers/50150) reads it back by file name.
+    #[test]
+    fn zstat_array_into_assoc_keeps_it_hashed() {
+        assert_parity_dash_f(&with_modules(
+            &["stat"],
+            "touch 50150-é 50150-Ą; typeset -A sizes; \
+             zstat +size -A sizes -nor -- 50150-*; typeset -p sizes",
+        ));
+    }
 }
 
 // ───────────────────────── zsh/files ─────────────────────────

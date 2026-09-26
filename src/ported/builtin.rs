@@ -15591,7 +15591,11 @@ pub fn bin_read(
                         }
                     }
                 }
-                _ => break,
+                // c:6674-6677 — `if (val <= 0) { eof = 1; break; }`.
+                _ => {
+                    partial_eof = true;
+                    break;
+                }
             }
         }
         // EOF mid-character: keep the debris, as c:6892-6898 does.
@@ -15816,9 +15820,13 @@ pub fn bin_read(
     // would be status 2; not modeled here.) This must run BEFORE the
     // IFS/array assignment dispatch — `-q` never does line splitting.
     if OPT_ISSET(ops, b'q') {
-        let is_yes = buf == "y" || buf == "Y"; // c:6741
-        setsparam(&reply, if is_yes { "y" } else { "n" }); // c:6742
-        return if is_yes { 0 } else { 1 };
+        // c:6737-6740 — "Keep eof as status but status is now whether we read
+        // 'y' or 'Y'.  If we timed out, status is 2."
+        //     if (eof) eof = 2;
+        //     else eof = (bptr - buf != 1 || (buf[0] != 'y' && buf[0] != 'Y'));
+        let eof = if partial_eof { 2 } else if buf == "y" || buf == "Y" { 0 } else { 1 };
+        setsparam(&reply, if eof == 0 { "y" } else { "n" }); // c:6742
+        return eof;
     }
 
     // Backslash-escaped chars were tagged with the Bnull mark (\u{99}) by
@@ -16006,6 +16014,10 @@ pub fn bin_read(
         if !opt_e {
             setaparam(&reply, parts); // c:6960 setaparam
         }
+        // c:6964 — `return c == EOF;`: the array arm returns before the
+        // c:7121 `return errflag` tail, so a failed assignment (odd pairs
+        // into an assoc) still exits 0 unless the line hit EOF.
+        return partial_eof as i32;
     } else if argi < args.len() {
         // Multi-var: `read x y [z]`. First var = reply (already
         // consumed); rest are args[argi..]. Split with at most

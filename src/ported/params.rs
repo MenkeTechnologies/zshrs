@@ -9999,6 +9999,26 @@ pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
     // `share/zsh/site-functions` is untouched -- see
     // `vm_helper::is_host_zsh_function_tree`; only the distribution's
     // flattened `functions` directory is dropped.
+    // !!! RUST-ONLY PLACEMENT !!! C's assignaparam keeps an existing ordinary
+    // PM_HASHED hashed — c:3341-3342 `else if (!(PM_TYPE(v->pm->node.flags) &
+    // (PM_ARRAY|PM_HASHED)) && ...)` excludes it from the reset — and c:3434
+    // `setarrvalue` hands the words to `arrhashsetfn` (c:2918-2920) as
+    // key/value pairs; `sethparam` is that chain (c:3651). The port's
+    // assignaparam instead rewrites the type to PM_ARRAY, and `typeset -a h`
+    // on an existing assoc relies on that rewrite (C converts in
+    // typeset_single before assigning), so the C behaviour is applied at this
+    // entry point, which typeset does not use. Without it
+    // `typeset -A h; read -A h <<< 'k v'` and `zstat -A h -n` made `h` a
+    // plain array (D07multibyte.ztst, workers/50150).
+    let hashed = paramtab()
+        .read()
+        .ok()
+        .and_then(|tab| tab.get(name).map(|pm| pm.node.flags as u32))
+        .map(|f| PM_TYPE(f) == PM_HASHED && f & (PM_SPECIAL | PM_UNSET) == 0)
+        .unwrap_or(false);
+    if hashed {
+        return sethparam(name, val); // c:3434 → c:2920 arrhashsetfn
+    }
     // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`.
     assignaparam(name, val, ASSPM_WARN)
 }

@@ -1449,9 +1449,15 @@ impl ShellExecutor {
     }
 
     /// Set an indexed array parameter via canonical paramtab
-    /// (`setaparam`, `Src/params.c:3595`). The single store.
+    /// (`assignaparam`, `Src/params.c:3357`). The single store.
+    ///
+    /// Callers mean "make NAME this array" — `typeset -a h=(…)` over an
+    /// existing assoc among them, whose type conversion C does in
+    /// typeset_single before it assigns. `setaparam` now keeps an existing
+    /// assoc hashed (C's c:3341-3342), so go one level down to the
+    /// type-resetting store with the same `ASSPM_WARN` flag setaparam used.
     pub fn set_array(&mut self, name: String, value: Vec<String>) {
-        setaparam(&name, value); // c:params.c:3595
+        assignaparam(&name, value, crate::ported::zsh_h::ASSPM_WARN); // c:params.c:3766
     }
 
     /// Set an associative array parameter via canonical
