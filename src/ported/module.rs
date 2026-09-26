@@ -4563,6 +4563,9 @@ pub fn do_module_features(
     // c:1998
     let mut module_features: Vec<String> = Vec::new(); // c:2000
     let mut ret: i32 = 0; // c:2001
+    // C edits the caller's `enablesarr` in place (c:2059-2066) and no
+    // caller reads it afterwards, so a local copy carries the same effect.
+    let mut features: Option<Vec<String>> = features.map(|a| a.to_vec());
 
     // c:2003 — `if (features_module(m, &features) == 0)`.
     if features_module(table, modname, &mut module_features) == 0 {
@@ -4606,17 +4609,48 @@ pub fn do_module_features(
                     // c:2045-2047 — autofeatures(NULL, m->node.nam, arg, 0, FEAT_IGNORE|FEAT_REMOVE)
                     let arg = vec![al.clone()];
                     autofeatures(table, "", Some(modname), &arg, 0, FEAT_IGNORE | FEAT_REMOVE);
-                    // c:2053-2072 — expunge from enablesarr.
-                    // features arg is &[String] — Rust slice can't be
-                    // mutated through &. The C path mutates the passed
-                    // Feature_enables array; the Rust callers that need
-                    // expunge build a fresh list. Skipped here.
+                    /*
+                     * don't want to try to enable *that*...
+                     * expunge it from the enable string.
+                     */
+                    // c:2053-2072 — without this the enables walk below
+                    // warned a second time ("has no such feature: `b:fail'")
+                    // for the feature the autoload just cancelled.
+                    if let Some(arr) = features.as_mut() {
+                        // c:2055-2071
+                        let pos = arr.iter().position(|fep| {
+                            let s = fep
+                                .strip_prefix('+')
+                                .or_else(|| fep.strip_prefix('-'))
+                                .unwrap_or(fep); // c:2057-2058
+                            if (flags & FEAT_PATTERN_ARGS) != 0 {
+                                let mut pat_src = crate::ported::string::dupstring(s);
+                                crate::ported::glob::tokenize(&mut pat_src);
+                                crate::ported::pattern::patcompile(
+                                    &pat_src,
+                                    crate::ported::zsh_h::PAT_STATIC,
+                                    None,
+                                )
+                                .is_some_and(|p| crate::ported::pattern::pattry(&p, al))
+                            } else {
+                                al == s // c:2059-2060
+                            }
+                        });
+                        if let Some(i) = pos {
+                            /* can't enable it after all, so return 1 */
+                            ret = 1; // c:2062
+                            // c:2063-2067 — shift the rest down; the loop
+                            // leaves `fep` on the terminator, so c:2068
+                            // `if (!fep->pat) break;` always stops here.
+                            arr.remove(i);
+                        }
+                    }
                 }
             }
         }
 
         // c:2077-2113 — apply enablesarr (or enable all).
-        match features {
+        match &features {
             Some(arr) => {
                 // c:2079-2103 — walk enablesarr.
                 let enables_vec = enables.get_or_insert_with(Vec::new);

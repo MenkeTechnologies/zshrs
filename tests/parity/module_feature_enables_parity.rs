@@ -426,3 +426,57 @@ fn mathfunc_rand48_is_a_selectable_feature() {
 before_rint=$(( ${a[(i)+f:rint]} - i ))\"",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Autoload stubs whose feature the module does not have.
+// ---------------------------------------------------------------------------
+
+/// `do_module_features` (Src/module.c:2020-2074) cancels an autoload the
+/// module turns out not to provide ("autoload cancelled") AND expunges it from
+/// the enables array it was asked to turn on, returning 1 (c:2053-2071). zshrs
+/// skipped the expunge, so the enables walk below warned a second time
+/// ("has no such feature: `b:fail'") before the caller's own "failed to
+/// define" message. Cases are Test/V01zmodload.ztst "Failed builtin/condition
+/// autoload"; stderr is merged so the warning sequence is compared.
+#[test]
+fn cancelled_autoload_is_expunged_from_the_enable_request() {
+    assert_feature_parity(
+        "(zmodload -u zsh/parameter; zmodload -aF zsh/parameter b:fail; fail; \
+         print unreachable) 2>&1; print -r -- \"rc=$?\"",
+    );
+    assert_feature_parity(
+        "(zmodload -u zsh/parameter; zmodload -aF zsh/parameter c:fail; \
+         [[ -fail foo ]]; print unreachable) 2>&1; print -r -- \"rc=$?\"",
+    );
+}
+
+/// `callmathfunc` resolves every name through `getmathfunc(n, 1)`
+/// (Src/math.c:1050): a registered entry is called, an autoload stub fires
+/// its module (Src/module.c:1289-1301) and reports "failed to define math
+/// function" when the module does not define it, and anything else is
+/// "unknown function" (c:1131). zshrs keyed the decision on a hardcoded name
+/// list plus "is the module loaded", so a user stub (`-aF MOD f:NAME`) went
+/// straight to "unknown function", and a feature disabled with `-f:NAME`
+/// stayed callable. Test/V01zmodload.ztst "Failed math function autoload" /
+/// "Module Features for math functions".
+#[test]
+fn math_functions_resolve_through_the_mathfuncs_table() {
+    assert_feature_parity(
+        "(zmodload -u zsh/parameter; zmodload -aF zsh/parameter f:fail; \
+         (( fail() ))) 2>&1; print -r -- \"rc=$?\"",
+    );
+    assert_feature_parity(
+        "zmodload zsh/system; zmodload -F zsh/system -f:systell; \
+         (print $(( systell(0) ))) 2>&1; zmodload -F zsh/system +f:systell; \
+         print $(( systell(0) >= 0 ))",
+    );
+    assert_feature_parity(
+        "zmodload zsh/mathfunc; zmodload -F zsh/mathfunc -f:sin; \
+         print $(( cos(0) )); (print $(( sin(0) ))) 2>&1; \
+         zmodload -F zsh/mathfunc +f:sin; print $(( sin(0) ))",
+    );
+    assert_feature_parity(
+        "zmodload zsh/system; zmodload -u zsh/system; (print $(( systell(0) ))) 2>&1; \
+         print -r -- \"rc=$?\"",
+    );
+}

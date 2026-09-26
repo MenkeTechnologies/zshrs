@@ -3037,84 +3037,6 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // Parse function name and args
     let paren = call.find('(').unwrap_or(call.len());
     let name = &call[..paren];
-    // c:Src/math.c:1037 — `callmathfunc` looks up `name` in the
-    // global `mathfuncs` table. The table is empty until
-    // `zmodload zsh/mathfunc` (Src/Modules/mathfunc.c mtab[]) is
-    // loaded. Without it, every named call fails with "unknown
-    // function: NAME" (Src/math.c:1066). The previous Rust port
-    // unconditionally dispatched against the built-in match arms,
-    // auto-loading the module's contents — `zsh -fc 'echo
-    // $((sqrt(4)))'` should exit 1, not silently return `2.`.
-    let is_module_func = matches!(
-        name,
-        "abs"
-            | "acos"
-            | "acosh"
-            | "asin"
-            | "asinh"
-            | "atan"
-            | "atanh"
-            | "cbrt"
-            | "ceil"
-            | "copysign"
-            | "cos"
-            | "cosh"
-            | "erf"
-            | "erfc"
-            | "exp"
-            | "expm1"
-            | "fabs"
-            | "float"
-            | "floor"
-            | "fmod"
-            | "gamma"
-            | "hypot"
-            | "ilogb"
-            | "int"
-            | "isinf"
-            | "isnan"
-            | "j0"
-            | "j1"
-            | "jn"
-            | "ldexp"
-            | "lgamma"
-            | "log"
-            | "log10"
-            | "log1p"
-            | "log2"
-            | "logb"
-            | "nextafter"
-            | "rand48"
-            | "rint"
-            | "scalb"
-            | "sin"
-            | "sinh"
-            | "sqrt"
-            | "tan"
-            | "tanh"
-            | "y0"
-            | "y1"
-            | "yn"
-    );
-    // c:Src/module.c:2206-2322 `load_module` — the post-init flag
-    // signaling "this module's setup/boot ran" is MOD_INIT_B (set
-    // at c:2322 after do_boot_module). MOD_LINKED alone is just
-    // "statically linkable" and is pre-set for every builtin
-    // module at registration time in modulestab::init_builtin
-    // (zsh_h.rs:758) — so it's true even before any `zmodload`.
-    // Gate on MOD_INIT_B to mirror C's "the module's mtab[] is
-    // currently in the global mathfuncs table".
-    let module_loaded = crate::ported::module::MODULESTAB
-        .lock()
-        .ok()
-        .and_then(|tab| {
-            tab.modules.get("zsh/mathfunc").map(|m| {
-                let flags = m.node.flags;
-                (flags & crate::ported::zsh_h::MOD_INIT_B) != 0
-                    && (flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
-            })
-        })
-        .unwrap_or(false);
     // c:Src/math.c:1108-1116 — MFF_USERFUNC branch: when the named
     // math function points at a user shfunc (registered via
     // `functions -M`), dispatch via doshfunc instead of looking it
@@ -3268,23 +3190,30 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         }
     } // close `if mathfunc_entry.is_some()`
 
-    if is_module_func && !module_loaded {
-        // c:Src/math.c:1050 — `if ((f = getmathfunc(n, 1)))`: the
-        // lookup with autol=1 IS the autoload fire. `zmodload -af
-        // zsh/mathfunc sin` installs a MATHFUNCS stub (module.c:1410
-        // add_automathfunc); getmathfunc removes the stub and
-        // ensurefeature-loads the owning module (module.c:1289-1301).
-        // On a hit, fall through to the evaluation arms below (the
-        // module is now booted). Without this, the registered
-        // autoload never fired and `$(( sin(0) ))` errored
-        // `unknown function: sin` despite the -af registration.
+    // c:Src/math.c:1050 — `if ((f = getmathfunc(n, 1)))`, else c:1131
+    // `zerr("unknown function: %s", n)`. The global `mathfuncs` list
+    // (MATHFUNCS) is the only authority: a module's `setmathfuncs`
+    // (c:Src/module.c:1374) adds its mftab entries on load and removes
+    // them again for `zmodload -F MOD -f:NAME`, so a module being loaded
+    // does not by itself make a name callable. A registered entry has
+    // `module == NULL`; an autoload stub (`zmodload -af` / `-aF MOD
+    // f:NAME`, c:Src/module.c:1410 add_automathfunc) carries the module
+    // name and is resolved by getmathfunc's autol arm (c:1289-1301),
+    // which reports "autoloading module %s failed to define math
+    // function" itself when the load does not define the name — the
+    // zerr below is then swallowed by errflag (c:Src/utils.c:175).
+    let registered = crate::ported::module::MATHFUNCS
+        .lock()
+        .map(|tab| tab.iter().any(|p| p.name == name && p.module.is_none()))
+        .unwrap_or(false);
+    if !registered {
         let autoloaded = crate::ported::module::MODULESTAB
             .lock()
             .ok()
             .map(|mut tab| crate::ported::module::getmathfunc(&mut tab, name, 1).is_some())
             .unwrap_or(false);
         if !autoloaded {
-            crate::ported::utils::zerr(&format!("unknown function: {}", name));
+            crate::ported::utils::zerr(&format!("unknown function: {}", name)); // c:1131
             crate::ported::utils::errflag.fetch_or(
                 crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,
