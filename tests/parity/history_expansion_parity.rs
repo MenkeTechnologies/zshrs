@@ -498,3 +498,32 @@ fn bang_hash_refers_to_the_current_line() {
     let got = stdin_interactive(&crate::zpty_probe::zshrs_bin(), true, script);
     assert_eq!(got, want);
 }
+
+/// c:Src/hist.c:2931-2933 — savehistfile returns before opening anything
+/// when `savehistsiz <= 0`, and `fc -W FILE` goes through it, so with
+/// SAVEHIST 0 an interactive `fc -W` writes nothing at all. zshrs
+/// exempted an explicit path from the gate and wrote the whole list.
+#[test]
+fn fc_w_writes_nothing_without_savehist() {
+    if !crate::zpty_probe::zsh_available() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("zshrs-fcw-parity-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let script = |f: &str| {
+        format!(
+            "SAVEHIST=0\nprint -s one\nfc -W {f}\n[[ -e {f} ]] && print written || print absent\nSAVEHIST=5\nfc -W {f}\n[[ -s {f} ]] && print written || print absent\n"
+        )
+    };
+    let zf = dir.join("zsh.hist");
+    let rf = dir.join("zshrs.hist");
+    let want = stdin_interactive(
+        std::path::Path::new(crate::zpty_probe::zsh_path()),
+        false,
+        &script(&zf.display().to_string()),
+    );
+    let got = stdin_interactive(&crate::zpty_probe::zshrs_bin(), true, &script(&rf.display().to_string()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(want, "absent\nwritten\n", "reference zsh changed");
+    assert_eq!(got, want);
+}

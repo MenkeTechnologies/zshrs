@@ -4551,18 +4551,17 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
     //                || (!fn && !(fn = getsparam("HISTFILE")))) return;`
     //
     // `!interact` is test-pinned (non-interactive shells must never
-    // write the user's HISTFILE). The explicit-path accommodation lets
-    // `fc -W path` still create/write the file in contexts where
-    // SAVEHIST is unset (e.g. `zsh -fc`) or the ring is empty.
+    // write the user's HISTFILE). An explicit `fc -W path` is gated the
+    // same way: with SAVEHIST unset or 0 zsh writes nothing, not even an
+    // empty file.
     if !isset(INTERACTIVE) {
         return;
     }
-    let explicit_path = fn_path.is_some();
     let savehistsiz_v = savehistsiz.load(SeqCst); // c:2932 savehistsiz
-    if savehistsiz_v <= 0 && !explicit_path {
+    if savehistsiz_v <= 0 {
         return; // c:2932 savehistsiz <= 0
     }
-    if ring_len() == 0 && !explicit_path {
+    if ring_len() == 0 {
         return; // c:2931 !hist_ring
     }
     let path: String = match fn_path {
