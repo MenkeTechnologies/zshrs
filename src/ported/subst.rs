@@ -16381,8 +16381,26 @@ pub fn paramsubst(
                             ),
                             None => var_name.clone(),
                         };
-                        assignsparam(&__s, &value, 0);
+                        // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
+                        // getstrvalue(&vbuf)` with VALFLAG_SUBST: the substituted value is the
+                        // PARAMETER's, so `typeset -Z3 z; ${z::=15}` is `015` (54674).
+                        let __pm = assignsparam(&__s, &value, 0);
                         exec_sync_state_from_paramtab();
+                        // Only for a bare name. With a subscript C reads the whole array back
+                        // from start 0 (dev zsh: `b=(x y); ${b[5]::=E}` is `x`), a zsh bug from
+                        // 54674 that 5.9.2 does not have; keep the
+                        // assigned text there.
+                        if let Some(__pm) = __pm.filter(|_| subscript.is_none()) {
+                            let mut __vbuf = crate::ported::zsh_h::value {
+                                pm: Some(__pm),
+                                arr: Vec::new(),
+                                scanflags: 0,
+                                valflags: crate::ported::zsh_h::VALFLAG_SUBST, // c:3320
+                                start: 0,
+                                end: -1, // c:3319
+                            };
+                            value = crate::ported::params::getstrvalue(Some(&mut __vbuf)); // c:3321
+                        }
                     }
                 }
             } else if let Some(default) = r.strip_prefix(":=") {
@@ -16502,8 +16520,26 @@ pub fn paramsubst(
                                 ),
                                 None => var_name.clone(),
                             };
-                            assignsparam(&__s, &value, 0);
+                            // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
+                            // getstrvalue(&vbuf)` with VALFLAG_SUBST: the substituted value is the
+                            // PARAMETER's, so `typeset -Z3 z; ${z::=15}` is `015` (54674).
+                            let __pm = assignsparam(&__s, &value, 0);
                             exec_sync_state_from_paramtab();
+                            // Only for a bare name. With a subscript C reads the whole array back
+                            // from start 0 (dev zsh: `b=(x y); ${b[5]::=E}` is `x`), a zsh bug from
+                            // 54674 that 5.9.2 does not have; keep the
+                            // assigned text there.
+                            if let Some(__pm) = __pm.filter(|_| subscript.is_none()) {
+                                let mut __vbuf = crate::ported::zsh_h::value {
+                                    pm: Some(__pm),
+                                    arr: Vec::new(),
+                                    scanflags: 0,
+                                    valflags: crate::ported::zsh_h::VALFLAG_SUBST, // c:3320
+                                    start: 0,
+                                    end: -1, // c:3319
+                                };
+                                value = crate::ported::params::getstrvalue(Some(&mut __vbuf)); // c:3321
+                            }
                         }
                     }
                 }
@@ -16625,8 +16661,26 @@ pub fn paramsubst(
                                 ),
                                 None => var_name.clone(),
                             };
-                            assignsparam(&__s, &value, 0);
+                            // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
+                            // getstrvalue(&vbuf)` with VALFLAG_SUBST: the substituted value is the
+                            // PARAMETER's, so `typeset -Z3 z; ${z::=15}` is `015` (54674).
+                            let __pm = assignsparam(&__s, &value, 0);
                             exec_sync_state_from_paramtab();
+                            // Only for a bare name. With a subscript C reads the whole array back
+                            // from start 0 (dev zsh: `b=(x y); ${b[5]::=E}` is `x`), a zsh bug from
+                            // 54674 that 5.9.2 does not have; keep the
+                            // assigned text there.
+                            if let Some(__pm) = __pm.filter(|_| subscript.is_none()) {
+                                let mut __vbuf = crate::ported::zsh_h::value {
+                                    pm: Some(__pm),
+                                    arr: Vec::new(),
+                                    scanflags: 0,
+                                    valflags: crate::ported::zsh_h::VALFLAG_SUBST, // c:3320
+                                    start: 0,
+                                    end: -1, // c:3319
+                                };
+                                value = crate::ported::params::getstrvalue(Some(&mut __vbuf)); // c:3321
+                            }
                         }
                     }
                 }
@@ -29313,7 +29367,10 @@ fn exec_assignaparam(name: &str, parts: Vec<String>) {
     if is_assoc {
         exec_sethparam(name, parts);
     } else {
-        arrays_insert(name.to_string(), parts);
+        // c:3306 — `setaparam(idbeg, a)`: the parameter's own setfn, so a
+        // `typeset -U` array drops duplicates and a tied array updates its
+        // scalar (`${(A)u::=$d}`, 54674).
+        let _ = crate::ported::params::setaparam(name, parts);
     }
 }
 

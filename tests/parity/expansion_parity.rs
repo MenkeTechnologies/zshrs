@@ -1979,7 +1979,7 @@ mod quoted_glob_function_name {
 mod brace_param_lexer_current_source {
     use super::*;
 
-    fn assert_zshrs(script: &str, want: &str) {
+    pub(super) fn assert_zshrs(script: &str, want: &str) {
         let r = run_zshrs(script);
         assert_eq!(r.stdout, want, "script:\n{script}\nstderr: {}", r.stderr);
         assert_eq!(r.exit, 0, "script:\n{script}\nstderr: {}", r.stderr);
@@ -2002,6 +2002,32 @@ mod brace_param_lexer_current_source {
         assert_zshrs(
             r#"slash=/; print -r -- x${slash/'/'}y x${slash/"/"}y; s=a/b/c; print -r -- ${s/'/'/X} ${s//'/'/X} ${s/'b/c'/X} ${s/"b/c"/Z} ${s/b/'/'}"#,
             "xy xy\naXb/c aXbXc a/X a/Z a///c\n",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:3300-3323 (zsh 54674, newer than the 5.9.2 reference) —
+// `${name::=word}` / `:=` / `=` substitute the PARAMETER's value after the
+// assignment, so its type flags apply, and an array goes through
+// setaparam so `typeset -U` drops duplicates.
+// ─────────────────────────────────────────────────────────────────────
+mod assign_operator_substitutes_parameter_value {
+    use super::brace_param_lexer_current_source::assert_zshrs;
+
+    #[test]
+    fn scalar_flags_apply_to_the_substituted_value() {
+        assert_zshrs(
+            r#"typeset -Z3 z; print ${z::=15}; typeset -E3 e; five=5; print ${e::=five}; typeset -l l; print ${l:=ABC}; typeset -i8 o; print ${o::=9}"#,
+            "015\n5.00e+00\nabc\n8#11\n",
+        );
+    }
+
+    #[test]
+    fn unique_array_assignment_drops_duplicates() {
+        assert_zshrs(
+            r#"typeset -a -U u; d=(1 2 1 1 2 3); print ${(A)u::=$d}; print $u"#,
+            "1 2 3\n1 2 3\n",
         );
     }
 }
