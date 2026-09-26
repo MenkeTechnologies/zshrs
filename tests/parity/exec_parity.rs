@@ -698,3 +698,60 @@ mod argument_glob_failure_is_forked_for_externals {
         assert_parity_in(d.path(), "zmodload zsh/files; rm *.nx 2>&1; print after $?");
     }
 }
+
+/// c:Src/exec.c:3081-3141 — the precommand walk expands each word before it
+/// looks it up and, on the `-` BINF_PREFIX builtin, drops it and expands the
+/// next. zshrs decided a "dynamic" command word by looking at words[0] only,
+/// so after `-` the literal `$x/echo` was looked up (A01grammar.ztst `-'
+/// precommand modifier).
+mod dash_precommand_expands_the_command_word {
+    use super::*;
+
+    #[test]
+    fn expansion_after_dash() {
+        assert_parity(r#"x=/bin; - $x/echo hi"#);
+        assert_parity(r#"x=(echo a); - $x b"#);
+        assert_parity(r#"x=/bin; - $x/sh -c 'echo $0'"#);
+        assert_parity(r#"x=echo; - - $x twice"#);
+    }
+}
+
+/// c:Src/exec.c:2055-2057 — every pipeline stage carries its own line
+/// (c:Src/parse.c:911 WCB_PIPE(…, line + 1)) and execpline2 re-anchors
+/// `lineno` before running it. zshrs set the line once per pipeline, so a
+/// later stage's error named the first line (A01grammar.ztst line-buffered
+/// input test).
+mod pipeline_stage_line_numbers {
+    use super::*;
+
+    #[test]
+    fn stage_error_names_its_own_line() {
+        assert_parity("print a |\n nosuch 2>&1");
+        assert_parity("print a |\n\n nosuch 2>&1");
+        assert_parity("(\n print a |\n nosuch 2>&1\n)");
+        assert_parity("f() {\n print a |\n  nosuch 2>&1\n}\nf");
+        assert_parity("print a |\n cat; echo $LINENO");
+    }
+}
+
+/// c:Src/exec.c:877-894 + c:538 — zexecve only ever opens the `DIR/arg0`
+/// candidates of its `$path` walk. The spawn path probed the BARE word after
+/// libc's walk failed, i.e. opened it relative to the cwd, and ran a `#!`
+/// script sitting there although `$path` never named that directory
+/// (A05execution.ztst path (3) / path (4)).
+mod shebang_script_off_path_is_not_found {
+    use super::*;
+
+    #[test]
+    fn cwd_script_not_on_path() {
+        let d = tempfile::tempdir().unwrap();
+        for (name, body) in [("slashless", "#!sh\necho ran"), ("witharg", "#!echo foo\necho ran")] {
+            let p = d.path().join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            assert_parity_in(d.path(), &format!("PATH=/bin:/nonexistent/ {name} 2>&1; echo $?"));
+            assert_parity_in(d.path(), &format!("PATH=/nonexistent {name} 2>&1; echo $?"));
+            assert_parity_in(d.path(), &format!("PATH=/bin:. {name} 2>&1; echo $?"));
+        }
+    }
+}

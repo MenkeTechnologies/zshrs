@@ -1829,10 +1829,12 @@ impl ZshCompiler {
         // its stdout BEFORE the pipe — so we emit `2>&1` redirect first
         // in cmd1's sub-chunk.
         let mut stages: Vec<(&ZshCommand, bool)> = Vec::new();
+        let mut stage_linenos: Vec<u64> = Vec::new();
         let mut cur_pipe = pipe;
         loop {
             let merge = cur_pipe.merge_stderr && cur_pipe.next.is_some();
             stages.push((&cur_pipe.cmd, merge));
+            stage_linenos.push(cur_pipe.lineno); // c:Src/parse.c:911 WCB_PIPE(…, line + 1)
             match cur_pipe.next.as_deref() {
                 Some(next) => cur_pipe = next,
                 None => break,
@@ -1863,6 +1865,18 @@ impl ZshCompiler {
                 // the recursive call depth.
                 for _ in 0..i {
                     sub.emit_cmd_push(crate::ported::zsh_h::CS_PIPE as u8);
+                }
+                // c:Src/exec.c:2055-2057 `execpline2` — every stage of the
+                // pipeline carries its own line (c:Src/parse.c:911), and
+                // each recursive execpline2 re-anchors `lineno` to it
+                // before running that stage: `print a |⏎ nosuch` reports
+                // `nosuch` on line 2, not the pipeline's first line.
+                if stage_linenos[i] != 0 {
+                    sub.builder
+                        .emit(Op::LoadInt(self.rel_lineno(stage_linenos[i])), 0);
+                    sub.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
+                    sub.builder.emit(Op::Pop, 0);
                 }
                 // c:Src/exec.c:3722-3724 — pipeline output occupies mfds[1]
                 // before the stage command's redirect list is walked, so
@@ -2821,7 +2835,19 @@ impl ZshCompiler {
         // host_exec_external → run_intercepts. Without this, `cmd=ls;
         // $cmd` would emit CallFunction(name="$cmd", ...) and fail with
         // `command not found: $cmd`.
-        let first_untoked = crate::lex::untokenize(first);
+        // c:Src/exec.c:3081-3141 — the precommand walk expands each word
+        // (`execcmd_getargs` → prefork) before it looks the word up, and on
+        // a BINF_PREFIX builtin drops it (c:3139 `uremnode`) and expands
+        // the next. So the word after a `-` precommand is expanded exactly
+        // like a head word: `- $x/echo hi` runs `/bin/echo`, it does not
+        // look up the literal `$x/echo`. The dynamic arm below hands `-`
+        // to the runtime walk along with the rest.
+        let head_idx = simple
+            .words
+            .iter()
+            .position(|w| crate::lex::untokenize(w) != "-")
+            .unwrap_or(0);
+        let first_untoked = crate::lex::untokenize(&simple.words[head_idx]);
         // `[` and `[[` are the test/cond builtins, not glob-pattern
         // command names — exempt them from the "dynamic command name"
         // check that routes through Op::Exec.

@@ -1303,10 +1303,17 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
                     // c:611
                     let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
                     argv_new.push("sh".to_string()); // c:625
-                    if !argv.is_empty() && (argv[0].starts_with('-') || argv[0].starts_with('+')) {
+                    // c:544 — `*argv = pth;`: by now argv[0] IS the path
+                    // being executed, not the command word, so both the
+                    // `-`/`+` guard and the operand handed to sh are `pth`.
+                    // Testing the word let `PATH=-dir tstcmd` hand sh
+                    // `-dir/tstcmd` with no `-` guard (sh: `-d: invalid
+                    // option`), and ran a bare-word script as `sh tstcmd`.
+                    if pth.starts_with('-') || pth.starts_with('+') {
                         argv_new.push("-".to_string()); // c:623
                     }
-                    for orig in argv.iter() {
+                    argv_new.push(pth.to_string()); // c:544
+                    for orig in argv.iter().skip(1) {
                         argv_new.push(orig.clone());
                     }
                     // c:626 — `winch_unblock()` omitted: child-side in C,
@@ -1317,6 +1324,32 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
         }
     }
     Err(eno) // c:643
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+///
+/// The pathname C's `execute()` `$path` walk (Src/exec.c:877-894) hands
+/// `zexecve` for `arg0`: `DIR/arg0` per entry, and the BARE word for an
+/// empty or `.` entry (c:879-880). The spawn callers let libc do that walk,
+/// so when libc reports the file unrunnable they rebuild C's `pth` here
+/// before the c:534 `#!` probe. `None` when no entry holds a non-directory
+/// `arg0` — C then had no candidate to open (c:538), and the bare word must
+/// NOT be probed relative to the cwd. Not `pathprog` (Src/utils.c:757): that
+/// spells a `.` entry `./arg0`, which reached the interpreter as `$0`.
+pub fn execute_path_candidate(arg0: &str) -> Option<String> {
+    let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+    for pp in path.split(':') {
+        let cand = if pp.is_empty() || pp == "." {
+            arg0.to_string() // c:880
+        } else {
+            format!("{}/{}", pp, arg0) // c:884-888
+        };
+        let unmeta_cand = crate::ported::utils::unmeta(&cand);
+        if std::fs::metadata(&unmeta_cand).map(|m| !m.is_dir()).unwrap_or(false) {
+            return Some(cand);
+        }
+    }
+    None
 }
 
 impl ShellExecutor {
@@ -5955,23 +5988,27 @@ impl ShellExecutor {
                             // bare word; and c:544 `*argv = pth;` then puts that
                             // resolved path into argv[0] for the interpreter. Here
                             // libc did the PATH search inside the spawn, so redo it
-                            // with `pathprog` (utils.rs:798) before probing —
+                            // with `execute_path_candidate` before probing —
                             // otherwise a `#!` script found on `$path` was handed to
                             // its interpreter as the bare name and `#!echo foo`
                             // printed `foo tstcmd-arg` instead of
                             // `foo <dir>/tstcmd-arg`.
+                            // c:861-865 — C only ever opens the `dir/arg0` candidates its
+                            // `$path` walk builds; a word no `$path` entry holds has no
+                            // candidate, so there is nothing to probe. Probing the bare word
+                            // opened it relative to the cwd and ran a `#!` script sitting
+                            // there although `$path` never named that directory.
                             let probe_pth = if spawn_prog.contains('/') {
-                                spawn_prog.clone()
+                                Some(spawn_prog.clone())
                             } else {
-                                match crate::ported::utils::pathprog(&spawn_prog) {
-                                    Some(p) => p.display().to_string(), // c:815
-                                    None => spawn_prog.clone(),
-                                }
+                                execute_path_candidate(&spawn_prog) // c:891
                             };
                             let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
                             cargv.push(spawn_arg0.clone());
                             cargv.extend_from_slice(&spawn_args);
-                            if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
+                            if let Some(Ok((prog, newargv))) =
+                                probe_pth.map(|p| zexecve_recover(&p, &cargv, eno))
+                            {
                                 spawn_arg0 =
                                     newargv.first().cloned().unwrap_or_else(|| prog.clone());
                                 spawn_args =
@@ -6077,23 +6114,27 @@ impl ShellExecutor {
                             // bare word; and c:544 `*argv = pth;` then puts that
                             // resolved path into argv[0] for the interpreter. Here
                             // libc did the PATH search inside the spawn, so redo it
-                            // with `pathprog` (utils.rs:798) before probing —
+                            // with `execute_path_candidate` before probing —
                             // otherwise a `#!` script found on `$path` was handed to
                             // its interpreter as the bare name and `#!echo foo`
                             // printed `foo tstcmd-arg` instead of
                             // `foo <dir>/tstcmd-arg`.
+                            // c:861-865 — C only ever opens the `dir/arg0` candidates its
+                            // `$path` walk builds; a word no `$path` entry holds has no
+                            // candidate, so there is nothing to probe. Probing the bare word
+                            // opened it relative to the cwd and ran a `#!` script sitting
+                            // there although `$path` never named that directory.
                             let probe_pth = if spawn_prog.contains('/') {
-                                spawn_prog.clone()
+                                Some(spawn_prog.clone())
                             } else {
-                                match crate::ported::utils::pathprog(&spawn_prog) {
-                                    Some(p) => p.display().to_string(), // c:815
-                                    None => spawn_prog.clone(),
-                                }
+                                execute_path_candidate(&spawn_prog) // c:891
                             };
                             let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
                             cargv.push(spawn_arg0.clone());
                             cargv.extend_from_slice(&spawn_args);
-                            if let Ok((prog, newargv)) = zexecve_recover(&probe_pth, &cargv, eno) {
+                            if let Some(Ok((prog, newargv))) =
+                                probe_pth.map(|p| zexecve_recover(&p, &cargv, eno))
+                            {
                                 spawn_arg0 =
                                     newargv.first().cloned().unwrap_or_else(|| prog.clone());
                                 spawn_args =
@@ -7425,6 +7466,32 @@ mod tests {
             crate::ported::signals_h::winch_unblock();
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// c:Src/exec.c:544 `*argv = pth;` — the shebang-less `/bin/sh`
+    /// fallback (c:611-627) hands sh the PATH being executed and applies the
+    /// c:616 `-`/`+` guard to it, not to the command word the user typed.
+    /// `PATH=-dir tstcmd` (A05execution.ztst, workers/52515) resolves to
+    /// `-dir/tstcmd`, which sh must see as an operand.
+    #[test]
+    #[cfg(unix)]
+    fn zexecve_recover_sh_fallback_passes_the_path_not_the_word() {
+        let dir = std::env::temp_dir().join(format!(
+            "zshrs_recover_argv_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("tstcmd");
+        std::fs::write(&script, "echo no shebang\n").unwrap();
+        let pth = script.to_str().unwrap().to_string();
+        // A word spelled like an option must neither be handed to sh nor
+        // trip the guard: only the executed path counts.
+        let argv = vec!["-tstcmd".to_string(), "arg".to_string()];
+        let got = zexecve_recover(&pth, &argv, libc::ENOEXEC);
+        let _ = std::fs::remove_dir_all(&dir);
+        let want: Vec<String> = vec!["sh".to_string(), pth.clone(), "arg".to_string()];
+        assert_eq!(got, Ok(("/bin/sh".to_string(), want)));
     }
 }
 
