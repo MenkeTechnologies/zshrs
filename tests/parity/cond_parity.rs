@@ -1277,3 +1277,23 @@ mod cmdsubst_in_pattern_rhs {
         assert_parity(r#"[[ a1 = *$(echo 1) ]]; echo $?; [[ ab = $(print -r -- '*') ]]; echo $?"#);
     }
 }
+
+/// Inside quotes a backslash in the `=`/`==`/`!=` pattern operand is an
+/// ordinary character, not a pattern escape (c:Src/lex.c: the quoted `\` is
+/// never turned into a Bnull), so `'a\b'` matches only the three-character
+/// string.
+mod quoted_backslash_in_pattern {
+    use super::*;
+
+    #[test]
+    fn single_quoted_backslash_is_literal() {
+        assert_parity(r#"[[ 'a\b' = 'a\b' ]]; echo $?; [[ ab = 'a\b' ]]; echo $?"#);
+        assert_parity(r#"[[ 'a\b' = a'\'b ]]; echo $?; [[ 'a\*' = 'a\'* ]]; echo $?"#);
+        assert_parity(r#"[[ 'a\\b' = 'a\\b' ]]; echo $?; [[ ab != 'a\b' ]]; echo $?"#);
+    }
+
+    #[test]
+    fn double_quoted_backslash_is_literal_in_a_mixed_word() {
+        assert_parity(r#"[[ 'a\b*' = "a\\b"* ]]; echo $?; [[ 'a\b*' = "a\b"* ]]; echo $?"#);
+    }
+}

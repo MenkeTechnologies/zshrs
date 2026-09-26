@@ -17930,8 +17930,27 @@ fn escape_quoted_glob_metas(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut in_squote = false;
     let mut in_dquote = false;
+    let mut after_bnull = false;
     for c in s.chars() {
+        // A Bnull-escaped char (`"\\"`) is already spelled as an escape
+        // pair by the caller's Bnull arm; escaping it again would double it.
+        if std::mem::take(&mut after_bnull) {
+            out.push(c);
+            continue;
+        }
         match c {
+            '\u{9f}' => {
+                after_bnull = true;
+                out.push(c);
+            }
+            // c:Src/lex.c — inside quotes a backslash is an ordinary
+            // character, never a pattern escape: `[[ 'a\b' = 'a\b' ]]` is
+            // true and `[[ ab = 'a\b' ]]` false. Double it so patcompile
+            // reads a literal backslash rather than escaping the next char.
+            '\\' if in_squote || in_dquote => {
+                out.push('\\');
+                out.push('\\');
+            }
             '\u{9d}' => {
                 in_squote = !in_squote;
                 out.push(c);
