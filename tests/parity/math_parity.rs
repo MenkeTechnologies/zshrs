@@ -1169,3 +1169,46 @@ mod inf_nan_under_sh_emulation {
         assert_parity(r#"echo $((Inf)) $((-inf)) $((NaN)); emulate ksh; inf=42; echo $((inf))"#);
     }
 }
+
+/// c:Src/math.c:550 lexconstant — `strtod(ptr, &nptr)` takes only the
+/// longest valid prefix, so an exponent with no digits (`1e`, `1.5e+`) is
+/// left in the input and the parser reports it; the value was never 0.
+mod float_constant_strtod_prefix {
+    use super::*;
+
+    #[test]
+    fn dangling_exponent_is_left_for_the_parser() {
+        assert_parity("exec 2>&1; echo $(( 1e ))");
+        assert_parity("exec 2>&1; echo $(( 1.5e+ ))");
+    }
+
+    /// c:536-548 — `_` in the constant is chucked from a copy of the input
+    /// that lexing continues in, so the error quotes the stripped text.
+    #[test]
+    fn underscores_are_stripped_before_the_rest_is_lexed() {
+        assert_parity("exec 2>&1; echo $(( 1e_x ))");
+        assert_parity("exec 2>&1; echo $(( 1_000.5_5 )) $(( 1.e5 )) $(( 1e5. ))");
+    }
+}
+
+/// c:Src/math.c:595-596 / 468 — `base#digits` and `0b…` go through
+/// zstrtol_underscore, which warns "number truncated after N digits"
+/// (c:Src/utils.c:2511) and quotes the rest of the expression.
+mod based_constant_truncation {
+    use super::*;
+
+    #[test]
+    fn base_hash_overflow_warns() {
+        assert_parity("exec 2>&1; echo $(( 16#fffffffffffffffff ))");
+        assert_parity(
+            "exec 2>&1; echo $(( 2#1111111111111111111111111111111111111111111111111111111111111111 ))",
+        );
+    }
+
+    #[test]
+    fn binary_prefix_overflow_quotes_the_tail() {
+        assert_parity(
+            "exec 2>&1; echo $(( 0b11111111111111111111111111111111111111111111111111111111111111111 + 1 ))",
+        );
+    }
+}

@@ -1063,19 +1063,14 @@ pub(crate) fn lexconstant() -> i32 {
             Some('b') if !crate::dash_mode::dash_strict() => {
                 // Binary: 0b1010
                 advance();
-                let bin_start = m_pos();
-                while let Some(c) = peek() {
-                    if c == '0' || c == '1' || c == '_' {
-                        advance();
-                    } else {
-                        break;
-                    }
-                }
-                let bin_str: String = m_input_slice(bin_start, m_pos())
-                    .chars()
-                    .filter(|&c| c != '_')
-                    .collect();
-                let val = crate::ported::utils::zstrtol(&bin_str, 2).0; // c:zstrtol base 2
+                // c:Src/math.c:468 — `zstrtol_underscore(ptr, &ptr, 0, 1)`; its
+                // truncation warning quotes the rest of the expression
+                // (c:Src/utils.c:2511), not just the digit run.
+                // `ptr` is still at the `0`: back over the `0b` just consumed.
+                let const_start = m_pos() - 2;
+                let tail = m_input_slice_from(const_start);
+                let (val, rest) = crate::ported::utils::zstrtol_underscore(&tail, 0, true);
+                m_pos_set(const_start + tail.len() - rest.len());
                 m_lastbase_set(2);
                 m_yyval_set(if m_force_float() {
                     mnumber {
@@ -1242,29 +1237,69 @@ pub(crate) fn lexconstant() -> i32 {
                 }
             }
         }
-        let float_str: String = m_input_slice(num_start, m_pos())
-            .chars()
-            .filter(|&c| c != '_')
-            .collect();
+        // c:536-548 — an `_` inside the scanned constant makes C lex on in a
+        // copy of the input with every `_` of [ptr, nptr) chucked out:
+        //     ptr = dupstring(ptr); for (...) if (*ptr2 == '_') chuck(ptr2);
+        let scan_end = m_pos();
+        let seg = m_input_slice(num_start, scan_end);
+        if seg.contains('_') {
+            let input = m_input_clone();
+            let stripped: String = seg.chars().filter(|&c| c != '_').collect();
+            m_input_set(format!("{}{}{}", &input[..num_start], stripped, &input[scan_end..]));
+        }
+        // c:550 — `yyval.u.d = strtod(ptr, &nptr);` strtod consumes only the
+        // longest valid prefix: an exponent with no digits after it (`1e`,
+        // `1.5e+`) is not part of the number, so `ptr` stops at the `e` and the
+        // parser then reports "operator expected at `e …'". The scan above
+        // (c:524-535) is only a bound; strtod decides.
+        let text = m_input_slice_from(num_start);
+        let b = text.as_bytes();
+        let mut n = 0usize;
+        while n < b.len() && b[n].is_ascii_digit() {
+            n += 1;
+        }
+        let int_end = n;
+        if n < b.len() && b[n] == b'.' {
+            n += 1;
+            while n < b.len() && b[n].is_ascii_digit() {
+                n += 1;
+            }
+        }
+        let mant_end = n;
+        if int_end == 0 && mant_end <= 1 {
+            n = 0; // no mantissa digit: strtod consumes nothing
+        } else if n < b.len() && (b[n] == b'e' || b[n] == b'E') {
+            let mut m = n + 1;
+            if m < b.len() && (b[m] == b'+' || b[m] == b'-') {
+                m += 1;
+            }
+            let exp_digits = m;
+            while m < b.len() && b[m].is_ascii_digit() {
+                m += 1;
+            }
+            if m > exp_digits {
+                n = m;
+            }
+        }
         // c:552-559 — right after strtod:
-        //     yyval.u.d = strtod(ptr, &nptr);
         //     if (ptr == nptr || *nptr == '.') {
         //         zerr("bad floating point constant");
         //         return EOI;
         //     }
-        // The `*nptr == '.'` half is the interesting one: a SECOND dot
-        // immediately after the constant strtod just consumed is fatal at LEX
-        // time. Without it `1.2.3` lexed as the float 1.2 followed by `.3` and
-        // the failure surfaced from the PARSER as "bad math expression:
-        // operator expected at `.3 '" — a different diagnostic for what zsh
-        // calls a malformed constant. (`ptr == nptr`, strtod consuming nothing,
-        // cannot happen here: this branch is only entered having already seen a
-        // digit or a dot.)
-        if peek() == Some('.') {
+        // The `*nptr == '.'` half: a SECOND dot immediately after the
+        // constant is fatal at LEX time, so `1.2.3` is a malformed constant,
+        // not the float 1.2 followed by `.3`.
+        if n == 0 || b.get(n) == Some(&b'.') {
             m_error_set("bad floating point constant".to_string()); // c:557
             return EOI; // c:558
         }
-        let val: f64 = float_str.parse().unwrap_or(0.0);
+        // Rust's parser wants digits on both sides of the dot.
+        let int_part = if int_end == 0 { "0" } else { &text[..int_end] };
+        let frac_part = if mant_end > int_end + 1 { &text[int_end + 1..mant_end] } else { "0" };
+        let val: f64 = format!("{}.{}{}", int_part, frac_part, &text[mant_end..n])
+            .parse()
+            .unwrap_or(0.0);
+        m_pos_set(num_start + n); // c:560 `ptr = nptr;`
         m_yyval_set(mnumber {
             l: 0,
             d: if is_neg { -val } else { val },
@@ -1321,29 +1356,13 @@ pub(crate) fn lexconstant() -> i32 {
         // Empty-digit-sequence case (`10#`, `2#`) silently
         // yields 0, matching zsh's `zstrtol` returning 0 when
         // no valid digits follow.
-        let mut val: i64 = 0;
-        let base_i64 = base as i64;
-        while let Some(c) = peek() {
-            if c == '_' {
-                advance();
-                continue;
-            }
-            let digit_val: Option<u32> = if c.is_ascii_digit() {
-                Some(c as u32 - '0' as u32)
-            } else if c.is_ascii_alphabetic() {
-                Some(c.to_ascii_lowercase() as u32 - 'a' as u32 + 10)
-            } else {
-                None
-            };
-            let Some(d) = digit_val else {
-                break;
-            };
-            if d >= base {
-                break;
-            }
-            val = val.saturating_mul(base_i64).saturating_add(d as i64);
-            advance();
-        }
+        // c:595-596 — `yyval.u.l = zstrtol_underscore(ptr, &ptr, lastbase, 1);`
+        // zstrtol owns the digit rules, the `_` skipping and the
+        // "number truncated after N digits" warning (c:Src/utils.c:2511),
+        // which a saturating accumulator never raised.
+        let tail = m_input_slice_from(m_pos());
+        let (val, rest) = crate::ported::utils::zstrtol_underscore(&tail, base as i32, true);
+        m_pos_add(tail.len() - rest.len());
         m_yyval_set(if m_force_float() {
             mnumber {
                 l: 0,
