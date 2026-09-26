@@ -3655,6 +3655,20 @@ impl ZshCompiler {
                 // Not the reserved word (`\typeset`, `"typeset"`, `disable -r
                 // typeset`): c:Src/exec.c:3353-3355 / c:Src/subst.c:103.
                 self.emit_asssub_assign_word(word);
+            } else if !head_is_typeset_family
+                && !head_is_magic_equals
+                && {
+                    // An unquoted substitution (String / Tick token) after a
+                    // non-leading `=` (Equals token): only those are affected
+                    // by c:Src/subst.c:433-439.
+                    use crate::ported::zsh_h::{Equals, Stringg, Tick};
+                    let ch: Vec<char> = word.chars().collect();
+                    ch.iter().skip(1).position(|&c| c == Equals).is_some_and(|eq| {
+                        ch[eq + 2..].iter().any(|&c| c == Stringg || c == Tick)
+                    })
+                }
+            {
+                self.emit_magic_equals_asssub_word(word);
             } else {
                 self.compile_word_str(word);
             }
@@ -15078,6 +15092,39 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
         self.builder.patch_jump(keep_whole, self.builder.current_pos());
+    }
+
+    /// A command argument shaped `text=…$expansion` for a head that is not a
+    /// typeset-family builtin. c:Src/exec.c:3353-3355 preforks every such
+    /// argument with `esprefork = PREFORK_TYPESET` under MAGIC_EQUAL_SUBST,
+    /// and c:Src/subst.c:103 `asssub = (flags & PREFORK_TYPESET) &&
+    /// isset(KSHTYPESET)` then turns word splitting off after the first `=`
+    /// (c:433-439): `print split=$(echo a b)` is one word. Both options are
+    /// read at run time, so the word is compiled twice: the asssub form
+    /// (BUILTIN_EXPAND_TEXT mode 13, a whole-word prefork with
+    /// PREFORK_TYPESET) and the ordinary one.
+    fn emit_magic_equals_asssub_word(&mut self, word: &str) {
+        let mut to_normal = Vec::with_capacity(2);
+        for opt in ["magicequalsubst", "kshtypeset"] {
+            let idx = self.builder.add_constant(Value::str(opt));
+            self.builder.emit(Op::LoadConst(idx), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OPTION_SET, 1), 0);
+            to_normal.push(self.builder.emit(Op::JumpIfFalse(0), 0));
+        }
+        let text = self.builder.add_constant(Value::str(word));
+        self.builder.emit(Op::LoadConst(text), 0);
+        self.builder.emit(Op::LoadInt(13), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+        let to_end = self.builder.emit(Op::Jump(0), 0);
+        let normal = self.builder.current_pos();
+        for j in to_normal {
+            self.builder.patch_jump(j, normal);
+        }
+        self.compile_word_str(word);
+        let end = self.builder.current_pos();
+        self.builder.patch_jump(to_end, end);
     }
 
     fn compile_singsub_word_noglob(&mut self, w: &str) {

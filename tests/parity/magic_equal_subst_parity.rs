@@ -347,3 +347,27 @@ mod name_equals_words_glob_like_any_argument {
         assert_plain_parity("f(){ local -i n=3*4; print $n; }; f");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// c:Src/subst.c:103 + 433-439 — with KSH_TYPESET as well, an argument
+// that looks like an assignment is preforked PREFORK_SINGLE from its first
+// `=` on, so its substitutions are not word-split (E01options
+// MAGIC_EQUAL_SUBST). The part before the `=` still splits.
+// ═══════════════════════════════════════════════════════════════════════
+mod ksh_typeset_stops_splitting_after_the_equals {
+    use super::*;
+
+    #[test]
+    fn substitutions_after_the_equals_stay_one_word() {
+        assert_magic_parity(
+            "setopt ksh_typeset\na=(1 2); s='p q'\nprint -l x=$a y=$(echo m n) z=`echo u v` $(echo l r)=w x=${=s} x=${a}b --o=$a",
+        );
+    }
+
+    #[test]
+    fn shwordsplit_and_quoting_unchanged() {
+        assert_magic_parity(
+            "setopt ksh_typeset sh_word_split\ns='p q'; a=(1 2)\nprint -l w=$s 'y=$s' x=\"$a\" x=\\$s k=${a[1]}$a",
+        );
+    }
+}

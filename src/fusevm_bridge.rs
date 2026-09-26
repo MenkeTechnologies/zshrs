@@ -14112,6 +14112,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     crate::ported::zsh_h::PREFORK_SINGLE
                 } else if mode == 6 {
                     crate::ported::zsh_h::PREFORK_ASSIGN
+                } else if mode == 13 {
+                    // Mode 13 = a command argument under MAGIC_EQUAL_SUBST +
+                    // KSH_TYPESET: c:Src/exec.c:3353-3355 preforks it with
+                    // `esprefork = PREFORK_TYPESET`, whose c:Src/subst.c:103
+                    // `asssub` stops word splitting after the first `=`.
+                    crate::ported::zsh_h::PREFORK_TYPESET
                 } else {
                     0
                 };

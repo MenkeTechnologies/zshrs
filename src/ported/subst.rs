@@ -604,7 +604,7 @@ fn stringsubst(
     // c:237
     list: &mut LinkList, // c:237
     node_idx: usize,     // c:237
-    pf_flags: i32,       // c:237
+    mut pf_flags: i32,   // c:237 (raised to PREFORK_SINGLE by c:433-439)
     ret_flags: &mut i32, // c:237
     asssub: bool,        // c:237
 ) -> Option<usize> {
@@ -1388,11 +1388,12 @@ fn stringsubst(
             continue; // c:237
         } // c:237
 
-        // Assignment context
-        if asssub && (c == '=' || c == Equals) && pos > 0 { // c:237
-             // We're in assignment context, apply SINGLE flag
-             // (handled by caller typically)
-        } // c:237
+        // c:433-439 — `else if (asssub && ((c == '=') || c == Equals) && str != str3)`
+        // /* We are in a normal argument which looks like an assignment
+        //  * and is to be treated like one, with no word splitting. */
+        if asssub && (c == '=' || c == Equals) && pos > 0 {
+            pf_flags |= PREFORK_SINGLE; // c:438
+        }
 
         pos += 1; // c:237
     } // c:237
