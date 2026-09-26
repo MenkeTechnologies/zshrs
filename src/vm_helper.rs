@@ -3658,8 +3658,17 @@ impl ShellExecutor {
         // chunk started with makes that structurally impossible to leak:
         // whatever loops this chunk opened are closed when it finishes.
         let loops_entry = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
+        // c:Src/exec.c:4364 `done:` → `fixfds(save)` — every execcmd puts
+        // back the fds its redirections replaced, whether it ran or was
+        // abandoned on errflag. A chunk abandoned mid-command (`eval 'echo >
+        // nx(N)'`: the target's expansion raises errflag after the scope
+        // opened) jumped past its WithRedirectsEnd, so the caller kept
+        // writing into the failed redirection's sink. Same unwind the
+        // function-call path does (`unwind_redirect_scopes_to`).
+        let redir_depth = self.redirect_scope_stack.len();
         let result = vm.run();
         crate::ported::builtin::LOOPS.store(loops_entry, Ordering::Relaxed);
+        self.unwind_redirect_scopes_to(redir_depth);
         match result {
             fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
                 self.set_last_status(vm.last_status);

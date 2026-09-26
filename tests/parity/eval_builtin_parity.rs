@@ -320,3 +320,18 @@ mod nested_dollar {
         assert_parity(r#"eval 'echo $(echo nested)'"#);
     }
 }
+
+/// c:Src/exec.c:4364 — `fixfds(save)` puts back the fds a command's
+/// redirections replaced even when the command is abandoned on errflag.
+/// An `eval` chunk that failed inside its redirection target left the
+/// caller writing into the failed redirection's sink.
+mod failed_redirection_in_eval_restores_fds {
+    use super::*;
+
+    #[test]
+    fn output_after_the_eval_is_not_lost() {
+        assert_parity("exec 2>/dev/null; eval 'echo > nx(N)'; echo after $?");
+        assert_parity("exec 2>/dev/null; eval 'print x > nx(N)'; eval 'echo >> nx(N)'; echo after");
+        assert_parity("exec 2>/dev/null; f() { eval 'print x > nx(N)'; echo in; }; f; echo out");
+    }
+}
