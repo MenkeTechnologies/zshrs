@@ -1126,6 +1126,28 @@ thread_local! {
     /// symmetric by construction.
     pub static LEX_UNGET_HPTR: std::cell::RefCell<std::collections::VecDeque<bool>>
         = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    /// !!! WARNING: RUST-ONLY HELPER STATE !!!
+    ///
+    /// Lockstep companion to [`LEX_UNGET_BUF`]: one flag per queued
+    /// character, `true` when its re-read in `hgetc` must NOT be added to
+    /// the raw record (`zshlex_raw_add`). Only the `{foo}` hack below sets
+    /// it; every other pushback queues `false`.
+    ///
+    /// C needs no such thing: `inungetc` (Src/input.c:545) returns the
+    /// character to an input-stack frame, and that frame decides the raw
+    /// bookkeeping. The `{foo}` hack in `gettok` (c:Src/lex.c:1457-1469)
+    /// pushes a `}` back with `lex_add_raw` forced to 0 when an alias
+    /// expansion inside a command substitution has already backed that `}`
+    /// out of the raw record (the alias frame was popped,
+    /// c:Src/input.c:751-752). In C the `}` then lands in an alias
+    /// continuation frame (c:Src/input.c:571-603): re-reading it adds it
+    /// to the raw record and popping that frame takes it out again. zshrs
+    /// re-reads it off `LEX_UNGET_BUF`, where no frame pop follows, so the
+    /// re-read must not add it. Without this, `alias WI='{false}'` then
+    /// `eval 'echo $(WI)'` recorded the body as `WI}` and the substitution
+    /// failed with "parse error near `}'".
+    pub static LEX_UNGET_RAW: std::cell::RefCell<std::collections::VecDeque<bool>>
+        = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// `char *tokstr` (lex.c:170).
     pub static LEX_TOKSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// `char *zshlextext` (lex.c:43) — the text of the current token as
@@ -3143,6 +3165,18 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         // c:1467-1468 — `lexstop = 0; hungetc('}');`
         LEX_LEXSTOP.set(false);
         hungetc('}');
+        // !!! RUST-ONLY !!! — raw recording is on but this `}` is no longer
+        // in the raw record (an alias frame took it out when it was
+        // popped): in C it re-enters an alias continuation frame that
+        // takes it out again (c:Src/input.c:571-603), so its re-read must
+        // leave the raw record alone. See `LEX_UNGET_RAW`.
+        if lar != 0 && LEX_LEX_ADD_RAW.get() == 0 {
+            LEX_UNGET_RAW.with_borrow_mut(|b| {
+                if let Some(front) = b.front_mut() {
+                    *front = true;
+                }
+            });
+        }
         // c:1469 — `lex_add_raw = lar;`
         LEX_LEX_ADD_RAW.set(lar);
     }
@@ -3954,6 +3988,9 @@ fn checkalias(lextext: &str) -> bool {
             // including its refusal under INP_ALIAS.
             let rewound: Vec<bool> =
                 LEX_UNGET_HPTR.with_borrow_mut(|b| b.drain(..).collect());
+            // Their re-read comes back through the fresh-read arm of
+            // `hgetc`, which records every character raw.
+            LEX_UNGET_RAW.with_borrow_mut(|b| b.clear());
             // !!! RUST-ONLY !!! — the same handover for the
             // function-body echo buffer: these characters leave
             // the unget queue, so their re-read comes back
@@ -4945,6 +4982,7 @@ pub fn lex_init(input: &str) {
     // file-static initializers in lex.c).
     LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
     LEX_UNGET_HPTR.with_borrow_mut(|b| b.clear());
+    LEX_UNGET_RAW.with_borrow_mut(|b| b.clear());
     crate::funcdef_capture::src_capture_reset();
     LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
     LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
@@ -5052,8 +5090,10 @@ pub(crate) fn hgetc() -> Option<char> {
         // the raw buffer when lex_add_raw is on. Re-reads from the
         // unget queue count the same as fresh reads; the matching
         // `zshlex_raw_back()` call in hungetc removed the prior
-        // record, so this restores it.
-        zshlex_raw_add(c);
+        // record, so this restores it — unless `LEX_UNGET_RAW` says not to.
+        if !LEX_UNGET_RAW.with_borrow_mut(|b| b.pop_front()).unwrap_or(false) {
+            zshlex_raw_add(c);
+        }
         // !!! RUST-ONLY (no C counterpart) !!! — same argument as the
         // `LEX_UNGET_HPTR` block above, for the function-body echo buffer:
         // put back exactly what `hungetc` took, decided at unget time.
@@ -5258,7 +5298,19 @@ pub(crate) fn hgetc() -> Option<char> {
     let cont_frame = via_inbuf
         && (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_CONT) != 0;
     if counts_lineno || alias_only || cont_frame {
-        let flags = if alias_only { crate::funcdef_capture::CAP_ALIAS_TEXT } else { 0 };
+        // Inside a command substitution skipcomm keeps the RAW text as the
+        // word (c:Src/lex.c:2253-2283), and `inpoptop` takes an alias
+        // expansion back out of it (c:Src/input.c:751-752): zsh prints
+        // `$(ll)`, not `$(ls -l)`. Both renderings drop such text.
+        let flags = if !alias_only {
+            0
+        } else if LEX_LEX_ADD_RAW.get() != 0
+            && crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_RAW_KEEP == 0
+        {
+            crate::funcdef_capture::CAP_ALIAS_TEXT | crate::funcdef_capture::CAP_ALIAS_NAME
+        } else {
+            crate::funcdef_capture::CAP_ALIAS_TEXT
+        };
         crate::funcdef_capture::src_capture_add(c, flags);
     }
 
@@ -5344,6 +5396,7 @@ fn hungetc(c: char) {
     // c:input.c:549,609 — `inungetc` calls `zshlex_raw_back()` so
     // the un-gotten char isn't double-counted in lexbuf_raw on
     // re-read. hgetc will re-add it next time it's pulled.
+    LEX_UNGET_RAW.with_borrow_mut(|b| b.push_front(false));
     zshlex_raw_back();
     // c:input.c:558-559 — `inbufptr--; inbufct++;`. C's ungetc pushes the
     // char back into inbuf AND restores `inbufct`, so a read-then-unget

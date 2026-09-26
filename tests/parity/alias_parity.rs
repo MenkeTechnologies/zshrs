@@ -444,3 +444,29 @@ mod alias_in_repeated_cmdsubst {
         );
     }
 }
+
+/// c:Src/lex.c:1457-1469 — the `{foo}` hack pushes a trailing `}` back with
+/// `lex_add_raw` off when an alias expansion inside `$(…)` has already
+/// backed it out of the raw record; the `}` then re-enters an alias frame
+/// (c:Src/input.c:571-603) and never reaches the word. zshrs kept it, so the
+/// substitution's text became `WI}` (D08cmdsubst "Aliases with braces").
+/// The listing half: skipcomm keeps the raw, unexpanded text as the word
+/// (c:Src/lex.c:2253-2283), so `functions` shows `$(WI)`, not the expansion.
+mod alias_with_braces_in_cmdsubst {
+    use super::*;
+
+    #[test]
+    fn a_brace_alias_ending_in_close_brace_runs_inside_cmdsubst() {
+        assert_parity("alias WI='{echo a}'\neval 'echo $(WI)'");
+        assert_parity("alias WI='{echo a}'\neval 'echo \"$(WI; echo b)\"'");
+        assert_parity("alias WI='while {false}'\neval 'echo $(WI blah) x'");
+    }
+
+    #[test]
+    fn a_function_body_lists_the_alias_name_inside_cmdsubst() {
+        assert_parity(
+            "alias WI='echo a' W2='{echo a}' ll='print -r x'\n\
+             eval 'f() { echo $(WI) $(W2) \"$(WI y)\" `WI`; ll; }'\nfunctions f; f",
+        );
+    }
+}

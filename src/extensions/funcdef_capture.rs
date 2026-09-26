@@ -248,8 +248,18 @@ fn captured_since(cap_pos: usize, drop: u8) -> String {
 /// c:1938-1940) as [`CAP_ALIAS_NAME`]. By then `hungetc` has already taken
 /// back the character that ended the word, so the capture ends with `name`;
 /// when it does not (capture closed, name not recorded) nothing is marked.
+///
+/// Inside a command substitution the name stays: skipcomm keeps the raw
+/// text as the word (c:Src/lex.c:2253-2283), from which `inpoptop` has
+/// taken the expansion back out (c:Src/input.c:751-752), so zsh lists
+/// `$(ll)`. `hgetc` flags that expansion text for both renderings to drop.
 pub fn src_capture_mark_alias_name(name: &str) {
     if LEX_SRC_CAPTURE_DEPTH.get() == 0 || name.is_empty() {
+        return;
+    }
+    if crate::ported::lex::LEX_LEX_ADD_RAW.get() != 0
+        && crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_RAW_KEEP == 0
+    {
         return;
     }
     LEX_SRC_CAPTURE.with_borrow(|b| {
