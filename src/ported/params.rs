@@ -11466,6 +11466,35 @@ pub fn stdunsetfn(pm: &mut param, exp: i32) {
                 *ifs_lock().lock().expect("ifs poisoned") = None; // c:4748
                 inittyptab(); // c:4749
             }
+            // The locale setfns are the other specials that give NULL a
+            // meaning: `lc_allsetfn` (c:4831 `if (!x || !*x)`) falls back to
+            // `setlang($LANG)`, `lcsetfn` (c:4866) to `$LANG` for its category,
+            // and `langsetfn` re-runs `setlang`. All three already treat "" as
+            // NULL, so "" stands in for C's NULL here. Without this,
+            // `LC_ALL=C; unset LC_ALL` left the process in the C locale.
+            if pm.node.flags as u32 & PM_SPECIAL != 0 {
+                match pm.node.nam.as_str() {
+                    "LC_ALL" => {
+                        // c:4873 `strsetfn(pm, x)` empties the ONE node that
+                        // setlang's c:4847 `getsparam_u("LC_ALL")` then reads.
+                        // The port's `pm` is a detached copy of the table row,
+                        // so clear the row too or setlang still sees "C" and
+                        // returns without restoring $LANG's locale.
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(p) = tab.get_mut("LC_ALL") {
+                                p.u_str = None;
+                            }
+                        }
+                        lc_allsetfn(pm, String::new()) // c:3914 → c:4871
+                    }
+                    "LANG" => langsetfn(pm, String::new()),     // c:3914 → c:4896
+                    n if LC_NAMES.iter().any(|(ln, _)| *ln == n) => {
+                        lcsetfn(pm, String::new()) // c:3914 → c:4904
+                    }
+                    _ => {}
+                }
+                pm.u_str = None;
+            }
         }
         PM_ARRAY => {
             pm.u_arr = None;
@@ -14702,7 +14731,7 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                 s = v;
             }
         }
-        print!("{}", quotedzputs(&s)); // c:6053
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&quotedzputs(&s))); // c:6053
     } else if t == PM_INTEGER {
         // c:Src/params.c:6051-6057 PM_INTEGER arm — C calls
         // `printf("%ld", p->gsu.i->getfn(p))` (or output64 on 64-bit
@@ -14786,14 +14815,14 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
             // like `( red blue green yellow )` for `(red "blue green"
             // yellow)` was 4 words when re-parsed, not 3. Bug #181
             // in docs/BUGS.md.
-            print!("{}", quotedzputs(&arr[0]));
+            let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&quotedzputs(&arr[0])));
             for el in &arr[1..] {
                 if (printflags & PRINT_LINE) != 0 {
                     print!("\n  ");
                 } else {
                     print!(" ");
                 }
-                print!("{}", quotedzputs(el));
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&quotedzputs(el)));
             }
             if (printflags & (PRINT_LINE | PRINT_KV_PAIR)) == PRINT_LINE {
                 println!();
@@ -14853,7 +14882,7 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                     // round-trip through `eval "$(typeset -p h)"` — p10k's
                     // `_p9k_must_init` rebuilds parameter signatures exactly
                     // this way, so an unquoted `[#]=…` reparsed wrong.
-                    print!("[{}]={}", quotedzputs(k), quotedzputs(v));
+                    let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&format!("[{}]={}", quotedzputs(k), quotedzputs(v))));
                 }
             }
         }
@@ -15432,7 +15461,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                         // value emission uses the array form. Print
                         // OUR name first (the scalar side), then
                         // swap.
-                        print!("{} ", quotedzputs(&hn.node.nam));
+                        let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&format!("{} ", quotedzputs(&hn.node.nam))));
                         hn.node.nam = peer_name;
                         hn.u_arr = Some(peer_arr);
                         hn.u_str = None;
@@ -15459,7 +15488,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                         // c:6286 — non-swap path: just print peer's
                         // name + space. The downstream name+value
                         // emission still uses hn (our own data).
-                        print!("{} ", quotedzputs(&peer_name));
+                        let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&format!("{} ", quotedzputs(&peer_name))));
                     }
                 }
             }
@@ -15473,7 +15502,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     // output is re-parseable (`'#'=0`, `'$'=2609`, `'?'=0`). Plain
     // identifiers pass through unchanged. Bug #97 in docs/BUGS.md:
     // bare `print!("{}", nam)` produced unquoted `#=0` etc.
-    print!("{}", quotedzputs(&hn.node.nam));
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&quotedzputs(&hn.node.nam)));
     // c:6289 — `(printflags & PRINT_NAMEONLY) ||
     //   ((p->node.flags & PM_HIDEVAL) && !(printflags & PRINT_INCLUDEVALUE))`
     // PM_HIDEVAL (set by `typeset -H`, see TYPESET_OPTSTR position
@@ -15528,7 +15557,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 // `buf[0] = joinchar; buf[1] = '\0';` — a NUL join character
                 // is an EMPTY C string, so it prints as `''`.
                 let buf = if jc == 0 { String::new() } else { ((jc as u8) as char).to_string() };
-                print!(" {}", quotedzputs(&buf));
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&format!(" {}", quotedzputs(&buf))));
             }
         }
     }

@@ -36,7 +36,7 @@ use crate::ported::zsh_h::{
 };
 use crate::signals::{settrap, unsettrap};
 use crate::text::{getpermtext, zoutputtab};
-use crate::utils::{nicezputs, quotedzputs, xsymlink, zputs, ztrcmp, zwarn};
+use crate::utils::{nicezputs, quotedzputs, unmetafy_str, xsymlink, zputs, ztrcmp, zwarn};
 use crate::zsh_h::{
     cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN,
     HASHED, HIST_DUP, HIST_FOREIGN, HIST_MAKEUNIQUE, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED,
@@ -1640,23 +1640,23 @@ pub fn printcmdnamnode(hn: &cmdnam, printflags: i32) {
     }
     if (hn.node.flags & HASHED as i32) != 0 {
         // c:786
-        print!("{}", quotedzputs(&hn.node.nam)); // c:787
+        let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam))); // c:787
         print!("="); // c:788
         if let Some(cmd) = &hn.cmd {
-            print!("{}", quotedzputs(cmd)); // c:789
+            let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(cmd))); // c:789
         }
         println!(); // c:790
     } else {
         // c:791
-        print!("{}", quotedzputs(&hn.node.nam)); // c:792
+        let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam))); // c:792
         print!("="); // c:793
         if let Some(name_arr) = &hn.name {
             if let Some(first) = name_arr.first() {
-                print!("{}", quotedzputs(first)); // c:794
+                let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(first))); // c:794
             }
         }
         print!("/"); // c:795
-        print!("{}", quotedzputs(&hn.node.nam)); // c:796
+        let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam))); // c:796
         println!(); // c:797
     }
 }
@@ -1859,11 +1859,11 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             if let Some(filename) = &hn.filename {
                 // c:934
                 print!(" from "); // c:935
-                print!("{}", quotedzputs(filename)); // c:936
+                let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(filename))); // c:936
                 if (hn.node.flags & PM_LOADDIR as i32) != 0 {
                     // c:937
                     print!("/"); // c:938
-                    print!("{}", quotedzputs(&hn.node.nam)); // c:939
+                    let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam))); // c:939
                 }
             }
         }
@@ -1872,7 +1872,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
     }
 
     // c:946 — `quotedzputs(nam, stdout);`
-    print!("{}", quotedzputs(&hn.node.nam));
+    let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam)));
 
     // c:947-987 — funcdef-present branch (or PM_UNDEFINED stub) vs empty `() { }`.
     // RUST-ONLY EXTENSION: zshrs's shfunc carries a raw `body: Option<String>`
@@ -2538,7 +2538,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                 // c:977
                 println!(); // c:978
                 let _ = zoutputtab(&mut io::stdout()); // c:979
-                print!("{}", quotedzputs(&hn.node.nam)); // c:980
+                let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam))); // c:980
                 print!(" \"$@\""); // c:981
             }
         }
@@ -3075,9 +3075,9 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     }
 
     // c:1332-1336 — common tail: quotedzputs(nam) '=' quotedzputs(text) '\n'.
-    print!("{}", quotedzputs(&hn.node.nam)); // c:1332
+    let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam))); // c:1332
     print!("="); // c:1333
-    print!("{}", quotedzputs(&hn.text)); // c:1334
+    let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.text))); // c:1334
     println!(); // c:1336
 }
 

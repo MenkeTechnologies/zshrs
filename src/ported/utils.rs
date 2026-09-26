@@ -7935,11 +7935,15 @@ pub fn mb_niceformat(
     // `don<e2>\M-^@\M-^Yt`, and the same for every description carrying a
     // curly apostrophe, an en dash or a typographic minus.
     //
-    // The `outstrp` shape (`nicedup`) is still excluded: its result is a Rust
-    // `String` handed back to shell-visible code, which has no way to carry a
-    // lone 0xe2 byte.
-    let mb_single_byte = outstrp.is_none()
-        && unsafe {
+    // The `outstrp` shape (`nicedup`, `quotedzputs`) takes the branch too. C's
+    // result there is METAFIED: `wcs_nicechar_sel` copies `wcrtomb`'s byte into
+    // its buffer through `imeta` (c:690-697), and the printers write it with
+    // `zputs`, which un-metafies. The append below stores such a byte the way
+    // zshrs metafies any lone byte (U+0083, byte ^ 32), so the String carries it
+    // and `zputs` emits the ONE byte. Excluding this shape left
+    // `LC_ALL=C which ヌ` printing the UTF-8 name raw where zsh prints
+    // `$'\xe3\M-\C-C\M-\C-L'` (0xe3 raw: printable under unicode9).
+    let mb_single_byte = unsafe {
             // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
             // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
             // the wide character, so `\303\255` is TWO characters under
@@ -8113,7 +8117,22 @@ pub fn mb_niceformat(
             // c:5433 if (outstr)
             // c:5434-5446 — append fmt to outstr, growing on demand. Rust
             // String auto-grows; the realloc loop collapses to push_str.
-            buf.push_str(&fmt); // c:5446 memcpy(outptr, fmt, outlen)
+            if mb_single_byte {
+                // c:690-697 — the single byte `wcrtomb` produced is stored
+                // metafied; in zshrs's char-level form that is U+0083 followed
+                // by `byte ^ 32` for every byte >= 0x80 (see the note above).
+                for ch in fmt.chars() {
+                    let cu = ch as u32;
+                    if (0x80..0x100).contains(&cu) {
+                        buf.push(char::from(Meta));
+                        buf.push(char::from((cu as u8) ^ 32));
+                    } else {
+                        buf.push(ch);
+                    }
+                }
+            } else {
+                buf.push_str(&fmt); // c:5446 memcpy(outptr, fmt, outlen)
+            }
         }
         let _ = fmt;
     }
@@ -8189,6 +8208,32 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
     umlen = ums.len(); // c:5483 *umlen
     ptr = 0; // c:5483 ptr starts at 0
 
+    // c:5488 — `mbrtowc` is LOCALE-driven, exactly as in `mb_niceformat`
+    // above: under a single-byte codeset (`LC_ALL=C`) every byte is one wide
+    // character whose value is the byte. Decoding UTF-8 regardless answered
+    // "no reformat needed" for `ヌ` (E3 83 8C) under LC_ALL=C, so `which`
+    // and `${(q+)…}` printed it bare where zsh sees the non-printable 0x83
+    // and quotes the whole name. Same inlined CODESET probe as there.
+    let mb_single_byte = unsafe {
+        let _ = *MB_LOCALE_READY;
+        let cs_ptr = libc::nl_langinfo(libc::CODESET);
+        if cs_ptr.is_null() {
+            false
+        } else {
+            let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
+            !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
+        }
+    };
+    if mb_single_byte {
+        // c:5486-5516 — one byte per `mbrtowc`; `case 0` (NUL) falls through
+        // to the default arm, so every byte reaches `is_wcs_nicechar`.
+        while ret == 0 && ptr < umlen {
+            if is_wcs_nicechar(char::from(ums[ptr])) {
+                ret = 1; // c:5509
+            }
+            ptr += 1; // c:5515
+        }
+    }
     // c:5485 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
     while ret == 0 && ptr < ums.len() {
         // c:5486 while (umlen > 0)

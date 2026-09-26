@@ -220,11 +220,15 @@ pub(crate) fn xtrerr_flush() {
             // stderr unless a simple command's redirect scope holds a copy
             // of the pre-redirection stderr (c:Src/exec.c:3766-3772).
             let fd = crate::ported::utils::xtrerr.load(std::sync::atomic::Ordering::Relaxed);
+            // c:Src/exec.c:2061 — the pieces were written with `quotedzputs(s, xtrerr)`,
+            // which emits METAFIED text un-metafied (a lone high byte from
+            // `mb_niceformat` under a single-byte locale is one byte on the wire).
+            let bytes = crate::ported::utils::unmetafy_str(&buf);
             if fd == libc::STDERR_FILENO {
                 use std::io::Write;
-                let _ = std::io::stderr().write_all(buf.as_bytes());
+                let _ = std::io::stderr().write_all(&bytes);
             } else {
-                let _ = crate::ported::utils::write_loop(fd, buf.as_bytes());
+                let _ = crate::ported::utils::write_loop(fd, &bytes);
             }
             buf.clear();
         }

@@ -239,3 +239,40 @@ mod multibyte_width_is_locale_driven {
         }
     }
 }
+
+/// `unset LC_ALL` calls `lc_allsetfn(pm, NULL)` through `stdunsetfn`
+/// (c:Src/params.c:3913-3914), whose `!x` arm re-runs `setlang($LANG)`
+/// (c:4831-4838). The port never dispatched the NULL setfn, so the process
+/// stayed in the C locale and `${#x}` kept counting bytes.
+#[test]
+fn unset_lc_all_restores_the_lang_locale() {
+    let Some(loc) = utf8_locale() else { return };
+    assert_locale_parity(&format!(
+        "export LANG={loc}; LC_ALL=C; unset LC_ALL; x=日本語; print -rn -- ${{#x}}"
+    ));
+}
+
+/// Under a single-byte locale `mbrtowc` hands back one byte per character
+/// (c:Src/utils.c:5393 / 5488), so `ヌ` (E3 83 8C) holds the non-printable
+/// 0x83 and 0x8C: `is_mb_niceformat` says "quote it" and `mb_niceformat`
+/// renders `$'\xe3\M-\C-C\M-\C-L'` (0xE3 printable, emitted raw and
+/// metafied, un-metafied again by the printer). The port decoded UTF-8
+/// regardless of locale and printed the name bare in `which`, `typeset -p`,
+/// `(q+)`, `(V)` and xtrace (E02xtrace.ztst).
+#[test]
+fn single_byte_locale_quotes_high_bytes_bytewise() {
+    if !zsh_available() {
+        return;
+    }
+    let script = "exec 2>&1; PS4='+ '; f=ヌ; eval \"$f() { :; }\"; which $f; \
+                  print -r -- ${(q+)f} ${(V)f}; typeset -p f; set -x; : $f";
+    let want = run(zsh_path(), &["-f", "-c"], script);
+    let got = run(
+        zshrs_bin().to_str().expect("bin path"),
+        &["--zsh", "-f", "-c"],
+        script,
+    );
+    // Raw bytes: the expected output carries a lone 0xE3, which a lossy
+    // UTF-8 comparison would fold into U+FFFD on both sides.
+    assert_eq!(want, got, "script: {script}");
+}
