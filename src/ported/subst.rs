@@ -4385,6 +4385,28 @@ pub fn paramsubst(
         out
     };
 
+    // The default / alternative word of `${x:-word}` / `${x:+word}` keeps the
+    // tokens the LEXER gave it, and globlist only globs what those mark.
+    // `pretokenize_src_pat` follows zshtokenize (c:Src/glob.c:3606-3622) and
+    // so turns `<N-M>` into `Inang`/`Outang`; the lexer does not inside a
+    // brace parameter:
+    //     if (!in_brace_param && isnumglob()) { add(Inang); ... }  c:Src/lex.c:1201
+    // so `print ${:-<->}` prints `<->` rather than globbing. Undo just that
+    // pair before the default-word `haswilds` test.
+    let default_word_lexer_tokens = |s: String| -> String {
+        use crate::ported::zsh_h::{Inang, Outang};
+        if !s.contains(Inang) {
+            return s;
+        }
+        s.chars()
+            .map(|c| match c {
+                Inang => '<',
+                Outang => '>',
+                c => c,
+            })
+            .collect()
+    };
+
     // Post-singsub half of the Src/subst.c:3412 contract: after
     // `singsub` splices parameter values RAW into the pre-tokenized
     // pattern, every remaining raw ASCII glob metachar came from a
@@ -16081,7 +16103,7 @@ pub fn paramsubst(
                         // strip/filter pattern (`${p#*:}`) is NOT counted as
                         // a filename glob — only a SOURCE-literal glob in the
                         // default word sets the flag.
-                        let __dg = pretokenize_src_pat(default);
+                        let __dg = default_word_lexer_tokens(pretokenize_src_pat(default));
                         // FILENAME GENERATION treats a TOP-LEVEL `|` as
                         // alternation — `${x:-a|b}` matches the file `b` — but
                         // the PATTERN callers this closure is shared with do
@@ -16231,7 +16253,7 @@ pub fn paramsubst(
                         }
                     }
                     if !qt {
-                        let __dg = pretokenize_src_pat(default); // c:globlist (default-word glob)
+                        let __dg = default_word_lexer_tokens(pretokenize_src_pat(default)); // c:globlist (default-word glob)
                                                                  // Top-level `|` is alternation for FILENAME
                                                                  // GENERATION though literal for the shared pattern
                                                                  // callers — see the `:-` site above. Bug #1053.
@@ -16791,7 +16813,7 @@ pub fn paramsubst(
                         }
                     }
                     if !qt {
-                        let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
+                        let __dg = default_word_lexer_tokens(pretokenize_src_pat(alt)); // c:globlist (alt-word glob)
                                                              // Top-level `|` is alternation for FILENAME
                                                              // GENERATION though literal for the shared pattern
                                                              // callers — see the `:-` site above. Bug #1053.
@@ -16903,7 +16925,7 @@ pub fn paramsubst(
                         }
                     }
                     if !qt {
-                        let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
+                        let __dg = default_word_lexer_tokens(pretokenize_src_pat(alt)); // c:globlist (alt-word glob)
                                                              // Top-level `|` is alternation for FILENAME
                                                              // GENERATION though literal for the shared pattern
                                                              // callers — see the `:-` site above. Bug #1053.
