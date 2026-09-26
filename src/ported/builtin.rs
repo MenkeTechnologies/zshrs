@@ -4604,7 +4604,9 @@ pub fn bin_typeset(
     // arguments" rejection.
     //
     // Bug #24 in docs/BUGS.md.
-    let tied_mode = (on & PM_TIED) != 0;
+    // c:2807 — `if ((on & PM_TIED) && !OPT_ISSET(ops, 'p'))`: under -p the
+    // names are printed (or reported missing) by the per-arg loop instead.
+    let tied_mode = (on & PM_TIED) != 0 && !OPT_ISSET(&ops, b'p');
     if tied_mode {
         // c:2818-2822 — the FIRST thing the -T block does, ahead of the
         // argument-count checks:
@@ -5466,6 +5468,112 @@ pub fn bin_typeset(
             None => arg.as_str(),
         };
 
+        // c:3100-3113 — `-p` is decided FIRST for every assignment, value or
+        // not, before typeset_single (and so before its name validation and
+        // type-change logic) runs:
+        //     if (OPT_ISSET(ops,'p')) {
+        //         if (hn) paramtab->printnode(hn, printflags);
+        //         else { zwarnnam(name, "no such variable: %s", asg->name);
+        //                returnval = 1; }
+        //         continue;
+        //     }
+        // `typeset -p s=1` prints (or reports) s and assigns nothing.
+        if OPT_ISSET(&ops, b'p') {
+            let with_ns = if OPT_ISSET(&ops, b'm') {
+                // c:2241
+                PRINT_WITH_NAMESPACE
+            } else {
+                0
+            };
+            // c:Src/builtin.c:2761-2765 — `-p1` adds PRINT_LINE (one
+            // array/assoc element per line). The named-arg `typeset -p1
+            // NAME` print path missed it (only the listing path parsed
+            // it), so `typeset -p1 myarray` printed single-line.
+            let line_flag =
+                if OPT_HASARG(&ops, b'p') && OPT_ARG(&ops, b'p').map(|a| a.trim()) == Some("1") {
+                    PRINT_LINE
+                } else {
+                    0
+                };
+            // !!! BASH-MODE GATE (no C counterpart) !!! `declare -p` of a bash
+            // synthesized special array (PIPESTATUS / FUNCNAME / BASH_VERSINFO)
+            // — these live outside paramtab, so the normal lookup below can't
+            // find them. Emit the bash reusable form (BASH_VERSINFO is a
+            // readonly array).
+            if crate::dash_mode::bash_mode() {
+                if let Some(vals) = crate::dash_mode::bash_special_array(arg_name) {
+                    let esc = |s: &str| -> String {
+                        let mut o = String::with_capacity(s.len());
+                        for c in s.chars() {
+                            if matches!(c, '"' | '\\' | '$' | '`') {
+                                o.push('\\');
+                            }
+                            o.push(c);
+                        }
+                        o
+                    };
+                    let flags = if arg_name == "BASH_VERSINFO" {
+                        "-ar"
+                    } else {
+                        "-a"
+                    };
+                    let body: String = vals
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| format!("[{}]=\"{}\"", i, esc(v)))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    println!("declare {} {}=({})", flags, arg_name, body);
+                    continue;
+                }
+            }
+            // c:Src/Modules/param_private.c:678 — with zsh/param/private
+            // loaded, `realparamtab->getnode` IS `getprivatenode`, so
+            // c:Src/builtin.c:3109's `paramtab->getnode(paramtab, pname)`
+            // returns NULL for a private declared in an OUTER scope. Without
+            // the walk, `typeset -p array_test` inside a function called from
+            // the declaring one found the private node, then printparamnode
+            // dropped it silently at its PM_RO_BY_DESIGN level test
+            // (c:Src/params.c:6157-6162) — no output AND no error, where zsh
+            // prints `typeset: no such variable: array_test` and exits 1
+            // (V10private.ztst:15). SAFETY: read-only `pm->old` walk under
+            // the read guard held for the lookup.
+            let existed = paramtab()
+                .read()
+                .map(|t| {
+                    t.get(arg_name).is_some_and(|pm| {
+                        !crate::ported::modules::param_private::getprivatenode(
+                            &**pm as *const crate::ported::zsh_h::param,
+                        )
+                        .is_null() // c:3109 getnode hook
+                    })
+                })
+                .unwrap_or(false);
+            if existed {
+                // c:Src/params.c:6275 — printparamnode looks up the
+                // PM_TIED peer via paramtab; we must NOT hold the lock
+                // when calling. Bug #410 — pre-clone pattern (mirrors
+                // the bin_typeset `-m PAT` arm refactor).
+                let mut pm_clone = match paramtab().read() {
+                    Ok(tab) => tab.get(arg_name).cloned(),
+                    Err(_) => None,
+                };
+                if let Some(ref mut pm) = pm_clone {
+                    // c:2243 — `paramtab->printnode(&pm->node,
+                    //   PRINT_TYPESET|with_ns);`
+                    printparamnode(pm, PRINT_TYPESET | with_ns | line_flag);
+                }
+            } else {
+                // c:Src/builtin.c:3110-3113 — when `typeset -p NAME`
+                // and the param doesn't exist, emit
+                // `typeset: no such variable: NAME` and set
+                // returnval=1 so the builtin's exit status is 1.
+                zwarnnam(name, &format!("no such variable: {}", arg_name));
+                returnval = 1; // c:Src/builtin.c:3112
+            }
+            continue;
+        }
+
         // c:2117-2193 (inside typeset_single) — changing the TYPE of an
         // existing parameter is refused for specials, with SECONDS the one
         // documented exception.
@@ -5642,109 +5750,6 @@ pub fn bin_typeset(
             // bin_typeset's per-arg loop record failure.
             returnval = 1;
             continue; // c:2551 return NULL
-        }
-
-        // c:2241-2247 — `-p` print-mode for an existing param (no `=`,
-        // no value). C `typeset_single` lands here when `usepm` is set
-        // and `!ASG_VALUEP(asg)`, BEFORE createparam runs (c:2218 →
-        // c:2244 early return). The Rust loop must also dispatch the
-        // print branch first; otherwise the createparam call below
-        // overwrites pm.node.flags on the reuse-arm (c:2018), clobbering
-        // typeset-attribute bits set by an earlier `typeset -i n` call.
-        if !arg.contains('=') && OPT_ISSET(&ops, b'p') {
-            let with_ns = if OPT_ISSET(&ops, b'm') {
-                // c:2241
-                PRINT_WITH_NAMESPACE
-            } else {
-                0
-            };
-            // c:Src/builtin.c:2761-2765 — `-p1` adds PRINT_LINE (one
-            // array/assoc element per line). The named-arg `typeset -p1
-            // NAME` print path missed it (only the listing path parsed
-            // it), so `typeset -p1 myarray` printed single-line.
-            let line_flag =
-                if OPT_HASARG(&ops, b'p') && OPT_ARG(&ops, b'p').map(|a| a.trim()) == Some("1") {
-                    PRINT_LINE
-                } else {
-                    0
-                };
-            // !!! BASH-MODE GATE (no C counterpart) !!! `declare -p` of a bash
-            // synthesized special array (PIPESTATUS / FUNCNAME / BASH_VERSINFO)
-            // — these live outside paramtab, so the normal lookup below can't
-            // find them. Emit the bash reusable form (BASH_VERSINFO is a
-            // readonly array).
-            if crate::dash_mode::bash_mode() {
-                if let Some(vals) = crate::dash_mode::bash_special_array(arg_name) {
-                    let esc = |s: &str| -> String {
-                        let mut o = String::with_capacity(s.len());
-                        for c in s.chars() {
-                            if matches!(c, '"' | '\\' | '$' | '`') {
-                                o.push('\\');
-                            }
-                            o.push(c);
-                        }
-                        o
-                    };
-                    let flags = if arg_name == "BASH_VERSINFO" {
-                        "-ar"
-                    } else {
-                        "-a"
-                    };
-                    let body: String = vals
-                        .iter()
-                        .enumerate()
-                        .map(|(i, v)| format!("[{}]=\"{}\"", i, esc(v)))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    println!("declare {} {}=({})", flags, arg_name, body);
-                    continue;
-                }
-            }
-            // c:Src/Modules/param_private.c:678 — with zsh/param/private
-            // loaded, `realparamtab->getnode` IS `getprivatenode`, so
-            // c:Src/builtin.c:3109's `paramtab->getnode(paramtab, pname)`
-            // returns NULL for a private declared in an OUTER scope. Without
-            // the walk, `typeset -p array_test` inside a function called from
-            // the declaring one found the private node, then printparamnode
-            // dropped it silently at its PM_RO_BY_DESIGN level test
-            // (c:Src/params.c:6157-6162) — no output AND no error, where zsh
-            // prints `typeset: no such variable: array_test` and exits 1
-            // (V10private.ztst:15). SAFETY: read-only `pm->old` walk under
-            // the read guard held for the lookup.
-            let existed = paramtab()
-                .read()
-                .map(|t| {
-                    t.get(arg_name).is_some_and(|pm| {
-                        !crate::ported::modules::param_private::getprivatenode(
-                            &**pm as *const crate::ported::zsh_h::param,
-                        )
-                        .is_null() // c:3109 getnode hook
-                    })
-                })
-                .unwrap_or(false);
-            if existed {
-                // c:Src/params.c:6275 — printparamnode looks up the
-                // PM_TIED peer via paramtab; we must NOT hold the lock
-                // when calling. Bug #410 — pre-clone pattern (mirrors
-                // the bin_typeset `-m PAT` arm refactor).
-                let mut pm_clone = match paramtab().read() {
-                    Ok(tab) => tab.get(arg_name).cloned(),
-                    Err(_) => None,
-                };
-                if let Some(ref mut pm) = pm_clone {
-                    // c:2243 — `paramtab->printnode(&pm->node,
-                    //   PRINT_TYPESET|with_ns);`
-                    printparamnode(pm, PRINT_TYPESET | with_ns | line_flag);
-                }
-            } else {
-                // c:Src/builtin.c:3110-3113 — when `typeset -p NAME`
-                // and the param doesn't exist, emit
-                // `typeset: no such variable: NAME` and set
-                // returnval=1 so the builtin's exit status is 1.
-                zwarnnam(name, &format!("no such variable: {}", arg_name));
-                returnval = 1; // c:Src/builtin.c:3112
-            }
-            continue;
         }
 
         // c:1961-1995 typeset_setbase — the `-i N` / `-E N` / `-F N`

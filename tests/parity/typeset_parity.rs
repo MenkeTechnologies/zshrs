@@ -1387,3 +1387,27 @@ mod tie_names_are_validated {
         assert_parity("typeset -T X x; x=(a b); print $X; typeset -T PATH path; print ok");
     }
 }
+
+/// c:Src/builtin.c:3100-3113 — under `-p` every argument, with or without a
+/// value, is only printed (or reported missing); nothing is assigned, and
+/// typeset_single's name check and type-change logic never run. c:2807 skips
+/// the `-T` tie under `-p` the same way. zshrs assigned `typeset -p s=1`,
+/// validated `typeset -p 'a b'`, retyped SECONDS and tied `-p -T A a`.
+mod p_never_assigns {
+    use super::*;
+
+    #[test]
+    fn a_value_is_not_assigned() {
+        assert_parity(r#"typeset -p s=1 2>&1 | cut -d: -f3-; typeset -p s=1 2>/dev/null; print $? "[${s-unset}]""#);
+        assert_parity(r#"s=0; typeset -p s=1; print $? "[$s]""#);
+        assert_parity(r#"ar=(x); typeset -p1 -a ar=(a b); print $? "[$ar]""#);
+        assert_parity(r#"f() { local -p x=1 2>/dev/null; print $? ${x-unset} }; f"#);
+    }
+
+    #[test]
+    fn no_name_check_type_change_or_tie() {
+        assert_parity(r#"typeset -p 'a b' 2>&1 | cut -d: -f3-"#);
+        assert_parity("typeset -p1 -F SECONDS >/dev/null; print ${(t)SECONDS}");
+        assert_parity("typeset -p -T A a 2>&1 | cut -d: -f3-; print ${+A} ${+a}");
+    }
+}
