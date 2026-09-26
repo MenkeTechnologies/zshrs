@@ -1411,3 +1411,23 @@ mod p_never_assigns {
         assert_parity("typeset -p -T A a 2>&1 | cut -d: -f3-; print ${+A} ${+a}");
     }
 }
+
+/// Under the TYPESET reserved word the words from the first `NAME=…` on are
+/// C's postassigns (c:Src/parse.c:2003-2008), kept out of `args`, so `$_`
+/// (c:Src/exec.c:3546) is the last word BEFORE them. An unquoted `$1` is
+/// an ordinary word there and vanishes when empty (c:Src/subst.c:183-186).
+mod typeset_args_vs_postassigns {
+    use super::*;
+
+    #[test]
+    fn underscore_is_last_word_before_the_postassigns() {
+        assert_parity(
+            "typeset -g a=1; print -r -- \"[$_]\"; local b c=2 d; print -r -- \"[$_]\"; local -a e=(1 2); print -r -- \"[$_]\"; \"typeset\" f=1; print -r -- \"[$_]\"",
+        );
+    }
+
+    #[test]
+    fn empty_unquoted_positional_word_is_dropped() {
+        assert_parity("f() { local $1 x=y; print -r -- $x; }; f ''; set -- ''; typeset $1 b=2; print -r -- $b");
+    }
+}

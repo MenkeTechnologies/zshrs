@@ -3468,8 +3468,12 @@ impl ZshCompiler {
                 && (is_typeset_scalar_assign(word) || split_typeset_paren_init(word).is_some())
             {
                 postassigns_started = true;
+                // Arg: how many words are postassigns (each pushes one value),
+                // so dispatch can tell C's `args` from its `assigns`.
+                self.builder
+                    .emit(Op::LoadInt((argv_words.len() - argv_index) as i64), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_TYPESET_POSTASSIGNS_BEGIN, 0),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_TYPESET_POSTASSIGNS_BEGIN, 1),
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);
@@ -18531,6 +18535,16 @@ fn word_is_bare_param_ref(word: &str) -> bool {
     };
     if inner.is_empty() {
         return false;
+    }
+    // A positional parameter is a bare reference too (c:Src/params.c:2210-2214,
+    // fetchvalue's `idigit(c = *s)` arm): `$1`, `${12}`. Unbraced
+    // (`bracks < 0`) it takes ONE digit, so `$12` is `$1` then `2`. Treating `$1` as a
+    // non-reference ran it through the no-split path, which keeps an empty
+    // value as an empty word, so `f() { local -n $1 r=v; }; f ''` failed
+    // with "local: not valid in this context:" where zsh's prefork drops the
+    // empty unquoted word (c:Src/subst.c:183-186).
+    if inner.iter().all(|c| c.is_ascii_digit()) {
+        return b.first() == Some(&b'{') || inner.len() == 1;
     }
     // Plain identifier only: no `[sub]`, no `(flags)`, no `:-` modifiers.
     let first_ok = inner[0] == b'_' || inner[0].is_ascii_alphabetic();

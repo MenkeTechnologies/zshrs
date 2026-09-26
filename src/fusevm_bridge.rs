@@ -91,6 +91,11 @@ thread_local! {
     /// postassign, set aside by BUILTIN_TYPESET_POSTASSIGNS_BEGIN and put
     /// back by BUILTIN_TYPESET_POSTASSIGNS_END.
     static TYPESET_WORD_GLOB_FAILED: Cell<bool> = const { Cell::new(false) };
+    /// Number of postassign words of the typeset-family command about to
+    /// dispatch, set by BUILTIN_TYPESET_POSTASSIGNS_BEGIN. C keeps those in
+    /// the command's `assigns` list, not `args` (c:Src/parse.c:2003-2008),
+    /// so they never become `$_` (c:Src/exec.c:3546).
+    static TYPESET_POSTASSIGN_COUNT: Cell<Option<usize>> = const { Cell::new(None) };
 
     /// Set by BUILTIN_TYPESET_POSTASSIGNS_END when a NOMATCH fired in one of
     /// the postassigns. Consumed by `dispatch_builtin`.
@@ -1701,7 +1706,12 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // every reg_passthru! builtin was left reading the stale value.
     // C's `args` list carries argv[0], so a bare `cat` sets `_=cat` —
     // hence the fallback to `name` when there are no arguments.
-    let underscore = args.last().cloned().unwrap_or_else(|| name.to_string()); // c:3546
+    // c:Src/parse.c:2003-2008 — under the TYPESET reserved word the words
+    // from the first `NAME=…` on are postassigns, not args: `local b c=2`
+    // sets `_=b`, `typeset -g a=1` sets `_=-g`.
+    let n_post = TYPESET_POSTASSIGN_COUNT.with(|c| c.take()).filter(|_| typeset_reswd).unwrap_or(0);
+    let n_args = args.len().saturating_sub(n_post);
+    let underscore = args[..n_args].last().cloned().unwrap_or_else(|| name.to_string()); // c:3546
     crate::ported::params::set_zunderscore(std::slice::from_ref(&underscore)); // c:3546
     let q = crate::ported::signals_h::queue_signal_level(); // c:3997
     crate::ported::signals_h::dont_queue_signals(); // c:4231
@@ -3503,7 +3513,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // See the const's doc comment for the contract. Stack (bottom→top):
     // base, e1, …, eN — argc = N + 1.
     // See the consts' doc comments.
-    vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_BEGIN, |_vm, _argc| {
+    vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_BEGIN, |vm, argc| {
+        let n_post = (argc == 1).then(|| vm.pop().to_int().max(0) as usize);
+        TYPESET_POSTASSIGN_COUNT.with(|c| c.set(n_post));
         let word_failed = with_executor(|exec| exec.current_command_glob_failed.replace(false));
         TYPESET_WORD_GLOB_FAILED.with(|c| c.set(word_failed));
         Value::Int(0)
@@ -17289,6 +17301,8 @@ pub const BUILTIN_SET_LOOP_VAR: u16 = 629;
 /// builtin branch (c:Src/exec.c:4167-4285) where a NOMATCH leaves `lastval`
 /// alone. Sets aside a NOMATCH the earlier command words raised
 /// (c:3755-3763, `lastval = 1`).
+///
+/// Arg: the number of postassign words (dispatch leaves them out of `$_`).
 pub const BUILTIN_TYPESET_POSTASSIGNS_BEGIN: u16 = 684;
 /// Emitted after the last word of a command that emitted
 /// BUILTIN_TYPESET_POSTASSIGNS_BEGIN: moves a postassign NOMATCH off the
