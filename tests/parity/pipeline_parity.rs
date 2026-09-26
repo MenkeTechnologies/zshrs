@@ -310,3 +310,17 @@ mod sh_emulation_forks_last_pipeline_stage {
         assert_parity("emulate sh -c 'echo abc | tr a b'");
     }
 }
+
+/// c:Src/parse.c:914-916 — `if (!par_pline(cmplx)) { tok = LEXERR; }`: a
+/// `|` with nothing after it is a parse error. The left side used to parse
+/// as a one-stage pipeline and run.
+mod trailing_pipe_is_a_parse_error {
+    use super::*;
+
+    #[test]
+    fn nothing_runs_and_status_is_one() {
+        assert_parity("exec 2>&1; eval 'print a |'; echo rc=$?");
+        assert_parity("exec 2>&1; eval 'print a |&'; echo rc=$?");
+        assert_parity("exec 2>&1; eval 'print a | print b |'; echo rc=$?");
+    }
+}

@@ -795,3 +795,17 @@ mod funcnest_diagnostic {
         assert_parity("exec 2>&1; FUNCNEST=3; f() {\nf\n}\nf");
     }
 }
+
+/// c:Src/parse.c:2114-2117 — `f()` with no body: `par_cmd` fails, YYERROR.
+/// c:2071 zeroed `lineno` and this path never restores it, so the message
+/// has no line number. The script used to run on with status 0.
+mod funcdef_missing_body {
+    use super::*;
+
+    #[test]
+    fn is_a_parse_error_without_line_number() {
+        assert_parity("exec 2>&1; eval 'f()'; echo rc=$?");
+        assert_parity("exec 2>&1; eval 'print a; f()'; echo rc=$?");
+        assert_parity("exec 2>&1; eval 'f() g()'; echo rc=$?");
+    }
+}

@@ -1336,7 +1336,15 @@ fn par_pline() -> Option<ZshPipe> {
                 zerr(&format!("parse error near `{}'", name));
                 return None;
             }
-            par_pline().map(Box::new)
+            // c:914-916 — `if (!par_pline(cmplx)) { tok = LEXERR; }`: a
+            // `|` with no command after it (`print a |` at end of input)
+            // is a syntax error, not a one-stage pipeline. Returning the
+            // bare `None` let the left side parse and RUN.
+            let rest = par_pline();
+            if rest.is_none() {
+                set_tok(LEXERR);
+            }
+            rest.map(Box::new)
         }
         _ => None,
     };
@@ -10465,7 +10473,17 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                     body_source,
                 }))
             }
-            None => None,
+            // c:2114-2117 — `if (!par_cmd(&c, argc == 0)) { cmdpop();
+            // YYERROR(oecused); }`: `f()` with no body is a syntax error.
+            // The bare `None` never flagged LEXERR, so nothing reported it
+            // and the script ran on with status 0. c:2071 `lineno = 0;` is
+            // never undone on this path (only the brace arm's c:2097 adds
+            // `oldlineno` back), so the diagnostic carries no line number.
+            None => {
+                set_lineno(0);
+                set_tok(LEXERR);
+                None
+            }
         }
     }
 }
