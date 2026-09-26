@@ -3144,6 +3144,12 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
         let mut pct = 0; // parenthesis count
         let mut brct = 0; // bracket count
         let mut bct = 0; // brace count (for ${...})
+        // c:1488 — `cmdsubst = 0` is the `bct` level of an open nofork
+        // `${|…}` / `${ … }`, and c:1489 `bskip` counts the plain braces
+        // inside it, which tokenize as if unquoted (c:1560) and do not close
+        // the substitution.
+        let mut cmdsubst = 0;
+        let mut bskip = 0;
         // c:1516 — `int intick = 0`. A TRISTATE, not a flag: 0 = outside
         // backticks, 1 = inside backticks, 2 = inside backticks AND inside a
         // single-quoted string within them. State 2 is what suspends history
@@ -3156,7 +3162,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
         // every CS_BQUOTE (if `intick`), CS_BRACEPAR + (CS_CURSH when
         // it was set) (for each remaining bct level). Wrapped via
         // closure so success + every early Err goes through cleanup.
-        let cleanup = |intick: i32, bct: i32| {
+        let cleanup = |intick: i32, bct: i32, cmdsubst: i32| {
             // c:1642-1643 — `if (intick == 2) ALLOWHIST` — an unterminated
             // single quote inside backticks must still restore the count.
             if intick == 2 {
@@ -3166,7 +3172,12 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
             if intick != 0 {
                 cmdpop();
             }
-            for _ in 0..bct {
+            // c:1645-1656 — `while (bct) { if (bct-- == cmdsubst) cmdpop();
+            // cmdpop(); }` — the nofork level also pops its CS_CURSH.
+            for level in (1..=bct).rev() {
+                if level == cmdsubst {
+                    cmdpop();
+                }
                 cmdpop(); // CS_BRACEPAR for each remaining `{`.
             }
         };
@@ -3188,13 +3199,13 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                         && bct == 0
                         && !(is_math && (pct > 0 || brct > 0)) =>
                 {
-                    cleanup(intick, bct);
+                    cleanup(intick, bct, cmdsubst);
                     return Ok(());
                 }
                 Some(c) => c,
                 None => {
                     LEX_LEXSTOP.set(true);
-                    cleanup(intick, bct);
+                    cleanup(intick, bct, cmdsubst);
                     // c:1659-1660 — `if (lexstop) err = intick || endchar || err;`:
                     // running out of input is an error only inside a backquote
                     // or when a terminator was expected. parsestrnoerr passes
@@ -3308,6 +3319,18 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                             add(Inbrace);
                             cmdpush(CS_BRACEPAR as u8);
                             bct += 1;
+                            // c:1631-1640 — `if (!cmdsubst && c == Inbrace)`:
+                            // `${|…}` / `${ … }` opens a nofork command
+                            // substitution whose body is parsed as a command.
+                            if cmdsubst == 0 {
+                                if let Some(nc) = hgetc() {
+                                    if nc == '|' || nc == ' ' || nc == '\t' || nc == '\n' {
+                                        cmdsubst = bct; // c:1635
+                                        cmdpush(CS_CURSH as u8); // c:1636
+                                    }
+                                    hungetc(nc); // c:1638
+                                }
+                            }
                         }
                         Some('$') => {
                             add(Qstring);
@@ -3323,14 +3346,30 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                     }
                 }
 
+                // c:1558-1563 — `case '{': if (cmdsubst && !intick) { c =
+                // Inbrace; bskip++; }` — in a nofork body a brace group
+                // tokenizes as if unquoted.
+                '{' if cmdsubst != 0 && intick == 0 => {
+                    add(Inbrace);
+                    bskip += 1;
+                }
+
                 '}' => {
                     if intick != 0 || bct == 0 {
                         add(c);
-                    } else {
-                        // c:1575/1577 — `cmdpop()` for inner brace, plus
-                        // matching CS_BRACEPAR pop on the outermost
-                        // closer.
+                    } else if bskip > 0 {
+                        // c:1567-1570 — the closer of a nofork body's own
+                        // brace group, not of the `${`.
                         add(Outbrace);
+                        bskip -= 1;
+                    } else {
+                        // c:1571-1576 — `if (bct-- == cmdsubst) { cmdsubst = 0;
+                        // cmdpop(); } cmdpop();`
+                        add(Outbrace);
+                        if bct == cmdsubst {
+                            cmdsubst = 0;
+                            cmdpop();
+                        }
                         cmdpop();
                         bct -= 1;
                     }

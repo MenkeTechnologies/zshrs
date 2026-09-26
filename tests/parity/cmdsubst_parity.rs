@@ -497,3 +497,20 @@ mod nofork_current_shell_zshrs_pin {
         assert_eq!(run_zshrs("x=${ true }; print ${+x}").stdout, "1\n");
     }
 }
+
+/// Nofork `${|…}` / `${ … }` inside DOUBLE quotes (dev-tree zsh pins, see
+/// `nofork_trim_zshrs_pin`). c:Src/lex.c:1631-1640 opens the substitution
+/// as a command body in dquote_parse; c:1558-1576 tokenize a `{` in the
+/// body as unquoted, so the body's own brace group does not close the `${`.
+/// The body used to be scanned as a quoted string: a parse error.
+mod nofork_in_double_quotes_zshrs_pin {
+    use super::*;
+
+    #[test]
+    fn body_is_parsed_as_commands() {
+        assert_eq!(run_zshrs(r#"print "A${| g() { print "q" ;} }B"; g"#).stdout, "AB\nq\n");
+        assert_eq!(run_zshrs(r#"print "a${ { echo "}" ; } }b""#).stdout, "a}\nb\n");
+        assert_eq!(run_zshrs(r#"print "${| REPLY=r }${ { echo b; } }""#).stdout, "rb\n\n");
+        assert_eq!(run_zshrs(r#"x=3; print "${x}${| REPLY="{"}z""#).stdout, "3{z\n");
+    }
+}
