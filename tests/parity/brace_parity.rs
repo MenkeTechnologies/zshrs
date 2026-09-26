@@ -356,6 +356,17 @@ mod brace_ccl {
         assert_parity("setopt braceccl; print -r -- {z-a}");
         assert_parity("setopt braceccl; print -r -- {a-c-e} x{a-cA}y");
     }
+
+    /// c:2455-2463 re-metafies an imeta byte (NUL included) because C words
+    /// are metafied; a zshrs word holds NUL as a plain char and a lone
+    /// high byte as Meta + `byte ^ 32`. Emitting NUL as a Meta pair left a
+    /// stray Meta char in the word (`$(( #c ))` read 131).
+    #[test]
+    fn nul_and_high_bytes_come_out_as_single_bytes() {
+        assert_parity("setopt braceccl; print -rn -- {$'\\0'-$'\\2'} | od -An -tx1");
+        assert_parity("setopt braceccl; print -rn -- {$'\\0'x} {$'\\x82'-$'\\x84'} | od -An -tx1");
+        assert_parity("setopt braceccl; a=({$'\\0'-$'\\2'}); c=$a[1]; print $(( #c )) ${#c}");
+    }
 }
 
 /// c:glob.c:2366-2369 — an empty or non-numeric `..step` is an error
