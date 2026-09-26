@@ -1016,6 +1016,12 @@ fn wait_unknown_pid_warning_is_suppressed_under_posix_builtins() {
 // through zsh/zpty like the other interactive probes.
 // ═══════════════════════════════════════════════════════════════════════
 
+/// The inner interactive shell records every line it runs, and zshrs's
+/// default history sink is `$ZSHRS_HOME` (`~/.zshrs` when unset), not
+/// `$HISTFILE`, so `unset HISTFILE` would not keep the probe out of the
+/// real store. Point it at a scratch directory the zpty child inherits.
+const ISOLATED_HISTORY: &str = "export ZSHRS_HOME=\"$(mktemp -d)\"\n";
+
 /// c:Src/jobs.c:646-647 — update_job's asynchronous `printjob(jn, …, 0)`
 /// reports a background job that finishes, here while `wait` reaps it.
 /// zshrs reaped the job and deleted it without a word: `: &` + `wait`
@@ -1023,15 +1029,17 @@ fn wait_unknown_pid_warning_is_suppressed_under_posix_builtins() {
 #[test]
 fn wait_reports_finished_background_job() {
     let driver = format!(
-        "{}
+        "{}{}
 zpty -w w ': &'
 zpty -w w 'wait'
 sleep 1
 zpty -w w 'print END'
 sleep 1
 {}
+command rm -rf -- \"$ZSHRS_HOME\"
 if [[ $all == *'[1]  + done'* ]]; then print DONE=yes; else print DONE=no; fi
 ",
+        ISOLATED_HISTORY,
         crate::zpty_probe::OPEN,
         crate::zpty_probe::DRAIN
     );
@@ -1043,7 +1051,7 @@ if [[ $all == *'[1]  + done'* ]]; then print DONE=yes; else print DONE=no; fi
 #[test]
 fn killed_background_job_is_reported() {
     let driver = format!(
-        "{}
+        "{}{}
 zpty -w w '/bin/sleep 30 &'
 sleep 1
 zpty -w w 'kill %1'
@@ -1051,8 +1059,10 @@ sleep 1
 zpty -w w 'print END'
 sleep 1
 {}
+command rm -rf -- \"$ZSHRS_HOME\"
 if [[ $all == *'[1]  + terminated'* ]]; then print KILLED=yes; else print KILLED=no; fi
 ",
+        ISOLATED_HISTORY,
         crate::zpty_probe::OPEN,
         crate::zpty_probe::DRAIN
     );
@@ -1066,7 +1076,7 @@ if [[ $all == *'[1]  + terminated'* ]]; then print KILLED=yes; else print KILLED
 #[test]
 fn no_check_jobs_exits_with_running_job() {
     let driver = format!(
-        "{}
+        "{}{}
 zpty -w w 'setopt no_check_jobs no_hup'
 zpty -w w '/bin/sleep 5 &'
 sleep 1
@@ -1075,8 +1085,10 @@ sleep 1
 zpty -w w 'print ALIVEM${{:-}}ARK'
 sleep 1
 {}
+command rm -rf -- \"$ZSHRS_HOME\"
 if [[ $all == *ALIVEMARK* ]]; then print EXITED=no; else print EXITED=yes; fi
 ",
+        ISOLATED_HISTORY,
         crate::zpty_probe::OPEN,
         crate::zpty_probe::DRAIN
     );
