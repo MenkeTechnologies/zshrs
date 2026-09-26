@@ -2864,8 +2864,20 @@ impl ZshCompiler {
         // Equals TOKEN \u{8d}, untokenize maps it back). EQUALS-option
         // gating happens inside equalsubstr at runtime — checking it
         // here would require duplicating the option lookup.
+        // c:Src/subst.c:301-304 — `$'...'` is a `String Snull` (or `Qstring Snull`)
+        // pair that `stringsubst` decodes via `stringsubstquote` BEFORE prefork's
+        // `remnulargs` (c:Src/subst.c:169) runs. `untokenize` decodes the region
+        // inline, hiding its `$`, so the static path below saw a plain name and
+        // then ran remnulargs on the RAW word: the Snulls went, the String token
+        // came back as `$`, and `$'echo' hi` looked up a command named `$echo`.
+        let first_has_dollar_quote = simple.words[head_idx]
+            .chars()
+            .zip(simple.words[head_idx].chars().skip(1))
+            .any(|(a, b)| (a == crate::ported::zsh_h::Stringg || a == crate::ported::zsh_h::Qstring)
+                && b == crate::ported::zsh_h::Snull);
         let first_is_dynamic = !first_is_test_builtin
             && (unquoted(&first_untoked, '$')
+                || first_has_dollar_quote
                 || unquoted(&first_untoked, '`')
                 || unquoted(&first_untoked, '*')
                 || unquoted(&first_untoked, '?')

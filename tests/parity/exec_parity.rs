@@ -755,3 +755,28 @@ mod shebang_script_off_path_is_not_found {
         }
     }
 }
+
+/// A command word that is (or contains) `$'…'`. `stringsubst` decodes the
+/// `String Snull … Snull` region (c:Src/subst.c:301-304) BEFORE prefork's
+/// `remnulargs` (c:Src/subst.c:169); the static head path ran remnulargs on
+/// the raw word instead, so the String token came back as `$` and
+/// `$'echo' hi` looked up a command named `$echo`.
+mod dollar_quote_command_word {
+    use super::*;
+
+    #[test]
+    fn whole_word() {
+        assert_parity(r#"$'echo' a; $'ec\x68o' b 2>&1; echo rc=$?"#);
+    }
+
+    #[test]
+    fn partial_word_and_prefix_assignment() {
+        assert_parity(r#"e$'cho' a 2>&1; x=1 $'ec\x68o' b 2>&1; { $'echo' c } 2>&1"#);
+    }
+
+    /// E02xtrace.ztst: a function whose name holds a NUL, called by name.
+    #[test]
+    fn nul_in_function_name() {
+        assert_parity(r#"$'ba\0z'() { echo x; }; $'ba\0z' 2>&1; echo rc=$?"#);
+    }
+}
