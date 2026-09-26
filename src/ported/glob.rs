@@ -1377,25 +1377,33 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
             zerr("missing identifier after `+'"); // c:1095
             return None; // c:1096
         }
-        // c:1109 — `sdata = dupstring(s + plus);` (plus=0 here).
-        // c:1113 — `*sp = tt + plus;` → advance offset is `tt`.
-        Some((s[..tt].to_string(), tt))
+        // c:1107 — `sdata = dupstring(s + plus);` (plus=0 here).
+        // c:1108 — `untokenize(sdata);`
+        // c:1113 — `*sp = tt;` → advance offset is `tt`.
+        Some((crate::ported::lex::untokenize(&s[..tt]), tt))
     } else {
         // c:1099 — `tt = get_strarg(s, &plus);` — find matching delimiter.
         // get_strarg returns delimiter-balanced span; for `e:foo:` it
         // walks `s` past the inner expr and returns position of the
         // closing `:`.
         match crate::ported::subst::get_strarg(s) {
-            Some((_del, content, rest)) => {
+            Some((del, content, rest)) => {
+                // Advance offset: bytes consumed of `s` = s.len() - rest.len().
+                let advance = s.len() - rest.len();
                 // c:1100-1104 — `if (!*tt) { zerr("missing end of string"); return NULL; }`
-                if rest.is_empty() && content.is_empty() {
+                // — `tt` sits on the closing delimiter; `*tt == '\0'` means
+                // none was found. The Rust get_strarg returns an empty `rest`
+                // both for a closer at the very end and for no closer, so
+                // tell them apart by length: with a closer, the consumed span
+                // is the opening delimiter + content + the closer.
+                if advance <= del.len_utf8() + content.len() {
                     zerr("missing end of string"); // c:1102
                     return None; // c:1103
                 }
-                // c:1109-1115 — `sdata = dupstring(s + plus); ... *sp = tt + plus;`.
-                // Advance offset: bytes consumed of `s` = s.len() - rest.len().
-                let advance = s.len() - rest.len();
-                Some((content, advance))
+                // c:1107 — `sdata = dupstring(s + plus);`
+                // c:1108 — `untokenize(sdata);`
+                // c:1110-1111 — `*sp = tt + plus;`.
+                Some((crate::ported::lex::untokenize(&content), advance))
             }
             None => {
                 zerr("missing end of string"); // c:1102
@@ -3976,6 +3984,9 @@ pub struct qualifier_set {
     /// `(T)` qualifier — append type-char (ls -F style) to every entry.
     /// Direct port of zsh/Src/glob.c:1562-1566 (`case 'T'`).
     pub list_types: bool,
+    /// `gf_follow` — c:1559/1564 `gf_follow = sense & 2;`: a `-` before
+    /// `M`/`T` makes the marker describe the symlink TARGET (c:366-371).
+    pub mark_follow: bool,
     /// `(N)` qualifier — per-glob nullglob: empty result on no-match,
     /// no error. Direct port of zsh/Src/glob.c:1567-1569 (`case 'N'`):
     ///   `gf_nullglob = !(sense & 1)` — set when `(N)` appears without
@@ -4521,6 +4532,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         .as_ref()
         .map(|q| q.list_types)
         .unwrap_or(false);
+    let mark_follow = state.qualifiers.as_ref().is_some_and(|q| q.mark_follow);
     let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
     // c:Src/glob.c — a pattern ending in `/` ("trailing slash" syntax)
     // forces matches to be directories AND preserves the slash in the
@@ -4565,7 +4577,14 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
                 s.push('/');
             }
             if mark_dirs || list_types {
-                if let Ok(meta) = fs::symlink_metadata(&m.path) {
+                // c:358-371 — lstat; under gf_follow a symlink is re-stat'ed,
+                // falling back to the lstat.
+                if let Ok(lmeta) = fs::symlink_metadata(&m.path) {
+                    let meta = if mark_follow && lmeta.file_type().is_symlink() {
+                        fs::metadata(&m.path).unwrap_or(lmeta)
+                    } else {
+                        lmeta
+                    };
                     let ch = file_type(meta.mode());
                     if list_types || (mark_dirs && ch == '/') {
                         // Don't double-stamp if trailing_slash already added one.
@@ -5009,7 +5028,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                         let parsed = qgetmodespec(&rest);
                         if let Some((who, op, perm, r)) = parsed {
                             let consumed = rest.len() - r.len();
-                            for _ in 0..consumed {
+                            for _ in 0..rest[..consumed].chars().count() {
                                 chars.next();
                             }
                             let _ = who;
@@ -5177,7 +5196,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                             let rest: String = chars.clone().collect();
                             match glob_exec_string(&rest, is_plus) {
                                 Some((code, consumed)) => {
-                                    for _ in 0..consumed {
+                                    for _ in 0..rest[..consumed].chars().count() {
                                         chars.next();
                                     }
                                     let idx = qs.sort_exec.len();
@@ -5285,8 +5304,19 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // `sense & 1` = the `^`-toggle bit. zshrs's parser tracks
             // `negated`; mirror by `!negated`. Read at output-emit
             // time to mark dirs / list types like coreutils ls -F.
-            'M' => qs.mark_dirs = !negated,
-            'T' => qs.list_types = !negated,
+            // c:1557-1566 — `if ((gf_markdirs = !(sense & 1))) gf_follow = sense & 2;`
+            'M' => {
+                qs.mark_dirs = !negated;
+                if qs.mark_dirs {
+                    qs.mark_follow = follow;
+                }
+            }
+            'T' => {
+                qs.list_types = !negated;
+                if qs.list_types {
+                    qs.mark_follow = follow;
+                }
+            }
             'F' => qs.qualifiers.push(qualifier::NonEmptyDir),
             // c:1744-1756 — `P:word:` adds `word` to gf_pre_words (or
             // gf_post_words under `^`), emitted as a separate element
@@ -5295,7 +5325,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             'P' => {
                 let rest: String = chars.clone().collect();
                 if let Some((word, consumed)) = glob_exec_string(&rest, false) {
-                    for _ in 0..consumed {
+                    for _ in 0..rest[..consumed].chars().count() {
                         chars.next();
                     }
                     if negated {
@@ -5464,103 +5494,34 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // the body returns 0. zshrs's qualifier::Eval variant
             // was defined but had no parser arm — was rejected as
             // "unknown file attribute: e". Bug #469.
-            'e' => {
-                // c:1712-1719 — `e` routes through glob_exec_string →
-                // get_strarg, which requires a delimiter char after `e` AND a
-                // matching closer. A bare `e` (nothing after, delim would be the
-                // `)`) or an unterminated body is `zerr("missing end of
-                // string"); return NULL;` (c:1102), aborting the glob.
-                let delim = match chars.next() {
-                    Some(d) => d,
+            // c:1707-1720 — `case '+': case 'e':` —
+            //     tt = glob_exec_string(&s);
+            //     if (tt == NULL) { data = 0; }
+            //     else { func = qualsheval; sdata = tt; }
+            // glob_exec_string reads the `+IDENT` or the delimited `e:CODE:`
+            // form (get_strarg bracket pairing, c:Src/subst.c:1366-1391) and
+            // UNTOKENIZES it (c:1108), so an unquoted `e:REPLY=x:` runs
+            // `REPLY=x` rather than a word carrying an Equals token.
+            'e' | '+' => {
+                let rest: String = chars.clone().collect();
+                match glob_exec_string(&rest, c == '+') {
+                    Some((code, consumed)) => {
+                        // c:1110-1113 — `*sp = tt + plus;`
+                        for _ in 0..rest[..consumed].chars().count() {
+                            chars.next();
+                        }
+                        qs.qualifiers.push(qualifier::Eval(code));
+                    }
                     None => {
-                        crate::ported::utils::zerr("missing end of string");
+                        // glob_exec_string emitted the diagnostic; errflag
+                        // aborts the glob (c:1786-1788).
                         crate::ported::utils::errflag.fetch_or(
                             crate::ported::utils::ERRFLAG_ERROR,
                             std::sync::atomic::Ordering::Relaxed,
                         );
                         return qs;
                     }
-                };
-                // c:Src/subst.c:1366-1391 — `get_strarg` maps the four
-                // bracket families to their closing partner (raw ASCII at
-                // c:1367-1378, tokenized at c:1379-1390); anything else
-                // closes itself (c:1391). Without the map, `*(e[CODE])` /
-                // `*(e{CODE})` scanned for a second `[` / `{` and aborted
-                // with "missing end of string".
-                let close_delim = match delim {
-                    '(' => ')',                                                      // c:1367-1369
-                    '[' => ']',                                                      // c:1370-1372
-                    '{' => '}',                                                      // c:1373-1375
-                    '<' => '>',                                                      // c:1376-1378
-                    crate::ported::zsh_h::Inpar => crate::ported::zsh_h::Outpar,     // c:1379-1381
-                    crate::ported::zsh_h::Inang => crate::ported::zsh_h::Outang,     // c:1382-1384
-                    crate::ported::zsh_h::Inbrace => crate::ported::zsh_h::Outbrace, // c:1385-1387
-                    crate::ported::zsh_h::Inbrack => crate::ported::zsh_h::Outbrack, // c:1388-1390
-                    _ => delim,                                                      // c:1391
-                };
-                let mut body = String::new();
-                let mut closed = false;
-                while let Some(&pc) = chars.peek() {
-                    if pc == close_delim {
-                        chars.next();
-                        closed = true;
-                        break;
-                    }
-                    body.push(pc);
-                    chars.next();
                 }
-                if !closed {
-                    crate::ported::utils::zerr("missing end of string");
-                    crate::ported::utils::errflag.fetch_or(
-                        crate::ported::utils::ERRFLAG_ERROR,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    return qs;
-                }
-                if negated {
-                    // (^e:CODE:) inverts; we route through Eval and
-                    // flip by wrapping the body. Simpler: just store
-                    // and let the negated flag at the qualifier_set
-                    // level handle inversion.
-                }
-                qs.qualifiers.push(qualifier::Eval(body));
-            }
-            // c:Src/glob.c:1708-1722 `case '+':` — `(+FUNC)` invokes
-            // shell function FUNC on each candidate; keep file iff
-            // function returns 0. C's glob_exec_string (c:1085) reads
-            // the identifier name via `itype_end(s, IIDENT, 0)` when
-            // the qualifier letter was '+'. The body wraps the call as
-            // a shell expression `FUNC` that qualsheval (c:4769 zshrs
-            // qualifier::Eval) runs as a one-shot. Bug #N — this arm
-            // was missing entirely, so `*(+func)` and `*(s+0)`-style
-            // mixed-qualifier strings errored "unknown file attribute:
-            // +" instead of routing through the Eval path that would
-            // either match files or fall through to "no matches found".
-            '+' => {
-                // c:1090-1097 — `tt = itype_end(s, IIDENT, 0); if
-                // (tt == s) zerr("missing identifier after `+'")`.
-                // Read identifier chars greedily.
-                let mut ident = String::new();
-                while let Some(&pc) = chars.peek() {
-                    if pc.is_ascii_alphanumeric() || pc == '_' {
-                        ident.push(pc);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if ident.is_empty() {
-                    crate::ported::utils::zerr("missing identifier after `+'"); // c:1095
-                    crate::ported::utils::errflag.fetch_or(
-                        crate::ported::utils::ERRFLAG_ERROR,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    return qs;
-                }
-                // c:1109-1117 — the identifier IS the body that
-                // qualsheval will run. Push as Eval so the same
-                // per-file evaluator at c:4769 fires.
-                qs.qualifiers.push(qualifier::Eval(ident));
             }
             // c:Src/glob.c:1758-1762 — `default: zerr("unknown file
             // attribute: %c", *s); restore_globstate(saved); return;`.
@@ -6292,9 +6253,35 @@ fn sort_matches(state: &mut globdata) {
     //   top-level entry ahead of any nested path (`**/*` → `d e m d/z`
     //   instead of `d d/z e m`). Strip it so the sort key matches the
     //   emit key.
+    //
+    // c:355-378 — insert() appends the `(M)`/`(T)`/MARK_DIRS type marker to
+    // the name BEFORE storing it (c:444 `matchptr->name = news`), so the
+    // marker is part of the sort key: under en_US collation `foo.c` sorts
+    // before `foo/`, while the unmarked `foo` sorts first. The port stamps
+    // the marker at emit (after this sort), so add it to the key here.
+    let mark_dirs = glob_isset(MARKDIRS) || state.qualifiers.as_ref().is_some_and(|q| q.mark_dirs);
+    let list_types = state.qualifiers.as_ref().is_some_and(|q| q.list_types);
+    let mark_follow = state.qualifiers.as_ref().is_some_and(|q| q.mark_follow);
     for m in state.matches.iter_mut() {
         let full = m.path.to_string_lossy();
         m.uname = full.strip_prefix("./").unwrap_or(&full).to_string();
+        // c:355 — `if (gf_listtypes || gf_markdirs)`
+        if mark_dirs || list_types {
+            // c:358 — `statfullpath(s, &buf, 1)` (lstat); c:366-371 — under
+            // gf_follow a symlink is re-stat'ed, falling back to the lstat.
+            if let Ok(lmeta) = fs::symlink_metadata(&m.path) {
+                let meta = if mark_follow && lmeta.file_type().is_symlink() {
+                    fs::metadata(&m.path).unwrap_or(lmeta)
+                } else {
+                    lmeta
+                };
+                let ch = file_type(meta.mode()); // c:377
+                // c:372 — `if (gf_listtypes || S_ISDIR(mode))`
+                if (list_types || ch == '/') && !m.uname.ends_with(ch) {
+                    m.uname.push(ch); // c:376-378
+                }
+            }
+        }
     }
 
     // c:1258/1575 — gf_numsort starts at the global NUMERIC_GLOB_SORT

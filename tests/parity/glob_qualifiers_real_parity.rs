@@ -187,6 +187,33 @@ mod sort_qualifiers {
         let r = run_zshrs_in(d.path(), s);
         assert_eq!(z.stdout, r.stdout);
     }
+
+    /// c:Src/glob.c:355-378 — the `M`/`T`/MARK_DIRS marker is appended in
+    /// insert(), before the sort, so it is part of the name key: `foo/`
+    /// sorts after `foo.c`, where the unmarked `foo` sorts before it.
+    /// c:1559/1564 — `-M`/`-T` mark a symlink by its target.
+    #[test]
+    fn type_marker_is_part_of_the_name_sort_key() {
+        if !zsh_available() {
+            return;
+        }
+        let d = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(d.path().join("foo")).unwrap();
+        std::fs::write(d.path().join("foo.c"), b"").unwrap();
+        std::fs::write(d.path().join("foo_x"), b"").unwrap();
+        std::os::unix::fs::symlink("foo", d.path().join("lf")).unwrap();
+        for s in [
+            "print *(M)",
+            "setopt markdirs; print *",
+            "print *(T)",
+            "print *(-M)",
+            "print *(-T)",
+        ] {
+            let z = run_zsh_in(d.path(), s);
+            let r = run_zshrs_in(d.path(), s);
+            assert_eq!(z.stdout, r.stdout, "order divergence on: {s}");
+        }
+    }
 }
 
 mod size_qualifier {
@@ -408,6 +435,17 @@ mod qualifier_arg_delimiters {
     fn eval_qualifier_bracket_delim() {
         let d = setup_txt_dir();
         assert_parity_sorted(d.path(), "print -l *(.e[true])");
+    }
+
+    /// c:Src/glob.c:1108 — `glob_exec_string` untokenizes the code, so an
+    /// UNQUOTED `e:REPLY=x:` body is an assignment (not a command word
+    /// carrying an Equals token) and `\*` reaches the eval as `\*`.
+    #[test]
+    fn eval_qualifier_unquoted_body_is_untokenized() {
+        let d = setup_txt_dir();
+        assert_parity_sorted(d.path(), "print -l *(e:REPLY=x:)");
+        assert_parity_sorted(d.path(), "print -l *(e:REPLY=\\*:)");
+        assert_parity_sorted(d.path(), "setopt extendedglob; print -l *(#qe:reply=( \\\\\\* ):)");
     }
 
     #[test]
