@@ -1956,7 +1956,18 @@ pub fn dotrap(sig: i32) -> i32 {
         // outer stdout around the body, then revert to the
         // cmdsub-bound fd. Same idea as bash's command-subst trap
         // routing (Functions/Misc/runtraps).
-        let outer = crate::ported::exec::cmdsubst_outer_stdout();
+        //
+        // Only a REAL signal is the parent's business. ZERR, DEBUG and EXIT
+        // (c:Src/signals.h:34-46 — pseudo-signals raised by the commands
+        // themselves) fire in the forked `$(…)` child in C, whose fd 1 is
+        // the capture pipe: `trap 'echo T' DEBUG; x=$(echo hi)` stores
+        // "T\nhi" in x. Rerouting those printed the trap output to the
+        // terminal and dropped it from the value.
+        let outer = if sig > SIGEXIT && sig <= SIGCOUNT {
+            crate::ported::exec::cmdsubst_outer_stdout()
+        } else {
+            None
+        };
         let saved_inner = if outer.is_some() {
             unsafe { libc::dup(libc::STDOUT_FILENO) }
         } else {

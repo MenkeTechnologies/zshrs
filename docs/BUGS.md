@@ -11478,6 +11478,11 @@ This matches zsh's forked-cmdsub semantic without requiring
 zshrs to actually fork. Bash's `runtraps` does the same
 routing trick for the equivalent case.
 
+The rerouting applies to REAL signals only. ZERR, DEBUG and EXIT are
+raised by the commands themselves, so in zsh they fire in the forked
+child and their output is captured: `trap 'echo T' DEBUG; x=$(echo hi)`
+stores `T\nhi`. Rerouting those too sent the output to the terminal.
+
 **Verify**
 
 ```sh

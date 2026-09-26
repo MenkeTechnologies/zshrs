@@ -412,3 +412,27 @@ mod forked_compound_exit_trap {
         assert_parity(r#"{ trap 'echo X' EXIT; echo A } | cat & wait"#);
     }
 }
+
+// DEBUG and ZERR are raised by the commands themselves, so inside `$(…)`
+// they fire in C's forked child, whose stdout is the capture pipe
+// (c:Src/exec.c getoutput → child execode). Only a REAL signal trap belongs
+// to the parent and prints to its stdout.
+mod pseudo_signal_traps_in_cmdsubst {
+    use super::*;
+
+    #[test]
+    fn debug_trap_output_is_captured() {
+        assert_parity(r#"trap 'echo T' DEBUG; x=$(echo hi); echo "<$x>""#);
+        assert_parity(r#"x=$(trap 'echo T' DEBUG; echo hi); echo "<$x>""#);
+    }
+
+    #[test]
+    fn zerr_trap_output_is_captured() {
+        assert_parity(r#"trap 'echo Z' ZERR; x=$(false; echo hi); echo "<$x>""#);
+    }
+
+    #[test]
+    fn signal_trap_still_prints_in_the_parent() {
+        assert_parity(r#"trap 'echo T' USR1; x=$(kill -USR1 $$; echo hi); echo "<$x>""#);
+    }
+}
