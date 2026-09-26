@@ -736,3 +736,20 @@ mod quoted_bracket_in_assignment_subscript {
         assert_parity("typeset -A pc; pc['\\[']+=x\npc['\\[']+=y\nprint -r -- ${(kv)pc}");
     }
 }
+
+/// c:Src/params.c:1541-1546 — in a HASH subscript, an escape marker that
+/// guards a bracket INSIDE a nested subscript is turned back into `\`
+/// (`if (ishash && i) *t = ztokens[*t - Pound]`) so the inner subscript's
+/// parsestr re-lexes it. The unbraced walk stripped it, the inner `[` never
+/// closed and the reference failed "invalid subscript" (D06subscript
+/// "Associative array lookup using a pattern subscript to get the key").
+mod unbraced_hash_key_nested_escaped_bracket {
+    use super::*;
+
+    #[test]
+    fn nested_pattern_subscript_keeps_its_escape() {
+        let prep = r#"s='a [b] c'; typeset -A A; A=('[' ob ']' cb '\]' bcb); "#;
+        assert_parity(&format!(r#"{prep}print -R $A[$s[(r)\[]] $A[$s[(r)\]]] ${{A[$s[(r)\[]]}}"#));
+        assert_parity(&format!(r#"{prep}print -R $A[$A[(i)\\\\\]]] $A[\[] $A[\]]"#));
+    }
+}

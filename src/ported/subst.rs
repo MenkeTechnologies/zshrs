@@ -25211,6 +25211,7 @@ pub fn paramsubst(
                     let trimmed = raw_sub.trim_start();
                     trimmed.starts_with('(') || trimmed.starts_with(crate::ported::zsh_h::Inpar)
                 };
+                let mut hash_nested_tok = false;
                 let raw_sub = {
                     // c:Src/params.c:1577-1582 — `if (ishash && (keymatch ||
                     // !rev)) remnulargs(s);`. The `ishash` half was dropped in
@@ -25225,14 +25226,43 @@ pub fn paramsubst(
                         raw_sub
                     } else {
                         let mut out = String::with_capacity(raw_sub.len());
-                        for c in raw_sub.chars() {
+                        let cv: Vec<char> = raw_sub.chars().collect();
+                        let mut depth = 0; // c:1535 `i`
+                        let mut k = 0;
+                        while k < cv.len() {
+                            let c = cv[k];
                             if c == crate::ported::zsh_h::Bnull {
+                                // c:1541-1547 — a marker guarding a bracket is kept
+                                // (and the bracket skipped, `++t`, so it does not
+                                // count as nesting) — except INSIDE a nested
+                                // subscript (`$A[$s[(r)\[]]`), where `if (ishash &&
+                                // i) *t = ztokens[…]` turns it back into `\`, so
+                                // remnulargs keeps it and parsestr (c:1586) re-lexes
+                                // the escape for the inner subscript. Stripping it
+                                // left `$s[(r)[]`, whose `[` never closed.
+                                if let Some(&b @ ('[' | ']' | '(' | ')' | '{' | '}')) = cv.get(k + 1) {
+                                    if depth > 0 {
+                                        out.push('\\');
+                                        hash_nested_tok = true; // c:1546 needtok
+                                    }
+                                    out.push(b);
+                                    k += 2;
+                                    continue;
+                                }
+                                k += 1;
                                 continue;
-                            } else if c == crate::ported::zsh_h::Bnullkeep {
+                            }
+                            if c == '[' || c == Inbrack {
+                                depth += 1; // c:1553
+                            } else if c == ']' || c == Outbrack {
+                                depth -= 1; // c:1555
+                            }
+                            if c == crate::ported::zsh_h::Bnullkeep {
                                 out.push('\\');
                             } else {
                                 out.push(c);
                             }
+                            k += 1;
                         }
                         out
                     }
@@ -25305,7 +25335,7 @@ pub fn paramsubst(
                 // untokenize turns the Bnull back into `\`, which dquote_parse keeps as a
                 // plain backslash, and the pattern still sees the escape after singsub
                 // strips markers. A NESTED `$s[$s[(i)\[]]` arrives with the marker, not `\`.
-                let to_expand = if (sub_is_flag && (raw_sub.contains('\\') || raw_sub.contains(crate::ported::zsh_h::Bnull))) || folded != raw_sub {
+                let to_expand = if (sub_is_flag && (raw_sub.contains('\\') || raw_sub.contains(crate::ported::zsh_h::Bnull))) || folded != raw_sub || hash_nested_tok {
                     crate::ported::lex::parsestr(&folded).unwrap_or_else(|_| folded.clone())
                 } else {
                     raw_sub
