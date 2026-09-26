@@ -2188,15 +2188,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     exec.redirect_failed = false;
                     f
                 });
-                if redir_failed {
+                // c:Src/exec.c:4343-4350 — the prefix assignments of an
+                // external run in the forked child (`addvars(…); if
+                // (errflag) _exit(1);`): `UID=0 date` is skipped with
+                // status 1 and the shell's errflag stays clean.
+                let prefix_failed = PREFIX_ASSIGN_FAILED.with(|c| c.replace(false));
+                if redir_failed || prefix_failed {
                     // c:Src/exec.c:3719 forks the external command these
                     // shadows stand in for BEFORE the redirection loop at
                     // c:3785, so a redirection `zerr` (`cat <&""` → "file
                     // number expected") lands in the child: the shell only
                     // sees status 1 (c:252-256 execerr in the child) and runs
                     // the next command. Same rule as call_function's arm.
+                    let bits = if prefix_failed {
+                        crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD
+                    } else {
+                        crate::ported::zsh_h::ERRFLAG_ERROR
+                    };
                     crate::ported::utils::errflag.fetch_and(
-                        !crate::ported::zsh_h::ERRFLAG_ERROR,
+                        !bits,
                         std::sync::atomic::Ordering::Relaxed,
                     );
                     crate::ported::builtin::LASTVAL

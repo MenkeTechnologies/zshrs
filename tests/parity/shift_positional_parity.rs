@@ -353,3 +353,37 @@ mod numeric_name_assign {
         assert_parity("echo 2=3 2+=3");
     }
 }
+
+mod shift_named_array {
+    use super::*;
+
+    /// c:Src/builtin.c:5600,5616 — `getaparam("argv")` reads the live
+    /// positional vector (`arrvargetfn`, Src/params.c:4231), so `argv` is an
+    /// array name for `shift`. It used to read a stale paramtab slot:
+    /// `shift 2 argv` reported "shift count must be <= $#" and shifted nothing.
+    #[test]
+    fn shift_argv_by_name() {
+        assert_parity(r#"() { shift 2 argv; echo $@; shift argv; echo $@ } a b c d e"#);
+    }
+
+    #[test]
+    fn shift_argv_past_end_fails() {
+        assert_parity(r#"() { shift 9 argv 2>/dev/null; echo $? $# } a b c"#);
+    }
+
+    /// c:Src/builtin.c:5602 — a named-array overflow names the array:
+    /// `zwarnnam(name, "shift count must be <= ${#%s}", *argv)`. Only the
+    /// positional case (c:5623) says `$#`. zsh 5.9.x predates this message,
+    /// so it is checked against the C source rather than the host zsh.
+    #[test]
+    fn shift_named_array_overflow_names_the_array() {
+        let o = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", "() { local -a arr=( a b c ); shift 9 arr }; () { shift 9 argv } a"])
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stderr),
+            "(anon):shift: shift count must be <= ${#arr}\n(anon):shift: shift count must be <= ${#argv}\n"
+        );
+    }
+}

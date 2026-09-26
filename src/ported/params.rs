@@ -6528,6 +6528,14 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
             let pm: &param = unsafe { &*visible };
             if PM_TYPE(pm.node.flags as u32) == PM_ARRAY {
                 // c:3108
+                // c:392-393,430 — `*`, `@` and `argv` are IPDEF9 nodes on
+                // `&pparams`; their gsu.a getfn is `arrvargetfn`
+                // (c:4231-4236), which reads the LIVE positional vector.
+                // zshrs keeps that vector in `builtin::PPARAMS`; the node's
+                // `u_arr` is stale, so `shift 2 argv` saw the wrong words.
+                if matches!(name, "argv" | "@" | "*") {
+                    return Some(PPARAMS.lock().map(|p| p.clone()).unwrap_or_default());
+                }
                 if let Some(arr) = pm.u_arr.as_ref() {
                     // c:3109 — gsu.a == stdarray_gsu → arrgetfn (c:4054).
                     return Some(arr.clone());

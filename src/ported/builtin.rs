@@ -13075,15 +13075,9 @@ pub fn bin_shift(
         // c:5600
         let first = &argv[0];
         // c:5600 — `if (!getaparam(*argv))` decides whether the arg is
-        //          a numeric shift-count vs an array name. Check
-        //          paramtab for a PM_ARRAY entry, not OS env.
-        let is_array = {
-            use {PM_ARRAY, PM_TYPE};
-            let tab = paramtab().read().unwrap();
-            tab.get(first)
-                .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_ARRAY)
-                .unwrap_or(false)
-        };
+        //          a numeric shift-count vs an array name. getaparam
+        //          dispatches `argv` to the live positional vector.
+        let is_array = crate::ported::params::getaparam(first).is_some();
         if !is_array {
             // c:5600
             // c:5601 — `num = mathevali(*argv++);`. The previous Rust port
@@ -13117,20 +13111,14 @@ pub fn bin_shift(
         for arr_name in &argv[idx..] {
             // c:5615
             // c:5616 — `if ((s = getaparam(*argv)))` else silent skip.
-            //          Read paramtab directly; was approximating arrays
-            //          as `:`-separated env values which is wrong (env
-            //          can never carry array structure).
-            let s: Vec<String> = {
-                let tab = paramtab().read().unwrap();
-                match tab.get(arr_name).and_then(|pm| pm.u_arr.clone()) {
-                    Some(arr) => arr,
-                    None => continue,
-                }
+            let s: Vec<String> = match crate::ported::params::getaparam(arr_name) {
+                Some(arr) => arr,
+                None => continue,
             };
             // c:5617-5621 — arrlen_lt check.
             if (s.len() as i32) < num {
                 // c:5617
-                zwarnnam(name, "shift count must be <= $#"); // c:5618
+                zwarnnam(name, &format!("shift count must be <= ${{#{}}}", arr_name)); // c:5602
                 ret += 1; // c:5619
                 continue; // c:5620
             }

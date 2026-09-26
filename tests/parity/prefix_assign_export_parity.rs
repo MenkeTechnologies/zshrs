@@ -262,3 +262,20 @@ fn a_tied_special_still_behaves_under_the_export_arm() {
         ],
     );
 }
+
+/// c:Src/exec.c:4343-4350 — the prefix assignments of an external run in the
+/// forked child (`addvars(…); if (errflag) _exit(1);`). The in-process
+/// stand-ins for `cat` / `date` must fail the same way: skipped with status
+/// 1, and the shell's errflag untouched so the next command still runs.
+/// Before the fix `UID=0 cat` ran the shadow and then ended the script.
+/// (As root `UID=0` succeeds in both shells, so the scripts still agree.)
+#[test]
+fn a_failed_prefix_assignment_skips_a_coreutils_shadow() {
+    assert_matches_oracle(
+        "`UID=0 cat` / `x=${u?e} date`",
+        &[
+            "UID=0 cat </dev/null 2>/dev/null; print -r -- rc=$?",
+            "x=${u?e} date 2>/dev/null; print -r -- rc=$?",
+        ],
+    );
+}
