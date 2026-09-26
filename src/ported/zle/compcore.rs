@@ -3821,9 +3821,14 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
                             // element is not a match list" answer.
                             Some(arr)
                         } else {
+                            // !!! RUST-ONLY: `params::getarrvalue` takes a
+                            // 1-based start; a non-negative `v.start` is
+                            // getindex's 0-based offset (c:2145), a negative
+                            // one already counts from the end.
+                            let start = v.start as i64;
                             Some(crate::ported::params::getarrvalue(
                                 &arr,
-                                v.start as i64,
+                                if start >= 0 { start + 1 } else { start },
                                 v.end as i64,
                             ))
                         }

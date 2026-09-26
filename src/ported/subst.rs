@@ -13280,14 +13280,14 @@ pub fn paramsubst(
             // ⇒ vunset, on PM_UNSET ALONE. `arrays_contains`/`assoc_contains`
             // answer the c:2813 `(t)` question instead, where PM_DECLARED
             // keeps a `setopt typesettounset; local -a h` node counting; for
-            // set-ness that node is unset (`print $+h` → 0). A PM_SPECIAL
-            // node is left to the value stores (`_` is decided by
-            // vars_contains, which already reads PM_UNSET).
+            // set-ness that node is unset (`print $+h` → 0). That holds for
+            // a PM_SPECIAL node too: `unset manpath` leaves the tied special
+            // in the table marked PM_UNSET (Src/params.c:3911-3913), and its
+            // array store must not answer for it.
             let node_unset_c2805 = paramtab().read().ok().is_some_and(|tab| {
                 tab.get(&var_name).is_some_and(|pm| {
                     let f = pm.node.flags as u32;
                     (f & crate::ported::zsh_h::PM_UNSET) != 0
-                        && (f & crate::ported::zsh_h::PM_SPECIAL) == 0
                 })
             });
             !ksh_clamped_past_end_c2954!()

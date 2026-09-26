@@ -6341,7 +6341,7 @@ fn apply_selection(state: &mut globdata) {
 
     let start = match first {
         Some(f) if f < 0 => (len + f).max(0) as usize,
-        Some(f) => (f - 1).max(0) as usize,
+        Some(f) => f as usize, // c:1739 `first = v.start` (getindex: 0-based, c:2145)
         None => 0,
     };
 
@@ -9074,12 +9074,14 @@ mod tests {
     }
 
     // ── Subscript qualifier — `[N]` keep first ───────────────────────
-    /// `[1]` — first entry only.
+    /// `[1]` — first entry only. C's `first = v.start` (c:1739) is getindex's
+    /// 0-based offset (c:2145) and `end = v.end` the 1-based bound.
     #[test]
-    fn parse_qualifier_string_bracket_one_sets_first_to_one() {
+    fn parse_qualifier_string_bracket_one_sets_first_to_zero() {
         let _g = crate::test_util::global_state_lock();
         let qs = parse_qualifier_string("[1]");
-        assert_eq!(qs.first, Some(1));
+        assert_eq!(qs.first, Some(0));
+        assert_eq!(qs.last, Some(1));
     }
 
     /// `om[1]` — sort by mtime, keep first.
@@ -9089,7 +9091,7 @@ mod tests {
         let qs = parse_qualifier_string("om[1]");
         assert_eq!(qs.sorts.len(), 1);
         assert_eq!(qs.sorts[0] & GS_MTIME, GS_MTIME);
-        assert_eq!(qs.first, Some(1));
+        assert_eq!(qs.first, Some(0));
     }
 
     // ═══════════════════════════════════════════════════════════════════

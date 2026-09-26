@@ -310,6 +310,65 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 }
             }
 
+            // c:337-358 — `getvalue(mptr->pval, &s, 1)` then
+            // `getnumvalue(mptr->pval)`: getindex evaluates the subscript,
+            // getstrvalue selects the array element or cuts the scalar, and
+            // getnumvalue re-evaluates that string (c:2639), so `b=12;
+            // $(( b[2] ))` is 2 and `a=(1+2); $(( a[1] ))` is 3. A name
+            // getvalue cannot resolve is c:345-346's nounset error. The
+            // store readers below remain for what this Value path does not
+            // model: associations (whose per-key gsu such as
+            // `compstate[nmatches]` lives in `assoc_key_hit`), module
+            // specials (PARTAB), and --bash's 0-based indexing.
+            let is_hash_or_special = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arr_name).map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED))
+                .unwrap_or(false)
+                || crate::ported::params::paramtab_hashed_storage()
+                    .lock()
+                    .map(|m| m.contains_key(arr_name))
+                    .unwrap_or(false)
+                || crate::ported::modules::parameter::PARTAB
+                    .iter()
+                    .any(|e_| e_.name == arr_name);
+            if !is_hash_or_special && !crate::dash_mode::bash_mode() {
+                let mut vbuf = crate::ported::zsh_h::value {
+                    pm: None,
+                    arr: Vec::new(),
+                    scanflags: 0,
+                    valflags: 0,
+                    start: 0,
+                    end: -1,
+                };
+                let mut s: &str = name;
+                // Same evaluator save/restore as the flag path above (c:367).
+                let saved = save_state();
+                let r = match crate::ported::params::getvalue(Some(&mut vbuf), &mut s, 1) {
+                    Some(v) => Some(crate::ported::params::getnumvalue(Some(v))), // c:358
+                    None => None,
+                };
+                let inner_err = M_ERROR.with(|c| c.borrow_mut().take());
+                restore_state(saved);
+                if let Some(e) = inner_err {
+                    m_error_set(e);
+                }
+                return match r {
+                    Some(n) => n,
+                    None => {
+                        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+                            // c:345-346
+                            crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+                        }
+                        mnumber {
+                            l: 0,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        } // c:353
+                    }
+                };
+            }
+
             // Recursively eval the index (so a[i+1], h[$k], etc work).
             // CRITICAL: save/restore evaluator state around the recursive
             // matheval — without this, the inner call's `push(idx_value)`
@@ -417,42 +476,38 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             // hash; route through it rather than adding a fourth copy
             // of the special-case. It falls back to the same store read
             // below when it declines (name shadowed by a `local`).
-            if let Some((_, Some(v))) = crate::vm_helper::assoc_key_hit(arr_name, idx_str) {
-                if let Ok(n) = v.parse::<i64>() {
-                    return mnumber {
-                        l: n,
-                        d: 0.0,
-                        type_: MN_INTEGER,
-                    };
-                }
-                if let Ok(f) = v.parse::<f64>() {
-                    return mnumber {
-                        l: 0,
-                        d: f,
-                        type_: MN_FLOAT,
-                    };
-                }
-            }
-            // PM_HASHED via paramtab_hashed_storage.
-            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
-                if let Some(map) = m.get(arr_name) {
-                    if let Some(v) = map.get(idx_str) {
-                        if let Ok(n) = v.parse::<i64>() {
-                            return mnumber {
-                                l: n,
-                                d: 0.0,
-                                type_: MN_INTEGER,
-                            };
-                        }
-                        if let Ok(f) = v.parse::<f64>() {
-                            return mnumber {
-                                l: 0,
-                                d: f,
-                                type_: MN_FLOAT,
-                            };
+            // c:Src/params.c:2639 — `return matheval(getstrvalue(v));`: an
+            // element's value is itself an arithmetic expression, so
+            // `h[x]=2+3; (( h[x] ))` is 5. Evaluated under the same state
+            // save as the other nested reads (c:367); an error reaches the
+            // outer frame through m_error_set.
+            let element_value = |val: &str| -> mnumber {
+                let saved = save_state();
+                let r = matheval(val);
+                restore_state(saved);
+                match r {
+                    Ok(n) => n,
+                    Err(e) => {
+                        m_error_set(e);
+                        mnumber {
+                            l: 0,
+                            d: 0.0,
+                            type_: MN_INTEGER,
                         }
                     }
                 }
+            };
+            if let Some((_, Some(v))) = crate::vm_helper::assoc_key_hit(arr_name, idx_str) {
+                return element_value(&v);
+            }
+            // PM_HASHED via paramtab_hashed_storage. The value is copied out
+            // so the store's lock is not held across the evaluation.
+            let stored = crate::ported::params::paramtab_hashed_storage()
+                .lock()
+                .ok()
+                .and_then(|m| m.get(arr_name).and_then(|map| map.get(idx_str).cloned()));
+            if let Some(v) = stored {
+                return element_value(&v);
             }
             // c:Src/math.c:337 getmathparam → getvalue: magic-assoc special
             // parameters (`sysparams`, `errnos`, `commands`, …) don't live in
@@ -2737,7 +2792,27 @@ pub(crate) fn zzlex() -> i32 {
                     }
                 }
                 if m_pos() > id_start {
-                    m_yylval_set(m_input_slice(id_start, m_pos()));
+                    // c:890-900 — `if (*ptr == '[' || (!cct && *ptr == '('))`:
+                    // a `[…]` subscript (nesting counted, `\` skipping the
+                    // next character) is part of the CID's text.
+                    if peek() == Some('[') {
+                        advance();
+                        let mut l = 1; // c:894
+                        while l > 0 {
+                            match advance() {
+                                Some('[') => l += 1, // c:895-896
+                                Some(']') => l -= 1, // c:897-898
+                                Some('\\') => {
+                                    if peek().is_some() {
+                                        advance(); // c:899-900
+                                    }
+                                }
+                                Some(_) => {}
+                                None => break,
+                            }
+                        }
+                    }
+                    m_yylval_set(m_input_slice(id_start, m_pos())); // c:902
                     return CID;
                 }
                 // c:Src/math.c:911-915 — bare `#` (followed by non-ident) is

@@ -1481,11 +1481,7 @@ pub fn getvaluearr(v: Option<&mut value>) -> Vec<String> {
         v.arr = paramvalarr(&ht, v.scanflags); // c:715
                                                // c:716-718 — `/* Can't take numeric slices of associative
                                                // arrays */ v->start = 0; v->end = numparamvals + 1;`.
-                                               // zshrs's `getarrvalue` takes a 1-BASED start (this port's
-                                               // `getindex` never applies C's `start -= startprevlen`,
-                                               // params.rs `getindex` c:2125 note), so the whole-array pair is
-                                               // (1, n+1) here rather than C's (0, n+1).
-        v.start = 1; // c:716
+        v.start = 0; // c:716
         v.end = (v.arr.len() + 1) as i32; // c:717
         return v.arr.clone();
     }
@@ -4427,6 +4423,10 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
             if start != end {
                 com = true; // c:2137-2138
             }
+            // c:2144-2145 — `if (start > 0) start -= startprevlen;` with the
+            // initial `*prevcharlen = 1` (c:1405): the hash exits never
+            // reach c:1650's character walk.
+            let start = start - 1;
             if v.scanflags != 0
                 && !com
                 && ((v.scanflags as u32 & SCANPM_MATCHMANY) == 0
@@ -4492,8 +4492,8 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                             }
                         }
                     };
-                    v.start = 1; // c:2151 (1-based; see the c:2125 note below)
-                    v.end = hits.len() as i32; // c:2152
+                    v.start = 0; // c:2144-2145 (getarg's 1, less startprevlen)
+                    v.end = hits.len() as i32; // c:2135
                     v.arr = hits;
                     *pptr = past_close; // c:2164
                     return 0; // c:2166
@@ -4525,9 +4525,16 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     // decimal fast path (matheval of "5" is 5) and route everything
     // else through the canonical evaluator so both outcomes survive.
     let evalarg = |t: &str| -> i64 {
-        match t.parse::<i64>() {
+        let r = match t.parse::<i64>() {
             Ok(n) => n, // fast path; identical to mathevalarg on a decimal literal
-            Err(_) => crate::ported::math::mathevalarg(t), // c:1597
+            Err(_) => crate::ported::math::mathevalarg(t), // c:1618
+        };
+        // c:1619-1620 — `if (isset(KSHARRAYS) && r >= 0) r++;`. getarg
+        // runs this for both the start (a2=0) and the `,end` (a2=1) operand.
+        if crate::ported::zsh_h::isset(KSHARRAYS) && r >= 0 {
+            r + 1
+        } else {
+            r
         }
     };
     let start: i64 = evalarg(start_str);
@@ -4539,12 +4546,20 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
         None => start,
     };
 
-    // c:2125 — `if (start > 0) start -= startprevlen`. Without
-    // multibyte support this is a no-op for ASCII.
     let mut start = start;
-    let com = end_str.is_some() || start != end;
+    let mut com = end_str.is_some() || start != end; // c:2131-2138
 
-    if start == 0 && end == 0 {
+    // c:2144-2145 — `if (start > 0) start -= startprevlen;`. getarg
+    // returned the 1-based position just PAST the start character
+    // (c:1650-1655 walks `r` characters); `startprevlen` is that last
+    // character's length, so this turns the position into the 0-based
+    // offset every consumer (getstrvalue c:2362/c:2527, setstrvalue,
+    // glob's `first`) indexes with. This port subscripts by character,
+    // where that length is always one — including for an array, whose
+    // getarg leaves `*prevcharlen` at its initial 1 (c:1405).
+    if start > 0 {
+        start -= 1; // c:2145
+    } else if start == 0 && end == 0 {
         // c:2126
         // c:2134 — `if (isset(KSHZEROSUBSCRIPT))` non-strict mode.
         // Treats `a[0]` as the first element (end = startnextlen,
@@ -4555,6 +4570,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
         } else {
             v.valflags |= VALFLAG_EMPTY; // c:2147
             start = -1; // c:2148
+            com = true; // c:2170
         }
     }
     // c:2156-2158 — clear scanflags for non-comma simple subscript
@@ -4790,11 +4806,13 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
             .and_then(|store| store.get(&pm.node.nam).and_then(|m| m.get("0").cloned()))
             .unwrap_or_default()
     } else if t == PM_HASHED || t == PM_ARRAY {
-        // c:2359-2369 (PM_ARRAY, and the ksh-emulation PM_HASHED fall-through)
+        // c:2359-2369 (PM_ARRAY, and the ksh-emulation PM_HASHED fall-through).
+        // Both arms end in `return s;` (c:2369): an element is neither
+        // padded nor cut by the scalar tail below.
         let arr = arrgetfn(pm);
         if v.scanflags != 0 {
             // c:2361
-            arr.join(" ")
+            return arr.join(" ");
         } else {
             let mut start = v.start;
             if start < 0 {
@@ -4802,9 +4820,9 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
             } // c:2364
             if start < 0 || (start as usize) >= arr.len() {
                 // c:2365-2366
-                String::new()
+                return String::new();
             } else {
-                arr[start as usize].clone()
+                return arr[start as usize].clone();
             }
         }
     } else if t == PM_INTEGER {
@@ -4962,7 +4980,43 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         }
     }
 
-    s
+    // c:2507-2508 — the whole value.
+    if v.start == 0 && v.end == -1 {
+        return s;
+    }
+
+    // c:2510-2532 — a subscripted scalar: cut `s` to [start, end). C's
+    // offsets are bytes of the metafied string (getarg converted the
+    // character subscript, c:1650-1655); this port's getindex yields
+    // character offsets, so the cut walks characters and each
+    // MB_METACHARLEN (c:2520) is one.
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len() as i32; // c:2510
+    if v.start < 0 {
+        // c:2511-2515
+        v.start += len;
+        if v.start < 0 {
+            v.start = 0;
+        }
+    }
+    if v.end < 0 {
+        // c:2516-2522
+        v.end += len;
+        if v.end >= 0 && v.end < len {
+            v.end += 1; // c:2520 `v->end += MB_METACHARLEN(eptr)`
+        }
+    }
+    if v.start > len {
+        return String::new(); // c:2524-2525
+    }
+    let tail = &chars[v.start as usize..]; // c:2526
+    if v.end <= v.start {
+        String::new() // c:2528-2529
+    } else if v.end - v.start <= len - v.start {
+        tail[..(v.end - v.start) as usize].iter().collect() // c:2530-2531
+    } else {
+        tail.iter().collect()
+    }
 }
 
 /// Slice an indexed array using zsh 1-based inclusive semantics.
@@ -5159,23 +5213,30 @@ pub fn getnumvalue(v: Option<&mut value>) -> mnumber {
         }
         // c:2556 — `s = getvaluearr(v)`, which returns `v->arr` first (c:731).
         // !!! WARNING: RUST-ONLY SLICE RULE !!! this port's getindex `(r)`/`(R)`
-        // arm stores exactly the matched elements in `v.arr` with 1-based
-        // bounds (params.rs getindex, "c:2151"), where C stores an index into
-        // the whole array; those elements ARE the slice, so they are taken
-        // whole. Otherwise C's c:2557-2558 whole-array test, then the slice.
+        // arm stores exactly the matched elements in `v.arr` (params.rs
+        // getindex), where C stores an index into the whole array; those
+        // elements ARE the slice, so they are taken whole. Otherwise C's
+        // c:2557-2558 whole-array test, then the slice. `getarrvalue` here
+        // takes a 1-based start; a non-negative `v.start` is getindex's
+        // 0-based offset (c:2145), a negative one already counts from the end.
         let whole = !v.arr.is_empty() || (v.start == 0 && v.end == -1);
         let (start, end) = (v.start as i64, v.end as i64);
         let full = getvaluearr(Some(&mut *v));
         let arr = if whole {
             full
         } else {
-            getarrvalue(&full, start + 1, end)
+            getarrvalue(&full, if start >= 0 { start + 1 } else { start }, end)
         };
         let scal = crate::ported::utils::sepjoin(&arr, None);
-        return matheval(&scal).unwrap_or(mnumber {
-            l: 0,
-            d: 0.0,
-            type_: MN_INTEGER,
+        // c:2630 — `return matheval(scal);`; a malformed join is reported
+        // by the evaluator (zerr) and reads as zero.
+        return matheval(&scal).unwrap_or_else(|e| {
+            zerr(&e);
+            mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            }
         });
     }
     let pm = match v.pm.as_mut() {
@@ -5203,18 +5264,20 @@ pub fn getnumvalue(v: Option<&mut value>) -> mnumber {
             type_: MN_FLOAT,
         };
     }
-    // c:2640 — `return matheval(getstrvalue(v));`. The previous
-    // Rust port used `parse::<i64>()` / `parse::<f64>()` directly
-    // on the scalar string, which silently failed for any non-
-    // trivial arithmetic. Route through `math::matheval` to match
-    // C's arithmetic-expression evaluation; matheval returns an
-    // mnumber tag matching the C output type.
-    let s = strgetfn(pm);
-    matheval(&s) // c:2640 matheval(...)
-        .unwrap_or(mnumber {
-            l: 0,
-            d: 0.0,
-            type_: MN_INTEGER,
+    // c:2639 — `return matheval(getstrvalue(v));`. getstrvalue, not the
+    // raw scalar getter: it selects the array ELEMENT (c:2362) and cuts a
+    // subscripted scalar (c:2510-2532), so `a=(1+2 x); $(( a[1] ))` is 3
+    // and `b=12; $(( b[2] ))` is 2. Reading `strgetfn(pm)` gave an
+    // array's (empty) scalar slot and a scalar's whole value.
+    let s = getstrvalue(Some(v));
+    matheval(&s) // c:2639 matheval(...)
+        .unwrap_or_else(|e| {
+            zerr(&e);
+            mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            }
         })
 }
 
@@ -5874,8 +5937,8 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     // c:2944-2949 — negative start: add pre_assignment_length; clamp to 0.
     // !!! WARNING: RUST-ONLY INDEX CONVENTION — C's getindex has already made a
     // positive start 0-based (`start -= startprevlen`, c:2144-2145), but this
-    // port keeps it 1-based (`start_idx = start - 1` below; the ported getindex
-    // omits that decrement and the fusevm splice passes 1-based starts). So a
+    // port keeps it 1-based (`start_idx = start - 1` below; the fusevm splice
+    // passes 1-based starts and assignaparam lifts getindex's). So a
     // negative start, which C turns into a 0-based index here, becomes the
     // matching 1-based one: `+ 1`, clamped at 1 instead of 0. Using C's 0-based
     // result made `typeset a[-1]=(z)` overwrite the last TWO elements.
@@ -7372,13 +7435,50 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
         None => (s, None),
     };
-    // c:Src/params.c parse_subscript — backslash-escapes in the
-    // subscript body (`\[`, `\]`, `\\`) are stripped to their literal
-    // form for the actual key value. `A[\[k\]]=v` stores under key
-    // `[k]`. zshrs's subscript extractor above preserved the escapes
-    // verbatim, so the stored key was `\[k\]` and the matching lookup
-    // `${A[[k]]}` couldn't find it.
+    // c:Src/params.c:1537-1598 (getarg) — the subscript text is scanned
+    // for `ispecial` characters (`needtok`, c:1562-1563); if there are any
+    // it is re-lexed as a double-quote-like string (`parsestr`, c:1587)
+    // and substituted (`singsub`, c:1592), then untokenized before the
+    // key lookup (c:1598). So only the escapes that lexing honours go:
+    // `\[k\]` → `[k]`, `\\` → `\`, `\$` → `$`, while `a\b` and `a\"b`
+    // keep their backslash, and a `$name` in the key expands.
+    //
+    // A flag subscript (`(r)pat`, …) keeps the older blanket escape strip:
+    // its pattern side is outside this fix.
     let subscript_owned: Option<String> = subscript.map(|key| {
+        if !key.starts_with('(') {
+            // !!! RUST-ONLY: C gets this key from getindex's in-place
+            // `parse_subscript(s, dq, ']')` (c:2008), which lexes `\` before
+            // a bracket, paren or brace into Bnull; getarg's loop keeps those
+            // Bnulls (c:1540-1547) and `remnulargs` (c:1582) deletes them.
+            // `lex::parse_subscript` returns only the end offset, so drop
+            // exactly those backslashes here. `\\` stays a pair for parsestr.
+            let mut k = String::with_capacity(key.len());
+            let mut it = key.chars().peekable();
+            while let Some(ch) = it.next() {
+                if ch == '\\' {
+                    match it.peek() {
+                        Some('[' | ']' | '(' | ')' | '{' | '}') => continue,
+                        Some(&next) => {
+                            k.push(ch);
+                            k.push(next);
+                            it.next();
+                            continue;
+                        }
+                        None => {}
+                    }
+                }
+                k.push(ch);
+            }
+            if k.bytes().any(crate::ported::ztype_h::ispecial) {
+                // c:1562-1563
+                match crate::ported::lex::parsestr(&k) {
+                    Ok(t) => k = crate::ported::subst::singsub(&t), // c:1587-1592
+                    Err(_) => return key.to_string(),               // c:1588 `return 0`
+                }
+            }
+            return crate::ported::lex::untokenize(&k); // c:1598
+        }
         let mut out = String::with_capacity(key.len());
         let mut bslash = false;
         for ch in key.chars() {
@@ -9292,6 +9392,13 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         };
         let mut cursor: &str = name;
         let v = fetchvalue(Some(&mut vbuf), &mut cursor, 1, SCANPM_ASSIGNING as i32)?; // c:3365
+        // !!! RUST-ONLY INDEX CONVENTION — getindex leaves C's 0-based start
+        // (c:2145), but `setarrvalue` here keeps the 1-based start its fusevm
+        // splice caller passes (see its c:2944 WARNING). Lift a non-negative
+        // start by one; VALFLAG_INV starts are 1-based already (c:2938).
+        if v.start >= 0 && (v.valflags & VALFLAG_INV) == 0 {
+            v.start += 1;
+        }
         setarrvalue(v, val); // c:3434
         let spliced = v.pm.take();
         if let Some(pm) = spliced {
@@ -10786,15 +10893,23 @@ pub fn unsetparam(name: &str) -> i32 {
                 // endparamscope can uncover the outer. Dropping it outright
                 // took the whole `pm.old` chain with it, so unsetting a
                 // shadowed `PATH` erased the GLOBAL `path` for good.
-                // Only the SHADOW halves of c:3892-3925 are replayed here.
-                // The PM_SPECIAL keep-the-node rule (c:3911-3913) deliberately
-                // is NOT: a global tied special must leave the table so
-                // `unset MANPATH; print $+manpath` reads 0 (D04parameter
-                // "Unsetting and recreation of tied special parameters").
+                // c:3911-3913 — `(pm->node.flags & (PM_SPECIAL|PM_REMOVABLE))
+                // == PM_SPECIAL` also keeps the node: a tied special stays in
+                // the table, PM_UNSET, with its tie and gsu intact, so a later
+                // `manpath=(…)` revives the SPECIAL pair and a following
+                // `unset MANPATH` cascades to `manpath` again. Dropping it
+                // made the revival a plain untied array that survived the
+                // partner's unset. `$+manpath` reads the PM_UNSET flag
+                // (subst.rs, c:Src/subst.c:2805).
                 let keep = alt_pm.old.is_some()
                     || (alt_pm.level > 0
-                        && locallevel.load(Ordering::Relaxed) as i32 >= alt_pm.level);
+                        && locallevel.load(Ordering::Relaxed) as i32 >= alt_pm.level)
+                    || (alt_pm.node.flags as u32 & (PM_SPECIAL | PM_REMOVABLE)) == PM_SPECIAL; // c:3911-3913
                 if keep {
+                    // The executor-side array/assoc bag (see the else arm)
+                    // holds the value outside the node; the unset empties it.
+                    crate::ported::exec::unset_array(alt);
+                    crate::ported::exec::unset_assoc(alt);
                     paramtab().write().unwrap().insert(alt.to_string(), alt_pm);
                 } else {
                     // c:3874 `paramtab->removenode(paramtab, pm->node.nam)` —

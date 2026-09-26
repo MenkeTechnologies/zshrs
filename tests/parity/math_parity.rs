@@ -1212,3 +1212,52 @@ mod based_constant_truncation {
         );
     }
 }
+
+/// c:Src/math.c:337-358 — a subscripted operand goes through
+/// `getvalue` + `getnumvalue`, which evaluates `getstrvalue(v)`
+/// (c:Src/params.c:2639): the element of an array, the cut of a scalar
+/// (c:2507-2532), each re-evaluated as arithmetic. getindex's
+/// `start -= startprevlen` (c:2145) makes the start 0-based for all of it.
+mod subscripted_operand_value {
+    use super::*;
+
+    #[test]
+    fn scalar_subscript_cuts_the_value() {
+        assert_parity("b=12; echo $(( b[2] )) $(( b[1] + 1 ))");
+        assert_parity("b=12345; echo $(( b[2,3] )) $(( b[-2] ))");
+    }
+
+    #[test]
+    fn array_element_is_evaluated_as_arithmetic() {
+        assert_parity("a=(1+2 x); x=5; echo $(( a[1] )) $(( a[2] ))");
+        assert_parity("setopt ksharrays; a=(7 8); echo $(( a[1] )) $(( a[0] ))");
+        assert_parity("typeset -A h; h[x]=2+3; h[y]=0x10; echo $(( h[x] )) $(( h[y] ))");
+    }
+
+    /// c:2626-2630 — a slice keeps its scanflags; the elements are joined
+    /// and the join is evaluated, so two numbers are a syntax error. A
+    /// strict `a[0]` is an empty range (c:2166-2170), i.e. zero.
+    #[test]
+    fn slice_is_joined_and_zero_index_is_empty() {
+        assert_parity("exec 2>&1; a=(1 2 3); echo $(( a[2,3] )); echo rc=$?");
+        assert_parity("exec 2>&1; a=(1 2 3); echo $(( a[0] ))");
+    }
+
+    /// c:345-346 — `getvalue` fails, so NO_UNSET reports the lvalue.
+    #[test]
+    fn nounset_reports_an_unset_subscripted_name() {
+        assert_parity("exec 2>&1; setopt nounset; echo $(( nope[1] )); echo rc=$?");
+    }
+}
+
+/// c:Src/math.c:890-902 — a `#name` operand's `[…]` subscript is part of
+/// the CID text; `getcvar`'s `getsparam` (bracks 0) then finds no such
+/// scalar and yields 0, instead of the lexer stopping at `[`.
+mod char_code_operand_subscript {
+    use super::*;
+
+    #[test]
+    fn subscripted_cid_is_one_token() {
+        assert_parity("exec 2>&1; a=(x yz); echo $(( #a[2] )) $(( #a[2] + 1 )) $(( #a + 1 ))");
+    }
+}

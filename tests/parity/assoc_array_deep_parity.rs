@@ -753,3 +753,28 @@ mod unbraced_hash_key_nested_escaped_bracket {
         assert_parity(&format!(r#"{prep}print -R $A[$A[(i)\\\\\]]] $A[\[] $A[\]]"#));
     }
 }
+
+/// c:Src/params.c:1537-1598 (getarg) — a key given as expanded text (the
+/// `typeset NAME[KEY]=v` argument form) is re-lexed only when it holds
+/// special characters, with double-quote-like rules: `\[`/`\]`, `\\` and
+/// `\$` lose the backslash, other escapes (`a\b`, `a\"b`) keep it, and
+/// `$name` expands.
+mod typeset_argument_key_escapes {
+    use super::*;
+
+    #[test]
+    fn only_lexed_escapes_are_removed() {
+        assert_parity(
+            r#"typeset -A A; for k in 'a\b' 'a\[k\]' 'a\\b' 'a\"b' 'a\$b' 'a\ b' 'x$HOME' 'a\*b'; do A=(); typeset "A[$k]"=1; print -r -- "$k => ${(k)A}"; done"#,
+        );
+    }
+
+    /// ztst D06subscript "Associative array keys with double quotes": the
+    /// two spellings are two different keys.
+    #[test]
+    fn escaped_quote_key_is_distinct() {
+        assert_parity(
+            r#"typeset -A A; typeset -g "A[one\"two\"three\"quotes]"=QQQ; typeset -g 'A[one\"two\"three\"quotes]'=qqq; print -rl -- ${(ok)A}"#,
+        );
+    }
+}

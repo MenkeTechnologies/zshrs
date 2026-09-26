@@ -324,3 +324,19 @@ mod env_does_not_see_argv0 {
         assert_parity(r#"env ARGV0=x /usr/bin/env | grep '^ARGV0='; ARGV0=foo env ARGV0=y /bin/sh -c 'echo $ARGV0'"#);
     }
 }
+
+/// c:Src/params.c:3911-3913 — unsetting a tied special keeps both nodes,
+/// PM_UNSET, with the tie intact: the array revived by `manpath=(…)` is
+/// still the special, so unsetting `MANPATH` takes `manpath` with it.
+mod unset_tied_special_keeps_the_tie {
+    use super::*;
+
+    #[test]
+    fn revived_pair_unsets_together() {
+        assert_parity(
+            "unset manpath; print $+MANPATH; manpath=(/here /there); print $MANPATH; \
+             unset MANPATH; print $+manpath; MANPATH=/a:/b; print $manpath",
+        );
+        assert_parity("unset fpath; FPATH=/a:/b; print ${(t)fpath}; unset FPATH; print $+fpath");
+    }
+}

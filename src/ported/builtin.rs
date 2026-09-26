@@ -10200,15 +10200,6 @@ pub fn bin_unset(
                                 .as_ref()
                                 .is_some_and(|p| (p.node.flags as u32 & PM_UNSET) == 0)
                         {
-                            // c:2125 `if (start > 0) start -= startprevlen;` —
-                            // the getindex port leaves a positive start
-                            // 1-based (see its c:2125 note); assignstrvalue's
-                            // scalar splice wants C's 0-based offset. Same
-                            // adjustment as the subscript-slice store in
-                            // fusevm_bridge.
-                            if vbuf.start > 0 {
-                                vbuf.start -= 1;
-                            }
                             crate::ported::params::setstrvalue(Some(&mut vbuf), ""); // c:3914
                             if let Some(pm_back) = vbuf.pm {
                                 if let Ok(mut tab) = paramtab().write() {
