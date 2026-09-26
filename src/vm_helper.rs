@@ -7121,7 +7121,11 @@ impl ShellExecutor {
         let mut output = crate::script_bytes::decode_script_bytes(&bytes);
 
         // POSIX: trailing newlines stripped from cmd-sub result.
-        while output.ends_with('\n') {
+        // c:Src/subst.c:1908 + c:2064-2069 — a nofork `${ … }` does its own
+        // trim (`trim = !qt` under zsh emulation: ONE newline unquoted, NONE
+        // quoted), so its caller gets the bytes untouched. Stripping them all
+        // here left `"${ print INNER } $?"` as `INNER 7`, zsh `INNER\n 7`.
+        while !shared_state && output.ends_with('\n') {
             output.pop();
         }
         // !!! RUST-ONLY: provenance tap. `$(…)` is a lineage ORIGIN —

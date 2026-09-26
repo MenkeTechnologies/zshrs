@@ -6832,7 +6832,13 @@ impl ZshCompiler {
         // the answer after this word was compiled (D10nofork.ztst
         // "newline removal in ${ ... }, emulation mode, shwordsplit").
         if !has_bnull {
-            let dq = word_is_single_dq_span(s);
+            // c:1908 `trim = !qt` wants the LEXICAL quoting. A segment of a
+            // larger double-quoted word (`"${ print X } $?"`) arrives with its
+            // quotes stripped but its `$` still the lexer's DQ-context Qstring;
+            // the Dnull pair `compile_scalar_assign_value` adds is synthetic
+            // (PREFORK_SINGLE, not a user `"…"`), so `v=${ cmd }` still trims.
+            let dq = (word_is_single_dq_span(s) && self.synthetic_dq_wrap_depth == 0)
+                || s.starts_with(crate::ported::zsh_h::Qstring);
             // The BODY is a fresh command line, so it must keep its own
             // quoting: `untokenize` folds the lexer's escape markers away
             // and turned `${ printf "a\n"; }` into `printf "an"`.
@@ -6860,7 +6866,19 @@ impl ZshCompiler {
                 // EMULATE_ZSH)) ? 2 : !qt;`. Whether the word was inside
                 // double quotes is a LEXICAL fact, so it is settled here;
                 // the emulation half is not, so the builtin computes `trim`.
-                self.builder.emit(Op::LoadInt(if dq { 1 } else { 0 }), 0);
+                // 2 = unquoted but PREFORK_SINGLE (a scalar assignment RHS,
+                // c:Src/exec.c:2603): trimmed as unquoted, never word-split.
+                let single = self.scalar_assign_depth > 0
+                    || self.assign_builtin_arg_depth > 0
+                    || self.singsub_depth > 0;
+                let qt_code = if dq {
+                    1
+                } else if single {
+                    2
+                } else {
+                    0
+                };
+                self.builder.emit(Op::LoadInt(qt_code), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_KSH_FUNSUB, 4), 0);
                 // Unquoted, the result is an ordinary expansion. Under

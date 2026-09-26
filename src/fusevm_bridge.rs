@@ -6381,7 +6381,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // ksh93 funsub / mksh valsub it subsumes. See the BUILTIN_KSH_FUNSUB
     // doc comment.
     vm.register_builtin(BUILTIN_KSH_FUNSUB, |vm, _argc| {
-        let mut qt = vm.pop().to_int() != 0;
+        // 0 = unquoted, 1 = inside `"…"`, 2 = unquoted PREFORK_SINGLE (a
+        // scalar assignment RHS): trimmed like unquoted, never split.
+        let qt_code = vm.pop().to_int();
+        let single = qt_code == 2;
+        let mut qt = qt_code == 1;
         let kind = vm.pop().to_int();
         let rplyvar = vm.pop().to_str();
         let body = vm.pop().to_str();
@@ -6421,6 +6425,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // substitution"): a `setopt shwordsplit` executed by the body
         // must not retroactively split the value it produced.
         let split = !qt
+            && !single
             && (crate::dash_mode::korn_mode()
                 || crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT));
         let out = with_executor(|exec| {

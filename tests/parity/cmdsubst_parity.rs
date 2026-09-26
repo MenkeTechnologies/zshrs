@@ -433,3 +433,33 @@ mod process_subst_out_dev_fd {
         );
     }
 }
+
+/// Nofork `${ cmd }` trailing-newline trim. The release zsh binary the
+/// parity helpers use predates nofork substitution, so these pin the output
+/// of the zsh dev tree (D10nofork.ztst). c:Src/subst.c:1908 `int trim =
+/// (!EMULATION(EMULATE_ZSH)) ? 2 : !qt;` and c:2064-2069: unquoted strips ONE
+/// newline, double-quoted strips NONE. The capture used to strip them all,
+/// and a segment of a larger quoted word was taken as unquoted.
+mod nofork_trim_zshrs_pin {
+    use super::*;
+
+    fn out(s: &str) -> String {
+        run_zshrs(s).stdout
+    }
+
+    #[test]
+    fn unquoted_strips_exactly_one_newline() {
+        assert_eq!(out(r#"print -r -- ${ echo $'a\n\n\n' }."#), "a\n\n\n.\n");
+        assert_eq!(out(r#"x=${ print a }; typeset -p x"#), "typeset x=a\n");
+        assert_eq!(out(r#"x=a${ print b }c; typeset -p x"#), "typeset x=abc\n");
+        assert_eq!(out(r#"w=${ print a } typeset -p w"#), "typeset w=a\n");
+    }
+
+    #[test]
+    fn quoted_strips_nothing() {
+        assert_eq!(out(r#"print -r -- "${ echo $'a\n\n' }""#), "a\n\n\n\n");
+        assert_eq!(out(r#"print -r -- "${ print INNER } $?""#), "INNER\n 0\n");
+        assert_eq!(out(r#"print -r -- "a${ print b }c""#), "ab\nc\n");
+        assert_eq!(out(r#"x="${ print a }"; typeset -p x"#), "typeset x=$'a\\n'\n");
+    }
+}
