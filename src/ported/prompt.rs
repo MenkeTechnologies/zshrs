@@ -2412,10 +2412,10 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
         }
         _ => {
             // c:1090 default
-            // c:1092 — `tputs(tcstr[cap], 1, putshout);`
-            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = crate::ported::utils::write_loop(out_fd, &crate::shout::tputs(&cap_str));
+            // c:1092 — `tputs(tcstr[cap], 1, putshout);`. putshout feeds the
+            // buffered `shout` stream, so the cap lands in order with the
+            // rest of a refresh frame instead of ahead of it.
+            crate::shout::write(&crate::shout::tputs(&cap_str));
         }
     }
     // zsh-5.9.1 tsetcap dirty pass — re-apply the attributes still

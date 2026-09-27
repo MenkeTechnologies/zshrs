@@ -1485,6 +1485,22 @@ pub fn zrefresh() {
     // index here instead. Set by the prompt walk in the build below.
     let mut prompt_last_row: usize = 0;
 
+    // c:1120-1124 — a single-line display for SINGLE_LINE_ZLE, a terminal
+    // under three lines, or one that cannot move the cursor up / is not
+    // known (`TERM=` or a TERM with no terminfo entry). Computed ahead of the
+    // NBUF build below, as in C, where c:1120 precedes the c:1208 build.
+    {
+        use crate::ported::params::TERMFLAGS;
+        use crate::ported::zsh_h::{TERM_BAD, TERM_NOUP, TERM_SHORT, TERM_UNKNOWN};
+        if isset(crate::ported::zsh_h::SINGLELINEZLE)
+            || crate::ported::utils::ZTERM_LINES.load(Ordering::SeqCst) < 3
+            || TERMFLAGS.load(Ordering::SeqCst) & (TERM_NOUP | TERM_BAD | TERM_UNKNOWN) != 0
+        {
+            TERMFLAGS.fetch_or(TERM_SHORT, Ordering::SeqCst); // c:1122
+        } else {
+            TERMFLAGS.fetch_and(!TERM_SHORT, Ordering::SeqCst); // c:1124
+        }
+    }
     // ---- Build NBUF (c:954-1400) ----------------------------------------
     // The full-repaint output above is the live renderer and is left
     // untouched. This populates the NBUF/OBUF video buffers that
@@ -1495,8 +1511,16 @@ pub fn zrefresh() {
     // now (the cell `chr` is faithful; the colour-diff is wired with
     // refreshline's colour path) — a documented simplification, not a stub.
     {
-        // c:954-956 — last frame's NBUF becomes this frame's OBUF.
-        bufswap();
+        // c:954-956 — last frame's NBUF becomes this frame's OBUF. A
+        // single-line frame swaps at the END instead (singlerefresh c:2740,
+        // as C's full path does at c:1745); swapping here as well would leave
+        // OBUF one frame stale and every keystroke would redraw the line.
+        if crate::ported::params::TERMFLAGS.load(Ordering::SeqCst)
+            & crate::ported::zsh_h::TERM_SHORT
+            == 0
+        {
+            bufswap();
+        }
         OLNCT.store(NLNCT.load(Ordering::SeqCst), Ordering::SeqCst);
         // c:1194 — `numscrolls = 0;` reset the per-frame scroll counter before
         // generating the video buffers. nextline increments it as content
@@ -2410,15 +2434,15 @@ pub fn zrefresh() {
         // `ESC SP BS` swallows one sequence), costing a whole grid row on
         // every `echo $commands[` and `man ` menu-select teardown.
         //
-        // `tcout` rather than `tsetcap(cap, 0)`: both are
-        // `tputs(tcstr[cap], 1, putshout)` in C, but the port's `tsetcap`
-        // writes STRAIGHT to the tty fd while `tcout` goes through the
-        // buffered `shout` stream that the rest of this frame is written to.
-        // Bypassing the buffer would reorder these three caps ahead of
-        // everything still queued.
-        tcout(crate::ported::zsh_h::TCALLATTRSOFF); // c:1191
-        tcout(crate::ported::zsh_h::TCSTANDOUTEND); // c:1192
-        tcout(crate::ported::zsh_h::TCUNDERLINEEND); // c:1193
+        // `tsetcap(cap, 0)`, not `tcout`: tsetcap is a plain
+        // `tputs(tcstr[cap], 1, putshout)` (prompt.c:1092), while tcout
+        // hands the cap to a `zle -T tc` function when one is set
+        // (c:2399). With `zle -T tc` blanking every tcout cap, zsh still
+        // emits this reset.
+        use crate::ported::prompt::tsetcap;
+        tsetcap(crate::ported::zsh_h::TCALLATTRSOFF, 0); // c:1191
+        tsetcap(crate::ported::zsh_h::TCSTANDOUTEND, 0); // c:1192
+        tsetcap(crate::ported::zsh_h::TCUNDERLINEEND, 0); // c:1193
         VCS.store(0, Ordering::SeqCst); // c:1157/1170 vcs = 0
         VLN.store(0, Ordering::SeqCst);
         // c:1201 `resetvideo();` → c:770 `vln = vmaxln = winprompt = 0;`.
@@ -2618,6 +2642,58 @@ pub fn zrefresh() {
                 LPROMPTW.load(Ordering::SeqCst).max(0) as usize,
             ); // c:1171
         }
+    }
+
+    // c:1181-1184 — `if (termflags & TERM_SHORT) { singlerefresh(tmpline,
+    // tmpll, tmpcs); goto singlelineout; }`. A single-line display draws
+    // the line with singlerefresh's horizontal scrolling instead of the
+    // multi-row video buffers. The port had singlerefresh but never
+    // dispatched to it, so `TERM=` and SINGLE_LINE_ZLE still got the
+    // multi-row redraw (and with no cursor-up capability, every redraw
+    // landed on a new row).
+    if crate::ported::params::TERMFLAGS.load(Ordering::SeqCst) & crate::ported::zsh_h::TERM_SHORT
+        != 0
+    {
+        if reset_frame {
+            // c:735-736 + c:757-787 — the rest of resetvideo that the inlined
+            // reset above leaves out, and which only singlerefresh reads: the
+            // horizontal window restarts (`winprompt = 0; winpos = -1;`) and
+            // the old line becomes `obuf[0] = zr_nl` — or `lpromptw` spaces
+            // when there is a prompt — so the first single-line frame blanks
+            // what the terminal still shows (zsh's ` \r` on a dumb terminal).
+            WINPROMPT.store(0, Ordering::SeqCst); // c:735
+            WINPOS.store(-1, Ordering::SeqCst); // c:736
+            let lpromptw = LPROMPTW.load(Ordering::SeqCst).max(0) as usize;
+            let mut row0: REFRESH_STRING = if lpromptw > 0 {
+                vec![REFRESH_ELEMENT { chr: ' ', atr: 0 }; lpromptw] // c:784-785
+            } else {
+                vec![REFRESH_ELEMENT { chr: '\n', atr: 0 }] // c:764 `obuf[0][0] = zr_nl`
+            };
+            row0.push(REFRESH_ELEMENT::default()); // c:765 / c:786 zr_zr
+            let mut obuf = OBUF.lock().unwrap();
+            if obuf.is_empty() {
+                obuf.push(row0);
+            } else {
+                obuf[0] = row0;
+            }
+        }
+        let tmpcs = (ZLECS.load(Ordering::SeqCst) + predisplay_len) as i32; // c:1023
+        singlerefresh(&line_snapshot, line_snapshot.len() as i32, tmpcs); // c:1182
+        // c:1753-1776 — singlelineout: the completion-list tail the full
+        // path runs at the end of this fn.
+        let showinglist = SHOWINGLIST.load(Ordering::Relaxed);
+        if showinglist == -2 || (showinglist > 0 && showinglist < NLNCT.load(Ordering::SeqCst)) {
+            INLIST.store(1, Ordering::Relaxed); // c:1769
+            crate::ported::zle::zle_h::listmatches(); // c:1770
+            INLIST.store(0, Ordering::Relaxed); // c:1771
+            if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0 {
+                zrefresh(); // c:1772-1773
+            }
+        }
+        if SHOWINGLIST.load(Ordering::Relaxed) == -1 {
+            SHOWINGLIST.store(NLNCT.load(Ordering::SeqCst), Ordering::Relaxed); // c:1775-1776
+        }
+        return;
     }
 
     // c:988 — `int rprompt_off = 1;` offset of the right prompt from the right
@@ -3870,6 +3946,13 @@ pub fn tcoutarg(cap: i32, arg: i32) {
     if cap_idx >= TC_COUNT as usize {
         return;
     }
+    // c:2414-2415 — `if (tcout_func_name) { tcout_via_func(cap, arg, putshout); }`
+    // `zle -T tc FUNC` hands every capability to the user function, which
+    // decides what reaches the terminal.
+    if TCOUT_FUNC_NAME.lock().map(|n| n.is_some()).unwrap_or(false) {
+        tcout_via_func(cap, arg); // c:2415
+        return;
+    }
     let cap_str = tcstr.lock().unwrap()[cap_idx].clone();
     if cap_str.is_empty() {
         return;
@@ -3880,7 +3963,7 @@ pub fn tcoutarg(cap: i32, arg: i32) {
     if result.is_empty() {
         return;
     }
-    // c:2416-2417 — `tputs(result, 1, putshout)`.
+    // c:2416-2417 — else `tputs(result, 1, putshout)`.
     crate::shout::write(&crate::shout::tputs(&String::from_utf8_lossy(&result)));
     // c:2419 — SELECT_ADD_COST(strlen(result)) cost accounting (no-op).
 }
@@ -4145,7 +4228,7 @@ pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
     use crate::ported::exec::sfcontext;
     use crate::ported::init::tccap_get_name;
     use crate::ported::params::getsparam;
-    use crate::ported::utils::{callhookfunc, getshfunc, write_loop, INCOMPFUNC};
+    use crate::ported::utils::{callhookfunc, getshfunc, INCOMPFUNC};
     use crate::ported::zsh_h::SFC_SUBST;
 
     // c:2295-2297 — save sfcontext / stopmsg / incompfunc.
@@ -4206,9 +4289,10 @@ pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
                     i += 1;
                 }
             }
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, &out);
+            // c:2330 — `(void)outc(chr)`, outc = putshout: the buffered
+            // `shout` stream the rest of the frame is queued on. A direct
+            // fd write put these bytes ahead of everything still buffered.
+            crate::shout::write(&out);
         }
         true
     } else {
@@ -4239,11 +4323,19 @@ pub fn tcout(cap: i32) {
     if cap_idx >= TC_COUNT as usize {
         return;
     }
+    // c:2399-2400 — `if (tcout_func_name) { tcout_via_func(cap, -1, putshout); }`
+    // `zle -T tc FUNC` hands every capability to the user function. The
+    // port recorded the name but never consulted it, so the raw escape went
+    // out regardless (X04zlehighlight's `zle -T tc tcfunc` blanks them all).
+    if TCOUT_FUNC_NAME.lock().map(|n| n.is_some()).unwrap_or(false) {
+        tcout_via_func(cap, -1); // c:2400
+        return;
+    }
     let escape = tcstr.lock().unwrap()[cap_idx].clone();
     if escape.is_empty() {
         return;
     }
-    // c:2345 — `tputs(tcstr[cap], 1, putshout)`: goes to the buffered
+    // c:2402 — else `tputs(tcstr[cap], 1, putshout)`: goes to the buffered
     // `shout` stream, not straight to the fd. `shout::tputs` is the
     // tputs(3) half — it strips the `$<n>` delay specs that capability
     // strings carry (vt100's `md` is `\e[1m$<2>`), which this port used
@@ -4408,11 +4500,14 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
         if ch == '\t' {
             // c:2413
             vsiz = (vsiz | 7) + 2; // c:2414
-        } else if ch.is_alphanumeric() || ch.is_ascii_graphic() {
-            // c:2416 WC_ISPRINT
-            width = unicode_width::UnicodeWidthChar::width(ch) // c:2416 WCWIDTH
-                .unwrap_or(1) as i32;
-            if width > 0 {
+        } else if crate::ported::ztype_h::WC_ISPRINT(ch) && {
+            // c:2416 — `WC_ISPRINT(tmpline[t0]) && (width = WCWIDTH(tmpline[t0])) > 0`.
+            // A space is printable; the old `is_alphanumeric || is_ascii_graphic`
+            // test sent it to the `<hex>` arm.
+            width = crate::ported::zsh_h::WCWIDTH(ch);
+            width > 0
+        } {
+            {
                 vsiz += width; // c:2417
                                // c:2418-2421 — combining-char absorption; skip combos.
                 if isset(COMBININGCHARS) {
@@ -4426,12 +4521,9 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
                     }
                 }
             }
-        } else if (ch as u32) < 0x20 || (ch as u32) == 0x7F {
-            // c:2424 ZC_icntrl
-            if (ch as u32) <= 0xff {
-                // c:2426
-                vsiz += 2; // c:2429
-            }
+        } else if crate::ported::zle::zle_h::ZC_icntrl(ch) && (ch as u32) <= 0xff {
+            // c:2424-2427 — `ZC_icntrl(tmpline[t0]) && (unsigned)tmpline[t0] <= 0xffU`
+            vsiz += 2; // c:2429
         } else {
             // c:2430
             vsiz += 10; // c:2432 wide / non-printable
@@ -4507,11 +4599,12 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
                 }; // c:2491-2492
                 vp += 1; // c:2493
             }
-        } else if ch.is_ascii_graphic() || (ch.is_alphanumeric()) {
-            // c:2495 WC_ISPRINT
-            width = unicode_width::UnicodeWidthChar::width(ch) // c:2496 WCWIDTH
-                .unwrap_or(1) as i32;
-            if width > 0 {
+        } else if crate::ported::ztype_h::WC_ISPRINT(ch) && {
+            // c:2495-2496 — `WC_ISPRINT(tmpline[t0]) && (width = WCWIDTH(tmpline[t0])) > 0`
+            width = crate::ported::zsh_h::WCWIDTH(ch);
+            width > 0
+        } {
+            {
                 // c:2497-2507 — combining-char absorption: when COMBININGCHARS
                 // is set and this is a base char, scan forward over the
                 // following combining marks and cluster them into ONE cell via
@@ -4572,10 +4665,9 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
                 }
                 t0 += ichars - 1; // c:2519
             }
-        } else if (ch as u32) < 0x20 || (ch as u32) == 0x7F {
-            // c:2521 ZC_icntrl
-            if (ch as u32) <= 0xff {
-                // c:2523
+        } else if crate::ported::zle::zle_h::ZC_icntrl(ch) && (ch as u32) <= 0xff {
+            // c:2521-2523 — `ZC_icntrl(tmpline[t0]) && (unsigned)tmpline[t0] <= 0xffU`
+            {
                 let t = ch as u32; // c:2526
                 if vp < vbuf.len() {
                     vbuf[vp] = REFRESH_ELEMENT {

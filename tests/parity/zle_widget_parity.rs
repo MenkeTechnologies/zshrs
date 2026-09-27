@@ -163,3 +163,119 @@ sleep 2"#,
         "where-is printed the bindings of beginning-of-line",
     );
 }
+
+/// `zle-line-pre-redraw` (c:Src/Zle/zle_main.c:1066-1106) runs before
+/// every redisplay, and what it writes to `$BUFFER` is what gets drawn and
+/// run. The port queued the hook on a list nothing ever drained, so the
+/// widget never ran and the typed `pr` was executed as a command.
+#[test]
+fn zle_line_pre_redraw_runs_before_each_redisplay() {
+    assert_same_verdict(
+        &driver(
+            r#"zle-line-pre-redraw(){ [[ $BUFFER == pr ]] && BUFFER="print PRE${:-}DRAW" && CURSOR=$#BUFFER }; zle -N zle-line-pre-redraw"#,
+            r#"zpty -w -n w 'pr'
+sleep 2
+zpty -w -n w $'\r'"#,
+            "PREDRAW",
+        ),
+        "K",
+        "zle-line-pre-redraw rewrote the line before it ran",
+    );
+}
+
+/// `$LASTWIDGET` names the last widget run, including one run with
+/// `zle NAME` inside another widget (c:Src/Zle/zle_main.c:1560-1567), and
+/// `zle NAME -f nolast` runs a widget without recording it (X04zlehighlight
+/// "zle $widgetname -f nolast"). The port never updated `lbindk` from
+/// execzlefunc, so `$LASTWIDGET` still named whatever ran before `f`.
+#[test]
+fn lastwidget_names_the_inner_widget_and_nolast_keeps_it() {
+    assert_same_verdict(
+        &driver(
+            r#"f(){ zle beginning-of-line; zle g -f nolast; BUFFER="print L:$LASTWIDGET" }; g(){ }; zle -N f; zle -N g; bindkey "^G" f"#,
+            r#"zpty -w -n w $'\C-g'
+sleep 2
+zpty -w -n w $'\r'"#,
+            "L:beginning-of-line",
+        ),
+        "K",
+        "$LASTWIDGET after `zle beginning-of-line; zle g -f nolast`",
+    );
+}
+
+/// `zle -T tc FUNC` hands every termcap capability ZLE outputs to FUNC,
+/// which writes `$REPLY` instead (c:Src/Zle/zle_refresh.c:2396-2419). The
+/// port recorded the function but tcout/tcoutarg never consulted it.
+/// Clear-screen outputs the `cl` capability.
+#[test]
+fn zle_T_tc_transforms_the_capabilities_zle_outputs() {
+    assert_same_verdict(
+        &driver(
+            r#"tcfunc(){ REPLY="<cap:$1>" }; zle -T tc tcfunc"#,
+            r#"zpty -w -n w $'\C-l'
+sleep 2"#,
+            "<cap:cl>",
+        ),
+        "K",
+        "zle -T tc rewrote the clear-screen capability",
+    );
+}
+
+/// A put over a visual selection (put-replace-selection) edits the line,
+/// and any change to the line ends the region (c:Src/Zle/zle_utils.c:844,
+/// :924 `region_active = 0`), which drops the `visual` local keymap. The
+/// port never cleared it, so the `a` after the put was read in the visual
+/// keymap and feeped instead of appending.
+#[test]
+fn a_visual_put_ends_the_region() {
+    assert_same_verdict(
+        &driver(
+            r#"bindkey -v"#,
+            r#"zpty -w -n w 'print -r x${:-}ab'
+sleep 1
+zpty -w -n w $'\e'
+sleep 1
+zpty -w -n w 'yl'
+sleep 1
+zpty -w -n w 'vp'
+sleep 1
+zpty -w -n w 'ac'
+sleep 1
+zpty -w -n w $'\r'"#,
+            "xabc",
+        ),
+        "K",
+        "`a` appended after a visual-mode put",
+    );
+}
+
+/// A terminal with no usable capabilities (`TERM=`) gets the single-line
+/// display, where each keystroke redraws only what changed
+/// (c:Src/Zle/zle_refresh.c:1120-1124 sets TERM_SHORT, c:1181-1184 hands
+/// the frame to singlerefresh). The port never dispatched to
+/// singlerefresh, and when it did the start-of-frame buffer swap left the
+/// old-line buffer a frame behind, so every keystroke re-sent the whole
+/// line from column 0.
+#[test]
+fn a_dumb_terminal_draws_typed_text_once() {
+    let d = format!(
+        "export TERM=\n{}",
+        driver(
+            "",
+            r#"zpty -w -n w 'e'
+sleep 0.5
+zpty -w -n w 'c'
+sleep 0.5
+zpty -w -n w 'h'
+sleep 0.5
+zpty -w -n w 'o'
+sleep 1"#,
+            "NEVER",
+        )
+    );
+    let d = d.replace(
+        "if [[ $all == *'NEVER'* ]]; then print \"K=yes\"; else print \"K=no\"; fi",
+        "local -a parts=( \"${(@s:ec:)all}\" ); if (( $#parts == 2 )); then print \"K=yes\"; else print \"K=no\"; fi",
+    );
+    assert_same_verdict(&d, "K", "`ec` reached a TERM= display exactly once");
+}

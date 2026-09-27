@@ -714,6 +714,9 @@ pub fn spaceinline(ct: i32) {
             }
         }
     }
+    // c:844 — `region_active = 0;` an insertion ends the active region
+    // (so e.g. a put in visual mode drops the `visual` local keymap).
+    crate::ported::zle::zle_main::REGION_ACTIVE.store(0, Ordering::SeqCst);
 }
 
 /// Port of `shiftchars(int to, int cnt)` from Src/Zle/zle_utils.c:846.
@@ -801,6 +804,8 @@ pub fn shiftchars(to: i32, cnt: i32) {
         // C still sets zlell=to (which would corrupt the buffer); Rust
         // clamps to `len` so we don't grow zlell past the actual storage.
         ZLELL.store(len, Ordering::SeqCst);
+        drop(line);
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(0, Ordering::SeqCst); // c:924
         return;
     }
     if to + cnt >= len {
@@ -810,6 +815,9 @@ pub fn shiftchars(to: i32, cnt: i32) {
         line.drain(to..to + cnt); // c:912-914 memmove
     }
     ZLELL.store(line.len(), Ordering::SeqCst); // c:915
+    drop(line);
+    // c:924 — `region_active = 0;` a deletion ends the active region.
+    crate::ported::zle::zle_main::REGION_ACTIVE.store(0, Ordering::SeqCst);
 }
 
 /// Port of `cut(int i, int ct, int flags)` from Src/Zle/zle_utils.c:935.
@@ -1268,12 +1276,15 @@ mod tests_hooks {
     }
 
     #[test]
-    fn redrawhook_queues_pre_redraw_hook() {
+    fn redrawhook_runs_inline_not_via_queue() {
+        // c:1066-1106 — redrawhook dispatches `zle-line-pre-redraw` inline
+        // through execzlefunc, gated on the thingy existing (c:1069). It
+        // queues nothing: the queue it used to push onto was never drained,
+        // so the hook never ran at all.
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         redrawhook();
-        let drained = drain_hooks();
-        assert_eq!(drained, vec![("zle-line-pre-redraw".to_string(), None)]);
+        assert!(drain_hooks().is_empty());
     }
 
     #[test]

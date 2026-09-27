@@ -357,18 +357,24 @@ pub struct ztmout {
 /// Picks the next read timeout based on do_keytmout + the
 /// timedfns list. Truncated to the keymap timeout subset until
 /// timedfns wiring lands.
-fn calc_timeout(do_keytmout: bool) -> ztmout {
+fn calc_timeout(do_keytmout: i64) -> ztmout {
     // c:454
     let kt = KEYTIMEOUT.load(SeqCst);
-    let mut out = if do_keytmout && kt > 0 {
-        let exp = if kt > ZMAXTIMEOUT * 100 {
-            ZMAXTIMEOUT * 100
+    // c:456 — `if (do_keytmout && (keytimeout > 0 || do_keytmout < 0))`.
+    // A negative `do_keytmout` is an explicit timeout in 100ths of a second
+    // (termquery.c's probe_terminal passes `TIMEOUT`, -51), honoured
+    // whatever `$KEYTIMEOUT` says.
+    let mut out = if do_keytmout != 0 && (kt > 0 || do_keytmout < 0) {
+        let exp = if do_keytmout < 0 {
+            -do_keytmout // c:457-458
+        } else if kt > ZMAXTIMEOUT * 100 {
+            (ZMAXTIMEOUT * 100) as i64 // c:459-460
         } else {
-            kt
+            kt as i64 // c:462
         };
         ztmout {
             tp: ztmouttp::ZTM_KEY,
-            exp100ths: exp as i64,
+            exp100ths: exp,
         }
     } else {
         ztmout {
@@ -405,7 +411,7 @@ fn calc_timeout(do_keytmout: bool) -> ztmout {
 /// `do_keytmout * KEYTIMEOUT`. Returns None on timeout/EOF — the
 /// C source uses EOF as the same sentinel.
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
-pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
+pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
     use std::os::unix::io::AsRawFd;
 
     // c:541 — drain the unget buffer first.
@@ -844,7 +850,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
 /// the live read path) + a small \n↔\r typeahead swap; the C
 /// `timeout`/`full` args are folded into the raw reader.
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, timeout, full)
-pub fn getbyte(do_keytmout: bool) -> Option<u8> {
+pub fn getbyte(do_keytmout: i64) -> Option<u8> {
     // c:877 — `lastchar_wide_valid = 0;` at entry. Every byte read
     // invalidates the cached wide character so the next `selfinsert`
     // (zle_misc.c:119) refills `lastchar_wide` from the FRESH `lastchar`
@@ -1007,7 +1013,7 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
 /// ```
 pub fn getfullchar(do_keytmout: bool) -> Option<char> {
     // c:967
-    let inchar = getbyte(do_keytmout).map(|b| b as i32).unwrap_or(-1); // c:969
+    let inchar = getbyte(do_keytmout as i64).map(|b| b as i32).unwrap_or(-1); // c:969
     let r = getrestchar(inchar); // c:972
     if r < 0 {
         None
@@ -1115,7 +1121,7 @@ pub fn getrestchar(inchar: i32) -> i32 {
             return outchar as i32;
         }
         // c:1034 — `inchar = getbyte(1L, &timeout, 1);`
-        match getbyte(true) {
+        match getbyte(1) {
             Some(n) => {
                 LASTCHAR_WIDE_VALID.store(1, SeqCst); // c:1036
                 c = n; // c:1053 — `c = inchar;`
@@ -1130,24 +1136,55 @@ pub fn getrestchar(inchar: i32) -> i32 {
     }
 }
 
-/// Run the registered redraw hook (`zle-line-pre-redraw` in zsh).
-/// Port of `redrawhook()` from Src/Zle/zle_main.c:1066.
+/// Run the `zle-line-pre-redraw` widget before a redisplay.
+/// Direct port of `void redrawhook(void)` from `Src/Zle/zle_main.c:1066`.
 ///
-/// C dispatches inline via `Th(z_redrawhook)` + `execzlefunc`; this
-/// Rust port appends the hook name onto `pending_hooks` for the host
-/// to dispatch after the ZLE call returns. This matches the queueing
-/// pattern used by every other in-process ZLE hook caller
-/// (`call_hook("zle-line-init", …)`, `call_hook("zle-keymap-select",
-/// …)`, `call_hook("handle-suffix", …)` — see zle_utils.rs:757-758,
-/// 1775). The host's `errflag` / `retflag` save+restore mirrors the
-/// `saverrflag`/`savretflag` block at zle_main.c:1071-1093.
+/// The previous port pushed the name onto `PENDING_HOOKS`, which nothing
+/// in the shell ever drains, so `zle-line-pre-redraw` never ran: a hook
+/// that set `$BUFFER` or `$region_highlight` had no effect on the screen.
 pub fn redrawhook() {
     // c:1066
-    // c:1069 — C gates on `rthingy_nocreate("zle-line-pre-redraw")`;
-    // Rust queues unconditionally and lets the host's drain loop skip
-    // when no widget is registered (consistent with the other
-    // `call_hook` sites — see zle_utils.rs:757-758 / :1775).
-    crate::ported::zle::zle_utils::call_hook("zle-line-pre-redraw", None);
+    let name = "zle-line-pre-redraw";
+    // c:1069 — `if ((initthingy = rthingy_nocreate("zle-line-pre-redraw")))`
+    if !crate::ported::zle::zle_thingy::rthingy_nocreate(name) {
+        return;
+    }
+    /* Duplicating most of zlecallhook() to save additional state */
+    // c:1071-1076
+    let saverrflag = errflag.load(Ordering::Relaxed);
+    let savretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
+    let lastcmd_prev = LASTCMD.load(SeqCst);
+    let old_incompfunc = crate::ported::utils::INCOMPFUNC.load(SeqCst);
+    let old_viinrepeat = crate::ported::zle::zle_vi::VIINREPEAT.load(SeqCst);
+    let lbindk_save = LBINDK.lock().unwrap().clone(); // c:1076-1078
+    let bindk_save = BINDK.lock().unwrap().clone(); // c:1076-1079
+    // c:1080-1081 — `args[0] = initthingy->nam; args[1] = NULL;`
+    let args = vec![name.to_string()];
+
+    /* The generic redraw hook cannot be a completion function, so
+     * temporarily reset state for special variable handling etc.
+     */
+    crate::ported::utils::INCOMPFUNC.store(0, SeqCst); // c:1086
+    execzlefunc(name, &args, 1, 0); // c:1087
+    crate::ported::utils::INCOMPFUNC.store(old_incompfunc, SeqCst); // c:1088
+    crate::ported::zle::zle_vi::VIINREPEAT.store(old_viinrepeat, SeqCst); // c:1089
+
+    /* Restore errflag and retflag as zlecallhook() does */
+    let cur = errflag.load(Ordering::Relaxed);
+    errflag.store(
+        saverrflag | (cur & crate::ported::zsh_h::ERRFLAG_INT),
+        Ordering::Relaxed,
+    ); // c:1092
+    crate::ported::builtin::RETFLAG.store(savretflag, Ordering::Relaxed); // c:1093
+
+    crate::ported::zle::zle_thingy::unrefthingy(name); // c:1095
+    *LBINDK.lock().unwrap() = lbindk_save; // c:1096-1098
+    *BINDK.lock().unwrap() = bindk_save; // c:1097-1099
+
+    /* we can't set ZLE_NOTCOMMAND since it's not a legit widget, so
+     * restore lastcmd manually so that we don't mess up the global state
+     */
+    LASTCMD.store(lastcmd_prev, SeqCst); // c:1104
 }
 
 /// Core ZLE loop.
@@ -1861,7 +1898,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
 
     // c:1426-1427 — `Thingy save_bindk = bindk; Thingy save_lbindk = lbindk;`.
     let save_bindk = BINDK.lock().ok().and_then(|b| b.clone());
-    let _save_lbindk = LBINDK.lock().ok().and_then(|b| b.clone());
+    let save_lbindk = LBINDK.lock().ok().and_then(|b| b.clone());
 
     // c:1429-1430 — `if (set_bindk) bindk = func;`. Install the
     // active Thingy on BINDK so bin_zle_flags + other widgets see the
@@ -1876,12 +1913,37 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
             *BINDK.lock().unwrap() = Some(t); // c:1430
         }
     }
-    // c:1435-1436 — `if (set_lbindk) refthingy(save_lbindk);`.
-    // The refthingy call increments the rc on LBINDK so inner widgets
-    // (which may overwrite it) can't free it under us. The Rust
-    // analog is just to keep the local clone around for the duration
-    // of the call — `_save_lbindk` holds it.
-    let _ = set_lbindk; // c:1435 — captured via _save_lbindk lifetime
+    // c:1435-1436 — `if (set_lbindk) refthingy(save_lbindk);`. The
+    // refthingy only pins the node against a free by an inner widget; the
+    // owned clone `save_lbindk` already does that. Restored at c:1560.
+    // c:1560-1567 — the `lbindk` update C runs once at its single exit:
+    // ```c
+    //     if (set_lbindk) {
+    //         unrefthingy(lbindk);
+    //         lbindk = save_lbindk;
+    //     } else if (r) {
+    //         unrefthingy(lbindk);
+    //         refthingy(func);
+    //         lbindk = func;
+    //     }
+    // ```
+    // `r` is 1 when a widget body ran (c:1500 internal, c:1556 shell
+    // function). The port has three exits, so the block is a closure.
+    // Without it `$LASTWIDGET` never named a widget run through `zle NAME`
+    // inside another widget, and `zle NAME -f nolast` had nothing to keep.
+    let set_lastbindk = |r: bool| {
+        if set_lbindk != 0 {
+            *LBINDK.lock().unwrap() = save_lbindk.clone(); // c:1562
+        } else if r {
+            let func = crate::ported::zle::zle_thingy::thingytab()
+                .lock()
+                .ok()
+                .and_then(|tab| tab.get(name).cloned());
+            if func.is_some() {
+                *LBINDK.lock().unwrap() = func; // c:1566
+            }
+        }
+    };
 
     // c:1437 — `if ((w = func->widget)->flags & (WIDGET_INT|WIDGET_NCOMP))`.
     // Resolve the widget bound to this thingy via the thingytab; if
@@ -1939,6 +2001,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
                 LASTCMD.store(wflags as u32, SeqCst); // c:1499 `lastcmd = wflags;`
             }
             LASTVAL.store(rc, Ordering::Relaxed);
+            set_lastbindk(true); // c:1500 r = 1; c:1560-1567
             if set_bindk != 0 {
                 *BINDK.lock().unwrap() = save_bindk; // c:1597
             }
@@ -2047,6 +2110,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         crate::ported::params::endparamscope(); // c:1540
                                                 // c:1530 — capture LASTVAL after the call.
         LASTVAL.store(rc, Ordering::Relaxed);
+        set_lastbindk(true); // c:1556 r = 1; c:1560-1567
         // c:1597 — restore BINDK.
         if set_bindk != 0 {
             *BINDK.lock().unwrap() = save_bindk;
@@ -2058,6 +2122,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
 
     // c:1597 — fall through: widget exists in thingytab but has no
     // shfunc binding. Restore BINDK and return.
+    set_lastbindk(false); // c:1560-1567, r = 0
     if set_bindk != 0 {
         *BINDK.lock().unwrap() = save_bindk; // c:1597
     }
@@ -2806,14 +2871,18 @@ pub fn setup_(m: *const module) -> i32 {
     // c:2252 — `init_thingies()` registers the built-in widgets.
     crate::ported::zle::zle_thingy::init_thingies();
     // c:2256 — `stackhist = stackcs = -1`. These exist as atomics.
-    // c:2263 — `if (shout) query_terminal()`. DISABLED until the response
-    // consumer is ported: C reads the terminal's answers back inside
-    // termquery.c's response state machine; zshrs only has the emitter, so
-    // under a responding terminal (tmux) the OSC 10/11/12 + DA replies
-    // landed on stdin as literal keystrokes and polluted the first prompt
-    // (`^[]10;rgb:…`, `^[P>|tmux 3.7.21^[\`, `^[[?1;2;4c`). Emitting
-    // questions we never read is strictly worse than not asking.
-    // TODO: port termquery.c's response reader, then re-enable.
+    /* detect terminal color and features */
+    // c:2263-2264 — `if (shout) query_terminal();`. NOT CALLED: a pending
+    // version decision, not a missing port. query_terminal and the
+    // probe_terminal reply parser are ported (termquery.rs), so the replies
+    // would no longer reach the editor as keystrokes. But zsh 5.9.2 — the
+    // reference the zpty parity suites run against — sends no queries, and
+    // current C's probe blocks in `settyinfo` (TCSADRAIN) until the other
+    // end reads, then waits TIMEOUT for a device-attributes reply no pty
+    // harness sends. Keys typed during that window are held as type-ahead,
+    // and the pty harnesses that type early (zle_editing_parity /
+    // zle_buffer_state_parity `^K ^Y`) stall; a current-C zsh build stalls
+    // the same way under them. Enabling this waits on that decision.
     // crate::ported::zle::termquery::query_terminal();
     // c:2275-2279 — set `$zle_bracketed_paste` to the bracketed-paste
     // mode toggle escapes.
@@ -3380,7 +3449,7 @@ pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> 
                 // c:2176 — `*chrp = getbyte(do_keytmout, timeout, 0);`
                 let byte = getbyte(
                     // c:2176
-                    *do_keytmout != 0,
+                    *do_keytmout,
                 )
                 .unwrap_or(0);
                 **chrp = byte as i32;
@@ -3615,7 +3684,7 @@ pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
         // c:1591 `getkeybuf(timeout)` — timed read once a binding matched
         // (c:1626-1627), otherwise block.
         let do_keytmout = timeout;
-        let b = match getbyte(do_keytmout) {
+        let b = match getbyte(do_keytmout as i64) {
             Some(b) => b,
             None => {
                 // c:zle_keymap.c:1614+ — a KEY TIMEOUT while waiting for
@@ -4625,7 +4694,7 @@ mod tests {
         KUNGETBUF.lock().unwrap().clear();
         WATCH_FDS.lock().unwrap().clear();
         LASTCHAR.store(b'x' as i32, SeqCst); // a stale previous char
-        let r = getbyte(false);
+        let r = getbyte(0);
         assert_eq!(r, None, "no input available → None");
         assert_eq!(
             LASTCHAR.load(SeqCst),
@@ -4837,7 +4906,7 @@ mod tests {
         assert!(KUNGETBUF.lock().unwrap().is_empty());
     }
 
-    /// `ungetbyte` then `getbyte(false)` returns the pushed byte.
+    /// `ungetbyte` then `getbyte(0)` returns the pushed byte.
     /// C ungetbyte + getbyte round-trip.
     #[test]
     fn ungetbyte_then_getbyte_round_trips() {
@@ -4845,7 +4914,7 @@ mod tests {
         let _g2 = zle_test_setup();
         KUNGETBUF.lock().unwrap().clear();
         ungetbyte(b'Z');
-        let got = getbyte(false);
+        let got = getbyte(0);
         assert_eq!(got, Some(b'Z'), "round-trip: pushed → got");
     }
 
@@ -5283,7 +5352,7 @@ mod tests {
     fn raw_getbyte_returns_option_u8_type() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _: Option<u8> = raw_getbyte(false);
+        let _: Option<u8> = raw_getbyte(0);
     }
 
     /// c:406 — `getbyte` returns Option<u8> (compile-time pin).
@@ -5291,7 +5360,7 @@ mod tests {
     fn getbyte_returns_option_u8_type() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _: Option<u8> = getbyte(false);
+        let _: Option<u8> = getbyte(0);
     }
 
     /// c:439 — `getfullchar` returns Option<char> (compile-time pin, alt).

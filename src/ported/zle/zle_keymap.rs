@@ -2866,7 +2866,7 @@ pub fn getrestchar_keybuf() -> i32 {
             // c:1532-1537 — "Always apply KEYTIMEOUT to the remains of the
             // input character. The parts of a multibyte character should
             // arrive together."
-            let inchar = getbyte(true); // c:1538
+            let inchar = getbyte(1); // c:1538
             // c:1539 — "getbyte deliberately resets lastchar_wide_valid"
             LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst); // c:1540
             match inchar {
@@ -2948,7 +2948,7 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
     loop {
         // Read one byte. Use timed read once we have a partial match.
         let do_keytmout = last_match.is_some();
-        let b = match super::zle_main::getbyte(do_keytmout) {
+        let b = match super::zle_main::getbyte(do_keytmout as i64) {
             Some(b) => b,
             None => break, // c:1591 EOF
         };

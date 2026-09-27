@@ -157,7 +157,7 @@ pub fn vigetkey() -> i32 {
     // Rust port: getbyte returns Option<u8>; None means EOF.
     // The KUNGETBUF drain path was the previous stub — covered now
     // by getbyte itself which consults the unget buffer first.
-    let byte = match getbyte(true) {
+    let byte = match getbyte(1) {
         Some(b) => b,
         None => return ZLEEOF, // c:135
     };

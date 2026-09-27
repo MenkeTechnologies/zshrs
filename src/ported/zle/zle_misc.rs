@@ -925,6 +925,32 @@ pub fn viputbefore() -> i32 {
     if ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 0; // c:616
     }
+    // c:617-629 — `if (zmod.flags & MOD_OSSEL)`: a `"*` / `"+` register reads
+    // the OS selection from the terminal (OSC 52) instead of a cut buffer.
+    if ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_OSSEL != 0 {
+        let clip = if ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_CLIP != 0 {
+            'c'
+        } else {
+            'p'
+        };
+        // c:620-622 — `if (!pbuf || !*pbuf) return 1;`
+        let pbuf = match crate::ported::zle::termquery::system_clipget(clip) {
+            Some(p) if !p.is_empty() => p,
+            _ => return 1,
+        };
+        let mut x: i32 = 0;
+        let kbuf = crate::ported::zle::zle_h::cutbuffer {
+            buf: crate::ported::zle::zle_utils::stringaszleline(&pbuf, 0, Some(&mut x), None, None)
+                .into_iter()
+                .collect(),
+            len: x as usize,
+            flags: 0,
+        };
+        KCT.store(-1, SeqCst); // kct = -1;
+        YANKCS.store(ZLECS.load(SeqCst) as i32, SeqCst); // yankcs = zlecs;
+        pastebuf(&kbuf, n, 0);
+        return 0;
+    }
     // c:631-634 — `kctbuf = &vibuf[zmod.vibuf]` / `kctbuf = &cutbuf`.
     // The unnamed register is CUTBUF (the vi cut buffer with its
     // CUTBUFFER_LINE flag), NOT the emacs kill ring — reading the ring
@@ -970,8 +996,32 @@ pub fn viputafter() -> i32 {
     if ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 0; // c:652
     }
-    // c:653-667 — OS selection branch (MOD_OSSEL = PRI|CLIP). Without
-    //              system_clipget we fall through to the cut-buffer path.
+    // c:654-666 — `if (zmod.flags & MOD_OSSEL)`: a `"*` / `"+` register reads
+    // the OS selection from the terminal (OSC 52) instead of a cut buffer.
+    if ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_OSSEL != 0 {
+        let clip = if ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_CLIP != 0 {
+            'c'
+        } else {
+            'p'
+        };
+        // c:657-659 — `if (!pbuf || !*pbuf) return 1;`
+        let pbuf = match crate::ported::zle::termquery::system_clipget(clip) {
+            Some(p) if !p.is_empty() => p,
+            _ => return 1,
+        };
+        let mut x: i32 = 0;
+        let kbuf = crate::ported::zle::zle_h::cutbuffer {
+            buf: crate::ported::zle::zle_utils::stringaszleline(&pbuf, 0, Some(&mut x), None, None)
+                .into_iter()
+                .collect(),
+            len: x as usize,
+            flags: 0,
+        };
+        KCT.store(-1, SeqCst); // kct = -1;
+        YANKCS.store(ZLECS.load(SeqCst) as i32, SeqCst); // yankcs = zlecs;
+        pastebuf(&kbuf, n, 1);
+        return 0;
+    }
     // c:668-671 — `kctbuf = &vibuf[zmod.vibuf]` / `kctbuf = &cutbuf`.
     // Same unnamed-register fix as viputbefore: read CUTBUF (flags
     // intact), not the kill ring.
@@ -1016,8 +1066,32 @@ pub fn putreplaceselection() -> i32 {
     if n < 0 || ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 1; // c:690
     }
-    // c:698-702 — `kctbuf = &vibuf[zmod.vibuf]` / `kctbuf = &cutbuf`.
-    let prevbuf: crate::ported::zle::zle_h::cutbuffer =
+    // c:696-705 — `if (zmod.flags & MOD_OSSEL)`: a `"*` / `"+` register
+    // replaces the selection with the OS selection read from the terminal.
+    let prevbuf: crate::ported::zle::zle_h::cutbuffer = if ZMOD.lock().unwrap().flags
+        & crate::ported::zle::zle_h::MOD_OSSEL
+        != 0
+    {
+        let clip = if ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_CLIP != 0 {
+            'c'
+        } else {
+            'p'
+        };
+        // c:699-700 — `if (!pbuf || !*pbuf) return 1;`
+        let pbuf = match crate::ported::zle::termquery::system_clipget(clip) {
+            Some(p) if !p.is_empty() => p,
+            _ => return 1,
+        };
+        let mut x: i32 = 0;
+        crate::ported::zle::zle_h::cutbuffer {
+            buf: crate::ported::zle::zle_utils::stringaszleline(&pbuf, 0, Some(&mut x), None, None)
+                .into_iter()
+                .collect(), // c:701
+            len: x as usize, // c:702
+            flags: 0,        // c:703
+        }
+    } else {
+        // c:706 — `putbuf = isvibuf ? &vibuf[zmod.vibuf] : &cutbuf;`
         if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
             let idx = ZMOD.lock().unwrap().vibuf as usize;
             if idx >= vibuf().lock().unwrap().len() {
@@ -1031,7 +1105,8 @@ pub fn putreplaceselection() -> i32 {
                 len: cb.len,
                 flags: cb.flags,
             } // c:702
-        };
+        }
+    };
     // `!putbuf->buf` — see viputbefore for the blank-line case.
     if prevbuf.buf.is_empty() && prevbuf.flags & crate::ported::zle::zle_h::CUTBUFFER_LINE == 0 {
         return 1; // c:702
@@ -1163,7 +1238,7 @@ pub fn bracketedstring() -> String {
     while endpos < ENDESC.len() {
         // c:807 — while (endesc[endpos])
         // c:809-810 — `if ((next = getbyte(1L, &timeout, 1)) == EOF) break;`
-        let next = match crate::ported::zle::zle_main::getbyte(true) {
+        let next = match crate::ported::zle::zle_main::getbyte(1) {
             Some(b) => b,
             None => break,
         };

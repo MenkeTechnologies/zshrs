@@ -111,105 +111,466 @@ pub const T_CONTINUE: u8 = 0x92; // c:53
 /// Port of `T_NEXT` from `termquery.c:54`. Advance to next stored number.
 pub const T_NEXT: u8 = 0x94; // c:54
 
-/// Port of `find_branch(pos)` from Src/Zle/termquery.c:170.
-/// WARNING: param names don't match C — Rust=(s, ch) vs C=(pos)
-pub fn find_branch(s: &str, ch: u8) -> Option<usize> {
+/// Port of the `QUERY_STATES` table from `Src/Zle/termquery.c:84-120`: the
+/// deterministic automaton `probe_terminal` walks to parse the replies to
+/// `query_terminal`'s probes. It is the C macro expansion byte for byte
+/// (alternatives decided by the first character, no back-tracking,
+/// literals 7-bit ASCII only). The C source reads:
+/// ```c
+/// "\033"
+/// EITHER( /* default terminal colours */
+///     "]1" NUM ";"
+///     EITHER( "rgb:"
+///         HEX OPT( HEX ) OPT( HEXCH HEXCH ) "/"
+///         HEX OPT( HEX ) OPT( HEXCH HEXCH ) "/"
+///         HEX OPT( HEX ) OPT( HEXCH HEXCH )
+///     OR "#"
+///         HEX HEX NEXT HEX HEX NEXT HEX HEX )
+///     EITHER(
+///         MATCH("\033", COLOR CONTINUE )
+///         MATCH("\\", DROP) /* urxvt 9.31 has bug: it omits the backslash */
+///     OR  MATCH("\007", COLOR ) )
+/// OR "P" /* DCS */
+///     EITHER( /* terminal name and version */
+///         ">|" RECORD
+///         REPEAT(
+///             CAPTURE EITHER( MATCH("(", XTID CONTINUE)
+///                 OR MATCH(" ", XTID CONTINUE) ) RECORD
+///         OR
+///             CAPTURE OPT( ")" ) "\033" MATCH( "\\", XTVER )
+///         OR
+///             WILDCARD
+///         )
+///     OR /* 24-bit colour support */
+///         EITHER(
+///             "0+r" OPT( "524742" ) /* mlterm responds without numbers */
+///             "\033" MATCH("\\", DROP) /* kitty does 24-bit but 0 => no */
+///         OR  "1+r524742=" REPEAT( HEXCH HEXCH ) /* hex encoded bytes */
+///             "\033" MATCH("\\", TINFO) )) /* any value => truecolor */
+/// OR /* keyboard protocol and device attributes */
+///     "[?"
+///     REPEAT( NUM
+///         EITHER( ";"
+///         OR MATCH("u", KITTY )
+///         OR MATCH("c", DA) )))
+/// ```
+/// Sequence tags: DA 0xc0, COLOR 0xc1, KITTY 0xc2, TINFO 0xc3, XTID 0xc4,
+/// XTVER 0xc5 (c:78-83); `handle_query` receives them with `SEQ` masked off.
+static QUERY_STATES: &[u8] = b"\x1b\x80]1\x84;\x80rgb:\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81/\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81/\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81\x82#\x85\x85\x94\x85\x85\x94\x85\x85\x81\x80\xc1\x92\x1b\x91\x5c\x82\xc1\x07\x81\x82P\x80>|\x88\x80\x89\x80\xc4\x92(\x82\xc4\x92 \x81\x88\x82\x89\x80)\x82\x80\x81\x81\x1b\xc5\x5c\x82\x87\x81\x83\x82\x800+r\x80524742\x82\x80\x81\x81\x1b\x91\x5c\x821+r524742=\x80\x86\x86\x81\x83\x1b\xc3\x5c\x81\x81\x82[?\x80\x84\x80;\x82\xc2u\x82\xc0c\x81\x81\x83\x81";
+
+/// Port of the `OSC52_STATES` table from `Src/Zle/termquery.c:122-126`,
+/// the automaton for an OSC 52 clipboard reply (CLIP = 0xc6, c:84):
+/// ```c
+/// "\033]52;" EITHER("p" OR "c") ";" RECORD
+/// REPEAT(
+///     CAPTURE EITHER( "\033" MATCH("\\", CLIP) OR MATCH("\007", CLIP) )
+/// OR WILDCARD )
+/// ```
+static OSC52_STATES: &[u8] =
+    b"\x1b]52;\x80p\x82c\x81;\x88\x80\x89\x80\x1b\xc6\x5c\x82\xc6\x07\x81\x82\x87\x81\x83";
+
+/// Port of `static char *WAITVAR` from `Src/Zle/termquery.c:137`.
+static WAITVAR: &str = ".term.querywait"; // c:137
+
+/// Direct port of `static seqstate_t* find_branch(seqstate_t* pos)` from
+/// `Src/Zle/termquery.c:170`. From the state at `pos`, skip forward over
+/// nested groups to the `T_OR` or `T_END` that closes the current branch
+/// (or the table's end). Positions are indices into `states`.
+/// WARNING: param names don't match C — Rust=(states, pos) vs C=(pos)
+pub fn find_branch(states: &[u8], pos: usize) -> usize {
     // c:170
-    // C body c:172-183 — scans `s` for the matching paren/bracket/
-    //                    brace branch open. We approximate by finding
-    //                    the first byte equal to `ch`.
-    s.bytes().position(|b| b == ch)
+    // C tables end in NUL; reading past the slice reads that NUL.
+    let state_at = |i: usize| states.get(i).copied().unwrap_or(0);
+    let mut nested = 0i32; // c:172
+    let mut cur = pos + 1; // c:173
+    // c:175 — `for (; *cur && (nested || (*cur != T_END && *cur != T_OR)); cur++)`
+    while state_at(cur) != 0
+        && (nested != 0 || (state_at(cur) != T_END && state_at(cur) != T_OR))
+    {
+        if state_at(cur) == T_BEGIN {
+            nested += 1; // c:177
+        } else if state_at(cur) == T_END {
+            nested -= 1; // c:179
+        }
+        cur += 1;
+    }
+    cur // c:181
 }
 
-/// Port of `find_matching(pos, direction)` from Src/Zle/termquery.c:185.
-/// WARNING: param names don't match C — Rust=(s, open, close) vs C=(pos, direction)
-pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {
+/// Direct port of `static seqstate_t* find_matching(seqstate_t* pos, int
+/// direction)` from `Src/Zle/termquery.c:185`. Forward (`direction` 1):
+/// the position just past the `T_END` closing the group `pos` is in.
+/// Backward (-1): the `T_BEGIN` opening it.
+/// WARNING: param names don't match C — Rust=(states, pos, direction) vs C=(pos, direction)
+pub fn find_matching(states: &[u8], pos: usize, direction: i32) -> usize {
     // c:185
-    // C body c:187-218 — paired-bracket finder; scans forward
-    //                    counting opens until depth returns to 0.
-    let bytes = s.as_bytes();
-    let mut depth = 0i32;
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == open {
-            depth += 1;
-        } else if b == close {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i);
+    let state_at = |i: usize| states.get(i).copied().unwrap_or(0);
+    let mut nested = 1i32; // c:187
+    let mut cur = pos as isize + direction as isize; // c:188
+    // c:190 — `for (; *cur && nested; cur += direction)`
+    while cur >= 0 && state_at(cur as usize) != 0 && nested != 0 {
+        let c = state_at(cur as usize);
+        if c == T_BEGIN && {
+            nested += direction;
+            nested == 0
+        } {
+            break; /* going backward, stop on begin */ // c:192
+        } else if c == T_END {
+            nested -= direction; // c:194
+        }
+        cur += direction as isize;
+    }
+    cur.max(0) as usize // c:196
+}
+
+/// Output sink of a `probe_terminal` sequence handler — C's `void *output`.
+/// `query_terminal` passes none; `system_clipget` collects the decoded
+/// clipboard text in it.
+/// !!! RUST-ONLY alias: C passes an untyped `void *`.
+pub type ProbeOutput = Option<Vec<u8>>;
+
+/// Direct port of `static void probe_terminal(const char *tquery,
+/// seqstate_t *states, void (*handle_seq) (int seq, int *numbers, int len,
+/// char *capture, int clen, void *output), void *output)` from
+/// `Src/Zle/termquery.c:201`.
+///
+/// Writes `tquery` to the terminal, then reads the replies through the
+/// `states` automaton, calling `handle_seq` for each recognised sequence.
+/// Reading stops at the first sequence tagged plain `SEQ` (the device
+/// attributes reply `query_terminal` sends last), on EOF, or on the read
+/// timeout (`$.term.querywait` in 100ths of a second, else `TIMEOUT`).
+/// Bytes that belong to no reply are type-ahead and are pushed back onto
+/// the input with `ungetbytes`.
+///
+/// The previous port read a raw reply into a string and returned it; no
+/// reply was ever parsed, so `query_terminal` could not be enabled
+/// without the replies reaching the line editor as keystrokes.
+pub fn probe_terminal(
+    tquery: &str,
+    states: &[u8],
+    handle_seq: fn(i32, &[i32], i32, &[u8], i32, &mut ProbeOutput),
+    output: &mut ProbeOutput,
+) {
+    // c:201
+    use crate::ported::utils::errflag;
+    use crate::ported::zle::zle_main::{getbyte, ungetbytes};
+
+    // c:205-211 — `buf` holds every byte read; `start`, `current` and
+    // `illgotten` are positions in it; `record`/`capture` mark a capture.
+    let mut buf: Vec<u8> = Vec::with_capacity(256); // c:206
+    let mut start: usize = 0; // c:207
+    let mut current: usize = 0; // c:207
+    let mut illgotten: usize = 0; // c:207
+    let mut record: usize = 0; // c:208
+    let mut capture: usize = 0; // c:208
+    let mut numbers: Vec<i32> = vec![0; 16]; // c:209 hcalloc(nlen)
+    let mut num: usize = 0; // c:210
+    let mut finish = false; // c:211
+    let mut number = false; // c:211
+    let mut ch: u8;
+
+    // c:213-215 — `Value v = getvalue(&vbuf, &WAITVAR, 0);
+    //   long timeout = v ? -1 - getintvalue(v) : TIMEOUT;`
+    let mut timeout: i64 = if crate::ported::params::getsparam(WAITVAR).is_some() {
+        -1 - crate::ported::params::getiparam(WAITVAR)
+    } else {
+        TIMEOUT
+    };
+    // c:217-218 — `if (timeout == -1) timeout = -((long)1 << (sizeof(int)*8-11))*100;`
+    if timeout == -1 {
+        timeout = -(1i64 << (32 - 11)) * 100;
+    }
+
+    let mut curstate: usize = 0; // c:220 `seqstate_t *curstate = states;`
+    // C tables end in NUL; reading past the slice reads that NUL.
+    let state_at = |i: usize| states.get(i).copied().unwrap_or(0);
+
+    // c:222-232 — no echo, no canonical input, no CR → NL on the reply.
+    let torig = crate::ported::utils::gettyinfo(); // c:222-223
+    if let Some(ti) = torig {
+        let mut ti = ti;
+        ti.c_lflag &= !libc::ECHO & !libc::ICANON; // c:225
+        ti.c_iflag &= !libc::ICRNL; // c:226
+        crate::ported::utils::settyinfo(&ti); // c:231
+    }
+
+    // c:233 — `write_loop(SHTTY, tquery, strlen(tquery));`
+    let _ = crate::ported::utils::write_loop(
+        crate::ported::init::SHTTY.load(Ordering::Relaxed),
+        tquery.as_bytes(),
+    );
+    notify_pwd(); /* unrelated to the function's main purpose */ // c:234
+
+    // c:236 — `while (!finish && *curstate)`
+    while !finish && state_at(curstate) != 0 {
+        let mut consumed = false; /* whether an input token has been matched */ // c:237
+        let mut branches: i32 = 1; /* count of untried paths encountered */ // c:238
+        let mut triedstart = curstate == 0; /* current char tried at start */ // c:239
+        let mut action: u8 = 0; // c:240
+        let mut sequence: u8 = 0; // c:240
+
+        if illgotten < current {
+            // c:242
+            ch = buf[illgotten]; // c:243
+            illgotten += 1;
+        } else {
+            // c:245-253 — the C buffer doubles when full; the Vec grows.
+            let got = getbyte(timeout); // c:254 `ch = getbyte(timeout, 0, 1);`
+            if errflag.load(Ordering::Relaxed) != 0 {
+                // c:255
+                errflag.store(0, Ordering::Relaxed); // c:256
+                break; // c:257
+            }
+            ch = match got {
+                Some(b) => b,
+                None => break, // c:259-260 `if (ch == EOF) break;`
+            };
+            // c:261-262 — `*current++ = ch; illgotten = current;`
+            if current == buf.len() {
+                buf.push(ch);
+            } else {
+                buf[current] = ch;
+            }
+            current += 1;
+            illgotten = current;
+        }
+
+        // c:265
+        while !consumed && branches >= 1 && state_at(curstate) != 0 {
+            let mut increment: i32 = 0; // c:266
+            let mut base: i32 = 1; // c:266
+            let mut tryhere = false; // c:266
+
+            // c:268-317 — `do { switch (*curstate) … } while (!tryhere);`
+            loop {
+                let s = state_at(curstate);
+                match s {
+                    T_BEGIN => {
+                        branches += 1; // c:271
+                        curstate += 1; // c:272
+                    }
+                    T_END => {
+                        branches -= 1; // c:275
+                        sequence = 0; // c:276
+                        action = 0;
+                        curstate += 1; // c:277
+                    }
+                    T_OR => {
+                        curstate = find_matching(states, curstate, 1); // c:280
+                    }
+                    T_REPEAT => {
+                        sequence = 0; // c:283
+                        action = 0;
+                        if branches > 1 {
+                            // c:284
+                            branches -= 1; // c:285
+                            curstate += 1; // c:286
+                        } else {
+                            branches += 1; // c:288
+                            curstate = find_matching(states, curstate - 1, -1); // c:289
+                        }
+                    }
+                    T_NUM => {
+                        tryhere = ch.is_ascii_digit(); // c:293
+                        if !tryhere {
+                            curstate += 1; // c:294
+                        }
+                    }
+                    T_RECORD => {
+                        record = current.saturating_sub(1); // c:297
+                        curstate += 1; // c:298
+                    }
+                    T_CAPTURE => {
+                        capture = current.saturating_sub(1); // c:301
+                        curstate += 1; // c:302
+                    }
+                    T_DROP | T_CONTINUE | T_NEXT => {
+                        action |= s; // c:307
+                        curstate += 1; // c:308
+                    }
+                    _ => {
+                        if (s & SEQ) == SEQ {
+                            // c:311
+                            sequence = s; // c:312
+                            curstate += 1; // c:313
+                        } else {
+                            tryhere = true; // c:315
+                        }
+                    }
+                }
+                if tryhere {
+                    break; // c:318 `} while (!tryhere);`
+                }
+            }
+
+            // c:320
+            match state_at(curstate) {
+                T_HEX => {
+                    // c:321-332
+                    let digit = match ch {
+                        b'0'..=b'9' => Some((ch - b'0') as i32),
+                        b'a'..=b'f' => Some((ch - b'a') as i32 + 10),
+                        b'A'..=b'F' => Some((ch - b'A') as i32 + 10),
+                        _ => None, // c:328 `else break;`
+                    };
+                    if let Some(d) = digit {
+                        increment = d;
+                        consumed = true; // c:330 `consumed = number = 1;`
+                        number = true;
+                        base = 16; // c:331
+                        if action & 4 != 0 {
+                            /* NEXT was used */
+                            num += 1; // c:332-333
+                        }
+                    }
+                }
+                T_HEXCH => {
+                    // c:335-341
+                    consumed = ch.is_ascii_hexdigit();
+                    if consumed && number {
+                        num += 1; // c:339
+                        number = false; // c:340
+                    }
+                }
+                T_NUM => {
+                    // c:343-349
+                    if ch.is_ascii_digit() {
+                        increment = (ch - b'0') as i32; // c:345
+                        base = 10; // c:346
+                        consumed = true; // c:347
+                        number = true;
+                        curstate -= 1; /* allow repetition */ // c:348
+                    }
+                }
+                T_WILDCARD => {
+                    // c:351-356
+                    consumed = true;
+                    if number {
+                        num += 1; // c:354
+                        number = false; // c:355
+                    }
+                }
+                s => {
+                    // c:358-363
+                    if (s & TAG) == 0 && {
+                        consumed = s == ch;
+                        consumed
+                    } && number
+                    {
+                        num += 1; // c:361
+                        number = false; // c:362
+                    }
+                }
+            }
+            // c:366-372 — grow the numbers array, keeping `num`'s place.
+            if num == numbers.len() {
+                let nlen = numbers.len();
+                numbers.resize(nlen * 2, 0);
+            }
+            if number {
+                numbers[num] = numbers[num] * base + increment; // c:374
+            }
+
+            /* if it didn't match, move to the next OR */
+            if !consumed && branches > 1 {
+                // c:377
+                sequence = 0; // c:378
+                action = 0;
+                while branches > 1 {
+                    // c:379 `for (; branches > 1; branches--)`
+                    curstate = find_branch(states, curstate); // c:380
+                    if state_at(curstate) == T_OR {
+                        // c:381
+                        curstate += 1; // c:382
+                        break; // c:383
+                    /* repeated group can match zero times */
+                    } else if state_at(curstate + 1) == T_REPEAT {
+                        break; // c:385-386
+                    }
+                    branches -= 1;
+                }
+            }
+            /* Retry character at the start if it is the only buffered
+             * character and was tried from a later state. */
+            if !consumed && branches <= 1 {
+                // c:391
+                if triedstart || start + 1 != current {
+                    break; // c:392-393
+                }
+                branches = 1; // c:394
+                curstate = 0; // c:395
+                triedstart = true; // c:396
+                numbers.iter_mut().for_each(|n| *n = 0); // c:397
+                num = 0;
+                sequence = 0; // c:398
+                action = 0;
+                number = false;
             }
         }
-    }
-    None
-}
 
-/// Send an escape sequence query and read the response.
-/// Port of `probe_terminal(const char *tquery, seqstate_t *states, void (*handle_seq) (int seq, int *numbers, int len, char *capture, int clen, void *output), void *output)` from Src/Zle/termquery.c — the
-/// raw-mode write+read+restore harness that drives all DA1/DA2/
-/// status-report probes.
-/// WARNING: param names don't match C — Rust=(query, timeout_ms) vs C=(tquery, states, handle_seq, numbers, len, capture, clen, output)
-fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
-    #[cfg(unix)]
-    {
-        // Set terminal to raw mode for reading response
-        let mut old_termios: libc::termios = unsafe { std::mem::zeroed() };
-        let has_old = unsafe { libc::tcgetattr(0, &mut old_termios) } == 0;
+        if !consumed {
+            // c:402
+            start += 1; // c:403 `illgotten = ++start;`
+            illgotten = start;
+            curstate = 0; /* return to first state */ // c:404
+            numbers.iter_mut().for_each(|n| *n = 0); // c:405
+            num = 0;
+            number = false; // c:406
+        } else {
+            // c:408 — `if (sequence && !(finish = sequence == SEQ))`
+            if sequence != 0 && {
+                finish = sequence == SEQ;
+                !finish
+            } {
+                // c:409-410 — `handle_seq(sequence & ~SEQ, numbers,
+                //   num - numbers, buf + record, capture - record, output);`
+                let rec = &buf[record.min(buf.len())..];
+                handle_seq(
+                    (sequence & !SEQ) as i32,
+                    &numbers,
+                    num as i32,
+                    rec,
+                    capture as i32 - record as i32,
+                    output,
+                );
+            }
 
-        if has_old {
-            let mut raw = old_termios;
-            raw.c_lflag &= !(libc::ICANON | libc::ECHO);
-            raw.c_cc[libc::VMIN] = 0;
-            raw.c_cc[libc::VTIME] = (timeout_ms / 100).min(255) as u8;
-            unsafe { libc::tcsetattr(0, libc::TCSANOW, &raw) };
-        }
-
-        // Write query — port of `write_loop(SHTTY, query, qlen)` from
-        // `Src/Zle/termquery.c:probe_terminal`. Terminal queries must
-        // reach the controlling TTY (where the terminal will see them
-        // and respond), not stdout — `read 0` on the stdin side picks
-        // up the reply on a real tty session. Route via SHTTY with
-        // stdout fallback for non-interactive testing.
-        let _ = {
-            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-            let out = if fd >= 0 { fd } else { 1 };
-            crate::ported::utils::write_loop(out, query.as_bytes())
-        };
-
-        // Read response
-        let mut response = Vec::new();
-        let mut buf = [0u8; 1];
-        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
-
-        while std::time::Instant::now() < deadline {
-            match io::stdin().read(&mut buf) {
-                Ok(1) => {
-                    response.push(buf[0]);
-                    // Check for terminal response ending characters
-                    if buf[0] == b'c'
-                        || buf[0] == b'n'
-                        || buf[0] == b't'
-                        || buf[0] == b'\\'
-                        || buf[0] == 0x07
-                    {
+            // c:412-420 — `if ((sequence || (action & 1)) &&
+            //   (current = start) && /* drop input from sequence */
+            //   (!(action & 2)))`. The middle term is an assignment whose
+            // value (a buffer pointer) is always true.
+            let restart = if sequence != 0 || (action & 1) != 0 {
+                current = start;
+                (action & 2) == 0
+            } else {
+                false
+            };
+            if restart {
+                curstate = 0; // c:416
+                numbers.iter_mut().for_each(|n| *n = 0); // c:417
+                num = 0;
+                number = false; // c:418
+            } else {
+                /* CONTINUE */
+                // c:420-421 — `while (*++curstate == T_END) ;`
+                loop {
+                    curstate += 1;
+                    if state_at(curstate) != T_END {
                         break;
                     }
                 }
-                Ok(0) => break,
-                _ => break,
             }
         }
-
-        // Restore terminal
-        if has_old {
-            unsafe { libc::tcsetattr(0, libc::TCSANOW, &old_termios) };
-        }
-
-        Ok(String::from_utf8_lossy(&response).to_string())
     }
 
-    #[cfg(not(unix))]
-    {
-        let _ = (query, timeout_ms);
-        Ok(String::new())
+    /* put back any type-ahead text */
+    if current > 0 {
+        // c:426
+        ungetbytes(&buf[..current]); // c:427
+    }
+
+    if let Some(ti) = torig {
+        crate::ported::utils::settyinfo(&ti); // c:429 `settyinfo(&torig);`
     }
 }
 
@@ -292,101 +653,150 @@ static EXTVAR: &str = ".term.extensions"; // c:132
 static IDVAR: &str = ".term.id"; // c:133
 static VERVAR: &str = ".term.version"; // c:134
 
+/// Port of `static const char *queries[]` from `Src/Zle/termquery.c:471`,
+/// indexed alongside `FEATURES`; the last entry (device attributes) has no
+/// feature and is sent last so its reply ends the probe (c:162-167).
+static QUERIES: &[&str] = &[
+    "\x1b]11;?\x1b\\", // TQ_BGCOLOR c:145
+    "\x1b]10;?\x1b\\", // TQ_FGCOLOR c:146
+    "\x1b]12;?\x1b\\", // TQ_CURSOR c:147
+    "\x1b[?u",         // TQ_KITTYKB c:151
+    "\x1bP+q524742\x1b\\", // TQ_RGB c:155
+    "\x1b[>0q",        // TQ_XTVERSION c:159
+    "\x1b[c  \r",      // TQ_DA c:167
+]; // c:471
+
 /// Direct port of `static void handle_query(int sequence, int *numbers,
 /// int len, char *capture, int clen, void *output)` from
 /// `Src/Zle/termquery.c:474`. Per-query dispatcher invoked by the
 /// state-machine matcher with the parsed response payload.
-/// WARNING: param names don't match C — Rust=(sequence, numbers, capture) vs C=(sequence, numbers, len, capture, clen, output)
-pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {
+pub fn handle_query(
+    sequence: i32,
+    numbers: &[i32],
+    len: i32,
+    capture: &[u8],
+    clen: i32,
+    _output: &mut ProbeOutput,
+) {
     // c:474
+    // `ztrduppfx(capture, clen)` — the first `clen` bytes of the capture.
+    let captured = || -> String {
+        let n = (clen.max(0) as usize).min(capture.len());
+        String::from_utf8_lossy(&capture[..n]).into_owned()
+    };
     match sequence {
-        // c:482
+        // c:479
         1 => {
-            // c:484 default colour
-            if numbers.len() == 4 {
-                // c:485 — `handle_color(numbers[0], numbers[1],
-                //                       numbers[2], numbers[3])`.
-                handle_color(numbers[0], numbers[1], numbers[2], numbers[3]); // c:486
+            /* default colour */
+            // c:480
+            if len == 4 {
+                handle_color(numbers[0], numbers[1], numbers[2], numbers[3]); // c:481-482
             }
         }
         2 => {
-            // c:488 kitty keyboard
+            /* kitty keyboard */
+            // c:484-487
             crate::ported::params::assignaparam(
-                EXTVAR, // c:489-491 assignaparam(EXTVAR, feat, ASSPM_AUGMENT)
+                EXTVAR,
                 vec![FEATURES[3].to_string()],
                 ASSPM_AUGMENT,
             );
         }
         3 => {
-            // c:492 truecolor
+            /* truecolor */
+            // c:489-492
             crate::ported::params::assignaparam(
-                EXTVAR, // c:493-495
+                EXTVAR,
                 vec![FEATURES[4].to_string()],
                 ASSPM_AUGMENT,
             );
         }
         4 => {
-            // c:496 id
-            crate::ported::params::assignsparam(IDVAR, capture, 0); // c:497 assignsparam(IDVAR, ...)
+            /* id */
+            crate::ported::params::assignsparam(IDVAR, &captured(), 0); // c:494
         }
         5 => {
-            // c:498 version
-            crate::ported::params::assignsparam(VERVAR, capture, 0); // c:499 assignsparam(VERVAR, ...)
+            /* version */
+            crate::ported::params::assignsparam(VERVAR, &captured(), 0); // c:497
         }
         _ => {}
     }
 }
 
-/// Probe the connected terminal for advertised capabilities.
-/// Port of `query_terminal()` from Src/Zle/termquery.c. The C source
-/// sends DA1 (`ESC [ c`), DA2 (`ESC [ > c`), and OSC-based probes,
-/// reads with a fixed timeout, and feeds the responses through
-/// per-capability parsers. zshrs sticks to the daily-driver subset
-/// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
-/// full 5+ probe round-trip.
+/// Direct port of `void query_terminal(void)` from
+/// `Src/Zle/termquery.c:505`. Sends the terminal probes that
+/// `$.term.extensions` does not rule out, in one burst, and parses the
+/// replies with `probe_terminal`: default colours into `$.term.fg` /
+/// `$.term.bg` / `$.term.mode`, name and version into `$.term.id` /
+/// `$.term.version`, and `modkeys-kitty` / `truecolor` onto
+/// `$.term.extensions`.
 pub fn query_terminal() {
     // c:505
-    // c:506 — `char tquery[sizeof(TQ_BGCOLOR TQ_FGCOLOR ... TQ_DA)]`.
-    // c:144-167 — TQ_* DEC OSC query sequences. Concatenate all
-    // probes into one packet; terminals that don't understand a
-    // given OSC will silently drop it.
-    const TQ_BGCOLOR: &str = "\x1b]11;?\x1b\\";
-    const TQ_FGCOLOR: &str = "\x1b]10;?\x1b\\";
-    const TQ_CURSOR: &str = "\x1b]12;?\x1b\\";
-    const TQ_KITTYKB: &str = "\x1b[?u";
-    const TQ_RGB: &str = "\x1bP+q524742\x1b\\";
-    const TQ_XTVERSION: &str = "\x1b[>0q";
-    const TQ_DA: &str = "\x1b[c  \r";
+    let mut tquery = String::new(); // c:506-507
+    let flist = crate::ported::params::getaparam(EXTVAR).unwrap_or_default(); // c:509
+    let envid = crate::ported::params::getsparam("TERM_PROGRAM"); // c:510
+    let mut badapple = false; // c:511
 
-    #[cfg(unix)]
-    {
-        if unsafe { libc::isatty(1) } != 1 {
-            return;
+    /* If TERM_PROGRAM is set in the environment, use that and
+     * skip the XTVERSION query */
+    if let Some(envid) = envid.as_deref() {
+        // c:516
+        handle_query(4, &[], 0, envid.as_bytes(), envid.len() as i32, &mut None); // c:518
+        if let Some(envver) = crate::ported::params::getsparam("TERM_PROGRAM_VERSION") {
+            // c:519
+            handle_query(5, &[], 0, envver.as_bytes(), envver.len() as i32, &mut None); // c:520
+            /* Older macOS terminal doesn't consume RGB queries,
+             * nor does it support truecolor. Given that it's widely
+             * used, we handle it explicitly. */
+            badapple = envid == "Apple_Terminal"
+                && crate::ported::utils::zstrtol(&envver, 10).0 < 470; // c:524-525
         }
     }
-    // c:512-518 — build the combined query packet, gated on
-    // `.term.extensions` flags so users can disable noisy probes.
-    let mut tquery = String::with_capacity(64);
-    if extension_enabled("bg", "color", true) {
-        tquery.push_str(TQ_BGCOLOR);
-        tquery.push_str(TQ_FGCOLOR);
+
+    // c:529-531
+    if flist.iter().any(|f| f == "-query") {
+        return; /* disable all queries */
     }
-    if extension_enabled("cursor", "color", true) {
-        tquery.push_str(TQ_CURSOR);
+
+    for i in 0..QUERIES.len() {
+        // c:533
+        let last = i >= FEATURES.len(); // c:534
+        let mut found = last && tquery.is_empty(); // c:535
+        let mut enable = false; // c:536
+
+        /* skip if the query or corresponding feature is already in the list */
+        // c:540 — `for (f = flist; !last && !found && f && *f; f++)`
+        for f in flist.iter() {
+            if last || found {
+                break;
+            }
+            /* just i=3(TQ_KITTYKB) is disabled by default */
+            enable = i == 3 && f.strip_prefix("query-") == Some(FEATURES[i]); // c:542
+            found = enable
+                || f.strip_prefix('-').unwrap_or(f) == FEATURES[i]
+                || f.strip_prefix("-query-") == Some(FEATURES[i]); // c:543-544
+        }
+        if if found { !enable } else { i == 3 } {
+            continue; // c:546-547
+        }
+        /* if termcap indicates 24-bit color, assume support - even
+         * though this is only based on the initial $TERM
+         * failing that, check $COLORTERM */
+        let cterm = crate::ported::params::getsparam("COLORTERM");
+        if i == 4
+            && (crate::ported::init::tccolours.load(Ordering::SeqCst) == 1 << 24
+                || matches!(cterm.as_deref(), Some("truecolor") | Some("24bit")))
+        {
+            handle_query(3, &[], 0, &[], 0, &mut None); // c:551-555
+        } else if (i != 4 || !badapple) && (i != 5 || envid.is_none()) {
+            tquery.push_str(QUERIES[i]); /* collate escape sequences */ // c:556-558
+        }
     }
-    if extension_enabled("kbprotocol", "kitty", false) {
-        tquery.push_str(TQ_KITTYKB);
+
+    if !tquery.is_empty() {
+        /* unless nothing left after filtering */
+        probe_terminal(&tquery, QUERY_STATES, handle_query, &mut None); // c:561-562
     }
-    if extension_enabled("truecolor", "query", true) {
-        tquery.push_str(TQ_RGB);
-    }
-    if extension_enabled("xtversion", "query", true) {
-        tquery.push_str(TQ_XTVERSION);
-    }
-    // c:530 — TQ_DA always emitted last as the "all probes done"
-    // marker (every terminal answers DA1).
-    tquery.push_str(TQ_DA);
-    let _ = probe_terminal(&tquery, PROBE_TIMEOUT_MS);
 }
 
 fn base64_encode(data: &[u8]) -> String {
@@ -507,21 +917,18 @@ pub fn base64_decode(src: &str) -> Vec<u8> {
 ///
 /// C body (single statement):
 ///     `*(char**)output = base64_decode(capture, clen);`
-/// Rust returns the decoded bytes as a String (caller no longer
-/// receives via an out-pointer).
-pub fn handle_paste(seq: &str, len: usize) -> String {
+pub fn handle_paste(
+    _sequence: i32,
+    _numbers: &[i32],
+    _len: i32,
+    capture: &[u8],
+    clen: i32,
+    output: &mut ProbeOutput,
+) {
     // c:595
-    let capture = seq.get(..len).unwrap_or(seq); // c:598 capture+clen
-    String::from_utf8_lossy(&base64_decode(capture)).into_owned() // c:598
+    let n = (clen.max(0) as usize).min(capture.len());
+    *output = Some(base64_decode(&String::from_utf8_lossy(&capture[..n]))); // c:598
 }
-
-// `handle_query(int sequence, int *numbers, int len, char *capture,
-// int clen, ...)` from Src/Zle/termquery.c:474 — C signature takes
-// 5 args (parsed sequence-id, decoded numbers, count, captured
-// text, capture-len) plus the matcher state, and dispatches
-// per-sequence (TQ_DA / TQ_BGCOLOR / ...). The previous Rust shape
-// shipped a 2-arg form against a fake `TermCapabilities` struct
-// that didn't exist in C.
 
 /// Percent-encode a string for OSC-7 / OSC-8 URLs.
 /// Port of `url_encode(path, ulen)` from Src/Zle/termquery.c. Preserves the
@@ -544,32 +951,21 @@ pub fn url_encode(s: &str) -> String {
 }
 
 /// Direct port of `char *system_clipget(char clip)` from
-/// `Src/Zle/termquery.c:625`. Emits `ESC ] 52 ; <clip> ; ? ST` and
-/// parses the terminal's `ESC ] 52 ; <clip> ; <base64> ST` reply,
-/// returning the decoded payload or None on timeout / malformed reply.
-///
-/// `clip` is the OSC-52 clipboard selector (`c` = clipboard, `p` =
-/// primary, `s` = selection); C source embeds it at `seq[5]` of the
-/// fixed template `\033]52;.;?\033\\`.
+/// `Src/Zle/termquery.c:644`. Asks the terminal for the OS selection
+/// (`clip` `c` = clipboard, `p` = primary) with OSC 52 and returns the
+/// decoded contents, or None when the terminal gave no reply.
 pub fn system_clipget(clip: char) -> Option<String> {
-    // c:625
-    let mut seq = String::from("\x1b]52;.;?\x1b\\"); // c:625 fixed template
-                                                     // c:631 — `seq[5] = clip` overwrites the placeholder '.'.
-    unsafe {
-        seq.as_bytes_mut()[5] = clip as u8;
-    } // c:631
-      // c:632 — probe_terminal(seq, osc52, &handle_paste, &contents).
-      // Rust's probe_terminal returns the full ESC...ST reply; parse it
-      // here in lieu of the C state-machine handle_paste callback.
-    let reply = probe_terminal(&seq, 200).ok()?; // c:632
-                                                 // Expected reply shape: `ESC ] 52 ; <clip> ; <base64> ESC \` (the
-                                                 // terminator may also be a bare BEL `\x07`).
-    let prefix = format!("\x1b]52;{};", clip);
-    let rest = reply.strip_prefix(&prefix)?;
-    let payload_end = rest.find('\x1b').or_else(|| rest.find('\x07'))?;
-    let b64 = &rest[..payload_end];
-    let bytes = base64_decode(b64);
-    String::from_utf8(bytes).ok() // c:637 return contents
+    // c:644
+    let mut seq = *b"\x1b]52;.;?\x1b\\"; // c:647 `char seq[] = "\033]52;.;?\033\\";`
+    let mut contents: ProbeOutput = None; // c:648
+    seq[5] = clip as u8; // c:649
+    probe_terminal(
+        &String::from_utf8_lossy(&seq),
+        OSC52_STATES,
+        handle_paste,
+        &mut contents,
+    ); // c:650
+    contents.map(|c| String::from_utf8_lossy(&c).into_owned()) // c:651
 }
 
 /// Encode `data` as an OSC-52 clipboard-set sequence.
@@ -1327,8 +1723,6 @@ pub fn cursor_form() {
     let _ = CURF_COLOR; // silence unused-import warning until tests cover the color path
 }
 
-const PROBE_TIMEOUT_MS: u64 = 500;
-
 #[cfg(test)]
 mod term_pat_tag_tests {
     use super::*;
@@ -1699,52 +2093,110 @@ mod tests {
     // C-parity tests pinning Src/Zle/termquery.c.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// `find_branch(s, ';')` finds the first ';' at top level.
-    /// C `Src/Zle/termquery.c:find_branch` walks balancing parens.
+    /// Records each sequence `probe_terminal` recognises as
+    /// `seq:numbers:capture` lines, so the parse can be asserted directly.
+    fn record_seq(
+        sequence: i32,
+        numbers: &[i32],
+        len: i32,
+        capture: &[u8],
+        clen: i32,
+        output: &mut ProbeOutput,
+    ) {
+        let nums: Vec<String> = numbers[..len as usize].iter().map(|n| n.to_string()).collect();
+        let cap = &capture[..(clen.max(0) as usize).min(capture.len())];
+        let out = output.get_or_insert_with(Vec::new);
+        out.extend_from_slice(
+            format!("{}:{}:{}\n", sequence, nums.join(","), String::from_utf8_lossy(cap)).as_bytes(),
+        );
+    }
+
+    /// c:201-430 — probe_terminal walks QUERY_STATES over foot's reply burst
+    /// (X06termquery case 1): both default colours as (fg/bg, r, g, b)
+    /// numbers with the 4-digit hex channels cut to 2, kitty keyboard, the
+    /// truecolor XTGETTCAP reply, and the name/version captures. The DA
+    /// reply (plain SEQ) ends the probe without a handler call, and a byte
+    /// that belongs to no reply is pushed back as type-ahead.
+    #[test]
+    fn probe_terminal_parses_a_reply_burst() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zle::zle_main::{ungetbytes, KUNGETBUF};
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbytes(
+            b"\x1b]11;rgb:ffff/ffff/dddd\x1b\\\x1b]10;rgb:0000/0000/0000\x1b\\x\x1b[?0u\
+\x1bP1+r524742=38\x1b\\\x1bP>|foot(1.20.2)\x1b\\\x1b[?62;4;22;28c",
+        );
+        let mut out: ProbeOutput = None;
+        probe_terminal("", QUERY_STATES, record_seq, &mut out);
+        assert_eq!(
+            String::from_utf8_lossy(&out.unwrap_or_default()),
+            "1:1,255,255,221:\n1:0,0,0,0:\n2:0:\n3::\n4::foot\n5::1.20.2\n"
+        );
+        let typeahead: Vec<u8> = KUNGETBUF.lock().unwrap().drain(..).collect();
+        assert_eq!(typeahead, b"x");
+    }
+
+    /// c:122-126 + c:595-598 — an OSC 52 reply is captured and base64-decoded
+    /// (the `"*p` vi-put source).
+    #[test]
+    fn probe_terminal_decodes_an_osc52_reply() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zle::zle_main::{ungetbytes, KUNGETBUF};
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbytes(b"\x1b]52;p;YWZ0ZXI=\x07");
+        let mut out: ProbeOutput = None;
+        probe_terminal("", OSC52_STATES, handle_paste, &mut out);
+        assert_eq!(out.as_deref(), Some(&b"after"[..]));
+        KUNGETBUF.lock().unwrap().clear();
+    }
+
+    /// c:170-181 — from inside a group, `find_branch` stops at the `T_OR`
+    /// that ends the current alternative.
     #[test]
     fn find_branch_top_level_separator() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let r = find_branch("abc;def", b';');
-        assert_eq!(r, Some(3));
+        let s = [T_BEGIN, b'a', T_OR, b'b', T_END];
+        assert_eq!(find_branch(&s, 1), 2);
     }
 
-    /// `find_branch` returns None when separator absent.
+    /// c:175 — with no `T_OR`/`T_END` ahead, the scan runs to the table's
+    /// terminating NUL.
     #[test]
     fn find_branch_no_match_returns_none() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert!(find_branch("abc", b';').is_none());
+        assert_eq!(find_branch(b"abc", 0), 3);
     }
 
-    /// `find_matching` finds matching `)` for `(`.
-    /// Walk starts at depth=0 — must see an `open` paren first to
-    /// increment depth, then the matching close pops it.
+    /// c:185-196 — forward from a `T_OR`, `find_matching` lands just past
+    /// the `T_END` closing the group (how an untaken alternative is skipped).
     #[test]
     fn find_matching_balanced_parens() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        // "(x)" — open at 0 (depth=1), close at 2 (depth=0).
-        let r = find_matching("(x)", b'(', b')');
-        assert_eq!(r, Some(2), "matching close at offset 2");
+        let s = [T_BEGIN, b'a', T_OR, b'b', T_END, b'z'];
+        assert_eq!(find_matching(&s, 2, 1), 5);
     }
 
-    /// `find_matching` handles nested parens.
+    /// c:190-195 — nested groups are balanced on the way to the close.
     #[test]
     fn find_matching_nested_parens() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        // "((x))" — outer open at 0, outer close at 4.
-        let r = find_matching("((x))", b'(', b')');
-        assert_eq!(r, Some(4), "outer match at offset 4 (after nested pair)");
+        let s = [T_BEGIN, b'a', T_OR, T_BEGIN, b'x', T_END, T_END, b'z'];
+        assert_eq!(find_matching(&s, 2, 1), 7);
     }
 
-    /// `find_matching` unbalanced returns None.
+    /// c:190 — a group that never closes runs to the terminating NUL.
     #[test]
     fn find_matching_unbalanced_returns_none() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert!(find_matching("abc", b'(', b')').is_none());
+        let s = [T_BEGIN, b'a', T_OR, b'b'];
+        assert_eq!(find_matching(&s, 2, 1), 4);
     }
 
     /// `url_encode("hello")` passes alphanumerics through.
@@ -1850,30 +2302,29 @@ mod tests {
         assert_eq!(url_encode("12345"), "12345");
     }
 
-    /// c:116 — `find_branch` returns Some(idx) for matching char.
+    /// c:176-179 — an inner group's `T_OR` is not the current branch's end.
     #[test]
     fn find_branch_finds_existing_char() {
         let _g = crate::test_util::global_state_lock();
-        let r = find_branch("hello", b'l');
-        assert!(r.is_some(), "find_branch must find 'l' in 'hello'");
+        let s = [T_BEGIN, b'a', T_BEGIN, b'x', T_OR, b'y', T_END, T_OR, b'b', T_END];
+        assert_eq!(find_branch(&s, 1), 7);
     }
 
-    /// c:116 — `find_branch` returns None for missing char.
+    /// c:175 — the last alternative of a group ends at its `T_END`.
     #[test]
     fn find_branch_missing_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        let r = find_branch("hello", b'x');
-        assert!(r.is_none());
+        let s = [T_BEGIN, b'a', T_OR, b'b', T_END];
+        assert_eq!(find_branch(&s, 3), 4);
     }
 
-    /// c:126 — `find_matching("(x)", '(', ')')` finds the closing paren.
+    /// c:192 — backward (T_REPEAT, c:289) `find_matching` stops on the
+    /// `T_BEGIN` opening the repeated group.
     #[test]
     fn find_matching_simple_pair() {
         let _g = crate::test_util::global_state_lock();
-        // Starting at index 0 (depth=0), need open first to step to depth=1.
-        let r = find_matching("(x)", b'(', b')');
-        // Should find the matching close; pin no panic + valid Option.
-        let _ = r;
+        let s = [b'q', T_BEGIN, b'x', T_END, T_REPEAT];
+        assert_eq!(find_matching(&s, 3, -1), 1);
     }
 
     /// `system_clipget` no panic on any clip selector.
@@ -1893,25 +2344,23 @@ mod tests {
     // c:851 mark_output / c:890 notify_pwd / c:922 match_cursorform
     // ═══════════════════════════════════════════════════════════════════
 
-    /// c:116 — `find_branch` returns Option<usize> (compile-time type pin).
+    /// c:170 — `find_branch` returns a state position (compile-time pin).
     #[test]
     fn find_branch_returns_option_usize_type() {
-        let _: Option<usize> = find_branch("abc", b'a');
+        let _: usize = find_branch(b"abc", 0);
     }
 
-    /// c:116 — `find_branch("", _)` always returns None.
+    /// c:175 — a branch running to the end of the table stops there.
     #[test]
     fn find_branch_empty_string_returns_none() {
-        for c in [b'a', b'\0', b' ', b'\xff'] {
-            assert!(find_branch("", c).is_none(), "empty + {} → None", c);
-        }
+        assert_eq!(find_branch(b"ab", 0), 2);
+        assert_eq!(find_branch(b"", 0), 1);
     }
 
-    /// c:126 — `find_matching("", _, _)` always returns None.
+    /// c:190 — an empty table gives the position after the start.
     #[test]
     fn find_matching_empty_string_returns_none() {
-        assert!(find_matching("", b'(', b')').is_none());
-        assert!(find_matching("", b'[', b']').is_none());
+        assert_eq!(find_matching(b"", 0, 1), 1);
     }
 
     /// c:451 — `base64_decode("")` returns empty Vec (pin).
@@ -1988,41 +2437,37 @@ mod tests {
     // c:451 base64_decode / c:531 url_encode / c:792 prompt_markers
     // ═══════════════════════════════════════════════════════════════════
 
-    /// c:116 — `find_branch` returns Option<usize> (compile-time pin, alt).
+    /// c:170 — `find_branch` returns a state position (compile-time pin, alt).
     #[test]
     fn find_branch_returns_option_usize_pin_alt() {
-        let _: Option<usize> = find_branch("anything", b';');
+        let _: usize = find_branch(QUERY_STATES, 1);
     }
 
-    /// c:116 — `find_branch("", _)` returns None (empty string has no branch).
+    /// c:170-181 — in the real `QUERY_STATES`, the first alternative after
+    /// ESC (the colour reply) ends at the `T_OR` before the DCS `P` branch.
     #[test]
     fn find_branch_empty_returns_none() {
-        assert!(
-            find_branch("", b';').is_none(),
-            "empty string → no branch found"
-        );
+        let end = find_branch(QUERY_STATES, 1);
+        assert_eq!(QUERY_STATES[end], T_OR);
+        assert_eq!(QUERY_STATES[end + 1], b'P');
     }
 
-    /// c:126 — `find_matching` returns Option<usize> (compile-time pin).
+    /// c:185 — `find_matching` returns a state position (compile-time pin).
     #[test]
     fn find_matching_returns_option_usize_type() {
-        let _: Option<usize> = find_matching("()", b'(', b')');
+        let _: usize = find_matching(b"\x80\x81", 0, 1);
     }
 
-    /// c:126 — `find_matching` on balanced pair finds the close.
+    /// c:185-196 — an empty group `EITHER()` closes immediately.
     #[test]
     fn find_matching_balanced_pair_finds_close() {
-        let r = find_matching("()", b'(', b')');
-        assert_eq!(r, Some(1), "() close at index 1");
+        assert_eq!(find_matching(&[T_BEGIN, T_END], 0, 1), 2);
     }
 
-    /// c:126 — `find_matching` on unbalanced returns None (alt name pin).
+    /// c:190 — unclosed nested groups run to the terminating NUL.
     #[test]
     fn find_matching_unbalanced_returns_none_alt() {
-        assert!(
-            find_matching("(((", b'(', b')').is_none(),
-            "unbalanced ((( → None"
-        );
+        assert_eq!(find_matching(&[T_BEGIN, T_BEGIN, T_BEGIN], 0, 1), 3);
     }
 
     /// c:392 — `base64_encode` returns String (compile-time pin).
