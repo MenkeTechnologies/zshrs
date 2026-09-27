@@ -487,3 +487,42 @@ mod nested_alias_in_cmdsubst {
         assert_parity("alias e='echo a' f='e b'\neval 'g() { x=$(f) }'; functions g");
     }
 }
+
+/// c:Src/input.c:546-609 + c:736-753 — a character the lexer pushes back
+/// returns to the input frame it came from; popping that frame (herrflush →
+/// inpopalias, c:Src/hist.c:479) walks back only over characters still
+/// consumed and abandons the pushed-back ones. zshrs queues pushback
+/// outside the frames, so after the `{foo}` hack gave back `}` and the
+/// alias's trailing separator, the pop took the alias NAME out of the raw
+/// record and herrflush re-read the separator: the second error reported
+/// `x=$( )` instead of `x=$(e)`.
+mod alias_pushback_on_parse_error {
+    use super::*;
+
+    fn stderr_of(bin: &std::path::Path, zshrs: bool, s: &str) -> String {
+        let mut c = Command::new(bin);
+        if zshrs {
+            c.args(["--zsh", "-f", "-c", s]).env_remove("ZSHRS_CACHE");
+        } else {
+            c.args(["-fc", s]);
+        }
+        String::from_utf8_lossy(&c.output().expect("spawn").stderr).into_owned()
+    }
+
+    #[test]
+    fn the_raw_word_keeps_the_alias_name() {
+        if !zsh_available() {
+            return;
+        }
+        for s in [
+            "alias e='echo a}'; eval 'x=$(e)'",
+            "alias e='echo a}'; eval 'x=$(e) y'",
+            "alias e='echo a}'; eval 'print $(e) z'",
+        ] {
+            let z = stderr_of(Path::new(zsh_path()), false, s);
+            let r = stderr_of(&zshrs_bin(), true, s);
+            assert!(z.contains("$(e)"), "reference zsh: {z:?}");
+            assert_eq!(z, r, "stderr divergence on:\n{s}");
+        }
+    }
+}

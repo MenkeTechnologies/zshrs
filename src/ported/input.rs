@@ -42,6 +42,9 @@ struct instacks {
     bufct: i32,            // c:112 int bufct — inbufct AT PUSH TIME (spans lower CONT frames)
     flags: i32,            // c:112 int flags
     alias: Option<(String, i32)>, // c:111 Alias alias — (an->node.nam, an->node.flags)
+    /// !!! RUST-ONLY !!! — the `INBUF_SERIAL` of the frame this entry
+    /// saves, restored by `inpoptop`. See `lex::LEX_UNGET_FRAME`.
+    serial: u64,
 }
 
 /// Initial input stack size
@@ -125,6 +128,19 @@ thread_local! {
     /// `Src/input.c:114`. The instacktop pointer in C maps to the
     /// Vec's length here.
     static instack: RefCell<Vec<instacks>> = const { RefCell::new(Vec::new()) };
+
+    /// !!! WARNING: RUST-ONLY HELPER STATE !!! — identity of the current
+    /// `inbuf` frame (0 = none pushed yet). C identifies a frame by its
+    /// `inbuf` pointer; the lexer's pushback queue (`lex::LEX_UNGET_FRAME`)
+    /// records this so `inpoptop` can tell which queued characters were
+    /// read from the frame it pops.
+    #[allow(non_upper_case_globals)]
+    pub static INBUF_SERIAL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// !!! WARNING: RUST-ONLY HELPER STATE !!! — next `INBUF_SERIAL` to
+    /// hand out; serials only grow, so a frame pushed later always has the
+    /// larger one.
+    #[allow(non_upper_case_globals)]
+    static INBUF_SERIAL_NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
 
     /// `lexstop` — set when the lexer should stop pulling chars.
     /// C mirrors this in zsh.h as an extern; per-thread here.
@@ -926,8 +942,12 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<(String, i32)>) {
         bufct: inbufct.with(|c| c.get()), // c:686
         flags: saved_flags,
         alias: None,
+        serial: INBUF_SERIAL.with(|s| s.get()),
     };
     instack.with(|st| st.borrow_mut().push(saved));
+    INBUF_SERIAL.with(|s| {
+        s.set(INBUF_SERIAL_NEXT.with(|n| n.replace(n.get() + 1)))
+    });
 
     inbuf.with(|b| *b.borrow_mut() = str.to_string());
     inbufpos.with(|p| p.set(0));
@@ -1002,7 +1022,23 @@ pub fn inpoptop() {
         let was_alias =
             (inbufflags.with(|f| f.get()) & (INP_ALIAS | INP_HIST | INP_RAW_KEEP)) == INP_ALIAS;
         if was_alias {
-            for _ in 0..inbufpos.with(|p| p.get()) {
+            // C's `inungetc` already moved `inbufptr` back over every
+            // character pushed back into this frame (c:558) and took it out
+            // of the raw record then (c:609). Here those characters sit in
+            // `LEX_UNGET_BUF`, tagged with this frame's serial; they must not
+            // be taken out a second time. (Tags are trusted only while the
+            // queue and its tags are the same length.)
+            let serial = INBUF_SERIAL.with(|s| s.get());
+            let backed = crate::ported::lex::LEX_UNGET_FRAME.with_borrow(|f| {
+                let in_step =
+                    crate::ported::lex::LEX_UNGET_BUF.with_borrow(|b| b.len()) == f.len();
+                if in_step {
+                    f.iter().filter(|&&t| t == serial).count()
+                } else {
+                    0
+                }
+            });
+            for _ in 0..inbufpos.with(|p| p.get()).saturating_sub(backed) {
                 zshlex_raw_back(); // c:752
             }
         }
@@ -1010,6 +1046,25 @@ pub fn inpoptop() {
 
     // c:756-757 — if (inbuf && (inbufflags & INP_FREE)) free(inbuf);
     //              Rust Drop covers the heap-string free when entry is replaced.
+    // In C the characters `inungetc` pushed back into this alias frame, or
+    // into the INP_CONT frames it stacked above it (c:571-603), are part of
+    // what is freed here: popping an alias expansion abandons its unread
+    // text. zshrs holds that pushback in `LEX_UNGET_BUF`, so drop the queued
+    // characters that belong to this frame or to a frame pushed after it
+    // (serials only grow). They sit at the front: they were read last.
+    if (inbufflags.with(|f| f.get()) & INP_ALIAS) != 0 {
+        let serial = INBUF_SERIAL.with(|s| s.get());
+        use crate::ported::lex::{LEX_UNGET_BUF, LEX_UNGET_FRAME, LEX_UNGET_HPTR, LEX_UNGET_RAW};
+        let in_step = LEX_UNGET_BUF.with_borrow(|b| b.len())
+            == LEX_UNGET_FRAME.with_borrow(|f| f.len());
+        while in_step && LEX_UNGET_FRAME.with_borrow(|f| f.front().is_some_and(|&t| t >= serial)) {
+            LEX_UNGET_FRAME.with_borrow_mut(|f| f.pop_front());
+            LEX_UNGET_BUF.with_borrow_mut(|b| b.pop_front());
+            LEX_UNGET_HPTR.with_borrow_mut(|b| b.pop_front());
+            LEX_UNGET_RAW.with_borrow_mut(|b| b.pop_front());
+            crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.pop_front());
+        }
+    }
 
     // c:759-765 — pop and restore from instacktop->{buf,bufptr,bufleft,bufct,flags}
     if let Some(entry) = instack.with(|st| st.borrow_mut().pop()) {
@@ -1066,6 +1121,7 @@ pub fn inpoptop() {
         inbuf.with(|b| *b.borrow_mut() = entry.buf);
         inbufpos.with(|p| p.set(entry.bufpos));
         inbufflags.with(|f| f.set(entry.flags));
+        INBUF_SERIAL.with(|s| s.set(entry.serial));
         // c:764 — `inbufct = instacktop->bufct;` — restore the count
         // saved at push time. It spans the restored frame's remainder
         // PLUS every CONT frame below; the previous recompute-from-

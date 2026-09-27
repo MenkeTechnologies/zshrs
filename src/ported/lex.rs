@@ -1148,6 +1148,34 @@ thread_local! {
     /// failed with "parse error near `}'".
     pub static LEX_UNGET_RAW: std::cell::RefCell<std::collections::VecDeque<bool>>
         = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    /// !!! WARNING: RUST-ONLY HELPER STATE !!!
+    ///
+    /// Lockstep companion to [`LEX_UNGET_BUF`]: one entry per queued
+    /// character, the `input::INBUF_SERIAL` of the `inbuf` frame the
+    /// character was read from (0 = the Rust-only `LEX_INPUT` window).
+    ///
+    /// C needs no such thing: `inungetc` (c:Src/input.c:546-609) returns
+    /// the character to the frame it came from (`inbufptr--`), or to an
+    /// INP_CONT frame pushed on top when that frame is already backed up
+    /// to its start. `inpoptop` (c:Src/input.c:736-753) then walks back
+    /// only over characters still consumed, and popping the frame throws
+    /// away whatever was pushed back into it. zshrs queues pushback here
+    /// instead, so `inpoptop` needs to know which queued characters belong
+    /// to the frame it pops: otherwise it took them out of the raw record a
+    /// second time and `herrflush` re-read them after the frame was gone
+    /// (`alias e='echo a}'; eval 'x=$(e)'` reported `x=$( )`).
+    pub static LEX_UNGET_FRAME: std::cell::RefCell<std::collections::VecDeque<u64>>
+        = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    /// !!! WARNING: RUST-ONLY HELPER STATE !!!
+    ///
+    /// The most recent characters `hgetc` returned, each with the frame
+    /// serial it came from, so `hungetc` can tag the character it pushes
+    /// back (see [`LEX_UNGET_FRAME`]). C's pushback always returns the
+    /// last-read character to its own frame; this is the memory of which
+    /// frame that was. Bounded: pushback never runs deeper than a few
+    /// characters.
+    pub static LEX_READ_FRAME: std::cell::RefCell<std::collections::VecDeque<(char, u64)>>
+        = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// `char *tokstr` (lex.c:170).
     pub static LEX_TOKSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// `char *zshlextext` (lex.c:43) — the text of the current token as
@@ -3994,6 +4022,7 @@ fn checkalias(lextext: &str) -> bool {
             // Their re-read comes back through the fresh-read arm of
             // `hgetc`, which records every character raw.
             LEX_UNGET_RAW.with_borrow_mut(|b| b.clear());
+            LEX_UNGET_FRAME.with_borrow_mut(|b| b.clear());
             // !!! RUST-ONLY !!! — the same handover for the
             // function-body echo buffer: these characters leave
             // the unget queue, so their re-read comes back
@@ -5001,6 +5030,8 @@ pub fn lex_init(input: &str) {
     // file-static initializers in lex.c).
     LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
     LEX_UNGET_HPTR.with_borrow_mut(|b| b.clear());
+    LEX_UNGET_FRAME.with_borrow_mut(|b| b.clear());
+    LEX_READ_FRAME.with_borrow_mut(|b| b.clear());
     LEX_UNGET_RAW.with_borrow_mut(|b| b.clear());
     crate::funcdef_capture::src_capture_reset();
     LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
@@ -5129,6 +5160,16 @@ pub(crate) fn hgetc() -> Option<char> {
         if LEX_LEXFLAGS.get() & (LEXFLAGS_ZLE | LEXFLAGS_ACTIVE) != 0 {
             crate::ported::input::inbufct.with(|ct| ct.set(ct.get() - 1));
         }
+        // !!! RUST-ONLY !!! — the re-read keeps the frame tag it was queued
+        // with, so a second pushback of it tags it the same (see
+        // `LEX_UNGET_FRAME`).
+        let tag = LEX_UNGET_FRAME.with_borrow_mut(|f| f.pop_front()).unwrap_or(0);
+        LEX_READ_FRAME.with_borrow_mut(|r| {
+            r.push_back((c, tag));
+            if r.len() > 16 {
+                r.pop_front();
+            }
+        });
         return Some(c);
     }
 
@@ -5333,6 +5374,16 @@ pub(crate) fn hgetc() -> Option<char> {
         crate::funcdef_capture::src_capture_add(c, flags);
     }
 
+    // !!! RUST-ONLY !!! — remember which frame this character came from
+    // (0 = the `LEX_INPUT` window), for `hungetc` to tag it with.
+    let tag = if via_inbuf { crate::ported::input::INBUF_SERIAL.with(|s| s.get()) } else { 0 };
+    LEX_READ_FRAME.with_borrow_mut(|r| {
+        r.push_back((c, tag));
+        if r.len() > 16 {
+            r.pop_front();
+        }
+    });
+
     Some(c)
 }
 
@@ -5346,6 +5397,23 @@ pub(crate) fn hgetc() -> Option<char> {
 /// in hgetc DOES increment, leaving LEX_LINENO=2 instead of 1.
 fn hungetc(c: char) {
     LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
+    // !!! RUST-ONLY !!! — tag the character with the frame it was read from
+    // (see `LEX_UNGET_FRAME`); an untracked character gets 0, the
+    // `LEX_INPUT` window, which no frame pop ever claims.
+    let tag = LEX_READ_FRAME.with_borrow_mut(|r| match r.pop_back() {
+        Some((rc, t)) if rc == c => t,
+        _ => 0,
+    });
+    // A save/restore of `LEX_UNGET_BUF` alone (nested parses) can leave the
+    // tags out of step with the queue; re-align with "untracked" tags then.
+    let queued = LEX_UNGET_BUF.with_borrow(|b| b.len()) - 1;
+    LEX_UNGET_FRAME.with_borrow_mut(|f| {
+        if f.len() != queued {
+            f.clear();
+            f.resize(queued, 0);
+        }
+        f.push_front(tag);
+    });
     // c:Src/hist.c:1009-1013 — `if ((inbufflags & (INP_ALIAS|INP_HIST)) !=
     //   INP_ALIAS) { DPUTS(hptr <= chline, ...); hptr--; ... }`.
     // C's `hungetc` is a function pointer pointing at `ihungetc`
