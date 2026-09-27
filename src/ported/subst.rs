@@ -10383,6 +10383,14 @@ pub fn paramsubst(
                                 // math path, erroring where zsh returns the
                                 // first match. c:1400-1410 accepts them.
                                 'I' | 'R' | 'i' | 'r' | 'e' | 'k' | 'K' => flags.push(c),
+                                // c:1760 — an ARRAY search runs before c:1782's `word`
+                                // arm, so `(w)`/`(f)`/`(p)`/`(s:SEP:)` are accepted and
+                                // have no effect: `a=("a b" "c d"); ${a[(wi)c*]}` is 2.
+                                'w' | 'f' | 'p' => {}
+                                's' => {
+                                    let delim = chars.next()?;
+                                    chars.by_ref().find(|&cc| cc == delim)?;
+                                }
                                 'n' | 'b' => {
                                     let delim = chars.next()?;
                                     let mut numstr = String::new();
@@ -11599,6 +11607,9 @@ pub fn paramsubst(
                                 String::new()
                             } else {
                                 let mut r = idx_n;
+                                if isset(crate::ported::zsh_h::KSHARRAYS) && r >= 0 {
+                                    r += 1; // c:1619-1620 `if (isset(KSHARRAYS) && r >= 0) r++;`
+                                }
                                 if r < 0 {
                                     r += len + 1; // c:1625
                                 }
@@ -11613,6 +11624,39 @@ pub fn paramsubst(
                         } else {
                             String::new()
                         }
+                    } else if let Some(word_hit) = (|s: &str| -> Option<String> {
+                        // c:Src/params.c:1782-1818 — a search flag (i/I/r/R/k/K)
+                        // together with a word flag (w/f) searches WORDS, which
+                        // neither arm below does: `${s[(wi)t*]}` fell through to
+                        // the math parser. The search is ported once, in
+                        // `params::getarg`'s scalar arm; a range takes the
+                        // two-bound path (c:2131-2136) instead.
+                        if crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
+                            .is_some()
+                        {
+                            return None;
+                        }
+                        let rest = s.trim_start().strip_prefix('(')?;
+                        let mut letters = String::new();
+                        let mut it = rest[..rest.find(')')?].chars();
+                        while let Some(c) = it.next() {
+                            letters.push(c);
+                            if matches!(c, 'n' | 'b' | 's') {
+                                let delim = it.next()?; // get_strarg: skip the argument
+                                it.by_ref().find(|&cc| cc == delim)?;
+                            }
+                        }
+                        let has = |set: &str| letters.chars().any(|c| set.contains(c));
+                        if !(has("wf") && has("iIrRkK")) {
+                            return None;
+                        }
+                        match crate::ported::params::getarg(s.trim_start(), None, None, Some(&scalar)) {
+                            Some(crate::ported::params::getarg_out::Value(v)) => Some(v.to_str()),
+                            _ => None,
+                        }
+                    })(sub)
+                    {
+                        word_hit
                     } else if let Some((flags, num, beg, pat)) =
                         (|s: &str| -> Option<(String, Option<i64>, Option<i64>, String)> {
                             let s = s.trim_start();

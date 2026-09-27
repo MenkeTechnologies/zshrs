@@ -60631,3 +60631,40 @@ either form; the key runs to the matching close (either form, depth-counted)
 and is untokenized; text after the close is discarded, as C does with
 `bracks > 0` (c:2290): `${(P)${:-a[1]x}}` → `one`. Test: `tests/zshrs_shell.rs`
 `test_param_flag_P_unquoted_nested_operand_keeps_its_subscript`.
+
+---
+
+## #1155 — word-mode subscript searches (`(wi)`, `(ws:SEP:r)`, …) were unimplemented — fixed
+
+**Status:** `fixed` 2026-09-27.
+
+```console
+                                 zsh 5.9.2        zshrs (before)
+s="one  two three"
+${s[(wi)t*]} ${s[(wR)t*]}        6 three          bad math expression: operator expected at `t*'
+s="a:bb:cc"; ${s[(ws.:.i)c*]}    6                bad math expression: ':' without '?'
+${${:-a:b:c}[(ws.:.)2]}          b                a:b:c
+${${:-a b c}[(w)5]}              c                (empty)
+a=("a b" "c d"); ${a[(wi)c*]}    2                bad math expression: operator expected at `c'
+setopt ksharrays; ${s[(w)1]}     b  (s="a b c")   a
+```
+
+**Root cause.** getarg's word arm (c:Src/params.c:1782-1818) was never ported:
+a search flag combined with `(w)`/`(f)` must `sepsplit` the value, match each
+word WHOLE (no implicit trailing Star, c:1689), then map the word number to a
+1-based character offset through `findword` (c:1811-1816). Only the character
+search existed, and it declined `w`, so the text fell through to the math
+parser. Separately:
+
+- `params::getarg` returned early on `s`, so `(ws.:.)N` on a nested value fell
+  back to the whole value; the separator is now parsed with get_strarg
+  semantics and the flag scan continues (c:1479-1495, with `(p)` decoding).
+- The numeric word index on a nested value was not clamped into
+  `[1, wordcount]` (c:1622-1629), and neither path applied c:1619-1620's
+  KSHARRAYS shift; the nested char search `(i)` also missed the c:2091 shift.
+- The braced ARRAY search rejected `w`/`f`/`p`/`s`; on an array the search arm
+  (c:1760) runs before `word`, so they are accepted and ignored.
+
+**Fix.** The word search lives once, in `params::getarg`'s scalar arm; the
+named-scalar path in `paramsubst` routes word+search subscripts to it. Test:
+`tests/zshrs_shell.rs` `test_subscript_word_search_flags`.

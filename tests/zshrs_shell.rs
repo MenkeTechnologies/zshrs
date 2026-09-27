@@ -5941,6 +5941,31 @@ fn test_param_flag_P_empty_deref_keeps_word() {
 }
 
 #[test]
+fn test_subscript_word_search_flags() {
+    // c:Src/params.c:1782-1818 — a search flag with (w)/(f) matches whole
+    // words and answers the word's 1-based CHARACTER offset (i/I) or the word
+    // itself (r/R); a miss is 0, an out-of-range `(b::)` is wordcount + 1.
+    // An explicit separator keeps empty fields for the word number but
+    // `findword` skips them (`a::b` → 0). On an array the search ignores the
+    // word flag (c:1760 precedes c:1782). c:1618-1634 clamps a numeric word
+    // index and shifts it under KSHARRAYS. Expected lines are zsh 5.9.2.
+    let (_, output, _) = run_zshrs(
+        r#"s="one  two three"; print ${s[(wi)t*]} ${s[(wI)t*]} ${s[(wr)t*]} ${s[(wR)t*]} ${s[(wn:2:i)t*]}
+s="one two three"; print "[${s[(wi)zz]}] [${s[(wr)zz]}] [${s[(wI)zz]}] [${s[(wR)zz]}]"
+s="a::b"; print ${s[(ws.:.i)b]} ${s[(ws.:.ie)b]} ${s[(ws.:.r)?]}
+s="a b c"; print "[${s[(b:9:wr)*]}]" ${s[(b:2:wi)*]} ${s[(wn:-1:r)*]}
+print ${${:-one  two three}[(wr)t*]} ${${:-a:bb:cc}[(ws.:.i)c*]} ${${:-a:b:c}[(ws.:.)2]} ${${:-a b c}[(w)5]}
+a=("a b" "c d"); print ${a[(wi)c]} ${a[(wi)c*]} ${a[(wr)c*]}
+setopt ksharrays; s="a b c"; print ${s[(w)0]} ${s[(w)1]} ${${:-a b c}[(w)0]} ${${:-abc}[(i)b]}"#,
+    );
+    assert_eq!(
+        output,
+        "6 10 two three 10\n[0] [] [0] []\n0 0 a\n[ ] 3 c\ntwo 6 b c\n3 2 c d\na b a 1\n",
+        "got: {output:?}"
+    );
+}
+
+#[test]
 fn test_param_flag_P_unquoted_nested_operand_keeps_its_subscript() {
     // An UNQUOTED nested operand reaches the (P) fetch with tokenized
     // brackets, which fetchvalue accepts (c:Src/params.c:2281 `*s == '[' ||

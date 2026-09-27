@@ -3353,6 +3353,11 @@ pub(crate) fn getarg<'a>(
     // Sequential direction state per c:1390-1483 (see the flag arm below).
     let mut seq_ind = false;
     let mut seq_down = false;
+    // c:1440-1447 `word` and c:1447/1479-1495 `sep`; `(p)` (c:1476) print-decodes
+    // a following `(s:SEP:)`.
+    let mut word = false;
+    let mut sep_explicit: Option<String> = None;
+    let mut escapes = false;
     while i < bytes.len() && bytes[i] != b')' {
         let c = bytes[i] as char;
         match c {
@@ -3383,6 +3388,12 @@ pub(crate) fn getarg<'a>(
                         seq_ind = true;
                         seq_down = true;
                     }
+                    'w' => word = true, // c:1440
+                    'f' => {
+                        word = true;
+                        sep_explicit = Some("\n".to_string()); // c:1447
+                    }
+                    'p' => escapes = true, // c:1476
                     _ => {}
                 }
                 i += 1;
@@ -3436,16 +3447,31 @@ pub(crate) fn getarg<'a>(
                 flags_end = i;
             }
             's' => {
-                // (s:SEP:) — pass through with raw flag block.
-                let close = match rest[i..].find(')') {
-                    Some(p) => i + p,
-                    None => return None,
+                // c:1479-1495 — `s<DELIM>SEP<DELIM>` via get_strarg; the flag
+                // scan continues after it, so `(ws.:.i)` and `(s.:.w)` both
+                // reach the word arms below.
+                let Some(&delim) = bytes.get(i + 1).filter(|b| b.is_ascii()) else {
+                    bad = true;
+                    break;
                 };
-                let flags = &rest[flags_start..close];
-                return Some(getarg_out::Flags {
-                    flags,
-                    rest: &rest[close + 1..],
+                let Some(len) = bytes[i + 2..].iter().position(|&b| b == delim) else {
+                    bad = true;
+                    break;
+                };
+                let arg = &rest[i + 2..i + 2 + len];
+                sep_explicit = Some(if escapes {
+                    crate::ported::utils::getkeystring_with(
+                        arg,
+                        (crate::ported::zsh_h::GETKEY_OCTAL_ESC | crate::ported::zsh_h::GETKEY_EMACS)
+                            as u32,
+                        None,
+                    )
+                    .0 // c:1490
+                } else {
+                    arg.to_string() // c:1494
                 });
+                i += len + 3;
+                flags_end = i;
             }
             _ => {
                 bad = true;
@@ -3837,36 +3863,144 @@ pub(crate) fn getarg<'a>(
     // word is returned. Pattern-search variants on scalars use the
     // c:1798-1980 char-search arm ported below.
     if let Some(s) = scalar {
-        if flags.contains('w') || flags.contains('f') {
-            if let Ok(n) = pat.parse::<i64>() {
-                let sep_chars: &[char] = if flags.contains('f') {
-                    &['\n']
+        // c:1783 `sepsplit(s, sep, 1, 1)`: with no separator the split is on
+        // IFS whitespace and yields no empty word; an explicit one keeps the
+        // empties between adjacent separators. Each entry is a char range.
+        let s_chars: Vec<char> = s.chars().collect();
+        let sepsplit_ranges = || -> Vec<(usize, usize)> {
+            let sep: Vec<char> = sep_explicit.as_deref().unwrap_or("").chars().collect();
+            let sep_len_at = |i: usize| -> usize {
+                if sep_explicit.is_none() {
+                    matches!(s_chars[i], ' ' | '\t' | '\n') as usize
+                } else if !sep.is_empty() && s_chars[i..].starts_with(&sep) {
+                    sep.len()
                 } else {
-                    &[' ', '\t', '\n']
-                };
-                let words: Vec<&str> = s
-                    .split(|c: char| sep_chars.contains(&c))
-                    .filter(|w| !w.is_empty())
-                    .collect();
-                let len = words.len() as i64;
-                let idx_into = if n > 0 {
-                    (n - 1) as usize
-                } else if n < 0 {
-                    let off = len + n;
-                    if off < 0 {
-                        return Some(getarg_out::Value(Value::str("")));
+                    0
+                }
+            };
+            let (mut ta, mut i, mut start) = (Vec::new(), 0usize, 0usize);
+            while i < s_chars.len() {
+                match sep_len_at(i) {
+                    0 => i += 1,
+                    l => {
+                        ta.push((start, i));
+                        i += l;
+                        start = i;
                     }
-                    off as usize
-                } else {
-                    return Some(getarg_out::Value(Value::str("")));
-                };
-                return Some(getarg_out::Value(Value::str(
-                    words
-                        .get(idx_into)
-                        .map(|s| s.to_string())
-                        .unwrap_or_default(),
-                )));
+                }
             }
+            ta.push((start, s_chars.len()));
+            if sep_explicit.is_none() {
+                ta.retain(|&(a, b)| a < b);
+            }
+            ta
+        };
+        let word_text = |(a, b): (usize, usize)| -> String { s_chars[a..b].iter().collect() };
+        if word {
+            if let Ok(n) = pat.parse::<i64>() {
+                let words: Vec<String> = sepsplit_ranges()
+                    .into_iter()
+                    .filter(|&(a, b)| a < b)
+                    .map(word_text)
+                    .collect();
+                // c:1618-1634 — KSHARRAYS shifts a non-negative index, then the
+                // word number is CLAMPED into [1, wordcount]: `${${:-a b c}[(w)5]}`
+                // is `c`, `(w)-5` and `(w)0` are `a`.
+                let len = words.len() as i64;
+                let mut r = if isset(KSHARRAYS) && n >= 0 { n + 1 } else { n };
+                if r < 0 {
+                    r += len + 1;
+                }
+                r = r.max(1).min(len);
+                return Some(getarg_out::Value(Value::str(if r < 1 {
+                    String::new() // c:1630 `if (!s || !*s) return 0;`
+                } else {
+                    words[r as usize - 1].clone()
+                })));
+            }
+        }
+        let any_search = flags.contains('r')
+            || flags.contains('R')
+            || flags.contains('i')
+            || flags.contains('I')
+            || flags.contains('k') // c:1422-1426 (keymatch = ishash = 0 ⇒ rev)
+            || flags.contains('K'); // c:1427-1431 (keymatch = ishash = 0 ⇒ rev+down)
+        // c:2091 — a search index leaves 0-based under KSHARRAYS.
+        let ksh_idx = |i: i64| -> i64 {
+            if i > 0 && isset(KSHARRAYS) {
+                i - 1
+            } else {
+                i
+            }
+        };
+        // c:1782-1818 — a search flag with a word flag matches whole WORDS
+        // (no implicit trailing Star: c:1689 skips it for `word`), then maps the
+        // word number back to a character offset through `findword`.
+        if word && any_search && sep_explicit.as_deref() != Some("") {
+            let down = seq_down ^ neg_num_flips; // c:1509-1512
+            let ta = sepsplit_ranges();
+            let visited: Vec<(usize, usize)> =
+                ta.iter().copied().filter(|&(a, b)| a < b).collect(); // findword skips empties
+            let exact = flags.contains('e');
+            let prog = if exact {
+                None
+            } else {
+                let mut tok = pat.to_string();
+                crate::ported::glob::tokenize(&mut tok);
+                patcompile(&tok, PAT_HEAPDUP as i32, None) // c:1727
+            };
+            let untok = crate::lex::untokenize(pat); // c:1709 quote_arg
+            let hit = |k: usize| -> bool {
+                let w = word_text(ta[k]);
+                if exact {
+                    w == untok
+                } else {
+                    prog.as_ref().is_some_and(|p| pattry(p, &w))
+                }
+            };
+            let len = ta.len() as i64;
+            let b0 = if beg < 0 { beg + len } else { beg }; // c:1785-1786
+            // c:1791 `return len + 1` — straight out, `*w` never set.
+            let direct = !down && b0 >= len;
+            let mut left = num;
+            let mut nth = |k: &usize| {
+                hit(*k) && {
+                    left -= 1;
+                    left == 0
+                }
+            };
+            let r: i64 = if (down && b0 < 0) || (!direct && !(b0 >= 0 && b0 < len)) {
+                0 // c:1788-1789
+            } else if direct {
+                len + 1
+            } else if down {
+                let top = if has_beg { b0 } else { len - 1 }; // c:1794-1795
+                (0..=top as usize).rev().find(&mut nth).map_or(0, |k| k as i64 + 1) // c:1796-1800
+            } else {
+                (b0 as usize..ta.len()).find(&mut nth).map_or(0, |k| k as i64 + 1) // c:1802-1806
+            };
+            // c:1811-1816 — the r-th visited word gives the 1-based offset; its
+            // extent is `strlen(ta[i])`, `i` counting findword's visits.
+            let (off, end) = if direct {
+                (r, r)
+            } else if r > 0 && (r as usize) <= visited.len() {
+                let k = r as usize - 1;
+                let a = visited[k].0 as i64;
+                (a + 1, a + (ta[k].1 - ta[k].0) as i64)
+            } else {
+                (0, 0)
+            };
+            return Some(getarg_out::Value(Value::str(if seq_ind {
+                ksh_idx(off).to_string()
+            } else if off > 0 {
+                // getindex: offset through `*w`, or the one character at the
+                // offset when `*w` was never set.
+                let a = off as usize - 1;
+                let e = (end.max(off) as usize).min(s_chars.len());
+                s_chars.get(a..e).map(|c| c.iter().collect()).unwrap_or_default()
+            } else {
+                String::new()
+            })));
         }
         // C params.c:1798-1980 — scalar char-search arm. `(i)/(I)/
         // (r)/(R)` on a scalar runs a sliding-window glob match over
@@ -3881,18 +4015,11 @@ pub(crate) fn getarg<'a>(
         // SCALAR they leave only `rev` (and `down` for `K`): they ARE `r`/`R`
         // here, and c:1707's `if (!keymatch)` still compiles the pattern.
         // Omitting them left `${s[(k)pat]}` short of the c:1819 char-search arm.
-        let any_search = flags.contains('r')
-            || flags.contains('R')
-            || flags.contains('i')
-            || flags.contains('I')
-            || flags.contains('k') // c:1422-1426 (keymatch = ishash = 0 ⇒ rev)
-            || flags.contains('K'); // c:1427-1431 (keymatch = ishash = 0 ⇒ rev+down)
         if any_search {
             let return_index = seq_ind; // c:1412/1416 ind, sequential
             let want_last = flags.contains('I') || flags.contains('R') || flags.contains('K');
             // Negative `num` flips direction (c:1488-1491).
             let want_last = want_last ^ neg_num_flips;
-            let s_chars: Vec<char> = s.chars().collect();
             let n = s_chars.len();
             let positions: Box<dyn Iterator<Item = usize>> = if want_last {
                 Box::new((0..=n).rev())
@@ -3978,7 +4105,7 @@ pub(crate) fn getarg<'a>(
                 }
             }
             return Some(getarg_out::Value(match (found, return_index) {
-                (Some((s_pos, _)), true) => Value::str((s_pos + 1).to_string()),
+                (Some((s_pos, _)), true) => Value::str(ksh_idx(s_pos as i64 + 1).to_string()),
                 // C params.c:1798-1980 char-search returns the char AT
                 // the match position, not the full matched substring.
                 // Verified empirically: `s="barfooxyz"; ${s[(r)foo]}`
@@ -3990,7 +4117,7 @@ pub(crate) fn getarg<'a>(
                         .unwrap_or_default(),
                 ),
                 (None, true) => Value::str(if flags.contains('i') {
-                    (n + 1).to_string()
+                    ksh_idx(n as i64 + 1).to_string()
                 } else {
                     "0".to_string()
                 }),
