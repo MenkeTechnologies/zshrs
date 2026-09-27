@@ -6748,9 +6748,14 @@ pub fn paramsubst(
           // length of PID), NOT a nested subexp. Only enter the
           // subexp path when the `$` has actual content after it.
         let next_after_dollar = body_chars.get(idx + 1).copied();
-        let is_bare_special_dollar = matches!(
+        // c:2650-2651 — `(s[1] == Inbrace || s[1] == Inpar || s[1] ==
+        // Inparmath)`: only a nested `${…}` / `$(…)` / `$((…))` opens a
+        // subexpression. `${$bar}` is the parameter `$` followed by the
+        // stray text `bar`, which the operator switch rejects as "bad
+        // substitution".
+        let is_bare_special_dollar = !matches!(
             next_after_dollar,
-            Some('}') | Some(')') | Some(Outbrace) | Some(Outpar) | None
+            Some('{') | Some('(') | Some(Inbrace) | Some(Inpar) | Some(Inparmath)
         );
         let mut subexp_value: Option<String> = if idx < body_chars.len()
             && (body_chars[idx] == '$' || body_chars[idx] == Qstring || body_chars[idx] == Stringg)

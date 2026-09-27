@@ -848,3 +848,18 @@ mod c_locale_flags {
         assert_parity(r#"print -r -- ${(qqqq):-""}"#);
     }
 }
+
+/// c:Src/subst.c:2650-2651 — only `${…}`, `$(…)` and `$((…))` open a nested
+/// subexpression. `${$bar}` is the parameter `$` followed by stray text, a
+/// "bad substitution" (E01options "Rule 11 failure case").
+mod dollar_name_is_not_a_subexp {
+    use super::*;
+
+    #[test]
+    fn dollar_name_after_flags_is_bad_substitution() {
+        assert_parity("exec 2>&1; bar=x; : ${(el.20..X.)$bar}; print rc=$?");
+        assert_parity("exec 2>&1; bar=x; print ${$bar}");
+        assert_parity("exec 2>&1; bar=x; print \"${$bar}\"");
+        assert_parity("x=abc; print ${${x}[2]} ${$(print hi)} ${$((1+2))}");
+    }
+}
