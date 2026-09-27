@@ -939,3 +939,89 @@ mod operator_word_feeds_the_flags {
         );
     }
 }
+
+/// Round-6 subst leftovers: each case diverged before its fix.
+mod round6_subst {
+    use super::*;
+
+    /// c:3313 — `untokenize(val)` before setsparam: a `$(…)` word's Nularg
+    /// never reaches the parameter or the word.
+    #[test]
+    fn assign_default_untokenizes_the_word() {
+        assert_parity(
+            r#"print -rl -- a ${x:=$(true)} b ${y::=$(true)} c ${z=`true`} d | od -c; typeset -p x y z"#,
+        );
+    }
+
+    /// c:2120-2122 — ksh `${!name}` is `${(k)name}`; with KSH_ARRAYS the bare
+    /// array is element 0 (c:Src/params.c:2286-2288), also under `(k)`/`(kv)`.
+    #[test]
+    fn ksh_bang_is_keys_and_bare_keys_clamp() {
+        assert_parity(
+            r#"emulate ksh; x=(a b); print ${!x}; print ${!x[@]}; typeset -A h; h=(k1 v1 k2 v2); print ${!h[@]}; y=s; print ${!y}"#,
+        );
+        assert_parity(r#"setopt ksharrays; x=(a b); print ${(k)x} ${(kv)x} ${(v)x}; print ${(k)x[@]}"#);
+    }
+
+    /// c:4041-4137 then c:4339 — the quote flags and the padding run on the
+    /// length string: `${(qq)#a}` is `'3'`.
+    #[test]
+    fn quote_flags_apply_to_the_length() {
+        assert_parity(
+            r#"arr=(a bb c); print -r -- ${(qq)#arr} ${(q)#arr} "${(qq)#arr}" ${(qqq)#arr} ${(qqqq)#arr} ${(l:5:qq)#arr}x"#,
+        );
+    }
+
+    /// c:3811-3845 runs `(#)` before the c:3856 length.
+    #[test]
+    fn evalchar_before_length() {
+        assert_parity(r#"x=65; a=(65 66); print ${(#)#x} ${(#)#a} "${(#)#a}""#);
+    }
+
+    /// c:Src/params.c:651-653 — `(kv)` counts every hash entry twice.
+    #[test]
+    fn kv_length_counts_pairs() {
+        assert_parity(r#"typeset -A h; h=(foo bar k2 v2); print ${(kv)#h} ${(k)#h} ${(v)#h} "${(kv)#h}""#);
+    }
+
+    /// c:Src/params.c:2270 — `(k)` with `[@]` on a scalar is the scalar.
+    #[test]
+    fn keys_splat_on_scalar_is_its_value() {
+        assert_parity(r#"s=abc; print -r -- ${(k)s[@]} "${(k)s[@]}" ${(k)s[*]} ${(@k)s}"#);
+    }
+
+    /// c:3032 then c:3446 — a quoted `(k)` strip operates on the joined KEYS.
+    #[test]
+    fn quoted_key_strip_uses_the_keys() {
+        assert_parity(
+            r#"typeset -A h; h=(foo bar); print "${(k)h#f}" "${(k)h%r}" "${(kv)h#f}" "${(kv)h%%r}" "${(v)h#b}""#,
+        );
+    }
+
+    /// c:3959 — a scalar subscript is folded whole: a space stays a space.
+    #[test]
+    fn casemod_on_a_space_subscript() {
+        assert_parity(
+            r#"s="ab cd"; x=${(U)s[3]}; print -r "[$x]"; x=${(U)s[3,4]}; print -r "[$x]"; print -rl -- ${(C)s[3]} "${(L)s[2,4]}" | od -c"#,
+        );
+    }
+
+    /// c:3932 sepsplit then c:4366-4437 glue the affixes before c:184-187
+    /// removes empty words, so the trailing empty field keeps the suffix.
+    #[test]
+    fn shwordsplit_array_trailing_empty_takes_the_suffix() {
+        assert_parity(
+            r#"setopt shwordsplit; arr=(a b ""); print -l x${arr}y; print -l x${arr[1,3]}y; print -l x${arr[*]}y; arr=("" a); print -l x${arr}y; print -l -- $arr"#,
+        );
+    }
+
+    /// c:Src/params.c:2286-2288 — `${^name}` is a bare name, so KSH_ARRAYS
+    /// clamps it before plan9 cross-products.
+    #[test]
+    fn ksharrays_rc_expand_bare_is_element_zero() {
+        assert_parity(
+            r#"setopt ksharrays; arr=(a b c); print x${^arr}y; print ${^arr}; print x${^arr[@]}y"#,
+        );
+        assert_parity(r#"setopt shwordsplit; arr=("a b" c); print -l x${^arr}y"#);
+    }
+}

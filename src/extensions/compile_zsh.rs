@@ -7933,8 +7933,17 @@ impl ZshCompiler {
             if valid {
                 let idx = self.builder.add_constant(Value::str(bare));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_ALL, 1), 0);
+                // c:Src/params.c:2286-2288 — a BARE name (no `[@]`/`[*]`) goes
+                // through fetchvalue's KSHARRAYS clamp to element 0 before
+                // plan9 sees it: `setopt ksharrays; a=(a b); x${^a}y` is `xay`.
+                // That is the bare-name read GET_VAR performs; the explicit
+                // splice keeps every element.
+                let load_bid = if bare.len() == inner.len() {
+                    crate::vm_helper::BUILTIN_GET_VAR
+                } else {
+                    crate::vm_helper::BUILTIN_ARRAY_ALL
+                };
+                self.builder.emit(Op::CallBuiltin(load_bid, 1), 0);
                 // c:Src/subst.c:184-188 — prefork's empty-word removal
                 // (`uremnode`) applies to an UNQUOTED splat, so
                 // `a=(a '' b); print -l -- ${^a}` is 2 lines, not 3. Same drop

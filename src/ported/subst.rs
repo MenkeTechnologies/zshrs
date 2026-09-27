@@ -5419,7 +5419,23 @@ pub fn paramsubst(
         // `${(flag)name}` in DQ context and in the new bridge passthru
         // path where raw tokenized text reaches paramsubst without an
         // intermediate untokenize pass.
-        if matches!(body_chars.first(), Some(&'(') | Some(&Inpar)) {
+        // c:2120-2122 — `if ((c = *s) == '!' && s[1] != Outbrace &&
+        // EMULATION(EMULATE_KSH)) { hkeys = SCANPM_WANTKEYS|SCANPM_NONAMEREF; s++; }`:
+        // ksh's `${!name}` is `${(k)name}` (for namerefs, the name at the end of
+        // the chain rather than the value). The body here excludes the closing
+        // brace, so `s[1] != Outbrace` is "something follows the `!`".
+        // !!! RUST-ONLY GATE: the posix-faithful `--ksh` drop-in and `--bash`
+        // take their own real-shell `${!…}` arms below, so skip C's arm there.
+        if body_chars.first() == Some(&'!')
+            && body_chars.len() > 1
+            && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH)
+            && !crate::dash_mode::posix_faithful()
+            && !crate::dash_mode::bash_mode()
+        {
+            hkeys = SCANPM_WANTKEYS; // c:2121
+            nonameref_guard = Some(crate::ported::params::NamerefSuppressGuard::new()); // c:2121 SCANPM_NONAMEREF
+            idx = 1; // c:2122 `s++`
+        } else if matches!(body_chars.first(), Some(&'(') | Some(&Inpar)) {
             // c:2147
             // dash/ash have no `${(flags)name}` parameter-flag block — a `(`
             // right after `${` is a "Bad substitution" error there. POSIX `${`
@@ -9679,6 +9695,9 @@ pub fn paramsubst(
             } else if (hkeys & SCANPM_WANTKEYS) != 0
                 && (hvals & SCANPM_WANTVALS) == 0
                 && is_splat_txt!(sub)
+                // c:Src/params.c:2270 — only a PM_HASHED node carries key scanflags;
+                // a scalar `${(k)s[@]}` is its value (c:1634 scalar subscript).
+                && assoc_contains(&var_name)
             {
                 // c:Src/params.c:1492 — `(k)` on `${assoc[@]}` / `[*]`
                 // wants the KEYS. Routing through assoc_get (the arm
@@ -13458,6 +13477,10 @@ pub fn paramsubst(
             // c:3845
             let _ = post_flags_start;
             let getlen = 1 + whichlen; // c:2588
+            // c:Src/params.c:651-653 scancountparams — `(kv)` counts each hash
+            // entry twice (`${(kv)#h}` is the length of the key/value list).
+            let kv_count_c652: usize =
+                if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 { 2 } else { 1 };
                                        // c:Src/subst.c:3193 — `:-default` modifier on `${#NAME:-X}`
                                        // shape. When var_name resolves empty (unset, empty
                                        // positional, or empty literal name `${#:-X}`), apply the
@@ -13942,9 +13965,9 @@ pub fn paramsubst(
                             // (dense; no holes tracked). c:3854
                             crate::bash_arrays::live_len(&var_name, arr.len())
                         } else if let Some(keys) = assoc_keys(&var_name) {
-                            keys.len()
+                            keys.len() * kv_count_c652
                         } else if let Some(ref keys) = magic_keys {
-                            keys.len()
+                            keys.len() * kv_count_c652
                         } else {
                             0
                         }
@@ -13962,10 +13985,10 @@ pub fn paramsubst(
                         // `IndexMap` insert per key, for a number that needs
                         // neither. `assoc_keys` is the keys-only scan, so the
                         // per-key getfn and every value string drop out.
-                        keys.len()
+                        keys.len() * kv_count_c652
                     } else if let Some(ref keys) = magic_keys {
                         // PARTAB magic-assoc count.
-                        keys.len()
+                        keys.len() * kv_count_c652
                     } else {
                         0
                     }
@@ -14018,6 +14041,31 @@ pub fn paramsubst(
                 // c:3866 (scalar) — uses post-modifier value so
                 // `${#:-foo}` returns 3 (length of "foo"), not 0
                 // (length of empty pre-modifier raw_value).
+                // c:3811-3845 — `(#)` replaced `val` with its character
+                // BEFORE the length (c:3856): `x=65; ${(#)#x}` is 1.
+                let raw_value_for_len = if evalchar {
+                    let saved_errflag = errflag.load(Ordering::Relaxed); // c:3812 oef
+                    let saved_noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:3812 one
+                    if !quoteerr {
+                        *crate::ported::utils::noerrs_lock().lock().unwrap() = 1; // c:3814
+                    }
+                    let evaluated = substevalchar(raw_value_for_len.trim()); // c:3837
+                    *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs; // c:3840
+                    if !quoteerr {
+                        // c:3843 — `errflag = oef | (errflag & ERRFLAG_INT);`
+                        let cur = errflag.load(Ordering::Relaxed);
+                        errflag.store(
+                            saved_errflag | (cur & crate::ported::zsh_h::ERRFLAG_INT),
+                            Ordering::Relaxed,
+                        );
+                    }
+                    match evaluated {
+                        Some(v) if errflag.load(Ordering::Relaxed) == 0 => v,
+                        _ => return (String::new(), new_pos, vec![]), // c:3845 return NULL
+                    }
+                } else {
+                    raw_value_for_len
+                };
                 if getlen < 3 {
                     // c:Src/utils.c MB_METASTRLEN — under C/POSIX
                     // locale (CODESET ≠ "UTF-8"), zsh's mbrtowc
@@ -14083,6 +14131,30 @@ pub fn paramsubst(
                                            // returns early from the length path, so the `(l)`/`(r)`
                                            // width never reached the count: `${(l:5:)#foo}` gave
                                            // "2" instead of zsh's "    2".
+            // c:4041-4137 — the quote flags run between the length (c:3856) and
+            // the padding (c:4339+), on the scalar `val` the length left behind:
+            // `${(qq)#a}` is `'3'`, `${(q)#a}` stays `3`.
+            if quotemod > 0 {
+                n_str = if quotetype == QT_QUOTEDZPUTS {
+                    crate::ported::utils::quotedzputs(&n_str) // c:4120
+                } else if quotetype > QT_BACKSLASH {
+                    let tmp = quotestring(&n_str, quotetype); // c:4124
+                    // c:4046-4062 pre/post; c:4129-4133 the pair char and `$`.
+                    if quotetype == QT_DOLLARS {
+                        format!("$'{}'", tmp)
+                    } else if quotetype == crate::ported::zsh_h::QT_DOUBLE {
+                        format!("\"{}\"", tmp)
+                    } else if quotetype == QT_SINGLE_OPTIONAL
+                        || quotetype == QT_BACKSLASH_PATTERN
+                    {
+                        tmp // c:4053-4057 — no quotes
+                    } else {
+                        format!("'{}'", tmp)
+                    }
+                } else {
+                    quotestring(&n_str, QT_BACKSLASH_SHOWNULL) // c:4135
+                };
+            }
             if prenum > 0 || postnum > 0 {
                 // c:4060 `if (prenum || postnum)`
                 let mul_default = " ".to_string(); // c:907 (def = " ")
@@ -14104,6 +14176,12 @@ pub fn paramsubst(
             } else {
                 String::new()
             };
+            // !!! RUST-ONLY: the result is re-scanned by stringsubst, which would
+            // strip a literal `'` pair from the (qq) quoting above; the Snull wrap
+            // keeps it (same as `wrap_snull` on the main quote path).
+            if quotemod > 0 && n_str.contains('\'') {
+                n_str = format!("\u{9d}{}\u{9d}", n_str);
+            }
             let full = format!("{}{}{}", prefix, n_str, suffix);
             let new_pos_in_full = prefix.chars().count() + n_str.chars().count();
             return (full.clone(), new_pos_in_full, vec![full]);
@@ -14271,7 +14349,18 @@ pub fn paramsubst(
                     "@" | "*" | "argv" => arrays_get(&var_name), // c:385,386,423
                     _ => None,
                 })
-                .or_else(|| crate::ported::exec::array(&var_name));
+                // c:Src/params.c:2286-2288 — a bare array name under KSHARRAYS is
+                // clamped to element 0 (`v->end = 1, v->scanflags = 0`) before
+                // the (k)/(kv) flags could see its shape.
+                .or_else(|| {
+                    crate::ported::exec::array(&var_name).map(|a| {
+                        if ksh_bare_ref_c2286(&var_name) {
+                            a.into_iter().take(1).collect() // c:2288 v->end = 1
+                        } else {
+                            a
+                        }
+                    })
+                });
             // c:Src/subst.c — `(kv)` on a plain SCALAR returns the
             // scalar's value (no-op), not empty (`x=hello; ${(kv)x}` →
             // `hello`). Fall back to raw_value when the assoc/array/
@@ -14345,7 +14434,18 @@ pub fn paramsubst(
                     "@" | "*" | "argv" => arrays_get(&var_name), // c:385,386,423
                     _ => None,
                 })
-                .or_else(|| crate::ported::exec::array(&var_name));
+                // c:Src/params.c:2286-2288 — a bare array name under KSHARRAYS is
+                // clamped to element 0 (`v->end = 1, v->scanflags = 0`) before
+                // the (k)/(kv) flags could see its shape.
+                .or_else(|| {
+                    crate::ported::exec::array(&var_name).map(|a| {
+                        if ksh_bare_ref_c2286(&var_name) {
+                            a.into_iter().take(1).collect() // c:2288 v->end = 1
+                        } else {
+                            a
+                        }
+                    })
+                });
             // c:2247 — derive the scalar-join value from the key list
             // ALREADY computed into magic_assoc_array above instead of
             // re-scanning the table a second time. The prior code called
@@ -14784,19 +14884,6 @@ pub fn paramsubst(
                                      // discriminates on `isarr`.
             }
         }
-        // c:3446-3462 — the scalar leg of every pattern operator runs
-        // `getmatch(&val, …)`, and `val` is what the DQ collapse just
-        // replaced with `sepjoin(aval, sep, 1)`. `raw_value` still holds the
-        // PRE-collapse scalar, which getstrvalue built with `$IFS[1]` and no
-        // knowledge of a `(j:X:)` separator, so a quoted operator matched the
-        // wrong string: `a=(aa bb); print -r -- "${(j:-:)a%b}"` stripped from
-        // `aa bb` (no match) instead of zsh's `aa-bb` → `aa-b`. Shadow it so
-        // the operator arms below see C's `val`.
-        let raw_value = if dq_collapsed {
-            value.clone() // c:3032
-        } else {
-            raw_value
-        };
         // `split_parts` (c:3950) moved to function-scope declaration
         // earlier so subscript/flag arms above can write to it.
         // c:Src/Modules/parameter.c — magic-assoc (k)/(v) reads
@@ -14906,6 +14993,21 @@ pub fn paramsubst(
                                      // discriminates on `isarr`.
             }
         }
+        // c:3446-3462 — the scalar leg of every pattern operator runs
+        // `getmatch(&val, …)`, and `val` is what the DQ collapse just
+        // replaced with `sepjoin(aval, sep, 1)`. `raw_value` still holds the
+        // PRE-collapse scalar, which getstrvalue built with `$IFS[1]` and no
+        // knowledge of a `(j:X:)` separator, so a quoted operator matched the
+        // wrong string: `a=(aa bb); print -r -- "${(j:-:)a%b}"` stripped from
+        // `aa bb` (no match) instead of zsh's `aa-bb` → `aa-b`. Shadow it so
+        // the operator arms below see C's `val`.
+        // Taken after BOTH collapse sites: the (k)/(v)/(kv) one just above
+        // joined the KEY list, so `"${(k)h#f}"` strips the keys.
+        let raw_value = if dq_collapsed {
+            value.clone() // c:3032
+        } else {
+            raw_value
+        };
         // c:Src/subst.c — `${assoc[(R)pat]}` / `${assoc[(I)pat]}` /
         // `${assoc[(K)pat]}` preserve ARRAY shape across the assoc
         // subscript MATCH path so consumers like
@@ -16542,6 +16644,7 @@ pub fn paramsubst(
                         // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
                         // getstrvalue(&vbuf)` with VALFLAG_SUBST: the substituted value is the
                         // PARAMETER's, so `typeset -Z3 z; ${z::=15}` is `015` (54674).
+                        value = untokenize(&value); // c:3313 — `untokenize(val);` drops Nularg and restores token chars
                         let __pm = assignsparam(&__s, &value, 0);
                         exec_sync_state_from_paramtab();
                         // Only for a bare name. With a subscript C reads the whole array back
@@ -16681,6 +16784,7 @@ pub fn paramsubst(
                             // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
                             // getstrvalue(&vbuf)` with VALFLAG_SUBST: the substituted value is the
                             // PARAMETER's, so `typeset -Z3 z; ${z::=15}` is `015` (54674).
+                            value = untokenize(&value); // c:3313 — `untokenize(val);` drops Nularg and restores token chars
                             let __pm = assignsparam(&__s, &value, 0);
                             exec_sync_state_from_paramtab();
                             // Only for a bare name. With a subscript C reads the whole array back
@@ -16822,6 +16926,7 @@ pub fn paramsubst(
                             // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
                             // getstrvalue(&vbuf)` with VALFLAG_SUBST: the substituted value is the
                             // PARAMETER's, so `typeset -Z3 z; ${z::=15}` is `015` (54674).
+                            value = untokenize(&value); // c:3313 — `untokenize(val);` drops Nularg and restores token chars
                             let __pm = assignsparam(&__s, &value, 0);
                             exec_sync_state_from_paramtab();
                             // Only for a bare name. With a subscript C reads the whole array back
@@ -22126,14 +22231,19 @@ pub fn paramsubst(
                 // refetching the full array and lowercasing everything
                 // because the `arrays_get` arm below fired before this
                 // branch — pinned by r_flag_then_L_lowercase parity.
-                let parts: Vec<String> = value.split_whitespace().map(|s| transform(s)).collect();
-                value = parts.join(" ");
-                if subscript.as_deref().map_or(false, |s| {
+                let is_range = subscript.as_deref().map_or(false, |s| {
                     crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
-                }) {
+                });
+                // c:3959 — a SCALAR subscript (`$s[3]`, `$s[3,4]`) or a single array
+                // slot leaves `isarr` 0, so `val` is folded whole: `${(U)s[3]}` on
+                // "ab cd" is the space itself, not an empty word.
+                if is_range && (arrays_contains(&var_name) || is_subexp_temp) {
+                    let parts: Vec<String> = value.split_whitespace().map(|s| transform(s)).collect();
+                    value = parts.join(" ");
                     split_parts = Some(parts);
+                } else {
+                    value = transform(&value); // c:3959
                 }
-                let _ = is_subexp_temp;
             } else if let Some(arr) = arrays_get(&var_name).or_else(|| {
                 // c:3939 `if (isarr)` — a bare assoc expands to its VALUE
                 // list, so `isarr` is true and C maps casemodify over each

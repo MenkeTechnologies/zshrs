@@ -2036,6 +2036,18 @@ fn sepsplit_c3932(s: &str, keep_empties: bool) -> Vec<String> {
     out
 }
 
+/// c:`Src/subst.c:3932-3938` for a bare read: `sepsplit` plus the 0/1/N shape.
+/// Inside a word that opened with `BUILTIN_WORD_DEFER_EMPTIES`, c:184-187 runs on
+/// the FINISHED node (after c:4366-4437 glue the affixes on), so the truly empty
+/// edge fields go out raw for the end-of-word drop to judge:
+/// `setopt shwordsplit; a=(a b ''); print -l x${a}y` is `xa` `b` `y`.
+fn split_words_c3932(val: &str) -> Value {
+    if crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) > 0 {
+        return splice_words_value(crate::ported::utils::sepsplit(val, None, false));
+    }
+    splice_words_value(sepsplit_c3932(val, false))
+}
+
 /// c:`Src/subst.c:3933-3938` — how a split (or untouched) word vector reaches
 /// the caller: nothing at all, a SCALAR for a single field, an array otherwise.
 ///
@@ -5517,7 +5529,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // SAME `sepsplit`: `setopt shwordsplit; a=('p:q' r); IFS=:;
             // print -rl -- ${a[1]}` is `p` `q` in zsh, and
             // `typeset -A h=(k 'p:q'); … ${h[k]}` likewise.
-            return splice_words_value(sepsplit_c3932(&v.to_str(), false));
+            return split_words_c3932(&v.to_str());
         };
         let elems: Vec<String> = items.iter().map(|x| x.to_str()).collect();
         match join_c3914(elems, ifs_opt.as_deref()) {
@@ -5525,7 +5537,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // split off too and the ORIGINAL elements are the answer.
             JoinC3914::Elements(_) => v,
             // c:3932 `sepsplit`, then c:3933-3938's 0/1/N result shape.
-            JoinC3914::Joined(val) => splice_words_value(sepsplit_c3932(&val, false)),
+            JoinC3914::Joined(val) => split_words_c3932(&val),
         }
     });
     // BUILTIN_ARRAY_INDEX_UNBRACED — bare `$name[idx]` (no braces).
@@ -7596,7 +7608,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // site — hand it the joined scalar rather than split twice.
                     return Value::str(val);
                 }
-                splice_words_value(sepsplit_c3932(&val, false))
+                split_words_c3932(&val)
             }
         }
     });
@@ -8501,7 +8513,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if let JoinC3914::Joined(val) = join_c3914(items.clone(), ifs_opt.as_deref()) {
                     // c:3932 `aval = sepsplit(val, spsep, 0, 1)`, then
                     // c:3933-3938's 0/1/N result shape.
-                    return splice_words_value(sepsplit_c3932(&val, false));
+                    return split_words_c3932(&val);
                 }
             }
             // c:Src/subst.c:184-187 — prefork's `else if (!keep)
