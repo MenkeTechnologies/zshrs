@@ -377,11 +377,20 @@ pub fn evalcond(
                     // parsing (no arithmetic eval). Mirror both
                     // branches.
                     let parse_num = |s: &str| -> Option<f64> {
+                        if from_test.is_some() {
+                            // c:236-246 — "For test and [, the expressions
+                            // must be base 10 integers, not integer
+                            // expressions." `mn1.u.l = zstrtol(left,
+                            // &eptr, 10); ... if (*eptr) zwarnnam(...)`.
+                            // zstrtol skips leading blanks only and
+                            // accepts an empty string as 0 (eptr lands
+                            // on the NUL), so `[ '' -eq 0 ]` is true and
+                            // `[ '5 ' -eq 5 ]` is an error.
+                            let (n, rest) = crate::ported::utils::zstrtol(s, 10);
+                            return if rest.is_empty() { Some(n as f64) } else { None };
+                        }
                         let t = s.trim();
-                        if posix || from_test.is_some() {
-                            // c:Src/cond.c:236-249 — `if (fromtest) { ...
-                            // zstrtol base-10 ... }`. test/[ context
-                            // demands plain integers; no math eval.
+                        if posix {
                             // Same shape under POSIXBUILTINS.
                             t.parse::<i64>().ok().map(|i| i as f64)
                         } else {

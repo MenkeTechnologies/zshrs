@@ -1297,3 +1297,21 @@ mod quoted_backslash_in_pattern {
         assert_parity(r#"[[ 'a\b*' = "a\\b"* ]]; echo $?; [[ 'a\b*' = "a\b"* ]]; echo $?"#);
     }
 }
+
+/// c:Src/cond.c:236-246 — for `test` / `[` the operands of `-eq` .. `-ge`
+/// are read with `zstrtol(.., 10)` and rejected only when `*eptr` is not the
+/// NUL. zstrtol consumes nothing from an empty string, so `''` is 0 and not
+/// an error; it skips leading blanks but not trailing ones.
+mod test_builtin_integer_operands {
+    use super::*;
+
+    #[test]
+    fn empty_operand_is_zero() {
+        assert_parity(r#"[ '' -eq 0 ]; echo $?; test 5 -gt ''; echo $?"#);
+    }
+
+    #[test]
+    fn leading_blanks_skipped_trailing_rejected() {
+        assert_parity(r#"{ [ ' 5' -eq 5 ]; echo $?; [ '5 ' -eq 5 ]; echo $?; } 2>&1"#);
+    }
+}
