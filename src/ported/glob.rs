@@ -1971,7 +1971,10 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
             return None;
         }
         let end = &right[..pos];
-        let inc: i32 = right[pos + 2..].parse().ok()?;
+        // The step arrives TOKENIZED: a leading `-` is the Dash token, which
+        // `str::parse` rejects, so `{a..e..-2}` stayed literal. zstrtol
+        // (c:Src/utils.c:2427) reads Dash as `-`; untokenize to the same effect.
+        let inc: i32 = crate::lex::untokenize(&right[pos + 2..]).parse().ok()?;
         (end, inc)
     } else {
         (right, 1)
@@ -6522,7 +6525,9 @@ fn expand_range(
                 Ok(v) => v,
                 Err(_) => return None,
             };
-            if raw == 0 {
+            // bash treats a zero step as 1 (`{1..3..0}` → 1 2 3); the
+            // `.max(1)` at each use site applies that.
+            if raw == 0 && !crate::dash_mode::bash_mode() {
                 // c:2368 — `!rincr` → err++ → no expansion. Return
                 // None so xpandbraces falls back to literal.
                 return None;
@@ -6554,7 +6559,10 @@ fn expand_range(
                 v -= step;
             }
         }
-        if incr_sign_negative {
+        // bash takes the direction from the endpoints alone and ignores the
+        // step's sign (`{6..1..-2}` → 6 4 2, `{1..6..-2}` → 1 3 5); only zsh
+        // reverses the sequence for a negative step.
+        if incr_sign_negative && !crate::dash_mode::bash_mode() {
             vals.reverse();
         }
 
@@ -6631,24 +6639,21 @@ fn expand_range(
     if endpoints_ok && cstart.is_some() && cend.is_some() && alpha_step_ok {
         let start = cstart?; // c:2311 cstart
         let end = cend?; // c:2311 cend
-        let step = incr_abs.max(1) as u32;
-        let (lo, hi, reverse) = if start <= end {
-            (start, end, false)
-        } else {
-            (end, start, true)
-        };
+        // Walk FROM `start` toward `end`: bash steps from the left endpoint,
+        // so `{f..a..2}` is `f d b`. Stepping up from the low end and
+        // reversing gave `e c a` whenever the span is not a step multiple.
+        let step = incr_abs.max(1) as i64;
+        let (from, to) = (start as i64, end as i64);
+        let dir = if from <= to { step } else { -step };
 
         let mut results = Vec::new();
         let mut chars: Vec<char> = Vec::new();
-        let mut v = lo as u32;
-        while v <= hi as u32 {
-            if let Some(c) = char::from_u32(v) {
+        let mut v = from;
+        while (dir > 0 && v <= to) || (dir < 0 && v >= to) {
+            if let Some(c) = char::from_u32(v as u32) {
                 chars.push(c);
             }
-            v += step;
-        }
-        if reverse {
-            chars.reverse();
+            v += dir;
         }
 
         for c in chars {

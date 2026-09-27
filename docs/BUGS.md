@@ -60522,3 +60522,36 @@ read still has to materialize it.
 
 Serial `cargo test --lib -- --test-threads=1`: this name no longer appears in
 the failure list.
+
+---
+
+## #1151 — `--bash` brace ranges: a negative step, a zero step and a descending alpha step diverged from bash — fixed
+
+**Status:** `fixed` 2026-09-27.
+
+```console
+            bash (/opt/homebrew/bin/bash)   zshrs --bash (before)
+{a..e..-2}  a c e                           {a..e..-2}
+{f..a..2}   f d b                           e c a
+{6..1..-2}  6 4 2                           2 4 6
+{1..6..-2}  1 3 5                           5 3 1
+```
+
+bash takes the direction from the endpoints alone, ignores the step's sign and
+treats a zero step as 1. Three causes in `src/ported/glob.rs`:
+
+- `bracechardots` parsed the TOKENIZED step with `str::parse`, so the Dash
+  token of `-2` was rejected and the alpha range was never recognised. zsh's
+  `zstrtol` (c:Src/utils.c:2427) reads Dash as `-`; the step is untokenized
+  first.
+- The alpha path stepped up from the low endpoint and reversed, which differs
+  from walking down from the left endpoint whenever the span is not a multiple
+  of the step. It now walks from `start` toward `end`.
+- The numeric path reversed for a negative step and rejected a zero step
+  (bash: `{1..3..0}` → `1 2 3`) in every mode. Both are zsh semantics (c:Src/glob.c:2365-2369) and are now
+  gated to non-bash modes; `--zsh` output is unchanged (`{1..6..-2}` → `5 3 1`,
+  `{1..3..0}` → `1..3..0`, matching zsh 5.9.2).
+
+Test: `tests/emulation_parity.rs` `bash_brace_step_direction_comes_from_the_endpoints`;
+`bash_alpha_brace_step` passes again.
+

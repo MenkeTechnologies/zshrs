@@ -2033,6 +2033,29 @@ fn bash_alpha_brace_step() {
 }
 
 #[test]
+fn bash_brace_step_direction_comes_from_the_endpoints() {
+    // bash walks from the LEFT endpoint and ignores the step's sign; a zero
+    // step is 1. zsh instead reverses for a negative step and leaves a zero
+    // step literal. Each expected string is /opt/homebrew/bin/bash output.
+    let run = |mode: &str, script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args([mode, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(run("--bash", "echo {f..a..2}"), "f d b");
+    assert_eq!(run("--bash", "echo {f..a..-2}"), "f d b");
+    assert_eq!(run("--bash", "echo x{a..e..-2}y"), "xay xcy xey");
+    assert_eq!(run("--bash", "echo {6..1..-2}"), "6 4 2");
+    assert_eq!(run("--bash", "echo {1..6..-2}"), "1 3 5");
+    assert_eq!(run("--bash", "echo {a..e..0} {1..3..0}"), "a b c d e 1 2 3");
+    // zsh semantics are unchanged.
+    assert_eq!(run("--zsh", "echo {1..6..-2}"), "5 3 1");
+    assert_eq!(run("--zsh", "echo {1..3..0}"), "1..3..0");
+}
+
+#[test]
 fn test_bracket_posix_three_arg_binary_rule() {
     // POSIX `test`/`[` 3-argument rule: with exactly three operands and a
     // BINARY operator in the middle, it is a binary test of $1 and $3 — even
