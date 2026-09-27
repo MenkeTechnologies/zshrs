@@ -13497,6 +13497,19 @@ pub fn paramsubst(
                                        // re-entry the modifier chain below already uses. The scalar
                                        // branch (`is_array_source` forced false via `wantt` below) then
                                        // counts that string, matching c:3877-3878.
+            // c:3194-3232 — a default/alternate word that is USED goes through
+            // `multsub`, which leaves `isarr` 0 unless spbreak split it, so the
+            // length is taken of the WORD, not of the (empty) array parameter:
+            // `x=(); ${#x:-abc}` is 3, `y=(1); ${#y:+abcd}` is 4.
+            let len_spbreak = !suppress_split
+                && (force_split
+                    || (pf_flags & PREFORK_SHWORDSPLIT != 0 && pf_flags & PREFORK_SINGLE == 0 && !qt)); // c:1707 / c:2567
+            let len_split_flags = if len_spbreak {
+                PREFORK_SHWORDSPLIT | if aspar { 0 } else { PREFORK_SPLIT } // c:3216-3218
+            } else {
+                PREFORK_NOSHWORDSPLIT // c:3226
+            };
+            let mut word_used: Option<(Vec<String>, bool)> = None;
             let raw_value_for_len = if wantt {
                 // The re-entry body keeps the TOKENIZED tail (`rest_raw`), not
                 // the token-folded `rest`: with `Pound` folded back to a plain
@@ -13519,20 +13532,24 @@ pub fn paramsubst(
                     // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                     let default_tokenized: String = rest_raw.chars().skip(2).collect();
                     let default: &str =
-                        if default_tokenized.chars().count() == default.chars().count() {
+                        if !default_tokenized.is_empty() {
                             default_tokenized.as_str()
                         } else {
                             default
                         };
                     if raw_value.is_empty() {
-                        singsub(default)
+                        {
+                            let (joined, parts, isarr_w, _) = multsub_operand(default, len_split_flags); // c:3221
+                            word_used = Some((parts, isarr_w));
+                            joined
+                        }
                     } else {
                         raw_value.clone()
                     }
                 } else if let Some(default) = r.strip_prefix('-') {
                     // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                     let default_tokenized: String = rest_raw.chars().skip(1).collect();
-                    let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                    let default: &str = if !default_tokenized.is_empty() {
                         default_tokenized.as_str()
                     } else {
                         default
@@ -13541,27 +13558,35 @@ pub fn paramsubst(
                         && !arrays_contains(&var_name)
                         && !assoc_contains(&var_name)
                     {
-                        singsub(default)
+                        {
+                            let (joined, parts, isarr_w, _) = multsub_operand(default, len_split_flags); // c:3221
+                            word_used = Some((parts, isarr_w));
+                            joined
+                        }
                     } else {
                         raw_value.clone()
                     }
                 } else if let Some(alt) = r.strip_prefix(":+") {
                     // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                     let alt_tokenized: String = rest_raw.chars().skip(2).collect();
-                    let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                    let alt: &str = if !alt_tokenized.is_empty() {
                         alt_tokenized.as_str()
                     } else {
                         alt
                     };
                     if !raw_value.is_empty() {
-                        singsub(alt)
+                        {
+                            let (joined, parts, isarr_w, _) = multsub_operand(alt, len_split_flags); // c:3221
+                            word_used = Some((parts, isarr_w));
+                            joined
+                        }
                     } else {
                         String::new()
                     }
                 } else if let Some(alt) = r.strip_prefix('+') {
                     // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                     let alt_tokenized: String = rest_raw.chars().skip(1).collect();
-                    let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                    let alt: &str = if !alt_tokenized.is_empty() {
                         alt_tokenized.as_str()
                     } else {
                         alt
@@ -13570,7 +13595,11 @@ pub fn paramsubst(
                         || arrays_contains(&var_name)
                         || assoc_contains(&var_name)
                     {
-                        singsub(alt)
+                        {
+                            let (joined, parts, isarr_w, _) = multsub_operand(alt, len_split_flags); // c:3221
+                            word_used = Some((parts, isarr_w));
+                            joined
+                        }
                     } else {
                         String::new()
                     }
@@ -13778,6 +13807,7 @@ pub fn paramsubst(
             // never taken; the scalar char-count arm at c:3876 runs instead.
             let is_array_source = !ksh_scalar_array
                 && !wantt
+                && word_used.is_none() // c:3221 — the word, not the parameter, is measured
                 && (((arrays_contains(&var_name)
                     || assoc_contains(&var_name)
                     || magic_keys.is_some())
@@ -13809,7 +13839,22 @@ pub fn paramsubst(
                     whole[lo_idx as usize..hi_idx as usize].to_vec()
                 }
             };
-            let n: usize = if is_array_source {
+            let n: usize = if let Some((parts, true)) = word_used.as_ref() {
+                // c:3849-3865 with `isarr` set by the word's multsub split.
+                match getlen {
+                    1 => parts.len(), // c:3851
+                    2 => crate::ported::utils::mb_metastrlenend(
+                        &raw_value_for_len,
+                        multi_width as i32,
+                        raw_value_for_len.len(),
+                    ), // c:3854-3856 sepjoin
+                    _ => parts
+                        .iter()
+                        .map(|p| crate::ported::utils::wordcount(p, spsep.as_deref(), (getlen > 3) as i32))
+                        .sum::<i32>()
+                        .max(0) as usize, // c:3860-3864
+                }
+            } else if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
                     // c:Src/subst.c:3540 + 3845 — a `:#pat` filter is a

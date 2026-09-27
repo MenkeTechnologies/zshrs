@@ -60692,3 +60692,33 @@ synthetic typeset word from the bare name, so the builtin saw `x=2`.
 **Fix.** `src/ported/parse.rs` builds the synthetic word from the same
 `name+` text for scalar and array forms. Test: `tests/zshrs_shell.rs`
 `test_typeset_family_rejects_append_assignment`.
+
+---
+
+## #1157 — `${#arr:-word}` / `${#arr:+word}` measured the array, not the word — fixed
+
+**Status:** `fixed` 2026-09-27.
+
+```console
+                                   zsh 5.9.2   zshrs (before)
+x=(); ${#x:-abc}                   3           0
+y=(1); ${#y:+abcd}                 4           1
+setopt shwordsplit
+x=(); ${#x:-"a b" c}               2           0
+```
+
+**Root cause.** A default/alternate word that is used replaces the value
+through `multsub` (c:Src/subst.c:3194-3232), which leaves `isarr` 0 unless
+spbreak split the word; `getlen` (c:3849-3881) then measures that. The
+length block's early path substituted the word but still took the
+array-element branch whenever the NAME was an array, and it expanded the word
+with `singsub` after dropping its lexer tokens whenever the token and plain
+spellings differed in length, so a quoted span was split under
+SH_WORD_SPLIT. The main `:-`/`-`/`:+`/`+` arms had already been moved to the
+tokenized word (a901d78d39); this block had been missed.
+
+**Fix.** `src/ported/subst.rs` — the length block runs the used word through
+`multsub` with the same spbreak split flags as the main arm (c:3215-3227) and
+measures it: element count when the split made an array, otherwise the
+scalar. Test: `tests/zshrs_shell.rs`
+`test_length_of_used_default_word_on_an_array`.

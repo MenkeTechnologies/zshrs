@@ -5941,6 +5941,19 @@ fn test_param_flag_P_empty_deref_keeps_word() {
 }
 
 #[test]
+fn test_length_of_used_default_word_on_an_array() {
+    // c:Src/subst.c:3194-3232 — a default/alternate word that is USED goes
+    // through multsub, so `${#…}` measures the WORD (scalar unless spbreak
+    // split it), not the array parameter. Expected lines are zsh 5.9.2.
+    let (_, output, _) = run_zshrs(
+        r#"x=(); print ${#x:-abc} ${#x-abc} ${#x:+abc} "${#x:-a b}" ${#x:-"a b" c}
+y=(1 22); print ${#y:-abc} ${#y:+abcd} ${#y+"a b"}
+setopt shwordsplit; print ${#x:-a b} ${#x:-"a b" c}; unset u; print ${#u:-a b c}"#,
+    );
+    assert_eq!(output, "3 0 0 3 5\n2 4 3\n2 2\n3\n", "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_word_search_flags() {
     // c:Src/params.c:1782-1818 — a search flag with (w)/(f) matches whole
     // words and answers the word's 1-based CHARACTER offset (i/I) or the word
