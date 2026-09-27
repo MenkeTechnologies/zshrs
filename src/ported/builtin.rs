@@ -12851,102 +12851,148 @@ pub fn bin_print(
         }
         processed_args = new_args;
     }
-    // c:Src/builtin.c:4930-4958 — `-C N` column-grid output. Layout
-    // N args per row (nr = ceil(argc/nc) rows), each cell padded
-    // to widest arg + 2 spaces. Default mode is COLUMN-MAJOR (col 1
-    // takes first nr items, col 2 the next nr, etc.). The `-a` flag
-    // (c:4980 "print across, i.e. columns first") switches to
-    // ROW-MAJOR fill — items flow across each row before moving to
-    // the next row. Bug #40 in docs/BUGS.md: zshrs ignored `-a` and
-    // always produced column-major output.
-    let body = if !_printf_mode && OPT_HASARG(ops, b'C') {
-        // c:4687-4698 — `-C` validates its argument two ways and FAILS; it does
-        // not fall back:
-        //     nc = (int)zstrtol(argptr, &eptr, 10);
-        //     if (*eptr) {
-        //         zwarnnam(name, "number expected after -%c: %s", 'C', argptr);
-        //         return 1;
-        //     }
-        //     if (nc <= 0) {
-        //         zwarnnam(name, "invalid number of columns: %s", argptr);
-        //         return 1;
-        //     }
-        // This parsed as usize, filtered `n > 0`, and silently
-        // `.unwrap_or(1)`, so `print -C 0`, `print -C -1`, `print -C abc` and
-        // `print -C ''` all printed one column per line and returned 0 where
-        // zsh fails. zstrtol is what separates the two messages: trailing
-        // garbage leaves *eptr set ("3x" → "number expected"), while a
-        // well-formed non-positive parses cleanly and reaches the second check
-        // ("-1" → "invalid number of columns"). Leading blanks are skipped by
-        // zstrtol, so `-C ' 2'` is valid.
-        let argptr = OPT_ARG(ops, b'C').unwrap_or("");
-        let (nc_l, rest) = crate::ported::utils::zstrtol_underscore(argptr, 10, false); // c:4689
-        if !rest.is_empty() {
-            zwarnnam(name, &format!("number expected after -C: {argptr}")); // c:4691
-            return 1; // c:4692
+    // c:4842-4990 — "-c -- output in columns". `-c` sizes the grid from the
+    // terminal width, `-C N` fixes the column count. Each ROW is written
+    // with its own terminator (c:4989 `fputc(OPT_ISSET(ops,'N') ? '\0' :
+    // '\n', fout)`) and the block returns straight after, so `-n` does not
+    // apply and `-v` captures the final row's newline too.
+    let columnate = !_printf_mode && (OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'C'));
+    let body = if columnate {
+        let mut nc: i32 = 0;
+        if OPT_HASARG(ops, b'C') {
+            // c:4687-4698 — `-C` validates its argument two ways and FAILS;
+            // it does not fall back:
+            //     nc = (int)zstrtol(argptr, &eptr, 10);
+            //     if (*eptr) {
+            //         zwarnnam(name, "number expected after -%c: %s", 'C', argptr);
+            //         return 1;
+            //     }
+            //     if (nc <= 0) {
+            //         zwarnnam(name, "invalid number of columns: %s", argptr);
+            //         return 1;
+            //     }
+            let argptr = OPT_ARG(ops, b'C').unwrap_or("");
+            let (nc_l, rest) = crate::ported::utils::zstrtol_underscore(argptr, 10, false); // c:4689
+            if !rest.is_empty() {
+                zwarnnam(name, &format!("number expected after -C: {argptr}")); // c:4691
+                return 1; // c:4692
+            }
+            if nc_l <= 0 {
+                zwarnnam(name, &format!("invalid number of columns: {argptr}")); // c:4695
+                return 1; // c:4696
+            }
+            nc = nc_l as i32;
         }
-        if nc_l <= 0 {
-            zwarnnam(name, &format!("invalid number of columns: {argptr}")); // c:4695
-            return 1; // c:4696
-        }
-        let nc: usize = nc_l as usize;
-        let argc = processed_args.len();
-        let nr = (argc + nc - 1) / nc;
-        let across = OPT_ISSET(ops, b'a'); // c:4947 / c:4980
-                                           // c:Src/builtin.c:4946-4956 — max-width walk skips
-                                           // last-column items because they don't need trailing
-                                           // padding. The skip set differs by mode:
-                                           //   -a (row-major): skip i where (i % nc) == nc-1
-                                           //   default (col-major): skip i where i >= nr * (nc-1)
-        let max_w = processed_args
+        let args = &processed_args;
+        let argc = args.len() as i32;
+        // c:4846-4903 — "We need the character widths to align output in
+        // columns."  Under MULTIBYTE each arg's width is the sum of its
+        // printable WCWIDTHs; otherwise the byte length (`widths = len`).
+        let widths: Vec<i32> = args
             .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                if across {
-                    (i % nc) != nc - 1
-                } else {
-                    *i < nr * (nc.saturating_sub(1))
+            .map(|a| {
+                if !isset(crate::ported::zsh_h::MULTIBYTE) {
+                    return a.len() as i32; // c:4901 widths = len
                 }
+                let mut width = 0i32;
+                let mut it = a.chars();
+                while let Some(c) = it.next() {
+                    // c:4870-4883 — "Prevent misaligned columns due to
+                    // escape sequences by skipping over them. Octals \033
+                    // and \233 are the possible escape characters
+                    // recognized by ANSI."  Skip through the first
+                    // alphabetic character.
+                    if c == '\u{1b}' || c == '\u{9b}' {
+                        for d in it.by_ref() {
+                            if d.is_ascii_alphabetic() {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    let wcw = crate::ported::zsh_h::WCWIDTH(c); // c:4892
+                    // c:4893-4895 — "treat unprintable as 0"
+                    if wcw > 0 {
+                        width += wcw;
+                    }
+                }
+                width
             })
-            .map(|(_, s)| s.chars().count())
-            .max()
-            .unwrap_or(0);
-        let sc = max_w + 2;
-        let mut out = String::new();
-        for row in 0..nr {
-            for col in 0..nc {
-                // c:4982-4986 (-a) — `idx = row*nc + col` for
-                // row-major fill across columns first.
-                // c:4994-5005 (default) — `idx = col*nr + row` for
-                // column-major fill down columns first.
-                let idx = if across {
-                    row * nc + col
-                } else {
-                    col * nr + row
-                };
-                if idx >= argc {
-                    break;
+            .collect();
+        let across = OPT_ISSET(ops, b'a');
+        let (nr, sc);
+        if OPT_ISSET(ops, b'C') {
+            // c:4907-4934 — n: number of elements, nc: number of columns,
+            // nr: number of rows. "Ignore lengths in last column since
+            // they don't affect the separation."
+            let n = argc;
+            nr = (n + nc - 1) / nc;
+            let mut l = 0i32;
+            for i in 0..argc {
+                if across {
+                    if (i % nc) == nc - 1 {
+                        continue; // c:4925
+                    }
+                } else if i >= nr * (nc - 1) {
+                    break; // c:4928
                 }
-                let cell = &processed_args[idx];
-                // Padding skip rule mirrors max_w gate:
-                // last-column-of-row (-a) or last-column-of-grid
-                // (default) gets no trailing padding.
-                let is_last_col_of_row = col == nc - 1;
-                let is_after_last_grid_col = !across && col * nr + row + nr >= argc;
-                if is_last_col_of_row || is_after_last_grid_col {
-                    out.push_str(cell);
-                } else {
-                    out.push_str(cell);
-                    let pad = sc.saturating_sub(cell.chars().count());
-                    out.extend(std::iter::repeat(' ').take(pad));
+                if l < widths[i as usize] {
+                    l = widths[i as usize];
                 }
             }
-            out.push('\n');
+            sc = l + 2; // c:4933
+        } else {
+            // c:4937-4961 — l: maximum length seen; sc: column width;
+            // nc: number of columns (at least one).
+            let l = widths.iter().copied().max().unwrap_or(0);
+            sc = l + 2; // c:4953
+            nc = (crate::ported::utils::ZTERM_COLUMNS.load(Ordering::SeqCst) + 1) / sc; // c:4954
+            if nc == 0 {
+                nc = 1; // c:4956
+            }
+            nr = (argc + nc - 1) / nc; // c:4957
         }
-        // Strip trailing newline; the post-loop `if !nonewline` adds
-        // one back.
-        if out.ends_with('\n') {
-            out.pop();
+        let mut out = String::new();
+        let mut n: i32 = 0; // c:4960 — "print across, i.e. columns first"
+        for i in 0..nr {
+            if across {
+                // c:4962-4972
+                let mut ic = 0;
+                while ic < nc && n < argc {
+                    out.push_str(&args[n as usize]);
+                    let mut l = widths[n as usize];
+                    if n < argc && ic < nc - 1 {
+                        while l < sc {
+                            out.push(' ');
+                            l += 1;
+                        }
+                    }
+                    ic += 1;
+                    n += 1;
+                }
+            } else {
+                // c:4974-4983
+                n = i;
+                loop {
+                    out.push_str(&args[n as usize]);
+                    let mut l = widths[n as usize];
+                    let mut t = nr;
+                    while t != 0 && n < argc {
+                        t -= 1;
+                        n += 1;
+                    }
+                    if n < argc {
+                        while l < sc {
+                            out.push(' ');
+                            l += 1;
+                        }
+                    }
+                    if n >= argc {
+                        break;
+                    }
+                }
+            }
+            out.push(if nul_sep { '\0' } else { '\n' }); // c:4985
         }
         out
     } else if OPT_HASARG(ops, b'x') || OPT_HASARG(ops, b'X') {
@@ -13037,7 +13083,10 @@ pub fn bin_print(
         // `a\nb\nc\n` (with the trailing newline) where `print -v x a b c`
         // stores `a b c` (none). The port previously suppressed it for every
         // `-v`, dropping the `-l` trailing newline.
-        let suppress_term = nonewline || backslash_c_truncated || !OPT_ISSET(ops, b'l');
+        // c:4990-4999 — the columnate block already wrote every row's
+        // terminator into the stream, and READ_MSTREAM captures all of it.
+        let suppress_term =
+            columnate || nonewline || backslash_c_truncated || !OPT_ISSET(ops, b'l');
         let mut val = body.clone();
         if !suppress_term {
             val.push(if nul_sep { '\0' } else { '\n' }); // c:546
@@ -13050,13 +13099,10 @@ pub fn bin_print(
         // `echo "a\cb"; echo END` → `aEND`.
         //
         // c:Src/builtin.c:4982-5025 — the columnate (`-c`/`-C`) block emits its
-        // newline PER ROW and then `return ret`s, never reaching this shared
-        // terminator. With ZERO args there are zero rows, so `print -c` /
-        // `print -C 2` output NOTHING — not the empty line this path would add.
-        // (`print -c ""` has one arg → one row → one newline, still correct.)
-        let columnate_empty =
-            (OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'C')) && processed_args.is_empty();
-        let final_term: &[u8] = if nonewline || backslash_c_truncated || columnate_empty {
+        // newline PER ROW (already in `body`) and then `return ret`s, never
+        // reaching this shared terminator: `-n` does not suppress it, and with
+        // ZERO args there are zero rows, so `print -c` outputs nothing.
+        let final_term: &[u8] = if columnate || nonewline || backslash_c_truncated {
             b""
         } else if nul_sep {
             b"\0"

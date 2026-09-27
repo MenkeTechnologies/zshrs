@@ -369,3 +369,29 @@ mod print_tab_expand_arg {
         assert_parity("print -x ' 3' 'a\tb'; print -X ' 2' 'ab\tc'");
     }
 }
+
+/// c:Src/builtin.c:4842-4990 — `print -c` sizes its grid from zterm_columns
+/// (`nc = (zterm_columns + 1) / sc`), and every row carries its own
+/// terminator, so `-v` keeps the last newline and `-n` does not remove it.
+/// The port printed `-c` one word per line whatever COLUMNS said.
+mod print_columns_c {
+    use super::*;
+
+    #[test]
+    fn c_fills_columns_from_zterm_columns() {
+        assert_parity("COLUMNS=20; print -c a bb ccc dddd eeeee ffffff ggggggg");
+        assert_parity("COLUMNS=30; print -ac a bb ccc dddd eeeee ffffff ggggggg");
+    }
+
+    #[test]
+    fn rows_keep_their_terminator() {
+        assert_parity(r#"print -c -v v a b c; print -r -- "[$v]"; print -C2 -v v a b c; print -r -- "[$v]""#);
+        assert_parity("COLUMNS=30; print -nc a bb ccc dddd; echo X");
+    }
+
+    /// c:4870-4883 — escape sequences do not count toward the cell width.
+    #[test]
+    fn escape_sequences_have_no_width() {
+        assert_parity(r#"print -C 2 é ab $'\e[31mx\e[0m' y | od -c"#);
+    }
+}
