@@ -11027,13 +11027,6 @@ pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
     // zshrs-original (`src/extensions/banner.rs`); fusevm has no ID for it,
     // so a literal `zbanner` reaches `try_run_registered_builtin`.
     "zbanner",
-    // The `ai` builtin. `register_builtins` already installs its opcode
-    // handler (`BUILTIN_AI` = 264), but the pinned fusevm crate predates
-    // the name, so it answers `None` and a literal `ai` reaches
-    // `try_run_registered_builtin` through the run-time head path.
-    // Graduates off this list when the fusevm pin moves to a release
-    // that ships `BUILTIN_AI`.
-    "ai",
     // Dispatched by `fusevm_bridge`'s command-name match arms.
     "arch",
     "base64",

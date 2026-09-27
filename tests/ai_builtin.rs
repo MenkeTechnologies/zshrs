@@ -413,11 +413,12 @@ fn help_lists_every_flag_the_completion_offers() {
 
 #[test]
 fn ai_resolves_as_a_builtin_not_an_external_command() {
-    // Guards the `LOCAL_ONLY_BUILTINS` entry. The pinned fusevm release
-    // does not know the name yet, so without that entry `whence -w`
-    // reports `none`/`command` while calling `ai` still runs the
-    // builtin — the shell running its own implementation while every
-    // tool you could ask about it says otherwise.
+    // `ai` classifies as a builtin through fusevm's name registry
+    // (`BUILTIN_AI`), not `LOCAL_ONLY_BUILTINS`. If the name ever drops
+    // out of both, `whence -w` reports `none`/`command` while calling
+    // `ai` still runs the builtin — the shell running its own
+    // implementation while every tool you could ask about it says
+    // otherwise.
     let (out, err, code) = run("whence -w ai; print -r -- ${+builtins[ai]}");
     assert_eq!(code, 0, "stderr: {err}");
     assert_eq!(out, "ai: builtin\n1\n");

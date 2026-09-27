@@ -402,7 +402,7 @@ These features absorb the best of other shells. None ship before Phase G is done
 ## Today actions
 
 1. **G0 audit + lint** — sweep stops the friendly-output regression class permanently. 2 hours.
-2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.26.0** (`fusevm` in root `Cargo.toml:123`, features `jit`, `jit-disk-cache`, `aot`, `ffi`, `rkyv-archive`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
+2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.26.7** (`fusevm` in root `Cargo.toml:149`, features `jit`, `jit-disk-cache`, `aot`, `ffi`, `rkyv-archive`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
 3. **Decide priority of Phase H1 dogfood** — can be started in parallel with remaining assoc / `BUILTIN_EXPAND_WORD_RUNTIME` tail work by using a stripped-down `.zshrc` that avoids the long tail of zpwr-only constructs. Surfaces more bugs sooner.
 
 ---
@@ -426,7 +426,7 @@ These were on the "needs verification" list and are now measured, not estimated:
 | Claim | Measured | How |
 |---|---|---|
 | Builtins | **243** (152 + 91, disjoint) | `BUILTIN(` names in `src/ported/builtin.rs`, `EXT_BUILTIN_NAMES` in `src/extensions/ext_builtins.rs` |
-| fusevm opcodes | **235** | `Op` enum variants in `fusevm-0.26.0/src/op.rs` |
+| fusevm opcodes | **235** | `Op` enum variants in `fusevm-0.26.7/src/op.rs` |
 | ZLE widgets | **193** | `IWIDGET_NAMES` in `src/ported/zle/zle_bindings.rs` |
 | Workspace Rust | **860 files / 915k lines** | every `*.rs` outside `target/` |
 | `src/ported/` | **106 files** | frozen port directory |
