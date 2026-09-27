@@ -2855,6 +2855,31 @@ fn test_glob_qualifier_path_dot() {
 }
 
 #[test]
+fn test_glob_unsorted_subscript_counts_from_the_end_of_scan_order() {
+    // c:Src/glob.c:1991-1998 — under `oN` the unsorted matchbuf is inserted
+    // back to front from `matchct - first - 1`, so `[1,2]` picks the LAST two
+    // scanned matches (still printed in scan order). zsh 5.9.2 on a directory
+    // scanned `1 10 2`: `*(oN[1,2])` → `10 2`, `*(oN[1])` → `2`,
+    // `*(oN[-1])` → `1`. Scan order is filesystem-dependent, so the expected
+    // words are derived from the unsubscripted `*(oN)`.
+    let tmp = tempdir_for_test();
+    for f in ["1", "2", "10"] {
+        std::fs::write(format!("{}/{}", tmp, f), b"").unwrap();
+    }
+    let (_, output, _) = run_zshrs_parity(&format!(
+        "cd {tmp}; print *(oN); print *(oN[1,2]); print *(oN[1]); print *(oN[-1]); print *(oN[2,3])"
+    ));
+    let lines: Vec<&str> = output.lines().collect();
+    let scan: Vec<&str> = lines[0].split(' ').collect();
+    assert_eq!(scan.len(), 3, "got: {output:?}");
+    assert_eq!(lines[1], format!("{} {}", scan[1], scan[2]), "got: {output:?}");
+    assert_eq!(lines[2], scan[2], "got: {output:?}");
+    assert_eq!(lines[3], scan[0], "got: {output:?}");
+    assert_eq!(lines[4], format!("{} {}", scan[0], scan[1]), "got: {output:?}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn test_explicit_glob_qualifier_requires_extendedglob() {
     // c:Src/glob.c:1192-1197 — the `(#q...)` explicit glob-qualifier form is
     // recognized ONLY under EXTENDEDGLOB. Without it, the `#` inside `(...)`

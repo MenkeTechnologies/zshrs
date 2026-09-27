@@ -60577,3 +60577,33 @@ assertions were stale.
   (c:Src/Modules/zutil.c:849-856) and `bin_zformat` rejects `%` as a spec name
   (c:1026-1029; zsh 5.9.2 prints `invalid argument: %:X`). Renamed to
   `zformat_substring_percent_percent_ignores_a_percent_spec`, asserting `%`.
+
+---
+
+## #1153 — `*(oN[1,2])` took the FIRST scanned matches; zsh takes the last — fixed
+
+**Status:** `fixed` 2026-09-27.
+
+```console
+# directory scanned in the order 1 10 2
+            zsh 5.9.2   zshrs (before)
+*(oN)       1 10 2      1 10 2
+*(oN[1,2])  10 2        1 10
+*(oN[1])    2           1
+*(oN[-1])   1           2
+```
+
+**Root cause.** zglob's subscript walk has two arms (c:Src/glob.c:1990-2006).
+For a sorted list it starts at `matchbuf + matchct - first - end` and walks up.
+With `gf_sortlist[0]` = `GS_NONE` the buffer was never sorted, so C starts at
+`matchbuf + matchct - first - 1` and walks DOWN; each word is inserted right
+after the same list node (`insert_glob_match`, c:1124-1141), so the words still
+print in scan order but the window is counted from the END of the scan.
+`apply_selection` sliced `[first, end)` from the front for both arms.
+
+**Fix.** `sort_matches` reports whether `gf_sortlist[0]` is `GS_NONE`, and
+`apply_selection` mirrors the window to `[len - end, len - first)` in that case.
+Test: `tests/zshrs_shell.rs`
+`test_glob_unsorted_subscript_counts_from_the_end_of_scan_order`, which derives
+the expected words from the unsubscripted `*(oN)` because scan order is
+filesystem-dependent.

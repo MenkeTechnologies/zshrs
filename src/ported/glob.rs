@@ -4516,10 +4516,10 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     }
 
     // Sort results
-    sort_matches(state);
+    let unsorted = sort_matches(state);
 
     // Apply subscript selection
-    apply_selection(state);
+    apply_selection(state, unsorted);
 
     // Extract filenames. Mark-dirs / list-types come from EITHER
     // the canonical global option store OR the parsed `(M)`/`(T)`
@@ -6200,7 +6200,9 @@ fn check_qualifiers(state: &globdata, path: &Path, stat_out: &mut Option<fs::Met
 /// Sort the per-state matches per the qualifier `o`/`O` keys.
 /// **RUST-ONLY** — C does this inline at the end of `scanner()`
 /// (glob.c:1700ish, qsort with `gmatchcmp` comparator).
-fn sort_matches(state: &mut globdata) {
+/// Returns whether `gf_sortlist[0]` is `GS_NONE`, which decides the
+/// direction of the `[first,last]` walk (c:1991).
+fn sort_matches(state: &mut globdata) -> bool {
     // RUST-ONLY
     // Default sort is GS_NAME ascending (c:204 gf_sortlist
     // initial setup). Per-qualifier `o<key>` / `O<key>` overrides.
@@ -6243,10 +6245,12 @@ fn sort_matches(state: &mut globdata) {
             }
         })
         .unwrap_or_else(|| vec![GS_NAME]);
+    // c:1991 — the subscript walk tests only `gf_sortlist[0]`.
+    let unsorted = specs[0] & GS_NONE != 0;
 
     // GS_NONE marker — caller wants no sort at all.
     if specs.iter().any(|&tp| (tp & GS_NONE) != 0) {
-        return;
+        return unsorted;
     }
 
     // c:936 gmatchcmp returns 0 when every sort key ties. In C the final
@@ -6325,12 +6329,13 @@ fn sort_matches(state: &mut globdata) {
     state
         .matches
         .sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
+    unsorted
 }
 
 /// Apply `[FIRST,LAST]` qualifier subscript on the match list.
 /// **RUST-ONLY** — C uses `gd_pre_first` / `gd_first` index tracking
 /// during scanner emit; here we slice after the full walk.
-fn apply_selection(state: &mut globdata) {
+fn apply_selection(state: &mut globdata, unsorted: bool) {
     // RUST-ONLY
     let (first, last, short_circuit) = match &state.qualifiers {
         Some(q) => (q.first, q.last, q.short_circuit),
@@ -6352,6 +6357,20 @@ fn apply_selection(state: &mut globdata) {
         Some(l) if l < 0 => (len + l + 1).max(0) as usize,
         Some(l) => l.min(len) as usize,
         None => len as usize,
+    };
+
+    // c:1991-1998 — with `GS_NONE` first (`oN`, or the `Y` default) C never
+    // sorted `matchbuf`, so it inserts "back to front": it starts at
+    // `matchbuf + matchct - first - 1` and walks DOWN, each match landing
+    // right after the same node (insert_glob_match, c:1124-1141). The
+    // subscript therefore counts from the END of the scan order, while the
+    // words still come out in scan order: files scanned `1 10 2` give
+    // `*(oN[1,2])` → `10 2` and `*(oN[1])` → `2`.
+    let (start, end) = if unsorted {
+        let n = len as usize;
+        (n.saturating_sub(end), n.saturating_sub(start))
+    } else {
+        (start, end)
     };
 
     // c:1990-2004 — C never copies the match array for the subscript: it
