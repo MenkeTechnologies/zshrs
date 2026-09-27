@@ -352,3 +352,20 @@ mod print_sort {
         assert_parity(r#"print -f '%s\n' foo bar baz"#);
     }
 }
+
+/// c:Src/builtin.c:5085-5089 — `print -x N` / `-X N`: N is parsed with
+/// zstrtol (leading blanks allowed) and the diagnostic always names `-x`,
+/// even when the bad argument came from `-X`.
+mod print_tab_expand_arg {
+    use super::*;
+
+    #[test]
+    fn capital_x_error_names_lowercase_x() {
+        assert_parity(r#"print -X x a 2>&1; echo $?"#);
+    }
+
+    #[test]
+    fn leading_blank_width_accepted() {
+        assert_parity("print -x ' 3' 'a\tb'; print -X ' 2' 'ab\tc'");
+    }
+}

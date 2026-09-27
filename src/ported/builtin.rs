@@ -12286,13 +12286,14 @@ pub fn bin_print(
         //   leading sign + digits and stops at the first non-digit.
         //   Reject when eptr isn't end-of-string (trailing garbage)
         //   OR the signed result is <= 0 (zero / negative).
-        let valid = xarg.parse::<i64>().map(|n| n > 0).unwrap_or(false);
+        let (expand, eptr) = crate::ported::utils::zstrtol(xarg, 10); // c:5085
+        let valid = eptr.is_empty() && expand > 0; // c:5086
         if !valid {
             zwarnnam(
                 name,
                 &format!(
                     "positive integer expected after -{}: {}",
-                    which as char, xarg
+                    'x', xarg // c:5087 — C always names 'x', even for -X
                 ),
             );
             return 1;
@@ -12992,7 +12993,7 @@ pub fn bin_print(
         let all = OPT_HASARG(ops, b'X');
         let which = if all { b'X' } else { b'x' };
         let width: i32 = OPT_ARG(ops, which)
-            .and_then(|a| a.parse().ok())
+            .map(|a| crate::ported::utils::zstrtol(a, 10).0 as i32) // c:5085
             .unwrap_or(8);
         let n = processed_args.len();
         let mut out = String::new();
