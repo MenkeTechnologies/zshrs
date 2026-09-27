@@ -1106,6 +1106,19 @@ pub fn bin_enable(
                             println!("{}", nm);
                         }
                     }
+                    Tab::Shfunc => {
+                        // shfunctab->printnode is printshfuncnode
+                        // (c:Src/hashtable.c:914 via c:555 printflags 0):
+                        // the whole definition, not the bare name.
+                        let shf = shfunctab_lock()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get_including_disabled(&nm).cloned());
+                        match shf {
+                            Some(f) => crate::ported::hashtable::printshfuncnode(&f, 0),
+                            None => println!("{}", nm),
+                        }
+                    }
                     _ => println!("{}", nm),
                 }
             }

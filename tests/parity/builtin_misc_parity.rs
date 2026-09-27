@@ -336,3 +336,15 @@ mod fc_list_follows_fclist {
         assert_parity("print -s one; fc -l one=two; echo $?");
     }
 }
+
+/// c:Src/builtin.c:555 — with no arguments enable/disable list the table
+/// through `ht->printnode`; for `-f` that is printshfuncnode, which prints
+/// each function's definition. The port printed the bare names.
+mod enable_disable_function_listing {
+    use super::*;
+
+    #[test]
+    fn disable_f_lists_definitions() {
+        assert_parity("f() { echo a; }; g() { :; }; disable -f g; disable -f; enable -f");
+    }
+}
