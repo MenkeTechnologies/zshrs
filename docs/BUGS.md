@@ -60668,3 +60668,27 @@ parser. Separately:
 **Fix.** The word search lives once, in `params::getarg`'s scalar arm; the
 named-scalar path in `paramsubst` routes word+search subscripts to it. Test:
 `tests/zshrs_shell.rs` `test_subscript_word_search_flags`.
+
+---
+
+## #1156 — `typeset x+=2` / `typeset a+=(2)` assigned instead of being rejected — fixed
+
+**Status:** `fixed` 2026-09-27.
+
+```console
+                           zsh 5.9.2                                     zshrs (before)
+x=1; typeset x+=2          typeset:1: not valid in this context: x+      x=2
+typeset a+=(2)             typeset:1: not valid in this context: a+      a=(2)
+integer i+=1               integer:1: not valid in this context: i+      i=1
+```
+
+**Root cause.** Inside a typeset the par_simple ENVSTRING scan stops at `+`,
+and `equalsplit` (c:Src/utils.c:4133) then cuts at the `=`, so the name is
+`x+` (c:Src/parse.c:2010-2020); an ENVARRAY name is `ecstr(tokstr)`'d whole
+(c:2032). typeset_single rejects `x+` (c:Src/builtin.c:2546). zshrs's
+par_simple already kept the `+` for the lexer-text cut but rebuilt the
+synthetic typeset word from the bare name, so the builtin saw `x=2`.
+
+**Fix.** `src/ported/parse.rs` builds the synthetic word from the same
+`name+` text for scalar and array forms. Test: `tests/zshrs_shell.rs`
+`test_typeset_family_rejects_append_assignment`.

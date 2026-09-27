@@ -3071,13 +3071,16 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 if let Some(assign) = parse_assign() {
                     // c:2010-2019 — the mid-command scan has no `+=` arm, so
                     // `equalsplit` NUL-terminates at the `=` and the `+`
-                    // stays part of the name left in tokstr.
+                    // stays part of the name left in tokstr. c:2032 likewise
+                    // `ecstr(tokstr)`s an ENVARRAY name whole. typeset_single
+                    // then rejects `x+` ("not valid in this context"); the
+                    // synthetic word dropped the `+` and assigned instead.
+                    let nul_at = if assign.append {
+                        format!("{}+", assign.name)
+                    } else {
+                        assign.name.clone()
+                    };
                     if tok() == ENVSTRING {
-                        let nul_at = if assign.append {
-                            format!("{}+", assign.name)
-                        } else {
-                            assign.name.clone()
-                        };
                         // !!! RUST-ONLY !!! — write the cut through to zshlextext (see the
                         // leading-assignment loop in par_simple).
                         crate::ported::lex::LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
@@ -3087,7 +3090,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                         });
                     }
                     let synthetic = match &assign.value {
-                        ZshAssignValue::Scalar(v) => format!("{}={}", assign.name, v),
+                        ZshAssignValue::Scalar(v) => format!("{}={}", nul_at, v),
                         ZshAssignValue::Array(elems) => {
                             // c:Src/builtin.c — assoc paren-init `h=( "" v
                             //   k2 v2 )` must preserve empty-string
@@ -3104,11 +3107,11 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                             //   bin_typeset never sees the empty key.
                             //   Bug #93 in docs/BUGS.md.
                             let mut buf = String::with_capacity(
-                                assign.name.len()
+                                nul_at.len()
                                     + 4
                                     + elems.iter().map(|e| e.len() + 1).sum::<usize>(),
                             );
-                            buf.push_str(&assign.name);
+                            buf.push_str(&nul_at);
                             buf.push_str("=(");
                             for elem in elems {
                                 buf.push('\u{1f}');

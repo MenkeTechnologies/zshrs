@@ -10887,6 +10887,23 @@ fn test_export_space_in_name_rejects() {
 }
 
 #[test]
+fn test_typeset_family_rejects_append_assignment() {
+    // c:Src/parse.c:2010-2020 — inside a typeset the scan stops at `+` and
+    // equalsplit cuts at the `=`, so `x+=2` names `x+`; c:2032 keeps an
+    // ENVARRAY name whole. typeset_single (c:Src/builtin.c:2546) rejects it.
+    // The error aborts the -c list, as in zsh 5.9.2, whose stderr this is.
+    for (code, msg) in [
+        ("x=1; typeset x+=2; print $x", "typeset:1: not valid in this context: x+"),
+        ("a=(1); typeset a+=(2); print $a", "typeset:1: not valid in this context: a+"),
+        ("integer i+=1; print $i", "integer:1: not valid in this context: i+"),
+    ] {
+        let (status, out, err) = run_zshrs(code);
+        assert_eq!((status, out.as_str()), (1, ""), "{code}: stdout {out:?}");
+        assert_eq!(err, format!("zshrs:{msg}\n"), "{code}");
+    }
+}
+
+#[test]
 fn test_typeset_invalid_identifier_rejects() {
     // zsh: `typeset 1bad=5` -> `typeset:1: not an identifier:
     // 1bad` exit 1. Same rule for declare/local/integer/
