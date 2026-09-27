@@ -628,3 +628,32 @@ mod split_flag_and_array_assign {
         );
     }
 }
+
+/// c:Src/subst.c:3912-3940 — an array is joined (j) first, then the joined
+/// text is split; unique/sort (c:4264/4301) run once on the split words.
+mod join_then_split_then_sort {
+    use super::*;
+
+    #[test]
+    fn split_after_join_is_sorted() {
+        assert_parity(
+            r#"a=(c.b a.d); v=q.c.a; printf '<%s>' ${(s:.:j:,:o)a}; echo; printf '<%s>' ${(s:.:Oa)v}; echo; printf '<%s>' ${(oj/-/)a}; echo"#,
+        );
+    }
+
+    #[test]
+    fn assoc_values_join_before_split() {
+        assert_parity(
+            r#"typeset -A h=(k v1.x k2 v2); printf '<%s>' ${(j:,:s:.:)h} ${(fj:,:)h}; echo"#,
+        );
+    }
+
+    /// SH_WORD_SPLIT splits in the same c:3912 block, so the sort sees the
+    /// split words, and an explicit (s:X:) takes over from the IFS split.
+    #[test]
+    fn shwordsplit_splits_before_sort() {
+        assert_parity(
+            r#"setopt shwordsplit; a=(foo 'b ar' baz); s='a b:c.d'; printf '<%s>' ${(o)a}; echo; printf '<%s>' x${(s:.:)s}y; echo"#,
+        );
+    }
+}

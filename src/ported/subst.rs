@@ -16168,6 +16168,11 @@ pub fn paramsubst(
                     // array splits intact).
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
+                    // c:3202-3230 — the operator word replaced `val`/`aval`; every later
+                    // flag arm must work on it, not re-read the parameter by name
+                    // (`${(U)a:+alt}` folded `a`'s elements, `${(U)e:-dflt}` read the
+                    // empty array and dropped the default).
+                    var_name = String::new();
                 }
             } else if let Some(default) = r.strip_prefix('-') {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
@@ -16270,6 +16275,11 @@ pub fn paramsubst(
                     }
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
+                    // c:3202-3230 — the operator word replaced `val`/`aval`; every later
+                    // flag arm must work on it, not re-read the parameter by name
+                    // (`${(U)a:+alt}` folded `a`'s elements, `${(U)e:-dflt}` read the
+                    // empty array and dropped the default).
+                    var_name = String::new();
                 }
             } else if let Some(default) = r.strip_prefix("::=") {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`), so the
@@ -16861,6 +16871,11 @@ pub fn paramsubst(
                 {
                     split_parts = Some(vec![value.clone()]);
                 }
+                // c:3202-3230 — the operator word replaced `val`/`aval`; every later
+                // flag arm must work on it, not re-read the parameter by name
+                // (`${(U)a:+alt}` folded `a`'s elements, `${(U)e:-dflt}` read the
+                // empty array and dropped the default).
+                var_name = String::new();
             } else if let Some(alt) = r.strip_prefix('+') {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                 let alt_tokenized: String = rest_raw.chars().skip(1).collect();
@@ -16962,6 +16977,11 @@ pub fn paramsubst(
                 {
                     split_parts = Some(vec![value.clone()]);
                 }
+                // c:3202-3230 — the operator word replaced `val`/`aval`; every later
+                // flag arm must work on it, not re-read the parameter by name
+                // (`${(U)a:+alt}` folded `a`'s elements, `${(U)e:-dflt}` read the
+                // empty array and dropped the default).
+                var_name = String::new();
             } else if let Some(msg) = r.strip_prefix(":?") {
                 // c:3193 (:?msg)
                 // c:Src/subst.c:3188-3191 — same colon NULL test as the `:-`
@@ -20782,7 +20802,10 @@ pub fn paramsubst(
                             let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                             value = new_parts.join(" ");
                             split_parts = Some(new_parts);
-                        } else if let Some(arr) = arrays_get(&var_name).filter(|_| !wantt_typed) { // c:2859
+                        } else if let Some(arr) = arrays_get(&var_name)
+                            .or_else(|| getvaluearr_assoc_vals!(&var_name).cloned()) // c:Src/params.c:736
+                            .filter(|_| !wantt_typed)
+                        { // c:2859
                             // Honor a range subscript (split_parts
                             // would have captured it normally; do the
                             // narrowing here when it didn't).
@@ -20872,7 +20895,14 @@ pub fn paramsubst(
                         let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                         value = new_parts.join(" ");
                         split_parts = Some(new_parts);
-                    } else if let Some(arr) = arrays_get(&var_name).filter(|_| !wantt_typed) { // c:2859
+                    } else if let Some(arr) = arrays_get(&var_name)
+                        // c:4533 — `aval` of an association is its value list
+                        // (c:Src/params.c:736), so `${h:u}` folds each value; the
+                        // plain-array refetch missed the hash and the modifier ran
+                        // on the joined text that the splat then discarded.
+                        .or_else(|| getvaluearr_assoc_vals!(&var_name).cloned())
+                        .filter(|_| !wantt_typed)
+                    { // c:2859
                         // KSHARRAYS bare array → modifier folds only element 0.
                         let arr: Vec<String> =
                             if ksh_bare_ref_shape_c2286!()
@@ -21503,6 +21533,19 @@ pub fn paramsubst(
             }
         }
         drop(eglob_restore);
+        if wantt_typed {
+            // Deferred past the operator block: `${(t)arr[9]:=D}` still assigns
+            // through the parameter name (c:3246 uses `idbeg`, not `v`).
+            // c:2882 — `v = NULL;` detaches the expansion from the parameter:
+            // every later arm (casemodify c:3937, join c:3916, quoting c:3985,
+            // padding c:4027) works on the type string in `val`. The arms
+            // below that stand in for `aval` re-read the array BY NAME, so
+            // `${(Ut)arr}` case-folded the elements (`A B`) and `${(tj:,:)arr}`
+            // joined them (`a,b`) instead of answering `ARRAY` / `array`.
+            // Dropping the name is this port's `v = NULL`.
+            var_name = String::new(); // c:2882
+        }
+
         // Case mods operate per-element when array-shaped (so
         // \${(@U)arr} uppercases each element, preserving shape).
         // Direct port of subst.c:3937 casmod arm which iterates aval
@@ -21548,7 +21591,14 @@ pub fn paramsubst(
                     }
                 }
             };
-            if let Some(parts) = split_parts.clone() {
+            if dq_collapsed {
+                // c:3032-3034 — the DQ sepjoin cleared `isarr`, so c:3814
+                // `if (isarr)` is false and c:3831 evals the JOINED `val` once.
+                // `split_parts` still holds `aval` (kept for c:3406), which the
+                // arm below would have walked per element: `"${(k#)arr}"` gave
+                // one char per element where zsh evals the joined text.
+                value = eval_one(&value); // c:3831
+            } else             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| eval_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
@@ -21557,7 +21607,13 @@ pub fn paramsubst(
                 // eval each element (`${(#)a[@]}` → "A B C"). A single-slot
                 // subscript (`a[3]`) clears isarr and already selected the
                 // element into `value`, so DON'T re-fetch the whole array.
-                if let Some(arr) = arrays_get(&var_name) {
+                // c:3822 — `aval` is the value list of an association too
+                // (c:Src/params.c:736 getvaluearr), so `${(#)h}` evals each
+                // VALUE; the name-keyed refetch only knew plain arrays and the
+                // joined text fell through unevaluated.
+                if let Some(arr) = arrays_get(&var_name)
+                    .or_else(|| getvaluearr_assoc_vals!(&var_name).cloned())
+                {
                     let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
                     value = new_arr.join(" ");
                     split_parts = Some(new_arr);
@@ -22117,7 +22173,10 @@ pub fn paramsubst(
             } else if split_has_scalar_sub {
                 None // scalar `value` holds the resolved element
             } else {
-                arrays_get(&var_name)
+                // c:Src/params.c:736 — `aval` of an association is its value
+                // list; without it `${(j:,:s:.:)h}` split the IFS-joined
+                // values and dropped the (j) separator.
+                arrays_get(&var_name).or_else(|| getvaluearr_assoc_vals!(&var_name).cloned())
             };
             let parts: Vec<String> = match src_elems {
                 Some(elems) if nojoin == 2 => {
@@ -22155,35 +22214,11 @@ pub fn paramsubst(
             //   of preserving "a:b:c". Bug #313 in docs/BUGS.md.
             //   When an explicit (j:Y:) sep is also set, the join uses
             //   it (force-rejoin path is separate).
-            // c:Src/subst.c:4245-4313 — sort/unique block runs AFTER
-            //   spsep split (C order: 3920+ split, then 4245 sort). The
-            //   zshrs sort block at subst.rs:8141 is ordered BEFORE
-            //   spsep handling here, so it sees isarr=0 from the
-            //   pre-split scalar and skips. Apply sort/unique to the
-            //   split parts inline here to preserve C's split-then-sort
-            //   composition. Bugs #314 (sort after split) and #315
-            //   (unique after split) in docs/BUGS.md.
+            // c:Src/subst.c:4264/4301 — unique/sort run later, on the split
+            //   result (isarr set below), in the shared sort block after the
+            //   (z) split. Sorting here as well ran them twice, which undid
+            //   `(Oa)`: `v=q.c.a; ${(s:.:Oa)v}` reversed back to `q c a`.
             let mut parts = parts;
-            if unique {
-                let mut seen = std::collections::HashSet::new(); // c:4253
-                parts.retain(|s| seen.insert(s.clone())); // c:4253
-            }
-            if sortit != SORTIT_ANYOLDHOW {
-                // c:4022 — same dispatch as the array arm above.
-                if indord != 0 {
-                    // c:4025-4037 — (a) keeps insertion order, (O) on top of
-                    // it only reverses.
-                    if (sortit & SORTIT_BACKWARDS) != 0 {
-                        parts.reverse(); // c:4030-4035
-                    }
-                } else {
-                    // c:4045 `strmetasort(aval, sortit, NULL)` — one call for
-                    // the whole flag set, so `(ni)` folds case AND compares
-                    // digit runs instead of picking one or the other.
-                    crate::ported::sort::strmetasort(&mut parts, sortit as u32, None);
-                    // c:4045
-                }
-            }
             if let Some(ref jsep) = sep {
                 value = parts.join(jsep.as_str()); // c:3906 sepjoin path
             } else if parts.is_empty() {
@@ -22381,177 +22416,136 @@ pub fn paramsubst(
             }
         }
 
-        // c:Src/subst.c:3912-3932 — the (s:X:) split (`aval = sepsplit(val,
-        // spsep, 0, 1)`) and the (j:X:) join (`val = sepjoin(aval, sep, 1);
-        // isarr = 0`) BOTH run above, at c:3917/c:3932, long before the
-        // sort/unique block at c:4264-4326. The split is what decides `isarr`
-        // (c:3922-3927: a 0- or 1-element split result leaves isarr == 0), and
-        // c:4301 sorts only `if (isarr)`. Running the sort FIRST therefore
-        // sorted an array that C had already collapsed to a scalar:
-        // `a=('a b' c); ${(ps:\t:O)a}` splits the space-joined `a b c` on TAB,
-        // gets ONE element, and zsh emits `a b c` unsorted — the sort-first
-        // order emitted `c a b`.
-        // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
-        // subst.c:4180-4253 array sortit/unique post-processing.
-        //
-        // c:4245 — `if (isarr) { ... }` — the sort + unique +
-        // splat block is INSIDE this gate. Scalar shape (isarr=0)
-        // after DQ sepjoin at c:3034 means no sort applies. C does
-        // not have a separate "sort the joined string" path.
-        //
-        // sep.is_none() guard: C's sepjoin at c:3906 runs BEFORE c:4245
-        // and clears isarr=0 when (j)/(F) flag was set, so the sort
-        // block at c:4245 is gated out by `if (isarr)`. zshrs's port
-        // ordering inverts that (sort here at 5819, sep below at 5924),
-        // so explicitly skip sort when sep is set to mirror C's
-        // join-collapses-first behavior. `${(oj/-/)arr}` for
-        // (charlie alpha bravo) returns "charlie-alpha-bravo" in zsh —
-        // the o flag is a no-op because j collapsed shape first.
-        // c:Src/subst.c:3901-3921 — a pending `=`/spbreak force_split
-        // splits the scalar into words BEFORE the c:4245 unique/sort
-        // block (C runs the c:3901 split first). zshrs's force_split
-        // block lives later (line ~13560), so when `(u)`/`(o)`/etc. is
-        // ALSO requested the split hadn't happened yet and the c:4245
-        // gate below (`isarr != 0`) skipped — `${(u)=s}` left the
-        // word-split result un-deduped. Pre-apply the split here so the
-        // unique/sort block sees the array; the later force_split block
-        // then no-ops via its `split_parts.is_none()` guard. Only fires
-        // when sort/unique is requested, so plain `${=s}` is unaffected.
-        if force_split
-            && pf_flags & PREFORK_SINGLE == 0
-            && split_parts.is_none()
-            && isarr == 0
-            && (sortit != SORTIT_ANYOLDHOW || unique)
+        // c:Src/subst.c:3912-3940 — SH_WORD_SPLIT (spbreak) and `${=…}` split in
+        // the SAME block as (s)/(j), AFTER the (j) join (c:3916 joins an array,
+        // c:3932 splits the result; a scalar is never joined, so
+        // `${(j:-:)=x}` is just the split), and before casmod's successors: quoting
+        // (c:4041), (z) (c:4185), unique/sort (c:4264/4301) and padding
+        // (c:4339) all see the split words. Running it last left
+        // `setopt shwordsplit; ${(o)a}` sorting whole elements. With an (s:X:)
+        // separator the split below is C's `sepsplit(val, spsep)` and the
+        // (s) arm owns it, so this block stands down (`${(s:.:)v}` must not
+        // ALSO split on IFS).
+        // ${=name} forced split — promote scalar value to multi-word
+        // splat per Src/subst.c:3902 `force_split = !ssub && spbreak`.
+        // Suppressed when ssub (paramsubst called with PREFORK_SINGLE,
+        // i.e. inside a scalar-assignment context). The split uses
+        // IFS chars from the executor; default IFS is " \t\n".
+        let in_ssub = pf_flags & PREFORK_SINGLE != 0;
+        // c:Src/subst.c:1707 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT)
+        // && !(pf_flags & PREFORK_SINGLE) && !qt;` — and c:3913
+        // `force_split = !ssub && (spbreak || spsep)`. `force_split` alone is
+        // only C's `spbreak == 2`, i.e. the explicit `${=…}` flag (c:2567); the
+        // OPTION-driven half was missing on this braced path, so under
+        // SH_WORD_SPLIT a braced expansion never IFS-split: `setopt
+        // shwordsplit; string='another poxy boring string';
+        // print -l ${${string}/o/ }` came back as ONE word where zsh prints
+        // seven (D04parameter.ztst "Rule 9: Shell Word Splitting"). The bare
+        // `$name` path has its own c:1705 block further down; only the braced
+        // one was uncovered.
+        let spbreak = spsep.is_none() // c:3932 — the (s) arm splits on spsep
+            && !spbreak_cleared
+            && !suppress_split // c:2562 `${==…}` → spbreak = 0
+            && (force_split || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt)); // c:1707, c:3230
+                                                                                               // c:Src/subst.c:3906-3911 — inside the same `if (ssub || spbreak || …)`
+                                                                                               // block, an ARRAY-shaped value is JOINED FIRST when `nojoin == 0`:
+                                                                                               //     if (isarr || quoted_array_with_offset) {
+                                                                                               //         if (nojoin == 0 || sep) { val = sepjoin(aval, sep, 1);
+                                                                                               //                                   isarr = 0; }
+                                                                                               // and only then does c:3919 `sepsplit` re-split it. That join-then-split
+                                                                                               // is what makes `setopt shwordsplit; ${${string}/o/ }` seven words: the
+                                                                                               // inner split gave four elements, the replacement put a space INSIDE
+                                                                                               // three of them, and the outer round re-splits on the new spaces. The
+                                                                                               // port skipped the join entirely (the split below is gated on
+                                                                                               // `split_parts.is_none()`), so those inner spaces survived.
+                                                                                               // `(@)`/`(*)` (nojoin != 0) and an explicit `(j:…:)` sep keep their
+                                                                                               // shape, exactly as the C condition says.
+        // c:3911 `if (isarr || …)` — the elements are `aval`. A splat read
+        // (`${a[@]}`, `${(@)a}`, a nested `${${…}[@]}`, which lives in its temp
+        // array) keeps them in the parameter rather than in `split_parts`, with
+        // `value` only a space-joined rendering, so fetch them the way the later
+        // splat arms do. Without this, `setopt shwordsplit; IFS=:; a=(a "" b);
+        // print -rl -- ${${a}[@]}` re-split the space-joined text on `:` and
+        // printed the single word `a  b` (zsh: `a` `` `b`).
+        let aval_c3911: Option<Vec<String>> = split_parts.clone().or_else(|| {
+            if isarr != 0 && (subscript.is_none() || splat_sub!().is_some()) {
+                arrays_get(&var_name)
+            } else {
+                None
+            }
+        });
+        // c:3914-3928 — join when `nojoin == 0`, or for the element-split hack
+        // (`spsep || nojoin == 2 || (!ifs && isarr < 0)`; the `spsep` split is
+        // the (s) arm above), both with a NULL separator here.
+        let ifs_unset = vars_get("IFS").is_none();
+        if spbreak
+            && !in_ssub
+            && sep.is_none()
+            && (nojoin == 0 || nojoin == 2 || (ifs_unset && isarr < 0))
         {
-            // c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
-            let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false);
+            if let Some(parts) = aval_c3911.clone() {
+                if parts.len() > 1 {
+                    value = crate::ported::utils::sepjoin(&parts, None); // c:3909
+                    split_parts = None; // c:3910 `isarr = 0`
+                    isarr = 0; // c:3910
+                } else if parts.len() == 1 {
+                    // c:Src/subst.c:3899-3906 — `else if (isarr && aval &&
+                    // aval[0] && !aval[1]) { val = aval[0]; isarr = 0; }`: a
+                    // ONE-element array is treated as a scalar BEFORE the
+                    // c:3912 force_split block, so the c:3931
+                    // `if (force_split && !isarr)` sepsplit still fires on it.
+                    // The port demoted only arrays of length > 1 (the c:3914
+                    // join above), so a single-element array kept `isarr`,
+                    // made `unjoined_array` true at c:3931 and skipped the
+                    // split entirely: `a=("x y z"); print ${#${=${a}}}` was 1
+                    // where zsh is 3. `_git`'s __git_merge_strategies splits
+                    // exactly this shape — `${=${(M)${(f)…}:#[Aa]vailable …
+                    // strategies are: *}}` matches ONE line — so
+                    // `git merge --strategy=<TAB>` inserted
+                    // `octopus\ ours\ recursive\ resolve\ subtree` as a single
+                    // backslash-escaped word instead of listing five matches.
+                    value = parts[0].clone(); // c:3904 `val = aval[0]`
+                    split_parts = None; // c:3905 `isarr = 0`
+                    isarr = 0; // c:3905
+                }
+            }
+        }
+        // c:3931 `if (force_split && !isarr)` — an array that was not joined
+        // above (IFS set but empty: c:1817 `nojoin` 1) keeps its elements:
+        // `setopt shwordsplit; IFS=; a=(x y); print -rl -- ${${a}[@]}` is `x` `y`.
+        let unjoined_array = isarr != 0 && aval_c3911.is_some();
+        if spbreak && !in_ssub && split_parts.is_none() && !unjoined_array {
+            // Same signal the (s)/(f) arm raises above: this paramsubst is a
+            // SPLIT, so a nesting reader must apply C's prefork empty-node
+            // deletion (c:Src/subst.c:184 `else if (!keep) uremnode`) to the
+            // pieces. spacesplit marks a field lost to IFS-WHITESPACE as a
+            // genuine "" (c:Src/utils.c:3734-3735 `*ptr++ = dup("")`) and one
+            // lost to an IFS-NON-whitespace separator as `nulstring`
+            // (c:3733), so only the former is dropped — which is exactly why
+            // `s='  a  b  '; "${(@)${=s}}"` is `a b` in zsh while
+            // `IFS=:; s=':a::b:'; "${(@)${=s}}"` keeps its empties. Without
+            // the signal the `${=…}` inner kept the leading "" that the
+            // `(s:X:)` inner already dropped.
+            SUBEXP_NONAT_SPLIT.with(|c| c.set(nojoin != 2)); // c:184
+                                                             // c:Src/subst.c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
+                                                             // Call the ported sepsplit (→ spacesplit for the IFS case)
+                                                             // rather than splitting inline: the prior inline did
+                                                             // `value.split(|c| ifs.contains(c)).filter(non-empty)`, which
+                                                             // collapsed empty fields for NON-whitespace IFS — `IFS=,;
+                                                             // ${=}` on "a,,b" dropped the middle field. sepsplit keeps
+                                                             // them as Nularg per zsh's word-splitting (Bug #636).
+            let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false); // c:3921
             if !parts.is_empty() {
                 value = parts.join(" ");
                 split_parts = Some(parts);
-                isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
+                // c:3274 — `isarr = nojoin ? 1 : 2;` mark this as a
+                // split-from-scalar so the c:4245 splat block fires
+                // and the c:3032 sepjoin-on-qt skips (per c:3317
+                // !spsep guard equivalent — force_split is the
+                // spbreak=2 path which has the same effect).
+                isarr = if nojoin != 0 { 1 } else { 2 };
             }
         }
-        // c:Src/subst.c:4226-4231 — the LAST array→scalar collapse before the
-        // sort/unique block, and the one that decides this case:
-        //
-        //     if (isarr && ssub) {
-        //         /* prefork() wants a scalar, so join no matter what else */
-        //         val = sepjoin(aval, NULL, 1);
-        //         isarr = 0;
-        //         l->list.flags &= ~LF_ARRAY;
-        //     }
-        //
-        // `ssub` is c:1761 `(pf_flags & PREFORK_SINGLE)`, set for a SCALAR
-        // assignment RHS (c:Src/exec.c:2603 `prefork(vl, isstr ?
-        // (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN, …)`) and for every
-        // singsub caller (c:520 prefork, c:Src/glob.c:2161 redirection
-        // filename under NO_MULTIOS, `case`/`[[` word expansion). It sits at
-        // c:4226, i.e. BEFORE `if (isarr)` at c:4256 — and the (u) unique fold
-        // (c:4264) and the (o)/(O)/(a)/(n)/(i) sort (c:4301-4326) are both
-        // INSIDE that gate. So in scalar-substitution context zsh never sorts
-        // and never uniques: it joins and stops. Verified against zsh 5.9 -f:
-        //     a=(c a b); v=${(o)a}     -> c a b   (not `a b c`)
-        //     a=(b a b c a); v=${(u)a} -> b a b c a
-        //     a=(3 10 2); v=${(n)a}    -> 3 10 2
-        //     a=(c a b); IFS=:; v=${(o)a} -> c:a:b
-        //     a=(c a b); [[ ${(o)a} == "c a b" ]] -> true
-        // The double-quoted form `v="${(o)a}"` already agreed because C's
-        // qt-sepjoin at c:3032 had cleared isarr earlier by a different route,
-        // which is why the divergence looked flag-specific rather than
-        // context-specific.
-        //
-        // c:4226 is UNCONDITIONAL on `nojoin`, unlike the earlier ssub join at
-        // c:3916 (`if (nojoin == 0 || sep)`). That is what makes `(@)` a
-        // non-exception here: `a=(bb a ccc); v=${(@o)a}` is `bb a ccc` in zsh,
-        // even though nojoin==2 lets the array survive c:3916. Gate on ssub
-        // alone, never on nojoin.
-        //
-        // The port keeps `isarr` non-zero past this point (the ssub scalar
-        // shape is produced downstream instead — see `ssub_join_c3903` in the
-        // quoting block), so the c:4226 collapse is expressed here as a guard
-        // on the sort/unique block rather than as an `isarr = 0` store, which
-        // would also re-shape the splat and quoting arms below.
-        let ssub_c4226 = (pf_flags & PREFORK_SINGLE) != 0; // c:1761
-        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() && !ssub_c4226 {
-            // c:4245 + c:4290
-            // Sort/unique source: prefer split_parts (any prior
-            // operator result like :# filter, (s::) split, or
-            // assoc-splat) so sort applies to the actual element
-            // list, not a whitespace re-split of the joined view.
-            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
-                // c:4290
-                sp // c:4290 (operator-result)
-            } else if let Some(arr) = arrays_get(&var_name) {
-                // c:4290
-                arr.clone() // c:4290 (real array)
-            } else if let Some(map) = assoc_get(&var_name) {
-                // c:4290
-                map.values().cloned().collect() // c:4290 (assoc values)
-            } else if matches!(var_name.as_str(), "@" | "*" | "argv") {
-                // c:Src/params.c:3262 IPDEF9 — `@`, `*`, `argv` map
-                // to `pparams`. Source the sort/unique input from the
-                // canonical positional vec instead of the whitespace-
-                // re-split joined view, so individual positionals
-                // with embedded spaces survive `${(o)@}` etc.
-                crate::ported::builtin::PPARAMS
-                    .lock()
-                    .map(|p| p.clone())
-                    .unwrap_or_default()
-            } else {
-                // c:4290
-                value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
-            }; // c:4290
-               // KSHARRAYS bare array → sort/unique fold only element 0.
-            let parts: Vec<String> = if split_parts.is_none()
-                && ksh_bare_ref_shape_c2286!()
-                && arrays_contains(&var_name)
-            {
-                parts.into_iter().take(1).collect()
-            } else {
-                parts
-            };
-            let mut sorted: Vec<String> = parts; // c:4290
-            if unique {
-                // c:4253
-                let mut seen = std::collections::HashSet::new(); // c:4253
-                sorted.retain(|s| seen.insert(s.clone())); // c:4253
-            } // c:4253
-            if sortit != SORTIT_ANYOLDHOW {
-                // c:4022 `if (sortit != SORTIT_ANYOLDHOW) {`
-                if indord != 0 {
-                    // c:4025-4037 — the (a) flag keeps insertion order; (O)
-                    // on top of it reverses the array without ever running a
-                    // comparator.
-                    if (sortit & SORTIT_BACKWARDS) != 0 {
-                        sorted.reverse(); // c:4030-4035
-                    }
-                } else {
-                    // c:4045 — ONE call: `strmetasort(aval, sortit, NULL)`.
-                    // strmetasort (sort.c:234) owns the whole flag set — the
-                    // SORTIT_IGNORING_CASE / SORTIT_IGNORING_BACKSLASHES
-                    // pre-pass that rewrites each element's compare key
-                    // (sort.c:289-385), then `sortdir = BACKWARDS ? -1 : 1`
-                    // and `sortnumeric` (sort.c:400-405) before the qsort.
-                    // This arm used to hand-roll a three-way dispatch —
-                    // numeric OR case-folded OR plain — which made the two
-                    // mutually exclusive: `${(ni)a}` took the numeric branch
-                    // and never lowered, so `(X2 x10)` compared 'X' against
-                    // 'x', found no digit run at the divergence, and fell
-                    // through to strcoll → `x10 X2` where zsh gives `X2 x10`
-                    // (lowered to `x2`/`x10`, then 2 < 10). It also applied
-                    // BACKWARDS as a post-sort `reverse()` instead of C's
-                    // negated comparator, which flips the order of tied
-                    // elements rather than leaving them alone.
-                    crate::ported::sort::strmetasort(&mut sorted, sortit as u32, None);
-                    // c:4045
-                }
-            } // c:4046
-            let join_with = sep.as_deref().unwrap_or(" "); // c:4313
-            value = sorted.join(join_with); // c:4313
-                                            // Update split_parts so downstream operators (case mods,
-                                            // padding, splat) see the sorted/uniq list.
-            split_parts = Some(sorted); // c:4313
-        } // c:4290
 
         // (%) prompt-expand — interpret %F{red}, %~, %n, %{...%},
         // etc. Per-element on arrays. Direct port of subst.c:2405 /
@@ -22602,149 +22596,6 @@ pub fn paramsubst(
             opt_state_set(opt_name(PROMPTBANG), save_bang);
             opt_state_set(opt_name(PROMPTPERCENT), save_percent);
         } // c:2405
-
-        // (z)/(Z:cCn:) — shell-tokenize the value into a list of
-        // words. Direct port of subst.c:2439 LEXFLAGS_ACTIVE +
-        // sub-flags. Simplified port: use whitespace splitting
-        // that respects single/double-bslashquote spans and backslash
-        // escapes, plus optional comment handling. The full lexer
-        // reentry is deferred — this covers the common idioms
-        // \${(z)cmdline} (split a command into words) and
-        // \${(Zn)multiline} (newlines act like spaces).
-        // c:Src/subst.c:3906 — `if (shsplit)`, i.e. ANY bit, not just
-        // LEXFLAGS_ACTIVE. C's `(Z)` arm (c:2206-2237) only ORs the
-        // sub-flag bits and never sets LEXFLAGS_ACTIVE, so `${(Z::)v}`
-        // (empty sub-flag list) leaves shsplit == 0 and does NOT split,
-        // while `${(Z:c:)v}` splits on LEXFLAGS_COMMENTS_KEEP alone.
-        // Testing `& LEXFLAGS_ACTIVE` here forced the `(Z)` arm to set
-        // that bit unconditionally, which made `${(Z::)v}` split.
-        if shsplit != 0 {
-            // c:Src/subst.c:4185-4199 — the (z)/(Z) split runs the real lexer
-            // over the value through bufferwords (c:Src/hist.c:3385):
-            //     if (isarr) { for (ap = aval; *ap; ap++) {
-            //         untokenize(*ap); list = bufferwords(list, *ap, NULL, shsplit); }
-            //         isarr = 0; }
-            //     else { untokenize(val); list = bufferwords(NULL, val, NULL, shsplit); }
-            // `untokenize` DROPS the Nularg sentinel (c:Src/exec.c:2143), which is
-            // what keeps a nulstring element out of the word list (`q=("" 1)`,
-            // `"${(z)${(@)q}}"` is the single word `1`). It also turns every other
-            // token back into its character — the lexer skips token bytes
-            // (c:Src/input.c ingetc `if (itok(...)) continue`), so a Dash/Star/Quest
-            // left in `${(z):-a-b}` vanished (`ab`). `untokenize_ztokens` is the C
-            // untokenize (it keeps `$'…'` in source form, unlike `untokenize`).
-            let mut words: Vec<String> = Vec::new();
-            let elements: Option<Vec<String>> = if isarr != 0 {
-                split_parts
-                    .clone()
-                    .or_else(|| arrays_get(&var_name).map(|a| a.iter().map(|e| e.to_string()).collect()))
-            } else {
-                None
-            };
-            match elements {
-                Some(list) => {
-                    for ap in &list {
-                        // c:4190-4192
-                        words.extend(crate::ported::hist::bufferwords(&crate::ported::lex::untokenize_ztokens(ap), None, shsplit).0);
-                    }
-                }
-                None => {
-                    // c:4196-4197
-                    words = crate::ported::hist::bufferwords(&crate::ported::lex::untokenize_ztokens(&value), None, shsplit).0;
-                }
-            }
-                                                                        // c:4174-4198 — bufferwords result becomes a word list:
-                                                                        // when there are multiple words OR isarr was set, the
-                                                                        // value is the list (aval), else the single joined val.
-                                                                        // Mirror by setting split_parts so the auto_splat block
-                                                                        // (or DQ join via sepjoin gate) consumes the list.
-                                                                        // Per c:3274 split-from-scalar convention, isarr = 2.
-                                                                        // Bug #363: zsh's `(z)` flag produces TOKENIZED words —
-                                                                        // a `$` inside any word is the literal char `$`, NOT a
-                                                                        // new param reference. Without an "already-tokenized"
-                                                                        // marker, downstream stringsubst re-expands `$VAR` as a
-                                                                        // fresh param-ref (UNSET → empty → element elided).
-                                                                        // Prefix `$` and `` ` `` with Bnull (the lexer's
-                                                                        // backslash-token) so the chars survive stringsubst's
-                                                                        // `$`/`` ` `` arms (Src/subst.c:265 `case Bnull: *s='\0'`
-                                                                        // skip) and untokenize to the literal char at the final
-                                                                        // output pass. Mirrors C bufferwords' tokenized result.
-                                                                        // Wrap each `$` / `` ` `` in Snull single-quote markers rather
-                                                                        // than prefixing with Bnull. Both stop stringsubst re-expanding
-                                                                        // the char (subst.rs:654-665 treats a Snull region as a literal
-                                                                        // `'…'` span, stripping the markers and keeping the content
-                                                                        // verbatim), but Bnull UNTOKENIZES to a literal backslash
-                                                                        // (C ztokens maps Bnull → `\`, lex.rs:4936), so `${(z)v}` for
-                                                                        // v=`a$b` came out `a\$b` instead of zsh's `a$b`. Snull is
-                                                                        // stripped by stringsubst before any untokenize sees it, so the
-                                                                        // `$` survives as a bare literal char — matching zsh's `(z)`
-                                                                        // which keeps `$foo` unexpanded AND unescaped. Bug #363's
-                                                                        // re-expansion guard is preserved (Snull is still a literal
-                                                                        // region); only the spurious backslash is gone.
-            let snull = crate::ported::zsh_h::Snull;
-            for w in words.iter_mut() {
-                if w.contains('$') || w.contains('`') {
-                    let mut out = String::with_capacity(w.len() + 4);
-                    for c in w.chars() {
-                        if c == '$' || c == '`' {
-                            out.push(snull);
-                            out.push(c);
-                            out.push(snull);
-                        } else {
-                            out.push(c);
-                        }
-                    }
-                    *w = out;
-                }
-            }
-            value = words.join(" "); // c:4191 single-word case
-                                     // c:Src/subst.c:4189-4197 — the bufferwords result decides the
-                                     // SHAPE, and a 0/1-word result is a SCALAR, not a 1-element
-                                     // array:
-                                     //     if (!list || !firstnode(list))
-                                     //         val = dupstring("");            // c:4189-4190
-                                     //     else if (!nextnode(firstnode(list)))
-                                     //         val = getdata(firstnode(list)); // c:4191-4192
-                                     //     else {                              // c:4193-4197
-                                     //         aval = hlinklist2array(list, 0);
-                                     //         isarr = nojoin ? 1 : 2;
-                                     //         l->list.flags |= LF_ARRAY;
-                                     //     }
-                                     // Only the >= 2 word branch sets `isarr`/LF_ARRAY. The port
-                                     // previously array-ized ANY non-empty word list, so a single
-                                     // word read as a 1-element array and `${#${(z)v}}` counted
-                                     // ELEMENTS (1) where zsh counts CHARACTERS of the scalar
-                                     // (`v=one` → 3, `v='a:b::c'` → 6). The (f) flag already got
-                                     // this right through the c:3924 `else if (!aval[1]) val =
-                                     // aval[0];` collapse (see `forced_split_to_one` below); this
-                                     // makes (z)/(Z) consistent with the same C rule.
-            if words.len() >= 2 {
-                split_parts = Some(words); // c:4194
-                                           // Bug #363 sub-issue: in DQ context, (z) flag must
-                                           // preserve splat shape per zsh — `"${(z)c}"` produces
-                                           // a multi-arg splat where adjacent text glues to the
-                                           // first/last word (mirrors `"${a[@]}"`). Without the
-                                           // negative-isarr gate, c:3032 sepjoin fires and
-                                           // collapses the words to a single scalar; the
-                                           // downstream auto_splat block (gated on isarr != 0)
-                                           // then never emits per-word. Setting isarr to a
-                                           // negative marker (mirrors the SCANPM_ISVAR_AT case
-                                           // at line 5969 for `[@]`) skips c:3032 (`isarr > 0`)
-                                           // while keeping auto_splat eligible. Bug #363.
-                isarr = if qt {
-                    -1 // c:3274 + c:3032 isarr<0 skip-sepjoin
-                } else if nojoin != 0 {
-                    1
-                } else {
-                    2 // c:3274 split-from-scalar (unquoted)
-                };
-            } else {
-                // c:4183 + c:4189-4192 — an array source is flattened by
-                // bufferwords (`isarr = 0`), and a 0/1-word list leaves the
-                // result in `val` as a plain scalar.
-                split_parts = None;
-                isarr = 0;
-            }
-        } // c:2473
 
         // (D) dir-magic — the `mods` bit-1 half of c:4149-4167:
         //     if (isarr) { for (ap = aval; *ap; ap++) {
@@ -23635,6 +23486,337 @@ pub fn paramsubst(
             }
         }
 
+        // c:Src/subst.c:4041-4185 — C runs quoting (c:4041), the D/V mods
+        // (c:4160) and THEN the (z) split (c:4185), with unique/sort
+        // (c:4264/c:4301) after that, all ahead of padding. These two blocks
+        // used to sit before (%)/(q)/(Q)/(D)/(V): `${(zo)arr}` sorted the
+        // elements before splitting them, and `${(zq)arr}` split before
+        // quoting (`b ar` → two words instead of the one word `b\ ar`).
+        // (z)/(Z:cCn:) — shell-tokenize the value into a list of
+        // words. Direct port of subst.c:2439 LEXFLAGS_ACTIVE +
+        // sub-flags. Simplified port: use whitespace splitting
+        // that respects single/double-bslashquote spans and backslash
+        // escapes, plus optional comment handling. The full lexer
+        // reentry is deferred — this covers the common idioms
+        // \${(z)cmdline} (split a command into words) and
+        // \${(Zn)multiline} (newlines act like spaces).
+        // c:Src/subst.c:3906 — `if (shsplit)`, i.e. ANY bit, not just
+        // LEXFLAGS_ACTIVE. C's `(Z)` arm (c:2206-2237) only ORs the
+        // sub-flag bits and never sets LEXFLAGS_ACTIVE, so `${(Z::)v}`
+        // (empty sub-flag list) leaves shsplit == 0 and does NOT split,
+        // while `${(Z:c:)v}` splits on LEXFLAGS_COMMENTS_KEEP alone.
+        // Testing `& LEXFLAGS_ACTIVE` here forced the `(Z)` arm to set
+        // that bit unconditionally, which made `${(Z::)v}` split.
+        if shsplit != 0 {
+            // c:Src/subst.c:4185-4199 — the (z)/(Z) split runs the real lexer
+            // over the value through bufferwords (c:Src/hist.c:3385):
+            //     if (isarr) { for (ap = aval; *ap; ap++) {
+            //         untokenize(*ap); list = bufferwords(list, *ap, NULL, shsplit); }
+            //         isarr = 0; }
+            //     else { untokenize(val); list = bufferwords(NULL, val, NULL, shsplit); }
+            // `untokenize` DROPS the Nularg sentinel (c:Src/exec.c:2143), which is
+            // what keeps a nulstring element out of the word list (`q=("" 1)`,
+            // `"${(z)${(@)q}}"` is the single word `1`). It also turns every other
+            // token back into its character — the lexer skips token bytes
+            // (c:Src/input.c ingetc `if (itok(...)) continue`), so a Dash/Star/Quest
+            // left in `${(z):-a-b}` vanished (`ab`). `untokenize_ztokens` is the C
+            // untokenize (it keeps `$'…'` in source form, unlike `untokenize`).
+            // The (q) arm, which C runs first (c:4041), wraps its output in
+            // Snull markers so stringsubst leaves the emitted quote chars alone.
+            // They are port bookkeeping, not tokens C's untokenize would see:
+            // left in, untokenize turned each into a literal `'` and
+            // `${(zq)a}` with an empty element gave `''''`.
+            let snull_c = crate::ported::zsh_h::Snull;
+            let z_src = |s: &str| -> String {
+                let s = if quotemod > 0 { s.replace(snull_c, "") } else { s.to_string() };
+                crate::ported::lex::untokenize_ztokens(&s) // c:4191
+            };
+            let mut words: Vec<String> = Vec::new();
+            let elements: Option<Vec<String>> = if isarr != 0 {
+                split_parts
+                    .clone()
+                    .or_else(|| arrays_get(&var_name).map(|a| a.iter().map(|e| e.to_string()).collect()))
+            } else {
+                None
+            };
+            match elements {
+                Some(list) => {
+                    for ap in &list {
+                        // c:4190-4192
+                        words.extend(crate::ported::hist::bufferwords(&z_src(ap), None, shsplit).0);
+                    }
+                }
+                None => {
+                    // c:4196-4197
+                    words = crate::ported::hist::bufferwords(&z_src(&value), None, shsplit).0;
+                }
+            }
+                                                                        // c:4174-4198 — bufferwords result becomes a word list:
+                                                                        // when there are multiple words OR isarr was set, the
+                                                                        // value is the list (aval), else the single joined val.
+                                                                        // Mirror by setting split_parts so the auto_splat block
+                                                                        // (or DQ join via sepjoin gate) consumes the list.
+                                                                        // Per c:3274 split-from-scalar convention, isarr = 2.
+                                                                        // Bug #363: zsh's `(z)` flag produces TOKENIZED words —
+                                                                        // a `$` inside any word is the literal char `$`, NOT a
+                                                                        // new param reference. Without an "already-tokenized"
+                                                                        // marker, downstream stringsubst re-expands `$VAR` as a
+                                                                        // fresh param-ref (UNSET → empty → element elided).
+                                                                        // Prefix `$` and `` ` `` with Bnull (the lexer's
+                                                                        // backslash-token) so the chars survive stringsubst's
+                                                                        // `$`/`` ` `` arms (Src/subst.c:265 `case Bnull: *s='\0'`
+                                                                        // skip) and untokenize to the literal char at the final
+                                                                        // output pass. Mirrors C bufferwords' tokenized result.
+                                                                        // Wrap each `$` / `` ` `` in Snull single-quote markers rather
+                                                                        // than prefixing with Bnull. Both stop stringsubst re-expanding
+                                                                        // the char (subst.rs:654-665 treats a Snull region as a literal
+                                                                        // `'…'` span, stripping the markers and keeping the content
+                                                                        // verbatim), but Bnull UNTOKENIZES to a literal backslash
+                                                                        // (C ztokens maps Bnull → `\`, lex.rs:4936), so `${(z)v}` for
+                                                                        // v=`a$b` came out `a\$b` instead of zsh's `a$b`. Snull is
+                                                                        // stripped by stringsubst before any untokenize sees it, so the
+                                                                        // `$` survives as a bare literal char — matching zsh's `(z)`
+                                                                        // which keeps `$foo` unexpanded AND unescaped. Bug #363's
+                                                                        // re-expansion guard is preserved (Snull is still a literal
+                                                                        // region); only the spurious backslash is gone.
+            let snull = crate::ported::zsh_h::Snull;
+            for w in words.iter_mut() {
+                if w.contains('$') || w.contains('`') {
+                    let mut out = String::with_capacity(w.len() + 4);
+                    for c in w.chars() {
+                        if c == '$' || c == '`' {
+                            out.push(snull);
+                            out.push(c);
+                            out.push(snull);
+                        } else {
+                            out.push(c);
+                        }
+                    }
+                    *w = out;
+                }
+            }
+            value = words.join(" "); // c:4191 single-word case
+                                     // c:Src/subst.c:4189-4197 — the bufferwords result decides the
+                                     // SHAPE, and a 0/1-word result is a SCALAR, not a 1-element
+                                     // array:
+                                     //     if (!list || !firstnode(list))
+                                     //         val = dupstring("");            // c:4189-4190
+                                     //     else if (!nextnode(firstnode(list)))
+                                     //         val = getdata(firstnode(list)); // c:4191-4192
+                                     //     else {                              // c:4193-4197
+                                     //         aval = hlinklist2array(list, 0);
+                                     //         isarr = nojoin ? 1 : 2;
+                                     //         l->list.flags |= LF_ARRAY;
+                                     //     }
+                                     // Only the >= 2 word branch sets `isarr`/LF_ARRAY. The port
+                                     // previously array-ized ANY non-empty word list, so a single
+                                     // word read as a 1-element array and `${#${(z)v}}` counted
+                                     // ELEMENTS (1) where zsh counts CHARACTERS of the scalar
+                                     // (`v=one` → 3, `v='a:b::c'` → 6). The (f) flag already got
+                                     // this right through the c:3924 `else if (!aval[1]) val =
+                                     // aval[0];` collapse (see `forced_split_to_one` below); this
+                                     // makes (z)/(Z) consistent with the same C rule.
+            if words.len() >= 2 {
+                split_parts = Some(words); // c:4194
+                                           // Bug #363 sub-issue: in DQ context, (z) flag must
+                                           // preserve splat shape per zsh — `"${(z)c}"` produces
+                                           // a multi-arg splat where adjacent text glues to the
+                                           // first/last word (mirrors `"${a[@]}"`). Without the
+                                           // negative-isarr gate, c:3032 sepjoin fires and
+                                           // collapses the words to a single scalar; the
+                                           // downstream auto_splat block (gated on isarr != 0)
+                                           // then never emits per-word. Setting isarr to a
+                                           // negative marker (mirrors the SCANPM_ISVAR_AT case
+                                           // at line 5969 for `[@]`) skips c:3032 (`isarr > 0`)
+                                           // while keeping auto_splat eligible. Bug #363.
+                isarr = if qt {
+                    -1 // c:3274 + c:3032 isarr<0 skip-sepjoin
+                } else if nojoin != 0 {
+                    1
+                } else {
+                    2 // c:3274 split-from-scalar (unquoted)
+                };
+                // c:4195 — the word list is the new `aval`; the earlier DQ join
+                // (c:3032) no longer describes the value, so the padding and
+                // eval arms must walk these words, not pad the joined text.
+                dq_collapsed = false;
+            } else {
+                // c:4183 + c:4189-4192 — an array source is flattened by
+                // bufferwords (`isarr = 0`), and a 0/1-word list leaves the
+                // result in `val` as a plain scalar.
+                split_parts = None;
+                isarr = 0;
+            }
+        } // c:2473
+
+        // c:Src/subst.c:3912-3932 — the (s:X:) split (`aval = sepsplit(val,
+        // spsep, 0, 1)`) and the (j:X:) join (`val = sepjoin(aval, sep, 1);
+        // isarr = 0`) BOTH run above, at c:3917/c:3932, long before the
+        // sort/unique block at c:4264-4326. The split is what decides `isarr`
+        // (c:3922-3927: a 0- or 1-element split result leaves isarr == 0), and
+        // c:4301 sorts only `if (isarr)`. Running the sort FIRST therefore
+        // sorted an array that C had already collapsed to a scalar:
+        // `a=('a b' c); ${(ps:\t:O)a}` splits the space-joined `a b c` on TAB,
+        // gets ONE element, and zsh emits `a b c` unsorted — the sort-first
+        // order emitted `c a b`.
+        // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
+        // subst.c:4180-4253 array sortit/unique post-processing.
+        //
+        // c:4245 — `if (isarr) { ... }` — the sort + unique +
+        // splat block is INSIDE this gate. Scalar shape (isarr=0)
+        // after DQ sepjoin at c:3034 means no sort applies. C does
+        // not have a separate "sort the joined string" path.
+        //
+        // A (j)/(F) join (c:3912-3917) clears isarr before this point, which
+        // gates the sort out exactly as C's `if (isarr)` does: `${(oj/-/)arr}`
+        // stays unsorted. A LATER split of the joined text re-arms it
+        // (`${(s:.:j:,:o)a}` sorts the split words), so no `sep` test here.
+        // c:Src/subst.c:3901-3921 — a pending `=`/spbreak force_split
+        // splits the scalar into words BEFORE the c:4245 unique/sort
+        // block (C runs the c:3901 split first). zshrs's force_split
+        // block lives later (line ~13560), so when `(u)`/`(o)`/etc. is
+        // ALSO requested the split hadn't happened yet and the c:4245
+        // gate below (`isarr != 0`) skipped — `${(u)=s}` left the
+        // word-split result un-deduped. Pre-apply the split here so the
+        // unique/sort block sees the array; the later force_split block
+        // then no-ops via its `split_parts.is_none()` guard. Only fires
+        // when sort/unique is requested, so plain `${=s}` is unaffected.
+        if force_split
+            && pf_flags & PREFORK_SINGLE == 0
+            && split_parts.is_none()
+            && isarr == 0
+            && (sortit != SORTIT_ANYOLDHOW || unique)
+        {
+            // c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
+            let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false);
+            if !parts.is_empty() {
+                value = parts.join(" ");
+                split_parts = Some(parts);
+                isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
+            }
+        }
+        // c:Src/subst.c:4226-4231 — the LAST array→scalar collapse before the
+        // sort/unique block, and the one that decides this case:
+        //
+        //     if (isarr && ssub) {
+        //         /* prefork() wants a scalar, so join no matter what else */
+        //         val = sepjoin(aval, NULL, 1);
+        //         isarr = 0;
+        //         l->list.flags &= ~LF_ARRAY;
+        //     }
+        //
+        // `ssub` is c:1761 `(pf_flags & PREFORK_SINGLE)`, set for a SCALAR
+        // assignment RHS (c:Src/exec.c:2603 `prefork(vl, isstr ?
+        // (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN, …)`) and for every
+        // singsub caller (c:520 prefork, c:Src/glob.c:2161 redirection
+        // filename under NO_MULTIOS, `case`/`[[` word expansion). It sits at
+        // c:4226, i.e. BEFORE `if (isarr)` at c:4256 — and the (u) unique fold
+        // (c:4264) and the (o)/(O)/(a)/(n)/(i) sort (c:4301-4326) are both
+        // INSIDE that gate. So in scalar-substitution context zsh never sorts
+        // and never uniques: it joins and stops. Verified against zsh 5.9 -f:
+        //     a=(c a b); v=${(o)a}     -> c a b   (not `a b c`)
+        //     a=(b a b c a); v=${(u)a} -> b a b c a
+        //     a=(3 10 2); v=${(n)a}    -> 3 10 2
+        //     a=(c a b); IFS=:; v=${(o)a} -> c:a:b
+        //     a=(c a b); [[ ${(o)a} == "c a b" ]] -> true
+        // The double-quoted form `v="${(o)a}"` already agreed because C's
+        // qt-sepjoin at c:3032 had cleared isarr earlier by a different route,
+        // which is why the divergence looked flag-specific rather than
+        // context-specific.
+        //
+        // c:4226 is UNCONDITIONAL on `nojoin`, unlike the earlier ssub join at
+        // c:3916 (`if (nojoin == 0 || sep)`). That is what makes `(@)` a
+        // non-exception here: `a=(bb a ccc); v=${(@o)a}` is `bb a ccc` in zsh,
+        // even though nojoin==2 lets the array survive c:3916. Gate on ssub
+        // alone, never on nojoin.
+        //
+        // The port keeps `isarr` non-zero past this point (the ssub scalar
+        // shape is produced downstream instead — see `ssub_join_c3903` in the
+        // quoting block), so the c:4226 collapse is expressed here as a guard
+        // on the sort/unique block rather than as an `isarr = 0` store, which
+        // would also re-shape the splat and quoting arms below.
+        let ssub_c4226 = (pf_flags & PREFORK_SINGLE) != 0; // c:1761
+        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && !ssub_c4226 {
+            // c:4245 + c:4290
+            // Sort/unique source: prefer split_parts (any prior
+            // operator result like :# filter, (s::) split, or
+            // assoc-splat) so sort applies to the actual element
+            // list, not a whitespace re-split of the joined view.
+            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
+                // c:4290
+                sp // c:4290 (operator-result)
+            } else if let Some(arr) = arrays_get(&var_name) {
+                // c:4290
+                arr.clone() // c:4290 (real array)
+            } else if let Some(map) = assoc_get(&var_name) {
+                // c:4290
+                map.values().cloned().collect() // c:4290 (assoc values)
+            } else if matches!(var_name.as_str(), "@" | "*" | "argv") {
+                // c:Src/params.c:3262 IPDEF9 — `@`, `*`, `argv` map
+                // to `pparams`. Source the sort/unique input from the
+                // canonical positional vec instead of the whitespace-
+                // re-split joined view, so individual positionals
+                // with embedded spaces survive `${(o)@}` etc.
+                crate::ported::builtin::PPARAMS
+                    .lock()
+                    .map(|p| p.clone())
+                    .unwrap_or_default()
+            } else {
+                // c:4290
+                value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
+            }; // c:4290
+               // KSHARRAYS bare array → sort/unique fold only element 0.
+            let parts: Vec<String> = if split_parts.is_none()
+                && ksh_bare_ref_shape_c2286!()
+                && arrays_contains(&var_name)
+            {
+                parts.into_iter().take(1).collect()
+            } else {
+                parts
+            };
+            let mut sorted: Vec<String> = parts; // c:4290
+            if unique {
+                // c:4253
+                let mut seen = std::collections::HashSet::new(); // c:4253
+                sorted.retain(|s| seen.insert(s.clone())); // c:4253
+            } // c:4253
+            if sortit != SORTIT_ANYOLDHOW {
+                // c:4022 `if (sortit != SORTIT_ANYOLDHOW) {`
+                if indord != 0 {
+                    // c:4025-4037 — the (a) flag keeps insertion order; (O)
+                    // on top of it reverses the array without ever running a
+                    // comparator.
+                    if (sortit & SORTIT_BACKWARDS) != 0 {
+                        sorted.reverse(); // c:4030-4035
+                    }
+                } else {
+                    // c:4045 — ONE call: `strmetasort(aval, sortit, NULL)`.
+                    // strmetasort (sort.c:234) owns the whole flag set — the
+                    // SORTIT_IGNORING_CASE / SORTIT_IGNORING_BACKSLASHES
+                    // pre-pass that rewrites each element's compare key
+                    // (sort.c:289-385), then `sortdir = BACKWARDS ? -1 : 1`
+                    // and `sortnumeric` (sort.c:400-405) before the qsort.
+                    // This arm used to hand-roll a three-way dispatch —
+                    // numeric OR case-folded OR plain — which made the two
+                    // mutually exclusive: `${(ni)a}` took the numeric branch
+                    // and never lowered, so `(X2 x10)` compared 'X' against
+                    // 'x', found no digit run at the divergence, and fell
+                    // through to strcoll → `x10 X2` where zsh gives `X2 x10`
+                    // (lowered to `x2`/`x10`, then 2 < 10). It also applied
+                    // BACKWARDS as a post-sort `reverse()` instead of C's
+                    // negated comparator, which flips the order of tied
+                    // elements rather than leaving them alone.
+                    crate::ported::sort::strmetasort(&mut sorted, sortit as u32, None);
+                    // c:4045
+                }
+            } // c:4046
+            let join_with = sep.as_deref().unwrap_or(" "); // c:4313
+            value = sorted.join(join_with); // c:4313
+                                            // Update split_parts so downstream operators (case mods,
+                                            // padding, splat) see the sorted/uniq list.
+            split_parts = Some(sorted); // c:4313
+        } // c:4290
+
         // c:Src/subst.c:4041 (quotemod) / 4155 (mods D+V) / 4185 (shsplit)
         // / 4301 (sort) ALL precede the four `dopadding()` call sites at
         // c:4339, c:4387, c:4406 and c:4426 (plus the scalar one at c:4465).
@@ -23711,7 +23893,14 @@ pub fn paramsubst(
                 .as_deref()
                 // c:2048 — only a LITERAL one-char `[@]`/`[*]` is the splat.
                 .map_or(false, |s| !is_splat_txt!(s));
-            if let Some(parts) = split_parts.clone() {
+            if dq_collapsed {
+                // c:3032-3034 — the DQ sepjoin cleared `isarr`, so c:4245
+                // `if (isarr)` is false and c:4444 pads the JOINED `val` once.
+                // `split_parts` still holds `aval` (kept for c:3406), so the
+                // arm below padded each element: `"${(kl:12:)h}"` padded every
+                // key where zsh pads (and truncates) the joined keys.
+                value = pad_one(&value); // c:4444
+            } else             if let Some(parts) = split_parts.clone() {
                 // c:4245 array branch — array shape already materialized.
                 let new_parts: Vec<String> = parts.iter().map(|s| pad_one(s)).collect();
                 value = new_parts.join(" ");
@@ -23731,7 +23920,13 @@ pub fn paramsubst(
             } else if isarr != 0 {
                 // c:4245 array branch — whole-array reference (`${arr}`,
                 // `${arr[@]}`): pad each element of the source array.
-                if let Some(arr) = arrays_get(&var_name) {
+                // c:4327 pads `aval[i]`, which for an association is its VALUE
+                // list (c:Src/params.c:736 getvaluearr): `${(l:4:)h}` pads each
+                // value. The plain-array refetch missed the hash and padded
+                // nothing.
+                if let Some(arr) = arrays_get(&var_name)
+                    .or_else(|| getvaluearr_assoc_vals!(&var_name).cloned())
+                {
                     let new_arr: Vec<String> = arr.iter().map(|s| pad_one(s)).collect();
                     value = new_arr.join(" ");
                     split_parts = Some(new_arr);
@@ -23959,125 +24154,6 @@ pub fn paramsubst(
             }
         }
 
-        // ${=name} forced split — promote scalar value to multi-word
-        // splat per Src/subst.c:3902 `force_split = !ssub && spbreak`.
-        // Suppressed when ssub (paramsubst called with PREFORK_SINGLE,
-        // i.e. inside a scalar-assignment context). The split uses
-        // IFS chars from the executor; default IFS is " \t\n".
-        let in_ssub = pf_flags & PREFORK_SINGLE != 0;
-        // c:Src/subst.c:1707 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT)
-        // && !(pf_flags & PREFORK_SINGLE) && !qt;` — and c:3913
-        // `force_split = !ssub && (spbreak || spsep)`. `force_split` alone is
-        // only C's `spbreak == 2`, i.e. the explicit `${=…}` flag (c:2567); the
-        // OPTION-driven half was missing on this braced path, so under
-        // SH_WORD_SPLIT a braced expansion never IFS-split: `setopt
-        // shwordsplit; string='another poxy boring string';
-        // print -l ${${string}/o/ }` came back as ONE word where zsh prints
-        // seven (D04parameter.ztst "Rule 9: Shell Word Splitting"). The bare
-        // `$name` path has its own c:1705 block further down; only the braced
-        // one was uncovered.
-        let spbreak = !spbreak_cleared
-            && !suppress_split // c:2562 `${==…}` → spbreak = 0
-            && (force_split || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt)); // c:1707, c:3230
-                                                                                               // c:Src/subst.c:3906-3911 — inside the same `if (ssub || spbreak || …)`
-                                                                                               // block, an ARRAY-shaped value is JOINED FIRST when `nojoin == 0`:
-                                                                                               //     if (isarr || quoted_array_with_offset) {
-                                                                                               //         if (nojoin == 0 || sep) { val = sepjoin(aval, sep, 1);
-                                                                                               //                                   isarr = 0; }
-                                                                                               // and only then does c:3919 `sepsplit` re-split it. That join-then-split
-                                                                                               // is what makes `setopt shwordsplit; ${${string}/o/ }` seven words: the
-                                                                                               // inner split gave four elements, the replacement put a space INSIDE
-                                                                                               // three of them, and the outer round re-splits on the new spaces. The
-                                                                                               // port skipped the join entirely (the split below is gated on
-                                                                                               // `split_parts.is_none()`), so those inner spaces survived.
-                                                                                               // `(@)`/`(*)` (nojoin != 0) and an explicit `(j:…:)` sep keep their
-                                                                                               // shape, exactly as the C condition says.
-        // c:3911 `if (isarr || …)` — the elements are `aval`. A splat read
-        // (`${a[@]}`, `${(@)a}`, a nested `${${…}[@]}`, which lives in its temp
-        // array) keeps them in the parameter rather than in `split_parts`, with
-        // `value` only a space-joined rendering, so fetch them the way the later
-        // splat arms do. Without this, `setopt shwordsplit; IFS=:; a=(a "" b);
-        // print -rl -- ${${a}[@]}` re-split the space-joined text on `:` and
-        // printed the single word `a  b` (zsh: `a` `` `b`).
-        let aval_c3911: Option<Vec<String>> = split_parts.clone().or_else(|| {
-            if isarr != 0 && (subscript.is_none() || splat_sub!().is_some()) {
-                arrays_get(&var_name)
-            } else {
-                None
-            }
-        });
-        // c:3914-3928 — join when `nojoin == 0`, or for the element-split hack
-        // (`spsep || nojoin == 2 || (!ifs && isarr < 0)`; the `spsep` split is
-        // the (s) arm above), both with a NULL separator here.
-        let ifs_unset = vars_get("IFS").is_none();
-        if spbreak
-            && !in_ssub
-            && sep.is_none()
-            && (nojoin == 0 || nojoin == 2 || (ifs_unset && isarr < 0))
-        {
-            if let Some(parts) = aval_c3911.clone() {
-                if parts.len() > 1 {
-                    value = crate::ported::utils::sepjoin(&parts, None); // c:3909
-                    split_parts = None; // c:3910 `isarr = 0`
-                    isarr = 0; // c:3910
-                } else if parts.len() == 1 {
-                    // c:Src/subst.c:3899-3906 — `else if (isarr && aval &&
-                    // aval[0] && !aval[1]) { val = aval[0]; isarr = 0; }`: a
-                    // ONE-element array is treated as a scalar BEFORE the
-                    // c:3912 force_split block, so the c:3931
-                    // `if (force_split && !isarr)` sepsplit still fires on it.
-                    // The port demoted only arrays of length > 1 (the c:3914
-                    // join above), so a single-element array kept `isarr`,
-                    // made `unjoined_array` true at c:3931 and skipped the
-                    // split entirely: `a=("x y z"); print ${#${=${a}}}` was 1
-                    // where zsh is 3. `_git`'s __git_merge_strategies splits
-                    // exactly this shape — `${=${(M)${(f)…}:#[Aa]vailable …
-                    // strategies are: *}}` matches ONE line — so
-                    // `git merge --strategy=<TAB>` inserted
-                    // `octopus\ ours\ recursive\ resolve\ subtree` as a single
-                    // backslash-escaped word instead of listing five matches.
-                    value = parts[0].clone(); // c:3904 `val = aval[0]`
-                    split_parts = None; // c:3905 `isarr = 0`
-                    isarr = 0; // c:3905
-                }
-            }
-        }
-        // c:3931 `if (force_split && !isarr)` — an array that was not joined
-        // above (IFS set but empty: c:1817 `nojoin` 1) keeps its elements:
-        // `setopt shwordsplit; IFS=; a=(x y); print -rl -- ${${a}[@]}` is `x` `y`.
-        let unjoined_array = isarr != 0 && aval_c3911.is_some();
-        if spbreak && !in_ssub && split_parts.is_none() && !unjoined_array {
-            // Same signal the (s)/(f) arm raises above: this paramsubst is a
-            // SPLIT, so a nesting reader must apply C's prefork empty-node
-            // deletion (c:Src/subst.c:184 `else if (!keep) uremnode`) to the
-            // pieces. spacesplit marks a field lost to IFS-WHITESPACE as a
-            // genuine "" (c:Src/utils.c:3734-3735 `*ptr++ = dup("")`) and one
-            // lost to an IFS-NON-whitespace separator as `nulstring`
-            // (c:3733), so only the former is dropped — which is exactly why
-            // `s='  a  b  '; "${(@)${=s}}"` is `a b` in zsh while
-            // `IFS=:; s=':a::b:'; "${(@)${=s}}"` keeps its empties. Without
-            // the signal the `${=…}` inner kept the leading "" that the
-            // `(s:X:)` inner already dropped.
-            SUBEXP_NONAT_SPLIT.with(|c| c.set(nojoin != 2)); // c:184
-                                                             // c:Src/subst.c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
-                                                             // Call the ported sepsplit (→ spacesplit for the IFS case)
-                                                             // rather than splitting inline: the prior inline did
-                                                             // `value.split(|c| ifs.contains(c)).filter(non-empty)`, which
-                                                             // collapsed empty fields for NON-whitespace IFS — `IFS=,;
-                                                             // ${=}` on "a,,b" dropped the middle field. sepsplit keeps
-                                                             // them as Nularg per zsh's word-splitting (Bug #636).
-            let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false); // c:3921
-            if !parts.is_empty() {
-                value = parts.join(" ");
-                split_parts = Some(parts);
-                // c:3274 — `isarr = nojoin ? 1 : 2;` mark this as a
-                // split-from-scalar so the c:4245 splat block fires
-                // and the c:3032 sepjoin-on-qt skips (per c:3317
-                // !spsep guard equivalent — force_split is the
-                // spbreak=2 path which has the same effect).
-                isarr = if nojoin != 0 { 1 } else { 2 };
-            }
-        }
         // Reconstruct the full str3 with the brace expansion applied
         // — same protocol the simple `$var` arm uses (line 1240).
         // Caller (stringsubst) re-loads `str3 = list.getdata(node_idx)`

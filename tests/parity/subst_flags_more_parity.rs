@@ -863,3 +863,79 @@ mod dollar_name_is_not_a_subexp {
         assert_parity("x=abc; print ${${x}[2]} ${$(print hi)} ${$((1+2))}");
     }
 }
+
+/// c:Src/subst.c:2882 — after `(t)` replaces the value with the type tag,
+/// `v = NULL` detaches the expansion from the parameter: case folding,
+/// joining, quoting and padding all work on the tag, not the elements.
+mod type_tag_is_the_value {
+    use super::*;
+
+    #[test]
+    fn later_flags_see_the_tag() {
+        assert_parity(
+            r#"a=(x y); typeset -A h=(k v); printf '<%s>' ${(Ut)a} ${(tj:,:)a} ${(tq)a} ${(tl:8:)a} ${(Ct)h} ${(t@)h}; echo"#,
+        );
+    }
+}
+
+/// c:Src/params.c:736 — an association's `aval` is its value list, so the
+/// per-element arms (padding c:4327, evalchar c:3822, modifiers c:4533)
+/// walk the values of an unquoted `${h}`.
+mod assoc_values_are_aval {
+    use super::*;
+
+    #[test]
+    fn padding_evalchar_and_modifiers_per_value() {
+        assert_parity(
+            r#"typeset -A h=(a 65 b 66); printf '<%s>' ${(l:4:)h} ${(r:3::_:)h} ${(#)h}; echo"#,
+        );
+        assert_parity(r#"typeset -A h=(k1 v1.c k2 /x/y); printf '<%s>' ${h:u} ${h:t} ${(@)h:r}; echo"#);
+    }
+
+    /// c:3032-3034 then c:4444 — a quoted `(k)`/`(v)` list is joined first,
+    /// so padding (and truncation) runs once on the joined text.
+    #[test]
+    fn quoted_key_list_pads_once() {
+        assert_parity(
+            r#"typeset -A h=(k1 v1 k2 v2 k3 v3); a=(foo bar baz); printf '<%s>' "${(kl:12:)h}" "${(kr:5:)h}" "${(kl:12:)a}"; echo"#,
+        );
+    }
+}
+
+/// c:Src/subst.c:4041 / 4185 / 4264 / 4301 — quoting, then the (z) split,
+/// then unique and sort.
+mod quote_split_sort_order {
+    use super::*;
+
+    #[test]
+    fn z_split_before_sort_and_unique() {
+        assert_parity(
+            r#"a=(foo 'b ar' baz foo Qux); printf '<%s>' ${(zo)a}; echo; printf '<%s>' "${(zO)a}"; echo; printf '<%s>' ${(zu)a}; echo"#,
+        );
+    }
+
+    #[test]
+    fn quote_before_z_split() {
+        assert_parity(
+            r#"a=(foo 'b ar' '' baz); printf '<%s>' ${(zq)a}; echo; printf '<%s>' ${(zqq)a}; echo; printf '<%s>' "${(zqq)a}"; echo"#,
+        );
+    }
+
+    #[test]
+    fn padding_after_z_split_in_quotes() {
+        assert_parity(r#"a=(foo 'b ar'); printf '<%s>' "${(zl:5:)a}" "${(zr:4:)a}"; echo"#);
+    }
+}
+
+/// c:3202-3230 — a `:-`/`-`/`:+`/`+` word replaces `val`/`aval`; the
+/// flags run on that word, not on the parameter.
+mod operator_word_feeds_the_flags {
+    use super::*;
+
+    #[test]
+    fn flags_apply_to_default_and_alternate() {
+        assert_parity(
+            r#"e=(); a=(x y); printf '<%s>' ${(U)e:-dflt} ${(q)e:-d f} ${(U)a:+alt} ${(U)a+alt} ${(U)x:-d}; echo"#,
+        );
+    }
+}
