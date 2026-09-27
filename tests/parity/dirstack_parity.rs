@@ -214,3 +214,39 @@ mod cdable_vars_named_directory {
         );
     }
 }
+
+/// c:Src/builtin.c:908 + c:928-931 — `popd` with an argument that is not a
+/// `+N`/`-N` index pushes it as the node to remove and chdirs to the next
+/// node, the pwd bin_cd pushed at c:849. So the directory and the stack
+/// are unchanged and the status is 0; the port tried to cd into the word.
+mod popd_non_index_argument {
+    use super::*;
+
+    #[test]
+    fn popd_word_is_a_no_op() {
+        assert_parity(
+            r#"d=$(mktemp -d); cd $d; mkdir a b; pushd -q a; pushd -q ../b; popd foo 2>&1; echo $?; popd -z 2>&1; echo $?; print $#dirstack ${dirstack[1]:t} ${PWD:t}; cd /; command rm -rf $d"#,
+        );
+    }
+}
+
+/// c:Src/builtin.c:1030-1080 — cd_do_chdir remembers the first errno that
+/// was not ENOENT and reports it with `%e`, so `cd <file>` says "not a
+/// directory" and an unreadable directory "permission denied".
+mod cd_error_errno {
+    use super::*;
+
+    #[test]
+    fn cd_into_file_reports_enotdir() {
+        assert_parity(
+            r#"d=$(mktemp -d); cd $d; touch f; mkdir -p s/t; touch s/g; cd f 2>&1; echo $?; CDPATH=s cd g 2>&1; echo $?; cd /; command rm -rf $d"#,
+        );
+    }
+
+    #[test]
+    fn cd_into_unsearchable_dir_reports_eacces() {
+        assert_parity(
+            r#"d=$(mktemp -d); cd $d; mkdir x; chmod 000 x; cd x 2>&1; echo $?; chmod 755 x; cd /; command rm -rf $d"#,
+        );
+    }
+}

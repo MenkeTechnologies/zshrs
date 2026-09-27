@@ -2111,6 +2111,10 @@ pub fn bin_cd(
             } else if func == BIN_PUSHD || (func == BIN_CD && autopushd) {
                 // c:849 — push pre-cd pwd.
                 d.insert(0, pre_pwd.clone());
+            } else if func == BIN_POPD && argv.len() == 1 {
+                // c:908 + c:928-931 — `popd <non-index>`: the pushed node
+                //   is removed again and pwd stays on top, so the stack is
+                //   unchanged (see cd_get_dest).
             } else if func == BIN_POPD {
                 // c:1197-1199 — pop top of stack (the dir we left).
                 if !d.is_empty() {
@@ -2340,14 +2344,25 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
         //   `doprintdir--` (cancelling the c:891 `doprintdir++` → no
         //   print), while `cd -` keeps doprintdir set → prints $OLDPWD.
         //   C reads the `oldpwd` global; route through `$OLDPWD`.
-        if arg == "-" {
+        let pushed = if arg == "-" {
             // c:909 — `: oldpwd` — no doprintdir--, so `cd -` prints.
             getsparam("OLDPWD")
         } else {
             // c:909 — `? (doprintdir--, argv[0])`.
             DOPRINTDIR.fetch_sub(1, Relaxed);
             Some(arg.clone())
+        };
+        // c:928-931 — `if (func == BIN_POPD) { if (!dir) { target = dir =
+        //   firstnode(dirstack); } ... dir = nextnode(dir); }`. For popd the
+        //   node just pushed at c:908 is only the target to remove; the
+        //   chdir goes to the next node, the pwd bin_cd pushed at c:849.
+        //   So `popd foo` / `popd -` stays in the current directory and
+        //   leaves the stack alone (cd_new_pwd c:1195-1199 removes the
+        //   pushed node, then takes pwd back off the front).
+        if func == BIN_POPD {
+            return Some(getsparam("PWD").unwrap_or_else(|| zgetcwd()));
         }
+        pushed
     } else {
         // c:914-924 — two-arg substitution: cd OLDPATTERN NEWPATTERN.
         //              C reads `pwd` global / `$PWD` param via getsparam;
@@ -2427,11 +2442,17 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
         cdpath_str.split(':').collect()
     };
     let hasdot = !nocdpath && !posix_cd && cdpath.iter().any(|p| p.is_empty() || *p == ".");
+    let mut eno = libc::ENOENT; // c:990 — `int hasdot = 0, eno = ENOENT;`
 
     // c:1026-1031 — if no dot in cdpath (and !POSIXCD), try as-is first.
     if !hasdot && !posix_cd {
         if let Some(ret) = cd_try_chdir("", dest, hard) {
             return Some(ret);
+        }
+        // c:1030-1031 — `if (errno != ENOENT) eno = errno;`
+        let e = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if e != libc::ENOENT {
+            eno = e;
         }
     }
 
@@ -2456,6 +2477,11 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
                 }
                 return Some(ret);
             }
+            // c:1052-1053 — `if (errno != ENOENT) eno = errno;`
+            let e = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if e != libc::ENOENT {
+                eno = e;
+            }
         }
     }
 
@@ -2463,6 +2489,11 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
     if posix_cd {
         if let Some(ret) = cd_try_chdir("", dest, hard) {
             return Some(ret);
+        }
+        // c:1062-1063
+        let e = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if e != libc::ENOENT {
+            eno = e;
         }
     }
 
@@ -2482,10 +2513,18 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
             DOPRINTDIR.fetch_add(1, Relaxed); // c:1069
             return Some(ret);
         }
+        // c:1072-1073
+        let e = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if e != libc::ENOENT {
+            eno = e;
+        }
     }
 
-    // c:1071 — failure warning.
-    zwarnnam(cnam, &format!("no such file or directory: {}", crate::ported::utils::nicedupstring(&dest))); // c:1080 `%s` → nicezputs (c:Src/utils.c:316)
+    // c:1080 — `zwarnnam(cnam, "%e: %s", eno, dest);`. `%e` is
+    //   strerror of the first non-ENOENT failure seen (c:1030, 1052,
+    //   1062, 1072), so `cd <file>` reports ENOTDIR and an unreadable
+    //   directory EACCES rather than a blanket ENOENT.
+    zwarnnam(cnam, &format!("{}: {}", crate::ported::utils::zsh_errno_msg(eno), crate::ported::utils::nicedupstring(&dest))); // c:1080 `%s` → nicezputs (c:Src/utils.c:316)
     None
 }
 
