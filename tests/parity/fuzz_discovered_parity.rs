@@ -4653,4 +4653,18 @@ z=1 command; print -r -- ${z-unset}
 y=$(exit 3) exec; print -n $? ""; y=$(exit 4) noglob; print $?"#,
         );
     }
+
+    /// c:Src/exec.c WC_SUBSH forks, so `break`/`continue` inside `( … )`
+    /// only end the child's list; the parent's loop runs on.
+    /// zsh: `1 2` / `1 2` / `1a 1b 2a 2b` / `1 2` (the child counts the parent's
+    /// loop, so `break 2` also ends the subshell's own list).
+    #[test]
+    fn break_inside_subshell_does_not_end_parent_loop() {
+        assert_parity(
+            r#"for i in 1 2; do (break); print -n "$i "; done; print
+for i in 1 2; do (continue; print no); print -n "$i "; done; print
+for i in 1 2; do for j in a b; do (break 2); print -n "$i$j "; done; done; print
+for i in 1 2; do (for j in a b; do break 2; done; print -n "in$i "); print -n "$i "; done; print"#,
+        );
+    }
 }

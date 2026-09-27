@@ -2001,7 +2001,21 @@ impl ZshCompiler {
                 for v in self.body_end_patches.iter_mut() {
                     v.clear();
                 }
+                // The literal `break`/`continue` fast path jumps straight to
+                // an enclosing loop's patch list — which, for a loop OUTSIDE
+                // the parens, skipped SubshellEnd and ended the parent's loop
+                // (`for i in 1 2; do (break); print $i; done` printed
+                // nothing; zsh prints 1 and 2). Hide the outer loops from the
+                // body so such a `break` takes the runtime `bin_break` arm,
+                // whose BREAKS the `!breaks` gate above carries to
+                // SubshellEnd, which restores the parent's copy.
+                let saved_breaks = std::mem::take(&mut self.break_patches);
+                let saved_continues = std::mem::take(&mut self.continue_patches);
+                self.try_loop_base.push(0);
                 self.compile_program(prog);
+                self.try_loop_base.pop();
+                self.break_patches = saved_breaks;
+                self.continue_patches = saved_continues;
                 let inner_patches = std::mem::take(&mut self.return_patches);
                 self.return_patches = saved;
                 let inner_body_ends: Vec<Vec<usize>> = self
