@@ -200,6 +200,15 @@ mod nocorrect {
         assert_parity(r#"z=1 nocorrect print hi; z=2 nocorrect sh -c 'echo $z'; nocorrect z=3 sh -c 'echo $z'"#);
         assert_parity(r#"z=1 nocorrect y=2 sh -c 'echo $z$y'"#);
     }
+
+    /// c:Src/parse.c:1845 — only the NOCORRECT token is the modifier; a
+    /// `nocorrect` word lexed as a STRING (quoted, or after another
+    /// precommand) is a command name.
+    #[test]
+    fn nocorrect_as_a_word_is_a_command_name() {
+        assert_parity(r#"noglob nocorrect print x 2>&1; print $?"#);
+        assert_parity(r#"'nocorrect' print x 2>&1; print $?"#);
+    }
 }
 
 mod combined {
