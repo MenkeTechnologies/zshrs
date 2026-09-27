@@ -13308,8 +13308,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // 5 }; f'` prints nothing.
         if retflag != 0 && exit_pending == 0 {
             let last = vm.last_status;
+            // c:1651 — `!donetrap` as it stood when this sublist finished.
+            let donetrap_at_entry = crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0;
             // c:1598-1603 — same DONETRAP gate as the non-escape path below.
-            if last != 0 && crate::ported::exec::DONETRAP.load(Ordering::Relaxed) == 0 {
+            if last != 0 && !donetrap_at_entry && zerr_sigtrapped() {
                 // c:Src/signals.c:1085-1087 — `int obreaks = breaks; int
                 // oretflag = retflag; int olastval = lastval;` and c:1220-1222
                 // — `breaks += obreaks; retflag = oretflag;`. dotrapargs
@@ -13341,6 +13343,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::builtin::RETFLAG.store(oretflag, Ordering::Relaxed); // c:1222
                 crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed);
                 // c:1213
+            }
+            // c:1660-1680 — the same sublist_done then applies ERR_EXIT /
+            // ERR_RETURN to the `return N` that ended it: `setopt errexit;
+            // trap 'echo e' ZERR; return 1` inside a function exits there.
+            if last != 0 && !donetrap_at_entry {
+                let _ = errexit_tail(last);
             }
         }
         if retflag != 0 || exit_pending != 0 {
@@ -13408,7 +13416,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // a function-form TRAPZERR runs through doshfunc and would
             // otherwise consume the caller's breaks/retflag/lastval.
             let last = with_executor(|exec| exec.last_status());
-            if last != 0 && crate::ported::exec::DONETRAP.load(Ordering::Relaxed) == 0 {
+            if last != 0 && crate::ported::exec::DONETRAP.load(Ordering::Relaxed) == 0 && zerr_sigtrapped() {
                 let obreaks = crate::ported::builtin::BREAKS.load(Ordering::Relaxed); // c:1085
                 let oretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed); // c:1086
                 let olastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:1087
@@ -13455,7 +13463,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let zerr_suppressed = (crate::ported::exec::noerrexit.load(Ordering::Relaxed)
             & crate::ported::zsh_h::NOERREXIT_EXIT)
             != 0; // c:1653
-        if !already_done && !zerr_suppressed {
+        // c:1652 — `sigtrapped[SIGZERR] &&`: with no ZERR trap the block
+        // never runs, so `donetrap` stays 0 and cannot spare a caller's
+        // errexit / errreturn below.
+        if !already_done && !zerr_suppressed && zerr_sigtrapped() {
             // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR
             // trap dispatch. Fires whenever a command exits
             // non-zero.
@@ -13499,59 +13510,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Value::Int(1); // c:1443 — list loop stops on retflag
             }
         }
-        // c:Src/exec.c:1605-1610 — compute errreturn / errexit.
-        //   errreturn = ERRRETURN && (INTERACTIVE || locallevel || sourcelevel)
-        //               && !(noerrexit & NOERREXIT_RETURN)
-        //   errexit   = (ERREXIT || (ERRRETURN && !errreturn))
-        //               && !(noerrexit & NOERREXIT_EXIT)
-        let no_err = crate::ported::exec::noerrexit.load(Ordering::Relaxed);
-        let locallvl = crate::ported::params::locallevel.load(Ordering::Relaxed);
-        let sourcelvl = crate::ported::init::sourcelevel.load(Ordering::Relaxed);
-        let errreturn_opt = isset(crate::ported::zsh_h::ERRRETURN);
-        let in_unwindable_scope =
-            isset(crate::ported::zsh_h::INTERACTIVE) || locallvl != 0 || sourcelvl != 0;
-        let errreturn = errreturn_opt
-            && in_unwindable_scope
-            && (no_err & crate::ported::zsh_h::NOERREXIT_RETURN) == 0;
-        if errreturn {
-            // c:1620-1623 — `retflag = 1; breaks = loops;` — unwind to
-            // function boundary without exiting the shell.
-            crate::ported::builtin::RETFLAG.store(1, Ordering::Relaxed);
-            let loops = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
-            crate::ported::builtin::BREAKS.store(loops, Ordering::Relaxed);
-            return Value::Int(1);
-        }
-        let (errexit_on, in_subshell) = with_executor(|exec| {
-            let on_canonical = isset(ERREXIT) || (errreturn_opt && !errreturn); // c:1608-1609
-            let on_legacy = opt_state_get("errexit").unwrap_or(false);
-            (
-                (on_canonical || on_legacy) && (no_err & crate::ported::zsh_h::NOERREXIT_EXIT) == 0,
-                !exec.subshell_snapshots.is_empty(),
-            )
-        });
-        if !errexit_on {
+        // c:Src/exec.c:1651 — `if (!this_noerrexit && !donetrap &&
+        // !this_donetrap)` gates the errexit / errreturn half too, not only
+        // ZERR: a ZERR trap that already fired inside a function called by
+        // this sublist also spares the caller the top-level ERR_RETURN-as-
+        // ERR_EXIT (`setopt errreturn; trap 'echo z' ZERR; f() { false };
+        // f; echo s` prints `z` then `s`).
+        if already_done {
             return Value::Int(0);
         }
-        // c:Src/exec.c:1611-1618 — under ERR_EXIT a failing command exits the
-        // whole shell via realexit() FROM THE POINT OF FAILURE, before any
-        // enclosing `always` arm can run. zsh 5.9.2 (the reference) has no
-        // `this_noerrexit` deferral, so at top-level / function scope the
-        // faithful behavior is to process-exit here (zexit fires the SIGEXIT
-        // trap and exits). This bypasses the always arm, fixing
-        // `setopt errexit; { false } always { print A }` which wrongly ran the
-        // always body: the deferred EXIT_PENDING routed the unwind through
-        // always_entry (compile_zsh.rs re-points it there) and
-        // SET_TRY_BLOCK_ERROR then cleared the pending exit so the body ran.
-        if crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::Relaxed) == 0 {
-            crate::ported::builtin::zexit(last, crate::ported::zsh_h::ZEXIT_NORMAL);
-            // c:1618 realexit
-        }
-        // Subshell: zshrs runs subshells in-process, so it cannot process-exit
-        // the whole shell here — defer to the subshell-end unwind.
-        crate::ported::builtin::EXIT_VAL.store(last, Ordering::Relaxed);
-        crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
-        let _ = in_subshell;
-        Value::Int(1)
+        errexit_tail(last)
     });
 
     // BUILTIN_ASSIGN_ONLY_STATUS — status of an assignment-only
@@ -21774,6 +21742,83 @@ pub(crate) fn set_lineno_impl(n: i64) -> fusevm::Value {
         // `debugger.should_stop(line) → debugger.prompt(...)` flow.
         crate::extensions::dap::check_line(n as u32);
     fusevm::Value::Status(0)
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+/// The `if (lastval) { errreturn / errexit }` half of execlist's
+/// `sublist_done:` block (c:Src/exec.c:1660-1680), shared by the normal
+/// check and the retflag-escape check of BUILTIN_ERREXIT_CHECK: C runs it
+/// at EVERY sublist_done, including the one a `return 1` just ended.
+/// Returns the builtin's result (1 = unwind this scope).
+fn errexit_tail(last: i32) -> Value {
+    use std::sync::atomic::Ordering;
+    // c:Src/exec.c:1605-1610 — compute errreturn / errexit.
+    //   errreturn = ERRRETURN && (INTERACTIVE || locallevel || sourcelevel)
+    //               && !(noerrexit & NOERREXIT_RETURN)
+    //   errexit   = (ERREXIT || (ERRRETURN && !errreturn))
+    //               && !(noerrexit & NOERREXIT_EXIT)
+    let no_err = crate::ported::exec::noerrexit.load(Ordering::Relaxed);
+    let locallvl = crate::ported::params::locallevel.load(Ordering::Relaxed);
+    let sourcelvl = crate::ported::init::sourcelevel.load(Ordering::Relaxed);
+    let errreturn_opt = isset(crate::ported::zsh_h::ERRRETURN);
+    let in_unwindable_scope =
+        isset(crate::ported::zsh_h::INTERACTIVE) || locallvl != 0 || sourcelvl != 0;
+    let errreturn = errreturn_opt
+        && in_unwindable_scope
+        && (no_err & crate::ported::zsh_h::NOERREXIT_RETURN) == 0;
+    let (errexit_on, in_subshell) = with_executor(|exec| {
+        let on_canonical = isset(ERREXIT) || (errreturn_opt && !errreturn); // c:1608-1609
+        let on_legacy = opt_state_get("errexit").unwrap_or(false);
+        (
+            (on_canonical || on_legacy) && (no_err & crate::ported::zsh_h::NOERREXIT_EXIT) == 0,
+            !exec.subshell_snapshots.is_empty(),
+        )
+    });
+    if !errexit_on {
+        // c:1667-1674 — `if (errexit) { … realexit(); }` comes FIRST;
+        // `if (errreturn) { retflag = 1; breaks = loops; }` only matters
+        // when the shell did not exit. With both options set inside a
+        // function, ERR_EXIT wins.
+        if errreturn {
+            // c:1675-1678 — unwind to the function boundary without
+            // exiting the shell.
+            crate::ported::builtin::RETFLAG.store(1, Ordering::Relaxed);
+            let loops = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
+            crate::ported::builtin::BREAKS.store(loops, Ordering::Relaxed);
+            return Value::Int(1);
+        }
+        return Value::Int(0);
+    }
+    // c:Src/exec.c:1611-1618 — under ERR_EXIT a failing command exits the
+    // whole shell via realexit() FROM THE POINT OF FAILURE, before any
+    // enclosing `always` arm can run. zsh 5.9.2 (the reference) has no
+    // `this_noerrexit` deferral, so at top-level / function scope the
+    // faithful behavior is to process-exit here (zexit fires the SIGEXIT
+    // trap and exits). This bypasses the always arm, fixing
+    // `setopt errexit; { false } always { print A }` which wrongly ran the
+    // always body: the deferred EXIT_PENDING routed the unwind through
+    // always_entry (compile_zsh.rs re-points it there) and
+    // SET_TRY_BLOCK_ERROR then cleared the pending exit so the body ran.
+    if crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::Relaxed) == 0 {
+        crate::ported::builtin::zexit(last, crate::ported::zsh_h::ZEXIT_NORMAL);
+        // c:1618 realexit
+    }
+    // Subshell: zshrs runs subshells in-process, so it cannot process-exit
+    // the whole shell here — defer to the subshell-end unwind.
+    crate::ported::builtin::EXIT_VAL.store(last, Ordering::Relaxed);
+    crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+    let _ = in_subshell;
+    Value::Int(1)
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+/// `sigtrapped[SIGZERR]` (c:Src/exec.c:1652) read through the port's
+/// mutex-guarded `sigtrapped` table. C indexes the array inline.
+fn zerr_sigtrapped() -> bool {
+    crate::ported::signals::sigtrapped
+        .lock()
+        .ok()
+        .is_some_and(|st| st.get(crate::ported::signals_h::SIGZERR as usize).is_some_and(|&s| s != 0))
 }
 
 /// Body of `BUILTIN_DONETRAP_RESET`, factored out for the same reason.

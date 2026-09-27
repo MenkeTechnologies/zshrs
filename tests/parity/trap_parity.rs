@@ -462,3 +462,41 @@ mod zsh_debug_cmd_permanent_text {
         assert_parity(r#"setopt rcquotes; trap 'print -r -- "[$ZSH_DEBUG_CMD]"' DEBUG; x='it''s'; echo "$x""#);
     }
 }
+
+// c:Src/exec.c:1651 — `if (!this_noerrexit && !donetrap && !this_donetrap)`
+// gates BOTH the ZERR trap and the ERR_EXIT / ERR_RETURN tail, and
+// `donetrap` is set only when a ZERR trap actually ran (c:1652
+// `sigtrapped[SIGZERR] && …`). The same tail runs for the sublist a
+// `return N` just ended.
+mod zerr_donetrap_gate {
+    use super::*;
+
+    /// A ZERR trap that fired inside the function spares the caller's
+    /// top-level ERR_RETURN-as-ERR_EXIT.
+    #[test]
+    fn trap_inside_function_spares_toplevel_errreturn() {
+        assert_parity(r#"setopt errreturn; trap 'echo z' ZERR; f() { false; echo no }; f; echo s $?"#);
+    }
+
+    /// Without a ZERR trap nothing sets donetrap, so the top-level
+    /// ERR_RETURN still exits.
+    #[test]
+    fn no_trap_toplevel_errreturn_still_exits() {
+        assert_parity(r#"setopt errreturn; f() { false; echo no }; f; echo s $?"#);
+    }
+
+    /// C03traps.ztst "Combination of ERR_EXIT and ZERR trap": ERR_EXIT
+    /// applies at the `return 1` itself.
+    #[test]
+    fn errexit_applies_to_return() {
+        assert_parity(
+            r#"f() { setopt errexit; trap 'echo e' ZERR; return 1; echo no }; (f; echo no2); echo after $?"#,
+        );
+    }
+
+    /// c:1667 — ERR_EXIT is decided before ERR_RETURN.
+    #[test]
+    fn errexit_wins_over_errreturn() {
+        assert_parity(r#"setopt errexit errreturn; trap 'echo z' ZERR; f() { false; echo in }; f; echo after"#);
+    }
+}
