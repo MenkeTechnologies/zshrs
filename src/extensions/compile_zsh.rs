@@ -4110,6 +4110,17 @@ impl ZshCompiler {
                 // leaves the process without ever reaching sublist_done, so no
                 // ERR trap fires (`zsh -fc 'trap "print e" ERR; f(){ exit 5 };
                 // f'` prints nothing).
+                // c:Src/builtin.c:432-436 — execbuiltin rejects a bad
+                // argument count (`return 1 2`, `exit 1 2`) before bin_break
+                // runs, and bin_break's `exit` in a function with stopped
+                // jobs (c:5871) returns without setting retflag: the list
+                // simply continues with lastval 1. Escape only when retflag
+                // is really set (c:Src/exec.c:1370 tests exactly that).
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_RETFLAG_CHECK, 0),
+                    0,
+                );
+                let no_escape = self.builder.emit(Op::JumpIfFalse(0), 0);
                 let is_return = first == "return" || first_clean == "return";
                 if is_return && self.errexit_suppress_depth == 0 {
                     self.builder.emit(
@@ -4133,6 +4144,9 @@ impl ZshCompiler {
                 self.emit_cmd_stack_drain();
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
+                let no_escape_at = self.builder.current_pos();
+                self.builder.patch_jump(no_escape, no_escape_at);
+                self.emit_errexit_check();
             } else {
                 self.emit_errexit_check();
             }

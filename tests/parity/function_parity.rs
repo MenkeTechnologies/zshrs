@@ -834,3 +834,26 @@ mod def_name_expansion {
         assert_parity("x=(f1 f2); function $x { print $0 }; f1; f2");
     }
 }
+
+/// c:Src/builtin.c:432-436 — execbuiltin rejects `return 1 2` / `exit 1 2`
+/// with "too many arguments" BEFORE bin_break runs, so retflag is never set
+/// and the list goes on with status 1. zshrs jumped out of the scope (or
+/// the whole shell) unconditionally after any `return`/`exit` word.
+mod return_exit_with_too_many_arguments {
+    use super::*;
+
+    #[test]
+    fn the_list_continues_after_the_rejected_command() {
+        assert_parity("exit 3 4; echo $?");
+        assert_parity("f() { return 3 4; echo in $?; }; f; echo $?");
+        assert_parity("f() { exit 3 4; echo in $?; }; f; echo out $?");
+        assert_parity("f() { false || return 2 3; echo yes $?; }; f; echo $?");
+    }
+
+    #[test]
+    fn a_valid_return_or_exit_still_leaves() {
+        assert_parity("f() { for i in 1 2; do while :; do return 4; done; done; echo no; }; f; echo $?");
+        assert_parity("f() { exit 3; echo no; }; f; echo no2");
+        assert_parity("f() { eval 'return 7'; echo no; }; f; echo $?");
+    }
+}
