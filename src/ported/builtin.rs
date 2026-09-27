@@ -12694,110 +12694,10 @@ pub fn bin_print(
     } else {
         " "
     };
-    // c:Src/builtin.c:4783-4795 — `-D`: interpret each arg as a
-    // directory and abbreviate via `finddir(args[n])` — longest-prefix
-    // match against the full named-dir table ($HOME → `~`, `hash -d`
-    // entries → `~name`, plus the `zsh_directory_name` hook). C rewrites
-    // the matched prefix to `~name` and keeps the trailing path. The
-    // canonical `finddir` port already returns the `~name/rest` form.
-    if dirify_d {
-        for a in processed_args.iter_mut() {
-            if let Some(abbrev) = crate::ported::utils::finddir(a) {
-                *a = abbrev; // c:4791 — `~%s%s`
-            }
-        }
-    }
-    // c:4598-4600 — `-P` prompt-style percent expansion (`%n`, `%d`,
-    // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
-    // (canonical port of `Src/prompt.c:182 promptexpand`).
-    if OPT_ISSET(ops, b'P') {
-        // c:Src/builtin.c:4745-4746 — `if (OPT_ISSET(ops, 'P'))
-        //   txtunknownattrs = TXT_ATTR_ALL;`. Marks every attribute
-        // as initially "unknown" so the first `%b`/`%u`/`%s`/`%f`/`%k`
-        // off-escape in this print invocation emits its terminfo cap
-        // (via tunsetattrs at prompt.c:1758 — `txtcurrentattrs |=
-        // newattrs & txtunknownattrs`). Without this seed, applying
-        // an off-escape against zero current attrs produced no diff
-        // and zshrs emitted nothing — `%b` / `%u` / `%s` looked like
-        // no-ops in fresh prompts. Bug #38 in docs/BUGS.md.
-        crate::ported::prompt::txtunknownattrs.store(
-            crate::ported::zsh_h::TXT_ATTR_ALL,
-            std::sync::atomic::Ordering::SeqCst,
-        );
-        // c:4598-4600 — `-P` prompt-style percent expansion.
-        for a in processed_args.iter_mut() {
-            *a = crate::ported::prompt::expand_prompt(a); // c:Src/prompt.c:182
-                                                          // c:Src/prompt.c:236-247 — `if (!ns) { ... chuck(Inpar/
-                                                          // Outpar/Nularg); }`. When `ns=0` (non-stripping flag
-                                                          // off), zsh REMOVES the Inpar/Outpar/Nularg marker bytes
-                                                          // from the output. `print -P` calls promptexpand with
-                                                          // `ns=0` per Src/builtin.c:4598, so the SGR-wrapping
-                                                          // markers MUST NOT leak into stdout. The Rust port's
-                                                          // expand_prompt uses ad-hoc `\x01`/`\x02` (readline
-                                                          // RL_PROMPT_*_IGNORE) markers instead of canonical
-                                                          // Inpar/Outpar, but the strip rule applies identically:
-                                                          // for non-prompt-render callers, scrub them. Parity bug
-                                                          // #17 — without this, `print -P "%F{red}red%f"` emitted
-                                                          // `\x01\E[31m\x02red\x01\E[39m\x02` instead of zsh's
-                                                          // `\E[31mred\E[39m`.
-            a.retain(|c| c != '\x01' && c != '\x02');
-        }
-    }
-    // c:4799-4808 — `-o` / `-O` / `-i` sort flags.
-    //
-    // C body:
-    // ```c
-    // if (OPT_ISSET(ops,'o') || OPT_ISSET(ops,'O')) {
-    //     flags = OPT_ISSET(ops,'i') ? SORTIT_IGNORING_CASE : 0;
-    //     if (OPT_ISSET(ops,'O'))
-    //         flags |= SORTIT_BACKWARDS;
-    //     strmetasort(args, flags, len);
-    // }
-    // ```
-    //
-    // Meaning: `-i` sets `SORTIT_IGNORING_CASE` (case-INSENSITIVE).
-    // Without `-i`, sort is case-SENSITIVE.
-    //
-    // The previous Rust port had this INVERTED — it bound
-    // `case_sensitive = OPT_ISSET(ops, b'i')`, then case-sensitive-
-    // sorted under `-i` and case-insensitive-sorted without `-i`.
-    // The doc-comment for the block claimed "-o → case-insensitive
-    // ascending" which is also wrong. Result: `print -o foo Bar BAZ`
-    // emitted `BAZ Bar foo` (case-insensitive) when zsh emits
-    // `BAZ Bar foo` only WITH `-i`; without it, zsh emits
-    // `BAZ Bar foo` ordered by ASCII (caps first).
-    if OPT_ISSET(ops, b'o') || OPT_ISSET(ops, b'O') {
-        // c:4800
-        // c:4801-4807 — `flags = OPT_ISSET(ops,'i') ? SORTIT_IGNORING_CASE
-        // : 0; if (OPT_ISSET(ops,'O')) flags |= SORTIT_BACKWARDS;
-        // strmetasort(args, flags, len);`. The previous Rust port used an
-        // ad-hoc `processed_args.sort()` (byte/ordinal order) plus a
-        // `.reverse()`, bypassing the faithful comparator. zsh's eltpcmp
-        // sorts via `strcoll(as, bs)` (sort.c:134) — locale collation,
-        // case-insensitive in UTF-8 locales — and SORTIT_BACKWARDS flips
-        // `sortdir` inside the comparator (not a post-sort reverse).
-        let mut flags: u32 = if OPT_ISSET(ops, b'i') {
-            SORTIT_IGNORING_CASE as u32 // c:4805
-        } else {
-            0
-        };
-        if OPT_ISSET(ops, b'O') {
-            flags |= SORTIT_BACKWARDS as u32; // c:4806
-        }
-        // c:4792 — `strmetasort(args, flags, len);`. C passes the REAL
-        // per-argument length array, never NULL (contrast c:694, the
-        // `typeset` sort, which does pass NULL). That is what selects
-        // `eltpcmp`'s embedded-NUL branch (`ae->len != -1`), so arguments
-        // holding NUL bytes compare over their FULL byte extent instead of
-        // being truncated at the first NUL by `strcoll`. Passing `None`
-        // here made every `$'a\0...'` argument compare equal to plain
-        // `a`, so `print -lO $'a' $'a\0' $'a\0b' …` came back in input
-        // order instead of sorted (Test/B03print.ztst "sorting with
-        // embedded nulls"). Rust `String` stores the NULs faithfully, so
-        // the length is simply each argument's byte length.
-        let mut lens: Vec<usize> = processed_args.iter().map(|a| a.len()).collect(); // c:4792 len
-        strmetasort(&mut processed_args, flags, Some(&mut lens)); // c:4792
-    }
+    // c:4731-4781 — per-argument interpretation runs in C order: backslash
+    //   escapes (getkeystring), then `-P`, then `-D`; the `-o`/`-O` sort
+    //   (c:4784-4792) comes after all three, so it orders the INTERPRETED
+    //   strings (`print -lo 'a\tb' 'a\nc'` sorts on the TAB/LF bytes).
     // c:Src/builtin.c:4866-4886 — when `-r` is NOT set, each arg goes
     // through `getkeystring` to interpret backslash escapes (`\n`,
     // `\t`, `\\`, escaped space `\ `, etc.). `echo` follows the same
@@ -12876,6 +12776,110 @@ pub fn bin_print(
             }
         }
         processed_args = new_args;
+    }
+    // c:4598-4600 — `-P` prompt-style percent expansion (`%n`, `%d`,
+    // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
+    // (canonical port of `Src/prompt.c:182 promptexpand`).
+    if OPT_ISSET(ops, b'P') {
+        // c:Src/builtin.c:4745-4746 — `if (OPT_ISSET(ops, 'P'))
+        //   txtunknownattrs = TXT_ATTR_ALL;`. Marks every attribute
+        // as initially "unknown" so the first `%b`/`%u`/`%s`/`%f`/`%k`
+        // off-escape in this print invocation emits its terminfo cap
+        // (via tunsetattrs at prompt.c:1758 — `txtcurrentattrs |=
+        // newattrs & txtunknownattrs`). Without this seed, applying
+        // an off-escape against zero current attrs produced no diff
+        // and zshrs emitted nothing — `%b` / `%u` / `%s` looked like
+        // no-ops in fresh prompts. Bug #38 in docs/BUGS.md.
+        crate::ported::prompt::txtunknownattrs.store(
+            crate::ported::zsh_h::TXT_ATTR_ALL,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        // c:4598-4600 — `-P` prompt-style percent expansion.
+        for a in processed_args.iter_mut() {
+            *a = crate::ported::prompt::expand_prompt(a); // c:Src/prompt.c:182
+                                                          // c:Src/prompt.c:236-247 — `if (!ns) { ... chuck(Inpar/
+                                                          // Outpar/Nularg); }`. When `ns=0` (non-stripping flag
+                                                          // off), zsh REMOVES the Inpar/Outpar/Nularg marker bytes
+                                                          // from the output. `print -P` calls promptexpand with
+                                                          // `ns=0` per Src/builtin.c:4598, so the SGR-wrapping
+                                                          // markers MUST NOT leak into stdout. The Rust port's
+                                                          // expand_prompt uses ad-hoc `\x01`/`\x02` (readline
+                                                          // RL_PROMPT_*_IGNORE) markers instead of canonical
+                                                          // Inpar/Outpar, but the strip rule applies identically:
+                                                          // for non-prompt-render callers, scrub them. Parity bug
+                                                          // #17 — without this, `print -P "%F{red}red%f"` emitted
+                                                          // `\x01\E[31m\x02red\x01\E[39m\x02` instead of zsh's
+                                                          // `\E[31mred\E[39m`.
+            a.retain(|c| c != '\x01' && c != '\x02');
+        }
+    }
+    // c:Src/builtin.c:4783-4795 — `-D`: interpret each arg as a
+    // directory and abbreviate via `finddir(args[n])` — longest-prefix
+    // match against the full named-dir table ($HOME → `~`, `hash -d`
+    // entries → `~name`, plus the `zsh_directory_name` hook). C rewrites
+    // the matched prefix to `~name` and keeps the trailing path. The
+    // canonical `finddir` port already returns the `~name/rest` form.
+    if dirify_d {
+        for a in processed_args.iter_mut() {
+            if let Some(abbrev) = crate::ported::utils::finddir(a) {
+                *a = abbrev; // c:4791 — `~%s%s`
+            }
+        }
+    }
+    // c:4799-4808 — `-o` / `-O` / `-i` sort flags.
+    //
+    // C body:
+    // ```c
+    // if (OPT_ISSET(ops,'o') || OPT_ISSET(ops,'O')) {
+    //     flags = OPT_ISSET(ops,'i') ? SORTIT_IGNORING_CASE : 0;
+    //     if (OPT_ISSET(ops,'O'))
+    //         flags |= SORTIT_BACKWARDS;
+    //     strmetasort(args, flags, len);
+    // }
+    // ```
+    //
+    // Meaning: `-i` sets `SORTIT_IGNORING_CASE` (case-INSENSITIVE).
+    // Without `-i`, sort is case-SENSITIVE.
+    //
+    // The previous Rust port had this INVERTED — it bound
+    // `case_sensitive = OPT_ISSET(ops, b'i')`, then case-sensitive-
+    // sorted under `-i` and case-insensitive-sorted without `-i`.
+    // The doc-comment for the block claimed "-o → case-insensitive
+    // ascending" which is also wrong. Result: `print -o foo Bar BAZ`
+    // emitted `BAZ Bar foo` (case-insensitive) when zsh emits
+    // `BAZ Bar foo` only WITH `-i`; without it, zsh emits
+    // `BAZ Bar foo` ordered by ASCII (caps first).
+    if OPT_ISSET(ops, b'o') || OPT_ISSET(ops, b'O') {
+        // c:4800
+        // c:4801-4807 — `flags = OPT_ISSET(ops,'i') ? SORTIT_IGNORING_CASE
+        // : 0; if (OPT_ISSET(ops,'O')) flags |= SORTIT_BACKWARDS;
+        // strmetasort(args, flags, len);`. The previous Rust port used an
+        // ad-hoc `processed_args.sort()` (byte/ordinal order) plus a
+        // `.reverse()`, bypassing the faithful comparator. zsh's eltpcmp
+        // sorts via `strcoll(as, bs)` (sort.c:134) — locale collation,
+        // case-insensitive in UTF-8 locales — and SORTIT_BACKWARDS flips
+        // `sortdir` inside the comparator (not a post-sort reverse).
+        let mut flags: u32 = if OPT_ISSET(ops, b'i') {
+            SORTIT_IGNORING_CASE as u32 // c:4805
+        } else {
+            0
+        };
+        if OPT_ISSET(ops, b'O') {
+            flags |= SORTIT_BACKWARDS as u32; // c:4806
+        }
+        // c:4792 — `strmetasort(args, flags, len);`. C passes the REAL
+        // per-argument length array, never NULL (contrast c:694, the
+        // `typeset` sort, which does pass NULL). That is what selects
+        // `eltpcmp`'s embedded-NUL branch (`ae->len != -1`), so arguments
+        // holding NUL bytes compare over their FULL byte extent instead of
+        // being truncated at the first NUL by `strcoll`. Passing `None`
+        // here made every `$'a\0...'` argument compare equal to plain
+        // `a`, so `print -lO $'a' $'a\0' $'a\0b' …` came back in input
+        // order instead of sorted (Test/B03print.ztst "sorting with
+        // embedded nulls"). Rust `String` stores the NULs faithfully, so
+        // the length is simply each argument's byte length.
+        let mut lens: Vec<usize> = processed_args.iter().map(|a| a.len()).collect(); // c:4792 len
+        strmetasort(&mut processed_args, flags, Some(&mut lens)); // c:4792
     }
     // c:4842-4990 — "-c -- output in columns". `-c` sizes the grid from the
     // terminal width, `-C N` fixes the column count. Each ROW is written

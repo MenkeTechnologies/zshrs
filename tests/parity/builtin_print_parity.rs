@@ -407,3 +407,16 @@ mod printf_c_first_byte {
         assert_parity(r#"printf '%c|%3c|%-3c|\n' 'éa' 'é' 'é' | od -c"#);
     }
 }
+
+/// c:Src/builtin.c:4731-4792 — escapes, `-P` and `-D` are applied per
+/// argument before the `-o`/`-O` sort, so the sort orders the interpreted
+/// strings. The port sorted the raw `\t`/`\n` text first.
+mod print_sort_after_escapes {
+    use super::*;
+
+    #[test]
+    fn sort_sees_interpreted_escapes() {
+        assert_parity(r#"print -lO -- 'a\tb' 'a\nc' | od -c"#);
+        assert_parity(r#"print -lo -- 'a\tb' 'a\nc' 'a\x01' | od -c"#);
+    }
+}
