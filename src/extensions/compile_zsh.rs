@@ -1466,6 +1466,7 @@ impl ZshCompiler {
         // (c:Src/exec.c:2891-2907). Compile it into a sub-chunk + emit
         // BUILTIN_RUN_BG with one proc.
         let mut sub = ZshCompiler::new();
+        sub.emit_execcmd_forked_level(&pipe.cmd);
         // c:Src/exec.c:2916-2918 + c:4417 — see compile_pipe_stages: a SIMPLE
         // command forked for `cmd &` leaves through `_realexit()` without
         // reaching `sublist_done`, so its child fires no ZERR.
@@ -1512,6 +1513,9 @@ impl ZshCompiler {
         // wires the whole pipe (compile_pipe), not just the first
         // command.
         let mut sub = ZshCompiler::new();
+        if pipe.next.is_none() {
+            sub.emit_execcmd_forked_level(&pipe.cmd);
+        }
         sub.compile_pipe(pipe);
         let sub_end = sub.builder.current_pos();
         for patch in std::mem::take(&mut sub.return_patches) {
@@ -1747,6 +1751,28 @@ impl ZshCompiler {
     /// and the C-style `for` pass 0, and a simple command leaves through
     /// `_realexit()` (c:4417) — none of those runs an EXIT trap it set.
     /// `( … )` fires its own at subshell end.
+    /// Head of a chunk the pipeline / `&` / coproc drivers may run in a
+    /// forked child: `BUILTIN_EXECCMD_FORKED_LEVEL`, the `zsh_subshell++`
+    /// of that fork's entersubsh (c:Src/exec.c:1200). It carries whether the
+    /// command is a `( … )` — C runs that subshell in the same child
+    /// (c:3063 sets `forked`, so c:3715's fork is skipped), so its
+    /// subshell_begin bump is the fork's one bump.
+    fn emit_execcmd_forked_level(&mut self, cmd: &ZshCommand) {
+        fn is_subsh(cmd: &ZshCommand) -> bool {
+            match cmd {
+                ZshCommand::Redirected(inner, _) => is_subsh(inner),
+                ZshCommand::Subsh(_) => true,
+                _ => false,
+            }
+        }
+        self.builder.emit(Op::LoadInt(i64::from(is_subsh(cmd))), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXECCMD_FORKED_LEVEL, 1),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
     fn emit_exiting_exit_trap(&mut self, cmd: &ZshCommand) {
         let exiting = match cmd {
             ZshCommand::Redirected(inner, _) => {
@@ -1855,6 +1881,7 @@ impl ZshCompiler {
             let mut install_at_top = !stage_is_simple;
             let chunk = loop {
                 let mut sub = ZshCompiler::new();
+                sub.emit_execcmd_forked_level(stage_cmd);
                 // c:Src/exec.c::execpline2 — recursive pipeline emit
                 // pushes CS_PIPE BEFORE each recursive call into the
                 // rest of the pipeline. Stage i (0-based) inherits `i`

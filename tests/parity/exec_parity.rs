@@ -521,6 +521,29 @@ mod zsh_subshell_in_process_substitutions {
     }
 }
 
+/// c:Src/exec.c:3042-3063 — a non-last pipeline stage, an `&` job and a
+/// coproc fork in execcmd_exec (entersubsh, c:1200 `zsh_subshell++`), and
+/// set `forked`, so a `( … )` that IS that command runs in the same child
+/// (c:3715 skips the second fork): one level either way. The in-shell last
+/// stage does not fork.
+mod zsh_subshell_in_forked_commands {
+    use super::*;
+
+    #[test]
+    fn pipeline_stages() {
+        assert_parity(r#"{ print $ZSH_SUBSHELL } | cat; print $ZSH_SUBSHELL | cat; print a | { print $ZSH_SUBSHELL }"#);
+        assert_parity(r#"(print $ZSH_SUBSHELL) | cat; { (print $ZSH_SUBSHELL) } | cat; print $(print $ZSH_SUBSHELL) | cat"#);
+        assert_parity(r#"{ print | (print $ZSH_SUBSHELL) } | cat; ( print | { print $ZSH_SUBSHELL } ) | cat"#);
+    }
+
+    #[test]
+    fn async_and_coproc() {
+        assert_parity(r#"{ print $ZSH_SUBSHELL } & wait; (print $ZSH_SUBSHELL) & wait"#);
+        assert_parity(r#"coproc { print $ZSH_SUBSHELL }; read -p x; print $x"#);
+        assert_parity(r#"coproc (print $ZSH_SUBSHELL); read -p x; print $x"#);
+    }
+}
+
 /// c:Src/subst.c:1707-1708 — `spbreak = (pf_flags & PREFORK_SHWORDSPLIT) &&
 /// !(pf_flags & PREFORK_SINGLE) && !qt`: SH_WORD_SPLIT never splits a quoted
 /// expansion, so `"${scalar[@]}"` stays one word.

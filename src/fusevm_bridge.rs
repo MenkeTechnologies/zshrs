@@ -4025,6 +4025,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 0 => {
                     forked_child_subsh_levels(); // c:Src/exec.c:1221
+                    EXECCMD_FORKED.with(|f| f.set(true)); // c:Src/exec.c:3063 `last1 = forked = 1`
                     // Reset SIGPIPE to default so a broken-pipe write
                     // kills the child cleanly instead of triggering a
                     // Rust println! panic. The parent shell ignores
@@ -4193,6 +4194,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 -1 => 1,
                 0 => {
                     forked_child_subsh_levels(); // c:Src/exec.c:1221
+                    EXECCMD_FORKED.with(|f| f.set(true)); // c:Src/exec.c:3063 `last1 = forked = 1`
                     // Subshell child: run the last stage, then _exit with its
                     // status. Reset SIGPIPE + drop the EXIT trap like the
                     // other pipeline children above.
@@ -4420,6 +4422,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     0 => {
                         forked_child_subsh_levels(); // c:Src/exec.c:1221
+                        EXECCMD_FORKED.with(|f| f.set(true)); // c:Src/exec.c:3063 `last1 = forked = 1`
                         // c:Src/exec.c:2916 — every async stage runs
                         // `entersubsh(ESUB_ASYNC|ESUB_PGRP)`: traps reset, MONITOR
                         // off, SIGINT/SIGQUIT ignored without job control, the
@@ -4559,6 +4562,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             -1 => Value::Status(1),
             0 => {
                 forked_child_subsh_levels(); // c:Src/exec.c:1221
+                EXECCMD_FORKED.with(|f| f.set(true)); // c:Src/exec.c:3063 `last1 = forked = 1`
                 // c:Src/exec.c:2916 — an async command's child runs
                 // `entersubsh(ESUB_ASYNC|ESUB_PGRP)`: string traps reset,
                 // MONITOR off (no ESUB_JOB_CONTROL, c:1245-1246), SIGINT/
@@ -4572,12 +4576,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     crate::ported::exec::esub::ASYNC | crate::ported::exec::esub::PGRP,
                     None,
                 );
-                // NOT DONE: `$ZSH_SUBSHELL` lives in the param, not in the
-                // zsh_subshell counter entersubsh bumped, and copying it
-                // across double-counts `( … ) &` — C runs that subshell in
-                // this same child (execcmd_fork already forked), while zshrs
-                // enters its in-process subshell again. So `{ … } &` still
-                // reports the parent's level.
+                // `$ZSH_SUBSHELL` itself is bumped by the chunk's leading
+                // BUILTIN_EXECCMD_FORKED_LEVEL, which knows whether the job
+                // is a `( … )` whose own subshell_begin is the one bump.
                 crate::fusevm_disasm::maybe_print_stdout("background_job", &chunk);
                 let mut bg_vm = fusevm::VM::new(chunk);
                 register_builtins(&mut bg_vm);
@@ -8051,6 +8052,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             0 => {
                 forked_child_subsh_levels(); // c:Src/exec.c:1221
+                EXECCMD_FORKED.with(|f| f.set(true)); // c:Src/exec.c:3063 `last1 = forked = 1`
                 // Child: stdin from p2c[0], stdout to c2p[1]. Close all
                 // unused fds. setsid so SIGINT to fg doesn't hit us.
                 unsafe {
@@ -11529,6 +11531,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     vm.register_builtin(BUILTIN_DONETRAP_RESET, |_vm, _argc| {
         donetrap_reset_impl()
+    });
+    vm.register_builtin(BUILTIN_EXECCMD_FORKED_LEVEL, |vm, _argc| {
+        execcmd_forked_level(vm.pop().to_int() != 0);
+        Value::Int(0)
     });
     vm.register_builtin(BUILTIN_EXITING_EXIT_TRAP, |_vm, _argc| {
         use crate::ported::signals_h::SIGEXIT;
@@ -16504,6 +16510,40 @@ fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
 /// from inside a function or `( … )` only unwound the child's VM, which then
 /// exited 0 — `(setopt pipefail; false | exit 2 | true; print $?)` printed
 /// 1 where zsh prints 2.
+thread_local! {
+    /// c:Src/exec.c:3063 — `last1 = forked = 1;`: execcmd_exec has already
+    /// forked for the command it is about to run (a non-last pipeline stage,
+    /// an `&` job, a coproc, the sh-emulation last stage).
+    ///
+    /// !!! WARNING: RUST-ONLY FLAG — C KEEPS `forked` AS AN execcmd_exec LOCAL !!!
+    /// zshrs forks in the pipeline/bg/coproc drivers, one level above the
+    /// stage chunk, so the fact crosses into the chunk through this flag. The
+    /// chunk's leading BUILTIN_EXECCMD_FORKED_LEVEL consumes it.
+    static EXECCMD_FORKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Head of a stage / `&` / coproc chunk: account for execcmd_fork's
+/// `entersubsh` (c:Src/exec.c:1200 `zsh_subshell++;`) when the driver forked.
+///
+/// C forks once per such command. For `( … )` that one fork IS the subshell:
+/// with `forked` already set, the `if (!forked)` block (c:3715-3752) is
+/// skipped and the body runs in this child without a second fork, so
+/// `(print $ZSH_SUBSHELL) | cat` prints 1. zshrs's `( … )` always bumps in
+/// subshell_begin, so for a subshell the fork's bump is left to it; any other
+/// command takes it here. Without a fork (the in-shell last stage) nothing
+/// happens. The bump is never undone: the child exits.
+fn execcmd_forked_level(is_subsh: bool) {
+    if EXECCMD_FORKED.with(|f| f.replace(false)) && !is_subsh {
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("ZSH_SUBSHELL") {
+                pm.u_val += 1; // c:1200
+                pm.u_str = Some(pm.u_val.to_string());
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+        }
+    }
+}
+
 fn forked_child_subsh_levels() {
     use std::sync::atomic::Ordering;
     crate::ported::exec::FORKLEVEL.store(
@@ -17733,6 +17773,10 @@ pub const BUILTIN_DONETRAP_RESET: u16 = 612;
 /// `if (exiting && sigtrapped[SIGEXIT]) { errflag = 0; dotrap(SIGEXIT);
 /// sigtrapped[SIGEXIT] = 0; errflag = eflag; }`. Stack: pushes Int(0). argc = 0.
 pub const BUILTIN_EXITING_EXIT_TRAP: u16 = 729;
+
+/// Head of a pipeline-stage / `&` / coproc chunk: `execcmd_forked_level`.
+/// Stack: pops Int(is_subsh), pushes Int(0). argc = 1.
+pub const BUILTIN_EXECCMD_FORKED_LEVEL: u16 = 740;
 
 /// Take a copy of stderr for this simple command's xtrace output before
 /// its redirections apply (c:Src/exec.c:3765-3773). Released when the
