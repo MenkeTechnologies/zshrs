@@ -179,3 +179,18 @@ fn autoload_parse_error_counts_lines_in_the_file() {
         "setopt ignorebraces\nfpath=(.)\n\n\nprint \"{ echo OK }\\n[[ -o ignorebraces ]] || print off\" >emufunctest\n(autoload -z emufunctest; emufunctest) 2>&1",
     );
 }
+
+/// c:Src/parse.c:1856-1865 — par_simple NUL-terminates an assignment's name
+/// inside `tokstr`, which `zshlextext` aliases; at ENDINPUT zshlex does not
+/// refresh `zshlextext` (c:Src/lex.c:276), so the error names only the
+/// name. The mid-command (typeset) arm has no `+=` case, so `x+` survives.
+#[test]
+fn eof_error_after_assignment_names_the_truncated_name() {
+    assert_parity("f() { x=1}");
+    assert_parity("f() { x+=1}");
+    assert_parity("f() { a[1]=2}");
+    assert_parity("f() { typeset x+=1}");
+    assert_parity("f() { typeset x=1}");
+    assert_parity("{ x=1; y=abc");
+    assert_parity("if x=1");
+}

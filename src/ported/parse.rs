@@ -3001,6 +3001,19 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     // Parse leading assignments
     while tok() == ENVSTRING || tok() == ENVARRAY {
         if let Some(assign) = parse_assign() {
+            // c:1856-1865 — the name is NUL-terminated inside tokstr.
+            if tok() == ENVSTRING {
+                // !!! RUST-ONLY !!! — C NUL-terminates the name INSIDE tokstr, and
+                // `zshlextext` is that same buffer (lex.c:1980/2018). zshlex does not
+                // refresh it at ENDINPUT (c:276 skips exalias), so a parse error at end
+                // of input right after an assignment names only the name (`f() { x=1}`
+                // → near `x'). LEX_ZSHLEXTEXT is an owned copy; write the cut through.
+                crate::ported::lex::LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
+                    if let Some(text) = t.as_mut().filter(|text| text.starts_with(assign.name.as_str())) {
+                        text.truncate(assign.name.len());
+                    }
+                });
+            }
             assigns.push(assign);
         }
         zshlex();
@@ -3030,6 +3043,16 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // typeset-word path below and was silently dropped, so
                 // `a=b 2>/dev/null c=d` set neither parameter.
                 if let Some(assign) = parse_assign() {
+                    // c:1856-1865 — the name is NUL-terminated inside tokstr.
+                    if tok() == ENVSTRING {
+                        // !!! RUST-ONLY !!! — write the cut through to zshlextext (see the
+                        // leading-assignment loop in par_simple).
+                        crate::ported::lex::LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
+                            if let Some(text) = t.as_mut().filter(|text| text.starts_with(assign.name.as_str())) {
+                                text.truncate(assign.name.len());
+                            }
+                        });
+                    }
                     assigns.push(assign);
                 }
                 zshlex();
@@ -3046,6 +3069,23 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // scope path that mistakenly treats it like a
                 // pre-cmd `X=Y cmd` assignment.
                 if let Some(assign) = parse_assign() {
+                    // c:2010-2019 — the mid-command scan has no `+=` arm, so
+                    // `equalsplit` NUL-terminates at the `=` and the `+`
+                    // stays part of the name left in tokstr.
+                    if tok() == ENVSTRING {
+                        let nul_at = if assign.append {
+                            format!("{}+", assign.name)
+                        } else {
+                            assign.name.clone()
+                        };
+                        // !!! RUST-ONLY !!! — write the cut through to zshlextext (see the
+                        // leading-assignment loop in par_simple).
+                        crate::ported::lex::LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
+                            if let Some(text) = t.as_mut().filter(|text| text.starts_with(nul_at.as_str())) {
+                                text.truncate(nul_at.len());
+                            }
+                        });
+                    }
                     let synthetic = match &assign.value {
                         ZshAssignValue::Scalar(v) => format!("{}={}", assign.name, v),
                         ZshAssignValue::Array(elems) => {
@@ -8260,6 +8300,14 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                         }
                     }
                 }
+                // c:1856-1865 — `name` is NUL-terminated inside tokstr.
+                // !!! RUST-ONLY !!! — write the cut through to zshlextext (see the
+                // leading-assignment loop in par_simple).
+                crate::ported::lex::LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
+                    if let Some(text) = t.as_mut().filter(|text| text.starts_with(name.as_str())) {
+                        text.truncate(name.len());
+                    }
+                });
                 ecstr(&name);
                 ecstr(&value);
                 isnull = false;
@@ -8490,6 +8538,14 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                     idx
                 };
                 let value: String = bytes[str_off..].iter().collect();
+                // c:2016-2019 — `name` is NUL-terminated inside tokstr.
+                // !!! RUST-ONLY !!! — write the cut through to zshlextext (see the
+                // leading-assignment loop in par_simple).
+                crate::ported::lex::LEX_ZSHLEXTEXT.with_borrow_mut(|t| {
+                    if let Some(text) = t.as_mut().filter(|text| text.starts_with(name.as_str())) {
+                        text.truncate(name.len());
+                    }
+                });
                 ecadd(WCB_ASSIGN(WC_ASSIGN_SCALAR, WC_ASSIGN_NEW, 0));
                 ecstr(&name);
                 ecstr(&value);
