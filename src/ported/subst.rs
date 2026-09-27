@@ -8937,11 +8937,33 @@ pub fn paramsubst(
                     // no subscript is taken.
                     var_name.truncate(name_len);
                 } else if let Some(open_idx) = var_name
-                    .find('[')
+                    .find(['[', Inbrack])
                     .filter(|&i| name_len > 0 && i == name_len)
                 {
-                    if var_name.ends_with(']') {
-                        let raw_key = var_name[open_idx + 1..var_name.len() - 1].to_string();
+                    // c:2281 accepts the TOKEN form too: an unquoted nested
+                    // `${(P)${:-a[2]}}` hands over `a` Inbrack `2` Outbrack, and
+                    // matching only ASCII `[` read the whole of `$a`. getindex
+                    // ends at the matching close (either form); what trails it
+                    // is discarded because the aspar fetch has `bracks > 0`
+                    // (c:2290), so `${(P)${:-a[1]x}}` is `$a[1]`.
+                    let open_len = var_name[open_idx..].chars().next().map_or(1, char::len_utf8);
+                    let mut depth = 0usize;
+                    let close_idx = var_name[open_idx..].char_indices().find_map(|(i, c)| {
+                        match c {
+                            '[' | Inbrack => depth += 1,
+                            ']' | Outbrack => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    return Some(open_idx + i);
+                                }
+                            }
+                            _ => {}
+                        }
+                        None
+                    });
+                    if let Some(close_idx) = close_idx {
+                        let raw_key =
+                            crate::lex::untokenize(&var_name[open_idx + open_len..close_idx]);
                         let base = var_name[..open_idx].to_string();
                         // Subscript may contain $-refs (`a[$n]`,
                         // `m[$key]`) — singsub them so the lookup

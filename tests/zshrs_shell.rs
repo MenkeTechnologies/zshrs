@@ -5941,6 +5941,24 @@ fn test_param_flag_P_empty_deref_keeps_word() {
 }
 
 #[test]
+fn test_param_flag_P_unquoted_nested_operand_keeps_its_subscript() {
+    // An UNQUOTED nested operand reaches the (P) fetch with tokenized
+    // brackets, which fetchvalue accepts (c:Src/params.c:2281 `*s == '[' ||
+    // *s == Inbrack`); text after the closing bracket is discarded
+    // (bracks > 0, c:2290). Expected lines are zsh 5.9.2 output.
+    let (_, output, _) = run_zshrs(
+        r#"a=(one two); s=hello; typeset -A h=(kx v ky w)
+print -r -- ${(P)${:-a[2]}}
+print -r -- ${(P)${:-s[2,3]}}
+print -r -- ${(P)${:-a[*]}}
+print -r -- ${(P)${:-a[(i)two]}}
+print -r -- ${(P)${:-h[kx]}}
+print -r -- ${(P)${:-a[1]x}}"#,
+    );
+    assert_eq!(output, "two\nel\none two\n2\nv\none\n", "got: {output:?}");
+}
+
+#[test]
 fn test_param_flag_P_positional_takes_no_subscript() {
     // `fetchvalue()` parses the NAME before a subscript can exist. A
     // digit run makes it a POSITIONAL (c:Src/params.c:2210-2214), and

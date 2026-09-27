@@ -60607,3 +60607,27 @@ Test: `tests/zshrs_shell.rs`
 `test_glob_unsorted_subscript_counts_from_the_end_of_scan_order`, which derives
 the expected words from the unsubscripted `*(oN)` because scan order is
 filesystem-dependent.
+
+---
+
+## #1154 — `${(P)${:-a[2]}}` ignored the subscript of an unquoted nested operand — fixed
+
+**Status:** `fixed` 2026-09-27.
+
+```console
+                      zsh 5.9.2   zshrs (before)
+${(P)${:-a[2]}}       two         one two
+${(P)${:-s[2,3]}}     el          hello
+```
+
+The quoted form `${(P)"${:-a[2]}"}` was already right. Unquoted, the nested
+result reaches the `(P)` fetch with TOKENIZED brackets (`Inbrack`/`Outbrack`),
+and fetchvalue takes either form (c:Src/params.c:2281 `*s == '[' ||
+*s == Inbrack`). The port matched only ASCII `[` and required the operand to
+END with `]`, so the subscript was dropped and the bare name read.
+
+**Fix.** `src/ported/subst.rs` aspar arm: the bracket after the name may be
+either form; the key runs to the matching close (either form, depth-counted)
+and is untokenized; text after the close is discarded, as C does with
+`bracks > 0` (c:2290): `${(P)${:-a[1]x}}` → `one`. Test: `tests/zshrs_shell.rs`
+`test_param_flag_P_unquoted_nested_operand_keeps_its_subscript`.
