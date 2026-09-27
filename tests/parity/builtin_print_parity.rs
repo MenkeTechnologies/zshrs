@@ -395,3 +395,15 @@ mod print_columns_c {
         assert_parity(r#"print -C 2 é ab $'\e[31mx\e[0m' y | od -c"#);
     }
 }
+
+/// c:Src/builtin.c:5300-5305 — printf `%c` prints `*curarg`, the first
+/// BYTE of the argument, so a multibyte character yields its lead byte
+/// alone, and the libc width pads by that one byte.
+mod printf_c_first_byte {
+    use super::*;
+
+    #[test]
+    fn multibyte_arg_gives_lead_byte() {
+        assert_parity(r#"printf '%c|%3c|%-3c|\n' 'éa' 'é' 'é' | od -c"#);
+    }
+}

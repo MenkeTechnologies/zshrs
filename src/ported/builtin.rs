@@ -20449,10 +20449,32 @@ fn printf_format(
                     // empty or missing arg yields `*curarg == '\0'`, so
                     // `%c` emits a NUL byte (not nothing). zsh:
                     // `printf "%c" "" | od` → 00.
-                    let ch_str = a.chars().next().unwrap_or('\0').to_string();
-                    let mut cspec = spec.split('.').next().unwrap_or(spec.as_str()).to_string();
-                    cspec.push('s');
-                    out.push_str(&format_spec_str(&cspec, &ch_str, true));
+                    // `*curarg` is the first BYTE of the unmetafied arg, not
+                    // its first character: `printf %c é` writes the lone
+                    // lead byte 0xc3. Keep it in the port's metafied form
+                    // (Meta + byte^32 for 0x80..) so the final unmetafy
+                    // writes that one raw byte; libc's `%*c` then pads by
+                    // one byte.
+                    let byte = crate::ported::utils::unmetafy_str(&a)
+                        .first()
+                        .copied()
+                        .unwrap_or(0);
+                    let mut ch_str = String::new();
+                    if byte < 0x80 {
+                        ch_str.push(byte as char);
+                    } else {
+                        ch_str.push('\u{83}');
+                        ch_str.push(char::from(byte ^ 32));
+                    }
+                    let (left_align, zero_pad, width, _) = parse_flags_width_prec(&spec);
+                    let pad = width.saturating_sub(1);
+                    if left_align {
+                        out.push_str(&ch_str);
+                        out.push_str(&" ".repeat(pad));
+                    } else {
+                        out.push_str(&(if zero_pad { "0" } else { " " }).repeat(pad));
+                        out.push_str(&ch_str);
+                    }
                     arg_i += 1;
                 }
                 // c:builtin.c:5403-5409 %q — shell-quote the arg using
