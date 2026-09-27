@@ -12361,14 +12361,18 @@ pub fn usernamesetfn(_pm: &mut param, x: String) {
                         // c:4673
                         zwarn(&format!(
                             "failed to change group ID: {}",
-                            std::io::Error::last_os_error()
+                            crate::ported::utils::zsh_errno_msg(
+                                std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+                            )
                         ));
                     } else if libc::setuid((*pwd).pw_uid) != 0 {
                         // c:4675
                         // c:4675-4676 — setuid failed.
                         zwarn(&format!(
                             "failed to change user ID: {}",
-                            std::io::Error::last_os_error()
+                            crate::ported::utils::zsh_errno_msg(
+                                std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+                            )
                         ));
                     } else {
                         // c:4677-4681 — cache update.

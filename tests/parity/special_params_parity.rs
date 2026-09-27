@@ -550,3 +550,12 @@ mod local_special_starts_empty {
         assert_parity(r#"zmodload zsh/parameter; x(){ :; }; f(){ local +h status ARGC; local +h IFS=:; local +h -A functions builtins; print "[$status][$ARGC][$IFS][${(k)functions}][${+builtins[print]}]" }; f a; print ${#IFS}"#);
     }
 }
+
+/// c:Src/params.c:4624 — `zwarn("failed to change group ID: %e", errno)`:
+/// `%e` is strerror with a lowercased first letter (c:Src/utils.c:366), not
+/// Rust's `io::Error` Display with its ` (os error N)` suffix. As root the
+/// assignment succeeds in both shells and prints nothing.
+#[test]
+fn username_setfn_failure_uses_zsh_errno_text() {
+    assert_parity(r#"USERNAME=root 2>&1; echo rc=$?"#);
+}

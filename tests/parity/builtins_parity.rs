@@ -233,6 +233,18 @@ mod rlimits_builtin {
         let _ = run_zsh("(ulimit -t unlimited 2>/dev/null) ; echo done");
         let _ = run_zshrs("(ulimit -t unlimited 2>/dev/null) ; echo done");
     }
+
+    /// c:Src/Builtins/rlimits.c:745-746 — `convchar_t opt =
+    /// unmeta_one(options, &sz)` decodes a whole multibyte character, so
+    /// the diagnostic names it (B12limit.ztst "bad multibyte option
+    /// letter"). Asserted literally: zsh 5.9.2 predates the unmeta_one
+    /// call and prints a Meta-mangled byte.
+    #[test]
+    fn ulimit_bad_multibyte_option_letter() {
+        let r = run_zshrs("LANG=en_US.UTF-8; ulimit -の");
+        assert_eq!(r.stderr, "zsh:ulimit:1: bad option: -の\n", "stderr={:?}", r.stderr);
+        assert_eq!(r.exit, 1);
+    }
 }
 
 // ───────────────────────── Src/Builtins/sched.c ─────────────────────

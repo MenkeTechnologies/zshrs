@@ -611,7 +611,10 @@ pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
             zwarnnam(
                 nam,
-                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "can't read limit: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             );
             return 1;
         }
@@ -664,7 +667,10 @@ pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 {
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
             zwarnnam(
                 nam,
-                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "can't read limit: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             );
             return 1;
         }
@@ -747,7 +753,10 @@ pub(crate) fn do_limit(
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
             zwarnnam(
                 nam,
-                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "can't read limit: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             );
             return 1;
         }
@@ -777,7 +786,10 @@ pub(crate) fn do_limit(
         } else if unsafe { setrlimit(lim as _, &vals) } < 0 {
             zwarnnam(
                 nam,
-                &format!("setrlimit failed: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "setrlimit failed: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             );
             return 1;
         }
@@ -1047,7 +1059,10 @@ pub(crate) fn do_unlimit(
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
             zwarnnam(
                 nam,
-                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "can't read limit: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             );
             return 1;
         }
@@ -1070,7 +1085,10 @@ pub(crate) fn do_unlimit(
         } else if unsafe { setrlimit(lim as _, &vals) } < 0 {
             zwarnnam(
                 nam,
-                &format!("setrlimit failed: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "setrlimit failed: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             );
             return 1;
         }
@@ -1278,30 +1296,35 @@ pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32
             let opt_bytes = opt_str.as_bytes();
             let mut p: usize = 1; // skip leading '-'  ; emulates `while (*++options)` (c:743)
             while p < opt_bytes.len() {
-                let mut c = opt_bytes[p];
-                // c:744 — if (*options == Meta) *++options ^= 32;
-                // (Meta-character handling skipped — argv strings are
-                // already metafied in zsh; the Rust port doesn't model
-                // Meta yet. See zsh.h:Meta = 0x83.)
+                // c:745-746 — `int sz; convchar_t opt = unmeta_one(options, &sz);`
+                // The MULTIBYTE_SUPPORT branch of unmeta_one is
+                // mb_metacharlenconv_r (utils.c:5075): one whole character.
+                // argv is the port's UTF-8 String form, so the decode is a
+                // char rather than a Meta pair.
+                let (sz, wc) = crate::ported::utils::mb_metacharlenconv_r(&opt_str, p);
+                let opt: char = wc.unwrap_or('\0');
+                // ASCII option letters keep the byte match below; a
+                // non-ASCII char can only reach the default arm.
+                let mut c = if opt.is_ascii() { opt as u8 } else { 0x80 };
                 res = -1; // c:746
                 let mut continue_outer = false;
                 match c {
                     b'H' => {
                         // c:748
                         hard = true;
-                        p += 1;
+                        p += sz; // c:747 options += sz
                         continue_outer = true;
                     }
                     b'S' => {
                         // c:751
                         soft = true;
-                        p += 1;
+                        p += sz; // c:747 options += sz
                         continue_outer = true;
                     }
                     b'N' => {
                         // c:754
                         // c:755-762 — number after -N
-                        let number: String = if p + 1 < opt_bytes.len() {
+                        let number: String = if p + sz < opt_bytes.len() {
                             let n = std::str::from_utf8(&opt_bytes[p + 1..])
                                 .unwrap_or("")
                                 .to_string();
@@ -1342,16 +1365,16 @@ pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32
                         all = true;
                         resmask = (1u64 << RLIM_NLIMITS as i32) - 1; // c:780
                         nres = RLIM_NLIMITS as i32; // c:781
-                        p += 1;
+                        p += sz; // c:747 options += sz
                         continue_outer = true;
                     }
                     _ => {
                         // c:783
-                        res = find_resource(c as char); // c:784
+                        res = find_resource(opt); // c:784
                         if res < 0 {
                             /* unrecognised limit */
                             // c:786
-                            zwarnnam(name, &format!("bad option: -{}", c as char));
+                            zwarnnam(name, &format!("bad option: -{}", opt));
                             return 1;
                         }
                     }
@@ -1359,7 +1382,7 @@ pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32
                 if continue_outer {
                     continue;
                 }
-                if p + 1 < opt_bytes.len() {
+                if p + sz < opt_bytes.len() {
                     // c:792 options[1]
                     resmask |= 1u64 << res; // c:793
                     nres += 1; // c:794
@@ -1369,7 +1392,7 @@ pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32
                     zwarnnam(name, "no limits allowed with -a"); // c:797
                     return 1;
                 }
-                p += 1;
+                p += sz; // c:747 options += sz
                 // Handle c:763 case where -N consumed the rest:
                 if c == b'N' {
                     // already advanced past
@@ -1430,7 +1453,10 @@ pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32
                     // c:826
                     zwarnnam(
                         name,
-                        &format!("can't read limit: {}", std::io::Error::last_os_error()),
+                        &format!(
+                    "can't read limit: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
                     );
                     return 1;
                 }
@@ -1681,7 +1707,10 @@ fn zsetlimit(limnum: i32, nam: &str) -> i32 {
         if unsafe { setrlimit(limnum as _, &limits_v) } < 0 {
             zwarnnam(
                 nam,
-                &format!("setrlimit failed: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "setrlimit failed: {}",
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             );
             // restore in-memory copy from current
             let mut limits = limits_lock.lock().unwrap();
