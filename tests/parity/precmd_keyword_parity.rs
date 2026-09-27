@@ -192,6 +192,14 @@ mod nocorrect {
     fn nocorrect_runs_command_normally() {
         assert_parity(r#"nocorrect echo hi"#);
     }
+
+    /// c:Src/parse.c:1844-1907 — par_simple takes NOCORRECT and leading
+    /// assignments in one loop, in any order.
+    #[test]
+    fn nocorrect_after_an_assignment() {
+        assert_parity(r#"z=1 nocorrect print hi; z=2 nocorrect sh -c 'echo $z'; nocorrect z=3 sh -c 'echo $z'"#);
+        assert_parity(r#"z=1 nocorrect y=2 sh -c 'echo $z$y'"#);
+    }
 }
 
 mod combined {

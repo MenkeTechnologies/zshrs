@@ -2993,13 +2993,20 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     // NOCORRECT arm so the token was silently dropped and the
     // following command line evaporated — `nocorrect echo hello`
     // produced empty output.
-    while tok() == NOCORRECT {
-        set_nocorrect(1); // c:1846
-        zshlex(); // c:1907 (loop-tail zshlex)
-    }
-
-    // Parse leading assignments
-    while tok() == ENVSTRING || tok() == ENVARRAY {
+    //
+    // c:1844-1907 — ONE loop takes NOCORRECT and the leading assignments in
+    // any order, so `z=1 nocorrect cmd` is as valid as `nocorrect z=1 cmd`.
+    // Two consecutive loops (NOCORRECT first) rejected the former with a
+    // parse error.
+    loop {
+        if tok() == NOCORRECT {
+            set_nocorrect(1); // c:1846
+            zshlex(); // c:1907 (loop-tail zshlex)
+            continue;
+        }
+        if tok() != ENVSTRING && tok() != ENVARRAY {
+            break; // c:1905-1906
+        }
         if let Some(assign) = parse_assign() {
             // c:1856-1865 — the name is NUL-terminated inside tokstr.
             if tok() == ENVSTRING {
