@@ -26317,7 +26317,7 @@ pub fn paramsubst(
         } // c:1625
         c if c == '$' || c == Stringg => {
             // c:1625
-            let value = std::process::id().to_string(); // c:1625
+            let value = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed).to_string(); // c:1625
                                                         // c:Src/subst.c:1820 — `$$:MOD` modifier chain. Accept
                                                         // Stringg token (`\u{85}`) alongside ASCII `$` since the
                                                         // lexer tokenizes the second `$` of `$$` as Stringg in

@@ -2513,6 +2513,29 @@ impl ZshCompiler {
     }
 
     fn compile_simple(&mut self, simple: &ZshSimple) {
+        // c:Src/exec.c:3386-3452 — precommand modifiers (`exec`, `builtin`,
+        // `noglob`, `-`; c:Src/builtin.c BIN_PREFIX) are consumed off the
+        // argument list, and when NOTHING is left and there are no
+        // redirections the command takes the "No arguments" arm: a plain
+        // `addvars(state, varspc, 0)` with no save_params, then `lastval =
+        // cmdoutval`. So `z=1 exec` / `z=1 builtin` / `z=1 noglob` keep `z`
+        // exactly like a bare `z=1`. (`command` alone returns earlier, at
+        // c:3420-3426, BEFORE addvars — the assignment is dropped — and the
+        // redirection forms are nullexec, c:3386-3394; neither is this arm.)
+        if !simple.assigns.is_empty()
+            && simple.redirs.is_empty()
+            && !simple.words.is_empty()
+            && simple.words.iter().all(|w| {
+                matches!(
+                    crate::lex::untokenize(w).as_str(),
+                    "exec" | "builtin" | "noglob" | "-"
+                )
+            })
+        {
+            let mut bare = simple.clone();
+            bare.words.clear();
+            return self.compile_simple(&bare);
+        }
         // Inline-assignment-prefix scope: `X=foo Y=bar cmd` should
         // export the assigns to cmd's child env AND restore both
         // shell-vars and process-env to the pre-call state when cmd
@@ -3000,6 +3023,11 @@ impl ZshCompiler {
                 .get(1)
                 .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok());
             let nonpositive_literal = literal_int.is_some_and(|n| n <= 0);
+            // c:Src/builtin.c:53/:57 — `BUILTIN("break", BINF_PSPECIAL,
+            // bin_break, 0, 1, ...)`: maxargs 1, so execbuiltin rejects
+            // `break 1 2` with "too many arguments" before bin_break runs.
+            // Route it through the builtin arm, which carries that check.
+            let too_many_args = simple.words.len() > 2;
             // `break N` where N is a RUNTIME expression ($((..))/$var):
             // the literal fast path can't read it, so it fell back to
             // N=1. Emit a runtime jump table dispatching to the same
@@ -3013,9 +3041,9 @@ impl ZshCompiler {
             // `for; if then; break; fi; done` — without the drain,
             // the Then push leaks past the loop_exit.
             self.emit_cmd_stack_drain();
-            if depth > 0 && runtime_count {
+            if depth > 0 && runtime_count && !too_many_args {
                 self.emit_runtime_loop_level(&simple.words[1], "break", false);
-            } else if depth >= levels && !nonpositive_literal {
+            } else if depth >= levels && !nonpositive_literal && !too_many_args {
                 let idx = depth.saturating_sub(levels);
                 // Inside try-block: also bump BREAKS atomic so the
                 // always-arm post-restore can detect the escape and
@@ -3119,15 +3147,20 @@ impl ZshCompiler {
                 .get(1)
                 .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok());
             let nonpositive_literal = literal_int.is_some_and(|n| n <= 0);
+            // c:Src/builtin.c:53/:57 — `BUILTIN("break", BINF_PSPECIAL,
+            // bin_break, 0, 1, ...)`: maxargs 1, so execbuiltin rejects
+            // `break 1 2` with "too many arguments" before bin_break runs.
+            // Route it through the builtin arm, which carries that check.
+            let too_many_args = simple.words.len() > 2;
             let runtime_count = simple.words.len() > 1 && literal_int.is_none();
             let depth = self.continue_patches.len();
             // Drain pending cmd_stack pushes — same rationale as
             // for `break`. `continue` inside an inner if/then is the
             // common case in zinit's mode-aware loop bodies.
             self.emit_cmd_stack_drain();
-            if depth > 0 && runtime_count {
+            if depth > 0 && runtime_count && !too_many_args {
                 self.emit_runtime_loop_level(&simple.words[1], "continue", true);
-            } else if depth >= levels && !nonpositive_literal {
+            } else if depth >= levels && !nonpositive_literal && !too_many_args {
                 // Inside try-block: bump BREAKS + CONTFLAG so the
                 // always-arm post-restore can detect the escape.
                 if self.try_block_depth > 0 {
@@ -10246,7 +10279,15 @@ impl ZshCompiler {
         // First branch — the test is errexit-suppressed.
         self.emit_cmd_push(crate::ported::zsh_h::CS_IF as u8);
         self.errexit_suppress_depth += 1;
+        // c:Src/loop.c:559-562 — `olderrexit = noerrexit; ... noerrexit |=
+        // NOERREXIT_EXIT | NOERREXIT_RETURN;` across the tests, restored at
+        // c:584 `noerrexit = olderrexit;`. The runtime bits are what reach a
+        // shell function called as the test (doshfunc clears only
+        // NOERREXIT_RETURN, c:Src/exec.c:5930); the compile-time depth above
+        // only covers checks emitted in this chunk.
+        self.emit_noerrexit_suppress();
         self.compile_program(&if_node.cond);
+        self.emit_noerrexit_restore(); // c:584
         self.errexit_suppress_depth -= 1;
         self.emit_cmd_pop();
         self.builder.emit(Op::GetStatus, 0);
@@ -10263,7 +10304,9 @@ impl ZshCompiler {
         for (cond, body) in &if_node.elif {
             self.emit_cmd_push(crate::ported::zsh_h::CS_ELIF as u8);
             self.errexit_suppress_depth += 1;
+            self.emit_noerrexit_suppress(); // c:562
             self.compile_program(cond);
+            self.emit_noerrexit_restore(); // c:584
             self.errexit_suppress_depth -= 1;
             self.emit_cmd_pop();
             self.builder.emit(Op::GetStatus, 0);
@@ -10333,7 +10376,11 @@ impl ZshCompiler {
         let loop_top = self.builder.current_pos();
         // The while/until test is errexit-suppressed.
         self.errexit_suppress_depth += 1;
+        // c:Src/loop.c:443 `noerrexit |= NOERREXIT_EXIT | NOERREXIT_RETURN;`
+        // before each test, c:452 `noerrexit = olderrexit;` after it.
+        self.emit_noerrexit_suppress(); // c:443
         self.compile_program(&w.cond);
+        self.emit_noerrexit_restore(); // c:452
         self.errexit_suppress_depth -= 1;
         self.builder.emit(Op::GetStatus, 0);
         let exit_jump = if w.until {

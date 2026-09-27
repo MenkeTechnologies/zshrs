@@ -5781,7 +5781,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             0
         };
-        let v = paramsubst_to_value_pf(&format!("${{{}}}", inner), pf_flags);
+        let v = paramsubst_to_value_status(vm, &format!("${{{}}}", inner), pf_flags);
         if dq {
             with_executor(|exec| exec.in_dq_context -= 1);
         }
@@ -5816,7 +5816,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             0
         };
-        paramsubst_to_value_pf(&body, pf_flags)
+        paramsubst_to_value_status(vm, &body, pf_flags)
     });
 
     // `foo[key]=val` — single-key set on an assoc array. Stack: [name, key, value].
@@ -5988,6 +5988,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // c:Src/exec.c:4343-4348 — `A[k]=v extcmd`: a forked command's
+        // `addvars` runs in the CHILD, so the parent's `A` is never touched.
+        // zshrs assigns in-process, so snapshot the whole `A` for the frame
+        // to put back (see `InlineEnvFrame::forked`). For a builtin or shell
+        // function nothing is saved: C's `save_params` looks the raw `A[k]`
+        // text up with `getnode` (c:4476), misses, and the element
+        // assignment persists.
+        with_executor(|exec| {
+            if exec
+                .inline_env_stack
+                .last()
+                .is_some_and(|frame| frame.recording && frame.forked)
+            {
+                save_inline_prefix_param(exec, &name);
+            }
+        });
         // c:Src/params.c:3250-3266 — assignsparam ASSPM_AUGMENT on a
         // subscripted integer/float:
         //     case PM_INTEGER: case PM_EFLOAT: case PM_FFLOAT:
@@ -9838,6 +9854,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             .read()
             .map(|t| t.get(&name).is_some())
             .unwrap_or(false); // c:4142-4143
+        // c:Src/exec.c:4343-4348 — neither a shell function nor a builtin
+        // means C forks and runs `addvars` in the child (also the
+        // not-found case: the child reports it). An expanded command word
+        // arrives empty and keeps the in-process arm (same KNOWN GAP as
+        // `export` above).
+        frame.forked = !name.is_empty()
+            && !frame.export
+            && !crate::ported::builtin::createbuiltintable().contains_key(&name);
         with_executor(|exec| {
             exec.inline_env_stack.push(frame);
         });
@@ -10207,7 +10231,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
         let body = format!("${{{}:#{}}}", name, pattern);
-        paramsubst_to_value_pf(&body, pf_flags)
+        paramsubst_to_value_status(vm, &body, pf_flags)
     });
 
     // `a[i]=(elements)` / `a[i,j]=(elements)` / `a[i]=()`
@@ -13628,7 +13652,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             };
             format!("${{{}{}{}}}", name, op_str, rhs)
         };
-        paramsubst_to_value_pf(&body, pf_flags)
+        paramsubst_to_value_status(vm, &body, pf_flags)
     });
 
     // `${var:offset[:length]}` — substring. Pops [name, offset, length].
@@ -13674,7 +13698,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             format!("${{{}:{}{}:{}}}", name, off_sep, offset, length)
         };
-        paramsubst_to_value_pf(&body, pf_flags)
+        paramsubst_to_value_status(vm, &body, pf_flags)
     });
 
     // BUILTIN_PARAM_SUBSTRING_EXPR — `${var:offset_expr[:length_expr]}` form.
@@ -13708,7 +13732,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             format!("${{{}:{}{}}}", name, off_sep, off_expr)
         };
-        paramsubst_to_value_pf(&body, pf_flags)
+        paramsubst_to_value_status(vm, &body, pf_flags)
     });
 
     // `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}`
@@ -13740,7 +13764,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             _ => "#",
         };
         let body = format!("${{{}{}{}}}", name, op_str, pattern);
-        paramsubst_to_value_pf(&body, pf_flags)
+        paramsubst_to_value_status(vm, &body, pf_flags)
     });
 
     // `$((expr))` — pops [expr_string], evaluates via MathEval which
@@ -14681,7 +14705,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if dq_flag {
             with_executor(|exec| exec.in_dq_context += 1);
         }
-        let ret = paramsubst_to_value_pf(&body, pf_flags);
+        let ret = paramsubst_to_value_status(vm, &body, pf_flags);
         if dq_flag {
             with_executor(|exec| exec.in_dq_context -= 1);
         }
@@ -15458,6 +15482,25 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
         }
     }
     value
+}
+
+/// !!! RUST-ONLY ADAPTER — the dual `$?` store !!!
+///
+/// `paramsubst_to_value_pf` for the compiled `${…}` fast-path builtins, whose
+/// body can run a command substitution (`${y:-$(exit 4)}`, `${y#$(…)}`).
+/// C has ONE `lastval`: getoutput's `lastval = cmdoutval` (c:Src/exec.c:4775)
+/// is what a later `$?` in the same command reads, so
+/// `print ${y:-$(exit 4)} $?` prints `4`. zshrs also keeps `vm.last_status`,
+/// which `BUILTIN_GET_VAR` treats as authoritative, so the inner status has
+/// to be handed back to it — the same two-way mirror `BUILTIN_CMD_SUBST_TEXT`
+/// and `BUILTIN_EXPAND_TEXT` do around their own cmd-subst runs.
+fn paramsubst_to_value_status(vm: &mut fusevm::VM, body: &str, pf_flags: i32) -> Value {
+    // The substitution sees the live `$?` (`false; print ${y:-$(print $?)}`).
+    let live_status = vm.last_status;
+    with_executor(|exec| exec.set_last_status(live_status));
+    let v = paramsubst_to_value_pf(body, pf_flags);
+    vm.last_status = with_executor(|exec| exec.last_status()); // c:4775
+    v
 }
 
 /// Parameter name inside a `${...}` expansion body, for the provenance

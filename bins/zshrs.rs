@@ -1146,6 +1146,20 @@ fn main() {
     // any dispatch path forks off — covers `-c`, script and interactive
     // alike. Must stay the first statement so shell init cannot skew it.
     let _ = zsh::ported::params::shtimer_lock(); // c:1121
+    // c:Src/init.c:1226-1227 — `ppid = getppid(); mypid = getpid();`, the
+    // values `$PPID` / `$$` read for the life of the shell (a forked
+    // pipeline stage or `&` job keeps them). `setupvals` stores them too,
+    // but the emulation drivers (`--bash`, `--sh`, `--ksh`, …) dispatch
+    // without reaching it, which left both at 0 there. Same process-entry
+    // placement, and the same reason, as the `shtimer` stamp above.
+    zsh::ported::params::ppid.store(
+        unsafe { libc::getppid() } as i64,
+        std::sync::atomic::Ordering::Relaxed,
+    ); // c:1226
+    zsh::ported::params::mypid.store(
+        unsafe { libc::getpid() } as i64,
+        std::sync::atomic::Ordering::Relaxed,
+    ); // c:1227
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // C cannot panic, so there is nothing to port here; this exists purely to
     // make a Rust panic diagnosable after the fact.

@@ -1244,7 +1244,8 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
 
     // zoptarg = ""; zoptind = 1;                                            // c:1207-1208
 
-    // ppid = getppid(); mypid = getpid();                                   // c:1210-1211
+    crate::ported::params::ppid.store(unsafe { libc::getppid() } as i64, Ordering::Relaxed); // c:1226
+    crate::ported::params::mypid.store(unsafe { libc::getpid() } as i64, Ordering::Relaxed); // c:1227
     // term = ztrdup("");                                                    // c:1212
 
     // nullcmd = "cat"; readnullcmd = DEFAULT_READNULLCMD;                   // c:1214-1215

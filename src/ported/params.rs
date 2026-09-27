@@ -166,6 +166,22 @@ pub fn IPDEF2(A: &str, B: usize, C: i32) -> paramdef {
 pub static locallevel: crate::thread_shell_state::LocalLevelCell = // c:54
     crate::thread_shell_state::LocalLevelCell::new();
 
+/// Port of `mod_export zlong mypid;` from `Src/params.c:102` — `$$`
+/// (`IPDEF4("$", &mypid)`, c:353). Set ONCE by `setupvals`
+/// (c:Src/init.c:1227 `mypid = (zlong) getpid();`); a forked child
+/// (pipeline stage, `&` job, coproc) inherits the parent's value, so `$$`
+/// names the parent shell there — zshrs read `getpid()` live and printed
+/// the child's pid (`echo $$ | cat`).
+#[allow(non_upper_case_globals)]
+pub static mypid: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0); // c:102
+
+/// Port of `mod_export zlong ppid;` from `Src/params.c:107` — `$PPID`
+/// (`IPDEF4("PPID", &ppid)`, c:350), set by `setupvals`
+/// (c:Src/init.c:1226 `ppid = (zlong) getppid();`). Same fork rule as
+/// [`mypid`]: a forked stage keeps the shell's parent, not its own.
+#[allow(non_upper_case_globals)]
+pub static ppid: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0); // c:107
+
 // ---------------------------------------------------------------------------
 // Real `param` struct lives in Src/zsh.h:1829 (port at zsh_h.rs:750).
 // It uses C-union flattening: u_str / u_arr / u_val / u_dval / u_hash
@@ -16625,8 +16641,10 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // file-static set at shell startup from getppid(). zshrs's
         // ported special_paramdef list registers PPID but nothing
         // populates the paramtab slot from getppid(2), so $PPID
-        // always read 0. Route through the libc syscall directly.
-        "PPID" => Some((unsafe { libc::getppid() } as i64).to_string()),
+        // always read 0. Read the `ppid` global setupvals fills
+        // (c:Src/init.c:1226) — NOT a live getppid(), which a forked
+        // pipeline stage would answer with the shell's own pid.
+        "PPID" => Some(ppid.load(std::sync::atomic::Ordering::Relaxed).to_string()), // c:350 IPDEF4("PPID", &ppid)
         // c:Src/params.c:348 + c:4202 — `IPDEF4("HISTCMD", &curhist)`
         // binds `intvargetfn` (`return *pm->u.valptr;`) to `&curhist`
         // (`Src/hist.c:88`). Same valptr-bound shape as PPID above: the
@@ -16874,7 +16892,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
                     .to_string(),
             )
         }
-        "$" => Some(std::process::id().to_string()),
+        "$" => Some(mypid.load(std::sync::atomic::Ordering::Relaxed).to_string()), // c:353 IPDEF4("$", &mypid)
         "!" => {
             // c:Src/params.c:345 IPDEF4("!", &lastpid) — `$!` reads
             // directly from the `lastpid` atomic (Src/jobs.c:73).

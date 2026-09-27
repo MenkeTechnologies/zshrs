@@ -389,6 +389,18 @@ pub struct InlineEnvFrame {
     /// `X=y shellfn` leave `X` marked exported for the duration of the
     /// call while `X=y builtin` does not.
     pub export: bool,
+    /// The command runs as an external in a forked child. C then never
+    /// calls `save_params` in the parent at all: `addvars` runs in the
+    /// CHILD (c:Src/exec.c:4343-4348 `if (varspc) { int addflags =
+    /// ADDVAR_EXPORT; if (forked) addflags |= ADDVAR_RESTORE;
+    /// addvars(state, varspc, addflags); ...`), so not one prefix
+    /// assignment reaches the parent — including a subscripted one
+    /// (`A[k]=2 extcmd`), which `save_params`' `getnode(paramtab, s)`
+    /// (c:4476) can never match by its `A[k]` text and which therefore
+    /// PERSISTS after a builtin or shell function. zshrs runs the
+    /// assignments in-process either way, so for a forked command the
+    /// frame snapshots the subscripted name's whole base parameter.
+    pub forked: bool,
 }
 
 /// One parameter a prefix assignment displaced — the Rust twin of the
@@ -424,6 +436,8 @@ impl InlineEnvFrame {
             // c:4141 `int flags = 0;` — BEGIN_INLINE_ENV sets the
             // ADDVAR_EXPORT bit once it has resolved the command word.
             export: false,
+            // BEGIN_INLINE_ENV resolves the command word.
+            forked: false,
         }
     }
 

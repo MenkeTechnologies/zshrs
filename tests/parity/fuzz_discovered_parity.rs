@@ -4570,3 +4570,87 @@ mod equals_expansion_after_substitution {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Control-flow / exec divergences found by the round-4 differential sweep.
+// ─────────────────────────────────────────────────────────────────────
+mod exec_control_flow_round4 {
+    use super::*;
+
+    /// c:Src/exec.c:4343-4348 — an external command's prefix assignments run
+    /// in the forked child (`addvars(state, varspc, ADDVAR_EXPORT|…)`), so a
+    /// SUBSCRIPTED one never reaches the parent, found or not. For a builtin
+    /// or function `save_params`' `getnode` misses the `A[k]` text (c:4476)
+    /// and the element persists. zsh: `1` / `1` / `3` / `1 2` / `unset`.
+    #[test]
+    fn subscripted_prefix_assignment_before_external_is_not_kept() {
+        assert_parity(
+            r#"typeset -A A; A[k]=1; A[k]=2 nosuchcmd_zz 2>/dev/null; print -r -- $A[k]
+A[k]=4 /usr/bin/true; print -r -- $A[k]; A[k]=3 :; print -r -- $A[k]
+a=(1 2); a[1]=9 /usr/bin/true; print -r -- $a
+B[k]=1 nosuchcmd_zz 2>/dev/null; print -r -- ${B-unset}"#,
+        );
+    }
+
+    /// c:Src/exec.c:4775 `lastval = cmdoutval;` — a command substitution in
+    /// a `${…}` operand word is a real lastval write, so a later `$?` in the
+    /// same command sees it. zsh: `4` / `ab 4 xab 3` / `5`.
+    #[test]
+    fn cmdsubst_inside_param_operand_sets_status() {
+        assert_parity(
+            r#"false; print -r -- ${y:-$(exit 4)} $?
+y=ab; print -r -- ${y#$(exit 4)} $? ${y/$(exit 3)/x} $?
+x=(${z:-$(exit 5)} $?); print -r -- $x"#,
+        );
+    }
+
+    /// c:Src/builtin.c:53/:57 — break/continue take at most one argument;
+    /// execbuiltin rejects `break 1 2` inside a loop too. zsh: `x` / `1` / `1`.
+    #[test]
+    fn break_continue_too_many_args_inside_loop() {
+        assert_parity(
+            r#"for i in 1; do break 1 2 2>/dev/null; print x; done; print $?
+for i in 1; do continue 1 2 2>/dev/null; done; print $?"#,
+        );
+    }
+
+    /// c:Src/loop.c:559-562 / :443 — the if/elif/while test runs with
+    /// NOERREXIT_EXIT|NOERREXIT_RETURN set on the global `noerrexit`, which a
+    /// called function inherits (doshfunc clears only NOERREXIT_RETURN,
+    /// c:Src/exec.c:5930). zsh: `no` / `in y` / `ok`, and no ZERR.
+    #[test]
+    fn errexit_suppressed_inside_function_called_as_condition() {
+        assert_parity(r#"setopt err_exit; f() { false; }; if f; then print yes; else print no; fi"#);
+        assert_parity(
+            r#"setopt err_exit; f() { false; print in; }; if true; then :; elif f; then :; fi; if f; then print y; fi"#,
+        );
+        assert_parity(r#"setopt err_exit; f() { false; }; while f; do :; done; until f; do break; done; print ok"#);
+        assert_parity(r#"TRAPZERR() { print Z }; f() { false; }; if f; then :; fi; while f; do :; done; print end"#);
+    }
+
+    /// c:Src/params.c:102/:107 + c:Src/init.c:1226-1227 — `$$` and `$PPID`
+    /// are the values stored at startup, inherited by a forked pipeline
+    /// stage or `&` job, not the child's own pids. zsh: `same` x4.
+    #[test]
+    fn dollar_dollar_and_ppid_in_forked_stage_name_the_shell() {
+        assert_parity(
+            r#"echo $$ | read p; [[ $p == $$ ]] && print same
+{ print $(( $$ )) } | read p; [[ $p == $$ ]] && print same
+echo $PPID | read p; [[ $p == $PPID ]] && print same
+f() { print ${$} }; f | read p; [[ $p == $$ ]] && print same"#,
+        );
+    }
+
+    /// c:Src/exec.c:3427-3452 — a precommand modifier with nothing after it
+    /// and no redirection leaves an empty command: plain `addvars`, no
+    /// save/restore, `lastval = cmdoutval`. `command` alone returns before
+    /// addvars (c:3420-3426). zsh: `1 1 1 1` / `unset` / `3 4`.
+    #[test]
+    fn bare_precommand_modifier_keeps_prefix_assignment() {
+        assert_parity(
+            r#"a=1 exec; b=1 builtin; c=1 noglob; d=1 -; print -r -- $a $b $c $d
+z=1 command; print -r -- ${z-unset}
+y=$(exit 3) exec; print -n $? ""; y=$(exit 4) noglob; print $?"#,
+        );
+    }
+}

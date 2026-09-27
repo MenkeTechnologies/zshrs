@@ -5203,7 +5203,7 @@ pub(crate) fn new(input: &str) {
     m_variables_set(HashMap::new());
     m_string_variables_set(HashMap::new());
     m_lastval_set(0);
-    m_pid_set(std::process::id() as i64);
+    m_pid_set(crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed));
     m_error_clear();
 }
 
