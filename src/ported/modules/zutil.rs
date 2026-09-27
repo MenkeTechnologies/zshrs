@@ -5023,18 +5023,17 @@ mod tests {
         assert_eq!(r, "[X-X]");
     }
 
-    /// c:814 — caller's `%`-override beats the pre-populated literal `%`.
-    /// Pin: if user registers `%`→"OVERRIDE", `%%` → "OVERRIDE".
+    /// c:849-856 — `%%` unwinds to a literal `%` BEFORE any spec lookup,
+    /// so a `%` entry in the table is never consulted. bin_zformat
+    /// (c:1026-1029) rejects `%` as a spec name anyway: reference zsh prints
+    /// `invalid argument: %:X` for `zformat -f v "%%" "%:X"`.
     #[test]
-    fn zformat_substring_caller_override_of_percent_wins() {
+    fn zformat_substring_percent_percent_ignores_a_percent_spec() {
         let _g = crate::test_util::global_state_lock();
         let mut specs = std::collections::HashMap::new();
         specs.insert('%', "OVERRIDE".to_string());
         let r = zformat_substring("%%", &specs, false);
-        assert_eq!(
-            r, "OVERRIDE",
-            "caller override of % beats default '%' literal"
-        );
+        assert_eq!(r, "%");
     }
 
     /// c:814 — `%` followed by unregistered char produces empty

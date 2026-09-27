@@ -78,16 +78,21 @@ mod tests {
     use crate::ported::zle::complete::INCOMPFUNC;
     use std::sync::atomic::Ordering;
 
+    /// Reference zsh 5.9.2, no `compinit` and no `_main_complete`: a
+    /// `zle -C` widget whose body is `_options` returns 0 — `_wanted` runs
+    /// `_tags` (`comptags -i` registers the tag on the spot,
+    /// c:Src/Zle/computil.c bin_comptags) and `compadd -k options` adds
+    /// every option name against the empty `$PREFIX`.
     #[test]
-    fn returns_one_without_registered_tags() {
+    fn adds_options_without_a_prior_tags_context() {
         let _g = crate::test_util::global_state_lock();
         // The lock serialises but restores nothing, and a `compadd`-driven
         // test parks a word in `$PREFIX` that makes every later candidate fail
-        // to match — so this returned 0 in a full run and 1 on its own.
+        // to match, which would turn the reference 0 into 1.
         crate::test_util::reset_completion_state();
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = _options_impl(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 }

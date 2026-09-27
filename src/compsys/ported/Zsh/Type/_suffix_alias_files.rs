@@ -89,11 +89,22 @@ mod tests {
     use super::*;
     use crate::ported::params::setaparam;
 
+    /// sh:7 — `(( ${#saliases} )) || return 1`. Reference zsh 5.9.2 with no
+    /// suffix alias defined returns 1 from a `zle -C` widget body, before
+    /// `_path_files` is ever reached. `$saliases` reads `sufaliastab`
+    /// (c:Src/Modules/parameter.c scanpmsaliases), so the table itself is
+    /// emptied for the call and restored after.
     #[test]
     fn no_saliases_returns_one() {
         let _g = crate::test_util::global_state_lock();
-        setaparam("saliases", Vec::new());
-        assert_eq!(_suffix_alias_files(&[]), 127);
+        let tab = crate::ported::hashtable::sufaliastab_lock();
+        let saved = tab.read().expect("sufaliastab poisoned").snapshot();
+        tab.write()
+            .expect("sufaliastab poisoned")
+            .restore(crate::ported::hashtable::alias_table::new());
+        let r = _suffix_alias_files(&[]);
+        tab.write().expect("sufaliastab poisoned").restore(saved);
+        assert_eq!(r, 1);
     }
 
     #[test]

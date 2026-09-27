@@ -570,12 +570,16 @@ mod tests {
     use crate::ported::zle::complete::INCOMPFUNC;
     use std::sync::atomic::Ordering;
 
+    /// Reference zsh 5.9.2, no `compinit` and no `_main_complete`: a
+    /// `zle -C` widget whose body is `_path_commands` returns 0 — `_wanted`
+    /// registers `commands` itself through `_tags` and `compadd -k commands`
+    /// (sh:103) adds the command table against the empty `$PREFIX`.
     #[test]
-    fn returns_one_without_registered_tags() {
+    fn adds_commands_without_a_prior_tags_context() {
         let _g = crate::test_util::global_state_lock();
         // The lock serialises but restores nothing, and a `compadd`-driven
         // test parks a word in `$PREFIX` that makes every later candidate fail
-        // to match — so this returned 0 in a full run and 1 on its own.
+        // to match, which would turn the reference 0 into 1.
         crate::test_util::reset_completion_state();
         // Restore INCOMPFUNC BEFORE asserting, the way the sibling
         // `_options` case does (`Zsh/Type/_options.rs:88-91`). Asserting
@@ -588,7 +592,7 @@ mod tests {
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = _path_commands(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 0);
     }
 
     /// sh:3-55 — both file-scope helpers must land in `$functions`.

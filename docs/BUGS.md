@@ -60555,3 +60555,25 @@ treats a zero step as 1. Three causes in `src/ported/glob.rs`:
 Test: `tests/emulation_parity.rs` `bash_brace_step_direction_comes_from_the_endpoints`;
 `bash_alpha_brace_step` passes again.
 
+---
+
+## #1152 — four lib tests asserted results the reference shell does not produce — fixed
+
+**Status:** `fixed` 2026-09-27. The ported functions were already right; the
+assertions were stale.
+
+- `_options` / `_path_commands` "returns one without registered tags": zsh
+  5.9.2, no `compinit`, a `zle -C` widget whose body calls the function returns
+  **0** — `_wanted` registers its tag through `_tags` (`comptags -i`) and
+  `compadd` adds the whole table against the empty `$PREFIX`. Renamed to
+  `adds_options_without_a_prior_tags_context` /
+  `adds_commands_without_a_prior_tags_context`, asserting 0.
+- `_suffix_alias_files` `no_saliases_returns_one` asserted 127; the same widget
+  probe returns **1** (sh:7 `(( ${#saliases} )) || return 1`). The test now
+  empties `sufaliastab` for the call (restoring it after) instead of assigning
+  a shadowing array, and asserts 1.
+- `zutil` `zformat_substring_caller_override_of_percent_wins` asserted that a
+  `%` spec replaces `%%`. C unwinds `%%` to `%` before any spec lookup
+  (c:Src/Modules/zutil.c:849-856) and `bin_zformat` rejects `%` as a spec name
+  (c:1026-1029; zsh 5.9.2 prints `invalid argument: %:X`). Renamed to
+  `zformat_substring_percent_percent_ignores_a_percent_spec`, asserting `%`.
