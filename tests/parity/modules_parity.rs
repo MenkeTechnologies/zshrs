@@ -2464,3 +2464,17 @@ mod zmodload_nonexistent_diagnostic {
         assert_eq!(r.exit, 1, "zshrs rc");
     }
 }
+
+/// c:Src/module.c:2208-2211 — load_module rejects a name that is not
+/// `/`-separated identifiers with a fatal `invalid module name` before any
+/// lookup, so the rest of the `-c` string does not run. The port reported
+/// `failed to load module` and carried on.
+mod invalid_module_name {
+    use super::*;
+
+    #[test]
+    fn pattern_name_is_invalid_and_fatal() {
+        assert_parity_strict("zmodload 'zsh/da*'; echo $?");
+        assert_parity_strict("zmodload -mF 'zsh/date*' 'b:str*'; echo $?");
+    }
+}

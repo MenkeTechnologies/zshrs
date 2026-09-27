@@ -4964,6 +4964,17 @@ pub fn require_module(
 
     let ret = if needs_load {
         // c:2354 — `ret = load_module(module, features, silent);`
+        // c:2208-2211 — load_module's first step: `if (!modname_ok(name))
+        //   { if (!silent) zerr("invalid module name `%s'", name); return 1; }`.
+        //   It runs before any lookup, so `zmodload 'zsh/da*'` is a fatal
+        //   `invalid module name`, not a failed load.
+        if modname_ok(&mname) == 0 {
+            if silent == 0 {
+                crate::ported::utils::zerr(&format!("invalid module name `{}'", mname)); // c:2210
+            }
+            crate::ported::signals::unqueue_signals();
+            return 1; // c:2211
+        }
         // try_load_module gates the static-link path. On miss, emit
         // the canonical zwarn (gated by silent).
         if try_load_module(table, &mname) == 0 {
