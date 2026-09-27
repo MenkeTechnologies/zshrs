@@ -509,7 +509,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 /// Port of `getoutput()` from `Src/exec.c:4713` — C decl `getoutput(char *cmd, int qt)`.
 // c:4709
 /// `getoutput` — see implementation.
-pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
+pub fn getoutput(cmd: &str, qt: i32) -> Option<Vec<String>> {
     // c:4713
     // c:4715 — `Eprog prog;`
     let prog: Option<eprog>;
@@ -529,13 +529,13 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
 
     if prog.is_none() {
         // c:4725
-        return Vec::new(); // c:4726 return NULL
+        return None; // c:4726 return NULL
     }
     let prog = prog.unwrap();
 
     if !isset(crate::ported::zsh_h::EXECOPT) {
         // c:4728
-        return Vec::new(); // c:4729 newlinklist()
+        return Some(Vec::new()); // c:4729 newlinklist()
     }
 
     // c:4731 — `if ((s = simple_redir_name(prog, REDIR_READ)))` — `$(< word)`
@@ -545,7 +545,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
         s = red_name;
         s = singsub(&s); // c:4737
         if errflag.load(Ordering::Relaxed) != 0 {
-            return Vec::new(); // c:4739
+            return None; // c:4739
         }
         let s = untokenize(&s); // c:4740
         let path_meta = unmeta(&s); // c:4741 unmeta(s)
@@ -577,7 +577,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
             ));
             LASTVAL.store(1, Ordering::Relaxed);
             cmdoutval.store(1, Ordering::Relaxed);
-            return Vec::new(); // c:4800
+            return Some(Vec::new()); // c:4800
         }
         // c:4746 — `retval = readoutput(stream, qt, &readerror);`
         let mut readerror: i32 = 0;
@@ -593,7 +593,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
             LASTVAL.store(1, Ordering::Relaxed);
             cmdoutval.store(1, Ordering::Relaxed);
         }
-        return retval; // c:4751
+        return Some(retval); // c:4751
     }
 
     // c:4753-4790 — Full fork path: mpipe + zfork + parent
@@ -640,9 +640,9 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     if qt != 0 {
         // c:4861
         if s.is_empty() {
-            return vec![String::from(Nularg)]; // c:4862
+            return Some(vec![String::from(Nularg)]); // c:4862
         }
-        return vec![s.to_string()]; // c:4864
+        return Some(vec![s.to_string()]); // c:4864
     }
     // c:4866-4871 — `spacesplit` + per-word GLOBSUBST `shtokenize`.
     let mut words = crate::ported::utils::spacesplit(s, false); // c:4867
@@ -652,7 +652,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
             crate::ported::glob::shtokenize(w); // c:4870
         }
     }
-    words
+    Some(words)
 }
 
 /// Direct port of `Shfunc loadautofn(Shfunc shf, int ks, int test_only,

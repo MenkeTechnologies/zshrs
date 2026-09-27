@@ -1011,7 +1011,12 @@ fn stringsubst(
                                                                                  // a `${…}` operand never split: `${x:-$(echo a b c)}` came
                                                                                  // back as the single word `a b c` where zsh gives three.
                     let qt_out = qt || (pf_flags & PREFORK_SINGLE) != 0; // c:399
-                    let words = getoutput(&cmd, if qt_out { 1 } else { 0 }); // c:399
+                    // c:399-402 — `if (!(pl = getoutput(...))) { zerr("parse
+                    // error in command substitution"); return NULL; }`
+                    let Some(words) = getoutput(&cmd, if qt_out { 1 } else { 0 }) else {
+                        zerr("parse error in command substitution"); // c:401
+                        return None; // c:402
+                    };
                     let prefix: String = chars[..pos].iter().collect(); // c:404 `l1 = str2 - str3`
                     let suffix: String = if end + 1 < chars.len() {
                         // c:237
@@ -1353,7 +1358,12 @@ fn stringsubst(
                 // one word per output FIELD, so an unquoted `` `cmd` `` is
                 // multi-word. The port passed 1 unconditionally and joined.
                 let qt_out = qt || (pf_flags & PREFORK_SINGLE) != 0; // c:399
-                let words = getoutput(&cmd, if qt_out { 1 } else { 0 }); // c:399
+                // c:399-402 — a body that does not parse: getoutput
+                // returns NULL and the substitution fails.
+                let Some(words) = getoutput(&cmd, if qt_out { 1 } else { 0 }) else {
+                    zerr("parse error in command substitution"); // c:401
+                    return None; // c:402
+                };
                 let prefix: String = chars[..pos].iter().collect(); // c:404
                 let suffix: String = if end + 1 < chars.len() {
                     // c:237

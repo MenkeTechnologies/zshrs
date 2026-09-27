@@ -514,3 +514,47 @@ mod nofork_in_double_quotes_zshrs_pin {
         assert_eq!(run_zshrs(r#"x=3; print "${x}${| REPLY="{"}z""#).stdout, "3{z\n");
     }
 }
+
+/// c:Src/exec.c:4778-4780 + c:Src/subst.c:399-402 — a `` `…` `` body is
+/// parsed when the substitution runs; when it does not parse, `getoutput`
+/// returns NULL and `stringsubst` reports "parse error in command
+/// substitution" and fails, abandoning the command with status 1. zshrs
+/// swallowed the error and substituted nothing, so the command ran and the
+/// rest of the line went on.
+mod backquote_parse_error {
+    use super::*;
+
+    fn run_full(bin: &std::path::Path, zshrs: bool, s: &str) -> (String, String, i32) {
+        let mut c = Command::new(bin);
+        if zshrs {
+            c.args(["--zsh", "-f", "-c", s]).env_remove("ZSHRS_CACHE");
+        } else {
+            c.args(["-fc", s]);
+        }
+        let o = c.output().expect("spawn");
+        (
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+            o.status.code().unwrap_or(-1),
+        )
+    }
+
+    #[test]
+    fn an_unparsable_backquote_body_fails_the_command() {
+        if !zsh_available() {
+            return;
+        }
+        for s in [
+            "echo `echo )`; echo rc=$?",
+            "x=`echo )`; echo rc=$?",
+            "echo \"`echo )`\"; echo rc=$?",
+            "echo ${x:-`echo )`}; echo rc=$?",
+            "alias e='echo a}'; eval 'echo `e`'; echo rc=$?",
+        ] {
+            let z = run_full(Path::new(zsh_path()), false, s);
+            let r = run_full(&zshrs_bin(), true, s);
+            assert!(z.1.contains("parse error in command substitution"), "reference zsh: {z:?}");
+            assert_eq!(z, r, "divergence on:\n{s}");
+        }
+    }
+}

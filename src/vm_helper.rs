@@ -7245,6 +7245,15 @@ impl ShellExecutor {
         if crate::provenance::active() {
             crate::provenance::on_cmd_subst(cmd_str, &output);
         }
+        if parse_failed {
+            // c:Src/exec.c:4778-4780 — `getoutput` returns NULL when
+            // `parse_string` fails, and its caller raises the error:
+            // c:Src/subst.c:400-402 `zerr("parse error in command
+            // substitution"); return NULL;`, abandoning the command. Only a
+            // body parsed at run time gets here (`` `…` ``); the lexer has
+            // already parsed a `$(…)` body.
+            crate::ported::utils::zerr("parse error in command substitution");
+        }
         output
     }
 }

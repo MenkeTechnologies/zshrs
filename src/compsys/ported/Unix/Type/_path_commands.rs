@@ -313,7 +313,7 @@ fn extra_verbose_pass(curcontext: &str) {
     if stale && dispatch_function_call("_retrieve_cache", &ident) != Some(0) {
         // sh:71-76 — parse `whatis` output into the assoc.
         declare_locals(&["line"], 0);
-        let out = getoutput("_call_program command-descriptions _call_whatis", 1);
+        let out = getoutput("_call_program command-descriptions _call_whatis", 1).unwrap_or_default();
         // qt=1 yields one element: the whole output with trailing
         // newlines stripped, or `Nularg` when the command printed
         // nothing (exec.rs:613-618).
