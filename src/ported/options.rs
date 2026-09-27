@@ -390,11 +390,10 @@ pub fn emulate(mode: &str, fully: bool) {
 /// Port of `setoption(HashNode hn, int value)` from Src/options.c:573 — the inner loop
 /// of `bin_setopt`. Returns 0 on success, -1 on bad option name.
 pub fn setoption(hn: &str, value: i32) -> i32 {
-    // C: `opts[optno] = value;` — the C source writes the option's
-    // live state into the `opts[]` array. The Rust port stores it
-    // in OPTS_LIVE via `opt_state_set` (the same global the
-    // `optlookup("hn")>0` and `isset(OPT)` paths read).
-    opt_state_set(hn, value != 0); // c:735+ dosetopt body
+    // c:575 — `dosetopt(((Optname) hn)->optno, value, 0, opts);`. Going
+    // through dosetopt keeps its locks: `setopt -m 'sh*'` must not flip
+    // SHINSTDIN (c:746-750), nor MONITOR without a terminal.
+    dosetopt(optlookup(hn), value, 0); // c:575
     0
 }
 

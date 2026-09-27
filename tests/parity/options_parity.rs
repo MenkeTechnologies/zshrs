@@ -365,3 +365,43 @@ mod xtrace_stream {
         );
     }
 }
+
+/// c:Src/builtin.c:6308-6316 + c:Src/init.c:424-545 — the options after
+/// `emulate SHELL` go through parseopts: a single letter is looked up in
+/// the option letters of the options in force BEFORE the switch
+/// (c:Src/options.c:287), a refused option warns "can't change option", an
+/// unknown one aborts with the emulation rolled back, and anything left
+/// over is an "unknown argument". zshrs skipped letters silently (so
+/// `emulate zsh -x` never traced), accepted `--NAME`, and left the new
+/// emulation in place after a bad `-o`.
+mod emulate_trailing_options {
+    use super::*;
+
+    #[test]
+    fn a_letter_after_the_shell_name_sets_that_option() {
+        assert_parity("emulate zsh -x 2>/dev/null; print $options[xtrace]");
+        assert_parity("emulate sh -e -c 'print $options[errexit]'; print $options[errexit]");
+        assert_parity("emulate sh -L -c 'print ok'; echo $?");
+    }
+
+    #[test]
+    fn a_bad_option_rolls_the_emulation_back() {
+        assert_parity("emulate sh -o nosuch 2>/dev/null; echo $?; emulate; print $options[shwordsplit]");
+        assert_parity("emulate sh; emulate zsh -L 2>&1; echo $?; emulate");
+        assert_parity("emulate sh --foo 2>&1; echo $?; emulate");
+        assert_parity("emulate sh -- foo 2>&1; echo $?");
+        assert_parity("emulate zsh -o monitor 2>&1; echo $?");
+    }
+}
+
+/// c:Src/options.c:572-576 — `setopt -m` applies every match through
+/// dosetopt, which refuses to flip SHINSTDIN/INTERACTIVE (c:746-750).
+mod setopt_glob_respects_locked_options {
+    use super::*;
+
+    #[test]
+    fn a_pattern_does_not_flip_shinstdin() {
+        assert_parity("setopt -m 'sh*'; setopt | grep ^sh");
+        assert_parity("setopt -m 'int*'; print $options[interactive]");
+    }
+}

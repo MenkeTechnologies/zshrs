@@ -14966,6 +14966,28 @@ pub fn bin_emulate(
                                              // sticky struct's on_opts/off_opts at c:6347-6373. Rust tracks
                                              // (canonical-name, on?) pairs.
     let mut optlist: Vec<(String, bool)> = Vec::new();
+    // c:6309-6311 — `if (parseopts(...)) { ret = 1; goto restore; }`. C's
+    // parseopts wrote only the local new_opts; this port writes the live
+    // table, so the failure path rolls the snapshot back.
+    let parse_fail = || -> i32 {
+        emulation.store(saveemulation, Relaxed);
+        crate::ported::options::EMULATION.store(saveemulation_live, Relaxed);
+        crate::ported::options::opt_state_restore(saveopts.clone());
+        1
+    };
+    // !!! RUST-ONLY ADAPTER !!! — C's `optletters` (c:Src/options.c:287)
+    // tests SHOPTIONLETTERS in the LIVE opts, which parseopts never writes
+    // (it fills new_opts); this port has already applied the emulation to
+    // the live table, so letters are looked up with the value it had
+    // before: `emulate sh -L` resolves `L` through zsh's letters, not sh's.
+    let pre_sol = saveopts.get("shoptionletters").copied().unwrap_or(false);
+    let optlookupc_pre = |c: char| -> i32 {
+        let now = crate::ported::zsh_h::isset(crate::ported::zsh_h::SHOPTIONLETTERS);
+        crate::ported::options::opt_state_set("shoptionletters", pre_sol);
+        let r = crate::ported::options::optlookupc(c);
+        crate::ported::options::opt_state_set("shoptionletters", now);
+        r
+    };
     while !optionbreak && i < argv.len() {
         let arg = &argv[i];
         // c:Src/init.c:418 — only `-` / `+` start an option arg.
@@ -14987,66 +15009,24 @@ pub fn bin_emulate(
         while j < bytes.len() {
             let ch = bytes[j];
             if ch == '-' {
-                // c:425-429 — `--` ends options.
+                // c:Src/init.c:424-429 — "The pseudo-option `--' signifies
+                // the end of options."
                 if j == 1 && bytes.len() == 2 {
-                    optionbreak = true;
-                    i += 1;
+                    optionbreak = true; // the `i += 1` after this walk steps past it
                     break;
                 }
-                // c:432-460 — `--NAME` GNU-style long. `-` chars
-                // inside NAME become `_` (c:457-459). For bin_emulate
-                // we don't recognize `--version` / `--help` / etc.,
-                // just route the inline NAME as a long-form option.
-                let name: String = bytes[j + 1..].iter().collect::<String>().replace('-', "_");
-                // Same optlookup+dosetopt fix as the `-o NAME` arm below:
-                // resolve the `no` negation prefix and run option side
-                // effects, instead of writing a bogus stripped-name slot.
-                let optno = crate::ported::options::optlookup(&name);
-                if optno == 0 {
-                    zwarnnam(nam, &format!("no such option: {}", name));
-                    return 1;
-                }
-                crate::ported::options::dosetopt(optno, if action { 1 } else { 0 }, 0);
-                let canon = crate::ported::zsh_h::opt_name(optno.abs()).to_string();
-                let effective_on = if optno < 0 { !action } else { action };
-                optlist.push((canon, effective_on)); // c:6308 optlist record
-                break;
+                // c:Src/init.c:430-431 — `if (!toplevel || …) goto
+                // badoptionstring;`: GNU-style long options belong to the
+                // shell's own command line only.
+                zwarnnam(nam, &format!("bad option string: '{}'", arg)); // c:520
+                return parse_fail(); // c:521 `return 1` → c:6311 `goto restore`
             }
-            if ch == 'o' || ch == 'O' {
-                // c:480-505 — `-o NAME` / `+o NAME`. NAME is either
-                // attached (rest of arg after `o`) or the next arg.
-                let name = if j + 1 < bytes.len() {
-                    bytes[j + 1..].iter().collect::<String>()
-                } else {
-                    if i + 1 >= argv.len() {
-                        zwarnnam(nam, "string expected after -o");
-                        return 1; // c:484-485
-                    }
-                    consumed_next_arg = true;
-                    argv[i + 1].clone()
-                };
-                // c:6314-6316 — `optno = optlookup(*argv); if (!optno)
-                // { WARN("no such option"); return 1; } dosetopt(optno,
-                // action, ...)`. optlookup resolves the `no`/`no_`
-                // negation prefix (returning a NEGATIVE optno) and
-                // dosetopt inverts it AND runs the side effects
-                // (inittyptab for MULTIBYTE/BANGHIST/SHINSTDIN). The
-                // previous `opt_state_set(lowercased_stripped, action)`
-                // wrote a bogus `nomultibyte` slot and never toggled the
-                // real MULTIBYTE option, so `emulate -o no_multi_byte`
-                // (p10k.zsh:1760) left MULTIBYTE ON — char- not
-                // byte-oriented length math — and every p10k prompt
-                // segment built empty.
-                let optno = crate::ported::options::optlookup(&name);
-                if optno == 0 {
-                    zwarnnam(nam, &format!("no such option: {}", name));
-                    return 1;
-                }
-                crate::ported::options::dosetopt(optno, if action { 1 } else { 0 }, 0);
-                let canon = crate::ported::zsh_h::opt_name(optno.abs()).to_string();
-                let effective_on = if optno < 0 { !action } else { action };
-                optlist.push((canon, effective_on)); // c:6308 optlist record
-                break; // c:505 — break out of char walk after `-o`
+            if ch == 'b' && !pre_sol {
+                // c:Src/init.c:480-486 — "-b ends options at the end of this
+                // argument".
+                optionbreak = true;
+                j += 1;
+                continue;
             }
             if ch == 'c' {
                 // c:6310 — `-c command`. Capture the command body from
@@ -15068,24 +15048,63 @@ pub fn bin_emulate(
                 cmd_body = Some(body);
                 break;
             }
-            // c:Src/init.c — single-char option letter dispatch via
-            // `optno = optlookupc(**argv); dosetopt(optno, action, ...)`.
-            // C maps the char through `optletters[]` (Src/options.c) to
-            // an OPT_* number, then writes the action bit.
-            //
-            // NOT PORTED here: the chars bin_emulate cares about (`L`,
-            // `R`, `l`) are extracted into `ops` by the dispatcher BEFORE
-            // bin_emulate runs (via the optstr declared at
-            // Src/builtin.c:99 for the emulate builtin). The Rust port's
-            // builtin dispatcher does the same — see `opt_l`, `opt_l_arg`,
-            // `opt_r` reads at the top of this function. So by the time
-            // parseopts runs, single-char options have already been
-            // consumed and `argv[1..]` contains only the long-form
-            // `-o NAME` / `--NAME` shapes that this loop handles.
-            // Unknown single-char chars are silently skipped (matching
-            // what the dispatcher would have flagged as a parse error
-            // before bin_emulate ran).
-            let _ = ch;
+            if ch == 'o' {
+                // c:Src/init.c:496-501 — `-o NAME` / `+o NAME`: NAME is the
+                // rest of this word, else the next word.
+                let name = if j + 1 < bytes.len() {
+                    bytes[j + 1..].iter().collect::<String>()
+                } else {
+                    if i + 1 >= argv.len() {
+                        zwarnnam(nam, "string expected after -o"); // c:499
+                        return parse_fail(); // c:500
+                    }
+                    consumed_next_arg = true;
+                    argv[i + 1].clone()
+                };
+                // c:506-518. optlookup resolves the `no`/`no_` negation
+                // prefix (a NEGATIVE optno) and dosetopt inverts it and runs
+                // the option's side effects.
+                let optno = crate::ported::options::optlookup(&name);
+                if optno == 0 {
+                    zwarnnam(nam, &format!("no such option: {}", name)); // c:507
+                    return parse_fail(); // c:508
+                } else if optno == crate::ported::zsh_h::EMACSMODE || optno == crate::ported::zsh_h::VIMODE {
+                    zwarnnam(nam, &format!("can't change option: {}", name)); // c:510
+                } else if crate::ported::options::dosetopt(optno, action as i32, 0) != 0 {
+                    zwarnnam(nam, &format!("can't change option: {}", name)); // c:514
+                } else {
+                    // c:515-516 — parseopts_insert(optlist, new_opts, optno)
+                    let canon = crate::ported::zsh_h::opt_name(optno.abs()).to_string();
+                    let effective_on = if optno < 0 { !action } else { action };
+                    optlist.push((canon, effective_on));
+                }
+                break; // c:519
+            }
+            if ch.is_ascii_whitespace() {
+                // c:Src/init.c:520-527 — trailing blanks are allowed, any
+                // other character after one is a bad option string.
+                if bytes[j + 1..].iter().any(|c| !c.is_ascii_whitespace()) {
+                    zwarnnam(nam, &format!("bad option string: '{}'", arg)); // c:525
+                    return parse_fail(); // c:526
+                }
+                break; // c:528
+            }
+            // c:Src/init.c:529-545 — a single option letter.
+            let optno = optlookupc_pre(ch);
+            if optno == 0 {
+                zwarnnam(nam, &format!("bad option: -{}", ch)); // c:535
+                return parse_fail(); // c:536
+            } else if optno == crate::ported::zsh_h::EMACSMODE || optno == crate::ported::zsh_h::VIMODE {
+                let rest: String = bytes[j..].iter().collect();
+                zwarnnam(nam, &format!("can't change option: {}", rest)); // c:539
+            } else if crate::ported::options::dosetopt(optno, action as i32, 0) != 0 {
+                zwarnnam(nam, &format!("can't change option: -{}", ch)); // c:543
+            } else {
+                // c:544-545 — parseopts_insert(optlist, new_opts, optno)
+                let canon = crate::ported::zsh_h::opt_name(optno.abs()).to_string();
+                let effective_on = if optno < 0 { !action } else { action };
+                optlist.push((canon, effective_on));
+            }
             j += 1;
         }
         i += 1;
@@ -15181,8 +15200,8 @@ pub fn bin_emulate(
     // *argv);`. Anything left after the option-parse loop is unknown.
     // zinit's `emulate -LR zsh -o extendedglob` exhausts argv, so this
     // arm doesn't fire — but mirror the C behavior for other callers.
-    if i < argv.len() && !optionbreak {
-        zwarnnam(nam, &format!("unknown argument: {}", argv[i]));
+    if i < argv.len() {
+        zwarnnam(nam, &format!("unknown argument {}", argv[i])); // c:6314
         // c:6315 `goto restore` — C's LIVE opts were never touched on
         // this path (parseopts wrote the local new_opts); the Rust
         // loop wrote live state, so roll back the snapshot to match.
