@@ -551,7 +551,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Option<Vec<String>> {
         let path_meta = unmeta(&s); // c:4741 unmeta(s)
         let cpath = match std::ffi::CString::new(path_meta.as_bytes()) {
             Ok(c) => c,
-            Err(_) => return Vec::new(),
+            Err(_) => return Some(Vec::new()),
         };
         let stream = unsafe {
             libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) // c:4741
