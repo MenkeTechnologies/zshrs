@@ -1058,6 +1058,47 @@ pub(crate) fn try_run_registered_builtin(name: &str, argv: &[String]) -> Option<
     Some(s)
 }
 
+/// `command -v` / `command -V`: c:Src/exec.c:3149-3157 — `pushnode(preargs,
+/// "command"); hn = &commandbn.node; is_builtin = 1;`, i.e. bin_whence with
+/// the BIN_COMMAND funcid. `post` is the flag words then the names; `dash_p`
+/// says a `-p` was among the flags.
+fn command_whence(post: &[String], dash_p: bool) -> i32 {
+    let mut ops = options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    let mut name_pos = 0usize;
+    let mut flag_byte = b'v';
+    for (i, a) in post.iter().enumerate() {
+        if a.starts_with('-') && a.len() >= 2 {
+            let body = &a.as_bytes()[1..];
+            if body.contains(&b'V') {
+                flag_byte = b'V';
+            }
+            name_pos = i + 1;
+        } else {
+            name_pos = i;
+            break;
+        }
+    }
+    ops.ind[flag_byte as usize] = 1;
+    // c:Src/builtin.c:4157 + c:4165-4167 — bin_whence reads `-p` off
+    // `ops` twice: to prefer a builtin over an external for
+    // `command -p[vV]`, and as `findcmd`'s `default_path` argument.
+    if dash_p {
+        ops.ind[b'p' as usize] = 1;
+    }
+    let whence_args: Vec<String> = post[name_pos..].to_vec();
+    crate::ported::builtin::bin_whence(
+        "command",
+        &whence_args,
+        &ops,
+        crate::ported::hashtable_h::BIN_COMMAND,
+    )
+}
+
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native p10k engine intercept (src/extensions/p10k): sourcing
@@ -2861,44 +2902,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(words_errflag_status());
         }
         if dispatch.has_command_vv {
-            // `-v` / `-V` → bin_whence with BIN_COMMAND funcid.
-            let mut ops = options {
-                ind: [0u8; MAX_OPS],
-                args: Vec::new(),
-                argscount: 0,
-                argsalloc: 0,
-            };
-            let mut name_pos = 0usize;
-            let mut flag_byte = b'v';
-            for (i, a) in post.iter().enumerate() {
-                if a.starts_with('-') && a.len() >= 2 {
-                    let body = &a.as_bytes()[1..];
-                    if body.contains(&b'V') {
-                        flag_byte = b'V';
-                    }
-                    name_pos = i + 1;
-                } else {
-                    name_pos = i;
-                    break;
-                }
-            }
-            ops.ind[flag_byte as usize] = 1;
-            // c:Src/builtin.c:4157 + c:4165-4167 — bin_whence reads `-p` off
-            // `ops` twice: to prefer a builtin over an external for
-            // `command -p[vV]`, and as `findcmd`'s `default_path` argument.
-            // `p` was consumed above (it never reaches `post`), so re-raise it
-            // here; without it `command -pv` reported the `$PATH` hit instead
-            // of the DEFAULT_PATH one.
-            if dash_p {
-                ops.ind[b'p' as usize] = 1;
-            }
-            let whence_args: Vec<String> = post[name_pos..].to_vec();
-            return Value::Status(crate::ported::builtin::bin_whence(
-                "command",
-                &whence_args,
-                &ops,
-                crate::ported::hashtable_h::BIN_COMMAND,
-            ));
+            return Value::Status(command_whence(post, dash_p));
         }
         if dispatch.is_empty_command {
             return Value::Status(0);
@@ -3000,106 +3004,56 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // ported minimally; advanced redirect-only `exec >file` is handled
     // upstream by compile_zsh and never reaches this handler.
     vm.register_builtin(BUILTIN_EXEC, |vm, argc| {
-        let mut args = pop_args(vm, argc);
-        let mut argv0_override: Option<String> = None;
-        let mut clean_env = false;
-        let mut login = false;
-        let mut i = 0;
-        // c:Src/builtin.c:1075-1080 — track if any flag was consumed.
-        // `exec -c`, `exec -l`, `exec -a NAME` without a following
-        // command emit "exec requires a command to execute" rc=1.
-        // Bare `exec` (no args at all) is the silent-redirect-apply
-        // form per POSIX.
-        let mut saw_flag = false;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" {
-                args.remove(i);
-                break;
-            }
-            // c:Src/builtin.c:42 `BIN_PREFIX("-", BINF_DASH)`. A bare
-            // `-` is its own BINF_PREFIX builtin (BINF_DASH flag —
-            // "login shell, prepend `-` to argv[0]"). In the canonical
-            // precmd-walk at Src/exec.c:3056-3091 a bare `-` after
-            // `exec` is recognized AS a builtin and stripped from
-            // preargs (precmd_skip++), accumulating BINF_DASH into
-            // cflags. The fast-path here bypasses execcmd_compile_head,
-            // so we mirror the strip locally: bare `-` → set login,
-            // remove, continue. Without this `exec -` (with no command
-            // following) tried to exec `-` as a literal command and
-            // exited the shell. Bug #252.
-            if a == "-" {
-                saw_flag = true;
-                login = true;
-                args.remove(i);
-                continue;
-            }
-            if !a.starts_with('-') || a.len() < 2 {
-                break;
-            }
-            match a.as_str() {
-                // c:Src/exec.c:3268-3273 — the exec flag word is scanned
-                // CHARACTER by character (`for (cmdopt = &argdata[1];
-                // *cmdopt; ++cmdopt)`), and `case 'a'` takes the REST OF
-                // THE SAME WORD when there is one:
-                //     if (cmdopt[1]) { exec_argv0 = cmdopt+1;
-                //                      cmdopt += strlen(cmdopt+1); }
-                // Matching whole words only left `exec -a/bin/SPLOOSH
-                // /bin/sh -c '…'` (A01grammar.ztst:135) treating the flag
-                // word itself as the command name.
-                inline_a if inline_a.starts_with("-a") && inline_a.len() > 2 => {
-                    saw_flag = true;
-                    argv0_override = Some(inline_a[2..].to_string()); // c:3269
-                    args.remove(i);
-                }
-                "-a" => {
-                    saw_flag = true;
-                    args.remove(i);
-                    if i < args.len() {
-                        argv0_override = Some(args.remove(i));
-                    }
-                }
-                "-c" => {
-                    saw_flag = true;
-                    clean_env = true;
-                    args.remove(i);
-                }
-                "-l" => {
-                    saw_flag = true;
-                    login = true;
-                    args.remove(i);
-                }
-                _ => {
-                    // c:Src/exec.c:3196-3208 — when an unrecognized
-                    // `-X`-style arg has NO following arg, the lexer's
-                    // IS_DASH walk hits the "no next node" branch at
-                    // c:3199 before the unknown-flag-letter switch at
-                    // c:3249, so the canonical message is "exec
-                    // requires a command to execute" rc=1 (verified vs
-                    // `/opt/homebrew/bin/zsh -fc 'exec --bad'`).
-                    // Consume the lone flag so the post-loop check
-                    // fires. When a following arg exists, leave the
-                    // unknown-flag arg in place — that arg becomes
-                    // the command name and execution proceeds.
-                    if args.len() == 1 {
-                        saw_flag = true;
-                        args.remove(i);
-                        continue;
-                    }
-                    break;
-                }
-            }
+        let args = pop_args(vm, argc);
+        // c:Src/exec.c:3029-3278 — the precommand walk, `exec` included:
+        // its options (c:3178-3274, `-a`/`-c`/`-l` and the "exec requires
+        // a command to execute" / "unknown exec flag" errors), then any
+        // further BINF_PREFIX word (`command`, `builtin`, `exec`, `-`) whose
+        // flags join cflags with BINF_EXEC still set (c:3116-3118). So
+        // `exec command X` runs the external X in the shell's place and
+        // `exec builtin X` the builtin. Under POSIX_BUILTINS the walk stops
+        // after `exec`'s options (c:3098-3103): the name is a command.
+        let mut full = Vec::with_capacity(args.len() + 1);
+        full.push("exec".to_string());
+        full.extend(args);
+        let walk = crate::ported::exec::execcmd_compile_head(&full, crate::ported::zsh_h::WC_SIMPLE);
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            vm.last_status = 1; // c:3205 `lastval = 1;`
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(1); // c:3203-3207 / c:3230-3234 / c:3249-3256 `goto done`
         }
-        let Some(cmd) = args.first().cloned() else {
-            if saw_flag {
-                // c:Src/builtin.c:1078-1080 — flags consumed but no
-                // command follows → "exec requires a command to
-                // execute" rc=1.
-                eprintln!("zshrs:1: exec requires a command to execute");
-                return Value::Status(1);
-            }
-            // `exec` with no command + no redirects = no-op success.
+        if walk.has_command_vv {
+            // c:3149-3157 — whence, then the exec'd shell is gone.
+            let post = &walk.preargs[walk.precmd_skip..];
+            let dash_p = post.iter().take_while(|a| a.starts_with('-')).any(|a| a.contains('p'));
+            let status = command_whence(post, dash_p);
+            let _ = std::io::stdout().flush();
+            std::process::exit(status);
+        }
+        if walk.is_empty_command {
+            // `exec` with no command + no redirects = no-op success
+            // (c:3365-3406; the redirect-only form never reaches here).
             return Value::Status(0);
+        }
+        let args: Vec<String> = walk.preargs[walk.precmd_skip..].to_vec();
+        let cmd = args[0].clone();
+        if (walk.cflags & crate::ported::zsh_h::BINF_BUILTIN) != 0 && !walk.is_builtin {
+            // c:3490-3492 — `zwarn("no such builtin: %s", cmdarg); lastval = 1;`
+            crate::ported::utils::zwarn(&format!("no such builtin: {}", cmd));
+            return Value::Status(1);
+        }
+        let login = (walk.cflags & crate::ported::zsh_h::BINF_DASH) != 0; // c:3246
+        let clean_env = (walk.cflags & crate::ported::zsh_h::BINF_CLEARENV) != 0; // c:3243
+        let argv0_override = walk.exec_argv0.clone(); // c:3263-3274
+        // c:4369 — `execute(args, cflags, use_defpath)`: `exec command -p X`.
+        let use_defpath = walk.use_defpath;
+        let prog = if use_defpath && !cmd.contains('/') {
+            crate::ported::exec::search_defpath(&cmd, libc::PATH_MAX as usize).unwrap_or_else(|| cmd.clone())
+        } else {
+            cmd.clone()
         };
         let rest: Vec<String> = args[1..].to_vec();
         let display_argv0 = match argv0_override {
@@ -3147,10 +3101,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (cflags & BINF_EXEC)) break;` "POSIX doesn't allow "exec" to
         // operate on builtins or shell functions": the walk stops before
         // the shfunctab and builtintab lookups, so the name is searched
-        // as an external command.
-        let posix_exec = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS);
-        let has_user_fn =
-            !posix_exec && with_executor(|exec| exec.functions_compiled.contains_key(&cmd));
+        // as an external command. A walked chain has already resolved the
+        // head (c:3104-3108 skips functions after `builtin` / `command`).
+        let has_user_fn = walk.is_shfunc; // c:3104-3108
         if has_user_fn {
             let status =
                 with_executor(|exec| exec.dispatch_function_call(&cmd, &rest).unwrap_or(127));
@@ -3170,8 +3123,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // c:Src/exec.c — builtin path: `exec builtin` runs the
         // builtin in-process and exits.
-        let bn_in_tab =
-            !posix_exec && crate::ported::builtin::createbuiltintable().contains_key(&cmd); // c:3098-3103
+        let bn_in_tab = walk.is_builtin; // c:3120-3129
         if bn_in_tab {
             let status = dispatch_builtin_raw(&cmd, rest.clone());
             let in_subshell_now = with_executor(|exec| !exec.subshell_snapshots.is_empty());
@@ -3200,7 +3152,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if in_subshell {
             // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
             crate::lowfd::cloexec_internal_fds();
-            let mut command = std::process::Command::new(&cmd);
+            let mut command = std::process::Command::new(&prog);
             command.arg0(&display_argv0);
             command.args(&rest);
             if clean_env {
@@ -3296,7 +3248,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::params::setiparam("SHLVL", cur - 1); // c:4336
             crate::ported::params::addenv("SHLVL", &(cur - 1).to_string()); // c:2672
         }
-        let mut command = std::process::Command::new(&cmd);
+        let mut command = std::process::Command::new(&prog);
         command.arg0(&display_argv0);
         command.args(&rest);
         if clean_env {

@@ -1162,6 +1162,11 @@ pub struct execcmd_dispatch {
     /// BINF_COMMAND)` sub-case at `c:3365-3371` (bare `command`
     /// returns 0 without complaining about missing redirs).
     pub is_empty_command: bool,
+    /// `preargs` as the walk left it (the c:3086 / c:3165 / c:3177 /
+    /// c:3209 / c:3239 `uremnode`s): the command words are
+    /// `preargs[precmd_skip..]`, with `command -p` / `--` and the `exec`
+    /// option words already removed.
+    pub preargs: Vec<String>,
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -1257,6 +1262,14 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
             // typeset family. The static `BUILTINS` array doesn't
             // expose a separate disabled-bit lookup; one path covers
             // both. Effect is identical for the precmd-modifier walk.
+
+            // c:3098-3103 — `} else if (isset(POSIXBUILTINS) && (cflags &
+            // BINF_EXEC)) { /* POSIX doesn't allow "exec" to operate on
+            // builtins or shell functions. */ break; }`
+            let typeset_hit = type_ == WC_TYPESET && BUILTINS.iter().any(|b| b.node.nam == cmdarg); // c:3088-3089
+            if !typeset_hit && isset(POSIXBUILTINS) && (cflags & BINF_EXEC) != 0 {
+                break; // c:3103
+            }
 
             // c:3050-3052 — `if (!(cflags & (BINF_BUILTIN |
             // BINF_COMMAND)) && shfunctab->getnode(...))` — shell
@@ -1459,6 +1472,15 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
                                 } else {
                                     // c:3220 — `-a NAME` separate form.
                                     if argnode >= preargs.len() {
+                                        // c:3274-3279 — `if (!argnode)`.
+                                        zerr("exec requires a command to execute");
+                                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                                        error_done = true;
+                                        break;
+                                    }
+                                    // c:3280-3283 — `if (!nextnode(argnode))`:
+                                    // the NAME must still leave a command.
+                                    if argnode + 1 >= preargs.len() {
                                         // c:3230
                                         zerr(
                                             // c:3231
@@ -1516,6 +1538,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
                         has_command_vv,
                         exec_argv0,
                         is_empty_command: false,
+                        preargs,
                     };
                 }
             }
@@ -1579,6 +1602,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
         has_command_vv,
         exec_argv0,
         is_empty_command,
+        preargs,
     }
 }
 

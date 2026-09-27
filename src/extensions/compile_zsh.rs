@@ -2784,6 +2784,36 @@ impl ZshCompiler {
         // `noglob` and recursively compile the rest with a runtime
         // option-toggle wrapper.
         let untoked_first0 = crate::lex::untokenize(&simple.words[0]);
+        // c:Src/exec.c:3116-3118 + c:3754 — cflags accumulates over the
+        // whole precommand walk and `esglob = !(cflags & BINF_NOGLOB)` is
+        // read only after it, so a `noglob` anywhere in the chain
+        // (`exec noglob cmd *`, `exec -c noglob …`) suppresses globbing
+        // just as a leading one does. Hoist it to the front.
+        if untoked_first0 == "exec" {
+            let mut i = 1;
+            while i < simple.words.len() {
+                let w = crate::lex::untokenize(&simple.words[i]);
+                match w.as_str() {
+                    "noglob" => {
+                        let mut words = simple.words.clone();
+                        let ng = words.remove(i);
+                        words.insert(0, ng);
+                        let hoisted = ZshSimple {
+                            assigns: simple.assigns.clone(),
+                            words,
+                            redirs: simple.redirs.clone(),
+                            typeset_reswd: simple.typeset_reswd,
+                        };
+                        return self.compile_simple(&hoisted);
+                    }
+                    "exec" | "command" | "builtin" | "-" => {}
+                    "-a" => i += 1, // c:3220-3239 — the ARGV0 word
+                    _ if w.len() >= 2 && w.starts_with('-') => {} // c:3196 / c:3107 option words
+                    _ => break,
+                }
+                i += 1;
+            }
+        }
         if untoked_first0 == "noglob" && simple.words.len() > 1 {
             let inner = ZshSimple {
                 assigns: simple.assigns.clone(),

@@ -832,3 +832,45 @@ mod cmdoutval_leftover {
         assert_parity(r#"typeset -a a; a[$(exit 2)1]=1; echo $?"#);
     }
 }
+
+/// c:Src/exec.c:3029-3278 — `exec` is one step of the precommand walk: its
+/// options, then further BINF_PREFIX words whose flags join cflags with
+/// BINF_EXEC still set, and a `noglob` anywhere in the chain (c:3754).
+mod exec_precommand_chain {
+    use super::*;
+
+    #[test]
+    fn exec_then_another_modifier() {
+        assert_parity(r#"exec command sh -c 'echo x'"#);
+        assert_parity(r#"echo() { print fn }; exec command echo x; print after"#);
+        assert_parity(r#"echo() { print fn }; exec builtin echo x; print after"#);
+        assert_parity(r#"f() { print fn }; exec command f 2>&1; print after"#);
+        assert_parity(r#"exec - command sh -c 'echo $0'"#);
+        assert_parity(r#"exec -a foo command sh -c 'echo $0'"#);
+        assert_parity(r#"exec command -p sh -c 'echo ok'"#);
+        assert_parity(r#"exec command -v sh; print after"#);
+        assert_parity(r#"exec exec sh -c 'echo nested'"#);
+    }
+
+    #[test]
+    fn exec_builtin_without_a_builtin_warns_and_continues() {
+        assert_parity(r#"exec builtin nosuch x; print after $?"#);
+        assert_parity(r#"exec builtin; print after $?; exec command; print after $?"#);
+    }
+
+    #[test]
+    fn noglob_later_in_the_chain() {
+        assert_parity(r#"exec noglob sh -c 'echo "$1"' sh *"#);
+        assert_parity(r#"exec -l noglob sh -c 'echo "$1"' sh *"#);
+    }
+
+    /// c:3274-3288 — `-a` needs a NAME and a command after it; option
+    /// errors set errflag, ending the script with status 1.
+    #[test]
+    fn exec_option_errors() {
+        assert_parity(r#"exec -a foo; print notreached"#);
+        assert_parity(r#"exec -a; print notreached"#);
+        assert_parity(r#"exec -x ls; print notreached"#);
+        assert_parity(r#"exec -c; print notreached"#);
+    }
+}
