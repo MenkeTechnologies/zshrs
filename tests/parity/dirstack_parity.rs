@@ -250,3 +250,23 @@ mod cd_error_errno {
         );
     }
 }
+
+/// c:Src/builtin.c:1190-1199 — `cd +N`/`-N` only removes the target node;
+/// rolllist is BIN_PUSHD's. With AUTO_PUSHD the old pwd (pushed at c:849)
+/// stays on top; without it `getlinknode` drops the front node, which for
+/// `cd +0` is the entry below pwd. The port rotated the stack like pushd
+/// under AUTO_PUSHD and kept everything for `cd +0`.
+mod cd_stack_index {
+    use super::*;
+
+    #[test]
+    fn cd_index_with_and_without_autopushd() {
+        for opt in ["autopushd", "noautopushd"] {
+            for n in ["+0", "+1", "+2", "-1", "-2"] {
+                assert_parity(&format!(
+                    "d=$(mktemp -d); cd $d; mkdir a b c; setopt {opt}; pushd -q a; pushd -q ../b; pushd -q ../c; cd {n}; print ${{PWD#$d}} ${{dirstack#$d}}; cd /; command rm -rf $d"
+                ));
+            }
+        }
+    }
+}

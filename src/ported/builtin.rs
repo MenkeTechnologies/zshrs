@@ -1952,7 +1952,7 @@ pub fn bin_cd(
             && (argv[0].starts_with('+') || argv[0].starts_with('-'))
             && argv[0][1..].chars().all(|c| c.is_ascii_digit());
         if let Ok(mut d) = DIRSTACK.lock() {
-            if is_stack_rotate && (func == BIN_PUSHD || (func == BIN_CD && autopushd)) {
+            if is_stack_rotate && func == BIN_PUSHD {
                 // c:1190 — rolllist(dirstack, dir) + remnode. Rotate the
                 // virtual full stack `[pre_pwd] ++ DIRSTACK_old` so the
                 // target entry becomes firstnode (= new PWD); remaining
@@ -1973,16 +1973,29 @@ pub fn bin_cd(
                     d.extend(rotated.into_iter().skip(1));
                 }
             } else if is_stack_rotate && func == BIN_CD {
-                // c:1192 — remnode(dirstack, dir) for non-PUSHD CD with
-                //          +N/-N: target removed from dirstack, no rolllist.
+                // c:1190-1199 — `cd +N`/`-N` never rolls the list (rolllist
+                //   is BIN_PUSHD only). On the C stack `[pwd] ++ DIRSTACK`
+                //   (pwd pushed at c:849) it does `remnode(dirstack, dir)` on
+                //   the target, then without AUTO_PUSHD
+                //   `zsfree(getlinknode(dirstack))` drops the new front node.
+                //   So with AUTO_PUSHD the old pwd stays on top of the rest in
+                //   order; without it the old pwd goes, and for `cd +0` (the
+                //   target WAS the pushed pwd) the front entry below it goes.
                 let dd: usize = argv[0][1..].parse().unwrap_or(0);
                 let pushdminus = isset(PUSHDMINUS);
                 let from_top = (argv[0].starts_with('+')) ^ pushdminus;
                 let m = d.len();
                 let n = m + 1;
                 let k = if from_top { dd } else { n - 1 - dd };
-                if k >= 1 && k - 1 < d.len() {
-                    d.remove(k - 1);
+                if k == 0 {
+                    if !autopushd && !d.is_empty() {
+                        d.remove(0); // c:1199 getlinknode
+                    }
+                } else if k - 1 < d.len() {
+                    d.remove(k - 1); // c:1195 remnode(dirstack, dir)
+                    if autopushd {
+                        d.insert(0, pre_pwd.clone()); // c:849 pushed pwd kept
+                    }
                 }
             } else if is_stack_rotate && func == BIN_POPD {
                 // c:Src/builtin.c:872-936 + c:1197-1199 — `popd +N` /
