@@ -238,3 +238,14 @@ mod real_lexer_token_shapes {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// c:Src/hist.c:3544-3558 — bufferwords strips the space it appended to
+/// the buffer only when the lexer READ PAST it (`ingetptr() ==
+/// addedspaceptr + 1`). A word ending in an escaped space is terminated by
+/// that added space, which the lexer gives back, so it is still unread and
+/// the word keeps its `\ `. zshrs's pushback lives outside `inbuf`, so the
+/// test saw an exhausted buffer and dropped the escaped space.
+#[test]
+fn a_word_ending_in_an_escaped_space_keeps_it() {
+    assert_same_words(&["a\\ ", "echo a\\ ", "x\\  y\\ ", "a\\\t"]);
+}

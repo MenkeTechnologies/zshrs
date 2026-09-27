@@ -5168,7 +5168,17 @@ pub fn bufferwords(buf: &str, cursor: Option<usize>, flags: i32) -> (Vec<String>
                 // c:3543 `untokenize(p);` — every token back to its source char.
                 let mut w = untokenize_ztokens(&raw);
                 // c:3544-3558 — read past the added space: drop it again.
-                if crate::ported::input::ingetptr().is_empty() && w.ends_with(' ') {
+                // `ingetptr() == addedspaceptr + 1` holds only when the
+                // added space was CONSUMED. C's `hungetc` returns a
+                // word-terminating space to `inbuf`, so an un-got space
+                // leaves `ingetptr()` at `addedspaceptr`; this port queues it
+                // in `LEX_UNGET_BUF` instead, so a pending pushback means the
+                // space is still unread. Without that, `a\ ` lost its
+                // escaped space: the terminator was the added one, un-got.
+                if crate::ported::input::ingetptr().is_empty()
+                    && crate::ported::lex::LEX_UNGET_BUF.with_borrow(|b| b.is_empty())
+                    && w.ends_with(' ')
+                {
                     w.pop();
                 }
                 list.push(w); // c:3559
