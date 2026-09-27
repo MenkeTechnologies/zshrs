@@ -64,6 +64,18 @@ exclude = [
     "/zterm_columns",
     "/.module_audit.md",
     "/TODO.md",
+    # zsh's upstream completion sources kept beside their Rust ports under
+    # src/compsys/ported (991 files, `_git`, `_gcc`, `compinstall`, ...),
+    # dropped from the PUBLISHED crate only -- 0.12.65 packaged at
+    # 10.10 MiB against crates.io's 10 MiB ceiling. They are porting
+    # reference: no build step and no `include_str!` reads them (the
+    # package verify build succeeds without them), and the function tree
+    # the binary bundles comes from vendor/zsh/functions. Only the `.rs`
+    # ports and their directories are re-included. A git or Homebrew build
+    # still has them.
+    "/src/compsys/ported/**/*",
+    "!/src/compsys/ported/**/*.rs",
+    "!/src/compsys/ported/**/*/",
 ]
 
 
