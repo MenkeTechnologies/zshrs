@@ -1392,117 +1392,43 @@ pub fn bin_set(
             // c:680-681 — `scanhashtable(paramtab, 1, 0, 0,
             //              paramtab->printnode, hadplus ? PRINT_NAMEONLY : 0);`
             //
-            // C walks the paramtab (sorted=1 → alphabetical). The previous
-            // Rust port walked `std::env::vars()` — the OS environment.
-            // Shell-internal vars (not exported to env) would never appear
-            // in the `set` listing, diverging from C where ALL paramtab
-            // entries are emitted.
+            // Every paramtab node goes through printnode (printparamnode),
+            // sorted by name. printparamnode owns the whole format: arrays
+            // as `name=( a b )`, assocs as `name=( [k]=v )`, PM_HIDEVAL
+            // specials (`commands`, `functions`, ...) as the bare name, and
+            // name quoting (`'$'`, `'#'`). The previous port printed every
+            // node as a joined scalar `name='a b'`.
             //
-            // Same family of bug as the prior bin_unset -m fix.
-            //
-            // c:Src/builtins.c::printparamnode — dispatches the value
-            // read through the param's gsu_s.getfn rather than reading
-            // `pm.u_str` directly. Special params like `!`, `$`, `#`,
-            // `-`, `0`, `?` have empty `u_str` slots because their live
-            // value lives behind getfn (libc syscall, LASTVAL, pparams
-            // count, etc.). Bug #463: zshrs read u_str directly so the
-            // dump showed `!=''`, `$=''` etc. instead of the actual
-            // values. Route through `getsparam` so the canonical
-            // special-param dispatch (lookup_special_var → getfn shim)
-            // fires.
-            let names: Vec<String> = {
+            // Clone the nodes first: printparamnode reads paramtab (tied
+            // peers, getfn dispatch) and must not run under the guard.
+            let mut nodes: Vec<crate::ported::zsh_h::param> = {
                 let tab = paramtab().read().unwrap();
-                tab.iter()
-                    .filter(|(_, pm)| (pm.node.flags as u32 & PM_UNSET) == 0)
-                    .map(|(k, _)| k.clone())
-                    .collect()
+                tab.values().map(|pm| (**pm).clone()).collect()
             };
-            let mut entries: Vec<(String, String)> = names
-                .into_iter()
-                .map(|k| {
-                    let v = crate::ported::params::getsparam(&k).unwrap_or_default();
-                    (k, v)
-                })
-                .collect();
-            // c:680 sorted=1 → meta-aware sort via hnamcmp (already fixed
-            // to use ztrcmp earlier in the series).
-            entries.sort_by(|a, b| hnamcmp(&a.0, &b.0));
-            for (k, v) in entries {
-                // c:Src/params.c::printparamnode — single-char names
-                // that double as shell metacharacters (`#` comment,
-                // `$` substitution, `*` glob, `?` glob, `@` splat)
-                // are wrapped in single quotes so the output
-                // round-trips through the shell parser. Other
-                // single-char specials (`!`, `-`, `0`) appear bare
-                // because they're unambiguous in name position.
-                // Verified against /opt/homebrew/bin/zsh `set` output.
-                let needs_quote_name = matches!(k.as_str(), "#" | "$" | "*" | "?" | "@");
-                let kq: String = if needs_quote_name {
-                    format!("'{}'", k)
-                } else {
-                    k.clone()
-                };
-                if hadplus {
-                    // c:681 PRINT_NAMEONLY
-                    println!("{}", kq);
-                } else if matches!(k.as_str(), "*" | "@" | "argv") {
-                    // c:Src/params.c — `*` / `@` / `argv` are array-
-                    // shaped (positional params); print as `( e1 e2 …)`
-                    // mirroring zsh's array form so `set` output
-                    // round-trips. Without this special-case, zshrs
-                    // showed `'*'='1 2'` (joined scalar) instead of
-                    // zsh's `'*'=( 1 2 )` (array splat).
-                    let pp = PPARAMS.lock().ok();
-                    let elems: Vec<String> = pp
-                        .as_ref()
-                        .map(|p| p.iter().cloned().collect())
-                        .unwrap_or_default();
-                    let body: String = elems
-                        .iter()
-                        .map(|e| quotedzputs(e))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if elems.is_empty() {
-                        println!("{}=(  )", kq);
-                    } else {
-                        println!("{}=( {} )", kq, body);
-                    }
-                } else {
-                    println!("{}={}", kq, quotedzputs(&v));
-                }
+            nodes.sort_by(|a, b| hnamcmp(&a.node.nam, &b.node.nam)); // c:680 sorted=1
+            let printflags = if hadplus { PRINT_NAMEONLY } else { 0 }; // c:681
+            for mut pm in nodes {
+                printparamnode(&mut pm, printflags); // c:680 printnode
             }
         }
         if array != 0 {
             // c:684
             // c:685-687 — `scanhashtable(paramtab, 1, PM_ARRAY, 0,
             //              paramtab->printnode, hadplus ? PRINT_NAMEONLY : 0)`.
-            // Walk paramtab filtering by PM_ARRAY and emit each as
-            // `name=(elem1 elem2 ...)`. Previous Rust port stubbed
-            // this body with a "nothing to enumerate" comment — but
-            // paramtab does store arrays in `u_arr`, so `set -A` (no
-            // name) MUST list every PM_ARRAY entry. Sorted via
-            // hnamcmp (meta-aware compare) per `sorted=1` in the C
-            // scanhashtable call.
-            let mut arr_entries: Vec<(String, Vec<String>)> = {
-                use {PM_ARRAY, PM_TYPE};
+            // scanhashtable keeps a node when `hn->flags & flags1`
+            // (c:Src/hashtable.c:353), sorted by name; the
+            // format is printparamnode's (`name=( a 'b c' )`).
+            let mut nodes: Vec<crate::ported::zsh_h::param> = {
                 let tab = paramtab().read().unwrap();
-                tab.iter()
-                    .filter(|(_, pm)| {
-                        PM_TYPE(pm.node.flags as u32) == PM_ARRAY
-                            && (pm.node.flags as u32 & PM_UNSET) == 0
-                    })
-                    .map(|(k, pm)| (k.clone(), pm.u_arr.clone().unwrap_or_default()))
+                tab.values()
+                    .filter(|pm| (pm.node.flags as u32 & PM_ARRAY) != 0)
+                    .map(|pm| (**pm).clone())
                     .collect()
             };
-            arr_entries.sort_by(|a, b| hnamcmp(&a.0, &b.0)); // c:685 sorted=1
-            for (k, arr) in arr_entries {
-                if hadplus {
-                    // c:686 PRINT_NAMEONLY
-                    println!("{}", k);
-                } else {
-                    let quoted: Vec<String> = arr.iter().map(|v| quotedzputs(v)).collect();
-                    println!("{}=({})", k, quoted.join(" "));
-                }
+            nodes.sort_by(|a, b| hnamcmp(&a.node.nam, &b.node.nam)); // c:685 sorted=1
+            let printflags = if hadplus { PRINT_NAMEONLY } else { 0 }; // c:686
+            for mut pm in nodes {
+                printparamnode(&mut pm, printflags); // c:685 printnode
             }
         }
         if remaining.is_empty() && !hadend {

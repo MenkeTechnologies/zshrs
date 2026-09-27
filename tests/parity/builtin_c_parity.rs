@@ -1748,3 +1748,22 @@ mod env_command_exit_status {
         assert_parity(r#"env /bin/sh -c 'echo hi'; echo rc=$?; env >/dev/null; echo rc=$?"#);
     }
 }
+
+/// c:Src/builtin.c:680-687 — bare `set` and `set -A` list parameters through
+/// `paramtab->printnode` (printparamnode), so arrays print as `name=( a 'b c' )`,
+/// assocs as `name=( [k]=v )`. The port printed every value as a joined scalar.
+mod set_listing_format {
+    use super::*;
+
+    #[test]
+    fn set_lists_arrays_and_assocs_in_printnode_form() {
+        assert_parity(
+            r#"a=1 b=(x 'y z') c=(); typeset -A h; h=('k k' 'v v'); set | grep -E '^(a|b|c|h)='"#,
+        );
+    }
+
+    #[test]
+    fn set_capital_a_lists_arrays() {
+        assert_parity(r#"b=(x 'y z') c=(); set -A | grep -E '^(b|c)='; set +A | grep -E '^(b|c)$'"#);
+    }
+}
