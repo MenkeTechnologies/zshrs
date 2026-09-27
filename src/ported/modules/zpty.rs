@@ -787,7 +787,13 @@ pub fn ptyread(nam: &str, cmd: &mut ptycmd, args: &[&str], noblock: bool, mustma
         // c:680 — `prog && ret && (matchok = pattry(prog, buf))` early-exit.
         if let Some(ref pp) = prog {
             if ret > 0 {
-                let s = String::from_utf8_lossy(&buf);
+                // `buf` is byte-metafied (c:642-646); the pattern and the parameter
+                // both take the pipeline's char-level form, so unmetafy and
+                // re-encode losslessly rather than lossy-decode the Meta pairs.
+                let mut raw = buf.clone();
+                let n = crate::ported::utils::unmetafy(&mut raw);
+                raw.truncate(n);
+                let s = crate::script_bytes::decode_script_bytes(&raw);
                 if crate::ported::pattern::pattry(pp, &s) {
                     matchok = true;
                     break;
@@ -812,7 +818,10 @@ pub fn ptyread(nam: &str, cmd: &mut ptycmd, args: &[&str], noblock: bool, mustma
     // c:696-701 — output disposition: setsparam(target, buf) or
     // write the unwritten tail to stdout.
     if let Some(target) = setparam_target {
-        let s = String::from_utf8_lossy(&buf).to_string();
+        let mut raw = buf;
+        let n = crate::ported::utils::unmetafy(&mut raw);
+        raw.truncate(n);
+        let s = crate::script_bytes::decode_script_bytes(&raw);
         let _ = crate::ported::params::setsparam(target, &s);
     } else if used > 0 {
         let mut flush = buf;
@@ -919,8 +928,10 @@ pub fn ptywrite(cmd: &mut ptycmd, args: &[&str], nonl: i32) -> i32 {
                        // the inter-arg space write at c:751.
         for (i, a) in args.iter().enumerate() {
             // c:750 — `unmetafy((tmp = dupstring(*args)), &len);`
-            let tmp = crate::ported::utils::unmeta(a);
-            let bytes = tmp.as_bytes();
+            // Byte-exact: a raw byte (`$'\xff'`) must reach the pty as
+            // that byte, not as the lossy U+FFFD a `String` would carry.
+            let tmp = crate::ported::utils::unmetafy_str(a);
+            let bytes = tmp.as_slice();
             // c:751-752 — `if (ptywritestr(cmd, tmp, len) ||
             //                  (*++args && ptywritestr(cmd, &sp, 1)))
             //                  return 1;`

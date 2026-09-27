@@ -7417,15 +7417,17 @@ pub fn metalen(s: &str, len: usize) -> usize {
 /// `unmeta` — see implementation.
 pub fn unmeta(s: &str) -> String {
     // c:4994
-    let bytes = s.as_bytes();
-    // c:4995-4996 — Meta-byte scan; no-copy fast path.
-    if !bytes.iter().any(|&b| b == Meta) {
+    // c:4995-4996 — Meta scan; no-copy fast path. A `&str` carries Meta as
+    // the CHAR U+0083 (the char-level encoding `unmetafy_str` decodes), never
+    // as a lone 0x83 byte: in valid UTF-8 that byte is only ever a
+    // continuation byte (`ホ` is E3 83 9B). Scanning bytes decoded those
+    // continuations as Meta pairs and turned every such character into
+    // U+FFFD before a write or syscall (`zpty -w z ホ`, zsh/files `rm ホ`).
+    if !s.contains(Meta as char) {
         return s.to_string();
     }
-    let mut buf = bytes.to_vec();
-    let len = unmetafy(&mut buf); // c:4999-5001
-    buf.truncate(len);
-    String::from_utf8_lossy(&buf).into_owned()
+    // c:4999-5001 — `if ((*p = *t++) == Meta && *t) *p = *t++ ^ 32;`
+    String::from_utf8_lossy(&unmetafy_str(s)).into_owned()
 }
 
 /// Port of `unmeta_one()` from `Src/utils.c:5058` — C decl `convchar_t unmeta_one(const char *in, int *sz)`.

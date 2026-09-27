@@ -285,3 +285,30 @@ zpty -d w
         r.0
     );
 }
+
+/// c:Src/Modules/zpty.c:766 — `zpty -w` unmetafies each argument and
+/// writes the raw bytes; c:642-646 + c:697 — `zpty -r` metafies what it
+/// reads and stores that string in the parameter. zshrs strings carry Meta
+/// as the CHAR U+0083, never as a lone 0x83 byte, but the write path
+/// unmetafied at the BYTE level, so the UTF-8 continuation byte 0x83 of
+/// `ホ` (e3 83 9b) was taken for Meta and the pty received U+FFFD; the read
+/// path lossy-decoded its metafied buffer the same way.
+#[test]
+fn zpty_moves_bytes_0x83_and_raw_bytes_unchanged() {
+    if !zsh_available() {
+        return;
+    }
+    let script = r#"zmodload zsh/zpty
+zpty w 'stty raw -echo; head -c 5 | od -An -tx1'
+zpty -w -n w ホ$'\xff'x
+zpty -r w l
+print -r -- ${=l}
+zpty r 'print -r -- ホ; sleep 1'
+zpty -r r l
+print -rn -- $l | od -An -tx1
+[[ $l == ホ* ]] && print match"#;
+    let z = run_zsh(script).expect("zsh hung");
+    let r = run_zshrs(script).expect("zshrs hung");
+    assert!(z.0.contains("e3 83 9b ff 78"), "reference zsh: {:?}", z.0);
+    assert_eq!(z, r);
+}
