@@ -4032,7 +4032,23 @@ fn checkalias(lextext: &str) -> bool {
                 let n = pending.chars().count() as i32;
                 crate::ported::input::inbufct.with(|ct| ct.set(ct.get() - n));
             }
-            if !pending.is_empty() {
+            if pending.is_empty() {
+                // nothing queued
+            } else if crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS != 0
+                && !crate::ported::input::lexstop.with(|s| s.get())
+            {
+                // c:Src/input.c:549-557 — the characters were read from the
+                // alias frame still on top (an exhausted frame is popped by
+                // the next read before anything below it is reached), so
+                // C's inungetc backs that frame's pointer up over them.
+                // Layering an INP_CONT frame on top instead made them count
+                // twice when the alias frames unwound (c:Src/input.c:
+                // 751-752): with `alias e='echo a' f='e b'`, `eval
+                // 'echo $(f)'` recorded the substitution as `$()`.
+                for ch in pending.chars().rev() {
+                    crate::ported::input::inungetc(ch);
+                }
+            } else {
                 inpush(&pending, INP_CONT, None);
             }
         }

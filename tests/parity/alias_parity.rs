@@ -470,3 +470,20 @@ mod alias_with_braces_in_cmdsubst {
         );
     }
 }
+
+/// c:Src/input.c:549-557 — the word terminator an inner alias check reads
+/// and gives back returns to the alias frame it came from (inungetc backs
+/// the frame pointer up). zshrs layered a fresh frame on top instead, so
+/// the character was backed out of the raw record twice when the frames
+/// unwound: an alias expanding to another alias inside `$(…)` lost its
+/// name and the substitution ran nothing.
+mod nested_alias_in_cmdsubst {
+    use super::*;
+
+    #[test]
+    fn an_alias_of_an_alias_runs_inside_cmdsubst() {
+        assert_parity("alias e='echo a' f='e b'\neval 'x=$(f); echo $x'");
+        assert_parity("alias e='echo a' f='e b'\neval 'echo \"$(f)\" `f`'");
+        assert_parity("alias e='echo a' f='e b'\neval 'g() { x=$(f) }'; functions g");
+    }
+}
