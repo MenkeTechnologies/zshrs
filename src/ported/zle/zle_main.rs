@@ -2995,7 +2995,7 @@ pub fn finish_(m: *const module) -> i32 {
     // c:2338 — `free_isrch_spots()`.
     free_isrch_spots();
     // c:2342-2346 — kring entries: in Rust the KILLRING is a
-    // `Mutex<VecDeque<Vec<char>>>` owned by the runtime; clearing
+    // `Mutex<VecDeque<cutbuffer>>` owned by the runtime; clearing
     // it drops the entries.
     if let Ok(mut ring) = KILLRING.lock() {
         ring.clear();
@@ -3587,6 +3587,16 @@ pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
     // inserts the PROBE byte: typing `df80` with `f`-prefix bindings
     // inserted `d880` (every f/j replaced by its follower).
     let mut lastc = LASTCHAR.load(SeqCst); // c:1585
+    // c:1586 — `int timeout = 0, csi = 0, oscdcs = 0;`. `csi`/`oscdcs` are
+    // offsets into the METAFIED global keybuf, as in C; `csi_raw` is the
+    // same position in the raw `buf` this walk drives.
+    let mut timeout = false;
+    let mut csi: usize = 0;
+    let mut csi_raw: usize = 0;
+    let mut oscdcs: usize = 0;
+    let mut oscdcs_raw: usize = 0;
+    // c:1585 `lastlen` in METAFIED bytes, for the CSI test at c:1656-1657.
+    let mut lastlen_meta: usize = 0;
 
     // c:zle_keymap.c:1588-1589 — `keybuflen = 0; keybuf[0] = 0;` —
     // reset the GLOBAL keybuf at sequence start. The local `buf`
@@ -3602,9 +3612,9 @@ pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
     crate::ported::zle::zle_keymap::keybuflen.store(0, SeqCst); // c:1588
 
     loop {
-        // Read one byte. Use timed read once we have a partial match
-        // (a prefix that already hit a binding); otherwise block.
-        let do_keytmout = last_match.is_some();
+        // c:1591 `getkeybuf(timeout)` — timed read once a binding matched
+        // (c:1626-1627), otherwise block.
+        let do_keytmout = timeout;
         let b = match getbyte(do_keytmout) {
             Some(b) => b,
             None => {
@@ -3703,18 +3713,117 @@ pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
                 .map(|t| t.nam == "undefined-key")
                 .unwrap_or(false);
             if !is_undef && (bind.is_some() || s.is_some()) {
+                // c:1626-1627 — "can be patient with vi commands that need
+                // a motion operator: they wait till a key is pressed for
+                // the movement anyway".
+                let vioper = bind
+                    .as_ref()
+                    .and_then(|t| t.widget.as_ref())
+                    .map(|w| w.flags & crate::ported::zle::zle_h::ZLE_VIOPER != 0)
+                    .unwrap_or(false);
+                timeout = !(crate::ported::zle::zle_vi::VIRANGEFLAG.load(SeqCst) == 0
+                    && REGION_ACTIVE.load(SeqCst) == 0
+                    && vioper);
+                let selfins = bind
+                    .as_ref()
+                    .map(|t| t.nam == "self-insert" || t.nam == "self-insert-unmeta")
+                    .unwrap_or(false);
                 last_match = bind; // c:1620 `func = f;`
                 last_str = s; // c:1621 `str = s;`
                 matched = true;
                 last_match_len = buf.len();
+                lastlen_meta = crate::ported::zle::zle_keymap::keybuf.lock().unwrap().len();
                 lastc = LASTCHAR.load(SeqCst); // c:1622 — `lastc = lastchar;`
+                // c:1634-1639 — a multibyte key sequence bound to self-insert:
+                // assemble the wide character from keybuf (reading any
+                // continuation bytes still in flight) so selfinsert inserts
+                // the character rather than waiting for bytes the keymap
+                // walk already consumed.
+                if selfins && LASTCHAR_WIDE_VALID.load(SeqCst) == 0 && !is_prefix {
+                    crate::ported::zle::zle_keymap::getrestchar_keybuf(); // c:1636
+                    // c:1637 `lastlen = keybuflen;` — getrestchar_keybuf may
+                    // have appended bytes (addkeybuf); keep `buf` in step.
+                    let mut raw = crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clone();
+                    lastlen_meta = raw.len();
+                    crate::ported::utils::unmetafy(&mut raw);
+                    buf = raw;
+                    last_match_len = buf.len();
+                }
             }
         }
 
-        // If this sequence is no longer a prefix of any binding,
-        // stop. C's getkeymapcmd:1614 makes the same call —
-        // keep reading only while ispfx is true.
-        if !is_prefix {
+        let kb: Vec<u8> = crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clone();
+        let kl = kb.len();
+        // c:1642-1644 — "CSI key sequences have a well defined structure so
+        // if we currently have an incomplete one, loop so the rest of it
+        // will be included in the key sequence if that arrives within the
+        // timeout."
+        if csi == 0 && kl >= 3 && kb[kl - 3] == 0x1b && kb[kl - 2] == b'[' {
+            csi = kl - 1; // c:1647
+            csi_raw = buf.len() - 1;
+        }
+        if csi != 0 {
+            // c:1648
+            if kb[kl - 2] == crate::ported::zsh_h::Meta || kb[kl - 1] < 0x20 || kb[kl - 1] > 0x3f {
+                // c:1649-1650
+                // c:1651-1654 — "If we reach the end of a valid CSI sequence
+                // and the matched key binding is for part of the CSI
+                // introduction, select instead the undefined-key widget and
+                // consume the full sequence from the input buffer."
+                if kb[kl - 1] >= 0x40
+                    && kb[kl - 1] <= 0x7e
+                    && lastlen_meta + 2 > csi
+                    && lastlen_meta <= csi
+                {
+                    // c:1655-1657
+                    if kb[csi] == b'?' && (kb[kl - 1] == b'c' || kb[kl - 1] == b'u') {
+                        // c:1658-1659 — "is a terminal query response - discard"
+                        buf.truncate(csi_raw - 2);
+                        crate::ported::zle::zle_keymap::keybuf.lock().unwrap().truncate(csi - 2); // c:1661
+                        crate::ported::zle::zle_keymap::keybuflen.store((csi - 2) as i32, SeqCst);
+                        timeout = false; // c:1662
+                        csi = 0;
+                        continue; // c:1663
+                    }
+                    last_match = crate::ported::zle::zle_thingy::thingytab()
+                        .lock()
+                        .ok()
+                        .and_then(|t| t.get("undefined-key").cloned())
+                        .or_else(|| Some(Thingy::new("undefined-key"))); // c:1665 `func = t_undefinedkey;`
+                    last_str = None;
+                    matched = true;
+                    last_match_len = buf.len(); // c:1666 `lastlen = keybuflen;`
+                    lastlen_meta = kl;
+                }
+                csi = 0; // c:1668
+            }
+        }
+        // c:1671-1673 — "An OSC or DCS sequence is likely a late arriving
+        // terminal query response. Keep looping; if we reach an ST, discard
+        // the sequence - unless we first match a keybinding or a keytimeout
+        // elapses."
+        if oscdcs != 0 {
+            // c:1674
+            if kb[kl - 1] == 0x07 // c:1675 "BEL sometimes used"
+                || (kl >= 2 && kb[kl - 2] == 0x1b && kb[kl - 1] == b'\\')
+                || (kl >= 2 && kb[kl - 2] == crate::ported::zsh_h::Meta && kb[kl - 1] == (0x9c ^ 32))
+            {
+                // c:1676-1679
+                buf.truncate(oscdcs_raw - 2);
+                crate::ported::zle::zle_keymap::keybuf.lock().unwrap().truncate(oscdcs - 2); // c:1681 "discard"
+                crate::ported::zle::zle_keymap::keybuflen.store((oscdcs - 2) as i32, SeqCst);
+                timeout = false; // c:1682
+                oscdcs = 0;
+                continue; // c:1683
+            }
+        } else if kl >= 2 && kb[kl - 2] == 0x1b && (kb[kl - 1] == b']' || kb[kl - 1] == b'P') {
+            // c:1685-1686
+            oscdcs = kl; // c:1687
+            oscdcs_raw = buf.len();
+        }
+
+        // c:1689 — `if (!ispfx && !csi && !oscdcs) break;`
+        if !is_prefix && csi == 0 && oscdcs == 0 {
             break;
         }
     }
@@ -4361,8 +4470,8 @@ pub fn is_emacs() -> bool {
     let n = curkeymapname();
     *n == "emacs" || *n == "main"
 }
-/// Port of `LinkList kring` from `Src/Zle/zle_misc.c`.
-pub static KILLRING: std::sync::Mutex<VecDeque<Vec<char>>> = std::sync::Mutex::new(VecDeque::new());
+/// Port of `struct cutbuffer *kring` from `Src/Zle/zle_misc.c` (newest at index 0).
+pub static KILLRING: std::sync::Mutex<VecDeque<crate::ported::zle::zle_h::cutbuffer>> = std::sync::Mutex::new(VecDeque::new());
 /// Port of `int kringsize` from `Src/Zle/zle_misc.c`.
 pub static KILLRINGMAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(8);
 

@@ -5125,8 +5125,8 @@ pub(crate) fn hgetc() -> Option<char> {
         // c:input.c:327 — re-reading the un-gotten char consumes it like
         // any other read (C's ingetc `inbufct--`). Mirror it so the
         // hungetc(+1)/reread(-1) pair stays balanced; scoped to
-        // LEXFLAGS_ZLE for the same reason as the hungetc restore.
-        if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+        // LEXFLAGS_ZLE|LEXFLAGS_ACTIVE for the same reason as the hungetc restore.
+        if LEX_LEXFLAGS.get() & (LEXFLAGS_ZLE | LEXFLAGS_ACTIVE) != 0 {
             crate::ported::input::inbufct.with(|ct| ct.set(ct.get() - 1));
         }
         return Some(c);
@@ -5426,13 +5426,14 @@ fn hungetc(c: char) {
     // restored `inbufct`; a word-terminating char read-then-ungotten
     // then left `inbufct` one low, inflating `we`/`swe` by one and
     // dropping the leading separator of a `compset -q` ignored suffix.
-    // Scoped to LEXFLAGS_ZLE: only the completion lexer (set_comp_sep /
-    // get_comp_string, fed entirely through inpush -> inbuf) reads
-    // `inbufct` for word positions; normal parsing may read the
+    // Scoped to LEXFLAGS_ZLE|LEXFLAGS_ACTIVE: only the lexers fed entirely
+    // through inpush -> inbuf set those flags (set_comp_sep /
+    // get_comp_string, bufferwords, and selectargument, which reads
+    // `inbufct` for the `aa`/`ia` word bounds, textobjects.c:267); normal parsing may read the
     // Rust-only LEX_INPUT window where `inbufct` isn't tracked, so it
     // must not be perturbed. Paired with the matching `inbufct--` on the
     // unget re-read in hgetc so the count stays balanced.
-    if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+    if LEX_LEXFLAGS.get() & (LEXFLAGS_ZLE | LEXFLAGS_ACTIVE) != 0 {
         crate::ported::input::inbufct.with(|ct| ct.set(ct.get() + 1));
     }
 }

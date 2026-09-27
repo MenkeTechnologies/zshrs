@@ -406,81 +406,182 @@ pub fn selectword() -> i32 {
 
 /// Port of `selectargument(UNUSED(char **args))` from `Src/Zle/textobjects.c:212`.
 ///
-/// The C body uses the shell's `ctxtlex()` lexer-walk machinery
-/// (textobjects.c:233-257) to drive real shell tokenisation over
-/// the buffer. zshrs lowers the lexer through fusevm bytecode and
-/// does not expose a free-running `ctxtlex`-style scanner; this
-/// port uses whitespace-split tokenisation against the buffer
-/// (matches C output for simple commands without quoting /
-/// expansion / heredocs). Returns 1 when `n` is out of range,
-/// matching C textobjects.c:225.
+/// Runs the real lexer (`ctxtlex`) over the edit line, recording where each
+/// shell word starts, and selects the `zmult`-th word back from the one the
+/// cursor is in — the `aa`/`ia` (`select-a-shell-word` /
+/// `select-in-shell-word`) text objects.
+///
+/// !!! RUST-ONLY: offsets are CHARACTER indices. C lexes the metafied line
+/// from `zlegetline` in bytes and converts back with `stringaszleline`
+/// (c:281-282); zshrs's `inbufct` counts characters (input.rs `inpush`), so
+/// lexing the plain line gives offsets already in `zleline` units.
 pub fn selectargument() -> i32 {
     // c:212
-    let n: i32 = if ZMOD.lock().unwrap().flags & MOD_MULT != 0 {
-        ZMOD.lock().unwrap().mult // c:222 zmult
-    } else {
-        1
+    use crate::ported::lex::{
+        ctxtlex, noaliases, set_noaliases, tok, LEX_INPUT, LEX_LEXFLAGS, LEX_LEXSTOP, LEX_POS,
+        LEX_UNGET_BUF, LEX_UNGET_HPTR, LEX_UNGET_RAW,
     };
-    if n < 1 || (2 * n as usize) > ZLELL.load(Ordering::SeqCst) + 1 {
-        // c:225
-        return 1;
+    use crate::ported::zle::compcore::{ADDEDX, WB, WE, ZLEMETACS, ZLEMETALL};
+    use crate::ported::zsh_h::{ENDINPUT, LEXERR, LEXFLAGS_ACTIVE};
+
+    let ne = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:214 `int ne = noerrs`
+    let ocs = ZLEMETACS.load(Ordering::SeqCst); // c:214 `ocs = zlemetacs`
+    let (owb, owe, oadx) = (
+        WB.load(Ordering::SeqCst),
+        WE.load(Ordering::SeqCst),
+        ADDEDX.load(Ordering::SeqCst),
+    ); // c:215
+    let ona = noaliases(); // c:215
+    let oll = ZLEMETALL.load(Ordering::SeqCst);
+    let mut wend: i32 = 0; // c:219
+    let mut wcur: usize = 0; // c:219
+    let n: i32 = ZMOD.lock().unwrap().mult; // c:220 `int n = zmult;`
+
+    if n < 1 || 2 * n > ZLELL.load(Ordering::SeqCst) as i32 + 1 {
+        // c:224
+        return 1; // c:225
     }
+
+    // c:227 — "if used from emacs mode enable the region"
     if !in_vi_cmd_mode() {
         // c:228
         REGION_ACTIVE.store(1, Ordering::SeqCst); // c:229
         MARK.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst); // c:230
     }
-    // Whitespace-split tokenisation (see fn-doc for the ctxtlex
-    // tradeoff).
-    let mut starts: Vec<usize> = Vec::with_capacity(n as usize);
-    let mut in_word = false;
-    let mut word_start = 0usize;
-    starts.push(0);
-    for (i, &c) in ZLELINE.lock().unwrap().iter().enumerate() {
-        if c.is_whitespace() {
-            if in_word {
-                in_word = false;
-                if starts.len() < n as usize {
-                    starts.push(i + 1);
-                }
-            }
-        } else if !in_word {
-            in_word = true;
-            word_start = i;
-            if i >= ZLECS.load(Ordering::SeqCst) {
-                break;
+
+    let mut wstarts: Vec<i32> = vec![0; n as usize]; // c:233-234
+
+    ADDEDX.store(0, Ordering::SeqCst); // c:236
+    crate::ported::utils::set_noerrs(1); // c:237
+    crate::ported::context::zcontext_save(); // c:238
+    LEX_LEXFLAGS.set(LEXFLAGS_ACTIVE); // c:239
+    // c:240-242 — `linein = zlegetline(&ll, &cs); zlemetall = ll; zlemetacs = cs;`
+    let linein: String = ZLELINE.lock().unwrap().iter().collect();
+    let ll = linein.chars().count() as i32;
+    ZLEMETALL.store(ll, Ordering::SeqCst);
+    ZLEMETACS.store(ZLECS.load(Ordering::SeqCst) as i32, Ordering::SeqCst);
+
+    // c:244-257 — `if (!isfirstln && chline) { …prepend chline… }`. The
+    // zcontext_save above ran hist_context_save, which sets `chline = NULL`
+    // (hist.c:285), so C only ever takes the else arm: push the line alone.
+    // The lexer reads LEX_INPUT ahead of the input stack: park it so hgetc
+    // takes the pushed frame, exactly as bufferwords does (hist.rs).
+    let saved_lex_input = LEX_INPUT.with_borrow_mut(std::mem::take);
+    let saved_lex_pos = LEX_POS.replace(0);
+    // !!! RUST-ONLY: C's `hungetc` returns a character to the pushed `inbuf`
+    // frame, so `inpop` below discards it with the line. zshrs queues it in
+    // `LEX_UNGET_BUF` (plus its lockstep companions), which survives the pop:
+    // the word terminator read past the cursor leaked into the NEXT `cia`,
+    // shifting its word bounds by one. Isolate the queues around the walk,
+    // as `parse_string`'s nested parse does (exec.rs).
+    let saved_unget = LEX_UNGET_BUF.with_borrow_mut(std::mem::take);
+    let saved_unget_hptr = LEX_UNGET_HPTR.with_borrow_mut(std::mem::take);
+    let saved_unget_raw = LEX_UNGET_RAW.with_borrow_mut(std::mem::take);
+    let saved_unget_srccap =
+        crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(std::mem::take);
+    LEX_LEXSTOP.set(false);
+    crate::ported::input::inpush(&linein, 0, None); // c:255
+    if ZLEMETACS.load(Ordering::SeqCst) != 0 {
+        // c:257
+        ZLEMETACS.fetch_sub(1, Ordering::SeqCst); // c:258
+    }
+    crate::ported::hist::strinbeg(0); // c:259
+    set_noaliases(true); // c:260
+    loop {
+        // c:261 do
+        wstarts[wcur] = wend; // c:262 `wstarts[wcur++] = wend;`
+        wcur = (wcur + 1) % n as usize; // c:263 `wcur %= n;`
+        ctxtlex(); // c:264
+        let t = tok();
+        if t == ENDINPUT || t == LEXERR {
+            // c:265
+            break; // c:266
+        }
+        // c:267 `wend = zlemetall - inbufct;`
+        wend = ZLEMETALL.load(Ordering::SeqCst) - crate::ported::input::inbufct.with(|c| c.get());
+        if wend > ZLEMETACS.load(Ordering::SeqCst) {
+            // c:268 `while (... && wend <= zlemetacs)`
+            break;
+        }
+    }
+    set_noaliases(ona); // c:269
+    crate::ported::hist::strinend(); // c:270
+    crate::ported::input::inpop(); // c:271
+    crate::ported::utils::errflag.fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::SeqCst); // c:272
+    crate::ported::utils::set_noerrs(ne); // c:273
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
+    LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+    LEX_UNGET_HPTR.with_borrow_mut(|b| *b = saved_unget_hptr);
+    LEX_UNGET_RAW.with_borrow_mut(|b| *b = saved_unget_raw);
+    crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| *b = saved_unget_srccap);
+    crate::ported::context::zcontext_restore(); // c:274
+    ZLEMETACS.store(ocs, Ordering::SeqCst); // c:275
+    ZLEMETALL.store(oll, Ordering::SeqCst);
+    WB.store(owb, Ordering::SeqCst); // c:276
+    WE.store(owe, Ordering::SeqCst); // c:277
+    ADDEDX.store(oadx, Ordering::SeqCst); // c:278
+
+    // c:280-282 — "convert offsets for mark and zlecs back to ZLE internal
+    // format": zlecs = wend, mark = wstarts[wcur] (already char offsets).
+    let clamp = |v: i32| (v.max(0) as usize).min(ll as usize);
+    let mut zlecs = clamp(wend);
+    let mut mark = clamp(wstarts[wcur]);
+
+    let widget = BINDK
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|t| t.nam.clone())
+        .unwrap_or_default();
+    if widget == "select-in-shell-word" {
+        // c:285 IS_THINGY(bindk, selectinshellword)
+        let line = ZLELINE.lock().unwrap();
+        let at = |i: usize| line.get(i).copied().unwrap_or('\0');
+        let mut match_: &[char] = &['`', '\'', '"']; // c:286
+        let lmatch: &[char] = &['\'', '(', '{']; // c:287
+        let rmatch: &[char] = &['\'', ')', '}'];
+        let mut ematch: &[char] = match_; // c:288
+        let mut end = zlecs; // c:289
+        // c:290 — "for 'in' widget, don't include initial blanks ..."
+        while mark < zlecs && ZC_iblank(at(mark)) {
+            mark += 1; // c:292 INCPOS(mark)
+        }
+        // c:293 — "... or a matching pair of quotes"
+        let mut start = mark; // c:294
+        if at(start) == '$' {
+            // c:295
+            match_ = lmatch; // c:296
+            ematch = rmatch; // c:297
+            start += 1; // c:298 INCPOS(start)
+        }
+        if let Some(found) = match_.iter().position(|&c| c == at(start)) {
+            // c:300-301
+            end = end.saturating_sub(1); // c:302 DECPOS(end)
+            if at(end) == ematch[found] {
+                // c:303
+                zlecs = end; // c:304
+                start += 1; // c:305 INCPOS(start)
+                mark = start; // c:306
             }
         }
     }
-    let arg_idx = (n - 1) as usize;
-    let s = starts.get(arg_idx).copied().unwrap_or(word_start);
-    let e = (s..ZLELL.load(Ordering::SeqCst))
-        .find(|&i| {
-            ZLELINE
-                .lock()
-                .unwrap()
-                .get(i)
-                .copied()
-                .map_or(true, |c| c.is_whitespace())
-        })
-        .unwrap_or(ZLELL.load(Ordering::SeqCst));
-    MARK.store(s, Ordering::SeqCst);
-    ZLECS.store(e, Ordering::SeqCst);
-    // c:315-316 — `if (!virangeflag && invicmdmode()) DECCS();`
+    ZLECS.store(zlecs, Ordering::SeqCst);
+    MARK.store(mark, Ordering::SeqCst);
+
+    // c:311 — "Adjustment: vi operators don't include the cursor position"
     //
-    // "vi operators don't include the cursor position" — but `virangeflag`
-    // is set precisely WHILE an operator is collecting its range, and then
-    // the operator does that adjustment itself. Dropping the guard made the
-    // decrement happen twice: `cia` on `echo "…"` selected `ech` and left
-    // the `o` behind. `selectword` reads the same flag (see the sibling at
-    // the top of this file), which is why the word objects were unaffected.
+    // `virangeflag` is set precisely WHILE an operator is collecting its
+    // range, and then the operator does that adjustment itself; `cia` on
+    // `echo "…"` must not lose the last character twice.
     if VIRANGEFLAG.load(Ordering::Relaxed) == 0
         && in_vi_cmd_mode()
         && ZLECS.load(Ordering::SeqCst) > 0
     {
-        ZLECS.fetch_sub(1, Ordering::SeqCst);
+        // c:312
+        ZLECS.fetch_sub(1, Ordering::SeqCst); // c:313 DECCS()
     }
-    0
+    0 // c:315
 }
 
 #[cfg(test)]

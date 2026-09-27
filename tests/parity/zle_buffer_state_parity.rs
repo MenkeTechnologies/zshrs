@@ -376,3 +376,121 @@ mod execute_named_cmd {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cases mined from zsh's own Test/X02zlevi, X03zlebindkey, X05zleincarg
+// ═══════════════════════════════════════════════════════════════════════
+
+mod ztst_x0 {
+    use super::*;
+
+    /// X02 "character based after before followed by line based yank-pop".
+    /// The kill ring stored bare text, so `dd`'s entry popped back
+    /// char-wise (`SlineE`) instead of as its own line (`SE\nline`).
+    /// Every ESC is its own write, and the put is `h` `p` rather than
+    /// `P`: if the inner shell is slow to start the keys arrive together,
+    /// and `ESC P` is a DCS introducer (zle_keymap.c:1685-1687).
+    #[test]
+    fn yank_pop_restores_a_line_kill_line_wise() {
+        assert_same_dump(
+            &driver(
+                "-v; bindkey -a \"^P\" yank-pop",
+                &[
+                    "line", "\\e", "dd", "i", "word", "\\e", "0", "dw", "i", "SE", "\\e", "h",
+                    "p", "\\C-P",
+                ],
+            ),
+            "vi p then yank-pop onto a dd kill pasted it as a whole line",
+        );
+    }
+
+    /// X05 "Repeats of vim-incarg takes the numeric argument into
+    /// account", reduced to a widget: `.` replays a `zle -f vichange`
+    /// widget with the count it was first given, so `$NUMERIC` inside
+    /// the repeat must be 3, not the stale unset snapshot.
+    #[test]
+    fn vi_repeat_of_a_vichange_widget_sees_its_count() {
+        assert_same_dump(
+            &driver(
+                "-v; nw(){ zle -f vichange; LBUFFER+=${NUMERIC:-1} }; zle -N nw; bindkey -a \"^T\" nw",
+                &["x", "\\e", "3\\C-T", "."],
+            ),
+            "vi . repeated the widget with NUMERIC=3",
+        );
+    }
+
+    /// X02 "in argument for different arguments": `ia` selects a SHELL
+    /// word (the lexer's word, quotes and all, stripped by `ia`), not a
+    /// whitespace-delimited run.
+    #[test]
+    fn cia_changes_the_inside_of_a_quoted_shell_word() {
+        assert_same_dump(
+            &driver("-v", &["a \"b c\" d", "\\e", "B", "ciaX"]),
+            "cia on a quoted argument replaced only its inside",
+        );
+    }
+
+    /// Two `cia` in a row: the word terminator the first lexer walk read
+    /// past the cursor must not leak into the second walk.
+    #[test]
+    fn a_second_cia_uses_its_own_word_bounds() {
+        assert_same_dump(
+            &driver("-v", &["a b c d", "\\e", "B", "ciaX", "\\e", "BB", "ciaY"]),
+            "the second cia changed the first argument only",
+        );
+    }
+
+    /// X03 "bindkey -s multibyte characters": a multibyte key bound
+    /// explicitly to self-insert inserts that character. (`日`, not the
+    /// test's `ホ`: the driver shell writes the keys, and a character
+    /// containing the byte 0x83 does not survive zshrs's `zpty -w`.)
+    #[test]
+    fn a_multibyte_key_bound_to_self_insert_inserts_it() {
+        assert_same_dump(
+            &driver("-e; bindkey 日 self-insert", &["日é"]),
+            "a multibyte key bound to self-insert inserted the character",
+        );
+    }
+
+    /// X03 "binding to CSI introduction is not used if a full sequence
+    /// arrives" (Src/Zle/zle_keymap.c:1642-1668). `\e[` is bound, but
+    /// `\e[17~` is a complete CSI key, so the whole sequence is consumed
+    /// as undefined-key. The reference zsh (5.9.2) predates this code and
+    /// still runs the `\e[` binding, so zshrs is pinned to the value the
+    /// current C source and its own test produce: `BUFFER: $`, `CURSOR: 0`.
+    #[test]
+    fn a_csi_introducer_binding_does_not_fire_on_a_full_sequence() {
+        use crate::zpty_probe::{probe, zshrs_bin};
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let out = std::env::temp_dir().join(format!(
+            "zshrs-parity-csi-{}-{}.txt",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&out);
+        let out = out.display().to_string();
+        // The inner shell gets `OUTFILE` from its setup line (double quotes:
+        // the setup is itself wrapped in single quotes); the outer driver
+        // then turns the dump into a CSI=yes/no verdict.
+        let driver = format!(
+            "{}\nOUTFILE={}\nprint -r -- \"CSI=$([[ $(<$OUTFILE) == 'BUF=[$] CUR=[0]' ]] && print yes || print no)\"\n",
+            driver(
+                &format!("-e; OUTFILE=\"{out}\"; bindkey -s \"\\e[\" altbracket"),
+                &["$", "\\C-A\\e[17~"],
+            ),
+            sq(&out),
+        );
+        let (v, text) = probe(&zshrs_bin(), true, &driver, "CSI");
+        let dumped = std::fs::read_to_string(&out).unwrap_or_default();
+        let _ = std::fs::remove_file(&out);
+        if v.is_none() {
+            eprintln!("skip: zsh/zpty unavailable");
+            return;
+        }
+        assert_eq!(
+            v,
+            Some(true),
+            "a full CSI sequence ran the ESC-[ binding: dumped {dumped:?}\n{text}"
+        );
+    }
+}

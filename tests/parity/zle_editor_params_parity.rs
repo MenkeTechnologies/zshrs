@@ -188,3 +188,38 @@ fn a_vi_count_repeats_the_operator() {
         "vi 3x deleted three characters",
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// $CUTBUFFER / $killring
+// ═══════════════════════════════════════════════════════════════════════
+
+const KILLS: &str = r#""CB=[$CUTBUFFER] KR=[${(j:,:)killring}]""#;
+
+/// `$CUTBUFFER` is the unnamed cut buffer, i.e. the LATEST kill
+/// (zle_params.c:623); the kill ring only receives it when a later kill
+/// starts a new entry. zshrs read `$CUTBUFFER` off the ring, so it was
+/// empty after the first kill, and `$killring` omitted the ring's empty
+/// slots (zsh always reports all eight).
+#[test]
+fn cutbuffer_is_the_latest_kill_and_killring_the_earlier_ones() {
+    assert_same_dump(
+        &driver("-e", KILLS, &["abc def ghi", "\\C-a", "\\ed", "\\C-f", "\\ed"]),
+        "CUTBUFFER held the second kill, killring the first plus empty slots",
+    );
+}
+
+/// Writing `$CUTBUFFER` and `$killring` from a widget replaces the cut
+/// buffer and the ring (zle_params.c:633, :665), so `yank` then takes the
+/// assigned cut buffer and `ESC-y` walks the assigned ring. (`yank` is on
+/// `^B` and the setter on `^N`: the tty eats `^Y` and, on BSD, `^T`.)
+#[test]
+fn assigned_cutbuffer_and_killring_feed_yank_and_yank_pop() {
+    assert_same_dump(
+        &driver(
+            "-e; st(){ CUTBUFFER=zz; killring=(k1 k2) }; zle -N st; bindkey \"^N\" st; bindkey \"^B\" yank",
+            r#""BUF=[$BUFFER]""#,
+            &["a", "\\C-n", "\\C-b", "\\ey"],
+        ),
+        "yank took the assigned CUTBUFFER and yank-pop the assigned killring",
+    );
+}

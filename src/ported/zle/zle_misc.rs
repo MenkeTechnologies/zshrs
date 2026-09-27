@@ -1055,11 +1055,8 @@ pub fn putreplaceselection() -> i32 {
 /// (cuttext pushes front and pins `kringnum = 0`), so the descending
 /// C index walk maps to ASCENDING deque indices.
 ///
-/// Substrate note: `KILLRING` entries are `Vec<char>` without the C
-/// `struct cutbuffer` flags, so a ring entry pastes char-wise even if
-/// its kill was line-mode (`dd` then `M-y M-y`). The original CUTBUF /
-/// vibuf (`kct == -1`) keeps its flags. Retyping KILLRING to
-/// `VecDeque<cutbuffer>` lifts this.
+/// `KILLRING` entries are whole `struct cutbuffer`s (C `kring`), so a
+/// line-mode kill (`dd`) pops back line-wise through `pastebuf`.
 pub fn yankpop() -> i32 {
     // c:741
     let kctstart = KCT.load(SeqCst); // c:744 `int kctstart = kct;`
@@ -1074,7 +1071,7 @@ pub fn yankpop() -> i32 {
         return 1;
     }
     let ringlen = KILLRING.lock().unwrap().len() as i32;
-    let text: Vec<char>;
+    let buf: crate::ported::zle::zle_h::cutbuffer;
     loop {
         // c:751 do
         // c:759-767 — advance kct. C: kct==-1 → kringnum (newest);
@@ -1095,21 +1092,17 @@ pub fn yankpop() -> i32 {
             return 1;
         }
         // c:768-771 — resolve the buffer for this kct.
-        let candidate: Vec<char> = if new_kct == -1 {
-            // c:769 — the original cutbuffer (CUTBUF or a vibuf).
+        let candidate: crate::ported::zle::zle_h::cutbuffer = if new_kct == -1 {
+            // c:769 `buf = kctbuf;` — the original cutbuffer (CUTBUF or a vibuf).
             match KCTBUF_SEL.load(SeqCst) {
-                -1 => crate::ported::zle::zle_main::CUTBUF
-                    .lock()
-                    .unwrap()
-                    .buf
-                    .chars()
-                    .collect(),
+                -1 => crate::ported::zle::zle_main::CUTBUF.lock().unwrap().clone(),
                 idx if idx >= 0 && (idx as usize) < 36 => {
-                    vibuf().lock().unwrap()[idx as usize].buf.chars().collect()
+                    vibuf().lock().unwrap()[idx as usize].clone()
                 }
-                _ => Vec::new(),
+                _ => crate::ported::zle::zle_h::cutbuffer::default(),
             }
         } else {
+            // c:771 `buf = kring+kct;`
             KILLRING
                 .lock()
                 .unwrap()
@@ -1119,8 +1112,8 @@ pub fn yankpop() -> i32 {
         };
         // c:787 — `while (!buf->buf || *buf->buf == ZWC('\0'));` —
         // skip unset / zero-length buffers.
-        if !candidate.is_empty() {
-            text = candidate;
+        if !candidate.buf.is_empty() {
+            buf = candidate;
             break;
         }
     }
@@ -1129,14 +1122,9 @@ pub fn yankpop() -> i32 {
     let del = YANKE.load(SeqCst) as i32 - YANKB.load(SeqCst) as i32;
     crate::ported::zle::zle_utils::foredel(del.max(0), crate::ported::zle::zle_h::CUT_RAW); // c:790
     ZLECS.store(YANKCS.load(SeqCst).max(0) as usize, SeqCst); // c:791 `zlecs = yankcs;`
-    let pastebuf_arg = crate::ported::zle::zle_h::cutbuffer {
-        buf: text.iter().collect(),
-        len: text.len(),
-        flags: 0,
-    };
     // c:792 — `pastebuf(buf, 1, !!(lastcmd & ZLE_YANKAFTER));`
     pastebuf(
-        &pastebuf_arg,
+        &buf,
         1,
         if last & crate::ported::zle::zle_h::ZLE_YANKAFTER != 0 {
             1
@@ -2711,7 +2699,7 @@ pub fn accept_and_hold() -> String {
 pub fn kill_buffer() {
     if !ZLELINE.lock().unwrap().is_empty() {
         let text: Vec<char> = ZLELINE.lock().unwrap().drain(..).collect();
-        KILLRING.lock().unwrap().push_front(text);
+        KILLRING.lock().unwrap().push_front(crate::ported::zle::zle_h::cutbuffer { len: text.len(), buf: text.iter().collect(), flags: 0 });
         if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
             KILLRING.lock().unwrap().pop_back();
         }
@@ -2790,7 +2778,7 @@ pub fn kill_region() {
     };
 
     let text: Vec<char> = ZLELINE.lock().unwrap().drain(start..end).collect();
-    KILLRING.lock().unwrap().push_front(text);
+    KILLRING.lock().unwrap().push_front(crate::ported::zle::zle_h::cutbuffer { len: text.len(), buf: text.iter().collect(), flags: 0 });
     if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
         KILLRING.lock().unwrap().pop_back();
     }
@@ -2821,7 +2809,7 @@ pub fn yank_pop() {
         .lock()
         .unwrap()
         .front()
-        .map(|v| v.len())
+        .map(|v| v.buf.chars().count())
         .unwrap_or(0);
     let start = MARK.load(SeqCst);
     for _ in 0..prev_len {
@@ -2839,7 +2827,7 @@ pub fn yank_pop() {
 
     // Insert new text
     if let Some(text) = KILLRING.lock().unwrap().front() {
-        for &c in text {
+        for c in text.buf.chars() {
             ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
             ZLECS.fetch_add(1, SeqCst);
         }

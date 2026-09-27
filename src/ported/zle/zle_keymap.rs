@@ -2833,74 +2833,77 @@ pub fn default_bindings() {
 /// Used by the keymap dispatcher when it needs to assemble a wide
 /// char that crossed a key-binding boundary.
 pub fn getrestchar_keybuf() -> i32 {
-    use crate::ported::zle::zle_main::{getbyte, ungetbyte, LASTCHAR_WIDE, LASTCHAR_WIDE_VALID};
+    // c:1504
+    use crate::ported::utils::{mbrtowc, MbStateBuf, MBSTATE_ZERO, MB_INCOMPLETE, MB_INVALID};
+    use crate::ported::zle::zle_main::{getbyte, LASTCHAR_WIDE, LASTCHAR_WIDE_VALID};
     use std::sync::atomic::Ordering;
 
-    // c:1519 — `lastchar_wide_valid = 1; memset(&mbs, 0, sizeof mbs);`
-    LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst);
-
     let keybuf_v = keybuf.lock().unwrap().clone();
-    let buflen = (keybuflen.load(Ordering::SeqCst) as usize).min(keybuf_v.len());
-    let mut bufind = 0usize;
-    let mut bytes: Vec<u8> = Vec::new();
+    let mut bufind = 0usize; // c:1508
+    let buflen = (keybuflen.load(Ordering::SeqCst) as usize).min(keybuf_v.len()); // c:1508
 
-    // First-byte read (c:1525-1545): either pop from keybuf or call
-    // getbyte; subsequent bytes follow the same path until we have a
-    // valid UTF-8 sequence.
+    // c:1512-1516 — "We are guaranteed to set a valid wide last character,
+    // although it may be WEOF (which is technically not a wide character at
+    // all...)"
+    LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst); // c:1517
+    let mut mbs: MbStateBuf = MBSTATE_ZERO; // c:1518
+
+    // c:1520-1523 — "Return may be zero if we have a NULL; handle this like
+    // any other character."
     loop {
-        let cur = if bufind < buflen {
-            // c:1525-1530 — keybuf path with Meta-pair decode.
-            let mut c = keybuf_v[bufind];
+        // c:1524
+        let c: u8 = if bufind < buflen {
+            // c:1525
+            let mut c = keybuf_v[bufind]; // c:1526
             bufind += 1;
-            if c == 0x83 && bufind < buflen {
-                c = keybuf_v[bufind] ^ 32;
+            if c == crate::ported::zsh_h::Meta {
+                // c:1527
+                c = keybuf_v[bufind] ^ 32; // c:1529
                 bufind += 1;
             }
             c
         } else {
-            // c:1546 — `inchar = getbyte(1L, &timeout, 1);`
-            match getbyte(true) {
-                Some(b) => b,
+            // c:1532-1537 — "Always apply KEYTIMEOUT to the remains of the
+            // input character. The parts of a multibyte character should
+            // arrive together."
+            let inchar = getbyte(true); // c:1538
+            // c:1539 — "getbyte deliberately resets lastchar_wide_valid"
+            LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst); // c:1540
+            match inchar {
+                Some(b) => {
+                    addkeybuf(b as i32); // c:1558
+                    b // c:1557
+                }
                 None => {
-                    // c:1550-1553 — EOF in the middle of a sequence.
+                    // c:1541-1555 — EOF mid-character. `getbyte` does not
+                    // report C's `timeout` out-parameter, so this is the
+                    // `else` arm (c:1554): WEOF.
                     LASTCHAR_WIDE.store(-1, Ordering::SeqCst);
                     return -1;
                 }
             }
         };
-        bytes.push(cur);
 
-        // Decode the partial UTF-8 buffer — break out when it parses
-        // or when the lead byte tells us we have enough bytes.
-        if let Ok(s) = std::str::from_utf8(&bytes) {
-            if let Some(c) = s.chars().next() {
-                LASTCHAR_WIDE.store(c as i32, Ordering::SeqCst);
-                return c as i32;
-            }
-        }
-        let lead = bytes[0];
-        let need = if lead < 0x80 {
-            1
-        } else if lead < 0xC0 {
-            1
-        } else if lead < 0xE0 {
-            2
-        } else if lead < 0xF0 {
-            3
-        } else {
-            4
+        let mut outchar: libc::wchar_t = 0;
+        // c:1561 — `cnt = mbrtowc(&outchar, &c, 1, &mbs);`
+        let cnt = unsafe {
+            mbrtowc(
+                &mut outchar,
+                &c as *const u8 as *const libc::c_char,
+                1,
+                &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+            )
         };
-        if bytes.len() >= need {
-            // c:1535-1538 — invalid byte sequence; reset mbs + WEOF.
-            // Unget the non-continuation byte if we read it from
-            // getbyte (not from keybuf).
-            if let Some(&last) = bytes.last() {
-                if bufind >= buflen && (last & 0xC0) != 0x80 {
-                    ungetbyte(last);
-                }
-            }
+        if cnt == MB_INVALID {
+            // c:1562-1567 — "Invalid input. Hmm, what's the right thing to
+            // do here?"
             LASTCHAR_WIDE.store(-1, Ordering::SeqCst);
             return -1;
+        }
+        if cnt != MB_INCOMPLETE {
+            // c:1569-1572 — `return lastchar_wide = (ZLE_INT_T)outchar;`
+            LASTCHAR_WIDE.store(outchar as i32, Ordering::SeqCst);
+            return outchar as i32;
         }
     }
 }

@@ -2295,7 +2295,7 @@ fn vi_cut_into_killring(start: usize, end: usize) {
         return;
     }
     let killed: Vec<char> = ZLELINE.lock().unwrap()[start..end].to_vec();
-    KILLRING.lock().unwrap().push_front(killed);
+    KILLRING.lock().unwrap().push_front(crate::ported::zle::zle_h::cutbuffer { len: killed.len(), buf: killed.iter().collect(), flags: 0 });
     if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
         KILLRING.lock().unwrap().pop_back();
     }
@@ -2575,7 +2575,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .front()
-                .map(|v| v.iter().collect::<String>()),
+                .map(|v| v.buf.clone()),
             Some("hello ".to_string())
         );
     }
@@ -2596,7 +2596,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .front()
-                .map(|v| v.iter().collect::<String>()),
+                .map(|v| v.buf.clone()),
             Some("bar".to_string())
         );
         // Cursor lands at start of the yanked range.

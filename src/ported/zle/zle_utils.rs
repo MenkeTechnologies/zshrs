@@ -918,7 +918,13 @@ pub fn cuttext(
     let should_rotate =
         !cutbuf_empty && ((lastcmd_v & ZLE_KILL) == 0 || (flags & CUT_REPLACE) != 0);
     if should_rotate {
-        let old: Vec<char> = CUTBUF.lock().unwrap().buf.chars().collect();
+        // c:1010-1012 — the old cutbuf, flags and all, becomes kring[kringnum].
+        let old = CUTBUF.lock().unwrap().clone();
+        // c:1011-1013 — `if (!kring) { kringsize = KRINGCTDEF; ... }` — an
+        // unset `$killring` left the ring with no slots.
+        if KILLRINGMAX.load(Ordering::SeqCst) == 0 {
+            KILLRINGMAX.store(crate::ported::zle::zle_h::KRINGCTDEF as usize, Ordering::SeqCst);
+        }
         KILLRING.lock().unwrap().push_front(old);
         let max = KILLRINGMAX.load(Ordering::SeqCst);
         while KILLRING.lock().unwrap().len() > max {

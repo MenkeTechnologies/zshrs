@@ -1189,31 +1189,26 @@ pub fn get_suffixactive() -> i64 {
     SUFFIXLEN.load(Ordering::Relaxed) as i64 // c:614 return suffixlen
 }
 
-/// `$CUTBUFFER` accessor — most-recent kill-ring entry.
-/// Port of `get_cutbuffer(UNUSED(Param pm))` from Src/Zle/zle_params.c which
-/// reads `cutbuf` (the unnamed kill register).
+/// `$CUTBUFFER` accessor — the unnamed cut buffer `cutbuf`, which holds the
+/// LATEST kill; the kill ring only receives it when the next kill starts a
+/// new entry (zle_utils.c:1009-1022).
+/// Port of `get_cutbuffer(UNUSED(Param pm))` from Src/Zle/zle_params.c:623.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_cutbuffer() -> String {
-    // c:619
-    KILLRING
-        .lock()
-        .unwrap()
-        .front()
-        .map(|v| v.iter().collect())
-        .unwrap_or_default()
+    // c:623
+    // c:625-627 — `if (cutbuf.buf) return zlelineasstring(cutbuf.buf, ...); return "";`
+    crate::ported::zle::zle_main::CUTBUF.lock().unwrap().buf.clone()
 }
 
-/// `$CUTBUFFER=s` setter — overwrite the front of the kill ring.
-/// Port of `set_cutbuffer(UNUSED(Param pm), char *x)` from Src/Zle/zle_params.c.
+/// `$CUTBUFFER=s` setter — replace the unnamed cut buffer.
+/// Port of `set_cutbuffer(UNUSED(Param pm), char *x)` from Src/Zle/zle_params.c:633.
 /// WARNING: param names don't match C — Rust=(s) vs C=(pm, x)
 pub fn set_cutbuffer(s: &str) {
-    // c:629
-    let chars: Vec<char> = s.chars().collect();
-    if KILLRING.lock().unwrap().is_empty() {
-        KILLRING.lock().unwrap().push_front(chars);
-    } else {
-        KILLRING.lock().unwrap()[0] = chars;
-    }
+    // c:633
+    let mut cb = crate::ported::zle::zle_main::CUTBUF.lock().unwrap();
+    cb.flags = 0; // c:637
+    cb.buf = s.to_string(); // c:640 `cutbuf.buf = stringaszleline(x, 0, &n, NULL, NULL);`
+    cb.len = s.chars().count(); // c:641
 }
 
 /// Port of `unset_cutbuffer(Param pm, int exp)` from Src/Zle/zle_params.c:647.
@@ -1221,9 +1216,10 @@ pub fn unset_cutbuffer(exp: i32) {
     // c:647
     // c:647-655 — `if (exp) { stdunsetfn; if (cutbuf.buf) { free; NULL; len=0 } }`.
     if exp != 0 {
-        // zshrs uses VecDeque for the kill ring; the "primary" cut
-        // buffer is the front entry. Clearing means popping it.
-        KILLRING.lock().unwrap().pop_front();
+        // c:654-659 — `if (cutbuf.buf) { free; cutbuf.buf = NULL; cutbuf.len = 0; }`
+        let mut cb = crate::ported::zle::zle_main::CUTBUF.lock().unwrap();
+        cb.buf.clear();
+        cb.len = 0;
     }
 }
 
@@ -1233,9 +1229,20 @@ pub fn set_killring(x: Option<&[String]>) {
     // c:661-672 — `if (kring) { free each kptr->buf; zfree(kring) }`.
     // Then either rebuild from `x` or leave NULL.
     KILLRING.lock().unwrap().clear();
+    KILLRINGMAX.store(0, Ordering::SeqCst); // c:677 `kringsize = kringnum = 0;`
+    KRINGNUM.store(0, Ordering::SeqCst);
     if let Some(arr) = x {
+        // c:681-686 — "Insert the elements into the kill ring. Regardless
+        // of the old order, we number it with the current entry first."
+        // C walks `kpos` DOWN the ring from 0; the deque keeps the newest
+        // at index 0 with older entries after it, so that is push_back.
+        KILLRINGMAX.store(arr.len(), Ordering::SeqCst); // c:689 `kringsize = arrlen(x);`
         for entry in arr {
-            KILLRING.lock().unwrap().push_back(entry.chars().collect());
+            KILLRING.lock().unwrap().push_back(crate::ported::zle::zle_h::cutbuffer {
+                buf: entry.clone(),
+                len: entry.chars().count(),
+                flags: 0,
+            }); // c:692-698
         }
     }
 }
@@ -1243,16 +1250,18 @@ pub fn set_killring(x: Option<&[String]>) {
 /// Port of `get_killring(UNUSED(Param pm))` from Src/Zle/zle_params.c:705.
 pub fn get_killring() -> Vec<String> {
     // c:705
-    // c:705-733 — return kring entries with most-recently-killed
-    // first. Empty entries returned as "" so the array length always
-    // equals kringsize. zshrs holds the kill ring as
-    // VecDeque<Vec<char>> where push_front puts newest at index 0,
-    // so we iterate forward.
-    KILLRING
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|entry| entry.iter().collect::<String>())
+    // c:712-714 — "Return the kill ring with the most recently killed
+    // first. Since the kill ring is no longer a fixed length, we return
+    // all entries even if empty."
+    // c:719-723 — "Supposed to work even if kring is NULL".
+    if KILLRINGMAX.load(Ordering::SeqCst) == 0 {
+        KILLRINGMAX.store(crate::ported::zle::zle_h::KRINGCTDEF as usize, Ordering::SeqCst); // c:721
+    }
+    let kringsize = KILLRINGMAX.load(Ordering::SeqCst);
+    let ring = KILLRING.lock().unwrap();
+    // c:727-737 — newest first (the deque's front), an unset slot as "".
+    (0..kringsize)
+        .map(|kcnt| ring.get(kcnt).map(|kptr| kptr.buf.clone()).unwrap_or_default())
         .collect()
 }
 
@@ -2089,7 +2098,8 @@ mod widget_killring_tests {
         let entries = vec!["x".to_string()];
         set_killring(Some(&entries));
         unset_killring(1);
-        assert!(get_killring().is_empty());
+        // c:719-723 — an unset ring reads back as KRINGCTDEF empty slots.
+        assert!(get_killring().iter().all(|e| e.is_empty()));
     }
 
     #[test]

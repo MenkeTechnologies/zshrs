@@ -1424,6 +1424,13 @@ pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -
                                     {
                                         // c:687 — clear PM_UNSET so widget sees value.
                                         pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                                        // !!! RUST-ONLY: C's NUMERIC getfn reads `zmult`
+                                        // live (zle_params.c:485-487); zshrs published a
+                                        // snapshot in makezleparams before this widget ran.
+                                        // Under `.` (viinrepeat) startvichange just loaded
+                                        // zmod = lastvichg.mod (zle_vi.c:95), so the
+                                        // snapshot is stale — refresh it from zmod.mult.
+                                        pm.u_val = ZMOD.lock().unwrap().mult as i64;
                                     }
                                 }
                             }
