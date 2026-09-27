@@ -110,6 +110,7 @@ mod metasort_unmetafy_parity;
 mod module_feature_enables_parity;
 mod multibyte_meta_parity;
 mod modules_parity;
+mod nameref_scope_parity;
 mod noclobber_parity;
 mod non_utf8_script_parity;
 mod nounset_length_slot_parity;

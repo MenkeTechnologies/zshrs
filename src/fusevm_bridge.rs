@@ -9089,6 +9089,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::exec::setunderscore(""); // c:1369
             }
         });
+        // c:Src/exec.c:2654-2663 — `if (!pm) { lastval = 1; ... if
+        // (!cmdoutval) cmdoutval = 1; }`; BUILTIN_ASSIGN_ONLY_STATUS
+        // reads the flag back as the command's status.
+        if assign_failed {
+            ASSIGN_FAILED_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         Value::Status(vm.last_status)
     });
 

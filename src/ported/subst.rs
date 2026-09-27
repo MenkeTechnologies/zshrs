@@ -7501,7 +7501,7 @@ pub fn paramsubst(
                                 crate::ported::params::nameref_resolution::Target {
                                     name, ..
                                 } => name,
-                                crate::ported::params::nameref_resolution::Placeholder(name) => {
+                                crate::ported::params::nameref_resolution::Placeholder(name, _) => {
                                     name
                                 }
                                 _ => target.clone(),
@@ -14967,7 +14967,7 @@ pub fn paramsubst(
                         }
                         t
                     }
-                    crate::ported::params::nameref_resolution::Placeholder(p) => p,
+                    crate::ported::params::nameref_resolution::Placeholder(p, _) => p,
                     _ => var_name.clone(),
                 }
             } else {

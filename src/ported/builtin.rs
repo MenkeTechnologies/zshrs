@@ -5479,22 +5479,6 @@ pub fn bin_typeset(
         //     }
         // `typeset -p s=1` prints (or reports) s and assigns nothing.
         if OPT_ISSET(&ops, b'p') {
-            let with_ns = if OPT_ISSET(&ops, b'm') {
-                // c:2241
-                PRINT_WITH_NAMESPACE
-            } else {
-                0
-            };
-            // c:Src/builtin.c:2761-2765 — `-p1` adds PRINT_LINE (one
-            // array/assoc element per line). The named-arg `typeset -p1
-            // NAME` print path missed it (only the listing path parsed
-            // it), so `typeset -p1 myarray` printed single-line.
-            let line_flag =
-                if OPT_HASARG(&ops, b'p') && OPT_ARG(&ops, b'p').map(|a| a.trim()) == Some("1") {
-                    PRINT_LINE
-                } else {
-                    0
-                };
             // !!! BASH-MODE GATE (no C counterpart) !!! `declare -p` of a bash
             // synthesized special array (PIPESTATUS / FUNCNAME / BASH_VERSINFO)
             // — these live outside paramtab, so the normal lookup below can't
@@ -5559,9 +5543,12 @@ pub fn bin_typeset(
                     Err(_) => None,
                 };
                 if let Some(ref mut pm) = pm_clone {
-                    // c:2243 — `paramtab->printnode(&pm->node,
-                    //   PRINT_TYPESET|with_ns);`
-                    printparamnode(pm, PRINT_TYPESET | with_ns | line_flag);
+                    // c:3104 — `paramtab->printnode(hn, printflags);` with
+                    // the flags bin_typeset accumulated: PRINT_WITH_NAMESPACE
+                    // (c:2664, kept because there are arguments), PRINT_TYPESET
+                    // or a POSIX variant (c:2750-2758), PRINT_LINE for -p1
+                    // (c:2765). With PRINT_WITH_NAMESPACE a `.ns.name` prints.
+                    printparamnode(pm, printflags);
                 }
             } else {
                 // c:Src/builtin.c:3110-3113 — when `typeset -p NAME`
@@ -6058,7 +6045,7 @@ pub fn bin_typeset(
                     }
                 } else if !reuse_existing && crate::ported::params::is_nameref(arg_name) {
                     // bare placeholder — still run setscope for parity (no-op).
-                    let _ = crate::ported::params::setscope_by_name(arg_name);
+                    let _ = crate::ported::params::setscope_by_name(arg_name, None);
                 }
 
                 // c:2618 — `pm->node.flags |= (on & PM_READONLY);` AFTER the
@@ -6100,7 +6087,7 @@ pub fn bin_typeset(
                         returnval = 1;
                         continue;
                     }
-                    nameref_resolution::Placeholder(last) => {
+                    nameref_resolution::Placeholder(last, _) => {
                         // c:2033-2034 — `if ((pm = resolve_nameref(pm)))
                         //                     pname = pm->node.nam;`
                         // The chain endpoint becomes the name the rest of
@@ -7189,6 +7176,25 @@ pub fn bin_typeset(
                 }) == Some(true);
                 let requesting_type =
                     (on as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED)) != 0;
+                // c:2115-2126 — `chflags = ((off & pm->node.flags) | (on &
+                // ~pm->node.flags)) & (PM_INTEGER|...|PM_AUTOLOAD)`; a type
+                // change (`typeset +a arr=s` removes PM_ARRAY) sets tc and
+                // clears usepm, so the c:2233 inconsistency test never runs.
+                let removing_type = paramtab().read().ok().and_then(|t| {
+                    t.get(n).map(|pm| {
+                        let pmf = pm.node.flags as u32;
+                        let chflags = ((off as u32 & pmf) | (on as u32 & !pmf))
+                            & (PM_INTEGER
+                                | PM_EFLOAT
+                                | PM_FFLOAT
+                                | PM_HASHED
+                                | PM_ARRAY
+                                | PM_TIED
+                                | PM_AUTOLOAD);
+                        chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT) // c:2119
+                    })
+                }) == Some(true);
+                let requesting_type = requesting_type || removing_type;
                 // c:2216 — the whole c:2233-2237 inconsistency test lives INSIDE
                 // `if (usepm) {`, i.e. it only applies when typeset_single is
                 // RE-USING the existing pm. `usepm` is seeded at c:2062-2064
@@ -7215,6 +7221,45 @@ pub fn bin_typeset(
                 // exactly the state c:2062-2090 reads.
                 let usepm = usepm_existing
                     && !(pm_level_existing != cur_locallevel && (on as u32 & PM_LOCAL) != 0); // c:2078
+                // c:2355-2378 — `if (tc && !OPT_ISSET(ops,'p'))`: removing
+                // the array/hash type (`typeset +a arr=s`) keeps only
+                // READONLY|EXPORTED (`on |= ~off & (PM_READONLY|PM_EXPORTED)
+                // & pm->node.flags`, c:2357) and `unsetparam_pm(pm, 0, 1)`
+                // (c:2378); the scalar path below then creates it afresh.
+                // A numeric type REMOVED with no numeric type requested
+                // (`typeset +i n=s`) is the same tc; a numeric type requested
+                // is converted by the pre-assign arm below.
+                let off_removes_type = paramtab().read().ok().and_then(|t| {
+                    t.get(n).map(|pm| {
+                        (off as u32 & pm.node.flags as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT))
+                            != 0
+                            && (on as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT)) == 0
+                    })
+                }) == Some(true);
+                let mut on = if usepm
+                    && removing_type
+                    && (target_is_arraylike || off_removes_type)
+                    && !OPT_ISSET(&ops, b'p')
+                {
+                    let pmf = paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(n).map(|pm| pm.node.flags as u32))
+                        .unwrap_or(0);
+                    let carried = !(off as u32) & (PM_READONLY | PM_EXPORTED) & pmf; // c:2357
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(n) {
+                            pm.node.flags &= !(PM_READONLY as i32); // c:2359
+                        }
+                    }
+                    crate::ported::params::unsetparam(n); // c:2378
+                    // c:2521 — `createparam(pname, on & ~PM_READONLY)` re-types the
+                    // struct a kept local left behind (Src/params.c:1132 `pm = oldpm`).
+                    let _ = createparam(n, ((on | carried) & !(PM_READONLY | PM_LOCAL)) as i32);
+                    on | carried
+                } else {
+                    on
+                };
                 if usepm && target_is_arraylike && !requesting_type {
                     zerrnam(name, &format!("{}: inconsistent type for assignment", n)); // c:2236
                     returnval = 1;
@@ -10148,7 +10193,7 @@ pub fn bin_unset(
                             // c:params.c:6341-6342 — a placeholder chain
                             // resolves to the (PM_NAMEREF) ref itself, which
                             // falls through to the c:3919 type check below.
-                            nameref_resolution::Placeholder(last) => {
+                            nameref_resolution::Placeholder(last, _) => {
                                 let f = paramtab()
                                     .read()
                                     .ok()
@@ -10239,10 +10284,13 @@ pub fn bin_unset(
                             nameref_resolution::SelfRef | nameref_resolution::OutOfScope => {
                                 continue
                             }
-                            nameref_resolution::Placeholder(last) => {
-                                // chain ends at a ref → that ref is the
-                                // unset object (resolve_nameref returns it).
-                                ref_removal = Some(last);
+                            nameref_resolution::Placeholder(..) => {
+                                // c:3949-3951 — `(pm = resolve_nameref(pm))
+                                // && !(pm->node.flags & PM_NAMEREF)`: a chain
+                                // ending at a placeholder ref resolves to that
+                                // ref, which fails the PM_NAMEREF test, so
+                                // nothing is unset.
+                                continue;
                             }
                             nameref_resolution::Target {
                                 name: t,
@@ -10259,30 +10307,60 @@ pub fn bin_unset(
                                     // dangling — nothing to unset (c:3942).
                                     continue;
                                 } else {
-                                    let cur_ll = locallevel.load(Relaxed) as i32;
-                                    let ro = pm
-                                        .as_ref()
-                                        .map(|p| (p.node.flags as u32 & PM_READONLY) != 0)
-                                        .unwrap_or(false);
-                                    if level < cur_ll && !ro {
-                                        // c:3944-3949 — mark unset, keep in
-                                        // table (stdunsetfn + PM_DECLARED).
-                                        if let Ok(mut tab) = paramtab().write() {
-                                            if let Some(p) = tab.get_mut(&t) {
-                                                p.node.flags |= (PM_UNSET | PM_DECLARED) as i32;
-                                                p.u_str = None;
-                                                p.u_arr = None;
-                                                p.u_val = 0;
+                                    // c:3952 — `unsetparam_pm(pm, 0, 1)` on
+                                    // the RESOLVED struct. When that struct
+                                    // is the visible binding, the ordinary
+                                    // unsetparam path below is exactly it.
+                                    // When it is hidden by a local of the
+                                    // same name (upscope picked an `old`
+                                    // node), unset that node in place.
+                                    let visible = paramtab()
+                                        .read()
+                                        .ok()
+                                        .and_then(|tab| tab.get(&t).map(|p| p.level == level))
+                                        .unwrap_or(true);
+                                    if visible {
+                                        resolved_target = Some(t);
+                                    } else {
+                                        // paramtab is keyed by name with the
+                                        // chain owned by the visible node, so
+                                        // take it out, walk to `level`, and
+                                        // unset that node.
+                                        let top = paramtab().write().ok().and_then(|mut tab| tab.remove(&t));
+                                        if let Some(mut top) = top {
+                                            let mut defer_global = false;
+                                            let mut cur = top.old.as_deref_mut();
+                                            while let Some(hpm) = cur {
+                                                if hpm.level == level {
+                                                    if crate::ported::params::unsetparam_pm(hpm, 0, 1) != 0 {
+                                                        returnval = 1; // c:3953
+                                                    } else if hpm.level == 0 {
+                                                        // c:3859-3869 — a hidden
+                                                        // global cannot be removed
+                                                        // yet: `zpushnode(scoperefs[0],
+                                                        // pm)`; endparamscope deletes
+                                                        // it once uncovered. A local
+                                                        // keeps its node (c:3851-3853).
+                                                        defer_global = true;
+                                                    }
+                                                    break;
+                                                }
+                                                cur = hpm.old.as_deref_mut();
+                                            }
+                                            if let Ok(mut tab) = paramtab().write() {
+                                                tab.insert(t.clone(), top);
+                                            }
+                                            if defer_global {
+                                                crate::ported::params::SCOPEREFS.with(|sr| {
+                                                    let mut sr = sr.borrow_mut();
+                                                    if sr.is_empty() {
+                                                        sr.resize(8, Vec::new()); // c:3865
+                                                    }
+                                                    sr[0].insert(0, t.clone()); // c:3868
+                                                });
                                             }
                                         }
-                                        let _ = crate::ported::params::paramtab_hashed_storage()
-                                            .lock()
-                                            .ok()
-                                            .as_deref_mut()
-                                            .map(|m| m.remove(&t));
                                         handled = true;
-                                    } else {
-                                        resolved_target = Some(t);
                                     }
                                 }
                             }
