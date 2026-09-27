@@ -551,6 +551,11 @@ pub struct SubshellSnapshot {
     /// `after` twice. zshrs runs subshells in-process, so the three
     /// counters have to be restored by hand at the boundary.
     pub loop_flags: (i32, i32, i32),
+    /// `cmdoutval` (c:Src/exec.c:225) at subshell entry. A process global
+    /// the forked child owns a private copy of: `x=$(exit 3); (y=1); exec
+    /// 3>f` still reports 3 in zsh although the subshell's assignment reset
+    /// its own copy (c:2796). Restored by hand like `loop_flags`.
+    pub cmdoutval: i32,
     /// Parent's traps at subshell entry. zsh's `(trap "echo X" EXIT;
     /// true)` runs the trap when the subshell exits — BEFORE the parent
     /// continues. Without this snapshot, the trap inherited from parent

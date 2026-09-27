@@ -2544,6 +2544,15 @@ impl ZshCompiler {
         // SET_VAR can stash and restore each name's prior state.
         // Direct port of zsh's addvars()-list scoping in execute_simple.
         let has_inline_env_scope = !simple.assigns.is_empty() && !simple.words.is_empty();
+        // c:Src/exec.c:2796 — `if (wc_code(*state->pc) == WC_ASSIGN) {
+        // cmdoutval = 0;` (execcmd_analyse; execsimple c:1368 likewise).
+        // Only a command with assignments resets it; one without keeps the
+        // exit of an earlier command's `$(...)`.
+        if !simple.assigns.is_empty() {
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMDOUTVAL_RESET, 0), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
         // c:Src/exec.c:3720-3724 — a pipeline stage with no command
         // word has no argument expansion for the addfd pair to follow,
         // so its pipe fds install right here: before the redirect loop

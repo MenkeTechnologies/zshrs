@@ -780,3 +780,32 @@ mod dollar_quote_command_word {
         assert_parity(r#"$'ba\0z'() { echo x; }; $'ba\0z' 2>&1; echo rc=$?"#);
     }
 }
+
+/// c:Src/exec.c:4032 — a bare `exec` carrying only redirections sets
+/// `lastval = errflag ? errflag : cmdoutval`. `cmdoutval` is reset only by
+/// a command that carries assignments (c:2796 execcmd_analyse, c:1368
+/// execsimple), so an earlier command's `$(...)` still decides the status.
+mod cmdoutval_leftover {
+    use super::*;
+
+    #[test]
+    fn bare_exec_redirect_reports_an_earlier_substitution() {
+        assert_parity(r#"x=$(false); exec 3>/dev/null; echo $?"#);
+        assert_parity(r#"x=$(exit 3); true; exec 3>/dev/null; echo $?"#);
+        assert_parity(r#"x=$(exit 3); y=1; exec 3>/dev/null; echo $?"#);
+        assert_parity(r#"x=$(exit 3); y=$(exit 4) true; exec 3>/dev/null; echo $?"#);
+    }
+
+    /// A forked subshell's reset (its own `y=1`) dies with the child.
+    #[test]
+    fn subshell_assignment_keeps_the_parents_value() {
+        assert_parity(r#"x=$(exit 3); (y=1); exec 3>/dev/null; echo $?"#);
+    }
+
+    /// c:3396 `lastval = cmdoutval` — a `$(...)` in an assignment's
+    /// subscript sets the status just like one in its value.
+    #[test]
+    fn subscript_substitution_sets_assignment_status() {
+        assert_parity(r#"typeset -a a; a[$(exit 2)1]=1; echo $?"#);
+    }
+}

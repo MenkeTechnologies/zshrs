@@ -12389,7 +12389,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             f
         });
         if !failed {
-            return Value::Status(0);
+            // c:Src/exec.c:4032 — `lastval = errflag ? errflag : cmdoutval;`
+            // cmdoutval is NOT reset by a command without assignments, so
+            // a `$(...)` from an earlier command (`x=$(false); exec 3>f`)
+            // still decides this status.
+            let ef = crate::ported::utils::errflag.load(Ordering::Relaxed);
+            return Value::Status(if ef != 0 { ef } else { crate::ported::exec::cmdoutval.load(Ordering::Relaxed) });
         }
         // c:255 — `redir_err = lastval = 1`.
         vm.last_status = 1;
@@ -12630,6 +12635,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // this keeps the executor coherent with it before the abort check.
         with_executor(|exec| exec.set_last_status(status));
         Value::Int(status as i64)
+    });
+    // c:Src/exec.c:2796 (execcmd_analyse) / c:1368 (execsimple) — a simple
+    // command that carries assignments starts with `cmdoutval = 0;`.
+    vm.register_builtin(BUILTIN_CMDOUTVAL_RESET, |_vm, _argc| {
+        crate::ported::exec::cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed);
+        Value::Status(0)
     });
     vm.register_builtin(BUILTIN_USE_CMDOUTVAL_RESET, |_vm, _argc| {
         crate::ported::exec::use_cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -13564,12 +13575,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // c:Src/exec.c addvars — `if (!pm) { lastval = 1; if
         // (!cmdoutval) cmdoutval = 1; }` (assignment-failed cheat).
         let assign_failed = ASSIGN_FAILED_FLAG.swap(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = had_cmd_subst;
+        if assign_failed && crate::ported::exec::cmdoutval.load(Ordering::Relaxed) == 0 {
+            // c:Src/exec.c:2662-2663 — `if (!cmdoutval) cmdoutval = 1;`
+            crate::ported::exec::cmdoutval.store(1, Ordering::Relaxed);
+        }
         let status = if errflag_set || assign_failed {
             1 // c:Src/exec.c:3394 `lastval = 1` / addvars cmdoutval=1
-        } else if had_cmd_subst {
-            vm.last_status // c:3396 `lastval = cmdoutval` (subst exit)
         } else {
-            0 // c:3396 `lastval = cmdoutval` (cmdoutval = 0)
+            // c:3396 `lastval = cmdoutval` — reset to 0 when the command
+            // started (c:2796 / c:1368, BUILTIN_CMDOUTVAL_RESET), then set by
+            // any `$(...)` that ran in it, RHS or subscript alike.
+            crate::ported::exec::cmdoutval.load(Ordering::Relaxed)
         };
         with_executor(|exec| exec.set_last_status(status));
         // c:Src/jobs.c deletefilelist — a `=(cmd)` temp file is bound to the
@@ -17143,6 +17160,10 @@ pub const BUILTIN_EXEC_DYNAMIC: u16 = 606;
 /// can't leak into this command's null-command status decision
 /// (c:Src/exec.c:3009 `use_cmdoutval = !args`). See BUILTIN_EXEC_DYNAMIC.
 pub const BUILTIN_USE_CMDOUTVAL_RESET: u16 = 637;
+/// Reset `cmdoutval` to 0 at the START of a simple command that carries
+/// assignments, before any of its words or assignment values expand
+/// (c:Src/exec.c:2796 execcmd_analyse, c:1368 execsimple WC_ASSIGN).
+pub const BUILTIN_CMDOUTVAL_RESET: u16 = 731;
 /// Tilde-expand a match pattern's leading `~`, the way `singsub` does
 /// before the pattern reaches `patcompile`.
 ///
@@ -19075,6 +19096,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // free). See SubshellSnapshot::flock_fds.
                 flock_fds: current_flock_fds(),
                 loop_flags: loop_flags_snap,
+                cmdoutval: crate::ported::exec::cmdoutval.load(std::sync::atomic::Ordering::Relaxed),
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
                 special_globals: special_globals_snap,
@@ -19351,6 +19373,9 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::builtin::BREAKS.store(breaks, SeqCst);
                     crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);
                 }
+                // c:Src/exec.c:225 `cmdoutval` — the child's copy dies with
+                // it. See SubshellSnapshot::cmdoutval.
+                crate::ported::exec::cmdoutval.store(snap.cmdoutval, std::sync::atomic::Ordering::Relaxed);
                 // c:Src/utils.c:2155-2164 `zcloselockfd` — release the
                 // `zsystem flock` locks the subshell itself took. Under C
                 // the forked child's fds close on exit; here we close the
