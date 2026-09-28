@@ -4237,6 +4237,11 @@ impl ZshCompiler {
             Some(fusevm::shell_builtins::BUILTIN_TEST) if first_clean == "[" => {
                 Some(crate::fusevm_bridge::BUILTIN_TEST_BRACKET)
             }
+            // c:Src/builtin.c:56 — `chdir` is its own builtintab node sharing
+            // bin_cd, and bin_cd reports under the name it was called by
+            // (`zsh:chdir:1: …`). fusevm folds `chdir` into the BUILTIN_CD
+            // slot, whose handler can only say `cd`; resolve it by name.
+            Some(fusevm::shell_builtins::BUILTIN_CD) if first_clean == "chdir" => None,
             other => other,
         };
         // u8 argc overflow. `CallBuiltin`/`CallFunction` carry argc as a u8

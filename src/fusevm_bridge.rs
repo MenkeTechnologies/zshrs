@@ -2525,15 +2525,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("cd", &args) {
             return Value::Status(s);
         }
-        let status = dispatch_builtin("cd", args);
-        // c:Src/builtin.c:1258 — `callhookfunc("chpwd", NULL, 1, NULL)`
-        // after cd succeeds. The canonical port at
-        // src/ported/utils.rs:1532 handles both the `chpwd` shfunc
-        // dispatch AND the `chpwd_functions` array walk.
-        if status == 0 {
-            crate::ported::utils::callhookfunc("chpwd", None, 1, std::ptr::null_mut());
-        }
-        Value::Status(status)
+        // c:Src/builtin.c:1258 — the chpwd hook runs inside cd_new_pwd.
+        Value::Status(dispatch_builtin("cd", args))
     });
 
     vm.register_builtin(BUILTIN_PWD, |vm, argc| {

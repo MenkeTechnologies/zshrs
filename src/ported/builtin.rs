@@ -2620,11 +2620,20 @@ pub fn cd_new_pwd(func: i32, _dir: usize, quiet: i32) {
         }
     }
 
-    // c:1258 — `callhookfunc("chpwd", NULL, 1, NULL)` fires the chpwd
-    // hook. Not surfaced here: the executor wrapper (fusevm_bridge.rs
-    // cd builtin) calls `callhookfunc("chpwd", ...)` after a successful
-    // cd, which dispatches both the `chpwd` shfunc and the
-    // `chpwd_functions` array (utils.rs:1532).
+    /* execute the chpwd function */
+    // c:1255-1261 — every directory change that commits here (cd, chdir,
+    // pushd, popd, however the command word was reached) runs the hook,
+    // unless `-q` asked for quiet.
+    let _ = std::io::stdout().flush(); // c:1256
+    let _ = std::io::stderr().flush(); // c:1257
+    if quiet == 0 {
+        // c:1258
+        crate::ported::utils::callhookfunc("chpwd", None, 1, std::ptr::null_mut()); // c:1259
+        if crate::ported::init::zle_load_state.load(std::sync::atomic::Ordering::SeqCst) == 1 {
+            // c:1260
+            crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_CHPWD); // c:1261
+        }
+    }
 
     // c:1264-1271 — trim the dir stack to $DIRSTACKSIZE.
     //   `dirstacksize = getiparam("DIRSTACKSIZE");

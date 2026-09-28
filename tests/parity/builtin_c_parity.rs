@@ -211,6 +211,23 @@ mod cd_builtin {
     fn cd_nonexistent_fails() {
         assert_parity("cd /nope-no-such-dir 2>/dev/null; echo $?");
     }
+
+    /// c:Src/builtin.c:1255-1261 — cd_new_pwd runs the chpwd hook for every
+    /// directory change it commits (pushd and popd too, and a command word
+    /// reached through a parameter), unless `-q` asked for quiet.
+    #[test]
+    fn chpwd_hook_runs_from_cd_new_pwd() {
+        assert_parity(
+            r#"chpwd() { print hook $PWD }; pushd /tmp; pushd -q /usr; popd; popd -q; cd -q /; x=pushd; $x /usr; x=cd; $x /tmp; chpwd_functions=(f); f() { print F }; cd /"#,
+        );
+    }
+
+    /// c:Src/builtin.c:56 — `chdir` is its own builtintab node, and bin_cd
+    /// reports under the name it was called by.
+    #[test]
+    fn chdir_reports_under_its_own_name() {
+        assert_parity(r#"{ chdir /nope-no-such-dir } 2>&1; { chdir a b c } 2>&1; chdir /tmp; pwd"#);
+    }
 }
 
 // ───────────────────────── dirs ─────────────────────────
