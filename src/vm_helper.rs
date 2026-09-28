@@ -8615,6 +8615,20 @@ impl ShellExecutor {
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
             return Vec::new();
         }
+        // c:1871-1872 — `if (matchct) badcshglob |= 2;`: files DID match and
+        // only the `[first,last]` subscript left none (`*([100])`), so this
+        // is not a failed expansion — the word simply expands to nothing.
+        if crate::ported::glob::CURGLOBDATA
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .matchct
+            > 0
+        {
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLGLOB) {
+                crate::ported::glob::BADCSHGLOB.fetch_or(2, std::sync::atomic::Ordering::Relaxed);
+            }
+            return Vec::new();
+        }
         // No matches. Mirror zsh's `setopt nullglob` / `nomatch`
         // dispatch (Src/glob.c:1873-1886) here because glob_path
         // returns an empty Vec without knowing executor state.
