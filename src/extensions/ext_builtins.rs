@@ -7897,7 +7897,7 @@ impl ShellExecutor {
     }
 
     /// printenv [VAR...] — print env. coreutils printenv(1).
-    /// No args: print all env vars (sorted by key for stable output).
+    /// No args: print all env vars in `environ` order, as printenv(1) does.
     /// Args: print VAR's value per arg, exit 1 if any unset.
     pub(crate) fn builtin_printenv(&self, args: &[String]) -> i32 {
         // coreutils printenv has -0 / --null (NUL-terminate output).
@@ -7919,9 +7919,8 @@ impl ShellExecutor {
         }
         let term: char = if zero_term { '\0' } else { '\n' };
         if names.is_empty() {
-            let mut vars: Vec<(String, String)> = std::env::vars().collect();
-            vars.sort_by(|a, b| a.0.cmp(&b.0));
-            for (k, v) in vars {
+            // environ order: the order the shell added the variables.
+            for (k, v) in std::env::vars() {
                 print!("{}={}{}", k, v, term);
             }
             return 0;
@@ -8344,11 +8343,11 @@ impl ShellExecutor {
         };
 
         if cmd_args.is_empty() {
-            // Print env, sorted by key for stable output (matches
-            // GNU env's typical alphabetical layout).
-            let mut sorted = env_overrides;
-            sorted.sort_by(|a, b| a.0.cmp(&b.0));
-            for (k, v) in sorted {
+            // env(1) prints `environ` in array order — the order the shell
+            // added the variables (c:Src/params.c:5448 addenv appends), with
+            // env's own NAME=VALUE operands last. Sorting diverged from every
+            // external `env`.
+            for (k, v) in env_overrides {
                 println!("{}={}", k, v);
             }
             return 0;

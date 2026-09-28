@@ -938,3 +938,16 @@ mod precmd_walk_before_redirections {
         let _ = std::fs::remove_dir_all(&d);
     }
 }
+
+/// The in-process `env` / `printenv` shims list `environ` in array order,
+/// like the external commands they stand in for. Pre-fix they sorted by name.
+mod env_shim_order {
+    use super::*;
+
+    #[test]
+    fn env_and_printenv_list_in_export_order() {
+        assert_parity(r#"export c=3 a=1; env | grep -E '^(a|c)='"#);
+        assert_parity(r#"export c=3 a=1; printenv | grep -E '^(a|c)='"#);
+        assert_parity(r#"export c=3 a=1; env z=9 | grep -E '^(a|c|z)='"#);
+    }
+}
