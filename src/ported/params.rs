@@ -11500,15 +11500,17 @@ pub fn strgetfn(pm: &param) -> String {
 /// should register a named-directory entry for `~name` expansion;
 /// the Rust port silently dropped that behavior.
 pub fn strsetfn(pm: &mut param, x: String) {
-    // c:4040
-    pm.u_str = Some(x.clone()); // c:4044 pm->u.str = x
-                                // c:4045-4046 — `if (!(PM_HASHELEM) && (PM_NAMEDDIR || isset(AUTONAMEDIRS)))`.
+    pm.u_str = Some(x.clone()); // c:3995 pm->u.str = x
+    // c:3997-3998 — `if (!(pm->node.flags & PM_HASHELEM) && !pm->level &&
+    //     ((pm->node.flags & PM_NAMEDDIR) || isset(AUTONAMEDIRS)))`. A local
+    // (level > 0) never names a directory (workers/54309).
     if (pm.node.flags as u32 & PM_HASHELEM) == 0
+        && pm.level == 0
         && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0 || isset(AUTONAMEDIRS))
-    // c:4046 isset(AUTONAMEDIRS)
+    // c:3998
     {
-        pm.node.flags |= PM_NAMEDDIR as i32; // c:4047
-        adduserdir(&pm.node.nam, &x, 0, false); // c:4048
+        pm.node.flags |= PM_NAMEDDIR as i32; // c:3999
+        adduserdir(&pm.node.nam, &x, 0, false); // c:4000
     }
 }
 
@@ -16757,7 +16759,12 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
         let n: usize = name.parse().ok()?;
         if n == 0 {
-            return argzero();
+            // c:4906-4911 argzerogetfn — `if (isset(POSIXARGZERO)) return
+            // posixzero; return argzero;`
+            if isset(POSIXARGZERO) {
+                return crate::ported::utils::posixzero(); // c:4909
+            }
+            return argzero(); // c:4910
         }
         let pp = pparams_lock().lock().ok()?;
         return pp.get(n - 1).cloned();

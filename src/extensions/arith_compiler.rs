@@ -144,13 +144,18 @@ impl<'a> ArithCompiler<'a> {
     /// is what `setmathvar` returns, which c:1014-1030 converts to the
     /// TYPE of the parameter assigned (`typeset -i x; (( y = (x = 1.7) ))`
     /// gives y 1, not 1.7). `slot` is scratch only.
-    fn emit_setmathvar(&mut self, name: &str, slot: u16) {
+    ///
+    /// `pval` is true when the operator READ the lvalue first (`op=`,
+    /// `++`, `--`): c:Src/math.c:975-993 then stores through the cached
+    /// value handle instead of setnparam (no WARN_* report, no retyping).
+    fn emit_setmathvar(&mut self, name: &str, slot: u16, pval: bool) {
         self.builder.emit(Op::SetSlot(slot), 0);
         let name_const = self.builder.add_constant(Value::str(name));
         self.builder.emit(Op::LoadConst(name_const), 0);
         self.builder.emit(Op::GetSlot(slot), 0);
+        self.builder.emit(Op::LoadInt(pval as i64), 0);
         self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 2),
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 3),
             0,
         );
     }
@@ -748,7 +753,7 @@ impl<'a> ArithCompiler<'a> {
                     let slot = self.slot_for(&name);
                     self.assigned.insert(name.clone());
                     self.assign_expr();
-                    self.emit_setmathvar(&name, slot);
+                    self.emit_setmathvar(&name, slot, false);
                     return;
                 }
                 if let Some(binop) = compound_assign_op(tok) {
@@ -765,7 +770,7 @@ impl<'a> ArithCompiler<'a> {
                     self.emit_getmathparam(&name);
                     self.builder.emit(Op::GetSlot(slot), 0);
                     self.emit_binop(binop);
-                    self.emit_setmathvar(&name, slot);
+                    self.emit_setmathvar(&name, slot, true);
                     return;
                 }
                 // Not an assignment — rewind and re-parse as a value.
@@ -1039,7 +1044,7 @@ impl<'a> ArithCompiler<'a> {
                 self.emit_getmathparam(&var_name);
                 self.builder.emit(Op::LoadInt(1), 0);
                 self.builder.emit(Op::Add, 0);
-                self.emit_setmathvar(&var_name, slot);
+                self.emit_setmathvar(&var_name, slot, true);
             }
             Tok::PreDec => {
                 let _ = self.next_tok();
@@ -1049,7 +1054,7 @@ impl<'a> ArithCompiler<'a> {
                 self.emit_getmathparam(&var_name);
                 self.builder.emit(Op::LoadInt(1), 0);
                 self.builder.emit(Op::Sub, 0);
-                self.emit_setmathvar(&var_name, slot);
+                self.emit_setmathvar(&var_name, slot, true);
             }
             _ => self.primary_expr(),
         }
@@ -1079,7 +1084,7 @@ impl<'a> ArithCompiler<'a> {
                         // c:Src/math.c:1394-1401 POSTPLUS — float stays float.
                         self.builder.emit(Op::LoadInt(1), 0);
                         self.builder.emit(Op::Add, 0);
-                        self.emit_setmathvar(&name, slot);
+                        self.emit_setmathvar(&name, slot, true);
                         self.builder.emit(Op::Pop, 0);
                     }
                     Tok::PreDec => {
@@ -1088,7 +1093,7 @@ impl<'a> ArithCompiler<'a> {
                         self.builder.emit(Op::Dup, 0);
                         self.builder.emit(Op::LoadInt(1), 0);
                         self.builder.emit(Op::Sub, 0);
-                        self.emit_setmathvar(&name, slot);
+                        self.emit_setmathvar(&name, slot, true);
                         self.builder.emit(Op::Pop, 0);
                     }
                     _ => {}

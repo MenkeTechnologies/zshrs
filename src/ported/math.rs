@@ -2991,7 +2991,7 @@ pub(crate) fn pop() -> mnumber {
 /// Write `val` to the named parameter from inside math context.
 /// Calls `setnparam` (the canonical param-set) and returns the value
 /// re-typed to match the parameter's type (C c:1014-1027).
-pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
+pub(crate) fn setmathvar(name: &str, val: mnumber, pval: bool) -> mnumber {
     // c:972
     // c:996-1001 — bad-lvalue check (empty name).
     if name.is_empty() {
@@ -3005,6 +3005,31 @@ pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
     // c:1002-1003 — `if (noeval) return v;`
     if M_NOEVAL.with(|n| n.get()) != 0 {
         return val;
+    }
+    // c:975-993 — `if (mvp->pval) { … pm = paramtab->getnode(paramtab, s);
+    // if (pm == mvp->pval->pm) { if (noeval) return v; setnumvalue(mvp->pval,
+    // v); return v; } … }`. An lvalue this expression already READ (`n++`,
+    // `n += 2`) is stored through the value handle getmathparam cached: no
+    // setnparam, so no WARN_CREATE_GLOBAL / WARN_NESTED_VAR report, and the
+    // result keeps its own type (`integer n=1; $(( n += 2.5 ))` is 3.5).
+    // !!! RUST-ONLY SHAPE !!! zshrs caches no Value handle (see the note at
+    // the head of `op`), so "the handle still names this parameter" is read
+    // as "the parameter is still set". The subscripted path below already
+    // stores without the warning and without retyping.
+    if pval && !name.contains('[') {
+        let set = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(name)
+                    .map(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0)
+            })
+            .unwrap_or(false);
+        if set {
+            m_variables_insert(name.to_string(), val);
+            let _ = crate::ported::params::assignnparam(name, val, 0); // c:990 setnumvalue
+            return val; // c:991
+        }
     }
     // c:1004 — `setnparam(mvp->lval, v)`. C passes the FULL lval
     // (including any `[subscript]`) to setnparam → assignnparam,
@@ -4202,7 +4227,7 @@ pub(crate) fn op(what: i32) {
         // Handle assignment
         if (tp & (OP_E2 | OP_E2IO)) != 0 {
             if let Some(ref name) = mv_a.lval {
-                let final_val = setmathvar(name, result);
+                let final_val = setmathvar(name, result, what != EQ); // c:1171 pop(what == EQ)
                 push(final_val, Some(name.clone()));
             } else {
                 // c:Src/math.c:997 — `zerr("bad math expression: lvalue
@@ -4354,7 +4379,7 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 }
             };
-            setmathvar(name, new_val);
+            setmathvar(name, new_val, true); // c:1375 getmathparam read it
             push(val, None); // Return original value
         }
         POSTMINUS => {
@@ -4384,7 +4409,7 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 }
             };
-            setmathvar(name, new_val);
+            setmathvar(name, new_val, true); // c:1375 getmathparam read it
             push(val, None);
         }
         PREPLUS => {
@@ -4414,7 +4439,7 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 }
             };
-            setmathvar(name, new_val);
+            setmathvar(name, new_val, true); // c:1375 getmathparam read it
             push(new_val, mv.lval);
         }
         PREMINUS => {
@@ -4444,7 +4469,7 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 }
             };
-            setmathvar(name, new_val);
+            setmathvar(name, new_val, true); // c:1375 getmathparam read it
             push(new_val, mv.lval);
         }
         QUEST => {
@@ -5753,7 +5778,7 @@ mod tests {
             d: 0.0,
             type_: MN_INTEGER,
         };
-        let returned = setmathvar("mvar1", v);
+        let returned = setmathvar("mvar1", v, false);
         assert_eq!(returned.l, 42);
         let stored = getsparam("mvar1");
         assert_eq!(
@@ -5775,7 +5800,7 @@ mod tests {
             d: 0.0,
             type_: MN_INTEGER,
         };
-        let returned = setmathvar("", v);
+        let returned = setmathvar("", v, false);
         assert_eq!(returned.l, 0);
         assert_eq!(returned.type_, MN_INTEGER);
     }
@@ -5797,7 +5822,7 @@ mod tests {
             d: 0.0,
             type_: MN_INTEGER,
         };
-        setmathvar("rt_int", n_in);
+        setmathvar("rt_int", n_in, false);
         let n_out = getmathparam("rt_int");
         assert_eq!(n_out.type_, MN_INTEGER);
         assert_eq!(n_out.l, 123);
@@ -5808,7 +5833,7 @@ mod tests {
             d: 3.14,
             type_: MN_FLOAT,
         };
-        setmathvar("rt_float", f_in);
+        setmathvar("rt_float", f_in, false);
         let f_out = getmathparam("rt_float");
         // Stored as paramtab PM_FFLOAT (per setnparam c:3687); read
         // back as MN_FLOAT.
@@ -5836,7 +5861,7 @@ mod tests {
             d: 0.0,
             type_: MN_INTEGER,
         };
-        setmathvar("mvar2[5]", v);
+        setmathvar("mvar2[5]", v, false);
         let stored = getsparam("mvar2");
         // The base "mvar2" got the value; subscript element handling
         // is upstream so we just confirm the param was created.
@@ -5869,7 +5894,7 @@ mod tests {
             d: 0.0,
             type_: MN_INTEGER,
         };
-        let ret = setmathvar("ne_var", v);
+        let ret = setmathvar("ne_var", v, false);
         assert_eq!(
             ret.l, 42,
             "c:1003 — `return v` so the stack still sees the value"
@@ -5905,7 +5930,7 @@ mod tests {
             d: 3.7,
             type_: MN_FLOAT,
         };
-        let ret = setmathvar("intvar", v);
+        let ret = setmathvar("intvar", v, false);
         assert_eq!(
             ret.type_, MN_INTEGER,
             "c:1016-1020 — PM_INTEGER target must return MN_INTEGER"
@@ -7359,6 +7384,7 @@ mod tests {
                 d: 0.0,
                 type_: MN_INTEGER,
             },
+            false,
         );
         assert_eq!(
             assoc_read("counts", "apple"),
@@ -7390,6 +7416,7 @@ mod tests {
                 d: 0.0,
                 type_: MN_INTEGER,
             },
+            false,
         );
         assert_eq!(
             assoc_read("h", "a"),
@@ -7428,6 +7455,7 @@ mod tests {
                 d: 0.0,
                 type_: MN_INTEGER,
             },
+            false,
         );
         assert_eq!(
             crate::ported::params::getaparam("arr"),
@@ -7466,6 +7494,7 @@ mod tests {
                 d: 0.0,
                 type_: MN_INTEGER,
             },
+            false,
         );
         let got = crate::ported::params::getaparam("arr");
         assert_eq!(
@@ -7496,6 +7525,7 @@ mod tests {
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
+                false,
             );
         }
         assert_eq!(
@@ -7522,6 +7552,7 @@ mod tests {
                 d: 0.0,
                 type_: MN_INTEGER,
             },
+            false,
         );
         assert_eq!(
             assoc_read("hv", "fresh"),
@@ -7546,7 +7577,7 @@ mod tests {
             d: 0.0,
             type_: MN_INTEGER,
         };
-        let ret = setmathvar("nev[k]", v);
+        let ret = setmathvar("nev[k]", v, false);
         M_NOEVAL.with(|n| n.set(0));
         assert_eq!(ret.l, 999, "noeval returns val unchanged");
         assert_eq!(

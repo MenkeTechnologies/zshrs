@@ -1745,6 +1745,22 @@ pub fn source(s: &str) -> i32 {
     crate::ported::utils::set_scriptname(Some(us.clone())); // c:1572
     crate::ported::utils::set_scriptfilename(Some(us.clone()));
 
+    // c:1627-1630 — `if (isset(SOURCETRACE)) { printprompt4();
+    //     fprintf(xtrerr ? xtrerr : stderr, "<sourcetrace>\n"); }`
+    if isset(crate::ported::zsh_h::SOURCETRACE) {
+        // c:1621 — `lineno = 1;` precedes the trace, so PS4 `%i` reads 1.
+        // The file's own statements set it again as they run; put the
+        // caller's value back for the frame push below.
+        let oldlineno = crate::ported::params::getsparam("LINENO")
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        crate::fusevm_bridge::set_lineno_impl(1); // c:1621
+        crate::ported::utils::printprompt4(); // c:1628
+        crate::fusevm_bridge::xtrerr_fputs("<sourcetrace>\n"); // c:1629
+        crate::fusevm_bridge::xtrerr_flush();
+        crate::fusevm_bridge::set_lineno_impl(oldlineno);
+    }
+
     sourcelevel.fetch_add(1, Ordering::SeqCst); // c:1606
 
     // c:1610-1618 — push an FS_SOURCE funcstack frame so `$funcstack`,

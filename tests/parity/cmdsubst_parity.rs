@@ -558,3 +558,24 @@ mod backquote_parse_error {
         }
     }
 }
+
+/// A nofork body is parsed from the RUNNING line (dev-tree zsh pins, see
+/// `nofork_trim_zshrs_pin`): c:Src/subst.c:2044 `parse_string(cmdarg, 0)`,
+/// and execstring's `parse_string(s, 0)` (c:Src/exec.c:1277) on the glob
+/// path. The body restarted at line 1, so `$LINENO` inside it read 1 and
+/// a NOMATCH error on the substitution's own word said `zsh:1:`.
+mod nofork_body_keeps_the_running_line_zshrs_pin {
+    use super::*;
+
+    #[test]
+    fn lineno_and_error_line() {
+        assert_eq!(
+            run_zshrs("true\ntrue\nprint ${| REPLY=$LINENO } ${{x} x=$LINENO }").stdout,
+            "3 3\n"
+        );
+        assert_eq!(
+            run_zshrs("true\ntrue\ntrue\n( print ${| REPLY=x }* ) 2>&1").stdout,
+            "zsh:4: no matches found: x*\n"
+        );
+    }
+}

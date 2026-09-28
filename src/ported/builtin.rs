@@ -757,7 +757,36 @@ pub fn execbuiltin(
                             } else {
                                 (0, "")
                             };
-                        if sep_len != 0 {
+                        let val = &s[i + sep_len..];
+                        if sep_len != 0
+                            && val.starts_with("(\u{1f}")
+                            && val.ends_with("\u{1f})")
+                            && val.len() >= 3
+                        {
+                            // c:454-485 — an ASG_ARRAY asgment: `=(`, then
+                            // ` quoted(elem)` per element, then ` )`. The
+                            // compiler packs `name=( … )` into one word with
+                            // REJOIN_SEP around each element (fusevm_bridge
+                            // BUILTIN_TYPESET_PAREN_PACK); unpack it the way
+                            // bin_typeset does.
+                            let mut elems: Vec<&str> =
+                                val[1..val.len() - 1].split('\u{1f}').collect();
+                            if elems.first().is_some_and(|e| e.is_empty()) {
+                                elems.remove(0);
+                            }
+                            if elems.last().is_some_and(|e| e.is_empty()) {
+                                elems.pop();
+                            }
+                            xtrerr_fputs(&s[..i]);
+                            xtrerr_fputs(sep);
+                            xtrerr_fputs("("); // c:455
+                            for e in elems {
+                                xtrerr_fputs(" "); // c:479
+                                xtrerr_fputs(&quotedzputs(e)); // c:480-481
+                            }
+                            xtrerr_fputs(" )"); // c:485
+                            emitted = true;
+                        } else if sep_len != 0 {
                             // c:453,487-488 — emit name + sep + quoted(value).
                             xtrerr_fputs(&format!(
                                 "{}{}{}",
@@ -2563,9 +2592,10 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
         format!("{}/{}", pwd_trim, dest)
     };
 
-    // c:1163-1166 — fixdir normalisation, skipped if chasing symlinks.
+    // c:1161-1166 — fixdir normalisation, skipped if chasing symlinks.
+    let mut dochaselinks = 0; // c:1120
     if CHASINGLINKS.load(Relaxed) == 0 {
-        buf = fixdir(&buf); // c:1164
+        dochaselinks = fixdir(&mut buf); // c:1165
     }
 
     // c:1169-1177 — "We try the full path first.  If that fails, try the
@@ -2577,6 +2607,11 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
         && (!pfix.is_empty() || dest.starts_with('/') || lchdir(dest, None, hard) != 0)
     {
         return None; // c:1175-1176
+    }
+    // c:1178-1180 — the chdir succeeded, so decide if we should force
+    // links to be chased
+    if dochaselinks != 0 {
+        CHASINGLINKS.store(1, Relaxed);
     }
     Some(buf) // c:1181 — metafy(buf, ...)
 }
@@ -2710,61 +2745,99 @@ pub fn printdirstack() {
     println!(); // c:1287
 }
 
-/// Port of `fixdir()` from `Src/builtin.c:1297`.
-/// C decl: `fixdir(char *src)`
-/// Lexically canonicalises a path in-place
-/// (no symlink follow): collapses `//`, drops `./` segments, and
-/// removes `..` along with their preceding segment. Returns 1 if
-/// fully canonicalised, 0 if a `..` could not be popped (e.g. at
-/// the root or with `..` as the first segment under CHASEDOTS=0).
+/// Port of `fixdir()` from `Src/builtin.c:1298`.
+/// C decl: `int fixdir(char *src)`
 ///
-/// Rust port takes ownership of `src` and returns the canonical
-/// form; was a 1-line stub returning empty string.
-pub fn fixdir(src: &str) -> String {
-    // c:1297
-    if src.is_empty() {
-        return String::new();
-    }
-
-    // c:1320-1325 — `chasedots` flag for the cdpath `../` edge case.
-    //                Skipped here — only fires under the pwd=="." rare
-    //                state. Lexical canonicalisation is what callers
-    //                rely on.
-    let abs = src.starts_with('/');
-    let mut components: Vec<&str> = Vec::new();
-
-    // c:1339-1395 — walk slash-separated segments.
-    for seg in src.split('/') {
-        match seg {
-            "" => continue,  // collapse `//`
-            "." => continue, // c:1352 drop `./`
-            ".." => {
-                // c:1358-1372 — pop previous segment if present and not
-                //                also `..` (sticky-`..` for relative
-                //                paths past their start).
-                if let Some(last) = components.last() {
-                    if *last == ".." {
-                        components.push("..");
-                    } else {
-                        components.pop();
-                    }
-                } else if !abs {
-                    // Relative path: keep the leading `..`.
-                    components.push("..");
-                }
-                // Absolute path: silently drop `..` past `/`.
-            }
-            other => components.push(other),
-        }
-    }
-
-    let body = components.join("/");
-    if abs {
-        format!("/{}", body)
-    } else if body.is_empty() {
-        ".".to_string()
+/// Canonicalises `src` IN PLACE: collapses `//`, drops `.` segments and
+/// removes each `foo/..` pair — but only after `stat()` shows `foo` is a
+/// directory; when it is not, the rest of the path is left as written and
+/// the result is 1. Under CHASE_DOTS a `..` is kept as an ordinary segment
+/// and the result is 1 as well. A non-zero result tells cd_try_chdir that
+/// the new directory must be found by chasing links (c:1165, c:1179-1180).
+pub fn fixdir(src: &mut String) -> i32 {
+    let s: Vec<u8> = src.as_bytes().to_vec();
+    let at = |i: usize| s.get(i).copied().unwrap_or(0);
+    let mut dest: Vec<u8> = Vec::with_capacity(s.len()); // c:1300 d0 = dest
+    // c:1301-1319 — relative change with the cwd removed from under us
+    // (`pwd` is "."): force links to be chased. Set to 2 so the lack of
+    // CHASEDOTS is still obeyed after the first "../" is preserved.
+    let pwd = getsparam("PWD").unwrap_or_default();
+    let mut chasedots: i32 = if at(0) == b'.'
+        && pwd == "."
+        && (at(1) == b'/' || (at(1) == b'.' && at(2) == b'/'))
+    {
+        2 // c:1319-1320
     } else {
-        body
+        0
+    };
+    let done = |dest: Vec<u8>, src: &mut String| {
+        *src = String::from_utf8_lossy(&dest).into_owned();
+    };
+    let mut i = 0usize;
+    loop {
+        // c:1334-1342 — compress multiple /es into single
+        if at(i) == b'/' {
+            dest.push(b'/');
+            i += 1;
+            while at(i) == b'/' {
+                i += 1;
+            }
+        }
+        // c:1343-1350 — at the end of the input path, remove a trailing /
+        // (if it exists), and return ct
+        if at(i) == 0 {
+            while dest.len() > 1 && dest.last() == Some(&b'/') {
+                dest.pop();
+            }
+            done(dest, src);
+            return chasedots; // c:1349
+        }
+        if at(i) == b'.' && at(i + 1) == b'.' && (at(i + 2) == 0 || at(i + 2) == b'/') {
+            if isset(crate::ported::zsh_h::CHASEDOTS) || chasedots > 1 {
+                // c:1356-1358 — and treat as normal segment
+                chasedots = 1;
+            } else {
+                if dest.len() > 1 {
+                    // c:1360-1377 — remove a foo/.. combination:
+                    // first check foo exists, else return.
+                    let d0 = String::from_utf8_lossy(&dest).into_owned();
+                    if !std::fs::metadata(&d0).map(|m| m.is_dir()).unwrap_or(false) {
+                        dest.extend_from_slice(&s[i..]); // c:1370-1373
+                        done(dest, src);
+                        return 1; // c:1374
+                    }
+                    // c:1376-1378 — `for (dest--; dest > d0 + 1 &&
+                    // dest[-1] != '/'; dest--); if (dest[-1] != '/') dest--;`
+                    let mut d = dest.len() - 1;
+                    while d > 1 && dest[d - 1] != b'/' {
+                        d -= 1;
+                    }
+                    if dest[d - 1] != b'/' {
+                        d -= 1;
+                    }
+                    dest.truncate(d);
+                }
+                // c:1380-1382 — `src++; while (*++src == '/'); continue;`
+                i += 2;
+                while at(i) == b'/' {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        if at(i) == b'.' && (at(i + 1) == b'/' || at(i + 1) == 0) {
+            // c:1385-1387 — skip a . section
+            i += 1;
+            while at(i) == b'/' {
+                i += 1;
+            }
+        } else {
+            // c:1388-1392 — copy a normal segment into the output
+            while at(i) != b'/' && at(i) != 0 {
+                dest.push(s[i]);
+                i += 1;
+            }
+        }
     }
 }
 
@@ -14418,6 +14491,22 @@ pub fn bin_dot(
     let oloops = LOOPS.load(Relaxed); // c:1609
     LOOPS.store(0, Relaxed); // c:1622
 
+    // c:Src/init.c:1627-1630 — `if (isset(SOURCETRACE)) { printprompt4();
+    //     fprintf(xtrerr ? xtrerr : stderr, "<sourcetrace>\n"); }`
+    if isset(crate::ported::zsh_h::SOURCETRACE) {
+        // c:1621 — `lineno = 1;` precedes the trace, so PS4 `%i` reads 1.
+        // The file's own statements set it again as they run; put the
+        // caller's value back for the frame push below.
+        let oldlineno = crate::ported::params::getsparam("LINENO")
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        crate::fusevm_bridge::set_lineno_impl(1); // c:1621
+        crate::ported::utils::printprompt4(); // c:1628
+        crate::fusevm_bridge::xtrerr_fputs("<sourcetrace>\n"); // c:1629
+        crate::fusevm_bridge::xtrerr_flush();
+        crate::fusevm_bridge::set_lineno_impl(oldlineno);
+    }
+
     crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
 
     // c:Src/init.c:1608-1616 — push a funcstack frame with
@@ -21909,46 +21998,80 @@ mod tests {
         }
     }
 
+    /// Run `fixdir` (c:Src/builtin.c:1298) on `p`; the rewritten path and
+    /// the int it returns.
+    fn fixdir_of(p: &str) -> (String, i32) {
+        let mut s = p.to_string();
+        let r = fixdir(&mut s);
+        (s, r)
+    }
+
     #[test]
     fn fixdir_canonicalizes_absolute_paths() {
         let _g = crate::test_util::global_state_lock();
-        // c:1297 — collapse `//`, drop `./`, pop `..`.
-        assert_eq!(fixdir("/tmp/./foo"), "/tmp/foo");
-        assert_eq!(fixdir("/tmp//foo"), "/tmp/foo");
-        assert_eq!(fixdir("/tmp/bar/../foo"), "/tmp/foo");
-        assert_eq!(fixdir("/tmp/bar/baz/../.."), "/tmp");
+        // c:1334-1392 — collapse `//`, drop `./`, pop `foo/..` for a
+        // directory `foo`.
+        let d = std::env::temp_dir().join(format!("fixdir-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("bar/baz")).unwrap();
+        let d = d.to_string_lossy().into_owned();
+        assert_eq!(fixdir_of(&format!("{d}/./bar")), (format!("{d}/bar"), 0));
+        assert_eq!(fixdir_of(&format!("{d}//bar//")), (format!("{d}/bar"), 0));
+        assert_eq!(fixdir_of(&format!("{d}/bar/../x")), (format!("{d}/x"), 0));
+        assert_eq!(fixdir_of(&format!("{d}/bar/baz/../..")), (d.clone(), 0));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn fixdir_keeps_dotdot_after_a_non_directory() {
+        let _g = crate::test_util::global_state_lock();
+        // c:1366-1374 — `foo/..` is removed only once stat() shows `foo`
+        // is a directory; otherwise the rest stays as written and the
+        // result is 1 (so `cd /nonexistent/../tmp` fails, as in zsh).
+        assert_eq!(
+            fixdir_of("/nonexistent-fixdir/../tmp"),
+            ("/nonexistent-fixdir/../tmp".to_string(), 1)
+        );
     }
 
     #[test]
     fn fixdir_drops_dotdot_past_root() {
         let _g = crate::test_util::global_state_lock();
-        // c:1372 — absolute path, `..` past `/` is dropped.
-        assert_eq!(fixdir("/.."), "/");
-        assert_eq!(fixdir("/../.."), "/");
-        assert_eq!(fixdir("/foo/../../bar"), "/bar");
+        // c:1359 `if (dest > d0 + 1)` — at `/` there is nothing to pop.
+        assert_eq!(fixdir_of("/.."), ("/".to_string(), 0));
+        assert_eq!(fixdir_of("/../.."), ("/".to_string(), 0));
     }
 
     #[test]
-    fn fixdir_relative_keeps_leading_dotdot() {
+    fn fixdir_chasedots_keeps_dotdot() {
         let _g = crate::test_util::global_state_lock();
-        // c:1367 — relative path: `..` past start stays as `..`.
-        assert_eq!(fixdir("../foo"), "../foo");
-        assert_eq!(fixdir("../../foo"), "../../foo");
-        assert_eq!(fixdir("foo/../bar"), "bar");
+        // c:1356-1358 — under CHASE_DOTS `..` is an ordinary segment and
+        // the result asks cd to chase links.
+        crate::ported::options::opt_state_set("chasedots", true);
+        let r = fixdir_of("/tmp/../usr");
+        crate::ported::options::opt_state_set("chasedots", false);
+        assert_eq!(r, ("/tmp/../usr".to_string(), 1));
     }
 
     #[test]
-    fn fixdir_empty_collapses_to_dot() {
+    fn fixdir_relative_leading_dotdot_has_nothing_to_pop() {
         let _g = crate::test_util::global_state_lock();
-        // Relative path that collapses fully → "."
-        assert_eq!(fixdir("./"), ".");
-        assert_eq!(fixdir("foo/.."), ".");
+        // c:1359 — callers hand fixdir an absolute path; a leading `..` in a
+        // relative one has no segment before it and is simply skipped.
+        assert_eq!(fixdir_of("../foo"), ("foo".to_string(), 0));
+        assert_eq!(fixdir_of("../../foo"), ("foo".to_string(), 0));
+    }
+
+    #[test]
+    fn fixdir_lone_dot_collapses_to_empty() {
+        let _g = crate::test_util::global_state_lock();
+        // c:1385-1387 skip the `.` section, c:1343-1349 end with nothing.
+        assert_eq!(fixdir_of("./"), (String::new(), 0));
     }
 
     #[test]
     fn fixdir_empty_input_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(fixdir(""), "");
+        assert_eq!(fixdir_of(""), (String::new(), 0));
     }
 
     #[test]

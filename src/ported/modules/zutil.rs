@@ -3141,6 +3141,22 @@ pub fn bin_zparseopts(
     // `n = dyncat("-", d->name)` from the matched `d` BEFORE `d = map_opt_desc(d)`
     // (c:1645/1648-1650), so under `-M` the stored option name is the arg
     // the user actually gave (`--foo`), not the canonical spec (`-f`).
+    // !!! WARNING: RUST-ONLY HELPER — NO SINGLE C COUNTERPART !!!
+    // Routes the four parse-time diagnostics to the prefix that matches the
+    // revision being emulated. See the `progname` declaration in
+    // bin_zparseopts for the split: 5.9.2 uses zwarnnam(nam, ...), and the
+    // 5.9.999.3-only `-n NAME` selects that revision's bare fprintf prefix.
+    fn parse_diag(nam: &str, progname: &Option<String>, msg: &str) {
+        match progname {
+            // ~/forkedRepos/zsh/Src/Modules/zutil.c:1993/1998/2018/2061 —
+            // `fprintf(stderr, "%s: …\n", progname)`, no scriptname/lineno.
+            Some(p) => eprint!("{p}: {msg}\n"),
+            // c:1984/1986/2005/2048 — `zwarnnam(nam, …)`, which prefixes
+            // `scriptname:zparseopts:LINE:` (src/zsh/Src/utils.c:142-168).
+            None => zwarnnam(nam, msg),
+        }
+    }
+
     fn push_val(
         descs: &mut [Desc],
         name_idx: usize,
@@ -3171,15 +3187,21 @@ pub fn bin_zparseopts(
         if (dflags & ZOF_MULT) == 0 {
             // c:1736-1737 — `if (!(d->flags & ZOF_MULT)) v = d->vals;`
             if let Some(v) = descs[idx].vals.first_mut() {
-                // c:1742 — `v->name = n;` with the comment "insert the last
-                // given name into arrays". C assigns this UNCONDITIONALLY,
-                // on the reuse path too, so under `-M` the surviving element
-                // carries the name of the LAST spelling the user typed:
-                // `-M -a optv - a:=-aaa -aaa:` given `--aaa foo -a bar`
-                // yields optv=(-a bar), not (--aaa bar). The previous port
-                // updated only arg/str and left the first-seen name.
-                v.name = n; // c:1742
-                v.arg = arg; // c:1743
+                // c:1654-1659 — `if (!v) { v = zhalloc(...); …; v->name = n;
+                // new = 1; }`. In 5.9.2 the name is written ONLY on the fresh
+                // path, so a reused value keeps the FIRST spelling seen:
+                // `-M -a optv -A opts - a:=-aaa -aaa:` on `--aaa foo -a bar`
+                // yields optv=(--aaa bar).
+                //
+                // 5.9.999.3 moved the assignment out of the `if (!v)` block
+                // (~/forkedRepos/zsh/Src/Modules/zutil.c:1742, "insert the
+                // last given name into arrays") and answers (-a bar) instead.
+                // /opt/homebrew/bin/zsh 5.9.2 and test_corpus/
+                // V12zparseopts.ztst:108 both want --aaa, and zparseopts is
+                // pinned to 5.9.2 (LONG_SPEC_NEEDS_GUARD), so the name is
+                // left alone here.
+                let _ = n; // c:1645 `n` is unused once the value is reused
+                v.arg = arg; // c:1660
                 v.str_ = str_;
                 return;
             }
@@ -3317,15 +3339,25 @@ pub fn bin_zparseopts(
     let mut defarr: Option<String> = None; // c:1828 `Zoptarr a, defarr = NULL;`
     let mut named_arrays: Vec<String> = Vec::new();
 
-    // c:1825 — `char *progname = scriptname ? scriptname :
-    //            (argzero ? argzero : nam);`
-    // progname prefixes the two diagnostics C prints with fprintf(stderr)
-    // rather than zwarnnam (c:1993/1998 "bad option:" and c:2018/2048
-    // "missing argument for option:"), so they carry NO `:zparseopts:LINE:`
-    // segment. `-n` (c:1866) overrides it.
-    let mut progname = crate::ported::utils::scriptname_get()
-        .or_else(crate::ported::utils::argzero)
-        .unwrap_or_else(|| nam.to_string());
+    // The four parse-time diagnostics ("bad option:" x2, "missing argument
+    // for option:" x2) are a version split, and zparseopts is already pinned
+    // to 5.9.2 everywhere else (LONG_SPEC_NEEDS_GUARD above).
+    //
+    //   5.9.2 (src/zsh/Src/Modules/zutil.c:1984/1986/2005/2048):
+    //       zwarnnam(nam, "bad option: -%c", *o);
+    //     -> `(anon):zparseopts:2: bad option: -x`
+    //   5.9.999.3 (~/forkedRepos/zsh/Src/Modules/zutil.c:1825/1993/1998):
+    //       char *progname = scriptname ? scriptname : (argzero ? argzero : nam);
+    //       fprintf(stderr, "%s: bad option: -%s\n", progname, o);
+    //     -> `(anon): bad option: -x`
+    //
+    // /opt/homebrew/bin/zsh 5.9.2 — the parity oracle — prints the zwarnnam
+    // form, and so does the checked-in corpus (test_corpus/V12zparseopts.ztst
+    // lines 68-77, 124, 134). `-n NAME` does not exist in 5.9.2 at all (the
+    // oracle answers `no default array defined: -n`); it is kept here only
+    // because Functions/Misc/zgetopt:22 opens with `zparseopts -n $errname`,
+    // so when and only when it is given the 5.9.999.3 fprintf prefix applies.
+    let mut progname: Option<String> = None;
 
     // c:1842-1853 — `-a NAME` names the default array.
     if OPT_ISSET(ops, b'a') {
@@ -3353,7 +3385,7 @@ pub fn bin_zparseopts(
             zwarnnam(nam, "missing program name for -n"); // c:1863
             return 1; // c:1864
         }
-        progname = v.to_string(); // c:1866
+        progname = Some(v.to_string()); // c:1866
     }
     // c:1868-1874 — `-v NAME` parses that array instead of $argv.
     if OPT_ISSET(ops, b'v') {
@@ -3621,12 +3653,13 @@ pub fn bin_zparseopts(
                 {
                     // c:2044-2052 — `add_opt_val(d, *++pp);`
                     if pi + 1 >= params.len() {
-                        // c:2046-2049 — `fprintf(stderr, "%s: missing
-                        // argument for option: -%s\n", progname, d->name);`
-                        // fprintf, NOT zwarnnam: no `:zparseopts:LINE:`
-                        // segment, and the prefix is progname (`-n`, else
-                        // scriptname/argzero/nam).
-                        eprint!("{}: missing argument for option: -{}\n", progname, dname);
+                        // c:2047-2050 — `zwarnnam(nam, "missing argument for
+                        // option: -%s", d->name);`
+                        parse_diag(
+                            nam,
+                            &progname,
+                            &format!("missing argument for option: -{dname}"),
+                        );
                         return 1; // c:2050
                     }
                     pi += 1;
@@ -3653,33 +3686,30 @@ pub fn bin_zparseopts(
             let didx = descs.iter().position(|d| d.name == name1);
             let Some(idx) = didx else {
                 if fail {
-                    // c:1990-2001:
-                    //   if (*o != '-' || o > *pp + 1) {
-                    //       convchar_t wc = unmeta_one(o, NULL);
-                    //       fprintf(stderr, "%s: bad option: -", progname);
-                    //       MB_CHARINIT();
-                    //       zputs(MB_NICECHAR(wc), stderr);
-                    //       fputc('\n', stderr);
-                    //   } else {
-                    //       fprintf(stderr, "%s: bad option: -%s\n", progname, o);
+                    // c:1982-1988:
+                    //   if (fail) {
+                    //       if (*o != '-' || o > *pp + 1)
+                    //           zwarnnam(nam, "bad option: -%c", *o);
+                    //       else
+                    //           zwarnnam(nam, "bad option: -%s", o);
+                    //       return 1;
                     //   }
-                    // Both arms are fprintf(stderr), NOT zwarnnam — the line
-                    // carries progname alone, with no `:zparseopts:LINE:`.
                     // `o > *pp + 1` is "not the first character after the
                     // leading dash", i.e. `ci > 0`; the else arm therefore
                     // only fires at ci == 0, where `o` and the whole body
                     // are the same string (so `-a --x -z` reports `--x`
                     // while `-a-xy` reports `--`).
                     if ch != '-' || ci > 0 {
-                        eprint!("{}: bad option: -{}\n", progname, ch); // c:1993-1996
+                        parse_diag(nam, &progname, &format!("bad option: -{ch}"));
+                        // c:1983-1984
                     } else {
-                        eprint!(
-                            "{}: bad option: -{}\n",
-                            progname,
-                            chars.iter().collect::<String>()
-                        ); // c:1998
+                        parse_diag(
+                            nam,
+                            &progname,
+                            &format!("bad option: -{}", chars.iter().collect::<String>()),
+                        ); // c:1986
                     }
-                    return 1; // c:2000
+                    return 1; // c:1987
                 }
                 consumed_param = false;
                 break;
@@ -3698,10 +3728,14 @@ pub fn bin_zparseopts(
                         && !params[pi + 1].starts_with('-'))
                 {
                     if pi + 1 >= params.len() {
-                        // c:2017-2021 — `fprintf(stderr, "%s: missing
-                        // argument for option: -%s\n", progname, d->name);`
-                        eprint!("{}: missing argument for option: -{}\n", progname, dname);
-                        return 1; // c:2020
+                        // c:2004-2007 — `zwarnnam(nam, "missing argument for
+                        // option: -%s", d->name);`
+                        parse_diag(
+                            nam,
+                            &progname,
+                            &format!("missing argument for option: -{dname}"),
+                        );
+                        return 1; // c:2007
                     }
                     pi += 1;
                     let arg = params[pi].clone();

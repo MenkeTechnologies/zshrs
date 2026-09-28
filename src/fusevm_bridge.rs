@@ -6698,6 +6698,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 || crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT));
         let out = with_executor(|exec| {
             exec.set_last_status(live_status);
+            // c:2044 — `parse_string(cmdarg, 0)`: the `${| … }` / `${{VAR} … }`
+            // body is parsed from the running line, not from 1.
+            let lineno: u64 = exec.scalar("LINENO").and_then(|s| s.parse().ok()).unwrap_or(0);
             // c:2016 — `startparamscope(); /* "local" behaves as if in a
             // function */`, paired with c:2093 `endparamscope()`. All three
             // forms take it (the C block is under `if (rplyvar)`), which is
@@ -6718,7 +6721,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // → `[][outer]`), so one save/clear/restore serves both.
                     let saved = crate::ported::params::getsparam(&rplyvar);
                     crate::ported::params::unsetparam(&rplyvar);
-                    let st = exec.execute_string_without_exit_hooks(&body).unwrap_or(0);
+                    let st = exec.execute_string_at_lineno(&body, lineno).unwrap_or(0);
                     exec.set_last_status(st);
                     let reply = crate::ported::params::getsparam(&rplyvar).unwrap_or_default();
                     match saved {
@@ -6740,7 +6743,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // is why an ARRAY result stays an array
                     // (D10nofork.ztst "Basic substitution, brace quoting,
                     // and array result").
-                    let st = exec.execute_string_without_exit_hooks(&body).unwrap_or(0);
+                    let st = exec.execute_string_at_lineno(&body, lineno).unwrap_or(0);
                     exec.set_last_status(st);
                     match exec.array(&rplyvar) {
                         Some(items) => {
@@ -7477,8 +7480,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Int(i64::from(mn_is_true(a) != mn_is_true(b)))
     });
 
-    // c:Src/math.c:972 setmathvar — stack is \[name, value\].
-    vm.register_builtin(BUILTIN_SET_MATH_VAR, |vm, _argc| {
+    // c:Src/math.c:972 setmathvar — stack is \[name, value, pval\]; pval
+    // (argc 3) says the operator read the lvalue first (c:975-993).
+    vm.register_builtin(BUILTIN_SET_MATH_VAR, |vm, argc| {
+        let pval = argc >= 3 && vm.pop().to_int() != 0;
         let value = arith_pop_mnumber(vm);
         let name = vm.pop().to_str();
         // c:Src/math.c:1161 — `op()` begins `if (errflag) return;`, so an
@@ -7504,7 +7509,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // c:Src/math.c:1370-1371 — `c = setmathvar(mvp, c); push(c, …)`:
         // the stored value, converted to the parameter's type
         // (c:1014-1030), is the value of the assignment.
-        let stored = crate::ported::math::setmathvar(&name, value);
+        let stored = crate::ported::math::setmathvar(&name, value, pval);
         crate::ported::math::m_variables_set(saved);
         arith_push(stored)
     });
@@ -8914,7 +8919,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let _ = crate::ported::params::assignaparam(
                     &name,
                     vec![value.clone()],
-                    crate::ported::zsh_h::ASSPM_AUGMENT,
+                    crate::ported::zsh_h::ASSPM_AUGMENT
+                        | crate::ported::zsh_h::ASSPM_WARN, // c:Src/exec.c:2573
                 );
                 #[cfg(feature = "recorder")]
                 if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
@@ -8935,7 +8941,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _ = crate::ported::params::assignsparam(
                 &name,
                 &value,
-                crate::ported::zsh_h::ASSPM_AUGMENT,
+                crate::ported::zsh_h::ASSPM_AUGMENT | crate::ported::zsh_h::ASSPM_WARN, // c:Src/exec.c:2573 addvars
             );
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
@@ -12032,6 +12038,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut entries: Vec<(u8, String)> = Vec::with_capacity(pairs.len());
         for (op_byte, target) in pairs {
             match target {
+                // c:Src/glob.c:2161 — without MULTIOS the word is preforked
+                // PREFORK_SINGLE: one word, an array joined by sepjoin.
+                Value::Array(items) if !opt_state_get("multios").unwrap_or(true) => {
+                    let words: Vec<String> = items.iter().map(|v| v.to_str()).collect();
+                    entries.push((op_byte, crate::ported::utils::sepjoin(&words, None)));
+                }
                 Value::Array(items) => {
                     for item in items.iter() {
                         entries.push((op_byte, item.to_str()));
@@ -12453,6 +12465,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut entries: Vec<(u8, String)> = Vec::with_capacity(pairs.len());
         for (op_byte, source) in pairs {
             match source {
+                // c:Src/glob.c:2161 — without MULTIOS the word is preforked
+                // PREFORK_SINGLE: one word, an array joined by sepjoin.
+                Value::Array(items) if !opt_state_get("multios").unwrap_or(true) => {
+                    let words: Vec<String> = items.iter().map(|v| v.to_str()).collect();
+                    entries.push((op_byte, crate::ported::utils::sepjoin(&words, None)));
+                }
                 Value::Array(items) => {
                     for item in items.iter() {
                         entries.push((op_byte, item.to_str()));
@@ -13109,6 +13127,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // resulting word the way execcmd's fall-through does (shell function →
     // builtin → external). Redirects are already applied by the surrounding
     // WithRedirectsBegin scope.
+    vm.register_builtin(BUILTIN_NULLCMD_CHECK, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let nullcmd = crate::ported::params::getsparam("NULLCMD");
+        // c:3395 — `!nullcmd || !*nullcmd || opts[CSHNULLCMD]`
+        if nullcmd.as_deref().map_or(true, str::is_empty)
+            || crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLCMD)
+        {
+            crate::ported::utils::zerr("redirection with no command"); // c:3397
+            crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:3398
+            vm.last_status = 1;
+            crate::ported::utils::errflag
+                .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed); // c:3399
+            return Value::Bool(false);
+        }
+        Value::Bool(true)
+    });
     vm.register_builtin(BUILTIN_NULLCMD_EXEC, |vm, argc| {
         let args = pop_args(vm, argc);
         let is_single_read = args
@@ -13128,21 +13162,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(1);
         }
+        // c:3395-3399 — the no-NULLCMD / CSH_NULLCMD refusal already ran in
+        // BUILTIN_NULLCMD_CHECK, before the redirections opened.
         let nullcmd = crate::ported::params::getsparam("NULLCMD");
         let nc_str = nullcmd.as_deref().unwrap_or("");
-        let nc_empty = nc_str.is_empty();
-        // c:3340-3344 — CSHNULLCMD or no NULLCMD set → diagnostic.
-        if nc_empty || crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLCMD) {
-            let script_name =
-                crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
-            let lineno: u64 = with_executor(|exec| {
-                exec.scalar("LINENO")
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(1)
-            });
-            eprintln!("{}:{}: redirection with no command", script_name, lineno);
-            return Value::Status(1);
-        }
         // c:3350 — SHNULLCMD → run `:`.
         let cmd: String = if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHNULLCMD) {
             ":".to_string()
@@ -17819,6 +17842,11 @@ pub const BUILTIN_EXEC_INLINE_ENV_DONE: u16 = 627;
 /// stack indicates whether this is a single REDIR_READ redirect
 /// (selects READNULLCMD when set + non-empty).
 pub const BUILTIN_NULLCMD_EXEC: u16 = 607;
+/// c:Src/exec.c:3395-3399 — the redirection-only command's refusal,
+/// taken before its redirections open: no NULLCMD, or CSH_NULLCMD set,
+/// is `zerr("redirection with no command")` with `lastval = 1` and
+/// ERRFLAG_ERROR. argc=0; Bool(true) = go on to NULLCMD_EXEC.
+pub const BUILTIN_NULLCMD_CHECK: u16 = 760;
 /// `.` (dot) — alias of source/bin_dot but dispatches with the
 /// literal name "." so the diagnostic prefix matches zsh's
 /// (`zsh:.:1: …` vs source's `zsh:source:1: …`).

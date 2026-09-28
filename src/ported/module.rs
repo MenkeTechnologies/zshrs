@@ -1202,39 +1202,81 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     // directly. Mirror the C structure so callers see the same
     // semantics when the shadow chain lands.
     if let Some(expected) = d.pm.as_ref() {
-        // c:1135
+        // c:1130 `if (pm != d->pm)`
         // !!! RUST-ONLY IDENTITY TEST !!! C compares POINTERS: `pm` and
         // `d->pm` are the same heap object whenever the module's own
         // parameter is the live binding. zshrs's `paramtab` stores `Param`
         // BY VALUE and hands out clones, so `std::ptr::eq` was false for
-        // every call — `deleteparamdef` always took the c:1147 `return 1`
+        // every call — `deleteparamdef` always took the c:1143 `return 1`
         // path, and `zmodload -u zsh/datetime` reported "parameter
         // `EPOCHSECONDS' already deleted" for a parameter it had just
-        // added. Compare by NAME, which is what identity means for a
-        // by-value table (the shadow-chain walk below is still a no-op
-        // until `pm.old` is wired through paramtab).
-        if pm.node.nam != expected.node.nam {
-            // c:1135 pm != d->pm
-            // c:1141-1145 — walk pm->old looking for d->pm.
-            let mut searchpm = pm.old.clone(); // c:1142
-            let mut found = false;
-            while let Some(s) = searchpm {
-                // c:1142
-                if std::ptr::eq(s.as_ref(), expected.as_ref()) {
-                    // c:1144
-                    found = true; // c:1145
-                    break;
+        // added. Two things stand in for the pointer compare:
+        //   * the NAME, which is what identity means for a by-value table;
+        //   * `pm.level`, because `addparamdef` (c:1078) pins the module's
+        //     own binding at `pm->level = 0` while `local NAME=…` records
+        //     the enclosing `locallevel` (params.rs:2762-2766, c:1136).
+        // A non-zero level therefore means the live node is a LOCAL that
+        // has hidden the module's parameter — exactly the case c:1131-1133
+        // describes ("See if the parameter has been hidden").
+        if pm.node.nam != expected.node.nam || pm.level != 0 {
+            // c:1136-1140 — walk pm->old looking for d->pm. The whole chain
+            // carries one name, so the level-0 link is the module's.
+            //     for (prevpm = pm, searchpm = pm->old;
+            //          searchpm;
+            //          prevpm = searchpm, searchpm = searchpm->old)
+            //         if (searchpm == d->pm) break;
+            // Flatten the by-value chain so the splice below is a Vec edit
+            // rather than a doubly-borrowed linked-list walk.
+            let mut chain: Vec<Param> = Vec::new();
+            let mut link = Some(pm);
+            while let Some(mut n) = link {
+                link = n.old.take();
+                chain.push(n);
+            }
+            let searchpm = chain
+                .iter()
+                .skip(1)
+                .position(|p| p.level == 0 && p.node.nam == expected.node.nam)
+                .map(|i| i + 1);
+            let Some(hit) = searchpm else {
+                // c:1142-1143 — `if (!searchpm) return 1;`
+                return 1;
+            };
+            // c:1145-1150:
+            //     paramtab->removenode(paramtab, pm->node.nam);
+            //     prevpm->old = searchpm->old;
+            //     searchpm->old = pm;
+            //     paramtab->addnode(paramtab, searchpm->node.nam, searchpm);
+            //     pm = searchpm;
+            // C hoists the module's binding to the front so the unset below
+            // hits it, with the hidden chain hanging off its ->old; then
+            // unsetparam_pm's removenode postlude (c:Src/params.c:3900)
+            // restores that chain. The net effect on the table is that the
+            // module's link, and only it, leaves the chain — so splice it
+            // out here and rebuild.
+            let mut modpm = chain.remove(hit);
+            let mut rebuilt: Option<Param> = None;
+            for mut link in chain.into_iter().rev() {
+                link.old = rebuilt.take();
+                rebuilt = Some(link);
+            }
+            // c:1152-1153 on the module's own binding, not on the local.
+            modpm.node.flags =
+                (modpm.node.flags & !(PM_READONLY as i32)) | (PM_REMOVABLE as i32);
+            unsetparam_pm(&mut modpm, 0, 1);
+            if let Ok(mut tab) = paramtab().write() {
+                match rebuilt {
+                    // c:1150 — the hidden chain is what stays visible.
+                    Some(front) => {
+                        tab.insert(d.name.clone(), front);
+                    }
+                    None => {
+                        tab.remove(&d.name);
+                    }
                 }
-                searchpm = s.old.clone(); // c:1143
             }
-            if !found {
-                // c:1147
-                return 1; // c:1148
-            }
-            // c:1150-1153 — splice searchpm out of the chain and
-            // re-add it under its node.nam. Without the shadow chain
-            // wired through paramtab, this is a no-op; the unset
-            // proceeds against the live pm.
+            d.pm = None; // c:1154 d->pm = NULL
+            return 0; // c:1155
         }
     }
 

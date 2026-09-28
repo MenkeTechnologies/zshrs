@@ -2797,6 +2797,10 @@ pub fn zshrs_main() {
         // `executor.variables`, but the explicit-name case above
         // depends on the GSU side knowing the value too.
         zsh::ported::utils::set_argzero(Some(zero.clone()));
+        // c:Src/init.c:305-306 — `posixzero = *argv;` when a `-c` name word
+        // follows the command string; otherwise it stays argv[0] (c:282).
+        // `$0` reads it under POSIX_ARGZERO (argzerogetfn, params.c:4908).
+        zsh::ported::utils::set_posixzero(Some(zero.clone()));
 
         // Per Src/init.c:479 — `-c` mode hardcodes
         //   `scriptname = scriptfilename = ztrdup("zsh")`
@@ -3078,6 +3082,9 @@ pub fn zshrs_main() {
             }
         };
         executor.set_scalar("0".to_string(), args[1].clone());
+        // c:Src/init.c:305 — `posixzero = *argv;`: the script path, which
+        // `$0` reads under POSIX_ARGZERO even inside a function.
+        zsh::ported::utils::set_posixzero(Some(args[1].clone()));
         executor.set_pparams(args.iter().skip(2).cloned().collect());
         // c:Src/init.c:1330 — `if (runscript) setsparam("ZSH_SCRIPT",
         // ztrdup(runscript));`. Also bug #25 in docs/BUGS.md.

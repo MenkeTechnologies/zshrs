@@ -2272,13 +2272,9 @@ pub static xtrerr: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 /// with the per-line/per-arg fprintf — same shape mirrored at the two
 /// zshrs call sites in fusevm_bridge.rs (BUILTIN_XTRACE_LINE / ARGS).
 pub(crate) fn printprompt4() {
-    // c:utils.c:1720 — `if (!isset(XTRACE)) return;`. C tests
-    // `xtrerr` first then conditionally; the read-the-option early-
-    // return path is equivalent for our purposes since we don't ship
-    // the `xtrerr` separate-stream support.
-    if !isset(XTRACE) {
-        return;
-    }
+    // c:1720-1721 — `if (!xtrerr) xtrerr = stderr;`. There is NO XTRACE
+    // test here: every XTRACE caller gates itself, and source()'s
+    // SOURCE_TRACE line (c:Src/init.c:1627-1630) prints PS4 with XTRACE off.
     // c:utils.c:1722-1724 — `if (prompt4) { ... s = dupstring(prompt4);`
     // C `prompt4` is a global initialized in init.c:1192 from the
     // emulation bits; PS4/PROMPT4 paramtab entries alias it via

@@ -2788,6 +2788,19 @@ impl ZshCompiler {
             //   NULLCMD=cat reads the redir-bound fd through the
             //   inherited redirect.
             if !simple.redirs.is_empty() {
+                // c:Src/exec.c:3395-3399 — with no NULLCMD, or under
+                // CSH_NULLCMD, the empty command is an error decided while
+                // the command word is resolved, BEFORE any redirection is
+                // opened (c:3786): `> file` must not create `file`.
+                let nullcmd_refused = if simple.assigns.is_empty() {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_NULLCMD_CHECK, 0),
+                        0,
+                    );
+                    Some(self.builder.emit(Op::JumpIfFalse(0), 0))
+                } else {
+                    None
+                };
                 self.emit_forked_redirs();
                 self.builder
                     .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
@@ -2836,6 +2849,9 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);
+                if let Some(j) = nullcmd_refused {
+                    self.builder.patch_jump(j, self.builder.current_pos());
+                }
                 self.emit_errexit_check();
                 return;
             }
@@ -4623,6 +4639,20 @@ impl ZshCompiler {
                 || unquoted(s, '{')
                 || unquoted(s, '\u{8f}') // Inbrace (parse/tokens.rs)
         };
+        // c:Src/glob.c:2161 xpandredir — `prefork(&fake, isset(MULTIOS) ? 0 :
+        // PREFORK_SINGLE, NULL)`: under MULTIOS a parameter / command
+        // substitution in the target is word-split like an argument, and
+        // c:2195-2203 duplicates the redirection per resulting word
+        // (`cat <$(echo f g)` reads f then g). Route such targets through
+        // the multios builtins, which splice an array value.
+        let may_expand_to_words = |r: &crate::parse::ZshRedir| -> bool {
+            r.name.contains([
+                crate::ported::zsh_h::Stringg,
+                crate::ported::zsh_h::Qstring,
+                crate::ported::zsh_h::Tick,
+                crate::ported::zsh_h::Qtick,
+            ])
+        };
         for r in redirs {
             if is_write_member(r) {
                 *writes_per_fd.entry(fd_of(r)).or_insert(0) += 1;
@@ -4675,7 +4705,7 @@ impl ZshCompiler {
             // (c:Src/glob.c:2195-2203).
             let is_multios_read_candidate = is_read_member(redir)
                 && (read_total >= 2
-                    || (read_total == 1 && is_read_side(redir.rtype) && has_glob_tokens(redir)));
+                    || (read_total == 1 && is_read_side(redir.rtype) && (has_glob_tokens(redir) || may_expand_to_words(redir))));
             if is_multios_read_candidate {
                 let op_byte = match redir.rtype {
                     REDIR_HEREDOC | REDIR_HEREDOCDASH => crate::vm_helper::MULTIOS_OP_HEREDOC_BODY,
@@ -4755,7 +4785,7 @@ impl ZshCompiler {
             let write_total = writes_per_fd.get(&fd).copied().unwrap_or(0);
             let is_multios_candidate = is_write_member(redir)
                 && (write_total >= 2
-                    || (write_total == 1 && is_write_side(redir.rtype) && has_glob_tokens(redir)));
+                    || (write_total == 1 && is_write_side(redir.rtype) && (has_glob_tokens(redir) || may_expand_to_words(redir))));
             if !is_multios_candidate {
                 self.compile_redir(redir, permanent);
                 continue;

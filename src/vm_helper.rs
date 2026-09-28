@@ -3995,6 +3995,17 @@ impl ShellExecutor {
     /// is what lands in `~/.zshrs/autoloads.rkyv`, so the next process can
     /// install the same function without re-parsing the definition file.
     fn compile_script_isolated(&mut self, script: &str) -> Result<fusevm::Chunk, String> {
+        self.compile_script_isolated_at(script, None)
+    }
+
+    /// `compile_script_isolated` with C's `parse_string(s, reset_lineno)`
+    /// argument: `Some(n)` is `parse_string(s, 0)` (c:Src/exec.c:291-300),
+    /// the body parsed from the running line `n` (see `parse_isolated_at`).
+    fn compile_script_isolated_at(
+        &mut self,
+        script: &str,
+        lineno: Option<u64>,
+    ) -> Result<fusevm::Chunk, String> {
         // Skip history expansion for non-interactive script execution
         // (`zsh -c '…'`, internal eval, sourced files). zsh's `!`
         // history sub only fires on the REPL command line, never on
@@ -4013,7 +4024,7 @@ impl ShellExecutor {
         // SHIN line into this nested program (e.g. `eval "x=5"` swallowed the
         // following `echo $x` off stdin). parse_isolated sets `strin` so the
         // string drains to EOF; execution below stays in the current shell.
-        let program = parse_isolated(script);
+        let program = parse_isolated_at(script, lineno);
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
@@ -4030,6 +4041,7 @@ impl ShellExecutor {
         }
 
         let mut compiler = crate::compile_zsh::ZshCompiler::new();
+        compiler.nested_lineno_base = lineno; // c:Src/exec.c:297 reset_lineno == 0
         if CMDARG_EXITING.with(|c| c.replace(false)) {
             // c:Src/init.c:1568 — `execstring(cmd, 0, 1, "cmdarg")`: the `-c`
             // string runs as an EXITING list, so its last command is the
@@ -4230,6 +4242,15 @@ impl ShellExecutor {
     /// `trap 'print T' EXIT; eval :; print after` printed T before `after`.
     pub fn execute_string_without_exit_hooks(&mut self, script: &str) -> Result<i32, String> {
         let chunk = self.compile_script_isolated(script)?;
+        self.run_chunk(chunk, "execstring")
+    }
+
+    /// `execode(parse_string(cmdarg, 0), 1, 0, "cmdsubst")` — a nofork
+    /// substitution body (c:Src/subst.c:2044-2046) parsed from the running
+    /// line, so its statements carry the outer line numbers and leave
+    /// `lineno` on them, as C's do.
+    pub fn execute_string_at_lineno(&mut self, script: &str, lineno: u64) -> Result<i32, String> {
+        let chunk = self.compile_script_isolated_at(script, Some(lineno))?;
         self.run_chunk(chunk, "execstring")
     }
 

@@ -405,3 +405,118 @@ mod setopt_glob_respects_locked_options {
         assert_parity("setopt -m 'int*'; print $options[interactive]");
     }
 }
+
+/// Option effects that need a scratch cwd or extra argv words: stdout and
+/// exit status of `zsh -f -c SCRIPT ARGS…` vs `zshrs --zsh -f -c`, each run
+/// in its own fresh temporary directory.
+mod option_effects_in_a_sandbox {
+    use super::*;
+
+    fn run_in(bin: &Path, pre: &[&str], s: &str, args: &[&str]) -> R {
+        let d = std::env::temp_dir().join(format!(
+            "optfx-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        let o = Command::new(bin)
+            .args(pre)
+            .args(["-f", "-c", s])
+            .args(args)
+            .current_dir(&d)
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("spawn");
+        let _ = std::fs::remove_dir_all(&d);
+        R {
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            exit: o.status.code().unwrap_or(-1),
+        }
+    }
+
+    fn parity(s: &str, args: &[&str]) {
+        if !zsh_available() {
+            return;
+        }
+        let z = run_in(Path::new(zsh_path()), &[], s, args);
+        let r = run_in(&zshrs_bin(), &["--zsh"], s, args);
+        assert_eq!(
+            (z.stdout.as_str(), z.exit),
+            (r.stdout.as_str(), r.exit),
+            "divergence on:\n{s}"
+        );
+    }
+
+    /// c:Src/init.c:1627-1630 — SOURCE_TRACE prints PS4 (with lineno 1,
+    /// c:1621) and `<sourcetrace>` for every sourced file. printprompt4
+    /// (c:Src/utils.c:1718) has no XTRACE test of its own; the port's
+    /// made the trace line vanish.
+    #[test]
+    fn sourcetrace_announces_each_sourced_file() {
+        parity(
+            "PS4='+%N:%i> '; setopt sourcetrace; print 'print sourced' > s.zsh; true\n\
+             { . ./s.zsh; f() { source ./s.zsh }; f } 2>&1",
+            &[],
+        );
+    }
+
+    /// c:Src/params.c:4906-4911 — under POSIX_ARGZERO `$0` is posixzero,
+    /// the `-c` name word (c:Src/init.c:305), even inside a function.
+    #[test]
+    fn posixargzero_zero_is_the_shell_name_in_a_function() {
+        parity("setopt posixargzero; f() { print $0 }; f; print $0", &["NAME"]);
+    }
+
+    /// c:Src/builtin.c:1356-1358 — CHASE_DOTS keeps `..` as a segment and
+    /// makes cd chase links, so `cd l/..` lands in the parent of the link
+    /// TARGET. c:1366-1374 — without it `foo/..` is only folded once
+    /// stat() shows `foo` is a directory.
+    #[test]
+    fn chasedots_and_fixdir_stat_check() {
+        parity("mkdir -p a/b; ln -s a/b l; setopt chasedots; cd l/..; print ${PWD:t}", &[]);
+        parity("mkdir -p a/b; ln -s a/b l; cd l/..; [[ -L l ]] && print back", &[]);
+        parity("cd /nonexistent-optfx/../tmp 2>/dev/null; print $?", &[]);
+    }
+
+    /// c:Src/exec.c:3395-3399 — with no NULLCMD, or under CSH_NULLCMD, a
+    /// redirection-only command is an error (lastval 1, ERRFLAG_ERROR)
+    /// decided before any redirection opens: the file is not created and
+    /// the rest of the list does not run.
+    #[test]
+    fn cshnullcmd_refuses_before_opening_the_file() {
+        parity("setopt cshnullcmd; { > g } always { ls; print done }", &[]);
+        parity("NULLCMD=; > g; print notreached", &[]);
+        parity("setopt cshnullcmd; f() { > g; print in }; f; print $? after", &[]);
+    }
+}
+
+/// c:Src/params.c:3997-4000 — `strsetfn` names a directory for AUTO_NAME_DIRS
+/// only when `!pm->level` (workers/54309, E01options.ztst "AUTO_NAME_DIRS:
+/// local parameter not considered"). zsh 5.9.2 predates the fix, so this
+/// pins the current-source result.
+mod autonamedirs_ignores_locals_zshrs_pin {
+    use super::*;
+
+    #[test]
+    fn a_local_never_names_a_directory() {
+        let o = Command::new(zshrs_bin())
+            .args([
+                "--zsh",
+                "--autonamedirs",
+                "+Z",
+                "-fic",
+                "() { local b=/bin; hash -d | grep '^b=' }\n\
+                 c=/bin\n\
+                 () { local c=/sbin; hash -d | grep '^c=' }\n\
+                 hash -d | grep '^[bc]='",
+            ])
+            .stdin(std::process::Stdio::null())
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "c=/bin\nc=/bin\n");
+    }
+}

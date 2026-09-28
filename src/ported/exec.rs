@@ -2157,7 +2157,16 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
     // installed by fusevm_bridge at startup. Direct
     // `with_executor` / ShellExecutor reach-in from src/ported/ is
     // forbidden — see memory feedback_no_exec_script_from_ported.
-    let _ = crate::ported::exec::execute_script_zsh_pipeline(s);
+    // c:1277 — `parse_string(s, 0)`: reset_lineno is 0, so the string is
+    // parsed from the line being executed, not from 1. A `${| … }` body
+    // re-run on the glob path left `lineno` at 1 and the NOMATCH error
+    // for its own word said `zsh:1:`.
+    let running = crate::ported::lex::lineno();
+    if crate::fusevm_bridge::try_with_executor(|exec| exec.execute_string_at_lineno(s, running))
+        .is_none()
+    {
+        let _ = crate::ported::exec::execute_script_zsh_pipeline(s);
+    }
     popheap(); // c:1240
 }
 
@@ -5778,7 +5787,7 @@ pub fn cancd2(s: &str) -> i32 {
             s.to_string()
         };
         // c:6427 — `fixdir(us2 = us);` — lexical canonicalisation.
-        raw = fixdir(&raw);
+        fixdir(&mut raw);
         us = raw;
     } else {
         // c:6428
