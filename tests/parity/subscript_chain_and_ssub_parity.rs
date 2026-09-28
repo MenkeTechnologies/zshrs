@@ -654,3 +654,25 @@ mod unbraced_subscript_escape_marker {
         assert_parity(r#"s='little *, [how]'; print -R $s[$s[(i)\*]] $s[(i)\*]"#);
     }
 }
+
+/// c:Src/params.c:1725 — getarg's `tokenize(s)` honors a backslash only
+/// before a glob metacharacter (c:Src/glob.c:3651 leaves any other one as
+/// DATA), so `(i)a\\b` searches for a literal backslash and `(i)a\"b` for
+/// backslash-quote. Every route that reaches the shared getarg (a mixed
+/// word `x$a[...]`, a nested `${${s}[...]}`) read the raw backslash as a
+/// quote and matched `ab` / `a"b` instead.
+mod search_pattern_data_backslash {
+    use super::*;
+
+    #[test]
+    fn mixed_word_and_nested_references() {
+        assert_parity(
+            r#"a=('a b' 'a\ b' 'a\b' 'a"b' 'a\"b' 'ab'); print -r -- x$a[(i)a\ b] x$a[(i)a\\b] x$a[(i)a\"b] x$a[(i)a\b]"#,
+        );
+        assert_parity(r#"s='xa\by'; print -r -- x$s[(i)a\\b] ${${s}[(i)a\\b]} ${${:-a\\b}[(i)a\\b]}"#);
+        assert_parity(
+            r#"typeset -A C; C[a\"b]=2; C[a\\b]=4; print -r -- x$C[(i)a\"b] "z$C[(i)a\"b]" x$C[(i)a\\b] $C[(i)a\\b]$C[(i)a\"b]"#,
+        );
+        assert_parity(r#"a=('a\ b' 'a b'); p='a\ b'; print -r -- $a[(i)$p] x$a[(i)$p] "$a[(i)$p]""#);
+    }
+}

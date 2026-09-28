@@ -3571,7 +3571,7 @@ pub(crate) fn getarg<'a>(
         } else {
             patcompile(
                 &{
-                    let mut __pat_tok = (pat).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(pat); // c:1725 tokenize(s): a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 },
@@ -3819,7 +3819,7 @@ pub(crate) fn getarg<'a>(
         } else {
             patcompile(
                 &{
-                    let mut __pat_tok = (pat_used).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(pat_used); // c:1725 tokenize(s): a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 },
@@ -3945,7 +3945,7 @@ pub(crate) fn getarg<'a>(
             let prog = if exact {
                 None
             } else {
-                let mut tok = pat.to_string();
+                let mut tok = crate::pattern_data_escape::escape_data_backslashes(pat); // c:1725 tokenize(s): a raw backslash tokenize declines is DATA (c:Src/glob.c:3651)
                 crate::ported::glob::tokenize(&mut tok);
                 patcompile(&tok, PAT_HEAPDUP as i32, None) // c:1727
             };
@@ -4057,7 +4057,7 @@ pub(crate) fn getarg<'a>(
             } else {
                 patcompile(
                     &{
-                        let mut __pat_tok = (pat).to_string();
+                        let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(pat); // c:1725 tokenize(s): a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                         crate::ported::glob::tokenize(&mut __pat_tok);
                         __pat_tok.push(crate::ported::zsh_h::Star); // c:1698
                         __pat_tok

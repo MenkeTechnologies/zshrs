@@ -13853,24 +13853,54 @@ pub fn paramsubst(
             // `a=(aa bbb c); ${(c)#a[1,2]}` is 6, not 8 — zargs' `-s` loop
             // shrinks its slice until this length fits and never ended.
             let len_elems = |whole: Vec<String>| -> Vec<String> {
-                if flagged_array_subscript {
-                    return split_parts.clone().unwrap_or_default();
-                }
-                let Some((lo_s, hi_s)) = subscript.as_deref().and_then(|s| {
+                let aval: Vec<String> = if flagged_array_subscript {
+                    split_parts.clone().unwrap_or_default()
+                } else if let Some((lo_s, hi_s)) = subscript.as_deref().and_then(|s| {
                     crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
-                }) else {
-                    return whole;
-                };
-                let len = whole.len() as i64;
-                let lo = crate::ported::math::mathevali(&singsub(&lo_s)).unwrap_or(1); // c:Src/params.c:2130
-                let hi = crate::ported::math::mathevali(&singsub(&hi_s)).unwrap_or(len); // c:Src/params.c:2172
-                let lo_idx = if lo < 0 { (len + lo).max(0) } else { (lo - 1).max(0) };
-                let hi_idx = if hi < 0 { (len + hi + 1).max(0) } else { hi.min(len) };
-                if hi_idx <= lo_idx {
-                    Vec::new()
+                }) {
+                    let len = whole.len() as i64;
+                    let lo = crate::ported::math::mathevali(&singsub(&lo_s)).unwrap_or(1); // c:Src/params.c:2130
+                    let hi = crate::ported::math::mathevali(&singsub(&hi_s)).unwrap_or(len); // c:Src/params.c:2172
+                    let lo_idx = if lo < 0 { (len + lo).max(0) } else { (lo - 1).max(0) };
+                    let hi_idx = if hi < 0 { (len + hi + 1).max(0) } else { hi.min(len) };
+                    if hi_idx <= lo_idx {
+                        Vec::new()
+                    } else {
+                        whole[lo_idx as usize..hi_idx as usize].to_vec()
+                    }
                 } else {
-                    whole[lo_idx as usize..hi_idx as usize].to_vec()
+                    whole
+                };
+                if !evalchar {
+                    return aval;
                 }
+                // c:3811-3833 — `(#)` runs BEFORE getlen (c:3856) and, when
+                // `isarr`, replaces EACH element with its character, so
+                // `a=(abc de f); ${(c#)#a}` measures three one-char words
+                // joined by a space (5), not the raw words (8).
+                let saved_errflag = errflag.load(Ordering::Relaxed); // c:3812 oef
+                let saved_noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:3812 one
+                if !quoteerr {
+                    *crate::ported::utils::noerrs_lock().lock().unwrap() = 1; // c:3814
+                }
+                let mut aval2: Vec<String> = Vec::with_capacity(aval.len()); // c:3824
+                for avptr in &aval {
+                    // c:3826-3830
+                    match substevalchar(avptr) {
+                        Some(c) => aval2.push(c),
+                        None => break, // c:3829 haserr = 1; break;
+                    }
+                }
+                *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs; // c:3840
+                if !quoteerr {
+                    // c:3843 — `errflag = oef | (errflag & ERRFLAG_INT);`
+                    let cur = errflag.load(Ordering::Relaxed);
+                    errflag.store(
+                        saved_errflag | (cur & crate::ported::zsh_h::ERRFLAG_INT),
+                        Ordering::Relaxed,
+                    );
+                }
+                aval2
             };
             let n: usize = if let Some((parts, true)) = word_used.as_ref() {
                 // c:3849-3865 with `isarr` set by the word's multsub split.

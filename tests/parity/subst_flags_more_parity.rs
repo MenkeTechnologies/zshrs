@@ -1025,3 +1025,16 @@ mod round6_subst {
         assert_parity(r#"setopt shwordsplit; arr=("a b" c); print -l x${^arr}y"#);
     }
 }
+
+/// c:Src/subst.c:3811-3833 — `(#)` replaces EACH array element with its
+/// character before the length arm (c:3856) measures it, so `(c#)`
+/// counts one-char words joined by a space, not the raw words.
+mod evalchar_before_getlen {
+    use super::*;
+
+    #[test]
+    fn char_count_measures_the_converted_elements() {
+        assert_parity(r#"a=(abc de f); print ${(c#)#a} ${(c)#a} ${(#)#a}"#);
+        assert_parity(r#"a=(65 66 9731); print ${(c#)#a} ${(c#)#a[1,2]} ${(w#)#a}"#);
+    }
+}
