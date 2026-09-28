@@ -2155,11 +2155,13 @@ impl ShellExecutor {
         } else {
             crate::ported::compat::zgetcwd() // c:1250-1252 — pwd = zgetcwd()
         };
-        env::set_var("PWD", &pwd_val);
         // c:1255-1259 — oldpwd = getenv("OLDPWD") ?: ztrdup(pwd).
-        if env::var("OLDPWD").is_err() {
-            env::set_var("OLDPWD", &pwd_val); // c:1257
-        }
+        let oldpwd_val = env::var("OLDPWD").unwrap_or_else(|_| pwd_val.clone()); // c:1257
+        // Both stay out of the environment until set_pwd_env below: in C they
+        // are the `pwd`/`oldpwd` globals, and only set_pwd_env's addenv
+        // (c:Src/builtin.c:821-826) exports them, after HOME, LOGNAME and
+        // SHLVL (c:Src/params.c:960-977). Publishing them here put a
+        // non-inherited PWD/OLDPWD ahead of those in every child's env.
 
         // Initialize fpath from FPATH env var, or from the compiled-in
         // defaults when it is absent (c:Src/init.c:1132-1143).
@@ -2797,11 +2799,16 @@ impl ShellExecutor {
         // Build the initial $path tied array as a local — fans out
         // to paramtab below; no ShellExecutor mirror anymore.
         let mut arrays: HashMap<String, Vec<String>> = HashMap::new();
-        let path_dirs: Vec<String> = env::var("PATH")
-            .unwrap_or_default()
-            .split(':')
-            .map(|s| s.to_string())
-            .collect();
+        // c:Src/init.c:1125-1130 — `path` starts as the compiled-in default;
+        // an inherited $PATH replaces it in the environ import. With no PATH
+        // in the environment the default stands and is not exported.
+        let path_dirs: Vec<String> = match env::var("PATH") {
+            Ok(p) => p.split(':').map(|s| s.to_string()).collect(),
+            Err(_) => ["/bin", "/usr/bin", "/usr/ucb", "/usr/local/bin"] // c:1126-1129
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        };
         arrays.insert("path".to_string(), path_dirs);
         let mut exec = Self {
             // c:Src/init.c:479 — `-c` mode: scriptname = scriptfilename
@@ -3354,30 +3361,6 @@ impl ShellExecutor {
                 }
             }
         }
-        // c:Src/params.c:951 — `addenv(pm, buf)`. Unconditional: the C comment
-        // on the line above it is "shlvl value in environment needs updating
-        // unconditionally". `addenv` both zputenv's the string and stamps
-        // `pm->node.flags |= PM_EXPORTED` (c:Src/params.c:5482-5484), so this
-        // one call is what makes `${(t)SHLVL}` read `integer-export-special`
-        // AND what puts the incremented number in a forked child's
-        // environment.
-        //
-        // Omitting it left $SHLVL unable to count nesting at all — measured
-        // with each shell nesting itself twice, the inner shells FORKED so
-        // that no exec-in-place decrement applies:
-        //     zsh    L1=1 L2=2 L3=3
-        //     zshrs  L1=1 L2=1 L3=1
-        // because every nested zshrs re-read the grandparent's stale
-        // environment entry instead of the parent's incremented one. It also
-        // left the parameter unexported under a scrubbed environment
-        // (`env -i … -f -c '${(t)SHLVL}'`: zsh `integer-export-special`,
-        // zshrs `integer-special`), which a completion listing sees directly:
-        // `env <TAB>` runs `_parameters -g "*export*"` and zsh offered SHLVL
-        // there where zshrs did not.
-        if let Some(v) = shlvl_env {
-            crate::ported::params::addenv("SHLVL", &v); // c:951
-        }
-
         // c:Src/params.c:960-965 — HOME wiring, which C runs right
         // after the environment-import loop:
         //     pm = (Param) realparamtab->getnode2(realparamtab, "HOME");
@@ -3484,8 +3467,33 @@ impl ShellExecutor {
             crate::ported::params::addenv("LOGNAME", &v); // c:970
         }
 
-        // SHLVL's own `addenv` (c:Src/params.c:951) is done above, beside the
-        // increment it publishes. Its paired exec-time half — c:Src/exec.c:
+        // c:Src/params.c:951 — `addenv(pm, buf)`. Unconditional: the C comment
+        // on the line above it is "shlvl value in environment needs updating
+        // unconditionally". `addenv` both zputenv's the string and stamps
+        // `pm->node.flags |= PM_EXPORTED` (c:Src/params.c:5482-5484), so this
+        // one call is what makes `${(t)SHLVL}` read `integer-export-special`
+        // AND what puts the incremented number in a forked child's
+        // environment.
+        //
+        // Omitting it left $SHLVL unable to count nesting at all — measured
+        // with each shell nesting itself twice, the inner shells FORKED so
+        // that no exec-in-place decrement applies:
+        //     zsh    L1=1 L2=2 L3=3
+        //     zshrs  L1=1 L2=1 L3=1
+        // because every nested zshrs re-read the grandparent's stale
+        // environment entry instead of the parent's incremented one. It also
+        // left the parameter unexported under a scrubbed environment
+        // (`env -i … -f -c '${(t)SHLVL}'`: zsh `integer-export-special`,
+        // zshrs `integer-special`), which a completion listing sees directly:
+        // `env <TAB>` runs `_parameters -g "*export*"` and zsh offered SHLVL
+        // there where zshrs did not.
+        // It follows the HOME and LOGNAME exports, as in C (c:960-974), so a
+        // child sees them in zsh's environment order.
+        if let Some(v) = shlvl_env {
+            crate::ported::params::addenv("SHLVL", &v); // c:951
+        }
+
+        // SHLVL's paired exec-time half — c:Src/exec.c:
         // 4332-4336, "for either implicit or explicit exec, decrease $SHLVL as
         // we're now done as a shell", guarded by `!subsh && !forked` — is
         // ported for the EXPLICIT `exec cmd` form at fusevm_bridge.rs's
@@ -3540,6 +3548,10 @@ impl ShellExecutor {
         // (c:Src/init.c:1242-1259). Without this, a stale inherited
         // $PWD (env-import snapshot taken at process entry) survives
         // in paramtab even though the live env was corrected.
+        // The live environment is the carrier set_pwd_env reads for C's
+        // `pwd`/`oldpwd` globals (see the c:Src/init.c:1242-1259 block above).
+        env::set_var("PWD", &pwd_val);
+        env::set_var("OLDPWD", &oldpwd_val);
         crate::ported::builtin::set_pwd_env();
         crate::startup_trace::mark("exec: set_pwd_env");
 

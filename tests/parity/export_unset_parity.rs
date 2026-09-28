@@ -340,3 +340,81 @@ mod unset_tied_special_keeps_the_tie {
         assert_parity("unset fpath; FPATH=/a:/b; print ${(t)fpath}; unset FPATH; print $+fpath");
     }
 }
+
+/// c:Src/params.c:893-977 — the startup exports. After the environ import,
+/// createparamtable exports HOME (c:960-965), LOGNAME (c:968-970) and the
+/// incremented SHLVL (c:971-974), and set_pwd_env's addenv (c:977,
+/// c:Src/builtin.c:821-826) exports PWD and OLDPWD last. A child therefore
+/// sees the inherited variables in their own order, then those five in that
+/// order. zshrs published PWD/OLDPWD at the top of ShellExecutor::new and
+/// SHLVL before LOGNAME, so every child's environment was ordered
+/// differently. MANPATH/INFOPATH/FPATH are left out: exporting the bundled
+/// doc and function paths is a separate, open decision.
+mod startup_environment_order {
+    use super::*;
+
+    fn child_env(shell: &Path, zshrs: bool, vars: &[(&str, &str)]) -> Vec<String> {
+        let mut c = Command::new(shell);
+        if zshrs {
+            c.arg("--zsh");
+        }
+        c.args(["-f", "-c", "/usr/bin/env; :"]).env_clear().current_dir("/");
+        for (k, v) in vars {
+            c.env(k, v);
+        }
+        let o = c.output().expect("run shell");
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter(|l| {
+                !["MANPATH=", "INFOPATH=", "FPATH=", "_="]
+                    .iter()
+                    .any(|p| l.starts_with(p))
+            })
+            .map(String::from)
+            .collect()
+    }
+
+    fn assert_env_parity(vars: &[(&str, &str)]) {
+        if !zsh_available() {
+            return;
+        }
+        let z = child_env(Path::new(zsh_path()), false, vars);
+        let r = child_env(&zshrs_bin(), true, vars);
+        assert_eq!(z, r, "environment divergence for {vars:?}");
+    }
+
+    #[test]
+    fn home_logname_shlvl_then_pwd_oldpwd() {
+        assert_env_parity(&[("HOME", "/tmp"), ("PATH", "/bin:/usr/bin")]);
+        assert_env_parity(&[("SHLVL", "3"), ("HOME", "/tmp"), ("PATH", "/bin"), ("LOGNAME", "x")]);
+    }
+
+    #[test]
+    fn inherited_pwd_keeps_its_place() {
+        assert_env_parity(&[("HOME", "/tmp"), ("PWD", "/"), ("FOO", "1"), ("PATH", "/bin")]);
+    }
+
+    /// c:Src/init.c:1125-1130 — with no PATH in the environment `$path` is
+    /// the compiled-in default, not one empty element.
+    #[test]
+    fn missing_path_is_the_compiled_in_default() {
+        if !zsh_available() {
+            return;
+        }
+        let script = r#"print -r -- "$PATH"; typeset -p path"#;
+        let run = |shell: &Path, zshrs: bool| {
+            let mut c = Command::new(shell);
+            if zshrs {
+                c.arg("--zsh");
+            }
+            let o = c
+                .args(["-f", "-c", script])
+                .env_clear()
+                .env("HOME", "/tmp")
+                .output()
+                .expect("run shell");
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        };
+        assert_eq!(run(Path::new(zsh_path()), false), run(&zshrs_bin(), true));
+    }
+}
