@@ -9913,7 +9913,12 @@ pub fn paramsubst(
                                         }
                                         numstr.push(cc);
                                     }
-                                    let n = numstr.trim().parse::<i64>().ok()?;
+                                    // c:Src/params.c:1458 / c:1471 — the argument is `mathevalarg`ed, so
+                                    // `(n:1+1:)` / `(b:i+1:)` are arithmetic, not only literals.
+                                    let n = match numstr.trim().parse::<i64>() {
+                                        Ok(n) => n,
+                                        Err(_) => crate::ported::math::mathevalarg(numstr.trim()),
+                                    };
                                     if c == 'n' {
                                         num = Some(n);
                                     }
@@ -10429,7 +10434,12 @@ pub fn paramsubst(
                                         }
                                         numstr.push(cc);
                                     }
-                                    let n = numstr.trim().parse::<i64>().ok()?;
+                                    // c:Src/params.c:1458 / c:1471 — the argument is `mathevalarg`ed, so
+                                    // `(n:1+1:)` / `(b:i+1:)` are arithmetic, not only literals.
+                                    let n = match numstr.trim().parse::<i64>() {
+                                        Ok(n) => n,
+                                        Err(_) => crate::ported::math::mathevalarg(numstr.trim()),
+                                    };
                                     if c == 'n' {
                                         num = Some(n);
                                     } else {
@@ -10503,9 +10513,11 @@ pub fn paramsubst(
                     } else {
                         ind // c:1518
                     };
-                    let down = flag_down; // c:1416/c:1418 down=1, sequential (see above)
+                    // c:Src/params.c:1511-1514 — `if (num < 0) { down = !down; num = -num; }`:
+                    // a negative `(n:-N:)` counts from the other end.
+                    let down = flag_down ^ num.is_some_and(|n| n < 0); // c:1416/c:1418 down=1, sequential (see above)
                     let exact = flags.contains('e'); // c:Src/params.c:1419 e flag — literal compare, no glob
-                    let nth = num.unwrap_or(1).max(1) as usize;
+                    let nth = num.map_or(1, i64::abs).max(1) as usize; // c:1513 num = -num
                     // c:Src/params.c — `(b.N.)` is 1-based offset
                     // (start from the N-th element). Convert to
                     // 0-based for slicing.
@@ -11807,7 +11819,9 @@ pub fn paramsubst(
                             (ind, down)
                         };
                         let exact = flags.contains('e'); // c:1419 e — literal compare, no glob
-                        let nth = num.unwrap_or(1).max(1) as usize; // c:1432 (n.N.)
+                        // c:Src/params.c:1511-1514 — `if (num < 0) { down = !down; num = -num; }`.
+                        let want_last = want_last ^ num.is_some_and(|n| n < 0);
+                        let nth = num.map_or(1, i64::abs).max(1) as usize; // c:1432 (n.N.), c:1513
                                                                     // c:Src/params.c — `(b.N.)` is a 1-based begin offset;
                                                                     // the sliding-window search starts at that char.
                         let n = s_chars.len();
@@ -25854,6 +25868,54 @@ pub fn paramsubst(
         // The evaluated `[lo,hi]` bounds of an array slice, kept for the
         // unquoted splat below so it does not evaluate them a second time.
         let mut range_bounds: Option<(i64, i64)> = None;
+        // c:Src/params.c:1409-1500 — getarg's flag switch. Answers whether the
+        // subscript opens with a WELL-FORMED `(...)` group and, if so, the byte
+        // offset just past its `)`, whether it set `rev` (r/R/k/K/i/I) and
+        // whether it set `word` (w/f). `n`/`b`/`s` take a get_strarg-delimited
+        // argument (c:1451-1495); any other character, or a delimiter that
+        // never closes (`if (!*t) goto flagerr`), is flagerr (c:1496-1500),
+        // which leaves the whole text an ordinary subscript.
+        let getarg_flags = |sub: &str| -> Option<(usize, bool, bool)> {
+            let mut s = sub
+                .strip_prefix('(')
+                .or_else(|| sub.strip_prefix(crate::ported::zsh_h::Inpar))?; // c:1409
+            let (mut rev, mut word) = (false, false);
+            loop {
+                let c = s.chars().next()?;
+                match c {
+                    // c:1410 — the loop stops at `)` / Outpar.
+                    ')' => return Some((sub.len() - s.len() + 1, rev, word)),
+                    c if c == crate::ported::zsh_h::Outpar => {
+                        return Some((sub.len() - s.len() + c.len_utf8(), rev, word))
+                    }
+                    'r' | 'R' | 'k' | 'K' | 'i' | 'I' => rev = true, // c:1412-1438
+                    'w' | 'f' => word = true,                        // c:1439-1446
+                    'e' | 'p' => {}                                  // c:1447-1449, c:1474
+                    'n' | 'b' | 's' => {
+                        let after = &s[1..];
+                        let (del, content, rest) = get_strarg(after)?; // c:1451
+                        if after.len() - rest.len() <= del.len_utf8() + content.len() {
+                            return None; // c:1452 `if (!*t) goto flagerr;`
+                        }
+                        s = rest; // c:1460 `s = t + arglen - 1;`, then the loop's s++
+                        continue;
+                    }
+                    _ => return None, // c:1496 flagerr
+                }
+                s = &s[c.len_utf8()..];
+            }
+        };
+        // c:Src/params.c:1575-1596 — a flag group that set no `rev` is consumed
+        // and the REST of the subscript is evaluated as usual: `mathevalarg` on
+        // an array or a scalar, the exact key on a hash. Only a SCALAR `word`
+        // subscript still needs its flags (c:1622 `if (word && !v->scanflags)`);
+        // an array fetch has scanflags set, so `a=('a b' c); $a[(w)2]` is `c`.
+        if let Some((end, false, word)) = subscript_str.as_deref().and_then(getarg_flags) {
+            let scalar = !assoc_contains(&var_name) && arrays_get(&var_name).is_none();
+            if !(scalar && word) {
+                subscript_str = subscript_str.map(|s| s[end..].to_string());
+            }
+        }
         let value = if let Some(sub) = subscript_str.as_deref() {
             // c:1625
             // Array / assoc element lookup. Port of zsh's
@@ -25909,9 +25971,8 @@ pub fn paramsubst(
                 if let Some(crate::ported::params::getarg_out::Value(v)) =
                     sub.trim_start().strip_prefix('(').and_then(|rest| {
                         let close = rest.find(')')?;
-                        if rest[..close].chars().all(|c| {
-                            matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')
-                        }) {
+                        let _ = close;
+                        if getarg_flags(sub.trim_start()).is_some() {
                             crate::ported::params::getarg(sub.trim_start(), None, Some(&map), None)
                         } else {
                             None
@@ -25959,10 +26020,8 @@ pub fn paramsubst(
                     // instead of 0 (zargs --version/--help misfire).
                     sub.trim_start().strip_prefix('(').and_then(|rest| {
                             let close = rest.find(')')?;
-                            if rest[..close]
-                                .chars()
-                                .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e'))
-                            {
+                            let _ = close;
+                            if getarg_flags(sub.trim_start()).is_some() {
                                 crate::ported::params::getarg(
                                     sub.trim_start(),
                                     Some(&arr),
@@ -26179,12 +26238,8 @@ pub fn paramsubst(
                     // canonical getarg.
                     sub.trim_start().strip_prefix('(').and_then(|rest| {
                             let close = rest.find(')')?;
-                            if rest[..close].chars().all(|c| {
-                                matches!(
-                                    c,
-                                    'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f'
-                                )
-                            }) {
+                            let _ = close;
+                            if getarg_flags(sub.trim_start()).is_some() {
                                 crate::ported::params::getarg(
                                     sub.trim_start(),
                                     None,

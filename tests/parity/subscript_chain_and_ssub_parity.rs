@@ -676,3 +676,34 @@ mod search_pattern_data_backslash {
         assert_parity(r#"a=('a\ b' 'a b'); p='a\ b'; print -r -- $a[(i)$p] x$a[(i)$p] "$a[(i)$p]""#);
     }
 }
+
+/// c:Src/params.c:1409-1500 + 1511-1514 — getarg's flag switch takes
+/// `n`/`b`/`s` arguments delimited by get_strarg, evaluates `n`/`b` with
+/// mathevalarg, flips the search direction for a negative `n`, and hands
+/// the REST of a group that set no `rev` to the ordinary index / key
+/// lookup. The unbraced reference inside a longer word (`x$a[...]`)
+/// rejected every group holding a `:` or digit and fell into the math
+/// parser ("':' without '?'"), and the braced / whole-word array and
+/// scalar searches ignored the sign of `n`.
+mod subscript_flag_group_arguments {
+    use super::*;
+
+    #[test]
+    fn negative_n_reverses_the_search() {
+        assert_parity(
+            r#"a=(foo bar baz foo); print $a[(n:-1:i)foo] ${a[(n:-1:I)foo]} ${a[(n:-2:I)foo]} ${a[(n:-1:r)b*]} ${a[(n:-1:R)b*]} ${a[(n:-3:i)*]}"#,
+        );
+        assert_parity(r#"s=abcabc; print $s[(n:-1:i)b] ${s[(n:-1:I)b]} ${s[(n:-2:i)b]}"#);
+        assert_parity(r#"a=(foo bar baz foo); print ${a[(n:1+1:i)foo]} ${a[(b:1+1:i)foo]}"#);
+    }
+
+    #[test]
+    fn flag_arguments_inside_a_longer_word() {
+        assert_parity(
+            r#"a=(foo bar baz foo); print x$a[(n:-1:i)foo] x$a[(n:2:i)foo] x$a[(b:2:i)foo]; s=abcabc; print x$s[(n:2:i)b]"#,
+        );
+        assert_parity(
+            r#"a=('a b' c d); s='ab cd'; typeset -A h=(k v 2 two); print -r -- x$a[(e)2] x$a[(n:2:)2] x$a[(w)2] x$a[(e)1,2] x$s[(e)2] x$s[(ws: :)2] x$s[(n:2:)2] x$h[(n:1:)2]"#,
+        );
+    }
+}
