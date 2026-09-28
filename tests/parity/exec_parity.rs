@@ -874,3 +874,37 @@ mod exec_precommand_chain {
         assert_parity(r#"exec -c; print notreached"#);
     }
 }
+
+/// c:Src/exec.c:504-643 `zexecve` + c:758-768 `execute` — what an external
+/// command receives, spawned from the static-head fast path.
+mod external_spawn {
+    use super::*;
+
+    /// c:514-520 — every exec stamps `_=<path>` into the child's environment
+    /// (replacing an inherited `_` in place, else appended), and the array
+    /// keeps `environ`'s order: `c` was exported before `a`. Pre-fix the
+    /// child saw no `_` at all, and any spawn that touched the environment
+    /// (ARGV0) got it back sorted.
+    #[test]
+    fn child_env_keeps_export_order_and_gets_underscore() {
+        assert_parity(r#"export c=3 a=1; /usr/bin/env | grep -E '^(a|c|_)='"#);
+        assert_parity(r#"export c=3 a=1; ARGV0=x /usr/bin/env | grep -E '^(a|c|_|ARGV0)='"#);
+    }
+
+    /// c:611-624 — a shebang-less script whose path starts with `-` goes to
+    /// `sh - <path>`, never `sh -dir/...`. posix_spawnp ran libc's own
+    /// `/bin/sh` fallback, which has no such guard (A05execution #39).
+    #[test]
+    fn shebangless_script_under_dash_dir_runs_via_sh() {
+        let d = std::env::temp_dir().join(format!("zshrs-dashdir-{}", std::process::id()));
+        let dash = d.join("-dir");
+        std::fs::create_dir_all(&dash).unwrap();
+        let script = dash.join("tstcmd");
+        std::fs::write(&script, "echo hello from tstcmd\n").unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_parity_in(&d, "path=(-dir $path); tstcmd; print rc=$?");
+        assert_parity_in(&d, "-dir/tstcmd; print rc=$?");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

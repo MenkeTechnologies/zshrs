@@ -1345,30 +1345,218 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
     Err(eno) // c:643
 }
 
-/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+
+/// !!! WARNING: RUST-ONLY HELPER — the non-forking form of `execute()`'s
+/// search (Src/exec.c:791-895) !!!
 ///
-/// The pathname C's `execute()` `$path` walk (Src/exec.c:877-894) hands
-/// `zexecve` for `arg0`: `DIR/arg0` per entry, and the BARE word for an
-/// empty or `.` entry (c:879-880). The spawn callers let libc do that walk,
-/// so when libc reports the file unrunnable they rebuild C's `pth` here
-/// before the c:534 `#!` probe. `None` when no entry holds a non-directory
-/// `arg0` — C then had no candidate to open (c:538), and the bare word must
-/// NOT be probed relative to the cwd. Not `pathprog` (Src/utils.c:757): that
-/// spells a `.` entry `./arg0`, which reached the interpreter as `$0`.
-pub fn execute_path_candidate(arg0: &str) -> Option<String> {
-    let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
-    for pp in path.split(':') {
-        let cand = if pp.is_empty() || pp == "." {
-            arg0.to_string() // c:880
+/// C runs `execute()` in the forked child, where every `zexecve` either
+/// replaces the process or returns an errno and the walk moves on to the
+/// next candidate. zshrs spawns from the parent, so each `zexecve` here is a
+/// `posix_spawn(2)` attempt (`zexecve_spawn`) and the first one that starts a
+/// process ends the walk with its pid. The candidates, their order and the
+/// `isgooderr` bookkeeping are C's:
+///
+/// * c:791-801 — an `arg0` holding a `/` is exec'd as spelled; unless it is
+///   relative, not `./…`/`../…`, and PATH_DIRS is set, a failure is final.
+/// * c:803-819 — `command -p`: the default-path hit alone.
+/// * c:822-870 — the `cmdnamtab` candidate, then c:877-895
+///   `execute_skip_exec:`, the full `$path` walk (empty and `.` entries
+///   mean `arg0` itself).
+///
+/// `Err(eno)` is C's `eno` at c:871: non-zero means `zerr("%e: %s")`, zero
+/// means nothing usable was found (`command not found`).
+fn execute_spawn(
+    arg0: &str,
+    argv: &[String],
+    defpath: Option<&str>,
+    hashed: Option<&str>,
+    drop_argv0: bool,
+) -> Result<libc::pid_t, i32> {
+    use crate::ported::exec::isgooderr;
+    // c:791-801
+    if let Some(slash) = arg0.find('/') {
+        let lerrno = match zexecve_spawn(arg0, argv, drop_argv0) {
+            Ok(pid) => return Ok(pid),
+            Err(e) => e,
+        }; // c:793
+        let dotted = arg0.starts_with('.')
+            && (slash == 1 || (arg0.starts_with("..") && slash == 2));
+        if slash == 0 || crate::ported::zsh_h::unset(crate::ported::zsh_h::PATHDIRS) || dotted {
+            return Err(lerrno); // c:794-798
+        }
+    }
+    let mut eno = 0;
+    let mut attempt = |pth: &str, dir: &str| -> Option<libc::pid_t> {
+        match zexecve_spawn(pth, argv, drop_argv0) {
+            Ok(pid) => Some(pid),
+            Err(ee) => {
+                if isgooderr(ee, dir) {
+                    eno = ee;
+                }
+                None
+            }
+        }
+    };
+    let dir_of = |p: &str| -> String {
+        // c:817-818 / c:866-867 — `if ((dptr = strrchr(nn, '/'))) *dptr =
+        // '\0'; isgooderr(ee, *nn ? nn : "/")`.
+        match p.rfind('/') {
+            Some(0) | None => "/".to_string(),
+            Some(i) => p[..i].to_string(),
+        }
+    };
+    if let Some(pbuf) = defpath {
+        // c:815 — `ee = zexecve(pbuf, argv, newenvp);`
+        if let Some(pid) = attempt(pbuf, &dir_of(pbuf)) {
+            return Ok(pid);
+        }
+        return Err(eno);
+    }
+    if let Some(nn) = hashed {
+        // c:863 — `ee = zexecve(nn, argv, newenvp);`
+        if let Some(pid) = attempt(nn, &dir_of(nn)) {
+            return Ok(pid);
+        }
+    }
+    // c:877 `execute_skip_exec:` — `for (pp = path; *pp; pp++)`.
+    let path = crate::ported::params::getaparam("path").unwrap_or_default();
+    for pp in &path {
+        let pth = if pp.is_empty() || pp == "." {
+            arg0.to_string() // c:879-880
         } else {
             format!("{}/{}", pp, arg0) // c:884-888
         };
-        let unmeta_cand = crate::ported::utils::unmeta(&cand);
-        if std::fs::metadata(&unmeta_cand).map(|m| !m.is_dir()).unwrap_or(false) {
-            return Some(cand);
+        if pth.len() >= libc::PATH_MAX as usize {
+            continue; // c:887-888
+        }
+        if let Some(pid) = attempt(&pth, pp) {
+            return Ok(pid); // c:890 `ee = zexecve(buf, argv, newenvp);`
         }
     }
-    None
+    Err(eno)
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — `zexecve()` (Src/exec.c:504-643) from the
+/// parent via `posix_spawn(2)` !!!
+///
+/// Same steps as the forked-child port (`crate::ported::exec::zexecve`), with
+/// each `execve` a `posix_spawn` of the SAME path — never `posix_spawnp`,
+/// whose libc-internal `/bin/sh` fallback on ENOEXEC runs a shebang-less
+/// script without C's `-`/`+` operand guard (c:611-624) and so hands
+/// `-dir/tstcmd` to sh as an option. The kernel's refusal comes back here
+/// and `zexecve_recover` makes C's decision.
+///
+/// The environment is the child's `environ` as C leaves it right before
+/// `execve`, built as a copy so the parent's own array is untouched (C does
+/// these writes in the child that is about to vanish):
+///
+/// * c:514-520 — `zputenv("_=<pth>")`: an existing `_` entry is replaced in
+///   place, otherwise the entry is appended.
+/// * c:765-768 (`execute`) — `unsetenv("ARGV0")` when ARGV0 supplied argv[0].
+///
+/// The array keeps `environ`'s order: `std::process::Command` rebuilds any
+/// environment it modifies from a sorted map, so externals saw the variables
+/// alphabetically instead of in the order the shell added them.
+fn zexecve_spawn(pth: &str, argv: &[String], drop_argv0: bool) -> Result<libc::pid_t, i32> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+    // c:514-520 — `_=pth`, made absolute against `pwd`.
+    let underscore = if pth.starts_with('/') {
+        pth.to_string() // c:516-517
+    } else {
+        format!("{}/{}", crate::ported::params::getsparam("PWD").unwrap_or_default(), pth) // c:519
+    };
+    let mut underscore_entry = b"_=".to_vec();
+    underscore_entry.extend_from_slice(&crate::ported::utils::unmetafy_str(&underscore));
+    let mut envp: Vec<CString> = Vec::new();
+    let mut have_underscore = false;
+    for (k, v) in std::env::vars_os() {
+        let k = k.as_bytes();
+        if drop_argv0 && k == b"ARGV0" {
+            continue; // c:768 `unsetenv("ARGV0")`
+        }
+        let entry = if k == b"_" {
+            have_underscore = true;
+            underscore_entry.clone() // c:520 — replaced in place
+        } else {
+            let mut e = k.to_vec();
+            e.push(b'=');
+            e.extend_from_slice(v.as_bytes());
+            e
+        };
+        if let Ok(c) = CString::new(entry) {
+            envp.push(c);
+        }
+    }
+    if !have_underscore {
+        if let Ok(c) = CString::new(underscore_entry) {
+            envp.push(c); // c:520 — appended
+        }
+    }
+    // c:528 — `execve(pth, argv, newenvp);`
+    let eno = match posix_spawn_argv(pth, argv, &envp) {
+        Ok(pid) => return Ok(pid),
+        Err(eno) => eno,
+    };
+    // c:534-634 — the kernel refused the file: the `#!` line's interpreter,
+    // or `/bin/sh` for a shebang-less script.
+    match zexecve_recover(pth, argv, eno) {
+        // c:566/571/581/585/627 — the second `execve`; when it fails too, C
+        // falls through to c:643 `return eno` with the ORIGINAL errno.
+        Ok((prog, newargv)) => posix_spawn_argv(&prog, &newargv, &envp).map_err(|_| eno),
+        Err(e) => Err(e), // c:632/634/643
+    }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — the `posix_spawn(2)` call standing in for
+/// `execve(2)` in `zexecve_spawn` !!!
+///
+/// argv and path are unmetafied first, as C's `zexecve` does at c:510-513
+/// (`$'\xff'` reaches the child as the raw byte). Spawn attributes match what
+/// `std::process::Command` set for the same children: the signal mask is
+/// inherited and SIGPIPE — ignored by the Rust runtime — is reset to its
+/// default, so `yes | head -1` still terminates `yes`.
+fn posix_spawn_argv(pth: &str, argv: &[String], envp: &[std::ffi::CString]) -> Result<libc::pid_t, i32> {
+    use std::ffi::CString;
+    let cstr = |s: &str| {
+        let mut b = crate::ported::utils::unmetafy_str(s);
+        if let Some(n) = b.iter().position(|c| *c == 0) {
+            b.truncate(n); // a C string ends at its first NUL
+        }
+        CString::new(b).unwrap_or_default()
+    };
+    let cpth = cstr(pth);
+    let cargs: Vec<CString> = argv.iter().map(|a| cstr(a)).collect();
+    let mut argv_ptrs: Vec<*mut libc::c_char> = cargs.iter().map(|c| c.as_ptr() as *mut _).collect();
+    argv_ptrs.push(std::ptr::null_mut());
+    let mut envp_ptrs: Vec<*mut libc::c_char> = envp.iter().map(|c| c.as_ptr() as *mut _).collect();
+    envp_ptrs.push(std::ptr::null_mut());
+    unsafe {
+        let mut attrs: libc::posix_spawnattr_t = std::mem::zeroed();
+        let rc = libc::posix_spawnattr_init(&mut attrs);
+        if rc != 0 {
+            return Err(rc);
+        }
+        let mut dfl: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut dfl);
+        libc::sigaddset(&mut dfl, libc::SIGPIPE);
+        libc::posix_spawnattr_setsigdefault(&mut attrs, &dfl);
+        libc::posix_spawnattr_setflags(&mut attrs, libc::POSIX_SPAWN_SETSIGDEF as _);
+        let mut pid: libc::pid_t = 0;
+        let rc = libc::posix_spawn(
+            &mut pid,
+            cpth.as_ptr(),
+            std::ptr::null(),
+            &attrs,
+            argv_ptrs.as_ptr(),
+            envp_ptrs.as_ptr(),
+        );
+        libc::posix_spawnattr_destroy(&mut attrs);
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(pid)
+    }
 }
 
 impl ShellExecutor {
@@ -5916,374 +6104,97 @@ impl ShellExecutor {
                 }
             }
         }
-        // c:Src/exec.c:531-534 — `execve(pth, argv, newenvp); if ((eno =
-        // errno) == ENOEXEC || eno == ENOENT) { … }`. The kernel is the only
-        // thing that understands `#!`, and when it REFUSES the file — ENOEXEC
-        // (no valid magic and no shebang) or ENOENT (a `#!` line naming an
-        // interpreter that does not exist as spelled, e.g. `#!sh`) — zsh reads
-        // the shebang itself and re-execs with the interpreter it names,
-        // falling back to `/bin/sh` for a shebang-less script. These three
-        // hold what C's second `execve` would receive: `spawn_prog` is c:566's
-        // `pprog` (the RESOLVED program), `spawn_arg0` is c:564's `ptr2` (the
-        // interpreter NAME as written on the `#!` line), `spawn_args` the
-        // rest. `Command::new` conflates program and argv[0], hence the
-        // explicit `arg0`. `cmd`/`args` stay untouched: every diagnostic and
-        // hook below reports the command the user actually typed, exactly as
-        // C reports `arg0` (c:797/811).
-        //
-        // c:870 `ee = zexecve(nn, argv, newenvp)` — when the table answered,
-        // `nn` (not the bare word) is what C execs.
-        let mut retried_bare = false;
-        // c:Src/exec.c:801-806 + c:878-895 — with PATH_DIRS set, a relative
-        // arg0 holding a slash (not `/…`, `./…` or `../…`) that did not exec
-        // as spelled goes on to the `$path` walk, trying `DIR/arg0` for each
-        // entry. The spawn below tries it as spelled first; this remembers
-        // that the walk has been taken so a miss is reported once.
-        let mut retried_pathdirs = false;
-        // c:822 vs c:870 — the defpath hit wins outright; `hashed_prog` (and
-        // with it the ENOENT bare-name retry at c:877) belongs to the `else`
-        // arm alone.
-        let mut spawn_prog: String = defpath_prog
-            .clone()
-            .or_else(|| hashed_prog.clone())
-            .unwrap_or_else(|| cmd.to_string());
-        if defpath_prog.is_some() {
-            hashed_prog = None;
-        }
-        let mut spawn_arg0: String = cmd.to_string();
         // c:Src/exec.c:758-776 — "If ARGV0 is in the commands environment, we
         // use that as argv[0] for this external command" and unsetenv it; else
         // "if the pre-command `-' was given, we add `-' to the front of
         // argv[0] for this command."
         let exec_dash = crate::fusevm_bridge::take_exec_dash();
         let argv0_env = std::env::var("ARGV0").ok(); // c:760 zgetenv("ARGV0")
-        if let Some(z) = &argv0_env {
-            spawn_arg0 = z.clone(); // c:761
-        } else if exec_dash {
-            spawn_arg0 = format!("-{}", cmd); // c:775-776
+        let mut argv: Vec<String> = Vec::with_capacity(args.len() + 1);
+        argv.push(match &argv0_env {
+            Some(z) => z.clone(),                      // c:761
+            None if exec_dash => format!("-{}", cmd), // c:775-776
+            None => cmd.to_string(),
+        });
+        argv.extend_from_slice(args);
+
+        // c:Src/jobs.c — `time` reports only on JOBS (forked work). This
+        // is the single chokepoint where an external process is actually
+        // spawned (both fg and bg, all callers), AFTER the
+        // command-not-found and resolvebuiltin early-returns above — so
+        // counting here makes BUILTIN_TIME_SUBLIST report `time sleep 0`
+        // / `time /usr/bin/true` (external → fork) while staying silent
+        // for `time true` (builtin, never reaches this point). The
+        // subshell entry counts separately (fusevm_bridge.rs:9573).
+        FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
+        crate::lowfd::cloexec_internal_fds();
+
+        // Redirect handling lives in fusevm's WithRedirectsBegin/End
+        // ops at compile time; `_redirects` arrives empty here.
+        let spawned = if background {
+            execute_spawn(cmd, &argv, defpath_prog.as_deref(), hashed_prog.as_deref(), argv0_env.is_some())
+                .map_err(|eno| (eno, None))
+        } else {
+            // Queue signals across the wait so zshrs's SIGCHLD reaper
+            // (waitpid(-1) in wait_for_processes, delivered on any thread)
+            // can't reap this child before the wait does, and claim the
+            // status back when it wins anyway — see foreground_status.
+            let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
+            match execute_spawn(cmd, &argv, defpath_prog.as_deref(), hashed_prog.as_deref(), argv0_env.is_some()) {
+                Ok(pid) => match crate::fusevm_bridge::wait_pid_status(pid) {
+                    Ok(status) => return Ok(crate::exec_jobs::wait_status_val(status)),
+                    Err(e) => Err((0, Some(e))),
+                },
+                Err(eno) => Err((eno, None)),
+            }
+        };
+        let sn = crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
+        let eno = match spawned {
+            Ok(pid) => {
+                let cmd_str = format!("{} {}", cmd, args.join(" "));
+                let job_id = self.jobs.add_pid_job(pid, cmd_str, JobState::Running);
+                println!("[{}] {}", job_id, pid);
+                return Ok(0);
+            }
+            Err((_, Some(e))) => return Err(format!("{}: {}: {}", sn, cmd, e)),
+            Err((eno, None)) => eno,
+        };
+        // c:Src/exec.c:871-881 — `if (eno) zerr("%e: %s", eno, arg0); else
+        // if (commandnotfound(arg0, args) == 0) _realexit(); else
+        // zerr("command not found: %s", arg0); _exit((eno == EACCES || eno
+        // == ENOEXEC) ? 126 : 127);`. Emitted directly rather than through
+        // `zerr`: C prints from the doomed child, so the parent's errflag is
+        // never raised and the script continues.
+        if eno != 0 {
+            eprintln!(
+                "{}: {}: {}",
+                zerr_prefix(&sn),
+                crate::ported::utils::zsh_errno_msg(eno),
+                cmd
+            );
+            return Ok(if eno == libc::EACCES || eno == libc::ENOEXEC { 126 } else { 127 });
         }
-        let mut spawn_args: Vec<String> = args.to_vec();
-        // C recurses through zexecve for each rewrite; the loop is that
-        // recursion, re-driving the spawn with the rewritten argv.
-        loop {
-            let mut command = Command::new(&spawn_prog);
-            {
-                use std::os::unix::process::CommandExt as _;
-                command.arg0(&spawn_arg0);
+        // c:873 — the `command_not_found_handler` user hook; its status is
+        // the command's status. Documented in zshmisc(1) under "Special
+        // Functions". Bug #426.
+        if !background {
+            let mut hook_args = Vec::with_capacity(args.len() + 1);
+            hook_args.push(cmd.to_string());
+            hook_args.extend_from_slice(args);
+            if let Some(rc) = self.dispatch_function_call("command_not_found_handler", &hook_args) {
+                return Ok(rc);
             }
-            if argv0_env.is_some() {
-                command.env_remove("ARGV0"); // c:768 unsetenv("ARGV0")
-            }
-            // c:Src/exec.c execute — C unmetafies every arg before the
-            // execve (the child must see raw bytes, not the shell's
-            // internal Meta encoding). Args carrying Meta-char pairs
-            // (from `$'\xff'` etc., vm_helper::meta_encode_byte) are
-            // decoded to raw bytes via OsStr; plain args pass through
-            // unchanged. Bug #127.
-            for a in &spawn_args {
-                if a.contains('\u{83}') {
-                    use std::os::unix::ffi::OsStrExt as _;
-                    command.arg(std::ffi::OsStr::from_bytes(&unmetafy_str(a)));
-                } else {
-                    command.arg(a);
-                }
-            }
-
-            // Redirect handling lives in fusevm's WithRedirectsBegin/End
-            // ops at compile time; `_redirects` arrives empty here.
-
-            // c:Src/jobs.c — `time` reports only on JOBS (forked work). This
-            // is the single chokepoint where an external process is actually
-            // spawned (both fg and bg, all callers), AFTER the
-            // command-not-found and resolvebuiltin early-returns above — so
-            // counting here makes BUILTIN_TIME_SUBLIST report `time sleep 0`
-            // / `time /usr/bin/true` (external → fork) while staying silent
-            // for `time true` (builtin, never reaches this point). The
-            // subshell entry counts separately (fusevm_bridge.rs:9573).
-            FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
-            crate::lowfd::cloexec_internal_fds();
-
-            return if background {
-                match command.spawn() {
-                    Ok(child) => {
-                        let pid = child.id();
-                        let cmd_str = format!("{} {}", cmd, args.join(" "));
-                        let job_id = self.jobs.add_job(child, cmd_str, JobState::Running);
-                        println!("[{}] {}", job_id, pid);
-                        Ok(0)
-                    }
-                    Err(e) => {
-                        // c:534-627 — the kernel refused the file; retry with
-                        // the interpreter the `#!` line names (or `/bin/sh` for a
-                        // shebang-less script). See zexecve_recover.
-                        let eno = e.raw_os_error().unwrap_or(0);
-                        if eno == libc::ENOEXEC || eno == libc::ENOENT {
-                            // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
-                            // candidate `pbuf` from its own `$path` walk, never the
-                            // bare word; and c:544 `*argv = pth;` then puts that
-                            // resolved path into argv[0] for the interpreter. Here
-                            // libc did the PATH search inside the spawn, so redo it
-                            // with `execute_path_candidate` before probing —
-                            // otherwise a `#!` script found on `$path` was handed to
-                            // its interpreter as the bare name and `#!echo foo`
-                            // printed `foo tstcmd-arg` instead of
-                            // `foo <dir>/tstcmd-arg`.
-                            // c:861-865 — C only ever opens the `dir/arg0` candidates its
-                            // `$path` walk builds; a word no `$path` entry holds has no
-                            // candidate, so there is nothing to probe. Probing the bare word
-                            // opened it relative to the cwd and ran a `#!` script sitting
-                            // there although `$path` never named that directory.
-                            let probe_pth = if spawn_prog.contains('/') {
-                                Some(spawn_prog.clone())
-                            } else {
-                                execute_path_candidate(&spawn_prog) // c:891
-                            };
-                            let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
-                            cargv.push(spawn_arg0.clone());
-                            cargv.extend_from_slice(&spawn_args);
-                            if let Some(Ok((prog, newargv))) =
-                                probe_pth.map(|p| zexecve_recover(&p, &cargv, eno))
-                            {
-                                spawn_arg0 =
-                                    newargv.first().cloned().unwrap_or_else(|| prog.clone());
-                                spawn_args =
-                                    newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
-                                spawn_prog = prog;
-                                continue;
-                            }
-                            // c:Src/exec.c:801-806 + c:878-895 — PATH_DIRS: a
-                            // relative slash-bearing arg0 that failed as spelled
-                            // is retried as `DIR/arg0` for each `$path` entry.
-                            if !retried_pathdirs
-                                && eno == libc::ENOENT
-                                && spawn_prog == cmd
-                                && cmd.contains('/')
-                                && !cmd.starts_with('/')
-                                && !cmd.starts_with("./")
-                                && !cmd.starts_with("../")
-                                && crate::ported::zsh_h::isset(crate::ported::zsh_h::PATHDIRS)
-                            {
-                                retried_pathdirs = true;
-                                let found = crate::ported::params::getaparam("path")
-                                    .unwrap_or_default()
-                                    .iter()
-                                    .filter(|pp| !pp.is_empty() && pp.as_str() != ".") // c:879
-                                    .map(|pp| format!("{}/{}", pp, cmd)) // c:884-889
-                                    .find(|cand| crate::ported::exec::iscom(cand));
-                                if let Some(cand) = found {
-                                    spawn_prog = cand; // c:890 zexecve(buf, …)
-                                    continue;
-                                }
-                            }
-                            // c:Src/exec.c:877-895 `execute_skip_exec:` — a
-                            // cmdnamtab candidate that will not exec is not
-                            // the end of the search: C falls through to a
-                            // full `$path` walk, so a stale
-                            // `hash foo=/gone/foo` still runs the real `foo`.
-                            // Re-drive the spawn with the bare word and let
-                            // the PATH search happen.
-                            if !retried_bare && hashed_prog.is_some() && spawn_prog != cmd {
-                                retried_bare = true;
-                                spawn_prog = cmd.to_string();
-                                spawn_arg0 = cmd.to_string();
-                                spawn_args = args.to_vec();
-                                continue;
-                            }
-                        }
-                        let sn = crate::ported::utils::scriptname_get()
-                            .unwrap_or_else(|| "zshrs".to_string());
-                        if e.kind() == io::ErrorKind::NotFound {
-                            // Inline Rust FFI export run in the background: an
-                            // in-process FFI call has nothing to background, so run
-                            // it synchronously (mirrors the plugin-builtin path).
-                            if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
-                                return Ok(rc);
-                            }
-                            // zsh: absolute paths emit "no such file or
-                            // directory" (the OS error, since the path was
-                            // tried directly), not "command not found"
-                            // (which implies PATH search).
-                            // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
-                            // else … zerr("command not found: %s", arg0);`. `eno` is set
-                            // by an execve that actually ran, and zsh runs execve directly
-                            // for ANY arg0 containing a slash (no PATH search), so
-                            // `./foo` and `dir/foo` report the errno, not "command not
-                            // found". Testing only for a LEADING slash mis-reported the
-                            // relative forms:
-                            //   ./nonexistent_script
-                            //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
-                            //   zshrs: zsh:1: command not found: ./nonexistent_script
-                            if cmd.contains('/') && !retried_pathdirs {
-                                eprintln!(
-                                    "{}: no such file or directory: {}",
-                                    zerr_prefix(&sn),
-                                    cmd
-                                );
-                            } else {
-                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), crate::ported::utils::nicedupstring(&cmd));
-                            }
-                            Ok(127)
-                        } else {
-                            Err(format!("{}: {}: {}", sn, cmd, e))
-                        }
-                    }
-                }
-            } else {
-                // Queue signals across the wait so zshrs's SIGCHLD reaper
-                // (waitpid(-1) in wait_for_processes, delivered on any
-                // thread) can't reap this child before the wait does, and
-                // claim the status back when it wins anyway. Same hazard
-                // `exec_system_command` hit; see foreground_status in
-                // fusevm_bridge.
-                let status_result = crate::fusevm_bridge::foreground_status(&mut command);
-                match status_result {
-                    Ok(status) => Ok(crate::exec_jobs::wait_status_val(status)),
-                    Err(e) => {
-                        // c:534-627 — the kernel refused the file; retry with
-                        // the interpreter the `#!` line names (or `/bin/sh` for a
-                        // shebang-less script). See zexecve_recover.
-                        let eno = e.raw_os_error().unwrap_or(0);
-                        if eno == libc::ENOEXEC || eno == libc::ENOENT {
-                            // c:Src/exec.c:815 — C hands `zexecve` the RESOLVED
-                            // candidate `pbuf` from its own `$path` walk, never the
-                            // bare word; and c:544 `*argv = pth;` then puts that
-                            // resolved path into argv[0] for the interpreter. Here
-                            // libc did the PATH search inside the spawn, so redo it
-                            // with `execute_path_candidate` before probing —
-                            // otherwise a `#!` script found on `$path` was handed to
-                            // its interpreter as the bare name and `#!echo foo`
-                            // printed `foo tstcmd-arg` instead of
-                            // `foo <dir>/tstcmd-arg`.
-                            // c:861-865 — C only ever opens the `dir/arg0` candidates its
-                            // `$path` walk builds; a word no `$path` entry holds has no
-                            // candidate, so there is nothing to probe. Probing the bare word
-                            // opened it relative to the cwd and ran a `#!` script sitting
-                            // there although `$path` never named that directory.
-                            let probe_pth = if spawn_prog.contains('/') {
-                                Some(spawn_prog.clone())
-                            } else {
-                                execute_path_candidate(&spawn_prog) // c:891
-                            };
-                            let mut cargv: Vec<String> = Vec::with_capacity(spawn_args.len() + 1);
-                            cargv.push(spawn_arg0.clone());
-                            cargv.extend_from_slice(&spawn_args);
-                            if let Some(Ok((prog, newargv))) =
-                                probe_pth.map(|p| zexecve_recover(&p, &cargv, eno))
-                            {
-                                spawn_arg0 =
-                                    newargv.first().cloned().unwrap_or_else(|| prog.clone());
-                                spawn_args =
-                                    newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
-                                spawn_prog = prog;
-                                continue;
-                            }
-                            // c:Src/exec.c:801-806 + c:878-895 — PATH_DIRS walk;
-                            // see the background arm above.
-                            if !retried_pathdirs
-                                && eno == libc::ENOENT
-                                && spawn_prog == cmd
-                                && cmd.contains('/')
-                                && !cmd.starts_with('/')
-                                && !cmd.starts_with("./")
-                                && !cmd.starts_with("../")
-                                && crate::ported::zsh_h::isset(crate::ported::zsh_h::PATHDIRS)
-                            {
-                                retried_pathdirs = true;
-                                let found = crate::ported::params::getaparam("path")
-                                    .unwrap_or_default()
-                                    .iter()
-                                    .filter(|pp| !pp.is_empty() && pp.as_str() != ".") // c:879
-                                    .map(|pp| format!("{}/{}", pp, cmd)) // c:884-889
-                                    .find(|cand| crate::ported::exec::iscom(cand));
-                                if let Some(cand) = found {
-                                    spawn_prog = cand; // c:890 zexecve(buf, …)
-                                    continue;
-                                }
-                            }
-                            // c:Src/exec.c:877-895 `execute_skip_exec:` — see
-                            // the identical fall-through in the background
-                            // arm above. The cmdnamtab candidate failing to
-                            // exec sends C back to a full `$path` walk.
-                            if !retried_bare && hashed_prog.is_some() && spawn_prog != cmd {
-                                retried_bare = true;
-                                spawn_prog = cmd.to_string();
-                                spawn_arg0 = cmd.to_string();
-                                spawn_args = args.to_vec();
-                                continue;
-                            }
-                        }
-                        // Use scriptname (the user-visible shell identifier
-                        // — "zsh" in --zsh mode, "zshrs" otherwise) instead
-                        // of a hardcoded "zshrs:" prefix so --zsh-mode
-                        // diagnostics byte-match C zsh's stderr format.
-                        let sn = crate::ported::utils::scriptname_get()
-                            .unwrap_or_else(|| "zshrs".to_string());
-                        if e.kind() == io::ErrorKind::NotFound {
-                            // c:Src/exec.c — `command_not_found_handler` user
-                            // hook: when a command lookup fails AND a function
-                            // by that name is defined, call it with the cmd
-                            // name + original args and return its rc instead
-                            // of the default 127 + "command not found" error.
-                            // Documented in zshmisc(1) under "Special
-                            // Functions". Bug #426.
-                            //
-                            // The hook only fires for bare names (PATH search
-                            // failed); absolute paths skip it and emit the
-                            // OS-error path below — matches zsh behavior.
-                            if !cmd.contains('/') || retried_pathdirs {
-                                let mut hook_args = Vec::with_capacity(args.len() + 1);
-                                hook_args.push(cmd.to_string());
-                                hook_args.extend_from_slice(args);
-                                if let Some(rc) = self
-                                    .dispatch_function_call("command_not_found_handler", &hook_args)
-                                {
-                                    return Ok(rc);
-                                }
-                            }
-                            // Inline Rust FFI export: consulted after builtins,
-                            // functions, PATH search, and command_not_found_handler
-                            // have all missed — real commands keep priority.
-                            if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
-                                return Ok(rc);
-                            }
-                            // zsh: absolute paths emit "no such file or
-                            // directory" (the OS error, since the path was
-                            // tried directly), not "command not found"
-                            // (which implies PATH search).
-                            // c:Src/exec.c:871-876 — `if (eno) zerr("%e: %s", eno, arg0);
-                            // else … zerr("command not found: %s", arg0);`. `eno` is set
-                            // by an execve that actually ran, and zsh runs execve directly
-                            // for ANY arg0 containing a slash (no PATH search), so
-                            // `./foo` and `dir/foo` report the errno, not "command not
-                            // found". Testing only for a LEADING slash mis-reported the
-                            // relative forms:
-                            //   ./nonexistent_script
-                            //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
-                            //   zshrs: zsh:1: command not found: ./nonexistent_script
-                            if cmd.contains('/') && !retried_pathdirs {
-                                eprintln!(
-                                    "{}: no such file or directory: {}",
-                                    zerr_prefix(&sn),
-                                    cmd
-                                );
-                            } else {
-                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), crate::ported::utils::nicedupstring(&cmd));
-                            }
-                            Ok(127)
-                        } else if e.kind() == io::ErrorKind::PermissionDenied {
-                            // zsh: non-executable file → "permission denied"
-                            // on stderr and exit 126 (POSIX "command found
-                            // but not executable").
-                            eprintln!("{}: permission denied: {}", zerr_prefix(&sn), cmd);
-                            Ok(126)
-                        } else {
-                            Err(format!("{}: {}: {}", sn, cmd, e))
-                        }
-                    }
-                }
-            };
         }
+        // Inline Rust FFI export: consulted after builtins, functions, PATH
+        // search, and command_not_found_handler have all missed — real
+        // commands keep priority. In the background an in-process FFI call
+        // has nothing to background, so it runs synchronously.
+        if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
+            return Ok(rc);
+        }
+        eprintln!("{}: command not found: {}", zerr_prefix(&sn), crate::ported::utils::nicedupstring(&cmd));
+        Ok(127)
     }
     /// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     /// Inline Rust FFI fallback: when `cmd` names a function exported by a

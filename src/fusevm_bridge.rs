@@ -16828,19 +16828,34 @@ impl Drop for ForegroundWaitGuard {
 pub(crate) fn foreground_status(
     command: &mut std::process::Command,
 ) -> std::io::Result<std::process::ExitStatus> {
-    use std::os::unix::process::ExitStatusExt as _;
     let _wait_guard = ForegroundWaitGuard::enter();
-    let mut child = command.spawn()?;
-    let pid = child.id() as i32;
-    match child.wait() {
-        Ok(status) => Ok(status),
-        Err(e) if e.raw_os_error() == Some(libc::ECHILD) => {
-            match take_reaped_status(pid) {
-                Some(raw) => Ok(std::process::ExitStatus::from_raw(raw)),
-                None => Err(e),
-            }
+    let child = command.spawn()?;
+    wait_pid_status(child.id() as libc::pid_t)
+}
+
+/// Wait for the foreground child `pid`, claiming its status back from the
+/// SIGCHLD reaper when the reaper collected it first (ECHILD). The caller
+/// holds a `ForegroundWaitGuard` from before the spawn. Shared by
+/// `foreground_status` and the `posix_spawn` path in
+/// `vm_helper::execute_external_bg`, which has a pid but no `Child`.
+pub(crate) fn wait_pid_status(pid: libc::pid_t) -> std::io::Result<std::process::ExitStatus> {
+    use std::os::unix::process::ExitStatusExt as _;
+    loop {
+        let mut raw: libc::c_int = 0;
+        if unsafe { libc::waitpid(pid, &mut raw, 0) } == pid {
+            return Ok(std::process::ExitStatus::from_raw(raw));
         }
-        Err(e) => Err(e),
+        let e = std::io::Error::last_os_error();
+        match e.raw_os_error() {
+            Some(libc::EINTR) => continue,
+            Some(libc::ECHILD) => {
+                return match take_reaped_status(pid) {
+                    Some(raw) => Ok(std::process::ExitStatus::from_raw(raw)),
+                    None => Err(e),
+                }
+            }
+            _ => return Err(e),
+        }
     }
 }
 
