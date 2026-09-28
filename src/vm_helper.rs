@@ -77,6 +77,11 @@ thread_local! {
     /// Lives here (not src/ported/) because it is an architectural Rust-only
     /// backstop with no 1:1 C symbol.
     pub static EVAL_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Set by `execute_cmdarg` for the next compile_script_isolated only —
+    /// the `-c` string itself, not an `eval` or trap it runs.
+    ///
+    /// !!! WARNING: RUST-ONLY FLAG — C PASSES `exiting` TO execode !!!
+    static CMDARG_EXITING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// O(1) single-key probe against the canonical hashed storage — the
@@ -4012,8 +4017,25 @@ impl ShellExecutor {
             return Err("__SILENCED__".to_string());
         }
 
-        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let mut compiler = crate::compile_zsh::ZshCompiler::new();
+        if CMDARG_EXITING.with(|c| c.replace(false)) {
+            // c:Src/init.c:1568 — `execstring(cmd, 0, 1, "cmdarg")`: the `-c`
+            // string runs as an EXITING list, so its last command is the
+            // fake exec's candidate (BUILTIN_EXEC_FORKED_SIMPLE mode 2).
+            compiler.forked_tail_list = crate::compile_zsh::program_exiting_tail(&program);
+            compiler.exiting_tail_mode = 2;
+        }
         Ok(compiler.compile(&program))
+    }
+
+    /// `execstring(cmd, 0, 1, "cmdarg")` (c:Src/init.c:1568) — run the `-c`
+    /// string as the shell's last act: [`Self::execute_script`] with the
+    /// string compiled as an exiting list (see CMDARG_EXITING).
+    pub fn execute_cmdarg(&mut self, script: &str) -> Result<i32, String> {
+        CMDARG_EXITING.with(|c| c.set(true));
+        let result = self.execute_script(script);
+        CMDARG_EXITING.with(|c| c.set(false));
+        result
     }
 
     /// Run an already-compiled top-level chunk, then fire the end-of-script
@@ -6191,6 +6213,9 @@ impl ShellExecutor {
         // c:Src/exec.c:4369 — this process was forked for the command
         // (BUILTIN_EXEC_FORKED_SIMPLE): exec it here rather than spawn.
         let in_place = !background && carrier & crate::fusevm_bridge::EXEC_CARRIER_FORKED != 0;
+        if in_place && carrier & crate::fusevm_bridge::EXEC_CARRIER_SHLVL != 0 {
+            crate::fusevm_bridge::exec_shlvl_decrement(); // c:Src/exec.c:4334-4336
+        }
         let argv0_env = std::env::var("ARGV0").ok(); // c:760 zgetenv("ARGV0")
         let mut argv: Vec<String> = Vec::with_capacity(args.len() + 1);
         argv.push(match &argv0_env {

@@ -1557,6 +1557,61 @@ pub(crate) fn take_exec_dash() -> bool {
 pub(crate) const EXEC_CARRIER_DASH: u8 = 1;
 /// `EXEC_DASH` bit: exec in the already-forked child (c:Src/exec.c:4369).
 pub(crate) const EXEC_CARRIER_FORKED: u8 = 2;
+/// `EXEC_DASH` bit: the exec replaces the shell itself, so SHLVL drops first
+/// (exec_shlvl_decrement).
+pub(crate) const EXEC_CARRIER_SHLVL: u8 = 4;
+
+/// c:Src/exec.c:3717 — `nsigtrapped || havefiles() || fdtable_flocks`: what
+/// stops an exiting list's last command from exec'ing in place. nsigtrapped
+/// counts real traps only (c:Src/signals.c:725 — an ignored signal is not
+/// counted); zshrs keeps string traps in traps_table as well as sigtrapped.
+fn fake_exec_blocked() -> bool {
+    use crate::ported::zsh_h::{ZSIG_FUNC, ZSIG_TRAPPED};
+    let trapped = crate::ported::signals::sigtrapped
+        .lock()
+        .map(|t| t.iter().any(|&st| st & (ZSIG_TRAPPED | ZSIG_FUNC) != 0))
+        .unwrap_or(true)
+        || crate::ported::builtin::traps_table()
+            .lock()
+            .map(|t| t.values().any(|body| !body.is_empty()))
+            .unwrap_or(true);
+    let files = crate::ported::jobs::JOBTAB
+        .get()
+        .and_then(|tab| tab.lock().ok().map(|jt| crate::ported::jobs::havefiles(&jt)))
+        .unwrap_or(false);
+    trapped
+        || files
+        || crate::ported::utils::FDTABLE_FLOCKS.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
+/// c:Src/exec.c:4332-4336 —
+/// ```c
+/// if (!subsh) {
+///     /* for either implicit or explicit "exec", decrease $SHLVL
+///      * as we're now done as a shell */
+///     if (!forked)
+///         setiparam("SHLVL", --shlvl);
+/// ```
+/// For an exec that replaces the shell itself (explicit `exec`, or the fake
+/// exec of the `-c` string's last command): the command inherits one level
+/// LESS than the shell counted for itself — it is taking the shell's place,
+/// not nesting inside it.
+///
+/// C gets the environment update for free: SHLVL is PM_EXPORTED (from
+/// `addenv` in createparamtable, c:Src/params.c:951), and `setiparam` on an
+/// exported parameter runs setnumvalue → setstrvalue(NULL) → export_param →
+/// addenv (c:2872, c:2841, c:2672). zshrs's `setnumvalue`
+/// (src/ported/params.rs:5588-5595) has no `setstrvalue(v, NULL)` tail, so
+/// the paramtab write alone would leave the environment holding the
+/// pre-decrement number and the exec'd command would read one too high.
+/// Publish it explicitly.
+pub(crate) fn exec_shlvl_decrement() {
+    let cur = crate::ported::params::getsparam("SHLVL")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(1);
+    crate::ported::params::setiparam("SHLVL", cur - 1); // c:4336
+    crate::ported::params::addenv("SHLVL", &(cur - 1).to_string()); // c:2672
+}
 
 /// Take the job text of the command being dispatched (see JOB_TEXT).
 pub(crate) fn take_job_text() -> Option<String> {
@@ -3264,34 +3319,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(status);
         }
-        // c:Src/exec.c:4332-4336 —
-        //     if (!subsh) {
-        //         /* for either implicit or explicit "exec", decrease $SHLVL
-        //          * as we're now done as a shell */
-        //         if (!forked)
-        //             setiparam("SHLVL", --shlvl);
-        // Both guards hold on the way to the `command.exec()` below: the
-        // in-subshell form returned at the branch above (so `subsh` is
-        // false), and this call replaces THIS process rather than a child
-        // (so `forked` is false). The command therefore inherits one level
-        // LESS than the shell counted for itself — it is taking the shell's
-        // place, not nesting inside it.
-        //
-        // C gets the environment update for free: SHLVL is PM_EXPORTED (from
-        // `addenv` in createparamtable, c:Src/params.c:951), and `setiparam`
-        // on an exported parameter runs setnumvalue → setstrvalue(NULL) →
-        // export_param → addenv (c:2872, c:2841, c:2672). zshrs's
-        // `setnumvalue` (src/ported/params.rs:5588-5595) has no
-        // `setstrvalue(v, NULL)` tail, so the paramtab write alone would
-        // leave the environment holding the pre-decrement number and the
-        // exec'd command would read one too high. Publish it explicitly.
-        {
-            let cur = crate::ported::params::getsparam("SHLVL")
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(1);
-            crate::ported::params::setiparam("SHLVL", cur - 1); // c:4336
-            crate::ported::params::addenv("SHLVL", &(cur - 1).to_string()); // c:2672
-        }
+        // Both guards of exec_shlvl_decrement hold here: the in-subshell
+        // form returned at the branch above (so `subsh` is false), and this
+        // call replaces THIS process rather than a child (so `forked` is
+        // false).
+        exec_shlvl_decrement();
         // c:Src/exec.c:4369 — `execute(args, cflags, use_defpath)` in this
         // very process, exec'ing in place (see exec_execute). `exec -c`
         // keeps the Command route below: C hands it `blank_env` (c:778-779),
@@ -3592,8 +3624,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Int(0)
     });
     // See BUILTIN_EXEC_FORKED_SIMPLE.
-    vm.register_builtin(BUILTIN_EXEC_FORKED_SIMPLE, |vm, _argc| {
+    vm.register_builtin(BUILTIN_EXEC_FORKED_SIMPLE, |vm, argc| {
+        let mode = if argc >= 1 { vm.pop().to_int() } else { 0 };
+        let exiting_tail = mode != 0;
         let this_vm = vm as *const fusevm::VM as usize;
+        if mode == 2 {
+            // The `-c` string's last command (compile_zsh exiting_tail_mode
+            // 2): the shell exits after it, so it is exec'd in place under
+            // the same conditions, and not being forked it takes SHLVL down
+            // (c:Src/exec.c:4334-4336).
+            if !fake_exec_blocked() {
+                EXEC_DASH.with(|c| c.set(c.get() | EXEC_CARRIER_FORKED | EXEC_CARRIER_SHLVL));
+            }
+            return Value::Int(0);
+        }
+        if exiting_tail {
+            // c:Src/exec.c:3715-3718 — the fake exec of an exiting list's
+            // last command needs `last1 == 1` (the compiler's mark, in a
+            // child that was forked) and no traps, no files for the job to
+            // clean up and no flock()s to keep: `nsigtrapped || havefiles()
+            // || fdtable_flocks` otherwise forks as usual.
+            if FORKED_SIMPLE_VM.with(|f| f.get()) != this_vm || fake_exec_blocked() {
+                return Value::Int(0);
+            }
+        }
         if FORKED_SIMPLE_VM.with(|f| f.replace(0)) == this_vm {
             EXEC_DASH.with(|c| c.set(c.get() | EXEC_CARRIER_FORKED));
         }

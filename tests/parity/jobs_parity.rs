@@ -1234,3 +1234,37 @@ mod foreground_signal_is_reported {
         assert_same_verdict(&d, "V", "a nested job was not reported");
     }
 }
+
+/// c:Src/exec.c:4098-4099 + c:494 + c:3700-3718 — a forked `{ … }` runs its
+/// list as EXITING, so its last command is exec'd in place (the "fake
+/// exec") unless a real trap, a job file or a flock() needs the shell to
+/// stay; an ignored signal does not count (c:Src/signals.c:725). zshrs
+/// forked it, so `{ /bin/sleep 8; } &` then `kill -HUP $!` reported exit 1.
+#[test]
+fn forked_brace_group_execs_its_last_command() {
+    assert_parity(
+        r#"f=$(mktemp); { :; /bin/sh -c "echo \$\$ > $f" } & p=$!; wait; [[ $(<$f) == $p ]] && echo same || echo differ; rm -f $f"#,
+    );
+    assert_parity(
+        r#"f=$(mktemp); { trap 'echo t' USR1; /bin/sh -c "echo \$\$ > $f" } & p=$!; wait; [[ $(<$f) == $p ]] && echo same || echo differ; rm -f $f"#,
+    );
+    assert_parity(
+        r#"f=$(mktemp); { trap '' USR1; /bin/sh -c "echo \$\$ > $f" } & p=$!; wait; [[ $(<$f) == $p ]] && echo same || echo differ; rm -f $f"#,
+    );
+    assert_parity(
+        r#"f=$(mktemp); { /bin/sh -c "echo \$\$ > $f"; true } & p=$!; wait; [[ $(<$f) == $p ]] && echo same || echo differ; rm -f $f"#,
+    );
+}
+
+/// c:Src/init.c:1568 — the `-c` string runs as `execstring(cmd, 0, 1,
+/// "cmdarg")`, an EXITING list, so its last simple command is exec'd in
+/// place of the shell (c:3700-3718) and, not being forked, takes SHLVL down
+/// first (c:4334-4336); a zshexit hook never runs. A real trap keeps the
+/// shell. zshrs forked it.
+#[test]
+fn cmdarg_last_command_replaces_the_shell() {
+    assert_parity(r#"SHLVL=5; /usr/bin/printenv SHLVL"#);
+    assert_parity(r#"SHLVL=5; /usr/bin/printenv SHLVL; /usr/bin/printenv SHLVL"#);
+    assert_parity(r#"zshexit() { echo bye }; /bin/echo hi"#);
+    assert_parity(r#"trap 'echo t' EXIT; SHLVL=5; /usr/bin/printenv SHLVL"#);
+}

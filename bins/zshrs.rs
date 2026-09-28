@@ -2930,7 +2930,8 @@ pub fn zshrs_main() {
             zsh::ported::input::SHIN.with(|s| s.set(shin));
         }
         let start = Instant::now();
-        let result = executor.execute_script(code);
+        // c:Src/init.c:1568 — `execstring(cmd, 0, 1, "cmdarg")`, exiting.
+        let result = executor.execute_cmdarg(code);
         #[cfg(feature = "daemon")]
         completed_c.store(true, std::sync::atomic::Ordering::SeqCst);
         let duration_ns_total = start.elapsed().as_nanos() as i64;

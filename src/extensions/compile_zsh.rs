@@ -117,6 +117,22 @@ pub struct ZshCompiler {
     /// compile_simple takes it and emits BUILTIN_EXEC_FORKED_SIMPLE ahead of
     /// the external dispatch.
     pub forked_simple_exec: bool,
+    /// Address of the `ZshList` that is the last command of an EXITING list
+    /// in such a child (`{ a; cmd } &`): execcmd_exec runs a forked
+    /// `{ … }` with `do_exec = 1` (c:Src/exec.c:4098-4099), execcursh passes
+    /// it to execlist as `exiting` (c:494), and the tail command then gets
+    /// `last1 = 1` — the "fake exec" of c:3700-3717. compile_list turns it
+    /// into `forked_simple_tail` for that one list.
+    pub forked_tail_list: usize,
+    /// Set by compile_list for the `forked_tail_list` list, to
+    /// `exiting_tail_mode`; compile_simple takes it and hands it to
+    /// BUILTIN_EXEC_FORKED_SIMPLE.
+    pub forked_simple_tail: u8,
+    /// What makes the `forked_tail_list` list exiting: 1 = it runs in a child
+    /// forked for its `{ … }`; 2 = it is the `-c` string, run by
+    /// `execstring(cmd, 0, 1, "cmdarg")` with `exiting = 1`
+    /// (c:Src/init.c:1568), whose last command replaces the shell.
+    pub exiting_tail_mode: u8,
     /// Depth tracker for "currently compiling inside double quotes".
     /// Bumped when a parent word is DQ-wrapped (`\u{9e}…\u{9e}`) and
     /// we recurse into its Expansion segments. Used so the
@@ -411,6 +427,9 @@ impl ZshCompiler {
             errexit_suppress_depth: 0,
             async_subsh_skip_outer_errexit: false,
             forked_simple_exec: false,
+            forked_tail_list: 0,
+            forked_simple_tail: 0,
+            exiting_tail_mode: 1,
             dq_context_depth: 0,
             assign_context_depth: 0,
             in_cond_operand: false,
@@ -922,6 +941,10 @@ impl ZshCompiler {
     }
 
     fn compile_list(&mut self, list: &ZshList) {
+        if self.forked_tail_list != 0 && std::ptr::eq(list, self.forked_tail_list as *const ZshList) {
+            self.forked_tail_list = 0;
+            self.forked_simple_tail = self.exiting_tail_mode;
+        }
         // Update $LINENO before each top-level statement. Direct
         // port of zsh's `lineno` global increment in Src/input.c
         // — there it's tracked at the lexer level on every '\n';
@@ -1489,6 +1512,7 @@ impl ZshCompiler {
         // own commands keep theirs (async_subsh_skip_outer_errexit).
         sub.async_subsh_skip_outer_errexit = matches!(pipe.cmd, ZshCommand::Subsh(_));
         sub.forked_simple_exec = async_simple;
+        sub.forked_tail_list = exiting_tail_list(&pipe.cmd);
         sub.compile_pipe(pipe);
         if async_simple {
             sub.errexit_suppress_depth -= 1;
@@ -1961,6 +1985,7 @@ impl ZshCompiler {
                 // Every stage but the in-shell last one runs in its own child;
                 // the runtime marker only fires where the driver forked.
                 sub.forked_simple_exec = stage_is_simple;
+                sub.forked_tail_list = exiting_tail_list(stage_cmd);
                 if async_simple {
                     sub.errexit_suppress_depth += 1;
                 }
@@ -2599,6 +2624,7 @@ impl ZshCompiler {
     fn compile_simple(&mut self, simple: &ZshSimple) {
         // One-shot: only this chunk's top command is the forked one.
         let forked_simple_exec = std::mem::take(&mut self.forked_simple_exec);
+        let forked_simple_tail = std::mem::take(&mut self.forked_simple_tail);
         // c:Src/exec.c:3386-3452 — precommand modifiers (`exec`, `builtin`,
         // `noglob`, `-`; c:Src/builtin.c BIN_PREFIX) are consumed off the
         // argument list, and when NOTHING is left and there are no
@@ -4367,9 +4393,10 @@ impl ZshCompiler {
             // (`last1 = forked = 1`, c:3063) an external is `execute()`d in
             // place. Emitted after the words are expanded, so nothing nested
             // runs between the marker and the dispatch.
-            if forked_simple_exec {
+            if forked_simple_exec || forked_simple_tail != 0 {
+                self.builder.emit(Op::LoadInt(i64::from(forked_simple_tail)), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXEC_FORKED_SIMPLE, 0),
+                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXEC_FORKED_SIMPLE, 1),
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);
@@ -14329,6 +14356,33 @@ fn render_cond_for_debug(cond: &crate::parse::ZshCond) -> String {
 /// (c:332) and not `getpermtext()`'s (c:296): every consumer of this
 /// renderer wants one line. `taddnl(0)` therefore always means `"; "` and
 /// `taddnl(1)` always means `" "` — see `TNL` / `TNL_NOSEMI`.
+/// The last list of a forked `{ … }` whose command can take the exiting
+/// list's fake exec (see `ZshCompiler::forked_tail_list`), as an address; 0
+/// when there is none. Only a plain simple command qualifies: no `&&`/`||`,
+/// `!`, `&` or pipe.
+fn exiting_tail_list(cmd: &ZshCommand) -> usize {
+    let ZshCommand::Cursh(prog) = cmd else { return 0 };
+    program_exiting_tail(prog)
+}
+
+/// The last list of an exiting `prog` whose command can take the fake exec,
+/// as an address (0: none) — see `exiting_tail_list`.
+pub fn program_exiting_tail(prog: &ZshProgram) -> usize {
+    match prog.lists.last() {
+        Some(l)
+            if !l.flags.async_
+                && l.sublist.next.is_none()
+                && !l.sublist.flags.not
+                && !l.sublist.flags.coproc
+                && l.sublist.pipe.next.is_none()
+                && matches!(l.sublist.pipe.cmd, ZshCommand::Simple(_)) =>
+        {
+            l as *const ZshList as usize
+        }
+        _ => 0,
+    }
+}
+
 /// The job text of ONE pipeline stage: C's per-proc `getjobtext()` over that
 /// command's wordcode alone (c:Src/exec.c:2999), never the whole pipeline.
 ///
