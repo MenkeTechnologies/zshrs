@@ -11721,6 +11721,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_DONETRAP_RESET, |_vm, _argc| {
         donetrap_reset_impl()
     });
+    // See BUILTIN_FORKED_REDIRS.
+    vm.register_builtin(BUILTIN_FORKED_REDIRS, |vm, _argc| {
+        if FORKED_REDIR_VM.with(|f| f.replace(0)) == vm as *const fusevm::VM as usize {
+            // The next op is the command's WithRedirectsBegin.
+            let depth = with_executor(|exec| exec.redirect_scope_stack.len()) + 1;
+            FORKED_REDIR_SCOPE.with(|c| c.set(depth));
+        }
+        Value::Int(0)
+    });
     vm.register_builtin(BUILTIN_EXECCMD_FORKED_LEVEL, |vm, _argc| {
         let is_subsh = vm.pop().to_int() != 0;
         execcmd_forked_level(is_subsh, vm as *const fusevm::VM as usize);
@@ -12098,14 +12107,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // only for the subshell (see SubshFdFrame), as for a single target.
             crate::ported::exec::SubshFdFrame::touch(fd);
         }
-        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
+        // c:2478 — `if (!forked && save[fd1] == -2)`.
+        let forked = with_executor(|exec| redir_scope_forked(exec.redirect_scope_stack.len()));
+        let saved = if forked {
+            -1
+        } else {
+            unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) }
+        };
         // c:2426-2437 — "fd1 may already be closed here, so ignore bad
         // file descriptor error": `save[fd1] = fdN` stores -1 for a closed
         // fd, and the scope-end restore (c:Src/utils.c:2047 `if (x < 0)
         // zclose(y)`) then CLOSES it. Without that slot the splitter's pipe
         // write end stayed dup'd on the fd, the splitter never saw EOF and
         // the scope-end join hung: `print -u3 x 3>a 3>b` never returned.
-        let saved_slot = if saved >= 0 {
+        // A forked child parks no copy, but the splitter's pipe write end
+        // on `fd` must still go at scope end or its join never sees EOF;
+        // the -1 slot closes it there, as the child's exit does in C.
+        let saved_slot = if forked {
+            Some(-1)
+        } else if saved >= 0 {
             Some(saved)
         } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF) {
             Some(-1)
@@ -12122,6 +12142,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| {
                 if let Some(top) = exec.redirect_scope_stack.last_mut() {
                     top.push((fd, saved));
+                    mark_saved_fd(saved);
                 } else if saved >= 0 {
                     unsafe { libc::close(saved) };
                 }
@@ -12480,10 +12501,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // on fd 3, so `print -u 3 -r -- X 2>/dev/null` wrote into the shell's own
         // saved descriptor and reported success where zsh says `bad file number`.
         // F_DUPFD with a floor of 10 is exactly what movefd does.
-        let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
+        // c:2478 — `if (!forked && save[fd1] == -2)`.
+        let forked = with_executor(|exec| redir_scope_forked(exec.redirect_scope_stack.len()));
+        let saved = if forked {
+            -1
+        } else {
+            unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) }
+        };
         // c:2426-2437 — a closed fd saves -1, restored by closing it (see
         // the write-side multio above).
-        let saved_slot = if saved >= 0 {
+        // A forked child parks no copy, but the pipe read end on `fd` must
+        // still go at scope end or a splitter blocked on a full pipe never
+        // finishes its join; the -1 slot closes it there, as the child's
+        // exit does in C.
+        let saved_slot = if forked {
+            Some(-1)
+        } else if saved >= 0 {
             Some(saved)
         } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF) {
             Some(-1)
@@ -12494,6 +12527,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| {
                 if let Some(top) = exec.redirect_scope_stack.last_mut() {
                     top.push((fd, saved));
+                    mark_saved_fd(saved);
                 } else if saved >= 0 {
                     unsafe { libc::close(saved) };
                 }
@@ -16864,6 +16898,42 @@ thread_local! {
     ///
     /// !!! WARNING: RUST-ONLY FLAG — C KEEPS `forked` AS AN execcmd_exec LOCAL !!!
     static FORKED_SIMPLE_VM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The VM whose chunk head consumed EXECCMD_FORKED (subshell or not).
+    /// BUILTIN_FORKED_REDIRS honours it only from that same VM.
+    ///
+    /// !!! WARNING: RUST-ONLY FLAG — C KEEPS `forked` AS AN execcmd_exec LOCAL !!!
+    static FORKED_REDIR_VM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Depth of the redirect scope holding the forked command's OWN
+    /// redirections (0: none). c:Src/exec.c:2478 — addfd saves the original
+    /// fd only `if (!forked && save[fd1] == -2)`, so those redirections park
+    /// nothing: the child exits after the command and never restores.
+    ///
+    /// !!! WARNING: RUST-ONLY FLAG — C PASSES `forked` TO EVERY addfd CALL !!!
+    static FORKED_REDIR_SCOPE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// c:Src/exec.c:2478 — `if (!forked && save[fd1] == -2)`: true when the
+/// redirect scope at `depth` (the innermost open one) belongs to the command
+/// this child was forked for, whose redirections save no original fd. A
+/// saved dup there outlived the command in the child: `{ sleep 2 } >/dev/null
+/// &` kept the caller's stdout open for two seconds, so `$( … & )` and a
+/// pipe reader waited for it.
+fn redir_scope_forked(depth: usize) -> bool {
+    depth != 0 && FORKED_REDIR_SCOPE.with(|c| c.get()) == depth
+}
+
+/// c:Src/exec.c:2440 — `fdtable[fdN] |= FDT_SAVED_MASK;` on the copy
+/// movefd made FDT_INTERNAL (c:Src/utils.c:2006). The mark is how a forked
+/// child's entersubsh finds the copies it will never restore and closes them
+/// (c:1214-1217). Unmarked, a job forked inside `{ … } 2>/dev/null` kept the
+/// caller's stderr open until it finished. The restore's zclose clears it.
+pub(crate) fn mark_saved_fd(saved: i32) {
+    if saved >= 0 {
+        crate::ported::utils::fdtable_set(
+            saved,
+            crate::ported::zsh_h::FDT_INTERNAL | crate::ported::zsh_h::FDT_SAVED_MASK,
+        );
+    }
 }
 
 /// Head of a stage / `&` / coproc chunk: account for execcmd_fork's
@@ -16880,6 +16950,8 @@ fn execcmd_forked_level(is_subsh: bool, vm_addr: usize) {
     if !EXECCMD_FORKED.with(|f| f.replace(false)) {
         return;
     }
+    // The chunk's top command is the one forked for; see BUILTIN_FORKED_REDIRS.
+    FORKED_REDIR_VM.with(|f| f.set(vm_addr));
     // c:Src/exec.c:1245-1246 — `if (!job_control_ok) opts[MONITOR] = 0;` in
     // entersubsh. job_control_ok (c:1133) needs ESUB_JOB_CONTROL, which
     // execcmd_fork passes only for a non-async `( … )` (c:2919-2920), and
@@ -16911,6 +16983,10 @@ fn forked_child_subsh_levels() {
         Ordering::Relaxed,
     ); // c:1221
     crate::ported::builtin::SUBSHELL_DEPTH.store(0, Ordering::Relaxed);
+    // !!! RUST-ONLY: a forked child is no longer inside the in-process
+    // `$( … )` it was forked from; its signal traps print to its own fd 1,
+    // as in C, and the parent's saved fds are gone (mark_saved_fd).
+    CMDSUBST_OUTER_FDS.with(|s| s.borrow_mut().clear());
 }
 
 /// Holds SIGCHLD blocked across the span in which the VM forks children.
@@ -18278,6 +18354,12 @@ pub const BUILTIN_EXITING_EXIT_TRAP: u16 = 729;
 /// Head of a pipeline-stage / `&` / coproc chunk: `execcmd_forked_level`.
 /// Stack: pops Int(is_subsh), pushes Int(0). argc = 1.
 pub const BUILTIN_EXECCMD_FORKED_LEVEL: u16 = 740;
+/// Emitted right before the WithRedirectsBegin of the command at the top of
+/// a chunk a driver may run in a child forked for it, when that command has
+/// redirections. No args. When the chunk's BUILTIN_EXECCMD_FORKED_LEVEL found
+/// the fork, the scope it opens saves no fds (c:Src/exec.c:2478
+/// `if (!forked && …)`); see redir_scope_forked.
+pub const BUILTIN_FORKED_REDIRS: u16 = 745;
 
 /// Take a copy of stderr for this simple command's xtrace output before
 /// its redirections apply (c:Src/exec.c:3765-3773). Released when the
@@ -20469,6 +20551,10 @@ impl fusevm::ShellHost for ZshrsHost {
         let saved_stderr = unsafe {
             libc::fcntl(libc::STDERR_FILENO, libc::F_DUPFD_CLOEXEC, crate::lowfd::EXTENSION_FD_FLOOR)
         };
+        // A job the body forks must not keep them: they belong to the
+        // parent C never forked the body from (see mark_saved_fd).
+        mark_saved_fd(saved_stdout);
+        mark_saved_fd(saved_stderr);
         let write_fd = AsRawFd::as_raw_fd(&write_end);
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO); // c:4840 redup(pipes[1], 1)
@@ -20506,10 +20592,12 @@ impl fusevm::ShellHost for ZshrsHost {
 
         unsafe {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);
-            libc::close(saved_stdout);
-            if saved_stderr >= 0 {
-                libc::close(saved_stderr);
-            }
+        }
+        crate::ported::utils::zclose(saved_stdout);
+        if saved_stderr >= 0 {
+            crate::ported::utils::zclose(saved_stderr);
+        }
+        unsafe {
         }
 
         // Inner cmd's status not propagated for the same reason as
@@ -20930,6 +21018,10 @@ impl ShellExecutor {
             crate::ported::exec::SubshFdFrame::touch(fd);
             return;
         }
+        // c:2478 — `if (!forked && save[fd1] == -2)`.
+        if redir_scope_forked(self.redirect_scope_stack.len()) {
+            return;
+        }
         // c:2425 `movefd(fd1)` — zshrs keeps the original fd open and
         // dups it aside instead (the caller's dup2 overwrites it), so
         // F_DUPFD stands in for movefd's dup-then-close.
@@ -20938,6 +21030,7 @@ impl ShellExecutor {
         let slot = if saved >= 0 { saved } else { -1 };
         if let Some(top) = self.redirect_scope_stack.last_mut() {
             top.push((fd, slot));
+            mark_saved_fd(slot);
         } else if saved >= 0 {
             // No scope — leave saved fd open and let the next scope
             // reclaim it. (Caller without a scope leaks the dup; this
@@ -21266,6 +21359,16 @@ impl ShellExecutor {
                         let write_raw = AsRawFd::as_raw_fd(&write_end);
                         unsafe { libc::dup2(write_raw, 1) };
                         drop(write_end);
+                        // A forked command's scope parked no copy of fd 1
+                        // (save_fd_for_scope), so nothing would release this
+                        // write end at scope end and the join below would
+                        // wait forever; a -1 slot closes it there, as the
+                        // child's exit closes it in C.
+                        if redir_scope_forked(self.redirect_scope_stack.len()) {
+                            if let Some(top) = self.redirect_scope_stack.last_mut() {
+                                top.push((1, -1));
+                            }
+                        }
                         // Scope-end closes this dup (the last writer once
                         // the saved fd 1 is restored) → EOF → join.
                         let close_on_end = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
@@ -21562,6 +21665,9 @@ impl ShellExecutor {
         // join the splitter thread. If we closed close_on_end before
         // restoring saved, `fd` would still hold a pipe writer and
         // the thread would block forever waiting for EOF.
+        if redir_scope_forked(self.redirect_scope_stack.len()) {
+            FORKED_REDIR_SCOPE.with(|c| c.set(0));
+        }
         if let Some(saved) = self.redirect_scope_stack.pop() {
             for (fd, saved_fd) in saved.into_iter().rev() {
                 // c:Src/exec.c:4530 `redup(save[i], i)` →
@@ -21578,8 +21684,10 @@ impl ShellExecutor {
                 }
                 unsafe {
                     libc::dup2(saved_fd, fd);
-                    libc::close(saved_fd);
                 }
+                // c:Src/utils.c:2049 — redup's `zclose(x)`, which also
+                // clears the fdtable mark mark_saved_fd set.
+                crate::ported::utils::zclose(saved_fd);
             }
         }
         if let Some(scope) = self.multios_scope_stack.pop() {
@@ -21692,10 +21800,16 @@ impl ShellExecutor {
         };
         // c:4678 — `unlink(s);` — fd stays valid, name disappears.
         let _ = std::fs::remove_file(&tmp);
-        let saved = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 10) };
+        // c:Src/exec.c:2478 — `if (!forked && save[fd1] == -2)`.
+        let saved = if redir_scope_forked(self.redirect_scope_stack.len()) {
+            -1
+        } else {
+            unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 10) }
+        };
         if saved >= 0 {
             if let Some(top) = self.redirect_scope_stack.last_mut() {
                 top.push((libc::STDIN_FILENO, saved));
+                mark_saved_fd(saved);
             } else {
                 unsafe { libc::close(saved) };
             }

@@ -489,6 +489,50 @@ fn fg_bg_error_without_job_control() {
     assert_parity("sleep 5 & fg; echo rc=$?; kill %1");
 }
 
+/// A background job keeps no copy of the caller's stdout/stderr once its
+/// redirections point elsewhere:
+/// - c:Src/exec.c:2478 — addfd saves the original fd only `if (!forked &&
+///   save[fd1] == -2)`, so the job's OWN redirections save nothing;
+/// - c:1214-1217 — entersubsh closes every FDT_SAVED_MASK copy an
+///   ENCLOSING command's redirections parked (c:2440 sets the mark).
+/// zshrs parked both kinds (and an in-process `$( … )`'s own saves) in the
+/// job for its whole run, so the pipe reader around it — the harness here,
+/// or a `$( … )` — waited for the job to finish.
+#[test]
+fn bg_job_redirections_keep_no_copy_of_callers_stdout() {
+    if !zsh_available() {
+        return;
+    }
+    for s in [
+        r#"{ sleep 8 } >/dev/null 2>&1 &"#,
+        r#"for i in 1; do sleep 8; done >/dev/null 2>&1 &"#,
+        r#"{ { sleep 8 } >/dev/null 2>&1 & } 2>/dev/null"#,
+        r#"{ sleep 8 >/dev/null 2>&1 & } >/dev/null"#,
+        r#"print -r -- "[$( { sleep 8 } >/dev/null 2>&1 & )]""#,
+        r#"print -r -- "[$( sleep 8 >/dev/null 2>&1 & )]""#,
+    ] {
+        for (who, run) in [("zsh", run_zsh as fn(&str) -> R), ("zshrs", run_zshrs)] {
+            let t = std::time::Instant::now();
+            let r = run(s);
+            let took = t.elapsed();
+            let want = if s.starts_with("print") { "[]\n" } else { "" };
+            assert_eq!(r.stdout, want, "{who} {s:?}");
+            assert!(
+                took < std::time::Duration::from_secs(5),
+                "{who} {s:?}: the reader waited {took:?} for the background job"
+            );
+        }
+    }
+}
+
+/// The same no-save rule for a forked pipeline stage whose stdout is the
+/// pipe: `>&2` splits the stream (MULTIOS), and with no saved fd to restore
+/// the splitter's write end still has to go at scope end or its join hangs.
+#[test]
+fn forked_stage_multios_split_does_not_hang() {
+    assert_parity(r#"{ print a } >&2 | cat; { sleep 0.2; print b } >/dev/null | cat; print ok"#);
+}
+
 #[test]
 fn dollar_bang_set_by_bg() {
     assert_parity("sleep 5 & [[ -n $! ]] && echo set; kill $!");

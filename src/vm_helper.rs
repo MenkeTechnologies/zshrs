@@ -6646,6 +6646,10 @@ impl ShellExecutor {
         // Same as saved_stdout above.
         let saved_stderr_for_trap =
             crate::lowfd::movefd_past_script(unsafe { libc::dup(libc::STDERR_FILENO) });
+        // A job the body forks must not keep them: they belong to the
+        // parent C never forked the body from (see mark_saved_fd).
+        crate::fusevm_bridge::mark_saved_fd(saved_stdout);
+        crate::fusevm_bridge::mark_saved_fd(saved_stderr_for_trap);
         crate::fusevm_bridge::CMDSUBST_OUTER_FDS
             .with(|s| s.borrow_mut().push((saved_stdout, saved_stderr_for_trap)));
         unsafe {
@@ -8609,20 +8613,6 @@ impl ShellExecutor {
         // clears exactly that bit — so `*(N[1,])` printed `bad math
         // expression: empty string` twice. Bail out where C's `return` lands.
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            return Vec::new();
-        }
-        // c:1871-1872 — `if (matchct) badcshglob |= 2;`: files DID match and
-        // only the `[first,last]` subscript left none (`*([100])`), so this
-        // is not a failed expansion — the word simply expands to nothing.
-        if crate::ported::glob::CURGLOBDATA
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .matchct
-            > 0
-        {
-            if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLGLOB) {
-                crate::ported::glob::BADCSHGLOB.fetch_or(2, std::sync::atomic::Ordering::Relaxed);
-            }
             return Vec::new();
         }
         // No matches. Mirror zsh's `setopt nullglob` / `nomatch`

@@ -117,6 +117,11 @@ pub struct ZshCompiler {
     /// compile_simple takes it and emits BUILTIN_EXEC_FORKED_SIMPLE ahead of
     /// the external dispatch.
     pub forked_simple_exec: bool,
+    /// Set by emit_execcmd_forked_level when the chunk's top command carries
+    /// redirections; the first redirect scope emitted takes it and emits
+    /// BUILTIN_FORKED_REDIRS ahead of its WithRedirectsBegin, so a forked
+    /// child saves no fds for them (c:Src/exec.c:2478 `if (!forked && …)`).
+    pub forked_redirs: bool,
     /// Address of the `ZshList` that is the last command of an EXITING list
     /// in such a child (`{ a; cmd } &`): execcmd_exec runs a forked
     /// `{ … }` with `do_exec = 1` (c:Src/exec.c:4098-4099), execcursh passes
@@ -427,6 +432,7 @@ impl ZshCompiler {
             errexit_suppress_depth: 0,
             async_subsh_skip_outer_errexit: false,
             forked_simple_exec: false,
+            forked_redirs: false,
             forked_tail_list: 0,
             forked_simple_tail: 0,
             exiting_tail_mode: 1,
@@ -1807,6 +1813,23 @@ impl ZshCompiler {
             0,
         );
         self.builder.emit(Op::Pop, 0);
+        self.forked_redirs = match cmd {
+            ZshCommand::Redirected(inner, redirs) => {
+                !redirs.is_empty() && !matches!(inner.as_ref(), ZshCommand::FuncDef(_))
+            }
+            ZshCommand::Simple(simple) => !simple.redirs.is_empty(),
+            _ => false,
+        };
+    }
+
+    /// Emit BUILTIN_FORKED_REDIRS if this redirect scope is the forked top
+    /// command's (see `forked_redirs`). Call right before WithRedirectsBegin.
+    fn emit_forked_redirs(&mut self) {
+        if std::mem::take(&mut self.forked_redirs) {
+            self.builder
+                .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_FORKED_REDIRS, 0), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
     }
 
     fn emit_exiting_exit_trap(&mut self, cmd: &ZshCommand) {
@@ -2221,6 +2244,7 @@ impl ZshCompiler {
                 // `{ ... } 2>&1`). Bracket the body in a
                 // WithRedirectsBegin/End scope so post-body fds are
                 // restored. Status is whatever the inner cmd left.
+                self.emit_forked_redirs();
                 self.builder
                     .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
                 self.compile_redirs_multios(redirs, false);
@@ -2764,6 +2788,7 @@ impl ZshCompiler {
             //   NULLCMD=cat reads the redir-bound fd through the
             //   inherited redirect.
             if !simple.redirs.is_empty() {
+                self.emit_forked_redirs();
                 self.builder
                     .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
                 self.compile_redirs_multios(&simple.redirs, false);
@@ -4462,6 +4487,7 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRERR_COPY, 0), 0);
         self.builder.emit(Op::Pop, 0);
+        self.emit_forked_redirs();
         self.builder
             .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
         self.compile_redirs_multios(redirs, false);
