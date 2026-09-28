@@ -987,6 +987,15 @@ pub struct ShellExecutor {
 /// continuation. The `LEX_INPUT` window + `strin` flag is the working
 /// equivalent.
 pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
+    parse_isolated_at(input, None)
+}
+
+/// `parse_isolated` with C's `reset_lineno` argument inverted: `Some(n)` is
+/// `parse_string(s, 0)` (c:Src/exec.c:291-293), which parses from the line the
+/// shell is executing, `n`, instead of from line 1. A parse error in a body
+/// parsed at run time (`` `…` `` in getoutput c:4778) then carries that line,
+/// or none at all when it is 0 (c:Src/utils.c:301).
+pub(crate) fn parse_isolated_at(input: &str, lineno: Option<u64>) -> crate::parse::ZshProgram {
     use crate::ported::lex::{
         tok, LEXERR, LEX_INPUT, LEX_LINENO, LEX_POS, LEX_UNGET_BUF, LEX_FILE_WINDOW_STRIN,
     };
@@ -1020,6 +1029,9 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
 
     crate::ported::hist::strinbeg(0); // c:290 — strin++ → drained nested input EOFs (no SHIN steal)
     crate::ported::parse::parse_init(input); // install cmd_str as LEX_INPUT (lex_init), LEX_LINENO=1
+    if let Some(n) = lineno {
+        LEX_LINENO.set(n); // c:292 `if (reset_lineno)` not taken: keep the running line
+    }
     let program = crate::ported::parse::parse(); // c:294 (AST analog of par_list)
 
     // Capture parse failure BEFORE the restores wipe the signals.
@@ -6688,7 +6700,7 @@ impl ShellExecutor {
         // cmd-subst executes (single-event mode), so a destructive
         // parse_init/lex_init would clobber its next read. parse_isolated
         // brackets the parse with zcontext_save/restore + inpush/inpop.
-        let parsed = parse_isolated(cmd_str);
+        let parsed = parse_isolated_at(cmd_str, Some(outer_lineno)); // c:4778 parse_string(cmd, 0)
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         let prog = if parse_failed { None } else { Some(parsed) };

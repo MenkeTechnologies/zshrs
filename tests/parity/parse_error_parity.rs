@@ -194,3 +194,14 @@ fn eof_error_after_assignment_names_the_truncated_name() {
     assert_parity("{ x=1; y=abc");
     assert_parity("if x=1");
 }
+
+/// c:Src/exec.c:4778 — getoutput parses a backquote body with
+/// `parse_string(cmd, 0)`: no lineno reset, so the error carries the line
+/// being executed, and no line at all when that is 0 (a function under `-c`,
+/// c:Src/utils.c:301). The nested parse used to restart at line 1.
+#[test]
+fn backquote_parse_error_reports_the_running_line() {
+    assert_parity("f() { : `(`; }; f");
+    assert_parity("f() {\n\n echo $LINENO; : `(`\n}\nf");
+    assert_parity("\n\necho `(`");
+}

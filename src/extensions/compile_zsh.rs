@@ -227,11 +227,11 @@ pub struct ZshCompiler {
     /// substitution body. C parses that body with `parse_string(cmd, 0)`
     /// (c:Src/exec.c:4778), which does NOT reset `lineno`, so the body's
     /// first line carries the outer value and each further line adds one:
-    /// inner line N is `outer + N - 1`. That includes an outer 0 — the first
-    /// line of a function body — which `outer - 1` as an unsigned addend
-    /// could not express: `g(){ print $(print $LINENO) }` printed 1, and
-    /// every error inside such a substitution said `g:1:` where zsh says
-    /// `g:`.
+    /// inner line N is `outer + N - 1`, an outer 0 (the first line of a
+    /// function body) included. The body is parsed from that line
+    /// (`vm_helper::parse_isolated_at`), so the parser's raw lines already
+    /// carry those numbers: `g(){ print $(print $LINENO) }` prints 0, and a
+    /// parse error in such a body says `g:` where a restart at 1 said `g:1:`.
     pub nested_lineno_base: Option<u64>,
     /// Counts the number of CS_* pushes that have been emitted at
     /// the current compile cursor and have NOT yet been matched by
@@ -1155,10 +1155,12 @@ impl ZshCompiler {
         let v = if self.is_function_body {
             let off = self.lineno_offset.max(1);
             raw_line.saturating_sub(off) + self.nested_lineno_base.unwrap_or(1).saturating_sub(1)
-        } else if let Some(base) = self.nested_lineno_base {
+        } else if self.nested_lineno_base.is_some() {
             // c:Src/exec.c:4778 — `parse_string(cmd, 0)` continues the outer
-            // lineno: line N of the substitution is `outer + N - 1`.
-            base + raw_line.saturating_sub(1)
+            // lineno: line N of the substitution is `outer + N - 1`. The
+            // body was parsed that way too (`vm_helper::parse_isolated_at`),
+            // so the parser's line already is that number.
+            raw_line
         } else {
             raw_line.saturating_sub(self.lineno_offset).max(1)
         };
