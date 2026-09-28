@@ -307,3 +307,32 @@ mod timed_command_text_inside_a_function {
         assert_parity(r#"TIMEFMT='[%J]'; { time /usr/bin/true; } 2>&1"#);
     }
 }
+
+/// c:Src/jobs.c:1029-1037 dumptime — a timed pipeline reports ONE LINE PER
+/// FORKED PROCESS, each with that process's own text (addproc,
+/// c:Src/exec.c:2907). The in-shell last stage is a process only when it
+/// forks (c:3690 `!is_cursh`): an external or a subshell, never a builtin,
+/// a function or `{ … }`. zshrs printed one line holding the whole pipeline.
+mod timed_pipeline_reports_each_process {
+    use super::*;
+
+    #[test]
+    fn one_line_per_forked_stage() {
+        assert_parity(r#"TIMEFMT='[%J]'; { time /bin/echo a | cat >/dev/null; } 2>&1"#);
+        assert_parity(r#"TIMEFMT='[%J]'; { time /bin/echo x | cat | wc -l >/dev/null; } 2>&1"#);
+        assert_parity(r#"TIMEFMT='[%J]'; { time print x |& cat >/dev/null; } 2>&1"#);
+    }
+
+    #[test]
+    fn in_shell_last_stage_is_not_a_process() {
+        assert_parity(r#"TIMEFMT='[%J]'; { time /bin/echo a | read x; } 2>&1"#);
+        assert_parity(r#"TIMEFMT='[%J]'; { time true | true; } 2>&1"#);
+        assert_parity(r#"TIMEFMT='[%J]'; { time echo a | { cat >/dev/null }; } 2>&1"#);
+        assert_parity(r#"TIMEFMT='[%J]'; f(){ cat >/dev/null }; { time echo a | f; } 2>&1"#);
+    }
+
+    #[test]
+    fn subshell_last_stage_is_a_process() {
+        assert_parity(r#"TIMEFMT='[%J]'; { time echo b | (cat >/dev/null); } 2>&1"#);
+    }
+}

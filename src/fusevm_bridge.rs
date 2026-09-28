@@ -3938,6 +3938,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(stage_vm.last_status);
         }
 
+        // A `time`d pipeline: record each forked stage for dumptime (see
+        // TimedPipeline). Taken, so a pipeline nested in a stage runs untimed.
+        let mut timed = TIMED_PIPELINE
+            .with(|t| t.borrow_mut().take())
+            .filter(|t| t.texts.len() == n);
+        let mut child_started: Vec<std::time::Instant> = Vec::with_capacity(n - 1);
+
         // c:Src/exec.c:1748 — `child_block();` before any stage is forked,
         // held through the in-shell last stage and the stage waits below,
         // released at c:2017. See ChildBlockSpan.
@@ -4096,6 +4103,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 pid => {
                     child_pids.push(pid);
+                    child_started.push(std::time::Instant::now()); // c:Src/jobs.c:1480 bgtime
                 }
             }
         }
@@ -4149,6 +4157,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         //         ... execcmd_fork(...)
         // so `emulate sh -c 'echo x | read v; echo $v'` prints an empty
         // line. ksh emulation keeps the in-shell last stage.
+        let mut last_proc: Option<crate::ported::zsh_h::process> = None;
         let last_stage_status = if crate::dash_mode::bash_mode()
             || crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
         {
@@ -4177,8 +4186,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     unsafe { libc::_exit(st) };
                 }
                 pid => {
+                    let started = std::time::Instant::now();
                     // Same EINTR retry as the stage reap loop below.
-                    match waitpid_eintr(pid) {
+                    let waited = wait4_eintr(pid);
+                    // c:Src/exec.c:3042-3043 — this last stage forked, so it
+                    // is a process of a timed job whatever its command is.
+                    if let (Some(t), Some((status, ru))) = (timed.as_ref(), waited.as_ref()) {
+                        last_proc = Some(timed_proc(pid, &t.texts[n - 1], *status, ru, started));
+                    }
+                    match waited.map(|(status, _)| status) {
                         Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
                         Some(status) if libc::WIFSIGNALED(status) => 128 + libc::WTERMSIG(status),
                         Some(_) => 1,
@@ -4189,6 +4205,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             let last_chunk = stages_vec.into_iter().last().unwrap();
             crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
+            // A timed pipeline's in-shell last stage is a process of the job
+            // only when it forks (TimedPipeline::last_forks). SIGCHLD is held
+            // blocked (ChildBlockSpan), so the forked stages are not reaped
+            // during this run and the children's usage that accrues here is
+            // the last stage's own.
+            let last_timed = timed.as_ref().filter(|t| t.last_forks).map(|_| {
+                let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+                unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut ru) };
+                (std::time::Instant::now(), ru)
+            });
             let mut stage_vm = fusevm::VM::new(last_chunk);
             stage_vm.last_status = parent_status;
             register_builtins(&mut stage_vm);
@@ -4196,6 +4222,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _ = stage_vm.run();
             let _ = std::io::stdout().flush();
             let _ = std::io::stderr().flush();
+            if let (Some(t), Some((started, before))) = (timed.as_ref(), last_timed) {
+                let mut after: libc::rusage = unsafe { std::mem::zeroed() };
+                unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut after) };
+                let mut ru = after;
+                ru.ru_utime = timeval_sub(after.ru_utime, before.ru_utime);
+                ru.ru_stime = timeval_sub(after.ru_stime, before.ru_stime);
+                let status = (stage_vm.last_status & 0xff) << 8; // W_EXITCODE
+                last_proc = Some(timed_proc(0, &t.texts[n - 1], status, &ru, started));
+            }
             stage_vm.last_status
         };
 
@@ -4219,11 +4254,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
         // Wait for all forked stages, capture per-stage statuses for PIPESTATUS.
         let mut pipestatus: Vec<i32> = Vec::with_capacity(n);
-        for pid in child_pids {
+        for (i, pid) in child_pids.into_iter().enumerate() {
             // EINTR retry: the SIGCHLD handler interrupts this wait and
             // leaves `status` untouched, which used to read back as a
             // clean exit 0 for every forked stage. See waitpid_eintr.
-            let s = match waitpid_eintr(pid) {
+            let waited = match timed.as_mut() {
+                Some(t) => wait4_eintr(pid).map(|(status, ru)| {
+                    let started = child_started.get(i).copied().unwrap_or_else(std::time::Instant::now);
+                    t.procs.push(timed_proc(pid, &t.texts[i], status, &ru, started));
+                    status
+                }),
+                None => waitpid_eintr(pid),
+            };
+            let s = match waited {
                 Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
                 Some(status) if libc::WIFSIGNALED(status) => 128 + libc::WTERMSIG(status),
                 Some(_) => 1,
@@ -4237,6 +4280,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Append the in-parent last-stage status so `pipestatus` ends
         // with N entries (one per stage).
         pipestatus.push(last_stage_status);
+        if let Some(mut t) = timed {
+            t.procs.extend(last_proc);
+            TIMED_PIPELINE.with(|slot| *slot.borrow_mut() = Some(t));
+        }
         // Pipeline exit status: by default, the LAST stage's status.
         // With `setopt pipefail` (or `set -o pipefail`), use the
         // first non-zero stage status (so failures earlier in the
@@ -9204,6 +9251,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             (-1, String::new())
         };
+        // c:Src/jobs.c:1029-1037 dumptime — a timed multi-stage pipeline
+        // arrives with its per-stage texts and the last stage's is_cursh
+        // verdict (compile_zsh.rs Time arm): [texts…, last_hint, last_name, n].
+        let timed_pipeline = if argc > 4 {
+            let n = vm.pop().to_int().max(0) as usize;
+            let last_name = vm.pop().to_str().to_string();
+            let last_hint = vm.pop().to_int();
+            let mut texts: Vec<String> = (0..n).map(|_| vm.pop().to_str().to_string()).collect();
+            texts.reverse();
+            Some(TimedPipeline {
+                texts,
+                last_forks: !time_body_is_cursh(last_hint, &last_name),
+                procs: Vec::new(),
+            })
+        } else {
+            None
+        };
         if sub_idx_raw < 0 {
             crate::ported::jobs::shelltime(None, None, None, 0); // c:5333
             return Value::Status(0); // c:5334
@@ -9240,7 +9304,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::fusevm_disasm::maybe_print_stdout("time_sublist", &chunk);
         let mut sub_vm = fusevm::VM::new(chunk);
         register_builtins(&mut sub_vm);
+        let outer_timed = TIMED_PIPELINE.with(|t| t.replace(timed_pipeline));
         let _ = sub_vm.run();
+        let timed_pipeline = TIMED_PIPELINE.with(|t| t.replace(outer_timed));
         let status = sub_vm.last_status;
         let elapsed = start.elapsed();
         let ru_self_after: libc::rusage = unsafe {
@@ -9255,18 +9321,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
         // Delta children rusage = timed work's CPU.
         let mut delta = ru_after;
-        let sub = |a: libc::timeval, b: libc::timeval| -> libc::timeval {
-            let mut sec = a.tv_sec - b.tv_sec;
-            let mut usec = a.tv_usec as i64 - b.tv_usec as i64;
-            if usec < 0 {
-                sec -= 1;
-                usec += 1_000_000;
-            }
-            libc::timeval {
-                tv_sec: sec,
-                tv_usec: usec as libc::suseconds_t,
-            }
-        };
+        let sub = timeval_sub;
         delta.ru_utime = sub(ru_after.ru_utime, ru_before.ru_utime);
         delta.ru_stime = sub(ru_after.ru_stime, ru_before.ru_stime);
         let ti = crate::ported::zsh_h::timeinfo::from_rusage(&delta);
@@ -9287,16 +9342,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let is_cursh = match cursh_hint {
             1 => true,
             0 => false,
-            2 => {
-                // c:3488-3491 — shfunctab is consulted BEFORE builtintab.
-                let is_shfunc = crate::ported::hashtable::shfunctab_lock()
-                    .read()
-                    .map(|t| t.get(&cursh_name).is_some())
-                    .unwrap_or(false);
-                is_shfunc
-                    || crate::ported::builtin::createbuiltintable()
-                        .contains_key(cursh_name.as_str())
-            }
+            2 => time_body_is_cursh(2, &cursh_name),
             // Bytecode cached before the hint operands existed: keep the
             // historical fork-counter heuristic (report only if something
             // forked) so a stale cache doesn't start emitting shell/children
@@ -9354,6 +9400,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "{}",
                 crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, "children")
             );
+        } else if let Some(report) = timed_pipeline.filter(|t| !t.procs.is_empty()).and_then(|t| {
+            // c:Src/jobs.c:1029-1037 — `for (pn = jn->procs; pn; pn = pn->next)
+            // printtime(dtime_ts(…, &pn->bgtime, &pn->endtime), &pn->ti,
+            // pn->text);` — one line per process the pipeline forked.
+            let jn = crate::ported::zsh_h::job {
+                procs: t.procs,
+                ..Default::default()
+            };
+            crate::ported::jobs::dumptime(&jn)
+        }) {
+            eprintln!("{}", report);
         } else {
             // c:Src/jobs.c:1037 — the forked job's own printtime line, with
             // `pn->text` (the command source) as %J.
@@ -16455,6 +16512,107 @@ fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
             // status it recorded instead of reporting a clean exit.
             return crate::reaped_status::take(pid);
         }
+    }
+}
+
+/// [`waitpid_eintr`] that also returns the child's resource usage.
+///
+/// c:Src/signals.c:535 — the SIGCHLD reaper collects with `wait3(&status,
+/// WNOHANG|WUNTRACED, &ru)` and stores `ru` on the process
+/// (`update_process`, c:Src/jobs.c:360-366), which is where `dumptime`'s
+/// per-process user/system times come from. A child the reaper got to
+/// first keeps its status (see waitpid_eintr) with zero times.
+fn wait4_eintr(pid: libc::pid_t) -> Option<(i32, libc::rusage)> {
+    loop {
+        let mut status: i32 = 0;
+        let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::wait4(pid, &mut status, 0, &mut ru) };
+        if rc >= 0 {
+            return Some((status, ru));
+        }
+        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if err != libc::EINTR {
+            return crate::reaped_status::take(pid).map(|st| (st, unsafe { std::mem::zeroed() }));
+        }
+    }
+}
+
+/// The processes of a `time`d multi-stage pipeline, collected for
+/// `dumptime` (c:Src/jobs.c:1029-1037).
+///
+/// !!! WARNING: RUST-ONLY SHAPE — C KEEPS THESE ON THE JOB'S PROCS !!!
+/// In C every forked stage is `addproc`ed onto `jobtab[thisjob]` with its
+/// text (c:Src/exec.c:2907) and the timed job is dumped when it finishes.
+/// zshrs's foreground pipeline has no job-table entry, so BUILTIN_TIME_SUBLIST
+/// hands the per-stage texts to BUILTIN_RUN_PIPELINE through
+/// [`TIMED_PIPELINE`] and reads the filled-in procs back.
+pub(crate) struct TimedPipeline {
+    /// One job text per stage, in pipeline order.
+    texts: Vec<String>,
+    /// The in-shell last stage is a process of the job (c:Src/exec.c:3690
+    /// `!is_cursh` — an external command or a subshell).
+    last_forks: bool,
+    /// Filled by the pipeline driver.
+    procs: Vec<crate::ported::zsh_h::process>,
+}
+
+thread_local! {
+    /// Set by BUILTIN_TIME_SUBLIST around a timed pipeline's body; TAKEN by
+    /// the first BUILTIN_RUN_PIPELINE that runs, so a pipeline nested inside
+    /// one of its stages is not mistaken for it.
+    static TIMED_PIPELINE: std::cell::RefCell<Option<TimedPipeline>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// c:Src/exec.c:3690 — `is_cursh = (is_builtin || is_shfunc || nullexec ||
+/// type >= WC_CURSH)` for the compiler's hint (compile_zsh.rs
+/// `command_cursh_hint`): 1 = current shell, 0 = forks, 2 = the command word
+/// decides at run time.
+fn time_body_is_cursh(hint: i64, name: &str) -> bool {
+    match hint {
+        1 => true,
+        2 => {
+            // c:3488-3491 — shfunctab is consulted BEFORE builtintab.
+            let is_shfunc = crate::ported::hashtable::shfunctab_lock()
+                .read()
+                .map(|t| t.get(name).is_some())
+                .unwrap_or(false);
+            is_shfunc || crate::ported::builtin::createbuiltintable().contains_key(name)
+        }
+        _ => false,
+    }
+}
+
+/// `a - b` for rusage times — c:Src/jobs.c `dtime_tv`.
+fn timeval_sub(a: libc::timeval, b: libc::timeval) -> libc::timeval {
+    let mut sec = a.tv_sec - b.tv_sec;
+    let mut usec = a.tv_usec as i64 - b.tv_usec as i64;
+    if usec < 0 {
+        sec -= 1;
+        usec += 1_000_000;
+    }
+    libc::timeval {
+        tv_sec: sec,
+        tv_usec: usec as libc::suseconds_t,
+    }
+}
+
+/// A `process` entry for [`TimedPipeline`]: C's addproc fields (c:Src/jobs.c
+/// 1473-1486) plus the wait's status and rusage (update_process).
+fn timed_proc(
+    pid: libc::pid_t,
+    text: &str,
+    status: i32,
+    ru: &libc::rusage,
+    bgtime: std::time::Instant,
+) -> crate::ported::zsh_h::process {
+    crate::ported::zsh_h::process {
+        pid,
+        text: text.to_string(),
+        status,
+        ti: crate::ported::zsh_h::timeinfo::from_rusage(ru),
+        bgtime: Some(bgtime),
+        endtime: Some(std::time::Instant::now()),
     }
 }
 

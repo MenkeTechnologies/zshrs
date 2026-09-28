@@ -1978,16 +1978,7 @@ impl ZshCompiler {
                 break sub.builder.build();
             };
             let idx = self.builder.add_sub_chunk(chunk);
-            // c:Src/parse.c:919-928 — `a |& b` is not its own operator in the
-            // stored program: the parser splices a `REDIR_MERGEOUT 2>&1` node
-            // onto the END of the FIRST command's redirection list. The
-            // deparser therefore never renders `|&`, and this stage's job
-            // text carries the `2>&1` the parser gave it.
-            let mut text = tstr(&render_cmd_for_debug(stage_cmd, true));
-            if *merge {
-                text.push_str(" 2>&1");
-            }
-            built.push((idx as u16, text));
+            built.push((idx as u16, pipe_stage_job_text(stage_cmd, *merge)));
         }
         built
     }
@@ -2242,6 +2233,43 @@ impl ZshCompiler {
                     // job's own printtime line is what gets emitted. Classify
                     // the sublist here and hand the verdict to the handler.
                     let (cursh_hint, cursh_name) = time_cursh_hint(sublist);
+                    // c:Src/jobs.c:1029-1037 dumptime — a timed PIPELINE
+                    // reports one line per forked process, each with its own
+                    // text (addproc, c:Src/exec.c:2907). The handler gets the
+                    // per-stage texts plus the last stage's `is_cursh`
+                    // verdict: that stage runs in the shell and is a process
+                    // of the job only when it forks (c:3690).
+                    let mut extra = 0u8;
+                    if sublist.next.is_none() && sublist.pipe.next.is_some() {
+                        let mut stages: Vec<(&ZshCommand, bool)> = Vec::new();
+                        let mut cur = &sublist.pipe;
+                        loop {
+                            stages.push((&cur.cmd, cur.merge_stderr && cur.next.is_some()));
+                            match cur.next.as_deref() {
+                                Some(next) => cur = next,
+                                None => break,
+                            }
+                        }
+                        // argc is a u8: a pipeline too long to describe keeps the
+                        // single-line report.
+                        if stages.len() > 200 {
+                            stages.clear();
+                        }
+                        for (stage_cmd, merge) in &stages {
+                            let c = self
+                                .builder
+                                .add_constant(Value::str(pipe_stage_job_text(stage_cmd, *merge)));
+                            self.builder.emit(Op::LoadConst(c), 0);
+                        }
+                        if let Some((last_cmd, _)) = stages.last() {
+                            let (last_hint, last_name) = command_cursh_hint(last_cmd);
+                            self.builder.emit(Op::LoadInt(last_hint), 0);
+                            let c = self.builder.add_constant(Value::str(&last_name));
+                            self.builder.emit(Op::LoadConst(c), 0);
+                            self.builder.emit(Op::LoadInt(stages.len() as i64), 0);
+                            extra = (stages.len() + 3) as u8;
+                        }
+                    }
                     let name_const = self.builder.add_constant(Value::str(&cursh_name));
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadInt(cursh_hint), 0);
@@ -2249,7 +2277,7 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(desc_const), 0);
                     self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 4),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 4 + extra),
                         0,
                     );
                     self.builder.emit(Op::SetStatus, 0);
@@ -13944,7 +13972,14 @@ fn time_cursh_hint(sublist: &crate::parse::ZshSublist) -> (i64, String) {
     if sublist.next.is_some() || sublist.pipe.next.is_some() {
         return (0, String::new());
     }
-    let mut cmd = &sublist.pipe.cmd;
+    command_cursh_hint(&sublist.pipe.cmd)
+}
+
+/// c:Src/exec.c:3690 `is_cursh` for one command, in `time_cursh_hint`'s
+/// encoding: 1 = runs in the current shell, 0 = forks, 2 = decided at run
+/// time by the command word (`is_builtin || is_shfunc`).
+fn command_cursh_hint(cmd: &ZshCommand) -> (i64, String) {
+    let mut cmd = cmd;
     // c:Src/exec.c — trailing redirections don't change the command type.
     while let ZshCommand::Redirected(inner, _) = cmd {
         cmd = inner;
@@ -14224,6 +14259,21 @@ fn render_cond_for_debug(cond: &crate::parse::ZshCond) -> String {
 /// (c:332) and not `getpermtext()`'s (c:296): every consumer of this
 /// renderer wants one line. `taddnl(0)` therefore always means `"; "` and
 /// `taddnl(1)` always means `" "` — see `TNL` / `TNL_NOSEMI`.
+/// The job text of ONE pipeline stage: C's per-proc `getjobtext()` over that
+/// command's wordcode alone (c:Src/exec.c:2999), never the whole pipeline.
+///
+/// c:Src/parse.c:919-928 — `a |& b` is not its own operator in the stored
+/// program: the parser splices a `REDIR_MERGEOUT 2>&1` node onto the END of
+/// the FIRST command's redirection list. The deparser therefore never
+/// renders `|&`, and the stage's text carries the `2>&1` the parser gave it.
+fn pipe_stage_job_text(stage_cmd: &crate::parse::ZshCommand, merge_stderr: bool) -> String {
+    let mut text = tstr(&render_cmd_for_debug(stage_cmd, true));
+    if merge_stderr {
+        text.push_str(" 2>&1");
+    }
+    text
+}
+
 fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand, job: bool) -> String {
     use crate::parse::ZshCommand;
     // c:Src/text.c:170-179 `taddlist` — every word is followed by a space
