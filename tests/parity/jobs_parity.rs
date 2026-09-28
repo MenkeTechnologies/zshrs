@@ -85,9 +85,20 @@ struct R {
 /// gets reaped fails the test instead of wedging the suite.
 const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// stdin is /dev/null and the shell leads its own process group. A
+/// background job outlives the `-fc` shell that forked it, and with an
+/// inherited stdin (a terminal, or a pipe a CI runner leaves open)
+/// `select … &` blocks reading it forever, in zsh and zshrs alike. Any
+/// such job that also still holds the stdout/stderr pipes keeps the
+/// drain threads below from ever seeing EOF, so the pipes are drained
+/// under the same deadline; on expiry the whole group (still alive,
+/// since it holds the pipes) is SIGKILLed.
 fn run_deadlined(mut cmd: Command, who: &str) -> R {
     use std::io::Read;
+    use std::os::unix::process::CommandExt;
     let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .process_group(0)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -106,13 +117,17 @@ fn run_deadlined(mut cmd: Command, who: &str) -> R {
         let _ = err.read_to_end(&mut b);
         b
     });
+    let pgid = child.id() as libc::pid_t;
+    let kill_group = || unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    };
     let deadline = std::time::Instant::now() + PROBE_DEADLINE;
     let status = loop {
         match child.try_wait().expect("try_wait") {
             Some(st) => break st,
             None => {
                 if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
+                    kill_group();
                     let _ = child.wait();
                     panic!("{who} exceeded the {PROBE_DEADLINE:?} probe deadline");
                 }
@@ -120,6 +135,13 @@ fn run_deadlined(mut cmd: Command, who: &str) -> R {
             }
         }
     };
+    while !(ot.is_finished() && et.is_finished()) {
+        if std::time::Instant::now() >= deadline {
+            kill_group();
+            panic!("{who}: a background job held the output pipes past the {PROBE_DEADLINE:?} probe deadline");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let ob = ot.join().unwrap_or_default();
     let eb = et.join().unwrap_or_default();
     R {
