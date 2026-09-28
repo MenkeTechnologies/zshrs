@@ -18903,6 +18903,20 @@ fn precmd_walk_ok(full: &[String]) -> bool {
         crate::ported::utils::zerr("redirection with no command"); // c:3397
         return false;
     }
+    // c:3488-3499 — a word reached through `builtin` is looked up in
+    // builtintab here, before c:3786 applies the redirections, so
+    // `builtin nosuch 2>/dev/null` still reports on the original stderr and
+    // opens nothing.
+    if walk.precmd_skip > 0
+        && crate::lex::untokenize(&walk.preargs[walk.precmd_skip - 1]) == "builtin"
+    {
+        let cmdarg = crate::lex::untokenize(&walk.preargs[walk.precmd_skip]);
+        if !builtin_prefix_finds(&cmdarg) {
+            // c:3491 — `zwarn("no such builtin: %s", cmdarg);`
+            crate::ported::utils::zwarn(&format!("no such builtin: {}", cmdarg));
+            return false; // c:3492 `lastval = 1;` … `return;`
+        }
+    }
     true
 }
 
@@ -18974,20 +18988,6 @@ pub const BUILTIN_PAT_DATA_BACKSLASH: u16 = 668;
 pub const BUILTIN_HEREDOC_BODY_SINK: u16 = 669;
 
 /// `BUILTIN_WORD_ELIDE_EMPTY` — prefork's empty-word removal
-    // c:3488-3499 — a word reached through `builtin` is looked up in
-    // builtintab here, before c:3786 applies the redirections, so
-    // `builtin nosuch 2>/dev/null` still reports on the original stderr and
-    // opens nothing.
-    if walk.precmd_skip > 0
-        && crate::lex::untokenize(&walk.preargs[walk.precmd_skip - 1]) == "builtin"
-    {
-        let cmdarg = crate::lex::untokenize(&walk.preargs[walk.precmd_skip]);
-        if !builtin_prefix_finds(&cmdarg) {
-            // c:3491 — `zwarn("no such builtin: %s", cmdarg);`
-            crate::ported::utils::zwarn(&format!("no such builtin: {}", cmdarg));
-            return false; // c:3492 `lastval = 1;` … `return;`
-        }
-    }
 /// (c:Src/subst.c:180-187) for a word that is EXACTLY one unquoted
 /// `$NAME`. Emitted only by that compile fast path, because C's test is
 /// post-assembly and only the word SHAPE makes it decidable early.
