@@ -917,6 +917,18 @@ pub fn bin_enable(
         (DISABLED as u32, 0u32) // c:545
     };
 
+    // c:548 — `ht` is the live builtintab: core builtins plus those of
+    // loaded (or autoload-stubbed) modules. zshrs's table is the static
+    // union of every module and of its own extensions, so apply the gate
+    // `$builtins` uses; under `--zsh` the zshrs-only extension tables
+    // (znative, ztest, …) are not part of it either.
+    let in_builtintab = |nm: &str| -> bool {
+        createbuiltintable().contains_key(nm)
+            && crate::extensions::ext_builtins::builtin_in_builtintab(nm)
+            && (!crate::extensions::ext_builtins::hide_ext_builtins()
+                || BUILTINS.iter().any(|b| b.node.nam == nm))
+    };
+
     // Helper closures over the chosen table.
     let toggle_one = |tab: &Tab, nm: &str, on: bool| -> bool {
         match tab {
@@ -977,7 +989,7 @@ pub fn bin_enable(
                 // arm below writes, so accepting the name here is all that is
                 // needed for `disable git` to fall the shell through to the
                 // `git` on `PATH`, and `enable git` to take it back.
-                if createbuiltintable().get(nm).is_none() && !crate::native_cmds::is_registered(nm)
+                if !in_builtintab(nm) && !crate::native_cmds::is_registered(nm)
                 {
                     return false;
                 }
@@ -1011,7 +1023,11 @@ pub fn bin_enable(
                 .read()
                 .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                 .unwrap_or_default(),
-            Tab::Builtin => createbuiltintable().keys().cloned().collect(),
+            Tab::Builtin => createbuiltintable()
+                .keys()
+                .filter(|n| in_builtintab(n))
+                .cloned()
+                .collect(),
         }
     };
 

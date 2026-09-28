@@ -488,6 +488,16 @@ mod enable_builtin {
         let r = run_zshrs("disable -r foo 2>/dev/null; echo done");
         assert_eq!(z.stdout, r.stdout);
     }
+
+    /// c:Src/builtin.c:548-555 — `enable`/`disable` scan and look up the
+    /// live builtintab: builtins of modules that are not loaded (zsh/files,
+    /// zsh/datetime, …) and the zshrs-only extension builtins are not in it.
+    #[test]
+    fn listing_and_lookup_use_the_live_builtintab() {
+        assert_parity("enable");
+        assert_parity(r#"enable -m "z*"; { enable strftime } 2>&1; print rc=$?"#);
+        assert_parity(r#"zmodload zsh/datetime; enable -m "str*"; disable strftime; disable"#);
+    }
 }
 
 // ───────────────────────── eval ─────────────────────────
