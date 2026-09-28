@@ -36,6 +36,77 @@ pub fn wait_status_val(s: std::process::ExitStatus) -> i32 {
     }
 }
 
+thread_local! {
+    /// Non-zero while a pipeline's in-shell last stage runs. update_job's
+    /// foreground tail reads the status of the job's process-group leader
+    /// (c:Src/jobs.c:497-498), which is the FIRST stage, so the externals
+    /// the last stage waits for do not drive it.
+    ///
+    /// !!! WARNING: RUST-ONLY COUNTER — C READS `jn->gleader` !!!
+    pub static NOT_JOB_LEADER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// !!! WARNING: RUST-ONLY ADAPTER !!! The tail of C `update_job` for the
+/// FOREGROUND job (`job == thisjob`, not STAT_CURSH, so `inforeground = 2`,
+/// c:Src/jobs.c:558-561), for an external zshrs waited for outside the job
+/// table. `status` is the raw wait status of the job's last process.
+///
+/// c:Src/jobs.c:654-679 —
+/// ```c
+/// /* When MONITOR is set, the foreground process runs in a different *
+///  * process group from the shell, so the shell will not receive     *
+///  * terminal signals, therefore we pretend that the shell got       *
+///  * the signal too.                                                 */
+/// if (inforeground == 2 && isset(MONITOR) && WIFSIGNALED(status)) {
+///     int sig = WTERMSIG(status);
+///     if (sig == SIGINT || sig == SIGQUIT) {
+///         if (sigtrapped[sig]) {
+///             dotrap(sig);
+///             if (errflag) breaks = loops;
+///         } else {
+///             breaks = loops;
+///             errflag |= ERRFLAG_INT;
+///         }
+///         check_cursh_sig(sig);
+///     }
+/// }
+/// ```
+/// So a child that dies of SIGINT/SIGQUIT ends the rest of the command line
+/// (`for i in 1 2; do sh -c 'kill -INT $$'; print $i; done` prints nothing)
+/// unless a trap for the signal returns zero.
+pub fn foreground_job_signalled(status: i32) {
+    use crate::ported::zsh_h::{isset, ERRFLAG_INT, MONITOR};
+    use std::sync::atomic::Ordering;
+    if NOT_JOB_LEADER.with(|d| d.get()) > 0 || !isset(MONITOR) || !libc::WIFSIGNALED(status) {
+        return;
+    }
+    let sig = libc::WTERMSIG(status); // c:659
+    if sig != libc::SIGINT && sig != libc::SIGQUIT {
+        return; // c:661
+    }
+    let loops = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
+    let trapped = crate::ported::signals::sigtrapped
+        .lock()
+        .ok()
+        .and_then(|t| t.get(sig as usize).copied())
+        .unwrap_or(0);
+    if trapped != 0 {
+        crate::ported::signals::dotrap(sig); // c:663
+        if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+            crate::ported::builtin::BREAKS.store(loops, Ordering::Relaxed); // c:671-672
+        }
+    } else {
+        crate::ported::builtin::BREAKS.store(loops, Ordering::Relaxed); // c:674
+        crate::ported::utils::errflag.fetch_or(ERRFLAG_INT, Ordering::Relaxed); // c:675
+    }
+    // c:677 — `check_cursh_sig(sig);`
+    if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
+        if let Ok(jt) = tab.lock() {
+            crate::ported::jobs::check_cursh_sig(&jt, sig);
+        }
+    }
+}
+
 /// Executor-side stand-in for C `printjob`'s done-job delete tail,
 /// `Src/jobs.c:1350-1363`:
 /// ```c

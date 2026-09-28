@@ -1132,3 +1132,61 @@ fn forked_exec_leaves_nested_commands_alone() {
     assert_parity(r#"{ /bin/echo a; /bin/echo b } & wait"#);
     assert_parity(r#"nosuchcmd_r7 & wait $!; echo w=$?; /nonexist/r7 & wait $!; echo w=$?"#);
 }
+
+/// c:Src/jobs.c:654-679 — with MONITOR set, a foreground job whose group
+/// leader dies of SIGINT/SIGQUIT is treated as if the SHELL got the signal:
+/// `breaks = loops; errflag |= ERRFLAG_INT`, so the rest of the command line
+/// is abandoned unless a trap for the signal returns zero. zshrs waited for
+/// its externals outside the job table and ran the rest of the line.
+/// Interactive only (MONITOR), hence the zpty probes; one case per session.
+mod foreground_signal_ends_the_command_line {
+    use crate::zpty_probe::{assert_same_verdict, sq, OPEN_PUMPED};
+
+    fn driver(line: &str, verdict: &str) -> String {
+        format!(
+            "{OPEN_PUMPED}\nzpty -w w {}; pump\nzpty -w w 'print DO${{:-}}NE'; pump\nzpty -d w 2>/dev/null\n{verdict}\n",
+            sq(line)
+        )
+    }
+
+    #[test]
+    fn sigint_in_a_loop_abandons_the_line() {
+        let d = driver(
+            r#"for i in 1 2; do sh -c 'kill -INT $$'; print L${:-}OOP$i; done; print AF${:-}TER"#,
+            r#"[[ $all == *DONE* && $all != *LOOP1* && $all != *AFTER* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "a child killed by SIGINT ended the command line");
+    }
+
+    #[test]
+    fn sigquit_in_a_function_abandons_the_line() {
+        let d = driver(
+            r#"f() { sh -c 'kill -QUIT $$'; print IN${:-}F }; f; print PO${:-}ST"#,
+            r#"[[ $all == *DONE* && $all != *INF* && $all != *POST* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "a child killed by SIGQUIT ended the command line");
+    }
+
+    /// `if (sigtrapped[sig]) { dotrap(sig); if (errflag) breaks = loops; }`:
+    /// a trap that returns zero lets the line continue.
+    #[test]
+    fn a_trap_returning_zero_keeps_the_line() {
+        let d = driver(
+            r#"TRAPINT() { print TR${:-}AP; return 0 }; sh -c 'kill -INT $$'; print AF${:-}TER"#,
+            r#"[[ $all == *TRAP* && $all == *AFTER* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "an INT trap returning 0 kept the command line");
+    }
+
+    /// c:Src/exec.c:1245-1246 — a forked pipeline stage runs without
+    /// MONITOR, so the tail never fires inside it; and the in-shell last
+    /// stage is not the job's group leader (c:Src/jobs.c:497-498).
+    #[test]
+    fn pipeline_stages_do_not_abandon_the_line() {
+        let d = driver(
+            r#"{ sh -c 'kill -INT $$'; print I${:-}N1 } | cat; echo | { sh -c 'kill -INT $$'; print I${:-}N2 }; print O${:-}UT"#,
+            r#"[[ $all == *IN1* && $all == *IN2* && $all == *OUT* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "a SIGINT inside a pipeline stage kept the command line");
+    }
+}

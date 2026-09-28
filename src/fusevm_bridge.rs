@@ -4239,7 +4239,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             stage_vm.last_status = parent_status;
             register_builtins(&mut stage_vm);
             stage_vm.set_shell_host(Box::new(ZshrsHost));
+            // The externals this stage waits for are not the job's process
+            // group leader (the first stage is), so they skip update_job's
+            // foreground tail; see exec_jobs::foreground_job_signalled.
+            crate::exec_jobs::NOT_JOB_LEADER.with(|d| d.set(d.get() + 1));
             let _ = stage_vm.run();
+            crate::exec_jobs::NOT_JOB_LEADER.with(|d| d.set(d.get() - 1));
             let _ = std::io::stdout().flush();
             let _ = std::io::stderr().flush();
             if let (Some(t), Some(started)) = (timed.as_ref(), last_timed) {
@@ -4285,6 +4290,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }),
                 None => waitpid_eintr(pid),
             };
+            if i == 0 {
+                // c:Src/jobs.c:497-498 — `if (pn->pid == jn->gleader) status =
+                // pn->status;`: the first stage leads the job's process group,
+                // and its status is the one update_job's foreground tail reads.
+                if let Some(status) = waited {
+                    crate::exec_jobs::foreground_job_signalled(status);
+                }
+            }
             let s = match waited {
                 Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
                 Some(status) if libc::WIFSIGNALED(status) => 128 + libc::WTERMSIG(status),
@@ -16728,7 +16741,20 @@ thread_local! {
 /// command takes it here. Without a fork (the in-shell last stage) nothing
 /// happens. The bump is never undone: the child exits.
 fn execcmd_forked_level(is_subsh: bool, vm_addr: usize) {
-    if EXECCMD_FORKED.with(|f| f.replace(false)) && !is_subsh {
+    if !EXECCMD_FORKED.with(|f| f.replace(false)) {
+        return;
+    }
+    // c:Src/exec.c:1245-1246 — `if (!job_control_ok) opts[MONITOR] = 0;` in
+    // entersubsh. job_control_ok (c:1133) needs ESUB_JOB_CONTROL, which
+    // execcmd_fork passes only for a non-async `( … )` (c:2919-2920), and
+    // POSIX_JOBS. Without this a pipeline stage kept MONITOR and ran
+    // update_job's foreground tail for its own children:
+    // `{ sh -c 'kill -INT $$'; echo in } | cat` lost `in`.
+    let job_control_ok = is_subsh && crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXJOBS);
+    if !job_control_ok && crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) {
+        crate::ported::options::dosetopt(crate::ported::zsh_h::MONITOR, 0, 0);
+    }
+    if !is_subsh {
         // The chunk's own top command is the one this child was forked for;
         // see BUILTIN_EXEC_FORKED_SIMPLE.
         FORKED_SIMPLE_VM.with(|f| f.set(vm_addr));

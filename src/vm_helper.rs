@@ -6224,7 +6224,13 @@ impl ShellExecutor {
             let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
             match execute_spawn(cmd, &argv, defpath_prog.as_deref(), hashed_prog.as_deref(), argv0_env.is_some(), in_place) {
                 Ok(pid) => match crate::fusevm_bridge::wait_pid_status(pid) {
-                    Ok(status) => return Ok(crate::exec_jobs::wait_status_val(status)),
+                    Ok(status) => {
+                        use std::os::unix::process::ExitStatusExt as _;
+                        drop(_wait_guard);
+                        // c:Src/jobs.c:654-679 — update_job's foreground tail.
+                        crate::exec_jobs::foreground_job_signalled(status.into_raw());
+                        return Ok(crate::exec_jobs::wait_status_val(status));
+                    }
                     Err(e) => Err((0, Some(e))),
                 },
                 Err(eno) => Err((eno, None)),
