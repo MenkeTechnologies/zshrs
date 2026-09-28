@@ -566,6 +566,13 @@ thread_local! {
     /// `cflags` in the same function that calls `execute()`; here the
     /// compile-time fact crosses from the marker op to the spawn.
     static EXEC_DASH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    /// c:Src/exec.c:3536-3538 — the job text of the simple command about to
+    /// dispatch (BUILTIN_JOB_TEXT). The foreground external wait takes it;
+    /// a builtin or function dispatch drops it.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C computes `text` in execcmd_exec,
+    /// the function that also forks and waits.
+    static JOB_TEXT: std::cell::RefCell<Option<fusevm::Value>> = const { std::cell::RefCell::new(None) };
     /// Counts sublists (bumped by BUILTIN_STMT_PROLOGUE_FAST). Together with
     /// REDIR_SCOPE_OPENED it tells a builtin whether the redirect scope on
     /// top of the stack belongs to its own command.
@@ -1551,6 +1558,11 @@ pub(crate) const EXEC_CARRIER_DASH: u8 = 1;
 /// `EXEC_DASH` bit: exec in the already-forked child (c:Src/exec.c:4369).
 pub(crate) const EXEC_CARRIER_FORKED: u8 = 2;
 
+/// Take the job text of the command being dispatched (see JOB_TEXT).
+pub(crate) fn take_job_text() -> Option<String> {
+    JOB_TEXT.with(|t| t.borrow_mut().take()).map(|v| v.to_str())
+}
+
 /// Consume every external-spawn carrier bit (see EXEC_DASH).
 pub(crate) fn take_exec_carrier() -> u8 {
     EXEC_DASH.with(|c| c.replace(0))
@@ -1559,6 +1571,7 @@ pub(crate) fn take_exec_carrier() -> u8 {
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // c:Src/exec.c:772-776 — BINF_DASH only changes an external's argv[0].
     take_exec_dash();
+    take_job_text();
     PREFORK_CUT.with(|c| c.set(false)); // the words are complete
 
     // c:Src/exec.c getproc + Src/jobs.c deletefilelist — close any
@@ -3557,6 +3570,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // See BUILTIN_EXEC_DASH.
     vm.register_builtin(BUILTIN_EXEC_DASH, |_vm, _argc| {
         EXEC_DASH.with(|c| c.set(c.get() | EXEC_CARRIER_DASH));
+        Value::Int(0)
+    });
+    // See BUILTIN_JOB_TEXT.
+    vm.register_builtin(BUILTIN_JOB_TEXT, |vm, _argc| {
+        let text = vm.pop();
+        JOB_TEXT.with(|t| *t.borrow_mut() = Some(text));
         Value::Int(0)
     });
     // See BUILTIN_EXEC_FORKED_SIMPLE.
@@ -17867,6 +17886,11 @@ pub const BUILTIN_EXEC_DASH: u16 = 687;
 /// the EXEC_CARRIER_FORKED bit: c:Src/exec.c:3063 `last1 = forked = 1` and
 /// c:4369 `execute(args, cflags, use_defpath)` — the child becomes the command.
 pub const BUILTIN_EXEC_FORKED_SIMPLE: u16 = 741;
+/// Emitted right before the external/function dispatch of a simple command,
+/// with the command's job text (c:Src/exec.c:3536-3538 `getjobtext`). Sets
+/// the JOB_TEXT carrier the foreground wait reads when it reports a job that
+/// died of a signal (exec_jobs::foreground_job_report).
+pub const BUILTIN_JOB_TEXT: u16 = 744;
 /// c:Src/exec.c:3755-3757 `globlist(args, 0)` over the WHOLE argument list,
 /// after prefork has expanded every word (c:3357-3359). Stack: the N
 /// expanded word values in source order, then two Int bitmasks: bit i of the
@@ -20561,10 +20585,12 @@ impl fusevm::ShellHost for ZshrsHost {
         // name that is not a function falls through to the external spawn,
         // which still needs the carrier.
         let exec_dash = take_exec_carrier();
+        let job_text = JOB_TEXT.with(|t| t.borrow_mut().take());
         PREFORK_CUT.with(|c| c.set(false)); // the words are complete
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
         if status.is_none() {
             EXEC_DASH.with(|c| c.set(exec_dash));
+            JOB_TEXT.with(|t| *t.borrow_mut() = job_text);
         }
 
         // Anonymous functions (`() { … } args`, compiled by

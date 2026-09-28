@@ -46,6 +46,76 @@ thread_local! {
     pub static NOT_JOB_LEADER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+/// !!! WARNING: RUST-ONLY HELPER — C WRITES THROUGH THE `shout` FILE* !!!
+/// printjob's asynchronous report goes to `fout = (synch == 2 || !shout) ?
+/// stdout : shout` (c:Src/jobs.c:1153), and an interactive shell's `shout`
+/// is the terminal, `fdopen(SHTTY, "w")`, or stderr when there is no tty
+/// (c:Src/init.c:734-748). Writing to fd 2 instead sent the report through
+/// the command's own redirection: `sh -c 'kill -HUP $$' 2>/dev/null` lost
+/// its `zsh: hangup` line.
+fn shout_write(s: &str) {
+    let tty = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed);
+    let fd = if tty >= 0 { tty } else { libc::STDERR_FILENO };
+    let _ = crate::ported::utils::write_loop(fd, s.as_bytes());
+}
+
+/// !!! WARNING: RUST-ONLY ADAPTER !!! update_job's report for the foreground
+/// job (c:Src/jobs.c:645-650), for a simple external zshrs waited for outside
+/// the job table: `if ((isset(NOTIFY) || job == thisjob) && (jn->stat &
+/// STAT_LOCKED)) printjob(jn, !!isset(LONGLISTJOBS), 0);`. The job is one
+/// process whose text is the command's job text (`None` when the dispatch
+/// carried none, e.g. inside a function, c:Src/exec.c:3536-3538).
+///
+/// printjob prints nothing for a job marked STAT_NOPRINT, and execpline marks
+/// every job run while another pipeline is executing (`pline_level`,
+/// c:Src/exec.c:1829-1831): a command inside a function, `eval`, a loop, a
+/// `{ … }` or an `if` is never reported, only one at the top of the command
+/// line — including either side of `&&`/`||`. `nested` is the caller's
+/// in-process `( … )` (C forks it, and the child has no MONITOR).
+///
+/// Then printjob's own gate (exec_jobs::printjob_async): an interactive
+/// shell with MONITOR reports a signal other than SIGINT/SIGPIPE as
+/// `zsh: terminated  cmd`, and a SIGINT only with a newline (c:1203-1205,
+/// c:1260-1263, c:1338-1341).
+pub fn foreground_job_report(status: i32, text: Option<String>, nested: bool) {
+    use crate::ported::zsh_h::{CS_CMDAND, CS_CMDOR, SFC_NONE};
+    use std::sync::atomic::Ordering;
+    let Some(text) = text else { return };
+    if nested
+        || !libc::WIFSIGNALED(status)
+        || NOT_JOB_LEADER.with(|d| d.get()) > 0
+        || crate::ported::exec::sfcontext.load(Ordering::Relaxed) != SFC_NONE
+        || crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.get()) > 0
+    {
+        return;
+    }
+    // c:Src/exec.c:1829-1831 — nested in a compound command (cmdstack holds
+    // more than the `&&`/`||` list connectors).
+    let in_compound = crate::ported::prompt::CMDSTACK.with(|s| {
+        s.borrow()
+            .iter()
+            .any(|&cs| cs as i32 != CS_CMDAND as i32 && cs as i32 != CS_CMDOR as i32)
+    });
+    if in_compound {
+        return;
+    }
+    let jn = job {
+        stat: stat::INUSE | stat::LOCKED | stat::DONE | stat::CHANGED,
+        procs: vec![crate::ported::zsh_h::process {
+            pid: 0,
+            text,
+            status,
+            ti: Default::default(),
+            bgtime: None,
+            endtime: None,
+        }],
+        ..Default::default()
+    };
+    // The job sits at index 1 and is `thisjob` (c:Src/jobs.c:645).
+    let tab = vec![job::default(), jn];
+    printjob_async(&tab, 1, 1);
+}
+
 /// !!! WARNING: RUST-ONLY ADAPTER !!! The tail of C `update_job` for the
 /// FOREGROUND job (`job == thisjob`, not STAT_CURSH, so `inforeground = 2`,
 /// c:Src/jobs.c:558-561), for an external zshrs waited for outside the job
@@ -228,11 +298,11 @@ pub fn printjob_async(tab: &[job], ji: usize, thisjob: i32) -> bool {
         );
         // c:1260-1263 — `if (doputnl && !synch) putc('\n', fout);`
         let nl = if doputnl { "\n" } else { "" };
-        eprint!("{}{}\n", nl, s);
+        shout_write(&format!("{}{}\n", nl, s));
         return true;
     } else if doputnl && interact {
         // c:1338-1341
-        eprintln!();
+        shout_write("\n");
         return true;
     }
     false

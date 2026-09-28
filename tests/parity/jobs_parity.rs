@@ -1190,3 +1190,47 @@ mod foreground_signal_ends_the_command_line {
         assert_same_verdict(&d, "V", "a SIGINT inside a pipeline stage kept the command line");
     }
 }
+
+/// c:Src/jobs.c:645-650 + printjob c:1147-1336 — an interactive shell with
+/// MONITOR reports a foreground job that died of a signal (other than
+/// SIGINT/SIGPIPE) as `zsh: terminated  <job text>`, on the terminal
+/// (`shout`, c:Src/init.c:748), and only for a job at the top of the command
+/// line: execpline marks one run while another pipeline executes STAT_NOPRINT
+/// (c:Src/exec.c:1829-1831). zshrs printed nothing.
+mod foreground_signal_is_reported {
+    use crate::zpty_probe::{assert_same_verdict, sq, OPEN_PUMPED};
+
+    fn driver(line: &str, verdict: &str) -> String {
+        format!(
+            "{OPEN_PUMPED}\nzpty -w w {}; pump\nzpty -w w 'print DO${{:-}}NE'; pump\nzpty -d w 2>/dev/null\n{verdict}\n",
+            sq(line)
+        )
+    }
+
+    #[test]
+    fn a_top_level_command_is_reported_with_its_text() {
+        let d = driver(
+            r#"sh -c 'kill -TERM $$'"#,
+            r#"[[ $all == *"zsh: terminated  sh -c 'kill -TERM \$\$'"* && $all == *DONE* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "a job killed by SIGTERM was reported");
+    }
+
+    #[test]
+    fn the_report_ignores_the_commands_redirection() {
+        let d = driver(
+            r#"sh -c 'kill -HUP $$' 2>/dev/null"#,
+            r#"[[ $all == *"zsh: hangup"* && $all == *DONE* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "the report went to the terminal, not the command's stderr");
+    }
+
+    #[test]
+    fn a_command_inside_a_function_is_not_reported() {
+        let d = driver(
+            r#"f() { sh -c 'kill -TERM $$' }; f; { sh -c 'kill -TERM $$' }; print ST${:-}AT=$?"#,
+            r#"[[ $all == *STAT=143* && $all != *"zsh: terminated"* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "a nested job was not reported");
+    }
+}

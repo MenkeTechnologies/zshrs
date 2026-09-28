@@ -4374,6 +4374,15 @@ impl ZshCompiler {
                 );
                 self.builder.emit(Op::Pop, 0);
             }
+            // c:Src/exec.c:3536-3538 — `text = getjobtext(state->prog,
+            // eparams->beg)` for the proc a forked external becomes; printjob
+            // shows it when the job dies of a signal (c:Src/jobs.c:1326).
+            let job_text = tstr(&render_cmd_for_debug(&ZshCommand::Simple(simple.clone()), true));
+            let text_const = self.builder.add_constant(Value::str(job_text));
+            self.builder.emit(Op::LoadConst(text_const), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_JOB_TEXT, 1), 0);
+            self.builder.emit(Op::Pop, 0);
             self.builder.emit(Op::CallFunction(name_idx, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             self.emit_print_exit_value(); // c:Src/exec.c:4308-4316

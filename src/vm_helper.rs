@@ -6186,6 +6186,7 @@ impl ShellExecutor {
         // "if the pre-command `-' was given, we add `-' to the front of
         // argv[0] for this command."
         let carrier = crate::fusevm_bridge::take_exec_carrier();
+        let job_text = crate::fusevm_bridge::take_job_text();
         let exec_dash = carrier & crate::fusevm_bridge::EXEC_CARRIER_DASH != 0;
         // c:Src/exec.c:4369 — this process was forked for the command
         // (BUILTIN_EXEC_FORKED_SIMPLE): exec it here rather than spawn.
@@ -6227,6 +6228,12 @@ impl ShellExecutor {
                     Ok(status) => {
                         use std::os::unix::process::ExitStatusExt as _;
                         drop(_wait_guard);
+                        // c:Src/jobs.c:645-650 — update_job reports the finished job.
+                        crate::exec_jobs::foreground_job_report(
+                            status.into_raw(),
+                            job_text,
+                            !self.subshell_snapshots.is_empty(),
+                        );
                         // c:Src/jobs.c:654-679 — update_job's foreground tail.
                         crate::exec_jobs::foreground_job_signalled(status.into_raw());
                         return Ok(crate::exec_jobs::wait_status_val(status));
