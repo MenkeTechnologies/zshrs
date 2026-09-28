@@ -3150,7 +3150,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // last act"). Subshell `(exec funcname)` — return through
             // the EXIT_PENDING path so the subshell body aborts and
             // the parent resumes via subshell_end.
-            let in_subshell_now = with_executor(|exec| !exec.subshell_snapshots.is_empty());
+            let in_subshell_now = exec_in_process_subshell();
             if in_subshell_now {
                 crate::ported::builtin::EXIT_VAL
                     .store(status, std::sync::atomic::Ordering::Relaxed);
@@ -3164,7 +3164,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let bn_in_tab = walk.is_builtin; // c:3120-3129
         if bn_in_tab {
             let status = dispatch_builtin_raw(&cmd, rest.clone());
-            let in_subshell_now = with_executor(|exec| !exec.subshell_snapshots.is_empty());
+            let in_subshell_now = exec_in_process_subshell();
             if in_subshell_now {
                 crate::ported::builtin::EXIT_VAL
                     .store(status, std::sync::atomic::Ordering::Relaxed);
@@ -3186,7 +3186,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // command as a child, wait for it, then signal the subshell
         // body to abort (return Status(N) and the caller's
         // subshell_end will pop the snapshot and resume the parent).
-        let in_subshell = with_executor(|exec| !exec.subshell_snapshots.is_empty());
+        let in_subshell = exec_in_process_subshell();
+        if in_subshell && !clean_env {
+            let status = exec_execute(&args, walk.exec_argv0.clone(), login, use_defpath, false);
+            crate::ported::builtin::EXIT_VAL.store(status, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(status);
+        }
         if in_subshell {
             // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
             crate::lowfd::cloexec_internal_fds();
@@ -3285,6 +3291,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .unwrap_or(1);
             crate::ported::params::setiparam("SHLVL", cur - 1); // c:4336
             crate::ported::params::addenv("SHLVL", &(cur - 1).to_string()); // c:2672
+        }
+        // c:Src/exec.c:4369 — `execute(args, cflags, use_defpath)` in this
+        // very process, exec'ing in place (see exec_execute). `exec -c`
+        // keeps the Command route below: C hands it `blank_env` (c:778-779),
+        // which carries no `_` either.
+        if !clean_env {
+            std::process::exit(exec_execute(&args, walk.exec_argv0.clone(), login, use_defpath, true));
         }
         let mut command = std::process::Command::new(&prog);
         command.arg0(&display_argv0);
@@ -17084,6 +17097,94 @@ fn current_flock_fds() -> Vec<i32> {
             slot == FDT_FLOCK || slot == FDT_FLOCK_EXEC
         })
         .collect()
+}
+
+/// `exec`'s external command: C's `execute(args, cflags, use_defpath)`
+/// (c:Src/exec.c:4369, body c:729-881) through the same search and zexecve
+/// as every other external (`vm_helper::execute_spawn`). `in_place` execs
+/// over this process and only returns on failure; otherwise (an in-process
+/// subshell, whose C counterpart was a forked child) the command is spawned
+/// and waited for. Returns the command's status, or C's exit status for a
+/// failed exec. `args` is the command and its arguments; `exec_argv0` the
+/// `exec -a` name; `login` the `-`/`exec -l` flag.
+fn exec_execute(
+    args: &[String],
+    exec_argv0: Option<String>,
+    login: bool,
+    use_defpath: bool,
+    in_place: bool,
+) -> i32 {
+    let cmd = &args[0];
+    crate::lowfd::cloexec_internal_fds(); // c:4352
+    // c:3318-3328 — `exec -a NAME` travels as ARGV0 in the environment;
+    // execute() takes argv[0] from it and unsets it (c:758-768), else
+    // prefixes `-` for `exec -l` / `-` (c:772-776).
+    let argv0_env = exec_argv0.or_else(|| std::env::var("ARGV0").ok());
+    let mut argv: Vec<String> = Vec::with_capacity(args.len());
+    argv.push(match &argv0_env {
+        Some(z) => z.clone(),
+        None if login => format!("-{}", cmd),
+        None => cmd.clone(),
+    });
+    argv.extend(args[1..].iter().cloned());
+    // c:810-819 — `command -p`: the default-path hit alone.
+    let defpath = if use_defpath && !cmd.contains('/') {
+        crate::ported::exec::search_defpath(cmd, libc::PATH_MAX as usize)
+    } else {
+        None
+    };
+    let _wait_guard = (!in_place).then(ForegroundWaitGuard::enter);
+    let eno = if use_defpath && !cmd.contains('/') && defpath.is_none() {
+        0 // c:815-819 — not on the default path
+    } else {
+        match crate::vm_helper::execute_spawn(
+            cmd,
+            &argv,
+            defpath.as_deref(),
+            None,
+            argv0_env.is_some(),
+            in_place,
+        ) {
+            Ok(pid) => {
+                return match wait_pid_status(pid) {
+                    Ok(status) => crate::exec_jobs::wait_status_val(status),
+                    Err(_) => 127,
+                }
+            }
+            Err(eno) => eno,
+        }
+    };
+    drop(_wait_guard);
+    // c:871-881
+    if eno != 0 {
+        crate::ported::utils::zerr(&format!(
+            "{}: {}",
+            crate::ported::utils::zsh_errno_msg(eno),
+            cmd
+        ));
+        return if eno == libc::EACCES || eno == libc::ENOEXEC { 126 } else { 127 };
+    }
+    // c:873-874 — `if (commandnotfound(arg0, args) == 0) _realexit();`
+    if let Some(rc) =
+        with_executor(|exec| exec.dispatch_function_call("command_not_found_handler", args))
+    {
+        return rc;
+    }
+    crate::ported::utils::zerr(&format!(
+        "command not found: {}",
+        crate::ported::utils::nicedupstring(cmd)
+    ));
+    127
+}
+
+/// Whether `exec` is running inside a subshell that zshrs keeps in this
+/// process — `( … )` (the snapshot stack) or a command substitution
+/// (`SubshStateGuard`, the in-process `entersubsh`). C forked both, so its
+/// exec replaced only that child; replacing THIS process would end the
+/// parent shell too (`x=$(exec echo hi)` ended the script).
+fn exec_in_process_subshell() -> bool {
+    with_executor(|exec| !exec.subshell_snapshots.is_empty())
+        || crate::ported::exec::SUBSH_STATE_DEPTH.load(std::sync::atomic::Ordering::SeqCst) > 0
 }
 
 fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {

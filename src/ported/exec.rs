@@ -5077,7 +5077,7 @@ pub static SUBSH_PARENT_ZLEACTIVE: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(-1);
 
 /// Nesting depth of the in-process subshell state above.
-static SUBSH_STATE_DEPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static SUBSH_STATE_DEPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 impl SubshStateGuard {
     /// Apply the deltas listed above and capture the values to restore.

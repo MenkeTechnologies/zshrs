@@ -1377,7 +1377,7 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
 ///
 /// `Err(eno)` is C's `eno` at c:871: non-zero means `zerr("%e: %s")`, zero
 /// means nothing usable was found (`command not found`).
-fn execute_spawn(
+pub(crate) fn execute_spawn(
     arg0: &str,
     argv: &[String],
     defpath: Option<&str>,

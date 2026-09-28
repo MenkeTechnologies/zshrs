@@ -951,3 +951,43 @@ mod env_shim_order {
         assert_parity(r#"export c=3 a=1; env z=9 | grep -E '^(a|c|z)='"#);
     }
 }
+
+/// c:Src/exec.c:4369 — `exec` runs `execute()`, the same search and
+/// zexecve every external goes through.
+mod exec_runs_execute {
+    use super::*;
+
+    /// A command substitution is a forked child in C, so `exec` there
+    /// replaces only that child. zshrs runs it in process, and exec'ing over
+    /// the process ended the whole script.
+    #[test]
+    fn exec_inside_command_substitution_ends_only_the_substitution() {
+        assert_parity(r#"x=$(exec echo hi; echo no); print "[$x] $?""#);
+        assert_parity(r#"x=$(exec /bin/echo hi; echo no); print "[$x] $?""#);
+        assert_parity(r#"x=$(exec sh -c 'exit 7'); print $?"#);
+    }
+
+    /// c:514-520 `_=<path>`; c:873 command_not_found_handler.
+    #[test]
+    fn exec_stamps_underscore_and_consults_the_not_found_handler() {
+        assert_parity(r#"export c=3 a=1; exec /usr/bin/env | grep -E '^(a|c|_)='"#);
+        assert_parity(r#"export c=3 a=1; (exec /usr/bin/env) | grep -E '^(a|c|_)='"#);
+        assert_parity(r#"command_not_found_handler() { print handled $1; return 5 }; exec nosuch_zq"#);
+        assert_parity(r#"command_not_found_handler() { print handled $1; return 5 }; (exec nosuch_zq); print $?"#);
+    }
+
+    /// c:611-624 — the `-` guard on the sh fallback, reached through `exec`.
+    #[test]
+    fn exec_shebangless_script_under_dash_dir() {
+        let d = std::env::temp_dir().join(format!("zshrs-exec-dashdir-{}", std::process::id()));
+        let dash = d.join("-dir");
+        std::fs::create_dir_all(&dash).unwrap();
+        let script = dash.join("tstcmd");
+        std::fs::write(&script, "echo hello from tstcmd\n").unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_parity_in(&d, "path=(-dir $path); exec tstcmd");
+        assert_parity_in(&d, "(path=(-dir $path); exec tstcmd); print rc=$?");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
