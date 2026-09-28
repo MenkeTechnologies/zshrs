@@ -245,3 +245,16 @@ fn comma_sections_still_work() {
 fn dollar_bearing_condition_still_works() {
     assert_parity("a=(x y z); for ((i=1; i<=$#a; i++)); do echo \"${a[i]}\"; done");
 }
+
+/// c:Src/loop.c:77/135/191 — each section goes through matheval, so a
+/// malformed one is "bad math expression" and the loop stops. The slot
+/// compilation had no syntax errors: `i<1+` ran the body, `1+` looped
+/// forever, `i+` as the step was accepted.
+#[test]
+fn malformed_section_is_a_math_error() {
+    assert_parity("{ for ((i=0; i<1+; i++)) echo x } 2>&1; print rc=$?");
+    assert_parity("{ for ((i=0; 1+; i++)) echo x } 2>&1");
+    assert_parity("{ for ((i=0; i<2; i+)) echo x } 2>&1");
+    assert_parity("{ for ((i=+; i<2; i++)) echo x } 2>&1");
+    assert_parity("f() { for ((i=0; i<; i++)) echo x; echo in }; { f } 2>&1; print after");
+}

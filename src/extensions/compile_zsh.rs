@@ -11150,10 +11150,23 @@ impl ZshCompiler {
         //     OP_E2 bit so op() never stores it, c:1364-1369). Skipping that
         //     check here made `for ((j=1; j^^=1; ))` store 0 where zsh
         //     leaves j at 1.
+        //   * a section the math parser rejects (`i<1+`, `i+`). ArithCompiler
+        //     has no syntax errors and compiled what it could, so the loop ran
+        //     where zsh reports "bad math expression" and stops. Same
+        //     side-effect-free pre-check as the `(( ))` statement (Bug #533);
+        //     the runtime evaluation then reports the error.
         let arith_compiler_cannot_lex = |s: &str| {
             s.contains(',')
                 || s.contains('$')
                 || crate::arith_compiler::arith_uncompilable_reason(s).is_some()
+                || {
+                    let bad = crate::ported::math::mathevali_noeval(s).is_err();
+                    crate::ported::utils::errflag.fetch_and(
+                        !crate::ported::zsh_h::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    bad
+                }
         };
         let needs_eval_global = arith_compiler_cannot_lex(&untoked_init)
             || arith_compiler_cannot_lex(&untoked_cond)
@@ -11274,8 +11287,18 @@ impl ZshCompiler {
         }
         self.builder.emit(Op::Jump(loop_top), 0);
 
+        // c:Src/loop.c:138-142 — `if (errflag) { if (breaks) breaks--; lastval
+        // = 1; break; }` after the condition: a bad init or condition leaves
+        // the loop through the false edge with errflag set, and the status is
+        // 1. BUILTIN_LOOP_ERRFLAG_STATUS stores it only when errflag is set.
+        let cond_false = self.builder.current_pos();
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_ERRFLAG_STATUS, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
         let loop_exit = self.builder.current_pos();
-        self.builder.patch_jump(exit_jump, loop_exit);
+        self.builder.patch_jump(exit_jump, cond_false);
         self.builder.patch_jump(errflag_break, loop_exit);
 
         self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
