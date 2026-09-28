@@ -591,6 +591,18 @@ done"#,
     fn return_exits_function() {
         assert_parity("f() { echo before; return 5; echo after; }; f; echo $?");
     }
+
+    /// c:Src/builtin.c:5816 — a bad count expression is reported by
+    /// mathevali, whose errflag then silences the "argument is not
+    /// positive" zerrnam; the list is abandoned.
+    #[test]
+    fn bad_count_expression_is_the_only_diagnostic() {
+        assert_parity(r#"{ for i in 1; do break 1+; done } 2>&1; print notreached"#);
+        assert_parity(r#"{ for i in 1 2; do continue 3/0; done } 2>&1"#);
+        assert_parity(r#"f() { for i in 1; do break -; done }; { f } 2>&1"#);
+        assert_parity(r#"x=1+; { for i in 1; do break $x; done } 2>&1"#);
+        assert_parity(r#"{ break 1+ } 2>&1"#);
+    }
 }
 
 // ───────────────────────── getopts ─────────────────────────

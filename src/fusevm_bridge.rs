@@ -7310,7 +7310,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_BREAK_COUNT_VALIDATE, |vm, _argc| {
         let name = vm.pop().to_str();
         let count_s = vm.pop().to_str();
-        let count = crate::ported::math::mathevali(&count_s).unwrap_or(0);
+        // c:5816 — mathevali zerr's a bad expression itself; its errflag
+        // then suppresses the zerrnam below.
+        let count = match crate::ported::math::mathevali(&count_s) {
+            Ok(n) => n,
+            Err(msg) => {
+                crate::ported::utils::zerr(&msg);
+                0
+            }
+        };
         if count <= 0 {
             crate::ported::utils::zerrnam(&name, &format!("argument is not positive: {count}"));
             return Value::Int(0);

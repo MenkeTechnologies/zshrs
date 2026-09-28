@@ -13617,7 +13617,16 @@ pub fn bin_break(
                                     // c:5815-5818 — first arg parsed as math expr.
     if !implicit {
         // c:5815
-        num = mathevali(&argv[0]).unwrap_or(0) as i32; // c:5816
+        // c:5816 — mathevali reports a bad expression itself (zerr, which
+        // sets errflag), so the `argument is not positive` zerrnam below is
+        // then suppressed; the Rust mathevali hands the message back instead.
+        num = match mathevali(&argv[0]) {
+            Ok(n) => n as i32,
+            Err(msg) => {
+                zerr(&msg);
+                0
+            }
+        }; // c:5816
         nump = 1; // c:5817
     }
 
