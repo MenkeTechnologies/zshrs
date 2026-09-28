@@ -3349,6 +3349,17 @@ impl ZshCompiler {
             };
             if let Some(opcode) = opcode {
                 let argc = (simple.words.len() - 1) as u8;
+                // c:Src/exec.c:3104-3402 — the precommand walk (`exec`'s
+                // option errors, a prefix left with no command) runs before c:3720 applies the
+                // redirections, so its diagnostics reach the ORIGINAL
+                // stderr and the redirections never happen. With
+                // redirections present the walk is run first by
+                // BUILTIN_PRECMD_CHECK on the expanded words; the prefix
+                // word rides along on the stack in front of them.
+                if has_redirects {
+                    let pfx = self.builder.add_constant(Value::str(first.as_str()));
+                    self.builder.emit(Op::LoadConst(pfx), 0);
+                }
                 // c:Src/exec.c:3257-3280 — `exec`'s own options are consumed
                 // in the precommand walk, before `globlist(args, 0)` (c:3757),
                 // so the argv0 given with `-a` is expanded but never
@@ -3402,9 +3413,20 @@ impl ZshCompiler {
                 // the redirect scope open after arg expansion, before
                 // addvars/dispatch.
                 self.emit_stage_fds_install();
-                if has_redirects {
+                let mut walk_failed_jump = None;
+                let call_argc = if has_redirects {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_PRECMD_CHECK, argc + 1),
+                        0,
+                    );
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PRECMD_CHECK_OK, 0), 0);
+                    walk_failed_jump = Some(self.builder.emit(Op::JumpIfFalse(0), 0));
                     self.emit_redir_scope_begin(&simple.redirs);
-                }
+                    1 // the checked words, one array
+                } else {
+                    argc
+                };
                 // c:Src/exec.c — inline-env assigns must commit AFTER
                 // arg expansion (above) but BEFORE the precmd dispatch
                 // consumes the args, so the spawned command sees
@@ -3419,7 +3441,7 @@ impl ZshCompiler {
                     }
                     self.emit_seal_inline_env();
                 }
-                self.builder.emit(Op::CallBuiltin(opcode, argc), 0);
+                self.builder.emit(Op::CallBuiltin(opcode, call_argc), 0);
                 self.builder.emit(Op::SetStatus, 0);
                 // Close the inline-env scope so the assigns don't leak
                 // into the caller's shell state.
@@ -3433,6 +3455,17 @@ impl ZshCompiler {
                 self.emit_errexit_check();
                 if has_redirects {
                     self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
+                if let Some(failed) = walk_failed_jump {
+                    // The walk failed: nothing was redirected or run. Drop
+                    // the checked words; the status is C's `lastval = 1`.
+                    let done = self.builder.emit(Op::Jump(0), 0);
+                    self.builder.patch_jump(failed, self.builder.current_pos());
+                    self.builder.emit(Op::Pop, 0);
+                    self.builder.emit(Op::LoadInt(1), 0);
+                    self.builder.emit(Op::SetStatus, 0);
+                    self.emit_errexit_check();
+                    self.builder.patch_jump(done, self.builder.current_pos());
                 }
                 return;
             }

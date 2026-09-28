@@ -13005,6 +13005,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `nocorrect`) with a redirect but no command word. Emits the
     // canonical diagnostic via zerr (which sets errflag) and
     // returns Status(1). Bug #534.
+    // c:Src/exec.c:3104-3290 then c:3380-3402 — the precommand walk for a
+    // `builtin`/`command`/`exec` head that carries redirections, run on the
+    // expanded words BEFORE the redirect scope opens (c:3720), as C orders
+    // it. Operands: [prefix, words…]. Returns the words without the prefix
+    // as one array for the prefix opcode; BUILTIN_PRECMD_CHECK_OK then says
+    // whether the walk let the command run. A failed walk has already
+    // printed its diagnostic to the still-unredirected stderr.
+    vm.register_builtin(BUILTIN_PRECMD_CHECK, |vm, argc| {
+        let mut popped: Vec<Value> = Vec::with_capacity(argc as usize);
+        for _ in 0..argc {
+            popped.push(vm.pop());
+        }
+        popped.reverse();
+        let mut full: Vec<String> = Vec::with_capacity(popped.len());
+        for v in popped {
+            match v {
+                Value::Array(items) => full.extend(items.iter().map(|i| i.to_str())),
+                other => full.push(other.to_str()),
+            }
+        }
+        let words: Vec<Value> = full.iter().skip(1).map(|s| Value::str(s.as_str())).collect();
+        let ok = precmd_walk_ok(&full);
+        if !ok {
+            // c:3205 / c:3398 — `lastval = 1;` before `goto done` / return.
+            vm.last_status = 1;
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        PRECMD_CHECK_PASSED.with(|c| c.set(ok));
+        Value::array(words)
+    });
+    vm.register_builtin(BUILTIN_PRECMD_CHECK_OK, |_vm, _argc| {
+        Value::Bool(PRECMD_CHECK_PASSED.with(|c| c.replace(true)))
+    });
     vm.register_builtin(BUILTIN_REDIR_NO_CMD, |_vm, _argc| {
         crate::ported::utils::zerr("redirection with no command");
         Value::Status(1)
@@ -18488,6 +18521,60 @@ pub const BUILTIN_ASSIGN_ONLY_STATUS: u16 = 623;
 /// than the opcode that reads the status back).
 pub static ASSIGN_FAILED_FLAG: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Precommand walk ahead of the redirections, for a `builtin`/`command`/
+/// `exec` head with redirections (c:Src/exec.c:3104-3402 run before c:3720).
+/// Operands: [prefix, words…]; returns the words minus the prefix as one
+/// array. Pairs with BUILTIN_PRECMD_CHECK_OK.
+pub const BUILTIN_PRECMD_CHECK: u16 = 742;
+
+/// Whether the last BUILTIN_PRECMD_CHECK let the command run. argc=0;
+/// pushes Bool. Resets the flag to true.
+pub const BUILTIN_PRECMD_CHECK_OK: u16 = 743;
+
+thread_local! {
+    /// BUILTIN_PRECMD_CHECK's verdict, read once by BUILTIN_PRECMD_CHECK_OK
+    /// (the two ops run back to back on the same VM thread).
+    static PRECMD_CHECK_PASSED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// The error exits of C's precommand walk (c:Src/exec.c:3104-3402) for
+/// `full` = [prefix, words…]; `false` when the walk ended the command.
+///
+/// * A shell function named like the prefix shadows it (c:3483-3487): the
+///   redirections belong to the function call.
+/// * c:3250-3290 — `exec`'s option errors: the walk `zerr`s and sets
+///   errflag itself.
+/// * c:3395-3402 — the walk consumed every word and redirections remain:
+///   `zerr("redirection with no command")`.
+///
+/// `builtin NAME` naming no builtin (c:3490) stays with BUILTIN_BUILTIN: its
+/// notion of "a builtin" also covers the zshrs extension and native-command
+/// registries, which only that handler consults.
+fn precmd_walk_ok(full: &[String]) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    let Some(prefix) = full.first() else {
+        return true;
+    };
+    let has_fn = with_executor(|exec| {
+        exec.functions_compiled.contains_key(prefix.as_str()) || exec.function_exists(prefix)
+    });
+    if has_fn {
+        return true;
+    }
+    let before = crate::ported::utils::errflag.load(Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR;
+    let walk = crate::ported::exec::execcmd_compile_head(full, crate::ported::zsh_h::WC_SIMPLE);
+    if before == 0
+        && (crate::ported::utils::errflag.load(Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0
+    {
+        return false; // c:3258/c:3276/c:3285 `zerr(...); … goto done`
+    }
+    if walk.is_empty_command && !walk.has_command_vv {
+        crate::ported::utils::zerr("redirection with no command"); // c:3397
+        return false;
+    }
+    true
+}
 
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword

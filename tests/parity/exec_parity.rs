@@ -908,3 +908,33 @@ mod external_spawn {
         let _ = std::fs::remove_dir_all(&d);
     }
 }
+
+/// c:Src/exec.c:3104-3402 — the precommand walk runs before c:3720 applies
+/// the command's redirections, so its diagnostics go to the ORIGINAL stderr
+/// and the redirections never happen. The outer `2>&1` makes that stderr
+/// visible on stdout; pre-fix the inner `2>/dev/null` swallowed them.
+mod precmd_walk_before_redirections {
+    use super::*;
+
+    #[test]
+    fn exec_option_errors_escape_the_commands_own_redirection() {
+        assert_parity(r#"{ exec -a foo 2>/dev/null } 2>&1; print notreached"#);
+        assert_parity(r#"{ exec -x ls 2>/dev/null } 2>&1"#);
+        assert_parity(r#"f() { exec -a 2>/dev/null }; { f } 2>&1"#);
+    }
+
+    #[test]
+    fn prefix_left_without_a_command_reports_the_redirection() {
+        assert_parity(r#"{ command -p 2>/dev/null } 2>&1; print notreached"#);
+        assert_parity(r#"x=(); { command $x 2>/dev/null } 2>&1"#);
+    }
+
+    #[test]
+    fn failed_walk_applies_no_redirection() {
+        let d = std::env::temp_dir().join(format!("zshrs-precmd-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert_parity_in(&d, r#"{ exec -a foo >created } 2>/dev/null"#);
+        assert!(!d.join("created").exists(), "the failed walk still opened the redirection");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
