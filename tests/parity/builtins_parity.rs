@@ -260,6 +260,14 @@ mod sched_builtin {
         assert_parity("sched");
     }
 
+    /// c:Src/Builtins/sched.c:190 — `*arg == '-'`: any word starting `--`
+    /// ends the options, not only `--` itself.
+    #[test]
+    fn sched_double_dash_word_ends_options() {
+        assert_parity("{ sched --help } 2>&1; print rc=$?");
+        assert_parity("{ sched --x } 2>&1; print rc=$?");
+    }
+
     /// `sched -L` is a sched flag in newer zsh — not all builds. Just
     /// smoke the parse path; both shells must agree on whether it's
     /// supported.

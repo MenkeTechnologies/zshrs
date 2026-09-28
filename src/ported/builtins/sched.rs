@@ -349,8 +349,9 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
             // C: zsfree(sch->cmd); zfree(sch, sizeof(struct schedcmd));
             drop(removed); // c:186-187
             return 0; // c:189
-        } else if arg == "-" {
-            // c:190 else if (*arg == '-')
+        } else if arg_b.first() == Some(&b'-') {
+            // c:190 else if (*arg == '-') — any word starting `--`, not only
+            // `--` itself, ends the options (`sched --help` lists).
             /* end of options */                                        // c:191
             argptr += 1; // c:192
             break; // c:193
