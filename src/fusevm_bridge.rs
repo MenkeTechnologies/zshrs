@@ -2855,6 +2855,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // with status 1 and leaves errflag set, so the script ends. This
         // handler is reached without dispatch_builtin's gates, and ran the
         // builtin, which reported 0.
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            // c:3523-3525 / c:3760-3762 — see words_errflag_status.
+            return Value::Status(words_errflag_status());
+        }
         // c:Src/exec.c:3104-3146 — the precommand walk strips a `-` word after
         // `builtin` too (it is itself a BINF_PREFIX node, c:Src/builtin.c:42);
         // when nothing is left, c:3380-3406 is the empty-command return and
@@ -2866,13 +2873,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             .is_empty_command
         {
             return Value::Status(0);
-        }
-        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
-            & crate::ported::zsh_h::ERRFLAG_ERROR)
-            != 0
-        {
-            // c:3523-3525 / c:3760-3762 — see words_errflag_status.
-            return Value::Status(words_errflag_status());
         }
         let Some((name, rest)) = args.split_first() else {
             // `builtin` with no args → list builtins (zsh emits nothing,
