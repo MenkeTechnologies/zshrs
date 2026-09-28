@@ -916,6 +916,25 @@ mod external_spawn {
 mod precmd_walk_before_redirections {
     use super::*;
 
+    /// c:3488-3499 — a word reached through `builtin` is looked up before
+    /// c:3786 applies the redirections, so "no such builtin" reaches the
+    /// original stderr and no redirection is opened.
+    #[test]
+    fn no_such_builtin_is_reported_before_redirections() {
+        assert_parity(r#"{ builtin nosuch_zq 2>/dev/null } 2>&1; print rc=$?"#);
+        assert_parity(r#"disable echo; { builtin echo hi 2>/dev/null } 2>&1; print rc=$?"#);
+        assert_parity(r#"{ builtin nosuch_zq >/nonexistent-dir-zq/x } 2>&1; print rc=$?"#);
+        assert_parity(r#"{ builtin echo hi 2>/dev/null } 2>&1; print rc=$?"#);
+    }
+
+    /// c:3104-3146 — `-` is itself a precommand modifier; `builtin -` with
+    /// nothing after it is the c:3380-3406 empty command, status 0.
+    #[test]
+    fn builtin_dash_alone_is_an_empty_command() {
+        assert_parity(r#"builtin -; print rc=$?"#);
+        assert_parity(r#"x=-; builtin $x; print rc=$?"#);
+    }
+
     #[test]
     fn exec_option_errors_escape_the_commands_own_redirection() {
         assert_parity(r#"{ exec -a foo 2>/dev/null } 2>&1; print notreached"#);

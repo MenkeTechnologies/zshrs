@@ -1003,6 +1003,63 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Lookup half of [`try_run_registered_builtin`]: the handler for a
+/// zshrs-original opcode builtin NAME, or `None`. Split from the run half so
+/// the `builtin` precommand walk can ask whether the name exists before the
+/// redirections open (c:Src/exec.c:3489 `builtintab->getnode`) without
+/// running the command.
+///
+/// !!! Keep in sync with the matching `vm.register_builtin(...)` closures in
+/// `register_builtins`: both must route a name to the same executor method.
+fn registered_builtin(name: &str) -> Option<fn(&[String]) -> i32> {
+    let f: fn(&[String]) -> i32 = match name {
+        "ai" => |argv| with_executor(|e| e.builtin_ai(argv)),
+        "async" => |argv| with_executor(|e| e.builtin_async(argv)),
+        "await" => |argv| with_executor(|e| e.builtin_await(argv)),
+        "barrier" => |argv| with_executor(|e| e.builtin_barrier(argv)),
+        "peach" => |argv| with_executor(|e| e.builtin_peach(argv)),
+        "pmap" => |argv| with_executor(|e| e.builtin_pmap(argv)),
+        "pgrep" => |argv| with_executor(|e| e.builtin_pgrep(argv)),
+        "intercept" => |argv| with_executor(|e| e.builtin_intercept(argv)),
+        "intercept_proceed" => |argv| with_executor(|e| e.builtin_intercept_proceed(argv)),
+        "doctor" => |argv| with_executor(|e| e.builtin_doctor(argv)),
+        "dbview" => |argv| with_executor(|e| e.builtin_dbview(argv)),
+        "profile" => |argv| with_executor(|e| e.builtin_profile(argv)),
+        "provenance" => |argv| with_executor(|e| e.builtin_provenance(argv)),
+        "zbanner" => |argv| with_executor(|e| e.builtin_zbanner(argv)),
+        "caller" => |argv| with_executor(|e| e.builtin_caller(argv)),
+        "help" => |argv| with_executor(|e| e.builtin_help(argv)),
+        "cdreplay" => |argv| with_executor(|e| e.builtin_cdreplay(argv)),
+        "zsleep" => |argv| crate::extensions::ext_builtins::zsleep(argv),
+        _ => return None,
+    };
+    Some(f)
+}
+
+/// Whether NAME is a zshrs-original opcode builtin or an enabled
+/// host-registered native command: the names [`try_run_registered_builtin`]
+/// would run.
+pub(crate) fn is_registered_builtin(name: &str) -> bool {
+    registered_builtin(name).is_some() || crate::native_cmds::is_enabled(name)
+}
+
+/// The builtin table as the `builtin` precommand modifier consults it
+/// (c:Src/exec.c:3489 `builtintab->getnode(builtintab, cmdarg)`): the ported
+/// table minus DISABLED nodes (`getnode` skips them, so `disable typeset;
+/// builtin typeset` is "no such builtin"), plus the zshrs builtins that live
+/// outside it: the daemon `z*` family and the opcode builtins above.
+pub(crate) fn builtin_prefix_finds(name: &str) -> bool {
+    if crate::daemon::builtins::is_zshrs_builtin(name) {
+        return true;
+    }
+    let disabled = crate::ported::builtin::BUILTINS_DISABLED
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false);
+    (crate::ported::builtin::createbuiltintable().contains_key(name) && !disabled)
+        || is_registered_builtin(name)
+}
+
 /// Dispatch a zshrs-ORIGINAL builtin by NAME, argv-style. These are
 /// registered as fusevm opcodes in [`register_builtins`] (async, doctor,
 /// peach, …), so a *literal* name compiles to `CallBuiltin` and runs. But
@@ -1020,52 +1077,32 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
 /// !!! Keep in sync with the matching `vm.register_builtin(...)` closures in
 /// `register_builtins`: both must route a name to the same executor method.
 pub(crate) fn try_run_registered_builtin(name: &str, argv: &[String]) -> Option<i32> {
-    let s = match name {
-        "ai" => with_executor(|e| e.builtin_ai(argv)),
-        "async" => with_executor(|e| e.builtin_async(argv)),
-        "await" => with_executor(|e| e.builtin_await(argv)),
-        "barrier" => with_executor(|e| e.builtin_barrier(argv)),
-        "peach" => with_executor(|e| e.builtin_peach(argv)),
-        "pmap" => with_executor(|e| e.builtin_pmap(argv)),
-        "pgrep" => with_executor(|e| e.builtin_pgrep(argv)),
-        "intercept" => with_executor(|e| e.builtin_intercept(argv)),
-        "intercept_proceed" => with_executor(|e| e.builtin_intercept_proceed(argv)),
-        "doctor" => with_executor(|e| e.builtin_doctor(argv)),
-        "dbview" => with_executor(|e| e.builtin_dbview(argv)),
-        "profile" => with_executor(|e| e.builtin_profile(argv)),
-        "provenance" => with_executor(|e| e.builtin_provenance(argv)),
-        "zbanner" => with_executor(|e| e.builtin_zbanner(argv)),
-        "caller" => with_executor(|e| e.builtin_caller(argv)),
-        "help" => with_executor(|e| e.builtin_help(argv)),
-        "cdreplay" => with_executor(|e| e.builtin_cdreplay(argv)),
-        "zsleep" => crate::extensions::ext_builtins::zsleep(argv),
-        // Host-registered native commands (`extensions/native_cmds.rs`): the
-        // fat binary's sibling runtimes — `git` (zvcs), `arb` (arblang),
-        // `stryke` (strykelang) in the zshrs-native build. Unknown here in the
-        // thin shell, where the table is empty and this arm falls through to
-        // `None` exactly as before.
-        //
-        // Reached from the two places that ask "is this a builtin?": the
-        // pre-PATH arm of the ZshrsHost dispatch (after functions and after
-        // builtintab, so a user `git()` still shadows it) and the forced
-        // `builtin NAME` precommand. `command git` consults neither, so the
-        // escape hatch to the `git` on PATH is untouched.
-        //
-        // The registry's contract is full argv — argv[0] is the command name
-        // as invoked, which zvcs needs for its `git-<verb>` dashed form and
-        // for its `zvcs: <command>: <reason>` diagnostics — while every arm
-        // above takes the operands alone, so the name is spliced back on here.
-        n => {
-            if !crate::native_cmds::is_enabled(n) {
-                return None;
-            }
-            let full: Vec<String> = std::iter::once(n.to_string())
-                .chain(argv.iter().cloned())
-                .collect();
-            return crate::native_cmds::dispatch(n, &full);
-        }
-    };
-    Some(s)
+    if let Some(run) = registered_builtin(name) {
+        return Some(run(argv));
+    }
+    // Host-registered native commands (`extensions/native_cmds.rs`): the
+    // fat binary's sibling runtimes — `git` (zvcs), `arb` (arblang),
+    // `stryke` (strykelang) in the zshrs-native build. Unknown here in the
+    // thin shell, where the table is empty and this falls through to
+    // `None` exactly as before.
+    //
+    // Reached from the two places that ask "is this a builtin?": the
+    // pre-PATH arm of the ZshrsHost dispatch (after functions and after
+    // builtintab, so a user `git()` still shadows it) and the forced
+    // `builtin NAME` precommand. `command git` consults neither, so the
+    // escape hatch to the `git` on PATH is untouched.
+    //
+    // The registry's contract is full argv — argv[0] is the command name
+    // as invoked, which zvcs needs for its `git-<verb>` dashed form and
+    // for its `zvcs: <command>: <reason>` diagnostics — while every arm
+    // above takes the operands alone, so the name is spliced back on here.
+    if !crate::native_cmds::is_enabled(name) {
+        return None;
+    }
+    let full: Vec<String> = std::iter::once(name.to_string())
+        .chain(argv.iter().cloned())
+        .collect();
+    crate::native_cmds::dispatch(name, &full)
 }
 
 /// `command -v` / `command -V`: c:Src/exec.c:3149-3157 — `pushnode(preargs,
@@ -2818,6 +2855,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // with status 1 and leaves errflag set, so the script ends. This
         // handler is reached without dispatch_builtin's gates, and ran the
         // builtin, which reported 0.
+        // c:Src/exec.c:3104-3146 — the precommand walk strips a `-` word after
+        // `builtin` too (it is itself a BINF_PREFIX node, c:Src/builtin.c:42);
+        // when nothing is left, c:3380-3406 is the empty-command return and
+        // `builtin -` succeeds without running anything.
+        let mut full = Vec::with_capacity(args.len() + 1);
+        full.push("builtin".to_string());
+        full.extend(args.iter().cloned());
+        if crate::ported::exec::execcmd_compile_head(&full, crate::ported::zsh_h::WC_SIMPLE)
+            .is_empty_command
+        {
+            return Value::Status(0);
+        }
         if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
@@ -18925,6 +18974,20 @@ pub const BUILTIN_PAT_DATA_BACKSLASH: u16 = 668;
 pub const BUILTIN_HEREDOC_BODY_SINK: u16 = 669;
 
 /// `BUILTIN_WORD_ELIDE_EMPTY` — prefork's empty-word removal
+    // c:3488-3499 — a word reached through `builtin` is looked up in
+    // builtintab here, before c:3786 applies the redirections, so
+    // `builtin nosuch 2>/dev/null` still reports on the original stderr and
+    // opens nothing.
+    if walk.precmd_skip > 0
+        && crate::lex::untokenize(&walk.preargs[walk.precmd_skip - 1]) == "builtin"
+    {
+        let cmdarg = crate::lex::untokenize(&walk.preargs[walk.precmd_skip]);
+        if !builtin_prefix_finds(&cmdarg) {
+            // c:3491 — `zwarn("no such builtin: %s", cmdarg);`
+            crate::ported::utils::zwarn(&format!("no such builtin: {}", cmdarg));
+            return false; // c:3492 `lastval = 1;` … `return;`
+        }
+    }
 /// (c:Src/subst.c:180-187) for a word that is EXACTLY one unquoted
 /// `$NAME`. Emitted only by that compile fast path, because C's test is
 /// post-assembly and only the word SHAPE makes it decidable early.
