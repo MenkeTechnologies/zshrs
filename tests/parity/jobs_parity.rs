@@ -1106,3 +1106,29 @@ fn disown_all_empties_the_job_table() {
     assert_eq!(r.stdout, "rc=0\nrc=1\n", "stderr: {}", r.stderr);
     assert_eq!(r.stderr, "zsh:disown:1: argument not meaningful with -a: %1\n");
 }
+
+/// c:Src/exec.c:3063 + c:4369 — a child forked for ONE simple external
+/// command (`cmd &`, a pipeline stage, a coproc) runs `execute()` and
+/// BECOMES the command: `$!` is the command's own pid and a stage's parent is
+/// the shell. zshrs's child spawned the command as a grandchild, so `kill
+/// -HUP $!` hit the child shell (`wait` said 1, zsh 129) and a timed stage
+/// reported the child shell's CPU, not the command's.
+#[test]
+fn forked_simple_command_execs_in_place() {
+    assert_parity(
+        r#"f=$(mktemp); /bin/sh -c "echo \$\$ > $f" & p=$!; wait $p; [[ $(<$f) == $p ]] && echo same || echo differ; rm -f $f"#,
+    );
+    assert_parity(r#"/bin/sh -c 'echo $PPID' | read pp; [[ $pp == $$ ]] && echo same || echo differ"#);
+    assert_parity(r#"coproc /bin/sh -c 'echo $$'; read -p x; [[ $x == $! ]] && echo same || echo differ"#);
+}
+
+/// The exec happens only for the command the child was forked for: a
+/// function, a `{ … }` body and the words' own `$( … )` still run in the
+/// child, and a command that cannot be found still reports from it.
+#[test]
+fn forked_exec_leaves_nested_commands_alone() {
+    assert_parity(r#"/bin/echo $(/bin/echo in) out & wait; echo done"#);
+    assert_parity(r#"f(){ /bin/echo a; /bin/echo b }; f & wait"#);
+    assert_parity(r#"{ /bin/echo a; /bin/echo b } & wait"#);
+    assert_parity(r#"nosuchcmd_r7 & wait $!; echo w=$?; /nonexist/r7 & wait $!; echo w=$?"#);
+}

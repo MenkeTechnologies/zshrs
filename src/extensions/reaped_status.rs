@@ -26,7 +26,7 @@
 //! Written from `zhandler`'s SIGCHLD arm, so it is plain atomics: no
 //! allocation, no locks, nothing that is unsafe to touch in a handler.
 
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 
 /// Number of slots. C bounds its own reaped-status store
 /// (`bgstatus_list`) at `sysconf(_SC_CHILD_MAX)` and drops the OLDEST
@@ -38,6 +38,11 @@ const SLOTS: usize = 64;
 
 static PIDS: [AtomicI32; SLOTS] = [const { AtomicI32::new(0) }; SLOTS];
 static STATUSES: [AtomicI32; SLOTS] = [const { AtomicI32::new(0) }; SLOTS];
+/// The child's user / system CPU in microseconds, from the reaper's
+/// `wait3` rusage (c:Src/signals.c:279) — what the reaper stores as
+/// `pn->ti = ru` (c:Src/signals.c:352) and `dumptime` reports.
+static UTIMES: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+static STIMES: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
 /// Next slot to overwrite — the "drop the oldest" half of c:Src/jobs.c:2378.
 static CURSOR: AtomicUsize = AtomicUsize::new(0);
 
@@ -51,6 +56,12 @@ static CURSOR: AtomicUsize = AtomicUsize::new(0);
 /// a stop status instead.
 #[cfg(unix)]
 pub fn record(pid: i32, status: i32) {
+    record_rusage(pid, status, 0, 0);
+}
+
+/// [`record`] with the child's CPU times (microseconds).
+#[cfg(unix)]
+pub fn record_rusage(pid: i32, status: i32, utime_us: u64, stime_us: u64) {
     if pid <= 0 || !(libc::WIFEXITED(status) || libc::WIFSIGNALED(status)) {
         return;
     }
@@ -59,6 +70,8 @@ pub fn record(pid: i32, status: i32) {
     // slot's pid with the PREVIOUS occupant's status.
     PIDS[slot].store(0, Ordering::SeqCst);
     STATUSES[slot].store(status, Ordering::SeqCst);
+    UTIMES[slot].store(utime_us, Ordering::SeqCst);
+    STIMES[slot].store(stime_us, Ordering::SeqCst);
     PIDS[slot].store(pid, Ordering::SeqCst);
 }
 
@@ -70,6 +83,13 @@ pub fn record(pid: i32, status: i32) {
 /// (c:Src/jobs.c:2398-2404, `getbgstatus`).
 #[cfg(unix)]
 pub fn take(pid: i32) -> Option<i32> {
+    take_rusage(pid).map(|(status, _, _)| status)
+}
+
+/// [`take`] plus the CPU times [`record_rusage`] stored:
+/// `(status, utime_us, stime_us)`.
+#[cfg(unix)]
+pub fn take_rusage(pid: i32) -> Option<(i32, u64, u64)> {
     if pid <= 0 {
         return None;
     }
@@ -78,13 +98,15 @@ pub fn take(pid: i32) -> Option<i32> {
             continue;
         }
         let status = STATUSES[slot].load(Ordering::SeqCst);
+        let utime = UTIMES[slot].load(Ordering::SeqCst);
+        let stime = STIMES[slot].load(Ordering::SeqCst);
         // Claim it: only the thread that clears the key returns it, so
         // two waiters can never both be told they reaped the same child.
         if PIDS[slot]
             .compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            return Some(status);
+            return Some((status, utime, stime));
         }
     }
     None

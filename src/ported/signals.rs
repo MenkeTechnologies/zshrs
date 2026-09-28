@@ -330,7 +330,10 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
     let waitflags = libc::WNOHANG | libc::WUNTRACED | libc::WCONTINUED; // c:271
     loop {
         let mut status: i32 = 0;
-        let pid = unsafe { libc::waitpid(-1, &mut status, waitflags) };
+        // c:265-266 — "Reap the child process. If we want usage
+        // information, we need to use wait3."
+        let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+        let pid = unsafe { libc::wait4(-1, &mut status, waitflags, &mut ru) }; // c:279 wait3
         if pid <= 0 {
             break;
         }
@@ -341,7 +344,8 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
         // `waitpid`, so publish the raw status BEFORE the loop can
         // return and before `update_bg_job` runs, i.e. before the losing
         // collector can observe the `ECHILD` this reap caused.
-        crate::reaped_status::record(pid, status);
+        let usec = |tv: libc::timeval| tv.tv_sec as u64 * 1_000_000 + tv.tv_usec as u64;
+        crate::reaped_status::record_rusage(pid, status, usec(ru.ru_utime), usec(ru.ru_stime));
         results.push((pid, status));
     }
     results

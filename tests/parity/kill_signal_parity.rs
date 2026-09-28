@@ -317,3 +317,24 @@ mod kill_signal_name_lookup {
         assert_parity("kill -l 128 137 0");
     }
 }
+
+/// c:Src/exec.c:1185-1193 — entersubsh puts SIGQUIT (unless `trap '' QUIT`)
+/// back to the default in the child it forks for an external; the shell
+/// itself ignores SIGQUIT (c:Src/init.c:1448), and SIG_IGN survives execve.
+/// zshrs spawned with SIGQUIT still ignored, so `sh -c 'kill -QUIT $$'`
+/// survived its own signal and exited 0 instead of 131.
+mod spawned_external_gets_default_sigquit {
+    use super::*;
+
+    #[test]
+    fn simple_pipeline_and_cmdsubst() {
+        assert_parity(r#"sh -c 'kill -QUIT $$'; echo rc=$?"#);
+        assert_parity(r#"sh -c 'kill -QUIT $$' | cat; echo p=$pipestatus"#);
+        assert_parity(r#"x=$(sh -c 'kill -QUIT $$'); echo c=$?"#);
+    }
+
+    #[test]
+    fn a_quit_ignored_by_trap_stays_ignored() {
+        assert_parity(r#"trap '' QUIT; sh -c 'kill -QUIT $$'; echo rc=$?"#);
+    }
+}

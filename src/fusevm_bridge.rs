@@ -555,14 +555,17 @@ thread_local! {
     /// VM ops, and errflag alone cannot tell this skip from an error raised
     /// by the command words, which C handles at c:3760 instead.
     static PREFIX_ASSIGN_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// c:Src/exec.c:772-776 — the `-` precommand (BINF_DASH) for the next
-    /// command. Set by BUILTIN_EXEC_DASH; an external spawn consumes it and
-    /// prefixes argv[0] with `-`, any other command clears it.
+    /// Facts about the next command that only its EXTERNAL spawn acts on; an
+    /// external spawn consumes them, any other command clears them.
+    /// EXEC_CARRIER_DASH — c:Src/exec.c:772-776, the `-` precommand
+    /// (BINF_DASH), set by BUILTIN_EXEC_DASH: argv[0] is prefixed with `-`.
+    /// EXEC_CARRIER_FORKED — c:Src/exec.c:3063/4369, set by
+    /// BUILTIN_EXEC_FORKED_SIMPLE: the child forked for this command execs it.
     ///
     /// !!! WARNING: RUST-ONLY CARRIER !!! C accumulates BINF_DASH into
     /// `cflags` in the same function that calls `execute()`; here the
     /// compile-time fact crosses from the marker op to the spawn.
-    static EXEC_DASH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static EXEC_DASH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     /// Counts sublists (bumped by BUILTIN_STMT_PROLOGUE_FAST). Together with
     /// REDIR_SCOPE_OPENED it tells a builtin whether the redirect scope on
     /// top of the stack belongs to its own command.
@@ -1540,7 +1543,17 @@ fn take_paramsubst_null() -> bool {
 
 /// Consume the `-` precommand carrier (see BUILTIN_EXEC_DASH).
 pub(crate) fn take_exec_dash() -> bool {
-    EXEC_DASH.with(|c| c.replace(false))
+    take_exec_carrier() & EXEC_CARRIER_DASH != 0
+}
+
+/// `EXEC_DASH` bit: the `-` precommand (c:Src/exec.c:772-776).
+pub(crate) const EXEC_CARRIER_DASH: u8 = 1;
+/// `EXEC_DASH` bit: exec in the already-forked child (c:Src/exec.c:4369).
+pub(crate) const EXEC_CARRIER_FORKED: u8 = 2;
+
+/// Consume every external-spawn carrier bit (see EXEC_DASH).
+pub(crate) fn take_exec_carrier() -> u8 {
+    EXEC_DASH.with(|c| c.replace(0))
 }
 
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
@@ -3543,7 +3556,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     // See BUILTIN_EXEC_DASH.
     vm.register_builtin(BUILTIN_EXEC_DASH, |_vm, _argc| {
-        EXEC_DASH.with(|c| c.set(true));
+        EXEC_DASH.with(|c| c.set(c.get() | EXEC_CARRIER_DASH));
+        Value::Int(0)
+    });
+    // See BUILTIN_EXEC_FORKED_SIMPLE.
+    vm.register_builtin(BUILTIN_EXEC_FORKED_SIMPLE, |vm, _argc| {
+        let this_vm = vm as *const fusevm::VM as usize;
+        if FORKED_SIMPLE_VM.with(|f| f.replace(0)) == this_vm {
+            EXEC_DASH.with(|c| c.set(c.get() | EXEC_CARRIER_FORKED));
+        }
         Value::Int(0)
     });
     // See BUILTIN_PREFORK_CUT_CHECK.
@@ -4206,14 +4227,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let last_chunk = stages_vec.into_iter().last().unwrap();
             crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
             // A timed pipeline's in-shell last stage is a process of the job
-            // only when it forks (TimedPipeline::last_forks). SIGCHLD is held
-            // blocked (ChildBlockSpan), so the forked stages are not reaped
-            // during this run and the children's usage that accrues here is
-            // the last stage's own.
+            // only when it forks (TimedPipeline::last_forks); its times are
+            // those of the externals it waits for (FG_CHILD_TIMES). Not a
+            // RUSAGE_CHILDREN delta: the reaper on another thread can collect
+            // a forked stage inside this window and its usage would land here.
             let last_timed = timed.as_ref().filter(|t| t.last_forks).map(|_| {
-                let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
-                unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut ru) };
-                (std::time::Instant::now(), ru)
+                FG_CHILD_TIMES.with(|c| c.set(Some((0, 0))));
+                std::time::Instant::now()
             });
             let mut stage_vm = fusevm::VM::new(last_chunk);
             stage_vm.last_status = parent_status;
@@ -4222,12 +4242,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _ = stage_vm.run();
             let _ = std::io::stdout().flush();
             let _ = std::io::stderr().flush();
-            if let (Some(t), Some((started, before))) = (timed.as_ref(), last_timed) {
-                let mut after: libc::rusage = unsafe { std::mem::zeroed() };
-                unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut after) };
-                let mut ru = after;
-                ru.ru_utime = timeval_sub(after.ru_utime, before.ru_utime);
-                ru.ru_stime = timeval_sub(after.ru_stime, before.ru_stime);
+            if let (Some(t), Some(started)) = (timed.as_ref(), last_timed) {
+                let (utime, stime) = FG_CHILD_TIMES.with(|c| c.take()).unwrap_or((0, 0));
+                let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+                ru.ru_utime = usec_timeval(utime);
+                ru.ru_stime = usec_timeval(stime);
                 let status = (stage_vm.last_status & 0xff) << 8; // W_EXITCODE
                 last_proc = Some(timed_proc(0, &t.texts[n - 1], status, &ru, started));
             }
@@ -11554,7 +11573,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         donetrap_reset_impl()
     });
     vm.register_builtin(BUILTIN_EXECCMD_FORKED_LEVEL, |vm, _argc| {
-        execcmd_forked_level(vm.pop().to_int() != 0);
+        let is_subsh = vm.pop().to_int() != 0;
+        execcmd_forked_level(is_subsh, vm as *const fusevm::VM as usize);
         Value::Int(0)
     });
     vm.register_builtin(BUILTIN_EXITING_EXIT_TRAP, |_vm, _argc| {
@@ -16550,11 +16570,11 @@ fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
 
 /// [`waitpid_eintr`] that also returns the child's resource usage.
 ///
-/// c:Src/signals.c:535 — the SIGCHLD reaper collects with `wait3(&status,
-/// WNOHANG|WUNTRACED, &ru)` and stores `ru` on the process
-/// (`update_process`, c:Src/jobs.c:360-366), which is where `dumptime`'s
-/// per-process user/system times come from. A child the reaper got to
-/// first keeps its status (see waitpid_eintr) with zero times.
+/// c:Src/signals.c:279 — the SIGCHLD reaper collects with `wait3(&status,
+/// WAITFLAGS, &ru)` and stores it on the process, `pn->ti = ru` (c:352),
+/// which is where `dumptime`'s per-process user/system times come from. A
+/// child the reaper got to first is claimed back from `reaped_status` with
+/// the times it recorded.
 fn wait4_eintr(pid: libc::pid_t) -> Option<(i32, libc::rusage)> {
     loop {
         let mut status: i32 = 0;
@@ -16565,7 +16585,12 @@ fn wait4_eintr(pid: libc::pid_t) -> Option<(i32, libc::rusage)> {
         }
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         if err != libc::EINTR {
-            return crate::reaped_status::take(pid).map(|st| (st, unsafe { std::mem::zeroed() }));
+            return crate::reaped_status::take_rusage(pid).map(|(st, utime, stime)| {
+                let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+                ru.ru_utime = usec_timeval(utime);
+                ru.ru_stime = usec_timeval(stime);
+                (st, ru)
+            });
         }
     }
 }
@@ -16630,6 +16655,14 @@ fn timeval_sub(a: libc::timeval, b: libc::timeval) -> libc::timeval {
     }
 }
 
+/// Microseconds as a `timeval`.
+fn usec_timeval(us: u64) -> libc::timeval {
+    libc::timeval {
+        tv_sec: (us / 1_000_000) as libc::time_t,
+        tv_usec: (us % 1_000_000) as libc::suseconds_t,
+    }
+}
+
 /// A `process` entry for [`TimedPipeline`]: C's addproc fields (c:Src/jobs.c
 /// 1473-1486) plus the wait's status and rusage (update_process).
 fn timed_proc(
@@ -16675,6 +16708,13 @@ thread_local! {
     /// stage chunk, so the fact crosses into the chunk through this flag. The
     /// chunk's leading BUILTIN_EXECCMD_FORKED_LEVEL consumes it.
     static EXECCMD_FORKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The VM (by address) whose chunk head consumed EXECCMD_FORKED for a
+    /// non-subshell command. BUILTIN_EXEC_FORKED_SIMPLE honours it only from
+    /// that same VM, so a `$( … )` or function body run while the forked
+    /// command's words expand — each on its own VM — never execs in its place.
+    ///
+    /// !!! WARNING: RUST-ONLY FLAG — C KEEPS `forked` AS AN execcmd_exec LOCAL !!!
+    static FORKED_SIMPLE_VM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Head of a stage / `&` / coproc chunk: account for execcmd_fork's
@@ -16687,8 +16727,11 @@ thread_local! {
 /// subshell_begin, so for a subshell the fork's bump is left to it; any other
 /// command takes it here. Without a fork (the in-shell last stage) nothing
 /// happens. The bump is never undone: the child exits.
-fn execcmd_forked_level(is_subsh: bool) {
+fn execcmd_forked_level(is_subsh: bool, vm_addr: usize) {
     if EXECCMD_FORKED.with(|f| f.replace(false)) && !is_subsh {
+        // The chunk's own top command is the one this child was forked for;
+        // see BUILTIN_EXEC_FORKED_SIMPLE.
+        FORKED_SIMPLE_VM.with(|f| f.set(vm_addr));
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             if let Some(pm) = tab.get_mut("ZSH_SUBSHELL") {
                 pm.u_val += 1; // c:1200
@@ -16875,7 +16918,10 @@ pub(crate) fn wait_pid_status(pid: libc::pid_t) -> std::io::Result<std::process:
     use std::os::unix::process::ExitStatusExt as _;
     loop {
         let mut raw: libc::c_int = 0;
-        if unsafe { libc::waitpid(pid, &mut raw, 0) } == pid {
+        let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+        if unsafe { libc::wait4(pid, &mut raw, 0, &mut ru) } == pid {
+            let usec = |tv: libc::timeval| tv.tv_sec as u64 * 1_000_000 + tv.tv_usec as u64;
+            fg_child_times_add(usec(ru.ru_utime), usec(ru.ru_stime));
             return Ok(std::process::ExitStatus::from_raw(raw));
         }
         let e = std::io::Error::last_os_error();
@@ -16883,13 +16929,36 @@ pub(crate) fn wait_pid_status(pid: libc::pid_t) -> std::io::Result<std::process:
             Some(libc::EINTR) => continue,
             Some(libc::ECHILD) => {
                 return match take_reaped_status(pid) {
-                    Some(raw) => Ok(std::process::ExitStatus::from_raw(raw)),
+                    Some((raw, utime, stime)) => {
+                        fg_child_times_add(utime, stime);
+                        Ok(std::process::ExitStatus::from_raw(raw))
+                    }
                     None => Err(e),
                 }
             }
             _ => return Err(e),
         }
     }
+}
+
+thread_local! {
+    /// User / system CPU (microseconds) of the foreground externals this
+    /// thread has waited for since the collector was opened, or `None` when
+    /// nothing collects. A timed pipeline's in-shell last stage opens it: C
+    /// forks that stage and times it as one process (`pn->ti = ru`,
+    /// c:Src/signals.c:352), zshrs runs it here and the externals it spawns
+    /// are what that process would have been.
+    ///
+    /// !!! WARNING: RUST-ONLY COLLECTOR — C READS THE STAGE'S OWN wait3 RUSAGE !!!
+    static FG_CHILD_TIMES: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
+}
+
+fn fg_child_times_add(utime: u64, stime: u64) {
+    FG_CHILD_TIMES.with(|c| {
+        if let Some((u, s)) = c.get() {
+            c.set(Some((u + utime, s + stime)));
+        }
+    });
 }
 
 /// Claim the reaper's record for `pid`, allowing for the fact that ECHILD
@@ -16909,11 +16978,11 @@ pub(crate) fn wait_pid_status(pid: libc::pid_t) -> std::io::Result<std::process:
 /// nothing to claim, and the caller must be allowed to report the error
 /// rather than spin.
 #[cfg(unix)]
-fn take_reaped_status(pid: i32) -> Option<i32> {
+fn take_reaped_status(pid: i32) -> Option<(i32, u64, u64)> {
     const TRIES: u32 = 200; // 200 x 100us = 20ms
     for _ in 0..TRIES {
-        if let Some(raw) = crate::reaped_status::take(pid) {
-            return Some(raw);
+        if let Some(rec) = crate::reaped_status::take_rusage(pid) {
+            return Some(rec);
         }
         let ts = libc::timespec { tv_sec: 0, tv_nsec: 100_000 };
         unsafe { libc::nanosleep(&ts, std::ptr::null_mut()) };
@@ -17765,6 +17834,13 @@ pub const BUILTIN_TEST_BRACKET: u16 = 690;
 /// EXEC_DASH carrier. c:Src/exec.c:772-776 — an external command then gets
 /// argv[0] `-name`; a function or builtin runs unchanged.
 pub const BUILTIN_EXEC_DASH: u16 = 687;
+/// Emitted right before the external dispatch of the SIMPLE command at the
+/// top of a chunk that a driver may run in a child forked for it (`cmd &`, a
+/// pipeline stage, a coproc — compile_zsh.rs `forked_simple_exec`). No args.
+/// When that chunk's BUILTIN_EXECCMD_FORKED_LEVEL did find the fork, it sets
+/// the EXEC_CARRIER_FORKED bit: c:Src/exec.c:3063 `last1 = forked = 1` and
+/// c:4369 `execute(args, cflags, use_defpath)` — the child becomes the command.
+pub const BUILTIN_EXEC_FORKED_SIMPLE: u16 = 741;
 /// c:Src/exec.c:3755-3757 `globlist(args, 0)` over the WHOLE argument list,
 /// after prefork has expanded every word (c:3357-3359). Stack: the N
 /// expanded word values in source order, then two Int bitmasks: bit i of the
@@ -20458,7 +20534,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // c:Src/exec.c:772-776 — a function runs unchanged under `-`; only a
         // name that is not a function falls through to the external spawn,
         // which still needs the carrier.
-        let exec_dash = take_exec_dash();
+        let exec_dash = take_exec_carrier();
         PREFORK_CUT.with(|c| c.set(false)); // the words are complete
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
         if status.is_none() {
@@ -21395,7 +21471,7 @@ impl ShellExecutor {
     pub fn host_exec_external(&mut self, args: &[String]) -> i32 {
         // c:Src/exec.c:772-776 — BINF_DASH reaches `execute()` only; every
         // other route below runs the command without it.
-        let exec_dash = EXEC_DASH.with(|c| c.replace(false));
+        let exec_dash = take_exec_carrier();
         PREFORK_CUT.with(|c| c.set(false)); // the words are complete
         // Native p10k API: the `p10k(){ zshrs-p10k-api "$@" }` stub's
         // body lands here (the name is neither function nor builtin).

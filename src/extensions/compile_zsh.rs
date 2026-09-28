@@ -110,6 +110,13 @@ pub struct ZshCompiler {
     /// leaves through `_realexit()`, so no sublist_done check runs for the
     /// `( … )` word). Checks inside the body are unaffected.
     pub async_subsh_skip_outer_errexit: bool,
+    /// Set for a chunk whose top command is a SIMPLE command that runs in a
+    /// child the driver already forked for it (`cmd &`, a pipeline stage, a
+    /// coproc). c:Src/exec.c:3063 `last1 = forked = 1`: such a child calls
+    /// `execute()` (c:4369) and becomes the command instead of forking again.
+    /// compile_simple takes it and emits BUILTIN_EXEC_FORKED_SIMPLE ahead of
+    /// the external dispatch.
+    pub forked_simple_exec: bool,
     /// Depth tracker for "currently compiling inside double quotes".
     /// Bumped when a parent word is DQ-wrapped (`\u{9e}…\u{9e}`) and
     /// we recurse into its Expansion segments. Used so the
@@ -403,6 +410,7 @@ impl ZshCompiler {
             redir_prog_text: None,
             errexit_suppress_depth: 0,
             async_subsh_skip_outer_errexit: false,
+            forked_simple_exec: false,
             dq_context_depth: 0,
             assign_context_depth: 0,
             in_cond_operand: false,
@@ -1478,6 +1486,7 @@ impl ZshCompiler {
         // exit path skips the check after the `( … )` word, while the body's
         // own commands keep theirs (async_subsh_skip_outer_errexit).
         sub.async_subsh_skip_outer_errexit = matches!(pipe.cmd, ZshCommand::Subsh(_));
+        sub.forked_simple_exec = async_simple;
         sub.compile_pipe(pipe);
         if async_simple {
             sub.errexit_suppress_depth -= 1;
@@ -1515,6 +1524,7 @@ impl ZshCompiler {
         let mut sub = ZshCompiler::new();
         if pipe.next.is_none() {
             sub.emit_execcmd_forked_level(&pipe.cmd);
+            sub.forked_simple_exec = matches!(pipe.cmd, ZshCommand::Simple(_));
         }
         sub.compile_pipe(pipe);
         let sub_end = sub.builder.current_pos();
@@ -1946,6 +1956,9 @@ impl ZshCompiler {
                 // traps for `sig <= SIGCOUNT` only (c:1127-1131) and SIGZERR is
                 // SIGCOUNT+1 (c:Src/signals.h:34).
                 let async_simple = async_job && stage_is_simple;
+                // Every stage but the in-shell last one runs in its own child;
+                // the runtime marker only fires where the driver forked.
+                sub.forked_simple_exec = stage_is_simple;
                 if async_simple {
                     sub.errexit_suppress_depth += 1;
                 }
@@ -2582,6 +2595,8 @@ impl ZshCompiler {
     }
 
     fn compile_simple(&mut self, simple: &ZshSimple) {
+        // One-shot: only this chunk's top command is the forked one.
+        let forked_simple_exec = std::mem::take(&mut self.forked_simple_exec);
         // c:Src/exec.c:3386-3452 — precommand modifiers (`exec`, `builtin`,
         // `noglob`, `-`; c:Src/builtin.c BIN_PREFIX) are consumed off the
         // argument list, and when NOTHING is left and there are no
@@ -4342,6 +4357,17 @@ impl ZshCompiler {
             if dispatch.cflags & crate::ported::zsh_h::BINF_DASH != 0 {
                 self.builder.emit(
                     Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXEC_DASH, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+            }
+            // c:Src/exec.c:4369 — in a child already forked for this command
+            // (`last1 = forked = 1`, c:3063) an external is `execute()`d in
+            // place. Emitted after the words are expanded, so nothing nested
+            // runs between the marker and the dispatch.
+            if forked_simple_exec {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXEC_FORKED_SIMPLE, 0),
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);

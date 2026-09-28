@@ -1371,11 +1371,12 @@ fn execute_spawn(
     defpath: Option<&str>,
     hashed: Option<&str>,
     drop_argv0: bool,
+    in_place: bool,
 ) -> Result<libc::pid_t, i32> {
     use crate::ported::exec::isgooderr;
     // c:791-801
     if let Some(slash) = arg0.find('/') {
-        let lerrno = match zexecve_spawn(arg0, argv, drop_argv0) {
+        let lerrno = match zexecve_spawn(arg0, argv, drop_argv0, in_place) {
             Ok(pid) => return Ok(pid),
             Err(e) => e,
         }; // c:793
@@ -1387,7 +1388,7 @@ fn execute_spawn(
     }
     let mut eno = 0;
     let mut attempt = |pth: &str, dir: &str| -> Option<libc::pid_t> {
-        match zexecve_spawn(pth, argv, drop_argv0) {
+        match zexecve_spawn(pth, argv, drop_argv0, in_place) {
             Ok(pid) => Some(pid),
             Err(ee) => {
                 if isgooderr(ee, dir) {
@@ -1457,7 +1458,7 @@ fn execute_spawn(
 /// The array keeps `environ`'s order: `std::process::Command` rebuilds any
 /// environment it modifies from a sorted map, so externals saw the variables
 /// alphabetically instead of in the order the shell added them.
-fn zexecve_spawn(pth: &str, argv: &[String], drop_argv0: bool) -> Result<libc::pid_t, i32> {
+fn zexecve_spawn(pth: &str, argv: &[String], drop_argv0: bool, in_place: bool) -> Result<libc::pid_t, i32> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt as _;
     // c:514-520 — `_=pth`, made absolute against `pwd`.
@@ -1494,7 +1495,7 @@ fn zexecve_spawn(pth: &str, argv: &[String], drop_argv0: bool) -> Result<libc::p
         }
     }
     // c:528 — `execve(pth, argv, newenvp);`
-    let eno = match posix_spawn_argv(pth, argv, &envp) {
+    let eno = match posix_spawn_argv(pth, argv, &envp, in_place) {
         Ok(pid) => return Ok(pid),
         Err(eno) => eno,
     };
@@ -1503,20 +1504,74 @@ fn zexecve_spawn(pth: &str, argv: &[String], drop_argv0: bool) -> Result<libc::p
     match zexecve_recover(pth, argv, eno) {
         // c:566/571/581/585/627 — the second `execve`; when it fails too, C
         // falls through to c:643 `return eno` with the ORIGINAL errno.
-        Ok((prog, newargv)) => posix_spawn_argv(&prog, &newargv, &envp).map_err(|_| eno),
+        Ok((prog, newargv)) => posix_spawn_argv(&prog, &newargv, &envp, in_place).map_err(|_| eno),
         Err(e) => Err(e), // c:632/634/643
     }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — the dispositions `entersubsh` resets in the
+/// child C forks for an external, applied at the spawn instead !!!
+///
+/// c:Src/exec.c:1185-1193 —
+/// ```c
+/// if (interact) {
+///     signal_default(SIGTERM);
+///     if (!(sigtrapped[SIGINT] & ZSIG_IGNORED))
+///         signal_default(SIGINT);
+///     if (!(sigtrapped[SIGPIPE]))
+///         signal_default(SIGPIPE);
+/// }
+/// if (!(sigtrapped[SIGQUIT] & ZSIG_IGNORED))
+///     signal_default(SIGQUIT);
+/// ```
+/// The shell ignores SIGQUIT always and SIGTERM when interactive
+/// (c:Src/init.c:1448/1463), and SIG_IGN survives `execve`, so without this a
+/// spawned `sh -c 'kill -QUIT $$'` survived its own signal. SIGPIPE is reset
+/// unless a `trap '' PIPE` ignores it: C never ignores it otherwise, but the
+/// Rust runtime does. The job-control stops (c:1174-1183) stay as they are: a foreground
+/// wait here does not watch for a stopped child, so a ^Z'd child would hang
+/// the shell.
+fn entersubsh_sigdef() -> Vec<i32> {
+    use crate::ported::zsh_h::{isset, INTERACTIVE, ZSIG_IGNORED};
+    let trapped = |sig: i32| -> i32 {
+        crate::ported::signals::sigtrapped
+            .lock()
+            .ok()
+            .and_then(|t| t.get(sig as usize).copied())
+            .unwrap_or(0)
+    };
+    let mut sigs = Vec::with_capacity(4);
+    if trapped(libc::SIGPIPE) & ZSIG_IGNORED == 0 {
+        sigs.push(libc::SIGPIPE); // c:1189-1190, and the Rust runtime's ignore
+    }
+    if isset(INTERACTIVE) {
+        sigs.push(libc::SIGTERM); // c:1186
+        if trapped(libc::SIGINT) & ZSIG_IGNORED == 0 {
+            sigs.push(libc::SIGINT); // c:1187-1188
+        }
+    }
+    if trapped(libc::SIGQUIT) & ZSIG_IGNORED == 0 {
+        sigs.push(libc::SIGQUIT); // c:1192-1193
+    }
+    sigs
 }
 
 /// !!! WARNING: RUST-ONLY HELPER — the `posix_spawn(2)` call standing in for
 /// `execve(2)` in `zexecve_spawn` !!!
 ///
 /// argv and path are unmetafied first, as C's `zexecve` does at c:510-513
-/// (`$'\xff'` reaches the child as the raw byte). Spawn attributes match what
-/// `std::process::Command` set for the same children: the signal mask is
-/// inherited and SIGPIPE — ignored by the Rust runtime — is reset to its
-/// default, so `yes | head -1` still terminates `yes`.
-fn posix_spawn_argv(pth: &str, argv: &[String], envp: &[std::ffi::CString]) -> Result<libc::pid_t, i32> {
+/// (`$'\xff'` reaches the child as the raw byte). The signal mask is
+/// inherited; the dispositions the child starts with are `entersubsh_sigdef`'s.
+///
+/// `in_place` is c:Src/exec.c:4369 in a child already forked for the command
+/// (`last1 = forked = 1`, c:3063): `execve(2)` replaces this process instead
+/// of spawning, and returns only on failure.
+fn posix_spawn_argv(
+    pth: &str,
+    argv: &[String],
+    envp: &[std::ffi::CString],
+    in_place: bool,
+) -> Result<libc::pid_t, i32> {
     use std::ffi::CString;
     let cstr = |s: &str| {
         let mut b = crate::ported::utils::unmetafy_str(s);
@@ -1531,7 +1586,15 @@ fn posix_spawn_argv(pth: &str, argv: &[String], envp: &[std::ffi::CString]) -> R
     argv_ptrs.push(std::ptr::null_mut());
     let mut envp_ptrs: Vec<*mut libc::c_char> = envp.iter().map(|c| c.as_ptr() as *mut _).collect();
     envp_ptrs.push(std::ptr::null_mut());
+    let sigdef = entersubsh_sigdef();
     unsafe {
+        if in_place {
+            for &sig in &sigdef {
+                libc::signal(sig, libc::SIG_DFL);
+            }
+            libc::execve(cpth.as_ptr(), argv_ptrs.as_ptr() as *const *const _, envp_ptrs.as_ptr() as *const *const _);
+            return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOEXEC));
+        }
         let mut attrs: libc::posix_spawnattr_t = std::mem::zeroed();
         let rc = libc::posix_spawnattr_init(&mut attrs);
         if rc != 0 {
@@ -1539,7 +1602,9 @@ fn posix_spawn_argv(pth: &str, argv: &[String], envp: &[std::ffi::CString]) -> R
         }
         let mut dfl: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut dfl);
-        libc::sigaddset(&mut dfl, libc::SIGPIPE);
+        for &sig in &sigdef {
+            libc::sigaddset(&mut dfl, sig);
+        }
         libc::posix_spawnattr_setsigdefault(&mut attrs, &dfl);
         libc::posix_spawnattr_setflags(&mut attrs, libc::POSIX_SPAWN_SETSIGDEF as _);
         let mut pid: libc::pid_t = 0;
@@ -6108,7 +6173,11 @@ impl ShellExecutor {
         // use that as argv[0] for this external command" and unsetenv it; else
         // "if the pre-command `-' was given, we add `-' to the front of
         // argv[0] for this command."
-        let exec_dash = crate::fusevm_bridge::take_exec_dash();
+        let carrier = crate::fusevm_bridge::take_exec_carrier();
+        let exec_dash = carrier & crate::fusevm_bridge::EXEC_CARRIER_DASH != 0;
+        // c:Src/exec.c:4369 — this process was forked for the command
+        // (BUILTIN_EXEC_FORKED_SIMPLE): exec it here rather than spawn.
+        let in_place = !background && carrier & crate::fusevm_bridge::EXEC_CARRIER_FORKED != 0;
         let argv0_env = std::env::var("ARGV0").ok(); // c:760 zgetenv("ARGV0")
         let mut argv: Vec<String> = Vec::with_capacity(args.len() + 1);
         argv.push(match &argv0_env {
@@ -6133,7 +6202,7 @@ impl ShellExecutor {
         // Redirect handling lives in fusevm's WithRedirectsBegin/End
         // ops at compile time; `_redirects` arrives empty here.
         let spawned = if background {
-            execute_spawn(cmd, &argv, defpath_prog.as_deref(), hashed_prog.as_deref(), argv0_env.is_some())
+            execute_spawn(cmd, &argv, defpath_prog.as_deref(), hashed_prog.as_deref(), argv0_env.is_some(), false)
                 .map_err(|eno| (eno, None))
         } else {
             // Queue signals across the wait so zshrs's SIGCHLD reaper
@@ -6141,7 +6210,7 @@ impl ShellExecutor {
             // can't reap this child before the wait does, and claim the
             // status back when it wins anyway — see foreground_status.
             let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
-            match execute_spawn(cmd, &argv, defpath_prog.as_deref(), hashed_prog.as_deref(), argv0_env.is_some()) {
+            match execute_spawn(cmd, &argv, defpath_prog.as_deref(), hashed_prog.as_deref(), argv0_env.is_some(), in_place) {
                 Ok(pid) => match crate::fusevm_bridge::wait_pid_status(pid) {
                     Ok(status) => return Ok(crate::exec_jobs::wait_status_val(status)),
                     Err(e) => Err((0, Some(e))),
