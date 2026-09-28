@@ -3449,7 +3449,13 @@ pub fn bin_fg(
             // waitpid(); if not a child of this shell, C falls back to
             // getbgstatus (the reaped-status ring) and only then emits
             // "pid %d is not a child of this shell" with exit 127.
-            if let Ok(pid) = arg.parse::<i32>() {
+            // c:2532 — `pid_t pid = (long)atoi(*argv);`. isanum passed any run
+            // of digits and `-`, so `-` is pid 0 and `5-` is pid 5; a Rust
+            // integer parse rejected both and the word was silently skipped.
+            let pid = std::ffi::CString::new(arg.as_str())
+                .map(|c| unsafe { libc::atoi(c.as_ptr()) })
+                .unwrap_or(0);
+            {
                 let mut status: libc::c_int = 0;
                 // c:2571 — `retval = waitforpid(pid, 1);`. C's
                 // `waitforpid` is a LOOP: `while (!errflag && (kill(pid,
@@ -3471,8 +3477,17 @@ pub fn bin_fg(
                 crate::ported::signals_h::dont_queue_signals();
                 let mut r;
                 let mut interrupted = None;
+                // c:2536 — `findproc(pid, &j, &p, 0)` only matches a process of
+                // the job table, whose pids are positive. waitpid would read 0
+                // and a negative number as process groups and reap some other
+                // child, so those go straight to the not-a-child arm.
+                let no_proc = pid <= 0;
                 loop {
                     crate::ported::signals::last_signal.store(-1, Ordering::Relaxed); // c:1657
+                    if no_proc {
+                        r = -1;
+                        break;
+                    }
                     r = unsafe { libc::waitpid(pid, &mut status, 0) };
                     if r != -1
                         || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
@@ -3507,7 +3522,7 @@ pub fn bin_fg(
                 }
                 if r == -1 {
                     let err = std::io::Error::last_os_error();
-                    if err.raw_os_error() == Some(libc::ECHILD) {
+                    if no_proc || err.raw_os_error() == Some(libc::ECHILD) {
                         // c:2566-2570 — getbgstatus fallback before
                         // the diagnostic.
                         //

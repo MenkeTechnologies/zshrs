@@ -1796,3 +1796,20 @@ mod set_listing_format {
         assert_parity(r#"b=(x 'y z') c=(); set -A | grep -E '^(b|c)='; set +A | grep -E '^(b|c)$'"#);
     }
 }
+
+// ───────────────────────── wait ─────────────────────────
+
+/// c:Src/jobs.c:2530-2556 — a word isanum accepts (any run of digits and
+/// `-`) is a pid read with atoi, so `-` is pid 0 and `5-` is pid 5, and
+/// findproc never matches a pid that is not a positive job-table pid.
+mod wait_pid_words {
+    use super::*;
+
+    #[test]
+    fn isanum_words_are_atoi_pids() {
+        assert_parity(r#"{ wait - } 2>&1; print rc=$?"#);
+        assert_parity(r#"{ wait 5- } 2>&1; print rc=$?"#);
+        assert_parity(r#"{ wait 0 } 2>&1; print rc=$?"#);
+        assert_parity(r#"sleep 0.1 & { wait - } 2>&1; print rc=$?; wait; print rc=$?"#);
+    }
+}
