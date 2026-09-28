@@ -1135,7 +1135,7 @@ pub fn bin_enable(
             queue_signals(); // c:563
             let pprog = patcompile(
                 &{
-                    let mut __pat_tok = (arg).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&arg); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 }, // c:566
@@ -2924,7 +2924,7 @@ pub fn bin_fc(
         // c:1495 — tokenize(*argv); — Rust `patcompile` handles tokenisation.
         match patcompile(
             &{
-                let mut __pat_tok = (&pat).to_string();
+                let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&pat); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                 crate::ported::glob::tokenize(&mut __pat_tok);
                 __pat_tok
             }, // c:1496
@@ -3398,7 +3398,7 @@ pub fn fclist(
 
     // C pre-compiles the pattern once (bin_fc c:1493 patcompile).
     let prog = pprog.and_then(|pat| {
-        let mut tok = pat.to_string();
+        let mut tok = crate::pattern_data_escape::escape_data_backslashes(pat); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
         crate::ported::glob::tokenize(&mut tok);
         patcompile(&tok, 0, None)
     });
@@ -5256,7 +5256,7 @@ pub fn bin_typeset(
             // emit "bad pattern" and continue to the next arg.
             let pat = crate::ported::pattern::patcompile(
                 &{
-                    let mut __pat_tok = (pattern).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&pattern); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 },
@@ -9117,7 +9117,7 @@ pub fn bin_functions(
                                  // c:3489 — `tokenize(*argv)`; Rust patcompile handles it.
                 if let Some(pprog) = patcompile(
                     &{
-                        let mut __pat_tok = (arg).to_string();
+                        let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&arg); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                         crate::ported::glob::tokenize(&mut __pat_tok);
                         __pat_tok
                     },
@@ -9457,7 +9457,7 @@ pub fn bin_functions(
                              // c:3678 — `tokenize(*argv)` + `patcompile(...)`
             let pprog = patcompile(
                 &{
-                    let mut __pat_tok = (pat).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&pat); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 }, // c:3680
@@ -9764,7 +9764,7 @@ pub fn bin_unset(
             queue_signals(); // c:3833
             let pprog = patcompile(
                 &{
-                    let mut __pat_tok = (s).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&s); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 }, // c:3836
@@ -10699,7 +10699,7 @@ pub fn bin_whence(
             // tokenize step internally; explicit call is a no-op here).
             let pprog = patcompile(
                 &{
-                    let mut __pat_tok = (pat).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&pat); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 }, // c:4038
@@ -11430,7 +11430,7 @@ pub fn bin_hash(
             // c:4280-4290 — glob-match path.
             let pprog = patcompile(
                 &{
-                    let mut __pat_tok = (arg).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&arg); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 }, // c:4282
@@ -11790,7 +11790,7 @@ pub fn bin_unhash(
             queue_signals(); // c:4397
             let pprog = patcompile(
                 &{
-                    let mut __pat_tok = (arg).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&arg); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 }, // c:4400
@@ -12009,7 +12009,7 @@ pub fn bin_alias(
                              // c:4506 — `tokenize + patcompile`.
             let pprog = patcompile(
                 &{
-                    let mut __pat_tok = (pat).to_string();
+                    let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&pat); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                     crate::ported::glob::tokenize(&mut __pat_tok);
                     __pat_tok
                 }, // c:4507
@@ -12455,7 +12455,7 @@ pub fn bin_print(
                 return 1;
             }
             let pat = &rest[0];
-            let mut pat_tok = pat.to_string();
+            let mut pat_tok = crate::pattern_data_escape::escape_data_backslashes(pat); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
             crate::ported::glob::tokenize(&mut pat_tok); // c:4727
             let Some(pprog) = crate::ported::pattern::patcompile(&pat_tok, PAT_STATIC, None) else {
                 zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730
@@ -12668,7 +12668,7 @@ pub fn bin_print(
         let pat = &args[0];
         let pprog = patcompile(
             &{
-                let mut __pat_tok = (pat).to_string();
+                let mut __pat_tok = crate::pattern_data_escape::escape_data_backslashes(&pat); // a backslash tokenize leaves raw is DATA (c:Src/glob.c:3651)
                 crate::ported::glob::tokenize(&mut __pat_tok);
                 __pat_tok
             },

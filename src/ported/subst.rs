@@ -17340,6 +17340,17 @@ pub fn paramsubst(
                 // (start AND end fixed): the pattern must consume
                 // the whole element. Different from `//` which is
                 // sliding-window mid-element replace.
+                // c:3115-3134 — the `:` only adds SUB_ALL (c:3170); the
+                // `/` that follows parses exactly like `${x/…}`'s: a
+                // doubled `/` is SUB_GLOBAL, then a `#` (head) and a `%`
+                // (tail) anchor. None of them change a whole-element
+                // match, but each is consumed, so `${a://x/Y}` has
+                // pattern `x`, not `/x`.
+                let rep = rep.strip_prefix('/').unwrap_or(rep); // c:3115-3118
+                let rep = rep
+                    .strip_prefix(|c: char| c == '#' || c == crate::ported::zsh_h::Pound)
+                    .unwrap_or(rep); // c:3120-3129
+                let rep = rep.strip_prefix('%').unwrap_or(rep); // c:3130-3134
                 let parts: Vec<&str> = rep.splitn(2, '/').collect();
                 // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
                 // singsub splices raw, literalize leftover raw metas
@@ -17375,6 +17386,16 @@ pub fn paramsubst(
                         None,
                     )
                 };
+                // c:Src/glob.c:2674-2677 — getmatch/getmatcharr's
+                // compgetmatch reports an uncompilable pattern; the `//`
+                // arm below does the same. Silently keeping every element
+                // turned `setopt kshglob; ${a:/*(#e)/Y}` into a no-op where
+                // zsh says "bad pattern".
+                if !pat.is_empty() && prog_opt.is_none() {
+                    zerr(&format!("bad pattern: {}", pat_display(&pat)));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 // c:Src/glob.c:2680 SUB_DOSUBST gate — capture groups
                 // (patnpar) or a match-ref (GF_MATCHREF) force per-match
                 // re-evaluation of the replacement.
@@ -19511,27 +19532,20 @@ pub fn paramsubst(
                                 }
                                 found
                             } else {
-                                let mut k = nn;
-                                let mut found = None;
-                                loop {
-
-                                    // Route through `glob_match_static` so (#b)
-                                    // capture groups populate `$match`/`$mbegin`/
-                                    // `$mend` on the first successful match —
-                                    // `${var##(#b)pat}` longest-prefix strip wants
-                                    // the captures from the matched prefix. No-op
-                                    // for patterns without (#b) (GF_BACKREF gate
-                                    // inside the helper).
-                                    if gms(sl(0, k), &p, 0, if k < nn { crate::ported::zsh_h::PAT_NOTEND } else { 0 }) { // c:2929 set_pat_end(p, *t)
-                                        found = Some((0, k));
-                                        break;
-                                    }
-                                    if k == 0 {
-                                        break;
-                                    }
-                                    k -= 1;
-                                }
-                                found
+                                // c:Src/glob.c:2913-2920 — `case SUB_LONG:` is ONE
+                                // `pattrylen(p, s, umltot, …)` over the whole string
+                                // with the PAT_NOANCH program (c:2665), and the match
+                                // length is whatever the matcher stopped at
+                                // (`patmatchlen()`, c:2921) — the FIRST alternative
+                                // that succeeds, not the longest slice any branch
+                                // could cover. zsh answers `x=ab; ${x##(a|ab)}` with
+                                // `b`. The port tried every prefix longest-first and
+                                // returned ``. pattrylen publishes (#b)/(#m)
+                                // captures itself (pattern.c:2526-2621 ports).
+                                gmsl(sl(0, nn), &p, 0, false).map(|ml_| {
+                                    let endb = (ml_.max(0) as usize).min(val.len());
+                                    (0, val[..endb].chars().count())
+                                })
                             }
                         }
                         _ => return val.to_string(),

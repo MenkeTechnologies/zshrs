@@ -1090,8 +1090,13 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         // approximate matching, so a `../x` path component still descends by
         // name instead of being scanned for.
         let dot_or_dotdot = matches!(&s[..cut], "." | ".."); // c:1414-1415
+        // c:947 `*flagp = P_PURESTR;` — only a compiled P_EXACTLY clears it
+        // (c:1409-1417), so an EMPTY component (the tail of `*/`) stays pure
+        // under nocaseglob too. Withholding it made the tail a scan for the
+        // empty name, and `setopt nocaseglob; print */` matched nothing.
+        let empty_component = cut == 0;
                                                              // c:610 — pure iff we stopped at end or '/', not at a glob meta.
-        if !at_token && (case_or_approx == 0 || dot_or_dotdot) {
+        if !at_token && (case_or_approx == 0 || dot_or_dotdot || empty_component) {
             let literal = literal_s.into_bytes();
             drop(p);
             let mlen = literal.len() as i64;
@@ -4127,15 +4132,27 @@ pub fn pattryrefs(
             }
             Some((lit, (gflags & GF_IGNCASE) != 0))
         })();
+        // c:3316-3317 — the trailing `*` walks `patinput` to `patinend`
+        // and `if (P_OP(next) == P_END) return 1;`, so a hit consumed the
+        // whole trial: c:2508 `patinlen = patinput - patinstart` is its
+        // length. The fast path returned without recording it, leaving
+        // `patmatchlen()` stale for the PAT_NOANCH callers (igetmatch
+        // `##`, the `(S)` scans): `x=aXb; ${(S)x##*X*}` stripped nothing.
+        let hit = |ok: bool| -> bool {
+            if ok {
+                patinlen.store(trial.len() as i32, Ordering::Relaxed); // c:2508
+            }
+            ok
+        };
         if let Some((lit, igncase)) = shape.as_ref().map(|(l, i)| (l.as_str(), *i)) {
             if !igncase {
-                return trial.contains(lit);
+                return hit(trial.contains(lit));
             }
             if lit.is_ascii() && trial.is_ascii() {
                 let lb = lit.as_bytes();
                 let tb = trial.as_bytes();
                 if lb.is_empty() {
-                    return true;
+                    return hit(true);
                 }
                 if lb.len() <= tb.len() {
                     let l0 = lb[0].to_ascii_lowercase();
@@ -4148,7 +4165,7 @@ pub fn pattryrefs(
                                 continue 'scan;
                             }
                         }
-                        return true;
+                        return hit(true);
                     }
                 }
                 return false;
@@ -5607,25 +5624,24 @@ fn chain_branches_to(starter: usize, target: usize) {
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
 ///
-/// There is NO `approx_match_exactly()` in `Src/pattern.c`. This is the
-/// factored-out inner loop of the C `case P_EXACTLY:` arm of
-/// `patmatch()` (`Src/pattern.c:2737-2779`), which C writes inline: the
-/// per-byte compare plus the three approximate-match edit trials
-/// (substitute / insert / delete) that `(#aN)` enables. C can keep it
-/// inline because `patinput` / `errsfound` are file-statics it mutates
-/// in place and restores on backtrack; the Rust matcher threads that
-/// state through `&mut rpat` and recurses into `patmatch()`, so the
-/// trial walk needs its own frame. Extracting it keeps the linear
-/// `patmatch()` dispatch loop readable. Both writer and reader live in
-/// pattern.rs; nothing outside the P_EXACTLY arm calls it.
+/// There is NO `approx_match_exactly()` in `Src/pattern.c`. It is the
+/// `case P_EXACTLY:` arm of `patmatch()` (c:2742-2784) together with the
+/// shared approximation block it falls into on a mismatch (c:3472-3576),
+/// for a program carrying an `(#aN)` budget. C keeps both inline and
+/// communicates the half-matched literal through the file-statics
+/// `exactpos`/`exactend`, retrying the SAME node with `patmatch(scan)`;
+/// the Rust matcher threads its state through `&mut rpat`, so the retry
+/// is a recursive call with the literal offset `p` standing in for
+/// `exactpos`. Nothing outside the P_EXACTLY arm calls it.
 ///
-/// Walks pattern bytes `str_bytes` against `input_bytes[s_off..]`.
-/// On exact-match per byte: advance both. On mismatch: try the 3
-/// edit operations in order (substitute = advance both + errsfound++,
-/// insert = advance pat + errsfound++, delete = advance input +
-/// errsfound++); each recurses via `patmatch` to continue with the
-/// rest of the bytecode at `next`. Returns the matched-end byte
-/// offset in `string` on success, None on failure.
+/// Order is C's, first success wins: characters that match are consumed
+/// with no alternative tried (c:2755-2778); at the first mismatch, one
+/// error buys, in turn, (1) omitting an input character, (2) swapping
+/// two characters, (3) omitting a character from both, (4) omitting a
+/// pattern character (c:3477-3575). A fully matched literal hands off to
+/// `next` without backtracking into the literal. The unit is a
+/// CHARACTER under GF_MULTIBYTE (CHARREFINC / CHARINC, c:2770-2771), a
+/// byte otherwise. Returns the end offset of the whole match.
 fn approx_match_exactly(
     code: &[u8],
     next: usize,
@@ -5636,203 +5652,127 @@ fn approx_match_exactly(
     glob_flags: i32,
     max_errs: i32,
 ) -> Option<usize> {
-    let input_bytes = string.as_bytes();
-    // Try matching the EXACT prefix as far as it lines up; on first
-    // mismatch (or out-of-input), branch into the edit-operation
-    // trials. This is a bounded recursive search; the budget caps
-    // recursion depth at `max_errs - state.errsfound`.
+    // CHARREFINC (c:1969) — the character at `off` and its byte length.
+    let char_at = |b: &[u8], off: usize| -> (u32, usize) {
+        if (glob_flags & GF_MULTIBYTE) != 0 {
+            let want = match b[off] {
+                0x00..=0x7f => 1,
+                0xc0..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf7 => 4,
+                _ => 1,
+            };
+            if let Some(c) = b
+                .get(off..off + want)
+                .and_then(|s| std::str::from_utf8(s).ok())
+                .and_then(|s| s.chars().next())
+            {
+                return (c as u32, want);
+            }
+        }
+        (b[off] as u32, 1)
+    };
+    // c:Src/pattern.c CHARMATCH — case folding under (#i) / (#l).
+    let charmatch = |chin: u32, chpa: u32| -> bool {
+        let upper = |c: u32| -> u32 {
+            char::from_u32(c)
+                .filter(|ch| ch.is_lowercase())
+                .and_then(|ch| ch.to_uppercase().next())
+                .map_or(c, |u| u as u32)
+        };
+        let is_lower = |c: u32| char::from_u32(c).is_some_and(|ch| ch.is_lowercase());
+        chin == chpa
+            || if (glob_flags & GF_IGNCASE) != 0 {
+                upper(chin) == upper(chpa)
+            } else if (glob_flags & GF_LCMATCHUC) != 0 {
+                is_lower(chpa) && upper(chpa) == chin
+            } else {
+                false
+            }
+    };
     fn walk(
         code: &[u8],
         next: usize,
         string: &str,
-        input_bytes: &[u8],
         str_bytes: &[u8],
-        s_off: usize,
-        p_off: usize,
+        mut s: usize,
+        mut p: usize,
         state: &mut rpat,
         glob_flags: i32,
         max_errs: i32,
+        char_at: &dyn Fn(&[u8], usize) -> (u32, usize),
+        charmatch: &dyn Fn(u32, u32) -> bool,
     ) -> Option<usize> {
-        // Direction terminology: `s_off+1` consumes one INPUT byte,
-        // `p_off+1` consumes one PATTERN byte.
-        //   - (s+1, p+1) = substitute one input byte for one pat byte
-        //   - (s+1, p)   = consume input byte that's NOT in pattern
-        //                  (= INSERTION in input compared to pattern)
-        //   - (s, p+1)   = consume pat byte that's NOT in input
-        //                  (= DELETION from input compared to pattern)
-        //
-        // Tries every option at each step, returns the path producing
-        // the LARGEST end s_off (most input consumed). Anchored
-        // callers (pattry) need full-input consumption; non-anchored
-        // accept any. C handles this via bytecode-level branching
-        // backtrack; the Rust port collapses it into a recursive
-        // tree-search with per-attempt state save/restore.
-        let mut best: Option<usize> = None;
-        let saved_outer = state.clone();
-        let mut update = |best: &mut Option<usize>, cand: Option<usize>| {
-            if let Some(c) = cand {
-                if best.map(|b| c > b).unwrap_or(true) {
-                    *best = Some(c);
+        let input = string.as_bytes();
+        loop {
+            if p >= str_bytes.len() {
+                // c:2779-2784 — the literal is used up: on to `next`.
+                return if next == 0 {
+                    Some(s)
+                } else {
+                    patmatch(code, next, string, s, state, glob_flags)
+                };
+            }
+            let (chpa, plen) = char_at(str_bytes, p);
+            if s < input.len() {
+                let (chin, ilen) = char_at(input, s);
+                if charmatch(chin, chpa) {
+                    // c:2770-2777 — matched: consume, no alternative.
+                    s += ilen;
+                    p += plen;
+                    continue;
                 }
             }
-        };
-        if p_off == str_bytes.len() {
-            // Pattern body consumed. Three paths to try; pick the
-            // one with most input consumed:
-            //   (a) terminate here at s_off, run continuation.
-            //   (b) absorb 1+ trailing input as INSERTION-IN-INPUT edits.
-            let terminate = if next == 0 {
-                Some(s_off)
-            } else {
-                patmatch(code, next, string, s_off, state, glob_flags)
-            };
-            update(&mut best, terminate);
-            // Path (b): absorb trailing input as insertion edits.
-            if s_off < input_bytes.len() && state.errsfound < max_errs {
-                *state = saved_outer.clone();
-                state.errsfound += 1;
-                let r = walk(
-                    code,
-                    next,
-                    string,
-                    input_bytes,
-                    str_bytes,
-                    s_off + 1,
-                    p_off,
-                    state,
-                    glob_flags,
-                    max_errs,
-                );
-                update(&mut best, r);
+            // c:3473-3474 — a mismatch spends an error, if any are left.
+            let fe = forceerrs.load(Ordering::Relaxed);
+            if !(state.errsfound < max_errs && (fe == -1 || state.errsfound < fe)) {
+                return None; // c:3578-3579
             }
-            *state = saved_outer;
-            return best;
+            state.errsfound += 1; // c:3497 `saverrsfound = ++errsfound`
+            let saved = state.clone();
+            if s < input.len() {
+                let (chin0, ilen0) = char_at(input, s);
+                // c:3503-3514 — (1) omit a character from the input.
+                if let Some(r) = walk(
+                    code, next, string, str_bytes, s + ilen0, p, state, glob_flags, max_errs,
+                    char_at, charmatch,
+                ) {
+                    return Some(r);
+                }
+                *state = saved.clone(); // c:3524-3526
+                let nextin = s + ilen0;
+                let nextexact = p + plen;
+                // c:3532-3551 — (2) transpose two characters.
+                if nextin < input.len() && nextexact < str_bytes.len() {
+                    let (chin1, ilen1) = char_at(input, nextin);
+                    let (chpa1, plen1) = char_at(str_bytes, nextexact);
+                    if charmatch(chin0, chpa1) && charmatch(chin1, chpa) {
+                        if let Some(r) = walk(
+                            code, next, string, str_bytes, nextin + ilen1, nextexact + plen1,
+                            state, glob_flags, max_errs, char_at, charmatch,
+                        ) {
+                            return Some(r);
+                        }
+                        *state = saved.clone(); // c:3549-3550
+                    }
+                }
+                // c:3553-3565 — (3) move up both strings.
+                if let Some(r) = walk(
+                    code, next, string, str_bytes, nextin, nextexact, state, glob_flags,
+                    max_errs, char_at, charmatch,
+                ) {
+                    return Some(r);
+                }
+                *state = saved; // c:3562-3565
+            }
+            // c:3567-3575 — (4) move up the pattern only; the last
+            // attempt, so C loops instead of recursing.
+            p += plen;
         }
-        // c:Src/pattern.c:2676 CHARMATCH — inline case-aware byte
-        // compare (the C macro, not a fn). Honors GF_IGNCASE /
-        // GF_LCMATCHUC so under `(#i)` a case-only difference is NOT an
-        // edit: `(#ia2)readme` matches `READXME` (only X→M costs an
-        // error). Raw byte `==` counted every case difference as an edit.
-        let charmatch_inline = |chin: u8, chpa: u8| -> bool {
-            chin == chpa
-                || ((glob_flags & GF_IGNCASE) != 0
-                    && chin.to_ascii_lowercase() == chpa.to_ascii_lowercase())
-                || ((glob_flags & GF_LCMATCHUC) != 0
-                    && chpa.is_ascii_lowercase()
-                    && chpa.to_ascii_uppercase() == chin)
-        };
-        // Exact-byte match — try advancing both.
-        if s_off < input_bytes.len() && charmatch_inline(input_bytes[s_off], str_bytes[p_off]) {
-            *state = saved_outer.clone();
-            let r = walk(
-                code,
-                next,
-                string,
-                input_bytes,
-                str_bytes,
-                s_off + 1,
-                p_off + 1,
-                state,
-                glob_flags,
-                max_errs,
-            );
-            update(&mut best, r);
-        }
-        // Edit operations — each costs 1 error.
-        if state.errsfound < max_errs {
-            // c:Src/pattern.c:3520-3543 — Damerau transposition: swap two
-            // adjacent input chars to match two adjacent pat chars (i.e.
-            // input[s..s+2] reversed equals pat[p..p+2]). Costs 1 edit;
-            // pin for `(#a3)abcd` matching "dcba" — needs sub + transp +
-            // sub = 3 edits to bridge the reversal.
-            if s_off + 1 < input_bytes.len()
-                && p_off + 1 < str_bytes.len()
-                && charmatch_inline(input_bytes[s_off], str_bytes[p_off + 1])
-                && charmatch_inline(input_bytes[s_off + 1], str_bytes[p_off])
-            {
-                *state = saved_outer.clone();
-                state.errsfound += 1;
-                let r = walk(
-                    code,
-                    next,
-                    string,
-                    input_bytes,
-                    str_bytes,
-                    s_off + 2,
-                    p_off + 2,
-                    state,
-                    glob_flags,
-                    max_errs,
-                );
-                update(&mut best, r);
-            }
-            // Substitute.
-            if s_off < input_bytes.len() {
-                *state = saved_outer.clone();
-                state.errsfound += 1;
-                let r = walk(
-                    code,
-                    next,
-                    string,
-                    input_bytes,
-                    str_bytes,
-                    s_off + 1,
-                    p_off + 1,
-                    state,
-                    glob_flags,
-                    max_errs,
-                );
-                update(&mut best, r);
-            }
-            // Insertion in input (skip input byte only).
-            if s_off < input_bytes.len() {
-                *state = saved_outer.clone();
-                state.errsfound += 1;
-                let r = walk(
-                    code,
-                    next,
-                    string,
-                    input_bytes,
-                    str_bytes,
-                    s_off + 1,
-                    p_off,
-                    state,
-                    glob_flags,
-                    max_errs,
-                );
-                update(&mut best, r);
-            }
-            // Deletion from input (skip pattern byte only).
-            *state = saved_outer.clone();
-            state.errsfound += 1;
-            let r = walk(
-                code,
-                next,
-                string,
-                input_bytes,
-                str_bytes,
-                s_off,
-                p_off + 1,
-                state,
-                glob_flags,
-                max_errs,
-            );
-            update(&mut best, r);
-        }
-        *state = saved_outer;
-        best
     }
     walk(
-        code,
-        next,
-        string,
-        input_bytes,
-        str_bytes,
-        s_off,
-        0,
-        state,
-        glob_flags,
-        max_errs,
+        code, next, string, str_bytes, s_off, 0, state, glob_flags, max_errs, &char_at,
+        &charmatch,
     )
 }
 

@@ -1315,3 +1315,43 @@ mod test_builtin_integer_operands {
         assert_parity(r#"{ [ ' 5' -eq 5 ]; echo $?; [ '5 ' -eq 5 ]; echo $?; } 2>&1"#);
     }
 }
+
+/// Pattern operations outside `[[ ]]`: builtin `-m` patterns, `##`
+/// head matching, `(#aN)` approximation and the `${…:/…}` operator.
+mod pattern_operations {
+    use super::*;
+
+    /// c:Src/glob.c:3651 — a backslash `tokenize` leaves in a builtin's
+    /// pattern argument is data, so `a\tb` matches the literal `a\tb`.
+    #[test]
+    fn builtin_m_pattern_backslash_is_data() {
+        assert_parity(r"print -m 'a\tb' 'a\tb' atb; print -rm 'a\*' 'a\*' 'a*' ab");
+        assert_parity(r"alias 'a\b=x' 'ab=y'; alias -m 'a\b'");
+    }
+
+    /// c:Src/glob.c:2913-2921 — `##` is ONE PAT_NOANCH try whose length is
+    /// where the matcher stopped (first successful branch), and the
+    /// `*literal*` fast path must still record that length.
+    #[test]
+    fn longest_head_match_takes_first_branch() {
+        assert_parity(r#"x=ab; print -r -- "[${x##(a|ab)}]" "[${x##(ab|a)}]" "[${x##a(|b)}]""#);
+        assert_parity(r#"x=aXb; print -r -- "[${x##*X*}]" "[${(S)x##*X*}]""#);
+    }
+
+    /// c:Src/pattern.c:2742-2784 / 3472-3576 — approximation edits whole
+    /// characters, and a literal that matches exactly takes no error.
+    #[test]
+    fn approximate_matching() {
+        assert_parity(
+            r#"setopt extendedglob; [[ aé = (#a1)ab ]]; echo $?; [[ éb = (#a1)ab ]]; echo $?; x=abc; print -r -- "[${x##(#a1)ab}]""#,
+        );
+    }
+
+    /// c:Src/subst.c:3115-3134 — after `:/` a doubled `/` and the `#`/`%`
+    /// anchors are consumed; c:Src/glob.c:2674-2677 reports a bad pattern.
+    #[test]
+    fn colon_slash_operator() {
+        assert_parity(r##"a=(x "#x" "%x" "/x"); print -r -- ${a:/#x/Y} , ${a://x/Y} , ${a:/%x/Y}"##);
+        assert_parity(r#"setopt kshglob extendedglob; { a=(abc); print -r -- ${a:/*(#e)/Y} } 2>&1; echo rc=$?"#);
+    }
+}

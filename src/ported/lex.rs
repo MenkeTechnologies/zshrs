@@ -5907,6 +5907,12 @@ pub fn untokenize(s: &str) -> String {
                 // Surfacing site: zinit zi-log message formatter
                 // (zinit.zsh:2191).
                 c if c == Bnull => result.push('\\'), // c:Src/lex.c:38
+                // `ztokens[Bnullkeep - Pound]` (index 28) is `\` too: the
+                // active backslash shtokenize leaves before a quoted
+                // metachar (c:Src/glob.c:3601/3643) prints as `\`. It
+                // used to fall to the arm below and leak U+00A0, so
+                // `v='q\~q'; print -r -- $~v` printed `q<A0>~q`.
+                c if c == Bnullkeep => result.push('\\'), // c:Src/lex.c:38
                 // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
                 // Nularg gets dropped (no replacement char emitted).
                 c if c == Nularg => {

@@ -549,3 +549,109 @@ mod redirect_target_nullglob {
         );
     }
 }
+
+/// Glob-qualifier parsing, qualifier-group chaining and trailing-slash
+/// marking, each measured against zsh 5.9.2 in a fixed fixture.
+mod qualifier_parsing_and_marking {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn fixture() -> tempfile::TempDir {
+        let d = mkdir_with_files(&["a", "b", "#ia", "plain", "exe", "suid", "priv", "full/x/y", "d1/z"]);
+        std::fs::create_dir(d.path().join("emptydir")).unwrap();
+        for (f, m) in [("exe", 0o755), ("suid", 0o4755), ("priv", 0o600), ("plain", 0o644)] {
+            std::fs::set_permissions(d.path().join(f), std::fs::Permissions::from_mode(m)).unwrap();
+        }
+        d
+    }
+
+    /// c:Src/glob.c:1308-1310 NULs only the Outpar TOKEN; a quoted `)` the
+    /// `e` delimiter scan (get_strarg) stops short of is an unknown attribute.
+    #[test]
+    fn quoted_paren_after_e_code_is_an_attribute() {
+        let d = fixture();
+        assert_parity_in(
+            d.path(),
+            r#"setopt extendedglob; { print -rl -- a(e"(true))") } 2>&1; { print -rl -- a(#qe'(true))') } 2>&1; print -rl -- a(e"(true)")"#,
+        );
+    }
+
+    /// c:Src/glob.c:844-931 qgetmodespec: an octal spec masks only the bits
+    /// it names (the setuid bit is not compared), `,` chains clauses, `?`
+    /// is a wildcard digit, and `=` is a bare spec, not a delimiter.
+    #[test]
+    fn f_mode_spec() {
+        let d = fixture();
+        assert_parity_in(d.path(), "print -rl -- *(f755); print -rl -- *(f:u+x,644:); print -rl -- *(f?7??)");
+        assert_parity_in(d.path(), "{ print -rl -- *(f=644) } 2>&1; { print -rl -- *(f:a=rx,u+w:) } 2>&1");
+    }
+
+    /// c:Src/glob.c:1477-1479 — an unterminated `u`/`g` name.
+    #[test]
+    fn u_g_missing_delimiter() {
+        let d = fixture();
+        assert_parity_in(d.path(), "{ print -rl -- *(u+1) } 2>&1; { print -rl -- *(g+1) } 2>&1");
+    }
+
+    /// c:Src/glob.c:1260-1302 / 1797-1844 — every trailing `(#q…)` group
+    /// applies, not just the last one.
+    #[test]
+    fn several_hash_q_groups_all_apply() {
+        let d = fixture();
+        assert_parity_in(d.path(), "setopt extendedglob; print -rl -- *(#q/)(#q^F); print -rl -- *(#q.)(#q^x)");
+    }
+
+    /// c:Src/glob.c:1557-1559 `gf_markdirs = !(sense & 1)` — `^M` switches
+    /// MARK_DIRS off; c:372-376 appends the marker even after a `*/` slash.
+    #[test]
+    fn markdirs_negation_and_trailing_slash() {
+        let d = fixture();
+        assert_parity_in(d.path(), "setopt markdirs; print -rl -- d*(^M); print -rl -- */");
+    }
+
+    /// c:Src/pattern.c:947 — the empty tail component of `*/` stays a pure
+    /// string under NO_CASE_GLOB.
+    #[test]
+    fn nocaseglob_trailing_slash() {
+        let d = fixture();
+        assert_parity_in(d.path(), "setopt nocaseglob; print -rl -- */; print -rl -- D*/");
+    }
+
+    /// c:Src/glob.c:1871-1886 — NOMATCH looks at the scan's matches, before
+    /// the `[first,last]` subscript trims them.
+    #[test]
+    fn subscript_selecting_nothing_is_not_nomatch() {
+        let d = fixture();
+        assert_parity_in(d.path(), "print -rl -- *([100]); echo rc=$?; print -rl -- *([2,1]); echo rc=$?");
+    }
+
+    /// A quoted `*` stays literal when the word also carries a qualifier.
+    #[test]
+    fn quoted_star_with_qualifier_stays_literal() {
+        let d = fixture();
+        assert_parity_in(d.path(), r#"print -rl -- "*"(N); { print -rl -- "*"(.) } 2>&1; print -rl -- "a"(.)"#);
+    }
+
+    /// c:Src/pattern.c:480-483 — without EXTENDED_GLOB `(#i)` is a group
+    /// holding a literal `#`, not a flag block.
+    #[test]
+    fn hash_flags_inert_without_extendedglob() {
+        let d = fixture();
+        assert_parity_in(d.path(), "print -rl -- (#i)A; print -rl -- (#i)a");
+    }
+
+    /// c:Src/glob.c:1169-1186 — a nested group in a `$~` value's trailing
+    /// parens makes them alternatives, not a bare qualifier list.
+    #[test]
+    fn globsubst_value_with_nested_group_is_not_a_qualifier() {
+        let d = fixture();
+        assert_parity_in(d.path(), "v='a(e:reply=(x):)'; { print -rl -- $~v } 2>&1");
+    }
+
+    /// c:Src/lex.c:38 — untokenize maps Bnullkeep to `\`.
+    #[test]
+    fn globsubst_escaped_tilde_and_equals_print_their_backslash() {
+        let d = fixture();
+        assert_parity_in(d.path(), r"v='q\~q'; print -r -- $~v; v='q\=q'; print -r -- $~v");
+    }
+}

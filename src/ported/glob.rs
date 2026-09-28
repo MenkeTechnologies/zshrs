@@ -1002,149 +1002,143 @@ impl globdata {
 // Mode specification parsing (from glob.c qgetmodespec)
 // ============================================================================
 
-// `ModeSpec` struct deleted — Rust-only helper. C `qgetmodespec`
-// (`Src/glob.c:844`) parses one clause and returns the combined
-// `long` mode-bits directly, mutating the parse cursor via `char**`.
-// The Rust port now returns `(who, op, perm, rest)` as a flat tuple
-// so the canonical "no intermediate struct" pattern is preserved.
-
-/// Parse mode specification like chmod (from glob.c qgetmodespec lines 790-920)
-/// Examples: u+x, go-w, a=r, 755 — returns `(who, op, perm, rest)`.
 /// Port of `qgetmodespec(char **s)` from `Src/glob.c:844`.
-pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
-    let mut chars = s.chars().peekable();
-    let mut spec_who: u32 = 0;
-    let mut spec_op: char = '\0';
-    let mut spec_perm: u32 = 0;
-
-    // Check for octal mode
-    if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-        let mut mode_str = String::new();
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() && c < '8' {
-                mode_str.push(c);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        if let Ok(mode) = u32::from_str_radix(&mode_str, 8) {
-            spec_perm = mode;
-            spec_op = '=';
-            spec_who = 0o7777;
-            let rest_pos = s.len() - chars.collect::<String>().len();
-            return Some((spec_who, spec_op, spec_perm, &s[rest_pos..]));
-        }
-        return None;
+///
+/// Parses a chmod-style spec for the `f` glob qualifier and returns
+/// C's packed value `(yes & 07777) | ((no & 07777) << 12)` (c:931) —
+/// the bits that must be set and the bits that must be clear, as
+/// `qualmodeflags` (c:3817) reads them — plus the unparsed rest, which
+/// is C's `*s = p` (c:930). `None` is C's `zerr("invalid mode
+/// specification"); return 0;` (c:890/913/925); the message is already
+/// out.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s); the `char **`
+/// cursor is returned as the rest slice.
+pub fn qgetmodespec(s: &str) -> Option<(i64, &str)> {
+    // c:844
+    use crate::ported::zsh_h::{Equals, Inang, Inbrace, Inbrack, Outang, Outbrace, Outbrack, Quest};
+    let cs: Vec<(usize, char)> = s.char_indices().collect();
+    // `*p` past the end reads the terminating NUL.
+    let at = |i: usize| cs.get(i).map(|&(_, c)| c).unwrap_or('\0');
+    let (mut yes, mut no): (i64, i64) = (0, 0); // c:846
+    let mut p = 0usize; // c:847
+    let mut c = at(p);
+    let end: char;
+    // c:849-860 — a bare spec starts with an operator or an octal digit;
+    // anything else is the opening delimiter.
+    if c == '=' || c == Equals || c == '+' || c == '-' || c == '?' || c == Quest || ('0'..='7').contains(&c) {
+        end = '\0'; // c:851
+    } else {
+        end = match c {
+            '<' => '>',
+            '[' => ']',
+            '{' => '}',
+            x if x == Inang => Outang,
+            x if x == Inbrack => Outbrack,
+            x if x == Inbrace => Outbrace,
+            other => other,
+        }; // c:853-858
+        p += 1; // c:859
     }
-
-    // Parse symbolic mode
-    // Who: u, g, o, a
-    let mut who = 0u32;
-    while let Some(&c) = chars.peek() {
-        match c {
-            'u' => {
-                who |= 0o4700;
-                chars.next();
-            }
-            'g' => {
-                who |= 0o2070;
-                chars.next();
-            }
-            'o' => {
-                who |= 0o1007;
-                chars.next();
-            }
-            'a' => {
-                who |= 0o7777;
-                chars.next();
-            }
-            _ => break,
-        }
-    }
-    if who == 0 {
-        who = 0o7777; // Default to all
-    }
-    spec_who = who;
-
-    // Op: +, -, =
-    spec_op = match chars.next() {
-        Some('+') => '+',
-        Some('-') => '-',
-        Some('=') => '=',
-        _ => return None,
+    let invalid = || {
+        zerr("invalid mode specification");
+        None
     };
-
-    // Perm: r, w, x, X, s, t
-    let mut perm = 0u32;
-    while let Some(&c) = chars.peek() {
-        match c {
-            'r' => {
-                perm |= 0o444;
-                chars.next();
-            }
-            'w' => {
-                perm |= 0o222;
-                chars.next();
-            }
-            'x' => {
-                perm |= 0o111;
-                chars.next();
-            }
-            'X' => {
-                perm |= 0o111;
-                chars.next();
-            } // Conditional execute
-            's' => {
-                perm |= 0o6000;
-                chars.next();
-            }
-            't' => {
-                perm |= 0o1000;
-                chars.next();
-            }
-            _ => break,
-        }
-    }
-    // c:Src/glob.c:903-913 — `while ((c = *p) == '?' || (c >= '0'
-    // && c <= '7')) { ... val = (val << 3) | (c - '0'); }`.
-    // In the C code path, perm letters (`r`/`w`/`x`/`s`/`t`) only
-    // get parsed when an explicit `who` mask was set (the `if
-    // (mask)` arm at c:877). When there's NO who (the
-    // bare-spec form like `f=644`), C falls through to the
-    // numeric digit loop in the `else if` arm at c:901. The
-    // Rust port previously accepted letters in either case but
-    // rejected digits — `f=644` would parse op='=' then break
-    // on digit '6' and return spec_perm = 0, which the caller
-    // computed as yes=0, no=0o7777 (essentially "match
-    // nothing"). After also accepting digits here, `f=644`
-    // builds spec_perm = 0o644 like C, and the matcher
-    // resolves `*(.f=644)` correctly. Bug #105 in
-    // docs/BUGS.md.
-    if perm == 0 {
-        let mut val = 0u32;
-        let mut any_digit = false;
-        while let Some(&c) = chars.peek() {
-            if c == '?' {
-                val <<= 3;
-                chars.next();
-                any_digit = true;
-            } else if c.is_ascii_digit() && c < '8' {
-                val = (val << 3) | (c as u32 - '0' as u32);
-                chars.next();
-                any_digit = true;
-            } else {
+    loop {
+        // c:861 do {
+        let mut mask: i64 = 0; // c:862
+        loop {
+            // c:863 — who letters, only inside a delimited spec.
+            c = at(p);
+            if !(matches!(c, 'u' | 'g' | 'o' | 'a') && end != '\0') {
                 break;
             }
+            mask |= match c {
+                'o' => 0o1007, // c:865
+                'g' => 0o2070, // c:866
+                'u' => 0o4700, // c:867
+                _ => 0o7777,   // c:868 'a'
+            };
+            p += 1; // c:870
         }
-        if any_digit {
-            perm = val;
+        let how = if c == '+' || c == '-' { c } else { '=' }; // c:872
+        if c == '+' || c == '-' || c == '=' || c == Equals {
+            // c:873
+            p += 1; // c:874
+        }
+        let mut val: i64 = 0; // c:875
+        if mask != 0 {
+            // c:876
+            loop {
+                // c:877 — `while ((c = *p++) != ',' && c != end)`
+                c = at(p);
+                p += 1;
+                if c == ',' || c == end {
+                    break;
+                }
+                match c {
+                    'x' => val |= 0o0111,  // c:879
+                    'w' => val |= 0o0222,  // c:880
+                    'r' => val |= 0o0444,  // c:881
+                    's' => val |= 0o6000,  // c:882
+                    't' => val |= 0o1000,  // c:883
+                    '0'..='7' => {
+                        // c:884-888
+                        let t = c as i64 - '0' as i64;
+                        val |= t | (t << 3) | (t << 6);
+                    }
+                    _ => return invalid(), // c:889-891
+                }
+            }
+            if how == '=' || how == '+' {
+                // c:894
+                yes |= val & mask; // c:895
+                val = !val; // c:896
+            }
+            if how == '=' || how == '-' {
+                // c:898
+                no |= val & mask; // c:899
+            }
+        } else if !(end != '\0' && c == end) && c != ',' && c != '\0' {
+            // c:900
+            let mut t: i64 = 0o7777; // c:901
+            loop {
+                // c:902-912
+                c = at(p);
+                if c == '?' || c == Quest {
+                    t = (t << 3) | 7; // c:905
+                    val <<= 3; // c:906
+                } else if ('0'..='7').contains(&c) {
+                    t <<= 3; // c:908
+                    val = (val << 3) | (c as i64 - '0' as i64); // c:909
+                } else {
+                    break;
+                }
+                p += 1; // c:911
+            }
+            if end != '\0' && c != end && c != ',' {
+                // c:913
+                return invalid(); // c:914-915
+            }
+            if how == '=' {
+                // c:917
+                yes = (yes & !t) | val; // c:918
+                no = (no & !t) | (!val & !t); // c:919
+            } else if how == '+' {
+                yes |= val; // c:921
+            } else {
+                no |= val; // c:923
+            }
+        } else {
+            return invalid(); // c:924-926
+        }
+        if !(end != '\0' && c != end) {
+            // c:928 } while (end && c != end);
+            break;
         }
     }
-    spec_perm = perm & who;
-
-    let rest_pos = s.len() - chars.collect::<String>().len();
-    Some((spec_who, spec_op, spec_perm, &s[rest_pos..]))
+    // c:930 `*s = p;`
+    let rest_off = cs.get(p).map(|&(o, _)| o).unwrap_or(s.len());
+    Some(((yes & 0o7777) | ((no & 0o7777) << 12), &s[rest_off..])) // c:931
 }
 
 // `impl GlobMatch` block deleted — C builds Gmatch entries inline
@@ -3993,7 +3987,10 @@ pub struct qualifier_set {
     ///   `gf_markdirs = !(sense & 1)` — set when the qualifier appears
     ///   without a `^` toggle. Stored per-qualifier-set rather than per
     ///   GlobOptions so a single glob call's qualifier picks it up.
-    pub mark_dirs: bool,
+    /// `None` = no `M` qualifier (the MARK_DIRS option decides, c:1255
+    /// `gf_markdirs = isset(MARKDIRS)`); `Some(false)` = `^M`, which
+    /// turns marking OFF even under `setopt markdirs`.
+    pub mark_dirs: Option<bool>,
     /// `(T)` qualifier — append type-char (ls -F style) to every entry.
     /// Direct port of zsh/Src/glob.c:1562-1566 (`case 'T'`).
     pub list_types: bool,
@@ -4132,8 +4129,13 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // `TILDE_GLOBSUBST_CARRIER`) for the glob layer to apply — so the raw
     // treatment, which activates every plain metachar, stands in for that
     // shtokenize.
+    //
+    // Ask the WHOLE word, qualifier block included: in `"*"(N)` the only
+    // tokens are the qualifier's Inpar/Outpar, so the stripped `*` alone
+    // looked raw and was re-tokenized into a live Star — the quoted star
+    // listed the directory where zsh expands to nothing.
     let word_is_tokenized =
-        crate::ported::lex::has_token(&pat) && !isset(crate::ported::zsh_h::GLOBSUBST);
+        crate::ported::lex::has_token(pattern) && !isset(crate::ported::zsh_h::GLOBSUBST);
 
     // c:Src/glob.c — `A~B` exclusion. zsh compiles the ENTIRE glob
     // (path components + `~B` exclusion + `**`) into ONE Patprog and
@@ -4327,14 +4329,29 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         // c:801-803 tests `zpc_special[ZPC_INPAR]` / `[ZPC_HASH]` /
         // `[ZPC_KSH_AT]`. zshrs seeds those slots with RAW ASCII
         // (pattern.rs:443-457) while `pat_tok` here is TOKENIZED, so accept
-        // either spelling of the pair.
-        let is_inpar = |c: char| c == '(' || c == crate::ported::zsh_h::Inpar;
-        let is_hash = |c: char| c == '#' || c == crate::ported::zsh_h::Pound;
+        // either spelling of the pair — but only while the slot is live:
+        // patcompcharsset (c:Src/pattern.c:480-483) sets ZPC_HASH to Marker
+        // without EXTENDEDGLOB, ZPC_INPAR under SHGLOB and ZPC_KSH_AT without
+        // KSHGLOB, and then `(#i)a` is an ordinary group holding a literal
+        // `#`, not a flag block.
+        let (inpar_live, hash_live, ksh_at_live) = {
+            let sp = crate::ported::pattern::zpc_special
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let marker = crate::ported::zsh_h::Marker as u32 as u8;
+            (
+                sp[crate::ported::zsh_h::ZPC_INPAR as usize] != marker,
+                sp[crate::ported::zsh_h::ZPC_HASH as usize] != marker,
+                sp[crate::ported::zsh_h::ZPC_KSH_AT as usize] != marker,
+            )
+        };
+        let is_inpar = |c: char| inpar_live && (c == '(' || c == crate::ported::zsh_h::Inpar);
+        let is_hash = |c: char| hash_live && (c == '#' || c == crate::ported::zsh_h::Pound);
         let is_outpar = |c: char| c == ')' || c == crate::ported::zsh_h::Outpar;
         // c:804 — `str += (*str == Inpar) ? 2 : 3;`. The Rust
         // `patgetglobflags` consumes the leading `(#` itself (pattern.rs:1927
         // `s.starts_with("(#")`), so only the ksh `@` is skipped here.
-        let skip = if cv.len() >= 3 && cv[0] == '@' && is_inpar(cv[1]) && is_hash(cv[2]) {
+        let skip = if cv.len() >= 3 && ksh_at_live && cv[0] == '@' && is_inpar(cv[1]) && is_hash(cv[2]) {
             Some(1) // c:802-803 ksh `@(#…)`
         } else if cv.len() >= 2 && is_inpar(cv[0]) && is_hash(cv[1]) {
             Some(0) // c:801 plain `(#…)`
@@ -4518,6 +4535,17 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // Sort results
     let unsorted = sort_matches(state);
 
+    // c:481 — `++matchct` per insert(): the count zglob's no-match
+    // dispatch reads (c:1871-1886) is taken BEFORE the `[first,last]`
+    // subscript (c:1981-1989) trims the list, so `*([100])` over a
+    // non-empty directory expands to nothing rather than tripping
+    // NOMATCH. Publish it for the caller (`expand_glob`), which only
+    // sees the trimmed Vec.
+    CURGLOBDATA
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .matchct = state.matches.len() as i32;
+
     // Apply subscript selection
     apply_selection(state, unsorted);
 
@@ -4527,12 +4555,11 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // — output marker emission consults the per-glob `gf_markdirs`
     // / `gf_listtypes` flags which the qualifier parser at
     // glob.c:1557-1566 sets.
-    let mark_dirs = glob_isset(MARKDIRS)
-        || state
-            .qualifiers
-            .as_ref()
-            .map(|q| q.mark_dirs)
-            .unwrap_or(false);
+    let mark_dirs = state
+        .qualifiers
+        .as_ref()
+        .and_then(|q| q.mark_dirs)
+        .unwrap_or_else(|| glob_isset(MARKDIRS)); // c:1255 / c:1558
     // c:1562-1566 — `gf_listtypes` is set ONLY by the `T` glob
     // qualifier (`*(T)`), NOT by the global LISTTYPES option.
     // LISTTYPES is the completion-listing option (see man zshoptions
@@ -4600,10 +4627,10 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
                     };
                     let ch = file_type(meta.mode());
                     if list_types || (mark_dirs && ch == '/') {
-                        // Don't double-stamp if trailing_slash already added one.
-                        if !s.ends_with(ch) {
-                            s.push(ch);
-                        }
+                        // c:372-376 — `*t++ = file_type(mode);` appended
+                        // unconditionally: a `*/` match already ends in the
+                        // path's `/`, so zsh prints `d1//` under MARK_DIRS.
+                        s.push(ch);
                     }
                 }
             }
@@ -4735,27 +4762,145 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
     // c:1163 test, raw mode is the untokenized-caller fallback that
     // reconstructs "was this escaped" from backslashes instead.
     if pattern.ends_with(crate::ported::zsh_h::Outpar) {
-        // c:1296-1310 — zglob calls checkglobqual, then cuts the block
-        // out at the returned `Inpar` (`*s++ = 0`) and steps over the
-        // `#q` when qualsfound == 2 (c:1310 `s += 2`).
-        let cv: Vec<char> = pattern.chars().collect();
-        let mut sp: Option<usize> = None;
+        // c:1260-1261 — `while (!nobareglob || (isset(EXTENDEDGLOB) &&
+        // !zpc_disables[ZPC_HASH]))`: qualifier groups are peeled off the
+        // END of the word one at a time. After the first, `nobareglob = 1`
+        // (c:1302), so only further explicit `(#q…)` groups are taken —
+        // `*(#q/)(#q^F)` applies BOTH (empty directories); the port used
+        // to keep the last group and glob the rest as pattern text.
+        let mut word: &str = pattern;
+        let mut acc: Option<qualifier_set> = None;
         // c:1226 `nobareglob = !isset(BAREGLOBQUAL);`
-        let nobareglob = i32::from(!glob_isset(BAREGLOBQUAL));
-        let qualsfound = checkglobqual(&cv, cv.len() as i32, nobareglob, &mut sp);
-        let start = match sp {
-            Some(v) if qualsfound != 0 => v,
-            _ => return (pattern.to_string(), None),
+        let mut nobareglob = i32::from(!glob_isset(BAREGLOBQUAL));
+        let hash_live = || {
+            glob_isset(EXTENDEDGLOB)
+                && crate::ported::pattern::zpc_disables
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())[crate::ported::zsh_h::ZPC_HASH as usize]
+                    == 0
         };
-        let body_start = if qualsfound == 2 {
-            start + 3
-        } else {
-            start + 1
+        while nobareglob == 0 || hash_live() {
+            if !word.ends_with(crate::ported::zsh_h::Outpar) {
+                break; // c:1163 — no further qualifier block
+            }
+            // c:1296-1310 — checkglobqual, then cut the block out at the
+            // returned `Inpar` (`*s++ = 0`), stepping over the `#q` when
+            // qualsfound == 2 (c:1310 `s += 2`).
+            let cv: Vec<char> = word.chars().collect();
+            let mut sp: Option<usize> = None;
+            let qualsfound = checkglobqual(&cv, cv.len() as i32, nobareglob, &mut sp);
+            let start = match sp {
+                Some(v) if qualsfound != 0 => v,
+                _ => break, // c:1297-1298
+            };
+            nobareglob = 1; // c:1302
+            let body_start = if qualsfound == 2 { start + 3 } else { start + 1 };
+            let qual_content: String = cv[body_start..cv.len() - 1].iter().collect();
+            let byte_start: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
+            let newq = parse_qualifier_string(&qual_content);
+            word = &word[..byte_start];
+            let failed = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0;
+            acc = Some(match acc {
+                None => newq, // c:1843-1844 `else if (newquals) quals = newquals;`
+                Some(old) => {
+                    // c:1797-1842 — merge the previous group into the new
+                    // (left-hand) one. The AND-chains are distributed over
+                    // every pair of alternatives, new set first ("we are
+                    // searching for sets of qualifiers from the right");
+                    // with no `or` on either side that is plain chaining.
+                    let alts = |a: &QualArena| -> Vec<Vec<qual>> {
+                        let mut out = Vec::new();
+                        let mut h = a.head;
+                        while let Some(hi) = h {
+                            let mut chain = Vec::new();
+                            let mut n = Some(hi);
+                            while let Some(ni) = n {
+                                chain.push(a.nodes[ni].clone());
+                                n = a.nodes[ni].next;
+                            }
+                            out.push(chain);
+                            h = a.nodes[hi].or;
+                        }
+                        out
+                    };
+                    let mut q = newq;
+                    let (na, oa) = (alts(&q.quals), alts(&old.quals));
+                    if !oa.is_empty() {
+                        let mut arena = QualArena::new();
+                        let mut prev_head: Option<usize> = None;
+                        let news = if na.is_empty() { vec![Vec::new()] } else { na };
+                        for qn in &news {
+                            for qo in &oa {
+                                let base = arena.nodes.len();
+                                for (k, node) in qn.iter().chain(qo.iter()).enumerate() {
+                                    let mut node = node.clone();
+                                    node.or = None;
+                                    node.next = Some(base + k + 1);
+                                    arena.nodes.push(node);
+                                }
+                                let last = arena.nodes.len() - 1;
+                                arena.nodes[last].next = None;
+                                match prev_head {
+                                    None => arena.head = Some(base),
+                                    Some(p) => arena.nodes[p].or = Some(base),
+                                }
+                                prev_head = Some(base);
+                            }
+                        }
+                        q.quals = arena;
+                    }
+                    // The enum mirror of the same distribution.
+                    if !old.alternatives.is_empty() {
+                        let news = if q.alternatives.is_empty() {
+                            vec![Vec::new()]
+                        } else {
+                            std::mem::take(&mut q.alternatives)
+                        };
+                        q.alternatives = news
+                            .iter()
+                            .flat_map(|n| old.alternatives.iter().map(move |o| [n.clone(), o.clone()].concat()))
+                            .collect();
+                    }
+                    // gf_sortlist (c:1702) fills in parse order: the right
+                    // group's specs first. GS_EXEC entries carry an index
+                    // into `sort_exec`, shifted past the earlier ones.
+                    let shift = old.sort_exec.len() as i32;
+                    let new_sorts: Vec<i32> = q
+                        .sorts
+                        .iter()
+                        .map(|&t| if (t & GS_EXEC) != 0 { t + (shift << 16) } else { t })
+                        .collect();
+                    q.sorts = old.sorts.iter().copied().chain(new_sorts).collect();
+                    q.sort_exec = old.sort_exec.iter().cloned().chain(q.sort_exec).collect();
+                    // c:1336-1340 — `colonmod = dyncat(newcolonmod, colonmod)`.
+                    q.colon_mods = match (q.colon_mods.take(), old.colon_mods) {
+                        (Some(n), Some(o)) => Some(n + &o),
+                        (n, o) => n.or(o),
+                    };
+                    // The gf_* globals are simply overwritten by the group
+                    // parsed later (the left one) when it sets them.
+                    q.pre_words = old.pre_words.into_iter().chain(q.pre_words).collect();
+                    q.post_words = old.post_words.into_iter().chain(q.post_words).collect();
+                    q.first = q.first.or(old.first);
+                    q.last = q.last.or(old.last);
+                    q.mark_dirs = q.mark_dirs.or(old.mark_dirs);
+                    q.numsort = q.numsort.or(old.numsort);
+                    q.short_circuit = q.short_circuit.or(old.short_circuit);
+                    q.list_types |= old.list_types;
+                    q.mark_follow |= old.mark_follow;
+                    q.nullglob |= old.nullglob;
+                    q.globdots |= old.globdots;
+                    q
+                }
+            });
+            if failed {
+                break; // c:1786-1788 — errflag: zglob returns
+            }
+        }
+        return match acc {
+            Some(qs) => (word.to_string(), Some(qs)),
+            None => (pattern.to_string(), None),
         };
-        let qual_content: String = cv[body_start..cv.len() - 1].iter().collect();
-        let byte_start: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
-        let qs = parse_qualifier_string(&qual_content);
-        return (pattern[..byte_start].to_string(), Some(qs));
     }
 
     // Untokenized fallback, for the programmatic `glob_path` callers
@@ -4858,8 +5003,31 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
         return (pattern.to_string(), None);
     };
 
-    // Don't parse as qualifiers if it contains | or ~ (alternatives/exclusions)
-    if !is_explicit && (qual_content.contains('|') || qual_content.contains('~')) {
+    // c:1169-1186 — alternatives or exclusions, not qualifiers: an inner
+    // `)` (a nested group) falls through to the `Bar` arm, and both set
+    // `nobareglob` unless `disable -p '|'`; `~` only does under
+    // EXTENDEDGLOB (unless disabled). Only an explicit `(#q…)` survives
+    // that (c:1192-1197). A `$~v` value lands here untokenized, but C
+    // shtokenized it (c:Src/subst.c:822/830), so its parens are the
+    // Inpar/Outpar tokens this scan stands for: zsh answers
+    // `v='*(e:reply=($REPLY):)'; print $~v` with "no matches found".
+    let nobareglob = {
+        let disp = crate::ported::pattern::zpc_disables
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        (start + 1..bytes.len() - 1).any(|k| {
+            !is_escaped(k)
+                && match bytes[k] {
+                    b')' | b'|' => disp[crate::ported::zsh_h::ZPC_BAR as usize] == 0,
+                    b'~' => {
+                        glob_isset(EXTENDEDGLOB)
+                            && disp[crate::ported::zsh_h::ZPC_TILDE as usize] == 0
+                    }
+                    _ => false,
+                }
+        })
+    };
+    if !is_explicit && nobareglob {
         return (pattern.to_string(), None);
     }
 
@@ -4966,112 +5134,33 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // bits agree. Multiple delimited specs can be chained
             // by separator character. Direct port of qgetmodespec
             // dispatch + mode-bit accumulator in qgetmodespec.
+            // c:1548-1552 — `case 'f': func = qualmodeflags; data =
+            // qgetmodespec(&s);`. qgetmodespec owns the whole spec: the
+            // bare-vs-delimited split, who letters, `,`-chained clauses, and
+            // leaves the cursor where C's `*s = p` does.
             'f' => {
-                // c:Src/glob.c:849 — qgetmodespec dispatches on the
-                // first char: if it's `=`/`+`/`-`/`?` or a digit
-                // (`(c >= '0' && c <= '7')`) the spec is bare (no
-                // surrounding delimiter, no who) — `f+x` / `f-w` /
-                // `f=755` / `f0644`. Otherwise the char is the
-                // OPENING DELIMITER paired with a matching closer
-                // (`<` → `>`, `[` → `]`, `{` → `}`, anything else
-                // → itself, e.g. `f:u+x:` uses `:` on both sides).
-                // The previous port used `!d.is_alphanumeric()`
-                // which incorrectly classified `+`, `-`, `=`, `?`
-                // as delimiters, sending `f+x` down the
-                // delimiter-string path that then called
-                // qgetmodespec on body "x" — qgetmodespec rejects
-                // `x` (no op char) and silently dropped the
-                // qualifier, so `*(.f+x)` matched ALL files. Bug
-                // #105 in docs/BUGS.md.
                 let rest: String = chars.clone().collect();
-                let trimmed: &str = match rest.chars().next() {
-                    // c:849-861 — bare spec ONLY when the first char is
-                    // `=`/`+`/`-`/`?` or an octal digit; ANY other char is
-                    // the OPENING DELIMITER (`<`→`>`, `[`→`]`, `{`→`}`, else
-                    // itself). Who-clauses (u/g/o/a) are valid only INSIDE a
-                    // delimited spec, so bare `fu+x` lands here with `u` as
-                    // the delimiter — and with no closing `u` it is an
-                    // unterminated (invalid) spec, exactly as in zsh.
-                    Some(d) if !matches!(d, '+' | '-' | '=' | '?' | '0'..='7') => {
-                        chars.next(); // consume opening delim
-                        let close = match d {
-                            '<' => '>',
-                            '[' => ']',
-                            '{' => '}',
-                            other => other,
-                        };
-                        let mut body = String::new();
-                        let mut closed = false;
-                        while let Some(pc) = chars.next() {
-                            if pc == close {
-                                closed = true;
-                                break;
-                            }
-                            body.push(pc);
+                match qgetmodespec(&rest) {
+                    Some((data, r)) => {
+                        for _ in 0..rest[..rest.len() - r.len()].chars().count() {
+                            chars.next();
                         }
-                        if !closed {
-                            // c:884/930 — `zerr("invalid mode specification")`
-                            // on an unterminated spec; the glob then fails.
-                            crate::ported::utils::zerr("invalid mode specification");
-                            crate::ported::utils::errflag.fetch_or(
-                                crate::ported::utils::ERRFLAG_ERROR,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            return qs;
-                        }
-                        if let Some((_who, op, perm, _r)) = qgetmodespec(&body) {
-                            let (yes, no) = match op {
-                                '=' => (perm, 0o7777 & !perm),
-                                '+' => (perm, 0),
-                                '-' => (0, perm),
-                                _ => (perm, 0),
-                            };
-                            qs.qualifiers.push(qualifier::Mode { yes, no });
-                        } else {
-                            // c:884/930 — qgetmodespec's every failure path is
-                            // `zerr("invalid mode specification"); return 0;`.
-                            // rs's qgetmodespec returns None only on those, so
-                            // None must fail the glob, not silently drop `f`.
-                            crate::ported::utils::zerr("invalid mode specification");
-                            crate::ported::utils::errflag.fetch_or(
-                                crate::ported::utils::ERRFLAG_ERROR,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            return qs;
-                        }
-                        ""
+                        // c:3819 — `y = mod & 07777, n = mod >> 12`.
+                        qs.qualifiers.push(qualifier::Mode {
+                            yes: (data & 0o7777) as u32,
+                            no: (data >> 12) as u32,
+                        });
                     }
-                    _ => {
-                        let parsed = qgetmodespec(&rest);
-                        if let Some((who, op, perm, r)) = parsed {
-                            let consumed = rest.len() - r.len();
-                            for _ in 0..rest[..consumed].chars().count() {
-                                chars.next();
-                            }
-                            let _ = who;
-                            let (yes, no) = match op {
-                                '=' => (perm, 0o7777 & !perm),
-                                '+' => (perm, 0),
-                                '-' => (0, perm),
-                                _ => (perm, 0),
-                            };
-                            qs.qualifiers.push(qualifier::Mode { yes, no });
-                        } else {
-                            // c:930 — a bare `f` (empty spec) or otherwise
-                            // unparseable mode is `zerr("invalid mode
-                            // specification"); return 0;` in qgetmodespec, which
-                            // aborts the glob rather than dropping the qualifier.
-                            crate::ported::utils::zerr("invalid mode specification");
-                            crate::ported::utils::errflag.fetch_or(
-                                crate::ported::utils::ERRFLAG_ERROR,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            return qs;
-                        }
-                        ""
+                    None => {
+                        // qgetmodespec already said "invalid mode
+                        // specification"; errflag aborts the glob.
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::utils::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return qs;
                     }
-                };
-                let _ = trimmed;
+                }
             }
             // Ownership
             'U' => qs.qualifiers.push(qualifier::OwnedByEuid),
@@ -5323,8 +5412,8 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // time to mark dirs / list types like coreutils ls -F.
             // c:1557-1566 — `if ((gf_markdirs = !(sense & 1))) gf_follow = sense & 2;`
             'M' => {
-                qs.mark_dirs = !negated;
-                if qs.mark_dirs {
+                qs.mark_dirs = Some(!negated);
+                if !negated {
                     qs.mark_follow = follow;
                 }
             }
@@ -5554,9 +5643,11 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // ALONE and a space reaches `default:` like any other
             // unhandled byte: zsh answers `*(N )` with `unknown file
             // attribute:  ` at rc=1 where the port listed every match at
-            // rc=0. `\0` still terminates the C loop, and `)` cannot
-            // appear because it was already overwritten.
-            ch if ch != '\0' && ch != ')' => {
+            // rc=0. `\0` still terminates the C loop. The overwritten
+            // closer is the Outpar TOKEN only; a QUOTED `)` left in the
+            // body (`*(e"(true))")`, whose get_strarg stops at the first
+            // `)`) is an ordinary byte and reaches `default:` too.
+            ch if ch != '\0' => {
                 // c:1758-1760 — `untokenize(--s); convchar_t attr =
                 // unmeta_one(s, NULL); zerr("unknown file attribute:
                 // %c", attr);`. C rewinds onto the offending char,
@@ -5762,11 +5853,24 @@ fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>, is_group: boo
         _ => delim,                                                      // c:1391
     };
     let mut name = String::new();
+    let mut closed = false;
     for c in chars.by_ref() {
         if c == close_delim {
+            closed = true;
             break;
         }
         name.push(c);
+    }
+    // c:1477-1479 / c:1519-1521 — `if (!*tt)`: get_strarg ran off the end
+    // without finding the closer, so `*(u+1)` (`+` opens a name) is a
+    // missing delimiter, not a lookup of the user `1`.
+    if !closed {
+        zerr(if is_group {
+            "missing delimiter for 'g' glob qualifier"
+        } else {
+            "missing delimiter for 'u' glob qualifier"
+        });
+        return 0;
     }
     // c:1488/1530 — resolve via getpwnam(3) / getgrnam(3).
     let cstr = match std::ffi::CString::new(name.as_bytes()) {
@@ -6293,7 +6397,11 @@ fn sort_matches(state: &mut globdata) -> bool {
     // marker is part of the sort key: under en_US collation `foo.c` sorts
     // before `foo/`, while the unmarked `foo` sorts first. The port stamps
     // the marker at emit (after this sort), so add it to the key here.
-    let mark_dirs = glob_isset(MARKDIRS) || state.qualifiers.as_ref().is_some_and(|q| q.mark_dirs);
+    let mark_dirs = state
+        .qualifiers
+        .as_ref()
+        .and_then(|q| q.mark_dirs)
+        .unwrap_or_else(|| glob_isset(MARKDIRS)); // c:1255 / c:1558
     let list_types = state.qualifiers.as_ref().is_some_and(|q| q.list_types);
     let mark_follow = state.qualifiers.as_ref().is_some_and(|q| q.mark_follow);
     for m in state.matches.iter_mut() {
@@ -6311,7 +6419,7 @@ fn sort_matches(state: &mut globdata) -> bool {
                 };
                 let ch = file_type(meta.mode()); // c:377
                 // c:372 — `if (gf_listtypes || S_ISDIR(mode))`
-                if (list_types || ch == '/') && !m.uname.ends_with(ch) {
+                if list_types || ch == '/' {
                     m.uname.push(ch); // c:376-378
                 }
             }
@@ -6934,6 +7042,8 @@ pub fn is_symlink(path: &str) -> bool {
 /// removed.) The faithful C entry is `zglob` (c:1214).
 pub fn glob_path(pattern: &str) -> Vec<String> {
     let _glob_scope = enter_glob_scope();
+    // c:1864 `matchct = 0;` — nothing matched yet for this glob.
+    CURGLOBDATA.lock().unwrap_or_else(|e| e.into_inner()).matchct = 0;
     let mut state = globdata::new();
     globdata_glob(&mut state, pattern)
 }
@@ -8932,7 +9042,7 @@ mod tests {
     fn parse_qualifier_string_capital_M_sets_mark_dirs_flag() {
         let _g = crate::test_util::global_state_lock();
         let qs = parse_qualifier_string("M");
-        assert!(qs.mark_dirs, "(M) must set mark_dirs");
+        assert_eq!(qs.mark_dirs, Some(true), "(M) must set mark_dirs");
     }
 
     /// `T` flag → list_types.
