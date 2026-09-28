@@ -12857,6 +12857,15 @@ pub fn paramsubst(
                 (carried.take(), carried_keep)
             } else if let Some(scan) = assoc_scan_chain.take() {
                 (Some(scan), assoc_scan_matchmany)
+            } else if let (true, Some(full)) = (
+                subscript.as_deref().is_some_and(|s| is_splat_txt!(s)),
+                arrays_get(&var_name),
+            ) {
+                // c:Src/params.c:2047-2054 — `[@]` / `[*]` leaves the Value an
+                // ARRAY over the whole parameter (`v->start = 0; v->end = -1`),
+                // and c:Src/subst.c:2890-2900 wraps that array for the chained
+                // subscript: `a=(a b c); ${a[@][2]}` is `b`, not `a b c`.
+                (Some((full, false, false)), false)
             } else if let (Some(s1_raw), Some(full)) = (first_slice, arrays_get(&var_name)) {
                 // s1 (the first subscript) can carry the Dash and Comma tokens too.
                 let s1 = s1_raw

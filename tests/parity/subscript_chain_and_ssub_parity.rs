@@ -707,3 +707,19 @@ mod subscript_flag_group_arguments {
         );
     }
 }
+
+/// c:Src/params.c:2047-2054 + c:Src/subst.c:2890-2900 — `[@]`/`[*]` leaves
+/// an ARRAY value over the whole parameter, and a chained subscript indexes
+/// that array. The chain treated the splat as a scalar and returned the
+/// whole array for `${a[@][2]}`.
+mod splat_then_chained_subscript {
+    use super::*;
+
+    #[test]
+    fn chained_subscript_indexes_the_splatted_array() {
+        assert_parity(
+            r#"a=(a b c); print -r -- ${a[@][2]} "${a[*][2]}" ${a[@][2,3]} ${a[@][(i)c]} ${a[@][-1][1]} ${#a[@][2]} ${a[@][2]:u}"#,
+        );
+        assert_parity(r#"setopt ksharrays; a=(a b c); print -r -- ${a[@][1]} ${a[*][0]} ${a[@][0][0]}"#);
+    }
+}
