@@ -349,6 +349,7 @@ Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.zshrs/
 | **`images/{hash8}-*.rkyv`** | Mmap-ready shards (system, completions, plugins, scripts, `.zshrc`, …) |
 | **`autoloads.rkyv`** | One compiled definition program per autoloaded function, keyed by name and stamped with the resolved fpath directory, a SHA-256 of the exact definition text, and the identity of the `zshrs` binary that compiled it |
 | **`scripts.rkyv`** | One compiled chunk per script file, keyed by path + mtime |
+| **`deparse.rkyv`** | Deparsed function bodies (the text `$functions` prints), keyed by a SHA-256 of the name, the body text and the option state the body is re-lexed under, and stamped with the identity of the `zshrs` binary that wrote them |
 
 **SQLite (read-only mirrors)** — same directory, different job: daemon-maintained copies you can query with SQL or `dbview`. They are **not** the bytecode cache and are **not** read when deciding cache hit/miss or when running compiled code.
 

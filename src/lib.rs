@@ -114,6 +114,9 @@ pub mod autoload_cache;
 /// `autoload_prewarm` submodule.
 #[path = "extensions/autoload_prewarm.rs"]
 pub mod autoload_prewarm;
+/// `deparse_cache` submodule.
+#[path = "extensions/deparse_cache.rs"]
+pub mod deparse_cache;
 /// `banner` submodule — the `zbanner` builtin and `zshrs --banner`
 /// (logo, builtin totals, daemon and shell counts). Ported from ztmux.
 #[path = "extensions/banner.rs"]

@@ -60845,3 +60845,36 @@ copies of one `v='a b c'…` fuzzer line, `PS1="RDY> "`, `SAVEHIST=0`.
 - `hend` writes to the store only when `SAVEHIST > 0`.
 
 Existing polluted entries are not removed by this fix.
+
+## #1162 — every new shell re-parsed every function body for `$functions` — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+zpwr's `_parameters` reads `${${(P)i}:0:100}` for every parameter, so the first
+command-position `<TAB>` in each shell builds `$functions`. C prints a
+function by walking its stored wordcode (c:Src/Modules/parameter.c:495,
+`getpermtext`). zshrs stores the body as text, so each body was re-parsed and
+deparsed, memoized only per process: ~55 ms of the first `ls<TAB>` in a
+release build, ~470 ms in a debug build.
+
+```console
+first ls<TAB> in a new shell, release build, zpwr config
+before   219-233 ms      zsh 5.9.2  189-216 ms
+after    183-194 ms      zsh 5.9.2  186-206 ms
+```
+
+**Fix.** `src/extensions/deparse_cache.rs` keeps deparsed bodies in
+`$ZSHRS_HOME/deparse.rkyv` across processes. The key is a SHA-256 of the name,
+the body text, every option bit and the emulation, taken while
+`funcdef_lex_pin` is applied. Bodies re-lexed with aliases on depend on the
+alias table and are not stored. The shard is stamped with the producing
+binary's identity, writes are buffered and flushed with the autoload cache
+(prompt, `zexit`, `atexit`), and a shard from another binary is not read.
+Output is identical to zsh 5.9.2 on a cold and a warm run of the same
+functions.
+
+**Open (found here, not caused by it).** A script run a second time is served
+from `scripts.rkyv` without re-parsing, so the parse-time RCQUOTES record that
+`funcdef_lex_pin` uses is missing: `setopt rcquotes; f() { print 'it''s' }`
+prints `'it''s'` on the first run (as zsh does) and `'it's'` on the second.
+Reproduces with `deparse.rkyv` deleted.

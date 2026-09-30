@@ -40,6 +40,7 @@ pub use crate::config;
 pub use crate::daemon_presence;
 pub use crate::dap;
 pub use crate::dash_mode;
+pub use crate::deparse_cache;
 pub use crate::emulation_output;
 pub use crate::emulation_startup;
 pub use crate::ext_builtins;

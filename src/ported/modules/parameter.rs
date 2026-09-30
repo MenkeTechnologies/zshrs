@@ -1182,9 +1182,22 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                         hit
                     } else {
                         let _pin = crate::vm_helper::funcdef_lex_pin(&shf.node.nam, text);
-                        let out = match crate::ported::exec::parse_string(text, 0) {
-                            Some(prog) => crate::ported::text::getpermtext(Box::new(prog), None, 1),
-                            None => text.to_string(),
+                        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+                        // The cross-process deparse cache (extensions/deparse_cache.rs);
+                        // the key is taken under the pin.
+                        let key = crate::deparse_cache::key(&shf.node.nam, text);
+                        let out = match key.and_then(|k| crate::deparse_cache::lookup(&k)) {
+                            Some(hit) => hit,
+                            None => {
+                                let out = match crate::ported::exec::parse_string(text, 0) {
+                                    Some(prog) => crate::ported::text::getpermtext(Box::new(prog), None, 1),
+                                    None => text.to_string(),
+                                };
+                                if let Some(k) = key {
+                                    crate::deparse_cache::record(k, &out);
+                                }
+                                out
+                            }
                         };
                         FN_DEPARSE_CACHE.with(|c| c.borrow_mut().insert(cache_key, out.clone()));
                         out
@@ -1377,9 +1390,21 @@ pub fn scanfunctions(
                         hit
                     } else {
                         let _pin = crate::vm_helper::funcdef_lex_pin(&shf.node.nam, text);
-                        let o = match crate::ported::exec::parse_string(text, 0) {
-                            Some(prog) => crate::ported::text::getpermtext(Box::new(prog), None, 1),
-                            None => text.to_string(),
+                        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+                        // Same cross-process deparse cache as `getfunction`.
+                        let key = crate::deparse_cache::key(&shf.node.nam, text);
+                        let o = match key.and_then(|k| crate::deparse_cache::lookup(&k)) {
+                            Some(hit) => hit,
+                            None => {
+                                let o = match crate::ported::exec::parse_string(text, 0) {
+                                    Some(prog) => crate::ported::text::getpermtext(Box::new(prog), None, 1),
+                                    None => text.to_string(),
+                                };
+                                if let Some(k) = key {
+                                    crate::deparse_cache::record(k, &o);
+                                }
+                                o
+                            }
                         };
                         FN_DEPARSE_CACHE.with(|c| c.borrow_mut().insert(cache_key, o.clone()));
                         o

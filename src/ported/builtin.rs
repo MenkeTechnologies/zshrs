@@ -14104,6 +14104,7 @@ pub fn zexit(val: i32, from_where: i32) {
     // interactive shell; a script never reaches a prompt, so without
     // this its compiles would never reach the cache at all.
     crate::autoload_cache::try_flush_pending();
+    crate::deparse_cache::try_flush_pending();
                                // c:6021-6024 — MONITOR → killrunjobs.
     if isset(MONITOR) {
         // c:6021
