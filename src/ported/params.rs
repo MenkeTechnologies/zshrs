@@ -7509,6 +7509,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                                     node = node.old.as_mut()?.as_mut();
                                 }
                                 if (node.node.flags as u32 & PM_READONLY) != 0 {
+                                    drop(tab); // zerr redraws ZLE, which reads paramtab
                                     zerr(&format!("read-only variable: {}", name)); // c:2696
                                     return None;
                                 }
@@ -7527,6 +7528,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                                     // never fetched, so it takes createparam.
                                     && ((nf & PM_UNSET) == 0 || (nf & PM_DECLARED) != 0)
                                 {
+                                    drop(tab); // zerr redraws ZLE, which reads paramtab
                                     zerr(&format!("can't change type of hidden variable: {}", name)); // c:3745
                                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3187
                                     return None;
@@ -8494,8 +8496,11 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             // c:3216 `if (v->pm->node.flags & PM_READONLY)`.
             let pm = tab.get(name).unwrap();
             if (pm.node.flags as u32 & PM_READONLY) != 0 {
-                zerr(&format!("read-only variable: {}", pm.node.nam)); // c:3217
+                let nam = pm.node.nam.clone();
+                // Release the write guard before zerr: zerr -> trashzle ->
+                // zrefresh reads paramtab, and std RwLock is not reentrant.
                 drop(tab);
+                zerr(&format!("read-only variable: {}", nam)); // c:3217
                 unqueue_signals(); // c:3220
                 return None; // c:3221
             }
@@ -8911,8 +8916,9 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         let pm = tab.get(name).unwrap();
         // c:3216 PM_READONLY guard for an existing param.
         if (pm.node.flags as u32 & PM_READONLY) != 0 {
-            zerr(&format!("read-only variable: {}", pm.node.nam)); // c:3217
-            drop(tab);
+            let nam = pm.node.nam.clone();
+            drop(tab); // zerr redraws ZLE, which reads paramtab
+            zerr(&format!("read-only variable: {}", nam)); // c:3217
             unqueue_signals(); // c:3220
             return None; // c:3221
         }
@@ -9506,6 +9512,7 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                                     node = node.old.as_mut()?.as_mut();
                                 }
                                 if (node.node.flags as u32 & PM_READONLY) != 0 {
+                                    drop(tab); // zerr redraws ZLE, which reads paramtab
                                     zerr(&format!("read-only variable: {}", name)); // c:3370-3381
                                     return None;
                                 }
@@ -9521,6 +9528,7 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                                     // never fetched, so it takes createparam.
                                     && ((nf & PM_UNSET) == 0 || (nf & PM_DECLARED) != 0)
                                 {
+                                    drop(tab); // zerr redraws ZLE, which reads paramtab
                                     zerr(&format!("can't change type of hidden variable: {}", name)); // c:3745
                                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3357
                                     return None;
@@ -10286,6 +10294,7 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
         let tab = paramtab().read().unwrap();
         if let Some(pm) = tab.get(name) {
             if (pm.node.flags as u32 & PM_READONLY) != 0 {
+                drop(tab); // zerr redraws ZLE, which reads paramtab
                 zerr(&format!("read-only variable: {}", name));
                 errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                 return None;
@@ -10295,6 +10304,7 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
             // Can't change type of a PM_SPECIAL non-hashed param.
             let pm_type = pm.node.flags as u32 & PM_TYPE(u32::MAX);
             if pm_type != PM_HASHED && (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+                drop(tab); // zerr redraws ZLE, which reads paramtab
                 zerr(&format!(
                     "{}: can't change type of a special parameter",
                     name
@@ -15954,13 +15964,16 @@ pub fn setloopvar(name: &str, value: &str) {
                 // c:6370 — `if (pm->node.flags & PM_READONLY)`
                 if (pm.node.flags as u32 & PM_READONLY) != 0 {
                     // c:6372 — `zerr("read-only reference: %s", pm->node.nam);`
-                    zerr(&format!("read-only reference: {}", pm.node.nam));
+                    let nam = pm.node.nam.clone();
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
+                    zerr(&format!("read-only reference: {}", nam));
                     // c:6373 — `return;`
                     return;
                 }
                 // c:6375-6378 — `if (!valid_refname(value, pm->node.flags)) {
                 //     zerr("invalid variable name: %s", value); return; }`
                 if !valid_refname(value, pm.node.flags) {
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
                     zerr(&format!("invalid variable name: {}", value));
                     return;
                 }

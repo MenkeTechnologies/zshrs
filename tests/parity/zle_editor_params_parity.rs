@@ -223,3 +223,25 @@ fn assigned_cutbuffer_and_killring_feed_yank_and_yank_pop() {
         "yank took the assigned CUTBUFFER and yank-pop the assigned killring",
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// errors raised inside a widget
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A failed assignment inside a widget reports and editing carries on.
+/// `zerr` redraws the line (`zwarning` → `trashzle` → `zrefresh`), and the
+/// redraw reads parameters; zshrs raised the error while `assignsparam`
+/// still held the parameter-table write lock, so the redraw blocked on
+/// it and the shell froze. Seen as `pro<TAB>` hanging when fzf-tab's
+/// completion wrapper ran before the deferred `compinit` had finished.
+#[test]
+fn a_readonly_assignment_in_a_widget_does_not_freeze_the_line() {
+    assert_same_dump(
+        &driver(
+            "-e; typeset -r ro=(a b) rs=ab; ww(){ ro[1]=x; rs[1]=y; BUFFER+=k }; zle -N ww; bindkey \"^N\" ww",
+            r#""BUF=[$BUFFER]""#,
+            &["a", "\\C-n", "b"],
+        ),
+        "the widget's readonly assignments fail and the line stays editable",
+    );
+}
