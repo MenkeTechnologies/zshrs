@@ -21634,33 +21634,25 @@ pub fn paramsubst(
                         // (c:3726 `sptr += MB_METACHARLEN(sptr)`): an undecodable
                         // byte stays one byte (a lossy decode made it U+FFFD) and
                         // with MULTIBYTE off every unit is a byte.
-                        let dv: Vec<String> = {
-                            let ub = crate::ported::utils::unmetafy_str(ksh_bare_scalar_src.as_deref().unwrap_or(raw_value.as_str()));
-                            let mut v: Vec<String> = Vec::new();
+                        let ub = crate::ported::utils::unmetafy_str(ksh_bare_scalar_src.as_deref().unwrap_or(raw_value.as_str()));
+                        // One character unit per step from the start of the
+                        // value, as C walks it with `sptr += MB_METACHARLEN(sptr)`.
+                        // Units are produced lazily: C walks only as far as the
+                        // offset and length reach (c:3726-3746), so
+                        // `${x:0:100}` on a large value touches 100 characters,
+                        // not the whole string.
+                        let units = || {
+                            let ub = &ub;
                             let mut i = 0usize;
-                            while i < ub.len() {
+                            std::iter::from_fn(move || {
+                                if i >= ub.len() {
+                                    return None;
+                                }
                                 let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&ub[i..]);
-                                v.push(unit);
                                 i += n.max(1);
-                            }
-                            v
+                                Some(unit)
+                            })
                         };
-                        let total = dv.len() as i64;
-                        // bash (unlike zsh/ksh93) yields the EMPTY string when a
-                        // negative offset underflows past the start of the value
-                        // (`${v: -10}` on "hello" → "" in bash, "hello" in
-                        // zsh/ksh93). zsh clamps `total+off` to 0; bash treats the
-                        // out-of-range start as no substring. Gate on bash mode so
-                        // `--zsh`/`--ksh` keep the zsh-faithful clamp. Verified via
-                        // 9-way parity fuzzer (gen_param_fuzz `${v: -N}`).
-                        let bash_off_underflow = crate::extensions::dash_mode::bash_mode()
-                            && off < 0
-                            && (total + off) < 0;
-                        let start = if off < 0 {
-                            (total + off).max(0)
-                        } else {
-                            off.min(total)
-                        } as usize;
                         // c:Src/subst.c:3786 — the substring LENGTH is a
                         // math expression; a parse failure is fatal (zsh
                         // emits "bad math expression: …" and aborts, rc=1).
@@ -21681,8 +21673,26 @@ pub fn paramsubst(
                                 }
                             },
                         };
+                        // c:3722-3728 / c:3731-3736 — the whole value is counted
+                        // only when a negative offset or length is measured from
+                        // its end.
+                        let needs_total = off < 0 || matches!(len, Some(l) if l < 0);
+                        let total = if needs_total { units().count() as i64 } else { 0 };
+                        // bash (unlike zsh/ksh93) yields the EMPTY string when a
+                        // negative offset underflows past the start of the value
+                        // (`${v: -10}` on "hello" → "" in bash, "hello" in
+                        // zsh/ksh93). zsh clamps `total+off` to 0; bash treats the
+                        // out-of-range start as no substring. Gate on bash mode so
+                        // `--zsh`/`--ksh` keep the zsh-faithful clamp. Verified via
+                        // 9-way parity fuzzer (gen_param_fuzz `${v: -N}`).
+                        let bash_off_underflow = crate::extensions::dash_mode::bash_mode()
+                            && off < 0
+                            && (total + off) < 0;
+                        // A positive offset past the end simply yields nothing
+                        // (c:3727 stops at the NUL).
+                        let start = if off < 0 { (total + off).max(0) } else { off } as usize;
                         value = match len {
-                            Some(l) if l >= 0 => dv.iter().skip(start).take(l as usize).map(String::as_str).collect(),
+                            Some(l) if l >= 0 => units().skip(start).take(l as usize).collect(),
                             Some(l) => {
                                 // c:Src/subst.c:3722-3741 — a negative length counts
                                 // from the string end: end = strlen + length. C's
@@ -21708,9 +21718,9 @@ pub fn paramsubst(
                                     return (String::new(), 0, Vec::new()); // c:3740
                                 }
                                 let take = (end - given_offset).max(0) as usize;
-                                dv.iter().skip(start).take(take).map(String::as_str).collect()
+                                units().skip(start).take(take).collect()
                             }
-                            None => dv.iter().skip(start).map(String::as_str).collect(),
+                            None => units().skip(start).collect(),
                         };
                         // The clamped bare reference is a SCALAR (c:2288's
                         // `v->scanflags = 0`), so the substring IS the whole
