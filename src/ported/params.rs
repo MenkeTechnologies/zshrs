@@ -8262,8 +8262,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     let kshzero =
                         crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
                     if idx == 0 && !isset(KSHARRAYS) && !kshzero {
+                        drop(pp); // zerr redraws ZLE; release the lock first
                         zerr(&format!("{}: assignment to invalid subscript range", name));
-                        drop(pp);
                         unqueue_signals();
                         return None;
                     }
@@ -8524,8 +8524,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 // zerr("%s: attempt to set slice of associative array", …); … }`
                 x if x == PM_HASHED => {
                     let nam = pm.node.nam.clone();
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
                     zerr(&format!("{}: attempt to set slice of associative array", nam)); // c:2701
-                    drop(tab);
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                     unqueue_signals();
                     return None;
@@ -8634,8 +8634,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 let len = chars.len() as i64;
                 let kshzero = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
                 if idx == 0 && !isset(KSHARRAYS) && !kshzero {
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
                     zerr(&format!("{}: assignment to invalid subscript range", name));
-                    drop(tab);
                     unqueue_signals();
                     return None;
                 }
@@ -8686,8 +8686,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 // range".
                 let kshzero = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
                 if idx == 0 && !isset(KSHARRAYS) && !kshzero {
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
                     zerr(&format!("{}: assignment to invalid subscript range", name)); // c:2911 (effective)
-                    drop(tab);
                     unqueue_signals();
                     return None;
                 }
@@ -8979,8 +8979,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     if !val.is_empty() && (pm.node.flags as u32 & PM_NAMEREF) != 0 {
         if !valid_refname(val, pm.node.flags) {
             // c:3259
+            drop(tab); // zerr redraws ZLE, which reads paramtab
             zerr(&format!("invalid variable name: {}", val)); // c:3260
-            drop(tab);
             errflag.fetch_or(
                 // c:3263
                 ERRFLAG_ERROR,

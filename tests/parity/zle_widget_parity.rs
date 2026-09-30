@@ -279,3 +279,26 @@ sleep 1"#,
     );
     assert_same_verdict(&d, "K", "`ec` reached a TERM= display exactly once");
 }
+
+/// An assignment error raised inside a widget must not wedge the shell.
+/// `zerr` redraws the line through `trashzle`/`zrefresh`, which reads the
+/// paramtab; the port raised "assignment to invalid subscript range"
+/// (c:Src/params.c:2911) while still holding the paramtab write lock, so
+/// the redraw blocked on the same thread forever and every later key was
+/// lost. Seen live as `pro<TAB>` hanging under fzf-tab.
+#[test]
+fn an_assignment_error_inside_a_widget_does_not_hang() {
+    assert_same_verdict(
+        &driver(
+            r#"w3(){ local -a a; a=(1 2); a[0]=x }; zle -N w3; bindkey "^G" w3"#,
+            r#"zpty -w -n w $'\C-g'
+sleep 2
+zpty -w -n w 'print ALIVE${:-}OK'
+sleep 1
+zpty -w -n w $'\r'"#,
+            "ALIVEOK",
+        ),
+        "K",
+        "the shell still ran a command after the widget's assignment error",
+    );
+}
