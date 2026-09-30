@@ -9162,7 +9162,16 @@ pub fn partab_get(name: &str, key: &str) -> Option<String> {
     }
     for entry in PARTAB.iter() {
         if entry.name == name {
-            return (entry.getfn)(std::ptr::null_mut(), key).and_then(|p| p.u_str);
+            // c:Src/Modules/parameter.c — a row getfn (`getpmfunction`,
+            // `getpmcommand`, `getpmoption`, …) answers a missing key with a
+            // node carrying `PM_UNSET` (e.g. getfunction, parameter.c:449 `pm->node.flags |=
+            // (PM_UNSET|PM_SPECIAL)`), which `IS_UNSET_VALUE` (params.c:479)
+            // and `issetvar` (params.c:764-765) read as unset. Keep that
+            // distinction: dropping the flag turned a miss into a set empty
+            // value, so `[[ -v functions[nosuch] ]]` was true.
+            return (entry.getfn)(std::ptr::null_mut(), key)
+                .filter(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET == 0)
+                .and_then(|p| p.u_str);
         }
     }
     None

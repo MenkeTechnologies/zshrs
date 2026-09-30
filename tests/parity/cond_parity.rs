@@ -450,6 +450,18 @@ mod var_set_test {
     fn dash_v_unset_false() {
         assert_parity(r#"unset y; [[ -v y ]]; echo $?"#);
     }
+
+    /// c:Src/Modules/parameter.c:449 — a special hash's row getfn answers a
+    /// missing key with a `PM_UNSET` node, which `issetvar` reads as unset.
+    /// zsh-hist's `[[ -v functions[_zsh_highlight] ]] && _zsh_highlight`
+    /// guard ran the call anyway and printed "command not found".
+    #[test]
+    fn dash_v_special_hash_missing_key_is_unset() {
+        assert_parity(
+            r#"f(){ :; }; for e in 'functions[nosuch]' 'functions[f]' 'commands[nosuchcmd]' 'aliases[nosuch]' 'options[nosuch]' 'options[xtrace]' 'builtins[nosuch]' 'builtins[echo]' 'parameters[nosuch]' 'parameters[PATH]'; do [[ -v $e ]]; print -r -- $e $?; done"#,
+        );
+        assert_parity(r#"[[ -v functions[nosuch] ]]; echo $?; print -r -- "[${functions[nosuch]-unset}]""#);
+    }
 }
 
 mod file_tests_extra {
