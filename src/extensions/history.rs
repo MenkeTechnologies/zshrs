@@ -612,6 +612,30 @@ pub fn with_session_engine<R>(f: impl FnOnce(&HistoryEngine) -> R) -> Option<R> 
     })
 }
 
+/// Whether this shell may write `$HISTFILE`. `$HISTFILE` is zsh's file:
+/// zshrs keeps its own history in the SQLite index + text mirror and
+/// writes `$HISTFILE` only in `--zsh` mode, where it stands in for zsh.
+/// Sharing the file let zshrs's writes clobber zsh's history.
+pub fn histfile_writable() -> bool {
+    crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether `path` names the file `$HISTFILE` points at. Compared through
+/// `canonicalize` when both exist, so `~/x` vs a symlinked spelling of
+/// the same file still matches.
+pub fn is_histfile(path: &str) -> bool {
+    let Some(hf) = crate::ported::params::getsparam("HISTFILE").filter(|h| !h.is_empty()) else {
+        return false;
+    };
+    if hf == path {
+        return true;
+    }
+    match (std::fs::canonicalize(&hf), std::fs::canonicalize(path)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// Append an accepted interactive line to the SQLite history index
 /// (+ text mirror) and arm the pending row for `history_sqlite_finish`.
 pub fn history_sqlite_add(line: &str) {

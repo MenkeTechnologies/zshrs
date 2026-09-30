@@ -60722,3 +60722,33 @@ tokenized word (a901d78d39); this block had been missed.
 measures it: element count when the split made an array, otherwise the
 scalar. Test: `tests/zshrs_shell.rs`
 `test_length_of_used_default_word_on_an_array`.
+
+## #1158 — zshrs truncated `$HISTFILE` to its newest 8 MB page on every exit — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+```console
+400k-entry, 22 MB $HISTFILE; setopt sharehistory extendedhistory; SAVEHIST=99999999
+`echo hi`, `exit` in an interactive shell with rc files:
+zsh 5.9.2                 22,288,895 -> 22,288,938 bytes
+zshrs 0.12.66 (before)    22,288,895 ->  8,388,563 bytes (first 250,205 entries gone)
+```
+
+**Root cause.** A normal exit calls `savehistfile(NULL, HFILE_USE_OPTIONS)`
+(c:Src/builtin.c:6015-6019); SHARE_HISTORY adds SKIPOLD, so the SAVEHIST trim
+(c:Src/hist.c:3106-3121) re-reads the file into a pushed history stack and
+rewrites the file from it. `readhistfile` pages only the newest
+`PAGE_BYTES` (#675) and did not exempt the pushed stack, so the rewrite held
+one page. A full write from the paged interactive ring (`fc -W $HISTFILE`)
+cut the file the same way.
+
+**Fix.**
+- `src/ported/hist.rs` `readhistfile` reads the whole file inside a pushed
+  stack; `savehistfile` pages the whole interactive ring in before a full write.
+- zshrs no longer writes `$HISTFILE` outside `--zsh` mode. `$HISTFILE` is zsh's
+  file; zshrs's history lives in the SQLite store and its text mirror
+  (`$ZSHRS_HOME/zshrs_history`), which the startup read hydrates from.
+  `resolve_histfile` returns nothing outside `--zsh` mode, and an explicit
+  `fc -W`/`fc -A` naming `$HISTFILE` warns and writes nothing
+  (`src/extensions/history.rs` `histfile_writable` / `is_histfile`).
+  `--zsh` keeps zsh's behaviour, byte-identical to zsh 5.9.2 on the cases above.

@@ -4216,8 +4216,8 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
             // zshrs's DEFAULT history store is the SQLite index; its
             // extended-history text mirror ($ZSHRS_HOME/zshrs_history,
             // extensions/history.rs::text_path) is kept current by the
-            // per-command interactive sink (history_sqlite_add). With no
-            // $HISTFILE override set, the startup read (init.c:1573)
+            // per-command interactive sink (history_sqlite_add). Outside
+            // --zsh mode (or with no $HISTFILE), the startup read (init.c:1573)
             // hydrates the ring from that mirror so up-arrow recalls
             // previous sessions. READ-side only: savehistfile stays
             // HISTFILE-gated — the engine owns all mirror writes, so a
@@ -4275,8 +4275,18 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     // `read_to_end`'d the entire HISTFILE (635MB / 566k entries) into a
     // String + one histent per line, per shell — multi-second first
     // prompts and hundreds of MB × N shells at fleet start.
+    //
+    // Paging serves the interactive ring only. Inside a pushed history
+    // stack (histsave_stack_pos > 0) the read is savehistfile's SAVEHIST
+    // trim (c:3113-3121): it re-reads the file and REWRITES it from the
+    // ring, so a one-page read there truncated $HISTFILE to its newest
+    // page on every exit, and `arm` repointed the interactive ring's
+    // floor at the temporary stack. Read the whole file, as C does.
     let page_bytes = crate::history_lazy::PAGE_BYTES as i64;
-    let tail_start: i64 = if start_pos == 0 && cur_size > page_bytes {
+    let tail_start: i64 = if start_pos == 0
+        && cur_size > page_bytes
+        && histsave_stack_pos.load(SeqCst) == 0
+    {
         cur_size - page_bytes
     } else {
         start_pos
@@ -4572,6 +4582,13 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
             None => return,
         },
     };
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // An explicit `fc -W/-A $HISTFILE` outside `--zsh` mode would still
+    // write zsh's file; see resolve_histfile.
+    if !crate::history::histfile_writable() && crate::history::is_histfile(&path) {
+        crate::ported::utils::zwarn(&format!("{}: not writing zsh history file", path));
+        return;
+    }
 
     // c:2934-2951 — pick the first entry to write and take the lock.
     let he: Option<i64>;
@@ -4608,6 +4625,15 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
                 std::io::Error::last_os_error()
             ));
             return;
+        }
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // The interactive ring is paged (extensions/history_lazy.rs): only
+        // the newest page is loaded at startup. C's ring always holds the
+        // whole file, so a full write from a partial ring would cut the
+        // file down to that page. Page everything in first. A pushed stack
+        // (histsave_stack_pos > 0) is read whole and never paged.
+        if histsave_stack_pos.load(SeqCst) == 0 && crate::history_lazy::has_older() {
+            crate::history_lazy::page_older_until(0);
         }
         he = ring_oldest(); // c:2950 he = hist_ring->down;
     }
@@ -5844,7 +5870,16 @@ static strin: AtomicI32 = AtomicI32::new(0);
 /// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
 /// when their `fn` arg is NULL. C reads from paramtab; was reading
 /// the OS env which never carries the shell-private HISTFILE param.
+///
+/// Outside `--zsh` mode this returns None: `$HISTFILE` is zsh's file and
+/// zshrs's history lives in the SQLite store
+/// (`extensions/history.rs::histfile_writable`). Every implicit
+/// read/write/lock then takes its HISTFILE-unset path — the startup read
+/// hydrates from the store's text mirror, and nothing writes the file.
 fn resolve_histfile() -> Option<String> {
+    if !crate::history::histfile_writable() {
+        return None;
+    }
     crate::ported::params::getsparam("HISTFILE")
 }
 
