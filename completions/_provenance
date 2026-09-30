@@ -1,0 +1,32 @@
+#compdef provenance
+
+# Value lineage over bytecode execution: `provenance -m NAME` arms
+# tracking, `provenance NAME` prints where its bytes came from.
+#
+# zshrs builtin. Flags mirror builtin_provenance
+# (src/extensions/ext_builtins.rs); keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
+
+_arguments -s -S -C \
+  '-m[start tracking the named parameters or functions]' \
+  '-u[stop tracking the named ones and drop their lineage (-ua: stop tracking everything)]' \
+  '-j[print the lineage as JSON]' \
+  '-l[list every tracked parameter and function]' \
+  '-c[clear every lineage and disarm]' \
+  '-f[act on shell functions instead of parameters]' \
+  '-a[track everything from here on]' \
+  '*: :->name' && return 0
+
+case $state in
+  name)
+    # A bare name reads whichever namespace holds it; -f picks functions.
+    if (( $+opt_args[-f] )); then
+      _functions
+    else
+      _alternative 'parameters:parameter:_parameters' 'functions:function:_functions'
+    fi
+    ;;
+esac
