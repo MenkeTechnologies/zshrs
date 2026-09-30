@@ -27,6 +27,7 @@
 #![allow(non_snake_case)]
 
 use crate::ported::params::getsparam;
+use crate::ported::zsh_h::histent;
 use crate::zle_file_tester::OperationContext;
 use std::ops::Range;
 use std::sync::Mutex;
@@ -197,14 +198,66 @@ pub fn history_commands_newest_first(prefix: &str, limit: usize) -> Vec<String> 
     if !from_db.is_empty() {
         return from_db;
     }
-    // In-memory ring fallback: newest at position 0 (hist.rs:2617-2621), skip
-    // foreign entries like hconsearch does (hist.rs:2614-2631).
+    // In-memory ring fallback: newest at position 0 (hist.rs:2617-2621).
     let ring = crate::ported::hist::hist_ring.lock().unwrap();
-    ring.iter()
-        .filter(|e| !e.node.nam.is_empty() && e.node.nam.starts_with(prefix))
-        .take(limit)
-        .map(|e| e.node.nam.clone())
+    ring_prefix_hits(&ring, prefix, limit)
+        .into_iter()
+        .map(|i| ring[i].node.nam.clone())
         .collect()
+}
+
+/// Ring indices whose text starts with `prefix`, newest first, as found so far
+/// for the line being edited. Every match in `ring[..scanned]` is in `hits`.
+#[derive(Default)]
+struct RingPrefixScan {
+    prefix: String,
+    ring_len: usize,
+    newest_histnum: i64,
+    hits: Vec<usize>,
+    scanned: usize,
+}
+
+/// The scan for the line being edited, kept across keystrokes.
+static RING_PREFIX_SCAN: Mutex<Option<RingPrefixScan>> = Mutex::new(None);
+
+/// The newest `want` ring entries whose text starts with `prefix`, as ring
+/// indices (newest first).
+///
+/// Suggestions are recomputed after every keystroke, and the ring holds the
+/// whole history once it is paged in (900k+ entries). Scanning it afresh per
+/// keystroke cost ~1s per command typed. Typing only extends the prefix, and
+/// every entry matching the longer prefix matched the shorter one, so the
+/// previous hits are filtered and the scan resumes where it stopped: a line
+/// costs at most one pass over the ring. Any other change to the prefix or to
+/// the ring restarts the scan.
+fn ring_prefix_hits(ring: &[histent], prefix: &str, want: usize) -> Vec<usize> {
+    let mut guard = RING_PREFIX_SCAN.lock().unwrap();
+    let scan = guard.get_or_insert_with(Default::default);
+    advance_prefix_scan(scan, ring, prefix, want);
+    scan.hits.iter().take(want).copied().collect()
+}
+
+fn advance_prefix_scan(scan: &mut RingPrefixScan, ring: &[histent], prefix: &str, want: usize) {
+    let newest_histnum = ring.first().map_or(0, |e| e.histnum);
+    let same_ring = scan.ring_len == ring.len() && scan.newest_histnum == newest_histnum;
+    if same_ring && prefix.starts_with(scan.prefix.as_str()) {
+        scan.hits.retain(|&i| ring[i].node.nam.starts_with(prefix));
+    } else {
+        *scan = RingPrefixScan {
+            ring_len: ring.len(),
+            newest_histnum,
+            ..Default::default()
+        };
+    }
+    scan.prefix = prefix.to_owned();
+    // Skip foreign/empty entries like hconsearch does (hist.rs:2614-2631).
+    while scan.hits.len() < want && scan.scanned < ring.len() {
+        let nam = &ring[scan.scanned].node.nam;
+        if !nam.is_empty() && nam.starts_with(prefix) {
+            scan.hits.push(scan.scanned);
+        }
+        scan.scanned += 1;
+    }
 }
 
 /// The last executed command, for the `match_prev_cmd` strategy.
@@ -279,12 +332,15 @@ pub fn compute_autosuggestion(
     // when no neighbor-match exists (the plugin's own code path).
     // Implementing it as a hard filter killed all suggestions for configs
     // like `ZSH_AUTOSUGGEST_STRATEGY=( match_prev_cmd )`.
+    // The plugin looks only at the newest 200 matches
+    // (`history_match_keys[1,200]`, strategies/match_prev_cmd.zsh).
     if let Some(prev) = &prev_cmd {
         let preferred: Option<String> = {
             let ring = crate::ported::hist::hist_ring.lock().unwrap();
-            ring.windows(2)
-                .find(|w| &w[1].node.nam == prev && w[0].node.nam.starts_with(search_string))
-                .map(|w| w[0].node.nam.clone())
+            ring_prefix_hits(&ring, search_string, 200)
+                .into_iter()
+                .find(|&i| ring.get(i + 1).is_some_and(|older| &older.node.nam == prev))
+                .map(|i| ring[i].node.nam.clone())
         };
         if let Some(preferred) = preferred {
             candidates.retain(|c| c != &preferred);
@@ -812,5 +868,62 @@ mod tests {
             is_whole_item_from_history: true,
         };
         assert_eq!(s.suffix(), "tatus");
+    }
+
+    fn ring_of(items: &[&str]) -> Vec<histent> {
+        items
+            .iter()
+            .enumerate()
+            .map(|(i, nam)| histent {
+                node: crate::ported::zsh_h::hashnode {
+                    nam: nam.to_string(),
+                    ..Default::default()
+                },
+                up: None,
+                down: None,
+                zle_text: None,
+                stim: 0,
+                ftim: 0,
+                words: Vec::new(),
+                nwords: 0,
+                histnum: (items.len() - i) as i64,
+            })
+            .collect()
+    }
+
+    fn fresh_hits(ring: &[histent], prefix: &str, want: usize) -> Vec<usize> {
+        let mut scan = RingPrefixScan::default();
+        advance_prefix_scan(&mut scan, ring, prefix, want);
+        scan.hits.into_iter().take(want).collect()
+    }
+
+    // Typing a line keystroke by keystroke must give the same hits as scanning
+    // afresh for each prefix, including after the cap stopped an earlier scan
+    // short and after a backspace.
+    #[test]
+    fn incremental_prefix_scan_matches_fresh_scan() {
+        let ring = ring_of(&[
+            "git status", "ls", "git stash", "gitk", "git status -s", "grep x", "git stash pop",
+            "", "git st", "git show",
+        ]);
+        let mut scan = RingPrefixScan::default();
+        for prefix in ["g", "gi", "git", "git s", "git st", "git sta", "git st", "git stash p", "l"] {
+            for want in [1, 2, 200] {
+                advance_prefix_scan(&mut scan, &ring, prefix, want);
+                let got: Vec<usize> = scan.hits.iter().take(want).copied().collect();
+                assert_eq!(got, fresh_hits(&ring, prefix, want), "prefix {prefix:?} want {want}");
+            }
+        }
+    }
+
+    // A new command at the ring head shifts every index: the scan restarts.
+    #[test]
+    fn prefix_scan_restarts_when_ring_changes() {
+        let mut scan = RingPrefixScan::default();
+        let ring = ring_of(&["git status", "ls"]);
+        advance_prefix_scan(&mut scan, &ring, "git", 10);
+        let grown = ring_of(&["gitk", "git status", "ls"]);
+        advance_prefix_scan(&mut scan, &grown, "git", 10);
+        assert_eq!(scan.hits, vec![0, 1]);
     }
 }

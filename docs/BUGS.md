@@ -60785,3 +60785,30 @@ were memory still referenced but never used.
   `readhistfile` does not hash file entries, so a file entry can share its
   text with a newer interactive entry that owns the key.
 - `raw_input` is removed.
+
+## #1160 — typing lagged ~1s per command once the whole history was in memory: autosuggest rescanned the ring every keystroke — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+```console
+interactive zshrs (debug build), real .zshrc, 914,461-entry history paged in by ${#history}
+                         before     after
+`true` + Enter           0.935 s    0.14-0.18 s
+autosuggest samples      3,776 / 6 s of typing (dominant)    166 / 8 s (~266 keys)
+```
+
+**Root cause.** `update_autosuggestion` runs after every widget
+(`zle_fx::on_post_widget`). With `ZSH_AUTOSUGGEST_STRATEGY=( match_prev_cmd )`,
+`compute_autosuggestion` ran `hist_ring.windows(2).find(..)` over the whole
+ring, and whenever the SQLite prefix query found nothing, `history_commands_newest_first`
+scanned the ring again. After anything paged the full history in (`${#history}`,
+`^R`, deep up-arrow), each keystroke cost two passes over 900k+ entries.
+zsh-autosuggestions' own `match_prev_cmd` only checks the newest 200 matches
+(`history_match_keys[1,200]`); the port had no cap.
+
+**Fix** (`src/extensions/autosuggest.rs`). One newest-first prefix scan of the
+ring is kept across keystrokes of a line (`ring_prefix_hits`). Typing extends the
+prefix, so earlier hits are filtered and the scan resumes where it stopped: a line
+costs at most one pass over the ring. `match_prev_cmd` checks the first 200 hits,
+as the plugin does, and the ring fallback uses the same scan. Unit tests compare
+the incremental scan against a fresh scan for every prefix of a typed line.
