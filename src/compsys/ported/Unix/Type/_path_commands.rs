@@ -479,7 +479,10 @@ fn add_path_dirs(args: &[String]) -> bool {
         let mut here: Vec<String> = match std::fs::read_dir(p) {
             Ok(rd) => rd
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
+                // `(/)` tests the entry itself, lstat-style: a symlink to a
+                // directory does not match. `file_type()` is exactly that and
+                // comes from readdir's d_type, so no stat per PATH entry.
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
                 .map(|e| e.file_name().to_string_lossy().into_owned())
                 .collect(),
             Err(_) => Vec::new(),
