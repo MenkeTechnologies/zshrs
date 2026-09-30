@@ -3063,11 +3063,13 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
 /// 5.9.2 rule, matching `src/zsh/Src/Modules/zutil.c:2137`).
 ///
 /// Independent of this switch, zshrs keeps the *unambiguous* halves of
-/// `88d51a2400`: flag STACKING (`-DF` == `-D -F`), CUDDLED optargs (`-nprog`),
-/// and the `-n NAME` flag itself.  5.9.2 read `-DF` / `-n` as descriptions;
-/// a word whose every letter is one of zparseopts's own flags cannot be a
-/// GNU-style long spec that any real script would write, and
-/// `~/forkedRepos/zsh/Functions/Misc/zgetopt:22` needs `-n`.
+/// `88d51a2400`: flag STACKING (`-DF` == `-D -F`) and the `-n NAME` flag
+/// itself.  5.9.2 read `-DF` / `-n` as descriptions; a word whose every letter
+/// is one of zparseopts's own flags cannot be a GNU-style long spec that any
+/// real script would write, and `~/forkedRepos/zsh/Functions/Misc/zgetopt:22`
+/// needs `-n`.  CUDDLED optargs stay 5.9.2's: `-aNAME` / `-ANAME` (5.9.2 had
+/// those), but not `-nprog` / `-vNAME`: 5.9.2 has no `-n` or `-v`, so those
+/// words are the long specs `-nprog` / `-vNAME` there.
 const LONG_SPEC_NEEDS_GUARD: bool = false;
 
 /// Direct port of `bin_zformat(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:954`.
@@ -3273,6 +3275,17 @@ pub fn bin_zparseopts(
                     bad = Some(c);
                     break;
                 };
+                // `-n` and `-v` exist only in the 5.9.999 revision: 5.9.2 has
+                // neither (`zparseopts -v arr x` in 5.9.2 is "no default array
+                // defined: -v"), so every `-n…` / `-v…` word reaches the
+                // `default:` arm and is a description (c:1859-1863). Cuddled
+                // text after the letter (`-num+:=N`, `-verbose=V`) is therefore
+                // a long spec, not the flag with an argument; only the bare
+                // word (`-n NAME`, as zgetopt:22 writes it) is the flag.
+                if matches!(c, b'n' | b'v') && j + 1 < word.len() && !LONG_SPEC_NEEDS_GUARD {
+                    bad = Some(c);
+                    break;
+                }
                 // c:Src/builtin.c:346 — `ops.ind[*arg] = sense ? 1 : 2;`
                 // (sense is always 1 here: zparseopts is not BINF_PLUSOPTS).
                 ops.ind[c as usize] = 1;

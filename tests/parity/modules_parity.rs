@@ -1464,6 +1464,30 @@ print -- "verbose=${verbose[1]:-unset}"
 print -- "name=${name_[2]:-unset}""#,
         ));
     }
+
+    /// An unguarded long spec whose name starts with `n` or `v` is a spec in
+    /// 5.9.2, which has no `-n`/`-v` flags. Reading `-num…` as `-n um…` left
+    /// every array empty.
+    #[test]
+    fn zparseopts_long_spec_starting_with_n_or_v() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"set -- --num 5 --num 6; zparseopts -num+:=N; print -r -- "N=(${N[*]})"
+set -- --name x --verbose; zparseopts -name:=M -verbose=V; print -r -- "M=(${M[*]}) V=(${V[*]})"
+set -- --v; zparseopts -v+=W; print -r -- "W=(${W[*]})""#,
+        ));
+    }
+
+    /// Cuddled `-aNAME` is 5.9.2's default-array flag, so `-all=V` is not a
+    /// spec there: it sets the default array to `ll=V` and has no specs left.
+    #[test]
+    fn zparseopts_cuddled_default_array() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"set -- -x; zparseopts -aD x; print -r -- "D=$D"
+set -- --all; zparseopts -all=V 2>&1; print -r -- "rc=$? V=(${V[*]})""#,
+        ));
+    }
 }
 
 // ───────────────────────── zsh/hlgroup ─────────────────────────
