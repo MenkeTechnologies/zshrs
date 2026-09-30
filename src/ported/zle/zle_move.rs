@@ -1081,6 +1081,10 @@ pub fn vifindchar(repeat: i32) -> i32 {
     } else if tail < 0 {
         deccs();
     }
+    // c:830-831 — a forward find is inclusive under an operator (`df.`).
+    if VFINDDIR.load(Ordering::SeqCst) == 1 && VIRANGEFLAG.load(Ordering::SeqCst) != 0 {
+        inccs();
+    }
     0
 }
 

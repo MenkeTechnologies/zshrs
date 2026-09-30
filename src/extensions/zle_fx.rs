@@ -384,6 +384,14 @@ pub fn on_pre_widget(widget: &str) -> bool {
             if line.is_empty() && matches!(widget, "up-line-or-history" | "up-history") {
                 return false;
             }
+            // fish up-or-search.fish: a search already running continues;
+            // otherwise only the TOP line of a multi-line command starts one,
+            // and any other line is a plain move up (`commandline -L` != 1 →
+            // up-line). The bound widget does that move.
+            let before_cursor: String = line.chars().take(current_cursor()).collect();
+            if !with_history_search(|hs| hs.active()) && before_cursor.contains('\n') {
+                return false;
+            }
             let placed = with_history_search(|hs| {
                 if !hs.active() {
                     hs.reset_to_mode(line.clone(), mode, 0);
@@ -407,6 +415,9 @@ pub fn on_pre_widget(widget: &str) -> bool {
             if !active {
                 return false; // stock down-arrow behavior
             }
+            // fish down-or-search.fish is keyed on the bottom line the same
+            // way; with no search running the bound widget already moves.
+            // A search that is running continues from any line, as there.
             let placed = with_history_search(|hs| {
                 if hs.move_in_direction(SearchDirection::Forward) || hs.is_at_present() {
                     Some(hs.current_result().to_owned())

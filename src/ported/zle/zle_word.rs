@@ -428,11 +428,7 @@ pub fn viforwardblankwordend(args: &[String]) -> i32 {
             let pos = ZLECS.load(std::sync::atomic::Ordering::SeqCst) + 1; // c:178 INCPOS
             if pos > ZLELL.load(std::sync::atomic::Ordering::SeqCst)
                 || !zc_inblank(
-                    ZLELINE.lock().unwrap()[pos.min(
-                        ZLELL
-                            .load(std::sync::atomic::Ordering::SeqCst)
-                            .saturating_sub(1),
-                    )],
+                    ZLELINE.lock().unwrap().get(pos).copied().unwrap_or('\0'),
                 )
             {
                 break;
@@ -447,11 +443,7 @@ pub fn viforwardblankwordend(args: &[String]) -> i32 {
             let pos = ZLECS.load(std::sync::atomic::Ordering::SeqCst) + 1; // c:185 INCPOS
             if pos > ZLELL.load(std::sync::atomic::Ordering::SeqCst)
                 || zc_inblank(
-                    ZLELINE.lock().unwrap()[pos.min(
-                        ZLELL
-                            .load(std::sync::atomic::Ordering::SeqCst)
-                            .saturating_sub(1),
-                    )],
+                    ZLELINE.lock().unwrap().get(pos).copied().unwrap_or('\0'),
                 )
             {
                 break;
@@ -461,10 +453,10 @@ pub fn viforwardblankwordend(args: &[String]) -> i32 {
     }
     if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
         != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-        && false
+        && crate::ported::zle::zle_vi::VIRANGEFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0
     {
-        // c:198
-        ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:198 INCCS
+        // c:191 `if (zlecs != zlell && virangeflag) INCCS();`
+        ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:192 INCCS
     }
     0
 }
@@ -511,11 +503,7 @@ pub fn viforwardwordend(args: &[String]) -> i32 {
             let pos = ZLECS.load(std::sync::atomic::Ordering::SeqCst) + 1; // c:213 INCPOS
             if pos > ZLELL.load(std::sync::atomic::Ordering::SeqCst)
                 || !zc_inblank(
-                    ZLELINE.lock().unwrap()[pos.min(
-                        ZLELL
-                            .load(std::sync::atomic::Ordering::SeqCst)
-                            .saturating_sub(1),
-                    )],
+                    ZLELINE.lock().unwrap().get(pos).copied().unwrap_or('\0'),
                 )
             {
                 break;
@@ -527,11 +515,8 @@ pub fn viforwardwordend(args: &[String]) -> i32 {
         {
             // c:218
             let mut pos = ZLECS.load(std::sync::atomic::Ordering::SeqCst) + 1; // c:221 INCPOS
-            let cc = if pos < ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
-                wordclass(ZLELINE.lock().unwrap()[pos])
-            } else {
-                0
-            }; // c:222
+            // c:222 — `zleline[zlell]` is the NUL terminator in C.
+            let cc = wordclass(ZLELINE.lock().unwrap().get(pos).copied().unwrap_or('\0')); // c:222
             loop {
                 // c:223
                 ZLECS.store(
@@ -546,11 +531,7 @@ pub fn viforwardwordend(args: &[String]) -> i32 {
                 pos += 1; // c:227 INCPOS
                 if pos > ZLELL.load(std::sync::atomic::Ordering::SeqCst)
                     || wordclass(
-                        ZLELINE.lock().unwrap()[pos.min(
-                            ZLELL
-                                .load(std::sync::atomic::Ordering::SeqCst)
-                                .saturating_sub(1),
-                        )],
+                        ZLELINE.lock().unwrap().get(pos).copied().unwrap_or('\0'),
                     ) != cc
                 {
                     break; // c:228-229
@@ -560,10 +541,10 @@ pub fn viforwardwordend(args: &[String]) -> i32 {
     }
     if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
         != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-        && false
+        && crate::ported::zle::zle_vi::VIRANGEFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0
     {
-        // c:240
-        ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:240 INCCS
+        // c:233 `if (zlecs != zlell && virangeflag) INCCS();`
+        ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:234 INCCS
     }
     0
 }

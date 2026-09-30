@@ -60908,3 +60908,41 @@ extents match zsh 5.9.2 for `vll`, `bvll` and `V`.
 **Open.** A `layer=N` clause in a `$region_highlight` entry is still dropped
 by `set_region_highlight`, so every user entry takes layer 10; paste (15) and
 isearch (20) are not painted by `compute_render_attrs`.
+
+## #1164 — vi on a multi-line buffer: `k` did nothing, `j` jumped to the last line; `de`/`dE`/`df` one short — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+```console
+buffer 'aaa one (x)\nbbb two\nccc three', cursor at end, vicmd, k/j = up/down-line-or-history
+keys   zsh 5.9.2                           zshrs (before)
+k      CUR=14 (line 2)                     CUR=24 (did not move)
+kkj    CUR=14                              CUR=24
+'ab cd ef gh', cursor on c:  de → 'ab  ef gh' (zsh)   'ab d ef gh' (zshrs)
+```
+
+**Root cause.**
+- The native history search (`extensions/zle_fx.rs`, a port of fish's
+  up-or-search) took over `up-line-or-history` whenever the line was
+  non-empty. fish's `up-or-search.fish` searches only from the top line of a
+  multi-line command and otherwise moves up a line. On a middle line `k`
+  started a search that matched nothing; the search stayed active, so the next
+  `j` walked it back to the present and re-placed the buffer with the cursor
+  at the end.
+- `viforwardwordend` and `viforwardblankwordend` had C's
+  `if (zlecs != zlell && virangeflag) INCCS();` (c:Src/Zle/zle_word.c:191,
+  :233) ported as `&& false`, so `e`/`E` were never inclusive under an
+  operator. Both also read `zleline[zlell - 1]` where C reads the NUL
+  terminator at `zleline[zlell]`.
+- `vifindchar` dropped c:Src/Zle/zle_move.c:830-831
+  (`if (vfinddir == 1 && virangeflag) INCCS();`), so `df`/`dt` were one short.
+
+**Fix.** The native up-search starts only on the top line (or continues a
+running search); `e`/`E` and forward finds are inclusive under an operator;
+the word-end scans read NUL past the end. 89 vi key sequences on a multi-line
+buffer (motions, operators, text objects, visual, undo/redo, repeat, put,
+counts) match zsh 5.9.2 with native effects on and off.
+
+**By design, not changed.** With native effects on, `k` on the top line of a
+non-empty buffer searches history for the buffer as a substring instead of
+stepping to the previous entry, as fish and zsh-history-substring-search do.
