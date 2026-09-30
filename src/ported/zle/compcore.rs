@@ -3872,17 +3872,13 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
         // list (`git diff --diff-filter=<TAB>` listed `b -- pairing broken`
         // twice).
         //
-        // `subst::assoc_get` IS this port's `gsu.h->getfn(pm)`: it rebuilds
-        // zsh's bucket layout to recover the scan order (`subst.rs:28164-28172`)
-        // and is exactly what `getvaluearr` feeds to `paramvalarr`
-        // (`params.rs:1480-1481`). Route the keys through that same pair.
-        crate::ported::subst::assoc_get(name)
-            .map(|ht| {
-                crate::ported::params::paramvalarr(
-                    &ht,
-                    crate::ported::zsh_h::SCANPM_WANTKEYS as i32,
-                )
-            })
+        // `subst::assoc_keys` is the keys-only read `${(k)NAME}` itself uses:
+        // it rebuilds zsh's bucket layout to recover the scan order, and for
+        // a magic hash runs the scanfn with SCANPM_WANTKEYS alone (c:2029).
+        // Reading through `assoc_get` asked for values too, so
+        // `compadd -k functions` deparsed every function body only to drop
+        // it (parameter.c:484-486 skips the body for a keys-only scan).
+        crate::ported::subst::assoc_keys(name)
             .filter(|k| !k.is_empty())
             // A magic hash (`commands`, `builtins`, `functions`, …) has no
             // `paramtab_hashed_storage` row at all, so `assoc_get` yields

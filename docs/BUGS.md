@@ -60812,3 +60812,36 @@ prefix, so earlier hits are filtered and the scan resumes where it stopped: a li
 costs at most one pass over the ring. `match_prev_cmd` checks the first 200 hits,
 as the plugin does, and the ring fallback uses the same scan. Unit tests compare
 the incremental scan against a fresh scan for every prefix of a typed line.
+
+## #1161 — `ls<TAB>` slow: `compadd -k` built every hash value, and `SAVEHIST=0` sessions filled the history store — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+```console
+interactive zshrs (debug build), zpwr config, `ls<TAB>` until the list draws
+history store as found (914,757 entries, 227 MB mirror)   first 3479 ms, then 1607 ms
+same config, 171,344-entry mirror                          first 1641 ms, then  927 ms
+zsh 5.9.2 (release)                                        ~190 ms
+```
+
+zpwr's `_parameters` previews every parameter with `${${(P)i}:0:100}`, so each
+command-position TAB expands all of `$history`. That cost scales with the
+history store, and about 90% of the store was PTY-harness input: e.g. 208,724
+copies of one `v='a b c'…` fuzzer line, `PS1="RDY> "`, `SAVEHIST=0`.
+
+**Root cause.**
+- `get_data_arr` (`compadd -k NAME`) read keys through `assoc_get`, which scans
+  a magic hash with `SCANPM_WANTKEYS|SCANPM_WANTVALS`. C passes
+  `SCANPM_WANTKEYS` only (c:Src/Zle/compcore.c:2028-2030), and
+  `scanfunctions` then skips the body (c:Src/Modules/parameter.c:484-486).
+  `compadd -k 'functions'` deparsed every function body and dropped it.
+- The SQLite store and text mirror sink in `hend` ignored `SAVEHIST`. A
+  session that sets `SAVEHIST=0` (zsh: save nothing) was still recorded, so
+  every harness that did that wrote into `$ZSHRS_HOME`.
+
+**Fix.**
+- `get_data_arr` reads keys through `subst::assoc_keys`, the keys-only read
+  `${(k)NAME}` uses (same bucket order, `SCANPM_WANTKEYS` alone).
+- `hend` writes to the store only when `SAVEHIST > 0`.
+
+Existing polluted entries are not removed by this fix.

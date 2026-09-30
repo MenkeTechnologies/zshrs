@@ -2436,7 +2436,12 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
         // this fn is untouched (user HISTFILE/SAVEHIST overrides keep
         // full zsh-compat behavior alongside the index). Duration/exit
         // land later via history_sqlite_finish (preprompt).
-        if newflags == 0 && crate::ported::zsh_h::interact() {
+        // SAVEHIST=0 means "save nothing" (zshparam), so a session that
+        // sets it — every PTY harness does — stays out of the store.
+        if newflags == 0
+            && crate::ported::zsh_h::interact()
+            && savehistsiz.load(SeqCst) > 0
+        {
             crate::history::history_sqlite_add(&text);
         }
     }

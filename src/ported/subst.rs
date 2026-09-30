@@ -29571,7 +29571,7 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
 /// load, which made a p10k load spend seconds re-deparsing bodies (and
 /// spewing spurious parse warnings). c:Src/subst.c drives keys-only reads
 /// through the scanfn with SCANPM_WANTKEYS and never calls the getfn.
-fn assoc_keys(name: &str) -> Option<Vec<String>> {
+pub(crate) fn assoc_keys(name: &str) -> Option<Vec<String>> {
     let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
