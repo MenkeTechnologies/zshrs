@@ -405,20 +405,14 @@ fn calc_timeout(do_keytmout: i64) -> ztmout {
 
 /// Read one byte from the input queue (or stdin) with optional
 /// keymap-timeout semantics.
-/// Port of `raw_getbyte(long do_keytmout, char *cptr, int full)` from Src/Zle/zle_main.c:506. The C
-/// source consults `kungetct`/`kungetbuf` (our `unget_buf`) first,
-/// then drops to a poll/select wait against SHTTY honouring
+/// Port of `raw_getbyte(long do_keytmout, char *cptr, int full)` from Src/Zle/zle_main.c:506.
+/// Reads the terminal only; pushed-back bytes are served by `getbyte`
+/// (c:880-881) before it calls here. A poll/select wait against SHTTY honouring
 /// `do_keytmout * KEYTIMEOUT`. Returns None on timeout/EOF — the
 /// C source uses EOF as the same sentinel.
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
 pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
     use std::os::unix::io::AsRawFd;
-
-    // c:541 — drain the unget buffer first.
-    if let Some(b) = KUNGETBUF.lock().unwrap().pop_front() {
-        RAW_GETBYTE_R.store(1, Ordering::SeqCst); // c:562 — `return 1`
-        return Some(b);
-    }
 
     let mut timeout = calc_timeout(do_keytmout);
     let have_timeout = timeout.tp != ztmouttp::ZTM_NONE;
@@ -881,7 +875,12 @@ pub fn getbyte(do_keytmout: i64) -> Option<u8> {
     // c:865 — `for (;;)`: the read is retried for IGNOREEOF and EINTR, so
     // the signal-queue dance belongs INSIDE the loop, as in C.
     let mut icnt = 0i32; // c:866 — bounds the IGNOREEOF retries
-    let b = loop {
+    // c:880-881 — `if (kungetct) ret = kungetbuf[--kungetct]; else { … }`:
+    // a pushed-back byte (`zle -U`, ungetbytes) is returned as it is. Only a
+    // byte read from the terminal goes through the \r/\n exchange below.
+    let ungot = KUNGETBUF.lock().unwrap().pop_front();
+    let from_tty = ungot.is_none();
+    let b = if let Some(u) = ungot { u } else { loop {
         let q = crate::ported::signals_h::queue_signal_level();
         crate::ported::signals_h::dont_queue_signals();
         let raw = raw_getbyte(do_keytmout);
@@ -958,13 +957,12 @@ pub fn getbyte(do_keytmout: i64) -> Option<u8> {
         }
         LASTCHAR.store(-1, SeqCst); // c:936 — zexit returns from an exit hook
         return None;
-    };
+    } };
 
-    // Handle newline/carriage return translation
-    // (The C code swaps \n and \r for typeahead handling)
-    let b = if b == b'\n' {
+    // c:940-943 — undo the exchange of \n and \r determined by zsetterm().
+    let b = if from_tty && b == b'\n' {
         b'\r'
-    } else if b == b'\r' {
+    } else if from_tty && b == b'\r' {
         b'\n'
     } else {
         b

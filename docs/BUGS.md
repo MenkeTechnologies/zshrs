@@ -60946,3 +60946,30 @@ counts) match zsh 5.9.2 with native effects on and off.
 **By design, not changed.** With native effects on, `k` on the top line of a
 non-empty buffer searches history for the buffer as a substring instead of
 stepping to the previous entry, as fish and zsh-history-substring-search do.
+
+## #1165 — a multi-line paste froze ZLE under `bracketed-paste-magic`; j/k and every later key were swallowed — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+```console
+zle -N bracketed-paste bracketed-paste-magic   (zpwr does this)
+paste 'print A1\nprint B2\nprint C3', ESC, k k j j
+zsh 5.9.2        CUR 25 → 16 → 7 → 16 → 25
+zshrs (before)   no output; every key after the paste is consumed; shell idle in poll
+```
+
+**Root cause.** `bracketed-paste-magic` pushes the pasted text back with
+`zle -U` and consumes it with `while [[ -n $PASTED ]] && zle .read-command;
+do PASTED=${PASTED#$KEYS}`. C's `getbyte` returns a pushed-back byte as it is
+(c:Src/Zle/zle_main.c:880-881) and applies the `\r`/`\n` exchange only to a
+byte read from the terminal (c:940-943). The port drained the unget buffer
+inside `raw_getbyte`, so every pushed-back `\n` came out of `read-command` as
+`\r`. `${PASTED#$KEYS}` then never matched, `$PASTED` never emptied, and the
+next `read-command` blocked on the terminal, taking every key typed after the
+paste. A paste without a newline was unaffected.
+
+**Fix.** `getbyte` serves the unget buffer itself and exchanges `\r`/`\n`
+only for terminal bytes; `raw_getbyte` reads the terminal only, as in C.
+Multi-line pastes through `bracketed-paste-magic`, and `k`/`j`/`dd`/`yyp` on
+the pasted buffer, match zsh 5.9.2 with the minimal harness rc and with the
+full zpwr config.
