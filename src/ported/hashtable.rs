@@ -3413,10 +3413,18 @@ pub fn freehistdata(idx: usize, unlink: i32) {
     }; // c:1461 if (!he) return
     let nam = he.node.nam.clone();
     let flags = he.node.flags as u32;
+    let histnum = he.histnum as i32;
     if (flags & (HIST_DUP | HIST_TMPSTORE)) == 0 {
         // c:1467
         let mut tab = histtab_lock().write().expect("histtab poisoned"); // c:1468 removehashnode(histtab, ...)
-        tab.remove(&nam);
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // C removes by name: every non-DUP entry is the hashed node for its
+        // text. readhistfile here does not hash file entries, so an evicted
+        // file entry can share its text with a newer interactive entry that
+        // owns the key. Remove the key only when it points at `he`.
+        if tab.get(&nam) == Some(&histnum) {
+            tab.remove(&nam);
+        }
     }
     // c:1471-1473 — `zsfree(name); if (nwords) zfree(words, ...)`. Rust
     // String/Vec drop handles both; only the unlink step needs explicit

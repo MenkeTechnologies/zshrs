@@ -172,9 +172,6 @@ thread_local! {
     /// single inbufptr-decrement which can't model arbitrary-length
     /// pushback from a different buffer.
     static pushback: RefCell<VecDeque<char>> = const { RefCell::new(VecDeque::new()) };
-
-    /// Raw-input accumulator for history. zshrs-specific.
-    static raw_input: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Allocate a fresh SHIN buffer.
@@ -385,7 +382,6 @@ pub fn ingetc() -> Option<char> {
     }
 
     if let Some(c) = pushback.with(|p| p.borrow_mut().pop_front()) {
-        raw_input.with(|r| r.borrow_mut().push(c));
         return Some(c);
     }
 
@@ -448,7 +444,6 @@ pub fn ingetc() -> Option<char> {
             if (inp_lineno || !is_strin) && c == '\n' {
                 lineno.with(|l| l.set(l.get() + 1));
             }
-            raw_input.with(|r| r.borrow_mut().push(c));
             return Some(c);
         }
 
@@ -754,9 +749,6 @@ pub fn inungetc(c: char) {
         if (inp_lineno || !is_strin) && c == '\n' {
             lineno.with(|l| l.set(l.get().saturating_sub(1)));
         }
-        raw_input.with(|r| {
-            r.borrow_mut().pop();
-        });
     } else {
         pushback.with(|p| p.borrow_mut().push_front(c));
     }
@@ -1233,7 +1225,6 @@ mod tests {
         super::lineno.with(|l| l.set(1));
         super::instack.with(|st| st.borrow_mut().clear());
         super::pushback.with(|p| p.borrow_mut().clear());
-        super::raw_input.with(|r| r.borrow_mut().clear());
     }
 
     #[test]

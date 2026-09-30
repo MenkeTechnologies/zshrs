@@ -60752,3 +60752,36 @@ cut the file the same way.
   `fc -W`/`fc -A` naming `$HISTFILE` warns and writes nothing
   (`src/extensions/history.rs` `histfile_writable` / `is_histfile`).
   `--zsh` keeps zsh's behaviour, byte-identical to zsh 5.9.2 on the cases above.
+
+## #1159 — heap grew with every command: stale `histtab` keys and a dead input accumulator — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+```console
+interactive zshrs, HISTSIZE=10, `echo cmdN $(( N * 2 )) xN` x N (heap(1) totals)
+before   300 cmds 2,591,392 B   1,800 cmds 5,308,912 B
+after    300 cmds 2,022,992 B   1,800 cmds 2,968,672 B   4,800 cmds 4,251,232 B
+```
+
+The remaining growth after the fix is SQLite's page cache for the history
+index (`mallocWithAlarm`), which slows as it fills and is capped by SQLite's
+default `cache_size`. leaks(1) reports 0 leaks before and after; both defects
+were memory still referenced but never used.
+
+**Root cause.**
+- Ring eviction (`prepnexthistent` c:Src/hist.c:1410, `resizehistents`
+  c:2626-2629) dropped the entry from `hist_ring` but never ran
+  `freehistdata`, which removes its `histtab` key (c:Src/hashtable.c:1467-1468).
+  Every unique command text stayed in `histtab` for the life of the shell,
+  whatever `HISTSIZE` was.
+- `src/ported/input.rs` kept a zshrs-only thread-local `raw_input` string that
+  `ingetc` appended every character to: rc files, every command line, and
+  every syntax-highlight re-lex on each keystroke. Nothing read it; its
+  consumer `take_raw_input` had already been removed.
+
+**Fix.**
+- Both eviction sites call `freehistdata(idx, 0)` before dropping the entry.
+  `freehistdata` removes the key only when it points at the evicted entry:
+  `readhistfile` does not hash file entries, so a file entry can share its
+  text with a newer interactive entry that owns the key.
+- `raw_input` is removed.

@@ -2030,6 +2030,13 @@ pub fn prepnexthistent() -> i64 {
     let cap = histsiz.load(SeqCst);
     if cap > 0 && histlinect.load(SeqCst) >= cap {
         if let Some(oldest) = ring_oldest() {
+            // c:1410 — `freehistdata(hist_ring, 0)`: drop the evicted
+            // entry's histtab key. Without it every unique command text
+            // stayed in histtab for the life of the shell.
+            let idx = hist_ring.lock().unwrap().iter().position(|h| h.histnum == oldest);
+            if let Some(idx) = idx {
+                crate::ported::hashtable::freehistdata(idx, 0);
+            }
             // Drop oldest from ring
             let mut ring = hist_ring.lock().unwrap();
             ring.retain(|h| h.histnum != oldest);
@@ -4158,8 +4165,14 @@ pub fn resizehistents() {
         return;
     }
     let excess = (ct - cap) as usize;
+    let len = hist_ring.lock().unwrap().len();
+    let keep = len.saturating_sub(excess);
+    // c:2626-2629 — each `freehistnode` runs freehistdata, which drops
+    // the entry's histtab key; do that before cutting the tail.
+    for idx in keep..len {
+        crate::ported::hashtable::freehistdata(idx, 0);
+    }
     let mut ring = hist_ring.lock().unwrap();
-    let keep = ring.len().saturating_sub(excess);
     ring.truncate(keep);
     histlinect.store(cap, SeqCst);
 }
@@ -8884,5 +8897,45 @@ mod subst_modifier_tests {
     fn substfailed_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = substfailed();
+    }
+
+    /// Ring eviction must drop the evicted entry's histtab key
+    /// (c:1410 `freehistdata(hist_ring, 0)`, c:2626-2629 `freehistnode`),
+    /// and must leave a key that belongs to a newer entry alone.
+    #[test]
+    fn eviction_unhashes_evicted_entry_only() {
+        use crate::ported::hashtable::{addhistnode, histtab_lock};
+        let _g = crate::test_util::global_state_lock();
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let saved_ring = std::mem::take(&mut *hist_ring.lock().unwrap());
+        let saved_tab = std::mem::take(&mut *histtab_lock().write().unwrap());
+        let saved = (histsiz.load(SeqCst), histlinect.load(SeqCst), curhist.load(SeqCst));
+
+        // prepnexthistent: ring full at histsiz=2, oldest "a" is evicted.
+        *hist_ring.lock().unwrap() = vec![make_histent(2, "b".into()), make_histent(1, "a".into())];
+        addhistnode("a", 1);
+        addhistnode("b", 2);
+        histsiz.store(2, SeqCst);
+        histlinect.store(2, SeqCst);
+        curhist.store(2, SeqCst);
+        prepnexthistent();
+        assert!(histtab_lock().read().unwrap().get("a").is_none(), "evicted key kept");
+        assert_eq!(histtab_lock().read().unwrap().get("b"), Some(&2));
+
+        // resizehistents: evicted file entry 4 shares text with hashed entry 5.
+        histtab_lock().write().unwrap().clear();
+        *hist_ring.lock().unwrap() = vec![make_histent(5, "x".into()), make_histent(4, "x".into())];
+        addhistnode("x", 5);
+        histsiz.store(1, SeqCst);
+        histlinect.store(2, SeqCst);
+        resizehistents();
+        assert_eq!(hist_ring.lock().unwrap().len(), 1);
+        assert_eq!(histtab_lock().read().unwrap().get("x"), Some(&5), "newer entry's key dropped");
+
+        *hist_ring.lock().unwrap() = saved_ring;
+        *histtab_lock().write().unwrap() = saved_tab;
+        histsiz.store(saved.0, SeqCst);
+        histlinect.store(saved.1, SeqCst);
+        curhist.store(saved.2, SeqCst);
     }
 }
