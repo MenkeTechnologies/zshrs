@@ -60878,3 +60878,33 @@ from `scripts.rkyv` without re-parsing, so the parse-time RCQUOTES record that
 `funcdef_lex_pin` uses is missing: `setopt rcquotes; f() { print 'it''s' }`
 prints `'it''s'` on the first run (as zsh does) and `'it's'` on the second.
 Reproduces with `deparse.rkyv` deleted.
+
+## #1163 — vi `v`/`V` selection did not show over syntax-highlighted characters — fixed
+
+**Status:** `fixed` 2026-09-30.
+
+```console
+bindkey -v; type `echo hello world`, ESC, `0w`, `b`, `v`, `l`, `l`, ^L
+zsh 5.9.2        P> <7>ech<27>o hello world
+zshrs (before)   P> <32>echo<39> hello world            (no standout)
+zshrs (after)    P> <7><32>ech<27>o<39> hello world
+```
+
+**Root cause.** `compute_render_attrs` painted the visual region first and
+then let the native syntax highlighter and `$region_highlight` overwrite the
+cell. C builds each cell layer by layer (c:Src/Zle/zle_refresh.c:1212-1244):
+user entries and the suffix are layer 10, paste 15, region and isearch 20
+(c:347-350, c:544), and each match is merged with `mixattrs`, not replaced.
+The region, at layer 20, lands on top of the syntax colours. The port also
+skipped the region bounds of c:1050-1057: `V` widens to whole lines
+(`findbol`/`findeol`), and charwise `v` in vicmd mode includes the character
+under the cursor.
+
+**Fix.** Overlays are applied in C's layer order and merged: suffix, native
+highlighting, `$region_highlight` (layer 10), then the region (layer 20).
+`V` widens to line bounds and vicmd `v` extends the end by one. Selection
+extents match zsh 5.9.2 for `vll`, `bvll` and `V`.
+
+**Open.** A `layer=N` clause in a `$region_highlight` entry is still dropped
+by `set_region_highlight`, so every user entry takes layer 10; paste (15) and
+isearch (20) are not painted by `compute_render_attrs`.

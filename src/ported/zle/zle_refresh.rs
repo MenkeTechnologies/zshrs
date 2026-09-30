@@ -5154,78 +5154,42 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
     let buf_len = pre_len + ZLELINE.lock().unwrap().len() + post_len;
     let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
 
-    // Visual-region attr: prefer the user's `region:` setting from
-    // $zle_highlight (populated by zle_set_highlight); fall back to
-    // standout per zsh's default at zle_refresh.c:397.
-    let visual_attr = highlight()
-        .lock()
-        .unwrap()
-        .category_attrs
-        .get(&HighlightCategory::Region)
-        .copied()
-        .unwrap_or(TextAttr {
-            standout: true,
-            ..TextAttr::default()
+    // c:1212-1244 — each cell's attribute is built layer by layer, lowest
+    // first, and within one layer in `region_highlights[]` order: the
+    // special entries (0=region, 1=isearch, 2=suffix, 3=paste) and then the
+    // user's `$region_highlight` entries. Each match is folded in with
+    // `base_attr = mixattrs(rhp->atr, rhp->atrmask, base_attr)`, so a later
+    // layer adds to the cell rather than replacing it. Default layers
+    // (c:347-350, c:544): user entries 10, suffix 10, paste 15, region 20,
+    // isearch 20. The visual region therefore lands on top of the syntax
+    // colours, keeping the colour it does not itself set.
+    //
+    // `mixattrs` (prompt.c:1802) replaces only what the overlay's mask
+    // names. `TextAttr` has no mask; a set flag or a `Some` colour is the
+    // overlay naming that attribute, so it is merged exactly that way.
+    let mix = |slot: &mut Option<TextAttr>, over: TextAttr| {
+        let base = slot.unwrap_or_default();
+        *slot = Some(TextAttr {
+            bold: over.bold || base.bold,
+            underline: over.underline || base.underline,
+            standout: over.standout || base.standout,
+            blink: over.blink || base.blink,
+            fg_color: over.fg_color.or(base.fg_color),
+            bg_color: over.bg_color.or(base.bg_color),
         });
+    };
+    let paint = |attrs: &mut Vec<Option<TextAttr>>, start: usize, end: usize, over: TextAttr| {
+        for slot in attrs.iter_mut().take(end.min(buf_len)).skip(start.min(buf_len)) {
+            mix(slot, over);
+        }
+    };
 
-    if REGION_ACTIVE.load(Ordering::SeqCst) != 0 {
-        let (lo, hi) = if MARK.load(Ordering::SeqCst) <= ZLECS.load(Ordering::SeqCst) {
-            (MARK.load(Ordering::SeqCst), ZLECS.load(Ordering::SeqCst))
-        } else {
-            (ZLECS.load(Ordering::SeqCst), MARK.load(Ordering::SeqCst))
-        };
-        // MARK/ZLECS are buffer-relative — shift into the combined snapshot.
-        let lo = (lo + pre_len).min(buf_len);
-        let hi = (hi + pre_len).min(buf_len);
-        for slot in attrs.iter_mut().take(hi).skip(lo) {
-            *slot = Some(visual_attr);
-        }
-    }
-    for region in &highlight().lock().unwrap().regions {
-        // Buffer-relative offsets land at +pre_len in the combined
-        // pre+line+post snapshot (C renders from tmpline where the
-        // buffer starts at predisplaylen).
-        let start = (region.start + pre_len).min(buf_len);
-        let end = (region.end + pre_len).min(buf_len);
-        for slot in attrs.iter_mut().take(end).skip(start) {
-            *slot = Some(region.attr);
-        }
-    }
-    // Native ZLE effects overlay (extensions/zle_fx.rs): the fish-ported
-    // syntax highlighter + autosuggestion ghost. Painted BELOW the user
-    // `$region_highlight` layer so script plugins always override the
-    // native engine.
-    {
-        let line_len = ZLELINE.lock().unwrap().len();
-        crate::zle_fx::native_render_attrs(&mut attrs, pre_len, line_len);
-    }
-    // c:1102-1116 — the user `$region_highlight` entries (parsed into
-    // REGION_HIGHLIGHTS by set_region_highlight) paint over the line
-    // too. C keeps user entries in the same region_highlights array
-    // the render walks; the Rust port kept them in a separate store
-    // that the renderer never consumed — `region_highlight` assignments
-    // (zsh-autosuggestions' fg=8 ghost span, zsh-syntax-highlighting)
-    // had no visual effect. ZRH_PREDISPLAY entries are
-    // predisplay-relative (offset 0 in the combined snapshot); plain
-    // entries are buffer-relative (+pre_len).
-    for rhp in REGION_HIGHLIGHTS.lock().unwrap().iter() {
-        let off = if rhp.flags & ZRH_PREDISPLAY != 0 {
-            0
-        } else {
-            pre_len
-        };
-        let start = (rhp.start + off).min(buf_len);
-        let end = (rhp.end + off).min(buf_len);
-        for slot in attrs.iter_mut().take(end).skip(start) {
-            *slot = Some(rhp.attr);
-        }
-    }
-    // c:1069-1075 — active completion suffix. A removable suffix (e.g. the
-    // space auto-added after a unique completion) is highlighted over
-    // `[zlecs - suffixlen, zlecs]` so the user can see the part the next
-    // keystroke will overwrite. Applied last (C's suffix is the top layer,
-    // c:349 layer 10). Default attr is bold (c:402 TXTBOLDFACE); the user may
-    // override it via `$zle_highlight`'s `suffix:` entry.
+    // ── layer 10 ──
+    // c:1069-1075 — special entry 2, the active completion suffix: a
+    // removable suffix (e.g. the space auto-added after a unique completion)
+    // is highlighted over `[zlecs - suffixlen, zlecs]` so the user can see
+    // the part the next keystroke will overwrite. Default attr is bold
+    // (c:402 TXTBOLDFACE); `$zle_highlight`'s `suffix:` overrides it.
     let suffix_len = crate::ported::zle::zle_misc::suffixlen.load(Ordering::SeqCst);
     if suffix_len > 0 {
         let suffix_attr = highlight()
@@ -5239,11 +5203,78 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
                 ..TextAttr::default()
             });
         // ZLECS is buffer-relative — shift into the combined snapshot.
-        let cs = (ZLECS.load(Ordering::SeqCst) + pre_len).min(buf_len);
-        let start = cs.saturating_sub(suffix_len as usize);
-        for slot in attrs.iter_mut().take(cs).skip(start) {
-            *slot = Some(suffix_attr);
+        let cs = ZLECS.load(Ordering::SeqCst) + pre_len;
+        paint(&mut attrs, cs.saturating_sub(suffix_len as usize), cs, suffix_attr);
+    }
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Native ZLE effects (extensions/zle_fx.rs): the fish-ported syntax
+    // highlighter + autosuggestion ghost. They stand in for what a
+    // highlighting plugin would put in `$region_highlight`, so they sit in
+    // the user layer, ahead of the real `$region_highlight` entries so a
+    // script plugin still wins where both set the same attribute.
+    {
+        let line_len = ZLELINE.lock().unwrap().len();
+        let mut native: Vec<Option<TextAttr>> = vec![None; buf_len];
+        crate::zle_fx::native_render_attrs(&mut native, pre_len, line_len);
+        for (slot, over) in attrs.iter_mut().zip(native) {
+            if let Some(over) = over {
+                mix(slot, over);
+            }
         }
+    }
+    for region in &highlight().lock().unwrap().regions {
+        // Buffer-relative offsets land at +pre_len in the combined
+        // pre+line+post snapshot (C renders from tmpline where the
+        // buffer starts at predisplaylen).
+        paint(&mut attrs, region.start + pre_len, region.end + pre_len, region.attr);
+    }
+    // c:1102-1116 — the user `$region_highlight` entries (parsed into
+    // REGION_HIGHLIGHTS by set_region_highlight). ZRH_PREDISPLAY entries are
+    // predisplay-relative (offset 0 in the combined snapshot); plain entries
+    // are buffer-relative (+pre_len). A `layer=` clause is not kept by
+    // set_region_highlight, so every user entry takes the default layer 10.
+    for rhp in REGION_HIGHLIGHTS.lock().unwrap().iter() {
+        let off = if rhp.flags & ZRH_PREDISPLAY != 0 {
+            0
+        } else {
+            pre_len
+        };
+        paint(&mut attrs, rhp.start + off, rhp.end + off, rhp.attr);
+    }
+
+    // ── layer 20 ──
+    // Special entry 0, the region: the vi visual selection. Its attr is the
+    // user's `region:` setting from $zle_highlight (zle_set_highlight),
+    // else standout (c:397).
+    if REGION_ACTIVE.load(Ordering::SeqCst) != 0 {
+        let visual_attr = highlight()
+            .lock()
+            .unwrap()
+            .category_attrs
+            .get(&HighlightCategory::Region)
+            .copied()
+            .unwrap_or(TextAttr {
+                standout: true,
+                ..TextAttr::default()
+            });
+        // c:1043-1049 — the span between point and mark, either order.
+        let cs = ZLECS.load(Ordering::SeqCst);
+        let mark = MARK.load(Ordering::SeqCst);
+        let (mut lo, mut hi) = if cs <= mark { (cs, mark) } else { (mark, cs) };
+        if REGION_ACTIVE.load(Ordering::SeqCst) == 2 {
+            // c:1050-1056 — linewise (`V`): widen to whole lines.
+            ZLECS.store(hi, Ordering::SeqCst);
+            hi = crate::ported::zle::zle_utils::findeol();
+            ZLECS.store(lo, Ordering::SeqCst);
+            lo = crate::ported::zle::zle_utils::findbol();
+            ZLECS.store(cs, Ordering::SeqCst);
+        } else if crate::ported::zle::zle_h::invicmdmode(&crate::ported::zle::zle_keymap::curkeymapname()) {
+            // c:1057 — `INCPOS(region_highlights[0].end)`: in vicmd mode
+            // the character under the cursor is part of the selection.
+            hi += 1;
+        }
+        // MARK/ZLECS are buffer-relative — shift into the combined snapshot.
+        paint(&mut attrs, lo + pre_len, hi + pre_len, visual_attr);
     }
     attrs
 }
