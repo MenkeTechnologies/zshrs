@@ -1462,6 +1462,35 @@ mod contrib {
         );
     }
 
+    /// zmv globs under `emulate -RL zsh`, so no match is the NOMATCH error
+    /// inside the function whatever the caller set: the script aborts with
+    /// status 1 (the native zmv carried on and exited 0).
+    #[test]
+    fn zmv_no_match_aborts_with_status_1() {
+        assert_parity(
+            r###"autoload -U zmv; t=$(mktemp -d); cd $t; setopt nonomatch; zmv -n "*.x" "*.y" 2>/dev/null; print not-reached"###,
+        );
+    }
+
+    /// `(**/)` is written so `$1` captures the directories, but zmv takes the
+    /// parens off before globbing (zmv:225-226); globbing it verbatim was a
+    /// "bad pattern".
+    #[test]
+    fn zmv_recursive_group() {
+        assert_parity(
+            r###"autoload -U zmv; t=$(mktemp -d); cd $t; mkdir -p d/e; : > x1.dat; : > d/y.dat; : > d/e/z.dat; zmv -n "(**/)(*).dat" '$1$2.bin'; zmv -nW "**/*.dat" "**/*.bin"; cd /; rm -rf $t"###,
+        );
+    }
+
+    /// Under -W the glob is the parenthesised pattern, so with -Q a trailing
+    /// `(*)` is a glob qualifier (executable files): no match here.
+    #[test]
+    fn zmv_W_Q_trailing_group_is_qualifier() {
+        assert_parity(
+            r###"autoload -U zmv; t=$(mktemp -d); cd $t; : > a.txt; zmv -n -W -Q "*.*" "*.*" 2>/dev/null; print not-reached"###,
+        );
+    }
+
     /// zmv -W wildcard shorthand.
     #[test]
     fn zmv_W() {

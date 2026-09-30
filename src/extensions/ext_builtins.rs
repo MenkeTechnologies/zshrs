@@ -10255,6 +10255,11 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     }
     let mut chars = re_pat.chars().peekable();
     let mut group_idx = 0;
+    // zmv:197-202 — under -w/-W the GLOB is the pattern with every wildcard
+    // parenthesised too (`pat="${pat//${~find}/($MATCH)}"`), not the pattern as
+    // typed: with -Q a trailing `(*)` is then a qualifier (zmv:219). Built in
+    // the same pass as the regex so both recognise the same wildcards.
+    let mut glob_src = String::new();
     // Byte offset in `regex_src` where the most recently emitted atom began, so
     // an extendedglob quantifier (`#` = zero-or-more, `##` = one-or-more; zmv
     // runs under `setopt extendedglob`, zmv:126) can wrap it. For a group the
@@ -10269,6 +10274,7 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
             if one_or_more {
                 chars.next();
             }
+            glob_src.push_str(if one_or_more { "##" } else { "#" });
             let atom: String = regex_src[last_atom_start..].to_string();
             regex_src.truncate(last_atom_start);
             regex_src.push_str("(?:");
@@ -10284,16 +10290,25 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
             '*' => {
                 // `**/` is one wildcard, not two (zmv:197 `\*\*##/`).
                 let mut atom = String::from(".*");
+                let mut orig = String::from("*");
                 if chars.peek() == Some(&'*') {
                     chars.next();
+                    orig.push('*');
                     while chars.peek() == Some(&'*') {
                         chars.next();
+                        orig.push('*');
                     }
                     if chars.peek() == Some(&'/') {
                         chars.next();
+                        orig.push('/');
                         atom = String::from("(?:.*/)?");
                     }
                 }
+                // zmv:225-226 takes the parens off a `(**/)` group again before
+                // globbing (`fpat="$match[1]$match[2]$match[3]"`): `(**/)` is
+                // not a valid glob, so the recursive part stays bare.
+                let recursive = orig.ends_with('/');
+                glob_src.push_str(&if wildcard && !recursive { format!("({orig})") } else { orig });
                 if wildcard {
                     regex_src.push('(');
                     regex_src.push_str(&atom);
@@ -10304,6 +10319,7 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
                 }
             }
             '?' => {
+                glob_src.push_str(if wildcard { "(?)" } else { "?" });
                 if wildcard {
                     regex_src.push_str("(.)");
                     group_idx += 1;
@@ -10322,7 +10338,10 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
                     }
                     body.push(cc);
                 }
-                if closed && body.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                let orig = format!("<{body}{}", if closed { ">" } else { "" });
+                let range = closed && body.chars().all(|c| c.is_ascii_digit() || c == '-');
+                glob_src.push_str(&if wildcard && range { format!("({orig})") } else { orig });
+                if range {
                     if wildcard {
                         regex_src.push_str("([0-9]+)");
                         group_idx += 1;
@@ -10351,6 +10370,7 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
                         break;
                     }
                 }
+                glob_src.push_str(&if wildcard { format!("({cls})") } else { cls.clone() });
                 if wildcard {
                     regex_src.push('(');
                     regex_src.push_str(&cls);
@@ -10366,6 +10386,10 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
                 regex_src.push(c);
             }
             _ => regex_src.push(c),
+        }
+        let pushed_by_arm = matches!(c, '*' | '?' | '[') || (c == '<' && re_pat.contains('>'));
+        if !pushed_by_arm {
+            glob_src.push(c);
         }
         // A closing `)` makes the whole group the atom a following `#` quantifies.
         last_atom_start = if c == ')' {
@@ -10445,7 +10469,30 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     // silently vanished from the rename set. zshrs's own glob engine handles
     // the grouped form identically to zsh (verified against `print -rl --
     // (*).(txt|log)`), so hand it the pattern unaltered.
-    let glob_pat: String = from_pat.clone();
+    let mut glob_pat: String = if wildcard {
+        // The leading `(#…)` flag groups stripped into `re_pat` stay on the glob.
+        format!("{}{}", &from_pat[..from_pat.len() - re_pat.len()], glob_src)
+    } else {
+        from_pat.clone()
+    };
+    // zmv:225-226 — `if [[ $pat = (#b)(*)\((\*\*##/)\)(*) ]]; then
+    // fpat="$match[1]$match[2]$match[3]"`: a `(**/)` group is written in the
+    // pattern so `$1` captures the directories, but `(**/)` is not a glob, so
+    // the parens come off for the glob. The leading `(*)` is greedy, so it is
+    // the LAST such group.
+    let bytes = glob_pat.as_bytes();
+    let unwrap = (0..bytes.len()).rev().find_map(|open| {
+        let stars = bytes[open + 1..].iter().take_while(|&&b| b == b'*').count();
+        let close = open + 1 + stars + 1;
+        (bytes[open] == b'('
+            && stars >= 2
+            && bytes.get(open + 1 + stars) == Some(&b'/')
+            && bytes.get(close) == Some(&b')'))
+        .then_some((open, close))
+    });
+    if let Some((open, close)) = unwrap {
+        glob_pat = format!("{}{}{}", &glob_pat[..open], &glob_pat[open + 1..close], &glob_pat[close + 1..]);
+    }
     // zmv:148 `[[ -z $opt_Q ]] && setopt nobareglobqual`. With bare glob
     // qualifiers ON (the zsh default), a TRAILING `(…)` is parsed as a
     // qualifier list, so `(*).(*)` — the canonical swap-name-and-extension
@@ -10470,12 +10517,38 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     if !saved_eg {
         crate::ported::options::opt_state_set("extendedglob", true);
     }
+    // zmv:125 `emulate -RL zsh` — the glob runs with zsh's defaults whatever
+    // the caller set: NOMATCH on, NULL_GLOB and CSH_NULL_GLOB off, so no match
+    // is always the "no matches found" error (a caller's `setopt nonomatch`
+    // does not reach inside zmv).
+    use crate::ported::zsh_h::{isset, CSHNULLGLOB, NOMATCH, NULLGLOB};
+    let saved_glob_opts = [
+        ("nomatch", isset(NOMATCH), true),
+        ("nullglob", isset(NULLGLOB), false),
+        ("cshnullglob", isset(CSHNULLGLOB), false),
+    ];
+    for (name, _, forced) in saved_glob_opts {
+        crate::ported::options::opt_state_set(name, forced);
+    }
     let candidates = crate::fusevm_bridge::with_executor(|exec| exec.expand_glob(&glob_pat));
+    for (name, saved, _) in saved_glob_opts {
+        crate::ported::options::opt_state_set(name, saved);
+    }
     if !saved_eg {
         crate::ported::options::opt_state_set("extendedglob", false);
     }
     if !bare_glob_qual && saved_bgq {
         crate::ported::options::opt_state_set("bareglobqual", true);
+    }
+    // zmv:239 globs with NOMATCH in force, so no match is a `zerr` inside the
+    // function: the error aborts the caller and the status is 1. The glob has
+    // already reported it and raised errflag; carrying on with no candidates
+    // returned 0, so the aborted script exited 0. The abort unwinds before the
+    // caller stores this builtin's return value, so the status is set here, as
+    // the function's failed command would leave it.
+    if errflag.load(std::sync::atomic::Ordering::Relaxed) & ERRFLAG_ERROR != 0 {
+        crate::fusevm_bridge::with_executor(|exec| exec.set_last_status(1));
+        return 1;
     }
     if candidates.len() == 1
         && candidates[0] == glob_pat
