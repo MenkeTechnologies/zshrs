@@ -1,0 +1,48 @@
+#compdef profile
+
+# Profile a command, script string or function call through zprof:
+# `profile CMD ...`, `profile -s SCRIPT`, `profile -f FUNC [ARGS]`,
+# `profile --clear`, `profile --dump`.
+#
+# zshrs builtin. Modes mirror builtin_profile
+# (src/extensions/ext_builtins.rs); only the FIRST word is a mode flag.
+# Keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
+
+local -a modes
+modes=(
+  '--clear:clear accumulated profile data'
+  '--dump:show accumulated profile data'
+  '-s:profile a script string'
+  '-f:profile a function call'
+)
+
+if (( CURRENT == 2 )); then
+  if [[ $PREFIX == -* ]]; then
+    _describe -t modes 'mode' modes
+  else
+    _command_names -e
+  fi
+  return
+fi
+
+case $words[2] in
+  --clear|--dump) _message 'no arguments' ;;
+  -s) _message -e scripts 'script string' ;;
+  -f)
+    if (( CURRENT == 3 )); then
+      _functions
+    else
+      _default
+    fi
+    ;;
+  *)
+    # `profile CMD ARGS...`: complete as the command line it runs.
+    shift words
+    (( CURRENT-- ))
+    _normal
+    ;;
+esac

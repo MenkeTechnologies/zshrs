@@ -1,0 +1,10 @@
+#compdef cdreplay
+
+# Replay the compdef calls deferred while compinit was not yet loaded
+# (zinit turbo mode).
+#
+# zshrs builtin. builtin_cdreplay (src/extensions/ext_builtins.rs) accepts
+# only -q, found anywhere in its argv; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments '-q[do not report the number of replayed compdef calls]'

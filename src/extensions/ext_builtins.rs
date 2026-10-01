@@ -345,6 +345,7 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "zassert_true",
     "zbanner",
     "zbuild",
+    "zsleep",
     "ztest_run",
     "ztest_skip",
     // NOT listed here, deliberately, though both once were:

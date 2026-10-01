@@ -1,0 +1,12 @@
+#compdef caller
+
+# Print the location of call-stack frame N (bash's `caller`).
+#
+# zshrs builtin. builtin_caller (src/extensions/ext_builtins.rs) reads
+# one optional numeric frame depth and indexes $funcstack; keep in sync.
+# The depth is a free number: $funcstack at completion time is the
+# completer's own stack, not the one `caller` will see.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+  '1::frame depth (0 is the current frame): '

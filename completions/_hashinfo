@@ -1,0 +1,11 @@
+#compdef hashinfo
+
+# Print node counts for the shell's hash tables (cmdnamtab, shfunctab,
+# aliastab, ...).
+#
+# zshrs builtin (zsh's ZSH_HASH_DEBUG builtin). The BUILTIN entry in
+# src/ported/builtin.rs takes no options and 0..0 arguments; handler is
+# bin_hashinfo (src/ported/hashtable.rs). Nothing is completed; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_message 'no arguments'

@@ -1,0 +1,35 @@
+#compdef help
+
+# Print usage for a builtin (bash's `help`).
+#
+# zshrs builtin. Names mirror the match in builtin_help
+# (src/extensions/ext_builtins.rs); any other name prints "no help
+# available". Keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
+
+local -a topics
+topics=(
+  alias
+  cd
+  echo
+  export
+  history
+  jobs
+  kill
+  read
+  set
+  test
+  '['
+  type
+)
+
+_arguments -C '1:builtin:->topic' && return 0
+
+case $state in
+  topic) _wanted builtins expl 'builtin' compadd -a topics && return 0 ;;
+esac
+
+return 1

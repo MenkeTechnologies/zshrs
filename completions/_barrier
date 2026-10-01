@@ -1,0 +1,18 @@
+#compdef barrier
+
+# Run commands in parallel and wait for all of them:
+# `barrier 'cmd1' ::: 'cmd2' ::: 'cmd3'`; returns the highest exit status.
+#
+# zshrs builtin. builtin_barrier (src/extensions/ext_builtins.rs) splits
+# its arguments on `:::` and joins each group into one `sh -c` command, so
+# the words after `barrier` or after the last `:::` complete as a command
+# line; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+# Drop everything up to the last `:::`; otherwise drop `barrier` itself.
+if ! compset -N ':::'; then
+    shift words
+    (( CURRENT-- ))
+fi
+
+_normal

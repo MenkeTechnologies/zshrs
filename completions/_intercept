@@ -1,0 +1,51 @@
+#compdef intercept
+
+# AOP advice on commands: `intercept before|after|around PATTERN { code }`
+# registers, `intercept list` shows, `intercept remove ID` drops one,
+# `intercept clear` drops all. PATTERN is a command name, `*`/`all`, or a
+# glob matched against the command name or full command line.
+#
+# zshrs builtin. Sub-commands mirror builtin_intercept
+# (src/extensions/ext_builtins.rs); pattern rules mirror intercept_matches
+# (src/extensions/intercepts.rs); keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+local -a verbs
+
+verbs=(
+    'before:run code before every matching command'
+    'after:run code after every matching command'
+    'around:run code in place of every matching command (intercept_proceed runs it)'
+    'list:show all registered intercepts'
+    'remove:remove the intercept with the given ID'
+    'clear:remove all intercepts'
+)
+
+_arguments -C \
+    '1:sub-command:->verb' \
+    '*::arg:->rest' && return 0
+
+case $state in
+    verb)
+        _describe -t commands 'sub-command' verbs && return 0
+        ;;
+    rest)
+        case $words[1] in
+            before|after|around)
+                if (( CURRENT == 2 )); then
+                    _alternative \
+                        'all:match every command:(all)' \
+                        'commands:command:_command_names -e' && return 0
+                else
+                    _message 'advice code' && return 0
+                fi
+                ;;
+            remove)
+                (( CURRENT == 2 )) && _message 'intercept ID (see intercept list)' && return 0
+                ;;
+        esac
+        ;;
+esac
+
+return 1

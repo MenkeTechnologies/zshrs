@@ -1,0 +1,17 @@
+#compdef pmap
+
+# Parallel map: `pmap 'cmd {}' ITEM...` runs the template once per ITEM
+# on the worker pool, `{}` replaced by the item, output printed in input
+# order.
+#
+# zshrs builtin. This file shadows the stock zsh `_pmap`, which completes
+# the Solaris/procps process-memory-map command; the zshrs builtin of the
+# same name is unrelated to it.
+#
+# Arguments mirror builtin_pmap (src/extensions/ext_builtins.rs): argv[0]
+# is the template, argv[1..] the items, no options; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+    '1:command template ({} is replaced by each item):_cmdstring' \
+    '*:item:_files'

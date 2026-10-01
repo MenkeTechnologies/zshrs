@@ -1,0 +1,9 @@
+#compdef zbanner
+
+# Print the ZSHRS logo, version box and live shell counts.
+#
+# zshrs builtin. builtin_zbanner (src/extensions/ext_builtins.rs)
+# rejects any argument, so nothing is completed; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_message 'no arguments'

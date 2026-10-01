@@ -1,0 +1,9 @@
+#compdef zsleep
+
+# Sleep for a (possibly fractional) number of seconds: `zsleep 0.25`.
+#
+# zshrs builtin. Takes exactly one numeric argument and no options, per
+# zsleep (src/extensions/ext_builtins.rs); keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments ':seconds (fractions allowed): '

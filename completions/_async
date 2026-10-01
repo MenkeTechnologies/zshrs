@@ -1,0 +1,11 @@
+#compdef async
+
+# Run a command on the worker pool and print its job ID at once:
+# `id=$(async 'cmd args')`, collected later with `await $id`.
+#
+# zshrs builtin. builtin_async (src/extensions/ext_builtins.rs) joins all
+# its arguments with spaces into one `sh -c` command string and takes no
+# options, so the words complete as a command line; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments '*:: : _normal'

@@ -1,0 +1,55 @@
+#compdef zassert_contains zassert_dies zassert_eq zassert_err zassert_false zassert_ge zassert_gt zassert_le zassert_lt zassert_match zassert_ne zassert_near zassert_ok zassert_true
+
+# ztest assertions: each bumps the per-block pass/fail counter that
+# ztest_run reports, prints a ✓/✗ line on stderr, returns 0/1.
+#
+# zshrs builtin. Positional operands mirror the builtin_zassert_* bodies
+# in src/extensions/ztest.rs; keep in sync. No options: the whole family
+# is registered BINF_HANDLES_OPTS (ztest.rs:509) and every body reads
+# args by position, so a leading `-` is an operand, not a flag. The
+# trailing MSG slot is assert_label(args, N, …) (ztest.rs:103).
+#   zassert_eq / zassert_ne         A B [MSG]          ztest.rs:135, :150
+#   zassert_ok / zassert_true       V [MSG]            ztest.rs:165, :192
+#   zassert_err / zassert_false     V [MSG]            ztest.rs:179, :197
+#   zassert_gt/_lt/_ge/_le          A B [MSG]          ztest.rs:203-247
+#   zassert_match                   PATTERN STRING [MSG] ztest.rs:260
+#   zassert_contains                HAYSTACK NEEDLE [MSG] ztest.rs:282
+#   zassert_near                    A B [EPS [MSG]]    ztest.rs:301
+#   zassert_dies                    CMD [MSG]          ztest.rs:326
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local -a args
+local msg=':message (label for the pass/fail line): '
+
+case $service in
+  zassert_eq)
+    args=(':actual value: ' ':expected value (string equality): ' $msg) ;;
+  zassert_ne)
+    args=(':actual value: ' ':value it must differ from (string inequality): ' $msg) ;;
+  zassert_ok|zassert_true)
+    args=(':value (passes when non-empty and not 0): ' $msg) ;;
+  zassert_err|zassert_false)
+    args=(':value (passes when empty or 0): ' $msg) ;;
+  zassert_gt)
+    args=(':number A (pass iff A > B): ' ':number B: ' $msg) ;;
+  zassert_lt)
+    args=(':number A (pass iff A < B): ' ':number B: ' $msg) ;;
+  zassert_ge)
+    args=(':number A (pass iff A >= B): ' ':number B: ' $msg) ;;
+  zassert_le)
+    args=(':number A (pass iff A <= B): ' ':number B: ' $msg) ;;
+  zassert_match)
+    args=(':regex (Rust regex syntax): ' ':string to match: ' $msg) ;;
+  zassert_contains)
+    args=(':haystack: ' ':needle (substring): ' $msg) ;;
+  zassert_near)
+    args=(':number A: ' ':number B: ' ':tolerance (pass iff |A-B| <= EPS, default 1e-9): ' $msg) ;;
+  zassert_dies)
+    # One quoted string run as shell code in a scratch executor; passes
+    # when it exits non-zero. Same shape as `sh -c STRING`: _cmdstring.
+    args=(':command string (passes when it fails):_cmdstring' $msg) ;;
+  *)
+    return 1 ;;
+esac
+
+_arguments -S $args

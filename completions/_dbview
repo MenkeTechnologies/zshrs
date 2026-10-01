@@ -1,0 +1,43 @@
+#compdef dbview
+
+# Browse the zshrs SQLite caches without SQL: `dbview` lists tables,
+# `dbview TABLE [NAME|PATTERN] [--count]` dumps or filters one.
+#
+# zshrs builtin. Tables and flags mirror builtin_dbview
+# (src/extensions/ext_builtins.rs); keep in sync. The first word is
+# always the table (a leading -c is read as a table name), so the
+# --count/-c flag is offered only after it.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local -a tables
+tables=(
+  'autoloads:autoload cache (name, source, body and bytecode size)'
+  'comps:command to completion-function map'
+  'executables:PATH executables cache'
+  'history:recent history entries, or a search'
+  'plugins:plugin source cache counts'
+)
+
+if (( CURRENT == 2 )); then
+  _describe -t tables 'table' tables
+  return
+fi
+
+local -a flags
+flags=(
+  '--count:print only the row count'
+  '-c:print only the row count'
+)
+
+if [[ $PREFIX == -* ]] || (( CURRENT > 3 )); then
+  _describe -t options 'option' flags
+  return
+fi
+
+# The second word is the row filter; its meaning depends on the table.
+case $words[2] in
+  autoloads)         _functions ;;
+  comps|executables) _command_names -e ;;
+  history)           _message -e patterns 'history search pattern' ;;
+  *)                 _message 'no filter' ;;
+esac

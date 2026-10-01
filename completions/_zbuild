@@ -1,0 +1,35 @@
+#compdef zbuild
+
+# Bake shell scripts into a standalone AOT executable:
+# `zbuild --in PATHS... --out OUT [--native]`.
+#
+# zshrs builtin. Flags mirror builtin_zbuild
+# (src/extensions/ext_builtins.rs); keep in sync. `--in` swallows every
+# following non-dash word, so a bare path after it is another input. --in/--out
+# also take the value in the same word (--in=PATH, --out=PATH).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
+
+_arguments -C \
+  '*'{-i,--in=,--input=}'[script source (following non-flag words are more sources)]:script:_files' \
+  '(-o --out --output)'{-o,--out=,--output=}'[output binary]:output binary:_files' \
+  '(-n --native)'{-n,--native}'[AOT-compile to native machine code]' \
+  '(- *)'{-h,--help}'[print usage]' \
+  '*: :->rest' && return 0
+
+case $state in
+  rest)
+    # A bare word is only legal inside an --in run: walk back to the
+    # nearest dash word and accept it only if that word is -i/--in/--input.
+    local i
+    for (( i = CURRENT - 1; i > 1; i-- )); do
+      [[ $words[i] == -* ]] || continue
+      [[ $words[i] == (-i|--in|--input) ]] && _files && return 0
+      break
+    done
+    ;;
+esac
+
+return 1

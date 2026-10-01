@@ -22690,3 +22690,40 @@ mod foreground_wait_guard_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod builtin_completer_coverage_tests {
+    use super::registered_builtin;
+
+    /// Every zshrs-original builtin ships a completer in `completions/`
+    /// (bundled into `~/.zshrs/functions` by build.rs), so `name <TAB>` and
+    /// `name -<TAB>` offer its arguments instead of nothing. zsh's own
+    /// completion tree cannot cover these: the commands do not exist there.
+    ///
+    /// The set: the in-process builtins [`registered_builtin`] dispatches
+    /// (taken from `EXT_BUILTIN_NAMES`), the ztest framework, and the
+    /// daemon-backed `z*` builtins. `pgrep` is left out: it stands in for the
+    /// external `pgrep`, which zsh's stock `_pgrep` already completes.
+    #[test]
+    fn every_zshrs_builtin_has_a_completer() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("completions");
+        let mut claimed = std::collections::HashSet::new();
+        for entry in std::fs::read_dir(&dir).expect("completions/") {
+            let path = entry.expect("dir entry").path();
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            if let Some(line) = text.lines().next().and_then(|l| l.strip_prefix("#compdef ")) {
+                claimed.extend(line.split_whitespace().map(str::to_string));
+            }
+        }
+        let names = crate::ext_builtins::EXT_BUILTIN_NAMES
+            .iter()
+            .filter(|n| registered_builtin(n).is_some() && **n != "pgrep")
+            .chain(crate::extensions::ztest::ZTEST_BUILTIN_NAMES)
+            .chain(crate::daemon::builtins::ZSHRS_BUILTIN_NAMES);
+        let missing: Vec<&str> = names.copied().filter(|n| !claimed.contains(*n)).collect();
+        assert!(
+            missing.is_empty(),
+            "zshrs builtins with no `#compdef` completer in completions/: {missing:?}"
+        );
+    }
+}

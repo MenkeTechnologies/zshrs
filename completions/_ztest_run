@@ -1,0 +1,21 @@
+#compdef ztest_run run_tests ztest_skip
+
+# ztest block control: `ztest_run` (alias `run_tests`) prints the
+# per-block summary and rolls the counters into the run totals;
+# `ztest_skip MSG` bumps the skip counter and prints a ↷ line.
+#
+# zshrs builtin. Mirrors src/extensions/ztest.rs; keep in sync. The
+# three share one file because none has options (BINF_HANDLES_OPTS,
+# ztest.rs:509) and each takes at most one free-form word:
+#   ztest_run / run_tests   no operands; args ignored   ztest.rs:360, :476
+#   ztest_skip              [MSG] (default "skipped")   ztest.rs:412
+# Bundled into ~/.zshrs/functions by build.rs.
+
+case $service in
+  ztest_run|run_tests)
+    _message 'no arguments' ;;
+  ztest_skip)
+    _arguments ':reason (printed after the skip marker): ' ;;
+  *)
+    return 1 ;;
+esac

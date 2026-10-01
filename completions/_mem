@@ -1,0 +1,12 @@
+#compdef mem
+
+# Print the allocator heap and sbrk/brk counters (zsh's ZSH_MEM_DEBUG
+# builtin).
+#
+# zshrs builtin. The BUILTIN entry in src/ported/builtin.rs takes
+# optstr "v" and 0..0 arguments; handler is bin_mem (src/ported/mem.rs).
+# Keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments -s \
+  '-v[explain each section of the report]'

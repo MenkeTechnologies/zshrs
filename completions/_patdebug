@@ -1,0 +1,14 @@
+#compdef patdebug
+
+# Compile a pattern and match strings against it (zsh's ZSH_PAT_DEBUG
+# builtin).
+#
+# zshrs builtin. Spec mirrors the BUILTIN entry in src/ported/builtin.rs
+# (optstr "p", 1..-1 arguments: a pattern, then strings); keep in sync.
+# That entry has no handler bound yet.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments -s \
+  '-p[treat the pattern as a path pattern]' \
+  '1:pattern: ' \
+  '*:string: '

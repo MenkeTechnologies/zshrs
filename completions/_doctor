@@ -1,0 +1,10 @@
+#compdef doctor
+
+# Diagnostic report of shell health: caches, autoload coverage, fpath,
+# daemon, memory.
+#
+# zshrs builtin. builtin_doctor (src/extensions/ext_builtins.rs)
+# ignores its arguments, so nothing is completed; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_message 'no arguments'
