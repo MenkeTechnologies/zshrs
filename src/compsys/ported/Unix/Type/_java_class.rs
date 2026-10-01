@@ -15,13 +15,16 @@
 //! sh:24  _wanted classes expl 'java class' compadd "$@" -M 'r:|.=* r:|=*' -a - c
 //! ```
 //!
-//! sh:17/19 approx — class enumeration is done in Rust: jars via
-//! `_call_program jar -tf` (REPLY), directories via a recursive `*.class`
-//! walk; both strip the `.class` suffix and map `/` → `.` to package form.
+//! sh:17 — jars via `_call_program jar -tf` (REPLY), keeping `*.class`
+//! entries in package form. sh:20 — directories through the glob engine
+//! with the upstream pattern and qualifier ([`glob_classes`]).
 
 use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
+use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::{getsparam, setaparam};
+use crate::ported::utils::quotestring;
+use crate::ported::zsh_h::QT_BACKSLASH_PATTERN;
 use std::path::Path;
 
 /// sh:9 — pull `-t`/`-m`/`-cp`/`--classpath` (each takes a value) out of the
@@ -51,25 +54,26 @@ fn parse_opts(args: &[String]) -> (Option<String>, Vec<String>) {
     (cp, rest)
 }
 
-/// sh:20 — recursively collect `*.class` files under `dir`, returning the
-/// package-dotted class names (`$dir/` stripped, `.class` stripped, `/`→`.`).
-fn walk_classes(dir: &Path, base: &str, out: &mut Vec<String>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for ent in rd.flatten() {
-        let path = ent.path();
-        if path.is_dir() {
-            walk_classes(&path, base, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("class") {
-            if let Some(full) = path.to_str() {
-                // strip leading `$base/`, drop `.class`, `/` → `.`
-                let rel = full.strip_prefix(&format!("{}/", base)).unwrap_or(full);
-                let stem = rel.strip_suffix(".class").unwrap_or(rel);
-                out.push(stem.replace('/', "."));
-            }
-        }
-    }
+/// sh:20 — `c+=( $i/**/*.class(.:r:s/.class//:s#$i/##:gs#/#.#) )`, run by
+/// the glob engine. `**/` neither follows a symlinked directory
+/// (c:Src/glob.c:724 `follow = (instr[2] == Star)`, false for two stars)
+/// nor enters a dot-directory (PAT_NOGLD), and the qualifier's modifiers
+/// produce the dotted names directly. A hand-written walk that followed
+/// links and descended `.git`/`target` took 8.5s in this repository where
+/// zsh takes 1s.
+///
+/// `$i` is spliced in as a parameter value: quoted in the path (not a
+/// pattern), literal inside `:s#…##` (`:s` matches a plain string).
+fn glob_classes(i: &str) -> Vec<String> {
+    let mut word = format!(
+        "{}/**/*.class(.:r:s/.class//:s#{}/##:gs#/#.#)",
+        quotestring(i, QT_BACKSLASH_PATTERN),
+        i
+    );
+    tokenize(&mut word);
+    let mut list = vec![word];
+    zglob(&mut list, 0, 0);
+    list
 }
 
 /// `_java_class` — complete fully-qualified Java class names from a classpath.
@@ -122,7 +126,7 @@ pub fn _java_class(args: &[String]) -> i32 {
             }
         } else if p.is_dir() {
             // sh:20
-            walk_classes(p, i, &mut c);
+            c.extend(glob_classes(i));
         }
     }
 
@@ -151,6 +155,27 @@ mod tests {
     fn returns_one_without_registered_tags() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(_java_class(&[]), 1);
+    }
+
+    /// sh:20 on a layout with a symlinked package directory and a
+    /// dot-directory. Real zsh 5.9.2 gives `com.ex.A com.ex.sub.B Top`
+    /// for both `i=.` (from inside) and `i=<absolute dir>`: `**/` does
+    /// not follow `lnk -> com` and skips `.hid`.
+    #[test]
+    fn class_glob_skips_symlinked_and_dot_directories() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = std::env::temp_dir().join(format!("zshrs_javacls_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("com/ex/sub")).unwrap();
+        std::fs::create_dir_all(dir.join(".hid")).unwrap();
+        for f in ["com/ex/A.class", "com/ex/sub/B.class", "Top.class", ".hid/H.class", "com/x.txt"] {
+            std::fs::write(dir.join(f), b"").unwrap();
+        }
+        std::os::unix::fs::symlink(dir.join("com"), dir.join("lnk")).unwrap();
+        let mut got = glob_classes(&dir.to_string_lossy());
+        got.sort();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got, vec!["Top", "com.ex.A", "com.ex.sub.B"]);
     }
 
     #[test]

@@ -57,15 +57,12 @@
 //! 0 and the rebuild branch returns `_store_cache`'s status — verified
 //! live (`zsh -c 'f(){ if false; then echo x; fi }; f; echo $?'` → 0).
 //!
-//! The `${^app_dir}*/Contents/(MacOS|MacOSClassic)` (sh:45) and
-//! `${^app_dir}^*.[a-z]#/..namedfork/rsrc` (sh:53) globs concatenate a
-//! wildcard directly onto each `app_dir` entry with **no** `/`
-//! separator — the wildcard therefore extends `app_dir`'s own last
-//! path component (matched against its *parent* directory), not a
-//! child of `app_dir`. Verified live against real zsh (extendedglob):
-//! `${^app_dir}*/Contents/(MacOS|MacOSClassic)(N)` only matches
-//! self/sibling-prefixed directories of `app_dir`, never descendants —
-//! ported literally (sibling-prefix scan), not "fixed".
+//! The sh:38, sh:45 and sh:53 globs run through the glob engine
+//! ([`glob_each`]). Every `(pat/)#` match at sh:38 ends in `/`, so the
+//! `*` that sh:45/53 append names the CHILDREN of each `app_dir` entry —
+//! `${^app_dir}*/Contents/MacOS` finds the bundles inside each directory.
+//! (An earlier version of this port claimed the opposite after testing
+//! with hand-written entries that lacked the trailing `/`.)
 
 use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_call_program::call_program_capture;
@@ -74,9 +71,11 @@ use crate::compsys::ported::_store_cache::_store_cache;
 use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::modules::zutil::{bin_zstyle, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
-use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::glob::{tokenize, zglob};
+use crate::ported::utils::quotestring;
+use crate::ported::zsh_h::{options, MAX_OPS, QT_BACKSLASH_PATTERN};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
@@ -139,85 +138,6 @@ fn mac_apps_spotlight_retrieve(app_dir_root: &[String]) -> Vec<String> {
 // sh:28-59  _mac_apps_old_retrieve
 // ---------------------------------------------------------------------
 
-/// One atom of an `app_dir_stop_pattern` entry (sh:34-35): `*`, `?`,
-/// the `[[:alpha:]]` class, or a literal char.
-#[derive(Clone, Copy)]
-enum Atom {
-    Star,
-    Any,
-    Alpha,
-    Lit(char),
-}
-
-fn atom_matches(atom: Atom, c: char) -> bool {
-    match atom {
-        Atom::Star | Atom::Any => true,
-        Atom::Alpha => c.is_ascii_alphabetic(),
-        Atom::Lit(l) => c.to_ascii_lowercase() == l,
-    }
-}
-
-/// Compile one stop-pattern string into `(atom, has_trailing_#)` pairs.
-fn compile_stop_pattern(pat: &str) -> Vec<(Atom, bool)> {
-    let mut out = Vec::new();
-    let mut chars = pat.chars().peekable();
-    while let Some(c) = chars.next() {
-        let atom = match c {
-            '*' => Atom::Star,
-            '?' => Atom::Any,
-            '[' => {
-                // Only `[[:alpha:]]` occurs in this file's patterns;
-                // consume up to (and including) the closing `]]`.
-                while let Some(&nc) = chars.peek() {
-                    chars.next();
-                    if nc == ']' {
-                        break;
-                    }
-                }
-                if chars.peek() == Some(&']') {
-                    chars.next();
-                }
-                Atom::Alpha
-            }
-            c => Atom::Lit(c.to_ascii_lowercase()),
-        };
-        let repeat = chars.peek() == Some(&'#');
-        if repeat {
-            chars.next();
-        }
-        out.push((atom, repeat));
-    }
-    out
-}
-
-/// Backtracking matcher for a compiled stop pattern against `text`
-/// (case-insensitive — `atom_matches` lowercases both sides).
-fn match_atoms(atoms: &[(Atom, bool)], text: &[char]) -> bool {
-    if atoms.is_empty() {
-        return text.is_empty();
-    }
-    let (atom, repeat) = atoms[0];
-    match atom {
-        Atom::Star => (0..=text.len()).any(|i| match_atoms(&atoms[1..], &text[i..])),
-        _ if repeat => {
-            let mut i = 0;
-            loop {
-                if match_atoms(&atoms[1..], &text[i..]) {
-                    return true;
-                }
-                if i < text.len() && atom_matches(atom, text[i]) {
-                    i += 1;
-                } else {
-                    return false;
-                }
-            }
-        }
-        _ => {
-            !text.is_empty() && atom_matches(atom, text[0]) && match_atoms(&atoms[1..], &text[1..])
-        }
-    }
-}
-
 /// sh:34-35 — the fixed stop-pattern list.
 const APP_DIR_STOP_PATTERNS: &[&str] = &[
     "*.app",
@@ -233,137 +153,55 @@ const APP_DIR_STOP_PATTERNS: &[&str] = &[
     "*configurations#",
 ];
 
-/// sh:37 `app_dir_pattern="(^(#i)(...))"` — true if `name` matches ANY
-/// stop pattern case-insensitively (the `^` negation is applied by the
-/// caller: a name is a valid `app_dir` component iff it is NOT a stop
-/// dir).
-fn is_stop_dir(name: &str) -> bool {
-    let chars: Vec<char> = name.to_lowercase().chars().collect();
-    APP_DIR_STOP_PATTERNS
-        .iter()
-        .any(|p| match_atoms(&compile_stop_pattern(p), &chars))
-}
-
-/// sh:38 `${^app_dir_root}/(${~app_dir_pattern}/)#(N)` — recursively
-/// collect `root` and every descendant reached through a chain of
-/// subdirectories none of which match `app_dir_stop_pattern`; recursion
-/// stops at (and excludes) any directory that DOES match.
-fn walk_app_dir(root: &Path, out: &mut Vec<String>) {
-    out.push(root.to_string_lossy().into_owned());
-    let entries = match std::fs::read_dir(root) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-    for ent in entries.flatten() {
-        let path = ent.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let name = ent.file_name();
-        if is_stop_dir(&name.to_string_lossy()) {
-            continue;
-        }
-        walk_app_dir(&path, out);
-    }
-}
-
-/// sh:30-39 default `app_dir` computation (used when neither a local
-/// `app_dir` nor the `application-dir` style supplied one).
-fn default_app_dir(app_dir_root: &[String]) -> Vec<String> {
+/// `${^DIRS}PATTERN` — each element of an array, spliced literally in
+/// front of PATTERN (`$x` without `~` is not a pattern, so its glob
+/// characters are quoted), globbed by the real engine, results in order.
+/// The surrounding completion context has `extendedglob` on
+/// (`_comp_options`), which `^`, `#` and `(#i)` below rely on exactly as
+/// the upstream function does.
+fn glob_each(dirs: &[String], pattern: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for root in app_dir_root {
-        walk_app_dir(Path::new(root), &mut out);
+    for d in dirs {
+        let mut word = format!("{}{}", quotestring(d, QT_BACKSLASH_PATTERN), pattern);
+        tokenize(&mut word);
+        let mut list = vec![word];
+        zglob(&mut list, 0, 0);
+        out.extend(list);
     }
+    out
+}
+
+/// sh:30-38 — `typeset -aU app_dir`; `app_dir_pattern=
+/// "(^(#i)(${(j/|/)app_dir_stop_pattern}))"`;
+/// `app_dir=( ${^app_dir_root}/(${~app_dir_pattern}/)#(N) )`.
+///
+/// Run through the glob engine rather than walked by hand: a `(pat/)#`
+/// closure does not follow symlinks (c:Src/glob.c:764 `l1->follow = 0`,
+/// c:647 lstat), never matches a dot-directory (PAT_NOGLD), and every
+/// match ENDS IN `/` — so `${^app_dir}*` at sh:45/53 names the CHILDREN
+/// of each directory. The hand-written walk followed links (minutes of
+/// walking through `~/Applications -> /Applications`) and dropped the
+/// trailing `/`, which turned sh:45/53 into a sibling-prefix scan.
+fn default_app_dir(app_dir_root: &[String]) -> Vec<String> {
+    let app_dir_pattern = format!("(^(#i)({}))", APP_DIR_STOP_PATTERNS.join("|"));
+    let mut out = glob_each(app_dir_root, &format!("/({}/)#(N)", app_dir_pattern));
     // sh:30  typeset -aU app_dir — unique, first-seen order.
     let mut seen = HashSet::new();
     out.retain(|p| seen.insert(p.clone()));
     out
 }
 
-/// sh:45-46 — bundle search. NOTE (see module doc): the upstream glob
-/// concatenates `*` directly onto each `app_dir` entry with no `/`
-/// separator, so the wildcard extends the entry's own last path
-/// component, scanned against its *parent* — for `d`, glob siblings of
-/// `d` (in `dirname(d)`) whose name starts with `basename(d)`, then
-/// check `sibling/Contents/{MacOS,MacOSClassic}`.
+/// sh:45-46 — `app_result=( ${^app_dir}*/Contents/(MacOS|MacOSClassic)(N) )`;
+/// `_mac_apps+=( ${app_result[@]%/Contents/MacOS*} )`.
 fn mac_apps_bundle_search(app_dir: &[String]) -> Vec<String> {
-    let mut app_result = Vec::new();
-    for d in app_dir {
-        let path = Path::new(d);
-        let (parent, prefix) = match (path.parent(), path.file_name()) {
-            (Some(p), Some(n)) => (p, n.to_string_lossy().into_owned()),
-            _ => continue,
-        };
-        let entries = match std::fs::read_dir(parent) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        for ent in entries.flatten() {
-            let name = ent.file_name();
-            let name = name.to_string_lossy();
-            if !name.starts_with(prefix.as_str()) {
-                continue;
-            }
-            for variant in ["MacOS", "MacOSClassic"] {
-                let candidate = ent.path().join("Contents").join(variant);
-                if candidate.is_dir() {
-                    app_result.push(candidate.to_string_lossy().into_owned());
-                }
-            }
-        }
-    }
-    // sh:46  ${app_result[@]%/Contents/MacOS*} — strip the shortest
-    // `/Contents/MacOS*` suffix (matches either variant).
-    app_result
+    glob_each(app_dir, "*/Contents/(MacOS|MacOSClassic)(N)")
         .into_iter()
         .map(|p| match p.rfind("/Contents/MacOS") {
+            // `%` — the SHORTEST matching suffix.
             Some(idx) => p[..idx].to_string(),
             None => p,
         })
         .collect()
-}
-
-/// `*.[a-z]#` against `suffix` (sh:53 negation target) — true if
-/// `suffix` ends with a literal `.` followed by zero-or-more lowercase
-/// ASCII letters (anything may precede the `.`). Verified live against
-/// real zsh: `${^app_dir}^*.[a-z]#(N)` keeps siblings whose leftover
-/// suffix does NOT satisfy this (self, and non-dotted-lowercase-ext
-/// siblings pass; dotted-lowercase-ext siblings are excluded).
-fn suffix_is_dotted_lowercase_ext(suffix: &str) -> bool {
-    match suffix.rfind('.') {
-        Some(idx) => suffix[idx + 1..].chars().all(|c| c.is_ascii_lowercase()),
-        None => false,
-    }
-}
-
-/// sh:53 first stage — `${^app_dir}^*.[a-z]#`, same sibling-scan
-/// mechanic as `mac_apps_bundle_search` but keeping only siblings whose
-/// leftover suffix is NOT a dotted-lowercase extension.
-fn negated_lowercase_ext_siblings(app_dir: &[String]) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for d in app_dir {
-        let path = Path::new(d);
-        let (parent, prefix) = match (path.parent(), path.file_name()) {
-            (Some(p), Some(n)) => (p, n.to_string_lossy().into_owned()),
-            _ => continue,
-        };
-        let entries = match std::fs::read_dir(parent) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        for ent in entries.flatten() {
-            let name = ent.file_name();
-            let name = name.to_string_lossy();
-            let suffix = match name.strip_prefix(prefix.as_str()) {
-                Some(s) => s,
-                None => continue,
-            };
-            if !suffix_is_dotted_lowercase_ext(suffix) {
-                out.push(ent.path());
-            }
-        }
-    }
-    out
 }
 
 /// sh:54-55 — `$#envvars` (char count of `builtin typeset -x` output)
@@ -392,17 +230,8 @@ fn kern_argmax() -> i64 {
 /// `grep -l APPL` per batch, then strips the `/..namedfork/rsrc` suffix
 /// off each hit to recover the application file path.
 fn mac_apps_single_file_search(app_dir: &[String]) -> Vec<String> {
-    // sh:53 stage 1 — sibling-prefix scan, suffix-negation filtered.
-    let siblings = negated_lowercase_ext_siblings(app_dir);
-    // sh:53 stage 2 — `.../..namedfork/rsrc` must exist as a regular
-    // file (the `(.UrN,.RN^U)` ownership/readability qualifiers are
-    // not modeled — the file-exists gate is the dominant filter).
-    let app_cand: Vec<String> = siblings
-        .into_iter()
-        .map(|p| p.join("..namedfork").join("rsrc"))
-        .filter(|p| p.is_file())
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
+    // sh:53  app_cand=( ${^app_dir}^*.[a-z]#/..namedfork/rsrc(.UrN,.RN^U) )
+    let app_cand = glob_each(app_dir, "^*.[a-z]#/..namedfork/rsrc(.UrN,.RN^U)");
     if app_cand.is_empty() {
         return Vec::new();
     }
@@ -674,92 +503,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The three sh:38/45/53 globs, through the engine, on a fixture that
+    /// holds every case the hand-written emulation got wrong:
+    ///   * `(pat/)#` stops at a stop-pattern directory (`Contents`,
+    ///     `*.app`), does not follow a symlinked directory
+    ///     (c:Src/glob.c:764) and skips a dot-directory (PAT_NOGLD);
+    ///   * its matches end in `/`, so sh:45 `${^app_dir}*/Contents/MacOS`
+    ///     finds bundles INSIDE each directory — `Tool.app` one level down
+    ///     — not siblings sharing a name prefix (`ApplicationsFoo`).
+    /// Expected values are real zsh 5.9.2's output on the same layout.
+    /// Extended glob is set as `$_comp_setup` sets it for every compsys
+    /// entry point (`Completion/compinit:141`).
     #[test]
-    fn is_stop_dir_matches_fixed_stop_patterns_case_insensitively() {
-        // sh:34  "*.app"
-        assert!(is_stop_dir("Safari.app"));
-        // sh:34  "contents#" — plural-optional via trailing `#`.
-        assert!(is_stop_dir("Contents"));
-        assert!(is_stop_dir("content"));
-        // sh:34  "*plug?ins#" — `?` covers plugin/plug-ins spelling.
-        assert!(is_stop_dir("PlugIns"));
-        assert!(is_stop_dir("Plug-ins"));
-        // sh:34  "document[[:alpha:]]#"
-        assert!(is_stop_dir("Documentation"));
-        // sh:34  "resources#" / "images#"
-        assert!(is_stop_dir("Resources"));
-        assert!(is_stop_dir("Images"));
-        // not a stop dir.
-        assert!(!is_stop_dir("Utilities"));
-    }
-
-    #[test]
-    fn walk_app_dir_stops_recursion_into_bundle_and_resources() {
-        let dir = std::env::temp_dir().join(format!("zshrs_walk_test_{}", std::process::id()));
+    fn app_dir_and_bundle_globs_match_the_upstream_patterns() {
+        let _g = crate::test_util::global_state_lock();
+        let had = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
+        crate::ported::options::opt_state_set("extendedglob", true);
+        let dir = std::env::temp_dir().join(format!("zshrs_macapps_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("Utilities")).unwrap();
-        std::fs::create_dir_all(dir.join("Safari.app/Contents/Resources")).unwrap();
-        let mut out = Vec::new();
-        walk_app_dir(&dir, &mut out);
-        let root = dir.to_string_lossy().into_owned();
-        assert!(out.contains(&root));
-        assert!(out.contains(&format!("{}/Utilities", root)));
-        // sh:34 "*.app" stop pattern — never descends into the bundle.
-        assert!(!out.iter().any(|p| p.contains("Safari.app")));
+        let apps = dir.join("Applications");
+        std::fs::create_dir_all(apps.join("Utilities/Tool.app/Contents/MacOS")).unwrap();
+        std::fs::create_dir_all(apps.join("Big.app/Contents/MacOS")).unwrap();
+        std::fs::create_dir_all(apps.join(".hidden/Secret.app/Contents/MacOS")).unwrap();
+        std::fs::create_dir_all(dir.join("ApplicationsFoo/Contents/MacOS")).unwrap();
+        std::fs::create_dir_all(dir.join("elsewhere/Linked.app/Contents/MacOS")).unwrap();
+        std::os::unix::fs::symlink(dir.join("elsewhere"), apps.join("link")).unwrap();
+
+        let root = apps.to_string_lossy().into_owned();
+        let app_dir = default_app_dir(&[root.clone()]);
+        let mut bundles = mac_apps_bundle_search(&app_dir);
+        bundles.sort();
         let _ = std::fs::remove_dir_all(&dir);
-    }
+        if !had {
+            crate::ported::options::opt_state_unset("extendedglob");
+        }
 
-    #[test]
-    fn bundle_search_finds_self_and_prefixed_sibling_only() {
-        // Mirrors the live-zsh verification in the module doc comment:
-        // ${^app_dir}*/Contents/(MacOS|MacOSClassic)(N) matches only
-        // `app_dir` itself (star="") and prefix-matching siblings, not
-        // descendants.
-        let dir = std::env::temp_dir().join(format!("zshrs_bundle_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("Applications/Contents/MacOS")).unwrap();
-        std::fs::create_dir_all(dir.join("ApplicationsFoo/Contents/MacOSClassic")).unwrap();
-        // A genuine nested bundle — NOT found, per the verified no-slash quirk.
-        std::fs::create_dir_all(dir.join("Applications/Safari.app/Contents/MacOS")).unwrap();
-
-        let app_dir = vec![dir.join("Applications").to_string_lossy().into_owned()];
-        let hits = mac_apps_bundle_search(&app_dir);
-
-        assert!(hits.contains(&dir.join("Applications").to_string_lossy().into_owned()));
-        assert!(hits.contains(&dir.join("ApplicationsFoo").to_string_lossy().into_owned()));
-        assert!(!hits.iter().any(|p| p.contains("Safari.app")));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn suffix_is_dotted_lowercase_ext_matches_star_dot_lower_hash() {
-        // Verified live: `${^app_dir}^*.[a-z]#(N)` excludes ".pm"/".rsrc"
-        // siblings, keeps self ("") and non-dotted siblings ("X").
-        assert!(suffix_is_dotted_lowercase_ext(".pm"));
-        assert!(suffix_is_dotted_lowercase_ext(".rsrc"));
-        assert!(!suffix_is_dotted_lowercase_ext(""));
-        assert!(!suffix_is_dotted_lowercase_ext("X"));
-    }
-
-    #[test]
-    fn negated_lowercase_ext_siblings_excludes_dotted_lowercase_ext() {
-        let dir = std::env::temp_dir().join(format!("zshrs_siblings_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::create_dir(dir.join("Applications")).unwrap();
-        std::fs::create_dir(dir.join("Applications.pm")).unwrap();
-        std::fs::create_dir(dir.join("ApplicationsX")).unwrap();
-
-        let app_dir = vec![dir.join("Applications").to_string_lossy().into_owned()];
-        let hits: Vec<String> = negated_lowercase_ext_siblings(&app_dir)
-            .into_iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-
-        assert!(hits.contains(&dir.join("Applications").to_string_lossy().into_owned()));
-        assert!(hits.contains(&dir.join("ApplicationsX").to_string_lossy().into_owned()));
-        assert!(!hits.contains(&dir.join("Applications.pm").to_string_lossy().into_owned()));
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(app_dir, vec![format!("{root}/"), format!("{root}/Utilities/")]);
+        assert_eq!(
+            bundles,
+            vec![format!("{root}/Big.app"), format!("{root}/Utilities/Tool.app")]
+        );
     }
 
     #[test]
