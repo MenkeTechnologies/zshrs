@@ -2278,6 +2278,25 @@ mod widget_killring_tests {
         use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
+        // imeta() reads typtab, which only inittyptab() fills; without it
+        // the 0x83 byte is not IMETA and nothing gets escaped.
+        crate::ported::utils::inittyptab();
+        // zlelineasstring encodes with wcrtomb (c:234), so the bytes depend
+        // on LC_CTYPE: a test binary never calls setlocale and runs in the C
+        // locale, where `Ã` is the single byte 0xC3 and there is no 0x83 to
+        // escape. Switch to a UTF-8 locale for the measurement, then restore.
+        let saved = unsafe {
+            let p = libc::setlocale(libc::LC_CTYPE, std::ptr::null());
+            std::ffi::CStr::from_ptr(p).to_owned()
+        };
+        let utf8 = ["en_US.UTF-8", "C.UTF-8"].iter().any(|loc| {
+            let c = std::ffi::CString::new(*loc).unwrap();
+            unsafe { !libc::setlocale(libc::LC_CTYPE, c.as_ptr()).is_null() }
+        });
+        if !utf8 {
+            eprintln!("skip: no UTF-8 locale on this host");
+            return;
+        }
 
         let line: Vec<char> = "echo Ã".chars().collect();
         let (mut ll, mut cs) = (0i32, 0i32);
@@ -2300,6 +2319,7 @@ mod widget_killring_tests {
         ZLEMETACS.store(cs, Ordering::SeqCst);
         let (buffer, cursor) = (get_buffer(), get_cursor());
         ZLEMETALL.store(0, Ordering::SeqCst);
+        unsafe { libc::setlocale(libc::LC_CTYPE, saved.as_ptr()) };
 
         assert!(expanded, "zlelineasstring did not metafy the 0x83 byte");
         assert_eq!(buffer, "echo Ã");
