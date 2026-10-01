@@ -255,3 +255,19 @@ fn smoke_arith_compare() {
     let (status, _) = run_via_zsh_pipeline("(( 0 ))");
     assert_eq!(status, 1);
 }
+
+/// A simple command with tens of thousands of literal words — the shape of
+/// the `autoload -Uz -- <every completion function>` line a large
+/// `.zcompdump` ends with (~49k words), which `compinit -C` sources at
+/// every `--zsh` startup. compile_simple's prefork-cut check rescanned every
+/// LATER word for each word, so compiling it was quadratic: 8k words took
+/// ~7s and the dump line minutes. The scan is now a suffix table built once.
+#[test]
+fn smoke_huge_literal_argv_compiles_linearly() {
+    let words: Vec<String> = (0..25_000).map(|i| format!("_w{i}")).collect();
+    let src = format!(": {}\nprint -r -- done", words.join(" "));
+    let (status, out) = run_via_zsh_pipeline(&src);
+    assert_eq!(status, 0);
+    assert_eq!(out, "done\n");
+}
+

@@ -3735,6 +3735,25 @@ impl ZshCompiler {
         let mut globlist_text_mask: u64 = 0;
         // (jump op, word index, value mask, text mask) per prefork-cut check.
         let mut cut_pads: Vec<(usize, usize, u64, u64)> = Vec::new();
+        // later_word_expands[i]: does any word AFTER argv word i carry an
+        // expansion (see the prefork-cut check in the loop)? Built once from
+        // the end so the loop stays linear: rescanning every later word per
+        // word was quadratic, and the `autoload -Uz -- <every function>` line
+        // of a large .zcompdump (~49k words) spent minutes compiling.
+        let later_word_expands: Vec<bool> = {
+            use crate::ported::zsh_h::{Inang, Inpar, OutangProc, Qstring, Qtick, Stringg, Tick};
+            let word_expands = |w: &String| {
+                w.chars().any(|c| {
+                    matches!(c, '$' | '`' | Stringg | Qstring | Tick | Qtick | OutangProc)
+                        || (c == Inang && w.contains(Inpar))
+                })
+            };
+            let mut later = vec![false; argv_words.len()];
+            for i in (0..argv_words.len().saturating_sub(1)).rev() {
+                later[i] = later[i + 1] || word_expands(&argv_words[i + 1]);
+            }
+            later
+        };
         for (argv_index, word) in argv_words.iter().enumerate() {
             // c:Src/parse.c:1986-1989 / c:2008-2050 — from a typeset-family
             // command's first `NAME=…` argument on, every word is a postassign,
@@ -3994,15 +4013,8 @@ impl ZshCompiler {
             // clears ERRFLAG_ERROR in hbegin, c:Src/hist.c:1115), so the check
             // is emitted only when one follows: `print "${x:n}" ${a[*]:1}`
             // printed its words after `unrecognized modifier`.
-            let later_word_expands = argv_words[argv_index + 1..].iter().any(|w| {
-                use crate::ported::zsh_h::{OutangProc, Qstring, Qtick, Stringg, Tick};
-                w.chars().any(|c| {
-                    matches!(c, '$' | '`' | Stringg | Qstring | Tick | Qtick | OutangProc)
-                        || (c == crate::ported::zsh_h::Inang && w.contains(crate::ported::zsh_h::Inpar))
-                })
-            });
             if argv_index + 1 < argv_words.len()
-                && (expansion_may_null_prefork(word) || later_word_expands)
+                && (expansion_may_null_prefork(word) || later_word_expands[argv_index])
             {
                 self.builder.emit(
                     Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_PREFORK_CUT_CHECK, 0),
