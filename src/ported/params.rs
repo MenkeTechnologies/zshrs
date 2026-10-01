@@ -2325,6 +2325,15 @@ pub fn createparam(
                 // c:1068-1069
             };
             if reject {
+                if (op.node.flags as u32 & PM_NAMEREF) == 0 {
+                    // zsh 5.9.2 has no c:1064-1080 block: a hidden outer-scope
+                    // private falls through to the reuse arm and fails there
+                    // with "can't change parameter attribute" (params.c:1018-1020
+                    // in the 5.9.1/5.9.2 sources). Only named references, which
+                    // exist in the dev tree alone, keep its wording.
+                    zerr(&format!("{}: can't change parameter attribute", name));
+                    return None;
+                }
                 zerr(&format!("{}: can't modify read-only parameter", name)); // c:1071
                 return None; // c:1072
             }
@@ -2482,7 +2491,9 @@ pub fn createparam(
             // c:1135-1138
             if (opf & PM_RO_BY_DESIGN) != 0 {
                 // c:1139
-                zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140-1141
+                // zsh 5.9.2 wording (params.c:1018-1020 in the 5.9.1/5.9.2
+                // sources); the dev tree says "can't modify read-only parameter".
+                zerr(&format!("{}: can't change parameter attribute", name)); // c:1140-1141
                 return None; // c:1142
             }
             if let Ok(mut tab) = paramtab().write() {
@@ -8885,6 +8896,14 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             let f = pm.node.flags as u32;
             if (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0 {
                 true // c:2264-2265 — fetchvalue finds a set/declared node
+            } else if isset(crate::ported::zsh_h::POSIXBUILTINS) && (f & PM_READONLY) != 0 {
+                // c:1131-1133 — createparam's reuse arm (always taken here:
+                // the PM_SCALAR flags carry no PM_LOCAL) rejects a read-only
+                // node first: `setopt posixbuiltins; readonly v; v=1`.
+                drop(tab); // zerr redraws ZLE, which reads paramtab
+                zerr(&format!("read-only variable: {}", name)); // c:1132
+                unqueue_signals(); // c:3241
+                return None; // c:3242
             } else if (f & PM_SPECIAL) != 0
                 || (isset(crate::ported::zsh_h::POSIXBUILTINS) && (f & PM_EXPORTED) != 0)
             {
@@ -8894,7 +8913,9 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 // getvalue then finds the revived node.
                 if (f & PM_RO_BY_DESIGN) != 0 {
                     drop(tab); // zerr redraws ZLE, which reads paramtab
-                    zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140
+                    // zsh 5.9.2 wording (params.c:1018-1020 in the 5.9.1/5.9.2
+                    // sources); the dev tree says "can't modify read-only parameter".
+                    zerr(&format!("{}: can't change parameter attribute", name)); // c:1140
                     unqueue_signals(); // c:3241
                     return None; // c:3242
                 }
@@ -9776,11 +9797,16 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                 // stale PM_NAMEREF instead of c:3337 rejecting the
                 // assignment. `typeset -n ref; unset -n ref; ref=(a b)`
                 // is the case that reaches this.
-                // Narrowed to PM_NAMEREF for the same reason as the twin
-                // gate in `assignsparam` — see the note there.
-                let visible =
-                    (f & PM_NAMEREF) == 0 || (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0; // c:2241-2243
-                if visible {
+                // Applied to every type, like the twin gate in `assignsparam`.
+                // An unset SPECIAL (or POSIXBUILTINS-exported) node is the
+                // one createparam does not replace (c:1135-1150): it clears
+                // PM_UNSET and the c:3368 second fetchvalue finds it again;
+                // that revival is applied just below, outside this read lock.
+                let fetch_visible = (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0; // c:2264-2265
+                let revive = !fetch_visible
+                    && ((f & PM_SPECIAL) != 0
+                        || (isset(crate::ported::zsh_h::POSIXBUILTINS) && (f & PM_EXPORTED) != 0));
+                if fetch_visible || revive {
                     (true, ps, pm.node.flags)
                 } else {
                     (false, None, 0)
@@ -9789,6 +9815,31 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
             None => (false, None, 0),
         }
     };
+    if existed
+        && (prior_flags as u32 & PM_UNSET) != 0
+        && (prior_flags as u32 & PM_DECLARED) == 0
+    {
+        // c:1139-1142 — createparam's reuse arm on a RO_BY_DESIGN node (an
+        // outer-scope private hidden by scopeprivate) errors, and the c:3368
+        // re-fetch then finds nothing: return NULL. zsh 5.9.2 wording
+        // (params.c:1018-1020 in the 5.9.1/5.9.2 sources).
+        if (prior_flags as u32 & PM_RO_BY_DESIGN) != 0 {
+            zerr(&format!("{}: can't change parameter attribute", name));
+            return None;
+        }
+        if let Ok(mut tab) = paramtab().write() {
+            let mut alt: Option<String> = None;
+            if let Some(pm) = tab.get_mut(name) {
+                pm.node.flags &= !(PM_UNSET as i32); // c:1144
+                if (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+                    alt = pm.ename.clone(); // c:1145
+                }
+            }
+            if let Some(altpm) = alt.as_deref().and_then(|a| tab.get_mut(a)) {
+                altpm.node.flags &= !(PM_UNSET as i32); // c:1146-1149
+            }
+        }
+    }
     // c:3397-3400 — PM_NAMEREF: can't change type of a named reference.
     if existed && (prior_flags as u32 & PM_NAMEREF) != 0 {
         zwarn(&format!("{}: can't change type of a named reference", name));

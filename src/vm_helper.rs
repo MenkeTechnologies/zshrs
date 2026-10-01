@@ -1735,6 +1735,15 @@ impl ShellExecutor {
             .ok()
             .and_then(|t| t.get(name).map(|p| (p.node.flags as u32, p.level)))
             .unwrap_or((0, 0));
+        // c:Src/params.c:2264-2265 — assignsparam reaches its c:3216 PM_READONLY
+        // test only through fetchvalue, which reports a node that is PM_UNSET
+        // without PM_DECLARED as ABSENT; createparam then decides (for an
+        // outer-scope private, hidden by scopeprivate's PM_UNSET|PM_READONLY,
+        // that is "can't change parameter attribute"). So such a node is not
+        // a read-only rejection here; assignsparam reports it.
+        if (flags & crate::ported::zsh_h::PM_UNSET) != 0 && (flags & crate::ported::zsh_h::PM_DECLARED) == 0 {
+            return false;
+        }
         // c:Src/params.c assignsparam — a real PM_READONLY param always
         // rejects writes.
         if (flags & PM_READONLY) != 0 {
