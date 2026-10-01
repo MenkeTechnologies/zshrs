@@ -19886,6 +19886,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 // c:Src/exec.c:160 `int subsh;` — saved so End can put the
                 // parent's value back (subshells nest).
                 subsh: crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed),
+                // The parent's libc locale — see SubshellSnapshot::locale.
+                locale: crate::vm_helper::subsh_locale_save(),
             });
             // c:Src/exec.c:1192-1193 — `if (!(flags & ESUB_FAKE)) subsh = 1;`
             // A `( … )` is a real subshell, so the body runs with subsh set.
@@ -20128,6 +20130,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 for (name, val) in &snap.special_globals {
                     crate::ported::params::setsparam(name, val);
                 }
+                // The body's `setlocale` (c:Src/params.c:4811 setlang,
+                // c:4877 lcsetfn) changed only the forked child in C.
+                crate::vm_helper::subsh_locale_restore(snap.locale.as_deref());
                 // c:Src/exec.c::entersubsh fork semantics — restore
                 // the parent's `$!`; a background job inside `(...)`
                 // dies with the child in C zsh.

@@ -687,6 +687,39 @@ pub struct SubshellSnapshot {
     /// bare `false`. zshrs runs `( … )` in-process, so the flag has
     /// to be set on entry and restored by hand on End.
     pub subsh: i32,
+    /// The libc locale on entry, as `setlocale(LC_ALL, NULL)` reports it.
+    /// `LC_ALL=C` / `LANG=…` / `LC_CTYPE=…` inside the body reach libc via
+    /// `setlang` / `lcsetfn` (c:Src/params.c:4811, c:4877), which in C
+    /// changes only the forked child. The paramtab restore puts the
+    /// parameters back without re-running their setfns, so the parent kept
+    /// the child's locale: `() { (LC_ALL=C; true) }` left `${(q+)…}` quoting
+    /// multibyte text as raw bytes for the rest of the script.
+    pub locale: Option<std::ffi::CString>,
+}
+
+/// !!! WARNING: RUST-ONLY !!! C forks `( … )` and `$( … )`, so a locale the
+/// body sets dies with the child. zshrs runs both in-process; this records
+/// the parent's libc locale on entry for `subsh_locale_restore`.
+pub(crate) fn subsh_locale_save() -> Option<std::ffi::CString> {
+    let cur = unsafe { libc::setlocale(libc::LC_ALL, std::ptr::null()) };
+    (!cur.is_null()).then(|| unsafe { std::ffi::CStr::from_ptr(cur) }.to_owned())
+}
+
+/// !!! WARNING: RUST-ONLY !!! Put back the locale `subsh_locale_save`
+/// recorded, if the body changed it, and redo what the locale setfns do after
+/// `setlocale` (c:Src/params.c:4841 `clear_mbstate()`, c:4842 `inittyptab()`).
+/// Call it after the paramtab restore: inittyptab reads $IFS. The typtab is
+/// rebuilt only when the locale differs, so an ordinary subshell does not
+/// rewrite the table concurrent lexers read.
+pub(crate) fn subsh_locale_restore(saved: Option<&std::ffi::CStr>) {
+    let Some(loc) = saved else { return };
+    let cur = unsafe { libc::setlocale(libc::LC_ALL, std::ptr::null()) };
+    if !cur.is_null() && unsafe { std::ffi::CStr::from_ptr(cur) } == loc {
+        return;
+    }
+    unsafe { libc::setlocale(libc::LC_ALL, loc.as_ptr()) };
+    crate::ported::params::clear_mbstate();
+    crate::ported::utils::inittyptab();
 }
 
 #[allow(unused_imports)]
@@ -6848,6 +6881,7 @@ impl ShellExecutor {
                 // SubshForkCopy.
                 // A funsub/valsub runs in the current shell and keeps it all.
                 let tables_snap = (!shared_state).then(crate::ported::exec::SubshForkCopy::save);
+                let locale_snap = (!shared_state).then(subsh_locale_save).flatten();
                 let fd_frame = (!shared_state).then(crate::ported::exec::SubshFdFrame::enter);
                 // c:Src/exec.c:1127-1131 — the child's `entersubsh` unsets
                 // every trap that is not function-form (`$(trap)` lists
@@ -7134,6 +7168,9 @@ impl ShellExecutor {
                     if ifs_changed {
                         crate::ported::utils::inittyptab();
                     }
+                    // The body's `LC_ALL=` / `LANG=` changed only the
+                    // forked child's locale in C.
+                    subsh_locale_restore(locale_snap.as_deref());
                     if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                         *t = traps_snap;
                     }
