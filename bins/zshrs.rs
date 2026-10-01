@@ -1266,7 +1266,7 @@ fn main() {
     // block below) has to be known HERE: `--zsh` publishes none of the
     // bundled-docs paths, because zsh itself sets none of them.
     zsh::extensions::dash_mode::set_zsh_dropin(
-        std::env::args().any(|a| a == "--zsh" || a == "--zsh-compat"),
+        std::env::args_os().any(|a| a == "--zsh" || a == "--zsh-compat"),
     );
     zsh::bundled_docs::publish_into(&mut entry_env);
     let _ = zsh::ported::params::environ.set(entry_env);
@@ -3082,7 +3082,9 @@ pub fn zshrs_main() {
             _ => {
                 eprintln!(
                     "{}: can't open input file: {}", // c:1397
-                    std::env::args().next().unwrap_or_else(|| "zsh".to_string()),
+                    std::env::args_os()
+                        .next()
+                        .map_or_else(|| "zsh".to_string(), |a| a.to_string_lossy().into_owned()),
                     runscript
                 );
                 std::process::exit(127); // c:1398
