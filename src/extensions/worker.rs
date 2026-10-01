@@ -569,41 +569,4 @@ mod tests {
             "inputline() must return EOF on a pool thread"
         );
     }
-
-    /// A pool-thread parse must leave the main thread's open history line
-    /// alone. Async precmd hooks parse on the pool while the shell reads a
-    /// command; their strinbeg/strinend cleared histactive, so the main
-    /// line's hend ran unlinkcurline, curhist dropped by one and the next
-    /// command reused an event number (`fc -l` then looped on it).
-    #[test]
-    fn worker_parse_leaves_the_main_history_line_alone() {
-        use crate::ported::hist::{curhist, histactive, HA_ACTIVE};
-        let _g = crate::test_util::global_state_lock();
-
-        let saved = (
-            histactive.load(Ordering::SeqCst),
-            curhist.load(Ordering::SeqCst),
-        );
-        histactive.store(HA_ACTIVE, Ordering::SeqCst);
-        curhist.store(41, Ordering::SeqCst);
-
-        let pool = WorkerPool::new(1);
-        let done = Arc::new(AtomicUsize::new(0));
-        let d = Arc::clone(&done);
-        pool.submit(move || {
-            let _ = crate::vm_helper::parse_isolated_at("print hook; x=${y[1]}", None);
-            d.store(1, Ordering::SeqCst);
-        });
-        wait_for_count(&done, 1, 10_000);
-        drop(pool);
-
-        let after = (
-            histactive.load(Ordering::SeqCst),
-            curhist.load(Ordering::SeqCst),
-        );
-        histactive.store(saved.0, Ordering::SeqCst);
-        curhist.store(saved.1, Ordering::SeqCst);
-        assert_eq!(done.load(Ordering::SeqCst), 1, "pool parse did not finish");
-        assert_eq!(after, (HA_ACTIVE, 41), "(histactive, curhist) after a pool parse");
-    }
 }

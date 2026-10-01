@@ -57,21 +57,6 @@ use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::utils::quotedzputs;
 
-/// Which zsh's alias listing command-name completion follows.
-///
-/// * `false` (zsh **5.9.2**, `$ZSH_VERSION`): aliases are added bare,
-///   `'aliases:alias:compadd -Qk aliases'`.
-/// * `true` (zsh **5.9.999.3-test**): upstream `9a5f213573` ("51759: Show
-///   alias values in command completions") adds sh:43-48, offering each
-///   alias with its value as the description through `((…))`. `_alternative`
-///   hands a `((…))` action to `_describe` with `-M 'r:|[_-]=* r:|=*'`, so a
-///   word as short as `-` then matches `run-help` and `which-command`:
-///   `peach -<TAB>` and a bare `-<TAB>` list them, where 5.9.2 lists nothing.
-///
-/// zshrs targets 5.9.2 here, as `zparseopts`' `LONG_SPEC_NEEDS_GUARD` does.
-/// Retargeting is this one `const`.
-const ALIAS_VALUES_IN_COMMAND_COMPLETION: bool = false;
-
 /// `${(kv)aliases}` — key/value pairs of the REGULAR aliases.
 ///
 /// `aliases` is a magic assoc served by `scanpmraliases`
@@ -236,9 +221,7 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
         //   `else` arm, i.e. the branch zsh only reaches when the style is
         //   explicitly set false — so every alias was offered bare, with no
         //   expansion shown as its description.
-        if ALIAS_VALUES_IN_COMMAND_COMPLETION
-            && style_true_or_unset(&format!(":completion:{}:aliases", curcontext), "verbose")
-        {
+        if style_true_or_unset(&format!(":completion:{}:aliases", curcontext), "verbose") {
             // sh:44  printf -v verbose %s:%s\  ${(@q+)${(kv)aliases}[@]//\:/\\:}
             let mut verbose = String::new();
             for (k, v) in regular_aliases() {

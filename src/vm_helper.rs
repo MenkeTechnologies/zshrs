@@ -8603,8 +8603,6 @@ impl ShellExecutor {
     /// cell so the dispatch layer skips the current command on NOMATCH +
     /// looks_like_glob instead of exiting the shell.
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
-        let errflag_before =
-            crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
         let expanded = glob_path(pattern);
         if !expanded.is_empty() {
             // c:Src/glob.c:1871-1872 — `if (matchct) badcshglob |= 2;`
@@ -8636,19 +8634,6 @@ impl ShellExecutor {
         // clears exactly that bit — so `*(N[1,])` printed `bad math
         // expression: empty string` twice. Bail out where C's `return` lands.
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            // A diagnostic THIS glob raised (`bad pattern: a[B`, a bad
-            // qualifier) belongs to the same per-command carrier as the
-            // c:1877 NOMATCH below. C runs an external command's prefork
-            // expansion in the child forked at Src/exec.c:3719, so the
-            // `zerr` there only costs that child (status 1) and the list
-            // goes on; a builtin expands in the shell and the errflag aborts
-            // the list. The dispatch layer makes exactly that split for
-            // `current_command_glob_failed`; without it `/bin/echo a[B;
-            // print after` aborted the list and the `find` shadow ran with
-            // the raw word after printing the diagnostic.
-            if errflag_before == 0 {
-                self.current_command_glob_failed.set(true);
-            }
             return Vec::new();
         }
         // c:1871-1872 — `if (matchct) badcshglob |= 2;`: files DID match and

@@ -65,18 +65,13 @@ pub fn zpcre_utf8_enabled() -> i32 {
     if !multibyte {
         return 0; // c:54
     }
-    // c:61 — `return (have_utf8_pcre == 1) &&
-    //            (!strcmp(nl_langinfo(CODESET), "UTF-8"));`
-    // The shell's own locale, which `LANG=…` / `LC_ALL=…` assignments
-    // move through setlocale (params.c setlang); reading the process
-    // environment instead missed a non-exported `LANG=C`.
-    let codeset = unsafe { libc::nl_langinfo(libc::CODESET) };
-    if codeset.is_null() {
-        return 0;
-    }
-    let codeset = unsafe { std::ffi::CStr::from_ptr(codeset) };
-    if codeset.to_bytes() == b"UTF-8" {
-        1 // c:61
+    // c:62 — nl_langinfo(CODESET) check.
+    let lc = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_CTYPE"))
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default();
+    if lc.to_uppercase().contains("UTF-8") || lc.to_uppercase().contains("UTF8") {
+        1 // c:62
     } else {
         0
     }
@@ -848,38 +843,10 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
     // silently no-matched whenever either side carried Meta bytes.
     let mut lhs_buf = lhstr.as_bytes().to_vec();
     let _lhs_len = crate::ported::utils::unmetafy(&mut lhs_buf); // c:442
+    let lhs_plain = String::from_utf8_lossy(&lhs_buf).into_owned();
     let mut rhs_buf = rhre.as_bytes().to_vec();
     let _rhs_len = crate::ported::utils::unmetafy(&mut rhs_buf); // c:443
-    // c:433-434 — `if (zpcre_utf8_enabled()) pcre_opts |= PCRE2_UTF;`.
-    // Without PCRE2_UTF the 8-bit library treats every subject and pattern
-    // byte as one character with that code point (0-255). The fancy_regex
-    // backend only takes `str`, so that mode is reached by decoding both
-    // sides byte-for-char (Latin-1); every char then stands for exactly one
-    // byte, and `[[ é =~ '^..\z' ]]` under `LANG=C` sees two characters as
-    // libpcre2 does.
-    let utf = zpcre_utf8_enabled() != 0; // c:433
-    let (lhs_plain, rhs_plain) = if utf {
-        (
-            String::from_utf8_lossy(&lhs_buf).into_owned(),
-            String::from_utf8_lossy(&rhs_buf).into_owned(),
-        )
-    } else {
-        (
-            lhs_buf.iter().map(|&b| b as char).collect::<String>(),
-            rhs_buf.iter().map(|&b| b as char).collect::<String>(),
-        )
-    };
-    // Matched text goes back to the shell as the subject's own bytes
-    // (c:209 metafy of the ovector slice); in non-UTF mode undo the
-    // byte-for-char decode above.
-    let subject_text = |t: &str| -> String {
-        if utf {
-            t.to_string()
-        } else {
-            String::from_utf8_lossy(&t.chars().map(|c| c as u32 as u8).collect::<Vec<u8>>())
-                .into_owned()
-        }
-    };
+    let rhs_plain = String::from_utf8_lossy(&rhs_buf).into_owned();
 
     // c:433-436 — compile-time PCRE option bits:
     //   if (zpcre_utf8_enabled())                 pcre_opts |= PCRE2_UTF;
@@ -956,7 +923,7 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                         for i in 0..caps.len() {
                             arr.push(
                                 caps.get(i)
-                                    .map(|m| subject_text(m.as_str()))
+                                    .map(|m| m.as_str().to_string())
                                     .unwrap_or_default(),
                             );
                         }
@@ -965,7 +932,7 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                         // c:188-190 — `MATCH` scalar.
                         let ksharr = isset(KSHARRAYS) as i64;
                         if let Some(m0) = caps.get(0) {
-                            crate::ported::params::setsparam("MATCH", &subject_text(m0.as_str())); // c:190
+                            crate::ported::params::setsparam("MATCH", m0.as_str()); // c:190
                                                                                     // c:243-261 — char-offset MBEGIN/MEND over the
                                                                                     // unmetafied subject (MB_CHARLEN walk ⟺
                                                                                     // chars().count() on the UTF-8 String).
@@ -987,7 +954,7 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                             for i in 1..caps.len() {
                                 match caps.get(i) {
                                     Some(m) => {
-                                        subs.push(subject_text(m.as_str())); // c:209
+                                        subs.push(m.as_str().to_string()); // c:209
                                         let b = lhs_plain[..m.start()].chars().count() as i64;
                                         let l =
                                             lhs_plain[m.start()..m.end()].chars().count() as i64;
@@ -1024,9 +991,9 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                     let mut named_kv: Vec<String> = Vec::new();
                     for (idx, name_opt) in re.capture_names().enumerate() {
                         if let Some(nm) = name_opt {
-                            let val = caps.get(idx).map(|m| subject_text(m.as_str())).unwrap_or_default();
+                            let val = caps.get(idx).map(|m| m.as_str()).unwrap_or("");
                             named_kv.push(nm.to_string()); // c:226
-                            named_kv.push(crate::ported::utils::metafy(&val)); // c:227
+                            named_kv.push(crate::ported::utils::metafy(val)); // c:227
                         }
                     }
                     if !named_kv.is_empty() {

@@ -3793,11 +3793,6 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
 
     // c:1896-1904 — highlights[] table: (name, mask_on, mask_off).
     const HIGHLIGHTS: &[(&str, zattr, zattr)] = &[
-        // zsh 5.9.2 spells this entry `none` (5.9.1 prompt.c:1610
-        // `{ "none", 0, TXT_ATTR_ON_MASK }`); the dev tree renamed it
-        // `reset`. zshrs targets 5.9.2, so `none` is accepted, with the
-        // mask that clears the same attributes in this layout.
-        ("none", 0, TXT_ATTR_ALL),
         ("reset", 0, TXT_ATTR_ALL),       // c:1897
         ("bold", TXTBOLDFACE, TXTFAINT),  // c:1898
         ("faint", TXTFAINT, TXTBOLDFACE), // c:1899

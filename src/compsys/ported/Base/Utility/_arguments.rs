@@ -256,6 +256,31 @@ fn nmatches() -> i64 {
         .unwrap_or(0)
 }
 
+/// Like `nmatches()` but also counts the CURRENT open group's compadds not yet
+/// flushed into a permanent group (the live `matches`/`fmatches` accumulators).
+/// C's `nmatches` pointer-aliases the open group's `lmatches` so it counts them
+/// live; the port copies, so `nmatches()` reads 0 for an unflushed group. Used
+/// ONLY for `_arguments`' RETURN comparison (sh:586, `[[ nm -ne nmatches ]]`),
+/// NOT the internal `nm == nmatches()` checks. Without it, `_arguments` returned
+/// 1 for `ssh -`/`mkdir -` (options added to an unflushed group → delta 0), so
+/// `_main_complete`'s matcher-list loop didn't break at the exact matcher and
+/// fell through to the looser matchers, spuriously matching login names/dirs to
+/// the `-` word.
+fn nmatches_live() -> i64 {
+    use crate::ported::zle::compcore as cc;
+    let live_m = crate::comp_match_handles::matches_arc()
+        .lock()
+        .ok()
+        .map(|g| g.len())
+        .unwrap_or(0);
+    let live_fm = crate::comp_match_handles::fmatches_arc()
+        .lock()
+        .ok()
+        .map(|g| g.len())
+        .unwrap_or(0);
+    nmatches() + (live_m + live_fm) as i64
+}
+
 /// `${context%:*}` / `${oldcontext%:*}` — drop the last `:field`.
 fn strip_last_field(ctx: &str) -> String {
     match ctx.rfind(':') {
@@ -1119,6 +1144,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
     let origpre = getsparam("PREFIX").unwrap_or_default();
     let origipre = getsparam("IPREFIX").unwrap_or_default();
     let nm = nmatches(); // sh:331 nm="$compstate[nmatches]"
+    let nm_live = nmatches_live();
     // sh:328-330 — enter the emulated `local` scope for the scratch names.
     let saved_scratch = save_scratch();
     // sh:328-330 — and they are `local`, not merely scratch: zsh creates
@@ -1848,7 +1874,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
             // Falls through the disabled `return 1` block (sh:574-580);
             // final value comes from sh:586. `[[ nm -ne … ]]` is TRUE
             // (exit 0) when matches were added.
-            if nm != nmatches() {
+            if nm_live != nmatches_live() {
                 0
             } else {
                 1
@@ -1860,13 +1886,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
             let _ = _message(&[noargs.clone()]);
         }
         // sh:586 — [[ nm -ne "$compstate[nmatches]" ]] (0 = added matches)
-        //   Both reads go through `get_nmatches` (c:Src/Zle/complete.c:1411),
-        //   whose `permmatches(0)` re-runs `makearray` over every group,
-        //   the open one included (its `lmatches` is the shared `matches`
-        //   accumulator), so the count is DEDUPLICATED: a second
-        //   `_arguments` in one completion that re-adds the same words
-        //   leaves it unchanged and returns 1, as zsh does.
-        if nm != nmatches() {
+        if nm_live != nmatches_live() {
             0
         } else {
             1

@@ -15,10 +15,6 @@
 
 use std::cmp::Ordering;
 
-use crate::metafied_key::MetafiedOperand;
-use crate::ported::zle::comp_h::Cmatch;
-use crate::ported::zle::compcore::matchcmp;
-
 /// Bottom-up **stable** merge sort that TOLERATES a comparator which is not a
 /// strict weak ordering — the stand-in for C's `qsort`. O(n log n), ties keep
 /// their input order, never panics on an inconsistent `cmp`.
@@ -121,42 +117,6 @@ where
     }
 }
 
-/// The `zstrcmp` operands `matchcmp` (`compcore.c:3173`) reads from one
-/// match: `(*m)->str` (c:3181-3182) and `(*m)->disp` (c:3191-3192), in the
-/// metafied, NUL-terminated form C's `Cmatch` already stores them in.
-/// Built once per match per sort by [`qsort_matches`].
-pub struct MatchSortKey {
-    pub str: MetafiedOperand,
-    pub disp: Option<MetafiedOperand>,
-}
-
-impl MatchSortKey {
-    pub fn new(m: &Cmatch) -> Self {
-        MatchSortKey {
-            str: MetafiedOperand::new(m.str.as_deref().unwrap_or("")),
-            disp: m.disp.as_deref().map(MetafiedOperand::new),
-        }
-    }
-}
-
-/// `qsort(rp, n, sizeof(Cmatch), matchcmp)` — `makearray`'s two sorts
-/// (`compcore.c:3262` and c:3301) — over `ord`, an index permutation into
-/// `src` (the port's stand-in for C's array of `Cmatch` pointers).
-///
-/// The comparator's operands are prepared once per match up front: C's
-/// `Cmatch` holds them ready-made, and preparing them inside the comparator
-/// repeated that work on each of the O(n log n) comparisons. Measured on
-/// `arch <TAB>` (47058 command names; `_description`'s `_setup` reads
-/// `$compstate[nmatches]` four times, and each read re-sorts the group the
-/// way C's `permmatches` does) the per-comparison preparation was 61% of the
-/// completion.
-pub fn qsort_matches(ord: &mut [usize], src: &[Cmatch]) {
-    let keys: Vec<MatchSortKey> = src.iter().map(MatchSortKey::new).collect();
-    qsort_tolerant(ord, |a: &usize, b: &usize| {
-        matchcmp(&src[*a], &keys[*a], &src[*b], &keys[*b])
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::qsort_tolerant;
@@ -191,54 +151,5 @@ mod tests {
         let mut check = v.clone();
         check.sort();
         assert_eq!(check, (0..30).collect::<Vec<_>>());
-    }
-
-    /// `makearray`'s `qsort(..., matchcmp)` over a completion-sized match
-    /// set. `arch <TAB>` sorts ~47k command names four times (one per
-    /// `$compstate[nmatches]` read that finds new matches), and with the
-    /// comparator re-deriving its operands per call that took ~8s per sort in
-    /// the debug build and the cell never drew within the harness's 10s. The
-    /// bound is far above the prepared-operand cost and far below the old one.
-    /// The order must also be what pairwise `matchcmp` says it is.
-    #[test]
-    fn qsort_matches_sorts_a_large_match_set_in_bounded_time() {
-        use super::{qsort_matches, MatchSortKey};
-        use crate::ported::zle::comp_h::Cmatch;
-        use crate::ported::zle::compcore::{matchcmp, MATCHORDER};
-        let _g = crate::test_util::global_state_lock();
-        MATCHORDER.store(0, std::sync::atomic::Ordering::Relaxed);
-        // Deterministic scramble of 40000 distinct command-like names.
-        let n = 40_000usize;
-        let src: Vec<Cmatch> = (0..n)
-            .map(|i| {
-                let k = (i * 7919) % n;
-                let mut m = Cmatch::default();
-                m.str = Some(format!("cmd-{}{}", ["git", "Zip", "ls", "x_"][k % 4], k));
-                m
-            })
-            .collect();
-        let mut ord: Vec<usize> = (0..n).collect();
-        let t = std::time::Instant::now();
-        qsort_matches(&mut ord, &src);
-        let took = t.elapsed();
-        assert!(
-            took < std::time::Duration::from_secs(4),
-            "sorting {n} matches took {took:?}"
-        );
-        let mut seen = vec![false; n];
-        for &i in &ord {
-            assert!(!seen[i], "index {i} twice");
-            seen[i] = true;
-        }
-        for w in ord.windows(2) {
-            let (a, b) = (&src[w[0]], &src[w[1]]);
-            assert_ne!(
-                matchcmp(a, &MatchSortKey::new(a), b, &MatchSortKey::new(b)),
-                Ordering::Greater,
-                "{:?} sorted before {:?}",
-                a.str,
-                b.str
-            );
-        }
     }
 }

@@ -19,23 +19,16 @@
 //! sh:24  (( $#file )) && compadd -U -i "$IPREFIX" -I "$ISUFFIX" -f -Q -- $file
 //! ```
 //!
-//! sh:17 / sh:21 run through the real `eval` ([`eval_comp`]): the word is
-//! `$PREFIX*$SUFFIX(om[N]N)`, so everything the globber does — `GLOB_DOTS`
-//! (a bare `*` skips dot files), pattern characters typed on the line,
-//! `~`/`=` expansion, path components, the `om` sort and its `[N]` index —
-//! comes from the engine instead of a re-implementation of it. An earlier
-//! version listed the directory with `std::fs` and matched names by
-//! `starts_with`, so `^Xm` on an empty word offered `.git` where zsh offers
-//! the newest non-dot file.
+//! `(om[N])` is the `o`rder-by-`m`odification-time glob qualifier
+//! selecting the Nth oldest match. We replicate via std::fs +
+//! mtime sort instead of evaluating zsh-glob expressions inline.
 
-use crate::compsys::ported::shared::{declare_locals, eval_comp};
-use crate::ported::glob::shtokenize;
-use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::subst::filesubstr;
-use crate::ported::utils::{errflag, quotestring};
+use crate::ported::params::{getiparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
-use crate::ported::zsh_h::{options, ERRFLAG_ERROR, MAX_OPS, QT_BACKSLASH};
-use std::sync::atomic::Ordering;
+use crate::ported::zsh_h::{options, MAX_OPS};
+use std::fs;
+use std::path::Path;
+use std::time::SystemTime;
 
 fn make_ops() -> options {
     options {
@@ -46,81 +39,84 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:17 / sh:21 — `eval "file=($PREFIX*$SUFFIX(om[${NUMERIC:-1}]N))"`.
-/// The string is built from the RAW parameter values, exactly as the
-/// double-quoted `eval` argument is, so quoting typed on the line reaches
-/// the parser intact (sh:15-16).
-fn eval_glob(prefix: &str, suffix: &str, line: u64) -> Vec<String> {
-    // `${NUMERIC:-1}` — unset OR empty falls back to 1.
-    let numeric = getsparam("NUMERIC")
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "1".to_string());
-    eval_comp(&format!("file=({prefix}*{suffix}(om[{numeric}]N))"), line);
-    getaparam("file").unwrap_or_default()
+/// sh:17/sh:21 — glob `$PREFIX*$SUFFIX` then pick the Nth by mtime
+/// (N from `$NUMERIC`, default 1, negative = oldest direction).
+fn pick_nth_recent(prefix: &str, suffix: &str, n: i64) -> Option<String> {
+    // Determine search dir from PREFIX.
+    let combined = format!("{}{}", prefix, suffix);
+    let (dir, fname_prefix) = match combined.rfind('/') {
+        Some(i) => (combined[..i].to_string(), combined[i + 1..].to_string()),
+        None => (".".to_string(), combined.clone()),
+    };
+    let (real_prefix, real_suffix) = if let Some(slash) = prefix.rfind('/') {
+        (prefix[slash + 1..].to_string(), suffix.to_string())
+    } else {
+        (prefix.to_string(), suffix.to_string())
+    };
+
+    let _ = fname_prefix; // used for context only
+
+    let entries = fs::read_dir(Path::new(&dir)).ok()?;
+    let mut matches: Vec<(SystemTime, String)> = Vec::new();
+    for ent in entries.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        if name.starts_with(&real_prefix) && name.ends_with(&real_suffix) {
+            if let Ok(meta) = ent.metadata() {
+                if let Ok(mtime) = meta.modified() {
+                    let full = if dir == "." {
+                        name
+                    } else {
+                        format!("{}/{}", dir, name)
+                    };
+                    matches.push((mtime, full));
+                }
+            }
+        }
+    }
+    if matches.is_empty() {
+        return None;
+    }
+    // `o`m = ascending mtime (oldest first); `O`m would be descending.
+    //   `om[N]` indexes 1-based from oldest. Negative N (zsh `om[-1]`)
+    //   is newest. We mirror by sorting newest-first then taking
+    //   N-1 for positive, or |N|-1 from oldest for negative.
+    matches.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    let idx = if n >= 0 {
+        (n.saturating_sub(1)) as usize
+    } else {
+        matches.len().saturating_sub((-n) as usize)
+    };
+    matches.get(idx).map(|t| t.1.clone())
 }
 
-/// `_most_recent_file` — `\C-xm` widget: complete the Nth most recently
-/// modified file matching the word on the line.
+/// `_most_recent_file` — `\C-xm` widget: insert the Nth most-recent
+/// file matching the glob on the current line.
 pub fn _most_recent_file() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_most_recent_file");
-    // sh:11
-    declare_locals(&["file", "tilde", "etilde"], 0);
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
+    let numeric = getiparam("NUMERIC");
+    let n = if numeric == 0 { 1 } else { numeric };
 
-    // sh:12 — `[[ $PREFIX = \~*/* ]]`: a literal `~`, then a `/` somewhere.
-    let file: Vec<String> = if prefix.starts_with('~') && prefix[1..].contains('/') {
-        // sh:13 — `tilde=${PREFIX%%/*}`
-        let tilde = prefix[..prefix.find('/').unwrap()].to_string();
-        let _ = setsparam("tilde", &tilde);
-        // sh:14 — `etilde=${~tilde} 2>/dev/null`. `~` turns on GLOB_SUBST,
-        // so the value is shtokenized and then file-expanded like any
-        // unquoted word; the redirection only hides the diagnostic. A
-        // failed expansion (unknown `~user` under NOMATCH) still raises the
-        // error, and the function stops there.
-        let mut tok = tilde.clone();
-        shtokenize(&mut tok);
-        let etilde = filesubstr(&tok, true).unwrap_or_else(|| tilde.clone());
-        if errflag.load(Ordering::SeqCst) & ERRFLAG_ERROR != 0 {
-            return 1;
-        }
-        let _ = setsparam("etilde", &etilde);
-        // sh:17
-        let globbed = eval_glob(&prefix, &suffix, 17);
-        // sh:18 — `file=(${file/#$etilde})`: `$etilde` is not `~`-flagged,
-        // so it is matched literally, anchored at the start.
-        // sh:19 — `file=($tilde${(q)^file})`
-        globbed
-            .iter()
-            .map(|f| {
-                let rest = f.strip_prefix(etilde.as_str()).unwrap_or(f);
-                format!("{tilde}{}", quotestring(rest, QT_BACKSLASH))
-            })
-            .collect()
-    } else {
-        // sh:21-22 — `file=(${(q)file})`
-        eval_glob(&prefix, &suffix, 21)
-            .iter()
-            .map(|f| quotestring(f, QT_BACKSLASH))
-            .collect()
+    let picked = match pick_nth_recent(&prefix, &suffix, n) {
+        Some(f) => f,
+        None => return 1,
     };
-    setaparam("file", file.clone());
 
-    // sh:24 — `(( $#file )) && compadd -U -i "$IPREFIX" -I "$ISUFFIX" -f -Q -- $file`
-    if file.is_empty() {
-        return 1;
-    }
-    let mut argv: Vec<String> = vec![
+    // sh:24
+    let iprefix = getsparam("IPREFIX").unwrap_or_default();
+    let isuffix = getsparam("ISUFFIX").unwrap_or_default();
+    let argv: Vec<String> = vec![
         "-U".to_string(),
         "-i".to_string(),
-        getsparam("IPREFIX").unwrap_or_default(),
+        iprefix,
         "-I".to_string(),
-        getsparam("ISUFFIX").unwrap_or_default(),
+        isuffix,
         "-f".to_string(),
         "-Q".to_string(),
         "--".to_string(),
+        picked,
     ];
-    argv.extend(file);
     bin_compadd("compadd", &argv, &make_ops(), 0)
 }
 

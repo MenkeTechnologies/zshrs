@@ -100,7 +100,7 @@ pub fn _dir_list(args: &[String]) -> i32 {
     // sh:29
     let mut dir_args: Vec<String> = suf;
     dir_args.push("-r".to_string());
-    dir_args.push(format!("{}{}", sep, r" /\t\t\-"));
+    dir_args.push(format!("{} /\t\t-", sep));
     dir_args.extend(argv);
     _directories(&dir_args)
 }

@@ -1348,25 +1348,6 @@ print -l -- "${watch[@]}""#,
     fn watchfmt_consistent() {
         assert_parity(&with_modules(&["watch"], r#"echo "[${WATCHFMT-unset}]""#));
     }
-
-    /// Autoloading zsh/watch through ONE of its parameters materialises
-    /// BOTH: 5.9.2's `boot_` (Src/Modules/watch.c:722-723) looks up `watch`
-    /// and `WATCH` with `paramtab->getnode`, which resolves the other stub.
-    /// `_parameters -g 'a*'` scans `$parameters` after `${(P)i}` on `WATCH`
-    /// has loaded the module; zshrs left `watch` typed "undefined", so
-    /// `read <TAB>` listed one name fewer than zsh. The scan (not a keyed
-    /// `$parameters[watch]` lookup, which itself autoloads) is what sees it.
-    #[test]
-    fn watch_autoload_through_one_name_enables_both() {
-        for first in ["WATCH", "watch"] {
-            assert_parity_dash_f(&format!(
-                r#"zmodload zsh/parameter
-i={first}; : ${{${{(P)i}}:0:100}}
-for k v in ${{(kv)parameters}}; do [[ $k == [wW][aA][tT][cC][hH] ]] && print -r -- "$k=$v"; done | sort
-zmodload -lF zsh/watch | grep p:"#
-            ));
-        }
-    }
 }
 
 // ───────────────────────── zsh/ksh93 ─────────────────────────

@@ -7030,24 +7030,12 @@ pub fn paramsubst(
             // twice per loop iteration where C walks them once.
             let aspar_arr: Option<Vec<String>> = if subexp_aspar_is_array {
                 match subexp_aspar_name.as_deref() {
-                    Some(n) => {
-                        // c:Src/subst.c:2800 — the outer `fetchvalue` on the
-                        // spliced name reaches the node through getparamnode
-                        // → loadparamnode (c:Src/params.c:563-585), which
-                        // ensurefeature's a PM_AUTOLOAD stub. Skipping the
-                        // inner pass above also skipped the inner's own mark,
-                        // so `${${(P)i}:0:100}` with i=watch (the
-                        // `_parameters` loop) left `watch` typed "undefined"
-                        // and zsh/watch unloaded. Same stand-in as the
-                        // un-nested aspar arm's mark below.
-                        crate::vm_helper::mark_module_param_used(n); // c:2800
-                        arrays_get(n).or_else(|| {
-                            // c:Src/params.c:736 — same `v->arr` slot the outer
-                            // arms read, so the referenced association is walked
-                            // once for the whole expansion.
-                            getvaluearr_assoc_vals!(n).cloned()
-                        })
-                    }
+                    Some(n) => arrays_get(n).or_else(|| {
+                        // c:Src/params.c:736 — same `v->arr` slot the outer
+                        // arms read, so the referenced association is walked
+                        // once for the whole expansion.
+                        getvaluearr_assoc_vals!(n).cloned()
+                    }),
                     None => None,
                 }
             } else {

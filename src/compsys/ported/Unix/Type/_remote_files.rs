@@ -303,7 +303,7 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
 
     // sh:99 — autoremoveslash: strip a trailing `/` on the next keystroke.
     let autoremove: Vec<String> = if isset(AUTOREMOVESLASH) {
-        vec!["-r".to_string(), r"/ \t\n\-".to_string()]
+        vec!["-r".to_string(), "/ \t\n-".to_string()]
     } else {
         Vec::new()
     };

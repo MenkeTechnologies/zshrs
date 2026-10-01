@@ -75,13 +75,6 @@ static histfile_linect: AtomicI64 = AtomicI64::new(0); // c:242
 /// Port of `hist_context_save()` from `Src/hist.c:248`. — C decl `hist_context_save(struct hist_stack *hs, int toplevel)`.
 pub fn hist_context_save(hs: &mut hist_stack, toplevel: i32) {
     // c:248
-    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
-    // The history line state is process-global. A worker-pool parse
-    // (zcontext_save in parse_isolated_at) must neither snapshot nor clear
-    // the main thread's live line; hbegin/hend leave it alone there too.
-    if crate::worker::in_worker_thread() {
-        return;
-    }
     if toplevel != 0 {
         // c:248
         // top level, make this version visible to ZLE                       // c:251
@@ -115,13 +108,6 @@ pub fn hist_context_save(hs: &mut hist_stack, toplevel: i32) {
 /// Port of `hist_context_restore()` from `Src/hist.c:296`. — C decl `hist_context_restore(const struct hist_stack *hs, int toplevel)`.
 pub fn hist_context_restore(hs: &hist_stack, toplevel: i32) {
     // c:296
-    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
-    // Paired with hist_context_save: a pool thread saved nothing, and writing
-    // its snapshot back would overwrite the main thread's live histactive,
-    // chline and stophist.
-    if crate::worker::in_worker_thread() {
-        return;
-    }
     if toplevel != 0 {
         // c:296
         // c:299 — Back to top level: don't need special ZLE value
@@ -1369,13 +1355,7 @@ pub fn digitcount() -> i32 {
 ///     init_parse_status();
 pub fn strinbeg(dohist: i32) {
     // c:1033
-    // !!! RUST-ONLY GUARD: the history-side `strin` is process-global and
-    // the main thread's hbegin reads it (`&& !strin`, c:1163); a worker-pool
-    // parse bumping it made a real command line look like string input.
-    // Pool threads keep only the thread-local input-side copy below.
-    if !crate::worker::in_worker_thread() {
-        strin.fetch_add(1, SeqCst); // c:1035
-    }
+    strin.fetch_add(1, SeqCst); // c:1035
                                 // C has ONE `strin`; zshrs splits it into hist.rs `strin` (history
                                 // logic above/below) and input.rs `strin` (the copy `ingetc` checks
                                 // at input.rs:390 to decide "string input drained → EOF" vs "read
@@ -1405,24 +1385,17 @@ pub fn strinbeg(dohist: i32) {
 pub fn strinend() {
     // c:1049
     hend(None); // c:1051
-    // Pool threads never bumped the global `strin` or opened a history line
-    // (see strinbeg / hbegin), so they leave both alone here too.
-    let main_thread = !crate::worker::in_worker_thread();
-    if main_thread {
-        // c:1052 — DPUTS(!strin, "BUG: strinend() called without strinbeg()")
-        DPUTS!(
-            // c:1052
-            strin.load(Ordering::SeqCst) == 0, // c:1052 !strin
-            "BUG: strinend() called without strinbeg()"  // c:1052
-        );
-        strin.fetch_sub(1, SeqCst); // c:1053
-    }
-    // Mirror the input-side `strin` decrement (see strinbeg note).
+                // c:1052 — DPUTS(!strin, "BUG: strinend() called without strinbeg()")
+    DPUTS!(
+        // c:1052
+        strin.load(Ordering::SeqCst) == 0, // c:1052 !strin
+        "BUG: strinend() called without strinbeg()"  // c:1052
+    );
+    strin.fetch_sub(1, SeqCst); // c:1053
+                                // Mirror the input-side `strin` decrement (see strinbeg note).
     crate::ported::input::strin.with(|s| s.set(s.get() - 1));
     LEX_ISFIRSTCH.with(|f| f.set(true)); // c:1054 isfirstch = 1
-    if main_thread {
-        histdone.store(0, SeqCst); // c:1055 histdone = 0
-    }
+    histdone.store(0, SeqCst); // c:1055 histdone = 0
 }
 
 /// Port of `nohw()` from `Src/hist.c:1062`. — C decl `nohw(UNUSED(int c))`.
@@ -1569,20 +1542,6 @@ pub fn hbegin(dohist: i32) {
     // prompt after the first rendered as `>` (PS2).
     crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.set(true));
     crate::ported::lex::LEX_ISFIRSTCH.with(|c| c.set(true));
-
-    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
-    // Everything below writes the PROCESS-global history state
-    // (histactive, histdone, stophist, chline, curhist via linkcurline),
-    // which C, having one thread, owns outright. A worker-pool parse
-    // (async precmd hooks, autoload backfill) runs this concurrently with
-    // the main thread's command line: its HA_NOINC hend cleared histactive
-    // between the main line's hbegin and hend, so the main hend took the
-    // unlinkcurline arm and the next command reused an event number —
-    // `fc -l` then looped forever on the duplicate. A pool parse records
-    // no history, so it leaves that state alone (same rule as ihwaddc).
-    if crate::worker::in_worker_thread() {
-        return;
-    }
 
     errflag.fetch_and(
         // c:1115
@@ -2153,14 +2112,6 @@ fn should_ignore_line(prog: Option<&[u8]>) -> i32 {
 /// Port of `hend()` from `Src/hist.c:1474`. — C decl `hend(Eprog prog)`.
 pub fn hend(prog: Option<&[u8]>) -> i32 {
     // c:1474
-    // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
-    // A worker-pool parse never opened a history line (hbegin returns early
-    // on pool threads), so there is nothing to end; running the body would
-    // read and clear the main thread's histactive and could unlinkcurline
-    // its curhist. Same answer as the c:1494-1501 HA_NOINC exit.
-    if crate::worker::in_worker_thread() {
-        return 1;
-    }
     let stack_pos = histsave_stack_pos.load(SeqCst); // c:1474
     let mut save: i32 = 1; // c:1484
     let mut hookret: i32 = 0;

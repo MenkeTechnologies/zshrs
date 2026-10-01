@@ -2683,26 +2683,6 @@ impl ShellExecutor {
                             );
                         }
                     }
-                    // compdump:135-138 — the dump ends with one
-                    // `autoload -Uz $_compautos[$_c] $_c` line per
-                    // `_compautos` key, and sourcing it (sh:494) runs each
-                    // through bin_functions with those options. The value
-                    // is the `#autoload` header's option words, e.g.
-                    // `_call_program`'s `+X`, which loads the body NOW
-                    // (c:Src/builtin.c bin_functions → eval_autoload →
-                    // loadautofn). `register_autoload_stubs` above only
-                    // creates undefined stubs, so without this
-                    // `functions _call_program` printed `# undefined`
-                    // where zsh prints the loaded body. The value is
-                    // unquoted in the dump line, so it word-splits.
-                    if let Some(t) = dump_tables.as_ref() {
-                        for (name, opts) in &t.compautos {
-                            let mut argv = vec!["-Uz".to_string()];
-                            argv.extend(opts.split_ascii_whitespace().map(str::to_string));
-                            argv.push(name.clone());
-                            crate::fusevm_bridge::dispatch_builtin_raw("autoload", argv);
-                        }
-                    }
                 }
             }
         }

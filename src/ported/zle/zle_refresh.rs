@@ -5327,43 +5327,71 @@ fn countprompt(s: &str) -> usize {
     w.max(0) as usize
 }
 
-/// Parse a highlight attribute spec (the part after the `category:` prefix,
-/// or the third field of a `$region_highlight` entry) into a `TextAttr`.
+/// Parse a highlight attribute spec (the part after the `category:` prefix)
+/// into a `TextAttr`. Accepts a comma-separated list of:
+///   * `bold` / `nobold`,
+///   * `underline` / `nounderline`,
+///   * `standout` / `nostandout`,
+///   * `blink` / `noblink`,
+///   * `fg=N` / `bg=N` where N is 0..=255 (256-colour palette index) or
+///     one of the named ANSI colours below,
+///   * `none` (clears every attr).
 ///
-/// C has ONE parser for both uses: `match_highlight` (Src/prompt.c:1725 in
-/// 5.9.x), which `zle_set_highlight` (zle_refresh.c:350-362) and
-/// `set_region_highlight` (zle_refresh.c:519) both call. The canonical port
-/// is `crate::ported::prompt::match_highlight`; this wrapper delegates to it
-/// and unpacks the returned `zattr` into the `TextAttr` the Rust region
-/// painter carries. Colours therefore go through the real `match_colour`
-/// port: named and abbreviated colours, numeric indices checked against
-/// `tccolours`, `#rgb`/`#rrggbb` hex triplets, and the zsh/nearcolor
-/// `get_color_attr` hook that maps a hex triplet onto the 256-colour
-/// palette (Src/Modules/nearcolor.c). Scanning stops at the first space,
-/// as C's does, so a trailing `memo=` field no longer swallows the colour
-/// in front of it.
-///
-/// `TextAttr` holds a colour as an 8-bit palette index, so a 24-bit
-/// (`TXT_ATTR_FG_24BIT` / `TXT_ATTR_BG_24BIT`) result is not carried: the
-/// cell keeps no colour, as before this delegation.
+/// ZLE-region subset of `match_highlight` (Src/prompt.c:2031),
+/// restricted to the tokens users actually set in `$zle_highlight`.
+/// The `hl=`/`layer=`/`opacity=` clauses (prompt.c:2042-2094) are
+/// not surfaced here — those are prompt-system hooks that don't
+/// apply to ZLE region paint.
 pub fn match_highlight(spec: &str) -> TextAttr {
-    use crate::ported::zsh_h::{
-        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT,
-        TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT,
-    };
-    // c:519 / c:350-362 — `match_highlight(strp, &rhp->atr)`.
-    let (atr, _mask) = crate::ported::prompt::match_highlight(spec);
-    let palette = |on, is_24bit, shift| {
-        (atr & on != 0 && atr & is_24bit == 0).then(|| ((atr >> shift) & 0xff) as u8)
-    };
-    TextAttr {
-        bold: atr & TXTBOLDFACE != 0,
-        underline: atr & TXTUNDERLINE != 0,
-        standout: atr & TXTSTANDOUT != 0,
-        blink: false, // no `blink` entry in C's highlights[] table
-        fg_color: palette(TXTFGCOLOUR, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT),
-        bg_color: palette(TXTBGCOLOUR, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT),
+    let mut attr = TextAttr::default();
+    for token in spec.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        match token {
+            "none" => {
+                attr = TextAttr::default();
+            }
+            "bold" => attr.bold = true,
+            "nobold" => attr.bold = false,
+            "underline" => attr.underline = true,
+            "nounderline" => attr.underline = false,
+            "standout" => attr.standout = true,
+            "nostandout" => attr.standout = false,
+            "blink" => attr.blink = true,
+            "noblink" => attr.blink = false,
+            other => {
+                // Inline port of the named/numeric colour parser the C
+                // `match_colour()` (Src/prompt.c:1957) does for `fg=`/
+                // `bg=` clauses. The 24-bit `#rrggbb` form and
+                // `bright-foo` aliases are not surfaced here.
+                let parse = |name: &str| -> Option<u8> {
+                    match name {
+                        "black" => Some(0),
+                        "red" => Some(1),
+                        "green" => Some(2),
+                        "yellow" => Some(3),
+                        "blue" => Some(4),
+                        "magenta" => Some(5),
+                        "cyan" => Some(6),
+                        "white" => Some(7),
+                        "default" => None,
+                        n => n.parse::<u8>().ok(),
+                    }
+                };
+                if let Some(rest) = other.strip_prefix("fg=") {
+                    attr.fg_color = parse(rest);
+                } else if let Some(rest) = other.strip_prefix("bg=") {
+                    attr.bg_color = parse(rest);
+                }
+                // Anything else (hl=, layer=, opacity=, unknown name) is
+                // silently dropped — same as the C source's "found = 0"
+                // exit path at prompt.c:2122 when no clause matched.
+            }
+        }
     }
+    attr
 }
 
 /// Port of `ZR_equal(zr1, zr2)` macro from `Src/Zle/zle_refresh.c:74-82`.
