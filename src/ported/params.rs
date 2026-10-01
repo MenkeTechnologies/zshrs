@@ -2441,6 +2441,68 @@ pub fn createparam(
         None => false,
     };
 
+    // c:1130-1152 — an existing node at this level is only taken over when
+    // it is unset and not special; otherwise createparam declines:
+    //
+    //     if (isset(POSIXBUILTINS) && (oldpm->node.flags & PM_READONLY)) {
+    //         zerr("read-only variable: %s", name);
+    //         return NULL;
+    //     }
+    //     if (!(oldpm->node.flags & PM_UNSET) ||
+    //         (oldpm->node.flags & PM_SPECIAL) ||
+    //         /* POSIXBUILTINS horror: we need to retain 'export' flags */
+    //         (isset(POSIXBUILTINS) && (oldpm->node.flags & PM_EXPORTED))) {
+    //         if (oldpm->node.flags & PM_RO_BY_DESIGN) { zerr(...); return NULL; }
+    //         oldpm->node.flags &= ~PM_UNSET;
+    //         if ((oldpm->node.flags & PM_SPECIAL) && oldpm->ename) {
+    //             Param altpm = (Param) paramtab->getnode(paramtab, oldpm->ename);
+    //             if (altpm)
+    //                 altpm->node.flags &= ~PM_UNSET;
+    //         }
+    //         return NULL;
+    //     }
+    //
+    // "If the parameter can't be created because it already exists, the
+    // PM_UNSET flag is cleared" (c:1045-1046). The caller then finds the
+    // revived node with getnode — e.g. assignnparam's c:3696 fallback — so an
+    // unset special such as SHLVL keeps its PM_SPECIAL|PM_EXPORTED identity
+    // when `(( SHLVL++ ))` recreates it.
+    if reuse {
+        let op = oldpm.as_ref().unwrap(); // reuse=true requires Some
+        let opf = op.node.flags as u32;
+        if isset(crate::ported::zsh_h::POSIXBUILTINS) && (opf & PM_READONLY) != 0 {
+            // c:1131
+            zerr(&format!("read-only variable: {}", name)); // c:1132
+            return None; // c:1133
+        }
+        if (opf & PM_UNSET) == 0
+            || (opf & PM_SPECIAL) != 0
+            || (isset(crate::ported::zsh_h::POSIXBUILTINS) && (opf & PM_EXPORTED) != 0)
+        {
+            // c:1135-1138
+            if (opf & PM_RO_BY_DESIGN) != 0 {
+                // c:1139
+                zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140-1141
+                return None; // c:1142
+            }
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(live) = tab.get_mut(name) {
+                    live.node.flags &= !(PM_UNSET as i32); // c:1144
+                }
+                if (opf & PM_SPECIAL) != 0 {
+                    // c:1145
+                    if let Some(alt) = op.ename.as_deref() {
+                        if let Some(altpm) = tab.get_mut(alt) {
+                            // c:1146-1149
+                            altpm.node.flags &= !(PM_UNSET as i32); // c:1149
+                        }
+                    }
+                }
+            }
+            return None; // c:1151
+        }
+    }
+
     // c:Src/builtin.c:2608-2609 — set by the shadow arm below when the
     // tied peer is already local at this level (c:2394-2408), which makes
     // `pm->old` carry PM_NORESTORE and so suppresses the
@@ -4635,6 +4697,33 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                             }
                         }
                     };
+                    // c:1394-1399 — the LAST direction letter decides `down`
+                    // (every arm resets the others); `k`/`K` act as `r`/`R`
+                    // on an array (c:1401/1406 `keymatch = ishash`).
+                    let down = flag_part
+                        .chars()
+                        .rev()
+                        .find(|c| matches!(c, 'r' | 'R' | 'k' | 'K'))
+                        .is_some_and(|c| c.is_ascii_uppercase());
+                    if hits.is_empty() && down {
+                        // c:1758-1760 / c:1782 — a reverse search that matches
+                        // nothing returns index 0, so getindex's tail sees
+                        // `start == 0 && end == 0` (c:2126) and the
+                        // zero-subscript rule decides what that means:
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                            // c:2134-2140 — "Treat this as accessing the
+                            // first element of the array."
+                            v.start = 0;
+                            v.end = 1; // c:2140 `end = startnextlen`
+                        } else {
+                            // c:2141-2150 — strict: an empty range.
+                            v.valflags |= VALFLAG_EMPTY; // c:2147
+                            v.start = -1; // c:2148
+                            v.end = 0;
+                        }
+                        *pptr = past_close; // c:2164
+                        return 0; // c:2166
+                    }
                     v.start = 0; // c:2144-2145 (getarg's 1, less startprevlen)
                     v.end = hits.len() as i32; // c:2135
                     v.arr = hits;
@@ -10440,13 +10529,9 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
         None => true,
     };
     if need_create {
-        // c:3686-3691 — `createparam(t, val.type & MN_FLOAT ? PM_FFLOAT
-        // : PM_INTEGER); second getvalue;`. Synthesize a fresh
-        // numeric param in paramtab matching the C body. Without
-        // this branch wired, callers like `setiparam` silently
-        // dropped the create (returned None) — every new integer
-        // param assignment was a no-op.
-        let _ = was_unset;
+        // c:3686-3716 — create the parameter (or revive the existing node
+        // createparam declines), then store the number through the same
+        // setnumvalue path a reassignment takes.
         // c:Src/params.c assignnparam — createparam picks the type as
         //   ss ? PM_ARRAY : isset(POSIXIDENTIFIERS) ? PM_SCALAR
         //     : (val.type & MN_INTEGER) ? PM_INTEGER : PM_FFLOAT
@@ -10469,70 +10554,65 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
             };
             return assignsparam(s, &sval, flags);
         }
-        let new_type = if val.type_ == MN_FLOAT {
-            PM_FFLOAT // c:3687
-        } else {
-            PM_INTEGER // c:3688
-        };
-        // c:Src/params.c:3690 — newly created PM_INTEGER param
-        // inherits the source numeric base from `lastbase` (set by
-        // the math parser when consuming a `N#NNN` or `0x..` literal).
-        // Mirror the assignstrvalue path at c:3714 so `(( X = 16#ff ))`
-        // creates X as `typeset -i16 X=255` (displays as `16#FF`)
-        // rather than naked decimal `255`.
-        // Posix-faithful: no per-var output base — bash/ksh/POSIX integers
-        // always print decimal, so a freshly created `(( z=0xff ))` var must
-        // not inherit base 16. (zsh mode keeps the base.)
-        let inherited_base = if val.type_ == MN_FLOAT || crate::dash_mode::posix_faithful() {
-            0
-        } else {
-            let lb = crate::ported::math::lastbase();
-            if lb > 0 {
-                lb
-            } else {
-                0
-            }
-        };
-        let pm: Param = Box::new(param {
-            node: hashnode {
-                next: None,
-                nam: s.to_string(),
-                flags: new_type as i32,
-            },
-            u_data: 0,
-            u_tied: None,
-            u_arr: None,
-            u_str: None,
-            // c:3690 — `setnumvalue(...)` stores the value. For
-            // PM_INTEGER → u.l; for PM_FFLOAT → u.dval.
-            u_val: if val.type_ == MN_FLOAT { 0 } else { val.l },
-            u_dval: if val.type_ == MN_FLOAT { val.d } else { 0.0 },
-            u_hash: None,
-            gsu_s: None,
-            gsu_i: None,
-            gsu_f: None,
-            gsu_a: None,
-            gsu_h: None,
-            base: inherited_base,
-            width: 0,
-            env: None,
-            ename: None,
-            old: None,
-            level: 0,
-        });
-        if let Ok(mut tab) = paramtab().write() {
-            tab.insert(s.to_string(), pm.clone());
+        // c:3678-3685 — a plain (non-special, untied) array or hash that is
+        // assigned a number without a subscript is removed first so it can be
+        // recreated as a number:
+        //     unsetparam_pm(v->pm, 0, 1);
+        //     was_unset = 1;
+        if was_unset {
+            unsetparam(s); // c:3681
         }
-        // c:3665-3666 — `if (flags & ASSPM_WARN) check_warn_pm(v->pm,
+        let new_type = if val.type_ == MN_FLOAT {
+            PM_FFLOAT // c:3690
+        } else {
+            PM_INTEGER // c:3690
+        };
+        // c:3686-3690 — `ss = strchr(s, '['); if (ss) *ss = '\0';
+        // pm = createparam(t, ss ? PM_ARRAY : ... );`
+        let base_name: &str = match s.find('[') {
+            Some(i) => &s[..i],
+            None => s,
+        };
+        let created = createparam(base_name, if has_sub { PM_ARRAY as i32 } else { new_type as i32 });
+        // c:3691-3695 — `if (errflag) { unqueue_signals(); return NULL; }`
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            return None;
+        }
+        // c:3696-3701 — `if (!pm && !(pm = paramtab->getnode(paramtab, t)))`:
+        // createparam declines for a node that already exists (a special, or a
+        // set parameter) after clearing its PM_UNSET (c:1130-1152); the
+        // assignment then lands on that node.
+        let found = created.is_some()
+            || paramtab()
+                .read()
+                .map(|t| t.contains_key(base_name))
+                .unwrap_or(false);
+        if !found {
+            zerr(&format!("{}: parameter not found", base_name)); // c:3699
+            return None; // c:3701
+        }
+        if !has_sub && val.type_ != MN_FLOAT {
+            // c:3704-3705 — `else if (val.type & MN_INTEGER) pm->base = outputradix;`
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(pm) = tab.get_mut(base_name) {
+                    pm.base = crate::ported::math::outputradix();
+                }
+            }
+        }
+        // c:3706-3711 — the second `getvalue(&vbuf, &t, 1)`; the value write
+        // (c:3716 `setnumvalue(v, val)`) is the reassign path below.
+        // c:3712-3713 — `if (flags & ASSPM_WARN) check_warn_pm(v->pm,
         // "numeric", !was_unset, 1);`. The new parameter was CREATED, so
         // WARN_CREATE_GLOBAL reports `(( n=8 ))` in a function exactly as
         // it reports the scalar `n=8`.
         if (flags & ASSPM_WARN) != 0 {
-            check_warn_pm(&pm, "numeric", (!was_unset) as i32, 1);
+            let snapshot = paramtab().read().ok().and_then(|t| t.get(base_name).cloned());
+            if let Some(pm) = snapshot {
+                check_warn_pm(&pm, "numeric", (!was_unset) as i32, 1);
+            }
         }
-        return Some(pm);
-    }
-    if (flags & ASSPM_WARN) != 0 {
+    } else if (flags & ASSPM_WARN) != 0 {
+        // c:3714-3715
         if let Some(ref vv) = v {
             if let Some(ref pm) = vv.pm {
                 check_warn_pm(pm, "numeric", 0, 1);

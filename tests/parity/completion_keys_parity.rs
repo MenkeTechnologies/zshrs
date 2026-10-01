@@ -416,6 +416,85 @@ fn describe_shows_the_description_text() {
     );
 }
 
+/// A diagnostic raised inside a native port has to carry the LINE of the
+/// upstream function it stands in for, exactly as the shell function's
+/// would. `_wanted -2 … NAME …` naming an ASSOCIATION makes `_description`'s
+/// `set -A "$name" -2 -J -default-` (Completion/Base/Core/_description:102)
+/// fail with `bad set of key/value pairs` (three words: an odd count); zsh prints it as
+/// `_description:102: …`. The port's `FnScope` zeroes `lineno`, so it
+/// printed `_description: …` until the port named its line.
+#[test]
+fn a_port_diagnostic_carries_the_upstream_line_number() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_verdict(
+        &compsys_driver(
+            r#"_mytest(){ local -A zz; _wanted -2 vals zz 'val' compadd x }; compdef _mytest mytest"#,
+            "_description:102: bad set of key/value pairs",
+        ),
+        "K",
+        "_description's set -A diagnostic named line 102",
+    );
+}
+
+/// `_arguments` returns `[[ nm -ne $compstate[nmatches] ]]`
+/// (Completion/Base/Utility/_arguments:586), and reading `nmatches` runs
+/// `permmatches(0)` (Src/Zle/complete.c:1411), which DEDUPLICATES. So a
+/// second `_arguments` in the same completion that offers the same words
+/// adds nothing and returns 1. The port compared a raw count of the open
+/// group's accumulator instead, which grows on every duplicate add, and
+/// returned 0 every time.
+#[test]
+fn a_repeated_arguments_call_that_adds_nothing_new_returns_one() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_verdict(
+        &compsys_driver(
+            r#"_mytest(){ local r; _arguments "*:rest:(r1 r2)"; _arguments "*:rest:(r1 r2)"; r=$?; print -u2 "SECOND=$r=" }; compdef _mytest mytest"#,
+            "SECOND=1=",
+        ),
+        "K",
+        "a second identical _arguments call returned 1",
+    );
+}
+
+/// `_most_recent_file` globs `$PREFIX*$SUFFIX(om[N]N)` through `eval`
+/// (Completion/Base/Widget/_most_recent_file:21), so on an empty word a
+/// bare `*` skips dot files unless GLOB_DOTS is set. The port listed the
+/// directory itself and matched names with `starts_with("")`, so a newer
+/// dot file won. The fixture's newest entry is `.zzdot`; the newest
+/// non-dot one is `plainnewest`, and only that may be offered.
+#[test]
+fn most_recent_file_skips_dot_files_like_the_glob() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("parity-most-recent-fixture");
+    let _ = std::fs::create_dir_all(&dir);
+    // Write in age order; the 1.1s gaps keep the mtimes distinct even on
+    // a filesystem with one-second resolution.
+    for name in ["plainolder", "plainnewest", ".zzdot"] {
+        let _ = std::fs::write(dir.join(name), name);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+    }
+    let setup = format!(
+        "cd {}; _mytest(){{ _most_recent_file }}; compdef _mytest mytest",
+        dir.display()
+    );
+    assert_same_verdict(
+        &compsys_driver(&setup, "mytest plainnewest"),
+        "K",
+        "_most_recent_file completed the newest non-dot file",
+    );
+}
+
 /// `compadd -k NAME` must enumerate an association's keys in the same
 /// order `${(k)NAME}` does.
 ///

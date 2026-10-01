@@ -201,16 +201,16 @@ pub fn _expand_with(args: &[String]) -> i32 {
     // sh:15  local continue=0 — also the exit status at sh:245.
     let mut continue_: i32 = 0;
 
-    // sh:17-20  `while getopts gsco opt; do force="$force$opt"; done`
+    // sh:17-20  `(( $# )) && while getopts gsco opt; do force="$force$opt"; done`
+    //   The real getopts loop: it stops at the first non-option word, a
+    //   `--`, or `+`-words per POSIX_BUILTINS, reports an unknown letter as
+    //   `_expand:18: bad option: -J` and appends `?` for it — `force`
+    //   collects whatever `opt` holds, `?` included.
     let mut force = String::new();
-    for arg in args {
-        if let Some(letters) = arg.strip_prefix('-') {
-            for c in letters.chars() {
-                if matches!(c, 'g' | 's' | 'c' | 'o') {
-                    force.push(c);
-                }
-            }
-        }
+    if !args.is_empty() {
+        crate::compsys::ported::shared::getopts_loop(args, "gsco", 18, |opt, _| {
+            force.push_str(opt);
+        });
     }
 
     // sh:22-26  `$ISUFFIX` is dropped when `_prefix` is the caller.

@@ -416,6 +416,12 @@ pub fn finish_(m: *const module) -> i32 {
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
+/// `static struct mathfunc mftab[]` (example.c:179). Initialized inline
+/// by `setfeatureenables` via `MFTAB.get_or_init` (single consumer); the
+/// `MFF_ADDED` bit setmathfuncs keeps on each row lives here, as it does
+/// on C's static table.
+static MFTAB: OnceLock<Mutex<Vec<crate::ported::zsh_h::mathfunc>>> = OnceLock::new();
+
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
@@ -428,7 +434,9 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:example".to_string(),
-        "c:ex".to_string(),
+        // c:169 — `CONDDEF("ex", CONDF_INFIX, …)`; featuresarray
+        // names an infix condition `C:` (Src/module.c:3299).
+        "C:ex".to_string(),
         "c:len".to_string(),
         "f:length".to_string(),
         "f:sum".to_string(),
@@ -443,9 +451,16 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
-    // c:3392 — the name-keyed variant in src/ported/module.rs; this
-    // module ships no `Features` descriptor tables for the per-feature
-    // ADDED bit to live on (see MODULE_FEATURE_ENABLES there).
+    // c:3394-3395 — `if (!enables || *enables) return
+    // setfeatureenables(m, f, enables ? *enables : NULL);`
+    if let Some(e) = enables.as_ref() {
+        let e = e.clone();
+        return setfeatureenables(m, f, Some(&e));
+    }
+    // c:3396 — `*enables = getfeatureenables(m, f);` read from the
+    // name-keyed ADDED ledger in src/ported/module.rs (this module ships
+    // no `Features` descriptor tables for the bit to live on; see
+    // MODULE_FEATURE_ENABLES there).
     crate::ported::module::handlefeatures("zsh/example", &featuresarray(m, f), enables)
 }
 
@@ -453,8 +468,38 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
-    0
+fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
+    // c:3354-3382 — walk bn/cd/mf/pd in that order, each block taking
+    // its slice of the positional enables bitmap; `e == NULL` disables
+    // everything. The b:/C:/c:/p: ADDED bits live in the name-keyed
+    // ledger (module.rs MODULE_FEATURE_ENABLES).
+    let mut ret = crate::ported::module::setfeatureenables("zsh/example", &featuresarray(m, f), e);
+    // c:3368-3372 — `if (f->mf_size) { if (setmathfuncs(m->node.nam,
+    // f->mf_list, f->mf_size, e)) ret = 1; … }`. mftab sits after the
+    // one bintab row (c:164) and the two cotab rows (c:168), so its
+    // slice of `e` starts after them. setmathfuncs (Src/module.c:1374)
+    // is what puts `length` / `sum` into the global `mathfuncs` list.
+    let (bn_size, cd_size, mf_size) = {
+        let g = f.lock().unwrap();
+        (g.bn_size as usize, g.cd_size as usize, g.mf_size as usize)
+    };
+    let mf_e: Option<Vec<i32>> = e.map(|a| {
+        (0..mf_size)
+            .map(|i| a.get(bn_size + cd_size + i).copied().unwrap_or(0))
+            .collect()
+    });
+    // `static struct mathfunc mftab[]` — example.c:179-182.
+    let tab_mutex = MFTAB.get_or_init(|| {
+        Mutex::new(vec![
+            crate::ported::zsh_h::STRMATHFUNC("length", math_length, 0), // c:180
+            crate::ported::zsh_h::NUMMATHFUNC("sum", math_sum, 1, -1, 0), // c:181
+        ])
+    });
+    let mut tab = tab_mutex.lock().unwrap();
+    if crate::ported::module::setmathfuncs("zsh/example", &mut tab, mf_e.as_deref()) != 0 {
+        ret = 1; // c:3370
+    }
+    ret // c:3382
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

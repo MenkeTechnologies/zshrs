@@ -655,3 +655,29 @@ mod qualifier_parsing_and_marking {
         assert_parity_in(d.path(), r"v='q\~q'; print -r -- $~v; v='q\=q'; print -r -- $~v");
     }
 }
+
+/// c:Src/exec.c:3719 forks an external command BEFORE its prefork
+/// expansion, so a `bad pattern:` raised by an argument glob costs only that
+/// child (status 1) and the list goes on — exactly like the c:Src/glob.c:1877
+/// NOMATCH case. A builtin expands in the shell, where the errflag aborts the
+/// list. zshrs aborted the list for externals too, and its in-process `find`
+/// ran with the raw word after printing the diagnostic.
+mod bad_pattern_in_an_external_costs_only_that_command {
+    use super::*;
+
+    #[test]
+    fn the_list_continues_after_an_external_with_a_bad_pattern() {
+        let d = mkdir_with_files(&["aB"]);
+        for script in [
+            "/bin/echo a[B; print after rc=$?",
+            "/bin/echo a[B || print or; print after",
+            "find a[B; print after rc=$?",
+            "cat a[B && print and; print after rc=$?",
+            // Controls: a builtin aborts the list; NOMATCH behaves the same.
+            "echo a[B; print after",
+            "/bin/echo nomatch*; print after rc=$?",
+        ] {
+            assert_parity_in(d.path(), script);
+        }
+    }
+}

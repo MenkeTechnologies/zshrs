@@ -7658,6 +7658,35 @@ mod tests {
         .map_or(false, |prog| pattry(&prog, text))
     }
 
+    /// The P_BRANCH alt-loop decides a literal-led alternative without
+    /// recursing when the input cannot match it. Every case here sits on
+    /// one side of that decision: a literal longer than the input, a
+    /// literal that fails while a later one matches, branches that must
+    /// still run in the full walker (`(#i)`, `(#a1)`, empty branch,
+    /// wildcard-led), and a compdump-sized alternation hit at its last
+    /// branch.
+    #[test]
+    fn alternation_literal_branches_match_like_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(patmatch("(ab|a)c", "ac"));
+        assert!(patmatch("(abc|ab)", "ab"));
+        assert!(!patmatch("(abc|ab)", "a"));
+        assert!(!patmatch("(x|y|z)", "w"));
+        assert!(patmatch("(foo|bar)*", "barbaz"));
+        assert!(patmatch("(foo|*az)", "barbaz"));
+        assert!(patmatch("(ab|)c", "c"));
+        assert!(patmatch("(#i)(ab|cd)", "CD"));
+        assert!(!patmatch("(ab|cd)", "CD"));
+        assert!(patmatch("(#a1)(abc|xyz)", "abd"));
+        assert!(!patmatch("(#a1)(abc|xyz)", "add"));
+        let names: Vec<String> = (0..2000).map(|i| format!("_n{i}")).collect();
+        let pat = format!("({})", names.join("|"));
+        assert!(patmatch(&pat, "_n1999"));
+        assert!(patmatch(&pat, "_n0"));
+        assert!(!patmatch(&pat, "_n2000"));
+        assert!(!patmatch(&pat, "_n"));
+    }
+
     #[test]
     fn literal_match() {
         let _g = crate::test_util::global_state_lock();

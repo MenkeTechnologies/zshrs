@@ -909,6 +909,26 @@ pub fn boot_(m: *const module) -> i32 {
     // the MODULESTAB lock, so re-locking here would deadlock.
     let mid_load =
         !m.is_null() && unsafe { ((*m).node.flags & crate::ported::zsh_h::MOD_SETUP) != 0 };
+    // zsh 5.9.2 Src/Modules/watch.c:722-723 (the shipped oracle; the
+    // forkedRepos tree replaced these with PM_TIED paramdefs in b2fb112ea6):
+    //     Param pma = (Param) paramtab->getnode(paramtab, "watch");
+    //     Param pms = (Param) paramtab->getnode(paramtab, "WATCH");
+    // `getnode` is getparamnode -> loadparamnode (Src/params.c:563-585),
+    // so whichever of the pair is still a PM_AUTOLOAD stub gets
+    // ensurefeature'd here: loading zsh/watch for ONE name enables BOTH
+    // (`zmodload -F zsh/watch p:WATCH; zmodload -lF zsh/watch` prints
+    // `+p:watch` in 5.9.2). zshrs models PM_AUTOLOAD as the
+    // MATERIALIZED_MODULE_PARAMS side-set, so resolving the name is marking
+    // it. Without this, `_parameters -g 'a*'` (Completion/Zsh/Type/_vars
+    // sh:19) never saw `watch` once `_parameters -g '^a*'` had loaded the
+    // module through `${(P)i}` on `WATCH`, and `read <TAB>` listed one name
+    // fewer than zsh. Only a real load runs these lookups: the startup
+    // registration shim (null `m`) must leave both names as stubs, as
+    // `zsh -f` has them.
+    if mid_load {
+        crate::vm_helper::mark_module_param_used("watch"); // c:722 (5.9.2)
+        crate::vm_helper::mark_module_param_used("WATCH"); // c:723 (5.9.2)
+    }
     // c:Src/Modules/watch.c:740-753 — `boot_` runs ONLY from `load_module`
     // (c:Src/module.c:2306), so a plain `zsh -f` has neither WATCHFMT nor
     // LOGCHECK and neither appears in `${(ko)parameters}`. The Rust-only

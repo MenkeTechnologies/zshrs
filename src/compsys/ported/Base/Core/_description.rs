@@ -593,6 +593,16 @@ pub fn _description_impl(args: &[String]) -> i32 {
             final_arr.push(format.clone());
         }
     }
+    // `set -A "$name" …` is one of four lines, and a diagnostic it raises
+    // (an associative `$name`: "bad set of key/value pairs") carries that
+    // line in its `scriptname:lineno:` prefix. `FnScope` zeroes `lineno` for
+    // a port body, so name the line the shell function would be on.
+    crate::compsys::ported::shared::set_sh_lineno(match (gname.is_empty(), format.is_empty()) {
+        (false, false) => 94,
+        (false, true) => 96,
+        (true, false) => 100,
+        (true, true) => 102,
+    });
     setaparam(&name, final_arr);
 
     // sh:106-121  fake / fake-always.

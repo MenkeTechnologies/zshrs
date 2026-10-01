@@ -1,0 +1,41 @@
+{
+  "argv": [
+    "-x",
+    "files",
+    "expl",
+    "file"
+  ],
+  "call": "_description '-x' 'files' 'expl' 'file'",
+  "call_label": "x-flag",
+  "fingerprint": "d3fbfd2633",
+  "function": "_description",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowtop/col0 | ref/== _description / x-flag | test/<absent>",
+  "ref_rows": [
+    "== _description / x-flag",
+    "-- argv: '-x' 'files' 'expl' 'file'",
+    "-- rc: 0",
+    "-- rc[2]: 0",
+    "-- rc[3]: 0",
+    "  nmatches: 0 -> 0",
+    "  expl[2] = '-J' '-default-'",
+    "  _lastdescr[2] = '' 'file'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _description --fn-call x-flag --fn-repeat 3 --fn-propagate --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/9cd54722-0671-42ae-b324-a30d7758a027/scratchpad/agent_fnsweep/zshrs-base --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_description:3-20 (zparseopts -K -D -a nopt 1 2 V=gropt J=ign x=xopt; then TAG NAME DESCR)",
+  "test_rows": [
+    "<absent>",
+    "<absent>",
+    "<absent>",
+    "<absent>",
+    "<absent>",
+    "<absent>",
+    "<absent>",
+    "<absent>"
+  ]
+}

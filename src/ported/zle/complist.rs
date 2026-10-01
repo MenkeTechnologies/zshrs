@@ -6913,20 +6913,20 @@ pub fn domenuselect(
             NOSELECT.store(nos, Ordering::SeqCst);
         }
     }
-    if NOSELECT.load(Ordering::SeqCst) == 0 && acc != 0 {
+    // `dat` is C's `Chdata` argument, and C has exactly two call sites:
+    // `after_complete` (compcore.c:517) runs the `menu_start` hook with
+    // `&cdat` — non-NULL, with the Hookdef as `dummy` — and the
+    // `menu-select` widget (c:3512) calls `domenuselect(NULL, NULL)`. The
+    // Rust hook passes a null `_dat` only because `runhookdef` has no chdata
+    // plumbing yet, so the C-visible `dat` is read off `_dummy`, which the
+    // two call sites pair with it.
+    let dat_present = !_dummy.is_null();
+    if NOSELECT.load(Ordering::SeqCst) == 0 && (!dat_present || acc != 0) {
         // c:3485 — `if (!noselect && (!dat || acc))`.
         //
-        // `dat` is C's `Chdata` argument. Both C call sites are reproduced in
-        // this port and BOTH make it non-NULL here: `after_complete`
-        // (compcore.c:517) passes `&cdat` through `runhookdef(MENUSTARTHOOK)`,
-        // and the `menu-select` widget (c:3512, which is the only caller that
-        // passes NULL) is ported as a delegation to `menucomplete`
-        // (complist.rs `menuselect`) — so it too arrives here through the
-        // menu_start hook. The Rust hook signature carries a null `_dat`
-        // pointer only because `runhookdef` has no chdata plumbing yet; the
-        // C-visible value is non-NULL, hence `!dat` is false and the guard is
-        // `acc`. Treating it as NULL ran this final zrefresh on the abort path
-        // and repainted the list that `after_complete`'s `ret == 2` arm
+        // On the hook path `!dat` is false and the guard is `acc`. Treating
+        // it as NULL there ran this final zrefresh on the abort path and
+        // repainted the list that `after_complete`'s `ret == 2` arm
         // (compcore.c:528-530) is supposed to clear — measured as
         // `tab,tab,s,ctrl-g` leaving `-<<directory>>-` + `sbin/` on screen.
         MLBEG.store(-1, Ordering::SeqCst);
@@ -6959,15 +6959,19 @@ pub fn domenuselect(
     let _ = step;
     // c:3517 — `return (broken == 2 ? 3 :
     //                   ((dat && !broken) ? (acc ? 1 : 2) : (!noselect ^ acc)))`.
-    // `dat` is non-NULL on every path that reaches this function in this port
-    // — see the c:3485 comment above for why. The `acc ? 1 : 2` arm is what
-    // tells `after_complete` (compcore.c:522-531) that the menu was ABORTED
-    // rather than accepted: only a 2 makes it restore `origline` and set
-    // `clearlist` + `invalidatelist()`. Collapsing the tail to
-    // `!noselect ^ acc` returned 1 on abort, so the restore never ran.
+    // The `acc ? 1 : 2` arm is what tells `after_complete`
+    // (compcore.c:522-531) that the menu was ABORTED rather than accepted:
+    // only a 2 makes it restore `origline` and set `clearlist` +
+    // `invalidatelist()`. Collapsing the tail to `!noselect ^ acc` returned
+    // 1 on abort, so the restore never ran. The `menu-select` widget
+    // (`dat == NULL`) takes the `!noselect ^ acc` arm: an accepting key
+    // returns 0, so c:3512-3513 does NOT run a second `menucomplete`.
+    // Returning 1 there re-completed the word `do_single` had just accepted
+    // — `^Xw ^Xw a` on a `compdef -k _generic menu-select` binding left
+    // `-ba` and a fresh list where zsh leaves `-b a`.
     if broken == 2 {
         3
-    } else if broken == 0 {
+    } else if dat_present && broken == 0 {
         if acc != 0 {
             1
         } else {

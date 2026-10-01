@@ -1864,8 +1864,15 @@ pub fn waitforpid(pid: i32) -> Option<i32> {
 pub fn zwaitjob(job: &mut job, wait_cmd: i32) -> Option<i32> {
     // c:1673
     if job.procs.is_empty() && job.auxprocs.is_empty() {
-        // c:1736-1740 — no procs: deletejob + pipestats[0]=lastval and return.
-        return Some(0);
+        // c:1736-1740 — `} else { deletejob(jn, 0); pipestats[0] =
+        // lastval; numpipestats = 1; }`. The previous body returned
+        // without the deletejob, so a fork-less job (the control job a
+        // subshell's clearjobtab grabs, c:1774) stayed in the table:
+        // `(wait %1; wait %1)` answered 0 twice where zsh answers 0
+        // then 127 "no such job". waitonejob's no-procs arm (c:1753-1755)
+        // is these same three statements, so it is reused here.
+        waitonejob(job);
+        return Some(0); // c:1747
     }
 
     use crate::ported::utils::errflag;
@@ -3631,6 +3638,21 @@ pub fn bin_fg(
             // route each status through update_bg_job — the same
             // chain C's SIGCHLD handler drives while zwaitjob
             // suspends (Src/signals.c:249 → jobs.c:460).
+            //
+            // A job with no forks (c:1681 `if (jn->procs || jn->auxprocs)`
+            // false) never suspends: zwaitjob takes its `else` arm and
+            // deletes the entry, so call it directly under the lock.
+            {
+                let mut tab = table.lock().expect("jobtab poisoned");
+                if let Some(j) = tab.get_mut(p as usize) {
+                    if j.procs.is_empty() && j.auxprocs.is_empty() {
+                        zwaitjob(j, 1); // c:2655 — returns 0 for this arm
+                        drop(tab);
+                        returnval = LASTVAL2.load(Ordering::SeqCst); // c:2656-2657
+                        continue;
+                    }
+                }
+            }
             // c:1684-1689 — zwaitjob's `dont_queue_signals()`, as above.
             let q = crate::ported::signals_h::queue_signal_level();
             crate::ported::signals_h::dont_queue_signals();
