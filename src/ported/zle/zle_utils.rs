@@ -576,17 +576,12 @@ pub fn zle_save_positions() {
         (ZLECS.load(Ordering::SeqCst), ZLELL.load(Ordering::SeqCst))
     };
 
-    // c:641-664 — snapshot region_highlights past N_SPECIAL_HIGHLIGHTS
-    //              so the user-driven (predisplay/normal) entries
-    //              survive the nested ZLE call.
-    const N_SPECIAL_HIGHLIGHTS: usize = 4;
-    let regions: Vec<crate::ported::zle::zle_refresh::RegionHighlight> = REGION_HIGHLIGHTS
-        .lock()
-        .unwrap()
-        .iter()
-        .skip(N_SPECIAL_HIGHLIGHTS)
-        .cloned()
-        .collect();
+    // c:641-664 — snapshot the user region_highlights (C: the entries past
+    //              N_SPECIAL_HIGHLIGHTS) so they survive the nested ZLE
+    //              call. REGION_HIGHLIGHTS holds only the user entries
+    //              (zle_refresh::set_region_highlight), so all of it.
+    let regions: Vec<crate::ported::zle::zle_refresh::RegionHighlight> =
+        REGION_HIGHLIGHTS.lock().unwrap().clone();
 
     let pos = ZlePosition {
         mk,
@@ -625,12 +620,12 @@ pub fn zle_restore_positions() {
         ZLELL.store(oldpos.ll, Ordering::SeqCst); // c:694
     }
 
-    // c:696-732 — restore region_highlights tail (everything past
-    //              N_SPECIAL_HIGHLIGHTS). C grows the array and copies
-    //              memo+atr+start+end+flags from each saved zle_region.
-    const N_SPECIAL_HIGHLIGHTS: usize = 4;
+    // c:696-732 — restore the user region_highlights (C: everything past
+    //              N_SPECIAL_HIGHLIGHTS; here the whole of REGION_HIGHLIGHTS).
+    //              C resizes the array and copies memo+atr+start+end+flags
+    //              from each saved zle_region.
     if let Ok(mut rh) = REGION_HIGHLIGHTS.lock() {
-        rh.truncate(N_SPECIAL_HIGHLIGHTS); // c:705 free user entries
+        rh.clear(); // c:705 free user entries
         for r in &oldpos.regions {
             rh.push(r.clone()); // c:715-728 restore each saved entry
         }
@@ -681,12 +676,13 @@ pub fn spaceinline(ct: i32) {
     if crate::ported::zle::zle_main::VIINSBEGIN.load(Ordering::SeqCst) > cs_u {
         crate::ported::zle::zle_main::VIINSBEGIN.store(0, Ordering::SeqCst);
     }
-    // c:830-844 — shift the user region-highlight offsets (those past
-    // the N_SPECIAL_HIGHLIGHTS reserved slots) so highlighting stays
+    // c:830-844 — shift the user region-highlight offsets (C: those past
+    // the N_SPECIAL_HIGHLIGHTS reserved slots; REGION_HIGHLIGHTS holds only
+    // the user entries, so every one of them) so highlighting stays
     // aligned with the text after the insertion. Predisplay regions are
     // measured relative to `predisplaylen`.
     {
-        use crate::ported::zle::zle_h::{N_SPECIAL_HIGHLIGHTS, ZRH_PREDISPLAY};
+        use crate::ported::zle::zle_h::ZRH_PREDISPLAY;
         let predisplaylen = crate::ported::zle::zle_params::get_predisplay()
             .chars()
             .count() as i64; // c:836 predisplaylen
@@ -695,8 +691,8 @@ pub fn spaceinline(ct: i32) {
         let mut rh = crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS
             .lock()
             .unwrap();
-        // c:831 — start past the N_SPECIAL_HIGHLIGHTS reserved slots.
-        for rhp in rh.iter_mut().skip(N_SPECIAL_HIGHLIGHTS as usize) {
+        // c:831 — `for (rhp = region_highlights + N_SPECIAL_HIGHLIGHTS; ...)`.
+        for rhp in rh.iter_mut() {
             // c:834-837 — `sub = (flags & ZRH_PREDISPLAY) ? predisplaylen : 0`.
             let sub = if rhp.flags & ZRH_PREDISPLAY != 0 {
                 predisplaylen
@@ -741,18 +737,17 @@ pub fn shiftchars(to: i32, cnt: i32) {
     // measured relative to `predisplaylen` — now that RegionHighlight
     // carries the `flags` bit, the `sub = predisplaylen` subtraction is
     // wired faithfully (was hardcoded sub=0).
-    use crate::ported::zle::zle_h::{N_SPECIAL_HIGHLIGHTS, ZRH_PREDISPLAY};
+    // REGION_HIGHLIGHTS holds only the user entries (the C entries past
+    // N_SPECIAL_HIGHLIGHTS), so the walk covers all of it.
+    use crate::ported::zle::zle_h::ZRH_PREDISPLAY;
     use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
-    let n_special = N_SPECIAL_HIGHLIGHTS as usize;
     let predisplaylen = crate::ported::zle::zle_params::get_predisplay()
         .chars()
         .count() as i64; // c:888 predisplaylen
     let to_i = to as i64;
     let cnt_i = cnt as i64;
     if let Ok(mut rh) = REGION_HIGHLIGHTS.lock() {
-        let total = rh.len();
-        for idx in n_special..total {
-            let entry = &mut rh[idx];
+        for entry in rh.iter_mut() {
             // c:890-891 — `sub = (flags & ZRH_PREDISPLAY) ? predisplaylen : 0`.
             let sub = if entry.flags & ZRH_PREDISPLAY != 0 {
                 predisplaylen
@@ -2856,7 +2851,7 @@ mod findbol_findeol_tests {
     /// differently from a plain one.
     #[test]
     fn shiftchars_predisplay_region_subtracts_predisplaylen() {
-        use crate::ported::zle::zle_h::{N_SPECIAL_HIGHLIGHTS, ZRH_PREDISPLAY};
+        use crate::ported::zle::zle_h::ZRH_PREDISPLAY;
         use crate::ported::zle::zle_refresh::{RegionHighlight, REGION_HIGHLIGHTS};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
@@ -2873,9 +2868,6 @@ mod findbol_findeol_tests {
         {
             let mut rh = REGION_HIGHLIGHTS.lock().unwrap();
             rh.clear();
-            for _ in 0..N_SPECIAL_HIGHLIGHTS {
-                rh.push(mk(0, 0, 0));
-            }
             rh.push(mk(6, 8, ZRH_PREDISPLAY)); // predisplay region
             rh.push(mk(6, 8, 0)); // plain region, same offsets
         }
@@ -2884,8 +2876,8 @@ mod findbol_findeol_tests {
         shiftchars(0, 2);
 
         let rh = REGION_HIGHLIGHTS.lock().unwrap();
-        let pre = &rh[N_SPECIAL_HIGHLIGHTS as usize];
-        let plain = &rh[N_SPECIAL_HIGHLIGHTS as usize + 1];
+        let pre = &rh[0];
+        let plain = &rh[1];
         // Predisplay: start-sub=1 not > to+cnt=2 → clamp start=to+sub=5;
         //             end-sub=3 > 2 → end -= cnt = 6.
         assert_eq!((pre.start, pre.end), (5, 6), "predisplay region uses sub=5");
@@ -2903,7 +2895,6 @@ mod findbol_findeol_tests {
     /// RegionHighlight. The prior port omitted this whole block.
     #[test]
     fn spaceinline_shifts_region_highlights() {
-        use crate::ported::zle::zle_h::N_SPECIAL_HIGHLIGHTS;
         use crate::ported::zle::zle_refresh::{RegionHighlight, REGION_HIGHLIGHTS};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
@@ -2911,17 +2902,9 @@ mod findbol_findeol_tests {
 
         {
             let mut rh = REGION_HIGHLIGHTS.lock().unwrap();
+            // REGION_HIGHLIGHTS holds only user entries (C: past the
+            // N_SPECIAL_HIGHLIGHTS slots); every one of them is shifted.
             rh.clear();
-            // The first N_SPECIAL_HIGHLIGHTS slots are reserved and skipped.
-            for _ in 0..N_SPECIAL_HIGHLIGHTS {
-                rh.push(RegionHighlight {
-                    start: 0,
-                    end: 0,
-                    attr: Default::default(),
-                    memo: None,
-                    flags: 0,
-                });
-            }
             // A user region [5,8) entirely past the cursor.
             rh.push(RegionHighlight {
                 start: 5,
@@ -2943,12 +2926,38 @@ mod findbol_findeol_tests {
         spaceinline(2); // open 2 chars at cursor 3
 
         let rh = REGION_HIGHLIGHTS.lock().unwrap();
-        let past = &rh[N_SPECIAL_HIGHLIGHTS as usize]; // [5,8)
+        let past = &rh[0]; // [5,8)
         assert_eq!(past.start, 7, "start>=zlecs shifts by ct (5→7)");
         assert_eq!(past.end, 10, "end>=zlecs shifts by ct (8→10)");
-        let before = &rh[N_SPECIAL_HIGHLIGHTS as usize + 1]; // [1,2)
+        let before = &rh[1]; // [1,2)
         assert_eq!(before.start, 1, "region before the cursor is unchanged");
         assert_eq!(before.end, 2, "region before the cursor is unchanged");
+    }
+
+    /// `Src/Zle/zle_utils.c:619-732` — zle_save_positions /
+    /// zle_restore_positions bring back every user region highlight,
+    /// in order, after a nested edit replaced them.
+    #[test]
+    fn save_restore_positions_keeps_every_user_region() {
+        use crate::ported::zle::zle_refresh::{
+            get_region_highlight, set_region_highlight, REGION_HIGHLIGHTS,
+        };
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("abcdefghij", 0);
+        let orig: Vec<String> = ["0 1 bold", "2 3 underline", "4 5 standout"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        set_region_highlight(Some(&orig));
+        zle_save_positions();
+        set_region_highlight(Some(&["7 9 bold".to_string()]));
+        zle_restore_positions();
+        assert_eq!(
+            get_region_highlight(&crate::ported::zsh_h::param::default()),
+            orig
+        );
+        REGION_HIGHLIGHTS.lock().unwrap().clear();
     }
 
     /// `Src/Zle/zle_utils.c:777-844` — `spaceinline(ct)` opens `ct`
