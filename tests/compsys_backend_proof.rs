@@ -96,7 +96,13 @@ fn run_with_backend(backend: &str, script: &str) -> R {
 /// call to `compsys::ported::Base::Core::_setup` and it succeeds; under
 /// `shell` the router stands down, nothing defines the name, and the
 /// shell reports `command not found` (rc 127).
+///
+/// `_setup`'s status is its last statement, the `force-list` `&&` chain
+/// (Completion/Base/Core/_setup), which is 1 when the style is unset. The
+/// probe sets `force-list always` so a `_setup` that ran ends on the
+/// `_comp_force_list=always` assignment and returns 0.
 const SETUP_PROBE: &str = r#"
+    zstyle ':completion:*' force-list always
     _setup default
     echo "RC=$?"
 "#;
