@@ -1511,6 +1511,38 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
         return rc;
     }
 
+    // c:Src/exec.c:756-766 — in `execute()` a command word containing `/` is
+    // exec'd directly, and when it is absolute, `./`/`../`-relative or
+    // PATHDIRS is unset the FAILED exec is reported with its errno, never as
+    // `command not found`:
+    //     if (arg0 == s || unset(PATHDIRS) || (arg0[0] == '.' && …)) {
+    //         zerr("%e: %s", lerrno, arg0);
+    //         _exit((lerrno == EACCES || lerrno == ENOEXEC) ? 126 : 127); }
+    // `_nfs-cat`'s spec `'1:nfs:// URL:'` makes `// URL:` the action, and zsh
+    // prints `_arguments:465: permission denied: //` where this printed
+    // `command not found: //`. No builtin name contains a `/`, so this sits
+    // ahead of the builtin / `$PATH` arm exactly as c:756 sits ahead of the
+    // path search.
+    if let Some(slash) = cmd.find('/') {
+        use crate::ported::zsh_h::{isset, PATHDIRS};
+        let dot = cmd.starts_with('.') && (slash == 1 || (cmd.starts_with("..") && slash == 2));
+        if slash == 0 || !isset(PATHDIRS) || dot {
+            let lerrno = direct_exec_errno(cmd);
+            if lerrno == 0 {
+                // An executable file: real, but with no execution route from
+                // here — the same answer the `$PATH` arm below gives.
+                return 1;
+            }
+            let _subsh = crate::ported::exec::SubshStateGuard::enter(); // c:1247-1248
+            crate::ported::utils::zwarn(&format!(
+                "{}: {}",
+                crate::ported::utils::zsh_errno_msg(lerrno),
+                cmd
+            )); // c:762
+            return if lerrno == libc::EACCES || lerrno == libc::ENOEXEC { 126 } else { 127 }; // c:763
+        }
+    }
+
     // Neither a shell function nor a registered port. zsh looks for a builtin
     // and then for an executable on `$PATH`; only when both miss does it
     // report the command as not found.
@@ -1548,6 +1580,27 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
     let _subsh = crate::ported::exec::SubshStateGuard::enter(); // c:1247-1248
     crate::ported::utils::zwarn(&format!("command not found: {}", cmd)); // c:903
     127 // c:908 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127)`
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// The errno c:Src/exec.c:758's `zexecve(arg0, …)` would fail with, worked
+/// out WITHOUT exec'ing: `dispatch_action_command` runs in the live shell and
+/// has no fork to exec in. 0 means the exec would start a program. execve(2)
+/// fails ENOENT/ENOTDIR/EACCES on the path walk and X_OK test that
+/// `access(2)` performs, and EACCES on a directory, which `access` accepts.
+fn direct_exec_errno(path: &str) -> i32 {
+    let Ok(c) = std::ffi::CString::new(path) else {
+        return libc::ENOENT;
+    };
+    if unsafe { libc::access(c.as_ptr(), libc::X_OK) } != 0 {
+        return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOENT);
+    }
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_file() => 0,
+        Ok(_) => libc::EACCES,
+        Err(e) => e.raw_os_error().unwrap_or(libc::ENOENT),
+    }
 }
 
 // =====================================================================
@@ -2594,5 +2647,27 @@ mod strip_shortest_space_delimited_suffix_tests {
     fn strip_then_append_leaves_a_single_space_between_specs() {
         let after_strip = strip(" tag1 tag2 ");
         assert_eq!(format!("{} {} ", after_strip, "tag3"), " tag1 tag3 ");
+    }
+}
+
+#[cfg(test)]
+mod slash_action_tests {
+    use super::*;
+
+    /// c:Src/exec.c:756-766: an action word with a `/` is exec'd directly
+    /// and a failed exec reports its errno with 126/127, never
+    /// `command not found`. `_nfs-cat`'s `'1:nfs:// URL:'` runs `//`, which
+    /// zsh answers `permission denied: //` (126); a missing absolute path is
+    /// `no such file or directory` (127). Both used to fall through to the
+    /// `$PATH` miss and return 127 for `command not found`.
+    #[test]
+    fn a_slash_action_reports_the_exec_errno() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(direct_exec_errno("//"), libc::EACCES);
+        assert_eq!(direct_exec_errno("/"), libc::EACCES);
+        assert_eq!(direct_exec_errno("/nonexistent-zshrs-dir/x"), libc::ENOENT);
+        assert_eq!(direct_exec_errno("/bin/sh"), 0);
+        assert_eq!(dispatch_action_command("//", &["URL:".to_string()], 0), 126);
+        assert_eq!(dispatch_action_command("/nonexistent-zshrs-dir/x", &[], 0), 127);
     }
 }
