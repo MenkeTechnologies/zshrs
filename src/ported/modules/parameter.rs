@@ -5758,11 +5758,16 @@ fn handlefeatures(
 // Src/module.c:3279/3350/3388 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
-    _e: Option<&[i32]>,
+    m: *const module,
+    f: &Mutex<crate::ported::zsh_h::features>,
+    e: Option<&[i32]>,
 ) -> i32 {
-    0
+    // c:Src/module.c:3354-3382 — this module has only the partab block
+    // (c:3376-3378 setparamdefs). cleanup_ (c:2350-2354) passes `e == NULL`,
+    // which deletes every parameter, so after `zmodload -u zsh/parameter`
+    // the names fall back to the autoload stubs and the next read reloads
+    // the module (c:Src/params.c:544-566 loadparamnode).
+    crate::ported::module::setfeatureenables("zsh/parameter", &featuresarray(m, f), e)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
