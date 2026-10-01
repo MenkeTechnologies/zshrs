@@ -7494,7 +7494,16 @@ pub fn doshfunc(
         // dropped privileges does not get them back on return. The port
         // restored it with everything else.
         restore.carry_privileged_from_live();
+        // zsh 5.9.x Src/exec.c:6021-6023 — "restore all shell options except
+        // PRIVILEGED and RESTRICTED": `funcsave->opts[RESTRICTED] =
+        // opts[RESTRICTED];`. RESTRICTED can only go from off to on
+        // (options.c:763-765), so carrying the live value is re-setting it
+        // when the body turned it on.
+        let live_restricted = isset(crate::ported::zsh_h::RESTRICTED);
         restore.restore();
+        if live_restricted {
+            opt_state_set(crate::ported::zsh_h::opt_name(crate::ported::zsh_h::RESTRICTED), true);
+        }
         // c:6136 / c:6153 — `emulation = funcsave->emulation;`
         crate::ported::options::emulation.store(funcsave_emulation, Ordering::Relaxed);
         crate::ported::options::EMULATION.store(funcsave_emulation_live, Ordering::Relaxed);
@@ -9048,7 +9057,12 @@ pub fn save_params(
                 // copyparam with fakecopy=0 already done by the clone()
                 // (Clone derives a deep copy of param fields).
                 restore_p.push(tpm); // c:4451
-            } else if (pm.node.flags & PM_READONLY as i32) == 0 {
+            } else if (pm.node.flags & PM_READONLY as i32) == 0
+                // zsh 5.9.x Src/exec.c:4366-4367 — `&& (unset(RESTRICTED) ||
+                //   !(pm->node.flags & PM_RESTRICTED))`.
+                && (!isset(crate::ported::zsh_h::RESTRICTED)
+                    || (pm.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) == 0)
+            {
                 // c:4439-4448 — special-but-not-readonly: fakecopy=1.
                 let mut tpm = pm.clone();
                 tpm.node.nam = pm.node.nam.clone();
