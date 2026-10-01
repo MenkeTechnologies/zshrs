@@ -123,9 +123,9 @@ impl<'a> Walker<'a> {
         }
         if (wc & 2) != 0 {
             // Short: 1-3 bytes packed in bits 3-10, 11-18, 19-26.
-            // Keep the raw token bytes, widened byte→char (token bytes
-            // 0x84..=0xa1 become the same `char` the zshrs lexer stores
-            // in tokstr). Canonicalization to source text happens in
+            // Keep the raw token bytes, widened byte→char (a token byte
+            // becomes the same token char the zshrs lexer stores in tokstr,
+            // crate::token_char). Canonicalization to source text happens in
             // `ast_sexp::emit_str` via `ported::lex::untokenize`
             // (port of Src/exec.c:2077 + Src/lex.c:38 ztokens) — the
             // SAME function the zshrs-parser side goes through, so both
@@ -141,7 +141,7 @@ impl<'a> Walker<'a> {
                 if c == 0 {
                     break;
                 }
-                s.push(c as char);
+                s.push(crate::token_char::token_char_from_byte(c).unwrap_or(c as char));
             }
             s
         } else {
@@ -165,7 +165,9 @@ impl<'a> Walker<'a> {
         // parity-harness sides share one untokenizer (see
         // decode_string_word above).
         let raw = &self.strings[offset..end];
-        raw.iter().map(|&b| b as char).collect()
+        raw.iter()
+            .map(|&b| crate::token_char::token_char_from_byte(b).unwrap_or(b as char))
+            .collect()
     }
 
     /// Top-level: walk a complete program until WC_END.
