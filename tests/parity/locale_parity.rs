@@ -276,3 +276,30 @@ fn single_byte_locale_quotes_high_bytes_bytewise() {
     // UTF-8 comparison would fold into U+FFFD on both sides.
     assert_eq!(want, got, "script: {script}");
 }
+
+/// `$'…'` is decoded at EXPANSION time: `stringsubstquote` calls
+/// `getkeystring` (c:Src/subst.c:301-304), and a `\u` escape the single-byte
+/// locale cannot encode raises `zerr("character not in range")` there
+/// (c:Src/utils.c:6763). A word that never runs never reaches it. zshrs
+/// decoded the word at COMPILE time and printed the error for the untaken
+/// branch — stock `_cut`'s `de_DE.UTF-8` arm aborted `cut -<TAB>` under
+/// `LANG=C`. The second line pins the run-time half: the error is still
+/// raised, once, when such a word is expanded.
+#[test]
+fn undecodable_dollar_quote_errors_only_when_expanded() {
+    if !zsh_available() {
+        return;
+    }
+    for script in [
+        "exec 2>&1; if false; then print $'g\\u00e4'; fi; print after",
+        "exec 2>&1; case x in (de) a=(k $'gew\\u00e4hlten') ;; esac; print after; print -r -- a$'x\\u00e4'b; print notreached",
+    ] {
+        let want = run(zsh_path(), &["-f", "-c"], script);
+        let got = run(zshrs_bin().to_str().expect("bin path"), &["-f", "-c"], script);
+        assert_eq!(
+            String::from_utf8_lossy(&want).replace("zsh:", "SHELL:"),
+            String::from_utf8_lossy(&got).replace("zshrs:", "SHELL:"),
+            "script: {script}",
+        );
+    }
+}

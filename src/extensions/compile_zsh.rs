@@ -6151,9 +6151,15 @@ impl ZshCompiler {
         // must see it), so a word whose `$'…'` decodes to a NUL cannot be
         // folded into a compile-time constant; route it through the runtime
         // text expansion, whose stringsubstquote applies the cut.
+        //
+        // The same deferral covers a `$'…'` span that does not decode at all
+        // (`\u00e4` in a single-byte locale): C raises
+        // `zerr("character not in range")` (c:Src/utils.c:6763) from that
+        // same run-time stringsubstquote, so a word that never runs — stock
+        // `_cut`'s `de_DE.UTF-8` arm under `LANG=C` — must not diagnose here.
         if (s.contains(crate::ported::zsh_h::Stringg) || s.contains(crate::ported::zsh_h::Qstring))
             && s.contains(crate::ported::zsh_h::Snull)
-            && crate::lex::untokenize(s).contains('\0')
+            && untokenize_quiet(s).map_or(true, |u| u.contains('\0'))
         {
             let text = self.builder.add_constant(Value::str(s));
             self.builder.emit(Op::LoadConst(text), 0);
@@ -6465,9 +6471,23 @@ impl ZshCompiler {
                         .chars()
                         .map(|c| if c == '\u{e09f}' { '\\' } else { c })
                         .collect();
-                    let decoded = decode_ansi_c(&body);
-                    let idx = self.builder.add_constant(Value::str(decoded.as_str()));
-                    self.builder.emit(Op::LoadConst(idx), 0);
+                    if let Some(decoded) = decode_ansi_c(&body) {
+                        let idx = self.builder.add_constant(Value::str(decoded.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                    } else {
+                        // The body does not decode (`\u00e4` under LC_ALL=C,
+                        // c:Src/utils.c:6763). C reports that from
+                        // stringsubstquote at EXPANSION time (c:Src/subst.c:
+                        // 301-304), so defer the whole word to the run-time
+                        // text expansion: a word that never runs never
+                        // diagnoses, and one that does fails on its own line.
+                        let text = self.builder.add_constant(Value::str(s));
+                        self.builder.emit(Op::LoadConst(text), 0);
+                        let mode = self.text_mode_for_context(self.text_base_mode(s));
+                        self.builder.emit(Op::LoadInt(mode as i64), 0);
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+                    }
                     return;
                 }
             }
@@ -19597,14 +19617,51 @@ fn base64_encode(bytes: &[u8]) -> String {
 /// NULL)`), the decoder `stringsubstquote` uses at run time, so the
 /// parse-time fast path and the run-time path agree on every escape
 /// (`$'\x'` is a NUL, `$'\x 41'` is 0x04 then `1`, c:Src/utils.c:7156-7178).
-fn decode_ansi_c(body: &str) -> String {
-    let (out, _) = crate::ported::utils::getkeystring_with(
-        body,
-        crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
-        None,
-    );
+///
+/// Returns None when the body does not decode: `getkeystring` raised
+/// `zerr("character not in range")` (c:Src/utils.c:6763), e.g. `\u00e4` in a
+/// single-byte locale. This runs at COMPILE time over words that may never
+/// execute, so it decodes under `noerrs = 1` (c:Src/utils.c:175-177: errflag
+/// is set, nothing is printed) and restores both afterwards; the caller
+/// defers such a word to run time, which is where C reports the error.
+fn decode_ansi_c(body: &str) -> Option<String> {
+    let out = quietly(|| {
+        crate::ported::utils::getkeystring_with(
+            body,
+            crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
+            None,
+        )
+        .0
+    })?;
     // c:Src/utils.c:7289-7294 — only imeta bytes are metafied.
-    crate::script_bytes::regroup_meta_utf8(out)
+    Some(crate::script_bytes::regroup_meta_utf8(out))
+}
+
+/// `untokenize` for a compile-time PROBE: None when a `$'…'` span in `s`
+/// does not decode, without printing or leaving errflag set (see
+/// `decode_ansi_c`).
+fn untokenize_quiet(s: &str) -> Option<String> {
+    quietly(|| crate::lex::untokenize(s))
+}
+
+/// !!! RUST-ONLY: run a compile-time decode under C's `noerrs = 1`
+/// (c:Src/utils.c:175-177 — `zerr` sets errflag and prints nothing), then
+/// restore errflag and noerrs. None when the decode raised an error.
+fn quietly<T>(f: impl FnOnce() -> T) -> Option<T> {
+    use crate::ported::utils::{errflag, noerrs_lock, ERRFLAG_ERROR};
+    use std::sync::atomic::Ordering;
+    let saved_errflag = errflag.load(Ordering::Relaxed);
+    errflag.store(0, Ordering::Relaxed);
+    let saved_noerrs = std::mem::replace(&mut *noerrs_lock().lock().unwrap(), 1);
+    let out = f();
+    let failed = errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR != 0;
+    *noerrs_lock().lock().unwrap() = saved_noerrs;
+    errflag.store(saved_errflag, Ordering::Relaxed);
+    if failed {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
