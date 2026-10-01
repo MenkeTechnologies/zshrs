@@ -2424,36 +2424,45 @@ pub fn get_match_ret(imd: &mut imatchdata, b: usize, e: usize) -> Option<String>
     Some(r) // c:2645 return r
 }
 
-/// Compile pattern and get match info (from glob.c compgetmatch line 2650)
-/// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from `Src/glob.c:2650`.
-/// WARNING: param names don't match C — Rust=(pat) vs C=(pat, flp, replstrp)
-pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
-    // c:1993 — `SUB_START` (anchor at head) / `SUB_END` (anchor at
-    // tail) / `SUB_LONG` (`##`/`%%` doubled = longest). All three
-    // imported from the canonical zsh_h.rs port; the previous local
-    // redeclaration risked the same drift hazard as the HIST_*
-    // bit-value bug caught earlier.
-    let mut flags: i32 = 0;
-    let mut pattern = pat.to_string();
-
-    if pattern.starts_with('#') {
-        flags |= SUB_START;
-        pattern = pattern[1..].to_string();
+/// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from
+/// `Src/glob.c:2650`.
+///
+/// Compiles the search pattern and decides how the replacement is
+/// expanded. A pattern with backreferences (`(#b)`, `patnpar`) or match
+/// references (`(#m)`, `GF_MATCHREF`) needs the replacement re-substituted
+/// after EACH match, once `$match`/`$MATCH` hold that match's text, so it
+/// sets `SUB_DOSUBST` (consumed by `igetmatch`, c:2567-2571). Otherwise
+/// the replacement is substituted once, here.
+pub fn compgetmatch(pat: &str, flp: &mut i32, replstrp: &mut Option<String>) -> Option<Patprog> {
+    // c:2662 — `int patflags = PAT_SCAN|PAT_NOANCH | (*replstrp ? 0 : PAT_STATIC);`
+    // PAT_STATIC's static-buffer path is not used by this port's compiler.
+    let mut patflags = crate::ported::zsh_h::PAT_SCAN | crate::ported::zsh_h::PAT_NOANCH;
+    // c:2668-2669 — anchored to the end of the string if we want to match
+    // it all, or if we are matching at the end and not using substrings.
+    if (*flp & SUB_ALL) != 0 || ((*flp & SUB_END) != 0 && (*flp & SUB_SUBSTR) == 0) {
+        patflags &= !crate::ported::zsh_h::PAT_NOANCH; // c:2670
     }
-    if pattern.starts_with("##") {
-        flags |= SUB_START | SUB_LONG;
-        pattern = pattern[2..].to_string();
+    // c:2671 — `p = patcompile(pat, patflags, NULL);` — `pat` is already
+    // tokenized by the caller (c:Src/hist.c:2365 parse_subst_string).
+    let p = match crate::ported::pattern::patcompile(pat, patflags, None) {
+        Some(p) => p,
+        None => {
+            zerr(&format!("bad pattern: {}", pat)); // c:2673
+            return None; // c:2674
+        }
+    };
+    if let Some(r) = replstrp.as_mut() {
+        // c:2676
+        if p.0.patnpar != 0 || (p.0.globend & crate::ported::zsh_h::GF_MATCHREF) != 0 {
+            // c:2677-2682 — "Either backreferences or match references, so
+            // we need to re-substitute replstr each time round."
+            *flp |= SUB_DOSUBST; // c:2682
+        } else {
+            // c:2684-2685 — `singsub(replstrp); untokenize(*replstrp);`
+            *r = untokenize(&crate::ported::subst::singsub(r));
+        }
     }
-    if pattern.ends_with('%') {
-        flags |= SUB_END;
-        pattern.pop();
-    }
-    if pattern.ends_with("%%") {
-        flags |= SUB_END | SUB_LONG;
-        pattern.truncate(pattern.len().saturating_sub(2));
-    }
-
-    Some((pattern, flags))
+    Some(p) // c:2689
 }
 
 /// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)`
@@ -2465,40 +2474,26 @@ pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
 /// `sp` is C's `char **sp` out-pointer — the result is written back
 /// through it — and the return value is C's STATUS: 1 when the pattern
 /// matched, `(fl & SUB_RETFAIL) ? 0 : 1` when it did not (c:3231, the
-/// tail of `igetmatch`). An earlier port returned the resulting string
-/// and dropped the status, which left a caller no way to tell "matched,
-/// and the replacement happened to equal the original" from "did not
-/// match" — the distinction `subst()` (c:Src/hist.c:2370) branches on.
+/// tail of `igetmatch`), the distinction `subst()` (c:Src/hist.c:2370)
+/// branches on.
 ///
-/// One adaptation: this port's `igetmatch` returns 0 for a match and 1
-/// for no match, INVERTED from C. That inversion is baked into every
-/// other `igetmatch` caller here, so it is translated at this boundary
-/// rather than flipped at the source.
+/// One adaptation: this port's `igetmatch` takes the pattern TEXT (it
+/// re-compiles per candidate) and returns 0 for a match and 1 for no
+/// match, INVERTED from C. That inversion is baked into every other
+/// `igetmatch` caller here, so it is translated at this boundary.
 pub fn getmatch(sp: &mut String, pat: &str, fl: i32, n: i32, replstr: Option<&str>) -> i32 {
-    let (prep_pat, prep_fl) = match compgetmatch(pat) {
-        // c:2713
-        Some(t) => t,
-        None => return 1, // c:2713-2714 return 1
-    };
-    // c:2676-2686 — C's `compgetmatch` takes `char **replstrp` and, for
-    // a pattern with no backreferences, runs `singsub(replstrp)` then
-    // `untokenize(*replstrp)` over the replacement before matching.
-    // This port's `compgetmatch` has no `replstrp` out-parameter, so
-    // that step lives here instead. Without it a replacement that has
-    // been through `parse_subst_string` (c:Src/hist.c:2367) still
-    // carries the lexer's token bytes, and they reach the command line:
-    // `!!:s/old/&X/` under HIST_SUBST_PATTERN printed the tokenized `&`
-    // and the shell re-read the line around it.
-    let replstr: Option<String> = replstr.map(|r| {
-        // c:2684-2685
-        untokenize(&crate::ported::subst::singsub(r))
-    });
+    let mut fl = fl;
+    let mut replstr: Option<String> = replstr.map(str::to_string);
+    // c:2713 — `if (!(p = compgetmatch(pat, &fl, &replstr))) return 1;`
+    if compgetmatch(pat, &mut fl, &mut replstr).is_none() {
+        return 1;
+    }
     // c:2716 `return igetmatch(sp, p, fl, n, replstr, NULL);`
-    if igetmatch(sp, &prep_pat, prep_fl | fl, n, replstr.as_deref()) == 0 {
+    if igetmatch(sp, pat, fl, n, replstr.as_deref()) == 0 {
         return 1;
     }
     // c:3231 — `return (fl & SUB_RETFAIL) ? 0 : 1;`
-    if (prep_fl | fl) & SUB_RETFAIL != 0 {
+    if fl & SUB_RETFAIL != 0 {
         0
     } else {
         1
@@ -2734,24 +2729,44 @@ pub fn igetmatch(
     // execution) lives in src/ported/pattern.rs. SUB_START imported
     // from zsh_h.rs at top-of-file rather than redeclared locally.
     // c:2669 — the Patprog reaching C's `igetmatch` was compiled by
-    // `compgetmatch` through `patcompile(pat, patflags, NULL)`, which
-    // reads the AMBIENT `EXTENDED_GLOB` and `CASE_GLOB` options. This
-    // port re-compiles per candidate inside `matchpat`, and passed
-    // `true` for both — so `(#i)` was honoured with NO_EXTENDED_GLOB,
-    // where zsh treats it as ordinary characters and reports no match.
-    let xglob = isset(EXTENDEDGLOB); // c:2669
-    let cglob = isset(CASEGLOB); // c:2669
+    // `compgetmatch` through `patcompile(pat, patflags, NULL)` from the
+    // ALREADY-TOKENIZED pattern text (`subst()` runs parse_subst_string
+    // and singsub over it first, c:Src/hist.c:2365-2369), under the
+    // ambient options. `matchpat` re-tokenizes its argument, which turns
+    // a quoted literal — `\(` lexed to Bnull `(`, the Bnull then dropped
+    // by singsub's remnulargs — back into an active Inpar, so
+    // `${x:s/\\(/Z/}` died with "bad pattern: (". Compile the text as
+    // given, once, as C does; each candidate is then tried against it.
+    // This port anchors by slicing the subject, so the program is
+    // compiled anchored (no PAT_NOANCH/PAT_SCAN).
+    let prog = crate::ported::pattern::patcompile(p, crate::ported::zsh_h::PAT_HEAPDUP, None);
+    let pat_try = |s: &str| -> bool {
+        prog.as_ref().map_or(false, |pp| crate::ported::pattern::pattry(pp, s))
+    };
     let anchored_start = (fl & SUB_START) != 0;
     let anchored_end = (fl & SUB_END) != 0;
     let substr_mode = (fl & SUB_SUBSTR) != 0;
     let shortest = (fl & SUB_LONG) == 0;
     let chars: Vec<char> = sp.chars().collect();
     let len = chars.len();
+    // c:2567-2571 (get_match_ret) — under SUB_DOSUBST (set by compgetmatch
+    // for a pattern with backreferences or match references) the
+    // replacement is `singsub`ed afresh for each match, after the match
+    // has set `$match`/`$MATCH`; otherwise compgetmatch already did it.
+    let resolve_repl = || -> Option<String> {
+        replstr.map(|r| {
+            if (fl & SUB_DOSUBST) != 0 {
+                untokenize(&crate::ported::subst::singsub(r)) // c:2569-2571
+            } else {
+                r.to_string()
+            }
+        })
+    };
 
     // c:2887-2898 — SUB_ALL: entire-string match flag.
     if (fl & SUB_ALL) != 0 {
         // c:2887
-        let i = matchpat(p, sp, xglob, cglob); // c:2888 pattrylen
+        let i = pat_try(sp); // c:2888 pattrylen
         if !i {
             // c:2889
             // c:2890-2893 — no match: clear replstr.
@@ -2762,7 +2777,7 @@ pub fn igetmatch(
             }
             return 1; // c:2897
         }
-        if let Some(r) = replstr {
+        if let Some(r) = resolve_repl() {
             // c:2894 get_match_ret
             *sp = r.to_string();
         }
@@ -2791,7 +2806,7 @@ pub fn igetmatch(
             for end in (start + 1)..=len {
                 // c:3009
                 let s2: String = chars[start..end].iter().collect();
-                if matchpat(p, &s2, xglob, cglob) {
+                if pat_try(&s2) {
                     // c:3010
                     found = true;
                     if shortest {
@@ -2832,7 +2847,7 @@ pub fn igetmatch(
             let mut found: Option<usize> = None;
             for end in (i + 1)..=len {
                 let substr: String = chars[i..end].iter().collect();
-                if matchpat(p, &substr, xglob, cglob) {
+                if pat_try(&substr) {
                     found = Some(end);
                     if shortest {
                         break;
@@ -2842,8 +2857,8 @@ pub fn igetmatch(
             match found {
                 Some(end) => {
                     any = true;
-                    if let Some(r) = replstr {
-                        out.push_str(r);
+                    if let Some(r) = resolve_repl() {
+                        out.push_str(&r);
                     }
                     i = end;
                 }
@@ -2872,7 +2887,7 @@ pub fn igetmatch(
     // just the matched slice.
     let match_only = (fl & SUB_MATCH) != 0;
     let (match_start, match_end) = if anchored_start && anchored_end {
-        if matchpat(p, sp, xglob, cglob) {
+        if pat_try(sp) {
             (0, len)
         } else {
             if match_only {
@@ -2885,12 +2900,12 @@ pub fn igetmatch(
         let mut best_end = 0;
         for end in 1..=len {
             let substr: String = chars[..end].iter().collect();
-            if matchpat(p, &substr, xglob, cglob) {
+            if pat_try(&substr) {
                 if shortest {
                     *sp = if match_only {
                         chars[..end].iter().collect()
                     } else {
-                        match replstr {
+                        match resolve_repl() {
                             Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
                             None => chars[end..].iter().collect(),
                         }
@@ -2913,12 +2928,12 @@ pub fn igetmatch(
         let mut best_start = len;
         for start in (0..len).rev() {
             let substr: String = chars[start..].iter().collect();
-            if matchpat(p, &substr, xglob, cglob) {
+            if pat_try(&substr) {
                 if shortest {
                     *sp = if match_only {
                         chars[start..].iter().collect()
                     } else {
-                        match replstr {
+                        match resolve_repl() {
                             Some(r) => {
                                 format!("{}{}", chars[..start].iter().collect::<String>(), r)
                             }
@@ -2941,16 +2956,23 @@ pub fn igetmatch(
         }
     } else {
         for start in 0..len {
-            for end in (start + 1)..=len {
+            // c:3029-3051 — "Find the longest match from this position";
+            // only without SUB_LONG is the shortest one searched for.
+            let ends: Vec<usize> = if shortest {
+                ((start + 1)..=len).collect()
+            } else {
+                ((start + 1)..=len).rev().collect()
+            };
+            for end in ends {
                 let substr: String = chars[start..end].iter().collect();
-                if matchpat(p, &substr, xglob, cglob) {
+                if pat_try(&substr) {
                     if match_only {
                         *sp = chars[start..end].iter().collect();
                         return 0;
                     }
                     let prefix: String = chars[..start].iter().collect();
                     let suffix: String = chars[end..].iter().collect();
-                    *sp = match replstr {
+                    *sp = match resolve_repl() {
                         Some(r) => format!("{}{}{}", prefix, r, suffix),
                         None => format!("{}{}", prefix, suffix),
                     };
@@ -2969,7 +2991,7 @@ pub fn igetmatch(
     } else {
         let prefix: String = chars[..match_start].iter().collect();
         let suffix: String = chars[match_end..].iter().collect();
-        match replstr {
+        match resolve_repl() {
             Some(r) => format!("{}{}{}", prefix, r, suffix),
             None => format!("{}{}", prefix, suffix),
         }
@@ -9572,10 +9594,15 @@ mod tests {
         let _: i32 = getmatch(&mut sp, "", 0, 0, None);
     }
 
-    /// c:1862 — `compgetmatch("")` empty returns Option<(String, i32)>.
+    /// c:2676-2686 — a pattern without backreferences substitutes the
+    /// replacement once and leaves SUB_DOSUBST clear.
     #[test]
-    fn compgetmatch_returns_option_tuple_type() {
+    fn compgetmatch_plain_pattern_substitutes_replstr_once() {
         let _g = crate::test_util::global_state_lock();
-        let _: Option<(String, i32)> = compgetmatch("");
+        let mut fl = 0;
+        let mut r = Some("X".to_string());
+        assert!(compgetmatch("a*", &mut fl, &mut r).is_some());
+        assert_eq!(fl & SUB_DOSUBST, 0);
+        assert_eq!(r.as_deref(), Some("X"));
     }
 }

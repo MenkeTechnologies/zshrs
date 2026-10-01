@@ -28030,549 +28030,118 @@ pub fn modify(s: &str, modifiers: &str) -> (String, String) {
             }
         }
 
-        // `:s/old/new/` and `:S/old/new/` — port of subst.c:4583-4685.
-        // `:s` is the standard substitute, `:S` is the anchored
-        // variant. Parsing rules:
-        //   - delim is the char immediately after `s`/`S`
-        //   - pattern is read until next unescaped delim
-        //   - replacement is read until next unescaped delim or eof
-        //   - in pattern: `\X` → literal X (backslash dropped)
-        //   - in replacement: `\X` → literal X; `&` → matched portion
-        //   - trailing delim is optional
+        // c:Src/subst.c:4589-4684 — `case 's': case 'S':`. This arm only
+        // PARSES the modifier into the file-statics `hsubl`/`hsubr` (and
+        // `hsubpatopt`); the substitution itself runs in the shared
+        // `while (rec--)` body below (c:4775-4780 word-wise, c:4865-4870
+        // whole value) through `subst()` (Src/hist.c:2334), exactly as
+        // `:&` (c:4686-4688) does.
         if modifier == 's' || modifier == 'S' {
-            // c:4583
-            let delim = match chars.next() {
-                // c:4585
-                Some(c) => c, // c:4585
-                None => {
-                    // c:Src/subst.c modify() — bare `:s` with no
-                    // delimiter byte → "bad substitution". Without
-                    // this the `None => break` silently returned
-                    // the unchanged value. Bug #595.
+            hsubpatopt.store((modifier == 'S') as i32, Ordering::Relaxed); // c:4592
+            let rest: Vec<char> = chars.clone().collect(); // c:4594 `(*ptr)++; ptr1 = *ptr;`
+            // c:4596 — the delimiter is the first char after `s`/`S`.
+            let del = rest.first().copied().unwrap_or('\0');
+            // c:4603-4612 — a backslash (bare, in double quotes) or a Bnull
+            // escapes the next char: the pair is skipped wholesale, the bare
+            // backslash being rewritten to Bnull.
+            let is_esc = |c: char| c == crate::ported::zsh_h::Bnull || c == '\\';
+            let mut k = 1usize; // c:4601 `ptr1 += charlen`
+            let mut pat: String = String::new();
+            loop {
+                // c:4620-4623 — `if (!*ptr2) { zerr("bad substitution"); return; }`
+                if k >= rest.len() || del == '\0' {
                     zerr("bad substitution");
                     errflag_set_error();
-                    return (String::new(), String::new()); // c:4618 `return;` with errflag set
+                    return (String::new(), String::new());
                 }
-            };
-            // Read pattern with backslash-escape support.
-            let mut pat = String::new(); // c:4595
-                                         // c:Src/subst.c modify() — track whether the closing
-                                         // pattern delimiter was actually consumed. C emits
-                                         // `if (!*ptr2) zerr("bad substitution")` when no
-                                         // closing delim is found before end of modifier string.
-                                         // Bug #595.
-            let mut pat_closed = false;
-            while let Some(&c) = chars.peek() {
-                if c == crate::ported::zsh_h::Bnull || c == crate::ported::zsh_h::Bnullkeep {
-                    // c:Src/subst.c — a lexer INULL marker (Bnull) means the
-                    // FOLLOWING char is an already-quoted literal (`\X` in the
-                    // source lexes to Bnull+X). Consume the marker and take the
-                    // next char verbatim — BEFORE the delimiter test — so an
-                    // escaped delimiter (`\/` → Bnull `/`) and an escaped
-                    // backslash (`\\` → Bnull `\`) both land literally instead
-                    // of closing the field or escaping the next char.
-                    chars.next();
-                    if let Some(&nx) = chars.peek() {
-                        pat.push(nx);
-                        chars.next();
-                    }
+                let c = rest[k];
+                if is_esc(c) && k + 1 < rest.len() {
+                    pat.push(crate::ported::zsh_h::Bnull); // c:4607 `*ptr2 = Bnull`
+                    pat.push(rest[k + 1]);
+                    k += 2; // c:4608 `charlen = 2`
                     continue;
                 }
-                if c == delim {
-                    chars.next();
-                    pat_closed = true;
-                    break;
+                if c == del {
+                    break; // c:4617-4618
                 }
-                if c == '\\' {
-                    // c:4598 (backslash escape)
-                    chars.next();
-                    if let Some(&nx) = chars.peek() {
-                        // C: `\X` drops backslash for non-meta X; for
-                        // meta keeps escape. Simplify to drop-always.
-                        pat.push(nx);
-                        chars.next();
-                    }
-                } else {
-                    pat.push(c);
-                    chars.next();
-                }
+                pat.push(c);
+                k += 1;
             }
-            if !pat_closed {
-                // c:Src/subst.c modify() — `if (!*ptr2) zerr("bad
-                // substitution")` — the pattern body must end with
-                // the chosen delimiter. `${a:s/l}` is rejected.
-                zerr("bad substitution");
+            k += 1; // c:4626 `ptr2 += charlen` — past the middle delimiter
+            let mut repl: String = String::new();
+            while k < rest.len() {
+                // c:4629-4645 — same scan for the replacement.
+                let c = rest[k];
+                if is_esc(c) && k + 1 < rest.len() {
+                    repl.push(crate::ported::zsh_h::Bnull); // c:4633
+                    repl.push(rest[k + 1]);
+                    k += 2;
+                    continue;
+                }
+                if c == del {
+                    break; // c:4643-4644
+                }
+                repl.push(c);
+                k += 1;
+            }
+            // c:4675-4679 — `*ptr = ptr3 - 1; if (*ptr3) *ptr += charlen;`
+            // and the `(*ptr)++` after the flag loop: the final terminator is
+            // optional, and is consumed when present.
+            let consumed = if k < rest.len() { k + 1 } else { k };
+            for _ in 0..consumed {
+                chars.next();
+            }
+            // c:4649-4652 — an empty search text reuses the previous one.
+            if !pat.is_empty() {
+                *hsubl.lock().unwrap() = Some(pat);
+            }
+            let Some(mut l) = hsubl.lock().unwrap().clone() else {
+                zerr("no previous substitution"); // c:4654
                 errflag_set_error();
-                return (String::new(), String::new()); // c:4618 `return;` with errflag set
+                return (String::new(), String::new()); // c:4655
+            };
+            let is_inull = |c: char| {
+                c == crate::ported::zsh_h::Snull
+                    || c == crate::ported::zsh_h::Dnull
+                    || c == crate::ported::zsh_h::Bnull
+                    || c == crate::ported::zsh_h::Bnullkeep
+                    || c == crate::ported::zsh_h::Nularg
+            };
+            // c:4658-4660 — `if (inull(*tt) && *tt != Bnullkeep) chuck(tt--);`
+            l.retain(|c| !(is_inull(c) && c != crate::ported::zsh_h::Bnullkeep));
+            // c:4661-4662
+            if !isset(HISTSUBSTPATTERN) {
+                l = untokenize(&l);
             }
-            // c:Src/subst.c:4650-4651 — `if (!isset(HISTSUBSTPATTERN))
-            // untokenize(hsubl);`. The search text arrives from the lexer
-            // with its metachars still TOKENIZED: `${x:gs/\\{/…/}` reaches
-            // here as Bnull `\` Inbrace, so the loop above built `\` +
-            // U+E08F while the haystack holds a plain ASCII `{` — no match,
-            // and `_expand`'s brace-expansion arm
-            // (Completion/Base/Completer/_expand:82) left its `\{`/`\}`
-            // untouched, so every expandable word came back unchanged.
-            // C untokenizes here for the literal (strstr) path and leaves
-            // the tokens for the pattern path, where patcompile wants them.
-            let pat = if isset(HISTSUBSTPATTERN) {
-                pat
-            } else {
-                untokenize(&pat)
-            };
-            // Read replacement with `&` and `\X` handling. A bare `&` is kept
-            // as `None` until the search mode is known: only the literal
-            // strstr path turns it into the search text (c:Src/hist.c:2375
-            // `convamps`); the pattern path hands the replacement to getmatch
-            // as written (c:2370), so there it is a plain `&`.
-            let mut repl_parts: Vec<Option<char>> = Vec::new(); // c:4625
-            while let Some(&c) = chars.peek() {
-                if c == crate::ported::zsh_h::Bnull || c == crate::ported::zsh_h::Bnullkeep {
-                    // c:Src/subst.c — INULL-marked literal (see the pattern
-                    // loop). `:s/X/\\/` → repl Bnull `\` → a literal backslash,
-                    // not an escape of the trailing delimiter.
-                    chars.next();
-                    if let Some(&nx) = chars.peek() {
-                        repl_parts.push(Some(nx));
-                        chars.next();
+            *hsubl.lock().unwrap() = Some(l);
+            // c:4663-4675 — inull markers are dropped from the replacement,
+            // except that a Bnull before `&` or `\` becomes a real backslash
+            // so `subst()`'s `convamps` still sees `\&` / `\\`.
+            let rv: Vec<char> = repl.chars().collect();
+            let mut r = String::with_capacity(repl.len());
+            for (i, &c) in rv.iter().enumerate() {
+                if is_inull(c) && c != crate::ported::zsh_h::Bnullkeep {
+                    if c == crate::ported::zsh_h::Bnull
+                        && matches!(rv.get(i + 1), Some('&') | Some('\\'))
+                    {
+                        r.push('\\'); // c:4671
                     }
-                    continue;
+                    continue; // c:4673 chuck
                 }
-                if c == delim {
-                    chars.next();
-                    break;
-                }
-                if c == '\\' {
-                    // c:4630
-                    chars.next();
-                    if let Some(&nx) = chars.peek() {
-                        repl_parts.push(Some(nx));
-                        chars.next();
-                    }
-                } else if c == '&' {
-                    // c:4639 (& → matched portion)
-                    chars.next();
-                    repl_parts.push(None);
-                } else {
-                    repl_parts.push(Some(c));
-                    chars.next();
-                }
+                r.push(c);
             }
-            // Direct port of Src/hist.c:2336 — `if (isset(HISTSUBSTPATTERN)
-            // || forcepat)` selects the pattern path (`:S` is forcepat);
-            // otherwise the strstr-based literal replace runs.
-            let use_glob = modifier == 'S' || isset(HISTSUBSTPATTERN);
-            let repl: String = repl_parts
-                .iter()
-                .map(|p| match p {
-                    Some(c) => c.to_string(),
-                    None if use_glob => "&".to_string(), // c:2370
-                    None => pat.clone(),                 // c:2375 convamps
-                })
-                .collect();
-            // c:Src/hist.c:2346-2361 — on the pattern path a LEADING `#`
-            // anchors at the head and a following LEADING `%` at the tail
-            // (both: the whole value); the literal path takes them as text.
-            let (eff_pat, anchor_head, anchor_tail) = if use_glob {
-                let mut rest = pat.as_str();
-                let mut head = false;
-                let mut tail = false;
-                if let Some(r) = rest.strip_prefix(['#', Pound]) {
-                    head = true; // c:2347-2350
-                    rest = r;
-                }
-                if let Some(r) = rest.strip_prefix('%') {
-                    tail = true; // c:2351-2355
-                    rest = r;
-                }
-                (rest.to_string(), head, tail)
+            *hsubr.lock().unwrap() = Some(r);
+        }
+        // c:Src/subst.c:4686-4688 — `case '&': c = hsubpatopt ? 'S' : 's';`
+        let modifier = if modifier == '&' {
+            if hsubpatopt.load(Ordering::Relaxed) != 0 {
+                'S'
             } else {
-                (pat.clone(), false, false)
-            };
-            // c:Src/hist.c:2366-2369 — the pattern path runs `parse_subst_string(in)`
-            // and then `singsub(&in)`, so a `$name` in the search text is
-            // substituted (`setopt histsubstpattern; b=b; ${a:s/$b/X/}`); the
-            // literal strstr path (c:2371) searches for the text as written.
-            // `hsubl` keeps the unsubstituted text, as C's does, for `:&`.
-            let hsubl_pat = eff_pat.clone();
-            let eff_pat = if use_glob { singsub(&eff_pat) } else { eff_pat };
-            let do_match = |hay: &str| -> Option<(usize, usize)> {
-                if use_glob {
-                    // Sliding-window glob match — find first
-                    // [start..end) span where eff_pat matches.
-                    // Direct port of zsh's getmatch() SUB_SUBSTR
-                    // search loop. Empty match returns (q, q).
-                    let cv: Vec<char> = hay.chars().collect();
-                    let n = cv.len();
-                    for start in 0..=n {
-                        for end in start..=n {
-                            let span: String = cv[start..end].iter().collect();
-                            if patcompile(
-                                &{
-                                    let mut __pat_tok = (&eff_pat).to_string();
-                                    crate::ported::glob::tokenize(&mut __pat_tok);
-                                    __pat_tok
-                                },
-                                PAT_HEAPDUP as i32,
-                                None,
-                            )
-                            .map_or(false, |__p| pattry(&__p, &span))
-                            {
-                                // Convert char positions to byte positions.
-                                let bs: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
-                                let be: usize =
-                                    bs + cv[start..end].iter().map(|c| c.len_utf8()).sum::<usize>();
-                                return Some((bs, be));
-                            }
-                        }
-                    }
-                    None
-                } else {
-                    hay.find(eff_pat.as_str()).map(|s| (s, s + eff_pat.len()))
-                }
-            };
-            // c:Src/subst.c modify() — under the `:w`/`:W` word flag the
-            // substitution is applied PER WORD by the `if wall` block below,
-            // NOT to the whole string. Capture the pre-substitution value so
-            // that block starts from the original: the whole-string loop that
-            // follows always runs (it records hsubl/hsubr for a later `:&`),
-            // but its `result` mutation must not compound with the per-word
-            // pass — `${p:ws/./-/}` on `a.b.c` is `a-b.c` (first `.` of the
-            // one word), not `a-b-c` (the whole-string first `.` PLUS the
-            // per-word first `.`).
-            let __wall_pre_subst: Option<String> = if wall { Some(result.clone()) } else { None };
-            // c:Src/subst.c modify() — `f`/`F N` repeat-until-no-change
-            // wrapper around the regular substitution. When neither flag
-            // is set, __limit=1 ⇒ the body runs once and breaks.
-            let __limit: u32 = max_iters.unwrap_or(if fixed_point { u32::MAX } else { 1 });
-            let mut __iters: u32 = 0;
-            loop {
-                let __prev_for_fp: Option<String> = if fixed_point || max_iters.is_some() {
-                    Some(result.clone())
-                } else {
-                    None
-                };
-                result = if anchor_head && anchor_tail {
-                    // c:2357-2361 — SUB_START|SUB_END: the pattern must match
-                    // the whole value.
-                    let whole = patcompile(
-                        &{
-                            let mut __pat_tok = (&eff_pat).to_string();
-                            crate::ported::glob::tokenize(&mut __pat_tok);
-                            __pat_tok
-                        },
-                        PAT_HEAPDUP as i32,
-                        None,
-                    )
-                    .map_or(false, |__p| pattry(&__p, &result));
-                    if whole {
-                        repl.clone()
-                    } else {
-                        result
-                    }
-                } else if anchor_head {
-                    // c:4665
-                    if use_glob {
-                        let cv: Vec<char> = result.chars().collect();
-                        let n = cv.len();
-                        let mut found: Option<usize> = None;
-                        for end in 0..=n {
-                            let span: String = cv[..end].iter().collect();
-                            if patcompile(
-                                &{
-                                    let mut __pat_tok = (&eff_pat).to_string();
-                                    crate::ported::glob::tokenize(&mut __pat_tok);
-                                    __pat_tok
-                                },
-                                PAT_HEAPDUP as i32,
-                                None,
-                            )
-                            .map_or(false, |__p| pattry(&__p, &span))
-                            {
-                                found = Some(cv[..end].iter().map(|c| c.len_utf8()).sum());
-                                break;
-                            }
-                        }
-                        if let Some(be) = found {
-                            format!("{}{}", repl, &result[be..])
-                        } else {
-                            result
-                        }
-                    } else if result.starts_with(&eff_pat) {
-                        // c:4665
-                        format!("{}{}", repl, &result[eff_pat.len()..]) // c:4665
-                    } else {
-                        result
-                    } // c:4665
-                } else if anchor_tail {
-                    // c:4665
-                    if use_glob {
-                        let cv: Vec<char> = result.chars().collect();
-                        let n = cv.len();
-                        let mut found: Option<usize> = None;
-                        for start in 0..=n {
-                            let span: String = cv[start..].iter().collect();
-                            if patcompile(
-                                &{
-                                    let mut __pat_tok = (&eff_pat).to_string();
-                                    crate::ported::glob::tokenize(&mut __pat_tok);
-                                    __pat_tok
-                                },
-                                PAT_HEAPDUP as i32,
-                                None,
-                            )
-                            .map_or(false, |__p| pattry(&__p, &span))
-                            {
-                                found = Some(cv[..start].iter().map(|c| c.len_utf8()).sum());
-                                break;
-                            }
-                        }
-                        if let Some(bs) = found {
-                            format!("{}{}", &result[..bs], repl)
-                        } else {
-                            result
-                        }
-                    } else if result.ends_with(&eff_pat) {
-                        // c:4665
-                        format!("{}{}", &result[..result.len() - eff_pat.len()], repl)
-                    // c:4665
-                    } else {
-                        result
-                    } // c:4665
-                } else if gbal {
-                    // c:4665
-                    if use_glob {
-                        let mut out = String::with_capacity(result.len());
-                        let mut rem = result.as_str();
-                        while let Some((s, e)) = do_match(rem) {
-                            out.push_str(&rem[..s]);
-                            out.push_str(&repl);
-                            if e == s {
-                                // Empty match — advance one char to
-                                // avoid infinite loop, mirroring zsh's
-                                // SUB_GLOBAL safeguard.
-                                let mut chars = rem[s..].char_indices();
-                                chars.next();
-                                let next_s =
-                                    s + chars.next().map(|(b, _)| b).unwrap_or(rem.len() - s);
-                                out.push_str(&rem[s..next_s]);
-                                rem = &rem[next_s..];
-                            } else {
-                                rem = &rem[e..];
-                            }
-                        }
-                        out.push_str(rem);
-                        out
-                    } else {
-                        result.replace(eff_pat.as_str(), repl.as_str())
-                    }
-                } else if use_glob {
-                    if let Some((s, e)) = do_match(&result) {
-                        format!("{}{}{}", &result[..s], repl, &result[e..])
-                    } else {
-                        result
-                    }
-                } else {
-                    result.replacen(eff_pat.as_str(), repl.as_str(), 1)
-                };
-                __iters += 1;
-                if __iters >= __limit {
-                    break;
-                }
-                if let Some(p) = __prev_for_fp {
-                    if result == p {
-                        break;
-                    }
-                } else {
-                    break;
-                }
+                's'
             }
-            // Record the post-anchor-strip form + anchor mode so a
-            // subsequent `:&` can replay the same shape. Storing
-            // `eff_pat` (not `pat`) avoids re-stripping `#`/`%` on
-            // replay; the `mode` byte encodes whether the original
-            // `:S` form was head-, tail-, or non-anchored.
-            // C: subst.c:4673 saves hsubl/hsubr; hsubpatopt bit is
-            // implicit from the modifier letter recorded by
-            // `case '&'`.
-            let mode: u8 = if modifier == 's' {
-                0
-            } else if anchor_head {
-                1
-            } else if anchor_tail {
-                2
-            } else {
-                3
-            };
-            *hsubl.lock().unwrap() = Some(hsubl_pat); // c:4673
-            *hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
-            hsubpatopt.store(mode as i32, Ordering::Relaxed); // c:4673
-                                                              // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
-                                                              // rejoins. Pull through the same code path :& uses
-                                                              // below by deferring to a shared `apply_subst` closure.
-            if wall {
-                // c:4665 — restart from the pre-substitution value so the
-                // per-word pass doesn't compound with the whole-string loop.
-                if let Some(orig) = __wall_pre_subst {
-                    result = orig;
-                }
-                let separator = sep.as_deref().unwrap_or(" "); // c:4665
-                let words: Vec<&str> = result.split(separator).collect(); // c:4665
-                let modified: Vec<String> = words
-                    .iter()
-                    .map(|w| {
-                        // c:4665
-                        if gbal {
-                            w.replace(pat.as_str(), repl.as_str())
-                        }
-                        // c:4665
-                        else {
-                            w.replacen(pat.as_str(), repl.as_str(), 1)
-                        } // c:4665
-                    })
-                    .collect(); // c:4665
-                result = modified.join(separator); // c:4665
-            } // c:4665
-            continue; // c:4675
-        } // c:4685
-
-        // `:&` repeats the last `:s`/`:S` substitution. Per
-        // Src/subst.c:4675 `case '&':` — `c = hsubpatopt ? 'S' :
-        // 's'`. The `mode` byte stored alongside (pat, repl) by
-        // the s/S arm tells which anchor disposition to replay:
-        //   0 = `:s` literal,  1 = `:S` head (`#X`),
-        //   2 = `:S` tail (`X%`), 3 = `:S` no-anchor.
-        // No-op if no prior `:s` in this chain (or pass — state.
-        // last_subst persists across calls via
-        // from_executor / commit_to_executor).
-        if modifier == '&' {
-            // c:4531
-            let last_subst = {
-                let p_opt = hsubl.lock().unwrap().clone();
-                let r_opt = hsubr.lock().unwrap().clone();
-                match (p_opt, r_opt) {
-                    (Some(p), Some(r)) => {
-                        let mode = hsubpatopt.load(Ordering::Relaxed) as u8;
-                        Some((p, r, mode))
-                    }
-                    _ => None,
-                }
-            };
-            if let Some((p, r, mode)) = last_subst {
-                // c:4531
-                // c:Src/subst.c:4675 — `case '&': c = hsubpatopt ? 'S' : 's';`
-                // and c:4863-4866 `subst(str, hsubl, hsubr, gbal, hsubpatopt)`.
-                // `hsubpatopt` is the SAME file-static the `s`/`S` arm wrote
-                // (c:4592/4859), so a replay of an `:S` runs c:Src/hist.c:2336's
-                // PATTERN path (`isset(HISTSUBSTPATTERN) || forcepat`), not the
-                // literal `strstr` path. The port replayed everything
-                // literally, so `${s:gS/[[:space:]]//}` followed by `${s:g&}`
-                // re-ran as a literal search for the 12-char text
-                // `[[:space:]]` and changed nothing (D04parameter.ztst
-                // "Different behaviour of :s and :S modifiers").
-                let replay_glob = mode != 0 || isset(HISTSUBSTPATTERN); // c:Src/hist.c:2336
-                let p = if replay_glob { singsub(&p) } else { p }; // c:Src/hist.c:2369
-                                                                        // Sliding-window glob search — same shape as the s/S arm's
-                                                                        // `do_match` (a port of getmatch()'s SUB_SUBSTR loop).
-                let g_find = |hay: &str| -> Option<(usize, usize)> {
-                    let cv: Vec<char> = hay.chars().collect();
-                    let n = cv.len();
-                    for start in 0..=n {
-                        for end in start..=n {
-                            let span: String = cv[start..end].iter().collect();
-                            if patcompile(
-                                &{
-                                    let mut __t = p.clone();
-                                    crate::ported::glob::tokenize(&mut __t);
-                                    __t
-                                },
-                                PAT_HEAPDUP as i32,
-                                None,
-                            )
-                            .map_or(false, |__p| pattry(&__p, &span))
-                            {
-                                let bs: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
-                                let be: usize =
-                                    bs + cv[start..end].iter().map(|c| c.len_utf8()).sum::<usize>();
-                                return Some((bs, be));
-                            }
-                        }
-                    }
-                    None
-                };
-                let apply = |w: &str| -> String {
-                    // c:4531
-                    match mode {
-                        // c:4675
-                        1 => {
-                            // c:4665 head-anchored
-                            if w.starts_with(p.as_str()) {
-                                format!("{}{}", r, &w[p.len()..])
-                            } else {
-                                w.to_string()
-                            }
-                        }
-                        2 => {
-                            // c:4665 tail-anchored
-                            if w.ends_with(p.as_str()) {
-                                format!("{}{}", &w[..w.len() - p.len()], r)
-                            } else {
-                                w.to_string()
-                            }
-                        }
-                        // mode 0 (`:s`) and mode 3 (`:S` no anchor) both
-                        // replay as a non-anchored replacement; only the
-                        // MATCHER differs (literal vs glob, per hsubpatopt).
-                        _ => {
-                            // c:4665 non-anchored
-                            if !replay_glob {
-                                return if gbal {
-                                    w.replace(p.as_str(), r.as_str())
-                                } else {
-                                    w.replacen(p.as_str(), r.as_str(), 1)
-                                };
-                            }
-                            let mut out = String::with_capacity(w.len());
-                            let mut rem = w;
-                            while let Some((s_, e_)) = g_find(rem) {
-                                out.push_str(&rem[..s_]);
-                                out.push_str(&r);
-                                if e_ == s_ {
-                                    // Empty match — advance one char, same
-                                    // guard the s/S arm's gbal loop uses.
-                                    let step =
-                                        rem[e_..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
-                                    if step == 0 {
-                                        rem = &rem[e_..];
-                                        break;
-                                    }
-                                    out.push_str(&rem[e_..e_ + step]);
-                                    rem = &rem[e_ + step..];
-                                } else {
-                                    rem = &rem[e_..];
-                                }
-                                if !gbal {
-                                    break;
-                                }
-                            }
-                            out.push_str(rem);
-                            out
-                        }
-                    }
-                };
-                if wall {
-                    // c:4531
-                    let separator = sep.as_deref().unwrap_or(" "); // c:4531
-                    let words: Vec<&str> = result.split(separator).collect(); // c:4531
-                    let modified: Vec<String> = words.iter().map(|w| apply(w)).collect();
-                    result = modified.join(separator); // c:4531
-                } else {
-                    // c:4531
-                    result = apply(&result); // c:4531
-                } // c:4531
-            } // c:4531
-            continue; // c:4531
-        } // c:4531
+        } else {
+            modifier
+        };
 
         // Single-char modifier dispatch — port of Src/subst.c:4585+
         // modifier-arm ladder. Each arm calls a canonical hist.rs
@@ -28580,6 +28149,27 @@ pub fn modify(s: &str, modifiers: &str) -> (String, String) {
         let dispatch = |w: &str| -> Option<String> {
             // c:4585
             match modifier {
+                // c:4774-4780 / c:4864-4870 —
+                //     hsubpatopt = (c == 'S');
+                //     if (hsubl && hsubr)
+                //         subst(&copy, dupstring(hsubl), dupstring(hsubr),
+                //               gbal, hsubpatopt);
+                's' | 'S' => {
+                    hsubpatopt.store((modifier == 'S') as i32, Ordering::Relaxed);
+                    let mut copy = w.to_string();
+                    let l = hsubl.lock().unwrap().clone();
+                    let r = hsubr.lock().unwrap().clone();
+                    if let (Some(l), Some(r)) = (l, r) {
+                        crate::ported::hist::subst(
+                            &mut copy,
+                            &l,
+                            &r,
+                            gbal as i32,
+                            (modifier == 'S') as i32,
+                        );
+                    }
+                    Some(copy)
+                }
                 // c:4585
                 'h' => Some(remtpath(w, count)), // c:4585 (:h head, count = :hN)
                 't' => Some(remlpaths(w, count)), // c:4585 (:t tail, count = :tN)
