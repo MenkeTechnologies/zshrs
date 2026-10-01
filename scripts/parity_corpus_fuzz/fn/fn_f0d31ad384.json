@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "-a[all]",
+    "-b[bee]",
+    "*:rest:(r1 r2)"
+  ],
+  "call": "_arguments '-a[all]' '-b[bee]' '*:rest:(r1 r2)'",
+  "call_label": "simple",
+  "fingerprint": "f0d31ad384",
+  "function": "_arguments",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/-- rc[#]: # | test/-- rc[#]: #",
+  "ref_rows": [
+    "-- rc[2]: 1",
+    "-- rc[3]: 1"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _arguments --fn-call simple --fn-repeat 3 --fn-propagate --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/9cd54722-0671-42ae-b324-a30d7758a027/scratchpad/agent_fnsweep/zshrs-base --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Utility/_arguments:3-60 (-s/-S/-A/-w/-C/-M etc, then option and positional specs)",
+  "test_rows": [
+    "-- rc[2]: 0",
+    "-- rc[3]: 0"
+  ]
+}

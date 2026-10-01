@@ -5804,10 +5804,25 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {
         // c:3078-3094 — reuse an existing group with the same name+flags.
         let reused = {
             let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
-            cell.lock().ok().and_then(|g| {
-                g.iter()
+            cell.lock().ok().and_then(|mut g| {
+                g.iter_mut()
                     .find(|grp| grp.name.as_deref() == Some(name) && (grp.flags & mask) == flags)
-                    .cloned() // c:3088
+                    .map(|grp| {
+                        // c:3088 `mgroup = p` is a pointer alias. `mgroup`
+                        // is only ever read for name/flags/`new`/`ylist` and
+                        // the shared `l*` lists, never for `matches` or
+                        // `perm` — the sorted array and the permanent copy
+                        // `permmatches` keeps on the group. Leave those two
+                        // out of the copy: cloning them duplicated every
+                        // match of the group twice on each `compadd` into
+                        // it (2 x 47058 per call on `arch <TAB>`).
+                        let kept_matches = std::mem::take(&mut grp.matches);
+                        let kept_perm = grp.perm.take();
+                        let active = grp.clone();
+                        grp.matches = kept_matches;
+                        grp.perm = kept_perm;
+                        active
+                    })
             })
         };
         if let Some(active) = reused {
@@ -6000,24 +6015,33 @@ pub fn addexpl(always: bool) {
 
 /// Port of `static int matchcmp(Cmatch *a, Cmatch *b)` from
 /// compcore.c:3173.
-pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
+///
+/// WARNING: signature differs from C — Rust=(a, ak, b, bk) vs C=(a, b).
+/// `ak`/`bk` are the `zstrcmp` operands of `a`/`b` prepared once per sort
+/// (`crate::tolerant_sort::MatchSortKey`). C reads `(*a)->str` /
+/// `(*a)->disp` as metafied, NUL-terminated `char *` and the comparison
+/// costs nothing but the collation; the port stores matches unmetafied, and
+/// deriving the operands inside the comparator re-did a metafy check, a NUL
+/// scan, a backslash scan and a NUL-terminating copy per operand on every
+/// one of qsort's O(n log n) calls. `arch <TAB>` (47058 command names,
+/// sorted four times by four `$compstate[nmatches]` reads) spent 61% of the
+/// completion there. Callers build keys with `MatchSortKey::new(m)`.
+pub fn matchcmp(
+    a: &Cmatch,
+    ak: &crate::tolerant_sort::MatchSortKey,
+    b: &Cmatch,
+    bk: &crate::tolerant_sort::MatchSortKey,
+) -> std::cmp::Ordering {
     // c:3173
     let order = MATCHORDER.load(Ordering::Relaxed);
     let sortdir = if (order & CGF_REVSORT) != 0 { -1 } else { 1 }; // c:3177
 
     let cmp = (b.disp.is_some() as i32) - (a.disp.is_some() as i32); // c:3176
-                                                                     // c:3175 — `const char *as, *bs;`. C assigns POINTERS here
-                                                                     // (c:3181-3182 / c:3191-3192); the comparator allocates nothing.
-                                                                     // The port used `.clone()`, so every one of the O(n log n)
-                                                                     // comparisons heap-allocated two Strings — 46765 matches
-                                                                     // (`compadd -k functions` under a real .zcompdump) means ~725k
-                                                                     // comparisons and ~1.45M allocations per sort. `as_deref()` is
-                                                                     // the direct analogue of C's `char *` assignment.
+    // c:3175 — `const char *as, *bs;`. C assigns POINTERS here
+    // (c:3181-3182 / c:3191-3192); the comparator allocates nothing, and
+    // neither does this: the operands are borrowed from the prepared keys.
     let (as_, bs) = if (order & CGF_MATSORT) != 0 || (cmp == 0 && a.disp.is_none()) {
-        (
-            a.str.as_deref().unwrap_or(""), // c:3181
-            b.str.as_deref().unwrap_or(""),
-        ) // c:3182
+        (&ak.str, &bk.str) // c:3181-3182
     } else {
         // c:3183-3184 / c:3186-3188 — C returns these two orderings RAW
         // (`return cmp;`); `sortdir` is applied only to the final `zstrcmp`
@@ -6041,10 +6065,11 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
                 std::cmp::Ordering::Greater
             };
         }
-        (
-            a.disp.as_deref().unwrap_or(""), // c:3191
-            b.disp.as_deref().unwrap_or(""),
-        ) // c:3192
+        // c:3191-3192 — cmp == 0 and `a` has a disp, so both do.
+        match (ak.disp.as_ref(), bk.disp.as_ref()) {
+            (Some(ad), Some(bd)) => (ad, bd),
+            _ => (&ak.str, &bk.str),
+        }
     };
     // c:3195-3197 — `sortdir * zstrcmp(as, bs, SORTIT_IGNORING_BACKSLASHES |
     // ((isset(NUMERICGLOBSORT) || matchorder & CGF_NUMSORT) ?
@@ -6075,14 +6100,11 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
     // 한국어 ascii あかさたなはまやらわ` listed them in an arbitrary
     // qsort-tie order while zsh listed them deterministically.
     //
-    // Metafy to put the same bytes in front of the same `strcoll` C uses.
-    // Metafication is the IDENTITY on ASCII, so the ASCII ordering —
-    // including the case-insensitive collation noted above — is untouched.
-    let base = crate::ported::sort::zstrcmp(
-        crate::metafied_key::metafied_key(as_),
-        crate::metafied_key::metafied_key(bs),
-        flags,
-    );
+    // The keys hold the metafied bytes, so the same bytes reach the same
+    // `strcoll` C uses. Metafication is the IDENTITY on ASCII, so the ASCII
+    // ordering — including the case-insensitive collation noted above — is
+    // untouched.
+    let base = crate::metafied_key::zstrcmp_operands(as_, bs, flags);
     if sortdir < 0 {
         base.reverse()
     } else {
@@ -6151,9 +6173,7 @@ pub fn makearray(src: &mut Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i
                                                         // (numeric/natural sort), which makes Rust's sort_by PANIC.
                                                         // Sorting the permutation is C's "qsort the POINTER array": the
                                                         // matches themselves never move.
-            crate::tolerant_sort::qsort_tolerant(&mut ord, |a: &usize, b: &usize| {
-                matchcmp(&src[*a], &src[*b])
-            });
+            crate::tolerant_sort::qsort_matches(&mut ord, src);
 
             if (flags & CGF_UNIQCON) == 0 {
                 // c:3269 not -2
@@ -6255,9 +6275,7 @@ pub fn makearray(src: &mut Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i
                 // whatever its libc's quicksort left behind.
                 let mut sord: Vec<usize> = ord.clone();
                 // c:3301-3302 — qsort matchcmp; tolerant sort (non-total-order cmp).
-                crate::tolerant_sort::qsort_tolerant(&mut sord, |a: &usize, b: &usize| {
-                    matchcmp(&src[*a], &src[*b])
-                });
+                crate::tolerant_sort::qsort_matches(&mut sord, src);
 
                 let mut del = false; // c:3303
                                      // c:3303-3318 — walk the sorted permutation in pairs. C's inner
@@ -6474,12 +6492,20 @@ pub fn permmatches(last: i32) -> i32 {
     let mut mn: i32 = 1; // c:3429 mn = 1
     let fi = PERMMATCHES_FI.load(Ordering::Relaxed);
 
+    // c:3449 `Cmgroup g = amatches` — C walks the live chain in place. The
+    // groups are TAKEN out of `amatches` (and every one is stored back after
+    // the loop, c:3488/3542/3544 write-back below) rather than cloned: a
+    // clone deep-copied each group's `matches` and its `perm` copy on every
+    // `permmatches` call, i.e. on every `$compstate[nmatches]` read that
+    // finds new matches — `arch <TAB>` copied 2 x 47058 matches four times
+    // for nothing. Nothing the loop calls (`makearray`, `dupmatch`) reads
+    // `amatches`.
     let groups_snapshot: Vec<Cmgroup> = {
         amatches
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
             .ok()
-            .map(|g| g.clone())
+            .map(|mut g| std::mem::take(&mut *g))
             .unwrap_or_default()
     };
     let mut new_pmatches: Vec<Cmgroup> = Vec::with_capacity(groups_snapshot.len());
@@ -8151,6 +8177,12 @@ mod tests {
         assert_eq!(result, vec!["a", "b", "c"]);
     }
 
+    /// `matchcmp` with freshly built operand keys.
+    fn mc(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
+        use crate::tolerant_sort::MatchSortKey;
+        matchcmp(a, &MatchSortKey::new(a), b, &MatchSortKey::new(b))
+    }
+
     #[test]
     fn matchcmp_str_sort_default() {
         let _g = crate::test_util::global_state_lock();
@@ -8160,9 +8192,9 @@ mod tests {
         a.str = Some("apple".into());
         let mut b = Cmatch::default();
         b.str = Some("banana".into());
-        assert_eq!(matchcmp(&a, &b), std::cmp::Ordering::Less);
-        assert_eq!(matchcmp(&b, &a), std::cmp::Ordering::Greater);
-        assert_eq!(matchcmp(&a, &a), std::cmp::Ordering::Equal);
+        assert_eq!(mc(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(mc(&b, &a), std::cmp::Ordering::Greater);
+        assert_eq!(mc(&a, &a), std::cmp::Ordering::Equal);
         MATCHORDER.store(0, Ordering::Relaxed);
     }
 
@@ -8225,13 +8257,13 @@ mod tests {
                 // Distinct matches must never compare equal: an Equal here
                 // leaves the listing order to the sort's tie handling, which
                 // is exactly the nondeterminism zsh does not have.
-                if matchcmp(&cms[i], &cms[j]) == std::cmp::Ordering::Equal {
+                if mc(&cms[i], &cms[j]) == std::cmp::Ordering::Equal {
                     failures.push(format!("{} vs {}", words[i], words[j]));
                 }
                 // Antisymmetry, which a byte/metafied total order guarantees.
                 assert_eq!(
-                    matchcmp(&cms[i], &cms[j]),
-                    matchcmp(&cms[j], &cms[i]).reverse(),
+                    mc(&cms[i], &cms[j]),
+                    mc(&cms[j], &cms[i]).reverse(),
                     "matchcmp not antisymmetric for {} vs {}",
                     words[i],
                     words[j]
@@ -8244,7 +8276,7 @@ mod tests {
         // locale-collated ordering that put `alpha.txt` before `README.md`
         // must survive untouched.
         assert_eq!(
-            matchcmp(&mk("alpha.txt"), &mk("README.md")),
+            mc(&mk("alpha.txt"), &mk("README.md")),
             crate::ported::sort::zstrcmp(
                 "alpha.txt",
                 "README.md",
@@ -9301,6 +9333,74 @@ mod tests {
                 .new_
                 .load(Ordering::Relaxed),
             0
+        );
+    }
+
+    /// c:3449-3544 / c:3087 — `permmatches` walks `amatches` in place and
+    /// `begcmgroup` re-opening an existing group aliases it. The port takes
+    /// the groups out of `amatches` for the walk and leaves the group's sorted
+    /// `matches` and `perm` out of `mgroup`'s copy; both must leave the
+    /// `amatches` entry whole: a re-opened group keeps its permanent copy (so
+    /// an unchanged group is served from it, c:3534) and new matches added
+    /// after the re-open are sorted in with the old ones on the next read.
+    #[test]
+    fn permmatches_and_group_reopen_keep_the_amatches_group_whole() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        amatches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().clear();
+        pmatches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().clear();
+        if let Ok(mut a) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+            *a = Some(Aminfo { count: 1, ..Default::default() });
+        }
+        MATCHORDER.store(0, Ordering::Relaxed);
+        let add = |words: &[&str]| {
+            let cell = crate::comp_match_handles::matches_arc();
+            let mut l = cell.lock().unwrap();
+            for w in words {
+                let mut m = Cmatch::default();
+                m.str = Some(w.to_string());
+                l.push(m);
+            }
+            drop(l);
+            mgroup.get_or_init(|| Mutex::new(None)).lock().unwrap()
+                .as_ref().unwrap().new_.store(1, Ordering::Relaxed);
+            newmatches.store(1, Ordering::Relaxed);
+        };
+        let pm_strs = || -> Vec<String> {
+            pmatches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap()
+                .iter().flat_map(|g| g.matches.iter().map(|m| m.str.clone().unwrap()))
+                .collect()
+        };
+
+        begcmgroup(Some("big"), 0);
+        add(&["delta", "alpha", "charlie"]);
+        permmatches(0);
+        assert_eq!(pm_strs(), ["alpha", "charlie", "delta"]);
+
+        // Re-open the same group: `mgroup` aliases it, `amatches` keeps both
+        // the sorted array and the permanent copy.
+        begcmgroup(Some("big"), 0);
+        {
+            let am = amatches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap();
+            let g = am.iter().find(|g| g.name.as_deref() == Some("big")).unwrap();
+            assert_eq!(g.matches.len(), 3, "re-open must not strip the sorted array");
+            assert_eq!(g.perm.as_ref().map(|p| p.matches.len()), Some(3));
+        }
+        // c:3433 — nothing new: the cached permanent copy is served.
+        newmatches.store(1, Ordering::Relaxed);
+        permmatches(0);
+        assert_eq!(pm_strs(), ["alpha", "charlie", "delta"]);
+        assert_eq!(nmatches.load(Ordering::Relaxed), 3);
+
+        add(&["bravo"]);
+        permmatches(0);
+        assert_eq!(pm_strs(), ["alpha", "bravo", "charlie", "delta"]);
+        assert_eq!(nmatches.load(Ordering::Relaxed), 4);
+        assert_eq!(
+            amatches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().len(),
+            1,
+            "the walk must put every group back"
         );
     }
 
