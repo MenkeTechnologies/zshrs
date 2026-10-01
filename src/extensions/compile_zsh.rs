@@ -14451,6 +14451,16 @@ fn exiting_tail_list(cmd: &ZshCommand) -> usize {
 
 /// The last list of an exiting `prog` whose command can take the fake exec,
 /// as an address (0: none) — see `exiting_tail_list`.
+///
+/// A trailing `( … )` or `{ … }` passes the exiting state on to its own
+/// last command, so the search recurses into it:
+/// - `( … )` with `last1 == 1` is not forked (c:Src/exec.c:3715-3718); it
+///   is a fake subshell (`entersubsh(ESUB_FAKE)`, c:4059-4066, which leaves
+///   `subsh` at 0, c:1192) whose body runs as `execlist(state, 0, 1)`
+///   (c:4379), so the body's last command is again exec'd in place and
+///   takes SHLVL down (c:4333-4336).
+/// - `{ … }` with `last1 == 1` gets `do_exec = 1` (c:4098-4099) and
+///   execcursh runs `execlist(state, 1, do_exec)` (c:494).
 pub fn program_exiting_tail(prog: &ZshProgram) -> usize {
     match prog.lists.last() {
         Some(l)
@@ -14458,10 +14468,15 @@ pub fn program_exiting_tail(prog: &ZshProgram) -> usize {
                 && l.sublist.next.is_none()
                 && !l.sublist.flags.not
                 && !l.sublist.flags.coproc
-                && l.sublist.pipe.next.is_none()
-                && matches!(l.sublist.pipe.cmd, ZshCommand::Simple(_)) =>
+                && l.sublist.pipe.next.is_none() =>
         {
-            l as *const ZshList as usize
+            match &l.sublist.pipe.cmd {
+                ZshCommand::Simple(_) => l as *const ZshList as usize,
+                ZshCommand::Subsh(inner) | ZshCommand::Cursh(inner) => {
+                    program_exiting_tail(inner)
+                }
+                _ => 0,
+            }
         }
         _ => 0,
     }
