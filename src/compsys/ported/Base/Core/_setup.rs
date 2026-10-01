@@ -73,19 +73,29 @@ pub fn _setup_impl(args: &[String]) -> i32 {
     // appends/assignments automatically — no manual dedup needed here.
     let lc = lookupstyle(&ctx, "list-colors");
     if !lc.is_empty() {
-        // sh: 9
+        // sh:8 — `zmodload -i zsh/complist`. The module's boot registers the
+        // coloured listing; without it `_comp_colors` reaches ZLS_COLORS and
+        // nothing reads it, so `lc=`/`rc=`/`no=` never reach the screen.
+        zmodload_complist();
         if tag == "default" {
+            // sh:10
             setaparam("_comp_colors", lc);
         } else {
-            // sh:13 — wrap each non-paren entry in `(group)` prefix
+            // sh:12 — `_comp_colors+=( "(${2})${(@)^val:#(|\(*\)*)}"
+            //                          "${(M@)val:#\(*\)*}" )`
+            // Two passes, not one interleaved walk: first every element that
+            // is neither EMPTY nor of the `\(*\)*` shape, each prefixed with
+            // `(group)`; then the `\(*\)*` elements unchanged. An empty
+            // element is dropped by the first filter and not selected by the
+            // second, so it contributes nothing.
+            let has_group = |v: &str| v.starts_with('(') && v[1..].contains(')');
             let mut existing = getaparam("_comp_colors").unwrap_or_default();
-            for v in &lc {
-                if v.starts_with('(') {
-                    existing.push(v.clone());
-                } else {
-                    existing.push(format!("({}){}", group, v));
-                }
-            }
+            existing.extend(
+                lc.iter()
+                    .filter(|v| !v.is_empty() && !has_group(v))
+                    .map(|v| format!("({}){}", group, v)),
+            );
+            existing.extend(lc.iter().filter(|v| has_group(v)).cloned());
             setaparam("_comp_colors", existing);
         }
     } else if tag == "default" {
@@ -105,6 +115,7 @@ pub fn _setup_impl(args: &[String]) -> i32 {
     // value being non-empty left the broader context's colour in place.
     // sh:29's `(yes|true|on)` test is against the JOINED value.
     if let Some(sa) = zstyle_s(&ctx, "show-ambiguity") {
+        zmodload_complist(); // sh:28
         let val = if matches!(sa.as_str(), "yes" | "true" | "on") {
             "4".to_string()
         } else {
@@ -206,6 +217,19 @@ pub fn _setup_impl(args: &[String]) -> i32 {
     0
 }
 
+/// `zmodload -i zsh/complist` (sh:8, sh:28) through the builtin itself, the
+/// same call `_main_complete`'s port makes at its sh:128/306/322 sites.
+fn zmodload_complist() {
+    let mut ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    ops.ind[b'i' as usize] = 1;
+    let _ = crate::ported::module::bin_zmodload("zmodload", &["zsh/complist".to_string()], &ops, 0);
+}
+
 /// Helper for sh:33/sh:42 — toggle `compstate[list]` += `<flag>`
 /// based on style.
 fn apply_list_flag(ctx: &str, style: &str, flag: &str) {
@@ -293,6 +317,50 @@ mod tests {
             Some("always"),
             "sh:79 assignment must land"
         );
+    }
+
+    /// sh:7-13 for a non-default tag. sh:8 loads zsh/complist — without it
+    /// the `lc=`/`rc=` meta-keys never reached the listing (`list-colors
+    /// 'lc=<LC>'` on `date -`: zsh prints `<LC>0m-I`, zshrs printed `-I`).
+    /// sh:12 builds the append in two passes: non-empty, non-`(…)…`
+    /// elements prefixed with `(group)` first, then the `(…)…` elements
+    /// as-is; an empty element is dropped. zsh 5.9.2, same expansion:
+    /// `val=("" a "(g)b" "(c")` gives `(G)a (G)(c (g)b`.
+    #[test]
+    fn list_colors_loads_complist_and_orders_group_prefixed_first() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("_comp_force_list", "");
+        let _ = setsparam("curcontext", "lcg:lcg:lcg");
+        setaparam("_comp_colors", Vec::new());
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let _ = crate::ported::modules::zutil::bin_zstyle(
+            "zstyle",
+            &[
+                ":completion:lcg:lcg:lcg:lctag".to_string(),
+                "list-colors".to_string(),
+                "".to_string(),
+                "a".to_string(),
+                "(g)b".to_string(),
+                "(c".to_string(),
+            ],
+            &ops,
+            0,
+        );
+        let _ = _setup_impl(&["lctag".to_string(), "G".to_string()]);
+        let colors = getaparam("_comp_colors").unwrap_or_default();
+        let loaded = crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| crate::ported::module::module_loaded(&t, "zsh/complist"))
+            .unwrap_or(0);
+        setaparam("_comp_colors", Vec::new());
+        crate::ported::params::unsetparam("curcontext");
+        assert_eq!(colors, vec!["(G)a", "(G)(c", "(g)b"]);
+        assert_eq!(loaded, 1, "sh:8 zmodload -i zsh/complist");
     }
 
     #[test]
