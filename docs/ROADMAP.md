@@ -415,7 +415,7 @@ These claims appear in README/RFC but are not yet backed by reproducible benchma
 - "2000-5000x cat fork avoidance"
 - "7x CI/CD pipeline speedup"
 - "100-400x script startup vs bash/zsh"
-- "23 coreutils builtins" (verified — listed in README)
+- "48 coreutils builtins" (verified — `EXT_BUILTIN_NAMES` entries that GNU coreutils also installs, listed in README)
 
 Phase M produces measured replacements. Until then, the README's "performance" section reads as architecture description, not benchmark report.
 

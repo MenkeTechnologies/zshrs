@@ -19,7 +19,7 @@ This RFC proposes `zshrs` as the **universal default shell** for all *Nix system
 - Run parallel primitives as VM-dispatched builtins (`pmap`, `pgrep`, `peach`,
   `barrier`, `async`, `await`) rather than forking to `sh -c`
 - Take command substitution, globbing, completion and autoloading off `fork()`
-  entirely, with 23 coreutils commands executing in-process
+  entirely, with 48 coreutils commands executing in-process
 
 Nushell reached bytecode first (IR in 0.96.0, default in 0.98.0) but interprets
 it, rebuilds it per parse, and drops it at exit; zsh's `.zwc` is wordcode for
@@ -69,7 +69,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 1. **Bytecode compilation** — Scripts compile to register-based bytecode (fusevm 0.26.7, 235 opcodes)
 2. **Sharded rkyv image cache** — `~/.zshrs/images/{shard}.rkyv` per source root (zpwr, each zinit plugin, completions corpus, etc.) plus a top-level `index.rkyv` for two-level lookup (~150-200ns); per-shard rebuild keeps `git pull` blast radius bounded (e.g. 3-5s for zpwr alone vs 30s full corpus); sibling `catalog.db` (worker-hydrated, per-shard) provides SQL-queryable view + entry stats that survive rebuilds
 3. **Tiered JIT** — Linear JIT for straight-line code, Block JIT for loops/conditionals, native x86-64/aarch64 via Cranelift
-4. **Anti-fork builtins** — 245 commands execute in-process, zero fork (152 zsh ports + 93 extensions: 23 coreutils, 4 xattr, 6 parallel/async primitives)
+4. **Anti-fork builtins** — 245 commands execute in-process, zero fork (152 zsh ports, including the 4 zsh/attr xattr builtins, + 93 extensions, including 48 coreutils and 6 parallel/async primitives)
 5. **Megafat binary** — Optional Stryke integration adds 3200+ additional builtins
 
 **Measured improvements:**
@@ -218,7 +218,7 @@ Integrity: Optional HMAC signing for security-critical deployments
 | Shell primitives | 80+ | cd, echo, export, source, eval, trap |
 | Job control | 10+ | jobs, fg, bg, kill, disown, wait |
 | Completion | 15+ | compgen, complete, compadd, compdef |
-| **Coreutils (anti-fork)** | **23** | cat, head, tail, wc, sort, find, uniq, cut, tr, seq, rev, tee, sleep, date, mktemp, hostname, uname, id, whoami, touch, realpath, basename, dirname |
+| **Coreutils (anti-fork)** | **48** | base64, basename, cat, cksum, comm, cut, date, dircolors, dirname, env, expand, expr, factor, fold, groups, head, id, link, logname, mkfifo, mktemp, nice, nl, nproc, paste, printenv, realpath, seq, sha256sum, shuf, sleep, sort, sum, tac, tail, tee, touch, tr, tsort, tty, uname, unexpand, uniq, unlink, users, wc, whoami, yes |
 | **xattr (direct syscall)** | 4 | zgetattr, zsetattr, zdelattr, zlistattr |
 | Text processing | 50+ | jq, yq, awk-equivalent, regex |
 | **Parallel (VM-executed)** | 6 | async, await, pmap, pgrep, peach, barrier |

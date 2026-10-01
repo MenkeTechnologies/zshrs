@@ -84,7 +84,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 91 C files (32 core + 24 ZLE + 33 modules + 2 Builtins) &middot; 147,233 C lines &middot; 1,011,253 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 948 <code>.rs</code> files &middot; 22,496 <code>#[test]</code> hooks (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
+            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 91 C files (32 core + 24 ZLE + 33 modules + 2 Builtins) &middot; 147,233 C lines &middot; 1,011,432 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 948 <code>.rs</code> files &middot; 22,497 <code>#[test]</code> hooks (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -122,11 +122,11 @@
       </p>
 
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val green">22,496</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val green">22,497</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val">91</div><div class="stat-label">C Files Ported</div></div>
-        <div class="stat-card"><div class="stat-val accent">6,387</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
+        <div class="stat-card"><div class="stat-val accent">6,388</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
         <div class="stat-card"><div class="stat-val">948</div><div class="stat-label">Rust Source Files</div></div>
-        <div class="stat-card"><div class="stat-val cyan">107 / 40 / 1</div><div class="stat-label">ported / extensions / recorder</div></div>
+        <div class="stat-card"><div class="stat-val cyan">106 / 115 / 1</div><div class="stat-label">ported / extensions / recorder</div></div>
         <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">147,233</div><div class="stat-label">C Lines Covered</div></div>
         <div class="stat-card"><div class="stat-val yellow">0</div><div class="stat-label">C-only symbols (index)</div></div>
       </div>
@@ -135,9 +135,9 @@
         <p style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-weight:700;">Overall Line Coverage</p>
         <div class="bar-wrap" style="height:26px;">
           <div class="bar-fill cyan" style="width:100%;"></div>
-          <span class="bar-pct" style="font-size:12px;">1,011,253 Rust / 147,233 C &mdash; raw line ratio (not semantic completeness); Rust side is <code>wc</code> over <code>git ls-files &#39;*.rs&#39;</code> on 2026-09-30</span>
+          <span class="bar-pct" style="font-size:12px;">1,011,432 Rust / 147,233 C &mdash; raw line ratio (not semantic completeness); Rust side is <code>wc</code> over <code>git ls-files &#39;*.rs&#39;</code> on 2026-09-30</span>
         </div>
-        <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 4-crate workspace (<code>zshrs</code> runtime, <code>zshrs-daemon</code>, <code>znative</code> plugin ABI SDK &mdash; <code>[workspace] members</code> in root <code>Cargo.toml</code>; <code>compsys</code> was folded into the runtime) plus <code>vendor/fish/</code>, <code>tests/</code>, <code>bins/</code>, and root <code>build.rs</code>. C-line ratio is ~581% Rust : C by raw lines, but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, vendored fish) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
+        <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 4-crate workspace (<code>zshrs</code> runtime, <code>zshrs-daemon</code>, <code>znative</code> plugin ABI SDK &mdash; <code>[workspace] members</code> in root <code>Cargo.toml</code>; <code>compsys</code> was folded into the runtime) plus <code>vendor/fish/</code>, <code>tests/</code>, <code>bins/</code>, and root <code>build.rs</code>. C-line ratio is ~687% Rust : C by raw lines (1,011,432 / 147,233), but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, vendored fish) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
       </div>
 
       <hr class="section-rule">
@@ -201,7 +201,7 @@
       <div class="feature-grid">
         <div class="feature-card"><h4>params.c &mdash; Full Parameter System</h4><p>All 80+ special params with dynamic get/set:</p><ul><li><code>$?</code>, <code>$$</code>, <code>$!</code>, <code>$#</code>, <code>$*</code>, <code>$@</code>, <code>$0</code>, <code>$_</code>, <code>$-</code></li><li><code>RANDOM</code> (LCG PRNG, seedable), <code>SECONDS</code> (int + float modes)</li><li><code>ERRNO</code>, <code>UID</code>/<code>EUID</code>/<code>GID</code>/<code>EGID</code> (with setuid on assign)</li><li><code>COLUMNS</code>/<code>LINES</code> (ioctl), <code>SHLVL</code>, <code>FUNCNEST</code>, <code>OPTIND</code>/<code>OPTARG</code></li><li><code>IFS</code>, <code>HOME</code>, <code>TERM</code>, <code>WORDCHARS</code>, <code>HISTCHARS</code></li><li><code>PS1-PS4</code>, <code>RPS1/2</code>, <code>RPROMPT/2</code>, <code>SPROMPT</code>, <code>POSTEDIT</code></li><li><code>PATH/path</code>, <code>CDPATH/cdpath</code>, <code>FPATH/fpath</code> tied pairs</li><li><code>pipestatus</code>, <code>argv</code>, <code>HISTSIZE</code>/<code>SAVEHIST</code></li><li>Namerefs with loop detection, scope push/pop with save/restore</li><li><code>typeset -p</code> re-executable output, <code>+=</code> augmented assignment</li></ul></div>
         <div class="feature-card"><h4>pattern.c &mdash; Complete Pattern Engine</h4><p>Bytecode-compiled pattern matcher:</p><ul><li>Wildcards: <code>*</code>, <code>?</code>, <code>[...]</code>, <code>[!...]</code>, <code>[^...]</code></li><li>Extended glob: <code>#</code> (0+), <code>##</code> (1+), <code>^</code> (negation), <code>~</code> (exclusion)</li><li>KSH globs: <code>?(pat)</code>, <code>*(pat)</code>, <code>+(pat)</code>, <code>!(pat)</code>, <code>@(pat)</code></li><li>Numeric ranges: <code>&lt;n-m&gt;</code>, <code>&lt;n-&gt;</code>, <code>&lt;-m&gt;</code></li><li>Backreferences with <code>()</code> capture groups (9 max)</li><li>Case-insensitive: <code>(#i)</code>, lowercase-match-upper: <code>(#l)</code></li><li>POSIX classes: <code>[:alpha:]</code>, <code>[:digit:]</code>, <code>[:space:]</code>, etc.</li><li>Glob flags: <code>(#b)</code> backrefs, <code>(#m)</code> match refs, <code>(#s)</code>/<code>(#e)</code> anchors</li><li>Pattern scope management for completion system</li></ul></div>
-        <div class="feature-card"><h4>exec.c &mdash; 180+ Builtins</h4><p>Every zsh builtin + 23 coreutils anti-fork:</p><ul><li>Variables: <code>typeset</code>/<code>local</code>/<code>declare</code>/<code>export</code>/<code>readonly</code>/<code>integer</code>/<code>float</code></li><li>I/O: <code>print</code>/<code>printf</code>/<code>echo</code>/<code>read</code>/<code>getln</code>/<code>pushln</code></li><li>History: <code>fc</code>/<code>history</code>/<code>r</code></li><li>Control: <code>eval</code>/<code>source</code>/<code>exec</code>/<code>command</code>/<code>builtin</code>/<code>noglob</code></li><li>Jobs: <code>bg</code>/<code>fg</code>/<code>jobs</code>/<code>kill</code>/<code>wait</code>/<code>disown</code>/<code>suspend</code></li><li>Dir: <code>cd</code>/<code>pushd</code>/<code>popd</code>/<code>dirs</code>/<code>pwd</code></li><li>Options: <code>set</code>/<code>setopt</code>/<code>unsetopt</code>/<code>emulate</code></li><li>Traps: <code>trap</code>/<code>kill</code></li><li>Completion: <code>compgen</code>/<code>complete</code>/<code>compdef</code>/<code>compadd</code>/<code>compset</code></li><li>ZLE: <code>bindkey</code>/<code>zle</code>/<code>vared</code></li><li>Modules: <code>zmodload</code>/<code>autoload</code>/<code>functions</code></li><li>Files: <code>mkdir</code>/<code>rmdir</code>/<code>rm</code>/<code>cp</code>/<code>mv</code>/<code>ln</code>/<code>chmod</code>/<code>chown</code></li><li>Coreutils (anti-fork): <code>cat</code>/<code>head</code>/<code>tail</code>/<code>wc</code>/<code>sort</code>/<code>find</code>/<code>uniq</code>/<code>cut</code>/<code>tr</code>/<code>seq</code>/<code>rev</code>/<code>tee</code>/<code>sleep</code>/<code>date</code>/<code>mktemp</code>/<code>hostname</code>/<code>uname</code>/<code>whoami</code>/<code>id</code>/<code>basename</code>/<code>dirname</code>/<code>touch</code>/<code>realpath</code></li><li>Misc: <code>getopts</code>/<code>zparseopts</code>/<code>zstyle</code>/<code>sched</code>/<code>zformat</code>/<code>coproc</code></li></ul></div>
+        <div class="feature-card"><h4>exec.c &mdash; 180+ Builtins</h4><p>Every zsh builtin + 48 coreutils anti-fork:</p><ul><li>Variables: <code>typeset</code>/<code>local</code>/<code>declare</code>/<code>export</code>/<code>readonly</code>/<code>integer</code>/<code>float</code></li><li>I/O: <code>print</code>/<code>printf</code>/<code>echo</code>/<code>read</code>/<code>getln</code>/<code>pushln</code></li><li>History: <code>fc</code>/<code>history</code>/<code>r</code></li><li>Control: <code>eval</code>/<code>source</code>/<code>exec</code>/<code>command</code>/<code>builtin</code>/<code>noglob</code></li><li>Jobs: <code>bg</code>/<code>fg</code>/<code>jobs</code>/<code>kill</code>/<code>wait</code>/<code>disown</code>/<code>suspend</code></li><li>Dir: <code>cd</code>/<code>pushd</code>/<code>popd</code>/<code>dirs</code>/<code>pwd</code></li><li>Options: <code>set</code>/<code>setopt</code>/<code>unsetopt</code>/<code>emulate</code></li><li>Traps: <code>trap</code>/<code>kill</code></li><li>Completion: <code>compgen</code>/<code>complete</code>/<code>compdef</code>/<code>compadd</code>/<code>compset</code></li><li>ZLE: <code>bindkey</code>/<code>zle</code>/<code>vared</code></li><li>Modules: <code>zmodload</code>/<code>autoload</code>/<code>functions</code></li><li>Files: <code>mkdir</code>/<code>rmdir</code>/<code>rm</code>/<code>cp</code>/<code>mv</code>/<code>ln</code>/<code>chmod</code>/<code>chown</code></li><li>Coreutils (anti-fork): <code>cat</code>/<code>head</code>/<code>tail</code>/<code>wc</code>/<code>sort</code>/<code>find</code>/<code>uniq</code>/<code>cut</code>/<code>tr</code>/<code>seq</code>/<code>rev</code>/<code>tee</code>/<code>sleep</code>/<code>date</code>/<code>mktemp</code>/<code>hostname</code>/<code>uname</code>/<code>whoami</code>/<code>id</code>/<code>basename</code>/<code>dirname</code>/<code>touch</code>/<code>realpath</code></li><li>Misc: <code>getopts</code>/<code>zparseopts</code>/<code>zstyle</code>/<code>sched</code>/<code>zformat</code>/<code>coproc</code></li></ul></div>
         <div class="feature-card"><h4>glob.c &mdash; Full Globbing</h4><p>Complete file globbing engine:</p><ul><li>Recursive scanning with <code>**/</code> support</li><li>Brace expansion: <code>{a,b,c}</code>, <code>{1..10}</code>, <code>{a..z}</code></li><li>20+ glob qualifiers: <code>(.)</code> regular, <code>(/)</code> dir, <code>(@)</code> symlink, <code>(=)</code> socket, <code>(p)</code> fifo, <code>(%b)</code> block, <code>(%c)</code> char</li><li>Permission qualifiers: <code>(r)</code>/<code>(w)</code>/<code>(x)</code>, <code>(R)</code>/<code>(W)</code>/<code>(X)</code>, <code>(s)</code> setuid</li><li>Ownership: <code>(u:name:)</code>, <code>(U)</code> owned by EUID</li><li>Size/time/links: <code>(L+n)</code>, <code>(m-n)</code>, <code>(l+n)</code></li><li>Sorting: <code>(on)</code> name, <code>(oL)</code> size, <code>(om)</code> mtime</li><li>Match/replace: <code>${var/pat/repl}</code>, <code>${var//pat/repl}</code></li><li>Tokenization: <code>tokenize()</code>, <code>shtokenize()</code>, <code>zshtokenize()</code></li></ul></div>
         <div class="feature-card"><h4>hist.c &mdash; Full History</h4><p>Complete history expansion and management:</p><ul><li>Event designators: <code>!!</code>, <code>!n</code>, <code>!-n</code>, <code>!string</code>, <code>!?string?</code></li><li>Word designators: <code>!:0</code>, <code>!:^</code>, <code>!:$</code>, <code>!:*</code>, <code>!:n-m</code></li><li>Quick substitution: <code>^old^new</code></li><li>Modifiers: <code>:h</code> head, <code>:t</code> tail, <code>:r</code> root, <code>:e</code> ext, <code>:l</code>/<code>:u</code> case, <code>:s/o/n/</code> subst, <code>:&amp;</code> repeat, <code>:q</code>/<code>:Q</code> quote, <code>:x</code> words, <code>:a</code> abs path</li><li>File I/O with locking, extended format timestamps</li><li>Deduplication, blank reduction, word splitting</li><li>History stack for nested parsing contexts</li><li>Search: prefix (<code>hcomsearch</code>) and substring (<code>hconsearch</code>)</li></ul></div>
         <div class="feature-card"><h4>jobs.c &mdash; Full Job Control</h4><p>Complete job lifecycle management:</p><ul><li>Job table with add/remove/reap/expand/shrink</li><li>Process tracking: <code>update_process</code>, <code>update_job</code>, <code>update_bg_job</code></li><li>Wait: <code>waitforpid</code>, <code>waitjob</code>, <code>waitjobs</code>, <code>waitonejob</code></li><li>Control: <code>fg_job</code>, <code>bg_job</code>, <code>disown_job</code>, <code>killjob</code></li><li>Process groups: <code>acquire_pgrp</code>, <code>release_pgrp</code></li><li>Pipestats tracking with <code>PIPEFAIL</code> support</li><li>Background status: <code>addbgstatus</code>/<code>getbgstatus</code></li><li>Superjob/subjob hierarchy</li><li>Time reporting: <code>format_time</code> with <code>%E</code>/<code>%U</code>/<code>%S</code>/<code>%P</code>/<code>%J</code></li><li>Signal name/number conversion: all 31 standard signals</li></ul></div>
@@ -247,13 +247,13 @@
       <!-- SECTION 8: ENGINEERING OVERVIEW         -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">%</span>ENGINEERING OVERVIEW</h2>
-      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (<code>zshrs</code> root crate &mdash; compsys folded in &mdash; plus <code>zshrs-daemon</code>, <code>znative</code>, and vendored crates). Counts below are from <code>wc</code> / <code>rg</code> over <code>git ls-files &#39;*.rs&#39;</code> on 2026-09-30; per-subsystem module tables follow unchanged.</p>
+      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (<code>zshrs</code> root crate &mdash; compsys folded in &mdash; plus <code>zshrs-daemon</code>, <code>znative</code>, and vendored crates). Counts below are from <code>wc</code> / <code>rg</code> over <code>git ls-files &#39;*.rs&#39;</code> on 2026-09-30; the per-crate, per-subsystem, ZLE, compsys and infrastructure tables below use the same commands on the same date. The core file table and the builtin catalog are not re-measured here.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card"><div class="stat-val">1,011,253</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val">1,011,432</div><div class="stat-label">Total Rust Lines</div></div>
         <div class="stat-card"><div class="stat-val accent">948</div><div class="stat-label"><code>.rs</code> Files</div></div>
-        <div class="stat-card"><div class="stat-val green">22,496</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
-        <div class="stat-card"><div class="stat-val">6,387</div><div class="stat-label"><code>pub fn</code> (tracked <code>.rs</code>)</div></div>
+        <div class="stat-card"><div class="stat-val green">22,497</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val">6,388</div><div class="stat-label"><code>pub fn</code> (tracked <code>.rs</code>)</div></div>
         <div class="stat-card"><div class="stat-val">666</div><div class="stat-label"><code>pub struct</code></div></div>
         <div class="stat-card"><div class="stat-val">148</div><div class="stat-label"><code>pub enum</code></div></div>
         <div class="stat-card"><div class="stat-val accent">6,798</div><div class="stat-label">Git Commits</div></div>
@@ -301,30 +301,31 @@
 
       <!-- ═══════════ MODULE BREAKDOWN ═══════════ -->
       <h2 class="tutorial-title"><span class="step-hash">*</span>MODULE BREAKDOWN BY SUBSYSTEM</h2>
+      <p class="tutorial-subtitle">Every tracked <code>.rs</code> file under <code>src/ported/</code> assigned to exactly one subsystem; lines from <code>git ls-files 'src/ported/*.rs' | xargs wc -l</code> (106 files), 2026-09-30.</p>
 
       <table class="file-table">
         <thead><tr><th>Subsystem</th><th>Modules</th><th class="num">Lines</th><th class="num">%</th><th>Coverage Bar</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td style="color:var(--cyan);">Core Engine</td><td><code>lexer, parser, exec, subst_port, subst</code></td><td class="num">29,933</td><td class="num">23.4%</td><td><div class="bar-wrap"><div class="bar-fill cyan" style="width:23.4%"></div></div></td><td>Lexer, parser (AST), executor (pipelines, redirects, 145 builtins), substitution</td></tr>
-          <tr><td style="color:var(--cyan);">ZLE Line Editor</td><td><code>zle/* (28 files)</code></td><td class="num">35,670</td><td class="num">27.9%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:27.9%"></div></div></td><td>Keymaps, widgets, vi mode, completion, refresh, history navigation, text objects, complete/complist/compctl/compmatch/compcore</td></tr>
-          <tr><td style="color:var(--cyan);">Loadable Modules</td><td><code>datetime, files, stat, system, tcp, pcre, curses, zftp, parameter, ksh93, zutil, ...</code></td><td class="num">26,418</td><td class="num">20.7%</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:20.7%"></div></div></td><td>35 module ports: networking, files, PCRE, curses, profiling, pseudo-tty, parameter introspection, math functions, db_gdbm, etc.</td></tr>
-          <tr><td style="color:var(--cyan);">Utilities</td><td><code>utils, compat, sort, tokens, input, linklist, mem, ...</code></td><td class="num">6,204</td><td class="num">7.3%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:7.3%"></div></div></td><td>String ops, quoting (7 modes), escape parsing, path resolution, spelling correction</td></tr>
-          <tr><td style="color:var(--cyan);">Parameters</td><td><code>params, param_private, parameter</code></td><td class="num">4,596</td><td class="num">5.4%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:5.4%"></div></div></td><td>80+ special params, namerefs, scoping, tied pairs, typeset, GSU dispatch</td></tr>
-          <tr><td style="color:var(--cyan);">Pattern / Glob</td><td><code>pattern, glob</code></td><td class="num">4,082</td><td class="num">4.8%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:4.8%"></div></div></td><td>Compiled pattern engine, glob qualifiers, brace expansion, match/replace</td></tr>
-          <tr><td style="color:var(--cyan);">Jobs / Signals</td><td><code>jobs, signals</code></td><td class="num">2,784</td><td class="num">3.3%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:3.3%"></div></div></td><td>Process lifecycle, pipestats, trap scopes, signal queuing, fg/bg/disown</td></tr>
-          <tr><td style="color:var(--cyan);">Math</td><td><code>math, mathfunc</code></td><td class="num">2,470</td><td class="num">2.9%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:2.9%"></div></div></td><td>Arithmetic evaluator, 40+ math functions (sin, cos, rand, int, float, abs, ...)</td></tr>
-          <tr><td style="color:var(--cyan);">Prompt / Text</td><td><code>prompt, text</code></td><td class="num">2,532</td><td class="num">3.0%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:3.0%"></div></div></td><td>% escape expansion, colors, truncation, right prompt, AST deparsing</td></tr>
-          <tr><td style="color:var(--cyan);">History</td><td><code>hist, history</code></td><td class="num">2,288</td><td class="num">2.7%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:2.7%"></div></div></td><td>Expansion (!!/!$/^old^new), modifiers (:h:t:r:e:s), file I/O, word splitting</td></tr>
-          <tr><td style="color:var(--cyan);">Options / Init</td><td><code>options, init, context</code></td><td class="num">1,688</td><td class="num">2.0%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:2.0%"></div></div></td><td>200+ shell options, startup files, emulation modes (sh/ksh/csh/zsh)</td></tr>
-          <tr><td style="color:var(--cyan);">Other</td><td><code>zwc, hashtable, completion, subscript, ...</code></td><td class="num">3,489</td><td class="num">4.1%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:4.1%"></div></div></td><td>Compiled scripts (ZWC), hash tables, completion framework, subscript parsing</td></tr>
+          <tr><td style="color:var(--cyan);">Core Engine</td><td><code>lex, parse, exec, subst, loop, cond, builtin, builtins/*</code></td><td class="num">99,509</td><td class="num">22.7%</td><td><div class="bar-wrap"><div class="bar-fill cyan" style="width:22.7%"></div></div></td><td>Lexer, parser, executor (pipelines, redirects), substitution, loops and conditionals, the builtin table</td></tr>
+          <tr><td style="color:var(--cyan);">ZLE Line Editor</td><td><code>zle/* (28 files)</code></td><td class="num">121,867</td><td class="num">27.8%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:27.8%"></div></div></td><td>Keymaps, widgets, vi mode, completion, refresh, history navigation, text objects, complete/complist/compctl/compmatch/compcore</td></tr>
+          <tr><td style="color:var(--cyan);">Loadable Modules</td><td><code>modules/* (33 modules + mod.rs, tcp_h.rs)</code></td><td class="num">68,978</td><td class="num">15.8%</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:15.8%"></div></div></td><td>33 module ports: networking, files, PCRE, curses, profiling, pseudo-tty, parameter introspection, math functions, db_gdbm, etc.</td></tr>
+          <tr><td style="color:var(--cyan);">Utilities</td><td><code>utils, compat, sort, string, input, linklist, mem</code></td><td class="num">28,055</td><td class="num">6.4%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:6.4%"></div></div></td><td>String ops, quoting, escape parsing, path resolution, spelling correction</td></tr>
+          <tr><td style="color:var(--cyan);">Parameters</td><td><code>params</code></td><td class="num">21,817</td><td class="num">5.0%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:5.0%"></div></div></td><td>Special params, namerefs, scoping, tied pairs, typeset, GSU dispatch (param_private and parameter are counted under Loadable Modules)</td></tr>
+          <tr><td style="color:var(--cyan);">Pattern / Glob</td><td><code>pattern, glob</code></td><td class="num">20,772</td><td class="num">4.7%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:4.7%"></div></div></td><td>Compiled pattern engine, glob qualifiers, brace expansion, match/replace</td></tr>
+          <tr><td style="color:var(--cyan);">Jobs / Signals</td><td><code>jobs, signals, signals_h</code></td><td class="num">12,150</td><td class="num">2.8%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:2.8%"></div></div></td><td>Process lifecycle, pipestats, trap scopes, signal queuing, fg/bg/disown</td></tr>
+          <tr><td style="color:var(--cyan);">Math</td><td><code>math</code></td><td class="num">7,590</td><td class="num">1.7%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:1.7%"></div></div></td><td>Arithmetic evaluator (mathfunc is counted under Loadable Modules)</td></tr>
+          <tr><td style="color:var(--cyan);">Prompt / Text</td><td><code>prompt, text</code></td><td class="num">9,457</td><td class="num">2.2%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:2.2%"></div></div></td><td>% escape expansion, colors, truncation, right prompt, AST deparsing</td></tr>
+          <tr><td style="color:var(--cyan);">History</td><td><code>hist</code></td><td class="num">8,946</td><td class="num">2.0%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:2.0%"></div></div></td><td>Expansion (!!/!$/^old^new), modifiers (:h:t:r:e:s), file I/O, word splitting</td></tr>
+          <tr><td style="color:var(--cyan);">Options / Init</td><td><code>options, init, context</code></td><td class="num">7,802</td><td class="num">1.8%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:1.8%"></div></div></td><td>Shell options, startup files, emulation modes (sh/ksh/csh/zsh)</td></tr>
+          <tr><td style="color:var(--cyan);">Other</td><td><code>hashtable, hashtable_h, hashnameddir, module, modentry, zsh_h, zsh_system_h, ztype_h, config_h, prototypes_h, patchlevel, openssh_bsd_setres_id, mod</code></td><td class="num">30,781</td><td class="num">7.0%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:7.0%"></div></div></td><td>Hash tables, module loader, header ports (zsh.h, system.h, ztype.h, config.h, prototypes.h)</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL</td><td class="num">208,696</td><td class="num">100%</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL (src/ported/)</td><td class="num">437,724</td><td class="num">100%</td><td></td><td></td></tr></tfoot>
       </table>
 
       <hr class="section-rule">
 
       <!-- ═══════════ LOADABLE MODULES ═══════════ -->
-      <h2 class="tutorial-title"><span class="step-hash">+</span>35 LOADABLE MODULE PORTS</h2>
+      <h2 class="tutorial-title"><span class="step-hash">+</span>33 LOADABLE MODULE PORTS</h2>
       <p class="tutorial-subtitle">Each C module from <code>src/zsh/Src/Modules/</code> has a corresponding strict-port Rust implementation in <code>src/ported/modules/</code>. Module file set is included in the file freeze on <code>src/ported/</code>; every module now routes its <code>features_</code> / <code>enables_</code> / <code>cleanup_</code> hooks through the canonical <code>module::featuresarray</code> / <code>handlefeatures</code> / <code>setfeatureenables</code> impls instead of per-module Rust-only stub copies.</p>
 
       <div class="mapping-grid" style="grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));">
@@ -366,42 +367,42 @@
       <hr class="section-rule">
 
       <!-- ═══════════ ZLE ARCHITECTURE ═══════════ -->
-      <h2 class="tutorial-title"><span class="step-hash">^</span>ZLE LINE EDITOR &mdash; 28 FILES, 35,670 LINES</h2>
+      <h2 class="tutorial-title"><span class="step-hash">^</span>ZLE LINE EDITOR &mdash; 28 FILES, 121,867 LINES</h2>
       <p class="tutorial-subtitle">The Zsh Line Editor (ZLE) is a complete terminal-based input system with vi and emacs keybinding modes, programmable widgets, and inline completion. Ported from <code>src/zsh/Src/Zle/*.c</code>. Files mirror the C source 1:1 with the canonical zsh prefix (<code>zle_*</code> / <code>comp*</code> / <code>termquery</code> / <code>deltochar</code>).</p>
 
       <table class="file-table">
         <thead><tr><th>File</th><th class="num">Lines</th><th>Responsibility</th></tr></thead>
         <tbody>
-          <tr><td>compctl.rs</td><td class="num">3,170</td><td>Legacy <code>compctl</code> system (pre-compsys, kept for back-compat)</td></tr>
-          <tr><td>compcore.rs</td><td class="num">3,082</td><td>Completion core: shared matcher state, group ordering</td></tr>
-          <tr><td>zle_misc.rs</td><td class="num">2,602</td><td>Miscellaneous widgets: transpose, case change, undo, named-cmd lookup</td></tr>
-          <tr><td>compmatch.rs</td><td class="num">2,179</td><td>Match patterns, anchor matching, case-insensitive matchers</td></tr>
-          <tr><td>zle_main.rs</td><td class="num">2,128</td><td>ZLE main loop, key reading, widget dispatch, initialization, WATCH_FDS</td></tr>
-          <tr><td>zle_keymap.rs</td><td class="num">1,973</td><td>Keymap management, key binding, bindkey builtin</td></tr>
-          <tr><td>computil.rs</td><td class="num">1,831</td><td>Completion utility functions used by <code>_arguments</code> etc.</td></tr>
-          <tr><td>zle_hist.rs</td><td class="num">1,717</td><td>History widgets: up/down, search, accept-line</td></tr>
-          <tr><td>zle_vi.rs</td><td class="num">1,640</td><td>Vi mode: motions, operators, text objects, registers; VIRANGEFLAG / WORDFLAG / VILINERANGE / VICHGFLAG / VIINREPEAT / VIINSBEGIN atomics</td></tr>
-          <tr><td>zle_utils.rs</td><td class="num">1,575</td><td>ZLE utility functions, character classification, prompt expansion</td></tr>
-          <tr><td>zle_refresh.rs</td><td class="num">1,390</td><td>Screen refresh, cursor positioning, line wrapping, TCOUT_FUNC_NAME</td></tr>
-          <tr><td>zle_thingy.rs</td><td class="num">1,349</td><td>Thingy (widget reference) management, zle -A / zle -N</td></tr>
-          <tr><td>zle_move.rs</td><td class="num">1,291</td><td>Cursor movement: word, line, char, matching bracket</td></tr>
-          <tr><td>zle_params.rs</td><td class="num">1,253</td><td>ZLE special parameters: $BUFFER, $CURSOR, $LBUFFER, $RBUFFER, $REGION_ACTIVE, etc.</td></tr>
-          <tr><td>zle_tricky.rs</td><td class="num">1,155</td><td>Completion: prefix matching, menu selection, listing</td></tr>
-          <tr><td>complete.rs</td><td class="num">1,018</td><td>Completion engine: compadd, compset, _arguments dispatch</td></tr>
-          <tr><td>compresult.rs</td><td class="num">982</td><td>Match result presentation, prefix/suffix sharing</td></tr>
-          <tr><td>zle_h.rs</td><td class="num">897</td><td>Header port — keymap / widget / keystruct types</td></tr>
-          <tr><td>zle_word.rs</td><td class="num">854</td><td>Word detection, WORDCHARS handling, shell-word vs vi-word</td></tr>
-          <tr><td>complist.rs</td><td class="num">800</td><td>Menu selection (Tab cycling, arrow nav, mouse)</td></tr>
-          <tr><td>comp_h.rs</td><td class="num">740</td><td>Header port — Cmatcher / Cmgroup / Cmlist types</td></tr>
-          <tr><td>termquery.rs</td><td class="num">627</td><td>Terminal capability queries (tigetstr / tparm)</td></tr>
-          <tr><td>zleparameter.rs</td><td class="num">339</td><td><code>$widgets</code>, <code>$keymaps</code>, <code>$builtins</code> intro params for zle/parameter module</td></tr>
-          <tr><td>textobjects.rs</td><td class="num">329</td><td>Vi text objects: iw, aw, i", a(, i{, etc.</td></tr>
-          <tr><td>compctl_h.rs</td><td class="num">323</td><td>Header port for <code>compctl</code></td></tr>
-          <tr><td>zle_bindings.rs</td><td class="num">252</td><td>Default emacs/vi keymap tables</td></tr>
-          <tr><td>deltochar.rs</td><td class="num">119</td><td>Delete-to-char widget (Vi f/t/F/T family)</td></tr>
-          <tr><td>mod.rs</td><td class="num">55</td><td>Module declarations and re-exports</td></tr>
+          <tr><td>computil.rs</td><td class="num">11,601</td><td>Completion utility functions used by <code>_arguments</code> etc.</td></tr>
+          <tr><td>compcore.rs</td><td class="num">9,883</td><td>Completion core: shared matcher state, group ordering</td></tr>
+          <tr><td>zle_refresh.rs</td><td class="num">9,737</td><td>Screen refresh, cursor positioning, line wrapping, TCOUT_FUNC_NAME</td></tr>
+          <tr><td>complist.rs</td><td class="num">9,137</td><td>Menu selection (Tab cycling, arrow nav, mouse)</td></tr>
+          <tr><td>compmatch.rs</td><td class="num">7,516</td><td>Match patterns, anchor matching, case-insensitive matchers</td></tr>
+          <tr><td>zle_tricky.rs</td><td class="num">6,935</td><td>Completion: prefix matching, menu selection, listing</td></tr>
+          <tr><td>compctl.rs</td><td class="num">6,105</td><td>Legacy <code>compctl</code> system (pre-compsys, kept for back-compat)</td></tr>
+          <tr><td>compresult.rs</td><td class="num">6,063</td><td>Match result presentation, prefix/suffix sharing</td></tr>
+          <tr><td>zle_main.rs</td><td class="num">5,392</td><td>ZLE main loop, key reading, widget dispatch, initialization, WATCH_FDS</td></tr>
+          <tr><td>complete.rs</td><td class="num">4,907</td><td>Completion engine: compadd, compset, _arguments dispatch</td></tr>
+          <tr><td>zle_misc.rs</td><td class="num">4,806</td><td>Miscellaneous widgets: transpose, case change, undo, named-cmd lookup</td></tr>
+          <tr><td>zle_keymap.rs</td><td class="num">4,718</td><td>Keymap management, key binding, bindkey builtin</td></tr>
+          <tr><td>zle_hist.rs</td><td class="num">4,143</td><td>History widgets: up/down, search, accept-line</td></tr>
+          <tr><td>zle_utils.rs</td><td class="num">3,723</td><td>ZLE utility functions, character classification, prompt expansion</td></tr>
+          <tr><td>zle_thingy.rs</td><td class="num">3,335</td><td>Thingy (widget reference) management, zle -A / zle -N</td></tr>
+          <tr><td>zle_vi.rs</td><td class="num">3,312</td><td>Vi mode: motions, operators, text objects, registers; VIRANGEFLAG / WORDFLAG / VILINERANGE / VICHGFLAG / VIINREPEAT / VIINSBEGIN atomics</td></tr>
+          <tr><td>zle_params.rs</td><td class="num">3,005</td><td>ZLE special parameters: $BUFFER, $CURSOR, $LBUFFER, $RBUFFER, $REGION_ACTIVE, etc.</td></tr>
+          <tr><td>zle_word.rs</td><td class="num">2,549</td><td>Word detection, WORDCHARS handling, shell-word vs vi-word</td></tr>
+          <tr><td>termquery.rs</td><td class="num">2,542</td><td>Terminal capability queries (tigetstr / tparm)</td></tr>
+          <tr><td>zle_move.rs</td><td class="num">2,463</td><td>Cursor movement: word, line, char, matching bracket</td></tr>
+          <tr><td>zle_h.rs</td><td class="num">1,974</td><td>Header port — keymap / widget / keystruct types</td></tr>
+          <tr><td>comp_h.rs</td><td class="num">1,971</td><td>Header port — Cmatcher / Cmgroup / Cmlist types</td></tr>
+          <tr><td>zle_bindings.rs</td><td class="num">1,804</td><td>Default emacs/vi keymap tables</td></tr>
+          <tr><td>zleparameter.rs</td><td class="num">1,447</td><td><code>$widgets</code>, <code>$keymaps</code>, <code>$builtins</code> intro params for zle/parameter module</td></tr>
+          <tr><td>compctl_h.rs</td><td class="num">1,302</td><td>Header port for <code>compctl</code></td></tr>
+          <tr><td>textobjects.rs</td><td class="num">1,040</td><td>Vi text objects: iw, aw, i", a(, i{, etc.</td></tr>
+          <tr><td>deltochar.rs</td><td class="num">353</td><td>Delete-to-char widget (Vi f/t/F/T family)</td></tr>
+          <tr><td>mod.rs</td><td class="num">104</td><td>Module declarations and re-exports</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL ZLE</td><td class="num">35,670</td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL ZLE</td><td class="num">121,867</td><td></td></tr></tfoot>
       </table>
 
       <hr class="section-rule">
@@ -434,39 +435,36 @@
 
       <!-- ═══════════ DEPENDENCY MAP ═══════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&amp;</span>DEPENDENCY ARCHITECTURE</h2>
+      <p class="tutorial-subtitle">Line counts are <code>wc -l</code> on the named files under <code>src/ported/</code> (directories: sum of their tracked <code>.rs</code> files), 2026-09-30.</p>
 
       <pre style="margin:0.8rem 0;padding:1rem;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-dim);font-size:11px;line-height:1.7;overflow-x:auto;">
-                         ┌──────────────────────────────────────┐
-                         │            exec.rs (22,994)          │
-                         │     ShellExecutor + 145 builtins     │
-                         └──────────┬───────────────────────────┘
-                                    │
-               ┌────────────────────┼─────────────────────┐
-               │                    │                     │
-        ┌──────▼──────┐     ┌──────▼──────┐      ┌───────▼──────┐
-        │  parser.rs   │     │  lexer.rs   │      │ subst_port.rs│
-        │  (4,099)     │     │  (2,551)    │      │  (5,021)     │
-        │  AST builder │     │  tokenizer  │      │  expansion   │
-        └──────────────┘     └─────────────┘      └──────────────┘
-               │                                          │
-    ┌──────────┼──────────────────────────────────────────┤
-    │          │          │          │          │          │
-┌───▼───┐ ┌───▼───┐ ┌───▼───┐ ┌───▼───┐ ┌───▼───┐ ┌───▼────┐
-│params │ │pattern│ │ glob  │ │ hist  │ │ math  │ │  text  │
-│(3,630)│ │(1,581)│ │(2,501)│ │(1,825)│ │(1,714)│ │  (980) │
-└───┬───┘ └───────┘ └───────┘ └───┬───┘ └───────┘ └────────┘
-    │                             │
-┌───▼───┐ ┌───────┐ ┌───────┐ ┌──▼────┐ ┌────────┐ ┌───────┐
-│ utils │ │ jobs  │ │signals│ │prompt │ │  init  │ │options│
-│(3,204)│ │(1,667)│ │(1,117)│ │(1,552)│ │  (598) │ │ (877) │
-└───────┘ └───────┘ └───────┘ └───────┘ └────────┘ └───────┘
-               │
-    ┌──────────┼──────────────────────────┐
-    │          │          │               │
-┌───▼───┐ ┌───▼───┐ ┌───▼───┐    ┌──────▼──────┐
-│  zwc  │ │  zle/ │ │  cond │    │  20 modules │
-│(1,577)│ │(8,227)│ │  (818)│    │  (16,149)   │
-└───────┘ └───────┘ └───────┘    └─────────────┘</pre>
+               ┌─────────────────────────────────────┐
+               │          exec.rs (14,432)           │
+               │         builtin.rs (23,457)         │
+               └──────────────────┬──────────────────┘
+                                  │
+      ┌───────────────────────────┼───────────────────────────┐
+┌─────▼─────┐               ┌─────▼─────┐               ┌─────▼─────┐
+│ parse.rs  │               │  lex.rs   │               │ subst.rs  │
+│ (12,671)  │               │  (7,514)  │               │ (33,455)  │
+└─────┬─────┘               └───────────┘               └─────┬─────┘
+      │                                                       │
+      ├─────────────┬─────────────┬─────────────┬─────────────┼─────────────┐
+┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐
+│  params   │ │  pattern  │ │   glob    │ │   hist    │ │   math    │ │   text    │
+│ (21,817)  │ │ (11,191)  │ │  (9,581)  │ │  (8,946)  │ │  (7,590)  │ │  (2,437)  │
+└─────┬─────┘ └───────────┘ └───────────┘ └─────┬─────┘ └───────────┘ └───────────┘
+      │                                         │
+┌─────▼─────┐ ┌───────────┐ ┌───────────┐ ┌─────▼─────┐ ┌───────────┐ ┌───────────┐
+│   utils   │ │   jobs    │ │  signals  │ │  prompt   │ │   init    │ │  options  │
+│ (17,627)  │ │  (6,890)  │ │  (3,840)  │ │  (7,020)  │ │  (3,514)  │ │  (3,499)  │
+└───────────┘ └─────┬─────┘ └───────────┘ └───────────┘ └───────────┘ └───────────┘
+                    │
+      ┌─────────────┼─────────────┬─────────────┐
+┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐
+│   zle/    │ │   cond    │ │   loop    │ │ modules/  │
+│ (121,867) │ │  (2,309)  │ │  (1,297)  │ │ (68,978)  │
+└───────────┘ └───────────┘ └───────────┘ └───────────┘</pre>
 
       <hr class="section-rule">
 
@@ -474,56 +472,57 @@
       <!-- SECTION: COMPSYS — COMPLETION SYSTEM             -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title" style="color:var(--magenta);"><span class="step-hash" style="color:var(--magenta);">&#x25C6;</span>COMPSYS &mdash; ZSH COMPLETION SYSTEM IN RUST</h2>
-      <p class="tutorial-subtitle">A standalone Rust crate reimplementing zsh&rsquo;s <code>compsys</code> &mdash; the programmable completion system. 27 modules, 23,319 lines, 154 public functions. Replaces 24,000+ lines of zsh shell functions with compiled Rust backed by Rkyv caching.</p>
+      <p class="tutorial-subtitle">zsh&rsquo;s <code>compsys</code> &mdash; the programmable completion system &mdash; inside the runtime crate under <code>src/compsys/</code> (the former standalone crate was folded in). Five runtime files plus 250 engine ports under <code>src/compsys/ported/</code>, which sit beside 991 upstream <code>Completion/</code> files copied verbatim. Counts: <code>git ls-files 'src/compsys/*.rs'</code> through the same <code>wc -l</code> / <code>rg</code> patterns as the workspace totals, 2026-09-30.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">23,319</div><div class="stat-label">Rust Lines</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">27</div><div class="stat-label">Modules</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">154</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">74</div><div class="stat-label">Structs</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">17</div><div class="stat-label">Enums</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val green">222</div><div class="stat-label">Tests</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">70</div><div class="stat-label">Completion Functions</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">80,811</div><div class="stat-label">Rust Lines</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">255</div><div class="stat-label"><code>.rs</code> Files</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">495</div><div class="stat-label">Public Functions</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">22</div><div class="stat-label">Structs</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">2</div><div class="stat-label">Enums</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val green">1,016</div><div class="stat-label">Tests</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">991</div><div class="stat-label">Upstream Files Mirrored</div></div>
       </div>
 
       <table class="file-table">
         <thead><tr><th>Module</th><th class="num">Lines</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td>menu.rs</td><td class="num">3,567</td><td>Menu completion: selection UI, scrolling, columns, groups, colors, accept/reject</td></tr>
-          <tr><td>cache.rs</td><td class="num">1,859</td><td>SQLite mirror tables for compsys: autoload paths, compiled function index, invalidation. Mirror only &mdash; the authoritative completion cache is the rkyv-mmap'd shard set (zero-copy hot path); this file backs <code>dbview</code> / SQL inspection.</td></tr>
-          <tr><td>functions.rs</td><td class="num">1,244</td><td>Completion function loading, autoload, function resolution from fpath</td></tr>
-          <tr><td>base.rs</td><td class="num">1,177</td><td>Core completion types, match data, completion context, prefix/suffix handling</td></tr>
-          <tr><td>main.rs</td><td class="num">1,077</td><td>Entry point, CLI, completion request dispatching</td></tr>
-          <tr><td>generate.rs</td><td class="num">1,009</td><td>Completion spec generation from command help output, man pages, --help parsing</td></tr>
-          <tr><td>zstyle.rs</td><td class="num">970</td><td><code>zstyle</code> pattern-based configuration: <code>:completion:*</code> contexts, lookup, inheritance</td></tr>
-          <tr><td>compinit.rs</td><td class="num">831</td><td>Completion system initialization: dump/load, fpath scan, function registration</td></tr>
-          <tr><td>zpwr_colors.rs</td><td class="num">793</td><td>ZPWR color integration: colored completions, syntax highlighting in menu</td></tr>
-          <tr><td>arguments.rs</td><td class="num">767</td><td><code>_arguments</code> implementation: option specs, argument actions, exclusive groups</td></tr>
-          <tr><td>computil.rs</td><td class="num">675</td><td>Completion utilities: <code>_describe</code>, <code>_values</code>, <code>_alternative</code>, <code>_combination</code></td></tr>
-          <tr><td>zle.rs</td><td class="num">673</td><td>ZLE integration: widget binding, cursor positioning, buffer manipulation</td></tr>
-          <tr><td>compcore.rs</td><td class="num">640</td><td>Core completion engine: matching, prefix analysis, suffix insertion</td></tr>
-          <tr><td>completion.rs</td><td class="num">635</td><td>Completion result types, display formatting, grouping</td></tr>
-          <tr><td>library.rs</td><td class="num">626</td><td>Completion library management: function registry, lazy loading, caching</td></tr>
-          <tr><td>compset.rs</td><td class="num">616</td><td><code>compset</code> command: prefix/suffix matching, cursor word extraction</td></tr>
-          <tr><td>state.rs</td><td class="num">495</td><td>Completion state machine: current word, context stack, match state</td></tr>
-          <tr><td>system.rs</td><td class="num">492</td><td>System completions: users, groups, hosts, pids, signals, file types</td></tr>
-          <tr><td>compadd.rs</td><td class="num">458</td><td><code>compadd</code> builtin: add matches with prefix, suffix, display, description</td></tr>
-          <tr><td>matching.rs</td><td class="num">458</td><td>Match control: case insensitivity, partial matching, anchored/unanchored</td></tr>
-          <tr><td>shell_runner.rs</td><td class="num">399</td><td>Shell function runner: eval completion functions in isolated environment</td></tr>
-          <tr><td>compdef.rs</td><td class="num">305</td><td><code>compdef</code> command: register completion functions for commands</td></tr>
-          <tr><td>files.rs</td><td class="num">303</td><td>File completion: <code>_path_files</code>, <code>_files</code>, <code>_directories</code>, glob patterns</td></tr>
-          <tr><td>describe.rs</td><td class="num">272</td><td><code>_describe</code>: completion with descriptions, columnar display</td></tr>
-          <tr><td>lib.rs</td><td class="num">145</td><td>Crate root: public API, re-exports</td></tr>
+          <tr><td>ported/ (250 files)</td><td class="num">75,688</td><td>Engine functions ported to Rust, one <code>.rs</code> per upstream function, each citing its shell source; per-directory breakdown below.</td></tr>
+          <tr><td>cache.rs</td><td class="num">2,153</td><td>SQLite mirror tables for compsys. Mirror only &mdash; the authoritative completion cache is the rkyv-mmap&rsquo;d shard set (zero-copy hot path); this file backs <code>dbview</code> / SQL inspection.</td></tr>
+          <tr><td>router.rs</td><td class="num">998</td><td>Backend router between the Rust ports under <code>ported/</code> and the upstream shell functions.</td></tr>
+          <tr><td>in_editor.rs</td><td class="num">826</td><td>In-editor entry point: drives <code>_main_complete</code> outside an interactive shell so the LSP gets the match list a Tab press would produce.</td></tr>
+          <tr><td>zpwr_colors.rs</td><td class="num">804</td><td>ZPWR zstyle color configuration parser.</td></tr>
+          <tr><td>mod.rs</td><td class="num">342</td><td>Module root.</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL COMPSYS</td><td class="num">20,486</td><td>(25 modules in table; <code>bins/menu_demo.rs</code> + <code>bins/bench_autoload.rs</code> add 2,833 for crate total 23,319)</td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL COMPSYS</td><td class="num">80,811</td><td>255 files</td></tr></tfoot>
       </table>
 
-      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--magenta);letter-spacing:1.5px;margin:1.2rem 0 0.5rem;">// 70 COMPLETION FUNCTIONS</h3>
-      <div class="mapping-grid" style="grid-template-columns:repeat(auto-fill,minmax(18rem,1fr));">
-        <div class="mapping-card" style="border-left-color:var(--magenta);"><h4 style="color:var(--magenta);">Base/Core (35 files)</h4><p><code>_wanted</code>, <code>_requested</code>, <code>_dispatch</code>, <code>_setup</code>, <code>_all_labels</code>, <code>_normal</code>, <code>_next_label</code>, <code>_main_complete</code>, <code>_message</code>, <code>_tags</code>, <code>_description</code>, <code>_arguments</code>, <code>_values</code>, <code>_alternative</code>, <code>_describe</code>, <code>_guard</code>, <code>_regex_arguments</code>, <code>_combination</code>, <code>_multi_parts</code>, and more</p></div>
-        <div class="mapping-card" style="border-left-color:var(--magenta);"><h4 style="color:var(--magenta);">Base/Utility (30 files)</h4><p><code>_path_files</code>, <code>_files</code>, <code>_directories</code>, <code>_users</code>, <code>_groups</code>, <code>_hosts</code>, <code>_pids</code>, <code>_signals</code>, <code>_parameters</code>, <code>_options</code>, <code>_jobs</code>, <code>_command_names</code>, <code>_globquals</code>, <code>_history_complete_word</code>, and more</p></div>
-        <div class="mapping-card" style="border-left-color:var(--magenta);"><h4 style="color:var(--magenta);">Unix + Zsh (5 files)</h4><p><code>_path_files</code>, <code>_files</code>, <code>_directories</code> (Unix), <code>_command</code> (Zsh) &mdash; core file and command completion</p></div>
-      </div>
+      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--magenta);letter-spacing:1.5px;margin:1.2rem 0 0.5rem;">// 250 ENGINE PORTS BY UPSTREAM DIRECTORY</h3>
+      <table class="file-table">
+        <thead><tr><th>Directory</th><th class="num">Files</th><th class="num">Lines</th></tr></thead>
+        <tbody>
+          <tr><td>Unix/Type</td><td class="num">70</td><td class="num">18,842</td></tr>
+          <tr><td>Base/Utility</td><td class="num">26</td><td class="num">11,151</td></tr>
+          <tr><td>(top level: compinit, compdump, compaudit, shared, mod)</td><td class="num">5</td><td class="num">9,109</td></tr>
+          <tr><td>Base/Core</td><td class="num">11</td><td class="num">6,393</td></tr>
+          <tr><td>Zsh/Type</td><td class="num">28</td><td class="num">5,900</td></tr>
+          <tr><td>Base/Completer</td><td class="num">16</td><td class="num">5,186</td></tr>
+          <tr><td>X/Type</td><td class="num">19</td><td class="num">3,425</td></tr>
+          <tr><td>Zsh/Context</td><td class="num">16</td><td class="num">3,290</td></tr>
+          <tr><td>Base/Widget</td><td class="num">12</td><td class="num">2,607</td></tr>
+          <tr><td>BSD/Type</td><td class="num">11</td><td class="num">1,745</td></tr>
+          <tr><td>Linux/Type</td><td class="num">8</td><td class="num">1,559</td></tr>
+          <tr><td>Darwin/Type</td><td class="num">3</td><td class="num">1,327</td></tr>
+          <tr><td>Debian/Type</td><td class="num">5</td><td class="num">1,314</td></tr>
+          <tr><td>Zsh/Function</td><td class="num">7</td><td class="num">1,272</td></tr>
+          <tr><td>Zsh/Command</td><td class="num">3</td><td class="num">765</td></tr>
+          <tr><td>Solaris/Type</td><td class="num">3</td><td class="num">760</td></tr>
+          <tr><td>AIX/Type</td><td class="num">4</td><td class="num">537</td></tr>
+          <tr><td>X/Utility</td><td class="num">2</td><td class="num">471</td></tr>
+          <tr><td>Unix/Command</td><td class="num">1</td><td class="num">35</td></tr>
+        </tbody>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL PORTED</td><td class="num">250</td><td class="num">75,688</td></tr></tfoot>
+      </table>
 
       <hr class="section-rule">
 
@@ -537,10 +536,10 @@
       <table class="file-table">
         <thead><tr><th>File</th><th class="num">Lines</th><th>Role</th></tr></thead>
         <tbody>
-          <tr><td><code>src/ported/lex.rs</code></td><td class="num">4,617</td><td>Lexer port of <code>Src/lex.c</code> &mdash; tokens, contexts, alias fusion</td></tr>
-          <tr><td><code>src/ported/parse.rs</code></td><td class="num">5,015</td><td>Parser port of <code>Src/parse.c</code> &mdash; lists, compounds, redirections</td></tr>
+          <tr><td><code>src/ported/lex.rs</code></td><td class="num">7,514</td><td>Lexer port of <code>Src/lex.c</code> &mdash; tokens, contexts, alias fusion</td></tr>
+          <tr><td><code>src/ported/parse.rs</code></td><td class="num">12,671</td><td>Parser port of <code>Src/parse.c</code> &mdash; lists, compounds, redirections</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">LEX + PARSE</td><td class="num">9,632</td><td>two files in <code>src/ported/</code> (no separate parse crate)</td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">LEX + PARSE</td><td class="num">20,185</td><td>two files in <code>src/ported/</code> (no separate parse crate)</td></tr></tfoot>
       </table>
 
       <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// EXECUTION PIPELINE (ZSHRS)</h3>
@@ -578,48 +577,48 @@
         <tbody>
           <tr>
             <td style="color:var(--cyan);"><code>src/extensions/</code></td>
-            <td class="num">34</td>
-            <td class="num">33,474</td>
-            <td class="num">229</td>
-            <td class="num">219</td>
+            <td class="num">115</td>
+            <td class="num">119,217</td>
+            <td class="num">749</td>
+            <td class="num">1,106</td>
             <td>The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT compile (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload / plugin / script caches (<code>autoload_cache.rs</code>, <code>plugin_cache.rs</code>, <code>script_cache.rs</code>), fish-style features (<code>fish_features.rs</code>), persistent worker pool (<code>worker.rs</code>), arith JIT compiler (<code>arith_compiler.rs</code>), AST s-exp dump (<code>ast_sexp.rs</code>), ZWC byte-code helpers (<code>zwc.rs</code>, <code>zwc_decode.rs</code>), recorder hooks (<code>recorder.rs</code>), daemon presence (<code>daemon_presence.rs</code>), structured logging (<code>log.rs</code>), keymaps / widgets (<code>zle/keymaps.rs</code>, <code>zle/widgets.rs</code>, <code>zle/widget.rs</code>), ext builtins (<code>ext_builtins.rs</code>), regex module (<code>regex_mod.rs</code>), config (<code>config.rs</code>), overlay snapshot + canonical apply (<code>overlay_snapshot.rs</code>, <code>canonical_apply.rs</code>), subscript / fds / hist (<code>subscript.rs</code>, <code>fds.rs</code>, <code>history.rs</code>), stringsort, completion shim. Re-exported at crate root via <code>pub use crate::*</code> aliases so call sites still resolve to <code>crate::aot::*</code>, etc.</td>
           </tr>
           <tr>
             <td style="color:var(--cyan);"><code>daemon/</code></td>
             <td class="num">41</td>
-            <td class="num">23,979</td>
-            <td class="num">202</td>
-            <td class="num">91</td>
+            <td class="num">24,723</td>
+            <td class="num">204</td>
+            <td class="num">94</td>
             <td>Singleton daemon: IPC server, HTTP listener (auto-derived OpenAPI 3.1), canonical-state engine, fsnotify, schedule, supervisor (jobs + bidirectional ptmx attach), pub/sub bus, named locks, ask-inbox, snapshots, artifacts, cache. Hosts every <code>z*</code> builtin.</td>
           </tr>
           <tr>
             <td style="color:var(--cyan);"><code>src/recorder/</code> (feature-gated)</td>
             <td class="num">1</td>
-            <td class="num">1,126</td>
+            <td class="num">1,203</td>
             <td class="num">46</td>
             <td class="num">0</td>
             <td>AOP intercept: every state-mutating dispatcher fires a record event with <code>(kind, name, value, file, line, fn_chain)</code>. <code>#[cfg(feature = "recorder")]</code>-gated &mdash; deleted by rustc in the default <code>zshrs</code> build, compiled into the separate <code>zshrs-recorder</code> binary. Replaces the static-walker approach every other shell uses for completion/fpath scanning.</td>
           </tr>
           <tr>
-            <td style="color:var(--cyan);"><code>fish/</code></td>
+            <td style="color:var(--cyan);"><code>vendor/fish/</code></td>
             <td class="num">157</td>
-            <td class="num">86,917</td>
+            <td class="num">88,088</td>
             <td class="num">1,244</td>
             <td class="num">175</td>
             <td>Fish-style reader, syntax highlighter, autosuggestions, abbreviations, env dispatch, history backend, process control, event system. Largest non-port surface in the workspace.</td>
           </tr>
           <tr>
-            <td style="color:var(--cyan);"><code>compsys/</code></td>
-            <td class="num">27</td>
-            <td class="num">23,319</td>
-            <td class="num">480</td>
-            <td class="num">222</td>
-            <td>Completion-system rkyv mmap, read-only SQL mirror, zstyle. Workspace crate; no C ancestor (zsh's compsys is shell-script, not C).</td>
+            <td style="color:var(--cyan);"><code>src/compsys/</code></td>
+            <td class="num">255</td>
+            <td class="num">80,811</td>
+            <td class="num">495</td>
+            <td class="num">1,016</td>
+            <td>Completion system inside the runtime crate: SQL mirror, backend router, in-editor entry point, and 250 engine ports of upstream <code>Completion/</code> shell functions. No C ancestor (zsh's compsys is shell-script, not C).</td>
           </tr>
         </tbody>
         <tfoot>
-          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE (rows above)</td><td class="num">260</td><td class="num">168,815</td><td class="num">2,201</td><td class="num">707</td></tr>
-          <tr><td colspan="6" style="font-size:11px;color:var(--text-muted);padding-top:0.35rem;">Sums cover the five layers in this table only. Workspace-wide Rust LOC (1,011,253) additionally includes <code>src/ported/</code>, remaining <code>src/</code> glue, <code>tests/</code>, <code>bins/</code>, and <code>build.rs</code>.</td></tr>
+          <tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE (rows above)</td><td class="num">569</td><td class="num">314,042</td><td class="num">2,738</td><td class="num">2,391</td><td></td></tr>
+          <tr><td colspan="6" style="font-size:11px;color:var(--text-muted);padding-top:0.35rem;">Sums cover the five layers in this table only. Workspace-wide Rust LOC (1,011,432) additionally includes <code>src/ported/</code>, the top-level <code>src/*.rs</code> glue, <code>tests/</code>, <code>examples/</code>, <code>bins/</code>, <code>build.rs</code>, <code>znative/</code> and <code>runtime/</code> (697,390 lines over 379 files).</td></tr>
         </tfoot>
       </table>
 
@@ -644,31 +643,31 @@
       <!-- SECTION: GRAND TOTAL — WORKSPACE CRATES       -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Four Rust packages in one Cargo workspace (<code>zshrs</code> + <code>zshrs-daemon</code> + <code>znative</code> + <code>zshrs-runtime</code>, the 16-line crate that emits the <code>zsh</code> staticlib for AOT linking; <code>compsys</code> was folded into <code>zshrs</code>). Combined: 1,011,253 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 6,387 <code>pub fn</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*pub fn '</code>), 666 <code>pub struct</code>, 148 <code>pub enum</code>, 22,496 <code>#[test]</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) — each <code>rg</code> over the same tracked <code>.rs</code> set as <code>wc</code>, 2026-09-30.</p>
+      <p class="tutorial-subtitle">Four Rust packages in one Cargo workspace (<code>zshrs</code> + <code>zshrs-daemon</code> + <code>znative</code> + <code>zshrs-runtime</code>, the 16-line crate that emits the <code>zsh</code> staticlib for AOT linking; <code>compsys</code> was folded into <code>zshrs</code>). Combined: 1,011,432 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 6,388 <code>pub fn</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*pub fn '</code>), 666 <code>pub struct</code>, 148 <code>pub enum</code>, 22,497 <code>#[test]</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) — each <code>rg</code> over the same tracked <code>.rs</code> set as <code>wc</code>, 2026-09-30.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">1,011,253</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">6,387</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
-        <div class="stat-card"><div class="stat-val green">22,496</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3</div><div class="stat-label">Workspace Crates</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">1,011,432</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">6,388</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
+        <div class="stat-card"><div class="stat-val green">22,497</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">4</div><div class="stat-label">Workspace Crates</div></div>
       </div>
 
       <table class="file-table">
         <thead><tr><th>Crate</th><th class="num">Lines</th><th class="num">Files</th><th class="num">Pub Fns</th><th class="num">Structs</th><th class="num">Enums</th><th class="num">Tests</th><th style="min-width:120px;">Share</th><th>Description</th></tr></thead>
         <tbody>
           <tr>
-            <td style="color:var(--cyan);"><code>zshrs</code> (root, lib <code>zsh</code>)</td><td class="num">742,969</td><td class="num">625</td><td class="num">4,517</td><td class="num">364</td><td class="num">60</td><td class="num">18,990</td>
-            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:86.8%"></div><span class="bar-pct">86.8%</span></div></td>
-            <td>Runtime: <code>src/</code> (ported + extensions + exec bridge), <code>bins/</code>, <code>tests/</code>, <code>build.rs</code>. Lines/tests include integration suites.</td>
+            <td style="color:var(--cyan);"><code>zshrs</code> (root, lib <code>zsh</code>)</td><td class="num">898,057</td><td class="num">748</td><td class="num">4,925</td><td class="num">395</td><td class="num">68</td><td class="num">22,228</td>
+            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:88.8%"></div><span class="bar-pct">88.8%</span></div></td>
+            <td>Runtime: <code>src/</code> (ported + extensions + compsys + exec bridge), <code>bins/</code>, <code>tests/</code>, <code>examples/</code>, <code>build.rs</code>. Lines/tests include integration suites.</td>
           </tr>
           <tr>
             <td style="color:var(--magenta);"><code>vendor/</code> (vendored crates)</td><td class="num">88,088</td><td class="num">157</td><td class="num">1,244</td><td class="num">229</td><td class="num">74</td><td class="num">175</td>
-            <td><div class="bar-wrap"><div class="bar-fill yellow" style="width:10.3%"></div><span class="bar-pct">10.3%</span></div></td>
+            <td><div class="bar-wrap"><div class="bar-fill yellow" style="width:8.7%"></div><span class="bar-pct">8.7%</span></div></td>
             <td>Vendored third-party crates carried in-tree so a clone builds offline &mdash; includes <code>vendor/fish/</code> (157 files). (compsys is no longer a separate package &mdash; it was folded into the root crate.)</td>
           </tr>
           <tr>
-            <td style="color:var(--accent);"><code>zshrs-daemon</code></td><td class="num">24,461</td><td class="num">41</td><td class="num">203</td><td class="num">38</td><td class="num">6</td><td class="num">94</td>
-            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:2.9%"></div><span class="bar-pct">2.9%</span></div></td>
+            <td style="color:var(--accent);"><code>zshrs-daemon</code></td><td class="num">24,723</td><td class="num">41</td><td class="num">204</td><td class="num">38</td><td class="num">6</td><td class="num">94</td>
+            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:2.4%"></div><span class="bar-pct">2.4%</span></div></td>
             <td>Singleton daemon: IPC + HTTP/OpenAPI, canonical shards, jobs, fsnotify, pub/sub.</td>
           </tr>
           <tr>
@@ -676,14 +675,19 @@
             <td><div class="bar-wrap"><div class="bar-fill green" style="width:0.1%"></div><span class="bar-pct">0.1%</span></div></td>
             <td>Published plugin ABI SDK: third parties <code>cargo add znative</code>, ship a <code>cdylib</code>, load it via <code>zmodload -R</code>.</td>
           </tr>
+          <tr>
+            <td style="color:var(--text-dim);"><code>zshrs-runtime</code></td><td class="num">16</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td>
+            <td><div class="bar-wrap"><div class="bar-fill green" style="width:0%"></div><span class="bar-pct">&lt;0.1%</span></div></td>
+            <td>Emits <code>libzsh.a</code> for AOT linking so <code>cargo install zshrs</code> does not build it (<code>runtime/src/lib.rs</code>).</td>
+          </tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">1,011,253</td><td class="num">948</td><td class="num">6,387</td><td class="num">666</td><td class="num">148</td><td class="num">22,496</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">1,011,432</td><td class="num">948</td><td class="num">6,388</td><td class="num">666</td><td class="num">148</td><td class="num">22,497</td><td></td><td></td></tr></tfoot>
       </table>
 
     </main>
 
     <footer style="text-align:center;padding:2rem;font-size:10px;color:var(--text-muted);font-family:'Orbitron',sans-serif;letter-spacing:2px;">
-      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-23 &middot; MENKETECHNOLOGIES
+      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-09-30 &middot; MENKETECHNOLOGIES
     </footer>
   </div>
 

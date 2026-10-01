@@ -64,7 +64,7 @@ telling you *why* your loop stayed interpreted is new.
 ### 5. The anti-fork architecture
 
 A persistent pool of 2–18 threads takes command substitution, process
-substitution, globbing, completion, and autoloading; 23 coreutils commands run
+substitution, globbing, completion, and autoloading; 48 coreutils commands run
 in-process so a `cat` in a pipeline never leaves the shell. This is Baumann,
 Appavoo, Krieger and Roscoe's "A fork() in the road" (HotOS 2019) applied to a
 shell. The quoted 2000–5000x is fork overhead divided by a function call —
