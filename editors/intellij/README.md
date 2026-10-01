@@ -106,7 +106,7 @@ The LSP server is in-process inside the `zshrs` binary — `zshrs --lsp` spawns 
 | Capability | Trigger / scope |
 |------------|-----------------|
 | `completion` | builtins, keywords, options, special vars, in-file functions; trigger chars `$` `{` `-` `:` plus all letters |
-| `hover` | full markdown cards for **1388** identifiers (156 builtins, 31 keywords, 756 options, 279 specials, 52 compsys fns, 114 extension builtins) |
+| `hover` | full markdown cards for **1391** identifiers (157 builtins, 31 keywords, 756 options, 279 specials, 52 compsys fns, 116 extension builtins) |
 | `definition` / `references` | function names declared in the open document; cross-file for package-scoped symbols |
 | `documentHighlight` | same scan as references |
 | `documentSymbol` | `function foo`, `foo()`, `alias`, `local`/`typeset`/`export` decls |
@@ -126,7 +126,7 @@ The LSP server is in-process inside the `zshrs` binary — `zshrs --lsp` spawns 
 3. **`BUILTIN_DOCS`** hand fallback — coreutils, `chdir` / `bye` / `declare` / `r` / `unfunction` / `zf_*` and other names with no per-name `item(tt(NAME))` block upstream.
 4. **`SPECIAL_VAR_DOCS`** hand fallback — `$SHELL` / `$EDITOR` / `$VISUAL` + every well-known env var.
 5. **`OPTION_DOCS_FALLBACK`** — `RESTRICTED` (the one option upstream doesn't document via an item block).
-6. **`EXT_BUILTIN_DOCS`** — every entry in `ext_builtins::EXT_BUILTIN_NAMES` (91) + `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23) = 114 hand bodies.
+6. **`EXT_BUILTIN_DOCS`** — every entry in `ext_builtins::EXT_BUILTIN_NAMES` (93) + `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23) = 116 hand bodies.
 7. **`COMPSYS_FN_DOCS`** — fallback for compsys functions without a yodl item block (`_main_complete` / `_directories` / `_git` / `_docker` / `_cargo` / etc.).
 
 Coverage is **gated by `tests/doc_coverage_audit.rs`** — 8 tests, every canonical name in every registry must resolve to a non-placeholder body. The gate also pins `keywords_inventory_matches_man_zshmisc_reserved_words` so the Keywords inventory tracks every reserved word in `man zshmisc` (including the declaration commands `local` / `typeset` / `export` / etc., which `man zshmisc` lists as reserved words and which also appear in the Builtins tab).
@@ -168,13 +168,15 @@ Pinned by 8 tests under `lsp::tests::code_actions_*`.
 
 | Tab | Source registry | Count |
 |-----|-----------------|------:|
-| **All** | merged union (last-write-wins on collisions) | 1439 |
-| **Builtins** | `ported::builtin::BUILTINS` | 159 |
+| **All** | merged union (last-write-wins on collisions) | 1450 |
+| **Builtins** | Compat ∪ Extensions (every builtin the user can call) | 273 |
+| **Compat** | `ported::builtin::BUILTINS` (zsh-faithful ports) | 157 |
 | **Keywords** | `ported::hashtable::RESWDS` (all reserved words per `man zshmisc`; declaration commands appear in both tabs) | 31 |
 | **Options** | `zsh_option_docs::OPTION_DOCS` ∪ `OPTION_ALIASES` (canonical CAPS form per `man zshoptions`) | 756 |
 | **Special vars** | `zsh_special_var_docs::SPECIAL_VAR_DOCS` ∪ `SPECIAL_VAR_ALIASES` | 279 |
 | **Compsys** | `compsys::COMPSYS_FN_NAMES` (Rust-native `_arguments` / `_files` / `_describe` / per-command completers) | 52 |
-| **Extensions** | `ext_builtins::EXT_BUILTIN_NAMES` (91 in-process) ∪ `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23 daemon-backed `z*` builtins) | 114 |
+| **Extensions** | `ext_builtins::EXT_BUILTIN_NAMES` (93 in-process) ∪ `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23 daemon-backed `z*` builtins) | 116 |
+| **Operators** | `lsp::OPERATOR_DOCS` (operator and punctuation tokens per `man zshmisc`) | 69 |
 
 Each tab is a tree with a per-tab search field filtering across name + category.
 
@@ -445,7 +447,7 @@ The Rust side lives in:
 | `src/extensions/dap.rs` | DAP server (`zshrs --dap HOST:PORT`) — breakpoints, stepping, scopes, variables, evaluate |
 | `src/extensions/plugin_cache.rs` | `plugins` SQLite table + classification helpers + `dump_plugins_json()` (consumed by the IntelliJ External Libraries view) |
 | `src/extensions/zsh_*_docs.rs` | Yodl-derived hover bodies (5 files, ~4400 lines total) — `zsh_builtin_docs.rs`, `zsh_ext_builtin_docs.rs`, `zsh_option_docs.rs`, `zsh_keyword_docs.rs`, `zsh_special_var_docs.rs` |
-| `src/extensions/ext_builtins.rs` | `EXT_BUILTIN_NAMES` const (91) — every in-process zshrs-only builtin |
+| `src/extensions/ext_builtins.rs` | `EXT_BUILTIN_NAMES` const (93) — every in-process zshrs-only builtin |
 | `daemon/builtins.rs` | `ZSHRS_BUILTIN_NAMES` const (23) — daemon-backed `z*` builtins |
 | `src/compsys/mod.rs` | `COMPSYS_FN_NAMES` const (52) — Rust-native completion functions |
 | `src/ported/hashtable.rs` | `RESWDS` const — canonical reserved-word table (port of `Src/hashtable.c:1076-1108`) |
