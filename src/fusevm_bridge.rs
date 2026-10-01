@@ -20625,8 +20625,6 @@ impl fusevm::ShellHost for ZshrsHost {
         if saved_stderr >= 0 {
             crate::ported::utils::zclose(saved_stderr);
         }
-        unsafe {
-        }
 
         // Inner cmd's status not propagated for the same reason as
         // run_command_substitution — see GAPS.md.
