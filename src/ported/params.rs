@@ -9167,6 +9167,18 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
       // MANPATH↔manpath, CDPATH↔cdpath, PSVAR↔psvar,
       // MODULE_PATH↔module_path, FIGNORE↔fignore,
       // MAILPATH↔mailpath. Bug #423/#424.
+      //
+      // The split is the tied GSU setfn, so it only exists on a node that
+      // CARRIES the tie: c:Src/params.c:406 `IPDEF8("PATH", &path, "path",
+      // PM_TIED)` installs `colonarr_gsu` on the special node alone. A
+      // `typeset -h PATH` local (c:Src/builtin.c:2083-2085 leaves newspecial
+      // NS_NONE, so createparam c:1157 gives it the plain `stdscalar_gsu`)
+      // and the untied `special_params_sh` PATH of sh emulation
+      // (c:Src/params.c:454-459) store a plain string and never touch the
+      // array. `cloned` is the node assignstrvalue just wrote.
+    let assigned_tied = cloned
+        .as_ref()
+        .is_some_and(|p| (p.node.flags as u32 & PM_TIED) != 0);
     let alt: Option<&str> = match name {
         "PATH" => Some("path"),
         "FPATH" => Some("fpath"),
@@ -9178,7 +9190,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         "MAILPATH" => Some("mailpath"),
         _ => None,
     };
-    if let Some(alt_name) = alt {
+    if let (Some(alt_name), true) = (alt, assigned_tied) {
         let parts: Vec<String> = val.split(':').map(String::from).collect();
         if let Ok(mut tab) = paramtab().write() {
             // c:Src/hashtable.c:157 — `ht->addnode(ht, ztrdup(nam), pm)`
@@ -9232,7 +9244,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         .iter()
         .find(|(arr, _)| *arr == name)
         .map(|(_, sc)| *sc);
-    if let Some(sc) = tied_scalar {
+    if let Some(sc) = tied_scalar.filter(|_| assigned_tied) {
         // The freshly stored value joined with ':' (a scalar assign is a
         // 1-element array → just the value).
         let joined = {
