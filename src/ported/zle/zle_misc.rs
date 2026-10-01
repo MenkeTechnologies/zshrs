@@ -2419,35 +2419,77 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
 pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
     // c:1699
 
-    // c:1701 — `if (suffixfunc) { ... }` — run shfunc if registered.
-    let sf = SUFFIXFUNC
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    if !sf.is_empty() {
-        // c:1701
-        // c:1703 — `getshfunc(suffixfunc)`.
+    // c:1667 — `if (suffixfunc) { ... } else { <suffixlist walk> }`, then
+    // c:1783 `fixsuffix()` on both arms. `suffixfunc` is the ONE static
+    // `makesuffixstr` writes (`compadd -R func`, c:1611-1612). A second,
+    // never-written `SUFFIXFUNC` used to be read here instead, so a `-R`
+    // remove function never ran: zsh calls `_sfz_rm` on the next
+    // non-completion key and zshrs called nothing (spec-fuzz 9502/case0022).
+    let sf = suffixfunc.lock().ok().and_then(|g| g.clone());
+    if let Some(sf) = sf {
+        // c:1668 — `Shfunc shfunc = getshfunc(suffixfunc);`
         if let Some(mut shfunc) = crate::ported::utils::getshfunc(&sf) {
-            // c:1720-1728 — build args [suffixfunc, suffixlen] and
-            // fire the suffix-function hook under SFC_COMPLETE.
+            // c:1674 — `int wasmeta = (zlemetaline != 0);`, and c:1676-1684:
+            // the function runs as a normal ZLE function, not a completion
+            // one, so it gets the unmetafied line.
+            let wasmeta = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::Relaxed) != 0;
+            if wasmeta {
+                crate::ported::zle::compcore::unmetafy_line(); // c:1684
+            }
+            // c:1687-1689 — args [suffixfunc, suffixlen].
             let suffix_len = SUFFIXLEN.load(Ordering::Relaxed);
             let largs: Vec<String> = vec![sf.clone(), suffix_len.to_string()];
-            // c:1728 — `doshfunc(shfunc, args, 1);`.
+            // c:1691 — `startparamscope();`, the same fresh-table shape as
+            // the widget call site (zle_main.rs, c:1533).
+            let mut local_scope: crate::ported::zsh_h::HashTable =
+                Box::new(crate::ported::zsh_h::hashtable {
+                    hsize: 0,
+                    ct: 0,
+                    nodes: Vec::new(),
+                    tmpdata: 0,
+                    hash: None,
+                    emptytable: None,
+                    filltable: None,
+                    cmpnodes: None,
+                    addnode: None,
+                    getnode: None,
+                    getnode2: None,
+                    removenode: None,
+                    disablenode: None,
+                    enablenode: None,
+                    freenode: None,
+                    printnode: None,
+                    scantab: None,
+                });
+            crate::ported::params::startparamscope(&mut local_scope); // c:1691
+            crate::ported::zle::zle_params::makezleparams(0); // c:1692
+            let osc = crate::ported::exec::sfcontext.load(Ordering::Relaxed); // c:1673
+            crate::ported::exec::sfcontext.store(crate::ported::zsh_h::SFC_COMPLETE, Ordering::Relaxed); // c:1693
             let name_for_body = sf.clone();
             let body_args: Vec<String> = vec![suffix_len.to_string()];
             let body_runner = move || -> i32 {
-                crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
+                let ret =
+                    crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0);
+                // RUST-ONLY WRITE-BACK, as at the widget call site: apply the
+                // function's $BUFFER/$CURSOR writes while its scope is live.
+                crate::zle_param_sync::sync_from_paramtab();
+                crate::zle_param_sync::clear_snapshot();
+                ret
             };
-            let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
+            let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner); // c:1694
+            crate::ported::exec::sfcontext.store(osc, Ordering::Relaxed); // c:1695
+            crate::zle_param_sync::clear_snapshot();
+            crate::ported::params::endparamscope(); // c:1696
+            if wasmeta {
+                crate::ported::zle::compcore::metafy_line(); // c:1698-1699
+            }
         }
-        // c:1729 — `zsfree(suffixfunc); suffixfunc = NULL`.
-        if let Ok(mut g) = SUFFIXFUNC
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-        {
-            g.clear();
+        // c:1701-1702 — `zsfree(suffixfunc); suffixfunc = NULL;`
+        if let Ok(mut g) = suffixfunc.lock() {
+            *g = None;
         }
+        fixsuffix(); // c:1783
+        return 0;
     }
 
     // c:1755-1813 — suffixlist walk, matching `ch` by suffix TYPE.
@@ -2682,10 +2724,6 @@ pub static PREVIOUS_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> =
 /// `Src/Zle/zle_hist.c`. Set on isearch abort; read by `$LASEARCH`.
 pub static PREVIOUS_ABORTED_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> =
     std::sync::OnceLock::new();
-
-/// File-scope `char *suffixfunc` from `Src/Zle/zle_misc.c` — the
-/// registered shfunc name run by `iremovesuffix` on suffix match.
-pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new(); // zle_misc.c
 
 // `PasteBuffer` deleted — Rust-invented struct that wasn't referenced
 // anywhere. The C source uses `Cutbuffer` (zle.h:342, ported as
