@@ -8110,8 +8110,59 @@ pub fn paramsubst(
                                 // `subscript_escape_markers` is that same C stage
                                 // re-encoded as `Bnull`+char, which is exactly the
                                 // spelling the word compiler consumes.
-                                let phase1 =
+                                let marked =
                                     crate::subscript_escape::subscript_escape_markers(&folded, qt);
+                                // c:Src/params.c:1583 — `if (ishash && (keymatch ||
+                                // !rev)) remnulargs(s);` runs BEFORE parsestr. The
+                                // markers still inull() at that point are the ones
+                                // c:1541-1551 left alone: before `"` (always) and
+                                // before a bracket/paren/brace at nesting depth 0
+                                // (c:1546 untokenizes it to `\` only when `ishash &&
+                                // i`). remnulargs deletes those, so the escaped char
+                                // reaches parsestr/singsub bare. A nested `(i)`
+                                // search inside a hash key — `${A[$A[(i)a\"b]]}` —
+                                // therefore sees the pattern `a"b`, not `a\"b`.
+                                // Markers before `$`, `\` and backtick were
+                                // untokenized at c:1550 and survive remnulargs.
+                                // Reaching here already implies the keymatch/!rev
+                                // half (flag_keeps_escapes is false); ishash is the
+                                // other.
+                                let phase1 = if assoc_contains(&var_name) {
+                                    let src: Vec<char> = marked.chars().collect();
+                                    let mut out = String::with_capacity(marked.len());
+                                    let mut depth = 0i32; // c:1533 `i`
+                                    let mut k = 0usize;
+                                    while k < src.len() {
+                                        let c = src[k];
+                                        if c == crate::ported::zsh_h::Bnull && k + 1 < src.len() {
+                                            let n = src[k + 1];
+                                            let bracketish = matches!(
+                                                n,
+                                                '[' | ']' | '(' | ')' | '{' | '}'
+                                            );
+                                            // c:1546-1548 — kept, then deleted by
+                                            // remnulargs at depth 0; `"` (c:1549).
+                                            if n == '"' || (bracketish && depth == 0) {
+                                                out.push(n);
+                                            } else {
+                                                out.push(c);
+                                                out.push(n);
+                                            }
+                                            k += 2; // c:1548 `++t` — skipped, uncounted
+                                            continue;
+                                        }
+                                        if c == '[' || c == crate::ported::zsh_h::Inbrack {
+                                            depth += 1; // c:1554
+                                        } else if c == ']' || c == crate::ported::zsh_h::Outbrack {
+                                            depth -= 1; // c:1556
+                                        }
+                                        out.push(c);
+                                        k += 1;
+                                    }
+                                    out
+                                } else {
+                                    marked
+                                };
                                 (phase1, false)
                             } else {
                                 // Stand in for that round ONLY when this pass
