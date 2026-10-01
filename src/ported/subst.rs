@@ -26239,7 +26239,34 @@ pub fn paramsubst(
                             }
                         })
                 {
-                    v.to_str().to_string()
+                    let val = v.to_str().to_string();
+                    // c:Src/params.c:1748-1760 — a REVERSE value search (`R`)
+                    // that misses leaves `r = 0`, and getindex c:2134-2140
+                    // turns subscript 0 into the FIRST element under
+                    // KSHZEROSUBSCRIPT (`end = startnextlen`). The Value form
+                    // of getarg has already folded the miss into "", so ask
+                    // for the index (`R` → `I`, same scan) to tell a miss from
+                    // a matched empty element.
+                    let st = sub.trim_start();
+                    let grp_end = st.find(')').unwrap_or(0);
+                    let grp = &st[..grp_end];
+                    if val.is_empty()
+                        && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT)
+                        && grp.contains('R')
+                        && !grp.contains(|c| matches!(c, 'i' | 'I' | 'k' | 'K'))
+                    {
+                        let as_index = format!("{}{}", grp.replace('R', "I"), &st[grp_end..]);
+                        match crate::ported::params::getarg(&as_index, Some(&arr), None, None) {
+                            Some(crate::ported::params::getarg_out::Value(ix))
+                                if ix.to_str().trim() == "0" =>
+                            {
+                                arr.first().cloned().unwrap_or_default() // c:2140
+                            }
+                            _ => val,
+                        }
+                    } else {
+                        val
+                    }
                 } else if let Some((lo, hi)) = sub.split_once(',') {
                     // c:1625
                     // Delegate to the canonical slice helper —
