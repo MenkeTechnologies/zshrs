@@ -8141,6 +8141,22 @@ pub fn mb_niceformat(
                         buf.push(ch);
                     }
                 }
+            } else if fmt.chars().any(|ch| (0x83..=0xa2).contains(&(ch as u32))) {
+                // c:690-697 — C's copy is metafied, so a printable char whose
+                // code point equals a token byte (NBSP = Bnullkeep) cannot be
+                // read as that token downstream. Bare in a zshrs String it is,
+                // so store each of its UTF-8 bytes as Meta + byte^32.
+                let mut ub = [0u8; 4];
+                for ch in fmt.chars() {
+                    if (0x83..=0xa2).contains(&(ch as u32)) {
+                        for &b in ch.encode_utf8(&mut ub).as_bytes() {
+                            buf.push(char::from(Meta));
+                            buf.push(char::from(b ^ 32));
+                        }
+                    } else {
+                        buf.push(ch);
+                    }
+                }
             } else {
                 buf.push_str(&fmt); // c:5446 memcpy(outptr, fmt, outlen)
             }
@@ -9125,7 +9141,17 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // copies a printable unit through STILL METAFIED. A raw byte therefore has
     // to go back out as `Meta` + `byte ^ 32`; pushing `b as char` would emit the
     // UTF-8 encoding of U+00`b` instead of the one byte the shell holds.
+    // A decoded char whose code point equals a token byte (U+0083..U+00A2,
+    // e.g. NBSP = Bnullkeep) goes back out metafied too: bare, it would be read
+    // as that token by remnulargs/untokenize downstream.
     let push_metachar = |out: &mut String, mc: MetaChar| match mc {
+        MetaChar::Ch(c) if (0x83..=0xa2).contains(&(c as u32)) => {
+            let mut buf = [0u8; 4];
+            for &b in c.encode_utf8(&mut buf).as_bytes() {
+                out.push(char::from(Meta));
+                out.push(char::from(b ^ 32));
+            }
+        }
         MetaChar::Ch(c) => out.push(c),
         MetaChar::Raw(b) => {
             out.push(char::from(Meta));
@@ -9749,11 +9775,14 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
         while i < chars_v.len() {
+            // c:6565-6569 — a decoded byte with imeta(c) goes back out as
+            // Meta + c^32, i.e. the pair it came in as.
+            let meta_pair = chars_v[i] as u32 == Meta as u32 && i + 1 < chars_v.len();
             let c = if chars_v[i] == Dash {
                 // c:6541 — `if (*s == Dash) c = '-';`
                 i += 1;
                 '-'
-            } else if chars_v[i] as u32 == Meta as u32 && i + 1 < chars_v.len() {
+            } else if meta_pair {
                 // c:6543 — `else if (*s == Meta) c = *++s ^ 32;`
                 let n = chars_v[i + 1] as u32;
                 i += 2;
@@ -9774,8 +9803,12 @@ pub(crate) fn quotedzputs(s: &str) -> String {
                 out.push('\\'); // c:6559
             }
             // c:6561-6570 — emit c (metafy on imeta).
-            out.push(c); // c:6569 (non-stream branch always re-metafies;
-                         // Rust String holds decoded chars directly)
+            if meta_pair {
+                out.push(char::from(Meta)); // c:6566
+                out.push(chars_v[i - 1]); // c:6567 — c ^ 32
+            } else {
+                out.push(c); // c:6569
+            }
         }
         out.push('\''); // c:6576
     } else {
@@ -9788,10 +9821,12 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
         while i < chars_v.len() {
+            // c:6623-6627 — imeta(c) re-emits the Meta pair, as above.
+            let meta_pair = chars_v[i] as u32 == Meta as u32 && i + 1 < chars_v.len();
             let c = if chars_v[i] == Dash {
                 i += 1;
                 '-' // c:6581
-            } else if chars_v[i] as u32 == Meta as u32 && i + 1 < chars_v.len() {
+            } else if meta_pair {
                 let n = chars_v[i + 1] as u32; // c:6583
                 i += 2;
                 char::from_u32(n ^ 32).unwrap_or(chars_v[i - 1])
@@ -9820,8 +9855,12 @@ pub(crate) fn quotedzputs(s: &str) -> String {
                 if c == '\n' && csh_junkie {
                     out.push('\\'); // c:6617
                 }
-                out.push(c); // c:6627 (imeta-encoding handled by Rust
-                             // String storage in the non-stream form)
+                if meta_pair {
+                    out.push(char::from(Meta)); // c:6624
+                    out.push(chars_v[i - 1]); // c:6625 — c ^ 32
+                } else {
+                    out.push(c); // c:6627
+                }
             }
         }
         if inquote {

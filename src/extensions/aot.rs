@@ -457,6 +457,12 @@ pub fn build_native(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf
         // macOS carries the same symbols in libSystem, which `cc` always links.
         cmd.arg("-lm");
     }
+    if !cfg!(any(target_os = "linux", target_os = "android")) {
+        // `ucs4tomb` (src/ported/utils.rs) takes the iconv(3) body off glibc,
+        // and its `#[link(name = "iconv")]` does not travel inside a staticlib,
+        // so the hand-built link has to name the library itself.
+        cmd.arg("-liconv");
+    }
     if cfg!(target_os = "macos") {
         // Frameworks pulled by zsh's transitive deps: chrono/iana-time-zone
         // (CoreFoundation), notify/FSEvents (CoreServices), and TLS/keychain

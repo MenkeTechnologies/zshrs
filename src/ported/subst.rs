@@ -23447,8 +23447,42 @@ pub fn paramsubst(
                 s
             }
         };
+        // !!! RUST-ONLY: C's `val` is metafied, so a value char whose code
+        // point equals a token byte (U+0083..U+00A2, e.g. NBSP = Bnullkeep)
+        // can never alias a token there. zshrs stores that char bare, and the
+        // quoting below passed it through as a token (`${(q)v}` for
+        // v=$'\xc2\x85' gave `$`, and an NBSP was deleted). Re-spell those
+        // chars the way C holds them: each UTF-8 byte as Meta + byte^32. An
+        // existing Meta pair (`$'\M-a'`) is already in that form and is kept.
+        let meta_token_aliases = |s: &str| -> String {
+            if !s.chars().any(|c| (0x83..=0xa2).contains(&(c as u32))) {
+                return s.to_string();
+            }
+            let meta = char::from(crate::ported::zsh_h::Meta);
+            let mut out = String::with_capacity(s.len() * 2);
+            let mut buf = [0u8; 4];
+            let mut it = s.chars();
+            while let Some(c) = it.next() {
+                if c == meta {
+                    out.push(c);
+                    if let Some(n) = it.next() {
+                        out.push(n);
+                    }
+                } else if (0x83..=0xa2).contains(&(c as u32)) {
+                    for &b in c.encode_utf8(&mut buf).as_bytes() {
+                        out.push(meta);
+                        out.push(char::from(b ^ 32));
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
         let quote_one = |s: &str| -> String {
             // c:4030
+            let metafied = meta_token_aliases(s);
+            let s = metafied.as_str();
             if quotetype == QT_SINGLE_OPTIONAL {
                 // c:Src/utils.c:6181-6190 — QT_SINGLE_OPTIONAL sets
                 // shownull=1 so empty string always quotes as `''`.
