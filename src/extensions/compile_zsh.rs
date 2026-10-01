@@ -13616,20 +13616,17 @@ impl ZshCompiler {
                 .builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_FILE_OLDER, 2), 0),
             _ => {
-                // c:Src/cond.c:150-188 — an unrecognized `-X` binary op is an
-                // unknown module condition: drop both operands and route the op
-                // through BUILTIN_COND_UNKNOWN (zerr + errflag) so the cond's
-                // errexit check aborts, matching `[[ a -xyz b ]]` in zsh. The
-                // prior LoadFalse silently evaluated false and ran on.
-                self.builder.emit(Op::Pop, 0);
-                self.builder.emit(Op::Pop, 0);
+                // c:Src/parse.c:2697-2701 — any other `-X` infix op is a
+                // COND_MODI module condition, evaluated at c:Src/cond.c:122-193:
+                // the module that defines it (e.g. zsh/example's `-ex`) is
+                // autoloaded on use, and only a name no module provides is
+                // `unknown condition` (status 2). Stack: left, right, op.
                 let idx = self.builder.add_constant(Value::str(op));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_UNKNOWN, 1),
+                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_COND_MODI, 3),
                     0,
-                );
-                0usize
+                )
             }
         };
     }

@@ -12917,6 +12917,64 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // MATCH-variable population stays in one place.
         Value::Bool(crate::vm_helper::glob_match_static(&s, &pat_eff))
     });
+    // c:Src/cond.c:122-193, the COND_MODI arm: `[[ a -op b ]]` with an `-op`
+    // that is not one of get_cond_num's (Src/parse.c:2697-2701). See
+    // BUILTIN_COND_MODI.
+    vm.register_builtin(BUILTIN_COND_MODI, |vm, _argc| {
+        let is_dash = |s: &str| s.starts_with('-') || s.starts_with(crate::ported::zsh_h::Dash);
+        let mut name = vm.pop().to_str(); // c:130 — the operator word
+        let right = vm.pop().to_str();
+        let left = vm.pop().to_str();
+        let mut strs = vec![left, right]; // c:136-141
+        let l: i32 = 2; // c:141
+        // c:143-148
+        let errname = if is_dash(&name) {
+            crate::lex::untokenize(&name)
+        } else if is_dash(&strs[0]) {
+            crate::lex::untokenize(&strs[0])
+        } else {
+            "<null>".to_string()
+        };
+        let lookup = |inf: i32, word: &str| {
+            let cond = word.chars().skip(1).collect::<String>(); // `name + 1`
+            match crate::ported::module::MODULESTAB.try_lock() {
+                Ok(mut tab) => crate::ported::module::getconddef(inf, &cond, 1, &mut tab),
+                Err(_) => None,
+            }
+        };
+        // c:149-150
+        let mut cd = if is_dash(&name) { lookup(1, &name) } else { None };
+        if cd.is_none() {
+            // c:161-174 — retry as a prefix condition on the left word, with
+            // the operator word moved into its place.
+            let s = std::mem::replace(&mut strs[0], name); // c:173
+            name = s; // c:174
+            cd = if is_dash(&name) { lookup(0, &name) } else { None }; // c:176-177
+            match cd.as_ref() {
+                Some(c) if l < c.min || (c.max >= 0 && l > c.max) => {
+                    // c:178-181
+                    crate::ported::utils::zerr(&format!("unknown condition: {}", errname));
+                    COND_BAD_PATTERN.with(|c| c.set(true));
+                    return Value::Bool(false);
+                }
+                Some(_) => {}
+                None => {
+                    // c:186-192 — `zwarnnam(…, "unknown condition: %s",
+                    // errname)` then `return 2;`, the status the shared
+                    // BUILTIN_COND_STATUS_FROM_BOOL tail turns into an error.
+                    crate::ported::utils::zerr(&format!("unknown condition: {}", errname));
+                    COND_BAD_PATTERN.with(|c| c.set(true));
+                    return Value::Bool(false);
+                }
+            }
+        }
+        // c:158 / c:185 — `return !cd->handler(strs, cd->condid);`
+        let r = cd
+            .and_then(|c| c.handler.map(|h| h(&strs, c.condid)))
+            .unwrap_or(0);
+        Value::Bool(r != 0)
+    });
+
     vm.register_builtin(BUILTIN_COND_UNKNOWN, |vm, _argc| {
         // c:Src/cond.c:150-188 — `zwarnnam(fromtest, "unknown condition: %s",
         // name)` for a `-X` op with no matching cond module. Like a cond
@@ -18176,6 +18234,13 @@ pub const BUILTIN_COND_ACCESS: u16 = 638;
 /// operator word. Dispatches to `complete::eval_mod_cond`. Result pushed as
 /// Bool (true = condition matched). Used by the `ZshCond::ModCond` compile arm.
 pub const BUILTIN_COND_MOD: u16 = 651;
+/// c:Src/cond.c:122-193 COND_MODI — an infix module condition `[[ a -op b ]]`
+/// (Src/parse.c:2697-2701). Stack: left word, right word, operator word
+/// (top). Looks the operator up as an infix condition, autoloading its
+/// module (`getconddef(1, name + 1, 1)`, c:150); failing that, as a prefix
+/// condition named by the left word (c:173-177). Bool result; an unknown
+/// condition arms the status-2 carrier like BUILTIN_COND_MOD.
+pub const BUILTIN_COND_MODI: u16 = 749;
 
 /// `provenance` — report the lineage of a tracked parameter: where its
 /// bytes entered the shell (command substitution, glob, heredoc, an
