@@ -17006,10 +17006,12 @@ fn execcmd_forked_level(is_subsh: bool, vm_addr: usize) {
     if !job_control_ok && crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) {
         crate::ported::options::dosetopt(crate::ported::zsh_h::MONITOR, 0, 0);
     }
+    // The chunk's own top command is the one this child was forked for; see
+    // BUILTIN_EXEC_FORKED_SIMPLE. A `( … )` is too: its body runs as
+    // `execlist(state, 0, 1)` (c:Src/exec.c:4379), so the body's last command
+    // takes the fake exec in this child (compile_zsh exiting_tail_list).
+    FORKED_SIMPLE_VM.with(|f| f.set(vm_addr));
     if !is_subsh {
-        // The chunk's own top command is the one this child was forked for;
-        // see BUILTIN_EXEC_FORKED_SIMPLE.
-        FORKED_SIMPLE_VM.with(|f| f.set(vm_addr));
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             if let Some(pm) = tab.get_mut("ZSH_SUBSHELL") {
                 pm.u_val += 1; // c:1200

@@ -14490,13 +14490,16 @@ fn render_cond_for_debug(cond: &crate::parse::ZshCond) -> String {
 /// (c:332) and not `getpermtext()`'s (c:296): every consumer of this
 /// renderer wants one line. `taddnl(0)` therefore always means `"; "` and
 /// `taddnl(1)` always means `" "` — see `TNL` / `TNL_NOSEMI`.
-/// The last list of a forked `{ … }` whose command can take the exiting
-/// list's fake exec (see `ZshCompiler::forked_tail_list`), as an address; 0
-/// when there is none. Only a plain simple command qualifies: no `&&`/`||`,
-/// `!`, `&` or pipe.
+/// The last list of a forked `{ … }` or `( … )` whose command can take the
+/// exiting list's fake exec (see `ZshCompiler::forked_tail_list`), as an
+/// address; 0 when there is none. Only a plain simple command qualifies: no
+/// `&&`/`||`, `!`, `&` or pipe. A forked `( … )` runs its body as
+/// `execlist(state, 0, 1)` (c:Src/exec.c:4379), exiting like the `{ … }`.
 fn exiting_tail_list(cmd: &ZshCommand) -> usize {
-    let ZshCommand::Cursh(prog) = cmd else { return 0 };
-    program_exiting_tail(prog)
+    match cmd {
+        ZshCommand::Cursh(prog) | ZshCommand::Subsh(prog) => program_exiting_tail(prog),
+        _ => 0,
+    }
 }
 
 /// The last list of an exiting `prog` whose command can take the fake exec,
