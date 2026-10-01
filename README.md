@@ -131,13 +131,17 @@ Every operation that zsh forks for runs in-process. **Zero forks for builtins.**
 
 ### Coreutils Builtins (Anti-Fork)
 
-23 coreutils commands run in-process with zero fork overhead:
+48 coreutils commands run in-process with zero fork overhead — the entries of `EXT_BUILTIN_NAMES` (`src/extensions/ext_builtins.rs`) that GNU coreutils also installs:
 
 ```
-cat  head  tail  wc  sort  find  uniq  cut  tr  seq  rev  tee
-basename  dirname  touch  realpath  sleep  whoami  id  hostname
-uname  date  mktemp
+base64  basename  cat  cksum  comm  cut  date  dircolors  dirname  env
+expand  expr  factor  fold  groups  head  id  link  logname  mkfifo
+mktemp  nice  nl  nproc  paste  printenv  realpath  seq  sha256sum  shuf
+sleep  sort  sum  tac  tail  tee  touch  tr  tsort  tty  uname  unexpand
+uniq  unlink  users  wc  whoami  yes
 ```
+
+Also in-process, outside that set: `arch`, `find`, `hostname`, `rev`, `tput`.
 
 **Speedup: 2000-5000x** per invocation (2-5ms fork overhead → 0.001ms builtin call).
 
@@ -697,7 +701,7 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 - Full bash compatibility via emulation
 - **Native fish-ported line-editor engines** (ON by default; every engine is refused when `RCS` is unset, so bare `zshrs -f` stays byte-identical to `zsh -f` for parity, and per-feature `false` in `~/.zshrs/zshrs.toml` `[zle]` opts out): syntax highlighting (lexer-driven command/keyword/quote/redirection/path coloring with command-validity and file-existence checks; the engine is the fish port, the palette and word-level classification are `fast-syntax-highlighting`'s — command-type ladder, brackets-by-nesting-level pass, glob/variable/path/option/math/here-string/case styles, secondary theme inside `$(…)`, and the `autoload` / `source` / `printf` chromas — so the native pass renders the same as the plugin it replaces), history autosuggestions (ghost text, accept with →/End, word-wise accept with forward-word), prefix/substring up-arrow history search, and bracket/quote auto-pairing (zsh-autopair port) — ports of the fish-shell Rust engines that zsh-syntax-highlighting, zsh-autosuggestions, and zsh-history-substring-search recreate in script. Existing plugin config applies (`ZSH_HIGHLIGHT_STYLES`, `ZSH_AUTOSUGGEST_*`, `HISTORY_SUBSTRING_SEARCH_*`, `AUTOPAIR_*`); the native engines stay authoritative even with the script plugins loaded (their config honored, their widgets subsumed); `ZSHRS_NATIVE_ZLE_FX=0` force-disables. Per-keystroke passes are wall-clock budgeted (`ZSHRS_ZLE_{HIGHLIGHT,AUTOSUGGEST}_BUDGET_MS`, default 8) so huge directories or PATHs can never lag typing
 - Fish-style abbreviations
-- **245 builtins** (152 zsh ports + 93 extensions, the latter including 23 coreutils and the parallel primitives) — see the [Reference](https://menketechnologies.github.io/zshrs/reference.html) for the full catalog
+- **245 builtins** (152 zsh ports + 93 extensions, the latter including 48 coreutils and 6 parallel/async primitives) — see the [Reference](https://menketechnologies.github.io/zshrs/reference.html) for the full catalog
 - **Self-contained `fpath`** — zsh's whole function tree (`Completion/**` + `Functions/**`, flattened the way `make install` flattens it) is packed into the binary at build time and written to `~/.zshrs/functions` on first run, alongside zshrs's own per-builtin completions. That directory is the entire default `fpath`, and it sits LAST — it supplies only what nothing else on `fpath` does, so a curated completion of the same name always wins. Two invariants hold on every `fpath` assignment, not just at startup: the bundled directory is always present (a config doing `fpath=( mydir )` gets it re-appended), and a host zsh installation's own `<prefix>/share/zsh/<version>/functions` is always absent. The two are never mixed — a foreign zsh's `compinit`/`_git` beside zshrs's own means the lookup winner decides behaviour, and that changes when the package manager upgrades zsh. Host zsh installation directories are dropped — from the compiled-in default and from an inherited `FPATH` alike — so `<prefix>/share/zsh/<version>/functions` and `share/zsh/site-functions` never shadow the bundle. zshrs's `compinit`, `_git` and `_describe` are the ones it shipped with, and a Homebrew zsh upgrade cannot change how the shell completes. User and plugin directories are untouched. The tree is re-written when the bundle's content hash changes, not merely when the version does
 - **`async_precmd` hook** — precmd-style functions registered here run on a pool worker thread instead of blocking the prompt, so a slow vcs status or network check never delays the prompt paint. The batch is serialized against the shell thread's own shell code — parameter scopes are one counter and one table, shared — so a widget, hook or command waits for a batch that is already running, and withdraws one the pool has not started yet (its hooks run at the next prompt). Plain typing never waits: builtin widgets open no scope. Registered the normal way, `add-zsh-hook async_precmd my_fn`: zshrs ships an `add-zsh-hook` whose hook list knows the name, since upstream's fixed list rejects it
 - **Bundled `man` / `info`** — zsh's manual pages (`zsh`, `zshall`, `zshbuiltins`, `zshexpn`, `zshmisc`, `zshoptions`, `zshparam`, `zshzle`, `zshcompsys` …) and the Texinfo manual ship in the binary the same way, materialising to `~/.zshrs/man/man1` and `~/.zshrs/info`. Those directories are prepended to `MANPATH` and `INFOPATH` with an empty trailing entry, so the system's own search path is still spliced in and every other page on the machine keeps resolving. `man zshall` and `info zsh` work on a host with no zsh installed. `run-help`'s help database and the `newuser` script ship the same way, to `~/.zshrs/help` and `~/.zshrs/scripts`, with `HELPDIR` pointed at the former unless the user set one — zsh's own `run-help` hardcodes the help path of whichever zsh built it, which is dead on any other machine. `HELPDIR` is a shell parameter only, never exported: `run-help` is a shell function that reads it out of the parameter table, so there is nothing to put in a child's environment

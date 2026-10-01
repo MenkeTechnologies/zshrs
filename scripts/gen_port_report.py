@@ -1685,11 +1685,7 @@ CORE_COVERAGE_FILES: list[tuple[str, str, str]] = [
     ("parse.c", "ported/parse.rs", "src/ported/parse.rs"),
     ("subst.c", "src/ported/subst.rs", "src/ported/subst.rs"),
     ("math.c", "src/ported/math.rs", "src/ported/math.rs"),
-    (
-        "exec.c",
-        'src/exec.rs <span style="opacity:.6;">(re-exported as <code>crate::ported::exec</code>)</span>',
-        "src/exec.rs",
-    ),
+    ("exec.c", "src/ported/exec.rs", "src/ported/exec.rs"),
     ("params.c", "src/ported/params.rs", "src/ported/params.rs"),
     ("pattern.c", "src/ported/pattern.rs", "src/ported/pattern.rs"),
     ("glob.c", "src/ported/glob.rs", "src/ported/glob.rs"),
