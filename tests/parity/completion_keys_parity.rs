@@ -416,25 +416,44 @@ fn describe_shows_the_description_text() {
     );
 }
 
+/// Run `setup` (which defines and `compdef`s a `_mytest` completer that
+/// writes what it observed to `$OUTFILE`), then complete `mytest ` once.
+/// The pumped shape of `compadd_k_enumerates_keys_in_scan_order`: the
+/// verdict is the file, not the screen, so the setup line echoed back by
+/// the pty can never satisfy it.
+fn completer_dump_driver(setup: &str) -> String {
+    let setup = sq(setup);
+    format!(
+        "{OPEN_PUMPED}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w w {setup}; pump
+zpty -w -n w 'mytest '; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w $'\\C-u'; pump
+zpty -w -n w $'\\r'; pump
+zpty -d w 2>/dev/null
+"
+    )
+}
+
 /// A diagnostic raised inside a native port has to carry the LINE of the
 /// upstream function it stands in for, exactly as the shell function's
 /// would. `_wanted -2 … NAME …` naming an ASSOCIATION makes `_description`'s
 /// `set -A "$name" -2 -J -default-` (Completion/Base/Core/_description:102)
-/// fail with `bad set of key/value pairs` (three words: an odd count); zsh prints it as
-/// `_description:102: …`. The port's `FnScope` zeroes `lineno`, so it
-/// printed `_description: …` until the port named its line.
+/// fail with `bad set of key/value pairs` (three words: an odd count); zsh
+/// prints it as `_description:102: …`. The port's `FnScope` zeroes
+/// `lineno`, so it printed `_description: …` until the port named its line.
 #[test]
 fn a_port_diagnostic_carries_the_upstream_line_number() {
     if !stock_fpath_exists() {
         eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
         return;
     }
-    assert_same_verdict(
-        &compsys_driver(
-            r#"_mytest(){ local -A zz; _wanted -2 vals zz 'val' compadd x }; compdef _mytest mytest"#,
-            "_description:102: bad set of key/value pairs",
+    assert_same_dump(
+        &completer_dump_driver(
+            r#"_mytest(){ local -A zz; _wanted -2 vals zz val compadd x 2>! $OUTFILE }; compdef _mytest mytest"#,
         ),
-        "K",
         "_description's set -A diagnostic named line 102",
     );
 }
@@ -452,13 +471,30 @@ fn a_repeated_arguments_call_that_adds_nothing_new_returns_one() {
         eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
         return;
     }
-    assert_same_verdict(
-        &compsys_driver(
-            r#"_mytest(){ local r; _arguments "*:rest:(r1 r2)"; _arguments "*:rest:(r1 r2)"; r=$?; print -u2 "SECOND=$r=" }; compdef _mytest mytest"#,
-            "SECOND=1=",
+    assert_same_dump(
+        &completer_dump_driver(
+            r#"_mytest(){ local a b; _arguments "*:r:(r1 r2)"; a=$?; _arguments "*:r:(r1 r2)"; b=$?; print -r -- "FIRST=$a SECOND=$b" >! $OUTFILE }; compdef _mytest mytest"#,
         ),
-        "K",
         "a second identical _arguments call returned 1",
+    );
+}
+
+/// `_expand` parses its options with a real `while getopts gsco opt`
+/// loop (Completion/Base/Completer/_expand:18). An unknown letter is
+/// reported by getopts itself as `_expand:18: bad option: -J`, and the
+/// loop stops at the first non-option word. The port scanned every `-`
+/// word for the four letters and said nothing.
+#[test]
+fn expand_reports_a_bad_option_the_way_getopts_does() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_dump(
+        &completer_dump_driver(
+            r#"_mytest(){ _expand -J grp 2>! $OUTFILE }; compdef _mytest mytest"#,
+        ),
+        "_expand's getopts reported the bad option at line 18",
     );
 }
 
@@ -485,13 +521,12 @@ fn most_recent_file_skips_dot_files_like_the_glob() {
         std::thread::sleep(std::time::Duration::from_millis(1100));
     }
     let setup = format!(
-        "cd {}; _mytest(){{ _most_recent_file }}; compdef _mytest mytest",
+        "cd {}; _mytest(){{ _most_recent_file; print -r -- \"N=$compstate[nmatches] U=$compstate[unambiguous]\" >! $OUTFILE }}; compdef _mytest mytest",
         dir.display()
     );
-    assert_same_verdict(
-        &compsys_driver(&setup, "mytest plainnewest"),
-        "K",
-        "_most_recent_file completed the newest non-dot file",
+    assert_same_dump(
+        &completer_dump_driver(&setup),
+        "_most_recent_file offered the newest non-dot file",
     );
 }
 
