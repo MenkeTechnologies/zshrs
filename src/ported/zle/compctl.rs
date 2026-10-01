@@ -1459,6 +1459,25 @@ pub fn bin_compcall(
     // letters spelled out in `argv` too.
     let t_set = crate::ported::zsh_h::OPT_ISSET(ops, b'T') || argv.iter().any(|a| a == "-T");
     let d_set = crate::ported::zsh_h::OPT_ISSET(ops, b'D') || argv.iter().any(|a| a == "-D");
+    // In C `$words` / `$CURRENT` ARE `compwords` / `compcurrent`
+    // (gsu-bound, c:Src/Zle/complete.c:1259/1261), and makecomplistctl
+    // reads them at c:2367-2369. zshrs keeps the params as separate
+    // paramtab copies, so an assignment made by the calling completer is
+    // invisible here unless it is mirrored back first — the same
+    // param->global refresh `bin_comparguments` does (computil.rs). Without
+    // it `_as_if`'s `words[1]=()` / `CURRENT=1` (Completion/Base/Utility/
+    // _as_if:5-6) never reached the engine: `_default`'s `compcall` still
+    // saw `true` in argument position and added nothing, where zsh is in
+    // command position and offers every command name via `cc_compos`.
+    if let Some(w) = crate::ported::params::getaparam("words") {
+        if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            *g = w;
+        }
+    }
+    COMPCURRENT.store(
+        crate::ported::params::getiparam("CURRENT") as i32,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let flags = (if t_set { 0 } else { CFN_FIRST })      // c:1686
         | (if d_set { 0 } else { CFN_DEFAULT }); // c:1687
                                                  // c:1689 — `return ret`. The status is the CONTRACT: `compcall`

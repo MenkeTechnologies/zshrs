@@ -530,6 +530,54 @@ fn most_recent_file_skips_dot_files_like_the_glob() {
     );
 }
 
+/// `$(lsvg)` (Completion/AIX/Type/_volume_groups:5) on a host without the
+/// tool is the substitution child's `command not found` (Src/exec.c:903),
+/// printed as `_volume_groups:5: command not found: lsvg`. The port ran
+/// the tool itself and stayed silent when it was missing.
+#[test]
+fn a_missing_tool_in_a_port_substitution_reports_command_not_found() {
+    if !stock_fpath_exists() || which_on_path("lsvg") {
+        eprintln!("skip: no stock fpath, or lsvg is installed here");
+        return;
+    }
+    assert_same_dump(
+        &completer_dump_driver(
+            r#"_mytest(){ _volume_groups 2>! $OUTFILE }; compdef _mytest mytest"#,
+        ),
+        "_volume_groups reported the missing lsvg",
+    );
+}
+
+/// `_as_if` with no arguments empties `words[1]` and sets `CURRENT=1`
+/// (Completion/Base/Utility/_as_if:5-6), so `_default`'s `compcall` runs
+/// in COMMAND position and the `cc_compos` compctl (`CC_COMMPATH`,
+/// Src/Zle/compctl.c:4024) offers every command. In C `$words`/`$CURRENT`
+/// are `compwords`/`compcurrent`; zshrs keeps them apart, and `compcall`
+/// never saw the completer's assignment — it added nothing. The verdict
+/// is "command names were offered", not an exact count, because the
+/// command tables legitimately differ between the two shells.
+#[test]
+fn compcall_sees_the_completers_words_and_current() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_dump(
+        &completer_dump_driver(
+            r#"_mytest(){ local w; local words=( '' ) CURRENT=1; compcall; (( compstate[nmatches] > 100 )) && w=yes; print -r -- "CMDS=${w:-no}" >! $OUTFILE }; zmodload zsh/compctl; compdef _mytest mytest"#,
+        ),
+        "compcall completed command names at CURRENT=1",
+    );
+}
+
+/// Is `name` an executable on `$PATH`? Used to skip a probe whose premise
+/// (the tool is ABSENT) does not hold on this host.
+fn which_on_path(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+        .unwrap_or(false)
+}
+
 /// `compadd -k NAME` must enumerate an association's keys in the same
 /// order `${(k)NAME}` does.
 ///

@@ -31,19 +31,9 @@ pub fn _volume_groups(args: &[String]) -> i32 {
     // kind 0, as sh:3 spells a bare `local`.
     crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:5  $(lsvg)
-    let groups: Vec<String> = std::process::Command::new("lsvg")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .split_whitespace()
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
+    // sh:5  $(lsvg)
+    let groups = crate::compsys::ported::shared::cmdsubst_external_words("lsvg", &[], 5);
 
-    // sh:5  _wanted volumegroups expl 'volume group' compadd "$@" - <groups>
     let mut w = vec![
         "volumegroups".to_string(),
         "expl".to_string(),

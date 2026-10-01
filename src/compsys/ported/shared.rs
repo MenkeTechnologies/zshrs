@@ -1246,6 +1246,43 @@ pub fn getopts_loop(
     }
 }
 
+/// `$(CMD ARGS...)` in an unquoted word, for an external CMD — the words
+/// the substitution splices into the command line.
+///
+/// What zsh does, and so what this does:
+///   * the child's stdout is used whatever its exit status — `$( )` has no
+///     status gate (c:Src/exec.c `getoutput`), so a failing tool that still
+///     printed names contributes them;
+///   * the child's stderr is NOT captured; it reaches the terminal;
+///   * an unquoted substitution is split on `$IFS` whitespace, and every
+///     name these callers list is a plain word;
+///   * a CMD found nowhere is the child's c:Src/exec.c:903
+///     `zerr("command not found: %s")`, printed as `FN:LINE: command not
+///     found: CMD` — `sh_line` is the upstream line the substitution sits
+///     on. The child has run `entersubsh`, so the diagnostic must not
+///     repaint the editor (`SubshStateGuard`, c:1247-1248).
+pub fn cmdsubst_external_words(cmd: &str, args: &[&str], sh_line: u64) -> Vec<String> {
+    let out = std::process::Command::new(cmd)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .split_whitespace()
+            .map(String::from)
+            .collect(),
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                set_sh_lineno(sh_line);
+                let _subsh = crate::ported::exec::SubshStateGuard::enter(); // c:1247-1248
+                crate::ported::utils::zwarn(&format!("command not found: {}", cmd)); // c:903
+            }
+            Vec::new()
+        }
+    }
+}
+
 /// `eval "$comp"` — the way every compsys dispatcher invokes the completer
 /// named by `$_comps` / `$_patcomps` (`_dispatch` sh:31/63/76/87,
 /// `_normal` sh:32).

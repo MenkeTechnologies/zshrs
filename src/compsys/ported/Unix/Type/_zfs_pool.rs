@@ -23,18 +23,7 @@ fn make_ops() -> options {
 pub fn _zfs_pool(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zfs_pool");
     // sh:3  $(zpool list -H -o name)
-    let names: Vec<String> = std::process::Command::new("zpool")
-        .args(["list", "-H", "-o", "name"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .split_whitespace()
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
+    let names = crate::compsys::ported::shared::cmdsubst_external_words("zpool", &["list", "-H", "-o", "name"], 3);
     // sh:3  compadd "$@" - $names
     let mut cadd: Vec<String> = args.to_vec();
     cadd.push("-".to_string());

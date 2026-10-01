@@ -19,33 +19,6 @@
 
 use crate::compsys::ported::_wanted::_wanted;
 
-/// `` `lsdev -C -c disk -S a -F name` `` — list AIX physical volume
-/// (disk) device names.
-fn lsdev_physical_volumes() -> Vec<String> {
-    let out = std::process::Command::new("lsdev")
-        .args(["-C", "-c", "disk", "-S", "a", "-F", "name"])
-        .output();
-    if matches!(&out, Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
-        // The `$( )` child reaches c:Src/exec.c:903 `zerr("command not
-        // found: %s")` and zsh prints `_physical_volumes:5: command not
-        // found: lsdev` on every host without the AIX tool. The child has
-        // run `entersubsh`, so the diagnostic must not repaint the editor —
-        // the same guard `shared::dispatch_action_command` documents.
-        crate::compsys::ported::shared::set_sh_lineno(5);
-        let _subsh = crate::ported::exec::SubshStateGuard::enter(); // c:1247-1248
-        crate::ported::utils::zwarn("command not found: lsdev"); // c:903
-    }
-    out.ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .split_whitespace()
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// `_physical_volumes` — complete AIX physical volume (disk) device names.
 pub fn _physical_volumes(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_physical_volumes");
@@ -75,7 +48,11 @@ pub fn _physical_volumes(args: &[String]) -> i32 {
     ];
     w.extend(args.iter().cloned());
     w.push("-".to_string());
-    w.extend(lsdev_physical_volumes());
+    w.extend(crate::compsys::ported::shared::cmdsubst_external_words(
+        "lsdev",
+        &["-C", "-c", "disk", "-S", "a", "-F", "name"],
+        5,
+    ));
     _wanted(&w)
 }
 
