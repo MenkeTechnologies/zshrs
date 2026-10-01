@@ -1682,8 +1682,19 @@ fn scan_file(path: &Path) -> Option<CompFile> {
         return None;
     }
 
-    // Read entire file at once (will be cached in SQLite)
-    let body = fs::read_to_string(path).ok()?;
+    // Read entire file at once (will be cached in SQLite).
+    //
+    // compinit sh:533 reads the tag line with `read -rA _i_line < $_i_file`,
+    // which has no encoding requirement, and the autoload that later runs
+    // the file reads raw bytes too (`getfpfunc`, c:Src/exec.c:6187-6192). This
+    // read used `read_to_string`, which rejects the WHOLE file on its first
+    // non-UTF-8 byte, so a completer carrying one legacy byte anywhere in its
+    // body was dropped from the scan: no `#compdef`, no `$_comps` entry, and
+    // its command completed through `-default-` instead (spec-fuzz 9509,
+    // `--hostile`: every case whose completer held an invalid or C1 byte).
+    // `read_script_file` is the same lossless decode the autoload path uses,
+    // so the cached body is the text the loader would have produced.
+    let body = crate::script_bytes::read_script_file(path).ok()?;
 
     // Parse first line for directive
     let first_line = body.lines().next().unwrap_or("");
@@ -3162,6 +3173,32 @@ mod tests {
             }
             _ => panic!("Expected Commands"),
         }
+    }
+
+    /// compinit sh:533 reads the tag line with `read -rA`, which has no
+    /// encoding requirement. A completer whose BODY holds one non-UTF-8 byte
+    /// must still be scanned and registered for its `#compdef` commands, and
+    /// its cached body must keep that byte (decoded the way autoload decodes
+    /// it), not drop the file. `read_to_string` rejected it outright.
+    #[test]
+    fn scan_file_keeps_a_completer_with_a_non_utf8_body() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("_rawc");
+        std::fs::write(&path, b"#compdef rawc\n\ncompadd -- \"x\x83y\" plain\n").expect("write");
+        let f = scan_file(&path).expect("a non-UTF-8 body must not drop the file from the scan");
+        match f.def {
+            CompFileDef::CompDef(CompDef::Commands(cmds)) => assert_eq!(cmds, vec!["rawc"]),
+            _ => panic!("expected `#compdef rawc` to register the command"),
+        }
+        assert_eq!(
+            f.body.as_deref(),
+            Some(
+                crate::script_bytes::read_script_file(&path)
+                    .expect("read")
+                    .as_str()
+            ),
+            "the cached body is the autoload path's lossless decode"
+        );
     }
 
     #[test]
