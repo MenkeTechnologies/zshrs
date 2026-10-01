@@ -20087,6 +20087,35 @@ pub fn paramsubst(
                         None => false,
                     }
                 };
+                // c:Src/glob.c:2665 — getmatch compiles with PAT_NOANCH unless
+                // `SUB_END && !SUB_SUBSTR`, so under `(S)` the per-start trial
+                // at c:3133 (`pattrylen(p, t, umlen, …)`) reports the match
+                // that starts at `t` WITHOUT having to reach the end, and
+                // `patmatchlen()` is its length. `gms` above compiles anchored
+                // (the plain `%`/`%%` arm needs that), so the `(S)` scan gets
+                // its own PAT_NOANCH programs. Compiled only for `(S)`.
+                let compile_noanch_ = |extra_: i32| {
+                    if !substr_mode {
+                        return None;
+                    }
+                    crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p.clone();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP | crate::ported::zsh_h::PAT_NOANCH | extra_,
+                        None,
+                    )
+                };
+                let prog_na_ = compile_noanch_(0);
+                let prog_na_ns_ = compile_noanch_(crate::ported::zsh_h::PAT_NOTSTART);
+                // Some(byte length) of the match starting at `s_`'s head.
+                let gms_na = |s_: &str, off_: i32, ns_: bool| -> Option<usize> {
+                    let pr_ = if ns_ { prog_na_ns_.as_ref() } else { prog_na_.as_ref() }?;
+                    crate::ported::pattern::pattrylen(pr_, s_, s_.len() as i32, -1, None, off_)
+                        .then(|| crate::ported::pattern::patmatchlen().max(0) as usize)
+                };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     // Byte offset of every character boundary, plus the end, so
@@ -20132,18 +20161,25 @@ pub fn paramsubst(
                             if gms("", val.len() as i32, !val.is_empty()) {
                                 return Some((total, total));
                             }
-                            // Rightmost longest substring match.
-                            let mut best: Option<(usize, usize)> = None;
-                            for start in 0..=total {
-                                for k in (0..=(total - start)).rev() {
-                                    let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, ioff(start), start > 0) {
-                                        best = Some((start, start + k));
-                                        break;
-                                    }
+                            // c:3130-3136 — ONE trial per start position
+                            // (`set_pat_start(p, t-s); if (pattrylen(p, t, umlen,
+                            // …)) tmatch = t;`), keeping the LAST start that
+                            // matched; c:3156 `mpos = tmatch + patmatchlen()`
+                            // and SUB_LONG skips the shortest refinement
+                            // (c:3158). Walking the starts from the right and
+                            // stopping at the first hit is the same `tmatch`.
+                            // The port tried every length at every start —
+                            // O(n^3) pattern tries per value.
+                            for start in (0..total).rev() {
+                                if let Some(mlen_) = gms_na(sl(start, total), ioff(start), start > 0) {
+                                    let endb_ = (bidx[start] + mlen_).min(val.len());
+                                    return Some((start, start + val[bidx[start]..endb_].chars().count()));
                                 }
                             }
-                            return best;
+                            // c:3172-3177 — `if ((fl & SUB_LONG) && pattrylen(p,
+                            // send, 0, …))`: the empty end match, already
+                            // probed above.
+                            return None;
                         }
                         let mut k = total;
                         loop {
@@ -20367,6 +20403,35 @@ pub fn paramsubst(
                         None => false,
                     }
                 };
+                // c:Src/glob.c:2665 — getmatch compiles with PAT_NOANCH unless
+                // `SUB_END && !SUB_SUBSTR`, so under `(S)` the per-start trial
+                // at c:3133 (`pattrylen(p, t, umlen, …)`) reports the match
+                // that starts at `t` WITHOUT having to reach the end, and
+                // `patmatchlen()` is its length. `gms` above compiles anchored
+                // (the plain `%`/`%%` arm needs that), so the `(S)` scan gets
+                // its own PAT_NOANCH programs. Compiled only for `(S)`.
+                let compile_noanch_ = |extra_: i32| {
+                    if !substr_mode {
+                        return None;
+                    }
+                    crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p.clone();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP | crate::ported::zsh_h::PAT_NOANCH | extra_,
+                        None,
+                    )
+                };
+                let prog_na_ = compile_noanch_(0);
+                let prog_na_ns_ = compile_noanch_(crate::ported::zsh_h::PAT_NOTSTART);
+                // Some(byte length) of the match starting at `s_`'s head.
+                let gms_na = |s_: &str, off_: i32, ns_: bool| -> Option<usize> {
+                    let pr_ = if ns_ { prog_na_ns_.as_ref() } else { prog_na_.as_ref() }?;
+                    crate::ported::pattern::pattrylen(pr_, s_, s_.len() as i32, -1, None, off_)
+                        .then(|| crate::ported::pattern::patmatchlen().max(0) as usize)
+                };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     // Byte offset of every character boundary, plus the end, so
@@ -20411,17 +20476,28 @@ pub fn paramsubst(
                             return Some((total, total));
                         }
                         if substr_mode {
-                            // Rightmost shortest substring match.
-                            let mut best: Option<(usize, usize)> = None;
-                            for start in 0..=total {
-                                for k in 0..=(total - start) {
-                                    let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, ioff(start), start > 0) {
-                                        best = Some((start, start + k));
-                                        break;
-                                    }
+                            // c:3130-3136 — ONE trial per start position keeps the
+                            // LAST start that matched (`tmatch`); c:3156 `mpos =
+                            // tmatch + patmatchlen()` bounds the shortest search
+                            // below. Walking the starts from the right and stopping
+                            // at the first hit is the same `tmatch`. The port tried
+                            // every length at every start — O(n^3) pattern tries
+                            // per value (`_ack`'s `${(S)…%; ?irst line…}`).
+                            let mut tmatch_: Option<(usize, usize)> = None; // (start, mpos)
+                            for start in (0..total).rev() {
+                                if let Some(mlen_) = gms_na(sl(start, total), ioff(start), start > 0) {
+                                    let endb_ = (bidx[start] + mlen_).min(val.len());
+                                    tmatch_ = Some((start, start + val[bidx[start]..endb_].chars().count()));
+                                    break;
                                 }
                             }
+                            // c:3158-3166 — shortest refinement: the first prefix
+                            // of the match that matches; otherwise `mpos` stands.
+                            let best: Option<(usize, usize)> = tmatch_.map(|(start, mpos_)| {
+                                (start..mpos_)
+                                    .find(|&e| gms(sl(start, e), ioff(start), start > 0))
+                                    .map_or((start, mpos_), |e| (start, e))
+                            });
                             // c:Src/glob.c:3156-3167 — after the scan loop picks
                             // `tmatch`, the SHORTEST-match refinement re-runs the
                             // matcher over growing prefixes of the match:
@@ -20443,14 +20519,7 @@ pub fn paramsubst(
                             // SUB_LONG — plain `%%` — and for PAT_PURES literals,
                             // both of which have shortest == longest anyway.)
                             if let Some((b, e)) = best {
-                                let mut longest = e;
-                                for k in (0..=(total - b)).rev() {
-                                    let candidate: String = cv[b..b + k].iter().collect();
-                                    if gms(&candidate, ioff(b), b > 0) {
-                                        longest = b + k;
-                                        break;
-                                    }
-                                }
+                                let longest = tmatch_.map_or(e, |(_, mpos_)| mpos_);
                                 // Re-publish the chosen span last so the probes
                                 // above don't leave stale capture arrays behind.
                                 let span: String = cv[b..e].iter().collect();
@@ -23600,6 +23669,16 @@ pub fn paramsubst(
                     || is_at_subscript_splat
                     || var_name == "@"
                     || spsep_arr_c3932);
+            // The by-name re-fetch below only applies to the no-subscript and
+            // `[@]`/`[*]` splat forms; c:3886 — after the empty-array
+            // collapse aval is already the empty scalar, and re-fetching by
+            // name would undo it. Decided BEFORE the fetch: as `.filter`s
+            // applied after it, every `"${(qq)h[k]}"` first copied all of
+            // `h` (assoc_get rebuilds the hash-bucket order of every key)
+            // just to discard it, so compdump:45's loop over `$_comps` was
+            // quadratic — seconds of CPU for 1.9k keys, minutes for 50k.
+            let refetch_whole =
+                (subscript.is_none() || is_at_subscript_splat) && !empty_arr_scalarized;
             // c:2237
             if joined_scalar_c3907 {
                 // c:4065 `if (isarr) … else` — after the DQ collapse
@@ -23628,8 +23707,13 @@ pub fn paramsubst(
                     value = quoted.clone();
                     split_parts = Some(vec![quoted]);
                 }
-            } else if let Some(arr) = arrays_get(&var_name)
+            } else if let Some(arr) = refetch_whole
+                .then(|| arrays_get(&var_name))
+                .flatten()
                 .or_else(|| {
+                    if !refetch_whole {
+                        return None;
+                    }
                     // A bare assoc is an array of its values (c:3939 isarr),
                     // so `(q)` quotes each value separately. Without this it
                     // fell to the scalar arm and quoted the JOINED values,
@@ -23648,10 +23732,6 @@ pub fn paramsubst(
                         None
                     }
                 })
-                .filter(|_| subscript.is_none() || is_at_subscript_splat)
-                // c:3886 — the empty-array collapse already replaced aval with
-                // the empty scalar; re-fetching by name would undo it.
-                .filter(|_| !empty_arr_scalarized)
             {
                 // c:Src/subst.c — re-fetch the WHOLE array by name only
                 // for the no-subscript and `[@]`/`[*]` splat forms. A
