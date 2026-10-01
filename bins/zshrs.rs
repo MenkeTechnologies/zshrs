@@ -1261,6 +1261,13 @@ fn main() {
     // onto MANPATH/INFOPATH HERE, while the snapshot is still mutable: once
     // it is frozen, paramtab is built from it and a later setenv can no
     // longer change what `$INFOPATH` reports in the shell.
+    //
+    // The drop-in flag (set again with the rest of the mode at the CLI-mode
+    // block below) has to be known HERE: `--zsh` publishes none of the
+    // bundled-docs paths, because zsh itself sets none of them.
+    zsh::extensions::dash_mode::set_zsh_dropin(
+        std::env::args().any(|a| a == "--zsh" || a == "--zsh-compat"),
+    );
     zsh::bundled_docs::publish_into(&mut entry_env);
     let _ = zsh::ported::params::environ.set(entry_env);
     // Restore default SIGPIPE behavior before anything writes to

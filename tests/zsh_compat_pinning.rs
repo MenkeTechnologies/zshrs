@@ -900,7 +900,7 @@ fn bundled_docs_materialise_and_publish_search_paths() {
 
     let run = |script: &str, manpath: Option<&str>| -> String {
         let mut cmd = Command::new(zshrs_bin());
-        cmd.args(["--zsh", "-f", "-c", script])
+        cmd.args(["-f", "-c", script])
             .env("HOME", &tmp)
             .env_remove("ZSHRS_CACHE")
             .env_remove("INFOPATH");
@@ -991,7 +991,7 @@ fn bundled_docs_materialise_and_publish_search_paths() {
     // A user-chosen HELPDIR always wins: the shell fills an empty slot,
     // it does not override.
     let mine = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", "print $HELPDIR"])
+        .args(["-f", "-c", "print $HELPDIR"])
         .env("HOME", &tmp)
         .env("HELPDIR", "/tmp/zshrs-pin-helpdir")
         .env_remove("ZSHRS_CACHE")
@@ -1001,6 +1001,23 @@ fn bundled_docs_materialise_and_publish_search_paths() {
         String::from_utf8_lossy(&mine.stdout).trim(),
         "/tmp/zshrs-pin-helpdir",
         "an explicit HELPDIR must not be overwritten"
+    );
+
+    // The `--zsh` drop-in publishes none of it: zsh sets no HELPDIR and adds
+    // nothing to INFOPATH/MANPATH.
+    let dropin = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "print -r -- \"${+HELPDIR}[$INFOPATH][$MANPATH]\""])
+        .env("HOME", &tmp)
+        .env_remove("HELPDIR")
+        .env_remove("INFOPATH")
+        .env_remove("MANPATH")
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke zshrs");
+    assert_eq!(
+        String::from_utf8_lossy(&dropin.stdout).trim(),
+        "0[][]",
+        "--zsh must not publish the bundled doc paths"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -1053,7 +1070,7 @@ fn helpdir_is_a_shell_parameter_never_exported() {
     // The feature itself: `run-help`'s database is reachable by name.
     let help = tmp.join(".zshrs").join("help");
     assert_eq!(
-        exec(zshrs, true, "print -r -- $HELPDIR", None),
+        exec(zshrs, false, "print -r -- $HELPDIR", None),
         help.display().to_string(),
         "HELPDIR must still name the bundled help tree"
     );
@@ -1065,21 +1082,21 @@ fn helpdir_is_a_shell_parameter_never_exported() {
 
     // Set, but a PLAIN scalar -- `scalar-export` is the bug.
     assert_eq!(
-        exec(zshrs, true, "print -r -- ${(t)HELPDIR}", None),
+        exec(zshrs, false, "print -r -- ${(t)HELPDIR}", None),
         "scalar",
         "HELPDIR must not carry PM_EXPORTED"
     );
 
     // The observable half: nothing downstream of the shell sees the name.
     assert_eq!(
-        exec(zshrs, true, "/usr/bin/env | grep -c '^HELPDIR='", None),
+        exec(zshrs, false, "/usr/bin/env | grep -c '^HELPDIR='", None),
         "0",
         "HELPDIR must not be in a child process's environment"
     );
     // The same probe on a variable that IS meant to be exported, so a
     // silently-broken probe cannot make the assertion above pass.
     assert_eq!(
-        exec(zshrs, true, "/usr/bin/env | grep -c '^MANPATH='", None),
+        exec(zshrs, false, "/usr/bin/env | grep -c '^MANPATH='", None),
         "1",
         "MANPATH is published for child `man` processes and must stay exported"
     );
@@ -1089,7 +1106,7 @@ fn helpdir_is_a_shell_parameter_never_exported() {
     assert_eq!(
         exec(
             zshrs,
-            true,
+            false,
             r#"print -r -- "$HELPDIR ${(t)HELPDIR}""#,
             Some("/tmp/zshrs-pin-helpdir"),
         ),
@@ -1099,7 +1116,7 @@ fn helpdir_is_a_shell_parameter_never_exported() {
     assert_eq!(
         exec(
             zshrs,
-            true,
+            false,
             "/usr/bin/env | grep -c '^HELPDIR='",
             Some("/tmp/zshrs-pin-helpdir"),
         ),
@@ -1145,14 +1162,14 @@ fn helpdir_is_a_shell_parameter_never_exported() {
     // start at all would also report no HELPDIR.
     let probe = r#"print -r -- "${+HELPDIR} $(( ${#HOME} > 0 ))""#;
     assert_eq!(
-        scrubbed(zshrs, true, probe),
+        scrubbed(zshrs, false, probe),
         "0 1",
         "a scrubbed shell must synthesise $HOME but NOT a $HELPDIR"
     );
     if zsh_available() {
         assert_eq!(
             scrubbed(zsh_path(), false, probe),
-            scrubbed(zshrs, true, probe),
+            scrubbed(zshrs, false, probe),
             "with no $HOME, zshrs must report HELPDIR set-or-not exactly as zsh does"
         );
     }

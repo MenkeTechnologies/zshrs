@@ -13,6 +13,10 @@
 //! module writes it to `~/.zshrs/{man,info}` on first run, then puts those
 //! directories on `MANPATH` / `INFOPATH`.
 //!
+//! Under `--zsh` / `--zsh-compat` none of this is published (no `MANPATH` /
+//! `INFOPATH` entries, no `HELPDIR`): the drop-in matches zsh, which sets none
+//! of them.
+//!
 //! Both variables are extended, never replaced: an empty trailing entry is
 //! how `man` and `info` are told "and then your usual search path", so a
 //! shell that had no `MANPATH` still finds every other page on the system.
@@ -229,6 +233,9 @@ fn helpdir_value() -> Option<String> {
 /// reads. [`inherited_home`] is the test that keeps the two shells equal
 /// in both arms.
 pub fn seed_helpdir_param() {
+    if crate::dash_mode::zsh_dropin() {
+        return; // `--zsh`: zsh sets no HELPDIR, so neither does the drop-in
+    }
     if crate::ported::params::getsparam("HELPDIR").is_some_and(|v| !v.is_empty()) {
         return; // a user-set value always wins; this only fills an empty slot
     }
@@ -251,6 +258,9 @@ pub fn seed_helpdir_param() {
 /// it is a shell parameter only, seeded by [`seed_helpdir_param`] once
 /// paramtab exists.
 pub fn install_and_publish() {
+    if crate::dash_mode::zsh_dropin() {
+        return; // `--zsh`: zsh publishes no bundled MANPATH/INFOPATH entries
+    }
     let _ = ensure_installed();
     for (var, dir) in published_dirs() {
         prepend_search_path(var, &dir);
@@ -268,6 +278,9 @@ pub fn install_and_publish() {
 /// re-derived from the live environment later. Editing the snapshot fixes
 /// both, and keeps the process environment in step for child commands.
 pub fn publish_into(env: &mut Vec<(String, String)>) {
+    if crate::dash_mode::zsh_dropin() {
+        return; // `--zsh`: zsh publishes no bundled MANPATH/INFOPATH entries
+    }
     let _ = ensure_installed();
     for (var, dir) in published_dirs() {
         let dir = dir.to_string_lossy().into_owned();
