@@ -3761,188 +3761,84 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
 }
 
 /// Match a set of highlights in `spec`, returning `(on_var, mask, rest)`.
-/// Port of `const char *match_highlight(const char *teststr, zattr *on_var,
-/// zattr *setmask, int *layer)` from `Src/prompt.c:2031`.
+/// Port of `const char *match_highlight(const char *teststr, zattr *on_var)`
+/// from 5.9.1 `Src/prompt.c:1717-1768` (zshrs targets zsh 5.9.2; the dev
+/// tree's `hl=`/`layer=`/`opacity=` directives, `no` prefix and
+/// `reset`/`faint`/`italic` names do not exist there).
 ///
-/// Scans a SPACE-or-`,`-delimited run of highlight directives — `hl=`,
-/// `fg=`, `bg=`, `layer=`, `opacity=`, plus the `highlights[]` attribute
-/// names (`reset`/`bold`/`faint`/`standout`/`underline`/`italic`) with an
-/// optional `no` prefix — accumulating the attribute bits into `*on_var`
-/// and the "which fields were explicitly set" bitmask into `*setmask`. C
-/// returns the first unconsumed character; Rust returns `(on_var, mask,
-/// rest)`, `rest` being that unconsumed tail of `spec` —
-/// `set_region_highlight` (5.9.1 zle_refresh.c:519-525) continues from it to
-/// read the `memo=` field. C's `int *layer` out-param is not exposed: the
-/// `layer=` directive is still parsed and consumed (so following directives
-/// scan correctly), but the decoded layer value is discarded.
-///
-/// SUBSTRATE NOTE: `hl=NAME` resolves a named group from the
-/// `.zle.hlgroups` hash parameter (C `parsehighlight`, `Src/prompt.c:285`),
-/// which is unported. This mirrors C's default-environment path (hash
-/// absent → `*atr = TXT_ERROR`): the token is consumed up to the next `,`
-/// but `on_var` is left unchanged. Wire the resolver here once
-/// `.zle.hlgroups` lands.
-/// WARNING: param names don't match C — Rust=(spec) vs C=(teststr, on_var, setmask, layer)
+/// Scans a SPACE-or-`,`-delimited run of `fg=`/`bg=` colours and the
+/// `highlights[]` names (`none`, `bold`, `standout`, `underline`,
+/// c:1609-1615), accumulating the attribute bits into `*on_var`. Anything
+/// else stops the scan: zsh 5.9.2 reads `region_highlight=("0 4 italic,bold")`
+/// back as `0 4 none`. C returns the first unconsumed character; Rust
+/// returns it as `rest`, the unconsumed tail of `spec` —
+/// `set_region_highlight` (5.9.1 zle_refresh.c:519-524) continues from it to
+/// read the `memo=` field. `mask` (no 5.9.x counterpart) is the set of
+/// attribute flags the spec named.
+/// WARNING: param names don't match C — Rust=(spec) vs C=(teststr, on_var)
 pub fn match_highlight(spec: &str) -> (zattr, zattr, &str) {
-    // c:2031
-    use crate::ported::utils::zstrtol;
-    use crate::ported::zsh_h::{TXTFAINT, TXTITALIC};
-
-    // c:1896-1904 — highlights[] table: (name, mask_on, mask_off).
+    // c:1609-1615 — highlights[]: (name, mask_on, mask_off). `none` clears
+    // TXT_ATTR_ON_MASK (5.9.1 zsh.h:2683), the five "on" flags; the colour
+    // values stay.
+    const TXT_ATTR_ON_MASK: zattr =
+        TXTBOLDFACE | TXTSTANDOUT | TXTUNDERLINE | TXTFGCOLOUR | TXTBGCOLOUR;
     const HIGHLIGHTS: &[(&str, zattr, zattr)] = &[
-        // zsh 5.9.2 spells this entry `none` (5.9.1 prompt.c:1610
-        // `{ "none", 0, TXT_ATTR_ON_MASK }`); the dev tree renamed it
-        // `reset`. zshrs targets 5.9.2, so `none` is accepted, with the
-        // mask that clears the same attributes in this layout.
-        ("none", 0, TXT_ATTR_ALL),
-        ("reset", 0, TXT_ATTR_ALL),       // c:1897
-        ("bold", TXTBOLDFACE, TXTFAINT),  // c:1898
-        ("faint", TXTFAINT, TXTBOLDFACE), // c:1899
-        ("standout", TXTSTANDOUT, 0),     // c:1900
-        ("underline", TXTUNDERLINE, 0),   // c:1901
-        ("italic", TXTITALIC, 0),         // c:1902
+        ("none", 0, TXT_ATTR_ON_MASK),   // c:1610
+        ("bold", TXTBOLDFACE, 0),        // c:1611
+        ("standout", TXTSTANDOUT, 0),    // c:1612
+        ("underline", TXTUNDERLINE, 0),  // c:1613
     ];
 
     let bytes = spec.as_bytes();
-    let mut pos: usize = 0; // teststr cursor (byte offset)
-    let mut on_var: zattr = 0; // c:2036 — *on_var = 0
-    let mut mask: zattr = 0; // c:2034
-    let mut found = true; // c:2033
+    let mut pos: usize = 0; // teststr
+    let mut on_var: zattr = 0; // c:1729 — *on_var = 0
+    let mut mask: zattr = 0;
+    let mut found = true; // c:1727
 
-    // c:2037 — while (found && *teststr)
+    // c:1730 — while (found && *teststr)
     while found && pos < bytes.len() {
-        found = false; // c:2041
+        found = false; // c:1733
         let rest = &spec[pos..];
-
-        if rest.starts_with("hl=") {
-            // c:2042-2047 — named highlight group (.zle.hlgroups resolver).
-            pos += 3; // c:2043
-                      // c:2044 — parsehighlight up to ','. No .zle.hlgroups substrate:
-                      // mirror C's hash-absent path (*atr = TXT_ERROR), consuming to
-                      // the endchar without touching on_var (c:2045-2046 skipped).
-            let seg = &spec[pos..];
-            pos += seg.find(',').unwrap_or(seg.len());
-            found = true; // c:2047
-        } else if rest.starts_with("fg=") || rest.starts_with("bg=") {
-            let is_fg = bytes[pos] == b'f'; // c:2049
-            pos += 3; // c:2051
-            let atr = match_colour(Some(&mut pos), spec, is_fg, 0); // c:2052
-                                                                    // c:2053-2056
+        if rest.starts_with("fg=") || rest.starts_with("bg=") {
+            // c:1734
+            let is_fg = bytes[pos] == b'f'; // c:1735
+            pos += 3; // c:1738
+            let atr = match_colour(Some(&mut pos), spec, is_fg, 0); // c:1739
+            // c:1740-1743
             match bytes.get(pos).copied() {
                 Some(b',') => pos += 1,
                 Some(c) if c != b' ' => break,
                 _ => {}
             }
-            found = true; // c:2057
+            found = true; // c:1744
+            // c:1745-1747 — "skip out of range colours but keep scanning
+            // attributes"
             if atr != TXT_ERROR {
-                // c:2059
-                // c:2060 — clear old fg/bg field before OR-ing the new colour.
-                on_var &= if is_fg {
-                    !TXT_ATTR_FG_MASK
-                } else {
-                    !TXT_ATTR_BG_MASK
-                };
-                on_var |= atr; // c:2061
-                mask |= if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR }; // c:2062
+                on_var |= atr;
+                mask |= if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
             }
-        } else if rest.starts_with("layer=") {
-            // c:2064-2071 — layer directive. C guards on `layer != NULL`; the
-            // Rust sig carries no layer out-param, so we always parse+consume
-            // it (matching the layer!=NULL callers) and discard the value.
-            pos += 6; // c:2065
-            let seg = &spec[pos..];
-            let (val, tail) = zstrtol(seg, 10); // c:2066
-            pos += seg.len() - tail.len();
-            // c:2066 — C writes `(int) val` to *layer. The Rust sig has no
-            // layer out-param (see doc note); bind & discard the value.
-            let _layer = val as i32;
-            // c:2067-2070
-            match bytes.get(pos).copied() {
-                Some(b',') => pos += 1,
-                Some(c) if c != b' ' => break,
-                _ => {}
-            }
-            found = true; // c:2071
-        } else if rest.starts_with("opacity=") {
-            // c:2072-2094
-            pos += 8; // c:2073
-            let seg = &spec[pos..];
-            let (o1, tail) = zstrtol(seg, 10); // c:2074
-            pos += seg.len() - tail.len();
-            if (o1 as u64) > 100 {
-                break;
-            } // c:2075-2076 (zulong compare)
-            if bytes.get(pos) == Some(&b'%') {
-                pos += 1;
-            } // c:2077-2078
-              // c:2079-2080 — invert sense (0 => fully opaque) into fg field.
-            mask |= (100 - o1 as zattr) << TXT_ATTR_FG_COL_SHIFT;
-            let mut o_bg = o1; // c:2074 opacity retained for bg when no '/'
-            if bytes.get(pos) == Some(&b'/') {
-                // c:2081
-                pos += 1; // c:2082
-                let seg = &spec[pos..];
-                let (o2, tail) = zstrtol(seg, 10); // c:2083
-                pos += seg.len() - tail.len();
-                if (o2 as u64) > 100 {
-                    break;
-                } // c:2084-2085
-                if bytes.get(pos) == Some(&b'%') {
-                    pos += 1;
-                } // c:2086-2087
-                o_bg = o2;
-            }
-            mask |= (100 - o_bg as zattr) << TXT_ATTR_BG_COL_SHIFT; // c:2089
-                                                                    // c:2090-2093
-            match bytes.get(pos).copied() {
-                Some(b',') => pos += 1,
-                Some(c) if c != b' ' => break,
-                _ => {}
-            }
-            found = true; // c:2094
         } else {
-            // c:2095-2120 — highlights[] table with optional `no` prefix.
-            let mut turn_off = false; // c:2096
-            let mut i = 0;
-            while !found && i < HIGHLIGHTS.len() {
-                // c:2097
-                let (name, mask_on, mask_off) = HIGHLIGHTS[i];
+            // c:1749-1763 — every table entry that prefixes the text.
+            for &(name, mask_on, mask_off) in HIGHLIGHTS {
                 if spec[pos..].starts_with(name) {
-                    // c:2098
-                    let mut vp = pos + name.len(); // c:2099 — val = teststr + strlen(name)
-                                                   // c:2101-2104
+                    // c:1750
+                    let mut vp = pos + name.len(); // c:1751
+                    // c:1753-1756
                     match bytes.get(vp).copied() {
                         Some(b',') => vp += 1,
-                        Some(c) if c != b' ' => break, // c:2104 — break the hl loop
+                        Some(c) if c != b' ' => break,
                         _ => {}
                     }
-                    if turn_off {
-                        // c:2106-2107
-                        on_var &= !mask_on & !mask_off;
-                    } else {
-                        // c:2108-2110
-                        on_var |= mask_on;
-                        on_var &= !mask_off;
-                    }
-                    mask |= mask_on | mask_off; // c:2112
-                    pos = vp; // c:2113 — teststr = val
-                    found = true; // c:2114
+                    on_var |= mask_on; // c:1758
+                    on_var &= !mask_off; // c:1759
+                    mask |= mask_on | mask_off;
+                    pos = vp; // c:1760
+                    found = true; // c:1761
                 }
-                // c:2116-2119 — delayed to the end of the first iteration
-                // ("noclear" isn't valid): only when hl == highlights[0].
-                if i == 0 {
-                    if spec[pos..].starts_with("no") {
-                        turn_off = true; // c:2118
-                        pos += 2; // c:2119
-                    } else {
-                        turn_off = false;
-                    }
-                }
-                i += 1;
             }
         }
     }
-    // c:2123-2126 — *setmask = mask; return teststr, the unconsumed tail.
+    // c:1767 — `return teststr;`
     (on_var, mask, &spec[pos..])
 }
 
@@ -6674,6 +6570,24 @@ mod tests {
         let _: (zattr, zattr, &str) = match_highlight("");
         assert_eq!(match_highlight("bold memo=x").2, " memo=x");
         assert_eq!(match_highlight("fg=red,bold").2, "");
+    }
+
+    /// 5.9.1 prompt.c:1609-1615 / :1725-1768 — only `fg=`, `bg=`, `none`,
+    /// `bold`, `standout` and `underline` are understood; any other word
+    /// stops the scan where it starts. zsh 5.9.2 reads `0 4 italic,bold`,
+    /// `0 4 nobold,underline` and `0 4 layer=5,bold` back as `0 4 none`,
+    /// and `0 4 bold,italic` as `0 4 bold`.
+    #[test]
+    fn match_highlight_knows_only_the_5_9_names() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(match_highlight("italic,bold"), (0, 0, "italic,bold"));
+        assert_eq!(match_highlight("nobold,underline").0, 0);
+        assert_eq!(match_highlight("layer=5,bold").0, 0);
+        assert_eq!(match_highlight("reset").0, 0);
+        let (on, _, rest) = match_highlight("bold,italic");
+        assert_eq!((on, rest), (TXTBOLDFACE, "italic"));
+        // `none` clears the flags named before it (c:1610).
+        assert_eq!(match_highlight("bold,underline,none,standout").0, TXTSTANDOUT);
     }
 
     // ═══════════════════════════════════════════════════════════════════
