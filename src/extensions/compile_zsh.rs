@@ -324,6 +324,11 @@ pub struct ZshCompiler {
     /// stages (`{ … }`, `( … )`, functions) install at chunk entry
     /// instead, since their bodies do read the pipe.
     stage_fds_pending: bool,
+    /// NO_EXEC gates emitted by the dispatch arms of the simple command
+    /// being compiled: (JumpIfTrue index, values the arm left on the
+    /// stack). [`ZshCompiler::compile_simple`] lands each on a pad that
+    /// drops those values. See [`ZshCompiler::emit_noexec_gate`].
+    noexec_gates: Vec<(usize, usize)>,
     /// `cmd |& next` — the stage also dups its (already piped) stdout
     /// onto stderr. c:Src/parse.c gives cmd an extra `2>&1` redirect,
     /// which C walks at c:Src/exec.c:3730+, after addfd installed the
@@ -455,6 +460,7 @@ impl ZshCompiler {
             is_function_body: false,
             current_sublist_line: 1,
             stage_fds_pending: false,
+            noexec_gates: Vec::new(),
             stage_fds_merge_stderr: false,
             redir_word_depth: 0,
             word_seg_depth: 0,
@@ -1095,8 +1101,15 @@ impl ZshCompiler {
         // statement body. set -n itself still executes (it's the
         // command BEFORE the option is checked), allowing it to
         // turn on noexec for subsequent statements.
+        // A sublist whose commands are all simple commands with a command
+        // word (cmplx, c:Src/parse.c:1928) is gated per command instead,
+        // after its words expand (BUILTIN_NOEXEC_CMD_GATE, c:Src/exec.c:4051).
         self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_NOEXEC_CHECK, 0),
+            Op::LoadInt(i64::from(sublist_gated_in_command(&list.sublist))),
+            0,
+        );
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_NOEXEC_CHECK, 1),
             0,
         );
         let noexec_skip = self.builder.emit(Op::JumpIfTrue(0), 0);
@@ -2693,6 +2706,52 @@ impl ZshCompiler {
     }
 
     fn compile_simple(&mut self, simple: &ZshSimple) {
+        let outer_gates = std::mem::take(&mut self.noexec_gates);
+        self.compile_simple_arms(simple);
+        let gates = std::mem::replace(&mut self.noexec_gates, outer_gates);
+        if gates.is_empty() {
+            return;
+        }
+        // c:Src/exec.c:4051 — under NO_EXEC the expanded words are dropped
+        // and nothing past the expansion runs: not the redirections (c:3818
+        // `if (unset(EXECOPT)) continue;`), not addvars (c:4142), not the
+        // command. Undo the BEGIN_INLINE_ENV the arm opened before its words.
+        let has_inline_env_scope = !simple.assigns.is_empty() && !simple.words.is_empty();
+        let mut joins = vec![self.builder.emit(Op::Jump(0), 0)];
+        for (jump, pops) in gates {
+            self.builder.patch_jump(jump, self.builder.current_pos());
+            for _ in 0..pops {
+                self.builder.emit(Op::Pop, 0);
+            }
+            if has_inline_env_scope {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_END_INLINE_ENV, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+            }
+            joins.push(self.builder.emit(Op::Jump(0), 0));
+        }
+        let end = self.builder.current_pos();
+        for j in joins {
+            self.builder.patch_jump(j, end);
+        }
+    }
+
+    /// Skip the command under NO_EXEC once its words are expanded.
+    /// c:Src/exec.c:4051 — `} else if (isset(EXECOPT) && !errflag) {` is
+    /// tested after prefork (c:3304) and globlist (c:3757). `stacked` is
+    /// the number of values the arm has pushed at this point.
+    fn emit_noexec_gate(&mut self, stacked: usize) {
+        self.builder.emit(
+            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_NOEXEC_CMD_GATE, 0),
+            0,
+        );
+        let jump = self.builder.emit(Op::JumpIfTrue(0), 0);
+        self.noexec_gates.push((jump, stacked));
+    }
+
+    fn compile_simple_arms(&mut self, simple: &ZshSimple) {
         // One-shot: only this chunk's top command is the forked one.
         let forked_simple_exec = std::mem::take(&mut self.forked_simple_exec);
         let forked_simple_tail = std::mem::take(&mut self.forked_simple_tail);
@@ -3148,6 +3207,7 @@ impl ZshCompiler {
             // original stderr and a `$( … )` in the args reads the
             // shell's fd 0 rather than the pipe.
             self.emit_stage_fds_install();
+            self.emit_noexec_gate(simple.words.len());
             if has_redirects {
                 self.emit_redir_scope_begin(&simple.redirs);
             }
@@ -3203,6 +3263,7 @@ impl ZshCompiler {
             // `break N` args are literal numerals (no expansion-error
             // window), so the C prefork-before-addfd order is moot.
             self.emit_stage_fds_install(); // c:Src/exec.c:3721-3724
+            self.emit_noexec_gate(0);
             if has_redirects {
                 self.emit_redir_scope_begin(&simple.redirs);
             }
@@ -3338,6 +3399,7 @@ impl ZshCompiler {
             // Redirect scope: same placement rationale as the `break`
             // arm above.
             self.emit_stage_fds_install(); // c:Src/exec.c:3721-3724
+            self.emit_noexec_gate(0);
             if has_redirects {
                 self.emit_redir_scope_begin(&simple.redirs);
             }
@@ -3544,6 +3606,7 @@ impl ZshCompiler {
                 // the redirect scope open after arg expansion, before
                 // addvars/dispatch.
                 self.emit_stage_fds_install();
+                self.emit_noexec_gate(usize::from(argc) + usize::from(has_redirects));
                 let mut walk_failed_jump = None;
                 let call_argc = if has_redirects {
                     self.builder.emit(
@@ -4180,6 +4243,7 @@ impl ZshCompiler {
         // `$( … )` in the args likewise reads the shell's fd 0, not the
         // stage's pipe.
         self.emit_stage_fds_install();
+        self.emit_noexec_gate(argc_full);
         if has_redirects {
             self.emit_redir_scope_begin(&simple.redirs);
         }
@@ -14544,6 +14608,43 @@ fn render_cond_for_debug(cond: &crate::parse::ZshCond) -> String {
 /// (c:332) and not `getpermtext()`'s (c:296): every consumer of this
 /// renderer wants one line. `taddnl(0)` therefore always means `"; "` and
 /// `taddnl(1)` always means `" "` — see `TNL` / `TNL_NOSEMI`.
+/// Does every command of this `&&`/`||` chain (and of each pipeline in it)
+/// test NO_EXEC itself, after expanding its words? True when each is a
+/// simple command with a word that is not a bare precommand modifier: those
+/// are the commands `par_simple` marks cmplx (`*cmplx = 1` per STRING word,
+/// c:Src/parse.c:1928), so C runs them through execcmd_exec, whose EXECOPT
+/// test (c:Src/exec.c:4051) follows the expansion; every compile_simple arm
+/// that reaches dispatch emits that test (`emit_noexec_gate`). Anything else
+/// keeps the statement-level skip: a word-less command goes to execsimple
+/// (c:1351 `if (!isset(EXECOPT)) return lastval = 0;`), and a compound or
+/// function definition is skipped whole by the same c:4051 test.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!! C decides this per command at run time
+/// (execsimple vs execpline); zshrs's statement prologue needs it up front.
+fn sublist_gated_in_command(sublist: &ZshSublist) -> bool {
+    let mut sub = Some(sublist);
+    while let Some(s) = sub {
+        let mut pipe = Some(&s.pipe);
+        while let Some(p) = pipe {
+            let ZshCommand::Simple(simple) = &p.cmd else {
+                return false;
+            };
+            let has_command_word = simple.words.iter().any(|w| {
+                !matches!(
+                    crate::lex::untokenize(w).as_str(),
+                    "exec" | "builtin" | "noglob" | "command" | "nocorrect" | "-"
+                )
+            });
+            if !has_command_word {
+                return false;
+            }
+            pipe = p.next.as_deref();
+        }
+        sub = s.next.as_ref().map(|(_, next)| next.as_ref());
+    }
+    true
+}
+
 /// The last list of a forked `{ … }` or `( … )` whose command can take the
 /// exiting list's fake exec (see `ZshCompiler::forked_tail_list`), as an
 /// address; 0 when there is none. Only a plain simple command qualifies: no

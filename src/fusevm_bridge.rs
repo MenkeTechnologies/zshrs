@@ -1505,7 +1505,11 @@ fn glob_tokenized_word(raw: Value, noglob: bool) -> Value {
     for w in words {
         // c:Src/glob.c:1872 — NO_GLOB leaves the word literal; a word that came
         // back tokenized only for its deferred filesub reaches here too.
-        if noglob || !crate::ported::pattern::haswilds(&w) {
+        // c:Src/glob.c:1230 — `unset(EXECOPT)` is part of the same early return.
+        if noglob
+            || !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT)
+            || !crate::ported::pattern::haswilds(&w)
+        {
             // c:Src/glob.c:1232 — zglob untokenizes a word it does not glob; a
             // deferred `=cmd` / `~user` that filesub left alone (NOMATCH off)
             // still carries its token.
@@ -11701,11 +11705,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Int(if b != 0 { 1 } else { 0 })
     });
 
-    vm.register_builtin(BUILTIN_NOEXEC_CHECK, |_vm, _argc| {
+    vm.register_builtin(BUILTIN_NOEXEC_CHECK, |vm, _argc| {
         // c:Src/exec.c:1390 — `set -n` / `noexec` option: parse but
         // don't execute. Returns Int(1) when noexec is set so the
         // emit-side JumpIfTrue skips the statement body.
-        if opt_state_get("noexec").unwrap_or(false) {
+        //
+        // Arg: 1 when every command of the sublist is a simple command
+        // with a command word. c:Src/parse.c:1928 marks those cmplx, so C
+        // never takes execsimple's `if (!isset(EXECOPT)) return lastval =
+        // 0;` (c:Src/exec.c:1351) for them: execcmd_exec expands the words
+        // first and skips only the execution (c:4051). Those commands
+        // carry their own BUILTIN_NOEXEC_CMD_GATE, so noexec must not
+        // skip them here.
+        let gated_in_command = vm.pop().to_int() != 0;
+        if !gated_in_command && opt_state_get("noexec").unwrap_or(false) {
             return Value::Int(1);
         }
         // c:Src/exec.c:1390 — execlist's list-loop gate:
@@ -11724,6 +11737,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Int(1);
         }
         Value::Int(0)
+    });
+    // See BUILTIN_NOEXEC_CMD_GATE.
+    vm.register_builtin(BUILTIN_NOEXEC_CMD_GATE, |vm, _argc| {
+        if !opt_state_get("noexec").unwrap_or(false) {
+            return Value::Int(0);
+        }
+        // c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }`
+        // runs after globlist and before the EXECOPT test, so an expansion
+        // error still sets the status under NO_EXEC.
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            vm.last_status = 1; // c:3761 `lastval = 1;`
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Value::Int(1) // c:4051 — the execution branch is not taken
     });
     // c:Src/exec.c:1536-1538 —
     //     /* suppress errexit for commands before && and || and after ! */
@@ -14138,6 +14168,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // output (trailing newlines stripped per POSIX cmd-sub semantics).
     vm.register_builtin(BUILTIN_CMD_SUBST_TEXT, |vm, _argc| {
         let cmd = vm.pop().to_str();
+        // c:Src/exec.c:4727-4729 (getoutput) — `if (!isset(EXECOPT)) return
+        // newlinklist();`: under NO_EXEC the substitution yields nothing and
+        // runs nothing, `$(<file)` included (that test is ahead of c:4731).
+        if !isset(crate::ported::zsh_h::EXECOPT) {
+            return Value::str(String::new());
+        }
         // The enclosing word's `BUILTIN_WORD_DEFER_EMPTIES` declaration
         // covers that word's own segments, not the words of a command run
         // inside it (`PRE$(f)${a}POST` — `f`'s own words are finished words
@@ -14382,7 +14418,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // shell so the inherited $? matches zsh's lastval
                 // propagation.
                 exec.set_last_status(live_status);
-                let captured = exec.run_command_substitution(inner);
+                // c:Src/exec.c:4727-4729 — getoutput returns an empty list
+                // under NO_EXEC.
+                let captured = if isset(crate::ported::zsh_h::EXECOPT) {
+                    exec.run_command_substitution(inner)
+                } else {
+                    String::new()
+                };
                 let trimmed = captured.trim_end_matches('\n');
                 if exec.in_dq_context > 0 {
                     Value::str(trimmed.to_string())
@@ -17740,6 +17782,13 @@ pub const BUILTIN_DEBUG_TRAP: u16 = 603;
 /// JumpIfTrue skips the statement body. c:Src/exec.c:1390 main loop
 /// check.
 pub const BUILTIN_NOEXEC_CHECK: u16 = 604;
+/// c:Src/exec.c:4051 — `else if (isset(EXECOPT) && !errflag)`: a simple
+/// command's words are expanded (prefork c:3304, globlist c:3757) whether
+/// or not NO_EXEC is set; only the execution is skipped. No args. Returns
+/// Int(1) under NO_EXEC, after setting the status to 1 when the expansion
+/// raised errflag (c:3760-3763); the caller's JumpIfTrue then drops the
+/// expanded words without running the command. Int(0) otherwise.
+pub const BUILTIN_NOEXEC_CMD_GATE: u16 = 748;
 /// Block-level redirect-failure gate. Reads exec.redirect_failed
 /// (set by host.redirect when a redirect open fails); returns
 /// Value::Int(1) AND clears the flag if set, else 0. Emit-side at
@@ -18260,7 +18309,9 @@ fn glob_expand_word_value(raw: Value, skip_glob: bool) -> Value {
         Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
         other => vec![other.to_str()],
     };
-    if skip_glob {
+    // c:Src/glob.c:1230 — zglob returns before globbing when
+    // `unset(EXECOPT)`, so NO_EXEC never reports a NOMATCH.
+    if skip_glob || !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT) {
         return if patterns.is_empty() {
             Value::array(Vec::new())
         } else if patterns.len() == 1 {
