@@ -78,6 +78,31 @@ fn wait_stdout(child: Child) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// The `COMPS=N` line one shell prints alone, cold, for `fpath`.
+///
+/// The expected table is not just the test's own files: an inherited
+/// `$FPATH` also gets the bundled function tree appended
+/// (`zsh_compat_pinning::inherited_fpath_still_carries_the_bundled_tree`),
+/// whose completers count too. Runs in its own throwaway home so the storm
+/// under test still starts with no cache.
+fn solo_comps(fpath: &Path) -> String {
+    let home = tempfile::tempdir().expect("solo home");
+    let out = wait_stdout(spawn(
+        home.path(),
+        fpath,
+        r#"autoload -Uz compinit
+           compinit -u
+           print "COMPS=${#_comps}""#,
+    ));
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("COMPS="))
+        .unwrap_or_else(|| panic!("solo run printed no COMPS line: `{out}`"))
+        .to_string();
+    assert_ne!(line, "COMPS=0", "solo run found no completions at all");
+    line
+}
+
 /// Eight shells rebuild at once, each with one completion no other shell
 /// can see. Each must publish its own.
 ///
@@ -99,6 +124,8 @@ fn concurrent_rebuilds_each_publish_their_own_fpath() {
         make_fpath(&dir, SHARED, &format!("uniq{s}"));
         fpaths.push(dir);
     }
+    // Every fpath differs only in its one unique file, so all share one size.
+    let expected = solo_comps(&fpaths[0]);
 
     let children: Vec<Child> = fpaths
         .iter()
@@ -117,9 +144,8 @@ fn concurrent_rebuilds_each_publish_their_own_fpath() {
     for (s, child) in children.into_iter().enumerate() {
         let out = wait_stdout(child);
         assert!(
-            out.contains(&format!("COMPS={}", SHARED + 1)),
-            "shell {s} must publish its whole scan ({} entries); got `{out}`",
-            SHARED + 1,
+            out.lines().any(|l| l == expected),
+            "shell {s} must publish its whole scan ({expected}); got `{out}`",
         );
         assert!(
             out.contains(&format!("UNIQ=uniq{s}")),
@@ -144,6 +170,7 @@ fn cold_dash_c_storm_scans_fpath_once() {
     fs::create_dir_all(&home).expect("home");
     let fpath = root.path().join("fp");
     make_fpath(&fpath, SHARED, "solo");
+    let expected = solo_comps(&fpath);
 
     let children: Vec<Child> = (0..SHELLS)
         .map(|_| {
@@ -160,8 +187,8 @@ fn cold_dash_c_storm_scans_fpath_once() {
     for child in children {
         let out = wait_stdout(child);
         assert!(
-            out.contains(&format!("COMPS={}", SHARED + 1)),
-            "every shell in the storm must see the whole table; got `{out}`",
+            out.lines().any(|l| l == expected),
+            "every shell in the storm must see the whole table ({expected}); got `{out}`",
         );
     }
 
