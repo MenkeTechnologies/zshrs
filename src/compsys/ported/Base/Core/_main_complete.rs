@@ -83,8 +83,11 @@ fn comps_entry(key: &str) -> String {
 /// already-applied states and its drop is a no-op relative to the
 /// outer guard's restore. IFS is likewise forced to the standard
 /// `$' \t\r\n\0'` (sh:183 `local IFS=...`) and restored. The
-/// remaining `_comp_setup` pieces (`exec </dev/null`, `trap - ZERR`,
-/// `enable -p` pattern chars) are not yet applied here.
+/// `builtin enable -p` of the pattern characters (sh:184) and
+/// `trap - ZERR` (sh:186) are applied too; see `apply`. `exec </dev/null`
+/// (sh:185) is not: callcompfunc already parks /dev/null on fd 0 for the
+/// whole completion-function window (compcore.rs, c:Src/Zle/compcore.c:965),
+/// so a completer reading stdin gets EOF exactly as under zsh.
 ///
 /// `localoptions localtraps localpatterns` are set too. They are not
 /// cosmetic: the shell-function completers this port calls INHERIT
@@ -99,8 +102,13 @@ fn comps_entry(key: &str) -> String {
 struct CompSetupGuard {
     saved_opts: Vec<(i32, bool)>,
     entry_opts: Vec<bool>,
+    /// `zpc_disables` on entry (`startpatternscope`, c:Src/pattern.c:4247).
+    entry_patterns: u32,
     saved_ifs: Option<String>,
 }
+
+/// sh:184 — `builtin enable -p \| \~ \( \? \* \[ \< \^ \# 2>&-`.
+const COMP_ENABLED_PATTERNS: [&str; 9] = ["|", "~", "(", "?", "*", "[", "<", "^", "#"];
 
 impl CompSetupGuard {
     fn apply() -> Self {
@@ -139,9 +147,21 @@ impl CompSetupGuard {
         }
         let saved_ifs = getsparam("IFS");
         let _ = crate::ported::params::setsparam("IFS", " \t\r\n\0");
+        // sh:184 — a user's `disable -p '*'` must not reach the completers'
+        // own patterns (`${a:#x*}` etc.). Every name is a valid zpc_strings
+        // entry, so the `2>&-` has nothing to swallow.
+        let entry_patterns = crate::ported::pattern::savepatterndisables();
+        crate::ported::pattern::pat_enables("enable", &COMP_ENABLED_PATTERNS, true);
+        // sh:186 — `trap - ZERR`: a failing command inside a completer must
+        // not run the user's ZERR trap. LOCALTRAPS is on (above), so
+        // removetrap saves the trap at this locallevel (c:Src/signals.c:
+        // 769-774) and doshfunc's endtrapscope puts it back when
+        // `_main_complete` returns.
+        crate::ported::signals::unsettrap(crate::ported::signals_h::SIGZERR);
         Self {
             saved_opts,
             entry_opts,
+            entry_patterns,
             saved_ifs,
         }
     }
@@ -151,6 +171,12 @@ impl Drop for CompSetupGuard {
     fn drop(&mut self) {
         use crate::ported::options::dosetopt;
         use crate::ported::zsh_h::{PRIVILEGED, RESTRICTED};
+        // c:Src/exec.c:6009 — `endpatternscope(); /* before restoring old
+        // LOCALPATTERNS */`: with LOCALPATTERNS still on, the entry disables
+        // come back (c:Src/pattern.c:4285-4286). doshfunc's own
+        // endpatternscope runs after this guard has turned LOCALPATTERNS
+        // back off, so it cannot do it.
+        crate::ported::pattern::restorepatterndisables(self.entry_patterns);
         for &(idx, was) in self.saved_opts.iter().rev() {
             dosetopt(idx, was as i32, 0);
         }

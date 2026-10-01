@@ -307,3 +307,81 @@ fn bpf_filters_does_not_leak_its_word_tables() {
         "_bpf_filters left `flags` / `subtypes` set after the completion",
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// `_comp_setup` (compinit sh:180-190): what a completer runs under
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Drive one completion with `setup` in place, then evaluate `check` (a
+/// `[[ … ]]` condition) in the inner shell. As in `leak_driver`, the marker
+/// is computed so the echoed command line can never satisfy the search, and
+/// no Return is sent. Every probe below is bounded: completers read stdin
+/// only with `read -t`, and `pump` returns on quiet.
+fn setup_driver(setup: &str, line: &str, check: &str) -> String {
+    let setup_q = sq(setup);
+    let line_q = sq(line);
+    let check_q = sq(&format!("integer v=0; {check} && v=1; print -r -- VERDICT$v"));
+    format!(
+        "{OPEN_PUMPED}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump
+zpty -w w {setup_q}; pump
+zpty -w -n w {line_q}; pump
+zpty -w -n w $'\\t'; sleep 3; pump
+zpty -w -n w $'\\025'; pump
+zpty -w w {check_q}; pump
+zpty -d w 2>/dev/null
+if [[ $all == *VERDICT1* ]]; then print \"S=yes\"; else print \"S=no\"; fi
+"
+    )
+}
+
+/// sh:186 `trap - ZERR`, under sh:182 `localtraps`: a failing command in a
+/// completer does not run the user's ZERR trap, and the trap is back once
+/// the completion returns.
+#[test]
+fn comp_setup_suspends_the_users_zerr_trap() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let driver = setup_driver(
+        r#"trap "ZC=fired" ZERR; _zerrp() { false; ZSEEN=${ZC:-none}; compadd -- x }; compdef _zerrp false"#,
+        "false ",
+        r#"ZC=; false; [[ $ZSEEN == none && $ZC == fired ]]"#,
+    );
+    assert_same_verdict(&driver, "S", "ZERR suspended inside the completer, restored after");
+}
+
+/// sh:184 `builtin enable -p \| \~ \( \? \* \[ \< \^ \#`, under sh:182
+/// `localpatterns`: a user's `disable -p '*'` does not reach the completer's
+/// own patterns, and is in force again after the completion.
+#[test]
+fn comp_setup_reenables_pattern_characters() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let driver = setup_driver(
+        r#"_globp() { local -a a; a=(x1 y1); PSEEN=( ${a:#x*} ); compadd -- x }; compdef _globp echo; disable -p "*""#,
+        "echo ",
+        r#"b=(x1 y1); [[ $PSEEN == y1 && "${b:#x*}" == "x1 y1" ]]"#,
+    );
+    assert_same_verdict(&driver, "S", "pattern chars enabled inside the completer, disables restored after");
+}
+
+/// sh:185 `exec </dev/null`: a completer reading stdin sees EOF, not the
+/// terminal. zshrs gets there through callcompfunc's /dev/null on fd 0.
+#[test]
+fn comp_setup_completer_stdin_is_not_the_terminal() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let driver = setup_driver(
+        r#"_rdin() { local r; read -t 2 r; RSEEN="$?:$r"; [[ -t 0 ]] && RSEEN+=tty; compadd -- x }; compdef _rdin true"#,
+        "true ",
+        r#"[[ $RSEEN == "1:" ]]"#,
+    );
+    assert_same_verdict(&driver, "S", "a completer's read of stdin gets EOF");
+}
