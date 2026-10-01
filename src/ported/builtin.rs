@@ -19425,6 +19425,10 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         ),
         // c:Src/Modules/param_private.c:652 — zsh/param/private module.
         // BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN.
+        // The option string is zsh 5.9.2's `...%ahi:%lmprtux`
+        // (param_private.c:581 in the 5.9.1/5.9.2 sources), which accepts
+        // `private -p NAME`; the dev tree's `%lnmrtux` dropped `p` when it
+        // added `n`. `n` stays because zshrs carries named references.
         BUILTIN(
             "private",
             BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN,
@@ -19432,7 +19436,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("AE:%F:%HL:%PR:%TUZ:%ahi:%lnmrtux"),
+            Some("AE:%F:%HL:%PR:%TUZ:%ahi:%lmnprtux"),
             Some("P"),
         ), // c:652
         // c:Src/Modules/termcap.c:139 — zsh/termcap module.

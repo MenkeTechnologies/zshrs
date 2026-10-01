@@ -1266,7 +1266,8 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
                 maxargs: -1,
                 funcid: 0,
                 // c:685 — optstr from bintab[0] (private's, which adds `P`).
-                optstr: Some("AE:%F:%HL:%PR:%TUZ:%ahi:%lnmrtux".to_string()),
+                // Same string as the `private` row in builtin.rs (5.9.2's `p`).
+                optstr: Some("AE:%F:%HL:%PR:%TUZ:%ahi:%lmnprtux".to_string()),
                 // c:683-685 — NOT copied: `local` keeps its own defaults.
                 defopts: None,
             });

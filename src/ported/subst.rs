@@ -4402,10 +4402,11 @@ pub fn paramsubst(
     // brace parameter:
     //     if (!in_brace_param && isnumglob()) { add(Inang); ... }  c:Src/lex.c:1201
     // so `print ${:-<->}` prints `<->` rather than globbing. Undo just that
-    // pair before the default-word `haswilds` test.
+    // pair before the default-word `haswilds` test. Only for the dev rule:
+    // 5.9.2's lexer DOES tokenize it there (lex::NUMGLOB_IN_BRACE_PARAM).
     let default_word_lexer_tokens = |s: String| -> String {
         use crate::ported::zsh_h::{Inang, Outang};
-        if !s.contains(Inang) {
+        if crate::ported::lex::NUMGLOB_IN_BRACE_PARAM || !s.contains(Inang) {
             return s;
         }
         s.chars()
