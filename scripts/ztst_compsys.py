@@ -736,6 +736,12 @@ def run_one(
     cfg = zsh_build / "config.modules"
     if cfg.is_file():
         (rundir / "config.modules").symlink_to(cfg)
+    # D03procsubst's %prep greps $ZTST_testdir/../config.h for PATH_DEV_FD /
+    # HAVE_FIFOS and marks the whole file unimplemented when the grep fails,
+    # so without the build's config.h its 20 assertions never ran.
+    cfgh = zsh_build / "config.h"
+    if cfgh.is_file():
+        (rundir / "config.h").symlink_to(cfgh)
 
     env = {
         "HOME": os.environ.get("HOME", str(Path.home())),
