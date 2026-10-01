@@ -6893,6 +6893,13 @@ pub fn domenuselect(
         }
         if let Some(c) = &cur {
             crate::ported::zle::compresult::do_single(c);
+            // zshrs bridge — same as the c:3450 pick: `do_single` wrote the
+            // COMPLETION buffer (the accepted match plus its suffix space),
+            // which in C IS the line. The `menu-select` widget path returns
+            // straight to the editor with no `docomplete` exit sync, so
+            // without this `^Xw ^Xw a` left `-ba` on the line instead of
+            // `-b a`.
+            push_line_to_editor();
         }
     }
     if wasnext != 0 || broken != 0 {
