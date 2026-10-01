@@ -59,6 +59,8 @@ mod compset_pattern_parity;
 mod compsys_local_leak_parity;
 mod completion_keys_parity;
 mod completion_continuation_parity;
+mod completion_old_list_parity;
+mod completion_remove_func_parity;
 mod completion_suffix_parity;
 mod cond_parity;
 mod config_state_parity;

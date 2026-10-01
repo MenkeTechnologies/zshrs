@@ -2137,8 +2137,30 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
             LASTAMBIG.store(0, Ordering::Relaxed);
             // c:976
         }
-        if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            g.clear(); // c:977
+        // c:976 — `amatches = NULL;`. In C that drops a POINTER: after c:1022
+        // and c:1026 (`amatches = pmatches; ... lastmatches = pmatches;`)
+        // the two name the SAME groups, and stay aliased until the next
+        // completion (`invalidatelist`, c:Src/Zle/compresult.c:2331-2345,
+        // ends both at once and clears `hasoldlist`). So every write made to
+        // `amatches` in between — above all `calclist`'s per-group geometry
+        // (`dcount`, `cols`, `lins`, `widths`) — is ALSO in `lastmatches`,
+        // and that is what c:1001 `amatches = lastmatches` hands back for
+        // `compstate[old_list]=keep`. zshrs holds two cloned Vecs, so those
+        // writes stayed in `amatches` alone and the kept list came back with
+        // `lcount` set but no rows or columns: `printlist` drew nothing, and
+        // `_history-complete-older`'s second TAB dropped the listing zsh
+        // keeps (spec-fuzz 9510/case0028, the 9401/0022 cell). While
+        // `hasoldlist` says the alias is live, carry `amatches` into
+        // `lastmatches` before letting go of it.
+        let prev = amatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default(); // c:977
+        if hasoldlist.load(Ordering::Relaxed) != 0 && !prev.is_empty() {
+            if let Ok(mut g) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                *g = prev;
+            }
         }
         mnum.store(0, Ordering::Relaxed); // c:978
         unambig_mnum.store(-1, Ordering::Relaxed); // c:979
