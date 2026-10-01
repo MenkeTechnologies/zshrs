@@ -3305,6 +3305,13 @@ mod tests {
         reset_tab();
         let restore = HASCOMPMOD.load(Ordering::SeqCst);
         HASCOMPMOD.store(false, Ordering::SeqCst);
+        // Start from a shell that has not loaded zsh/complete yet. Any earlier
+        // test that touched a completion builtin left it loaded, and then
+        // c:605's require_module is the no-op it is in C — nothing raises the
+        // flag and the assertion below measured test order, not the port.
+        if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+            crate::ported::module::delete_module(&mut tab, "zsh/complete"); // c:1687
+        }
 
         let ops = empty_ops_thingy();
         let r = bin_zle_complete(

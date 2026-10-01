@@ -84,19 +84,73 @@ pub fn _bash_completions() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::params::setsparam;
 
-    #[test]
-    fn unknown_key_returns_one() {
-        let _g = crate::test_util::global_state_lock();
-        let _ = setsparam("KEYS", "abc");
-        assert_eq!(_bash_completions(), 1);
+    /// Run `_bash_completions` with `$KEYS` = `keys`, published the way a
+    /// completion call publishes it, and return its status plus whatever it
+    /// wrote to fd 2.
+    ///
+    /// `$KEYS` is read-only to scripts (zle_params.c:152), so it cannot be
+    /// assigned; it comes from `keybuf` through `makezleparams` — called with
+    /// `ro = 1` at compcore.c:820 for every completion function — inside the
+    /// scope `endparamscope` closes again (c:839).
+    ///
+    /// No executor runs under `cargo test`, so neither `_main_complete` nor
+    /// `_message` resolves: every arm ends in c:903's `command not found` with
+    /// c:908's 127, and the diagnostic carries the ARM's own `sh:` line. That
+    /// line is the observable that tells the arms apart.
+    fn run_with_keys(keys: &[u8]) -> (i32, String) {
+        use std::io::Read;
+
+        *crate::ported::zle::zle_keymap::keybuf.lock().unwrap() = keys.to_vec();
+        crate::ported::utils::inc_locallevel(); // c:startparamscope
+        crate::ported::zle::zle_params::makezleparams(1); // c:820
+
+        let mut fds = [0 as libc::c_int; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+        let saved_stderr = unsafe { libc::dup(2) };
+        assert!(saved_stderr >= 0, "dup(2) failed");
+        assert!(unsafe { libc::dup2(fds[1], 2) } >= 0, "dup2 onto fd 2 failed");
+
+        let status = _bash_completions();
+
+        unsafe {
+            libc::dup2(saved_stderr, 2);
+            libc::close(saved_stderr);
+            libc::close(fds[1]);
+        }
+        let mut err = String::new();
+        let mut reader = unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fds[0]) };
+        let _ = reader.read_to_string(&mut err);
+
+        crate::ported::params::endparamscope(); // c:839
+        crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+        (status, err)
     }
 
+    /// sh:44 — a key the `case` does not list goes to `_message`, not to
+    /// `_main_complete`.
     #[test]
-    fn returns_one_without_executor() {
+    fn unknown_key_takes_the_message_arm() {
         let _g = crate::test_util::global_state_lock();
-        let _ = setsparam("KEYS", "\\e!");
-        assert_eq!(_bash_completions(), 1);
+        let _z = crate::ported::zle::zle_main::zle_test_setup();
+        let (status, err) = run_with_keys(b"abc");
+        assert_eq!(status, 127, "c:908 — `_message` resolves nowhere without an executor");
+        assert!(
+            err.contains(":44: command not found: _message"),
+            "the last key `c` is not understood, so sh:44 runs `_message`; got `{err}`"
+        );
+    }
+
+    /// sh:33 — `ESC !` completes command names through `_main_complete`.
+    #[test]
+    fn bang_key_takes_the_command_names_arm() {
+        let _g = crate::test_util::global_state_lock();
+        let _z = crate::ported::zle::zle_main::zle_test_setup();
+        let (status, err) = run_with_keys(b"\x1b!");
+        assert_eq!(status, 127, "c:908 — `_main_complete` resolves nowhere without an executor");
+        assert!(
+            err.contains(":33: command not found: _main_complete"),
+            "the last key `!` selects sh:33; got `{err}`"
+        );
     }
 }
