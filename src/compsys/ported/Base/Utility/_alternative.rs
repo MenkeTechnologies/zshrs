@@ -190,10 +190,7 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
 
         // sh:23
         for def in &defs {
-            let mut parts = def.splitn(3, ':');
-            let tag = parts.next().unwrap_or("").to_string();
-            let descr = parts.next().unwrap_or("").to_string();
-            let action = parts.next().unwrap_or("").to_string();
+            let (tag, descr, action) = split_def(def);
 
             // sh:24
             if _requested(&[tag.clone()]) != 0 {
@@ -371,6 +368,32 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
     1
 }
 
+/// sh:24-26 — a spec's tag, description and action, by the parameter
+/// expansions upstream uses:
+///     tag    = ${def%%:*}            everything before the first `:`
+///     descr  = ${${def#*:}%%:*}      the field after it
+///     action = ${def#*:*:}           everything after the second `:`
+/// A `#`/`%%` pattern that does not match leaves the word WHOLE, so a spec
+/// with no colon is its own tag, description AND action, and one with a
+/// single colon keeps the whole spec as its action. `_node` sh:57 relies on
+/// that: `_alternative "_node_files" "_values 'command' 'inspect[…]'"` runs
+/// both specs as commands. `splitn(3, ':')` gave such a spec an EMPTY
+/// action, which sh:30 turns into a message, so `node <TAB>` completed
+/// nothing where zsh lists `inspect` and the script files.
+fn split_def(def: &str) -> (String, String, String) {
+    let tag = def.split(':').next().unwrap_or("");
+    let after_first = def.find(':').map_or(def, |i| &def[i + 1..]);
+    let descr = after_first.split(':').next().unwrap_or("");
+    let action = match def.find(':') {
+        Some(i) => match def[i + 1..].find(':') {
+            Some(j) => &def[i + 1 + j + 1..],
+            None => def,
+        },
+        None => def,
+    };
+    (tag.to_string(), descr.to_string(), action.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +408,19 @@ mod tests {
     fn returns_one_when_no_tag_requested() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(_alternative_impl(&["foo:desc:_files".to_string()]), 1);
+    }
+
+    /// Expected values are zsh's own: `def=SPEC; print -r -- "${def%%:*}|${${def#*:}%%:*}|${def#*:*:}"`.
+    #[test]
+    fn split_def_follows_the_parameter_expansions() {
+        let s = |d: &str| {
+            let (t, de, a) = split_def(d);
+            format!("{}|{}|{}", t, de, a)
+        };
+        assert_eq!(s("files:file:_files -g x"), "files|file|_files -g x");
+        assert_eq!(s("_node_files"), "_node_files|_node_files|_node_files");
+        assert_eq!(s("a:b"), "a|b|a:b");
+        assert_eq!(s("t::"), "t||");
+        assert_eq!(s("t:d:x:y"), "t|d|x:y");
     }
 }
