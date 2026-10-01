@@ -17360,7 +17360,9 @@ pub fn paramsubst(
                 } else {
                     raw_value.is_empty() // c:3189 `!*val`
                 };
-                if !is_set || colon_null {
+                // c:Src/subst.c:3088 (5.9.1/5.9.2) — `if (isset(EXECOPT))`: under
+                // NO_EXEC the unset parameter is not an error.
+                if (!is_set || colon_null) && isset(crate::ported::zsh_h::EXECOPT) {
                     let m = if msg.is_empty() {
                         // c:Src/subst.c:3337 — `zerr("%s: %s", idbeg,
                         // "parameter not set")`. zsh uses the same
@@ -17393,8 +17395,9 @@ pub fn paramsubst(
                 // c:3193 (?msg — not-set only)
                 // Same as :? but trigger ONLY on unset (not on
                 // empty). Direct port of subst.c case '?' which
-                // only checks `vunset` (not `(vunset || !*val)`).
-                if !is_set {
+                // only checks `vunset` (not `(vunset || !*val)`), and only
+                // under EXECOPT (c:3088 in the 5.9.1/5.9.2 sources).
+                if !is_set && isset(crate::ported::zsh_h::EXECOPT) {
                     let m = if msg.is_empty() {
                         // c:3193
                         "parameter not set".to_string() // c:3193

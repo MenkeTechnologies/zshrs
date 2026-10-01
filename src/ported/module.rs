@@ -7249,7 +7249,7 @@ pub fn setconddefs(
     let mut ret = 0; // c:758
     for (i, entry) in c.iter_mut().enumerate() {
         // c:760 while (size--)
-        let want_add = e.map(|es| es[i] != 0).unwrap_or(true); // c:761 if (e && *e++)
+        let want_add = e.map(|es| es[i] != 0).unwrap_or(false); // c:761 if (e && *e++) — NULL e deletes
         if want_add {
             if (entry.flags & CONDF_ADDED) != 0 {
                 continue;
