@@ -1964,6 +1964,13 @@ impl ZshCompiler {
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
                     sub.builder.emit(Op::Pop, 0);
                 }
+                // The stage's words expand on that line too: a `=(…)` /
+                // `<(…)` body in them continues from it.
+                sub.current_sublist_line = if stage_linenos[i] != 0 {
+                    self.rel_lineno(stage_linenos[i])
+                } else {
+                    self.current_sublist_line
+                };
                 // c:Src/exec.c:3722-3724 — pipeline output occupies mfds[1]
                 // before the stage command's redirect list is walked, so
                 // that list's fd-1 write redirects MULTIOS-join the pipe
@@ -7136,11 +7143,18 @@ impl ZshCompiler {
             // (compile happens per-event, before execode), so a bare
             // parse_init/lex_init would STEAL the next SHIN line into this
             // inner program. parse_isolated sets `strin` so the drain EOFs.
-            let prog = crate::vm_helper::parse_isolated(inner);
+            //
+            // c:Src/exec.c:4955 parsecmd — `parse_string(cmd + 2, 0)`: with
+            // reset_lineno 0 the body's lines continue from the running
+            // statement's, as for `$(…)` (see `nested_lineno_base`), so
+            // `false =(nosuchcmd)` on line 2 of an eval says `(eval):2:`.
+            let line = self.current_sublist_line.max(0) as u64;
+            let prog = crate::vm_helper::parse_isolated_at(inner, Some(line));
             let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
             errflag.store(saved_errflag, Ordering::Relaxed);
             if !parse_failed {
                 let mut sub = ZshCompiler::new();
+                sub.nested_lineno_base = Some(line);
                 sub.compile_program(&prog);
                 let sub_end = sub.builder.current_pos();
                 for patch in std::mem::take(&mut sub.return_patches) {
