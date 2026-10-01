@@ -1615,12 +1615,53 @@ fn entersubsh_sigdef() -> Vec<i32> {
     sigs
 }
 
+/// !!! WARNING: RUST-ONLY HELPER — the signal mask the child C forks for an
+/// external carries into `execve`, computed in the parent instead !!!
+///
+/// The child inherits the shell's mask minus what C unblocks on the way to
+/// the exec:
+///
+/// * c:Src/exec.c:1162-1166 (`entersubsh`) — while `intrap`, every trapped,
+///   non-ignored signal is unblocked: the trap dispatcher blocks the signal
+///   being handled, and a command run from the trap body must not inherit it.
+/// * c:Src/exec.c:751 (`execute`) — `child_unblock()` right before the
+///   `zexecve` walk, so SIGCHLD is never blocked in an external.
+///
+/// Without this a command run from a `trap '...' USR2` handler started with
+/// SIGUSR2 blocked, and every external started with SIGCHLD blocked.
+fn execute_sigmask() -> libc::sigset_t {
+    use crate::ported::signals_h::SIGCOUNT;
+    use crate::ported::zsh_h::ZSIG_IGNORED;
+    unsafe {
+        let mut mask: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut mask);
+        libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
+        if crate::ported::signals::intrap.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            // c:1163-1166 — `for (sig = 1; sig <= SIGCOUNT; sig++) if
+            // (sigtrapped[sig] && sigtrapped[sig] != ZSIG_IGNORED)
+            // signal_unblock(signal_mask(sig));`
+            let trapped = crate::ported::signals::sigtrapped
+                .lock()
+                .map(|t| t.clone())
+                .unwrap_or_default();
+            for sig in 1..=SIGCOUNT {
+                let st = trapped.get(sig as usize).copied().unwrap_or(0);
+                if st != 0 && st != ZSIG_IGNORED {
+                    libc::sigdelset(&mut mask, sig);
+                }
+            }
+        }
+        libc::sigdelset(&mut mask, libc::SIGCHLD); // c:751 `child_unblock();`
+        mask
+    }
+}
+
 /// !!! WARNING: RUST-ONLY HELPER — the `posix_spawn(2)` call standing in for
 /// `execve(2)` in `zexecve_spawn` !!!
 ///
 /// argv and path are unmetafied first, as C's `zexecve` does at c:510-513
-/// (`$'\xff'` reaches the child as the raw byte). The signal mask is
-/// inherited; the dispositions the child starts with are `entersubsh_sigdef`'s.
+/// (`$'\xff'` reaches the child as the raw byte). The child starts with
+/// `execute_sigmask`'s mask and `entersubsh_sigdef`'s dispositions.
 ///
 /// `in_place` is c:Src/exec.c:4369 in a child already forked for the command
 /// (`last1 = forked = 1`, c:3063): `execve(2)` replaces this process instead
@@ -1646,11 +1687,13 @@ fn posix_spawn_argv(
     let mut envp_ptrs: Vec<*mut libc::c_char> = envp.iter().map(|c| c.as_ptr() as *mut _).collect();
     envp_ptrs.push(std::ptr::null_mut());
     let sigdef = entersubsh_sigdef();
+    let sigmask = execute_sigmask();
     unsafe {
         if in_place {
             for &sig in &sigdef {
                 libc::signal(sig, libc::SIG_DFL);
             }
+            libc::pthread_sigmask(libc::SIG_SETMASK, &sigmask, std::ptr::null_mut());
             libc::execve(cpth.as_ptr(), argv_ptrs.as_ptr() as *const *const _, envp_ptrs.as_ptr() as *const *const _);
             return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOEXEC));
         }
@@ -1665,7 +1708,11 @@ fn posix_spawn_argv(
             libc::sigaddset(&mut dfl, sig);
         }
         libc::posix_spawnattr_setsigdefault(&mut attrs, &dfl);
-        libc::posix_spawnattr_setflags(&mut attrs, libc::POSIX_SPAWN_SETSIGDEF as _);
+        libc::posix_spawnattr_setsigmask(&mut attrs, &sigmask);
+        libc::posix_spawnattr_setflags(
+            &mut attrs,
+            (libc::POSIX_SPAWN_SETSIGDEF | libc::POSIX_SPAWN_SETSIGMASK) as _,
+        );
         let mut pid: libc::pid_t = 0;
         let rc = libc::posix_spawn(
             &mut pid,
