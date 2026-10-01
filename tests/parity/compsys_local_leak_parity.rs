@@ -217,6 +217,41 @@ fn approximate_does_not_leave_shadow_globals() {
     );
 }
 
+/// zsh 5.9.2's `_complete_help` (`^Xh`) defines its `compadd`/`compcall`/
+/// `zstyle` overrides inline (sh:12-15) and drops them with `unfunction`
+/// (sh:45-47). The port also called the development-branch `_shadow` /
+/// `_unshadow` pair, which left `.shadow.depth` / `.shadow.stack` behind.
+///
+/// Liveness is the report itself: `tags in context` is printed only by the
+/// widget, never typed, so a session where `^Xh` did nothing reports `no`.
+#[test]
+fn complete_help_does_not_leave_shadow_globals() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let check = sq(
+        "integer v=$(( ${#${(k)parameters[(I).shadow*]}} == 0 )); print -r -- VERDICT$v",
+    );
+    let driver = format!(
+        "{OPEN_PUMPED}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump
+zpty -w -n w 'print /usr/li'; pump
+zpty -w -n w $'\\030h'; sleep 3; pump
+zpty -w -n w $'\\025'; pump
+zpty -w w {check}; pump
+zpty -d w 2>/dev/null
+if [[ $all == *VERDICT1* && $all == *'tags in context'* ]]; then print \"L=yes\"; else print \"L=no\"; fi
+"
+    );
+    assert_same_verdict(
+        &driver,
+        "L",
+        "^Xh left `.shadow.*` globals after the help scan",
+    );
+}
+
 /// `_extensions` sh:11 declares `expl` and `mfiles`; sh:30's
 /// `compadd -O mfiles` writes the second one BY NAME, so it is a direct
 /// write rather than a `_description` fill.
