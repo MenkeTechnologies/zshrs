@@ -3067,6 +3067,13 @@ pub fn bin_fg(
     // descriptive title rather than `zsh`.
     if OPT_ISSET(ops, b'Z') {
         // c:2425
+        // zsh 5.9.x Src/jobs.c:2345-2348 — `if(isset(RESTRICTED)) {
+        // zwarnnam(name, "-Z is restricted"); return 1; }`. Dropped from
+        // the upstream tree with the option itself; 5.9.2 still has it.
+        if isset(crate::ported::zsh_h::RESTRICTED) {
+            zwarnnam(name, "-Z is restricted");
+            return 1;
+        }
         if argv.is_empty() || argv.len() > 1 {
             // c:2428
             zwarnnam(name, "-Z requires one argument"); // c:2429
