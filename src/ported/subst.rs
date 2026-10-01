@@ -1857,9 +1857,9 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
             let mut cur = String::new();
             while i < chars.len() {
                 let c = chars[i];
-                // Bnull/Bnullkeep (c:612-617) — the marker + its escaped char
+                // Bnull/Bnullkeep (c:613-618) — the marker + its escaped char
                 // are copied verbatim and never treated as separators.
-                if c == '\u{e099}' || c == '\u{e09a}' {
+                if c == Bnull || c == Bnullkeep {
                     cur.push(c);
                     i += 1;
                     if i < chars.len() {
