@@ -347,15 +347,30 @@ pub fn shingetline() -> String {
     // write boundary, so a legacy byte piped into the shell now comes
     // back out verbatim instead of as U+FFFD.
     let mut bytes: Vec<u8> = Vec::new();
+    // c:274 — `int q = queue_signal_level();`
+    let q = crate::ported::signals_h::queue_signal_level();
+    // c:277-278 — `winch_unblock(); dont_queue_signals();`: signals are
+    // handled while the shell sits in read(2) waiting for a line, so a job
+    // that dies meanwhile is reaped and reported (NOTIFY) at once. With a
+    // queue level left raised the SIGCHLD stayed queued and its zombie
+    // unreaped until the line arrived.
+    crate::ported::signals_h::winch_unblock();
+    crate::ported::signals_h::dont_queue_signals();
     loop {
-        let c = shingetchar(); // c:279
-        if c < 0 {
-            break; // c:280 — EOF
+        let c = shingetchar(); // c:280
+        if c < 0 || c == b'\n' as i32 {
+            // c:281-283 — `winch_block(); restore_queue_signals(q);`
+            crate::ported::signals_h::winch_block();
+            crate::ported::signals_h::restore_queue_signals(q);
+            if c == b'\n' as i32 {
+                bytes.push(b'\n'); // c:284-285 — `*p++ = '\n';`
+            }
+            break;
         }
-        bytes.push(c as u8); // c:291 — `*p++ = c;`
-        if c == b'\n' as i32 {
-            break; // c:280-283 — `if (c == '\n') *p++ = '\n';`
-        }
+        // c:293-297 — byte (metafied in decode_script_bytes below). The
+        // c:298-308 BUFSIZ flush re-queues signals only around its
+        // zrealloc; a Vec push needs no such window.
+        bytes.push(c as u8);
     }
     crate::script_bytes::decode_script_bytes(&bytes)
 }
