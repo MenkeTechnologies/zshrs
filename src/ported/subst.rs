@@ -19817,7 +19817,23 @@ pub fn paramsubst(
                             let target = flnum.max(1);
                             let mut count: u32 = 0;
                             for start in 0..=total {
-                                for k in 0..=(total - start) {
+                                // c:Src/glob.c:3032-3034 — `set_pat_start(p, t-s);
+                                // if (pattrylen(p, t, umlen, …))` with getmatch's
+                                // PAT_NOANCH program (c:2665): ONE try per start
+                                // position finds the longest match from here, and
+                                // only a start that matches at all is searched for
+                                // its shortest match, bounded by that longest one
+                                // (c:3043 `ptr < mpos`). Searching every length at
+                                // every start made each value O(n^3) pattern tries:
+                                // `_ack`'s `${(S)…#*no\]}` over `ack --help-types`
+                                // took seconds where zsh takes a millisecond.
+                                let notstart_ = if start > 0 { crate::ported::zsh_h::PAT_NOTSTART } else { 0 };
+                                if !gms(sl(start, total), &p, ioff(start), notstart_ | crate::ported::zsh_h::PAT_NOANCH) {
+                                    continue;
+                                }
+                                let mpos_b = bidx[start] + (crate::ported::pattern::patmatchlen().max(0) as usize);
+                                let kmax = val[bidx[start]..mpos_b.min(val.len())].chars().count();
+                                for k in 0..=kmax {
                                     if gms(
                                         sl(start, start + k),
                                         &p,
@@ -19839,14 +19855,28 @@ pub fn paramsubst(
                             }
                             return None;
                         }
-                        for k in 0..=total {
-                            let prefix: String = cv[..k].iter().collect();
+                        // c:Src/glob.c:2918-2921 — `if (pattrylen(p, s, umltot, …))`
+                        // with getmatch's PAT_NOANCH program (c:2665) first: when
+                        // no prefix matches at all, igetmatch is done after that
+                        // ONE try; otherwise the brute-force shortest search runs
+                        // only up to the longest match (c:2927 `send = s + mlen`).
+                        // Trying every prefix of a non-matching value was O(n^2)
+                        // pattern tries — `_ack`'s `${…#*--\[no\]}` over the whole
+                        // `ack --help-types` text took ~10s where zsh takes 66µs.
+                        if !gms(sl(0, total), &p, 0, crate::ported::zsh_h::PAT_NOANCH) {
+                            return None;
+                        }
+                        let mlen_b = (crate::ported::pattern::patmatchlen().max(0) as usize).min(val.len());
+                        let kmax = val[..mlen_b].chars().count();
+                        for k in 0..=kmax {
                             // (#b) capture wiring via glob_match_static.
-                            if gms(&prefix, &p, 0, if k < total { crate::ported::zsh_h::PAT_NOTEND } else { 0 }) { // c:2929 set_pat_end(p, *t)
+                            if gms(sl(0, k), &p, 0, if k < total { crate::ported::zsh_h::PAT_NOTEND } else { 0 }) { // c:2929 set_pat_end(p, *t)
                                 return Some((0, k));
                             }
                         }
-                        None
+                        // c:2935 — no shorter prefix matched: `mlen` is still
+                        // the first try's match length.
+                        Some((0, kmax))
                     })();
                     if ben != 0 {
                         // c:Src/glob.c:2575-2645 get_match_ret — compose

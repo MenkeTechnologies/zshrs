@@ -250,6 +250,47 @@ print -r -- "mc=${{+functions[_main_complete]}} cp=${{+functions[_complete]}} nm
         );
     }
 
+    /// compdump:135-138 writes one `autoload -Uz $_compautos[$_c] $_c` line
+    /// per `#autoload` file that carries options, and `compinit -C` sources
+    /// the dump, so `_call_program`'s `+X` loads the body at compinit time.
+    /// The native dump reader registered only an undefined stub, and
+    /// `functions _call_program` printed `# undefined` where zsh prints the
+    /// body. Hand-written dump + fpath, so no reference shell is needed.
+    #[test]
+    fn dump_compautos_plus_x_loads_the_function() {
+        let dir = std::env::temp_dir().join(format!("zshrs-dump-plusx-{}", std::process::id()));
+        let fp = dir.join("fp");
+        std::fs::create_dir_all(&fp).expect("fpath dir");
+        std::fs::write(fp.join("_plusx_probe"), "#autoload +X\n\nprint -r -- plusx-body\n")
+            .expect("probe file");
+        let dump = dir.join("dump");
+        std::fs::write(
+            &dump,
+            "#files: 1\tversion: 5.9\n\n_comps=(\n)\n\n_services=(\n)\n\n_patcomps=(\n)\n\n\
+             _postpatcomps=(\n)\n\n_compautos=(\n'_plusx_probe' '+X'\n)\n\nautoload -Uz\n\n\
+             autoload -Uz +X _plusx_probe\n",
+        )
+        .expect("dump");
+        let script = format!(
+            "fpath=({fp})\nautoload -U compinit\ncompinit -C -d {dump}\nfunctions _plusx_probe",
+            fp = fp.display(),
+            dump = dump.display()
+        );
+        let o = Command::new(zshrs_bin())
+            .args(["-f", "-c", &script])
+            .env_remove("ZSHRS_CACHE")
+            .env("HOME", &dir)
+            .env("ZDOTDIR", &dir)
+            .output()
+            .expect("zshrs");
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            out.contains("plusx-body") && !out.contains("undefined"),
+            "`autoload -Uz +X` from the dump must load the body: {out:?}"
+        );
+    }
+
     /// compinit sh:544 guards `zle -C menu-select .menu-select _main_complete`
     /// with `zle -la menu-select`, so without `zsh/complist` it binds nothing
     /// and says nothing. The native compinit ran the `zle -C` unguarded and

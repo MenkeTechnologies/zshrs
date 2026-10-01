@@ -6852,6 +6852,41 @@ pub fn patmatch(
                         code[br + I_NEXT..br + I_NEXT + 4].try_into().unwrap();
                     let br_next = u32::from_le_bytes(br_next_bytes) as usize;
                     let operand = br + I_BODY + br_extra;
+                    // !!! RUST-ONLY DETAIL !!! C recurses into every
+                    // alternative (c:3258 `ret = patmatch(opnd)`). When the
+                    // alternative's operand is a P_EXACTLY that the input
+                    // cannot match, that recursion fails at its first node
+                    // with no side effect, so it is decided here instead —
+                    // with the P_EXACTLY arm's own failure test, under the
+                    // same conditions in which that arm compares raw bytes
+                    // (no `(#aN)` budget, no case folding). Restricted to
+                    // P_BRANCH: a P_WBRANCH records a visit mark before it
+                    // recurses (c:3245-3248), which must still happen.
+                    // compdump's `$^fpath/(${(o~j.|.)…})(N:t)` is a
+                    // ~2000-way alternation tried against every file in
+                    // every fpath directory; paying a full patmatch frame
+                    // plus an `rpat` clone per alternative made it seconds
+                    // of CPU in the debug build where zsh takes milliseconds.
+                    if br_op == P_BRANCH
+                        && (glob_flags & (0xff | GF_IGNCASE | GF_LCMATCHUC)) == 0
+                        && code.get(operand + I_OP) == Some(&P_EXACTLY)
+                    {
+                        let body = operand + I_BODY;
+                        let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap())
+                            as usize;
+                        let lit = &code[body + 4..body + 4 + len];
+                        if string.as_bytes().get(s_off..s_off + len) != Some(lit) {
+                            if br_next == 0 {
+                                return None;
+                            }
+                            let op_next = code[br_next + I_OP];
+                            if op_next != P_BRANCH && op_next != P_WBRANCH {
+                                return None;
+                            }
+                            br = br_next;
+                            continue;
+                        }
+                    }
                     let mut sub_state = state.clone();
                     // c:Src/pattern.c:3210-3248 — P_WBRANCH per-position
                     // visit guard. Allocate a bitmap sized to the input
@@ -7668,6 +7703,9 @@ mod tests {
     #[test]
     fn alternation_literal_branches_match_like_zsh() {
         let _g = crate::test_util::global_state_lock();
+        // `(#i)` / `(#a1)` are EXTENDED_GLOB syntax.
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         assert!(patmatch("(ab|a)c", "ac"));
         assert!(patmatch("(abc|ab)", "ab"));
         assert!(!patmatch("(abc|ab)", "a"));
@@ -7685,6 +7723,7 @@ mod tests {
         assert!(patmatch(&pat, "_n0"));
         assert!(!patmatch(&pat, "_n2000"));
         assert!(!patmatch(&pat, "_n"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     #[test]
