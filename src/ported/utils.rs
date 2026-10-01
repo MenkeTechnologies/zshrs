@@ -12218,89 +12218,86 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
                     *m = 1;
                 }
             }
-            // c:utils.c:7072-7138 — `\u` (4-hex) / `\U` (8-hex)
-            // Unicode codepoint escapes. Always interpreted; the C
-            // source's `case 'U':` / `case 'u':` arms have no flag
-            // gating (only the GETKEY_UPDATE_OFFSET bookkeeping). C
-            // calls `ucs4tomb(wval, t)` which writes UTF-8 bytes.
-            // Previously these were absent from `getkeystring_with`,
-            // so `echo -e "\U00000041"` emitted literal `\U00000041`
-            // instead of 'A'.
-            Some('u') => {
-                consumed += 1;
-                // c:utils.c:7077-7084 — extra `-6` when the escape precedes
-                // the cursor (checked at the 'u', i.e. offset bs_off+1).
-                if update_off {
-                    if let Some(m) = misc.as_deref_mut() {
-                        if ((bs_off + 1) as i32) < *m {
-                            *m -= 6;
-                        }
-                    }
-                }
-                let mut hex = String::new();
-                for _ in 0..4 {
-                    if let Some(&c) = chars.peek() {
-                        if c.is_ascii_hexdigit() {
-                            hex.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                // c:utils.c:7085 `wval = 0;` BEFORE the digit loop, and
-                // c:7087-7095 leaves it untouched when the first char is not
-                // a hex digit (`s--; break;`). So ZERO digits is not "not an
-                // escape" — it emits codepoint 0 via `ucs4tomb(wval, t)`
-                // (c:7101). `\u` → one NUL byte, `\uzz` → NUL + "zz". An Err
-                // on the empty parse pushed nothing at all.
-                let val = u32::from_str_radix(&hex, 16).unwrap_or(0);
-                if let Some(ch) = char::from_u32(val) {
-                    result.push(ch);
-                    // c:utils.c:7123-7124 — add one per output byte,
-                    // checked at the last consumed input byte.
-                    if update_off {
-                        if let Some(m) = misc.as_deref_mut() {
-                            if ((consumed - 1) as i32) < *m {
-                                *m += ch.len_utf8() as i32;
-                            }
-                        }
-                    }
-                }
-            }
-            Some('U') => {
+            // c:utils.c:7072-7138 — `\u` (4-hex) / `\U` (8-hex) Unicode
+            // codepoint escapes. `case 'U':` falls through into `case 'u':`
+            // (c:7072-7076); only the digit count and the
+            // GETKEY_UPDATE_OFFSET bookkeeping differ. The value is converted
+            // by `ucs4tomb(wval, t)` (c:7101), i.e. in the CURRENT LOCALE, not
+            // as blind UTF-8: under `LC_ALL=C` it fails with "character not
+            // in range" and the escape is not decoded.
+            Some(uc @ ('u' | 'U')) => {
                 consumed += 1;
                 // c:utils.c:7073-7084 — `\U` extra `-4` (c:7073) then the
-                // shared `\u` `-6` (c:7077), both gated at offset bs_off+1.
+                // shared `-6` (c:7077), both gated at offset bs_off+1.
                 if update_off {
                     if let Some(m) = misc.as_deref_mut() {
                         if ((bs_off + 1) as i32) < *m {
-                            *m -= 10;
+                            *m -= if uc == 'U' { 10 } else { 6 };
                         }
                     }
                 }
-                let mut hex = String::new();
-                for _ in 0..8 {
-                    if let Some(&c) = chars.peek() {
-                        if c.is_ascii_hexdigit() {
-                            hex.push(chars.next().unwrap());
+                // c:7085-7095 — `wval = 0;` then up to 4 / 8 hex digits.
+                // ZERO digits still emits codepoint 0: `\u` → one NUL byte,
+                // `\uzz` → NUL + "zz".
+                let mut wval: u32 = 0;
+                for _ in 0..(if uc == 'u' { 4 } else { 8 }) {
+                    match chars.peek().and_then(|c| c.to_digit(16)) {
+                        Some(d) => {
+                            chars.next();
                             consumed += 1;
-                        } else {
-                            break;
+                            wval = wval.wrapping_mul(16).wrapping_add(d);
+                        }
+                        None => break,
+                    }
+                }
+                // c:7101 — `count = ucs4tomb(wval, t);`
+                let mut tbuf = [0u8; 16];
+                let count = ucs4tomb(wval, &mut tbuf);
+                if count == -1 {
+                    // c:7102-7121 — the conversion failed (ucs4tomb already
+                    // raised the zerr). Under GETKEY_DOLLAR_QUOTE the rest of
+                    // the input is copied through undecoded (c:7104-7115);
+                    // otherwise the output ends here (c:7117-7119).
+                    if (how & crate::ported::zsh_h::GETKEY_DOLLAR_QUOTE as u32) != 0 {
+                        for rest in chars.by_ref() {
+                            // c:7105-7108 — `if (s - sstart > *misc) (*misc)++;`
+                            if update_off {
+                                if let Some(m) = misc.as_deref_mut() {
+                                    if (consumed as i32) > *m {
+                                        *m += 1;
+                                    }
+                                }
+                            }
+                            consumed += rest.len_utf8();
+                            result.push(rest);
+                        }
+                    }
+                    flush_tbuf(&mut result, &mut tbuf_mark, &mut ignoring);
+                    return (result, consumed); // c:7121
+                }
+                // c:7122-7124 — add one per output byte, checked at the last
+                // consumed input byte.
+                if update_off {
+                    if let Some(m) = misc.as_deref_mut() {
+                        if ((consumed - 1) as i32) < *m {
+                            *m += count;
                         }
                     }
                 }
-                // c:utils.c:7085 — same `wval = 0` default as the `\u` arm
-                // above: `\U` with no hex digits emits codepoint 0, not
-                // nothing.
-                let val = u32::from_str_radix(&hex, 16).unwrap_or(0);
-                if let Some(ch) = char::from_u32(val) {
-                    result.push(ch);
-                    // c:utils.c:7123-7124 — add one per output byte.
-                    if update_off {
-                        if let Some(m) = misc.as_deref_mut() {
-                            if ((consumed - 1) as i32) < *m {
-                                *m += ch.len_utf8() as i32;
+                // c:7127-7137 — the converted bytes are metafied (`imeta`)
+                // on the way out. Well-formed UTF-8 is a char a `String`
+                // holds as-is; any other byte >= 0x80 (a non-UTF-8 locale's
+                // encoding, or a surrogate's UTF-8 form) gets Meta + byte^32.
+                let bytes = &tbuf[..count as usize];
+                match std::str::from_utf8(bytes) {
+                    Ok(v) => result.push_str(v),
+                    Err(_) => {
+                        for &b in bytes {
+                            if b < 0x80 {
+                                result.push(b as char);
+                            } else {
+                                result.push('\u{83}');
+                                result.push(char::from(b ^ 32));
                             }
                         }
                     }
