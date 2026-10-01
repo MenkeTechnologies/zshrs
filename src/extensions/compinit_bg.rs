@@ -40,8 +40,9 @@ impl crate::ported::vm_helper::ShellExecutor {
                     // compinit sh:337/sh:541 — `compdef -na` autoloads every
                     // completer it registers, so `${(k)functions}` holds a stub
                     // for each one (see `register_autoload_stubs`).
-                    let mut stubs = crate::compsys::ported::compinit::register_autoload_stubs(
-                        crate::compsys::ported::compinit::autoload_stub_names(&bg.result),
+                    let mut stubs = crate::compsys::ported::compinit::register_scanned_autoload_stubs(
+                        &bg.result,
+                        &self.fpath,
                     );
                     // `autoload_stub_names` reads `result.files`, which only a
                     // fresh `$fpath` scan fills: `load_from_cache`
@@ -143,9 +144,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         // compinit sh:337/sh:541 — `compdef -na` autoloads every completer it
         // registers, so `${(k)functions}` holds a stub for each one (see
         // `register_autoload_stubs`).
-        crate::compsys::ported::compinit::register_autoload_stubs(
-            crate::compsys::ported::compinit::autoload_stub_names(&result),
-        );
+        crate::compsys::ported::compinit::register_scanned_autoload_stubs(&result, &self.fpath);
 
         // Set up _comps associative array
         self.set_assoc(

@@ -3090,8 +3090,9 @@ impl ShellExecutor {
                 // `_main_complete` was among the missing names, so the
                 // completion widgets compinit binds at sh:556-560 all called an
                 // undefined function and tab inserted nothing.
-                let mut stubs = crate::compsys::ported::compinit::register_autoload_stubs(
-                    crate::compsys::ported::compinit::autoload_stub_names(&bg.result),
+                let mut stubs = crate::compsys::ported::compinit::register_scanned_autoload_stubs(
+                    &bg.result,
+                    &self.fpath,
                 );
                 // `autoload_stub_names` reads `result.files`, which only a
                 // fresh `$fpath` scan fills — the background thread also

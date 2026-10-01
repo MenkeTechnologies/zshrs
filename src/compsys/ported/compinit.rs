@@ -854,6 +854,118 @@ where
     added
 }
 
+/// sh:311 / sh:523 — `autoload -rUz NAME` for every file a fresh `$fpath`
+/// scan registered (`compdef -na` for a `#compdef` file, the `#autoload`
+/// arm directly).
+///
+/// `-r` is what [`register_autoload_stubs`] leaves out: check_autoload
+/// (c:Src/builtin.c:3195-3225) resolves the name through `getfpfunc` at
+/// autoload time and records the fpath element it was found in as
+/// `shf->filename` with `PM_LOADDIR`, so the later load (loadautofn
+/// c:5747-5753) searches ONLY that directory instead of walking `$fpath`
+/// again. Observable two ways: `functions NAME` prints
+/// `builtin autoload -XUz <dir>`, and a load never consults a `.zwc`
+/// digest of an EARLIER fpath element — with a corrupt `fp.zwc` ahead of
+/// the distribution tree, zsh warns "invalid zwc file" only for the
+/// functions that live in `fp`, while every stub without the directory
+/// re-walked `$fpath` and warned for `_main_complete`, `_normal`, ….
+///
+/// The directory is `getfpfunc`'s answer: the leftmost element holding a
+/// digest that defines the name, a `<elem>/<name>.zwc`, or `<elem>/<name>`.
+/// The scan already found the leftmost `<elem>/<name>` (sh:509 first claim
+/// wins), so when no element ahead of it carries any `.zwc` the two answers
+/// are the same element and the per-name `getfpfunc` walk — 3 stats per
+/// element per name, ~16k names on a large fpath — is skipped. Any other
+/// case asks `getfpfunc` itself.
+///
+/// c:3216-3226 — a relative element is made absolute against the cwd and
+/// resolved with `xsymlink`. An existing still-undefined entry without a
+/// load directory gets one (c:3195-3199, `PM_UNDEFINED` arm); a defined
+/// function is left alone, as in [`register_autoload_stubs`]. Returns the
+/// number of stubs added.
+pub fn register_scanned_autoload_stubs(result: &CompInitResult, fpath: &[PathBuf]) -> usize {
+    use crate::ported::zsh_h::{PM_LOADDIR, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED};
+
+    // Leftmost index of each element, and of the first one carrying any digest.
+    let mut elem_index: HashMap<&Path, usize> = HashMap::new();
+    for (i, d) in fpath.iter().enumerate() {
+        elem_index.entry(d.as_path()).or_insert(i);
+    }
+    let first_digest = fpath.iter().position(|d| {
+        let mut zwc = d.as_os_str().to_owned();
+        zwc.push(".zwc");
+        Path::new(&zwc).exists()
+            || fs::read_dir(d).is_ok_and(|rd| {
+                rd.flatten()
+                    .any(|e| e.file_name().to_string_lossy().ends_with(".zwc"))
+            })
+    });
+
+    let resolved: Vec<(&str, Option<String>)> = result
+        .files
+        .iter()
+        .filter(|f| matches!(f.def, CompFileDef::CompDef(_) | CompFileDef::Autoload(_)))
+        .map(|f| {
+            let scanned_elem = f
+                .path
+                .parent()
+                .and_then(|p| elem_index.get(p).map(|&i| (i, p)));
+            let dir = match scanned_elem {
+                Some((i, p)) if first_digest.is_none_or(|fd| fd >= i) => {
+                    Some(p.to_string_lossy().into_owned())
+                }
+                _ => {
+                    // c:3216 `getfpfunc(shf->node.nam, NULL, &dir_path, NULL, 1)`
+                    let mut dir: Option<String> = None;
+                    let mut dump = None;
+                    crate::ported::exec::getfpfunc(&f.name, &mut dir, None, 1, &mut dump)
+                        .and(dir)
+                }
+            };
+            // c:3218-3222 — a relative element is absolutized and resolved.
+            let dir = dir.map(|d| {
+                if d.starts_with('/') {
+                    d
+                } else {
+                    let abs = format!("{}/{}", crate::ported::compat::zgetcwd(), d);
+                    crate::ported::utils::xsymlink(&abs).unwrap_or(abs)
+                }
+            });
+            (f.name.as_str(), dir)
+        })
+        .collect();
+
+    let flags = (PM_UNDEFINED | PM_UNALIASED | PM_ZSHSTORED) as i32;
+    let mut added = 0usize;
+    let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() else {
+        return 0;
+    };
+    for (name, dir) in resolved {
+        if let Some(shf) = tab.get_mut(name) {
+            // c:3195-3199 — only a still-undefined function without a load
+            // directory is resolved; anything else keeps what it has.
+            let undefined = shf.node.flags as u32 & PM_UNDEFINED != 0;
+            let has_dir = shf.filename.is_some() && shf.node.flags as u32 & PM_LOADDIR != 0;
+            if undefined && !has_dir {
+                if let Some(d) = dir {
+                    shf.filename = Some(d); // c:3223
+                    shf.node.flags |= PM_LOADDIR as i32; // c:3224
+                }
+            }
+            continue;
+        }
+        let mut stub = crate::ported::hashtable::shfunc_autoload(name);
+        stub.node.flags = flags;
+        if let Some(d) = dir {
+            stub.filename = Some(d); // c:3223
+            stub.node.flags |= PM_LOADDIR as i32; // c:3224
+        }
+        tab.add(stub);
+        added += 1;
+    }
+    added
+}
+
 /// Autoload-stub names contributed by a completed scan — every file
 /// whose header was `#compdef` or `#autoload`, which is exactly the set
 /// compinit hands to `compdef -na` / `autoload -rUz` at sh:537-547.
@@ -3613,6 +3725,73 @@ mod tests {
         assert!(tab.get("_zzt_readme").is_none());
         drop(tab);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Regression: the scan's stubs are `autoload -rUz` (compinit sh:311,
+    /// sh:523), and `-r` records the fpath element the name resolves to as
+    /// `shf->filename` with `PM_LOADDIR` (check_autoload,
+    /// c:Src/builtin.c:3216-3224). Without it every later load re-walked
+    /// `$fpath`, so a corrupt `<elem>.zwc` ahead of the distribution tree
+    /// made zshrs warn "invalid zwc file" for `_main_complete`, `_normal`,
+    /// … on TAB where zsh warns only for the functions living in that
+    /// element (`--layout-fuzz` layout digest-corrupt-D). `functions NAME`
+    /// shows the difference as `builtin autoload -XUz <dir>`.
+    #[test]
+    fn scan_stubs_record_their_resolved_load_directory() {
+        use crate::ported::zsh_h::{PM_LOADDIR, PM_UNDEFINED};
+        let _g = crate::test_util::global_state_lock();
+        let base = std::env::temp_dir().join("zshrs_compinit_loaddir_test");
+        let early = base.join("early");
+        let late = base.join("late");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&early).unwrap();
+        fs::create_dir_all(&late).unwrap();
+        fs::write(early.join("_zzr_b"), "#autoload\n").unwrap();
+        fs::write(late.join("_zzr_a"), "#compdef zzra\n").unwrap();
+        fs::write(late.join("_zzr_pre"), "#compdef zzrpre\n").unwrap();
+        // The same name in both: the leftmost element is the one recorded.
+        fs::write(early.join("_zzr_dup"), "#compdef zzrdup\n").unwrap();
+        fs::write(late.join("_zzr_dup"), "#compdef zzrdup2\n").unwrap();
+
+        let names = ["_zzr_a", "_zzr_b", "_zzr_pre", "_zzr_dup"];
+        if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+            for n in names {
+                t.remove(n);
+            }
+            // An undefined stub made earlier WITHOUT a directory (a plain
+            // `autoload -Uz`) is resolved too: c:3195 only needs PM_UNDEFINED.
+            t.add(crate::ported::hashtable::shfunc_autoload("_zzr_pre"));
+        }
+
+        let fpath = [early.clone(), late.clone()];
+        let result = compinit(&fpath);
+        assert_eq!(register_scanned_autoload_stubs(&result, &fpath), 3);
+
+        let tab = crate::ported::hashtable::shfunctab_lock();
+        let tab = tab.read().unwrap();
+        for (n, want) in [
+            ("_zzr_a", &late),
+            ("_zzr_b", &early),
+            ("_zzr_pre", &late),
+            ("_zzr_dup", &early),
+        ] {
+            let shf = tab.get(n).unwrap_or_else(|| panic!("{n} has no stub"));
+            let flags = shf.node.flags as u32;
+            assert!(flags & PM_UNDEFINED != 0, "{n} must stay undefined");
+            assert!(flags & PM_LOADDIR != 0, "{n} must carry PM_LOADDIR");
+            assert_eq!(
+                shf.filename.as_deref(),
+                Some(want.to_string_lossy().as_ref()),
+                "{n} must load from the element it resolved to"
+            );
+        }
+        drop(tab);
+        if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+            for n in names {
+                t.remove(n);
+            }
+        }
+        let _ = fs::remove_dir_all(&base);
     }
 
     /// Regression: `compinit -C -d FILE` takes the sh:515-518 branch, which
