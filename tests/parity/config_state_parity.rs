@@ -79,7 +79,7 @@ zpwr__dump_state() {
     OSTYPE MACHTYPE VENDOR CPUTYPE HOST HOSTNAME LOGCHECK WATCHFMT
     ZSHRS_VERSION ZSH_VERSION ZSH_PATCHLEVEL ZSH_NAME
     __CF_USER_TEXT_ENCODING PWD OLDPWD PATH path fpath FPATH cdpath
-    manpath MANPATH module_path
+    manpath MANPATH module_path MODULE_PATH
   )
   local -A skip
   for k in $volatile; do skip[$k]=1; done
