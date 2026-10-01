@@ -314,7 +314,20 @@ pub(crate) fn psub_pending_file_add(nam: &str) {
 /// job's filelist (getproc parks the fd there via
 /// `addfilelist(NULL, fd)`, Src/exec.c:5025+).
 fn close_pending_psub_fds() {
-    let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
+    close_pending_psub_from(PSUB_SCOPE_DEPTH.with(|d| d.get()));
+}
+
+/// c:Src/jobs.c:1452-1460 cleanfilelists — at shell exit EVERY job's
+/// filelist is deleted, whichever scope parked it, so the pending `>(cmd)`
+/// fds and `=(cmd)` temp files of all depths go. Called from
+/// `jobs::cleanfilelists`: these lists stand in for the jobtab filelists
+/// (see PSUB_PENDING_FDS).
+pub(crate) fn cleanfilelists_pending() {
+    close_pending_psub_from(0);
+}
+
+/// The drain behind both: everything parked at scope `depth` or deeper.
+fn close_pending_psub_from(depth: usize) {
     PSUB_PENDING_FDS.with(|v| {
         v.borrow_mut().retain(|&(d, fd)| {
             if d >= depth {
@@ -20929,6 +20942,13 @@ impl fusevm::ShellHost for ZshrsHost {
         if status.is_none() {
             EXEC_DASH.with(|c| c.set(exec_dash));
             JOB_TEXT.with(|t| *t.borrow_mut() = job_text);
+        } else {
+            // c:Src/exec.c:5643-5644 execshfunc — `if (!list_pipe)
+            // deletefilelist(last_file_list, 0);` once doshfunc returns: the
+            // `=(cmd)` temp files and `>(cmd)` fds made for the call's
+            // arguments go with it, also when the body ran `exit` (that only
+            // sets exit_pending, the function still returns here first).
+            close_pending_psub_fds();
         }
 
         // Anonymous functions (`() { … } args`, compiled by

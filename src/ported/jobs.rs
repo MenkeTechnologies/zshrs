@@ -1599,6 +1599,12 @@ pub fn cleanfilelists(jobtab: &mut [job]) {
     for job in jobtab.iter_mut().skip(1) {
         deletefilelist(job, false);
     }
+    // !!! WARNING: RUST-ONLY — the `=(cmd)` temp files and `>(cmd)` fds that
+    // C keeps in jobtab[thisjob].filelist (c:Src/exec.c:5011-5016, c:5143)
+    // are parked by zshrs in the VM's pending lists (getoutputfile has no
+    // job to add them to while the words expand), so those are the rest of
+    // "every job's filelist" this loop deletes.
+    crate::fusevm_bridge::cleanfilelists_pending();
 }
 
 /// Port of `void freejob(job jn, int deleting)` from `Src/jobs.c:1457-1495`.
