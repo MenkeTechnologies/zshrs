@@ -5067,19 +5067,24 @@ pub fn bin_typeset(
             crate::ported::utils::sepsplit(sval, Some(&joinsep), true)
         } else if let Some(old) = existing_scalar
             .as_deref()
-            // Inheriting the existing scalar is for a tie declared at the
-            // CURRENT scope: `V=pre:set; typeset -T V v` adopts `pre:set`. A
-            // declaration that SHADOWS an outer binding creates a fresh one, so
-            // it starts EMPTY even though a value is visible —
-            // `V=plain; f(){ local -T V v; print $V }` prints nothing in zsh,
-            // where zshrs printed `plain`. An explicit value is unaffected:
-            // `local -T V=x:y v` takes the `sval_opt` branch above.
-            //
-            // Both halves of the test matter. PM_LOCAL alone is not enough —
-            // it is set for a plain top-level `typeset` too, and gating on it
-            // by itself made the GLOBAL `typeset -T V v` stop inheriting. The
-            // `locallevel > 0` half is what restricts this to a real shadow.
-            .filter(|_| (on as u32 & PM_LOCAL) == 0 || locallevel.load(Relaxed) == 0)
+            // c:2930-2951 — `oldval = ztrdup(getsparam(asg0.name))` is taken
+            // only for a scalar that is live (`!(PM_UNSET) || PM_DECLARED`)
+            // in the scope the tie is declared in:
+            //     (locallevel == pm->level || !(on & PM_LOCAL))
+            // and is neither tied already nor an array/hash. A declaration
+            // that SHADOWS an outer binding starts empty
+            // (`V=plain; f(){ local -T V v; print $V }` prints nothing), while
+            // `f(){ local V=a:b; typeset -T V v }` keeps `a:b` because the
+            // scalar already lives at this level.
+            .filter(|_| {
+                pm_flags.is_some_and(|sf| {
+                    ((sf & PM_UNSET) == 0 || (sf & PM_DECLARED) != 0)
+                        && (locallevel_param.load(Relaxed) as i32 == pm_level
+                            || (on as u32 & PM_LOCAL) == 0)
+                        && (sf & PM_TIED) == 0
+                        && (PM_TYPE(sf) & (PM_ARRAY | PM_HASHED)) == 0
+                })
+            })
         {
             if old.is_empty() {
                 Vec::new()
