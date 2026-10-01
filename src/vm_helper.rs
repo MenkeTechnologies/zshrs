@@ -1032,6 +1032,15 @@ pub(crate) fn parse_isolated_at(input: &str, lineno: Option<u64>) -> crate::pars
                                          // left at EOF.
     let saved_in_lexstop = crate::ported::input::lexstop.with(|c| c.get());
 
+    // c:Src/exec.c:294 `inpush(s, INP_LINENO, NULL)` — the nested parse
+    // gets its own input frame, so whatever the OUTER reader still has
+    // queued is parked on the input stack until the inpop below. The text
+    // itself is lexed from LEX_INPUT (parse_init), so the pushed frame is
+    // empty: once that window drains, ingetc hits the end of THIS frame
+    // and returns EOF. Without the frame it fell through to the outer
+    // buffer — the rest of a multi-line command line, still unread while
+    // `preexec` ran an `eval` or `$(…)` — and swallowed it.
+    crate::ported::input::inpush("", crate::ported::zsh_h::INP_LINENO, None);
     crate::ported::hist::strinbeg(0); // c:290 — strin++ → drained nested input EOFs (no SHIN steal)
     crate::ported::parse::parse_init(input); // install cmd_str as LEX_INPUT (lex_init), LEX_LINENO=1
     if let Some(n) = lineno {
@@ -1046,13 +1055,13 @@ pub(crate) fn parse_isolated_at(input: &str, lineno: Option<u64>) -> crate::pars
     }
 
     crate::ported::hist::strinend(); // c:298 — strin--
-    // c:Src/exec.c:304 `inpop()` — pops the pushed string AND its continuations, and an
+    // c:Src/exec.c:304 `inpop()` — pops the pushed frame AND its continuations. An
     // alias expanded at the end of the body sits on top as an
-    // INP_ALIAS|INP_CONT frame (c:Src/input.c:695), so this is where its
-    // `inuse` is cleared (c:Src/input.c:773). No string frame was pushed
-    // here, so only the alias frames go: left behind, the alias stayed
+    // INP_ALIAS|INP_CONT frame (c:Src/input.c:695), so this is also where its
+    // `inuse` is cleared (c:Src/input.c:773): left behind, the alias stayed
     // `inuse` and every later `$(m)` / `m` reported "command not found".
-    crate::ported::input::inpopalias();
+    // Popping the frame pushed above restores the outer reader's queue.
+    crate::ported::input::inpop();
                                      // Restore the zshrs window, then the token/parse/history state.
     LEX_INPUT.with_borrow_mut(|s| *s = saved_input);
     LEX_POS.set(saved_pos);

@@ -61001,3 +61001,34 @@ leave the global state alone — the same rule the seven history hooks already f
 **Test.** `worker::tests::worker_parse_leaves_the_main_history_line_alone` runs 200 pool parses
 while the main thread samples `(histactive, curhist)`; without the guards it observes
 `[(0, 41), (1, 41), (3, 41)]`, with them only `[(1, 41)]`.
+
+## #1167 — a multi-line command line lost every line after the first when `preexec` ran `eval` or `$(…)` — fixed
+
+**Status:** `fixed` 2026-10-01.
+
+```console
+preexec() { eval "x=1" }        # zpwr's hooks do this
+paste 'print -r -- L1 > f' + newline + 'print -r -- L2 >> f', Enter
+zsh 5.9.2        f = L1 L2; history: one two-line event
+zshrs (before)   f = L1; L2 vanished, a PS2 `>` appeared, and the next
+                 command line was glued into the same history event
+```
+
+**Root cause.** After the first line of the buffer is parsed, the rest of
+the command line is still queued in the input buffer when `preexec` runs. C
+parses an `eval` / command-substitution string through `parse_string`, which
+`inpush`es the string (c:Src/exec.c:294) so the outer queue is parked on the
+input stack, and `inpop`s it afterwards (c:304). `vm_helper::parse_isolated_at`
+(the AST path used for `eval` and `$(…)`) saved only the lexer's own text
+window and pushed no input frame. Once the nested text was exhausted, `ingetc`
+fell through to the outer buffer and consumed the rest of the user's command
+line. A `precmd` hook was unaffected because by then nothing is queued.
+
+**Fix.** `parse_isolated_at` pushes an empty input frame before the nested
+parse and `inpop`s it after, which also pops any alias continuation frames
+the old `inpopalias()` call handled. Multi-line pastes and `print -z` buffers
+under a `preexec` that runs `eval` or `$(…)` run every line and are recorded
+as one history event, matching zsh 5.9.2, under a minimal rc and under the full
+zpwr config. Nested `eval`/`$(…)` cases (aliases inside `$()`, nested
+substitutions, `eval` defining aliases, sourced files and piped stdin with
+`eval` mid-input) match zsh 5.9.2.
