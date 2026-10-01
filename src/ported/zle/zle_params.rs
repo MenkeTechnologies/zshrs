@@ -184,10 +184,16 @@ pub fn makezleparams(ro: i32) {
     let rbuf = get_rbuffer(); // c:zleparams[2] getfn
     let cs = get_cursor(); // c:zleparams[3] getfn
 
-    let _ = setsparam("BUFFER", &line); // c:zleparams[0]
-    let _ = setsparam("LBUFFER", &lbuf); // c:zleparams[1]
-    let _ = setsparam("RBUFFER", &rbuf); // c:zleparams[2]
-    let _ = setiparam("CURSOR", cs as i64); // c:zleparams[3]
+    // c:199-206 — createparam only; the set_buffer/set_lbuffer/
+    // set_rbuffer/set_cursor setters (and their fixsuffix + menucmp=0
+    // tails, c:254/277/352/382) never run on publish. Keep the
+    // RUST-ONLY live-write arm out of it.
+    crate::zle_param_sync::publishing(|| {
+        let _ = setsparam("BUFFER", &line); // c:zleparams[0]
+        let _ = setsparam("LBUFFER", &lbuf); // c:zleparams[1]
+        let _ = setsparam("RBUFFER", &rbuf); // c:zleparams[2]
+        let _ = setiparam("CURSOR", cs as i64); // c:zleparams[3]
+    });
                                             // c:162 + c:485-487 — `get_numeric` returns `zmult`, which is
                                             // `zmod.mult` (zle.h `#define zmult zmod.mult`); `handleprefixes`
                                             // (zle_main.c:1618) has already promoted the digit-argument prefix

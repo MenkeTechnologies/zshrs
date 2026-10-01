@@ -108,6 +108,24 @@ pub fn in_live_write() -> bool {
     IN_LIVE_WRITE.with(|c| c.get())
 }
 
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+/// Run `f` with [`live_write`] disarmed, for `makezleparams`' own
+/// publish of the editing specials. C's `makezleparams`
+/// (Src/Zle/zle_params.c:194-223) only `createparam()`s GSU-backed
+/// params; it never calls `set_buffer`/`set_lbuffer`/`set_rbuffer`,
+/// so publishing never runs their `fixsuffix(); menucmp = 0;` tails
+/// (zle_params.c:254-255/277-278/352-353/382-383). Routing the port's
+/// `setsparam` publish through assignsparam's ZLE arm did run them: a
+/// `zle complete-word` called from a user widget re-publishes on
+/// return (zle_thingy::bin_zle_call), which cancelled the menu the
+/// completion had just started and dropped its removable suffix.
+pub fn publishing<R>(f: impl FnOnce() -> R) -> R {
+    let was = IN_LIVE_WRITE.with(|c| c.replace(true));
+    let r = f();
+    IN_LIVE_WRITE.with(|c| c.set(was));
+    r
+}
+
 /// Live GSU-adapter write for the ZLE editing specials. C's
 /// `makezleparams` (Src/Zle/zle_params.c:194) installs REAL GSU
 /// setters: `LBUFFER=x` mutates the editor immediately and
