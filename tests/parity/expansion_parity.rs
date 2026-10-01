@@ -1802,6 +1802,16 @@ mod hist_subst_pattern_search {
         );
     }
 
+    /// c:Src/glob.c:2913-2999 — an anchored match may be empty: `#` alone
+    /// inserts at the head, `%` alone appends, and an empty subject is
+    /// matched by any pattern that matches the empty string.
+    #[test]
+    fn empty_anchored_match_and_empty_subject() {
+        assert_parity(
+            r#"setopt histsubstpattern; a=abc; print -r -- ${a:s/#/Q/} ${a:s/%/Q/} ${a:s/#*/Q/}; a=; print -r -- "[${a:s/%/Q/}] [${a:s/#/Q/}] [${a:s/x/Q/}] [${a:s/*/Q/}]""#,
+        );
+    }
+
     /// Without the option `&` is the search text and anchors are literal.
     #[test]
     fn literal_path_unchanged() {

@@ -2788,8 +2788,20 @@ pub fn igetmatch(
         return 1; // c:2897
     }
 
+    // An empty subject: every C arm below reduces to one `pattrylen` on the
+    // empty string (c:2919 head, c:2950 tail, c:3008 substring), so
+    // `a=; ${a:s/%/X/}` / `${a:s/*/X/}` give `X` and a non-empty-only
+    // pattern leaves the subject alone.
     if len == 0 {
-        return 1;
+        if !pat_try("") {
+            return 1;
+        }
+        if (fl & SUB_MATCH) == 0 {
+            if let Some(r) = resolve_repl() {
+                *sp = r;
+            }
+        }
+        return 0;
     }
     // c:2998-3041 — SUB_LIST: collect all match offset pairs.
     if (fl & SUB_LIST) != 0 {
@@ -2897,8 +2909,12 @@ pub fn igetmatch(
             return 1;
         }
     } else if anchored_start {
-        let mut best_end = 0;
-        for end in 1..=len {
+        // c:2913-2938 — the head match may be EMPTY: `pattrylen(p, s,
+        // umltot, …)` runs unanchored at the end (PAT_NOANCH), so a
+        // pattern that matches nothing at the head (`:s/#/X/`) matches the
+        // empty prefix and the replacement is inserted before the string.
+        let mut best_end: Option<usize> = None;
+        for end in 0..=len {
             let substr: String = chars[..end].iter().collect();
             if pat_try(&substr) {
                 if shortest {
@@ -2912,10 +2928,10 @@ pub fn igetmatch(
                     };
                     return 0;
                 }
-                best_end = end;
+                best_end = Some(end);
             }
         }
-        if best_end > 0 {
+        if let Some(best_end) = best_end {
             (0, best_end)
         } else {
             if match_only {
@@ -2925,8 +2941,11 @@ pub fn igetmatch(
             return 1;
         }
     } else if anchored_end {
-        let mut best_start = len;
-        for start in (0..len).rev() {
+        // c:2949-2953 / c:2980-2999 — the tail match may be EMPTY: SUB_END
+        // tries `pattrylen(p, send, 0, …)` first, and SUB_END|SUB_LONG walks
+        // `t <= send`, so `:s/%/X/` appends the replacement.
+        let mut best_start: Option<usize> = None;
+        for start in (0..=len).rev() {
             let substr: String = chars[start..].iter().collect();
             if pat_try(&substr) {
                 if shortest {
@@ -2942,10 +2961,10 @@ pub fn igetmatch(
                     };
                     return 0;
                 }
-                best_start = start;
+                best_start = Some(start);
             }
         }
-        if best_start < len {
+        if let Some(best_start) = best_start {
             (best_start, len)
         } else {
             if match_only {
@@ -4767,6 +4786,100 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
 /// shape when porting parsepat for real.
 pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
     // RUST-ONLY
+    // c:Src/glob.c:1797-1844 — merge the qualifier group parsed EARLIER
+    // (`old`, the right-hand one) into the group just parsed to its left
+    // (`newq`). Shared by the tokenized and the untokenized qualifier scans
+    // in [`parse_qualifiers`], which both peel groups off the end of the word.
+    let merge_qualifier_groups = |old: qualifier_set, newq: qualifier_set| -> qualifier_set {
+        // c:1797-1842 — merge the previous group into the new
+        // (left-hand) one. The AND-chains are distributed over
+        // every pair of alternatives, new set first ("we are
+        // searching for sets of qualifiers from the right");
+        // with no `or` on either side that is plain chaining.
+        let alts = |a: &QualArena| -> Vec<Vec<qual>> {
+            let mut out = Vec::new();
+            let mut h = a.head;
+            while let Some(hi) = h {
+                let mut chain = Vec::new();
+                let mut n = Some(hi);
+                while let Some(ni) = n {
+                    chain.push(a.nodes[ni].clone());
+                    n = a.nodes[ni].next;
+                }
+                out.push(chain);
+                h = a.nodes[hi].or;
+            }
+            out
+        };
+        let mut q = newq;
+        let (na, oa) = (alts(&q.quals), alts(&old.quals));
+        if !oa.is_empty() {
+            let mut arena = QualArena::new();
+            let mut prev_head: Option<usize> = None;
+            let news = if na.is_empty() { vec![Vec::new()] } else { na };
+            for qn in &news {
+                for qo in &oa {
+                    let base = arena.nodes.len();
+                    for (k, node) in qn.iter().chain(qo.iter()).enumerate() {
+                        let mut node = node.clone();
+                        node.or = None;
+                        node.next = Some(base + k + 1);
+                        arena.nodes.push(node);
+                    }
+                    let last = arena.nodes.len() - 1;
+                    arena.nodes[last].next = None;
+                    match prev_head {
+                        None => arena.head = Some(base),
+                        Some(p) => arena.nodes[p].or = Some(base),
+                    }
+                    prev_head = Some(base);
+                }
+            }
+            q.quals = arena;
+        }
+        // The enum mirror of the same distribution.
+        if !old.alternatives.is_empty() {
+            let news = if q.alternatives.is_empty() {
+                vec![Vec::new()]
+            } else {
+                std::mem::take(&mut q.alternatives)
+            };
+            q.alternatives = news
+                .iter()
+                .flat_map(|n| old.alternatives.iter().map(move |o| [n.clone(), o.clone()].concat()))
+                .collect();
+        }
+        // gf_sortlist (c:1702) fills in parse order: the right
+        // group's specs first. GS_EXEC entries carry an index
+        // into `sort_exec`, shifted past the earlier ones.
+        let shift = old.sort_exec.len() as i32;
+        let new_sorts: Vec<i32> = q
+            .sorts
+            .iter()
+            .map(|&t| if (t & GS_EXEC) != 0 { t + (shift << 16) } else { t })
+            .collect();
+        q.sorts = old.sorts.iter().copied().chain(new_sorts).collect();
+        q.sort_exec = old.sort_exec.iter().cloned().chain(q.sort_exec).collect();
+        // c:1336-1340 — `colonmod = dyncat(newcolonmod, colonmod)`.
+        q.colon_mods = match (q.colon_mods.take(), old.colon_mods) {
+            (Some(n), Some(o)) => Some(n + &o),
+            (n, o) => n.or(o),
+        };
+        // The gf_* globals are simply overwritten by the group
+        // parsed later (the left one) when it sets them.
+        q.pre_words = old.pre_words.into_iter().chain(q.pre_words).collect();
+        q.post_words = old.post_words.into_iter().chain(q.post_words).collect();
+        q.first = q.first.or(old.first);
+        q.last = q.last.or(old.last);
+        q.mark_dirs = q.mark_dirs.or(old.mark_dirs);
+        q.numsort = q.numsort.or(old.numsort);
+        q.short_circuit = q.short_circuit.or(old.short_circuit);
+        q.list_types |= old.list_types;
+        q.mark_follow |= old.mark_follow;
+        q.nullglob |= old.nullglob;
+        q.globdots |= old.globdots;
+        q
+    };
     // c:Src/glob.c:1158-1202 `checkglobqual` — C decides where the
     // qualifier block starts by testing the LEXER TOKENS `Outpar` /
     // `Inpar` (c:1163 `if (str[sl - 1] != Outpar) return 0;`, c:1170
@@ -4824,96 +4937,7 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
             let failed = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0;
             acc = Some(match acc {
                 None => newq, // c:1843-1844 `else if (newquals) quals = newquals;`
-                Some(old) => {
-                    // c:1797-1842 — merge the previous group into the new
-                    // (left-hand) one. The AND-chains are distributed over
-                    // every pair of alternatives, new set first ("we are
-                    // searching for sets of qualifiers from the right");
-                    // with no `or` on either side that is plain chaining.
-                    let alts = |a: &QualArena| -> Vec<Vec<qual>> {
-                        let mut out = Vec::new();
-                        let mut h = a.head;
-                        while let Some(hi) = h {
-                            let mut chain = Vec::new();
-                            let mut n = Some(hi);
-                            while let Some(ni) = n {
-                                chain.push(a.nodes[ni].clone());
-                                n = a.nodes[ni].next;
-                            }
-                            out.push(chain);
-                            h = a.nodes[hi].or;
-                        }
-                        out
-                    };
-                    let mut q = newq;
-                    let (na, oa) = (alts(&q.quals), alts(&old.quals));
-                    if !oa.is_empty() {
-                        let mut arena = QualArena::new();
-                        let mut prev_head: Option<usize> = None;
-                        let news = if na.is_empty() { vec![Vec::new()] } else { na };
-                        for qn in &news {
-                            for qo in &oa {
-                                let base = arena.nodes.len();
-                                for (k, node) in qn.iter().chain(qo.iter()).enumerate() {
-                                    let mut node = node.clone();
-                                    node.or = None;
-                                    node.next = Some(base + k + 1);
-                                    arena.nodes.push(node);
-                                }
-                                let last = arena.nodes.len() - 1;
-                                arena.nodes[last].next = None;
-                                match prev_head {
-                                    None => arena.head = Some(base),
-                                    Some(p) => arena.nodes[p].or = Some(base),
-                                }
-                                prev_head = Some(base);
-                            }
-                        }
-                        q.quals = arena;
-                    }
-                    // The enum mirror of the same distribution.
-                    if !old.alternatives.is_empty() {
-                        let news = if q.alternatives.is_empty() {
-                            vec![Vec::new()]
-                        } else {
-                            std::mem::take(&mut q.alternatives)
-                        };
-                        q.alternatives = news
-                            .iter()
-                            .flat_map(|n| old.alternatives.iter().map(move |o| [n.clone(), o.clone()].concat()))
-                            .collect();
-                    }
-                    // gf_sortlist (c:1702) fills in parse order: the right
-                    // group's specs first. GS_EXEC entries carry an index
-                    // into `sort_exec`, shifted past the earlier ones.
-                    let shift = old.sort_exec.len() as i32;
-                    let new_sorts: Vec<i32> = q
-                        .sorts
-                        .iter()
-                        .map(|&t| if (t & GS_EXEC) != 0 { t + (shift << 16) } else { t })
-                        .collect();
-                    q.sorts = old.sorts.iter().copied().chain(new_sorts).collect();
-                    q.sort_exec = old.sort_exec.iter().cloned().chain(q.sort_exec).collect();
-                    // c:1336-1340 — `colonmod = dyncat(newcolonmod, colonmod)`.
-                    q.colon_mods = match (q.colon_mods.take(), old.colon_mods) {
-                        (Some(n), Some(o)) => Some(n + &o),
-                        (n, o) => n.or(o),
-                    };
-                    // The gf_* globals are simply overwritten by the group
-                    // parsed later (the left one) when it sets them.
-                    q.pre_words = old.pre_words.into_iter().chain(q.pre_words).collect();
-                    q.post_words = old.post_words.into_iter().chain(q.post_words).collect();
-                    q.first = q.first.or(old.first);
-                    q.last = q.last.or(old.last);
-                    q.mark_dirs = q.mark_dirs.or(old.mark_dirs);
-                    q.numsort = q.numsort.or(old.numsort);
-                    q.short_circuit = q.short_circuit.or(old.short_circuit);
-                    q.list_types |= old.list_types;
-                    q.mark_follow |= old.mark_follow;
-                    q.nullglob |= old.nullglob;
-                    q.globdots |= old.globdots;
-                    q
-                }
+                Some(old) => merge_qualifier_groups(old, newq),
             });
             if failed {
                 break; // c:1786-1788 — errflag: zglob returns
@@ -4929,133 +4953,174 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
     // that never went through the lexer (compsys, `builtin.rs`,
     // `subst.rs`). No `Bnull` tokens are present to carry escaping, so
     // it is recovered from literal backslashes instead.
-    if !pattern.ends_with(')') {
-        return (pattern.to_string(), None);
-    }
-
-    let bytes = pattern.as_bytes();
-    // Backslash-escaped trailing `)` is literal — no qualifier block
-    // present. C's glob path handles this via Bnull preservation in
-    // the lexer; zshrs's path arrives here with `\)` for quoted
-    // close-parens (e.g. assoc-value `'\)'`). Without the gate, the
-    // qualifier-extraction walk below treats the literal `)` as the
-    // qualifier terminator.
-    let last_paren_escaped = {
-        let mut bs = 0usize;
-        let mut j = bytes.len() - 1;
-        while j > 0 && bytes[j - 1] == b'\\' {
-            bs += 1;
-            j -= 1;
-        }
-        bs % 2 == 1
-    };
-    if last_paren_escaped {
-        return (pattern.to_string(), None);
-    }
-
-    // Find matching open paren
-    let mut depth = 0;
-    let mut qual_start = None;
-
-    // c:Src/glob.c haswilds backslash handling — a `\(` / `\)` is a
-    // literal paren, not a qualifier delimiter. Track which paren
-    // bytes are escaped by a preceding `\` (counting consecutive
-    // backslashes — even count means the paren is unescaped, odd
-    // count means escaped). Without this gate, `\(*\)` is mis-parsed
-    // as `(*\)` qualifier + empty pattern prefix, sending `*\` to
-    // the qualifier-letter switch which emits "unknown file
-    // attribute: \".
-    let is_escaped = |idx: usize| -> bool {
-        let mut bs = 0usize;
-        let mut j = idx;
-        while j > 0 && bytes[j - 1] == b'\\' {
-            bs += 1;
-            j -= 1;
-        }
-        bs % 2 == 1
-    };
-
-    for i in (0..bytes.len()).rev() {
-        match bytes[i] {
-            b')' => {
-                if !is_escaped(i) {
-                    depth += 1;
-                }
-            }
-            b'(' => {
-                if !is_escaped(i) {
-                    depth -= 1;
-                    if depth == 0 {
-                        qual_start = Some(i);
-                        break;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let start = match qual_start {
-        Some(s) => s,
-        None => return (pattern.to_string(), None),
-    };
-
-    // Check for (#q...) explicit qualifier syntax.
-    let qual_str = &pattern[start + 1..pattern.len() - 1];
-    // c:Src/glob.c:1192-1197 — `if (isset(EXTENDEDGLOB) &&
-    // !zpc_disables[ZPC_HASH] && s[1] == Pound) { if (s[2] != 'q')
-    // return 0; ret = 2; }`. The leading `#` inside `(...)` is ONLY
-    // special under EXTENDEDGLOB: `(#q...)` is the explicit glob
-    // qualifier, and `(#X...)` for any other X is an inline pattern flag
-    // (passed through). Without EXTENDEDGLOB the `#` is not special at
-    // all — the `(...)` is a bare qualifier group and a leading `#` is an
-    // (unknown) attribute char, so `*(#q.)` errors `unknown file
-    // attribute: #` rather than silently applying the `.` qualifier.
-    let (is_explicit, qual_content) = if glob_isset(EXTENDEDGLOB) && qual_str.starts_with('#') {
-        if let Some(after) = qual_str.strip_prefix("#q") {
-            (true, after) // c:1195 ret = 2 — explicit glob qualifier
-        } else {
-            // c:1194 `if (s[2] != 'q') return 0;` — inline pattern flag
-            // (`(#i)`, `(#c1,2)`, `(#a)`, `(#l)`, `(#s)`, `(#e)`, `(#m)`).
+    //
+    // Same c:1260-1302 loop as the tokenized scan above: groups are peeled
+    // off the END one at a time, and after the first only an explicit
+    // `(#q…)` is taken. Taking just the last group globbed `*(#qom)(-/)`
+    // (what `_path_files -/` builds for `file-sort`, sh:178) with the
+    // `(#qom)` left in the pattern text, where it sorts nothing.
+    // One step of the untokenized qualifier scan in [`parse_qualifiers`]: strip
+    // the LAST `(…)` group of `pattern` when it is a qualifier block. With
+    // `nobareglob` set (every group after the first, c:1302) only an explicit
+    // `(#q…)` qualifies.
+    let parse_qualifiers_raw = |pattern: &str, nobareglob_in: bool| -> (String, Option<qualifier_set>) {
+        if !pattern.ends_with(')') {
             return (pattern.to_string(), None);
         }
-    } else if glob_isset(BAREGLOBQUAL) {
-        (false, qual_str)
-    } else {
-        return (pattern.to_string(), None);
-    };
 
-    // c:1169-1186 — alternatives or exclusions, not qualifiers: an inner
-    // `)` (a nested group) falls through to the `Bar` arm, and both set
-    // `nobareglob` unless `disable -p '|'`; `~` only does under
-    // EXTENDEDGLOB (unless disabled). Only an explicit `(#q…)` survives
-    // that (c:1192-1197). A `$~v` value lands here untokenized, but C
-    // shtokenized it (c:Src/subst.c:822/830), so its parens are the
-    // Inpar/Outpar tokens this scan stands for: zsh answers
-    // `v='*(e:reply=($REPLY):)'; print $~v` with "no matches found".
-    let nobareglob = {
-        let disp = crate::ported::pattern::zpc_disables
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        (start + 1..bytes.len() - 1).any(|k| {
-            !is_escaped(k)
-                && match bytes[k] {
-                    b')' | b'|' => disp[crate::ported::zsh_h::ZPC_BAR as usize] == 0,
-                    b'~' => {
-                        glob_isset(EXTENDEDGLOB)
-                            && disp[crate::ported::zsh_h::ZPC_TILDE as usize] == 0
+        let bytes = pattern.as_bytes();
+        // Backslash-escaped trailing `)` is literal — no qualifier block
+        // present. C's glob path handles this via Bnull preservation in
+        // the lexer; zshrs's path arrives here with `\)` for quoted
+        // close-parens (e.g. assoc-value `'\)'`). Without the gate, the
+        // qualifier-extraction walk below treats the literal `)` as the
+        // qualifier terminator.
+        let last_paren_escaped = {
+            let mut bs = 0usize;
+            let mut j = bytes.len() - 1;
+            while j > 0 && bytes[j - 1] == b'\\' {
+                bs += 1;
+                j -= 1;
+            }
+            bs % 2 == 1
+        };
+        if last_paren_escaped {
+            return (pattern.to_string(), None);
+        }
+
+        // Find matching open paren
+        let mut depth = 0;
+        let mut qual_start = None;
+
+        // c:Src/glob.c haswilds backslash handling — a `\(` / `\)` is a
+        // literal paren, not a qualifier delimiter. Track which paren
+        // bytes are escaped by a preceding `\` (counting consecutive
+        // backslashes — even count means the paren is unescaped, odd
+        // count means escaped). Without this gate, `\(*\)` is mis-parsed
+        // as `(*\)` qualifier + empty pattern prefix, sending `*\` to
+        // the qualifier-letter switch which emits "unknown file
+        // attribute: \".
+        let is_escaped = |idx: usize| -> bool {
+            let mut bs = 0usize;
+            let mut j = idx;
+            while j > 0 && bytes[j - 1] == b'\\' {
+                bs += 1;
+                j -= 1;
+            }
+            bs % 2 == 1
+        };
+
+        for i in (0..bytes.len()).rev() {
+            match bytes[i] {
+                b')' => {
+                    if !is_escaped(i) {
+                        depth += 1;
                     }
-                    _ => false,
                 }
-        })
-    };
-    if !is_explicit && nobareglob {
-        return (pattern.to_string(), None);
-    }
+                b'(' => {
+                    if !is_escaped(i) {
+                        depth -= 1;
+                        if depth == 0 {
+                            qual_start = Some(i);
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
 
-    // Parse the qualifiers
-    let qs = parse_qualifier_string(qual_content);
-    (pattern[..start].to_string(), Some(qs))
+        let start = match qual_start {
+            Some(s) => s,
+            None => return (pattern.to_string(), None),
+        };
+
+        // Check for (#q...) explicit qualifier syntax.
+        let qual_str = &pattern[start + 1..pattern.len() - 1];
+        // c:Src/glob.c:1192-1197 — `if (isset(EXTENDEDGLOB) &&
+        // !zpc_disables[ZPC_HASH] && s[1] == Pound) { if (s[2] != 'q')
+        // return 0; ret = 2; }`. The leading `#` inside `(...)` is ONLY
+        // special under EXTENDEDGLOB: `(#q...)` is the explicit glob
+        // qualifier, and `(#X...)` for any other X is an inline pattern flag
+        // (passed through). Without EXTENDEDGLOB the `#` is not special at
+        // all — the `(...)` is a bare qualifier group and a leading `#` is an
+        // (unknown) attribute char, so `*(#q.)` errors `unknown file
+        // attribute: #` rather than silently applying the `.` qualifier.
+        let (is_explicit, qual_content) = if glob_isset(EXTENDEDGLOB) && qual_str.starts_with('#') {
+            if let Some(after) = qual_str.strip_prefix("#q") {
+                (true, after) // c:1195 ret = 2 — explicit glob qualifier
+            } else {
+                // c:1194 `if (s[2] != 'q') return 0;` — inline pattern flag
+                // (`(#i)`, `(#c1,2)`, `(#a)`, `(#l)`, `(#s)`, `(#e)`, `(#m)`).
+                return (pattern.to_string(), None);
+            }
+        } else if glob_isset(BAREGLOBQUAL) && !nobareglob_in {
+            (false, qual_str)
+        } else {
+            return (pattern.to_string(), None);
+        };
+
+        // c:1169-1186 — alternatives or exclusions, not qualifiers: an inner
+        // `)` (a nested group) falls through to the `Bar` arm, and both set
+        // `nobareglob` unless `disable -p '|'`; `~` only does under
+        // EXTENDEDGLOB (unless disabled). Only an explicit `(#q…)` survives
+        // that (c:1192-1197). A `$~v` value lands here untokenized, but C
+        // shtokenized it (c:Src/subst.c:822/830), so its parens are the
+        // Inpar/Outpar tokens this scan stands for: zsh answers
+        // `v='*(e:reply=($REPLY):)'; print $~v` with "no matches found".
+        let nobareglob = {
+            let disp = crate::ported::pattern::zpc_disables
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            (start + 1..bytes.len() - 1).any(|k| {
+                !is_escaped(k)
+                    && match bytes[k] {
+                        b')' | b'|' => disp[crate::ported::zsh_h::ZPC_BAR as usize] == 0,
+                        b'~' => {
+                            glob_isset(EXTENDEDGLOB)
+                                && disp[crate::ported::zsh_h::ZPC_TILDE as usize] == 0
+                        }
+                        _ => false,
+                    }
+            })
+        };
+        if !is_explicit && nobareglob {
+            return (pattern.to_string(), None);
+        }
+
+        // Parse the qualifiers
+        let qs = parse_qualifier_string(qual_content);
+        (pattern[..start].to_string(), Some(qs))
+    };
+    let hash_live = || {
+        glob_isset(EXTENDEDGLOB)
+            && crate::ported::pattern::zpc_disables
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())[crate::ported::zsh_h::ZPC_HASH as usize]
+                == 0
+    };
+    let mut word = pattern.to_string();
+    let mut acc: Option<qualifier_set> = None;
+    let mut nobareglob = false; // c:1226, gated per group inside the raw scan
+    while !nobareglob || hash_live() {
+        let (rest, newq) = match parse_qualifiers_raw(&word, nobareglob) {
+            (rest, Some(q)) => (rest, q),
+            _ => break, // c:1297-1298
+        };
+        nobareglob = true; // c:1302
+        word = rest;
+        acc = Some(match acc {
+            None => newq, // c:1843-1844
+            Some(old) => merge_qualifier_groups(old, newq),
+        });
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            break; // c:1786-1788
+        }
+    }
+    match acc {
+        Some(qs) => (word, Some(qs)),
+        None => (pattern.to_string(), None),
+    }
 }
 
 /// Parse the body of a `(...)` qualifier block into a qualifier_set.
@@ -7232,6 +7297,46 @@ mod tests {
         match saved {
             Some(v) => opt_state_set("extendedglob", v),
             None => opt_state_unset("extendedglob"),
+        }
+    }
+
+    /// c:Src/glob.c:1260-1302 — qualifier groups are peeled off the end one
+    /// at a time, so `*(#qOn)(.)` applies BOTH. `_path_files` builds exactly
+    /// this shape for `file-sort` (sh:178, `*(#qom)(-/)` under `-/`) and
+    /// hands it over untokenized; the untokenized scan took only the last
+    /// group, leaving `(#qOn)` as pattern text that sorts nothing. zsh 5.9.2:
+    /// `setopt extendedglob; print *(#qOn)(.)` in {a,b,c,d/} prints `c b a`.
+    #[test]
+    fn test_glob_two_qualifier_groups_apply_both() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = TempDir::new().unwrap();
+        let base = dir.path();
+        for f in ["a", "b", "c"] {
+            File::create(base.join(f)).unwrap();
+        }
+        fs::create_dir(base.join("d")).unwrap();
+
+        let saved = opt_state_get("extendedglob");
+        opt_state_set("extendedglob", true);
+        let mut got = Vec::new();
+        for tokflags in [Some(ZSHTOK_SUBST), None] {
+            let mut pattern = format!("{}/*(#qOn)(.)", base.display());
+            if let Some(flags) = tokflags {
+                zshtokenize(&mut pattern, flags);
+            }
+            let mut state = globdata::new();
+            let names: Vec<String> = globdata_glob(&mut state, &pattern)
+                .iter()
+                .map(|p| p.rsplit('/').next().unwrap_or("").to_string())
+                .collect();
+            got.push((tokflags, names));
+        }
+        match saved {
+            Some(v) => opt_state_set("extendedglob", v),
+            None => opt_state_unset("extendedglob"),
+        }
+        for (tokflags, names) in got {
+            assert_eq!(names, vec!["c", "b", "a"], "tokflags={tokflags:?}");
         }
     }
 
