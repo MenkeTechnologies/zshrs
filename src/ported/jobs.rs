@@ -3971,65 +3971,55 @@ pub fn bin_kill(
             return 0; // c:2879
         }
 
-        // c:2880 — `-L` tabular listing.
+        // zsh-5.9.1:Src/jobs.c:2801-2827 — `-L` tabular listing. The target
+        // is zsh 5.9.2, whose table is the 5.9.1 one: `%*d) ` and a FIXED
+        // five columns. (Later dev sources dropped the `)` and size the
+        // column count from `zterm_columns`; 5.9.2 does neither.)
         if body == "L" {
             use crate::ported::signals_h::SIGCOUNT;
-            // c:2908-2912 — field width from the highest signal number.
+            // 5.9.1 c:2803-2807 — field width from the highest signal number.
             #[cfg(target_os = "linux")]
-            let width: usize = if libc::SIGRTMAX() >= 100 { 3 } else { 2 }; // c:2909
+            let width: usize = if libc::SIGRTMAX() >= 100 { 3 } else { 2 }; // c:2804
             #[cfg(not(target_os = "linux"))]
-            let width: usize = if SIGCOUNT >= 100 { 3 } else { 2 }; // c:2911
-            // c:2913-2914 — `cols = zterm_columns >= 30 ?
-            //   (zterm_columns < 90 ? zterm_columns / 15 : 6) : 1;`
-            let zterm_columns =
-                crate::ported::utils::ZTERM_COLUMNS.load(std::sync::atomic::Ordering::SeqCst);
-            let cols: i32 = if zterm_columns >= 30 {
-                if zterm_columns < 90 {
-                    zterm_columns / 15
-                } else {
-                    6
-                }
-            } else {
-                1
-            };
-            // c:2916-2923 — `for (sig = 1; sig < SIGCOUNT [+ 1]; sig++)
-            //   printf("%*d %-10s%c", width, sig, sigs[sig], sig % cols ? ' ' : '\n');`
+            let width: usize = if SIGCOUNT >= 100 { 3 } else { 2 }; // c:2806
+            // 5.9.1 c:2808-2816 — `for (sig = 1; sig < SIGCOUNT [+ 1]; sig++)
+            //   printf("%*d) %-10s%c", width, sig, sigs[sig], sig % 5 ? ' ' : '\n');`
             #[cfg(target_os = "linux")]
-            let last_plain = SIGCOUNT + 1; // c:2917 `+ 1` under SIGRTMIN
+            let last_plain = SIGCOUNT + 1; // c:2810 `+ 1` under SIGRTMIN
             #[cfg(not(target_os = "linux"))]
             let last_plain = SIGCOUNT;
             let mut sig = 1;
             while sig < last_plain {
                 print!(
-                    "{:>width$} {:<10}{}",
+                    "{:>width$}) {:<10}{}",
                     sig,
                     sigs_name(sig).unwrap_or(""),
-                    if sig % cols != 0 { ' ' } else { '\n' }
+                    if sig % 5 != 0 { ' ' } else { '\n' } // c:2815
                 );
                 sig += 1;
             }
             #[cfg(target_os = "linux")]
             {
-                // c:2925-2929 — the real-time range, then `RTMAX` alone.
+                // 5.9.1 c:2818-2822 — the real-time range, then `RTMAX` alone.
                 sig = libc::SIGRTMIN();
                 while sig < libc::SIGRTMAX() {
                     print!(
-                        "{:>width$} {:<10}{}",
+                        "{:>width$}) {:<10}{}",
                         sig,
                         crate::ported::signals::rtsigname(sig),
-                        if (sig - libc::SIGRTMIN() + SIGCOUNT + 1) % cols != 0 {
+                        if (sig - libc::SIGRTMIN() + SIGCOUNT + 1) % 5 != 0 {
                             ' '
                         } else {
                             '\n'
-                        }
+                        } // c:2820
                     );
                     sig += 1;
                 }
-                println!("{:>width$} RTMAX", sig); // c:2929
+                println!("{:>width$}) RTMAX", sig); // c:2822
             }
             #[cfg(not(target_os = "linux"))]
-            println!("{:>width$} {}", sig, sigs_name(sig).unwrap_or("")); // c:2931
-            return 0; // c:2933
+            println!("{:>width$}) {}", sig, sigs_name(sig).unwrap_or("")); // c:2824
+            return 0; // c:2826
         }
 
         // c:2913 — `-n N` numeric signal (explicit).

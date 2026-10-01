@@ -338,3 +338,18 @@ mod spawned_external_gets_default_sigquit {
         assert_parity(r#"trap '' QUIT; sh -c 'kill -QUIT $$'; echo rc=$?"#);
     }
 }
+
+/// zsh-5.9.1:Src/jobs.c:2801-2827 — the `kill -L` table of the targeted
+/// zsh 5.9.2 is `%*d) %-10s` with a fixed five columns. zshrs followed the
+/// later dev source (no `)`, column count from `$COLUMNS`), so the table
+/// diverged on every row.
+mod kill_big_l_table {
+    use super::*;
+
+    #[test]
+    fn the_table_has_the_parenthesised_numbers_and_five_columns() {
+        assert_parity("kill -L");
+        assert_parity("COLUMNS=200; kill -L");
+        assert_parity("COLUMNS=40; kill -L | head -3");
+    }
+}
