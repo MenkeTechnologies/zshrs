@@ -2577,14 +2577,19 @@ pub fn do_ambig_menu() -> i32 {
 pub fn list_lines() -> i64 {
     crate::ported::zle::compcore::permmatches(0); // c:1450
 
-    // c:1452-1453 — `oam = amatches; amatches = pmatches;`
+    // c:1452-1453 — `oam = amatches; amatches = pmatches;`. C swaps two
+    // POINTERS, so `calclist` below walks — and writes its CGF_*/CMF_HIDE
+    // flags, widths and line counts into — the `pmatches` groups
+    // themselves. The port deep-cloned both lists instead (every match of
+    // every group, twice per `$compstate[list_lines]` read: 2 x 47058 on
+    // `arch <TAB>`) and threw `calclist`'s writes away with the copy. MOVE
+    // the lists: `pmatches` goes into `amatches` for the call and comes back
+    // carrying the writes, and `amatches` is restored untouched.
     let am = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-    let oam = am.lock().map(|g| g.clone()).unwrap_or_default(); // c:1452
-    let pm = crate::ported::zle::compcore::pmatches
-        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
+    let pmcell = crate::ported::zle::compcore::pmatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let oam = am.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default(); // c:1452
+    let pm = pmcell.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
     if let Ok(mut g) = am.lock() {
         *g = pm; // c:1453
     }
@@ -2602,7 +2607,12 @@ pub fn list_lines() -> i64 {
         0
     };
     if let Ok(mut g) = am.lock() {
-        *g = oam; // c:1457
+        // c:1457 `amatches = oam` — `pmatches` never moved in C; hand its
+        // groups back.
+        let pm = std::mem::replace(&mut *g, oam);
+        if let Ok(mut p) = pmcell.lock() {
+            *p = pm;
+        }
     }
     nlines // c:1459
 }
@@ -5558,6 +5568,78 @@ mod tests {
     fn do_ambig_menu_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = do_ambig_menu();
+    }
+
+    /// c:1452-1457 — `list_lines` points `amatches` at `pmatches` and back.
+    /// Both are pointer assignments in C, so `calclist`'s writes land on the
+    /// `pmatches` groups and stay there, and `amatches` comes back as it was.
+    /// The port moves the two lists rather than cloning them; neither may be
+    /// lost on the way.
+    #[test]
+    fn list_lines_swaps_pmatches_in_and_hands_them_back() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let mut sentinel = Cmgroup::default();
+        sentinel.name = Some("sentinel-amatches".to_string());
+        *amatches.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap() =
+            vec![sentinel];
+        let mut g = Cmgroup::default();
+        g.name = Some("perm".to_string());
+        g.matches = (1..=40)
+            .map(|i| {
+                let mut m = Cmatch::default();
+                m.str = Some(format!("cmd{i}"));
+                m.gnum = i;
+                m
+            })
+            .collect();
+        g.mcount = 40;
+        *crate::ported::zle::compcore::pmatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![g];
+        // c:3433 — a built `pmatches` with nothing new: permmatches is a no-op.
+        crate::ported::zle::compcore::newmatches.store(0, Relaxed);
+        crate::ported::zle::compcore::nmatches.store(40, Relaxed);
+
+        let n = list_lines();
+
+        assert!(n > 0, "40 listed matches need at least one line");
+        let am = amatches.get().unwrap().lock().unwrap();
+        assert_eq!(am.len(), 1);
+        assert_eq!(am[0].name.as_deref(), Some("sentinel-amatches"), "c:1457");
+        let pm = crate::ported::zle::compcore::pmatches.get().unwrap().lock().unwrap();
+        assert_eq!(pm.len(), 1);
+        assert_eq!(pm[0].matches.len(), 40, "pmatches must come back whole");
+        assert_eq!(pm[0].dcount, 40, "c:1647 — calclist's write lands on pmatches");
+    }
+
+    /// `niceztrlen` short-cuts printable ASCII to its length; that must be
+    /// exactly what the full `mb_niceformat` walk (c:5366) measures, and
+    /// every other byte class must still take the walk.
+    #[test]
+    fn niceztrlen_ascii_shortcut_matches_mb_niceformat() {
+        let _g = crate::test_util::global_state_lock();
+        let all_printable: String = (0x20u8..0x7f).map(char::from).collect();
+        for s in [
+            all_printable.as_str(),
+            "",
+            " ",
+            "~",
+            "git-receive-pack",
+            "a\tb",
+            "a\nb",
+            "del\x7f",
+            "ctl\x01",
+            "日本語",
+            "don\u{2019}t",
+        ] {
+            assert_eq!(
+                crate::ported::utils::niceztrlen(s),
+                crate::ported::utils::mb_niceformat(s, None, None, 0),
+                "{s:?}"
+            );
+        }
     }
 
     /// c:1446-1459 — with no matches at all, `calclist` yields no lines, so

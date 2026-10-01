@@ -7800,6 +7800,18 @@ pub fn niceztrlen(s: &str) -> usize {
     // c:5320-5341) version, which counts every byte through `nicechar` and so
     // charges 4+5+5 = 14 for that `‐` in EITHER locale — over-measuring in a
     // UTF-8 locale and still not matching zsh in a C one.
+    //
+    // A string of printable ASCII (0x20-0x7e) is the identity under every
+    // step of `mb_niceformat` with `flags == 0`: `untokenize` and `unmetafy`
+    // only touch bytes >= 0x83, `mbrtowc` yields one character per byte in
+    // either locale, and `wcs_nicechar_sel` gives each a width of 1
+    // (c:644-704). Its width is its length. `calclist` measures every match
+    // with this (c:1600/1615), twice per `$compstate[list_lines]` read, and
+    // the general walk allocated three copies of each string to arrive at
+    // that number: about 4.5k of 14k samples on `arch <TAB>`'s 47058 matches.
+    if s.bytes().all(|b| (0x20..0x7f).contains(&b)) {
+        return s.len();
+    }
     mb_niceformat(s, None, None, 0)
 }
 
