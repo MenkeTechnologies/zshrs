@@ -197,12 +197,44 @@ impl HistoryEngine {
                 INSERT INTO history_fts(history_fts, rowid, command) VALUES('delete', old.id, old.command);
             END;
 
-            CREATE TRIGGER IF NOT EXISTS history_au AFTER UPDATE ON history BEGIN
+            CREATE TRIGGER IF NOT EXISTS history_au AFTER UPDATE OF command ON history BEGIN
                 INSERT INTO history_fts(history_fts, rowid, command) VALUES('delete', old.id, old.command);
                 INSERT INTO history_fts(rowid, command) VALUES (new.id, new.command);
             END;
         "#)?;
+        self.migrate_fts_update_trigger()?;
         Ok(())
+    }
+
+    /// The FTS index only covers `command`, so `history_au` must only
+    /// re-index when that column changes. Databases created before this
+    /// had `AFTER UPDATE ON history`, which deleted and re-inserted the
+    /// row's trigram entries on every `update_last` (duration/exit stamp
+    /// at each prompt) and every dedup bump in `add` (timestamp,
+    /// frequency, cwd). Replace that trigger once; the schema is left
+    /// untouched when it is already current, so concurrent shells do not
+    /// rewrite it on every open.
+    fn migrate_fts_update_trigger(&self) -> rusqlite::Result<()> {
+        let sql: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'history_au'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        if sql.is_some_and(|s| s.contains("UPDATE OF command")) {
+            return Ok(());
+        }
+        self.conn.execute_batch(r#"
+            BEGIN IMMEDIATE;
+            DROP TRIGGER IF EXISTS history_au;
+            CREATE TRIGGER history_au AFTER UPDATE OF command ON history BEGIN
+                INSERT INTO history_fts(history_fts, rowid, command) VALUES('delete', old.id, old.command);
+                INSERT INTO history_fts(rowid, command) VALUES (new.id, new.command);
+            END;
+            COMMIT;
+        "#)
     }
 
     fn now() -> i64 {
@@ -762,6 +794,53 @@ mod tests {
             );
             assert!(text.starts_with(": ") && text.lines().next().unwrap().contains(":1;"));
         });
+    }
+
+    /// A database created with the old `AFTER UPDATE ON history` trigger is
+    /// migrated on open: stamping duration/exit then changes only the
+    /// `history` row (no FTS delete + re-insert), a dedup bump likewise,
+    /// and editing `command` itself still re-indexes the row.
+    #[test]
+    fn fts_update_trigger_fires_only_on_command_change() {
+        let engine = HistoryEngine {
+            conn: Connection::open_in_memory().unwrap(),
+            mirror_text: false,
+        };
+        engine.init_schema().unwrap();
+        engine
+            .conn
+            .execute_batch(
+                "DROP TRIGGER history_au;
+                 CREATE TRIGGER history_au AFTER UPDATE ON history BEGIN
+                     INSERT INTO history_fts(history_fts, rowid, command) VALUES('delete', old.id, old.command);
+                     INSERT INTO history_fts(rowid, command) VALUES (new.id, new.command);
+                 END;",
+            )
+            .unwrap();
+        engine.init_schema().unwrap();
+
+        let id = engine.add("print alpha", None).unwrap();
+        let before = engine.conn.total_changes();
+        engine.update_last(id, 1200, 0).unwrap();
+        assert_eq!(engine.conn.total_changes() - before, 1, "update_last touched FTS");
+
+        let before = engine.conn.total_changes();
+        assert_eq!(engine.add("print alpha", None).unwrap(), id);
+        assert_eq!(engine.conn.total_changes() - before, 1, "dedup bump touched FTS");
+
+        engine
+            .conn
+            .execute("UPDATE history SET command = 'print beta' WHERE id = ?1", params![id])
+            .unwrap();
+        let hits: i64 = engine
+            .conn
+            .query_row(
+                "SELECT count(*) FROM history_fts WHERE history_fts MATCH '\"beta\"'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "command edit was not re-indexed");
     }
 
     #[test]
