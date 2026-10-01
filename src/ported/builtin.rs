@@ -7361,11 +7361,19 @@ pub fn bin_typeset(
                 // ~PM_READONLY)` takes over the unset struct (Src/params.c:1132
                 // `pm = oldpm`) and re-types it from `on` alone — `typeset g=s`
                 // leaves a SCALAR, not the old declared array.
-                if !usepm && target_is_arraylike && !requesting_type {
+                // The same holds for every type, not just arrays: `integer y; unset
+                // y; typeset -u y=abc` re-types the struct from `-u` alone, and
+                // assignsparam (whose fetchvalue treats an unset, undeclared node
+                // as absent, c:Src/params.c:2264-2265) then finds it set. Only the
+                // REUSE arm of createparam (c:Src/params.c:1130 `oldpm->level ==
+                // locallevel || !(flags & PM_LOCAL)`) is modelled here; a shadow
+                // of an outer-scope name was already created above.
+                if !usepm {
                     let unset_plain = paramtab().read().ok().and_then(|t| {
                         t.get(n).map(|pm| {
                             (pm.node.flags as u32 & PM_UNSET) != 0
                                 && (pm.node.flags as u32 & PM_SPECIAL) == 0
+                                && (pm.level == cur_locallevel || (on as u32 & PM_LOCAL) == 0)
                         })
                     }) == Some(true);
                     if unset_plain {

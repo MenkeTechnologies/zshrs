@@ -8860,7 +8860,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     let mut tab = paramtab().write().unwrap();
     // c:3233 — `if (!(v = fetchvalue(&vbuf, &t, 1, SCANPM_ASSIGNING)))
     //             { createparam(t, PM_SCALAR); created = 1; }`.
-    // `fetchvalue` is not a plain table lookup: c:2241-2243 —
+    // `fetchvalue` is not a plain table lookup: c:2264-2265 —
     //     if (pm->node.flags & PM_UNSET && !(pm->node.flags & PM_DECLARED))
     //         return NULL;
     // — so a node left `PM_UNSET` with `PM_DECLARED` cleared reads as
@@ -8872,21 +8872,39 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // like bash") and keeps the local node (c:3851), and this lookup
     // then drops the stale PM_NAMEREF along with the rest of the flags.
     //
-    // NARROWED DELIBERATELY to PM_NAMEREF nodes. C can apply c:2262-2263
-    // unconditionally because `typeset_single` reaches `assignsparam`
-    // only AFTER c:2521 `createparam(pname, on & ~PM_READONLY)` has
-    // already stamped the FULL requested attribute mask (PM_INTEGER,
-    // PM_LEFT, …) and thereby cleared PM_UNSET. zshrs's `bin_typeset`
-    // hands `createparam` only the type-kind plus PM_LOCAL, so a
-    // still-PM_UNSET node arrives here carrying attributes that the
-    // c:1176 flag overwrite would silently drop (`typeset y; unset y;
-    // typeset -i y=i42` lost its `-i`). Restricting the gate to
-    // references keeps the nameref semantics exact without depending on
-    // that ordering difference.
-    let existing = tab.get(name).is_some_and(|pm| {
-        let f = pm.node.flags as u32;
-        (f & PM_NAMEREF) == 0 || (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0 // c:2241-2243
-    });
+    // Applied to every node type, as in C. `typeset_single` keeps its
+    // attributes because it reaches here only after c:Src/builtin.c:2521
+    // `createparam(pname, on & ~PM_READONLY)` re-typed the unset struct
+    // with the full requested mask (which clears PM_UNSET); a bare
+    // `x=val` after `integer x; unset x` gets a plain scalar, which is
+    // also what exec.c:2619 GLOB_ASSIGN relies on (`unsetparam(name)` "to
+    // force it to be recreated as either scalar or array").
+    let existing = match tab.get_mut(name) {
+        None => false,
+        Some(pm) => {
+            let f = pm.node.flags as u32;
+            if (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0 {
+                true // c:2264-2265 — fetchvalue finds a set/declared node
+            } else if (f & PM_SPECIAL) != 0
+                || (isset(crate::ported::zsh_h::POSIXBUILTINS) && (f & PM_EXPORTED) != 0)
+            {
+                // c:1135-1150 — createparam declines to replace an unset
+                // SPECIAL (or, under POSIXBUILTINS, exported) node: it
+                // clears PM_UNSET and returns NULL, and c:3240's second
+                // getvalue then finds the revived node.
+                if (f & PM_RO_BY_DESIGN) != 0 {
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
+                    zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140
+                    unqueue_signals(); // c:3241
+                    return None; // c:3242
+                }
+                pm.node.flags &= !(PM_UNSET as i32); // c:1144
+                true
+            } else {
+                false // c:3234 — reuse arm overwrites the flags (c:1176)
+            }
+        }
+    };
     let created_now = !existing; // c:3232 createparam path sets `created = 1`
     if !existing {
         // c:3234 `createparam(t, PM_SCALAR); created = 1;`
@@ -11330,9 +11348,27 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
     if nullsethash_gsu {
         return 0; // c:3870 nullunsetfn — empty body
     }
+    // c:3870 — a `private` parameter carries the zsh/param/private GSU
+    // closure, whose unsetfn (pps_unsetfn and its siblings,
+    // c:Src/Modules/param_private.c:311-322) only runs the wrapped unsetfn
+    // when `locallevel <= pm->level` and, on an EXPLICIT unset, sets
+    // PM_DECLARED again: `() { private x=1; unset x; x=2 }` must find the
+    // node through fetchvalue (c:2264-2265) instead of re-creating it over
+    // a PM_RO_BY_DESIGN struct.
+    let private_closure =
+        crate::ported::modules::param_private::is_private(pm as *const param) != 0;
     if (pm.node.flags as u32 & PM_UNSET) == 0 || (pm.node.flags as u32 & PM_REMOVABLE) != 0 {
-        // c:3870 — `pm->gsu.s->unsetfn(pm, exp)` — open-coded to stdunsetfn.
-        stdunsetfn(pm, exp);
+        if private_closure {
+            if cur_ll <= pm.level {
+                stdunsetfn(pm, exp); // c:param_private.c:317-318 gsu->unsetfn
+            }
+            if exp != 0 {
+                pm.node.flags |= PM_DECLARED as i32; // c:param_private.c:320
+            }
+        } else {
+            // c:3870 — `pm->gsu.s->unsetfn(pm, exp)` — open-coded to stdunsetfn.
+            stdunsetfn(pm, exp);
+        }
     }
     if pm.env.is_some() {
         delenv(&pm.node.nam); // c:3872 delenv(pm)
