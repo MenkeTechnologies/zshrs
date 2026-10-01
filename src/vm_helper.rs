@@ -9112,7 +9112,8 @@ pub fn module_param_is_autoload_stub(name: &str) -> bool {
 /// visible binding" test.
 ///
 /// Returns false when a MODULE-GATED row (`sysparams`, `errnos`,
-/// `mapfile`, `langinfo`) has no `paramtab` node: those are seeded on
+/// `mapfile`, `langinfo`) has no `paramtab` node and its module is not
+/// loaded: those are seeded on
 /// demand by `seed_partab_param`, and the PARTAB walk must still answer
 /// for them (their own `module` gate decides).
 ///
@@ -9153,16 +9154,27 @@ pub fn magic_special_shadowed(name: &str) -> bool {
     if !PARTAB.iter().any(|e| e.name == name) && !PARTAB_ARRAY.iter().any(|e| e.name == name) {
         return false;
     }
+    // A module-gated row (`errnos`, `sysparams`, `mapfile`, `langinfo`)
+    // gets its paramtab node from the owning module's setparamdefs
+    // (Src/module.c:1169-1196), so while that module is loaded an absent
+    // node means its `p:` feature is off: deleteparamdef (c:1190) removed
+    // it, or the module was loaded with other features only. Read the
+    // module state before taking the paramtab lock.
+    let gated_loaded = module_gated_partab_module(name)
+        .map(|m| crate::ported::module::MODULESTAB.lock().unwrap().is_loaded(m));
     crate::ported::params::paramtab()
         .read()
         .map_or(false, |tab| {
             let Some(pm) = tab.get(name) else {
                 // c:Src/params.c:2264 `if (!pm ...) return NULL` —
                 // `unset` removed the node (see the doc comment). Only
-                // a valid reading once the rows have been seeded, and
-                // never for the seeded-on-demand module rows.
-                return PARTAB_SEEDED.load(std::sync::atomic::Ordering::Acquire)
-                    && module_gated_partab_module(name).is_none();
+                // a valid reading once the rows have been seeded. A
+                // gated row whose module is not loaded is left to the
+                // module gate in partab_get / partab_array_get.
+                return match gated_loaded {
+                    Some(loaded) => loaded,
+                    None => PARTAB_SEEDED.load(std::sync::atomic::Ordering::Acquire),
+                };
             };
             {
                 // c:Src/params.c:2264-2266 — `(pm->node.flags & PM_UNSET)
