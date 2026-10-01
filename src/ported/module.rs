@@ -1594,6 +1594,12 @@ impl modulestab {
             ("zsh/cap", &["cap", "getcap", "setcap"][..]),
             ("zsh/clone", &["clone"][..]),
             ("zsh/curses", &["zcurses"][..]),
+            // c:Src/Modules/db_gdbm.mdd — `link='if test "x$enable_gdbm"
+            // = xyes; then echo dynamic; else echo no; fi'`. Without the
+            // gdbm backend the module is not built at all, so
+            // `zmodload zsh/db/gdbm` fails ("failed to load module").
+            // The backend here is the `gdbm` cfg used by db_gdbm.rs.
+            #[cfg(feature = "gdbm")]
             ("zsh/db/gdbm", &["ztie", "zuntie", "zgdbmpath"][..]),
             ("zsh/param/private", &["private"][..]),
             // c:Src/Modules/newuser.mdd — `link=dynamic`, no builtins;
