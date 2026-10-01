@@ -701,6 +701,11 @@ mod tests {
         use std::sync::atomic::Ordering;
 
         let _g = crate::test_util::global_state_lock();
+        // `compquote` autoloads its module on first use, and zsh/complete's
+        // `setup_` clears compqstack — which would wipe the stack set below.
+        // A live shell has the module loaded before any completion function
+        // runs, so load it first here too.
+        let _ = crate::ported::module::resolvebuiltin("compquote");
         let saved = INCOMPFUNC.load(Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
 
