@@ -596,7 +596,7 @@ pub fn on_post_widget(widget: &str) {
             if let Some((start, len)) = found {
                 let spec = getsparam("HISTORY_SUBSTRING_SEARCH_HIGHLIGHT_FOUND")
                     .unwrap_or_else(|| "bg=magenta,fg=white,bold".to_owned());
-                let (mask_on, _off) = crate::ported::prompt::match_highlight(&spec);
+                let (mask_on, _off, _) = crate::ported::prompt::match_highlight(&spec);
                 let attr = mask_on;
                 with_fx(|fx| {
                     for i in start..(start + len).min(fx.line_attrs.len()) {

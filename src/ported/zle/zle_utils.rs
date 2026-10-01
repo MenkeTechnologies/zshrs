@@ -705,12 +705,12 @@ pub fn spaceinline(ct: i32) {
             };
             // c:838-839 — `if (rhp->start - sub >= zlecs) rhp->start += ct;`
             if rhp.start as i64 - sub >= zlecs_i {
-                rhp.start = (rhp.start as i64 + ct_i) as usize;
+                rhp.start = (rhp.start as i64 + ct_i) as i32;
             }
             // c:840-841 — `if (rhp->end - sub >= zlecs && (!predisplaylen
             //                || zlecs)) rhp->end += ct;`
             if rhp.end as i64 - sub >= zlecs_i && (predisplaylen == 0 || zlecs_i != 0) {
-                rhp.end = (rhp.end as i64 + ct_i) as usize;
+                rhp.end = (rhp.end as i64 + ct_i) as i32;
             }
         }
     }
@@ -762,17 +762,17 @@ pub fn shiftchars(to: i32, cnt: i32) {
             // c:892-897 — `if (rhp->start - sub > to) { ... }`
             if entry.start as i64 - sub > to_i {
                 if entry.start as i64 - sub > to_i + cnt_i {
-                    entry.start = (entry.start as i64 - cnt_i).max(0) as usize; // c:894
+                    entry.start = (entry.start as i64 - cnt_i) as i32; // c:894
                 } else {
-                    entry.start = (to_i + sub).max(0) as usize; // c:896
+                    entry.start = (to_i + sub) as i32; // c:896
                 }
             }
             // c:898-903 — `if (rhp->end - sub > to) { ... }`
             if entry.end as i64 - sub > to_i {
                 if entry.end as i64 - sub > to_i + cnt_i {
-                    entry.end = (entry.end as i64 - cnt_i).max(0) as usize; // c:900
+                    entry.end = (entry.end as i64 - cnt_i) as i32; // c:900
                 } else {
-                    entry.end = (to_i + sub).max(0) as usize; // c:902
+                    entry.end = (to_i + sub) as i32; // c:902
                 }
             }
         }
@@ -2863,7 +2863,7 @@ mod findbol_findeol_tests {
         zle_with("abcdefghij", 0);
         crate::ported::zle::zle_params::set_predisplay(Some("12345")); // predisplaylen=5
 
-        let mk = |start: usize, end: usize, flags: i32| RegionHighlight {
+        let mk = |start: i32, end: i32, flags: i32| RegionHighlight {
             start,
             end,
             attr: Default::default(),

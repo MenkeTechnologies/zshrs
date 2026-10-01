@@ -3192,8 +3192,8 @@ impl HighlightManager {
     /// file-scope free fn below.
     pub fn add_region(&mut self, start: usize, end: usize, attr: zattr) {
         self.regions.push(RegionHighlight {
-            start,
-            end,
+            start: start as i32,
+            end: end as i32,
             attr,
             memo: None,
             flags: 0,
@@ -3203,7 +3203,10 @@ impl HighlightManager {
     /// Get region highlight for position. Equivalent to
     /// `get_region_highlight()` from zle_refresh.c.
     pub fn get_region_highlight(&self, pos: usize) -> Option<&RegionHighlight> {
-        self.regions.iter().find(|r| pos >= r.start && pos < r.end)
+        self
+            .regions
+            .iter()
+            .find(|r| pos as i64 >= r.start as i64 && (pos as i64) < r.end as i64)
     }
 
     /// Unset region highlight. Equivalent to
@@ -5175,10 +5178,11 @@ pub struct RefreshState {
 /// different fields: start/end/atr/flags/memo/layer).
 #[derive(Debug, Clone)]
 pub struct RegionHighlight {
-    /// `start` field.
-    pub start: usize,
-    /// `end` field.
-    pub end: usize,
+    /// `int start` — first character highlighted; -1 when the entry did
+    /// not parse (5.9.1 zle_refresh.c:528-530).
+    pub start: i32,
+    /// `int end` — one past the last; -1 when unparsed (c:534-537).
+    pub end: i32,
     /// `atr` — the region's attributes as the `zattr` bitmap
     /// `match_highlight` returns (5.9.1 zle_refresh.c:519).
     pub attr: zattr,
@@ -5279,7 +5283,7 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
 
     // The entries in `region_highlights[]` order, as (start, end, atr) in
     // combined-snapshot coordinates (offset already added).
-    let mut entries: Vec<(usize, usize, zattr)> = Vec::new();
+    let mut entries: Vec<(i64, i64, zattr)> = Vec::new();
     let (default_atr_on, region_atr, isearch_atr, suffix_atr, paste_atr) = {
         let mgr = highlight().lock().unwrap();
         let get = |cat, dflt| mgr.category_attrs.get(&cat).copied().unwrap_or(dflt);
@@ -5312,23 +5316,25 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
             // the character under the cursor is part of the selection.
             hi += 1;
         }
-        entries.push((lo + pre_len, hi + pre_len, region_atr));
+        entries.push(((lo + pre_len) as i64, (hi + pre_len) as i64, region_atr));
     }
     // Special entry 1, the isearch match (5.9.1 c:1118-1124).
     if crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(Ordering::SeqCst) != 0 {
         let start = crate::ported::zle::zle_hist::ISEARCH_STARTPOS.load(Ordering::SeqCst);
         let end = crate::ported::zle::zle_hist::ISEARCH_ENDPOS.load(Ordering::SeqCst);
-        if start >= 0 && end >= 0 {
-            entries.push((start as usize + pre_len, end as usize + pre_len, isearch_atr));
-        }
+        entries.push((
+            start as i64 + pre_len as i64,
+            end as i64 + pre_len as i64,
+            isearch_atr,
+        ));
     }
     // Special entry 2, the active completion suffix (5.9.1 c:1126-1131): a
     // removable suffix (e.g. the space auto-added after a unique
     // completion) over `[zlecs - suffixlen, zlecs]`.
     let suffix_len = crate::ported::zle::zle_misc::suffixlen.load(Ordering::SeqCst);
     if suffix_len > 0 {
-        let cs = ZLECS.load(Ordering::SeqCst) + pre_len;
-        entries.push((cs.saturating_sub(suffix_len as usize), cs, suffix_atr));
+        let cs = (ZLECS.load(Ordering::SeqCst) + pre_len) as i64;
+        entries.push((cs - suffix_len as i64, cs, suffix_atr));
     }
     // Special entry 3, the text just yanked (5.9.1 c:1133-1139).
     if crate::ported::zle::zle_main::LASTCMD.load(Ordering::SeqCst) as i32
@@ -5337,10 +5343,14 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
     {
         let yankb = crate::ported::zle::zle_main::YANKB.load(Ordering::SeqCst);
         let yanke = crate::ported::zle::zle_main::YANKE.load(Ordering::SeqCst);
-        entries.push((yankb + pre_len, yanke + pre_len, paste_atr));
+        entries.push(((yankb + pre_len) as i64, (yanke + pre_len) as i64, paste_atr));
     }
     for region in &highlight().lock().unwrap().regions {
-        entries.push((region.start + pre_len, region.end + pre_len, region.attr));
+        entries.push((
+            region.start as i64 + pre_len as i64,
+            region.end as i64 + pre_len as i64,
+            region.attr,
+        ));
     }
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native ZLE effects (extensions/zle_fx.rs): the fish-ported syntax
@@ -5360,7 +5370,7 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
                     while i < native.len() && native[i] == Some(atr) {
                         i += 1;
                     }
-                    entries.push((start, i, atr));
+                    entries.push((start as i64, i as i64, atr));
                 }
                 None => i += 1,
             }
@@ -5376,11 +5386,11 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
         } else {
             pre_len
         };
-        entries.push((rhp.start + off, rhp.end + off, rhp.attr));
+        entries.push((rhp.start as i64 + off as i64, rhp.end as i64 + off as i64, rhp.attr));
     }
 
     let mut attrs: Vec<(zattr, zattr)> = Vec::with_capacity(tmpll);
-    for tmppos in 0..tmpll {
+    for tmppos in 0..tmpll as i64 {
         // 5.9.1 c:1267 — `zattr base_atr_on = default_atr_on, base_atr_off = 0;`
         let mut base_atr_on = default_atr_on;
         let mut base_atr_off: zattr = 0;
@@ -5395,7 +5405,7 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
                     base_atr_on |= atr;
                 }
                 // 5.9.1 c:1291-1293
-                if tmppos == end - 1 || tmppos == tmpll - 1 {
+                if tmppos == end - 1 || tmppos == tmpll as i64 - 1 {
                     for (on, off) in TXT_ATTR_OFF_ON_PAIRS {
                         if atr & on != 0 {
                             base_atr_off |= off; // TXT_ATTR_OFF_FROM_ON(rhp->atr)
@@ -5984,79 +5994,87 @@ pub struct rparams {
 }
 
 /// Port of `void set_region_highlight(UNUSED(Param pm), char **aval)`
-/// from `Src/Zle/zle_refresh.c:488`. Setter for the `$region_highlight`
-/// special parameter. C body: resize the `region_highlights[]` global
-/// to `len(aval) + N_SPECIAL_HIGHLIGHTS`, freeing memo strings on
-/// each replaced entry, then parse each `aval[i]` into one entry:
-/// optional leading `P` sets `ZRH_PREDISPLAY`, two decimal indices
-/// become `start`/`end`, `match_highlight()` parses the attribute
-/// spec into `atr`+`atrmask` and optional `layer`, and a trailing
-/// `memo=NAME` field is stored verbatim. Passing `aval=None` (the
-/// `NULL` case from `unset_region_highlight`, c:595) truncates to
-/// the special baseline. C uses a packed `struct region_highlight`
-/// global; the Rust port stores parsed entries in
-/// `REGION_HIGHLIGHTS` via the simplified `RegionHighlight` shape.
+/// from 5.9.1 `Src/Zle/zle_refresh.c:463-561` (zshrs targets zsh 5.9.2).
+/// Setter for the `$region_highlight` special parameter: one entry per
+/// element, parsed as an optional `P` flag (`ZRH_PREDISPLAY`), the start
+/// and end offsets (-1 when absent), the attributes `match_highlight`
+/// reads, and — continuing from where `match_highlight` stopped — an
+/// optional `memo=` field that ends at a comma, a blank or a NUL, so
+/// `memo=foo,bar`, `memo=foo bar` and `memo=foo\0bar` all keep `foo`
+/// ("forward compatibility", c:527-538). An element that does not parse
+/// is kept with its -1 offsets, as in C. `aval == None` (the NULL case
+/// from `unset_region_highlight`) empties the table. C keeps the four
+/// special entries at the front of the same array; the Rust
+/// `REGION_HIGHLIGHTS` holds only the user entries.
 /// WARNING: param names don't match C — Rust=(aval) vs C=(pm, aval)
 pub fn set_region_highlight(aval: Option<&[String]>) {
-    // c:488
-    let aval = match aval {
-        // c:510 !aval
-        Some(a) => a,
-        None => {
-            // c:495-508 — truncate to special baseline when aval is NULL.
-            REGION_HIGHLIGHTS.lock().unwrap().clear();
-            return; // c:511
-        }
-    };
+    use crate::ported::ztype_h::inblank;
+    // c:469-483 — resize to the new count, freeing the old memos (c:475).
     let mut rh = REGION_HIGHLIGHTS.lock().unwrap();
-    rh.clear(); // c:500 free memos
+    rh.clear();
+    // c:485-486
+    let aval = match aval {
+        Some(a) => a,
+        None => return,
+    };
     for entry in aval.iter() {
-        // c:513
-        let mut oldstrp: &str = entry.as_str(); // c:519
-        let mut flags: i32 = 0; // c:525
-        if oldstrp.starts_with('P') {
-            // c:520
-            flags = ZRH_PREDISPLAY; // c:521
-            oldstrp = &oldstrp[1..]; // c:522
+        // c:489
+        let bytes = entry.as_bytes();
+        let mut p = 0usize; // oldstrp
+        let flags = if bytes.first() == Some(&b'P') {
+            p += 1; // c:497
+            ZRH_PREDISPLAY // c:496
+        } else {
+            0 // c:500
+        };
+        while p < bytes.len() && inblank(bytes[p]) {
+            p += 1; // c:501-502
         }
-        oldstrp = oldstrp.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:526
-        let (start_val, rest1) = crate::ported::utils::zstrtol(oldstrp, 10); // c:529
-        let start = if oldstrp.len() == rest1.len() {
-            -1i32
-        } else {
-            start_val as i32
-        }; // c:530-531
-        let strp = rest1.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:533
-        let (end_val, rest2) = crate::ported::utils::zstrtol(strp, 10); // c:537
-        let end = if strp.len() == rest2.len() {
-            -1i32
-        } else {
-            end_val as i32
-        }; // c:537-538
-        let strp = rest2.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:541
-                                                                              // c:545 — match_highlight(strp, ...) into attr fields.
-        let attr = match_highlight(strp);
-        // c:551 — memo= field extraction.
-        let memo = if let Some(rest) = strp.strip_prefix("memo=") {
-            // c:517,551
-            let end_pos = rest
-                .find(|c: char| c == ',' || c == ' ' || c == '\t' || c == '\0')
-                .unwrap_or(rest.len());
-            Some(rest[..end_pos].to_string()) // c:581
-        } else {
-            None
-        }; // c:583
-        if start >= 0 && end >= 0 {
-            rh.push(RegionHighlight {
-                start: start as usize,
-                end: end as usize,
-                attr,
-                memo,
-                flags, // c:521 — ZRH_PREDISPLAY from the `P` prefix (was discarded)
-            });
+        // c:504-506 — `rhp->start = (int)zstrtol(oldstrp, &strp, 10);
+        // if (strp == oldstrp) rhp->start = -1;`
+        let (val, rest) = crate::ported::utils::zstrtol(&entry[p..], 10);
+        let used = entry.len() - p - rest.len();
+        let start = if used == 0 { -1 } else { val as i32 };
+        p += used;
+        while p < bytes.len() && inblank(bytes[p]) {
+            p += 1; // c:508-509
         }
+        // c:511-514
+        let (val, rest) = crate::ported::utils::zstrtol(&entry[p..], 10);
+        let used = entry.len() - p - rest.len();
+        let end = if used == 0 { -1 } else { val as i32 };
+        p += used;
+        while p < bytes.len() && inblank(bytes[p]) {
+            p += 1; // c:516-517
+        }
+        // c:519 — `strp = (char*) match_highlight(strp, &rhp->atr);`
+        let (attr, _mask, rest) = crate::ported::prompt::match_highlight(&entry[p..]);
+        let mut p = entry.len() - rest.len();
+        while p < bytes.len() && inblank(bytes[p]) {
+            p += 1; // c:521-522
+        }
+        // c:524 — `if (strpfx(memo_equals, strp))`
+        let memo = if entry[p..].starts_with("memo=") {
+            // c:541-553 — the memo runs to the first NUL, comma or blank.
+            // The value is unmetafied here, so `unmeta_one` (c:545) is the
+            // plain character.
+            let memo_start = p + "memo=".len();
+            let len = entry[memo_start..]
+                .find(|c: char| c == '\0' || c == ',' || (c.is_ascii() && inblank(c as u8)))
+                .unwrap_or(entry.len() - memo_start);
+            Some(entry[memo_start..memo_start + len].to_string()) // c:554 ztrduppfx
+        } else {
+            None // c:556
+        };
+        rh.push(RegionHighlight {
+            start,
+            end,
+            attr,
+            memo,
+            flags,
+        });
     }
-    // c:586 — freearray(av): aval owned by caller in Rust.
+    // c:559 — freearray(av): aval owned by caller in Rust.
 }
 
 /// Direct port of `void unset_region_highlight(Param pm, int exp)` from
@@ -6081,43 +6099,35 @@ pub fn unset_region_highlight(pm: &mut crate::ported::zsh_h::param, exp: i32) {
     }
 }
 
-/// Direct port of `char **get_region_highlight(Param pm)` from
-/// `Src/Zle/zle_refresh.c:430`. The get hook for the `$region_highlight`
-/// special parameter: format each user region highlight as
-/// `"[P]start end <attr-spec>[ memo=NAME]"` (c:466-476) via the real
-/// `output_highlight` (the highlight spec, `fg=red,bold`). C skips the
-/// first `N_SPECIAL_HIGHLIGHTS` (4) cursor/region/isearch/suffix entries
-/// (c:443); the Rust `REGION_HIGHLIGHTS` holds ONLY user entries (the
-/// special baseline isn't stored there), so every entry is a user
-/// highlight and no skip is needed. Empty store → empty array (c:437-438).
-///
-/// 5.9.x `output_highlight(rhp->atr, buf)` (5.9.1 prompt.c:1823) prints the
-/// attributes that are set in `atr`; the port of the dev-tree signature also
-/// takes a mask naming which attributes to print, so the mask is the set
-/// flag bits of `atr` itself.
+/// Port of `char **get_region_highlight(UNUSED(Param pm))` from 5.9.1
+/// `Src/Zle/zle_refresh.c:401-453`. The get hook for the
+/// `$region_highlight` special parameter: each user entry as
+/// `"[P]start end <attr-spec>[ memo=NAME]"` (c:440-449), the spec coming
+/// from `output_highlight` (`fg=red,bold`, or `none`). C skips the first
+/// `N_SPECIAL_HIGHLIGHTS` entries (c:415); the Rust `REGION_HIGHLIGHTS`
+/// holds only the user entries, so nothing is skipped. An empty table is
+/// an empty array (c:408-409).
 pub fn get_region_highlight(_pm: &crate::ported::zsh_h::param) -> Vec<String> {
-    // c:430
-    use crate::ported::zsh_h::TXT_ATTR_ALL;
     let rh = REGION_HIGHLIGHTS.lock().unwrap();
     rh.iter()
         .map(|rhp| {
-            let mut s = String::new();
-            // c:466-468 — `sprintf("%s%s ", P?, "start end")`.
-            if rhp.flags & ZRH_PREDISPLAY != 0 {
-                s.push('P'); // c:467
-            }
-            s.push_str(&format!("{} {} ", rhp.start, rhp.end));
-            // 5.9.1 c:447 — `output_highlight(rhp->atr, ...)`.
-            let atr = rhp.attr;
-            s.push_str(&crate::ported::prompt::output_highlight(atr, atr & TXT_ATTR_ALL));
-            // c:473-475 — `memo=NAME`.
+            // c:440-442 — `sprintf(*arrp, "%s%s %s ", P?, digbuf1, digbuf2)`.
+            let mut s = format!(
+                "{}{} {} ",
+                if rhp.flags & ZRH_PREDISPLAY != 0 { "P" } else { "" },
+                rhp.start,
+                rhp.end
+            );
+            // c:443 — `output_highlight(rhp->atr, *arrp + strlen(*arrp))`.
+            s.push_str(&crate::ported::prompt::output_highlight(rhp.attr));
+            // c:445-449 — " memo=NAME".
             if let Some(memo) = &rhp.memo {
                 s.push_str(" memo=");
                 s.push_str(memo);
             }
             s
         })
-        .collect()
+        .collect() // c:452
 }
 
 /// Process-wide region-highlights table, the Rust analog of C's
@@ -7440,6 +7450,45 @@ mod tests {
         state.swap_buffers();
         state.free_video();
         assert!(state.old_video.is_none());
+    }
+
+    /// 5.9.1 zle_refresh.c:463-561 / :401-453 — `$region_highlight` read
+    /// back after a write, as zsh 5.9.2 prints it: the memo ends at a
+    /// comma, a blank or a NUL; an entry that does not parse keeps -1
+    /// offsets; an entry without attributes reads `none`.
+    #[test]
+    fn region_highlight_round_trip_normalises_like_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let input: Vec<String> = [
+            "foo",
+            "3 bar",
+            "  2 5   bold,fg=#ff0000 memo=a\0b",
+            "1 2 fg=red,junk",
+            "0 4 fg=green memo=someplugin,futureattribute=futurevalue",
+            "0 4 fg=green memo=someplugin futurefifthfield",
+            "P1 2 bold memo=x y",
+            "0 1 memo=q",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        set_region_highlight(Some(&input));
+        let got = get_region_highlight(&crate::ported::zsh_h::param::default());
+        set_region_highlight(None);
+        assert_eq!(
+            got,
+            [
+                "-1 -1 none",
+                "3 -1 none",
+                "2 5 fg=#ff0000,bold memo=a",
+                "1 2 fg=red",
+                "0 4 fg=green memo=someplugin",
+                "0 4 fg=green memo=someplugin",
+                "P1 2 bold memo=x",
+                "0 1 none memo=q",
+            ]
+        );
     }
 
     #[test]

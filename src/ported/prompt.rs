@@ -3760,7 +3760,7 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
     on | ((colour as zattr) << shft) // c:2018
 }
 
-/// Match a set of highlights in `spec`, returning `(on_var, mask)`.
+/// Match a set of highlights in `spec`, returning `(on_var, mask, rest)`.
 /// Port of `const char *match_highlight(const char *teststr, zattr *on_var,
 /// zattr *setmask, int *layer)` from `Src/prompt.c:2031`.
 ///
@@ -3769,15 +3769,12 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
 /// names (`reset`/`bold`/`faint`/`standout`/`underline`/`italic`) with an
 /// optional `no` prefix — accumulating the attribute bits into `*on_var`
 /// and the "which fields were explicitly set" bitmask into `*setmask`. C
-/// returns the first unconsumed character; Rust returns `(on_var, mask)`.
-///
-/// SIGNATURE NOTE: the return is pinned to `(zattr, zattr)` = `(*on_var,
-/// *setmask)` by the type-pin test `match_highlight_returns_tuple_type`.
-/// C's `int *layer` out-param and the unconsumed-remainder return are not
-/// exposed — no Rust caller consumes either, and the pinned test forbids
-/// widening the signature. The `layer=` directive is still parsed and
-/// consumed (so following directives scan correctly), but the decoded layer
-/// value is discarded.
+/// returns the first unconsumed character; Rust returns `(on_var, mask,
+/// rest)`, `rest` being that unconsumed tail of `spec` —
+/// `set_region_highlight` (5.9.1 zle_refresh.c:519-525) continues from it to
+/// read the `memo=` field. C's `int *layer` out-param is not exposed: the
+/// `layer=` directive is still parsed and consumed (so following directives
+/// scan correctly), but the decoded layer value is discarded.
 ///
 /// SUBSTRATE NOTE: `hl=NAME` resolves a named group from the
 /// `.zle.hlgroups` hash parameter (C `parsehighlight`, `Src/prompt.c:285`),
@@ -3786,7 +3783,7 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
 /// but `on_var` is left unchanged. Wire the resolver here once
 /// `.zle.hlgroups` lands.
 /// WARNING: param names don't match C — Rust=(spec) vs C=(teststr, on_var, setmask, layer)
-pub fn match_highlight(spec: &str) -> (zattr, zattr) {
+pub fn match_highlight(spec: &str) -> (zattr, zattr, &str) {
     // c:2031
     use crate::ported::utils::zstrtol;
     use crate::ported::zsh_h::{TXTFAINT, TXTITALIC};
@@ -3945,8 +3942,8 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
             }
         }
     }
-    // c:2123-2126 — *setmask = mask; C returns the unconsumed teststr ptr.
-    (on_var, mask)
+    // c:2123-2126 — *setmask = mask; return teststr, the unconsumed tail.
+    (on_var, mask, &spec[pos..])
 }
 
 /// Build the ANSI SGR escape for an indexed colour (e.g. `\x1b[31m`).
@@ -3977,41 +3974,29 @@ pub fn output_colour(colour: u8, is_fg: bool) -> String {
     }
 }
 
-/// Direct port of `int output_highlight(zattr atr, zattr mask, char *buf)`
-/// from `Src/prompt.c:2179`. Format the attribute bits as the zsh
-/// highlight SPEC (`fg=red,bold,nounderline`), the textual form used by
-/// `$region_highlight` and `zle_highlight` — NOT the ANSI SGR escape (the
-/// previous body called `apply_text_attributes`, which emits SGR; that was
-/// a fake cited as this function). `mask` selects which attributes appear;
-/// only bits set in `mask` are emitted, with a `no` prefix when the bit is
-/// off in `atr`. Returns the spec string (C's `buf`/length convention
-/// collapses to a Rust `String`).
-pub fn output_highlight(atr: zattr, mut mask: zattr) -> String {
-    // c:2179
+/// Port of `int output_highlight(zattr atr, char *buf)` from 5.9.1
+/// `Src/prompt.c:1823-1877` (zshrs targets zsh 5.9.2; the dev tree added
+/// a mask argument and `no`/`reset` output). Format the attribute bits as
+/// the zsh highlight SPEC — the foreground colour, the background colour,
+/// then each set entry of the `highlights[]` table (`bold`, `standout`,
+/// `underline`), comma-separated, or `none` when nothing is set
+/// (c:1872-1876). This is the textual form `$region_highlight` reads back
+/// (`get_region_highlight`), NOT an ANSI SGR escape. C's `buf`/length
+/// convention collapses to a Rust `String`.
+pub fn output_highlight(atr: zattr) -> String {
     use crate::ported::zsh_h::{
-        TXTBGCOLOUR, TXTBOLDFACE, TXTFAINT, TXTFGCOLOUR, TXTITALIC, TXTSTANDOUT, TXTUNDERLINE,
-        TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT,
-        TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT,
+        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT,
+        TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK,
+        TXT_ATTR_FG_COL_SHIFT,
     };
     let mut parts: Vec<String> = Vec::new();
 
-    // c:2186-2205 — when the mask covers every attribute and more than one
-    // is unset, it's shorter to start from "reset".
-    if mask == TXT_ATTR_ALL {
-        let mut threebits = !atr & TXT_ATTR_ALL;
-        threebits &= threebits.wrapping_sub(1); // c:2189 can't be bold && faint
-        threebits &= threebits.wrapping_sub(1); // c:2190 allow one "no" entry
-        if threebits != 0 {
-            mask &= atr; // c:2193 — mark atr's unset bits as done
-            parts.push("reset".to_string()); // c:2196
-        }
-    }
-
-    // output_colour (c:2136) as the spec: "fg=NAME" / "fg=NUM" / "fg=#rrggbb".
+    // `output_colour` (5.9.1 c:1777-1812) as the spec: "fg=NAME" /
+    // "fg=NUM" / "fg=#rrggbb".
     let colour_spec = |col: u32, is_fg: bool, truecol: bool| -> String {
         let prefix = if is_fg { "fg=" } else { "bg=" };
         if truecol {
-            // c:2146 — 24-bit hex triplet.
+            // c:1785-1788 — 24-bit hex triplet.
             format!(
                 "{}#{:02x}{:02x}{:02x}",
                 prefix,
@@ -4020,50 +4005,36 @@ pub fn output_highlight(atr: zattr, mut mask: zattr) -> String {
                 col & 0xff
             )
         } else if col > 7 {
-            format!("{}{}", prefix, col) // c:2155 — numeric index
+            format!("{}{}", prefix, col) // c:1795-1800 — numeric index
         } else {
-            format!("{}{}", prefix, COLOUR_NAMES[col as usize]) // c:2160 — ansi name
+            format!("{}{}", prefix, COLOUR_NAMES[col as usize]) // c:1802-1806 — ansi name
         }
     };
 
-    // c:2207-2223 — foreground colour.
-    if mask & TXTFGCOLOUR != 0 {
-        if atr & TXTFGCOLOUR != 0 {
-            let col = ((atr & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT) as u32;
-            parts.push(colour_spec(col, true, atr & TXT_ATTR_FG_24BIT != 0));
-        } else {
-            parts.push("fg=default".to_string()); // c:2218
+    // c:1829-1837 — foreground colour.
+    if atr & TXTFGCOLOUR != 0 {
+        let col = ((atr & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT) as u32;
+        parts.push(colour_spec(col, true, atr & TXT_ATTR_FG_24BIT != 0));
+    }
+    // c:1838-1853 — background colour.
+    if atr & TXTBGCOLOUR != 0 {
+        let col = ((atr & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT) as u32;
+        parts.push(colour_spec(col, false, atr & TXT_ATTR_BG_24BIT != 0));
+    }
+    // c:1854-1870 — `for (hp = highlights; hp->name; hp++) if (hp->mask_on
+    // & atr)`; the table is 5.9.1 c:1609-1615 (`none` has no on-bits).
+    for (name, mask_on) in [
+        ("bold", TXTBOLDFACE),
+        ("standout", TXTSTANDOUT),
+        ("underline", TXTUNDERLINE),
+    ] {
+        if mask_on & atr != 0 {
+            parts.push(name.to_string());
         }
     }
-    // c:2225-2243 — background colour.
-    if mask & TXTBGCOLOUR != 0 {
-        if atr & TXTBGCOLOUR != 0 {
-            let col = ((atr & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT) as u32;
-            parts.push(colour_spec(col, false, atr & TXT_ATTR_BG_24BIT != 0));
-        } else {
-            parts.push("bg=default".to_string()); // c:2236
-        }
-    }
-
-    // c:2244-2258 — named attribute table (the C `highlights[]`, c:1896).
-    let highlights: &[(&str, zattr, zattr)] = &[
-        ("reset", 0, TXT_ATTR_ALL),
-        ("bold", TXTBOLDFACE, TXTFAINT),
-        ("faint", TXTFAINT, TXTBOLDFACE),
-        ("standout", TXTSTANDOUT, 0),
-        ("underline", TXTUNDERLINE, 0),
-        ("italic", TXTITALIC, 0),
-    ];
-    for &(name, mask_on, mask_off) in highlights {
-        if mask_on & mask != 0 && (mask_off & mask & atr) == 0 {
-            mask &= !mask_off; // c:2247
-            let mut s = String::new();
-            if mask_on & atr == 0 {
-                s.push_str("no"); // c:2252
-            }
-            s.push_str(name); // c:2255
-            parts.push(s);
-        }
+    // c:1872-1876 — `if (atrlen == 0) { strcpy(ptr, "none"); return 4; }`
+    if parts.is_empty() {
+        return "none".to_string();
     }
     parts.join(",")
 }
@@ -5031,21 +5002,25 @@ pub fn set_pending_text_attrs(attrs: zattr) {
 mod tests {
     use super::*;
 
-    /// c:2179 — output_highlight produces the zsh highlight SPEC (not SGR):
-    /// a foreground colour by name, the named bold attribute, and a `no`
-    /// prefix when a masked attribute is off in `atr`.
+    /// 5.9.1 prompt.c:1823-1877 — output_highlight produces the zsh
+    /// highlight SPEC (not SGR): colours first, then the set attributes
+    /// in table order, `none` when nothing is set. zsh 5.9.2 reads
+    /// `region_highlight=("2 5 bold,fg=#ff0000")` back as
+    /// `2 5 fg=#ff0000,bold` and an attribute-less entry as `none`.
     #[test]
     fn output_highlight_emits_spec_not_sgr() {
-        use crate::ported::zsh_h::{TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT};
+        use crate::ported::zsh_h::{
+            TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT,
+        };
         // fg=red (colour index 1) → "fg=red", not an SGR escape.
         let atr = TXTFGCOLOUR | (1u64 << TXT_ATTR_FG_COL_SHIFT);
-        assert_eq!(output_highlight(atr, TXTFGCOLOUR), "fg=red");
-        // a set named attribute.
-        assert_eq!(output_highlight(TXTBOLDFACE, TXTBOLDFACE), "bold");
-        // masked but unset → "no" prefix.
-        assert_eq!(output_highlight(0, TXTUNDERLINE), "nounderline");
+        assert_eq!(output_highlight(atr), "fg=red");
+        assert_eq!(output_highlight(TXTBOLDFACE | TXTUNDERLINE), "bold,underline");
+        let tc = TXTFGCOLOUR | TXT_ATTR_FG_24BIT | (0xff0000u64 << TXT_ATTR_FG_COL_SHIFT);
+        assert_eq!(output_highlight(TXTBOLDFACE | tc), "fg=#ff0000,bold");
+        assert_eq!(output_highlight(0), "none");
         // never an escape.
-        assert!(!output_highlight(atr, TXTFGCOLOUR).contains('\u{1b}'));
+        assert!(!output_highlight(atr).contains('\u{1b}'));
     }
 
     /// c:1935-1944 — `truecolor_terminal` returns true iff
@@ -6690,11 +6665,15 @@ mod tests {
         let _: bool = truecolor_terminal();
     }
 
-    /// c:2089 — `match_highlight("")` empty returns (zattr, zattr) tuple.
+    /// c:2089 — `match_highlight` returns `(*on_var, *setmask, teststr)`:
+    /// the attributes, the mask, and the unconsumed tail (C's return value),
+    /// which stops at the space before a following field.
     #[test]
     fn match_highlight_returns_tuple_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: (zattr, zattr) = match_highlight("");
+        let _: (zattr, zattr, &str) = match_highlight("");
+        assert_eq!(match_highlight("bold memo=x").2, " memo=x");
+        assert_eq!(match_highlight("fg=red,bold").2, "");
     }
 
     // ═══════════════════════════════════════════════════════════════════
