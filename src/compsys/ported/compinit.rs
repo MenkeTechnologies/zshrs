@@ -1207,11 +1207,20 @@ pub fn merge_bundled_registrations(tables: &mut DumpTables) -> usize {
                 postpatterns,
             }) => (commands, patterns, postpatterns),
             CompFileDef::Autoload(opts) => {
-                // sh:522-524 — an `#autoload` file lands in `_compautos`.
-                tables
-                    .compautos
-                    .entry(file.name.clone())
-                    .or_insert_with(|| opts.join(" "));
+                // sh:524 `[[ "$_i_line" != \ # ]] && _compautos[$_i_name]="$_i_line"`
+                // — only an `#autoload` line WITH options lands in
+                // `_compautos`; a bare header registers nothing (the same
+                // guard the full scan applies, see `compinit`'s Autoload arm).
+                // This overlay inserted every bare `#autoload` file of
+                // `~/.zshrs/functions`, so a `compinit -C -d DUMP` shell had
+                // `$#_compautos` 178 where zsh, sourcing the same dump, has 1.
+                let opts_str = opts.join(" ");
+                if !opts_str.trim().is_empty() {
+                    tables
+                        .compautos
+                        .entry(file.name.clone())
+                        .or_insert(opts_str);
+                }
                 continue;
             }
             _ => continue,
