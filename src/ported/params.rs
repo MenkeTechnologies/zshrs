@@ -9207,17 +9207,18 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
       // MODULE_PATH↔module_path, FIGNORE↔fignore,
       // MAILPATH↔mailpath. Bug #423/#424.
       //
-      // The split is the tied GSU setfn, so it only exists on a node that
-      // CARRIES the tie: c:Src/params.c:406 `IPDEF8("PATH", &path, "path",
-      // PM_TIED)` installs `colonarr_gsu` on the special node alone. A
-      // `typeset -h PATH` local (c:Src/builtin.c:2083-2085 leaves newspecial
-      // NS_NONE, so createparam c:1157 gives it the plain `stdscalar_gsu`)
-      // and the untied `special_params_sh` PATH of sh emulation
-      // (c:Src/params.c:454-459) store a plain string and never touch the
-      // array. `cloned` is the node assignstrvalue just wrote.
+      // The split is the special's colonarr GSU setfn writing the internal
+      // `path`-style array, so it only exists on the SPECIAL node:
+      // c:Src/params.c:406 `IPDEF8("PATH", &path, "path", PM_TIED)` and, under
+      // sh/ksh emulation, c:459 `IPDEF8("PATH", &path, NULL, 0)` both point
+      // the special at the same internal array (zshrs keeps that array as the
+      // `path` parameter). A `typeset -h PATH` local (c:Src/builtin.c:2083-2085
+      // leaves newspecial NS_NONE, so createparam c:1157 gives it the plain
+      // `stdscalar_gsu`) stores a plain string and never touches the array.
+      // `cloned` is the node assignstrvalue just wrote.
     let assigned_tied = cloned
         .as_ref()
-        .is_some_and(|p| (p.node.flags as u32 & PM_TIED) != 0);
+        .is_some_and(|p| (p.node.flags as u32 & PM_SPECIAL) != 0);
     let alt: Option<&str> = match name {
         "PATH" => Some("path"),
         "FPATH" => Some("fpath"),

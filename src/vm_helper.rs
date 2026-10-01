@@ -2336,7 +2336,25 @@ impl ShellExecutor {
                 // but C zsh's createparamtable emits IPDEF9 rows for
                 // them at Src/params.c:425-432.
                 use crate::ported::zsh_h::{hashnode, param, PM_DONTIMPORT as PM_DI, PM_UNSET};
-                for entry in special_params.iter() {
+                // c:Src/params.c:838-847 — the first section is always
+                // loaded; past it, sh/ksh emulation loads the untied scalar
+                // `special_params_sh` rows INSTEAD of the zsh-only tail
+                // (array-tied pairs, lowercase aliases, pipestatus):
+                //     if (EMULATION(EMULATE_SH|EMULATE_KSH))
+                //         for (ip = special_params_sh; ...) addnode(...);
+                //     else
+                //         while ((++ip)->node.nam) addnode(...);
+                // `zsh --emulate sh -c 'typeset -p PATH'` therefore prints
+                // `export PATH=…`, never `export -T PATH path=( … )`.
+                let head = &special_params[..crate::ported::params::SPECIAL_PARAMS_ZSH_START];
+                let tail: &[crate::ported::params::special_paramdef] = if crate::ported::zsh_h::EMULATION(
+                    crate::ported::zsh_h::EMULATE_SH | crate::ported::zsh_h::EMULATE_KSH,
+                ) {
+                    crate::ported::params::special_params_sh // c:841-843
+                } else {
+                    &special_params[crate::ported::params::SPECIAL_PARAMS_ZSH_START..] // c:845-847
+                };
+                for entry in head.iter().chain(tail.iter()) {
                     // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
                     // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
                     //
