@@ -1481,7 +1481,7 @@ pub fn getzlequery() -> i32 {
     if c != '\n' {
         // c:1226-1228 — `REFRESH_ELEMENT re; re.chr = c; re.atr = 0;`
         let re = crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: c, atr: 0 };
-        crate::ported::zle::zle_refresh::zwcputc(&re); // c:1229
+        crate::ported::zle::zle_refresh::zwcputc(&re, None); // c:1229
     }
     // c:1231 — return c == ZWC('y');
     if c == 'y' {

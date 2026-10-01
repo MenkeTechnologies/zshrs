@@ -11,7 +11,8 @@ use crate::ported::zle::{
     zle_params::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 use crate::ported::zsh_h::{
-    isset, COMBININGCHARS, TCCLEAREOL, TCDEL, TCINS, TXT_ERROR, TXT_MULTIWORD_MASK,
+    isset, zattr, COMBININGCHARS, TCCLEAREOL, TCDEL, TCINS, TXT_ATTR_OFF_MASK, TXT_ERROR,
+    TXT_MULTIWORD_MASK,
 };
 use std::fmt::Write;
 use std::io;
@@ -360,31 +361,32 @@ pub const ZR_MID_ELLIPSIS2_SIZE: usize = ZR_MID_ELLIPSIS2.len(); // c:302
 pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len(); // c:312
 
 /// Apply a `$zle_highlight` array to the manager.
-/// Port of `zle_set_highlight()` from Src/Zle/zle_refresh.c:322. Walks
-/// each `category:spec` entry, parses the spec via `match_highlight`,
-/// and stores it in `category_attrs`. Categories not mentioned keep the
-/// zsh defaults, applied here on first call: `region` and `special`
-/// default to `standout`, `isearch` to `underline`, `suffix` to `bold`
-/// — direct ports of zle_refresh.c:395-402.
+/// Port of `zle_set_highlight()` from 5.9.1 Src/Zle/zle_refresh.c:316-389.
+/// Walks each `category:spec` entry, parses the spec via `match_highlight`,
+/// and stores the resulting `zattr` in `category_attrs`. A category that
+/// is not mentioned gets the 5.9.x default (c:378-387): `special`,
+/// `region` and `paste` standout, `isearch` underline, `suffix` bold.
 /// WARNING: param names don't match C — Rust=(manager, atrs) vs C=()
 pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
+    use crate::ported::zsh_h::{TXTBOLDFACE, TXTSTANDOUT, TXTUNDERLINE};
+    // c:326-336 — `special_atr_on = default_atr_on = 0;` and the special
+    // region_highlights entries' `atr` are zeroed before the walk.
+    manager.category_attrs.clear();
     let mut seen = std::collections::HashSet::new();
     for entry in atrs {
-        if entry.is_empty() {
-            continue;
-        }
         if *entry == "none" {
-            // zle_refresh.c:355-360 — `none` clears every category.
+            // c:341-346 — `none` zeroes `special` and `default` and marks
+            // every category as set, so none of them takes its default. It
+            // does not touch an attribute an earlier entry already parsed.
+            manager.category_attrs.insert(HighlightCategory::Default, 0);
+            manager.category_attrs.insert(HighlightCategory::Special, 0);
             for cat in [
+                HighlightCategory::Special,
                 HighlightCategory::Region,
                 HighlightCategory::Isearch,
                 HighlightCategory::Suffix,
                 HighlightCategory::Paste,
-                HighlightCategory::Default,
-                HighlightCategory::Special,
-                HighlightCategory::Ellipsis,
             ] {
-                manager.category_attrs.insert(cat, TextAttr::default());
                 seen.insert(cat);
             }
             continue;
@@ -394,12 +396,12 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
             None => continue,
         };
         let cat = match prefix {
-            "region" => HighlightCategory::Region,
-            "isearch" => HighlightCategory::Isearch,
-            "suffix" => HighlightCategory::Suffix,
-            "paste" => HighlightCategory::Paste,
-            "default" => HighlightCategory::Default,
-            "special" => HighlightCategory::Special,
+            "default" => HighlightCategory::Default, // c:347
+            "special" => HighlightCategory::Special, // c:349
+            "region" => HighlightCategory::Region,   // c:352
+            "isearch" => HighlightCategory::Isearch, // c:355
+            "suffix" => HighlightCategory::Suffix,   // c:358
+            "paste" => HighlightCategory::Paste,     // c:361
             "ellipsis" => HighlightCategory::Ellipsis,
             _ => continue,
         };
@@ -407,46 +409,26 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
         seen.insert(cat);
     }
 
-    // Defaults for unset slots — zle_refresh.c:395-402.
-    let default_standout = TextAttr {
-        standout: true,
-        ..TextAttr::default()
-    };
-    let default_underline = TextAttr {
-        underline: true,
-        ..TextAttr::default()
-    };
-    let default_bold = TextAttr {
-        bold: true,
-        ..TextAttr::default()
-    };
-    if !seen.contains(&HighlightCategory::Region) {
-        manager
-            .category_attrs
-            .insert(HighlightCategory::Region, default_standout);
+    // c:377-387 — defaults for the categories nothing set; a category
+    // that `none` marked as set but no entry parsed stays at 0.
+    for (cat, dflt) in [
+        (HighlightCategory::Special, TXTSTANDOUT), // c:378
+        (HighlightCategory::Region, TXTSTANDOUT),  // c:380
+        (HighlightCategory::Isearch, TXTUNDERLINE), // c:382
+        (HighlightCategory::Suffix, TXTBOLDFACE),  // c:384
+        (HighlightCategory::Paste, TXTSTANDOUT),   // c:386
+    ] {
+        let atr = if seen.contains(&cat) { 0 } else { dflt };
+        manager.category_attrs.entry(cat).or_insert(atr);
     }
-    if !seen.contains(&HighlightCategory::Isearch) {
-        manager
-            .category_attrs
-            .insert(HighlightCategory::Isearch, default_underline);
-    }
-    if !seen.contains(&HighlightCategory::Suffix) {
-        manager
-            .category_attrs
-            .insert(HighlightCategory::Suffix, default_bold);
-    }
-    if !seen.contains(&HighlightCategory::Special) {
-        manager
-            .category_attrs
-            .insert(HighlightCategory::Special, default_standout);
-    }
+    manager.category_attrs.entry(HighlightCategory::Default).or_insert(0);
 
-    // c:409 — take the shared colour-sequence composition buffer for the
+    // c:388 — take the shared colour-sequence composition buffer for the
     // duration of the refresh. This is also what loads the
     // `$zle_highlight` {fg,bg}_{start,default,end}_code overrides into
     // `fg_bg_sequences` (`Src/prompt.c:2375-2393`), so it must run after
     // the entries above have been parsed. `zle_free_highlight` drops it.
-    crate::ported::prompt::allocate_colour_buffer(); // c:409
+    crate::ported::prompt::allocate_colour_buffer(); // c:388
 }
 
 /// Direct port of `void zle_free_highlight(void)` from
@@ -468,56 +450,140 @@ pub fn zle_free_highlight() {
     crate::ported::prompt::free_colour_buffer(); // c:417
 }
 
-/// Direct port of `void tcoutclear(int cap)` from
-/// `Src/Zle/zle_refresh.c:607`.
+/// Port of `static void tcoutclear(int cap)` from 5.9.1
+/// `Src/Zle/zle_refresh.c:596-600` (zshrs targets zsh 5.9.2):
 /// ```c
-/// void tcoutclear(int cap) {
-///     treplaceattrs((cap == TCCLEAREOL) ? prompt_attr : 0);
-///     applytextattributes(0);
+/// static void
+/// tcoutclear(int cap)
+/// {
+///     clearattributes();
 ///     tcout(cap);
 /// }
 /// ```
-/// Emit a clear capability (`cap` is the termcap index TCCLEAREOL /
-/// TCCLEAREOD / TCCLEARSCREEN), after making the cleared region carry the
-/// right attributes — the prompt's for clear-to-end-of-line (so a
-/// coloured prompt's background fills correctly), else the default.
-/// The previous port took a `bool` and hardcoded CSI J for both, which
-/// wrongly cleared to end of *display* for the clear-to-end-of-*line*
-/// case (TCCLEAREOL → CSI K) and dropped the attribute setup. Every C
-/// caller guards on `tccan(cap)`, so `tcstr[cap]` is always loaded here.
+/// "Output a termcap capability, clearing any text attributes so as not
+/// to mess up the display." `clearattributes` (c:580-588) is inlined: it
+/// turns off whatever `lastatr` records as on and forgets it. `cap` is the
+/// termcap index TCCLEAREOL / TCCLEAREOD; every C caller guards on
+/// `tccan(cap)`, so `tcstr[cap]` is always loaded here.
 pub fn tcoutclear(cap: i32) {
-    // c:607
-    use crate::ported::zsh_h::TCCLEAREOL;
-    // c:609 — `treplaceattrs((cap == TCCLEAREOL) ? prompt_attr : 0);`
-    let attr = if cap == TCCLEAREOL {
-        PROMPT_ATTR.load(Ordering::SeqCst)
-    } else {
-        0
+    use crate::ported::prompt::{set_colour_attribute, tsetcap};
+    use crate::ported::zsh_h::{
+        COL_SEQ_BG, COL_SEQ_FG, TCALLATTRSOFF, TCSTANDOUTEND, TCUNDERLINEEND, TXTNOBGCOLOUR,
+        TXTNOBOLDFACE, TXTNOFGCOLOUR, TXTNOSTANDOUT, TXTNOUNDERLINE, TXT_ATTR_OFF_ON_PAIRS,
     };
-    crate::ported::prompt::treplaceattrs(attr);
-    // c:610 — `applytextattributes(0);` emit the SGR change.
-    let sgr = crate::ported::prompt::applytextattributes(0);
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    if !sgr.is_empty() {
-        let _ = write_loop(out_fd, sgr.as_bytes());
+    // c:583-587 — `if (lastatr) { settextattributes(TXT_ATTR_OFF_FROM_ON(lastatr));
+    // lastatr = 0; }`
+    let lastatr = LASTATR.load(Ordering::Relaxed);
+    if lastatr != 0 {
+        let off = TXT_ATTR_OFF_ON_PAIRS
+            .iter()
+            .filter(|(on, _)| lastatr & on != 0)
+            .fold(0, |acc, (_, off)| acc | off);
+        // settextattributes (5.9.1 c:945-963) with only "off" bits set.
+        if off & TXTNOBOLDFACE != 0 {
+            tsetcap(TCALLATTRSOFF, 0); // c:948
+        }
+        if off & TXTNOSTANDOUT != 0 {
+            tsetcap(TCSTANDOUTEND, 0); // c:950
+        }
+        if off & TXTNOUNDERLINE != 0 {
+            tsetcap(TCUNDERLINEEND, 0); // c:952
+        }
+        if off & TXTNOFGCOLOUR != 0 {
+            crate::shout::write(set_colour_attribute(off, COL_SEQ_FG, 0).as_bytes()); // c:960
+        }
+        if off & TXTNOBGCOLOUR != 0 {
+            crate::shout::write(set_colour_attribute(off, COL_SEQ_BG, 0).as_bytes()); // c:962
+        }
+        LASTATR.store(0, Ordering::Relaxed); // c:586
+        // !!! RUST-ONLY: keep prompt.rs's attribute state (still driven by
+        // the dev-tree diff elsewhere in this port) in step with the
+        // terminal.
+        crate::ported::prompt::treplaceattrs(0);
+        *crate::ported::prompt::current_attrs_lock().lock().unwrap() = 0;
     }
-    tcout(cap); // c:611
+    tcout(cap); // c:599
 }
 
-/// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
-/// `Src/Zle/zle_refresh.c:622`. Sets the pending attributes to the
-/// cell's (c:630), emits the SGR attribute-change diff (c:631 — empty
-/// when the attr is unchanged, so output stays minimal), then writes
-/// the character (c:644-651). The multiword/`nmwbuf` glyph path
-/// (c:634-643) reads the combining cluster `addmultiword` stored in the
-/// thread-local `NMWBUF` (length at `nmwbuf[c.chr]`, codepoints following)
-/// and emits each — the matching consumer for the already-ported producer.
-pub fn zwcputc(c: &REFRESH_ELEMENT) {
+/// Port of `static zattr lastatr` from 5.9.1 `Src/Zle/zle_refresh.c:575`:
+/// "The last attributes that were on." — the 5.9.x on-flags `zwcputc`
+/// turned on and has not turned off again.
+pub static LASTATR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:575
+
+/// Port of `zwcputc(const REFRESH_ELEMENT *c, zattr *curatrp)` from
+/// 5.9.1 `Src/Zle/zle_refresh.c:614-687` (zshrs targets zsh 5.9.2; the
+/// dev tree replaced this with a `treplaceattrs`/`applytextattributes`
+/// diff). Turns off what `lastatr` has on that the cell does not want
+/// (c:627-631), turns the cell's attributes on unless `curatrp` says the
+/// previous character already had them (c:638-646), writes the character
+/// (c:648-664), then turns off the attributes whose "off" bits the cell
+/// carries (c:670-675) — the last cell of a highlighted region. `curatrp`
+/// is `None` for the `zputc` macro (c:248/253) and the running attribute
+/// of the string for `zwcwrite` (c:689-697).
+///
+/// The multiword/`nmwbuf` glyph path (c:650-658) reads the combining
+/// cluster `addmultiword` stored in the thread-local `NMWBUF` (length at
+/// `nmwbuf[c.chr]`, codepoints following) and emits each.
+pub fn zwcputc(c: &REFRESH_ELEMENT, curatrp: Option<&mut zattr>) {
+    use crate::ported::prompt::{set_colour_attribute, tsetcap};
     use crate::ported::utils::{wcrtomb, MbStateBuf, MBSTATE_ZERO, MB_LOCALE_READY};
+    use crate::ported::zsh_h::{
+        COL_SEQ_BG, COL_SEQ_FG, TCALLATTRSOFF, TCBOLDFACEBEG, TCSTANDOUTBEG, TCSTANDOUTEND,
+        TCUNDERLINEBEG, TCUNDERLINEEND, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTNOBGCOLOUR,
+        TXTNOBOLDFACE, TXTNOFGCOLOUR, TXTNOSTANDOUT, TXTNOUNDERLINE, TXTSTANDOUT, TXTUNDERLINE,
+        TXT_ATTR_BG_MASK, TXT_ATTR_FG_MASK, TXT_ATTR_OFF_ON_PAIRS, TXT_ATTR_ON_VALUES_MASK,
+    };
     use std::sync::atomic::Ordering;
 
     let _ = *MB_LOCALE_READY; // see `MB_LOCALE_READY` — locale-driven encode
+
+    // 5.9.1 zsh.h:2683 `TXT_ATTR_ON_MASK` — the flags that have an "off"
+    // partner; TXT_ATTR_OFF_FROM_ON / TXT_ATTR_ON_FROM_OFF (zsh.h:2698-2701)
+    // map between the two halves through TXT_ATTR_OFF_ON_PAIRS.
+    let on_mask: zattr = TXT_ATTR_OFF_ON_PAIRS.iter().fold(0, |acc, (on, _)| acc | on);
+    let off_from_on = |atr: zattr| -> zattr {
+        TXT_ATTR_OFF_ON_PAIRS
+            .iter()
+            .filter(|(on, _)| atr & on != 0)
+            .fold(0, |acc, (_, off)| acc | off)
+    };
+    let on_from_off = |atr: zattr| -> zattr {
+        TXT_ATTR_OFF_ON_PAIRS
+            .iter()
+            .filter(|(_, off)| atr & off != 0)
+            .fold(0, |acc, (on, _)| acc | on)
+    };
+    // `settextattributes(zattr atr)`, 5.9.1 zle_refresh.c:943-963. tsetcap
+    // writes to `shout` itself; the colour sequence is returned, so it is
+    // written here, in the same order C emits them.
+    let settextattributes = |atr: zattr| {
+        if atr & TXTNOBOLDFACE != 0 {
+            tsetcap(TCALLATTRSOFF, 0); // c:948
+        }
+        if atr & TXTNOSTANDOUT != 0 {
+            tsetcap(TCSTANDOUTEND, 0); // c:950
+        }
+        if atr & TXTNOUNDERLINE != 0 {
+            tsetcap(TCUNDERLINEEND, 0); // c:952
+        }
+        if atr & TXTBOLDFACE != 0 {
+            tsetcap(TCBOLDFACEBEG, 0); // c:954
+        }
+        if atr & TXTSTANDOUT != 0 {
+            tsetcap(TCSTANDOUTBEG, 0); // c:956
+        }
+        if atr & TXTUNDERLINE != 0 {
+            tsetcap(TCUNDERLINEBEG, 0); // c:958
+        }
+        if atr & (TXTFGCOLOUR | TXTNOFGCOLOUR) != 0 {
+            // c:959-960
+            crate::shout::write(set_colour_attribute(atr, COL_SEQ_FG, 0).as_bytes());
+        }
+        if atr & (TXTBGCOLOUR | TXTNOBGCOLOUR) != 0 {
+            // c:961-962
+            crate::shout::write(set_colour_attribute(atr, COL_SEQ_BG, 0).as_bytes());
+        }
+    };
 
     // c:639-641 / c:645-647 — `memset(&mbstate, 0, ...); i = wcrtomb(mbtmp,
     // wc, &mbstate); if (i > 0) fwrite(mbtmp, i, 1, shout);`. The encode is
@@ -545,20 +611,40 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
         }
     };
 
-    // c:630-631 — make the cell's attrs pending, emit the SGR diff.
-    crate::ported::prompt::treplaceattrs(c.atr);
-    let mut out: Vec<u8> = crate::ported::prompt::applytextattributes(0).into_bytes();
+    // c:627-631 — "Stuff on we don't want, turn it off".
+    let lastatr = LASTATR.load(Ordering::Relaxed);
+    if lastatr & !c.atr & on_mask != 0 {
+        settextattributes(off_from_on(lastatr & !c.atr)); // c:629
+        LASTATR.store(0, Ordering::Relaxed); // c:630
+    }
+
+    // c:638-646 — "Don't output "on" attributes in a string of characters
+    // with the same attributes. Be careful in case a different colour
+    // needs setting."
+    let on_values = c.atr & TXT_ATTR_ON_VALUES_MASK;
+    let differs = match &curatrp {
+        None => true,
+        Some(cur) => (**cur & TXT_ATTR_ON_VALUES_MASK) != on_values,
+    };
+    if c.atr & on_mask != 0 && differs {
+        // c:643 — "Record just the control flags we might need to turn off..."
+        LASTATR.store(c.atr & on_mask, Ordering::Relaxed);
+        // c:645 — "...but set including the values for colour attributes"
+        settextattributes(on_values);
+    }
+
+    let mut out: Vec<u8> = Vec::new();
     if c.atr & TXT_MULTIWORD_MASK != 0 {
-        // c:633-643 — multiword glyph: the cell's chr is an index into
+        // c:650-658 — multiword glyph: the cell's chr is an index into
         // nmwbuf (set by addmultiword c:934); read the cluster length at
         // that slot then its codepoints and emit each in turn.
-        let base = c.chr as u32 as usize; // c:634 — `nmwbuf[c->chr]`
+        let base = c.chr as u32 as usize; // c:652 — `nmwbuf[c->chr]`
         NMWBUF.with(|buf| {
             let b = buf.borrow();
             if let Some(&nchars) = b.get(base) {
-                let mut p = base + 1; // c:635 — `nmwbuf + c->chr + 1`
+                let mut p = base + 1; // c:653 — `nmwbuf + c->chr + 1`
                 for _ in 0..nchars {
-                    // c:639-641 — `*wcptr++`, wcrtomb → fwrite each char.
+                    // c:655-657 — `*wcptr++`, wcrtomb → fwrite each char.
                     if let Some(ch) = b.get(p).copied().and_then(char::from_u32) {
                         emit(&mut out, ch);
                     }
@@ -567,32 +653,58 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
             }
         });
     } else if c.chr != '\0' && c.chr != ZWC_WEOF {
-        // c:644-651 — `else if (c->chr != WEOF)`: emit the single codepoint. A
+        // c:659-662 — `else if (c->chr != WEOF)`: emit the single codepoint. A
         // NUL chr is the empty/terminator cell; ZWC_WEOF is the trailing
         // column placeholder of a wide glyph — both are skipped (the leading
         // cell already drew the full-width character).
         emit(&mut out, c.chr);
     }
     if !out.is_empty() {
-        // c:646-651 — the cell's bytes go to `shout`, so a frame reaches
-        // the terminal in one write instead of one per cell.
+        // c:661 — the cell's bytes go to `shout`.
         crate::shout::write(&out);
     }
+
+    // c:667-675 — "Always output "off" attributes since we only turn off
+    // at the end of a chunk of highlighted text."
+    let atr_off = c.atr & TXT_ATTR_OFF_MASK;
+    if atr_off != 0 {
+        settextattributes(atr_off); // c:673
+        LASTATR.fetch_and(!on_from_off(atr_off), Ordering::Relaxed); // c:674
+    }
+    // c:676-685 — "Remember the current attributes: those that are turned
+    // on, less those that are turned off again."
+    let mut now = on_values & !on_from_off(atr_off);
+    if now & TXTFGCOLOUR == 0 {
+        now &= !TXT_ATTR_FG_MASK;
+    }
+    if now & TXTBGCOLOUR == 0 {
+        now &= !TXT_ATTR_BG_MASK;
+    }
+    if let Some(cur) = curatrp {
+        *cur = now; // c:683-684
+    }
+    // !!! RUST-ONLY: the rest of this port's refresh still drives attributes
+    // through the dev-tree `treplaceattrs`/`applytextattributes` state in
+    // prompt.rs; record what the terminal now has so those diffs start from
+    // it.
+    crate::ported::prompt::treplaceattrs(now);
+    *crate::ported::prompt::current_attrs_lock().lock().unwrap() = now;
 }
 
 /// Port of `int zwcwrite(const REFRESH_STRING s, size_t i)` from
-/// `Src/Zle/zle_refresh.c:655`. Writes the first `i` cells of the
-/// video-buffer string `s`, each via `zwcputc` (c:659). Returns the
-/// number of cells written. The `zwrite(a,b)` macro (c:255/260) is just
-/// `zwcwrite(a, b)`. (Cell attributes are deferred to `zwcputc`'s
-/// colour path; the cell `chr` is faithful.)
+/// 5.9.1 `Src/Zle/zle_refresh.c:689-697`. Writes the first `i` cells of
+/// the video-buffer string `s`, each via `zwcputc` with the running
+/// attribute `curatr` (c:692 `zattr curatr = 0;`), so consecutive cells
+/// with the same attributes do not re-emit them. Returns the number of
+/// cells written. The `zwrite(a,b)` macro (c:249/254) is `zwcwrite(a, b)`.
 pub fn zwcwrite(s: &[REFRESH_ELEMENT], i: usize) -> usize {
-    // c:657-659 — `for (j = 0; j < i; j++) zwcputc(s + j);`
+    let mut curatr: zattr = 0; // c:692
+    // c:694-695 — `for (j = 0; j < i; j++) zwcputc(s + j, &curatr);`
     let n = i.min(s.len());
     for cell in &s[..n] {
-        zwcputc(cell); // c:659
+        zwcputc(cell, Some(&mut curatr)); // c:695
     }
-    n // c:660 `return i;`
+    n // c:696 `return i;`
 }
 
 // =====================================================================
@@ -1388,8 +1500,9 @@ pub fn zrefresh() {
         .saturating_sub(drawn_prompt_width)
         .saturating_sub(rprompt_reserve);
 
-    // Walk the buffer chars from buffer_start, applying overlay attrs.
-    let mut current_attr: Option<TextAttr> = None;
+    // Walk the buffer chars from buffer_start. This full-repaint string is
+    // never written (see the NBUF/OBUF note below); attributes live in the
+    // NBUF cells.
     // c:1013-1025 — `if (predisplaylen || postdisplaylen)` splice:
     // `tmpline = predisplay + zleline + postdisplay`, `tmpcs = zlecs +
     // predisplaylen`. $POSTDISPLAY is how zsh-autosuggestions paints its
@@ -1417,28 +1530,11 @@ pub fn zrefresh() {
             tmp
         }
     };
-    for (written, (idx, ch)) in line_snapshot
-        .iter()
-        .enumerate()
-        .skip(buffer_start)
-        .enumerate()
-    {
+    for (written, ch) in line_snapshot.iter().skip(buffer_start).enumerate() {
         if written >= buffer_budget {
             break;
         }
-        let want_attr = attrs.get(idx).and_then(|a| *a);
-        if want_attr != current_attr {
-            let _ = write!(handle, "\x1b[0m");
-            if let Some(a) = want_attr {
-                let _ = write!(handle, "{}", a.to_ansi());
-            }
-            current_attr = want_attr;
-        }
         let _ = write!(handle, "{}", ch);
-    }
-    // Reset SGR before the rprompt / cursor jump.
-    if current_attr.is_some() {
-        let _ = write!(handle, "\x1b[0m");
     }
 
     // Right prompt — paint at the absolute right margin if there's
@@ -1533,32 +1629,8 @@ pub fn zrefresh() {
         NBUF.lock().unwrap().clear();
         // c:1208-1400 — emit prompt + line cells, wrapping at `winw`.
         // c:1226-1248 — each cell carries the resolved attribute (`atr`)
-        // so refreshline/zwcputc emit its colour. Convert the per-char
-        // TextAttr overlay (compute_render_attrs) to the zattr bitmap.
-        use crate::ported::zsh_h::zattr;
-        let to_zattr = |ta: &TextAttr| -> zattr {
-            use crate::ported::zsh_h::{
-                TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
-                TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
-            };
-            let mut a: zattr = 0;
-            if ta.bold {
-                a |= TXTBOLDFACE;
-            }
-            if ta.underline {
-                a |= TXTUNDERLINE;
-            }
-            if ta.standout {
-                a |= TXTSTANDOUT;
-            }
-            if let Some(fg) = ta.fg_color {
-                a |= TXTFGCOLOUR | ((fg as zattr) << TXT_ATTR_FG_COL_SHIFT);
-            }
-            if let Some(bg) = ta.bg_color {
-                a |= TXTBGCOLOUR | ((bg as zattr) << TXT_ATTR_BG_COL_SHIFT);
-            }
-            a
-        };
+        // so refreshline/zwcputc emit its colour; compute_render_attrs
+        // supplies each char's (base_atr_on, base_atr_off) pair.
         let cols_n = cols.max(1);
         // ---- Build into the global NBUF via rparams + nextline (c:975-1400).
         // Pre-allocate NBUF to (winh+1) rows × (winw+2) cells (resetvideo's
@@ -1820,12 +1892,12 @@ pub fn zrefresh() {
         // TXTSTANDOUT when `$zle_highlight` has no `special:` entry (c:395-396).
         // Without this, control characters echoed unhighlighted (`^A` instead
         // of `\x1b[7m^A\x1b[27m`).
-        let special_zattr: zattr = highlight()
+        let special_atr_on: zattr = highlight()
             .lock()
             .unwrap()
             .category_attrs
             .get(&HighlightCategory::Special)
-            .map(|ta| to_zattr(ta))
+            .copied()
             .unwrap_or(crate::ported::zsh_h::TXTSTANDOUT);
         // c:1297-1320 — combining marks absorbed into the preceding base char's
         // cluster cell are skipped in subsequent iterations (the for-loop can't
@@ -1844,11 +1916,27 @@ pub fn zrefresh() {
                 rpms.nvln = rpms.ln;
                 rpms.nvcs = rpms.pos as i32;
             }
-            let atr = attrs
-                .get(i)
-                .and_then(|o| o.as_ref())
-                .map(&to_zattr)
-                .unwrap_or(0);
+            let (base_atr_on, base_atr_off) = attrs.get(i).copied().unwrap_or((0, 0));
+            // 5.9.1 c:1295-1303 — the attributes of specially displayed
+            // cells: the `special` highlight over the region attributes,
+            // keeping the special colours if it sets any.
+            let all_atr_on = if special_atr_on
+                & (crate::ported::zsh_h::TXTFGCOLOUR | crate::ported::zsh_h::TXTBGCOLOUR)
+                != 0
+            {
+                // c:1296-1299 — keep colours from special attributes.
+                special_atr_on | (base_atr_on & !crate::ported::zsh_h::TXT_ATTR_COLOUR_ON_MASK)
+            } else {
+                // c:1300-1302 — keep colours from standard attributes.
+                special_atr_on | base_atr_on
+            };
+            // c:1303 — `all_atr_off = TXT_ATTR_OFF_FROM_ON(all_atr_on);`
+            let all_atr_off = crate::ported::zsh_h::TXT_ATTR_OFF_ON_PAIRS
+                .iter()
+                .filter(|(on, _)| all_atr_on & on != 0)
+                .fold(0, |acc, (_, off)| acc | off);
+            // c:1384 — a printable char's cell carries both halves.
+            let atr = base_atr_on | base_atr_off;
             if ch == '\n' {
                 // c:1251 — `if (nextline(&rpms, 0)) break;` hard newline.
                 if nextline(&mut rpms, 0) != 0 {
@@ -1857,13 +1945,15 @@ pub fn zrefresh() {
             } else if ch == '\t' {
                 // c:1254-1265 — spaces to the next 8-column stop, wrapping
                 // (and possibly bailing) at the right margin.
+                // 5.9.1 c:1320-1325 — the spaces carry `base_atr_on`, and
+                // the last one also `base_atr_off`.
                 let mut bail = false;
-                loop {
-                    if emit(&mut rpms, ' ', atr) {
+                let mut left = 8 - rpms.pos % 8;
+                while left > 0 {
+                    left -= 1;
+                    let a = if left == 0 { atr } else { base_atr_on };
+                    if emit(&mut rpms, ' ', a) {
                         bail = true;
-                        break;
-                    }
-                    if rpms.pos % 8 == 0 {
                         break;
                     }
                 }
@@ -1871,11 +1961,12 @@ pub fn zrefresh() {
                     break;
                 }
             } else if (ch as u32) < 0x20 || ch as u32 == 0x7f {
-                // c:1340-1356 — control char as `^X` / `^?`. Both cells carry
-                // the `special` highlight mixed over the base attr (c:1348
-                // `rpms.s->atr = all_attr`).
-                let catr = atr | special_zattr;
-                if emit(&mut rpms, '^', catr) {
+                // 5.9.1 c:1408-1424 — control char as `^X` / `^?`. Both cells
+                // carry `all_atr_on`; the off bits go on the cell before a
+                // wrap (c:1413-1415) and on the second cell (c:1423).
+                let wraps = rpms.pos + 1 >= cols_n as usize;
+                let first = if wraps { all_atr_on | all_atr_off } else { all_atr_on };
+                if emit(&mut rpms, '^', first) {
                     break;
                 }
                 let c2 = if ((ch as u32) & !0x80u32) > 31 {
@@ -1883,7 +1974,7 @@ pub fn zrefresh() {
                 } else {
                     char::from_u32((ch as u32) | 0x40).unwrap_or('?')
                 };
-                if emit(&mut rpms, c2, catr) {
+                if emit(&mut rpms, c2, all_atr_on | all_atr_off) {
                     break;
                 }
             } else {
@@ -1906,13 +1997,18 @@ pub fn zrefresh() {
                     } else {
                         format!("<{:04x}>", ch as u32) // c:1377
                     };
-                    // c:1383 — `rpms.s->atr = all_attr;` — like the `^X` cells
-                    // above, the escape carries the `special` highlight; without
-                    // the mix zshrs drew `<0083>` unhighlighted where zsh wraps
-                    // it in the standout SGR pair.
-                    let hatr = atr | special_zattr;
+                    // 5.9.1 c:1447-1466 — like the `^X` cells above, each cell
+                    // carries `all_atr_on` (the `special` highlight); the off
+                    // bits go on the last cell and on the cell before a wrap.
                     let mut bail = false;
-                    for hc in hex.chars() {
+                    let n = hex.chars().count();
+                    for (k, hc) in hex.chars().enumerate() {
+                        let wraps = rpms.pos + 1 >= cols_n as usize;
+                        let hatr = if k + 1 == n || wraps {
+                            all_atr_on | all_atr_off
+                        } else {
+                            all_atr_on
+                        };
                         if emit(&mut rpms, hc, hatr) {
                             // c:1385-1389 — each cell, wrapping at the margin.
                             bail = true;
@@ -1931,9 +2027,15 @@ pub fn zrefresh() {
                 let remaining = (cols_n as usize).saturating_sub(rpms.pos);
                 if width > remaining {
                     let mut bail = false;
-                    for _ in 0..remaining {
-                        if emit(&mut rpms, ' ', atr) {
-                            // c:1281 — `*s++ = zr_sp` (all_attr); last one wraps.
+                    for k in 0..remaining {
+                        // 5.9.1 c:1337-1345 — `all_atr_on`, the last space also
+                        // `all_atr_off`; the last one wraps.
+                        let a = if k + 1 == remaining {
+                            all_atr_on | all_atr_off
+                        } else {
+                            all_atr_on
+                        };
+                        if emit(&mut rpms, ' ', a) {
                             bail = true;
                             break;
                         }
@@ -1964,7 +2066,8 @@ pub fn zrefresh() {
                                              // WEOF column-placeholders for the rest of its width.
                 let remaining2 = (cols_n as usize).saturating_sub(rpms.pos);
                 if width > remaining2 {
-                    if emit(&mut rpms, '?', atr) {
+                    // 5.9.1 c:1365-1367 — `all_atr_on | all_atr_off`.
+                    if emit(&mut rpms, '?', all_atr_on | all_atr_off) {
                         break; // c:1304-1306
                     }
                 } else {
@@ -2931,7 +3034,7 @@ pub fn zrefresh() {
             if rprompt_off != 0 {
                 VCS.store(winw - rprompt_off, Ordering::SeqCst); // c:1721
             } else {
-                zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }); // c:1723 zputc(&zr_cr)
+                zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }, None); // c:1723 zputc(&zr_cr)
                 VCS.store(0, Ordering::SeqCst); // c:1723
             }
             // c:1725 — the prompt's literal escapes leave the terminal in
@@ -3087,7 +3190,7 @@ impl HighlightManager {
     /// HighlightManager-internal helper: append a single region.
     /// Not a direct C port — `set_region_highlight` proper is the
     /// file-scope free fn below.
-    pub fn add_region(&mut self, start: usize, end: usize, attr: TextAttr) {
+    pub fn add_region(&mut self, start: usize, end: usize, attr: zattr) {
         self.regions.push(RegionHighlight {
             start,
             end,
@@ -3417,8 +3520,8 @@ pub fn refreshline(ln: i32) {
                 // the wrapped line's first glyph keeps its attribute (was emitted
                 // with atr 0, dropping colour — same fault as the deferred-char
                 // path at c:1967).
-                Some(cell) => zwcputc(&cell),
-                None => zwcputc(&REFRESH_ELEMENT { chr: ' ', atr: 0 }), // c:1903 zr_sp
+                Some(cell) => zwcputc(&cell, None),
+                None => zwcputc(&REFRESH_ELEMENT { chr: ' ', atr: 0 }, None), // c:1903 zr_sp
             }
             if ln == vln {
                 // c:1904 — better safe than sorry
@@ -3435,7 +3538,7 @@ pub fn refreshline(ln: i32) {
             vcs = 0;
             VLN.store(vln, Ordering::SeqCst);
             VCS.store(0, Ordering::SeqCst);
-            zwcputc(&REFRESH_ELEMENT { chr: '\n', atr: 0 }); // c:1912 zr_nl
+            zwcputc(&REFRESH_ELEMENT { chr: '\n', atr: 0 }, None); // c:1912 zr_nl
         }
     }
     ins_last = 0; // c:1857
@@ -3526,7 +3629,7 @@ pub fn refreshline(ln: i32) {
                     // the deferred automargin glyph keeps its colour. The
                     // earlier port read only `chr` and emitted atr 0, dropping
                     // the attribute.
-                    zwcputc(&cell);
+                    zwcputc(&cell, None);
                 }
                 vcs += 1; // c:1968 vcs++
                 VCS.store(vcs, Ordering::SeqCst);
@@ -3588,7 +3691,7 @@ pub fn refreshline(ln: i32) {
                 // overwritten run with zr_pad (space + prompt_attr), so the
                 // cleared cells carry the prompt's colour.
                 for _ in 0..i_pad {
-                    zwcputc(&zr_pad); // c:1997 zputc(&zr_pad)
+                    zwcputc(&zr_pad, None); // c:1997 zputc(&zr_pad)
                 }
             }
             return; // c:2002
@@ -3771,7 +3874,7 @@ pub fn refreshline(ln: i32) {
             // (treplaceattrs + applytextattributes) internally, then writes
             // the char. This is the main per-cell overwrite emit.
             if let Some(cell) = nl.first().cloned() {
-                zwcputc(&cell); // c:2076-2084
+                zwcputc(&cell, None); // c:2076-2084
             }
             if !nl.is_empty() {
                 nl.remove(0);
@@ -3832,8 +3935,8 @@ pub fn moveto(row: usize, col: usize) {
         vcs = 0;
         if !hasam_v {
             // c:2170-2171 — no automargin: CR + NL.
-            zwcputc(&zr_cr);
-            zwcputc(&zr_nl);
+            zwcputc(&zr_cr, None);
+            zwcputc(&zr_nl, None);
         } else {
             // c:2173-2176 — rep = first cell of nbuf[vln] if real, else space.
             let nlnct = NLNCT.load(Ordering::SeqCst);
@@ -3846,8 +3949,8 @@ pub fn moveto(row: usize, col: usize) {
                     .filter(|c| c.chr != '\0')
                     .unwrap_or(zr_sp)
             };
-            zwcputc(&rep); // c:2177
-            zwcputc(&zr_cr); // c:2178
+            zwcputc(&rep, None); // c:2177
+            zwcputc(&zr_cr, None); // c:2178
                              // c:2179-2181 — `if (vln<olnct && obuf[vln] && obuf[vln]->chr)
                              //                  *obuf[vln] = *rep;`
             let olnct = OLNCT.load(Ordering::SeqCst);
@@ -3903,12 +4006,12 @@ pub fn moveto(row: usize, col: usize) {
             }
         }
         // c:2207 — `zputc(&zr_cr), vcs = 0;` safety precaution.
-        zwcputc(&zr_cr);
+        zwcputc(&zr_cr, None);
         vcs = 0;
         VCS.store(0, Ordering::SeqCst);
         while ln > vln {
             // c:2208-2211 — newline-scroll the remaining lines.
-            zwcputc(&zr_nl);
+            zwcputc(&zr_nl, None);
             vln += 1;
         }
         VLN.store(vln, Ordering::SeqCst);
@@ -4013,11 +4116,12 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
         return 1;
     } else if cap_ok {
         // c:2226-2229 — `else if (tccan(cap)) { while(ct--) tcout(cap); return 1; }`
-        // Through `shout::tputs` like `tcout` itself, so a padded cap
-        // (`$<n>`) doesn't put its delay spec on screen ct times.
-        let expanded = crate::shout::tputs(&cap_str);
+        // Through `tcout`, so a `zle -T tc` transformation function sees
+        // each cap (c:2399-2400) and a padded cap (`$<n>`) is expanded by
+        // `shout::tputs` instead of putting its delay spec on screen.
+        let _ = cap_str;
         for _ in 0..ct {
-            crate::shout::write(&expanded);
+            tcout(cap);
         }
         return 1;
     }
@@ -4124,7 +4228,7 @@ pub fn tc_rightcurs(count: usize) {
             // c:2297-2302 — reprint: CR to the left column, up over the prompt
             // height, dump lpromptbuf, then a newline if it filled the margin.
             if i != 0 {
-                zwcputc(&zr_cr); // c:2298 — zputc(&zr_cr)
+                zwcputc(&zr_cr, None); // c:2298 — zputc(&zr_cr)
             }
             tc_upcurs(LPROMPTH.load(Ordering::SeqCst) - 1); // c:2299
                                                             // c:2300 — `zputs(lpromptbuf, shout)` skips itok marker bytes
@@ -4159,7 +4263,7 @@ pub fn tc_rightcurs(count: usize) {
         if j == i {
             // c:2311-2312 — `for ( ; t->chr && ct; ct--, t++) zputc(t);`
             while idx < t.len() && t[idx].chr != '\0' && ct > 0 {
-                zwcputc(&t[idx]);
+                zwcputc(&t[idx], None);
                 ct -= 1;
                 idx += 1;
             }
@@ -4167,7 +4271,7 @@ pub fn tc_rightcurs(count: usize) {
     }
     // c:2314-2315 — `while (ct--) zputc(&zr_sp);`
     while ct > 0 {
-        zwcputc(&zr_sp);
+        zwcputc(&zr_sp, None);
         ct -= 1;
     }
 }
@@ -4203,10 +4307,10 @@ pub fn tc_downcurs(ct: i32) -> i32 {
     {
         let mut c = ct; // c:2327 while (ct--)
         while c > 0 {
-            zwcputc(&REFRESH_ELEMENT { chr: '\n', atr: 0 }); // c:2328 zputc(&zr_nl)
+            zwcputc(&REFRESH_ELEMENT { chr: '\n', atr: 0 }, None); // c:2328 zputc(&zr_nl)
             c -= 1;
         }
-        zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }); // c:2329 zputc(&zr_cr)
+        zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }, None); // c:2329 zputc(&zr_cr)
         ret = -1; // c:2329
     }
     ret // c:2331
@@ -4396,7 +4500,7 @@ pub fn clearscreen() -> i32 {
 pub fn redisplay() -> i32 {
     // c:2435
     moveto(0, 0); // c:2437
-    zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }); // c:2438 zputc(&zr_cr)
+    zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }, None); // c:2438 zputc(&zr_cr)
     let lprompth = LPROMPTH.load(Ordering::SeqCst);
     tc_upcurs(lprompth - 1); // c:2439
     RESETNEEDED.store(1, Ordering::SeqCst); // c:2440 resetneeded = 1
@@ -4865,14 +4969,14 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
                 // c:2728-2729 — `for (; refreshop++->chr; vcs++) zputc(&zr_sp)`.
                 let mut k = rp;
                 while k < ol0.len() && ol0[k].chr != '\0' {
-                    zwcputc(&zr_sp); // c:2729
+                    zwcputc(&zr_sp, None); // c:2729
                     VCS.fetch_add(1, Ordering::SeqCst);
                     k += 1;
                 }
             }
             break; // c:2730
         }
-        zwcputc(&nl0[vp]); // c:2731 — emit the one changed cell
+        zwcputc(&nl0[vp], None); // c:2731 — emit the one changed cell
         VCS.fetch_add(1, Ordering::SeqCst); // c:2732 — vcs++
         t0c += 1; // c:2732 — t0++
         vp += 1; // c:2733 — vp++
@@ -5075,8 +5179,9 @@ pub struct RegionHighlight {
     pub start: usize,
     /// `end` field.
     pub end: usize,
-    /// `attr` field.
-    pub attr: TextAttr,
+    /// `atr` — the region's attributes as the `zattr` bitmap
+    /// `match_highlight` returns (5.9.1 zle_refresh.c:519).
+    pub attr: zattr,
     /// `memo` field.
     pub memo: Option<String>,
     /// `flags` field — `ZRH_PREDISPLAY` etc. (Src/Zle/zle_refresh.c
@@ -5122,159 +5227,184 @@ pub struct HighlightManager {
     /// in `region_highlights[]` and the
     /// `default_attr`/`special_attr`/`ellipsis_attr` globals in
     /// Src/Zle/zle_refresh.c — populated by `zle_set_highlight()`.
-    pub category_attrs: std::collections::HashMap<HighlightCategory, TextAttr>,
+    pub category_attrs: std::collections::HashMap<HighlightCategory, zattr>,
 }
 
-/// Build the per-character attribute overlay used by `zrefresh`.
-/// One slot per char in `zleline`; `None` means "default attrs",
-/// `Some(attr)` means apply `attr` for that cell.
+/// Build the per-character attribute overlay used by `zrefresh`: one
+/// `(base_atr_on, base_atr_off)` pair per char of the combined
+/// predisplay + `zleline` + postdisplay snapshot.
 ///
-/// Port of the inner loop in `zrefresh()` (Src/Zle/zle_refresh.c) that
-/// consults `region_highlights[]` for each visible cell. The vi
-/// visual-mode region is synthesised from `region_active` + `mark`
-/// here so `v` selects visibly without callers having to push a
-/// region themselves — matching zle_refresh.c's auto-promotion of
-/// `region_active` into a paintable highlight.
-pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
+/// Port of the region scan at the top of zrefresh's line loop
+/// (5.9.1 Src/Zle/zle_refresh.c:1265-1294). zshrs targets 5.9.2, whose
+/// model is entry ORDER, not layers: `region_highlights[]` is walked from
+/// the special entries (0=region, 1=isearch, 2=suffix, 3=paste) to the
+/// user's `$region_highlight` entries, and each entry covering the cell
+/// folds in as
+///
+/// ```c
+/// if (rhp->atr & (TXTFGCOLOUR|TXTBGCOLOUR)) {
+///     /* override colour with later entry */
+///     base_atr_on = (base_atr_on & ~TXT_ATTR_ON_VALUES_MASK) | rhp->atr;
+/// } else {
+///     /* no colour set yet */
+///     base_atr_on |= rhp->atr;
+/// }
+/// if (tmppos == rhp->end + offset - 1 || tmppos == tmpll - 1)
+///     base_atr_off |= TXT_ATTR_OFF_FROM_ON(rhp->atr);
+/// ```
+///
+/// so an entry that sets a colour replaces everything earlier entries
+/// turned on, and the last cell an entry covers carries the "off" bits
+/// that make `zwcputc` turn its attributes off straight after it.
+pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
+    use crate::ported::zsh_h::{
+        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
+        TXT_ATTR_OFF_ON_PAIRS, TXT_ATTR_ON_VALUES_MASK,
+    };
     // c:1013-1025 — the render line is predisplay + zleline + postdisplay;
-    // attrs must cover the combined length. region_highlight offsets are
+    // attrs cover the combined length. region_highlight offsets are
     // buffer-relative (zshzle(1)) and may extend past the buffer into
     // $POSTDISPLAY — zsh-autosuggestions highlights its ghost text with
     // `region_highlight+=("$#BUFFER $(($#BUFFER + $#POSTDISPLAY)) fg=8")`.
-    // Clamping to the bare buffer length silently dropped that entry.
-    // With $PREDISPLAY present, buffer-relative offsets shift right by
-    // its length in the combined snapshot (the C code renders from
-    // tmpline where the buffer starts at predisplaylen).
+    // With $PREDISPLAY present, buffer-relative offsets shift right by its
+    // length (5.9.1 c:1276-1280 `offset = predisplaylen`).
     let pre_len = crate::ported::zle::zle_params::get_predisplay()
         .chars()
         .count();
     let post_len = crate::ported::zle::zle_params::get_postdisplay()
         .chars()
         .count();
-    let buf_len = pre_len + ZLELINE.lock().unwrap().len() + post_len;
-    let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
+    let line_len = ZLELINE.lock().unwrap().len();
+    let tmpll = pre_len + line_len + post_len;
 
-    // c:1212-1244 — each cell's attribute is built layer by layer, lowest
-    // first, and within one layer in `region_highlights[]` order: the
-    // special entries (0=region, 1=isearch, 2=suffix, 3=paste) and then the
-    // user's `$region_highlight` entries. Each match is folded in with
-    // `base_attr = mixattrs(rhp->atr, rhp->atrmask, base_attr)`, so a later
-    // layer adds to the cell rather than replacing it. Default layers
-    // (c:347-350, c:544): user entries 10, suffix 10, paste 15, region 20,
-    // isearch 20. The visual region therefore lands on top of the syntax
-    // colours, keeping the colour it does not itself set.
-    //
-    // `mixattrs` (prompt.c:1802) replaces only what the overlay's mask
-    // names. `TextAttr` has no mask; a set flag or a `Some` colour is the
-    // overlay naming that attribute, so it is merged exactly that way.
-    let mix = |slot: &mut Option<TextAttr>, over: TextAttr| {
-        let base = slot.unwrap_or_default();
-        *slot = Some(TextAttr {
-            bold: over.bold || base.bold,
-            underline: over.underline || base.underline,
-            standout: over.standout || base.standout,
-            blink: over.blink || base.blink,
-            fg_color: over.fg_color.or(base.fg_color),
-            bg_color: over.bg_color.or(base.bg_color),
-        });
-    };
-    let paint = |attrs: &mut Vec<Option<TextAttr>>, start: usize, end: usize, over: TextAttr| {
-        for slot in attrs.iter_mut().take(end.min(buf_len)).skip(start.min(buf_len)) {
-            mix(slot, over);
-        }
+    // The entries in `region_highlights[]` order, as (start, end, atr) in
+    // combined-snapshot coordinates (offset already added).
+    let mut entries: Vec<(usize, usize, zattr)> = Vec::new();
+    let (default_atr_on, region_atr, isearch_atr, suffix_atr, paste_atr) = {
+        let mgr = highlight().lock().unwrap();
+        let get = |cat, dflt| mgr.category_attrs.get(&cat).copied().unwrap_or(dflt);
+        // Defaults as 5.9.1 zle_set_highlight (c:378-387) sets them, for a
+        // refresh that has not parsed $zle_highlight.
+        (
+            get(HighlightCategory::Default, 0),
+            get(HighlightCategory::Region, TXTSTANDOUT),
+            get(HighlightCategory::Isearch, TXTUNDERLINE),
+            get(HighlightCategory::Suffix, TXTBOLDFACE),
+            get(HighlightCategory::Paste, TXTSTANDOUT),
+        )
     };
 
-    // ── layer 10 ──
-    // c:1069-1075 — special entry 2, the active completion suffix: a
-    // removable suffix (e.g. the space auto-added after a unique completion)
-    // is highlighted over `[zlecs - suffixlen, zlecs]` so the user can see
-    // the part the next keystroke will overwrite. Default attr is bold
-    // (c:402 TXTBOLDFACE); `$zle_highlight`'s `suffix:` overrides it.
-    let suffix_len = crate::ported::zle::zle_misc::suffixlen.load(Ordering::SeqCst);
-    if suffix_len > 0 {
-        let suffix_attr = highlight()
-            .lock()
-            .unwrap()
-            .category_attrs
-            .get(&HighlightCategory::Suffix)
-            .copied()
-            .unwrap_or(TextAttr {
-                bold: true,
-                ..TextAttr::default()
-            });
-        // ZLECS is buffer-relative — shift into the combined snapshot.
-        let cs = ZLECS.load(Ordering::SeqCst) + pre_len;
-        paint(&mut attrs, cs.saturating_sub(suffix_len as usize), cs, suffix_attr);
-    }
-    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
-    // Native ZLE effects (extensions/zle_fx.rs): the fish-ported syntax
-    // highlighter + autosuggestion ghost. They stand in for what a
-    // highlighting plugin would put in `$region_highlight`, so they sit in
-    // the user layer, ahead of the real `$region_highlight` entries so a
-    // script plugin still wins where both set the same attribute.
-    {
-        let line_len = ZLELINE.lock().unwrap().len();
-        let mut native: Vec<Option<TextAttr>> = vec![None; buf_len];
-        crate::zle_fx::native_render_attrs(&mut native, pre_len, line_len);
-        for (slot, over) in attrs.iter_mut().zip(native) {
-            if let Some(over) = over {
-                mix(slot, over);
-            }
-        }
-    }
-    for region in &highlight().lock().unwrap().regions {
-        // Buffer-relative offsets land at +pre_len in the combined
-        // pre+line+post snapshot (C renders from tmpline where the
-        // buffer starts at predisplaylen).
-        paint(&mut attrs, region.start + pre_len, region.end + pre_len, region.attr);
-    }
-    // c:1102-1116 — the user `$region_highlight` entries (parsed into
-    // REGION_HIGHLIGHTS by set_region_highlight). ZRH_PREDISPLAY entries are
-    // predisplay-relative (offset 0 in the combined snapshot); plain entries
-    // are buffer-relative (+pre_len). A `layer=` clause is not kept by
-    // set_region_highlight, so every user entry takes the default layer 10.
-    for rhp in REGION_HIGHLIGHTS.lock().unwrap().iter() {
-        let off = if rhp.flags & ZRH_PREDISPLAY != 0 {
-            0
-        } else {
-            pre_len
-        };
-        paint(&mut attrs, rhp.start + off, rhp.end + off, rhp.attr);
-    }
-
-    // ── layer 20 ──
-    // Special entry 0, the region: the vi visual selection. Its attr is the
-    // user's `region:` setting from $zle_highlight (zle_set_highlight),
-    // else standout (c:397).
+    // Special entry 0, the region (5.9.1 c:1098-1117): the span between point
+    // and mark, either order, widened to whole lines for `V`.
     if REGION_ACTIVE.load(Ordering::SeqCst) != 0 {
-        let visual_attr = highlight()
-            .lock()
-            .unwrap()
-            .category_attrs
-            .get(&HighlightCategory::Region)
-            .copied()
-            .unwrap_or(TextAttr {
-                standout: true,
-                ..TextAttr::default()
-            });
-        // c:1043-1049 — the span between point and mark, either order.
         let cs = ZLECS.load(Ordering::SeqCst);
         let mark = MARK.load(Ordering::SeqCst);
         let (mut lo, mut hi) = if cs <= mark { (cs, mark) } else { (mark, cs) };
         if REGION_ACTIVE.load(Ordering::SeqCst) == 2 {
-            // c:1050-1056 — linewise (`V`): widen to whole lines.
+            // 5.9.1 c:1107-1113 — linewise (`V`): widen to whole lines.
             ZLECS.store(hi, Ordering::SeqCst);
             hi = crate::ported::zle::zle_utils::findeol();
             ZLECS.store(lo, Ordering::SeqCst);
             lo = crate::ported::zle::zle_utils::findbol();
             ZLECS.store(cs, Ordering::SeqCst);
         } else if crate::ported::zle::zle_h::invicmdmode(&crate::ported::zle::zle_keymap::curkeymapname()) {
-            // c:1057 — `INCPOS(region_highlights[0].end)`: in vicmd mode
+            // 5.9.1 c:1115 — `INCPOS(region_highlights[0].end)`: in vicmd mode
             // the character under the cursor is part of the selection.
             hi += 1;
         }
-        // MARK/ZLECS are buffer-relative — shift into the combined snapshot.
-        paint(&mut attrs, lo + pre_len, hi + pre_len, visual_attr);
+        entries.push((lo + pre_len, hi + pre_len, region_atr));
+    }
+    // Special entry 1, the isearch match (5.9.1 c:1118-1124).
+    if crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(Ordering::SeqCst) != 0 {
+        let start = crate::ported::zle::zle_hist::ISEARCH_STARTPOS.load(Ordering::SeqCst);
+        let end = crate::ported::zle::zle_hist::ISEARCH_ENDPOS.load(Ordering::SeqCst);
+        if start >= 0 && end >= 0 {
+            entries.push((start as usize + pre_len, end as usize + pre_len, isearch_atr));
+        }
+    }
+    // Special entry 2, the active completion suffix (5.9.1 c:1126-1131): a
+    // removable suffix (e.g. the space auto-added after a unique
+    // completion) over `[zlecs - suffixlen, zlecs]`.
+    let suffix_len = crate::ported::zle::zle_misc::suffixlen.load(Ordering::SeqCst);
+    if suffix_len > 0 {
+        let cs = ZLECS.load(Ordering::SeqCst) + pre_len;
+        entries.push((cs.saturating_sub(suffix_len as usize), cs, suffix_atr));
+    }
+    // Special entry 3, the text just yanked (5.9.1 c:1133-1139).
+    if crate::ported::zle::zle_main::LASTCMD.load(Ordering::SeqCst) as i32
+        & crate::ported::zle::zle_h::ZLE_YANK
+        != 0
+    {
+        let yankb = crate::ported::zle::zle_main::YANKB.load(Ordering::SeqCst);
+        let yanke = crate::ported::zle::zle_main::YANKE.load(Ordering::SeqCst);
+        entries.push((yankb + pre_len, yanke + pre_len, paste_atr));
+    }
+    for region in &highlight().lock().unwrap().regions {
+        entries.push((region.start + pre_len, region.end + pre_len, region.attr));
+    }
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Native ZLE effects (extensions/zle_fx.rs): the fish-ported syntax
+    // highlighter + autosuggestion ghost. They stand in for what a
+    // highlighting plugin would put in `$region_highlight`, so they enter
+    // as user entries, ahead of the real `$region_highlight` entries so a
+    // script plugin still wins where both set a colour. Each run of cells
+    // with one attribute is one entry.
+    {
+        let mut native: Vec<Option<zattr>> = vec![None; tmpll];
+        crate::zle_fx::native_render_attrs(&mut native, pre_len, line_len);
+        let mut i = 0;
+        while i < native.len() {
+            match native[i] {
+                Some(atr) => {
+                    let start = i;
+                    while i < native.len() && native[i] == Some(atr) {
+                        i += 1;
+                    }
+                    entries.push((start, i, atr));
+                }
+                None => i += 1,
+            }
+        }
+    }
+    // The user `$region_highlight` entries (parsed into REGION_HIGHLIGHTS
+    // by set_region_highlight). 5.9.1 c:1276-1280 — ZRH_PREDISPLAY entries are
+    // predisplay-relative (offset 0); plain entries are buffer-relative
+    // (offset predisplaylen).
+    for rhp in REGION_HIGHLIGHTS.lock().unwrap().iter() {
+        let off = if rhp.flags & ZRH_PREDISPLAY != 0 {
+            0
+        } else {
+            pre_len
+        };
+        entries.push((rhp.start + off, rhp.end + off, rhp.attr));
+    }
+
+    let mut attrs: Vec<(zattr, zattr)> = Vec::with_capacity(tmpll);
+    for tmppos in 0..tmpll {
+        // 5.9.1 c:1267 — `zattr base_atr_on = default_atr_on, base_atr_off = 0;`
+        let mut base_atr_on = default_atr_on;
+        let mut base_atr_off: zattr = 0;
+        for &(start, end, atr) in &entries {
+            // 5.9.1 c:1281-1282
+            if start <= tmppos && tmppos < end {
+                if atr & (TXTFGCOLOUR | TXTBGCOLOUR) != 0 {
+                    // 5.9.1 c:1283-1286 — override colour with later entry.
+                    base_atr_on = (base_atr_on & !TXT_ATTR_ON_VALUES_MASK) | atr;
+                } else {
+                    // 5.9.1 c:1287-1289 — no colour set yet.
+                    base_atr_on |= atr;
+                }
+                // 5.9.1 c:1291-1293
+                if tmppos == end - 1 || tmppos == tmpll - 1 {
+                    for (on, off) in TXT_ATTR_OFF_ON_PAIRS {
+                        if atr & on != 0 {
+                            base_atr_off |= off; // TXT_ATTR_OFF_FROM_ON(rhp->atr)
+                        }
+                    }
+                }
+            }
+        }
+        attrs.push((base_atr_on, base_atr_off));
     }
     attrs
 }
@@ -5328,42 +5458,22 @@ fn countprompt(s: &str) -> usize {
 }
 
 /// Parse a highlight attribute spec (the part after the `category:` prefix,
-/// or the third field of a `$region_highlight` entry) into a `TextAttr`.
+/// or the third field of a `$region_highlight` entry) into the `zattr`
+/// bitmap C stores in `rhp->atr`.
 ///
 /// C has ONE parser for both uses: `match_highlight` (Src/prompt.c:1725 in
-/// 5.9.x), which `zle_set_highlight` (zle_refresh.c:350-362) and
-/// `set_region_highlight` (zle_refresh.c:519) both call. The canonical port
-/// is `crate::ported::prompt::match_highlight`; this wrapper delegates to it
-/// and unpacks the returned `zattr` into the `TextAttr` the Rust region
-/// painter carries. Colours therefore go through the real `match_colour`
+/// 5.9.x), which `zle_set_highlight` (5.9.1 zle_refresh.c:347-363) and
+/// `set_region_highlight` (5.9.1 zle_refresh.c:519) both call. The canonical
+/// port is `crate::ported::prompt::match_highlight`; this wrapper returns its
+/// `*on_var` result. Colours therefore go through the real `match_colour`
 /// port: named and abbreviated colours, numeric indices checked against
-/// `tccolours`, `#rgb`/`#rrggbb` hex triplets, and the zsh/nearcolor
+/// `tccolours`, `#rgb`/`#rrggbb` hex triplets kept as 24-bit colour
+/// (`TXT_ATTR_FG_24BIT` / `TXT_ATTR_BG_24BIT`), and the zsh/nearcolor
 /// `get_color_attr` hook that maps a hex triplet onto the 256-colour
-/// palette (Src/Modules/nearcolor.c). Scanning stops at the first space,
-/// as C's does, so a trailing `memo=` field no longer swallows the colour
-/// in front of it.
-///
-/// `TextAttr` holds a colour as an 8-bit palette index, so a 24-bit
-/// (`TXT_ATTR_FG_24BIT` / `TXT_ATTR_BG_24BIT`) result is not carried: the
-/// cell keeps no colour, as before this delegation.
-pub fn match_highlight(spec: &str) -> TextAttr {
-    use crate::ported::zsh_h::{
-        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT,
-        TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT,
-    };
-    // c:519 / c:350-362 — `match_highlight(strp, &rhp->atr)`.
-    let (atr, _mask) = crate::ported::prompt::match_highlight(spec);
-    let palette = |on, is_24bit, shift| {
-        (atr & on != 0 && atr & is_24bit == 0).then(|| ((atr >> shift) & 0xff) as u8)
-    };
-    TextAttr {
-        bold: atr & TXTBOLDFACE != 0,
-        underline: atr & TXTUNDERLINE != 0,
-        standout: atr & TXTSTANDOUT != 0,
-        blink: false, // no `blink` entry in C's highlights[] table
-        fg_color: palette(TXTFGCOLOUR, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT),
-        bg_color: palette(TXTBGCOLOUR, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT),
-    }
+/// palette (Src/Modules/nearcolor.c).
+pub fn match_highlight(spec: &str) -> zattr {
+    // c:519 / c:347-363 — `match_highlight(strp, &rhp->atr)`.
+    crate::ported::prompt::match_highlight(spec).0
 }
 
 /// Port of `ZR_equal(zr1, zr2)` macro from `Src/Zle/zle_refresh.c:74-82`.
@@ -5981,17 +6091,13 @@ pub fn unset_region_highlight(pm: &mut crate::ported::zsh_h::param, exp: i32) {
 /// special baseline isn't stored there), so every entry is a user
 /// highlight and no skip is needed. Empty store → empty array (c:437-438).
 ///
-/// `RegionHighlight` stores `attr` as a `TextAttr` (no `atrmask`, since the
-/// TextAttr-returning `match_highlight` dropped it), so the (atr, mask)
-/// pair `output_highlight` needs is rebuilt from the set flag bits — exact
-/// for positive specs (the common case); the explicit-"no"/layer semantics
-/// aren't recoverable from `TextAttr` and are omitted.
+/// 5.9.x `output_highlight(rhp->atr, buf)` (5.9.1 prompt.c:1823) prints the
+/// attributes that are set in `atr`; the port of the dev-tree signature also
+/// takes a mask naming which attributes to print, so the mask is the set
+/// flag bits of `atr` itself.
 pub fn get_region_highlight(_pm: &crate::ported::zsh_h::param) -> Vec<String> {
     // c:430
-    use crate::ported::zsh_h::{
-        zattr, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
-        TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
-    };
+    use crate::ported::zsh_h::TXT_ATTR_ALL;
     let rh = REGION_HIGHLIGHTS.lock().unwrap();
     rh.iter()
         .map(|rhp| {
@@ -6001,33 +6107,9 @@ pub fn get_region_highlight(_pm: &crate::ported::zsh_h::param) -> Vec<String> {
                 s.push('P'); // c:467
             }
             s.push_str(&format!("{} {} ", rhp.start, rhp.end));
-            // c:469 — output_highlight(atr, atrmask). Rebuild (atr, mask)
-            // from the TextAttr: every set field contributes both its value
-            // to `atr` and its flag bit to `mask`.
-            let ta = &rhp.attr;
-            let mut atr: zattr = 0;
-            let mut mask: zattr = 0;
-            if ta.bold {
-                atr |= TXTBOLDFACE;
-                mask |= TXTBOLDFACE;
-            }
-            if ta.underline {
-                atr |= TXTUNDERLINE;
-                mask |= TXTUNDERLINE;
-            }
-            if ta.standout {
-                atr |= TXTSTANDOUT;
-                mask |= TXTSTANDOUT;
-            }
-            if let Some(fg) = ta.fg_color {
-                atr |= TXTFGCOLOUR | ((fg as zattr) << TXT_ATTR_FG_COL_SHIFT);
-                mask |= TXTFGCOLOUR;
-            }
-            if let Some(bg) = ta.bg_color {
-                atr |= TXTBGCOLOUR | ((bg as zattr) << TXT_ATTR_BG_COL_SHIFT);
-                mask |= TXTBGCOLOUR;
-            }
-            s.push_str(&crate::ported::prompt::output_highlight(atr, mask));
+            // 5.9.1 c:447 — `output_highlight(rhp->atr, ...)`.
+            let atr = rhp.attr;
+            s.push_str(&crate::ported::prompt::output_highlight(atr, atr & TXT_ATTR_ALL));
             // c:473-475 — `memo=NAME`.
             if let Some(memo) = &rhp.memo {
                 s.push_str(" memo=");
@@ -6713,7 +6795,7 @@ mod tests {
         let old = SHTTY.load(Ordering::SeqCst);
         SHTTY.store(wr, Ordering::SeqCst);
 
-        zwcputc(&cell);
+        zwcputc(&cell, None);
 
         SHTTY.store(old, Ordering::SeqCst);
         unsafe { libc::close(wr) };
@@ -7167,11 +7249,7 @@ mod tests {
         ZLELL.store(3, Ordering::SeqCst);
         // A bold region over the whole line (the path compute_render_attrs
         // reads — the highlight manager, not the REGION_HIGHLIGHTS static).
-        let custom = TextAttr {
-            bold: true,
-            ..TextAttr::default()
-        };
-        highlight().lock().unwrap().add_region(0, 3, custom);
+        highlight().lock().unwrap().add_region(0, 3, TXTBOLDFACE);
         zrefresh();
         let nbuf = NBUF.lock().unwrap();
         let row0 = nbuf.first().expect("NBUF has a row");
@@ -7382,6 +7460,7 @@ mod tests {
     /// consumed by the renderer).
     #[test]
     fn compute_render_attrs_covers_postdisplay_and_user_regions() {
+        use crate::ported::zsh_h::{TXTFGCOLOUR, TXTNOFGCOLOUR, TXT_ATTR_FG_COL_SHIFT};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "echo hel".chars().collect();
@@ -7393,16 +7472,16 @@ mod tests {
         let attrs = compute_render_attrs();
         // Combined length: 8 (buffer) + 8 (postdisplay).
         assert_eq!(attrs.len(), 16);
-        for slot in attrs.iter().take(8) {
-            assert!(slot.is_none(), "buffer chars unstyled");
+        for &(on, off) in attrs.iter().take(8) {
+            assert_eq!((on, off), (0, 0), "buffer chars unstyled");
         }
-        for slot in attrs.iter().skip(8) {
-            assert_eq!(
-                slot.expect("ghost span styled").fg_color,
-                Some(8),
-                "postdisplay span carries the fg=8 ghost style"
-            );
+        let fg8 = TXTFGCOLOUR | (8 << TXT_ATTR_FG_COL_SHIFT);
+        for &(on, _) in attrs.iter().skip(8) {
+            assert_eq!(on, fg8, "postdisplay span carries the fg=8 ghost style");
         }
+        // 5.9.1 c:1291-1293 — only the span's last cell turns fg off.
+        assert_eq!(attrs[14].1, 0);
+        assert_eq!(attrs[15].1, TXTNOFGCOLOUR);
         // Cleanup for neighboring tests.
         crate::ported::zle::zle_params::set_postdisplay(Some(""));
         set_region_highlight(None);
@@ -7410,6 +7489,7 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
+        use crate::ported::zsh_h::{TXTNOSTANDOUT, TXTSTANDOUT};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "hello world".chars().collect();
@@ -7421,20 +7501,21 @@ mod tests {
         assert_eq!(attrs.len(), 11);
         // [0..2) and [7..11) are unstyled.
         for slot in attrs.iter().take(2) {
-            assert!(slot.is_none());
+            assert_eq!(*slot, (0, 0));
         }
         for slot in attrs.iter().skip(7) {
-            assert!(slot.is_none());
+            assert_eq!(*slot, (0, 0));
         }
-        // [2..7) painted in standout.
-        for slot in attrs.iter().take(7).skip(2) {
-            let attr = slot.expect("standout");
-            assert!(attr.standout);
+        // [2..7) painted in standout; the last cell turns it off.
+        for (i, &(on, off)) in attrs.iter().enumerate().take(7).skip(2) {
+            assert_eq!(on, TXTSTANDOUT);
+            assert_eq!(off, if i == 6 { TXTNOSTANDOUT } else { 0 });
         }
     }
 
     #[test]
     fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
+        use crate::ported::zsh_h::TXTSTANDOUT;
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "abcdef".chars().collect();
@@ -7443,72 +7524,113 @@ mod tests {
         ZLECS.store(1, Ordering::SeqCst);
         REGION_ACTIVE.store(2, Ordering::SeqCst); // linewise — same swap behavior
         let attrs = compute_render_attrs();
-        // Range collapses to (1..5).
-        assert!(attrs[0].is_none());
-        for slot in attrs.iter().take(5).skip(1) {
-            assert!(slot.unwrap().standout);
+        // Linewise widens to the whole (single) line: findbol..findeol.
+        for &(on, _) in attrs.iter() {
+            assert_eq!(on, TXTSTANDOUT);
         }
-        assert!(attrs[5].is_none());
+    }
+
+    /// 5.9.1 zle_refresh.c:1283-1290 — an entry that sets a colour replaces
+    /// every attribute earlier entries turned on (zsh 5.9.2: `0 4 bold` +
+    /// `1 2 fg=red` draws the `r` red and NOT bold), while one without a
+    /// colour adds to them.
+    #[test]
+    fn compute_render_attrs_colour_entry_overrides_earlier_attrs() {
+        use crate::ported::zsh_h::{
+            TXTBOLDFACE, TXTFGCOLOUR, TXTNOBOLDFACE, TXTNOFGCOLOUR, TXTUNDERLINE,
+            TXT_ATTR_FG_COL_SHIFT,
+        };
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "true".chars().collect();
+        ZLELL.store(4, Ordering::SeqCst);
+        set_region_highlight(Some(&[
+            "0 4 bold".to_string(),
+            "1 2 fg=red".to_string(),
+            "2 3 underline".to_string(),
+        ]));
+        let attrs = compute_render_attrs();
+        let red = TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT);
+        assert_eq!(attrs[0], (TXTBOLDFACE, 0));
+        assert_eq!(attrs[1], (red, TXTNOFGCOLOUR));
+        assert_eq!(attrs[2].0, TXTBOLDFACE | TXTUNDERLINE);
+        assert_eq!(attrs[3], (TXTBOLDFACE, TXTNOBOLDFACE));
+        set_region_highlight(None);
+    }
+
+    /// A `#rrggbb` colour stays a 24-bit colour in the cell attribute
+    /// (5.9.1 prompt.c:1683-1686), so zwcputc emits `38;2;r;g;b`.
+    #[test]
+    fn compute_render_attrs_keeps_truecolour() {
+        use crate::ported::zsh_h::{TXTFGCOLOUR, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT};
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "ab".chars().collect();
+        ZLELL.store(2, Ordering::SeqCst);
+        set_region_highlight(Some(&["0 2 fg=#040810".to_string()]));
+        let attrs = compute_render_attrs();
+        let want = TXTFGCOLOUR | TXT_ATTR_FG_24BIT | (0x040810 << TXT_ATTR_FG_COL_SHIFT);
+        assert_eq!(attrs[0].0, want);
+        set_region_highlight(None);
     }
 
     #[test]
     fn match_highlight_handles_combined_attrs() {
+        use crate::ported::zsh_h::{TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let attr = match_highlight("bold,fg=red,underline");
-        assert!(attr.bold);
-        assert!(attr.underline);
-        assert_eq!(attr.fg_color, Some(1));
+        assert_eq!(
+            attr,
+            TXTBOLDFACE | TXTUNDERLINE | TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT)
+        );
     }
 
     #[test]
     fn match_highlight_named_and_numeric_colors() {
+        use crate::ported::zsh_h::{TXTBGCOLOUR, TXTFGCOLOUR, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        assert_eq!(match_highlight("fg=cyan").fg_color, Some(6));
-        assert_eq!(match_highlight("bg=42").bg_color, Some(42));
-        // Out-of-range numeric → ignored (parse fails for u8).
-        assert_eq!(match_highlight("fg=999").fg_color, None);
+        assert_eq!(match_highlight("fg=cyan"), TXTFGCOLOUR | (6 << TXT_ATTR_FG_COL_SHIFT));
+        assert_eq!(match_highlight("bg=42"), TXTBGCOLOUR | (42 << TXT_ATTR_BG_COL_SHIFT));
+        // Out of range (prompt.c:1708-1709 `colour >= 256`) → TXT_ERROR,
+        // which match_highlight skips.
+        assert_eq!(match_highlight("fg=999"), 0);
     }
 
     #[test]
-    fn match_highlight_negation_clears_attr() {
-        let _g = crate::test_util::global_state_lock();
-        let _g = zle_test_setup();
-        let attr = match_highlight("bold,nobold,underline");
-        assert!(!attr.bold);
-        assert!(attr.underline);
-    }
-
-    #[test]
-    fn match_highlight_none_resets_everything() {
+    fn match_highlight_none_resets_everything_before_it() {
+        use crate::ported::zsh_h::{TXTFGCOLOUR, TXTUNDERLINE};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let attr = match_highlight("bold,fg=red,none,underline");
-        // After `none` the only thing surviving is the trailing `underline`.
-        assert!(!attr.bold);
-        assert!(attr.underline);
-        assert_eq!(attr.fg_color, None);
+        // After `none` the only flag left on is the trailing `underline`.
+        assert_eq!(attr & !crate::ported::zsh_h::TXT_ATTR_FG_COL_MASK & !TXTFGCOLOUR, TXTUNDERLINE);
     }
 
     #[test]
     fn zle_set_highlight_populates_categories_and_defaults() {
+        use crate::ported::zsh_h::{
+            TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT,
+        };
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let mut mgr = HighlightManager::new();
         let entries = ["region:fg=red,bold", "isearch:fg=blue"];
         zle_set_highlight(&mut mgr, &entries);
-        let region = mgr.category_attrs[&HighlightCategory::Region];
-        assert!(region.bold);
-        assert_eq!(region.fg_color, Some(1));
-        let isearch = mgr.category_attrs[&HighlightCategory::Isearch];
-        assert_eq!(isearch.fg_color, Some(4));
-        // Suffix wasn't set: defaults to bold (zle_refresh.c:401).
-        let suffix = mgr.category_attrs[&HighlightCategory::Suffix];
-        assert!(suffix.bold);
-        // Special wasn't set: defaults to standout (zle_refresh.c:396).
-        let special = mgr.category_attrs[&HighlightCategory::Special];
-        assert!(special.standout);
+        assert_eq!(
+            mgr.category_attrs[&HighlightCategory::Region],
+            TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT) | TXTBOLDFACE
+        );
+        assert_eq!(
+            mgr.category_attrs[&HighlightCategory::Isearch],
+            TXTFGCOLOUR | (4 << TXT_ATTR_FG_COL_SHIFT)
+        );
+        // 5.9.1 zle_refresh.c:377-387 — defaults for what was not set.
+        assert_eq!(mgr.category_attrs[&HighlightCategory::Suffix], TXTBOLDFACE);
+        assert_eq!(mgr.category_attrs[&HighlightCategory::Special], TXTSTANDOUT);
+        assert_eq!(mgr.category_attrs[&HighlightCategory::Paste], TXTSTANDOUT);
+        let _ = TXTUNDERLINE;
     }
 
     #[test]
@@ -7522,14 +7644,29 @@ mod tests {
             HighlightCategory::Isearch,
             HighlightCategory::Suffix,
             HighlightCategory::Paste,
+            HighlightCategory::Special,
+            HighlightCategory::Default,
         ] {
-            let attr = mgr.category_attrs[&cat];
-            assert_eq!(attr, TextAttr::default());
+            assert_eq!(mgr.category_attrs[&cat], 0);
         }
+    }
+
+    /// 5.9.1 zle_refresh.c:341-346 — `none` marks every category as set
+    /// but does not undo an entry parsed before it.
+    #[test]
+    fn zle_set_highlight_none_keeps_earlier_entry() {
+        use crate::ported::zsh_h::TXTBOLDFACE;
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let mut mgr = HighlightManager::new();
+        zle_set_highlight(&mut mgr, &["region:bold", "none"]);
+        assert_eq!(mgr.category_attrs[&HighlightCategory::Region], TXTBOLDFACE);
+        assert_eq!(mgr.category_attrs[&HighlightCategory::Isearch], 0);
     }
 
     #[test]
     fn compute_render_attrs_visual_uses_zle_highlight_region_attr() {
+        use crate::ported::zsh_h::{TXTBOLDFACE, TXTFGCOLOUR, TXT_ATTR_FG_COL_SHIFT};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // When the user sets `zle_highlight=(region:fg=red,bold)` via
@@ -7543,35 +7680,26 @@ mod tests {
         REGION_ACTIVE.store(1, Ordering::SeqCst);
         zle_set_highlight(&mut highlight().lock().unwrap(), &["region:fg=red,bold"]);
         let attrs = compute_render_attrs();
-        for slot in attrs.iter().take(4).skip(1) {
-            let a = slot.expect("region painted");
-            assert!(a.bold);
-            assert_eq!(a.fg_color, Some(1));
-            // Standout shouldn't be auto-set when user overrode.
-            assert!(!a.standout);
+        for &(on, _) in attrs.iter().take(4).skip(1) {
+            assert_eq!(on, TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT) | TXTBOLDFACE);
         }
     }
 
     #[test]
     fn compute_render_attrs_explicit_regions_override_default() {
+        use crate::ported::zsh_h::{TXTBOLDFACE, TXTFGCOLOUR, TXT_ATTR_FG_COL_SHIFT};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "abcde".chars().collect();
         ZLELL.store(5, Ordering::SeqCst);
-        let custom = TextAttr {
-            bold: true,
-            fg_color: Some(1),
-            ..TextAttr::default()
-        };
+        let custom = TXTBOLDFACE | TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT);
         highlight().lock().unwrap().add_region(1, 4, custom);
         let attrs = compute_render_attrs();
-        assert!(attrs[0].is_none());
-        for slot in attrs.iter().take(4).skip(1) {
-            let a = slot.expect("custom");
-            assert!(a.bold);
-            assert_eq!(a.fg_color, Some(1));
+        assert_eq!(attrs[0], (0, 0));
+        for &(on, _) in attrs.iter().take(4).skip(1) {
+            assert_eq!(on, custom);
         }
-        assert!(attrs[4].is_none());
+        assert_eq!(attrs[4], (0, 0));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -7907,7 +8035,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         for c in ['\0', 'a', '日', '\u{1F600}', '\u{10FFFF}'] {
-            zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 });
+            zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 }, None);
         }
     }
 
@@ -9641,7 +9769,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         for c in ['a', '\n', '\t', '\0', '日'] {
-            zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 });
+            zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 }, None);
         }
     }
 

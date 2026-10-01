@@ -4423,6 +4423,48 @@ pub const TXT_ATTR_FG_MASK: zattr = TXTFGCOLOUR | TXT_ATTR_FG_COL_MASK | TXT_ATT
 pub const TXT_ATTR_BG_MASK: zattr = TXTBGCOLOUR | TXT_ATTR_BG_COL_MASK | TXT_ATTR_BG_24BIT;
 /// `TXT_ATTR_COLOUR_MASK` constant.
 pub const TXT_ATTR_COLOUR_MASK: zattr = TXT_ATTR_FG_MASK | TXT_ATTR_BG_MASK;
+
+// zsh 5.9.x "off" attribute bits (5.9.1 zsh.h:2683-2701). The release
+// zshrs targets (5.9.2) marks the LAST cell of a highlighted region with
+// these so `zwcputc` turns the region's attributes off straight after
+// the character (5.9.1 zle_refresh.c:1291-1293, :669-675). The dev tree
+// dropped them along with the layout they lived in; in 5.9.x they sit
+// at 0x0020-0x0200, which this (dev) layout uses for TXTFGCOLOUR /
+// TXTBGCOLOUR, so they occupy bits this layout leaves free. Only
+// zle_refresh's region painter and `zwcputc` set or read them.
+/// `TXTNOBOLDFACE` (5.9.1 zsh.h:2689).
+pub const TXTNOBOLDFACE: zattr = 0x0080;
+/// `TXTNOSTANDOUT` (5.9.1 zsh.h:2690).
+pub const TXTNOSTANDOUT: zattr = 0x0100;
+/// `TXTNOUNDERLINE` (5.9.1 zsh.h:2691).
+pub const TXTNOUNDERLINE: zattr = 0x0200;
+/// `TXTNOFGCOLOUR` (5.9.1 zsh.h:2692).
+pub const TXTNOFGCOLOUR: zattr = 0x0800;
+/// `TXTNOBGCOLOUR` (5.9.1 zsh.h:2693).
+pub const TXTNOBGCOLOUR: zattr = 0x1000;
+/// `TXT_ATTR_OFF_MASK` (5.9.1 zsh.h:2695).
+pub const TXT_ATTR_OFF_MASK: zattr =
+    TXTNOBOLDFACE | TXTNOSTANDOUT | TXTNOUNDERLINE | TXTNOFGCOLOUR | TXTNOBGCOLOUR;
+/// `TXT_ATTR_ON_VALUES_MASK` (5.9.1 zsh.h:2726-2728): every "on" flag
+/// plus the colour values and their 24-bit markers.
+pub const TXT_ATTR_ON_VALUES_MASK: zattr = TXT_ATTR_ALL
+    | TXT_ATTR_FG_COL_MASK
+    | TXT_ATTR_BG_COL_MASK
+    | TXT_ATTR_FG_24BIT
+    | TXT_ATTR_BG_24BIT;
+/// `TXT_ATTR_COLOUR_ON_MASK` (5.9.1 zsh.h:2739-2740).
+pub const TXT_ATTR_COLOUR_ON_MASK: zattr = TXT_ATTR_FG_MASK | TXT_ATTR_BG_MASK;
+/// The `(on, off)` bit pairs behind 5.9.x `TXT_ATTR_OFF_FROM_ON` /
+/// `TXT_ATTR_ON_FROM_OFF` (5.9.1 zsh.h:2697-2701). 5.9.x converts with a
+/// shift of `TXT_ATTR_OFF_ON_SHIFT`; the off bits are not contiguous in
+/// this layout, so the pairs are spelled out.
+pub const TXT_ATTR_OFF_ON_PAIRS: [(zattr, zattr); 5] = [
+    (TXTBOLDFACE, TXTNOBOLDFACE),
+    (TXTSTANDOUT, TXTNOSTANDOUT),
+    (TXTUNDERLINE, TXTNOUNDERLINE),
+    (TXTFGCOLOUR, TXTNOFGCOLOUR),
+    (TXTBGCOLOUR, TXTNOBGCOLOUR),
+];
 /// `COL_SEQ_FG` constant.
 pub const COL_SEQ_FG: i32 = 0;
 /// `COL_SEQ_BG` constant.

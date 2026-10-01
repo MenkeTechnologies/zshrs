@@ -33,7 +33,7 @@ use crate::autosuggest::{self, AutosuggestionPortion};
 use crate::history_search::{with_history_search, SearchDirection, SearchMode};
 use crate::ported::params::getsparam;
 use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL};
-use crate::ported::zle::zle_refresh::TextAttr;
+use crate::ported::zsh_h::zattr;
 use crate::syntax_highlight::{highlight_shell, HighlightColorResolver, HighlightSpec};
 use crate::zle_file_tester::OperationContext;
 use std::sync::atomic::Ordering::SeqCst;
@@ -44,11 +44,11 @@ use std::sync::Mutex;
 /// the whole POSTDISPLAY span while a suggestion is showing.
 #[derive(Default)]
 struct FxState {
-    line_attrs: Vec<Option<TextAttr>>,
+    line_attrs: Vec<Option<zattr>>,
     /// cache key: the line the attrs were computed for
     hl_line: String,
     /// attr for the POSTDISPLAY ghost span (None = no native ghost active)
-    ghost_attr: Option<TextAttr>,
+    ghost_attr: Option<zattr>,
     /// the line this module last wrote into the buffer from a history search,
     /// used to detect user edits that must end the search
     search_placed: Option<String>,
@@ -531,10 +531,8 @@ pub fn on_post_widget(widget: &str) {
         let ghost = if suffix.is_empty() {
             None
         } else {
-            Some(zattr_to_text_attr(
-                HighlightColorResolver::resolve_spec_uncached(&HighlightSpec::with_fg(
-                    crate::syntax_highlight::HighlightRole::autosuggestion,
-                )),
+            Some(HighlightColorResolver::resolve_spec_uncached(
+                &HighlightSpec::with_fg(crate::syntax_highlight::HighlightRole::autosuggestion),
             ))
         };
         with_fx(|fx| fx.ghost_attr = ghost);
@@ -566,7 +564,7 @@ pub fn on_post_widget(widget: &str) {
 
                     let mut resolver = HighlightColorResolver::new();
                     let raw_len = line.chars().count();
-                    let mut attrs: Vec<Option<TextAttr>> = vec![None; raw_len];
+                    let mut attrs: Vec<Option<zattr>> = vec![None; raw_len];
                     if meta == line {
                         for (i, spec) in colors.iter().enumerate().take(raw_len) {
                             attrs[i] = spec_to_attr(&mut resolver, spec);
@@ -599,7 +597,7 @@ pub fn on_post_widget(widget: &str) {
                 let spec = getsparam("HISTORY_SUBSTRING_SEARCH_HIGHLIGHT_FOUND")
                     .unwrap_or_else(|| "bg=magenta,fg=white,bold".to_owned());
                 let (mask_on, _off) = crate::ported::prompt::match_highlight(&spec);
-                let attr = zattr_to_text_attr(mask_on);
+                let attr = mask_on;
                 with_fx(|fx| {
                     for i in start..(start + len).min(fx.line_attrs.len()) {
                         fx.line_attrs[i] = Some(attr);
@@ -625,7 +623,7 @@ fn budget_ms(name: &str, default: u64) -> u64 {
 /// Renderer callback — merge the native overlay into the combined
 /// pre+line+post attr array. Called by `compute_render_attrs` between the
 /// HighlightManager regions and user `$region_highlight` layers.
-pub fn native_render_attrs(attrs: &mut [Option<TextAttr>], pre_len: usize, line_len: usize) {
+pub fn native_render_attrs(attrs: &mut [Option<zattr>], pre_len: usize, line_len: usize) {
     if !enabled() {
         return;
     }
@@ -647,7 +645,7 @@ pub fn native_render_attrs(attrs: &mut [Option<TextAttr>], pre_len: usize, line_
     });
 }
 
-fn spec_to_attr(resolver: &mut HighlightColorResolver, spec: &HighlightSpec) -> Option<TextAttr> {
+fn spec_to_attr(resolver: &mut HighlightColorResolver, spec: &HighlightSpec) -> Option<zattr> {
     if *spec == HighlightSpec::default() {
         return None;
     }
@@ -655,25 +653,7 @@ fn spec_to_attr(resolver: &mut HighlightColorResolver, spec: &HighlightSpec) -> 
     if z == 0 {
         return None;
     }
-    Some(zattr_to_text_attr(z))
-}
-
-/// Inverse of zle_refresh's `to_zattr` closure (zle_refresh.rs:1339-1361).
-fn zattr_to_text_attr(a: crate::ported::zsh_h::zattr) -> TextAttr {
-    use crate::ported::zsh_h::{
-        zattr, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
-        TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
-    };
-    TextAttr {
-        bold: a & TXTBOLDFACE != 0,
-        underline: a & TXTUNDERLINE != 0,
-        standout: a & TXTSTANDOUT != 0,
-        blink: false,
-        fg_color: (a & TXTFGCOLOUR != 0)
-            .then(|| ((a >> TXT_ATTR_FG_COL_SHIFT) & 0xff as zattr) as u8),
-        bg_color: (a & TXTBGCOLOUR != 0)
-            .then(|| ((a >> TXT_ATTR_BG_COL_SHIFT) & 0xff as zattr) as u8),
-    }
+    Some(z)
 }
 
 /// Completion-takeover reset — called when a completion key loop is about to
@@ -738,16 +718,6 @@ pub fn on_line_finish() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn zattr_round_trip() {
-        use crate::ported::zsh_h::{TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT};
-        let a = TXTBOLDFACE | TXTUNDERLINE | TXTFGCOLOUR | ((2u64) << TXT_ATTR_FG_COL_SHIFT);
-        let t = zattr_to_text_attr(a);
-        assert!(t.bold && t.underline && !t.standout);
-        assert_eq!(t.fg_color, Some(2));
-        assert_eq!(t.bg_color, None);
-    }
 
     #[test]
     fn accept_widget_tables_are_disjoint() {
