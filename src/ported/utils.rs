@@ -12152,6 +12152,21 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
                 result.push('\\');
                 consumed += 1;
             }
+            // c:utils.c:7058-7063 — `\-` under GETKEY_BACKSLASH_MINUS:
+            //     case '-':
+            //         if (how & GETKEY_BACKSLASH_MINUS) {
+            //             *misc  = 1;
+            //             break;
+            //         }
+            //         goto def;
+            // The escape emits NOTHING; it only reports its presence. Without
+            // the flag it falls to the default arm below.
+            Some('-') if (how & crate::ported::zsh_h::GETKEY_BACKSLASH_MINUS as u32) != 0 => {
+                consumed += 1;
+                if let Some(m) = misc.as_deref_mut() {
+                    *m = 1;
+                }
+            }
             // c:utils.c:7072-7138 — `\u` (4-hex) / `\U` (8-hex)
             // Unicode codepoint escapes. Always interpreted; the C
             // source's `case 'U':` / `case 'u':` arms have no flag

@@ -2307,16 +2307,13 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
             s_iter_start = s_str;
         }
         // c:1657 — `s = getkeystring(s, &i, GETKEYS_SUFFIX, &z);`
-        let (decoded, consumed) = crate::ported::utils::getkeystring(s_iter_start);
-        // GETKEYS_SUFFIX scan sets `z` when `\-` appears; current
-        // getkeystring port doesn't expose `z` separately. The `\-`
-        // detection is observable inline by scanning the literal arg
-        // for `\-` prior to getkeystring's escape collapse.
-        if s_iter_start.contains("\\-") {
-            // c:1657 z out-param
-            z = 1;
-        }
-        let _ = consumed;
+        // GETKEYS_SUFFIX carries GETKEY_BACKSLASH_MINUS, so `\-` sets `z` and
+        // contributes no character to the removal set (c:Src/utils.c:7058).
+        let (decoded, _consumed) = crate::ported::utils::getkeystring_with(
+            s_iter_start,
+            crate::ported::zsh_h::GETKEYS_SUFFIX as u32,
+            Some(&mut z),
+        );
         // c:1658 — `s = metafy(s, i, META_USEHEAP);` (no-op for UTF-8 String)
         // c:1659 — `ws = stringaszleline(s, 0, &i, NULL, NULL);`
         let ws = crate::ported::zle::zle_utils::stringaszleline(&decoded, 0, None, None, None);
@@ -3476,6 +3473,44 @@ mod tests {
         fixsuffix();
 
         assert_eq!(got, "adir", "c:1817 — backdel runs even when keep == 1");
+    }
+
+    /// `_dir_list` registers `-r ': /\t\t\-'` (Completion/Unix/Type/_dir_list:29).
+    /// c:1672 decodes it with GETKEYS_SUFFIX, where `\-` (Src/utils.c:7058)
+    /// emits no character and sets `z`, so c:1678 makes the suffix removable
+    /// by a NON-inserting widget. `PATH=/usr/bin:/us<TAB><DOWN>` in zsh drops
+    /// the `/`; while `\-` was decoded as a plain `-`, zshrs kept it, and a
+    /// typed `-` wrongly stripped it.
+    #[test]
+    fn makesuffixstr_backslash_minus_sets_noinsrem_and_adds_no_char() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+        use crate::ported::zle::zle_h::NO_INSERT_CHAR;
+
+        let m = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new()));
+        let run = |c: i32| -> String {
+            let line = "PATH=/usr/bin:/usr/".to_string();
+            *m.lock().unwrap() = line.clone();
+            ZLEMETALL.store(line.len() as i32, SeqCst);
+            ZLEMETACS.store(line.len() as i32, SeqCst);
+            fixsuffix();
+            makesuffixstr(None, Some(r": /\t\t\-"), 1);
+            iremovesuffix(c, 0);
+            let got = m.lock().unwrap().clone();
+            got
+        };
+        let non_insert = run(NO_INSERT_CHAR);
+        let dash = run('-' as i32);
+        let colon = run(':' as i32);
+        *m.lock().unwrap() = String::new();
+        ZLEMETALL.store(0, SeqCst);
+        ZLEMETACS.store(0, SeqCst);
+        fixsuffix();
+
+        assert_eq!(non_insert, "PATH=/usr/bin:/usr", "c:1678 — `\\-` sets suffixnoinsrem");
+        assert_eq!(dash, "PATH=/usr/bin:/usr/", "c:7058 — `\\-` adds no `-` to the set");
+        assert_eq!(colon, "PATH=/usr/bin:/usr", "`:` is in the positive set");
     }
 
     #[test]
