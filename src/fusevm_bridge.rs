@@ -4902,11 +4902,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // assignment (`z=(9 8 7) f`) is a WC_ASSIGN in the same chain
             // as a scalar one, so it is snapshotted the same way and put
             // back by restore_params when the command returns.
-            if exec
+            let prefix_restored = exec
                 .inline_env_stack
                 .last()
-                .is_some_and(|frame| frame.recording)
-            {
+                .is_some_and(|frame| frame.recording);
+            if prefix_restored {
                 save_inline_prefix_param(exec, &name);
             }
             // Assoc init `typeset -A m; m=(k v k v ...)` — route to
@@ -5106,11 +5106,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `compaudit` needs a genuinely empty one, and a dozen unit
             // tests assert an exact array; appending the bundle rewrote
             // all of them (CI: 8 failures).
-            let res = crate::ported::params::assignaparam(
-                &name,
-                values.clone(),
-                crate::ported::zsh_h::ASSPM_WARN | kv_flag,
-            );
+            // c:Src/exec.c:2573 — `flags = !(addflags & ADDVAR_RESTORE) ?
+            // ASSPM_WARN : 0;`: a prefix assignment that is put back after
+            // the command is implicitly scoped and never warns, the same rule
+            // the scalar arm applies.
+            let warn = if prefix_restored { 0 } else { crate::ported::zsh_h::ASSPM_WARN };
+            let res = crate::ported::params::assignaparam(&name, values.clone(), warn | kv_flag);
             if name == "fpath" {
                 crate::vm_helper::normalize_fpath_after_assignment();
             }
