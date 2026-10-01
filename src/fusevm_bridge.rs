@@ -3680,6 +3680,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         EXEC_DASH.with(|c| c.set(c.get() | EXEC_CARRIER_DASH));
         Value::Int(0)
     });
+    // See BUILTIN_EXECPLINE_CHILD_BLOCK / _UNBLOCK.
+    vm.register_builtin(BUILTIN_EXECPLINE_CHILD_BLOCK, |_vm, _argc| {
+        crate::ported::signals_h::child_block(); // c:Src/exec.c:1748
+        Value::Int(0)
+    });
+    vm.register_builtin(BUILTIN_EXECPLINE_CHILD_UNBLOCK, |_vm, _argc| {
+        crate::ported::signals_h::child_unblock(); // c:Src/exec.c:2017
+        Value::Int(0)
+    });
     // See BUILTIN_JOB_TEXT.
     vm.register_builtin(BUILTIN_JOB_TEXT, |vm, _argc| {
         let text = vm.pop();
@@ -18384,6 +18393,14 @@ pub const BUILTIN_EXECCMD_FORKED_LEVEL: u16 = 740;
 /// the fork, the scope it opens saves no fds (c:Src/exec.c:2478
 /// `if (!forked && …)`); see redir_scope_forked.
 pub const BUILTIN_FORKED_REDIRS: u16 = 745;
+/// c:Src/exec.c:1748 — execpline's `child_block();` ahead of a synchronous
+/// pipeline. No args. Paired with BUILTIN_EXECPLINE_CHILD_UNBLOCK.
+pub const BUILTIN_EXECPLINE_CHILD_BLOCK: u16 = 746;
+/// c:Src/exec.c:2017 — execpline's `child_unblock();` once the pipeline
+/// has run (and been waited for). No args. Unconditional, as in C: a
+/// pipeline nested inside another one's command (a function body, `eval`)
+/// leaves SIGCHLD unblocked for the rest of the outer command.
+pub const BUILTIN_EXECPLINE_CHILD_UNBLOCK: u16 = 747;
 
 /// Take a copy of stderr for this simple command's xtrace output before
 /// its redirections apply (c:Src/exec.c:3765-3773). Released when the

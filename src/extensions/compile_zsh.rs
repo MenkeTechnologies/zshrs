@@ -905,6 +905,17 @@ impl ZshCompiler {
         for patch in std::mem::take(&mut self.return_patches) {
             self.builder.patch_jump(patch, end_pos);
         }
+        // A jump to the chunk end (an error that ends the list, `return`)
+        // passes over the c:Src/exec.c:2017 `child_unblock();` of the
+        // pipeline it left; C's execpline still reaches it on its way out.
+        // See compile_execpline. An empty program runs no pipeline.
+        if end_pos > 0 {
+            self.builder.emit(
+                Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_UNBLOCK, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+        }
 
         self.builder.build()
     }
@@ -1200,6 +1211,35 @@ impl ZshCompiler {
         self.compile_sublist_impl(sublist, None);
     }
 
+    /// A synchronous pipeline, run the way execpline runs it: SIGCHLD is
+    /// blocked from before the pipeline starts (c:Src/exec.c:1748
+    /// `child_block();`) until it has finished (c:2017 `child_unblock();`).
+    /// A builtin therefore runs with SIGCHLD held: `exit` reaches zexit's
+    /// killrunjobs and leaves before the SIGHUPed jobs can be reaped and
+    /// reported, where zshrs used to print `[1]  + hangup  sleep 3` on the
+    /// way out. A word-less simple command (assignments only) is not a
+    /// `cmplx` sublist (c:Src/parse.c:1925 sets it per command word, c:1999
+    /// per redirection) and runs through execsimple, which takes no block.
+    fn compile_execpline(&mut self, pipe: &ZshPipe) {
+        let execsimple = pipe.next.is_none()
+            && matches!(&pipe.cmd, ZshCommand::Simple(s) if s.words.is_empty() && s.redirs.is_empty());
+        if execsimple {
+            self.compile_pipe(pipe);
+            return;
+        }
+        self.builder.emit(
+            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_BLOCK, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+        self.compile_pipe(pipe);
+        self.builder.emit(
+            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_UNBLOCK, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
     /// c:Src/subst.c:49-79 keyvalpairelement, invoked from prefork's
     /// PREFORK_ASSIGN walk (c:111-117). An unquoted `[key]=value` /
     /// `[key]+=value` array element becomes THREE values: Marker (or
@@ -1287,7 +1327,7 @@ impl ZshCompiler {
                 if pipe_coprocs[i + 1] {
                     self.compile_coproc_pipe(pipes[i + 1]);
                 } else {
-                    self.compile_pipe(pipes[i + 1]);
+                    self.compile_execpline(pipes[i + 1]);
                 }
                 self.builder.patch_jump(skip, self.builder.current_pos());
             }
@@ -1348,7 +1388,7 @@ impl ZshCompiler {
             self.errexit_suppress_depth += 1;
             self.emit_noerrexit_suppress(); // c:1538
         }
-        self.compile_pipe(pipes[0]);
+        self.compile_execpline(pipes[0]);
         // c:Src/exec.c:1489-1492 — the FIRST chain element's own
         // sublist code. Emitted before the `!` negation because C
         // applies WC_SUBLIST_NOT inside execpline AFTER waitonejob has
@@ -1422,7 +1462,7 @@ impl ZshCompiler {
                 // wait, so there is no per-element sublist finish.
                 self.compile_coproc_pipe(pipes[i + 1]);
             } else {
-                self.compile_pipe(pipes[i + 1]);
+                self.compile_execpline(pipes[i + 1]);
                 // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
                 // (WC_SUBLIST_OR) re-read WC_SUBLIST_SIMPLE per chain
                 // element, so each RHS gets its own sublist code — and,
