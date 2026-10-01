@@ -6286,9 +6286,15 @@ impl ZshCompiler {
         // `zerr("character not in range")` (c:Src/utils.c:6763) from that
         // same run-time stringsubstquote, so a word that never runs — stock
         // `_cut`'s `de_DE.UTF-8` arm under `LANG=C` — must not diagnose here.
+        //
+        // A `\u`/`\U` escape is deferred even when it decodes now: its bytes
+        // come from ucs4tomb (c:Src/utils.c:6788-6863) under the locale in
+        // force when the word EXPANDS, so `f() { (LC_ALL=C; print $'é') }`
+        // must report `character not in range` although the function was
+        // compiled under a UTF-8 locale.
         if (s.contains(crate::ported::zsh_h::Stringg) || s.contains(crate::ported::zsh_h::Qstring))
             && s.contains(crate::ported::zsh_h::Snull)
-            && untokenize_quiet(s).map_or(true, |u| u.contains('\0'))
+            && (has_unicode_escape(s) || untokenize_quiet(s).map_or(true, |u| u.contains('\0')))
         {
             let text = self.builder.add_constant(Value::str(s));
             self.builder.emit(Op::LoadConst(text), 0);
@@ -19811,6 +19817,24 @@ fn decode_ansi_c(body: &str) -> Option<String> {
     })?;
     // c:Src/utils.c:7289-7294 — only imeta bytes are metafied.
     Some(crate::script_bytes::regroup_meta_utf8(out))
+}
+
+/// Does `s` carry a `\u` / `\U` escape? Those are the getkeystring escapes
+/// whose result depends on the locale at expansion time (c:Src/utils.c:7076
+/// `case 'u': case 'U':` → ucs4tomb). Over-matching (`\\u`) only defers a
+/// word to the run-time decode, which yields the same text.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!! C has no compile-time `$'…'` fold to
+/// guard; it always decodes in stringsubstquote at expansion time.
+fn has_unicode_escape(s: &str) -> bool {
+    let mut prev_backslash = false;
+    for c in s.chars() {
+        if prev_backslash && (c == 'u' || c == 'U') {
+            return true;
+        }
+        prev_backslash = c == '\\' || c == crate::ported::zsh_h::Bnull;
+    }
+    false
 }
 
 /// `untokenize` for a compile-time PROBE: None when a `$'…'` span in `s`
