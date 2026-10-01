@@ -1627,6 +1627,14 @@ impl modulestab {
             // "The example module has now been set up." on boot;
             // statically linked so `zmodload zsh/example` succeeds.
             ("zsh/example", &["example"][..]),
+            // c:Src/Zle/deltochar.mdd — `link=dynamic`, `moddeps="zsh/zle"`,
+            // no builtins (its features table is empty, deltochar.c:79-85);
+            // boot_ adds the delete-to-char / zap-to-char widgets. A stock
+            // zsh only fails to dlopen it when zsh/zle is not loaded yet
+            // (the bundle needs zle's `bindk`); V01zmodload declares the
+            // dependency with `zmodload -d` and loads it like every other
+            // module in config.modules.
+            ("zsh/deltochar", &[][..]),
             // NOT registered (zsh -fc parity probes confirm these
             // FAIL to load on this system because the dynamic
             // .bundle file doesn't exist):
@@ -1635,8 +1643,6 @@ impl modulestab {
             //   zsh/db_gdbm       — underscore alias for zsh/db/gdbm;
             //                       on the system zsh tested, neither
             //                       form loads (dlopen "no such file").
-            //   zsh/deltochar     — Zle widget addon; system zsh's
-            //                       bundle missing the _bindk symbol.
             //   zsh/compwid       — compwid bundle missing.
             // Letting zshrs zmodload succeed on these names would
             // diverge from `zsh -fc` which reports the dlopen error.
@@ -4030,6 +4036,7 @@ pub fn setup_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/mathfunc" => crate::ported::modules::mathfunc::setup_(std::ptr::null()),
         "zsh/nearcolor" => crate::ported::modules::nearcolor::setup_(std::ptr::null()),
         "zsh/newuser" => crate::ported::modules::newuser::setup_(std::ptr::null()),
+        "zsh/deltochar" => crate::ported::zle::deltochar::setup_(), // c:Zle/deltochar.c:90
         "zsh/parameter" => crate::ported::modules::parameter::setup_(std::ptr::null()),
         "zsh/param/private" => crate::ported::modules::param_private::setup_(std::ptr::null()),
         "zsh/pcre" => crate::ported::modules::pcre::setup_(std::ptr::null()),
@@ -4107,6 +4114,9 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
         "zsh/mathfunc" => crate::ported::modules::mathfunc::features_(std::ptr::null(), features),
         "zsh/nearcolor" => crate::ported::modules::nearcolor::features_(std::ptr::null(), features),
         "zsh/newuser" => crate::ported::modules::newuser::features_(std::ptr::null(), features),
+        // c:Zle/deltochar.c:97-101 — `featuresarray` over an all-empty
+        // `module_features` (c:79-85): an empty array, return 0.
+        "zsh/deltochar" => crate::ported::zle::deltochar::features_(),
         "zsh/parameter" => crate::ported::modules::parameter::features_(std::ptr::null(), features),
         "zsh/param/private" => {
             crate::ported::modules::param_private::features_(std::ptr::null(), features)
@@ -4294,6 +4304,7 @@ pub fn enables_module(table: &mut modulestab, name: &str, enables: &mut Option<V
         "zsh/mathfunc" => crate::ported::modules::mathfunc::enables_(std::ptr::null(), enables),
         "zsh/nearcolor" => crate::ported::modules::nearcolor::enables_(std::ptr::null(), enables),
         "zsh/newuser" => crate::ported::modules::newuser::enables_(std::ptr::null(), enables),
+        "zsh/deltochar" => crate::ported::zle::deltochar::enables_(), // c:Zle/deltochar.c:105
         "zsh/parameter" => crate::ported::modules::parameter::enables_(std::ptr::null(), enables),
         "zsh/param/private" => {
             crate::ported::modules::param_private::enables_(std::ptr::null(), enables)
@@ -4404,6 +4415,7 @@ pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/mathfunc" => crate::ported::modules::mathfunc::boot_(std::ptr::null()),
         "zsh/nearcolor" => crate::ported::modules::nearcolor::boot_(std::ptr::null()),
         "zsh/newuser" => crate::ported::modules::newuser::boot_(std::ptr::null()),
+        "zsh/deltochar" => crate::ported::zle::deltochar::boot_(), // c:Zle/deltochar.c:112
         "zsh/parameter" => crate::ported::modules::parameter::boot_(std::ptr::null()),
         "zsh/param/private" => crate::ported::modules::param_private::boot_(std::ptr::null()),
         "zsh/pcre" => crate::ported::modules::pcre::boot_(std::ptr::null()),
@@ -4486,6 +4498,7 @@ pub fn cleanup_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/mathfunc" => crate::ported::modules::mathfunc::cleanup_(std::ptr::null()),
         "zsh/nearcolor" => crate::ported::modules::nearcolor::cleanup_(std::ptr::null()),
         "zsh/newuser" => crate::ported::modules::newuser::cleanup_(std::ptr::null()),
+        "zsh/deltochar" => crate::ported::zle::deltochar::cleanup_(), // c:Zle/deltochar.c:129
         "zsh/parameter" => crate::ported::modules::parameter::cleanup_(std::ptr::null()),
         "zsh/param/private" => crate::ported::modules::param_private::cleanup_(std::ptr::null()),
         "zsh/pcre" => crate::ported::modules::pcre::cleanup_(std::ptr::null()),
@@ -4546,6 +4559,7 @@ pub fn finish_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/mathfunc" => crate::ported::modules::mathfunc::finish_(std::ptr::null()),
         "zsh/nearcolor" => crate::ported::modules::nearcolor::finish_(std::ptr::null()),
         "zsh/newuser" => crate::ported::modules::newuser::finish_(std::ptr::null()),
+        "zsh/deltochar" => crate::ported::zle::deltochar::finish_(), // c:Zle/deltochar.c:138
         "zsh/parameter" => crate::ported::modules::parameter::finish_(std::ptr::null()),
         "zsh/param/private" => crate::ported::modules::param_private::finish_(std::ptr::null()),
         "zsh/pcre" => crate::ported::modules::pcre::finish_(std::ptr::null()),
