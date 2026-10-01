@@ -61068,3 +61068,28 @@ cached chunks hold the old token chars. The stdin high-byte sweep
 (`non_utf8_script_parity::every_high_byte_round_trips_on_stdin`, previously
 `#[ignore]`d for this collision) now passes for all 128 bytes. Quote-mode fuzz
 goes from 5 divergences to 0, and the parity suite shows no new failures.
+
+## #1169 — every `compdef` re-published the whole 50k-entry `_comps`; plugin loading was quadratic — fixed
+
+**Status:** `fixed` 2026-10-01.
+
+Reported as `pro<TAB>` taking too long in a fresh shell: the TAB waited behind
+zinit's turbo plugin loading, and inside that, `compdef` →
+`publish_compdef_state_mut` → `merge_hparam` was 1289 of the sampled frames.
+
+**Root cause.** The native `compdef` keeps the full compdef tables in
+`CompdefState` and, after every call, merged the WHOLE table into the shell
+hash: read all of `_comps` back through `assoc_get` (rebuilding zsh's bucket
+order), merge into a `BTreeMap`, flatten, and `sethparam` it again. Upstream
+compdef assigns one element (`_comps[$cmd]=$func`, Completion/compinit
+sh:447-534) and removes with `unset "_comps[$^@]"` (sh:421). With ~51k
+entries that is O(N) per call and O(N²) across a plugin load.
+
+**Fix.** `CompdefState` records the keys set since the last publish; once the
+shell-side hash exists, a publish writes only those keys and the pending
+removals, element by element. The first publish, or one after the hash was
+unset, still takes the whole-table merge. Set, re-set after `-d`, `-d`, `-p`
+and a direct `_comps[x]=` assignment surviving later compdefs all match zsh
+5.9.2; `${#_comps}` is unchanged from before the fix. A 40 s sample of an
+interactive startup no longer shows the publish path at all (1289 samples
+before).

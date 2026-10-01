@@ -2117,19 +2117,19 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
     //   compinit-finish complement of `compdef()`'s per-call publish.
     with_state(|s| {
         for (k, v) in &result.comps {
-            s.comps.insert(k.clone(), v.clone());
+            put(&mut s.comps, &mut s.dirty.comps, k.clone(), v.clone());
         }
         for (k, v) in &result.services {
-            s.services.insert(k.clone(), v.clone());
+            put(&mut s.services, &mut s.dirty.services, k.clone(), v.clone());
         }
         for (k, v) in &result.patcomps {
-            s.patcomps.insert(k.clone(), v.clone());
+            put(&mut s.patcomps, &mut s.dirty.patcomps, k.clone(), v.clone());
         }
         for (k, v) in &result.postpatcomps {
-            s.postpatcomps.insert(k.clone(), v.clone());
+            put(&mut s.postpatcomps, &mut s.dirty.postpatcomps, k.clone(), v.clone());
         }
         for (k, v) in &result.compautos {
-            s.compautos.insert(k.clone(), v.clone());
+            put(&mut s.compautos, &mut s.dirty.compautos, k.clone(), v.clone());
         }
         publish_compdef_state_mut(s);
     });
@@ -2551,6 +2551,28 @@ pub struct CompdefState {
     /// Removal is the one edit a merge cannot express, so it is carried
     /// explicitly instead of being implied by the absence of a key.
     removed: CompdefRemovals,
+    /// Keys set since the last publish. A publish writes only these (plus
+    /// `removed`) into the shell-side hashes, the way upstream compdef
+    /// assigns one element (`_comps[$cmd]=$func`, Completion/compinit
+    /// sh:447-534). Re-publishing the whole table on every compdef made
+    /// loading N completions O(N^2) over a 50k-entry `_comps`.
+    dirty: CompdefDirty,
+}
+
+/// Per-array keys set since the last publish.
+#[derive(Default)]
+struct CompdefDirty {
+    comps: HashSet<String>,
+    services: HashSet<String>,
+    patcomps: HashSet<String>,
+    postpatcomps: HashSet<String>,
+    compautos: HashSet<String>,
+}
+
+/// Set `k` to `v` in one compdef table and mark it for the next publish.
+fn put(map: &mut HashMap<String, String>, dirty: &mut HashSet<String>, k: String, v: String) {
+    dirty.insert(k.clone());
+    map.insert(k, v);
 }
 
 /// Per-array key lists for pending `compdef -d` removals.
@@ -2670,12 +2692,46 @@ fn publish_compdef_state_mut(s: &mut CompdefState) {
     if PUBLISH_DEPTH.load(Ordering::Relaxed) > 0 {
         return;
     }
-    merge_hparam("_comps", &s.comps, &s.removed.comps);
-    merge_hparam("_services", &s.services, &s.removed.services);
-    merge_hparam("_patcomps", &s.patcomps, &s.removed.patcomps);
-    merge_hparam("_postpatcomps", &s.postpatcomps, &s.removed.postpatcomps);
-    merge_hparam("_compautos", &s.compautos, &[]);
+    publish_hparam("_comps", &s.comps, &s.dirty.comps, &s.removed.comps);
+    publish_hparam("_services", &s.services, &s.dirty.services, &s.removed.services);
+    publish_hparam("_patcomps", &s.patcomps, &s.dirty.patcomps, &s.removed.patcomps);
+    publish_hparam("_postpatcomps", &s.postpatcomps, &s.dirty.postpatcomps, &s.removed.postpatcomps);
+    publish_hparam("_compautos", &s.compautos, &s.dirty.compautos, &[]);
     s.removed = CompdefRemovals::default();
+    s.dirty = CompdefDirty::default();
+}
+
+/// Publish one compdef table. Once the shell-side hash exists, only the keys
+/// changed since the last publish are written, element by element, the way
+/// upstream compdef does `_comps[$cmd]=$func` / `unset "_comps[$^@]"`
+/// (Completion/compinit sh:421-534). The first publish, or one after the
+/// hash was unset, takes the whole-table merge.
+fn publish_hparam(
+    name: &str,
+    full: &HashMap<String, String>,
+    dirty: &HashSet<String>,
+    remove: &[String],
+) {
+    if dirty.is_empty() && remove.is_empty() {
+        return;
+    }
+    {
+        let mut store = crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(hash) = store.get_mut(name) {
+            for k in remove {
+                hash.shift_remove(k);
+            }
+            for k in dirty {
+                if let Some(v) = full.get(k) {
+                    hash.insert(k.clone(), v.clone());
+                }
+            }
+            return;
+        }
+    }
+    merge_hparam(name, full, remove);
 }
 
 /// Read one key out of a shell-side assoc array.
@@ -2882,8 +2938,8 @@ pub fn compdef(args: &[String]) -> i32 {
                 .or_else(|| with_state(|s| s.services.get(&svc_in).cloned()))
                 .unwrap_or(svc_in.clone());
             with_state(|s| {
-                s.comps.insert(cmd.clone(), func.clone());
-                s.services.insert(cmd, svc_for_state);
+                put(&mut s.comps, &mut s.dirty.comps, cmd.clone(), func.clone());
+                put(&mut s.services, &mut s.dirty.services, cmd, svc_for_state);
             });
         }
         with_state(publish_compdef_state_mut);
@@ -2985,18 +3041,18 @@ pub fn compdef(args: &[String]) -> i32 {
                         if let Some(eq) = arg.find('=') {
                             let key = arg[..eq].to_string();
                             let val = arg[eq + 1..].to_string();
-                            s.patcomps.insert(key, format!("={}={}", val, func));
+                            put(&mut s.patcomps, &mut s.dirty.patcomps, key, format!("={}={}", val, func));
                         } else {
-                            s.patcomps.insert(arg.clone(), func.clone());
+                            put(&mut s.patcomps, &mut s.dirty.patcomps, arg.clone(), func.clone());
                         }
                     }
                     SpecType::PostPattern => {
                         if let Some(eq) = arg.find('=') {
                             let key = arg[..eq].to_string();
                             let val = arg[eq + 1..].to_string();
-                            s.postpatcomps.insert(key, format!("={}={}", val, func));
+                            put(&mut s.postpatcomps, &mut s.dirty.postpatcomps, key, format!("={}={}", val, func));
                         } else {
-                            s.postpatcomps.insert(arg.clone(), func.clone());
+                            put(&mut s.postpatcomps, &mut s.dirty.postpatcomps, arg.clone(), func.clone());
                         }
                     }
                     _ => {
@@ -3022,9 +3078,9 @@ pub fn compdef(args: &[String]) -> i32 {
                         {
                             return;
                         }
-                        s.comps.insert(cmd.clone(), func.clone());
+                        put(&mut s.comps, &mut s.dirty.comps, cmd.clone(), func.clone());
                         if let Some(svc) = svc {
-                            s.services.insert(cmd, svc);
+                            put(&mut s.services, &mut s.dirty.services, cmd, svc);
                         }
                     }
                 });
@@ -3089,6 +3145,7 @@ pub fn snapshot_compdef_state() -> CompdefState {
         postpatcomps: s.postpatcomps.clone(),
         compautos: s.compautos.clone(),
         removed: CompdefRemovals::default(),
+        dirty: CompdefDirty::default(),
     })
 }
 
