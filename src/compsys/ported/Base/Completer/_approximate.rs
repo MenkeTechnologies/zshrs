@@ -1,41 +1,49 @@
 //! Port of `_approximate` from
-//! `Completion/Base/Completer/_approximate`.
-//!
-//! Full upstream body (121 lines, abridged):
+//! `Completion/Base/Completer/_approximate` as shipped in zsh 5.9.2
+//! (`share/zsh/functions/_approximate`, 125 lines, abridged):
 //! ```text
-//! sh:  1  #autoload
-//! sh: 14  [[ _matcher_num -gt 1 || "${#:-$PREFIX$SUFFIX}" -le 1 ]] && return 1
-//! sh: 17  local _comp_correct …
-//! sh: 21  if [[ "$1" = -a* ]]; then cfgacc="${1[3,-1]}"
-//! sh: 24  elif [[ "$1" = -a ]]; then cfgacc="$2"
-//! sh: 27  else zstyle -s … max-errors cfgacc || cfgacc='2 numeric'
-//! sh: 32  if [[ "$cfgacc" = *numeric* && ${NUMERIC:-1} -ne 1 ]]; then …
-//! sh: 41  comax="${NUMERIC:-1}"
-//! sh: 44  comax="${cfgacc//[^0-9]}"
-//! sh: 47  [[ "$comax" -lt 1 ]] && return 1
-//! sh: 50  _tags corrections original
-//! sh: 56  _shadow -s _approximate compadd
-//! sh: 57  compadd() { … inject (#a${_comp_correct}) prefix into match … }
-//! sh: 74  _comp_correct=1
-//! sh: 76  [[ -z "$compstate[pattern_match]" ]] && compstate[pattern_match]='*'
-//! sh: 79  while [[ _comp_correct -le comax ]]; do
-//! sh: 84    if _complete; then …emit corrections list … break …
-//! sh:117  (( _comp_correct++ ))
-//! sh:118  done
-//! sh:120  _unshadow; return ret
+//! sh: 11  [[ _matcher_num -gt 1 || "${#:-$PREFIX$SUFFIX}" -le 1 ]] && return 1
+//! sh: 13  local _comp_correct _correct_expl _correct_group comax cfgacc match
+//! sh: 15  local dounfunction
+//! sh: 18  if [[ "$1" = -a* ]]; then cfgacc="${1[3,-1]}"
+//! sh: 20  elif [[ "$1" = -a ]]; then cfgacc="$2"
+//! sh: 23  else zstyle -s … max-errors cfgacc || cfgacc='2 numeric'
+//! sh: 29  if [[ "$cfgacc" = *numeric* && ${NUMERIC:-1} -ne 1 ]]; then …
+//! sh: 43  [[ "$comax" -lt 1 ]] && return 1
+//! sh: 45  _tags corrections original
+//! sh: 54  {
+//! sh: 55  if (( ! $+functions[compadd] )); then
+//! sh: 56    dounfunction=1
+//! sh: 57    compadd() { … inject (#a${_comp_correct}) prefix into match … }
+//! sh: 74  fi
+//! sh: 76  _comp_correct=1
+//! sh: 78  [[ -z "$compstate[pattern_match]" ]] && compstate[pattern_match]='*'
+//! sh: 80  while [[ _comp_correct -le comax ]]; do
+//! sh: 88    if _complete; then …emit corrections list … break …
+//! sh:114    (( _comp_correct++ ))
+//! sh:115  done
+//! sh:117  } always {
+//! sh:118    [[ -n $dounfunction ]] && (( $+functions[compadd] )) && unfunction compadd
+//! sh:119  }
 //! ```
 //!
-//! Approximate-match completer: shadows `compadd` to inject the
-//! `(#a$n)`-error glob prefix into each match, walks `n` from 1
-//! up to the max-errors style. Wraps each pass in
-//! `_shadow -s _approximate compadd` + `_unshadow` so the
-//! compadd-override layer's eventual install/remove (deferred) is
-//! correctly scoped per-iteration.
+//! Approximate-match completer: overrides `compadd` to inject the
+//! `(#a$n)`-error glob prefix into each match, walking `n` from 1 up to
+//! the max-errors style. The override is installed only when the user has
+//! no `compadd` function of their own (sh:55); otherwise the user's
+//! function receives the calls untouched, as in zsh.
+//!
+//! The upstream development tree replaced sh:55-74 with
+//! `_shadow -s _approximate compadd` / `_unshadow` (51861, commit 5f984319b5, on the
+//! development branch only — not in the zsh-5.9.1 or 5.9.2 releases).
+//! 5.9.2 ships neither function, so this port does not call them: doing so
+//! left `.shadow.depth`/`.shadow.stack` behind after every correction pass
+//! and, on a host whose `$fpath` holds an unrelated `_shadow`, ran that
+//! file instead.
 
 use crate::compsys::ported::_complete::_complete;
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_requested::_requested;
-use crate::compsys::ported::_shadow::{_shadow, _unshadow};
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
@@ -224,19 +232,11 @@ pub fn _approximate(args: &[String]) -> i32 {
         set_compstate_str("pattern_match", "*");
     }
 
-    // sh:56  `_shadow -s _approximate compadd` — wrap the entire
-    //   loop so the compadd-override (when wired) installs/restores
-    //   exactly once, not once per pass.
-    // Bare command word at sh:53 — reach it by name. `_shadow` is overridden
-    // on a real zpwr host (zsh-more-completions `more_src5/_shadow`), and the
-    // `has_fpath_override` gate that honors that lives behind
-    // `dispatch_function_call`, not behind a plain Rust call.
-    let shargs = [
-        "-s".to_string(),
-        "_approximate".to_string(),
-        "compadd".to_string(),
-    ];
-    let _ = crate::compsys::ported::shared::call_compfn("_shadow", &shargs, || _shadow(&shargs));
+    // sh:55-56 — `if (( ! $+functions[compadd] )); then dounfunction=1`.
+    //   A `compadd` the user already defined (fzf-tab and similar) is left
+    //   alone: no override is installed and its calls reach the user's
+    //   function through `bin_compadd`'s shfunctab probe, uncorrected.
+    let dounfunction = crate::ported::utils::getshfunc("compadd").is_none();
 
     let mut ret: i32 = 1;
     let mut comp_correct: i64 = 1;
@@ -280,16 +280,21 @@ pub fn _approximate(args: &[String]) -> i32 {
             .unwrap_or(0);
         let _ = setsparam("_correct_group", &correct_group.to_string());
 
-        // sh:54-70 — install the `compadd` override for this pass. The
+        // sh:57-73 — install the `compadd` override for this pass. The
         //   PREFIX half (sh:60-64) is the injector hook; the argv half
         //   (sh:57-58 skip + sh:66-69 expl prepend) is the argv shadow.
-        set_compadd_prefix_injector(format!("(#a{})", comp_correct));
-        *COMPADD_ARGV_SHADOW.lock().unwrap() = Some(approximate_compadd_shadow);
+        if dounfunction {
+            set_compadd_prefix_injector(format!("(#a{})", comp_correct));
+            *COMPADD_ARGV_SHADOW.lock().unwrap() = Some(approximate_compadd_shadow);
+        }
 
         let comp_ret = _complete();
 
-        *COMPADD_ARGV_SHADOW.lock().unwrap() = None;
-        clear_compadd_prefix_injector();
+        // sh:117-119 — `always { … unfunction compadd }`.
+        if dounfunction {
+            *COMPADD_ARGV_SHADOW.lock().unwrap() = None;
+            clear_compadd_prefix_injector();
+        }
 
         if comp_ret == 0 {
             // sh:85-87  insert-unambiguous?
@@ -359,11 +364,6 @@ pub fn _approximate(args: &[String]) -> i32 {
         // sh:110
         comp_correct += 1;
     }
-
-    // sh:114  `_unshadow` — restore the compadd entry. Bare command word;
-    // paired with the `_shadow` call above, so it must go by name too or the
-    // user's `_shadow` would be torn down by the port's `_unshadow`.
-    let _ = crate::compsys::ported::shared::call_compfn("_unshadow", &[], _unshadow);
 
     // sh:13 — drop the function-locals (see the note above the loop).
     let _ = unsetparam("_comp_correct");

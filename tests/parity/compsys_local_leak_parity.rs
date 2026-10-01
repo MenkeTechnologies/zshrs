@@ -192,6 +192,31 @@ fn approximate_does_not_leak_expl() {
     );
 }
 
+/// zsh 5.9.2's `_approximate` installs its `compadd` override with a plain
+/// `compadd() { … }` (sh:55-57) and removes it in an `always` block
+/// (sh:117-119). The `_shadow -s _approximate compadd` / `_unshadow` pair
+/// that replaced it on the development branch (51861) is not in 5.9.2, and
+/// the port calling it left `_shadow`'s globals `.shadow.depth` and
+/// `.shadow.stack` (`typeset -gH`) defined after every correction pass.
+#[test]
+fn approximate_does_not_leave_shadow_globals() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let driver = leak_driver(
+        r#"zstyle ":completion:*" completer _complete _approximate; zstyle ":completion:*:approximate:*" max-errors 2"#,
+        "print /usr/lbi",
+        r#"[[ $_lastcomp[completer] == approximate ]] && (( ${#${(k)parameters[(I).shadow*]}} == 0 ))"#,
+        &["expl"],
+    );
+    assert_same_verdict(
+        &driver,
+        "L",
+        "_approximate left `.shadow.*` globals after the correction pass",
+    );
+}
+
 /// `_extensions` sh:11 declares `expl` and `mfiles`; sh:30's
 /// `compadd -O mfiles` writes the second one BY NAME, so it is a direct
 /// write rather than a `_description` fill.
