@@ -4273,6 +4273,24 @@ impl ZshCompiler {
             // zconvey.plugin.zsh:44 `command mkdir -p …` hit the
             // in-process bin_mkdir and errored "File exists".
             None
+        } else if matches!(
+            first_clean.as_str(),
+            // The coreutils shadows (fusevm_bridge `reg_overridable!`).
+            "cat" | "head" | "tail" | "wc" | "basename" | "dirname" | "touch"
+                | "realpath" | "sort" | "find" | "uniq" | "cut" | "tr" | "seq"
+                | "rev" | "tee" | "sleep" | "whoami" | "id" | "hostname"
+                | "uname" | "date" | "mktemp" | "cp"
+        ) && crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // None of these is a zsh builtin, and `--zsh` never runs the
+            // shadow (daemon_presence::coreutils_shadows_enabled). Compile
+            // them as the external command they are, so a child already
+            // forked for one (`sleep 5 &`, a pipeline stage) gets the
+            // BUILTIN_EXEC_FORKED_SIMPLE mark and execs it in place
+            // (c:Src/exec.c:4369) instead of forking again: a signal sent
+            // to the job then reaches the command itself, and `kill -HUP %1`
+            // reports `hangup`, not `exit 1`.
+            None
         } else {
             // Try the raw form first (handles already-untokenized inputs
             // from internal callers); fall back to the cleaned form so

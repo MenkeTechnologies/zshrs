@@ -2471,18 +2471,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:Src/exec.c:3545-3547 — these shadows stand in for
                 // EXTERNAL commands (`cat`, `head`, …), which in zsh reach
                 // execcmd_exec and set `$_` to the command's last word
-                // before running. Both arms below bypass dispatch_builtin
-                // AND execute_external_bg (the shadow runs in-process; the
-                // opt-out arm spawns through exec_system_command), so
-                // without this `cat f; print $_` reported the PREVIOUS
-                // command's last argument.
+                // before running. The in-process shadow below bypasses
+                // dispatch_builtin AND execute_external_bg, so without this
+                // `cat f; print $_` reported the PREVIOUS command's last
+                // argument.
                 {
                     let last = args.last().cloned().unwrap_or_else(|| $name.to_string());
                     crate::ported::params::set_zunderscore(std::slice::from_ref(&last));
                     // c:3546
                 }
+                // With the shadow off (always under `--zsh`) the name is the
+                // external command it stands in for, so it takes the external
+                // path: c:Src/exec.c:4369 `execute()` replaces a child already
+                // forked for it (`sleep 5 &`, a pipeline stage) instead of
+                // forking again, and a signal sent to the job reaches the
+                // command itself (`kill -HUP %1` is `hangup`, not `exit 1`).
                 if !crate::daemon_presence::coreutils_shadows_enabled() {
-                    return Value::Status(exec_system_command($name, &args));
+                    return Value::Status(with_executor(|exec| {
+                        exec.execute_external($name, &args, &[]).unwrap_or(127)
+                    }));
                 }
                 let status = with_executor(|exec| exec.$method(&args));
                 Value::Status(status)
@@ -17263,34 +17270,6 @@ fn take_reaped_status(pid: i32) -> Option<(i32, u64, u64)> {
         unsafe { libc::nanosleep(&ts, std::ptr::null_mut()) };
     }
     None
-}
-
-fn exec_system_command(name: &str, args: &[String]) -> i32 {
-    // c:Src/jobs.c — count the fork so `time` reports for an
-    // overridable coreutils shadow run as an external (`time sleep 0`,
-    // `time cat …`). This is a distinct spawn path from
-    // execute_external_bg; without the bump BUILTIN_TIME_SUBLIST saw no
-    // job and stayed silent. (Builtins that don't reach a spawn never
-    // hit this fn.)
-    crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
-    crate::lowfd::cloexec_internal_fds();
-    // Queue signals across the wait, and claim the status back when the
-    // reaper wins anyway — see foreground_status.
-    let status = foreground_status(
-        std::process::Command::new(name)
-            .args(args)
-            .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit()),
-    );
-    match status {
-        Ok(s) => crate::exec_jobs::wait_status_val(s),
-        Err(e) => {
-            eprintln!("zshrs: {}: {}", name, e);
-            127
-        }
-    }
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
