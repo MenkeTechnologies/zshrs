@@ -579,6 +579,8 @@ pub fn set_buffer(s: &str) {
         Ordering::SeqCst,
     );
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    crate::ported::zle::zle_misc::fixsuffix(); // c:254
+    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::SeqCst); // c:255
 }
 /// `$BUFFER` accessor — the full edited line.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c:258.
@@ -631,6 +633,8 @@ pub fn set_cursor(pos: usize) {
     // c:267
     ZLECS.store(pos.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst);
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    crate::ported::zle::zle_misc::fixsuffix(); // c:277
+    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::SeqCst); // c:278
 }
 
 /// `$CURSOR` accessor — current cursor position (0-indexed).
@@ -727,6 +731,8 @@ pub fn set_lbuffer(s: &str) {
     ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
     ZLECS.store(s.chars().count(), Ordering::SeqCst);
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    crate::ported::zle::zle_misc::fixsuffix(); // c:352
+    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::SeqCst); // c:353
 }
 
 /// `$LBUFFER` accessor — text before the cursor.
@@ -765,6 +771,8 @@ pub fn set_rbuffer(s: &str) {
     *ZLELINE.lock().unwrap() = lbuf.chars().chain(s.chars()).collect();
     ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    crate::ported::zle::zle_misc::fixsuffix(); // c:382
+    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::SeqCst); // c:383
 }
 
 /// `$RBUFFER` accessor — text after the cursor.

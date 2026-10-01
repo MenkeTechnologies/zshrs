@@ -177,6 +177,36 @@ zpty -w -n w $'\r'"#,
             "ESC-b moved back one word",
         );
     }
+
+    /// Assigning `LBUFFER` in a widget cancels the auto-removable suffix a
+    /// completion left (c:Src/Zle/zle_params.c:352 `fixsuffix()`). A widget
+    /// that trims the completion's trailing space and then accepts the line
+    /// must run the completed word whole; while the suffix stayed pending,
+    /// accept-line removed one more character, so `uniquefile.toml` ran as
+    /// `uniquefile.tom` and `test -e` failed.
+    #[test]
+    fn widget_lbuffer_write_cancels_the_completion_suffix() {
+        assert_same_verdict(
+            &driver(
+                "-e",
+                r#"zpty -w w 'cd ${TMPDIR:-/tmp} && cd $(mktemp -d) && : > uniquefile.toml'
+sleep 1
+zpty -w w $'trim(){ [[ ${LBUFFER: -1} == \' \' ]] && LBUFFER=${LBUFFER:0:-1}; zle .accept-line }; zle -N trim; bindkey \'^M\' trim'
+sleep 1
+zpty -w -n w 'test -e uniq'
+sleep 1
+zpty -w -n w $'\t'
+sleep 2
+zpty -w -n w $'\r'
+sleep 1
+zpty -w -n w 'print OUT${:-}$?'
+zpty -w -n w $'\r'"#,
+                "OUT0",
+            ),
+            "K",
+            "the completed word survived a widget that trims its suffix space",
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
