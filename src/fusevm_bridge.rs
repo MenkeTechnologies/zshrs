@@ -3198,6 +3198,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // (c:3365-3406; the redirect-only form never reaches here).
             return Value::Status(0);
         }
+        // zsh 5.9.x Src/exec.c:3337-3343 — `else if (isset(RESTRICTED) &&
+        //   (cflags & BINF_EXEC) && do_exec) { zerrnam("exec", "%s: restricted",
+        //   (char *) getdata(firstnode(args))); lastval = 1; return; }`
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED) {
+            let first = &walk.preargs[walk.precmd_skip];
+            crate::ported::utils::zerrnam("exec", &format!("{}: restricted", first)); // c:3338
+            vm.last_status = 1; // c:3340
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(1);
+        }
         let args: Vec<String> = walk.preargs[walk.precmd_skip..].to_vec();
         let cmd = args[0].clone();
         if (walk.cflags & crate::ported::zsh_h::BINF_BUILTIN) != 0 && !walk.is_builtin {
@@ -5085,7 +5095,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // ARRAY from the scalar. Running it afterwards makes `path=()`
             // publish PATH="" and then re-split that back into a one-element
             // `path=("")`, where zsh leaves 0 elements.
-            if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
+            // zsh 5.9.x Src/params.c:2747-2751 — setarrvalue refuses a
+            // PM_RESTRICTED array under RESTRICTED before its setfn (the
+            // tied-scalar update this mirrors) can run.
+            let restricted_refused = crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED)
+                && crate::ported::params::paramtab().read().ok().is_some_and(|t| {
+                    t.get(&name).is_some_and(|p| {
+                        (p.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0
+                    })
+                });
+            if let Some((scalar_name, sep)) = exec
+                .tied_array_to_scalar
+                .get(&name)
+                .cloned()
+                .filter(|_| !restricted_refused)
+            {
                 let uniq = crate::ported::params::paramtab()
                     .read()
                     .ok()
@@ -12114,6 +12138,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         if entries.is_empty() {
+            return Value::Status(1);
+        }
+        // zsh 5.9.x Src/exec.c:3690-3693 — the RESTRICTED write-file refusal
+        // runs per redirection before anything is opened; the members of one
+        // multio all reach it before their open, so refuse the whole set.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED)
+            && entries.iter().any(|(op, _)| redir_is_write_file(*op))
+        {
+            crate::ported::utils::zwarn("writing redirection not allowed in restricted mode"); // c:3691
+            with_executor(|exec| {
+                exec.set_last_status(1); // c:3692 execerr
+                exec.redirect_failed = true;
+            });
             return Value::Status(1);
         }
 
@@ -20191,6 +20228,16 @@ impl fusevm::ShellHost for ZshrsHost {
                 // paramtab restore above: setsparam writes through the GSU setfn
                 // to BOTH the process global and the param node, so the paramtab
                 // overwrite would otherwise clobber the node half of it.
+                // Restore parent's option store so `(set -e)` /
+                // `(setopt extendedglob)` don't leak. zsh forks
+                // subshells so child option changes die with the
+                // child; we run in-process and must restore. This runs
+                // BEFORE the special-global replay below: that replay is
+                // assignsparam, which honours options the body set — a
+                // body's `setopt restricted` refused every replayed
+                // PM_RESTRICTED special (`IFS: restricted`, zsh 5.9.x
+                // params.c:2539) although in C the child just exits.
+                crate::ported::options::opt_state_restore(snap.opts);
                 for (name, val) in &snap.special_globals {
                     crate::ported::params::setsparam(name, val);
                 }
@@ -20252,11 +20299,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                     *t = snap.traps;
                 }
-                // Restore parent's option store so `(set -e)` /
-                // `(setopt extendedglob)` don't leak. zsh forks
-                // subshells so child option changes die with the
-                // child; we run in-process and must restore.
-                crate::ported::options::opt_state_restore(snap.opts);
+                // (The parent's option store was put back above, before
+                // the special-global replay.)
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. Restore parent's function
                 //   table from snapshot so `(f() { ... })` definitions
@@ -21050,6 +21094,17 @@ impl fusevm::ShellHost for ZshrsHost {
 /// (Src/exec.c:3741); zshrs's `zwarning` takes a pre-built string, so the
 /// `%e` part is built here. Replaces the prior hardcoded `ErrorKind` match
 /// that fell back to a generic "redirect failed" for `EROFS`/`EACCES`/etc.
+/// Port of `IS_WRITE_FILE` (zsh.h:403, `REDIR_WRITE <= X <= REDIR_READWRITE`)
+/// over the fusevm redirect op bytes compile_zsh lowers those types to:
+/// `>`/`>|` (WRITE/CLOBBER), `>>`/`>>|` (APPEND), `>&`/`&>` and their append
+/// forms (WRITE_BOTH/APPEND_BOTH, compile_zsh.rs REDIR_ERRWRITE..), `<>`.
+fn redir_is_write_file(op_byte: u8) -> bool {
+    matches!(
+        op_byte,
+        r::WRITE | r::APPEND | r::CLOBBER | r::READ_WRITE | r::WRITE_BOTH | r::APPEND_BOTH
+    )
+}
+
 fn redir_errno_msg(err: &std::io::Error) -> String {
     let errno = match err.raw_os_error() {
         Some(n) if n != 0 => n,
@@ -21234,6 +21289,17 @@ impl ShellExecutor {
     /// `host_apply_redirect` — see implementation.
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
         if redir_target_expansion_failed(self) {
+            return;
+        }
+        // zsh 5.9.x Src/exec.c:3690-3693 — after xpandredir and the errflag
+        // test: `if (isset(RESTRICTED) && IS_WRITE_FILE(fn->type)) {
+        //   zwarn("writing redirection not allowed in restricted mode");
+        //   execerr(); }`. IS_WRITE_FILE (zsh.h:403) spans REDIR_WRITE ..
+        // REDIR_READWRITE, i.e. every op byte in redir_is_write_file.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED) && redir_is_write_file(op_byte) {
+            crate::ported::utils::zwarn("writing redirection not allowed in restricted mode"); // c:3691
+            self.set_last_status(1); // c:3692 execerr → lastval = 1
+            self.redirect_failed = true;
             return;
         }
         // c:Src/exec.c:3775-3777 — in a pipeline stage whose input is the

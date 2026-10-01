@@ -8667,6 +8667,16 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 unqueue_signals(); // c:3220
                 return None; // c:3221
             }
+            // zsh 5.9.x Src/params.c:2539-2543 — the element write below
+            // stands in for assignstrvalue, whose RESTRICTED gate refuses
+            // before anything is stored.
+            if (pm.node.flags as u32 & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+                let nam = pm.node.nam.clone();
+                drop(tab); // zerr redraws ZLE, which reads paramtab
+                zerr(&format!("{}: restricted", nam)); // c:2540
+                unqueue_signals();
+                return None;
+            }
         }
         // c:3231 `v = NULL;` — re-dispatch by storage type.
         let pm = tab.get_mut(name).unwrap();
