@@ -422,6 +422,15 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 /// on C's static table.
 static MFTAB: OnceLock<Mutex<Vec<crate::ported::zsh_h::mathfunc>>> = OnceLock::new();
 
+/// `static struct conddef cotab[]` (example.c:168-171). File-static in
+/// C, and the per-entry `CONDF_ADDED` bit setconddefs (Src/module.c:754)
+/// keeps on each row has to survive across calls, so it lives here.
+static COTAB: OnceLock<Mutex<Vec<crate::ported::zsh_h::conddef>>> = OnceLock::new();
+
+/// `static struct paramdef patab[]` (example.c:173-177). `d->pm` is the
+/// per-parameter enable bit setparamdefs (Src/module.c:1169) keeps.
+static PATAB: OnceLock<Mutex<Vec<crate::ported::zsh_h::paramdef>>> = OnceLock::new();
+
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
@@ -483,6 +492,29 @@ fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -
         let g = f.lock().unwrap();
         (g.bn_size as usize, g.cd_size as usize, g.mf_size as usize)
     };
+    // `e` sliced per block, the `if (e) e += f->xx_size;` advance of
+    // c:3361/3366/3371; `e == NULL` stays NULL for every block.
+    let block = |start: usize, len: usize| -> Option<Vec<i32>> {
+        e.map(|a| (0..len).map(|i| a.get(start + i).copied().unwrap_or(0)).collect())
+    };
+    // c:3363-3367 — `if (f->cd_size) { if (setconddefs(m->node.nam,
+    // f->cd_list, f->cd_size, e)) ret = 1; … }`. This is what replaces the
+    // `zmodload -ac zsh/example ex` autoload stub with the real
+    // `cond_i_ex` handler, so the getconddef retry (Src/module.c:669-685)
+    // finds a module-less definition after the load.
+    let cd_e = block(bn_size, cd_size);
+    let cotab_mutex = COTAB.get_or_init(|| {
+        Mutex::new(vec![
+            crate::ported::zsh_h::CONDDEF("ex", crate::ported::module::CONDF_INFIX, cond_i_ex, 0, 0, 0), // c:169
+            crate::ported::zsh_h::CONDDEF("len", 0, cond_p_len, 1, 2, 0), // c:170
+        ])
+    });
+    {
+        let mut cotab = cotab_mutex.lock().unwrap();
+        if crate::ported::module::setconddefs("zsh/example", &mut cotab, cd_e.as_deref()) != 0 {
+            ret = 1; // c:3365
+        }
+    }
     let mf_e: Option<Vec<i32>> = e.map(|a| {
         (0..mf_size)
             .map(|i| a.get(bn_size + cd_size + i).copied().unwrap_or(0))
@@ -495,9 +527,33 @@ fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -
             crate::ported::zsh_h::NUMMATHFUNC("sum", math_sum, 1, -1, 0), // c:181
         ])
     });
-    let mut tab = tab_mutex.lock().unwrap();
-    if crate::ported::module::setmathfuncs("zsh/example", &mut tab, mf_e.as_deref()) != 0 {
-        ret = 1; // c:3370
+    {
+        let mut tab = tab_mutex.lock().unwrap();
+        if crate::ported::module::setmathfuncs("zsh/example", &mut tab, mf_e.as_deref()) != 0 {
+            ret = 1; // c:3370
+        }
+    }
+    // c:3373-3378 — `if (f->pd_size) { if (setparamdefs(m->node.nam,
+    // f->pd_list, f->pd_size, e)) ret = 1; }`. addparamdef (c:1060) is what
+    // replaces a `zmodload -ap zsh/example exint` autoload stub, so
+    // loadparamnode (Src/params.c:544-566) finds the parameter defined.
+    let pd_size = f.lock().unwrap().pd_size as usize;
+    let pd_e = block(bn_size + cd_size + mf_size, pd_size);
+    let patab_mutex = PATAB.get_or_init(|| {
+        Mutex::new(vec![
+            // C passes `&arrparam` / `&intparam` / `&strparam` as `var`;
+            // addparamdef's `pm->u.data = d->var` (Src/module.c:1079-1080)
+            // has no Rust slot yet, so `var` is 0.
+            crate::ported::zsh_h::ARRPARAMDEF("exarr", 0), // c:174
+            crate::ported::zsh_h::INTPARAMDEF("exint", 0), // c:175
+            crate::ported::zsh_h::STRPARAMDEF("exstr", 0), // c:176
+        ])
+    });
+    {
+        let mut patab = patab_mutex.lock().unwrap();
+        if crate::ported::module::setparamdefs("zsh/example", &mut patab, pd_e.as_deref()) != 0 {
+            ret = 1; // c:3377
+        }
     }
     ret // c:3382
 }

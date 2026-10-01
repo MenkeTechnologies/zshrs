@@ -995,6 +995,18 @@ pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {
     }
     // c:1052 — unsetparam_pm(pm, 0, 1);
     unsetparam_pm(&mut pm, 0, 1);
+    // !!! RUST-ONLY STEP — NO DIRECT C COUNTERPART !!!
+    // C's `unsetparam_pm` ends in the `paramtab->removenode` postlude
+    // (c:Src/params.c:3853-3935) that drops the stub node; the Rust one
+    // only marks the by-value copy it was handed (see the same step in
+    // `deleteparamdef`). Without the removal the PM_AUTOLOAD stub stayed
+    // in paramtab, addparamdef's createparam found it and never
+    // installed the module's parameter, and loadparamnode
+    // (c:Src/params.c:553-563) reported "autoloading module zsh/example
+    // failed to define parameter: exint".
+    if let Ok(mut tab) = paramtab().write() {
+        tab.remove(nam); // c:Src/params.c:3900 paramtab->removenode
+    }
     // c:1053 — return 0;
     0
 }
