@@ -986,9 +986,9 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 ```
                   ┌────────────────────────────────────────────────────────────────┐
                   │                        zshrs workspace                         │
-                  │             4 crates · 861 .rs files · 915k lines              │
+                  │            4 crates · 948 .rs files · 1,011k lines             │
                   ├──────────────────────────────────────────┬─────────────────────┤
-                  │      src/ (476 .rs — runtime crate)      │  vendor/fish/ (157) │
+                  │      src/ (492 .rs — runtime crate)      │  vendor/fish/ (157) │
                   │  ┌────────────────────────────────────┐  │  reader / line edit │
                   │  │  src/ported/  (106 — STRICT PORT)  │  │  syntax highlight   │
                   │  │  every .rs ↔ a real Src/<x>.c file │  │  autosuggest        │
@@ -1000,7 +1000,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │  │  prompt · utils · init · …         │  ├─────────────────────┤
                   │  └────────────────────────────────────┘  │  parse + lex now    │
                   │  ┌────────────────────────────────────┐  │  live IN-RUNTIME    │
-                  │  │  src/extensions/  (94 — NON-PORT)  │  │  (folded from the   │
+                  │  │  src/extensions/ (115 — NON-PORT)  │  │  (folded from the   │
                   │  │  features zsh C does NOT have:     │  │  old parse crate)   │
                   │  │  AOT · plugin/script/autoload      │  ├─────────────────────┤
                   │  │  cache · fish_features · worker    │  │  daemon/ (41 .rs)   │

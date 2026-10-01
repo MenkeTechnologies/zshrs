@@ -139,7 +139,7 @@
           <span class="sep">/</span>
           <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
-        <p class="docs-build-line">zshrs v0.12.67 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 575 regression tests (393 corpus · 174 dispatch · 8 absence) · 22,279 <code>#[test]</code> hooks workspace-wide</p>
+        <p class="docs-build-line">zshrs v0.12.67 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 575 regression tests (393 corpus · 174 dispatch · 8 absence) · 22,496 <code>#[test]</code> hooks workspace-wide</p>
       </div>
       <div class="tutorial-toolbar">
         <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -7921,7 +7921,7 @@ echo done
 
       <h2>Extension Builtin Index</h2>
 
-      <p class="chapter-meta">115 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
+      <p class="chapter-meta">116 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
 
       <article class="doc-entry" id="doc-lsp-extension-ai">
 
@@ -8486,7 +8486,7 @@ echo done
         <p>  zbuild --in *.zsh --out app           # glob expansion   zbuild --in lib1.zsh lib2.zsh main.zsh --out app   ./app                                  # runs all three                                          # sequentially under                                          # one ShellExecutor</p>
         <p>zsh has no project concept, so there's no manifest, no entry point convention, no library directory walker. Order is exactly the order of paths given to <code>--in</code> (which honors shell glob expansion — \<code>*.zsh\</code> expands sorted by default).</p>
         <p><code>--in</code> accepts ONE OR MORE paths until the next flag-style token (anything starting with <code>-</code>). This makes glob-driven invocations like <code>--in *.zsh</code> work naturally — every path the glob expanded to lands as another input file.</p>
-        <p>Flags:   --in PATHS...  / -i PATHS...   script sources (1+, required)   --out PATH     / -o PATH       output binary (required)   --help / -h                    print usage</p>
+        <p>Flags:   --in PATHS...  / -i PATHS...   script sources (1+, required)   --out PATH     / -o PATH       output binary (required)   --native / -n                  AOT-compile to native machine code                                  (Cranelift object linked standalone)   --help / -h                    print usage</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zcache">
@@ -8573,6 +8573,13 @@ echo done
 
         <h3><code>zsend</code> <a class="doc-anchor" href="#doc-lsp-extension-zsend">¶</a></h3>
         <p>Send a one-shot message to another shell (by <code>shell_id</code> or <code>bundle_id</code>). Like <code>znotify</code> but targets a specific shell, not the user's desktop.</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-zsleep">
+
+        <h3><code>zsleep</code> <a class="doc-anchor" href="#doc-lsp-extension-zsleep">¶</a></h3>
+        <p>zsleep SECONDS — sleep for SECONDS, which may be fractional (<code>zsleep 0.25</code>). Exactly one argument, no options. A negative, zero or non-finite value returns 0 at once; a non-number is an error.</p>
+        <p>Usage:   zsleep 1.5</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zsource">
