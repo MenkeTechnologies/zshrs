@@ -85,16 +85,38 @@ fn comps_entry(key: &str) -> String {
 /// `$' \t\r\n\0'` (sh:183 `local IFS=...`) and restored. The
 /// remaining `_comp_setup` pieces (`exec </dev/null`, `trap - ZERR`,
 /// `enable -p` pattern chars) are not yet applied here.
+///
+/// `localoptions localtraps localpatterns` are set too. They are not
+/// cosmetic: the shell-function completers this port calls INHERIT
+/// them, so their own `setopt`/`trap`/`disable -p` is undone when they
+/// return (c:Src/exec.c:6020-6024 restores every option of a function
+/// that returns with LOCALOPTIONS set). Without them a completer's bare
+/// `setopt globdots` stayed on in the user's shell after the TAB. And
+/// because `_main_complete` itself runs with localoptions on, its exit
+/// restores EVERY option it entered with, except PRIVILEGED and
+/// RESTRICTED (c:6021-6024), not only the ones `_comp_options` names;
+/// `entry_opts` is that snapshot (`funcsave->opts`, c:5847).
 struct CompSetupGuard {
     saved_opts: Vec<(i32, bool)>,
+    entry_opts: Vec<bool>,
     saved_ifs: Option<String>,
 }
 
 impl CompSetupGuard {
     fn apply() -> Self {
         use crate::ported::options::{dosetopt, optlookup};
-        use crate::ported::zsh_h::OPT_INVALID;
+        use crate::ported::zsh_h::{LOCALOPTIONS, LOCALPATTERNS, LOCALTRAPS, OPT_INVALID, OPT_SIZE};
+        // c:Src/exec.c:5847 `memcpy(funcsave->opts, opts, sizeof(opts))`.
+        let entry_opts: Vec<bool> = (0..OPT_SIZE).map(isset).collect();
         let mut saved_opts = Vec::new();
+        // compinit sh:182 `setopt localoptions localtraps localpatterns
+        // ${_comp_options[@]}`.
+        for idx in [LOCALOPTIONS, LOCALTRAPS, LOCALPATTERNS] {
+            if !isset(idx) {
+                saved_opts.push((idx, false));
+                dosetopt(idx, 1, 0);
+            }
+        }
         for entry in crate::compsys::ported::compinit::COMP_OPTIONS {
             let (name, want) = match entry.strip_prefix("NO_") {
                 Some(rest) => (rest, false),
@@ -119,6 +141,7 @@ impl CompSetupGuard {
         let _ = crate::ported::params::setsparam("IFS", " \t\r\n\0");
         Self {
             saved_opts,
+            entry_opts,
             saved_ifs,
         }
     }
@@ -127,8 +150,18 @@ impl CompSetupGuard {
 impl Drop for CompSetupGuard {
     fn drop(&mut self) {
         use crate::ported::options::dosetopt;
+        use crate::ported::zsh_h::{PRIVILEGED, RESTRICTED};
         for &(idx, was) in self.saved_opts.iter().rev() {
             dosetopt(idx, was as i32, 0);
+        }
+        // c:Src/exec.c:6020-6024 — `_main_complete` returns with
+        // localoptions set, so every option goes back to its entry value
+        // except PRIVILEGED and RESTRICTED (c:6022-6023).
+        for (idx, &was) in self.entry_opts.iter().enumerate() {
+            let idx = idx as i32;
+            if idx != PRIVILEGED && idx != RESTRICTED && isset(idx) != was {
+                dosetopt(idx, was as i32, 0);
+            }
         }
         match self.saved_ifs.take() {
             Some(ifs) => {

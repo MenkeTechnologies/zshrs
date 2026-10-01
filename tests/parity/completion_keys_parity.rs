@@ -342,6 +342,41 @@ if [[ $all == *fxa1* && $all == *fxa2* ]]; then print \"K=yes\"; else print \"K=
     );
 }
 
+/// A completer's bare `setopt` must not outlive the TAB. compinit's
+/// `_comp_setup` runs `setopt localoptions localtraps localpatterns …`
+/// (compinit sh:182), every completer inherits localoptions, and its
+/// options are restored when it returns (c:Src/exec.c:6020-6024). The
+/// Rust `_main_complete` applied only `$_comp_options`, so `globdots`
+/// set by the completer stayed on in the user's shell afterwards.
+#[test]
+fn compsys_completer_setopt_does_not_leak() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let driver = format!(
+        "{}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'
+zpty -w w 'autoload -Uz compinit; compinit -u -D'
+sleep 20
+zpty -w w '_gdleak() {{ setopt globdots; compadd aaa }}; compdef _gdleak true'
+sleep 1
+zpty -w -n w 'true '
+sleep 1
+zpty -w -n w $'\\t'
+sleep 3
+zpty -w -n w $'\\r'
+sleep 2
+zpty -w w 'print GD=$options[globdots]'
+sleep 2
+{DRAIN}
+if [[ $all == *GD=off* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+",
+        open_in_fixture()
+    );
+    assert_same_verdict(&driver, "K", "a completer's setopt was undone after TAB");
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // Described completions — `_describe`, `compadd -d`, and the
