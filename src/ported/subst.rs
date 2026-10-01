@@ -3763,6 +3763,8 @@ pub fn paramsubst(
     // `PARAMSUBST_AFFIXES_DEFERRED` describes the compiled word being assembled,
     // not this inner list, so it is suspended for the call; without that the
     // inner prefork kept the `` and the prefix landed on it (`x` `a` `b` `y`).
+    // The nested `${${…}…}` sub-expression (c:2681) goes through here too:
+    // its multsub is likewise a list of its own.
     // c:3767-3801 — the braced modifier leg: `modify(&val, &s, inbrace)`,
     // then `if (inbrace && *s)` reports what modify() could not parse.
     let braced_modify = |s: &str, mods: &str| -> String {
@@ -7140,10 +7142,16 @@ pub fn paramsubst(
                         DEFAULT_WORD_GLOBSUBST_OFF.with(|c| c.get()),
                     )
                 });
+                // c:625 — the nested multsub preforks its OWN list, so c:183-186
+                // prunes that list's empty nodes before the outer measures or
+                // glues anything. `PARAMSUBST_AFFIXES_DEFERRED` belongs to the
+                // compiled word around the OUTER expansion; left open here, an
+                // empty `${a}` came back as one empty element whenever the word
+                // had literal text (`a=(); print x${#${a}}` gave `x1`, zsh `x0`).
                 let (joined, arr_parts, isarr, _) = if aspar_arr.is_some() {
                     (String::new(), Vec::new(), false, 0)
                 } else {
-                    multsub(&inner, PREFORK_SUBEXP)
+                    multsub_operand(&inner, PREFORK_SUBEXP)
                 };
                 if let Some(saved) = __inner_gs {
                     gs_restore(saved);
