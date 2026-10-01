@@ -963,3 +963,66 @@ fn the_fixture_holds_the_three_expected_names() {
         );
     }
 }
+
+/// `completer_dump_driver`, completing `word` instead of `mytest `.
+fn completer_dump_driver_at(setup: &str, word: &str) -> String {
+    completer_dump_driver(setup).replacen("'mytest '", &sq(word), 1)
+}
+
+/// `_alternative` takes a spec apart with `${def%%:*}`, `${${def#*:}%%:*}`
+/// and `${def#*:*:}` (Completion/Base/Utility/_alternative:24-26). A pattern
+/// that does not match leaves the word whole, so a spec with NO colon is its
+/// own action and runs. zsh-completions' `_node` relies on it
+/// (`_alternative "_node_files" "_values 'command' 'inspect[…]'"`); the
+/// port split on `:` and turned the colon-less spec into an empty action,
+/// so `node <TAB>` completed nothing.
+#[test]
+fn alternative_runs_a_spec_without_colons_as_its_action() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_dump(
+        &completer_dump_driver(
+            r#"_mytest(){ _alternative "_values 'command' 'inspect[enable inspector]'"; print -r -- "RC=$? N=$compstate[nmatches]" >! $OUTFILE }; compdef _mytest mytest"#,
+        ),
+        "a colon-less _alternative spec ran as its own action",
+    );
+}
+
+/// An action word containing `/` is exec'd directly and a failure reports
+/// the errno (Src/exec.c:756-766), so `'1:nfs:// URL:'` (zsh-more-
+/// completions' `_nfs-cat`) prints `permission denied: //`, not
+/// `command not found: //`.
+#[test]
+fn arguments_reports_a_slash_action_by_its_exec_errno() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_dump(
+        &completer_dump_driver(
+            r#"_mytest(){ _arguments '1:nfs:// URL:' 2>! $OUTFILE; print -r -- "RC=$?" >> $OUTFILE }; compdef _mytest mytest"#,
+        ),
+        "a // action reported permission denied",
+    );
+}
+
+/// `_arguments -s -S '-M[…]'` reads `-M[…]` as its own `-M matcher` option,
+/// so the bracket text becomes the match spec and every compadd it reaches
+/// rejects it. The one at `_arguments:551` must say so on line 551; the
+/// port left the line of the last `comparguments` call (490) in place.
+#[test]
+fn arguments_compadd_diagnostic_names_line_551() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_dump(
+        &completer_dump_driver_at(
+            r#"_mytest(){ _arguments -s -S '-M[monitor port]' '-f[in background]' '*:filename:_files' 2>! $OUTFILE }; compdef _mytest mytest"#,
+            "mytest -",
+        ),
+        "_arguments' -D equal compadd diagnostic named line 551",
+    );
+}

@@ -1184,6 +1184,9 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
         } else if orc == 2 {
             // sh:349 — [[ $? -eq 2 ]] (singles): add the raw word, done.
             let word = prefix_suffix();
+            // sh:350 — the line compadd's diagnostics carry (`zerrmsg`,
+            // Src/utils.c:301-308); see `comparguments`.
+            crate::compsys::ported::shared::set_sh_lineno(350);
             let _ = bin_compadd(
                 "compadd",
                 &["-Q".to_string(), "-".to_string(), word],
@@ -1807,6 +1810,10 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                 "-".to_string(),
             ];
             cav.extend(stripped);
+            // The line compadd's diagnostics carry. Without it the field kept
+            // the last comparguments line, so a bad `-M` spec reported
+            // `_arguments:compadd:490:` where zsh reports `:551:`.
+            crate::compsys::ported::shared::set_sh_lineno(551);
             let _ = bin_compadd("compadd", &cav, &make_ops(), 0);
 
             // sh:553 — exactly one option left after the -D cull → descend.
