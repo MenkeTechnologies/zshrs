@@ -2044,3 +2044,29 @@ mod assign_operator_substitutes_parameter_value {
         );
     }
 }
+
+/// c:Src/params.c:1449,1461 — getarg runs `singsub` on a hash subscript and
+/// then `untokenize`, which drops a Nularg (c:Src/exec.c:2048,2053). Under
+/// RC_EXPAND_PARAM the singsub of an empty `$E` is a lone Nularg; the port kept
+/// it, so the key was "\u{Nularg}" and every flagged / operator form missed the
+/// "" key. _man's `_manpath_cache[$MANPATH]` (MANPATH empty) hit this, and
+/// `man <TAB>` under `--zsh` listed 15942 pages where zsh lists 34009.
+mod rcexpandparam_empty_hash_key {
+    use super::*;
+
+    #[test]
+    fn flagged_and_operator_forms_find_the_empty_key() {
+        assert_parity(
+            r#"typeset -A c; E=; c[$E]=a:b:c; setopt rcexpandparam
+r=( ${(s.:.)c[$E]} ); print $#r
+print -r -- "[${c[$E]-unset}] [${+c[$E]}] [${#c[$E]}] [${(@)c[$E]}]""#,
+        );
+    }
+
+    #[test]
+    fn a_nonempty_key_is_unaffected() {
+        assert_parity(
+            r#"typeset -A c; E=; c[k]=v; setopt rcexpandparam; print -r -- "[${c[${E}k]-unset}] [${c[k$E]-unset}] [${c[$E]-unset}]""#,
+        );
+    }
+}

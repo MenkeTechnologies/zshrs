@@ -8221,7 +8221,18 @@ pub fn paramsubst(
                         // 5.9; the plain Rust untokenize strips the
                         // markers, so the lookup key lost its quotes and
                         // missed).
+                        //
+                        // c:Src/exec.c:2048,2053 — that untokenize DROPS a Nularg
+                        // (`if (c != Nularg) *p++ = ztokens[…]`).
+                        // `untokenize_preserve_quotes` passes it through, so under
+                        // RC_EXPAND_PARAM, where singsub of an empty `$E` comes back
+                        // as a lone Nularg, `${(s.:.)h[$E]}` / `${h[$E]-d}` /
+                        // `${+h[$E]}` looked up the key "\u{Nularg}" instead of ""
+                        // and missed. That is _man's `_manpath_cache[$MANPATH]`
+                        // with MANPATH empty: the cache read came back empty and
+                        // `man <TAB>` fell back to two man dirs.
                         crate::ported::lex::untokenize_preserve_quotes(&singsub(&parsed))
+                            .replace(crate::ported::zsh_h::Nularg, "")
                     // c:1571 + c:1584
                     } else {
                         crate::ported::lex::untokenize_preserve_quotes(&raw_sub)
