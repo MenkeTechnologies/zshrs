@@ -14142,9 +14142,17 @@ pub fn zexit(val: i32, from_where: i32) {
     // c:6012 — `cleanfilelists();` — delete per-job temp-file lists
     // before exit. jobs.rs::cleanfilelists is a Rust-only-signature
     // adapter over the C global jobtab (see its WARNING block).
-    if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
-        let mut tab = tab.lock().unwrap_or_else(|e| e.into_inner());
-        crate::ported::jobs::cleanfilelists(&mut tab); // c:6012
+    // C runs it unconditionally. zshrs allocates JOBTAB lazily (a `-c`
+    // command that never started a job has none), and skipping the call
+    // then also skipped the `=(cmd)` temp files cleanfilelists drains from
+    // the VM's pending list: `() { exit } =(true)` left the file behind
+    // (D03procsubst.ztst "exit in shell function cleans up tempfiles").
+    match crate::ported::jobs::JOBTAB.get() {
+        Some(tab) => {
+            let mut tab = tab.lock().unwrap_or_else(|e| e.into_inner());
+            crate::ported::jobs::cleanfilelists(&mut tab); // c:6012
+        }
+        None => crate::ported::jobs::cleanfilelists(&mut []), // c:6012
     }
     // ZSHRS-ONLY, no C counterpart — the selected drop-in's logout file
     // (`~/.bash_logout` for `--bash`, `~/.logout` + `/etc/csh.logout` for
