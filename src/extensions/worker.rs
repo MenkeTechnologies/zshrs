@@ -587,23 +587,34 @@ mod tests {
         histactive.store(HA_ACTIVE, Ordering::SeqCst);
         curhist.store(41, Ordering::SeqCst);
 
+        // The damage is transient: the pool parse's own save/restore puts the
+        // values back by the time it returns, so watch them WHILE it runs.
         let pool = WorkerPool::new(1);
         let done = Arc::new(AtomicUsize::new(0));
         let d = Arc::clone(&done);
         pool.submit(move || {
-            let _ = crate::vm_helper::parse_isolated_at("print hook; x=${y[1]}", None);
+            for _ in 0..200 {
+                let _ = crate::vm_helper::parse_isolated_at("print hook; x=${y[1]}", None);
+            }
             d.store(1, Ordering::SeqCst);
         });
-        wait_for_count(&done, 1, 10_000);
+        let mut seen = std::collections::BTreeSet::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while done.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            seen.insert((
+                histactive.load(Ordering::SeqCst),
+                curhist.load(Ordering::SeqCst),
+            ));
+        }
         drop(pool);
 
-        let after = (
-            histactive.load(Ordering::SeqCst),
-            curhist.load(Ordering::SeqCst),
-        );
         histactive.store(saved.0, Ordering::SeqCst);
         curhist.store(saved.1, Ordering::SeqCst);
-        assert_eq!(done.load(Ordering::SeqCst), 1, "pool parse did not finish");
-        assert_eq!(after, (HA_ACTIVE, 41), "(histactive, curhist) after a pool parse");
+        assert_eq!(done.load(Ordering::SeqCst), 1, "pool parses did not finish");
+        assert_eq!(
+            seen.into_iter().collect::<Vec<_>>(),
+            vec![(HA_ACTIVE, 41)],
+            "(histactive, curhist) observed while a pool thread parsed"
+        );
     }
 }

@@ -60973,3 +60973,31 @@ only for terminal bytes; `raw_getbyte` reads the terminal only, as in C.
 Multi-line pastes through `bracketed-paste-magic`, and `k`/`j`/`dd`/`yyp` on
 the pasted buffer, match zsh 5.9.2 with the minimal harness rc and with the
 full zpwr config.
+
+## #1166 — `fc -l` looped forever: a worker-pool parse reused the current command's history event — fixed
+
+**Status:** `fixed` 2026-10-01 (guards in `abf684dd66`, regression test in the commit after it).
+
+**Reproducer:** interactive zshrs with the zpwr config; intermittently (about 1 run in 3 under load,
+more often while the history store was being rewritten) a command was given the same event number
+as the command before it. `$HISTCMD` came out one low, the ring held two entries with one histnum,
+and `fc -l -20` printed the duplicate endlessly: `down_histent` finds an event by `ring_position`,
+which returned the other copy each time.
+
+**Root cause.** zshrs runs some shell code on the worker pool — async precmd hooks
+(`async_precmd::fire_async_precmd`) and autoload definitions. Those parses go through
+`parse_isolated_at` → `strinbeg`/`strinend` → `hbegin`/`hend` and `zcontext_save`/`restore`, all of
+which write the PROCESS-global history state (`histactive`, `curhist`, `strin`, `histdone`,
+`chline`). C has one thread, so it owns that state outright. lldb watchpoints on `histactive` caught
+the pool thread's HA_NOINC `hend` storing 0 between the main command line's `hbegin` and `hend`; the
+main `hend` then took the `unlinkcurline` arm (c:1492-1493), `curhist` dropped by one, and the next
+`prepnexthistent` handed out a number already in the ring.
+
+**Fix.** On pool threads (`worker::in_worker_thread()`), `hbegin`, `hend`, `hist_context_save`,
+`hist_context_restore` and the history-side `strin`/`histdone` updates in `strinbeg`/`strinend`
+leave the global state alone — the same rule the seven history hooks already follow
+(d99db35077). A pool parse records no history; the thread-local lexer state still resets.
+
+**Test.** `worker::tests::worker_parse_leaves_the_main_history_line_alone` runs 200 pool parses
+while the main thread samples `(histactive, curhist)`; without the guards it observes
+`[(0, 41), (1, 41), (3, 41)]`, with them only `[(1, 41)]`.
