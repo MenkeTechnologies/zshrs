@@ -10026,11 +10026,10 @@ pub fn dquotedzputs(s: &str) -> String {
 /// return len;
 /// ```
 ///
-/// Returns the encoded bytes (1..=6 long) on success, None on
-/// out-of-range. C's `zerr("character not in range")` (c:6763) is
-/// not emitted here — the return signals the error.
+/// Returns the encoded bytes (1..=6 long) on success; out of range it
+/// raises C's `zerr("character not in range")` (c:6763) and returns None.
 /// WARNING: param names don't match C — Rust=(wval) vs C=(dest, wval)
-pub fn ucs4toutf8(wval: u32) -> Option<String> {
+pub fn ucs4toutf8(wval: u32) -> Option<Vec<u8>> {
     // c:6743
     let len: usize = if wval < 0x80 {
         1
@@ -10079,7 +10078,9 @@ pub fn ucs4toutf8(wval: u32) -> Option<String> {
             buf[0] = (w as u8) | (((0xfcu32 << (6 - n)) & 0xfc) as u8);
         }
     }
-    Some(String::from_utf8_lossy(&buf[..len]).into_owned())
+    // c:6777 — the bytes go to `dest` as built. A surrogate's 3-byte
+    // form is not UTF-8 a `String` can hold, so they stay bytes here.
+    Some(buf[..len].to_vec())
 }
 
 /// Port of `ucs4tomb()` from `Src/utils.c:6788` — C decl `ucs4tomb(unsigned int wval, char *buf)`.
@@ -10145,7 +10146,7 @@ pub fn ucs4tomb(wval: u32, buf: &mut [u8]) -> i32 {
             let Some(enc) = ucs4toutf8(wval) else {
                 return -1;
             };
-            let b = enc.as_bytes();
+            let b = enc.as_slice();
             if b.len() > buf.len() {
                 zerr("character not in range");
                 return -1;
@@ -14023,25 +14024,25 @@ mod tests {
         // c:6750 — 1 byte: ASCII range [0, 0x80).
         assert_eq!(
             ucs4toutf8(0x41),
-            Some("A".to_string()),
+            Some(b"A".to_vec()),
             "c:6750 — 0x41 → 'A' (1 byte)"
         );
         // c:6752 — 2 bytes: [0x80, 0x800). 'é' = U+00E9.
         assert_eq!(
             ucs4toutf8(0xe9),
-            Some("é".to_string()),
+            Some("é".as_bytes().to_vec()),
             "c:6752 — U+00E9 → 'é' (2 bytes)"
         );
         // c:6754 — 3 bytes: [0x800, 0x10000). '字' = U+5B57.
         assert_eq!(
             ucs4toutf8(0x5B57),
-            Some("字".to_string()),
+            Some("字".as_bytes().to_vec()),
             "c:6754 — U+5B57 → '字' (3 bytes)"
         );
         // c:6756 — 4 bytes: [0x10000, 0x200000). '𝄞' = U+1D11E.
         assert_eq!(
             ucs4toutf8(0x1D11E),
-            Some("𝄞".to_string()),
+            Some("𝄞".as_bytes().to_vec()),
             "c:6756 — U+1D11E → '𝄞' (4 bytes)"
         );
     }
