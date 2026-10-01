@@ -520,6 +520,11 @@ pub fn makezleparams(ro: i32) {
                 continue; // not published (yet) — nothing to scope
             };
             pm.level = level; // c:206
+            // c:215-217 — `case PM_INTEGER: ... pm->base = 10;`, which is
+            // what makes `typeset -p CURSOR` print `-i10`.
+            if crate::ported::zsh_h::PM_TYPE(*ty) == PM_INTEGER {
+                pm.base = 10;
+            }
             pm.node.flags |= (PM_SPECIAL | PM_REMOVABLE) as i32; // c:200
                                                                  // c:200-201 — `zp->type` read-only bit, plus the blanket one the
                                                                  // completion / trap call sites pass in `ro`.
