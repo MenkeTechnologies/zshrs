@@ -59,7 +59,9 @@
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zformat;
-use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
+use crate::ported::params::{
+    getaparam, gethkparam, gethparam, getsparam, setaparam, sethparam, setsparam, unsetparam,
+};
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_comptry;
@@ -80,52 +82,42 @@ fn make_ops() -> options {
     }
 }
 
-// The four associative arrays are stored as flat `[k, v, k, v, …]`
-// plain arrays (`setaparam`/`getaparam` — the same interleaved layout
-// `_complete` uses for `$_comps`), because `getaparam` only reads
-// `PM_ARRAY` params: a `PM_HASHED` param (what `sethparam` builds)
-// reads back as `None`. The pairing is internal-only, so this is
-// behaviourally identical to the upstream `typeset -A` while staying
-// on the array-read path that actually round-trips.
+// sh:8 — `typeset -A help_funcs help_tags help_sfuncs help_styles`. The
+// four are REAL associative parameters (`declare_locals(..., PM_HASHED)`
+// in `_complete_help` below), so they are read through the hash accessors
+// `gethkparam`/`gethparam` (c:Src/params.c:3117/3131). `getaparam` answers
+// `None` for a PM_HASHED param (c:Src/params.c:3108 bails unless
+// `PM_TYPE == PM_ARRAY`), and `setaparam` on one is routed to `sethparam`
+// (c:3434 → c:2920 `arrhashsetfn`), so a flat `getaparam(name).chunks(2)`
+// reader saw every assoc as empty and each `assoc_set` rewrote the hash
+// down to its one new key. Every `^Xh` report came out blank.
 
-/// Flat-`(k,v)` associative lookup (`$assoc[$key]`).
-fn assoc_get(name: &str, key: &str) -> String {
-    getaparam(name)
-        .unwrap_or_default()
-        .chunks(2)
-        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
-        .and_then(|kv| kv.get(1).cloned())
-        .unwrap_or_default()
+/// `(key, value)` pairs of the associative array `name`, in table order.
+fn assoc_pairs(name: &str) -> Vec<(String, String)> {
+    let keys = gethkparam(name).unwrap_or_default();
+    let vals = gethparam(name).unwrap_or_default();
+    keys.into_iter().zip(vals).collect()
 }
 
-/// Flat-`(k,v)` associative store (`$assoc[$key]=$val`), preserving
-/// other keys.
+/// `$assoc[$key]` — empty when unset, as the upstream unquoted reads expand.
+fn assoc_get(name: &str, key: &str) -> String {
+    crate::compsys::ported::shared::assoc_get(name, key).unwrap_or_default()
+}
+
+/// `$assoc[$key]=$val`, preserving the other keys.
 fn assoc_set(name: &str, key: &str, val: &str) {
-    let mut flat = getaparam(name).unwrap_or_default();
-    let mut i = 0;
-    let mut done = false;
-    while i + 1 < flat.len() {
-        if flat[i] == key {
-            flat[i + 1] = val.to_string();
-            done = true;
-            break;
-        }
-        i += 2;
+    let mut pairs = assoc_pairs(name);
+    match pairs.iter_mut().find(|(k, _)| k == key) {
+        Some(kv) => kv.1 = val.to_string(),
+        None => pairs.push((key.to_string(), val.to_string())),
     }
-    if !done {
-        flat.push(key.to_string());
-        flat.push(val.to_string());
-    }
-    let _ = setaparam(name, flat);
+    let flat: Vec<String> = pairs.into_iter().flat_map(|(k, v)| [k, v]).collect();
+    let _ = sethparam(name, flat);
 }
 
 /// `${(@ok)assoc}` — the keys of an associative array, sorted.
 fn assoc_keys_sorted(name: &str) -> Vec<String> {
-    let mut keys: Vec<String> = getaparam(name)
-        .unwrap_or_default()
-        .chunks(2)
-        .filter_map(|kv| kv.first().cloned())
-        .collect();
+    let mut keys = gethkparam(name).unwrap_or_default();
     keys.sort();
     keys
 }
@@ -252,7 +244,7 @@ pub fn _complete_help(args: &[String]) -> i32 {
     //   function-local upstream; emulate the dynamic scope with global
     //   params, cleared at entry so a re-invocation starts fresh.
     for a in ["help_funcs", "help_tags", "help_sfuncs", "help_styles"] {
-        let _ = setaparam(a, Vec::new());
+        let _ = sethparam(a, Vec::new());
     }
     // sh:10-11 — publish the scan/filter sets for `_help_sort_tags`.
     let _ = setsparam("_help_scan_funcstack", HELP_SCAN_FUNCSTACK);
@@ -580,6 +572,54 @@ mod tests {
             "help_tags must record the tag list, got {:?}",
             tags
         );
+        clear_test_funcstack();
+    }
+
+    #[test]
+    /// sh:8 declares the four report tables `typeset -A`, and the widget
+    /// creates them PM_HASHED. Two tag registrations from two contexts
+    /// must BOTH survive into the report. With the old flat-array reader
+    /// `getaparam` answered `None` for the hash, every `assoc_set` wrote the
+    /// table back with just its one new key, and the final read found
+    /// nothing at all: `^Xh` printed an empty report for every command.
+    fn help_sort_tags_accumulates_into_real_assocs() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = unsetparam("help_funcs");
+        let _ = unsetparam("help_tags");
+        let _ = sethparam("help_funcs", Vec::new());
+        let _ = sethparam("help_tags", Vec::new());
+        set_test_funcstack(&["_help_sort_tags", "_tags", "_arguments", "_ls", "_main_complete"]);
+        let _ = setsparam("curcontext", ":complete:ls:");
+        let _ = _help_sort_tags(&["argument-rest".to_string(), "options".to_string()]);
+        set_test_funcstack(&[
+            "_help_sort_tags",
+            "_tags",
+            "_files",
+            "_arguments",
+            "_ls",
+            "_main_complete",
+        ]);
+        let _ = setsparam("curcontext", ":complete:ls:argument-rest");
+        let _ = _help_sort_tags(&["globbed-files".to_string()]);
+
+        assert_eq!(
+            assoc_keys_sorted("help_funcs"),
+            vec![":complete:ls:", ":complete:ls:argument-rest"],
+            "both contexts must be recorded in the PM_HASHED help_funcs"
+        );
+        let mut text = String::new();
+        append_context_report(&mut text, "help_funcs", "help_tags", |i| {
+            format!("tags in context :completion:{}:", i)
+        });
+        assert_eq!(
+            text,
+            "\ntags in context :completion::complete:ls::\
+             \n    argument-rest options  (_arguments _ls)\
+             \ntags in context :completion::complete:ls:argument-rest:\
+             \n    globbed-files  (_files _arguments _ls)"
+        );
+        let _ = unsetparam("help_funcs");
+        let _ = unsetparam("help_tags");
         clear_test_funcstack();
     }
 
