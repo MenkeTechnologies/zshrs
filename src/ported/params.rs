@@ -14523,6 +14523,7 @@ pub fn endparamscope() {
                       // all stack entries with locallevel > current.
     saveandpophiststack(0, HFILE_USE_OPTIONS as i32);
     let ll = locallevel_fn();
+    LC_UPDATE_NEEDED.store(0, Ordering::SeqCst); // c:5860 lc_update_needed = 0 (USE_LOCALE)
     // c:5869 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
     // the live paramtab (HashMap-backed until the hashtable.c vtable
     // is wired) and apply scanendscope's `pm->level > locallevel`
@@ -14573,6 +14574,13 @@ pub fn endparamscope() {
                 .get(&n)
                 .map(|pm| (pm.node.flags as u32 & (PM_SPECIAL | PM_REMOVABLE)) == PM_SPECIAL)
                 .unwrap_or(false);
+            // c:5919-5922 — scanendscope's special arm (USE_LOCALE):
+            //     if (!strncmp(pm->node.nam, "LC_", 3) ||
+            //         !strcmp(pm->node.nam, "LANG"))
+            //         lc_update_needed = 1;
+            if restore_in_place && (n.starts_with("LC_") || n == "LANG") {
+                LC_UPDATE_NEEDED.store(1, Ordering::SeqCst);
+            }
             // c:scanendscope:5903 — non-special path: restore pm.old
             // (or remove if no outer binding existed).
             let popped = if restore_in_place {
@@ -14855,6 +14863,37 @@ pub fn endparamscope() {
     }
     for (n, arr) in deferred_arrays {
         let _ = assignaparam(&n, arr, 0);
+    }
+    // c:5864-5880 (USE_LOCALE) — "Locale changed --- ensure it is restored."
+    // Runs after the deferred setfn replays above, which are where this
+    // port performs scanendscope's value restores. A shadowed LC_ALL whose
+    // outer binding is unset replays nothing, so without this block the
+    // process locale stayed at the local's value after the function
+    // returned (`() { local LC_ALL=C }` left LC_CTYPE at C).
+    if LC_UPDATE_NEEDED.load(Ordering::SeqCst) != 0 {
+        match getsparam_u("LC_ALL").filter(|v| !v.is_empty()) {
+            Some(val) => {
+                let c = std::ffi::CString::new(val.as_bytes()).unwrap_or_default();
+                unsafe {
+                    libc::setlocale(libc::LC_ALL, c.as_ptr()); // c:5869
+                }
+            }
+            None => {
+                if let Some(val) = getsparam_u("LANG").filter(|v| !v.is_empty()) {
+                    setlang(Some(&val)); // c:5873
+                }
+                for (name, category) in LC_NAMES {
+                    // c:5874
+                    if let Some(val) = getsparam_u(name).filter(|v| !v.is_empty()) {
+                        let c = std::ffi::CString::new(val.as_bytes()).unwrap_or_default();
+                        unsafe {
+                            libc::setlocale(*category, c.as_ptr()); // c:5876
+                        }
+                    }
+                }
+            }
+        }
+        clear_mbstate(); // c:5879 LC_CTYPE may have changed
     }
 
     // c:5890-5894 — `for (Param pm; refs && (pm = getlinknode(refs));) {
