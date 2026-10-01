@@ -35,7 +35,7 @@
 
 use crate::compsys::ported::shared::{PM_ARRAY, PM_UNIQUE};
 use crate::compsys::ported::shared::dispatch_action_command;
-use crate::ported::glob::{tokenize, zglob};
+use crate::ported::glob::{shtokenize, tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
 use crate::ported::subst::{filesubstr, singsub};
@@ -263,38 +263,30 @@ fn match_skips_prefix(s: &str, squeeze: bool) -> String {
     s[..i].to_string()
 }
 
-/// `tmp1=( $~tmp1 )` — tokenise + glob-expand each element. A pattern
-/// that matches nothing contributes nothing (glob_path already returns
-/// an empty vec in that case); everything glob_path returns is a real
-/// path and is kept verbatim.
+/// `tmp1=( $~tmp1 )` — tokenise + glob-expand each element.
+///
+/// `$~` forces GLOBSUBST (c:Src/subst.c:2373 `globsubst = 2`), so each element
+/// is `shtokenize`d as it is copied out (`strcatsub`, c:823/830) and the word then
+/// goes through `globlist` → `zglob` (c:Src/glob.c:1214) like any other
+/// command-line word. `zglob` owns the no-match arm (c:1872-1888): the
+/// word is DROPPED under NULL_GLOB or the `(N)` qualifier, and otherwise,
+/// with NOMATCH set, it is `zerr("no matches found: %s")` — which sets
+/// errflag, and that is what unwinds `_path_files` (see the errflag check
+/// at the sh:472 call site). `_main_complete`'s `$_comp_options` turn
+/// NULL_GLOB on, so the normal completion path drops the word silently;
+/// a completion widget whose function is the completer itself
+/// (`zle -C`, `compdef -k`) runs with the user's options, gets NOMATCH,
+/// and in zsh the completion stops there. Routing through the bare
+/// `glob_path` match list had no no-match arm at all, so that stop
+/// never happened and `_files` went on trying its remaining patterns.
 fn tilde_glob(pats: &[String]) -> Vec<String> {
-    // C: `tmp1=( $~tmp1 )` (sh:472) — force filename generation. Route through
-    // the canonical `glob_path` (what `globlist` uses), which is qualifier-
-    // aware: it keeps the `/` inside a `(-/)` directory glob qualifier attached
-    // to the qualifier instead of splitting the path on it. The old
-    // `tokenize()` + `zglob()` route left that `/` as a raw path separator, so
-    // zglob split `DIR/*(-/)` and every directory-qualified file-completion
-    // glob produced nothing.
     let mut out = Vec::new();
     for p in pats {
-        for e in crate::ported::glob::glob_path(p) {
-            // A RESULT is a filename, never a pattern: testing it for
-            // glob metacharacters deleted every real file whose NAME
-            // contains one. `/etc` alone has 29 such files (`profile~orig`,
-            // `group~previous`, …), so `cat /etc/<TAB>` offered 87 of 116
-            // matches — under LISTMAX (100), which silently swallowed the
-            // "do you wish to see all 116 possibilities" query zsh prints.
-            // glob_path returns an empty vec when a pattern matches nothing
-            // (glob.rs:4122), so no result-side wildcard test is needed to
-            // suppress non-matching patterns. The one case where glob_path
-            // echoes its input back is a pattern that failed to COMPILE
-            // (glob.rs:3903, `!BADPATTERN` → "treat as an ordinary literal
-            // string"); drop that echo, as before.
-            if e == *p && has_active_glob(p) {
-                continue;
-            }
-            out.push(e);
-        }
+        let mut word = p.clone();
+        shtokenize(&mut word);
+        let mut list = vec![word];
+        zglob(&mut list, 0, 0);
+        out.extend(list);
     }
     out
 }
@@ -2077,6 +2069,8 @@ mod tests {
     /// query. Regression guard for that whole chain.
     #[test]
     fn tilde_glob_keeps_files_whose_names_contain_glob_metachars() {
+        // `zglob` reads the option table and `errflag`, both shell-global.
+        let _g = crate::test_util::global_state_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         // One name per metacharacter class the old filter tripped on.
         let names = [
@@ -2097,15 +2091,30 @@ mod tests {
         assert_eq!(got_names, want, "tilde_glob dropped real files");
     }
 
-    /// A pattern that matches nothing contributes nothing — `glob_path`
-    /// returns an empty vec, so no result-side wildcard test is needed
-    /// to suppress it.
+    /// A pattern that matches nothing contributes nothing, and under the
+    /// default NOMATCH it is `zglob`'s c:1876-1880 error: errflag is SET.
+    /// That errflag is what unwinds `_path_files` at sh:472 when the
+    /// completion runs with the user's options (a `zle -C` / `compdef -k`
+    /// widget whose function is the completer, so no `_main_complete`
+    /// NULL_GLOB). The old `glob_path` route returned the empty list and
+    /// raised nothing, so `_files` kept trying its remaining patterns and
+    /// `_alternative` its remaining actions after zsh had stopped
+    /// (spec-fuzz 9503/case0022).
     #[test]
     fn tilde_glob_drops_non_matching_pattern() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::test_util::global_state_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("only"), b"").expect("write");
         let pat = format!("{}/nosuchprefix*", dir.path().display());
-        assert!(tilde_glob(&[pat]).is_empty());
+        let saved_noerrs = std::mem::replace(&mut *crate::ported::utils::noerrs_lock().lock().unwrap(), 1);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+        let got = tilde_glob(&[pat]);
+        let ef = crate::ported::utils::errflag.load(Ordering::Relaxed);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
+        assert!(got.is_empty());
+        assert_ne!(ef, 0, "c:1876-1880 — NOMATCH must raise errflag");
     }
 
     #[test]
