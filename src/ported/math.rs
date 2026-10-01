@@ -3331,24 +3331,42 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         ""
     };
 
-    // c:Src/math.c:1051-1052 — `if ((f->flags & (MFF_STR|MFF_USERFUNC))
-    // == MFF_STR) return f->sfunc(n, a, f->funcid);`. A pure string
-    // math function receives the raw, UN-evaluated arg text (here the
-    // name of the parameter holding the seed) and is dispatched before
-    // the numeric arg-eval below. `rand48` (mathfunc.c:154
-    // STRMATHFUNC("rand48", math_string, MS_RAND48)) is the only one.
-    if name == "rand48" {
-        return crate::ported::modules::mathfunc::math_string(
-            name,
-            args_str,
-            crate::ported::modules::mathfunc::MS_RAND48,
+    // c:1050 — `if ((f = getmathfunc(n, 1)))`: the entry the dispatch
+    // below calls through. The gate above already resolved an autoload
+    // stub, so this is the real (module == NULL) row a module's
+    // `setmathfuncs` (c:Src/module.c:1374) put on the list.
+    let entry = crate::ported::module::MATHFUNCS.lock().ok().and_then(|tab| {
+        tab.iter()
+            .find(|p| p.name == name && p.module.is_none())
+            .map(|p| (p.flags, p.nfunc, p.sfunc, p.minargs, p.maxargs, p.funcid))
+    });
+    let Some((fflags, nfunc, sfunc, minargs, maxargs, funcid)) = entry else {
+        crate::ported::utils::zerr(&format!("unknown function: {}", name)); // c:1131
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
         );
+        return mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
+    };
+
+    // c:1051-1052 — `if ((f->flags & (MFF_STR|MFF_USERFUNC)) == MFF_STR)
+    // return f->sfunc(n, a, f->funcid);`. A pure string math function
+    // receives the raw, UN-evaluated arg text (`rand48` gets the name of
+    // the parameter holding the seed, zsh/example's `length` the string).
+    if (fflags & (crate::ported::zsh_h::MFF_STR | crate::ported::zsh_h::MFF_USERFUNC))
+        == crate::ported::zsh_h::MFF_STR
+    {
+        if let Some(sfunc) = sfunc {
+            return sfunc(name, args_str, funcid); // c:1052
+        }
     }
 
-    // Parse arguments. Keep both the float view (for trig) and the
-    // original mnumber so int-preserving functions (abs/min/max/
-    // int/floor/ceil/trunc) can return integer when all inputs
-    // were integer.
+    // c:1087-1090 — `*q = mathevall(a, MPREC_ARG, &a); addlinknode(l, q);`
+    // one mnumber per comma-separated argument.
     let arg_nums: Vec<mnumber> = if args_str.is_empty() {
         vec![]
     } else {
@@ -3379,309 +3397,32 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             })
             .collect()
     };
-    let args: Vec<f64> = arg_nums
-        .iter()
-        .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
-        .collect();
-    // c:Src/math.c:1106-1107 + c:1127 — every math function's arg count
-    // must be within its registered [minargs, maxargs] bounds (maxargs<0
-    // = unbounded); on mismatch C errors "wrong number of arguments:
-    // NAME(args)" and aborts. The MFF_USERFUNC arity check above covers
-    // shfunc-backed entries; this mirrors it for the NUMERIC built-in
-    // dispatch so e.g. `atan(1,2,3)` errors (atan is registered 1..2)
-    // instead of silently dropping the extra arg. Bounds come from the
-    // ported NUMMATHFUNC table (modules/mathfunc.rs num()).
-    if let Some((minargs, maxargs)) = crate::ported::module::MATHFUNCS
-        .lock()
-        .ok()
-        .and_then(|tab| {
-            tab.iter()
-                .find(|p| p.name == name)
-                .map(|p| (p.minargs, p.maxargs))
-        })
-    {
-        let argc = args.len() as i32;
-        if argc < minargs || (maxargs >= 0 && argc > maxargs) {
-            crate::ported::utils::zerr(&format!("wrong number of arguments: {}", call)); // c:1127
-            crate::ported::utils::errflag.fetch_or(
-                crate::ported::zsh_h::ERRFLAG_ERROR,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            return mnumber {
-                l: 0,
-                d: 0.0,
-                type_: MN_INTEGER,
-            };
-        }
-    }
-    let all_int = !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
-
-    // c:Src/Modules/mathfunc.c:139 — only `int` has TFLAG(TF_NOASS)
-    // which collapses the result to MN_INTEGER. `ceil`/`floor` lack
-    // TF_NOASS so they return float (rendered as `5.` for whole
-    // values), and `trunc` doesn't exist in zsh's mathfunc table at
-    // all — it must error "unknown function: trunc" like zsh.
-    // The previous Rust port forced all four to integer, so
-    // `$(( ceil(1.1) ))` printed `2` instead of zsh's `2.`.
-    let always_int = matches!(name, "int");
-    if always_int {
-        let i = match name {
-            "int" => arg_nums
-                .first()
-                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
-                .unwrap_or(0),
-            _ => 0,
-        };
+    // c:1104-1105 — `if (argc >= f->minargs && (f->maxargs < 0 ||
+    // argc <= f->maxargs))`, else c:1127 `zerr("wrong number of
+    // arguments: %s", o)`.
+    let argc = arg_nums.len() as i32;
+    if argc < minargs || (maxargs >= 0 && argc > maxargs) {
+        crate::ported::utils::zerr(&format!("wrong number of arguments: {}", call)); // c:1127
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         return mnumber {
-            l: i,
+            l: 0,
             d: 0.0,
             type_: MN_INTEGER,
         };
     }
-    // c:Src/Modules/mathfunc.c:115 — only `abs` is a real mathfunc that
-    // returns an integer when fed integers. `min`/`max` are NOT mathfunc
-    // entries (zsh provides them only via the `zmathfunc` autoload, which
-    // registers them as `functions -M` shfuncs handled by the userfunc
-    // path above) — calling them through zsh/mathfunc errors "unknown
-    // function". Keeping them here let `zmodload zsh/mathfunc; min(1,2)`
-    // wrongly return a value.
-    let int_preserving = matches!(name, "abs");
-    if all_int && int_preserving {
-        let i = match name {
-            "abs" => arg_nums
-                .first()
-                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }).abs())
-                .unwrap_or(0),
-            _ => 0,
-        };
-        return mnumber {
-            l: i,
+    // c:1117-1123 — `return f->nfunc(n, argc, argv, f->funcid);`. The
+    // module's own handler does the work (zsh/mathfunc's `math_func`,
+    // zsh/system's `math_systell`, zsh/example's `math_sum`).
+    match nfunc {
+        Some(nfunc) => nfunc(name, argc, &arg_nums, funcid), // c:1123
+        None => mnumber {
+            l: 0,
             d: 0.0,
             type_: MN_INTEGER,
-        };
-    }
-
-    // c:Src/Modules/system.c:467/900 — zsh/system registers the
-    // `systell` math function (NUMMATHFUNC("systell", math_systell)).
-    // It returns lseek(fd, 0, SEEK_CUR). Dispatch to the ported
-    // math_systell when zsh/system is loaded; otherwise fall through to
-    // the "unknown function" error like any unregistered name (gated the
-    // same way as the zsh/mathfunc functions above).
-    if name == "systell" {
-        let system_loaded = crate::ported::module::MODULESTAB
-            .lock()
-            .ok()
-            .and_then(|tab| {
-                tab.modules.get("zsh/system").map(|m| {
-                    let flags = m.node.flags;
-                    (flags & crate::ported::zsh_h::MOD_INIT_B) != 0
-                        && (flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
-                })
-            })
-            .unwrap_or(false);
-        if system_loaded {
-            let argv: Vec<mnumber> = args
-                .iter()
-                .map(|&x| mnumber {
-                    l: x as i64,
-                    d: x,
-                    type_: if x.fract() == 0.0 {
-                        MN_INTEGER
-                    } else {
-                        MN_FLOAT
-                    },
-                })
-                .collect();
-            return crate::ported::modules::system::math_systell(
-                "systell",
-                argv.len() as i32,
-                &argv,
-                0,
-            );
-        }
-    }
-
-    // c:Src/Modules/mathfunc.c:24-44 — extern math fns provided by
-    // libc on every UNIX. Rust's `f64` exposes most directly
-    // (acosh/asinh/atanh/sqrt/...). The libgm-only ones (erf/erfc/
-    // tgamma/lgamma/j0/j1/y0/y1/ilogb/logb/cbrt/expm1/log1p/
-    // copysign/nextafter/fmod) need an explicit C ABI binding.
-    #[cfg(unix)]
-    extern "C" {
-        fn erf(x: f64) -> f64;
-        fn erfc(x: f64) -> f64;
-        fn lgamma(x: f64) -> f64;
-        fn tgamma(x: f64) -> f64;
-        fn ilogb(x: f64) -> i32;
-        fn logb(x: f64) -> f64;
-        fn j0(x: f64) -> f64;
-        fn j1(x: f64) -> f64;
-        // c:Src/Modules/mathfunc.c:334/421 — `jn(argi, argd2)` /
-        // `yn(argi, argd2)`: the ORDER is an int (TFLAG(TF_INT1)),
-        // the argument a double.
-        fn jn(n: i32, x: f64) -> f64;
-        fn y0(x: f64) -> f64;
-        fn y1(x: f64) -> f64;
-        fn yn(n: i32, x: f64) -> f64;
-        fn cbrt(x: f64) -> f64;
-        fn expm1(x: f64) -> f64;
-        fn log1p(x: f64) -> f64;
-        fn copysign(x: f64, y: f64) -> f64;
-        fn nextafter(x: f64, y: f64) -> f64;
-        fn rint(x: f64) -> f64;
-        fn fmod(x: f64, y: f64) -> f64;
-        fn ldexp(x: f64, exp: i32) -> f64;
-        fn scalbn(x: f64, exp: i32) -> f64;
-    }
-    // Built-in math functions — mirrors `math_func()` dispatch table
-    // at Src/Modules/mathfunc.c:198-432.
-    let result = match name {
-        "abs" => args.first().map(|x| x.abs()).unwrap_or(0.0),
-        "acos" => args.first().map(|x| x.acos()).unwrap_or(0.0),
-        "acosh" => args.first().map(|x| x.acosh()).unwrap_or(0.0), // c:212
-        "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
-        "asinh" => args.first().map(|x| x.asinh()).unwrap_or(0.0), // c:220
-        // c:Src/Modules/mathfunc.c:225-229 — `atan` takes 1 OR 2 args:
-        // the 2-arg form is atan2(y, x) (NUMMATHFUNC("atan", …, 1, 2)).
-        // The previous port ignored the second arg and returned
-        // atan(arg1), so `atan(3,2)` gave 1.249 instead of atan2(3,2)
-        // = 0.98279. (The 3+-arg "wrong number of arguments" error
-        // requires built-in math-func arity validation — see catalog.)
-        "atan" => {
-            if args.len() >= 2 {
-                args[0].atan2(args[1]) // c:227
-            } else {
-                args.first().map(|x| x.atan()).unwrap_or(0.0) // c:229
-            }
-        }
-        "atanh" => args.first().map(|x| x.atanh()).unwrap_or(0.0), // c:233
-        "cbrt" => unsafe { cbrt(args.first().copied().unwrap_or(0.0)) }, // c:237
-        "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
-        "copysign" => {
-            let x = args.first().copied().unwrap_or(0.0);
-            let y = args.get(1).copied().unwrap_or(0.0);
-            unsafe { copysign(x, y) } // c:245
-        }
-        "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
-        "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
-        "erf" => unsafe { erf(args.first().copied().unwrap_or(0.0)) }, // c:257
-        "erfc" => unsafe { erfc(args.first().copied().unwrap_or(0.0)) }, // c:261
-        "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
-        "expm1" => unsafe { expm1(args.first().copied().unwrap_or(0.0)) }, // c:269
-        "fabs" => args.first().map(|x| x.abs()).unwrap_or(0.0),            // c:273
-        "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
-        "fmod" => {
-            let x = args.first().copied().unwrap_or(0.0);
-            let y = args.get(1).copied().unwrap_or(1.0);
-            unsafe { fmod(x, y) } // c:285
-        }
-        "gamma" => unsafe { tgamma(args.first().copied().unwrap_or(0.0)) }, // c:289
-        "hypot" => {
-            let x = args.first().copied().unwrap_or(0.0);
-            let y = args.get(1).copied().unwrap_or(0.0);
-            x.hypot(y)
-        }
-        "ilogb" => unsafe { ilogb(args.first().copied().unwrap_or(0.0)) as f64 }, // c:304
-        "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
-        // c:Src/Modules/mathfunc.c:315-318 `case MF_ISINF: ret.type =
-        // MN_INTEGER; ret.u.l = (zlong) isinf(argd);`
-        "isinf" => {
-            if args.first().copied().unwrap_or(0.0).is_infinite() {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        // c:Src/Modules/mathfunc.c:320-323 `case MF_ISNAN: ret.type =
-        // MN_INTEGER; ret.u.l = (zlong) isnan(argd);`
-        "isnan" => {
-            if args.first().copied().unwrap_or(0.0).is_nan() {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        "j0" => unsafe { j0(args.first().copied().unwrap_or(0.0)) }, // c:325
-        "j1" => unsafe { j1(args.first().copied().unwrap_or(0.0)) }, // c:331
-        // c:Src/Modules/mathfunc.c:144 `NUMMATHFUNC("jn", math_func, 2, 2,
-        // MF_JN | TFLAG(TF_INT1))` + c:333-335 `retd = jn(argi, argd2);`.
-        // TF_INT1 (c:106) means the FIRST argument is the integer one —
-        // the mirror of ldexp/scalb's TF_INT2 below.
-        "jn" => {
-            let n = args.first().copied().unwrap_or(0.0) as i32;
-            let x = args.get(1).copied().unwrap_or(0.0);
-            unsafe { jn(n, x) } // c:334
-        }
-        "ldexp" => {
-            // c:Src/Modules/mathfunc.c:337 MF_LDEXP — `ldexp(argd, argi)`,
-            // 2nd arg coerced to int (TF_INT2). Returns x * 2^n.
-            let x = args.first().copied().unwrap_or(0.0);
-            let n = args.get(1).copied().unwrap_or(0.0) as i32;
-            unsafe { ldexp(x, n) }
-        }
-        "scalb" => {
-            // c:Src/Modules/mathfunc.c:378 MF_SCALB — `scalbn(argd, argi)`.
-            let x = args.first().copied().unwrap_or(0.0);
-            let n = args.get(1).copied().unwrap_or(0.0) as i32;
-            unsafe { scalbn(x, n) }
-        }
-        "lgamma" => unsafe { lgamma(args.first().copied().unwrap_or(0.0)) }, // c:341
-        "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
-        "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
-        "log1p" => unsafe { log1p(args.first().copied().unwrap_or(0.0)) }, // c:357
-        "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
-        "logb" => unsafe { logb(args.first().copied().unwrap_or(0.0)) }, // c:365
-        "nextafter" => {
-            let x = args.first().copied().unwrap_or(0.0);
-            let y = args.get(1).copied().unwrap_or(0.0);
-            unsafe { nextafter(x, y) } // c:373
-        }
-        // c:Src/Modules/mathfunc.c:374 — `retd = rint(argd)` (round to
-        // nearest, ties to even). Note zsh has NO `round`/`pow`/`rand`
-        // mathfunc — `**` is the power operator and `round` doesn't exist.
-        "rint" => unsafe { rint(args.first().copied().unwrap_or(0.0)) },
-        "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
-        "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
-        "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),
-        "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
-        "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
-        "y0" => unsafe { y0(args.first().copied().unwrap_or(0.0)) }, // c:417
-        "y1" => unsafe { y1(args.first().copied().unwrap_or(0.0)) }, // c:423
-        // c:Src/Modules/mathfunc.c:168 `NUMMATHFUNC("yn", math_func, 2, 2,
-        // MF_YN | TFLAG(TF_INT1))` + c:420-422 `retd = yn(argi, argd2);`.
-        "yn" => {
-            let n = args.first().copied().unwrap_or(0.0) as i32;
-            let x = args.get(1).copied().unwrap_or(0.0);
-            unsafe { yn(n, x) } // c:421
-        }
-        // `float(x)` — widen int/float to float. Identity on
-        // floats; on ints, returns same value tagged as float so
-        // `printf "%.4f"` prints "3.0000" instead of "3". Direct
-        // port of mathfunc.c's `to_float()`.
-        "float" => args.first().copied().unwrap_or(0.0),
-        _ => {
-            m_error_set(format!("unknown function: {}", name));
-            0.0
-        }
-    };
-
-    // c:Src/Modules/mathfunc.c — MF_ILOGB / MF_INT / MF_ISINF / MF_ISNAN
-    // set `ret.type = MN_INTEGER` (e.g. `ilogb(8)` → 3, not 3.). Tag the
-    // integer-returning functions so the result prints as an int.
-    // c:Src/Modules/mathfunc.c:306 / :311 / :316 / :321 — MF_ILOGB,
-    // MF_INT, MF_ISINF and MF_ISNAN all set `ret.type = MN_INTEGER`, so
-    // `isnan(x)` yields `0`/`1`, not `0.`/`1.`.
-    if matches!(name, "ilogb" | "int" | "isinf" | "isnan") {
-        return mnumber {
-            l: result as i64,
-            d: 0.0,
-            type_: MN_INTEGER,
-        };
-    }
-    mnumber {
-        l: 0,
-        d: result,
-        type_: MN_FLOAT,
+        },
     }
 }
 
