@@ -4122,6 +4122,13 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     } else {
         args[0].clone()
     }; // c:737
+       // zsh 5.9.x Src/exec.c:693-696 — `if (isset(RESTRICTED) &&
+       //   (strchr(arg0, '/') || defpath)) { zerr("%s: restricted", arg0);
+       //   _exit(1); }` — execute() runs in the forked child.
+    if isset(crate::ported::zsh_h::RESTRICTED) && (arg0.contains('/') || defpath != 0) {
+        zerr(&format!("{}: restricted", arg0)); // c:694
+        unsafe { libc::_exit(1) }; // c:695
+    }
        // c:733-748 — STTY pre-exec handling.
     {
         let mut stty = STTYval.lock().unwrap();

@@ -2415,8 +2415,10 @@ impl ShellExecutor {
                     // gets cleared by assignstrvalue at c:3660 on any
                     // write, so it correctly tracks "ever assigned".
                     // Bug #143 in docs/BUGS.md.
+                    // PM_RESTRICTED is kept too: the IPDEF rows carry it (zsh 5.9.x
+                    // Src/params.c:299-457) and RESTRICTED mode refuses on it.
                     let safe_pm_flags = entry.pm_flags
-                        & (PM_TIED | PM_DI | PM_UNSET | crate::ported::zsh_h::PM_READONLY);
+                        & (PM_TIED | PM_DI | PM_UNSET | crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_RESTRICTED);
                     // c:Src/params.c — IPDEF macros set PM_TYPE bits
                     // (PM_INTEGER for IPDEF5/6, PM_ARRAY for IPDEF9,
                     // PM_HASHED for IPDEF-hash) along with PM_SPECIAL.
@@ -6076,6 +6078,18 @@ impl ShellExecutor {
             let last = args.last().cloned().unwrap_or_else(|| cmd.to_string());
             crate::ported::params::set_zunderscore(std::slice::from_ref(&last));
             // c:3546
+        }
+        // zsh 5.9.x Src/exec.c:693-696 — `if (isset(RESTRICTED) &&
+        //   (strchr(arg0, '/') || defpath)) { zerr("%s: restricted", arg0);
+        //   _exit(1); }`. C runs execute() in the forked child, so the zerr
+        // never reaches the parent's errflag and the command's status is
+        // the child's 1. zshrs has not forked here: report with zwarn (the
+        // same `name:line: msg` text, no parent errflag) and return 1.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED)
+            && (cmd.contains('/') || defpath != 0)
+        {
+            crate::ported::utils::zwarn(&format!("{}: restricted", cmd)); // c:694
+            return Ok(1); // c:695
         }
         // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
         // Native (Rust) plugin builtins registered via `zmodload -R`

@@ -1796,6 +1796,12 @@ pub fn bin_cd(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // zsh 5.9.x Src/builtin.c:844-847 — `if (isset(RESTRICTED)) {
+    //   zwarnnam(nam, "restricted"); return 1; }`
+    if isset(crate::ported::zsh_h::RESTRICTED) {
+        zwarnnam(nam, "restricted"); // c:845
+        return 1; // c:846
+    }
     // c:844 — `doprintdir = (doprintdir == -1);`
     let prev = DOPRINTDIR.load(Relaxed);
     DOPRINTDIR.store(if prev == -1 { 1 } else { 0 }, Relaxed); // c:844
@@ -5423,6 +5429,15 @@ pub fn bin_typeset(
                         if !is_plus_m && (f & PM_UNSET) != 0 {
                             return false;
                         }
+                        // zsh 5.9.x Src/builtin.c:2992 — the same `-m`
+                        // collection loop also skips `(pm->node.flags &
+                        // PM_RESTRICTED) && isset(RESTRICTED)`.
+                        if !is_plus_m
+                            && (f & crate::ported::zsh_h::PM_RESTRICTED) != 0
+                            && isset(crate::ported::zsh_h::RESTRICTED)
+                        {
+                            return false;
+                        }
                         // c:Src/builtin.c:3055-3094 / hashtable.c:373-440
                         // — the `-m`/`+m` PATTERN path scans paramtab
                         // via `scanmatchtable(paramtab, pprog, ...)`.
@@ -5755,6 +5770,61 @@ pub fn bin_typeset(
                     }
                     // SECONDS: setsecondstype already installed the new type;
                     // c:2169's `tc = 0` skips the normal conversion below.
+                    continue;
+                }
+            }
+        }
+
+        // zsh 5.9.x Src/builtin.c typeset_single — the three places a
+        // PM_RESTRICTED parameter is refused under RESTRICTED:
+        //   c:2209  `if (usepm) { ... if (!on && !roff && !ASG_VALUEP(asg))
+        //            { print; return pm; }
+        //            if ((pm->node.flags & PM_RESTRICTED) && isset(RESTRICTED))
+        //            { zerrnam(cname, "%s: restricted", pname); return pm; }`
+        //   c:2335  `if (newspecial != NS_NONE) { if ((pm->node.flags &
+        //            PM_RESTRICTED) && isset(RESTRICTED)) { zerrnam(...); } }`
+        //   tc / non-local reuse → unsetparam_pm (params.c:3635) and
+        //            createparam (params.c:1010) carry the same check.
+        // The one way through is a `local` at a deeper level that does
+        // not keep the special (c:2059-2072 with -h), which createparam
+        // lets pass (`oldpm->level == locallevel || !(flags & PM_LOCAL)`).
+        if isset(crate::ported::zsh_h::RESTRICTED) {
+            let restricted_pm = paramtab().read().ok().and_then(|t| {
+                t.get(arg_name)
+                    .filter(|p| (p.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0)
+                    .map(|p| (p.node.flags as u32, p.level))
+            });
+            if let Some((pmf, pm_level)) = restricted_pm {
+                // c:2062-2071 — usepm (2 = special kept although unset).
+                let mut usepm = (pmf & PM_UNSET) == 0
+                    || (isset(POSIXBUILTINS) && (pmf & (PM_READONLY | PM_EXPORTED)) != 0)
+                    || (pmf & PM_SPECIAL) != 0;
+                let mut newspecial = false;
+                // c:2077-2091 — localizing at a new level drops usepm.
+                if usepm && locallevel_param.load(Relaxed) != pm_level && (on as u32 & PM_LOCAL) != 0 {
+                    if (pmf & PM_SPECIAL) != 0
+                        && (on as u32 & PM_HIDE) == 0
+                        && (pmf & PM_HIDE & !(off as u32)) == 0
+                    {
+                        newspecial = true; // c:2089 NS_NORMAL
+                    }
+                    usepm = false; // c:2090
+                }
+                // c:2201 — `!on && !roff && !ASG_VALUEP(asg)` (roff == off,
+                // c:2643; PM_LOCAL stripped at c:2200) is the print-only reuse.
+                let print_only = usepm
+                    && (on as u32 & !PM_LOCAL) == 0
+                    && off == 0
+                    && !arg.contains('=');
+                // c:1005 createparam — a deeper-level local of a
+                // non-special is a fresh parameter, not a change.
+                let fresh_shadow = !usepm
+                    && !newspecial
+                    && (on as u32 & PM_LOCAL) != 0
+                    && pm_level != locallevel_param.load(Relaxed);
+                if !print_only && !fresh_shadow {
+                    zerrnam(name, &format!("{}: restricted", arg_name)); // c:2210 / c:2336
+                    returnval = 1;
                     continue;
                 }
             }
@@ -9891,7 +9961,15 @@ pub fn bin_unset(
                     tab.keys().cloned().collect()
                 };
                 for nm in &names {
-                    if pattry(&prog, nm) {
+                    // zsh 5.9.x Src/builtin.c:3714-3716 — `if ((!(pm->node.flags
+                    // & PM_RESTRICTED) || unset(RESTRICTED)) && pattry(...))`.
+                    let restricted_skip = isset(crate::ported::zsh_h::RESTRICTED)
+                        && paramtab().read().ok().is_some_and(|t| {
+                            t.get(nm.as_str()).is_some_and(|p| {
+                                (p.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0
+                            })
+                        });
+                    if !restricted_skip && pattry(&prog, nm) {
                         // c:3842
                         // c:3846 — `unsetparam_pm(pm, 0, 1)` runs on the
                         // node the walk found. For a magic assoc/array
@@ -9980,6 +10058,20 @@ pub fn bin_unset(
             zerrnam(name, &format!("{}: invalid parameter name", crate::ported::utils::nicedupstring(&s))); // c:3876 — `%s` is nicezputs (c:Src/utils.c:316)
             returnval = 1; // c:3877
             continue; // c:3878
+        }
+        // zsh 5.9.x Src/builtin.c:3758-3768 — `if (!pm) continue;
+        //   else if ((pm->node.flags & PM_RESTRICTED) && isset(RESTRICTED)) {
+        //       zerrnam(name, "%s: restricted", pm->node.nam);
+        //       returnval = 1; }`
+        if isset(crate::ported::zsh_h::RESTRICTED)
+            && paramtab().read().ok().is_some_and(|t| {
+                t.get(nm)
+                    .is_some_and(|p| (p.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0)
+            })
+        {
+            zerrnam(name, &format!("{}: restricted", nm)); // c:3766
+            returnval = 1; // c:3767
+            continue;
         }
         // c:3886-3905 — `if (!pm) continue;` then unset.
         // C `unsetparam_pm` dispatches on `pm->gsu` (the gsu_*
@@ -11581,6 +11673,14 @@ pub fn bin_hash(
             None => (arg.as_str(), None),
         };
         if let Some(v) = val {
+            // zsh 5.9.x Src/builtin.c:4151-4154 — `if(isset(RESTRICTED)) {
+            //   zwarnnam(name, "restricted: %s", asg->value.scalar);
+            //   returnval = 1; } else { ...define the entry... }`
+            if isset(crate::ported::zsh_h::RESTRICTED) {
+                zwarnnam(name, &format!("restricted: {}", v)); // c:4152
+                returnval = 1; // c:4153
+                continue;
+            }
             // c:4302
             // Define entry.
             if dir_mode {

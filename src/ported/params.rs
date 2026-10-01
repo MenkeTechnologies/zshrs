@@ -67,6 +67,7 @@ use crate::ported::zsh_h::{
     PM_LOWER, PRIVILEGED, SCANPM_ASSIGNING,
 };
 use crate::ported::zsh_h::{CASMOD_LOWER, CASMOD_UPPER};
+use crate::ported::zsh_h::{PM_RESTRICTED, RESTRICTED};
 use crate::ported::zsh_system_h::DEFAULT_TIMEFMT;
 use crate::{DPUTS, DPUTS2};
 use fusevm::Value;
@@ -526,19 +527,19 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "GID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
         name: "EGID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
         name: "HISTSIZE",
         pm_type: PM_INTEGER,
-        pm_flags: 0,
+        pm_flags: PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -550,7 +551,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "SAVEHIST",
         pm_type: PM_INTEGER,
-        pm_flags: 0,
+        pm_flags: PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -562,13 +563,13 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "UID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
         name: "EUID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -581,7 +582,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "USERNAME",
         pm_type: PM_SCALAR,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -629,7 +630,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "IFS",
         pm_type: PM_SCALAR,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -882,7 +883,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "PATH",
         pm_type: PM_SCALAR,
-        pm_flags: PM_TIED,
+        pm_flags: PM_TIED | PM_RESTRICTED,
         tied_name: Some("path"),
     },
     special_paramdef {
@@ -900,7 +901,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "MODULE_PATH",
         pm_type: PM_SCALAR,
-        pm_flags: PM_DONTIMPORT | PM_TIED,
+        pm_flags: PM_DONTIMPORT | PM_TIED | PM_RESTRICTED,
         tied_name: Some("module_path"),
     },
     special_paramdef {
@@ -1058,13 +1059,13 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "module_path",
         pm_type: PM_ARRAY,
-        pm_flags: PM_TIED,
+        pm_flags: PM_TIED | PM_RESTRICTED,
         tied_name: Some("MODULE_PATH"),
     },
     special_paramdef {
         name: "path",
         pm_type: PM_ARRAY,
-        pm_flags: PM_TIED,
+        pm_flags: PM_TIED | PM_RESTRICTED,
         tied_name: Some("PATH"),
     },
     // pipestatus array
@@ -1118,7 +1119,7 @@ pub const special_params_sh: &[special_paramdef] = &[
         // c:452
         name: "PATH",
         pm_type: PM_SCALAR,
-        pm_flags: 0,
+        pm_flags: PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -1139,7 +1140,7 @@ pub const special_params_sh: &[special_paramdef] = &[
         // c:457 (security comment)
         name: "MODULE_PATH",
         pm_type: PM_SCALAR,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_RESTRICTED,
         tied_name: None,
     },
 ];
@@ -2494,6 +2495,13 @@ pub fn createparam(
             // c:1131
             zerr(&format!("read-only variable: {}", name)); // c:1132
             return None; // c:1133
+        }
+        // zsh 5.9.x Src/params.c:1010-1013 — `if ((oldpm->node.flags &
+        //   PM_RESTRICTED) && isset(RESTRICTED)) { zerr("%s: restricted",
+        //   name); return NULL; }`
+        if (opf & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+            zerr(&format!("{}: restricted", name)); // c:1011
+            return None; // c:1012
         }
         if (opf & PM_UNSET) == 0
             || (opf & PM_SPECIAL) != 0
@@ -5661,6 +5669,13 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
         zerr(&format!("read-only variable: {}", pm.node.nam)); // c:2701
         return;
     }
+    // zsh 5.9.x Src/params.c:2539-2543 — `if ((v->pm->node.flags &
+    //   PM_RESTRICTED) && isset(RESTRICTED)) { zerr("%s: restricted",
+    //   v->pm->node.nam); zsfree(val); return; }`
+    if (pm.node.flags as u32 & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam)); // c:2540
+        return;
+    }
     if (pm.node.flags as u32 & PM_HASHED) != 0
         && (v.scanflags as u32 & (SCANPM_MATCHMANY | SCANPM_ARRONLY)) != 0
     {
@@ -6042,6 +6057,11 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
         zerr(&format!("read-only variable: {}", pm.node.nam)); // c:2862
         return;
     }
+    // zsh 5.9.x Src/params.c:2706-2709 — the RESTRICTED gate of setnumvalue.
+    if (pm.node.flags as u32 & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam)); // c:2707
+        return;
+    }
     let t = PM_TYPE(pm.node.flags as u32);
     if t == PM_SCALAR || t == PM_NAMEREF || t == PM_ARRAY {
         // c:2862-2872 — convbase_underscore for integers (honors
@@ -6140,6 +6160,11 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     // c:2899-2904 — PM_READONLY rejection.
     if pm.node.flags & PM_READONLY as i32 != 0 {
         zerr(&format!("read-only variable: {}", pm.node.nam));
+        return;
+    }
+    // zsh 5.9.x Src/params.c:2747-2751 — the RESTRICTED gate of setarrvalue.
+    if (pm.node.flags as u32 & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam)); // c:2748
         return;
     }
     // c:2905-2911 — type guard.
@@ -9897,6 +9922,12 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
+    // zsh 5.9.x Src/params.c:2747-2751 — setarrvalue's RESTRICTED gate,
+    // mirrored here for the same reason as the readonly one above.
+    if existed && (prior_flags as u32 & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+        zerr(&format!("{}: restricted", name)); // c:2748
+        return None;
+    }
     // c:3395-3401 — the type-reset arm only fires for params that are
     // NOT (PM_ARRAY|PM_HASHED) and NOT PM_SPECIAL|PM_TIED. A special
     // param falls THROUGH the reset: `v` stays set and the assignment
@@ -10852,6 +10883,15 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 zerr(&format!("read-only variable: {}", nam));
                 return None;
             }
+            // zsh 5.9.x Src/params.c:2706-2709 — setnumvalue's RESTRICTED
+            // gate, mirrored here beside the readonly one for the same
+            // reason (and with the guard dropped before zerr likewise).
+            if (pm.node.flags as u32 & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+                let nam = pm.node.nam.clone();
+                drop(tab);
+                zerr(&format!("{}: restricted", nam)); // c:2707
+                return None;
+            }
             // c:3671 `v->pm->node.flags &= ~PM_DEFAULTED;` — PM_DECLARED
             // shares its bit with PM_DONTIMPORT (c:Src/zsh.h:1926-1927);
             // keep it on a PM_SPECIAL node that carries it. Full
@@ -11426,6 +11466,13 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         };
         zerr(&format!("read-only {}: {}", kind, pm.node.nam));
         return 1; // c:3854
+    }
+    // zsh 5.9.x Src/params.c:3635-3638 — `if ((pm->node.flags &
+    //   PM_RESTRICTED) && isset(RESTRICTED)) { zerr("%s: restricted",
+    //   pm->node.nam); return 1; }`
+    if (pm.node.flags as u32 & PM_RESTRICTED) != 0 && isset(RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam)); // c:3636
+        return 1; // c:3637
     }
     // c:3793-3796 — `if (pm->ename && !altflag) altremove = ztrdup(pm->ename);
     // else altremove = NULL;`. Captured before the unsetfn, which clears a
@@ -14927,11 +14974,13 @@ pub fn endparamscope() {
                 // duration of the restore so the write behaves like C's
                 // direct setfn call, then put it back. The bit is
                 // re-read from the node rather than assumed, so a row
-                // that is not read-only is untouched.
+                // that is not read-only is untouched. PM_RESTRICTED
+                // (zsh 5.9.x params.c:2539) is the other assignsparam-level
+                // guard C's setfn never meets; it is dropped the same way.
                 let ro_bit = paramtab()
                     .read()
                     .ok()
-                    .and_then(|t| t.get(&n).map(|p| p.node.flags as u32 & PM_READONLY))
+                    .and_then(|t| t.get(&n).map(|p| p.node.flags as u32 & (PM_READONLY | PM_RESTRICTED)))
                     .unwrap_or(0);
                 if ro_bit != 0 {
                     if let Ok(mut tab) = paramtab().write() {
@@ -14952,7 +15001,30 @@ pub fn endparamscope() {
         }
     }
     for (n, arr) in deferred_arrays {
+        // c:5921 `pm->gsu.a->setfn(pm, tpm->u.arr)` — like the scalar
+        // replay above, the restore must not meet assignaparam's
+        // RESTRICTED gate (zsh 5.9.x params.c:2747), which C's setfn
+        // never passes through.
+        let rs_bit = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(&n).map(|p| p.node.flags as u32 & PM_RESTRICTED))
+            .unwrap_or(0);
+        if rs_bit != 0 {
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(pm) = tab.get_mut(&n) {
+                    pm.node.flags &= !(rs_bit as i32);
+                }
+            }
+        }
         let _ = assignaparam(&n, arr, 0);
+        if rs_bit != 0 {
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(pm) = tab.get_mut(&n) {
+                    pm.node.flags |= rs_bit as i32;
+                }
+            }
+        }
     }
     // c:5864-5880 (USE_LOCALE) — "Locale changed --- ensure it is restored."
     // Runs after the deferred setfn replays above, which are where this
