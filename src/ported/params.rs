@@ -410,10 +410,21 @@ pub fn loadparamnode(
         _ => return pm, // c:566 fall through
     };
 
-    // c:549 — `ensurefeature(mn, "p:", nam)` fires the module loader.
-    // The Rust ensurefeature signature differs (takes ModuleTable);
-    // for now we look up the module without a table to keep the
-    // dispatch site honest. Module-table integration is pending.
+    // c:549 — `(void)ensurefeature(mn, "p:", (pm->node.flags & PM_AUTOALL)
+    // ? NULL : nam);` fires the module loader (same shape as
+    // module::resolvebuiltin's c:2711 call). A feature the module lacks
+    // reports "autoload cancelled" there and drops the stub.
+    let autoall = pm
+        .as_ref()
+        .is_some_and(|p| (p.node.flags as u32 & crate::ported::zsh_h::PM_AUTOALL) != 0);
+    if let Ok(mut mtab) = crate::ported::module::MODULESTAB.lock() {
+        let _ = crate::ported::module::ensurefeature(
+            &mut mtab,
+            &modname,
+            "p:",
+            if autoall { None } else { Some(nam) },
+        );
+    }
     // c:550 — re-fetch the node from ht after autoload.
     let mut pm = paramtab().write().unwrap().get(nam).cloned();
     // c:551 — walk pm->old back to original level.
@@ -4928,6 +4939,17 @@ pub fn fetchvalue<'a>(
         let key = if name == "0" { "0" } else { name };
         tab.get(key).cloned()
     };
+    // c:2227 — the lookup is `paramtab->getnode`, i.e. getparamnode
+    // (c:570-572), which runs loadparamnode on a PM_AUTOLOAD stub so the
+    // first fetch of `zmodload -ap MOD NAME`'s NAME loads MOD (or reports
+    // "autoloading module MOD failed to define parameter: NAME").
+    // loadparamnode does not read its table argument (zshrs has one
+    // paramtab), so the stub-only branch hands it a fresh empty one.
+    let pm = match pm {
+        Some(p) if (p.node.flags as u32 & PM_AUTOLOAD) != 0 => newparamtable(0, "paramtab")
+            .and_then(|ht| loadparamnode(&ht, Some(p), name)),
+        other => other,
+    };
     let pm = pm?; // c:2237-2241
 
     // c:2241-2243 — `if (PM_UNSET && !PM_DECLARED) return NULL`.
@@ -6462,6 +6484,22 @@ pub fn getsparam(name: &str) -> Option<String> {
     // c:2352 — set when the node is PM_ARRAY but its elements live behind a
     // MODULE getfn instead of `u.arr`; the dispatch runs after the read guard
     // below is dropped (see the arm that sets it).
+    // c:Src/params.c:570-572 — getvalue reaches the node through
+    // getparamnode, whose loadparamnode loads the owning module of a
+    // PM_AUTOLOAD stub (`zmodload -ap MOD NAME`) before the value is read;
+    // when the module does not define NAME the stub is gone and the read
+    // fails. Taken before the read guard below: the load re-enters paramtab.
+    let autoload_stub = paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).filter(|p| (p.node.flags as u32 & PM_AUTOLOAD) != 0).cloned());
+    if let Some(stub) = autoload_stub {
+        // loadparamnode does not read its table argument (one paramtab).
+        let loaded = newparamtable(0, "paramtab").and_then(|ht| loadparamnode(&ht, Some(stub), name));
+        if loaded.is_none() {
+            return None;
+        }
+    }
     let mut needs_partab_dispatch = false;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
