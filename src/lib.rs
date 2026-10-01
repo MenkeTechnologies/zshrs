@@ -69,6 +69,8 @@ pub mod ported;
 pub mod pattern_data_escape;
 /// `script_bytes` submodule (Rust-only; see the module docs).
 pub mod script_bytes;
+/// `token_char` submodule (Rust-only): where token chars live in a `char` string.
+pub mod token_char;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
 /// `test_util` submodule.

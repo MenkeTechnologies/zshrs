@@ -359,7 +359,7 @@ pub fn iaddtoline(c: i32) {
     let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
     exlast.store(inbufct_v, SeqCst); // c:413
                                      // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
-    let push_ch: char = if c >= 0 && c <= 0xff && itok(c as u8) {
+    let push_ch: char = if char::from_u32(c as u32).is_some_and(crate::token_char::itok_char) {
         let idx = (c as u8).wrapping_sub(Pound as u8) as usize;
         // ztokens is the literal-char back-mapping for ITOK bytes.
         // Defensively guard against an out-of-range token byte

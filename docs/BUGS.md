@@ -61032,3 +61032,39 @@ as one history event, matching zsh 5.9.2, under a minimal rc and under the full
 zpwr config. Nested `eval`/`$(…)` cases (aliases inside `$()`, nested
 substitutions, `eval` defining aliases, sourced files and piped stdin with
 `eval` mid-input) match zsh 5.9.2.
+
+## #1168 — value chars U+0084..U+00A2 (NBSP, `¡`, `¢`, NEL, C1 controls) were read as lexer tokens — fixed
+
+**Status:** `fixed` 2026-10-01.
+
+```console
+v=$'\xc2\xa0'; print -r -- "${(qq)v}" "${(V)v}"
+zsh 5.9.2        '<NBSP>'  <NBSP>
+zshrs (before)   wrong or empty: NBSP is the Bnullkeep code point
+print -r -- 'x<byte 0x80>y' | zshrs        # stdin, one line at a time
+zsh 5.9.2        x<0x80>y
+zshrs (before)   x\xc2\x83y — the Meta payload U+00A0 was eaten as a token
+```
+
+**Root cause.** C keeps the lexer's tokens as the bytes 0x84..0xa2 (`Pound` ..
+`Marker`, c:Src/zsh.h:159-224). It can, because every string that reaches
+token-aware code is metafied: a data byte in that range is stored as `Meta` +
+`byte ^ 32` (c:Src/utils.c:4856). zshrs holds text as Rust `char`s, does not
+metafy values, and stored the tokens at U+0084..U+00A2. Those are real
+characters, so every untokenize / quote / pattern / split path took an NBSP
+for `Bnullkeep`, a NEL for `String`, and so on. Commit `f721fcd062` worked
+around the `(q)` case by metafying such chars before quoting. It did not reach
+the other paths.
+
+**Fix.** The tokens moved to the Private Use Area at U+E000 + the C byte
+(U+E084..U+E0A2, `src/token_char.rs`). The low byte is still the C token byte
+and the order is C's, so `Pound as u8` and the `ztokens` index arithmetic are
+unchanged. Byte buffers (wordcode, `.zwc` pools, `lextok2`, metafied
+quotestring units) keep the C byte. The conversions at their boundaries go
+through `token_char_from_byte` / `token_byte`, and the `itok` / `inull` tests on
+chars through `itok_char` / `token_byte`. The `f721fcd062` metafy workaround is
+removed. The autoload, script and deparse cache formats were bumped, because
+cached chunks hold the old token chars. The stdin high-byte sweep
+(`non_utf8_script_parity::every_high_byte_round_trips_on_stdin`, previously
+`#[ignore]`d for this collision) now passes for all 128 bytes. Quote-mode fuzz
+goes from 5 divergences to 0, and the parity suite shows no new failures.

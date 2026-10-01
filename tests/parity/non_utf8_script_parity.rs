@@ -263,26 +263,14 @@ fn every_high_byte_round_trips_in_a_script_file() {
     assert!(bad.is_empty(), "diverging bytes:\n{}", bad.join("\n"));
 }
 
-/// DOCUMENTED GAP — the same sweep on STDIN.
-///
-/// The stdin/pipe path reaches the lexer one LINE at a time
-/// (`ingetcline` → `shingetline`, `Src/input.c:406`), and there the
-/// Meta payload char `b ^ 32` collides with zshrs's own token
-/// codepoints: the lexer reserves U+0084..U+00A1 for the markers C
-/// spells `Pound`..`Nularg` (`Src/utils.c:4198-4201`,
-/// `parse.rs::ecstrcode`), so for the 30 bytes whose payload lands in
-/// that range — 0x80, 0x81 and 0xa4..=0xbf — the payload char is eaten
-/// and only the bare Meta lead survives (`x\x80y` prints
-/// `x\xc2\x83y`). The file/`source`/`autoload` paths, which hand the
-/// whole decoded text to the parser at once, are unaffected — the
-/// sweep above passes for all 128 values.
-///
-/// Fixing this means giving the raw-byte encoding a payload range that
-/// cannot collide with the marker range, which is a cross-cutting
-/// change to `$'\xNN'` (`lex.rs`), `compile_zsh.rs::meta_encode_byte`,
-/// `utils::unmetafy_str` and `parse.rs::ecstrcode`. Pinned, not fixed.
+/// The same sweep on STDIN, which reaches the lexer one LINE at a time
+/// (`ingetcline` → `shingetline`, `Src/input.c:406`). The Meta payload char
+/// `b ^ 32` used to collide with the lexer's token codepoints, which sat at
+/// U+0084..U+00A1: for the 30 bytes whose payload landed there (0x80, 0x81,
+/// 0xa4..=0xbf) the payload was eaten and only the Meta lead survived
+/// (`x\x80y` printed `x\xc2\x83y`). Tokens now live in the Private Use Area
+/// (`crate::token_char`), so no payload can be mistaken for one.
 #[test]
-#[ignore = "documented gap: Meta payload collides with the lexer's marker codepoints on the line-at-a-time stdin path"]
 fn every_high_byte_round_trips_on_stdin() {
     if !zsh_available() {
         return;

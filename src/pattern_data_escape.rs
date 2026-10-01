@@ -388,7 +388,7 @@ pub fn note_default_word_bars(word: &str, value: &str) -> bool {
             i += 1;
             continue;
         }
-        if matches!(c, '$' | '`' | '\u{85}') || c == Qstring || c == Tick || c == Qtick {
+        if matches!(c, '$' | '`' | '\u{e085}') || c == Qstring || c == Tick || c == Qtick {
             substitutes = true;
         }
         match c {
@@ -404,7 +404,7 @@ pub fn note_default_word_bars(word: &str, value: &str) -> bool {
             i += 1;
             continue;
         }
-        if ('\u{84}'..='\u{9c}').contains(&c) {
+        if ('\u{e084}'..='\u{e09c}').contains(&c) {
             barred.push_str(&crate::ported::lex::untokenize(&c.to_string()));
         } else {
             barred.push(c);

@@ -3266,7 +3266,7 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> {
 /// Stringg, Hat, Star, ..., Bnull, Nularg). Earlier impl checked
 /// only 0x83 (Meta) which missed Dash/Equals/Inbrack/Inbrace/etc.,
 /// so any string containing those (e.g. `dart-lang/dart` →
-/// `dart\u{9b}lang/dart`) got encoded with the no-token bit set,
+/// `dart\u{e09b}lang/dart`) got encoded with the no-token bit set,
 /// breaking byte parity with C's wordcode-emitter output.
 /// ```c
 /// while (*s)
@@ -3287,9 +3287,7 @@ pub fn has_token(s: &str) -> bool {
     // metafies: a raw byte >= 0x80 is stored escaped (Meta, then byte ^ 32),
     // so a bare 0x84..=0xA1 in a metafied string is always a real token.
     // zshrs does not metafy — it keeps UTF-8 `str` and stores tokens as
-    // CHARS in U+0084..=U+00A1, which is the representation `untokenize`
-    // (lex.rs:5990) and `untokenize_preserve_quotes` (lex.rs:5650) both test
-    // with `c as u32`. Scanning bytes here therefore mistakes a UTF-8
+    // PUA CHARS (crate::token_char). Scanning bytes here therefore mistakes a UTF-8
     // CONTINUATION byte for a token: `—` U+2014 encodes as E2 80 94 and
     // `→` U+2192 as E2 86 92 — 0x94, 0x86 and 0x92 all answer `itok`, so
     // every em-dash, smart quote and arrow reported "has tokens".
@@ -3302,8 +3300,7 @@ pub fn has_token(s: &str) -> bool {
     // import — never inherited it.
     s.chars().any(|c| {
         // c:2285 itok(*s++)
-        let u = c as u32;
-        u <= 0xff && itok(u as u8)
+        crate::token_char::itok_char(c)
     })
 }
 
@@ -6389,7 +6386,7 @@ pub fn inittyptab() {
     // c:4191 — `Dash` token marker (0x9b per zsh.h:182, "Only in patterns").
     // Marking it IUSER lets pattern-side $-named-character paths
     // accept it as a user-name byte. Previously omitted in the port.
-    t[crate::ported::zsh_h::Dash as usize] = IUSER as u32;
+    t[crate::token_char::token_byte(crate::ported::zsh_h::Dash).unwrap() as usize] = IUSER as u32;
     // c:4192-4194 — blanks.
     t[b' ' as usize] |= (IBLANK | INBLANK) as u32;
     t[b'\t' as usize] |= (IBLANK | INBLANK) as u32;
@@ -6407,7 +6404,7 @@ pub fn inittyptab() {
                           // c:4196-4197 — Meta + Marker marked IMETA.
     {
         t[Meta as usize] |= IMETA as u32;
-        t[Marker as usize] |= IMETA as u32;
+        t[crate::token_char::token_byte(Marker).unwrap() as usize] |= IMETA as u32;
     }
 
     // c:4198-4199 — `for (t0 = (int) (unsigned char) Pound;
@@ -6419,8 +6416,8 @@ pub fn inittyptab() {
     // leading `$` as part of an identifier prefix → `$=cmd` lexes
     // as ENVSTRING instead of STRING.
     {
-        let lo = Pound as usize;
-        let hi = LAST_NORMAL_TOK as usize;
+        let lo = crate::token_char::token_byte(Pound).unwrap() as usize;
+        let hi = crate::token_char::token_byte(LAST_NORMAL_TOK).unwrap() as usize;
         for t0 in lo..=hi {
             t[t0] |= (ITOK | IMETA) as u32;
         }
@@ -6430,8 +6427,8 @@ pub fn inittyptab() {
     //                     t0 <= (int) (unsigned char) Nularg; t0++)
     //                    typtab[t0] |= ITOK | IMETA | INULL;`
     {
-        let lo = Snull as usize;
-        let hi = Nularg as usize;
+        let lo = crate::token_char::token_byte(Snull).unwrap() as usize;
+        let hi = crate::token_char::token_byte(Nularg).unwrap() as usize;
         for t0 in lo..=hi {
             t[t0] |= (ITOK | IMETA | INULL) as u32;
         }
@@ -7653,7 +7650,7 @@ pub fn zreaddir(dir: &mut fs::ReadDir, ignoredots: i32) -> Option<String> {
 /// because zsh metafies: a raw byte >= 0x80 is stored escaped
 /// (`Meta`, then `byte ^ 32`), so a bare `0x84..=0xa1` in a metafied
 /// string is always a real token. zshrs keeps UTF-8 `str` and stores
-/// tokens as CHARS in `U+0084..=U+00A1` — the representation
+/// tokens as PUA CHARS (crate::token_char) — the representation
 /// `lex::untokenize` and `has_token` (utils.rs:3089) both test with
 /// `c as u32`. Scanning bytes here mistook a UTF-8 CONTINUATION byte
 /// for a token and DROPPED it: `functions f` printed `print "a<E2><80>b"`
@@ -7681,7 +7678,7 @@ pub fn zputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
                 // c:5277 fputc(c, stream)
                 return -1; // c:5278 return EOF
             }
-        } else if (ch as u32) <= 0xff && itok(ch as u32 as u8) {
+        } else if crate::token_char::itok_char(ch) {
             // c:5271 else if (itok(*s))
             // c:5272 — `s++; continue;` (skip token char)
             continue;
@@ -8137,22 +8134,6 @@ pub fn mb_niceformat(
                     if (0x80..0x100).contains(&cu) {
                         buf.push(char::from(Meta));
                         buf.push(char::from((cu as u8) ^ 32));
-                    } else {
-                        buf.push(ch);
-                    }
-                }
-            } else if fmt.chars().any(|ch| (0x83..=0xa2).contains(&(ch as u32))) {
-                // c:690-697 — C's copy is metafied, so a printable char whose
-                // code point equals a token byte (NBSP = Bnullkeep) cannot be
-                // read as that token downstream. Bare in a zshrs String it is,
-                // so store each of its UTF-8 bytes as Meta + byte^32.
-                let mut ub = [0u8; 4];
-                for ch in fmt.chars() {
-                    if (0x83..=0xa2).contains(&(ch as u32)) {
-                        for &b in ch.encode_utf8(&mut ub).as_bytes() {
-                            buf.push(char::from(Meta));
-                            buf.push(char::from(b ^ 32));
-                        }
                     } else {
                         buf.push(ch);
                     }
@@ -8728,27 +8709,8 @@ pub fn sb_niceformat(
      * but it's used in lots of places.  however, one day this may
      * be, too.
      */                                                                      // c:5866-5870
-    // c:5871 — `untokenize(ums);` inlined byte-level (lex::untokenize
-    // is char-based; C does byte-walks). Mirrors `Src/exec.c:2077-2099`
-    // exec.c untokenize().
-    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\"; // ZTOKENS — Src/lex.c:38
-    let mut detok: Vec<u8> = Vec::with_capacity(ums.len());
-    for &c in &ums {
-        // exec.c:2082
-        if (0x84u8..=0xa1u8).contains(&c) {
-            // exec.c:2083 itok(c)
-            if c != 0xa1u8 {
-                // exec.c:2086 c != Nularg
-                let idx = (c - 0x84) as usize;
-                if idx < ztokens_table.len() {
-                    detok.push(ztokens_table[idx]);
-                }
-            }
-        } else {
-            detok.push(c); // exec.c:2094
-        }
-    }
-    ums = detok;
+    // c:5871 — `untokenize(ums);`, over the bytes (see untokenize_bytes).
+    ums = crate::token_char::untokenize_bytes(s.as_bytes());
     // c:5872 — `ptr = unmetafy(ums, &umlen);`
     umlen = unmetafy(&mut ums);
     ums.truncate(umlen);
@@ -8823,27 +8785,8 @@ pub fn is_sb_niceformat(s: &str) -> i32 {
     let mut ptr: usize; // c:5940 char *ptr
     let eptr: usize; // c:5940 char *eptr
 
-    ums = s.as_bytes().to_vec(); // c:5942 ums = ztrdup(s)
-                                 // c:5943 — `untokenize(ums);` inlined byte-level (lex::untokenize is
-                                 // char-based; C does byte-walks). Mirrors `Src/exec.c:2077-2099`.
-    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\"; // ZTOKENS — Src/lex.c:38
-    let mut detok: Vec<u8> = Vec::with_capacity(ums.len());
-    for &c in &ums {
-        // exec.c:2082
-        if (0x84u8..=0xa1u8).contains(&c) {
-            // exec.c:2083 itok(c)
-            if c != 0xa1u8 {
-                // exec.c:2086 c != Nularg
-                let idx = (c - 0x84) as usize;
-                if idx < ztokens_table.len() {
-                    detok.push(ztokens_table[idx]);
-                }
-            }
-        } else {
-            detok.push(c); // exec.c:2094
-        }
-    }
-    ums = detok;
+    // c:5942-5943 — `ums = ztrdup(s); untokenize(ums);`
+    ums = crate::token_char::untokenize_bytes(s.as_bytes());
     umlen = unmetafy(&mut ums); // c:5944 ptr = unmetafy(ums, &umlen)
     ums.truncate(umlen);
     eptr = umlen; // c:5945 eptr = ptr + umlen
@@ -9141,17 +9084,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // copies a printable unit through STILL METAFIED. A raw byte therefore has
     // to go back out as `Meta` + `byte ^ 32`; pushing `b as char` would emit the
     // UTF-8 encoding of U+00`b` instead of the one byte the shell holds.
-    // A decoded char whose code point equals a token byte (U+0083..U+00A2,
-    // e.g. NBSP = Bnullkeep) goes back out metafied too: bare, it would be read
-    // as that token by remnulargs/untokenize downstream.
     let push_metachar = |out: &mut String, mc: MetaChar| match mc {
-        MetaChar::Ch(c) if (0x83..=0xa2).contains(&(c as u32)) => {
-            let mut buf = [0u8; 4];
-            for &b in c.encode_utf8(&mut buf).as_bytes() {
-                out.push(char::from(Meta));
-                out.push(char::from(b ^ 32));
-            }
-        }
         MetaChar::Ch(c) => out.push(c),
         MetaChar::Raw(b) => {
             out.push(char::from(Meta));
@@ -9293,8 +9226,8 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                                    // never printability-tested. That half of the test was missing from
                                    // this arm, and `meta_chars` cannot express it: it demetafies, and a
                                    // token is NOT a metafied pair (this port stores C's token bytes as
-                                   // the chars U+0080..U+00A2), so `unmetafy_str` re-encodes one as its
-                                   // two UTF-8 bytes. `Inbrace` therefore fell through to the c:6435
+                                   // PUA chars, crate::token_char), so `unmetafy_str` re-encodes one as its
+                                   // UTF-8 bytes. `Inbrace` therefore fell through to the c:6435
                                    // not-printable arm and `quotename(Inbrace)` produced `$'\302\217'`
                                    // where C produces the raw byte that `untokenize` then maps back to
                                    // `{` — which is what the c:1931-2218 brace tail in zle_tricky.c
@@ -9311,7 +9244,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             let mut prev_meta = false;
             for c in s.chars() {
                 let cu = c as u32;
-                if !prev_meta && cu < 0x100 && crate::ported::ztype_h::itok(cu as u8) {
+                if !prev_meta && crate::token_char::itok_char(c) {
                     if !run.is_empty() {
                         let seg = meta_chars(&run);
                         m.resize(m.len() + seg.len(), false);
@@ -9341,6 +9274,9 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // which marks the elements that really were tokens in `s`.
         let cval = |k: usize| -> u32 {
             match mcs[k] {
+                // A token element holds its C byte; hand back its token char.
+                MetaChar::Raw(b) if tokmask[k] => crate::token_char::token_char_from_byte(b)
+                    .map_or(b as u32, |t| t as u32),
                 MetaChar::Raw(b) => b as u32,
                 MetaChar::Ch(c) => c as u32,
             }
@@ -9655,7 +9591,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // placeholding for the empty string": `if (inull(*u)) u++;`. Without
         // the skip, `${(qqqq):-""}` quoted the Nularg itself (`$'¡'` under LANG=C).
         let s = match s.chars().next() {
-            Some(c) if (c as u32) < 0x100 && crate::ported::ztype_h::inull(c as u8) => {
+            Some(c) if crate::token_char::token_byte(c).is_some_and(crate::ported::ztype_h::inull) => {
                 &s[c.len_utf8()..]
             }
             _ => s,
@@ -9771,7 +9707,7 @@ pub(crate) fn quotedzputs(s: &str) -> String {
                         // UTF-8, so the faithful transposition walks CHARS (a byte
                         // walk Latin-1-casts every multibyte char: em-dash E2 80 94
                         // became "â" + a token byte that downstream passes ate).
-                        // Token chars (Dash U+009B, Meta U+0083) are codepoints here.
+                        // Token chars (Dash U+E09B, Meta U+0083) are codepoints here.
         let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
         while i < chars_v.len() {
@@ -12056,7 +11992,7 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
     while let Some(c) = chars.next() {
         apply_pending_mask(&mut result, &mut pending_mask);
         flush_tbuf(&mut result, &mut tbuf_mark, &mut ignoring);
-        if !(0x84..=0xa1).contains(&(c as u32))
+        if !(0xe084..=0xe0a1).contains(&(c as u32))
             && !(c == '\\' && matches!(chars.peek(), Some('u') | Some('U')))
         {
             tbuf_mark = Some(result.len());
@@ -14302,16 +14238,16 @@ mod tests {
             "c:2285 — ASCII text has no token bytes"
         );
         // Pound (0x84) — first token byte.
-        let s: String = std::iter::once(0x84u8 as char).collect();
+        let s: String = std::iter::once(crate::token_char::token_char_from_byte(0x84).unwrap()).collect();
         assert!(
             has_token(&s),
             "c:2285 — Pound (0x84) is itok → has_token=true"
         );
         // Bang (0x9c) — last_normal_tok.
-        let s: String = std::iter::once(0x9cu8 as char).collect();
+        let s: String = std::iter::once(crate::token_char::token_char_from_byte(0x9c).unwrap()).collect();
         assert!(has_token(&s), "c:2285 — Bang (0x9c) is itok");
         // Nularg (0xa1) — upper bound.
-        let s: String = std::iter::once(0xa1u8 as char).collect();
+        let s: String = std::iter::once(crate::token_char::token_char_from_byte(0xa1).unwrap()).collect();
         assert!(has_token(&s), "c:2285 — Nularg (0xa1) is itok");
     }
 
@@ -14333,7 +14269,7 @@ mod tests {
     /// `Src/utils.c:2284-2285` — C scans BYTES because its input is
     /// METAFIED (a raw >= 0x80 byte is stored as Meta + `byte ^ 32`), so a
     /// bare 0x84..=0xA1 there is always a token. zshrs keeps UTF-8 `str`
-    /// and stores tokens as CHARS in U+0084..=U+00A1 — the representation
+    /// and stores tokens as PUA CHARS (crate::token_char) — the representation
     /// `untokenize` (lex.rs:5990) tests with `c as u32` — so the byte walk
     /// mistook a UTF-8 CONTINUATION byte for a token. `—` U+2014 is E2 80
     /// 94, `→` U+2192 is E2 86 92, `“` U+201C is E2 80 9C: 0x94, 0x86,
@@ -14351,13 +14287,13 @@ mod tests {
             );
             assert!(
                 !has_token(s),
-                "c:2285 — {s:?} holds no token CHAR (U+0084..=U+00A1); only \
+                "c:2285 — {s:?} holds no token CHAR (crate::token_char); only \
                  UTF-8 continuation bytes that happen to land in the ITOK range"
             );
         }
         // Still true for a genuine token char, so the fix isn't a blanket
         // "non-ASCII is never a token".
-        assert!(has_token("plain\u{9c}"), "c:2285 — Bang (U+009C) is a token");
+        assert!(has_token("plain\u{e09c}"), "c:2285 — Bang (U+E09C) is a token");
     }
 
     /// `Src/utils.c:5271` — `else if (itok(*s)) { s++; continue; }`. C may
@@ -14378,7 +14314,7 @@ mod tests {
             assert_eq!(
                 out,
                 s.as_bytes(),
-                "c:5271 — {s:?} holds no token CHAR (U+0084..=U+00A1); zputs \
+                "c:5271 — {s:?} holds no token CHAR (crate::token_char); zputs \
                  must emit it verbatim, not drop UTF-8 continuation bytes"
             );
         }
@@ -14386,8 +14322,8 @@ mod tests {
         // Meta pair still decodes to the escaped byte (c:5269-5270), so
         // the fix is not a blanket "pass everything through".
         let mut out: Vec<u8> = Vec::new();
-        let _ = zputs("a\u{9c}b", &mut out);
-        assert_eq!(out, b"ab", "c:5271 — Bang (U+009C) is a token, skipped");
+        let _ = zputs("a\u{e09c}b", &mut out);
+        assert_eq!(out, b"ab", "c:5271 — Bang (U+E09C) is a token, skipped");
         let mut out: Vec<u8> = Vec::new();
         let _ = zputs("a\u{83}\u{c1}b", &mut out);
         assert_eq!(

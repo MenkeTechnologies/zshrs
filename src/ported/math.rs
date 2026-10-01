@@ -790,7 +790,7 @@ pub(crate) fn mathevall(prec_tp: prec_type) -> Result<mnumber, String> {
 
     // Skip leading whitespace and Nularg
     while let Some(c) = peek() {
-        if c.is_whitespace() || c == '\u{a1}' {
+        if c.is_whitespace() || c == '\u{e0a1}' {
             advance();
         } else {
             break;
@@ -5957,7 +5957,7 @@ mod tests {
         assert_eq!(r, 0, "c:1532 — empty input returns 0");
 
         // Nularg-only → also empty after skip, returns 0.
-        let nularg_only: String = "\u{a1}".to_string();
+        let nularg_only: String = "\u{e0a1}".to_string();
         let r = mathevalarg(&nularg_only);
         assert_eq!(
             r, 0,
@@ -5969,7 +5969,7 @@ mod tests {
         assert_eq!(r, 3, "c:1534 — non-empty expression evaluates normally");
 
         // Nularg-prefixed expression → skipped, then evaluated.
-        let nularg_plus: String = "\u{a1}5 * 5".to_string();
+        let nularg_plus: String = "\u{e0a1}5 * 5".to_string();
         let r = mathevalarg(&nularg_plus);
         assert_eq!(
             r, 25,
@@ -5993,7 +5993,7 @@ mod tests {
         assert_eq!(r.l, 0, "c:1494 — empty input value is 0");
 
         // Nularg-only string → also returns 0 (c:1489-1494).
-        let nularg_only: String = "\u{a1}".to_string();
+        let nularg_only: String = "\u{e0a1}".to_string();
         let r = matheval(&nularg_only)
             .expect("Nularg-only must return 0 (treated as empty after skip)");
         assert_eq!(
@@ -6003,7 +6003,7 @@ mod tests {
         assert_eq!(r.l, 0, "c:1494 — Nularg-only input value is 0");
 
         // Nularg + expression → evaluates the expression (c:1490 skip).
-        let nularg_plus: String = "\u{a1}1 + 2".to_string();
+        let nularg_plus: String = "\u{e0a1}1 + 2".to_string();
         let r =
             matheval(&nularg_plus).expect("Nularg prefix must be skipped and expression evaluated");
         let v = if r.type_ == MN_FLOAT { r.d as i64 } else { r.l };

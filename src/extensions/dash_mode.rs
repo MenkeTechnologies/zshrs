@@ -381,7 +381,7 @@ pub fn strip_replacement_backslashes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
-        if c == '\u{9f}' {
+        if c == '\u{e09f}' {
             // Bnull marker: the following char is an ALREADY-cooked literal (a
             // `\\`/`\$`/`` \` `` the DQ lexer defanged). Keep both bytes so it
             // survives — bash does not re-strip an already-processed backslash.

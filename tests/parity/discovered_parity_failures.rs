@@ -222,7 +222,7 @@ fn parity_double_hash_requires_extendedglob() {
 
 /// `echo "\$var"` produces literal `\$var` in zsh (the `\$` is the
 /// dollar-escape inside double quotes, preserved verbatim by echo).
-/// Fixed: BUILTIN_EXPAND_TEXT now emits canonical Bnull (\u{9f})
+/// Fixed: BUILTIN_EXPAND_TEXT now emits canonical Bnull (\u{e09f})
 /// marker instead of \x00 for escaped specials. The Bnull stripper
 /// at subst.rs:643 (port of Src/zsh.h:195) already keeps the
 /// escaped char verbatim — `\x00` was silently ignored, letting
@@ -604,7 +604,7 @@ fn parity_array_zip_with_missing_right_operand() {
 /// `a=(1 2 3); b=(x y z); echo "${a:^b}"` — DQ short-zip. Fixed by
 /// propagating qt=true into the BRIDGE_BRACE_ARRAY fast path.
 ///   - compile_zsh.rs:2654 prefixes the inner body with Qstring
-///     (\u{8c}) when `dq_context_depth > 0` or the raw word is
+///     (\u{e08c}) when `dq_context_depth > 0` or the raw word is
 ///     Dnull-wrapped
 ///   - fusevm_bridge.rs::BUILTIN_BRIDGE_BRACE_ARRAY strips the
 ///     Qstring prefix and bumps `exec.in_dq_context` for the
@@ -646,7 +646,7 @@ fn parity_array_zip_unquoted_still_interleaves() {
 /// a zsh PARSE ERROR ("condition expected") per c:Src/parse.c:2601-
 /// 2625 (par_cond_2 binary-op set excludes `-a`/`-o`). Fixed:
 /// parse_cond_primary at parse.rs:8076 rejects Dash+a/o (handles
-/// both ASCII `-` and the lexer's Dash token \u{9b}), sets errflag
+/// both ASCII `-` and the lexer's Dash token \u{e09b}), sets errflag
 /// + LEXERR. The error propagates: par_cond returns None →
 /// par_cmd returns None → par_sublist returns None → execute_script
 /// at vm_helper.rs:1200 sees the post-parse errflag and aborts before

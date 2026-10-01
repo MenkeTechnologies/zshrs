@@ -652,9 +652,9 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     //
     // The Rust parser below uses a raw-ASCII internal encoding with
     // `\X` as its literal form; transpose the C contract onto it:
-    //   token char (U+0084..=U+009E)         -> ztokens[c - Pound]  (meta)
-    //   Bnull/Bnullkeep + X (U+009F/U+00A0)  -> \X                  (literal)
-    //   Nularg (U+00A1)                      -> dropped
+    //   token char (U+E084..=U+E09E)         -> ztokens[c - Pound]  (meta)
+    //   Bnull/Bnullkeep + X (U+E09F/U+E0A0)  -> \X                  (literal)
+    //   Nularg (U+E0A1)                      -> dropped
     //   Meta (U+0083) + X                    -> \X                  (literal)
     //   raw `\` + X                          -> \X  passthrough — raw
     //       backslash is the parser's established Bnull-equivalent
@@ -719,19 +719,19 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         while i < chars.len() {
             let c = chars[i];
             let cu = c as u32;
-            if cu == 0x91 {
+            if cu == 0xe091 {
                 in_bracket = true; // Inbrack — fall through to the generic `[` emit.
-            } else if cu == 0x92 {
+            } else if cu == 0xe092 {
                 in_bracket = false; // Outbrack — fall through to the generic `]` emit.
             }
-            if cu == 0x88 && !in_bracket {
+            if cu == 0xe088 && !in_bracket {
                 // Inpar — opens a group.
                 open_paren += 1;
                 opush!('(');
                 i += 1;
                 continue;
             }
-            if cu == 0x8a && !in_bracket {
+            if cu == 0xe08a && !in_bracket {
                 // Outpar — closes an open group, else literal `)`.
                 if open_paren > 0 {
                     open_paren -= 1;
@@ -764,7 +764,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 }
                 continue;
             }
-            if cu == 0x9f || cu == 0xa0 {
+            if cu == 0xe09f || cu == 0xe0a0 {
                 // Bnull / Bnullkeep — payload is a literal.
                 if i + 1 < chars.len() {
                     opush!('\\');
@@ -775,14 +775,14 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 }
                 continue;
             }
-            if cu == 0xa1 {
+            if cu == 0xe0a1 {
                 // Nularg — stripped like C's remnulargs.
                 i += 1;
                 continue;
             }
-            if (0x84..=0x9e).contains(&cu) {
+            if (0xe084..=0xe09e).contains(&cu) {
                 // Token -> the raw metachar the parser dispatches on.
-                opush!(ztokens[(cu - 0x84) as usize]);
+                opush!(ztokens[(cu - 0xe084) as usize]);
                 i += 1;
                 continue;
             }
@@ -5211,7 +5211,7 @@ pub fn clearpatterndisables() {
 /// ONLY token codes, never literal ASCII metachars.
 ///
 /// The walk is over chars: zshrs strings hold token chars as
-/// codepoints (Star = U+0087) and the input layer is char-domain
+/// codepoints (Star = U+E087) and the input layer is char-domain
 /// (input.rs `shingetline`/`ingetc`), so the char is the unit that
 /// the metafied byte is in C. Scanning bytes here false-positived
 /// on UTF-8 continuation bytes of plain text (`↔` = E2 86 94
@@ -5224,7 +5224,7 @@ pub fn haswilds(str: &str) -> bool {
     // c:4306
     // c:4325-4372 — every `return 1` needs one of Inpar / Bar / Star /
     // Inbrack / Inang / Quest / Pound / Hat, and all eight are TOKEN
-    // chars in U+0080..U+00A0, i.e. non-ASCII. An all-ASCII string
+    // chars (crate::token_char), i.e. non-ASCII. An all-ASCII string
     // therefore always falls through to c:4374 `return 0`. Answer it
     // with libcore's precompiled word-at-a-time `<[u8]>::is_ascii`
     // instead of building a `Vec<char>` to walk: `haswilds` runs once

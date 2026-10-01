@@ -74,7 +74,9 @@ pub const SHARD_MAGIC: u32 = 0x5A52414C;
 /// different build, so v2 entries are not trustworthy and this bump
 /// discards them. v3 stamps the resolved directory, a SHA-256 of the
 /// exact definition text, and the producing binary's identity.
-pub const SHARD_FORMAT_VERSION: u32 = 3;
+/// v4: token chars moved to the Private Use Area (crate::token_char); v3
+/// chunks hold the old U+0084..=U+00A2 tokens.
+pub const SHARD_FORMAT_VERSION: u32 = 4;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]

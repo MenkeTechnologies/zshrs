@@ -435,7 +435,7 @@ pub fn ingetc() -> Option<char> {
             // `itok()` lets future `inittyptab` adjustments propagate
             // automatically with zero changes here.
             let cu32 = c as u32;
-            if cu32 < 256 && itok(cu32 as u8) {
+            if crate::token_char::itok_char(c) {
                 continue;
             }
 
@@ -1492,14 +1492,16 @@ mod tests {
         // typtab default may have ITOK bits unset).
         inittyptab();
 
-        let bang: char = '\u{009c}'; // Bang (LAST_NORMAL_TOK)
-        let nularg: char = '\u{00a1}'; // Nularg (last ITOK byte)
+        let bang: char = crate::ported::zsh_h::Bang; // LAST_NORMAL_TOK
+        let nularg: char = crate::ported::zsh_h::Nularg; // last ITOK byte
         let mut s = String::new();
         s.push('a');
         s.push(bang);
         s.push('b');
         s.push(nularg);
         s.push('c');
+        // Real U+009C text is not a token (crate::token_char): kept.
+        s.push('\u{009c}');
         inputsetline(&s, 0);
         // c:328 — itok bytes must be silently skipped; visible
         // sequence is "abc".
@@ -1514,6 +1516,7 @@ mod tests {
             Some('c'),
             "c:328 — Nularg (0xa1) must be skipped (ITOK bit set per inittyptab)"
         );
+        assert_eq!(ingetc(), Some('\u{009c}'), "data U+009C is not the Bang token");
     }
 
     /// `Src/input.c:328` — non-token bytes (e.g. Meta=0x83) must NOT
@@ -1527,7 +1530,7 @@ mod tests {
         reset_input();
         inittyptab();
         let meta: char = '\u{0083}'; // Meta lead byte — IMETA only
-        let marker: char = '\u{00a2}'; // Marker — IMETA only per c:4197
+        let marker: char = crate::ported::zsh_h::Marker; // IMETA only per c:4197
         let mut s = String::new();
         s.push('x');
         s.push(meta);

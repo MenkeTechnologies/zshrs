@@ -126,7 +126,7 @@ thread_local! {
     /// Stores the METAFIED BYTE form of each long-string, exactly
     /// matching what C's strs region holds. `String` would not work
     /// here because Rust strings carry UTF-8-encoded chars (e.g.
-    /// the Dash marker `\u{9b}` UTF-8-encodes to two bytes
+    /// the Dash marker `\u{e09b}` UTF-8-encodes to two bytes
     /// `\xc2 \x9b`) while C stores zsh markers as single bytes
     /// (raw `\x9b`). Storing Vec<u8> lets us write byte-for-byte
     /// what C writes after metafy.
@@ -401,8 +401,8 @@ pub fn ecstrcode(s: &str) -> u32 {
     // through unchanged. See utils.c:4195-4204 typtab init.
     //
     // Rust receives chars. Classify each:
-    //   - codepoint in [0x83..=0xa2] → marker char (emitted by lex
-    //     post-metafy in C); 1 byte unchanged
+    //   - a lex token char (PUA, crate::token_char) → its single C
+    //     token byte, as C's lexer adds it
     //   - codepoint < 0x80 → ASCII, 1 byte unchanged
     //   - codepoint in [0x80..=0x82] or [0xa3..=0xff] → single
     //     non-imeta byte (user-input range); 1 byte unchanged
@@ -420,7 +420,7 @@ pub fn ecstrcode(s: &str) -> u32 {
         // `script_bytes::decode_script_bytes` produces for a non-UTF-8
         // script byte, and what `utils::unmetafy_str` reverses at the
         // write boundary. U+0083 is never a token: the token range starts
-        // at `Pound` U+0084 (zsh_h.rs:159), so this cannot swallow a lex
+        // at `Pound` U+E084 (zsh_h.rs:159), so this cannot swallow a lex
         // marker. Recover the byte and let the imeta rule below decide,
         // exactly as C does for a byte read off the file: `caf\xe9`
         // stores `63 61 66 e9` like zsh, where re-encoding the pair as
@@ -445,10 +445,11 @@ pub fn ecstrcode(s: &str) -> u32 {
         if cu < 0x80 {
             // ASCII — single byte unchanged.
             c_bytes.push(cu as u8);
-        } else if (0x83..=0xa2).contains(&cu) {
-            // Lex marker char (emitted by lex.add(Marker) post-metafy
-            // in C). Stored as single byte.
-            c_bytes.push(cu as u8);
+        } else if let Some(b) = crate::token_char::token_byte(ch) {
+            // Lex token char: stored as its single C byte, as C's lexer
+            // adds it. Real U+0083..=U+00A2 text is not a token and takes
+            // the metafy branch below like any other data.
+            c_bytes.push(b);
         } else {
             // User-input char: encode UTF-8 then metafy imeta bytes.
             // For chars 0x80..=0xff (like 'º' U+00BA), UTF-8 gives
@@ -1508,7 +1509,7 @@ fn par_cmd(zsh_construct: bool) -> Option<ZshCommand> {
             // human-readable source text, so quotes/sigils are shown
             // verbatim (`"quoted"`, `'x'`, `$var`). zshrs's `tokstr()`
             // still carries the inline quote MARKERS (Dnull/Snull/Stringg
-            // = `\u{9e}`/`\u{9d}`/`\u{85}`); emitting it raw printed the
+            // = `\u{e09e}`/`\u{e09d}`/`\u{e085}`); emitting it raw printed the
             // marker bytes and dropped the visible quotes. Untokenize to
             // the display form: Dnull→`"`, Snull→`'`, Stringg→`$`, Bnull→`\`.
             let bad = crate::ported::lex::untokenize_preserve_quotes(&tokstr().unwrap_or_default());
@@ -1674,7 +1675,7 @@ fn par_for() -> Option<ZshCommand> {
     // Outpar tokens. Detect that shape and split it manually.
     let list = if tok() == STRING_LEX
         && tokstr()
-            .map(|s| s.starts_with('\u{88}') && s.ends_with('\u{8a}'))
+            .map(|s| s.starts_with('\u{e088}') && s.ends_with('\u{e08a}'))
             .unwrap_or(false)
     {
         let raw = tokstr().unwrap_or_default();
@@ -1686,7 +1687,7 @@ fn par_for() -> Option<ZshCommand> {
         // expansion pass (which strictly requires Inbrace TOKEN per
         // Src/glob.c:hasbraces) would skip the word entirely.
         // Split only on UNTOKENIZED whitespace at the top level —
-        // tokenized characters (TOKEN range \u{84}..\u{a1}) are part
+        // tokenized characters (TOKEN range \u{e084}..\u{e0a1}) are part
         // of one word; bare ASCII spaces / tabs separate words.
         let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
             ..raw
@@ -2618,9 +2619,9 @@ fn par_funcdef() -> Option<ZshCommand> {
     // Handle options like -T and function names. Two subtleties:
     //
     //   1. Flags: zsh's lexer encodes a leading `-` as
-    //      `zsh_h::Dash` (`\u{9b}`, `Src/zsh.h:182`) inside the String tokstr.
+    //      `zsh_h::Dash` (`\u{e09b}`, `Src/zsh.h:182`) inside the String tokstr.
     //      The previous `s.starts_with('-')` check failed for
-    //      `\u{9b}T`, so `function -T NAME { body }` slipped the
+    //      `\u{e09b}T`, so `function -T NAME { body }` slipped the
     //      `-T` token into `names` and the function got registered
     //      as `T` plus the intended `NAME`.
     //
@@ -2686,9 +2687,9 @@ fn par_funcdef() -> Option<ZshCommand> {
                 // c:1702 — `if ((*tokstr == Inbrace || *tokstr == '{') && !tokstr[1])`.
                 // Body opener can be either the literal `{` (early-return
                 // path at lex.c:1141-1144 / lex.rs LX2_INBRACE cmdpos
-                // branch) or the Inbrace marker `\u{8f}` (lex.c:1420
+                // branch) or the Inbrace marker `\u{e08f}` (lex.c:1420
                 // post-switch add(c) where c was rewritten via lextok2).
-                if s == "{" || s == "\u{8f}" {
+                if s == "{" || s == "\u{e08f}" {
                     break;
                 }
                 // c:Src/parse.c par_funcdef — `if (tokstr[0] == Dash &&
@@ -2738,10 +2739,10 @@ fn par_funcdef() -> Option<ZshCommand> {
 
     // Body opener: real Inbrace OR a String containing the literal `{`
     // (early-return path) OR a String containing the Inbrace marker
-    // `\u{8f}` (bct++ path post-switch add). C parse.c:1702 handles
+    // `\u{e08f}` (bct++ path post-switch add). C parse.c:1702 handles
     // both string forms via `*tokstr == Inbrace || *tokstr == '{'`.
     let body_opener_is_string_brace =
-        tok() == STRING_LEX && tokstr().map(|s| s == "{" || s == "\u{8f}").unwrap_or(false);
+        tok() == STRING_LEX && tokstr().map(|s| s == "{" || s == "\u{e08f}").unwrap_or(false);
     if tok() == INBRACE_TOK || body_opener_is_string_brace {
         // Capture body_start BEFORE the lexer advances past the
         // first body token. After the previous zshlex consumed
@@ -3562,7 +3563,7 @@ pub fn par_cond_2() -> i32 {
     let s1 = tokstr().unwrap_or_default();
     // c:2549 — `dble = (s1 && IS_DASH(*s1) && (!n_testargs ||
     // strspn(s1+1, "abcd...") == 1) && !s1[2]);` — IS_DASH covers
-    // BOTH `-` and Dash (`\u{9b}`). The raw tokstr inside `[[ ... ]]`
+    // BOTH `-` and Dash (`\u{e09b}`). The raw tokstr inside `[[ ... ]]`
     // carries Dash as a marker byte, so `starts_with('-')` alone
     // matches only ASCII dashes and misses every `-z`, `-d`, `-r`
     // etc. — every such cond emitted the AST-only `condition
@@ -3679,9 +3680,9 @@ pub fn par_cond_2() -> i32 {
 /// Emits wordcode for unary cond `[ -X b ]` or modular `[ -mod b ]`.
 pub fn par_cond_double(a: &str, b: &str) -> i32 {
     // c:2628 — `if (!IS_DASH(a[0]) || !a[1])` — char-based, since
-    // Dash is a single code point (`\u{9b}`) and `a.len() < 2` on
+    // Dash is a single code point (`\u{e09b}`) and `a.len() < 2` on
     // BYTES would still pass for "-z" but fail for the marker form
-    // `\u{9b}z` (2 bytes). Walk by chars.
+    // `\u{e09b}z` (2 bytes). Walk by chars.
     let ac: Vec<char> = a.chars().collect();
     if ac.is_empty() || !IS_DASH(ac[0]) || ac.len() < 2 {
         // c:Src/parse.c:2629 COND_ERROR macro expansion:
@@ -3769,8 +3770,8 @@ thread_local! {
 /// C does `(b[0] == Equals || b[0] == '=')` etc., matching BOTH the
 /// raw ASCII operator char AND its tokenized marker form per
 /// `Src/zsh.h:159-194`:
-///   Equals = `\u{8d}`, Outang = `\u{95}`, Inang  = `\u{94}`,
-///   Tilde  = `\u{98}`, Bang   = `\u{9c}`, Dash   = `\u{9b}`.
+///   Equals = `\u{e08d}`, Outang = `\u{e095}`, Inang  = `\u{e094}`,
+///   Tilde  = `\u{e098}`, Bang   = `\u{e09c}`, Dash   = `\u{e09b}`.
 /// Inside `[[ ... ]]` the lexer emits the marker bytes — comparing
 /// against literal-only `b"=="` misses every cond op.
 /// (The previous Rust port had the doc comment values wrong:
@@ -6163,7 +6164,7 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     if simple.words.is_empty() || !simple.assigns.is_empty() {
         return None;
     }
-    let suffix = "\u{88}\u{8a}"; // Inpar + Outpar
+    let suffix = "\u{e088}\u{e08a}"; // Inpar + Outpar
                                  // Find the FIRST word ending in `()`. zsh accepts the
                                  // multi-name shorthand `fna fnb fnc() { body }` (parse.c:
                                  // par_funcdef wordlist) — words[0..i-1] are extra names,
@@ -7779,16 +7780,16 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
     if tok() == STRING_LEX {
         let s = tokstr().unwrap_or_default();
         let bytes = s.as_bytes();
-        // C: `tokstr[0] == Dash` (Dash = 0x9b = 0xc2 0x9b in UTF-8).
-        // First byte of UTF-8 `\u{9b}` is 0xc2; the char `'-'` is 0x2d.
+        // C: `tokstr[0] == Dash`. The Dash token is U+E09B (crate::token_char),
+        // `0xee 0x82 0x9b` in UTF-8; the plain char `'-'` is 0x2d.
         // Match either form.
-        let first_is_dash = (bytes.len() >= 2 && bytes[0] == 0xc2 && bytes[1] == 0x9b)
+        let first_is_dash = bytes.starts_with(&[0xee, 0x82, 0x9b])
             || (bytes.len() >= 1 && bytes[0] == b'-');
         if first_is_dash {
             // c:1691-1694 — `if (tokstr[1] == 'T' && !tokstr[2]) { ++do_tracing; zshlex(); }`
             // After the leading dash byte(s), check remaining bytes.
-            let after_dash = if bytes.len() >= 2 && bytes[0] == 0xc2 && bytes[1] == 0x9b {
-                &bytes[2..]
+            let after_dash = if bytes.starts_with(&[0xee, 0x82, 0x9b]) {
+                &bytes[3..]
             } else {
                 &bytes[1..]
             };
@@ -7804,8 +7805,8 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
                 let mut idx = 0;
                 let mut dashes = 0;
                 while idx < b2.len() && dashes < 2 {
-                    if b2[idx] == 0xc2 && idx + 1 < b2.len() && b2[idx + 1] == 0x9b {
-                        idx += 2;
+                    if b2[idx..].starts_with(&[0xee, 0x82, 0x9b]) {
+                        idx += 3;
                         dashes += 1;
                     } else if b2[idx] == b'-' {
                         idx += 1;
@@ -7827,10 +7828,10 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
     while tok() == STRING_LEX {
         let s = tokstr().unwrap_or_default();
         let bytes = s.as_bytes();
-        // First byte tests for Inbrace marker (0x8f → UTF-8 `0xc2 0x8f`) or `{`,
+        // First char tests for the Inbrace token (U+E08F, UTF-8 `0xee 0x82 0x8f`) or `{`,
         // and length-1 check (`!tokstr[1]`).
         let is_inbrace_only = (bytes.len() == 1 && bytes[0] == b'{')
-            || (bytes.len() == 2 && bytes[0] == 0xc2 && bytes[1] == 0x8f);
+            || (bytes == [0xee, 0x82, 0x8f]);
         if is_inbrace_only {
             set_tok(INBRACE_TOK);
             break;
@@ -8224,28 +8225,28 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 let mut idx = 0usize;
                 while idx < bytes.len() {
                     let ch = bytes[idx];
-                    if ch == '\u{91}' /* Inbrack */
-                        || ch == '=' || ch == '+' || ch == '\u{8d}'
+                    if ch == '\u{e091}' /* Inbrack */
+                        || ch == '=' || ch == '+' || ch == '\u{e08d}'
                     /* Equals */
                     {
                         break;
                     }
                     idx += 1;
                 }
-                if idx < bytes.len() && bytes[idx] == '\u{91}'
+                if idx < bytes.len() && bytes[idx] == '\u{e091}'
                 /* Inbrack */
                 {
                     // c:1855 — `skipparens(Inbrack, Outbrack, &ptr);`.
                     let byte_off: usize = bytes[..idx].iter().map(|c| c.len_utf8()).sum();
                     let mut cursor: &str = &raw_str[byte_off..];
-                    let _ = crate::ported::utils::skipparens('\u{91}', '\u{92}', &mut cursor);
+                    let _ = crate::ported::utils::skipparens('\u{e091}', '\u{e092}', &mut cursor);
                     let consumed = raw_str.len() - byte_off - cursor.len();
                     let advance_chars = raw_str[byte_off..byte_off + consumed].chars().count();
                     idx += advance_chars;
                     // Continue scanning for `=` / `+` after the `]`.
                     while idx < bytes.len() {
                         let ch = bytes[idx];
-                        if ch == '=' || ch == '+' || ch == '\u{8d}' {
+                        if ch == '=' || ch == '+' || ch == '\u{e08d}' {
                             break;
                         }
                         idx += 1;
@@ -8265,7 +8266,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // c:1860 — `if (*ptr == '=') { *ptr = '\0'; str = ptr + 1; }
                 //          else equalsplit(tokstr, &str);`
                 let name: String = bytes[..name_end].iter().collect();
-                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
+                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{e08d}')
                 {
                     idx + 1
                 } else {
@@ -8276,12 +8277,12 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // subst); if found, bump cmplx (suppresses Z_SIMPLE).
                 let vbytes: Vec<char> = value.chars().collect();
                 for (i, ch) in vbytes.iter().enumerate() {
-                    if i + 1 < vbytes.len() && vbytes[i + 1] == '\u{88}'
+                    if i + 1 < vbytes.len() && vbytes[i + 1] == '\u{e088}'
                     /* Inpar */
                     {
-                        if *ch == '\u{8d}' /* Equals */
-                            || *ch == '\u{94}' /* Inang */
-                            || *ch == '\u{96}'
+                        if *ch == '\u{e08d}' /* Equals */
+                            || *ch == '\u{e094}' /* Inang */
+                            || *ch == '\u{e096}'
                         /* OutangProc */
                         {
                             *cmplx = 1;
@@ -8403,7 +8404,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // c:1934-1974 — `{var}>file` brace-FD detection.
                 // `if (!isset(IGNOREBRACES) && *tokstr == Inbrace)`
                 let bytes = s.as_bytes();
-                let first_is_inbrace = (bytes.len() >= 2 && bytes[0] == 0xc2 && bytes[1] == 0x8f)
+                let first_is_inbrace = bytes.starts_with(&[0xee, 0x82, 0x8f])
                     || (bytes.len() >= 1 && bytes[0] == b'{');
                 if !isset(IGNOREBRACES) && first_is_inbrace {
                     // c:1937-1938 — `char *eptr = tokstr + strlen(tokstr) - 1;`
@@ -8411,14 +8412,14 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                     // C tests `*eptr == Outbrace` (0x90 marker or `}`) AND
                     // there's content between `{` and `}` (`ptr > tokstr + 1`).
                     let last_two_outbrace = bytes.len() >= 2
-                        && (bytes.ends_with(&[0xc2, 0x90]) || bytes.last() == Some(&b'}'));
-                    let opener_len = if bytes.len() >= 2 && bytes[0] == 0xc2 && bytes[1] == 0x8f {
-                        2
+                        && (bytes.ends_with(&[0xee, 0x82, 0x90]) || bytes.last() == Some(&b'}'));
+                    let opener_len = if bytes.starts_with(&[0xee, 0x82, 0x8f]) {
+                        3
                     } else {
                         1
                     };
-                    let closer_len = if bytes.len() >= 2 && bytes.ends_with(&[0xc2, 0x90]) {
-                        2
+                    let closer_len = if bytes.ends_with(&[0xee, 0x82, 0x90]) {
+                        3
                     } else if bytes.last() == Some(&b'}') {
                         1
                     } else {
@@ -8493,34 +8494,34 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 let mut idx = 0usize;
                 while idx < bytes.len() {
                     let ch = bytes[idx];
-                    if ch == '\u{91}' /* Inbrack */
-                        || ch == '=' || ch == '+' || ch == '\u{8d}'
+                    if ch == '\u{e091}' /* Inbrack */
+                        || ch == '=' || ch == '+' || ch == '\u{e08d}'
                     /* Equals */
                     {
                         break;
                     }
                     idx += 1;
                 }
-                if idx < bytes.len() && bytes[idx] == '\u{91}'
+                if idx < bytes.len() && bytes[idx] == '\u{e091}'
                 /* Inbrack */
                 {
                     // c:2014 — `skipparens(Inbrack, Outbrack, &ptr);`.
                     let byte_off: usize = bytes[..idx].iter().map(|c| c.len_utf8()).sum();
                     let mut cursor: &str = &raw[byte_off..];
-                    let _ = crate::ported::utils::skipparens('\u{91}', '\u{92}', &mut cursor);
+                    let _ = crate::ported::utils::skipparens('\u{e091}', '\u{e092}', &mut cursor);
                     let consumed = raw.len() - byte_off - cursor.len();
                     let advance_chars = raw[byte_off..byte_off + consumed].chars().count();
                     idx += advance_chars;
                     while idx < bytes.len() {
                         let ch = bytes[idx];
-                        if ch == '=' || ch == '+' || ch == '\u{8d}' {
+                        if ch == '=' || ch == '+' || ch == '\u{e08d}' {
                             break;
                         }
                         idx += 1;
                     }
                 }
                 let name: String = bytes[..idx].iter().collect();
-                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
+                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{e08d}')
                 {
                     idx + 1
                 } else {
@@ -9028,9 +9029,9 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
             // c:2303-2305 — `if (tokstr[0] == OutangProc && tokstr[1] == Inpar)
             //                  type = REDIR_OUTPIPE;`
             let nb: Vec<char> = name.chars().collect();
-            if nb.len() >= 2 && nb[0] == '\u{96}' && nb[1] == '\u{88}' {
+            if nb.len() >= 2 && nb[0] == '\u{e096}' && nb[1] == '\u{e088}' {
                 r#type = REDIR_OUTPIPE;
-            } else if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
+            } else if nb.len() >= 2 && nb[0] == '\u{e094}' && nb[1] == '\u{e088}' {
                 // c:2306-2307 — `else if (tokstr[0] == Inang && tokstr[1] == Inpar) YYERROR;`
                 YYERROR!(ECUSED.get());
             }
@@ -9038,17 +9039,17 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
         // c:2309-2315 — REDIR_READ
         x if x == REDIR_READ => {
             let nb: Vec<char> = name.chars().collect();
-            if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
+            if nb.len() >= 2 && nb[0] == '\u{e094}' && nb[1] == '\u{e088}' {
                 r#type = REDIR_INPIPE;
-            } else if nb.len() >= 2 && nb[0] == '\u{96}' && nb[1] == '\u{88}' {
+            } else if nb.len() >= 2 && nb[0] == '\u{e096}' && nb[1] == '\u{e088}' {
                 YYERROR!(ECUSED.get());
             }
         }
         // c:2316-2320 — REDIR_READWRITE
         x if x == REDIR_READWRITE => {
             let nb: Vec<char> = name.chars().collect();
-            if nb.len() >= 2 && (nb[0] == '\u{94}' || nb[0] == '\u{96}') && nb[1] == '\u{88}' {
-                r#type = if nb[0] == '\u{94}' {
+            if nb.len() >= 2 && (nb[0] == '\u{e094}' || nb[0] == '\u{e096}') && nb[1] == '\u{e088}' {
+                r#type = if nb[0] == '\u{e094}' {
                     REDIR_INPIPE
                 } else {
                     REDIR_OUTPIPE
@@ -9846,20 +9847,20 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
     // onto LEX_HEREDOCS (Rust-only AST-glue Vec carrying parsed-out
     // terminator/strip_tabs/quoted metadata for downstream AST
     // consumers). Quoted terminators (`<<'EOF'` / `<<"EOF"` / `<<\EOF`)
-    // disable expansion in the body — Snull `\u{9d}` marks single-quote,
-    // Dnull `\u{9e}` marks double-quote, Bnull `\u{9f}` marks
+    // disable expansion in the body — Snull `\u{e09d}` marks single-quote,
+    // Dnull `\u{e09e}` marks double-quote, Bnull `\u{e09f}` marks
     // backslash-escaped chars.
     let heredoc_idx = if matches!(rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
         let strip_tabs = rtype == REDIR_HEREDOCDASH;
-        let quoted = name.contains('\u{9d}')
-            || name.contains('\u{9e}')
-            || name.contains('\u{9f}')
+        let quoted = name.contains('\u{e09d}')
+            || name.contains('\u{e09e}')
+            || name.contains('\u{e09f}')
             || name.starts_with('\'')
             || name.starts_with('"');
         let term = name
             .chars()
             .filter(|c| {
-                *c != '\'' && *c != '"' && *c != '\u{9d}' && *c != '\u{9e}' && *c != '\u{9f}'
+                *c != '\'' && *c != '"' && *c != '\u{e09d}' && *c != '\u{e09e}' && *c != '\u{e09f}'
             })
             .collect::<String>();
         // c:2290-2296 — `for (hd = &hdocs; *hd; hd = &(*hd)->next);
@@ -11653,7 +11654,7 @@ esac"#;
     }
 
     /// c:2628 — `par_cond_double` checks `IS_DASH(ac[0])` so any
-    /// non-dash first char fails. The lexed Dash sentinel `\u{9b}`
+    /// non-dash first char fails. The lexed Dash sentinel `\u{e09b}`
     /// MUST be accepted alongside ASCII `-` (the lexer emits it
     /// inside `[[ ... ]]`). Regression dropping the sentinel form
     /// would break every cond expression after lexing.
@@ -11665,7 +11666,7 @@ esac"#;
         // We can't easily probe the wordcode emission here, but
         // the function MUST return without panic for both forms.
         let _ = par_cond_double("-z", "foo");
-        let _ = par_cond_double("\u{9b}z", "foo");
+        let _ = par_cond_double("\u{e09b}z", "foo");
     }
 
     /// c:2643 — case sensitivity: uppercase `EQ` MUST NOT match `eq`.
@@ -12045,7 +12046,7 @@ esac"#;
                 assert_eq!(s.words.len(), 3);
                 assert_eq!(s.words[0], "ls");
                 assert_eq!(s.words[2], "/tmp");
-                // s.words[1] contains the metafied `-` (`\u{9b}` Dash byte)
+                // s.words[1] contains the metafied `-` (`\u{e09b}` Dash byte)
                 // followed by "la". Don't pin the exact byte form (it
                 // may change); pin that the length is right.
                 assert_eq!(s.words[1].chars().count(), 3, "`-la` is 3 chars");

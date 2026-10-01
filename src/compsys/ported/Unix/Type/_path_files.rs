@@ -1997,7 +1997,7 @@ fn unquote(s: &str) -> String {
 /// to the Tilde token it expects.
 fn expand_tilde(spec: &str) -> Option<String> {
     let rest = spec.strip_prefix('~')?;
-    filesubstr(&format!("\u{98}{}", rest), false)
+    filesubstr(&format!("\u{e098}{}", rest), false)
 }
 
 fn is_dir(p: &str) -> bool {

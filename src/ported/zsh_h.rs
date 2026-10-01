@@ -141,69 +141,69 @@ pub const DEFAULT_IFS_SH: &str = " \t\n"; // c:153
 // (PascalCase). One exception: C `String` (`0x85`) would shadow Rust's
 // `std::string::String`, so we use `Stringg` for that single token.
 #[allow(non_upper_case_globals)]
-pub const Pound: char = '\u{84}'; // c:159 #
-pub const Stringg: char = '\u{85}'; // c:160 $ — C `String` (renamed: collides with std::string::String)
+pub const Pound: char = '\u{e084}'; // c:159 #
+pub const Stringg: char = '\u{e085}'; // c:160 $ — C `String` (renamed: collides with std::string::String)
 #[allow(non_upper_case_globals)]
-pub const Hat: char = '\u{86}'; // c:161 ^
+pub const Hat: char = '\u{e086}'; // c:161 ^
 #[allow(non_upper_case_globals)]
-pub const Star: char = '\u{87}'; // c:162 *
+pub const Star: char = '\u{e087}'; // c:162 *
 #[allow(non_upper_case_globals)]
-pub const Inpar: char = '\u{88}'; // c:163 (
+pub const Inpar: char = '\u{e088}'; // c:163 (
 #[allow(non_upper_case_globals)]
-pub const Inparmath: char = '\u{89}'; // c:164 ((
+pub const Inparmath: char = '\u{e089}'; // c:164 ((
 #[allow(non_upper_case_globals)]
-pub const Outpar: char = '\u{8a}'; // c:165 )
+pub const Outpar: char = '\u{e08a}'; // c:165 )
 #[allow(non_upper_case_globals)]
-pub const Outparmath: char = '\u{8b}'; // c:166 ))
+pub const Outparmath: char = '\u{e08b}'; // c:166 ))
 #[allow(non_upper_case_globals)]
-pub const Qstring: char = '\u{8c}'; // c:167 "$"
+pub const Qstring: char = '\u{e08c}'; // c:167 "$"
 #[allow(non_upper_case_globals)]
-pub const Equals: char = '\u{8d}'; // c:168 =
+pub const Equals: char = '\u{e08d}'; // c:168 =
 #[allow(non_upper_case_globals)]
-pub const Bar: char = '\u{8e}'; // c:169 |
+pub const Bar: char = '\u{e08e}'; // c:169 |
 #[allow(non_upper_case_globals)]
-pub const Inbrace: char = '\u{8f}'; // c:170 {
+pub const Inbrace: char = '\u{e08f}'; // c:170 {
 #[allow(non_upper_case_globals)]
-pub const Outbrace: char = '\u{90}'; // c:171 }
+pub const Outbrace: char = '\u{e090}'; // c:171 }
 #[allow(non_upper_case_globals)]
-pub const Inbrack: char = '\u{91}'; // c:172 [
+pub const Inbrack: char = '\u{e091}'; // c:172 [
 #[allow(non_upper_case_globals)]
-pub const Outbrack: char = '\u{92}'; // c:173 ]
+pub const Outbrack: char = '\u{e092}'; // c:173 ]
 #[allow(non_upper_case_globals)]
-pub const Tick: char = '\u{93}'; // c:174 `
+pub const Tick: char = '\u{e093}'; // c:174 `
 #[allow(non_upper_case_globals)]
-pub const Inang: char = '\u{94}'; // c:175 <
+pub const Inang: char = '\u{e094}'; // c:175 <
 #[allow(non_upper_case_globals)]
-pub const Outang: char = '\u{95}'; // c:176 >
+pub const Outang: char = '\u{e095}'; // c:176 >
 #[allow(non_upper_case_globals)]
-pub const OutangProc: char = '\u{96}'; // c:177 >(...)
+pub const OutangProc: char = '\u{e096}'; // c:177 >(...)
 #[allow(non_upper_case_globals)]
-pub const Quest: char = '\u{97}'; // c:178 ?
+pub const Quest: char = '\u{e097}'; // c:178 ?
 #[allow(non_upper_case_globals)]
-pub const Tilde: char = '\u{98}'; // c:179 ~
+pub const Tilde: char = '\u{e098}'; // c:179 ~
 #[allow(non_upper_case_globals)]
-pub const Qtick: char = '\u{99}'; // c:180 "`"
+pub const Qtick: char = '\u{e099}'; // c:180 "`"
 #[allow(non_upper_case_globals)]
-pub const Comma: char = '\u{9a}'; // c:181 ,
+pub const Comma: char = '\u{e09a}'; // c:181 ,
 #[allow(non_upper_case_globals)]
-pub const Dash: char = '\u{9b}'; // c:182 -
+pub const Dash: char = '\u{e09b}'; // c:182 -
 #[allow(non_upper_case_globals)]
-pub const Bang: char = '\u{9c}'; // c:183 !
+pub const Bang: char = '\u{e09c}'; // c:183 !
 /// `LAST_NORMAL_TOK` constant.
 pub const LAST_NORMAL_TOK: char = Bang; // c:188
 
 #[allow(non_upper_case_globals)]
-pub const Snull: char = '\u{9d}'; // c:193
+pub const Snull: char = '\u{e09d}'; // c:193
 #[allow(non_upper_case_globals)]
-pub const Dnull: char = '\u{9e}'; // c:194
+pub const Dnull: char = '\u{e09e}'; // c:194
 #[allow(non_upper_case_globals)]
-pub const Bnull: char = '\u{9f}'; // c:195
+pub const Bnull: char = '\u{e09f}'; // c:195
 #[allow(non_upper_case_globals)]
-pub const Bnullkeep: char = '\u{a0}'; // c:200
+pub const Bnullkeep: char = '\u{e0a0}'; // c:200
 #[allow(non_upper_case_globals)]
-pub const Nularg: char = '\u{a1}'; // c:206
+pub const Nularg: char = '\u{e0a1}'; // c:206
 #[allow(non_upper_case_globals)]
-pub const Marker: char = '\u{a2}'; // c:224
+pub const Marker: char = '\u{e0a2}'; // c:224
 /// `SPECCHARS` constant.
 pub const SPECCHARS: &str = "#$^*()=|{}[]`<>?~;&\n\t \\\'\""; // c:228
 /// `PATCHARS` constant.
@@ -5028,14 +5028,14 @@ mod tests {
     #[test]
     fn parser_tokens_correct() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(Pound as u32, 0x84);
-        assert_eq!(Bang as u32, 0x9c);
-        assert_eq!(Snull as u32, 0x9d);
-        assert_eq!(Dnull as u32, 0x9e);
-        assert_eq!(Bnull as u32, 0x9f);
-        assert_eq!(Bnullkeep as u32, 0xa0);
-        assert_eq!(Nularg as u32, 0xa1);
-        assert_eq!(Marker as u32, 0xa2);
+        assert_eq!(crate::token_char::token_byte(Pound), Some(0x84));
+        assert_eq!(crate::token_char::token_byte(Bang), Some(0x9c));
+        assert_eq!(crate::token_char::token_byte(Snull), Some(0x9d));
+        assert_eq!(crate::token_char::token_byte(Dnull), Some(0x9e));
+        assert_eq!(crate::token_char::token_byte(Bnull), Some(0x9f));
+        assert_eq!(crate::token_char::token_byte(Bnullkeep), Some(0xa0));
+        assert_eq!(crate::token_char::token_byte(Nularg), Some(0xa1));
+        assert_eq!(crate::token_char::token_byte(Marker), Some(0xa2));
     }
 
     #[test]
@@ -5256,7 +5256,7 @@ mod tests {
     fn is_dash_recognises_both_ascii_and_lexed_token() {
         let _g = crate::test_util::global_state_lock();
         assert!(IS_DASH('-'), "ASCII '-' is dash");
-        assert!(IS_DASH('\u{9b}'), "lexed Dash token is dash");
+        assert!(IS_DASH('\u{e09b}'), "lexed Dash token is dash");
         assert!(!IS_DASH('+'), "non-dash chars must NOT match");
         assert!(!IS_DASH(' '), "space is not dash");
     }
@@ -5365,38 +5365,38 @@ mod tests {
     fn token_byte_values_match_c_zsh_h() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(Meta, 0x83, "c:144");
-        assert_eq!(Pound, '\u{84}', "c:159");
-        assert_eq!(Stringg, '\u{85}', "c:160");
-        assert_eq!(Hat, '\u{86}', "c:161");
-        assert_eq!(Star, '\u{87}', "c:162");
-        assert_eq!(Inpar, '\u{88}', "c:163");
-        assert_eq!(Inparmath, '\u{89}', "c:164");
-        assert_eq!(Outpar, '\u{8a}', "c:165");
-        assert_eq!(Outparmath, '\u{8b}', "c:166");
-        assert_eq!(Qstring, '\u{8c}', "c:167");
-        assert_eq!(Equals, '\u{8d}', "c:168");
-        assert_eq!(Bar, '\u{8e}', "c:169");
-        assert_eq!(Inbrace, '\u{8f}', "c:170");
-        assert_eq!(Outbrace, '\u{90}', "c:171");
-        assert_eq!(Inbrack, '\u{91}', "c:172");
-        assert_eq!(Outbrack, '\u{92}', "c:173");
-        assert_eq!(Tick, '\u{93}', "c:174");
-        assert_eq!(Inang, '\u{94}', "c:175");
-        assert_eq!(Outang, '\u{95}', "c:176");
-        assert_eq!(OutangProc, '\u{96}', "c:177");
-        assert_eq!(Quest, '\u{97}', "c:178");
-        assert_eq!(Tilde, '\u{98}', "c:179");
-        assert_eq!(Qtick, '\u{99}', "c:180");
-        assert_eq!(Comma, '\u{9a}', "c:181");
-        assert_eq!(Dash, '\u{9b}', "c:182");
-        assert_eq!(Bang, '\u{9c}', "c:183");
+        assert_eq!(Pound, '\u{e084}', "c:159");
+        assert_eq!(Stringg, '\u{e085}', "c:160");
+        assert_eq!(Hat, '\u{e086}', "c:161");
+        assert_eq!(Star, '\u{e087}', "c:162");
+        assert_eq!(Inpar, '\u{e088}', "c:163");
+        assert_eq!(Inparmath, '\u{e089}', "c:164");
+        assert_eq!(Outpar, '\u{e08a}', "c:165");
+        assert_eq!(Outparmath, '\u{e08b}', "c:166");
+        assert_eq!(Qstring, '\u{e08c}', "c:167");
+        assert_eq!(Equals, '\u{e08d}', "c:168");
+        assert_eq!(Bar, '\u{e08e}', "c:169");
+        assert_eq!(Inbrace, '\u{e08f}', "c:170");
+        assert_eq!(Outbrace, '\u{e090}', "c:171");
+        assert_eq!(Inbrack, '\u{e091}', "c:172");
+        assert_eq!(Outbrack, '\u{e092}', "c:173");
+        assert_eq!(Tick, '\u{e093}', "c:174");
+        assert_eq!(Inang, '\u{e094}', "c:175");
+        assert_eq!(Outang, '\u{e095}', "c:176");
+        assert_eq!(OutangProc, '\u{e096}', "c:177");
+        assert_eq!(Quest, '\u{e097}', "c:178");
+        assert_eq!(Tilde, '\u{e098}', "c:179");
+        assert_eq!(Qtick, '\u{e099}', "c:180");
+        assert_eq!(Comma, '\u{e09a}', "c:181");
+        assert_eq!(Dash, '\u{e09b}', "c:182");
+        assert_eq!(Bang, '\u{e09c}', "c:183");
         assert_eq!(LAST_NORMAL_TOK, Bang, "c:188 == Bang");
-        assert_eq!(Snull, '\u{9d}', "c:193");
-        assert_eq!(Dnull, '\u{9e}', "c:194");
-        assert_eq!(Bnull, '\u{9f}', "c:195");
-        assert_eq!(Bnullkeep, '\u{a0}', "c:200");
-        assert_eq!(Nularg, '\u{a1}', "c:206");
-        assert_eq!(Marker, '\u{a2}', "c:224");
+        assert_eq!(Snull, '\u{e09d}', "c:193");
+        assert_eq!(Dnull, '\u{e09e}', "c:194");
+        assert_eq!(Bnull, '\u{e09f}', "c:195");
+        assert_eq!(Bnullkeep, '\u{e0a0}', "c:200");
+        assert_eq!(Nularg, '\u{e0a1}', "c:206");
+        assert_eq!(Marker, '\u{e0a2}', "c:224");
     }
 
     /// `Src/zsh.h:226-232` — SPECCHARS / PATCHARS string literals.
@@ -5740,10 +5740,10 @@ mod tests {
         );
     }
 
-    /// Pound (lex marker) is in the imeta range 0x83..=0xa2.
+    /// Pound's C byte (the lex marker) is in the imeta range 0x83..=0xa2.
     #[test]
     fn zshh_corpus_pound_marker_in_imeta_range() {
-        let p = Pound as u32;
+        let p = crate::token_char::token_byte(Pound).expect("Pound is a token char") as u32;
         assert!(
             p >= 0x83 && p <= 0xa2,
             "Pound = {:#x} must be in imeta range 0x83..=0xa2",

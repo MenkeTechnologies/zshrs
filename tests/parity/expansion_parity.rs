@@ -1140,7 +1140,7 @@ mod magic_equals_cmd {
 
     // ── over-firing regression (see src/ported/subst.rs:2375-2390) ───────
     //
-    // c:Src/subst.c:799 keys on the Equals TOKEN (`\u{8d}`), which only the
+    // c:Src/subst.c:799 keys on the Equals TOKEN (`\u{e08d}`), which only the
     // LEXER writes for a source-level `=`. A `=` that arrives from a
     // parameter substitution is a raw byte and must stay literal — else
     // `${kv#a}` of `a=1` is read as `=1` → "1: not found".

@@ -1229,7 +1229,7 @@ fn tilde_expand(s: &str) -> String {
     if !s.starts_with('~') {
         return s.to_string();
     }
-    let tokenized = format!("\u{98}{}", &s[1..]);
+    let tokenized = format!("\u{e098}{}", &s[1..]);
     crate::ported::subst::filesubstr(&tokenized, false).unwrap_or_else(|| s.to_string())
 }
 

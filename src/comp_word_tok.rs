@@ -178,7 +178,7 @@ pub fn strip_nulls(tok: &str) -> String {
         }
         // c:1881-1882 — `else if (inull(*p)) skipchars = 1;`, chucked at
         // c:1920-1921.
-        let b = if (c as u32) < 0x100 { c as u32 as u8 } else { 0 };
+        let b = crate::token_char::token_byte(c).unwrap_or(0);
         if inull(b) {
             i += 1;
             continue;

@@ -82,11 +82,13 @@ pub fn wordcode_pool_str(bytes: &[u8]) -> String {
                 // SAFETY: `valid_up_to` guarantees this prefix is UTF-8.
                 out.push_str(unsafe { std::str::from_utf8_unchecked(valid) });
                 let b = after[0];
-                if (0x83..=0xa2).contains(&b) {
-                    // Token / marker byte (`Meta` 0x83, `Pound` 0x84 ..
-                    // `Marker` 0xa2 — zsh_h.rs:128-224): widen to the char
-                    // of the same codepoint, which IS zshrs's marker
-                    // representation.
+                if let Some(t) = crate::token_char::token_char_from_byte(b) {
+                    // Token byte (`Pound` 0x84 .. `Marker` 0xa2 —
+                    // zsh_h.rs:159-224): zshrs's token char for it.
+                    out.push(t);
+                } else if b == crate::ported::zsh_h::Meta {
+                    // A lone `Meta` byte widens to the Meta char, which is
+                    // how the rest of the tree spells it.
                     out.push(b as char);
                 } else {
                     // A raw byte of the user's TEXT that is not valid
@@ -135,7 +137,7 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
 
     while i < bytes.len() {
         let b = bytes[i];
-        // Token constants in zsh_h are `char` (Unicode \u{84}..\u{a1}).
+        // Token constants in zsh_h are `char` (Unicode \u{e084}..\u{e0a1}).
         // Tokenized strings encode them as the same byte value, so widen
         // the byte to char for the match.
         let c = b as char;
@@ -163,8 +165,8 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
             Snull | Dnull | Bnull | Nularg => {
                 // Skip null markers
             }
-            '\u{89}' => result.push_str("(("), // Inparmath
-            '\u{8b}' => result.push_str("))"), // Outparmath
+            '\u{e089}' => result.push_str("(("), // Inparmath
+            '\u{e08b}' => result.push_str("))"), // Outparmath
             _ if b >= 0x80 => {
                 // Unknown token, skip or try to represent
             }
@@ -716,13 +718,13 @@ impl<'a> WordcodeDecoder<'a> {
             let c2 = ((wc >> 11) & 0xff) as u8;
             let c3 = ((wc >> 19) & 0xff) as u8;
             if c1 != 0 {
-                s.push(c1 as char);
+                s.push(crate::token_char::token_char_from_byte(c1).unwrap_or(c1 as char));
             }
             if c2 != 0 {
-                s.push(c2 as char);
+                s.push(crate::token_char::token_char_from_byte(c2).unwrap_or(c2 as char));
             }
             if c3 != 0 {
-                s.push(c3 as char);
+                s.push(crate::token_char::token_char_from_byte(c3).unwrap_or(c3 as char));
             }
             s
         } else {

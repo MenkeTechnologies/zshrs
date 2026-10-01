@@ -139,7 +139,7 @@ pub struct ZshCompiler {
     /// (c:Src/init.c:1568), whose last command replaces the shell.
     pub exiting_tail_mode: u8,
     /// Depth tracker for "currently compiling inside double quotes".
-    /// Bumped when a parent word is DQ-wrapped (`\u{9e}…\u{9e}`) and
+    /// Bumped when a parent word is DQ-wrapped (`\u{e09e}…\u{e09e}`) and
     /// we recurse into its Expansion segments. Used so the
     /// `${(o/M/i/n/u)…}` fast paths know to pass the DQ-suppression
     /// sentinel to BUILTIN_PARAM_FLAG.
@@ -210,7 +210,7 @@ pub struct ZshCompiler {
     /// array entry). Distinct from assign_context_depth which is set
     /// for both forms.
     pub scalar_assign_depth: i32,
-    /// Depth tracker for "this word's outer `\u{9e}…\u{9e}` (Dnull) pair was
+    /// Depth tracker for "this word's outer `\u{e09e}…\u{e09e}` (Dnull) pair was
     /// SYNTHESIZED by the scalar-assignment glob-suppression wrap below, not
     /// typed by the user".
     ///
@@ -3057,7 +3057,7 @@ impl ZshCompiler {
         // raw string `=ls` and got `command not found: =ls`.
         //
         // The first byte after untokenize is ASCII `=` (the lexer emits
-        // Equals TOKEN \u{8d}, untokenize maps it back). EQUALS-option
+        // Equals TOKEN \u{e08d}, untokenize maps it back). EQUALS-option
         // gating happens inside equalsubstr at runtime — checking it
         // here would require duplicating the option lookup.
         // c:Src/subst.c:301-304 — `$'...'` is a `String Snull` (or `Qstring Snull`)
@@ -3876,20 +3876,20 @@ impl ZshCompiler {
             }
             self.word_emitted_glob = false;
             // Raw-word tilde probe: the lexer emits TOKEN chars where it
-            // already recognised the shape — Equals = \u{8d}, Tilde =
-            // \u{98} (zsh_h.rs:161/183) — and leaves literals elsewhere
+            // already recognised the shape — Equals = \u{e08d}, Tilde =
+            // \u{e098} (zsh_h.rs:161/183) — and leaves literals elsewhere
             // (e.g. '~' after ':' in a path-list value). Accept every
             // '='/':' × '~' spelling combination.
             let word_has_assign_tilde =
-                ["=~", ":~", "=\u{98}", ":\u{98}", "\u{8d}~", "\u{8d}\u{98}"]
+                ["=~", ":~", "=\u{e098}", ":\u{e098}", "\u{e08d}~", "\u{e08d}\u{e098}"]
                     .iter()
                     .any(|p| word.contains(p));
             // See the BUILTIN_MAGIC_EQUALS_PREFORK emit below.
             let magic_prefork = (head_is_magic_equals
                 || (head_is_typeset_magic && word_has_assign_tilde))
-                && !word.contains('\u{9d}')
-                && !word.contains('\u{9e}')
-                && !word.contains('\u{9f}');
+                && !word.contains('\u{e09d}')
+                && !word.contains('\u{e09e}')
+                && !word.contains('\u{e09f}');
             let word_globsubst = has_unquoted_param_or_subst(word);
             let outer_glob_defer = std::mem::replace(&mut self.argv_glob_defer, globlist_argv);
             let outer_word_globs = std::mem::replace(&mut self.argv_word_globs, false);
@@ -4178,7 +4178,7 @@ impl ZshCompiler {
         // disabling alias expansion. Without this untokenize, p10k's
         // `'builtin' 'local' '-a' 'arr'` failed with `command not found:
         // builtin` because the lookup table didn't contain the Snull-
-        // wrapped form `\u{9d}builtin\u{9d}`.
+        // wrapped form `\u{e09d}builtin\u{e09d}`.
         // Precommand-modifier strip for dispatch: `builtin foo`,
         // `command foo`, `exec foo`, `nocorrect foo`, `noglob foo`,
         // and `- foo` should dispatch as if the modifier weren't
@@ -4398,10 +4398,10 @@ impl ZshCompiler {
             // Treat as function/external dispatch via Op::CallFunction.
             // host.call_function checks aliases → functions → falls back
             // to host.exec for externals. Untokenize first so the
-            // lexer's META encoding of `-` (`\u{9b}`) and other special
+            // lexer's META encoding of `-` (`\u{e09b}`) and other special
             // chars doesn't reach the name table — without this,
             // `foo-bar()` registered cleanly but the call site looked
-            // up `foo\u{9b}bar` and missed the registered function.
+            // up `foo\u{e09b}bar` and missed the registered function.
             //
             // c:Src/subst.c:169 — `prefork` runs `remnulargs` BEFORE
             // any cmd-name lookup. remnulargs strips standalone Bnull
@@ -4622,11 +4622,11 @@ impl ZshCompiler {
         let has_glob_tokens = |r: &crate::parse::ZshRedir| -> bool {
             let s = r.name.as_str();
             unquoted(s, '*')
-                || unquoted(s, '\u{87}') // Star (parse/tokens.rs:14)
+                || unquoted(s, '\u{e087}') // Star (parse/tokens.rs:14)
                 || unquoted(s, '?')
-                || unquoted(s, '\u{97}') // Quest (parse/tokens.rs:30)
+                || unquoted(s, '\u{e097}') // Quest (parse/tokens.rs:30)
                 || unquoted(s, '[')
-                || unquoted(s, '\u{91}') // Inbrack (parse/tokens.rs:24)
+                || unquoted(s, '\u{e091}') // Inbrack (parse/tokens.rs:24)
                 // c:Src/glob.c:2161 xpandredir — a redirect target that
                 // brace-expands to MULTIPLE words duplicates the redirect
                 // per word (MULTIOS), exactly like a glob match array.
@@ -4637,7 +4637,7 @@ impl ZshCompiler {
                 // opens its own fd (gated on MULTIOS by the runtime
                 // builtin, matching xpandredir's `isset(MULTIOS)`).
                 || unquoted(s, '{')
-                || unquoted(s, '\u{8f}') // Inbrace (parse/tokens.rs)
+                || unquoted(s, '\u{e08f}') // Inbrace (parse/tokens.rs)
         };
         // c:Src/glob.c:2161 xpandredir — `prefork(&fake, isset(MULTIOS) ? 0 :
         // PREFORK_SINGLE, NULL)`: under MULTIOS a parameter / command
@@ -5618,7 +5618,7 @@ impl ZshCompiler {
                 // paths call as well.
                 //
                 // GLOB_ASSIGN eligibility: the RHS carries an UNQUOTED glob
-                // TOKEN (Star \u{87} / Quest \u{97} / Inbrack \u{91}). Quoted
+                // TOKEN (Star \u{e087} / Quest \u{e097} / Inbrack \u{e091}). Quoted
                 // metas arrive as literal `*`/`?`/`[` (0x2a/0x3f/0x5b), so a
                 // token byte unambiguously means "unquoted glob pattern". This
                 // matches zsh: only literal unquoted patterns are globbed on
@@ -6238,7 +6238,7 @@ impl ZshCompiler {
         // `$^fpath/prompt_*_setup(N)`.
         //
         // Quote-safe by construction: only an UNQUOTED `$` is tokenized to
-        // Stringg (`\u{85}`) / Qstring (`\u{8c}`). Inside `'…'` or after a
+        // Stringg (`\u{e085}`) / Qstring (`\u{e08c}`). Inside `'…'` or after a
         // backslash the `$` stays a raw byte, so this scan cannot fire there —
         // `'$^b'` and `\$^b` remain literal, exactly as zsh has them.
         let s_rc_norm: String;
@@ -6256,7 +6256,7 @@ impl ZshCompiler {
             let mut i = 0usize;
             while i < ch.len() {
                 // Stringg (`$`) followed by a run of one flag char, then a name.
-                // A DQ `$` is Qstring (`\u{8c}`), not Stringg — `"$^b"` must
+                // A DQ `$` is Qstring (`\u{e08c}`), not Stringg — `"$^b"` must
                 // normalise too. Re-emit whichever token was there so the
                 // double-quote context is preserved.
                 //
@@ -6401,24 +6401,24 @@ impl ZshCompiler {
         };
         // ANSI-C quoted form: `$'a\tb'` arrives from the lexer as
         // `<META-Qstring><Snull>a<Bnull>tb<Snull>` —
-        // `\u{8c}\u{9d}a\u{9f}tb\u{9d}` per parse/src/lex:1767-1799.
-        // (Older comments reference `<META-$>` = `\u{85}`; accept either
+        // `\u{e08c}\u{e09d}a\u{e09f}tb\u{e09d}` per parse/src/lex:1767-1799.
+        // (Older comments reference `<META-$>` = `\u{e085}`; accept either
         // marker.) Strip the leading `<META-?>` + `<Snull>` and trailing
         // `<Snull>`, convert each Bnull+X back to `\X` so decode_ansi_c
         // sees real backslash escapes, then run the C-escape decoder.
         let first = s.chars().next();
-        if matches!(first, Some('\u{85}') | Some('\u{8c}')) && s.len() >= 3 {
+        if matches!(first, Some('\u{e085}') | Some('\u{e08c}')) && s.len() >= 3 {
             let inner = &s[first.unwrap().len_utf8()..];
-            // Body region is between the leading `\u{9d}` and the FIRST
-            // matching `\u{9d}` (Bnull-escapes excluded). Walk to the
+            // Body region is between the leading `\u{e09d}` and the FIRST
+            // matching `\u{e09d}` (Bnull-escapes excluded). Walk to the
             // close so chained `$'a'$'b'` (which has another Stringg
             // BEFORE the trailing Snull) falls through to the segment
             // path instead of emitting the inter-quote markers as
-            // literal text. Without this check, `inner.ends_with('\u{9d}')`
+            // literal text. Without this check, `inner.ends_with('\u{e09d}')`
             // matched the FINAL Snull and treated everything between
             // as a single ANSI-C body, leaking `Snull+Stringg+Snull`
             // bytes between the decoded `a` and `b`.
-            if inner.starts_with('\u{9d}') && inner.len() >= 6 {
+            if inner.starts_with('\u{e09d}') && inner.len() >= 6 {
                 let inner_chars: Vec<char> = inner.chars().collect();
                 let mut close_idx: Option<usize> = None;
                 let mut escaped = false;
@@ -6429,12 +6429,12 @@ impl ZshCompiler {
                         k += 1;
                         continue;
                     }
-                    if inner_chars[k] == '\u{9f}' {
+                    if inner_chars[k] == '\u{e09f}' {
                         escaped = true;
                         k += 1;
                         continue;
                     }
-                    if inner_chars[k] == '\u{9d}' {
+                    if inner_chars[k] == '\u{e09d}' {
                         close_idx = Some(k);
                         break;
                     }
@@ -6445,13 +6445,13 @@ impl ZshCompiler {
                 // after the close means the word continues with more
                 // content — let the segment splitter handle it.
                 if close_idx == Some(inner_chars.len() - 1) {
-                    let body_start = '\u{9d}'.len_utf8();
-                    let body_end = inner.len() - '\u{9d}'.len_utf8();
+                    let body_start = '\u{e09d}'.len_utf8();
+                    let body_end = inner.len() - '\u{e09d}'.len_utf8();
                     let body_raw = &inner[body_start..body_end];
                     // Bnull → `\` so `Bnull t` becomes `\t` for the decoder.
                     let body: String = body_raw
                         .chars()
-                        .map(|c| if c == '\u{9f}' { '\\' } else { c })
+                        .map(|c| if c == '\u{e09f}' { '\\' } else { c })
                         .collect();
                     let decoded = decode_ansi_c(&body);
                     let idx = self.builder.add_constant(Value::str(decoded.as_str()));
@@ -6482,11 +6482,11 @@ impl ZshCompiler {
         //      `y=${x:-'foo'}` → `${x:-<Snull>foo<Snull>}`. Falls
         //      through to the runtime expand path so the surrounding
         //      `${…}` still resolves while the SQ body stays literal.
-        if s.contains('\u{9d}') {
+        if s.contains('\u{e09d}') {
             let trimmed = s.trim_matches(|c: char| c.is_whitespace());
-            let whole_sq = trimmed.starts_with('\u{9d}')
-                && trimmed.ends_with('\u{9d}')
-                && trimmed.matches('\u{9d}').count() == 2;
+            let whole_sq = trimmed.starts_with('\u{e09d}')
+                && trimmed.ends_with('\u{e09d}')
+                && trimmed.matches('\u{e09d}').count() == 2;
             if whole_sq {
                 let cleaned = crate::lex::untokenize(s);
                 let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
@@ -6495,14 +6495,14 @@ impl ZshCompiler {
             }
             // `NAME=<Snull>…<Snull>` — assignment-arg shape with a
             // fully-SQ value. The lexer represents the `=` either as
-            // its META code (Equals = `\u{8d}`) or as a literal `=`
+            // its META code (Equals = `\u{e08d}`) or as a literal `=`
             // depending on context; accept both. Char-aware scan so
             // the multi-byte Snull/Equals markers don't trip the
             // byte-index slice path.
             let trimmed_chars: Vec<char> = trimmed.chars().collect();
             let eq_pos = trimmed_chars
                 .iter()
-                .position(|&c| c == '=' || c == '\u{8d}');
+                .position(|&c| c == '=' || c == '\u{e08d}');
             if let Some(eq_idx) = eq_pos {
                 let prefix: String = trimmed_chars[..eq_idx].iter().collect();
                 let value: String = trimmed_chars[eq_idx + 1..].iter().collect();
@@ -6523,9 +6523,9 @@ impl ZshCompiler {
                         .all(|c| c == '_' || c.is_ascii_alphanumeric());
                 let value_chars: Vec<char> = value.chars().collect();
                 let value_is_whole_sq = value_chars.len() >= 2
-                    && value_chars[0] == '\u{9d}'
-                    && *value_chars.last().unwrap() == '\u{9d}'
-                    && value_chars.iter().filter(|&&c| c == '\u{9d}').count() == 2;
+                    && value_chars[0] == '\u{e09d}'
+                    && *value_chars.last().unwrap() == '\u{e09d}'
+                    && value_chars.iter().filter(|&&c| c == '\u{e09d}').count() == 2;
                 if prefix_is_ident && value_is_whole_sq {
                     // Strip the SNULLs from the value, keep `name=` /
                     // `name+=` literal, emit the joined string as one
@@ -6566,16 +6566,16 @@ impl ZshCompiler {
                     let mut i = 0;
                     while i < value_chars.len() {
                         let c = value_chars[i];
-                        if c == '\u{9d}' {
+                        if c == '\u{e09d}' {
                             inside_sq = !inside_sq;
                             had_sq = true;
                         } else if !inside_sq {
-                            if c == '\u{9f}' && i + 1 < value_chars.len() {
+                            if c == '\u{e09f}' && i + 1 < value_chars.len() {
                                 // Bnull + char — escape pair, skip both
                                 i += 2;
                                 continue;
                             }
-                            if matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}') {
+                            if matches!(c, '$' | '`' | '\u{e085}' | '\u{e08c}' | '\u{e093}' | '\u{e099}') {
                                 all_inside_or_escaped = false;
                                 break;
                             }
@@ -6596,12 +6596,12 @@ impl ZshCompiler {
                     let mut i = 0;
                     while i < value_chars.len() {
                         let c = value_chars[i];
-                        if c == '\u{9d}' {
+                        if c == '\u{e09d}' {
                             inside_sq = !inside_sq;
                             i += 1;
                             continue;
                         }
-                        if !inside_sq && c == '\u{9f}' && i + 1 < value_chars.len() {
+                        if !inside_sq && c == '\u{e09f}' && i + 1 < value_chars.len() {
                             decoded.push(value_chars[i + 1]);
                             i += 2;
                             continue;
@@ -6635,12 +6635,12 @@ impl ZshCompiler {
         // `"[[ test ]]"` (DQ marks literal) because the runtime
         // BUILTIN_EXPAND_TEXT mode-1 strip-outer-DQ logic only fires
         // on whole-word DQ wrap, not on the `NAME=…` shape.
-        if s.contains('\u{9e}') {
+        if s.contains('\u{e09e}') {
             let trimmed = s.trim_matches(|c: char| c.is_whitespace());
             let trimmed_chars: Vec<char> = trimmed.chars().collect();
             let eq_pos = trimmed_chars
                 .iter()
-                .position(|&c| c == '=' || c == '\u{8d}');
+                .position(|&c| c == '=' || c == '\u{e08d}');
             if let Some(eq_idx) = eq_pos {
                 let prefix: String = trimmed_chars[..eq_idx].iter().collect();
                 let value: String = trimmed_chars[eq_idx + 1..].iter().collect();
@@ -6660,9 +6660,9 @@ impl ZshCompiler {
                         .all(|c| c == '_' || c.is_ascii_alphanumeric());
                 let value_chars: Vec<char> = value.chars().collect();
                 let value_is_whole_dq = value_chars.len() >= 2
-                    && value_chars[0] == '\u{9e}'
-                    && *value_chars.last().unwrap() == '\u{9e}'
-                    && value_chars.iter().filter(|&&c| c == '\u{9e}').count() == 2;
+                    && value_chars[0] == '\u{e09e}'
+                    && *value_chars.last().unwrap() == '\u{e09e}'
+                    && value_chars.iter().filter(|&&c| c == '\u{e09e}').count() == 2;
                 // Only take the literal shortcut when the DQ body
                 // has no `$`/`` ` ``/`\\` escape that would need
                 // runtime expansion. Fall through to the bridge for
@@ -6675,7 +6675,7 @@ impl ZshCompiler {
                 };
                 let needs_runtime = inner_chars
                     .iter()
-                    .any(|c| matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}'));
+                    .any(|c| matches!(c, '$' | '`' | '\u{e085}' | '\u{e08c}' | '\u{e093}' | '\u{e099}'));
                 if prefix_is_ident && value_is_whole_dq && !needs_runtime {
                     let mut inner: String = inner_chars.iter().collect();
                     // c:Src/subst.c:3649 remnulargs — strip the DQ quote
@@ -6717,13 +6717,13 @@ impl ZshCompiler {
             return;
         }
 
-        // Bnull marker (`\u{9f}`) means "the next char is literal" — used
+        // Bnull marker (`\u{e09f}`) means "the next char is literal" — used
         // by the lexer for backslash-escaped specials (`\$`, `\`, etc.).
         // Fast-paths that match `$NAME` shapes on the un-tokenized form
         // would mis-route here (the `$` was escaped). Skip the fast paths
         // and fall through to the runtime expand which honors the original
         // `"\$..."` form via untokenize_preserve_quotes.
-        let has_bnull = s.contains('\u{9f}');
+        let has_bnull = s.contains('\u{e09f}');
 
         // A Bnull escape that sits INSIDE the subscript brackets (after
         // the `[`/Inbrack) is safe for the bare-subscript fast paths:
@@ -6737,12 +6737,12 @@ impl ZshCompiler {
         // (Inpar / Bnull) that the array flag-parser couldn't read, so
         // `\?` was globbed as `?` instead of literal-matched.
         let bnull_in_subscript = {
-            let inbrack = s.find('\u{91}').or_else(|| s.find('[')); // Inbrack
-            let bnull = s.find('\u{9f}'); // Bnull
+            let inbrack = s.find('\u{e091}').or_else(|| s.find('[')); // Inbrack
+            let bnull = s.find('\u{e09f}'); // Bnull
             matches!((inbrack, bnull), (Some(ib), Some(bn)) if bn > ib)
         };
 
-        // A word that BEGINS with a single-quote (Snull `\u{9d}`) marker has
+        // A word that BEGINS with a single-quote (Snull `\u{e09d}`) marker has
         // its leading `${` / `$name[` as LITERAL text: single quotes make
         // `$`, `{`, `[` ordinary chars. `untokenize(s)` strips the Snull
         // markers, so the `${…}` fast paths below (which pattern-match on the
@@ -6758,11 +6758,11 @@ impl ZshCompiler {
         // runs on `untokenize_preserve_quotes` (Snull→`'`, so the leading `'`
         // fails its `${` prefix check); the plain-`untoked` fast paths need
         // this explicit guard.
-        let sq_literal_opener = s.starts_with('\u{9d}');
+        let sq_literal_opener = s.starts_with('\u{e09d}');
 
         // Trigger detection. `$` / `` ` `` checks run on the
         // un-tokenized form because the lexer turns `$` into
-        // `\u{85}` (META-$) in `s` — the literal-char check on
+        // `\u{e085}` (META-$) in `s` — the literal-char check on
         // `s` would miss every expansion. Glob triggers (`*`,
         // `?`, `[`) however MUST run on `s` so the Snull/Dnull
         // bslashquote markers correctly suppress meta-interpretation
@@ -6775,8 +6775,8 @@ impl ZshCompiler {
         // even though the brackets are literally inside DQ.
         // Models c:Src/subst.c:282-330 `stringsubst`. C's expansion
         // trigger fires on lexer-emitted META tokens — `String`
-        // (\u{85}) / `Qstring` (\u{8c}) for `$`, `Tick` (\u{93}) /
-        // `Qtick` (\u{99}) for backtick. The Rust port can't be a
+        // (\u{e085}) / `Qstring` (\u{e08c}) for `$`, `Tick` (\u{e093}) /
+        // `Qtick` (\u{e099}) for backtick. The Rust port can't be a
         // pure-token check because not every caller into
         // compile_word_str hands us raw-lexer output: compile_assign's
         // subscript-key path runs the name through
@@ -6808,15 +6808,15 @@ impl ZshCompiler {
             let mut i = 0;
             while i < chars.len() {
                 let c = chars[i];
-                if c == '\u{9d}' {
+                if c == '\u{e09d}' {
                     inside_sq = !inside_sq;
                     i += 1;
                     continue;
                 }
                 if !inside_sq
-                    && (c == '\u{85}' || c == '\u{8c}')
+                    && (c == '\u{e085}' || c == '\u{e08c}')
                     && i + 1 < chars.len()
-                    && chars[i + 1] == '\u{9d}'
+                    && chars[i + 1] == '\u{e09d}'
                 {
                     i += 1;
                     continue;
@@ -6828,7 +6828,7 @@ impl ZshCompiler {
                         // `if ((qt = c == Qstring) || c == String)`
                         // and c:331 `else if ((qt = c == Qtick) ||
                         // c == Tick)`.
-                        '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}'
+                        '\u{e085}' | '\u{e08c}' | '\u{e093}' | '\u{e099}'
                         // Plus literal `$` / `` ` `` — Rust-port
                         // divergence: untokenize_preserve_quotes
                         // converts the META forms to ASCII at some
@@ -6847,12 +6847,12 @@ impl ZshCompiler {
         // Glob metacharacters arrive in two forms:
         //   - Literal char (`*`, `?`, `[`) — the lexer leaves them
         //     bare in some paths (e.g. SQ-stripped contexts)
-        //   - META-encoded (`\u{87}` Star, `\u{86}` Quest, `\u{91}`
+        //   - META-encoded (`\u{e087}` Star, `\u{e086}` Quest, `\u{e091}`
         //     Inbrack) — the lexer's primary tokenization
         // Trigger glob expansion when EITHER form appears unquoted.
         // Direct port of Src/pattern.c::patcompswitch which treats
         // both encodings as glob metas. Without the META branch,
-        // `echo *.toml` saw `\u{87}.toml` (no literal `*`) and
+        // `echo *.toml` saw `\u{e087}.toml` (no literal `*`) and
         // skipped expand_glob entirely → literal pattern emitted.
         // c:Src/subst.c:111-112 `prefork` invokes `keyvalpairelement`
         // BEFORE the globlist pass when the word is in PREFORK_ASSIGN
@@ -6867,7 +6867,7 @@ impl ZshCompiler {
         // shape (literal `[`, then a `]`, then `=` or `+=`).
         let in_assign = self.assign_context_depth > 0;
         let looks_like_kv_pair = in_assign
-            && (untoked.starts_with('[') || untoked.starts_with('\u{91}' /* Inbrack */))
+            && (untoked.starts_with('[') || untoked.starts_with('\u{e091}' /* Inbrack */))
             && {
                 // Find first `]` (or Outbrack TOKEN) and check that
                 // immediate follower is `=` (or `+=`).
@@ -6876,13 +6876,13 @@ impl ZshCompiler {
                     .iter()
                     .enumerate()
                     .skip(1)
-                    .find(|(_, &c)| c == ']' || c == '\u{92}' /* Outbrack */)
+                    .find(|(_, &c)| c == ']' || c == '\u{e092}' /* Outbrack */)
                     .map(|(i, _)| i);
                 end.is_some_and(|e| {
                     let after = chars.get(e + 1);
-                    matches!(after, Some('=') | Some('\u{8d}' /* Equals */))
+                    matches!(after, Some('=') | Some('\u{e08d}' /* Equals */))
                         || (after == Some(&'+')
-                            && matches!(chars.get(e + 2), Some('=') | Some('\u{8d}' /* Equals */)))
+                            && matches!(chars.get(e + 2), Some('=') | Some('\u{e08d}' /* Equals */)))
                 })
             };
         // c:Src/parse.c par_simple (intypeset) + c:Src/exec.c:4265 —
@@ -6906,11 +6906,11 @@ impl ZshCompiler {
         let trigger_glob = !looks_like_kv_pair
             && !is_typeset_assign_arg
             && (unquoted(s, '*')
-            || unquoted(s, '\u{87}')   // Star (parse/tokens.rs:14)
+            || unquoted(s, '\u{e087}')   // Star (parse/tokens.rs:14)
             || unquoted(s, '?')
-            || unquoted(s, '\u{97}')   // Quest (parse/tokens.rs:30)
+            || unquoted(s, '\u{e097}')   // Quest (parse/tokens.rs:30)
             || unquoted(s, '[')
-            || unquoted(s, '\u{91}')   // Inbrack (parse/tokens.rs:24)
+            || unquoted(s, '\u{e091}')   // Inbrack (parse/tokens.rs:24)
             // extendedglob `^pat` (negation) and `pat~excl` (exclusion).
             // `^` is a no-op without `setopt extendedglob`, but routing
             // through expand_glob lets the runtime decide. The unquoted
@@ -6930,23 +6930,23 @@ impl ZshCompiler {
             // when EXTENDEDGLOB is off, so routing literal-`#` words
             // through the bridge is a no-op in the off case (#89/#117
             // in docs/BUGS.md). The lexer META-encodes `#` as Pound
-            // (\u{84}); check both forms.
+            // (\u{e084}); check both forms.
             || unquoted(s, '#')
-            || unquoted(s, '\u{84}')
+            || unquoted(s, '\u{e084}')
             // zsh glob qualifiers: `*(.)` / `path(mh-1)` etc. The `(...)`
             // suffix triggers globbing even when the body has no other
             // glob metachar — needed for `/etc/hosts(mh-100)` style.
             // Conservative: require closing `)` at end and a bare `(`
             // somewhere before (no other meta chars in between).
             // Bnull-gate: backslash-escaped parens (`\(...\)`) must NOT
-            // fire. After untokenize the `\u{9f}` markers are gone, so
+            // fire. After untokenize the `\u{e09f}` markers are gone, so
             // `(abc)` looks like a qualifier suffix — check the raw `s`
             // for at least one un-escaped `(` and `)`. Bug #537.
             || (untoked.ends_with(')')
                 && untoked.contains('(')
                 && !untoked.contains('|')
-                && (unquoted(s, '(') || unquoted(s, '\u{88}'))
-                && (unquoted(s, ')') || unquoted(s, '\u{8a}')))
+                && (unquoted(s, '(') || unquoted(s, '\u{e088}'))
+                && (unquoted(s, ')') || unquoted(s, '\u{e08a}')))
             // Unclosed `(` (or `(` anywhere not already covered by the
             // qualifier-suffix / alternation arms above). C zsh's
             // `Src/pattern.c:4326-4335 haswilds` returns true on any
@@ -6957,9 +6957,9 @@ impl ZshCompiler {
             // `(abc` as "bad pattern: (abc" (#170 in docs/BUGS.md).
             // The runtime `zglob` short-circuits when SHGLOB is set, so
             // the over-trigger is a no-op for cases C would also skip.
-            // The lexer META-encodes `(` as Inpar (\u{88}); check both.
+            // The lexer META-encodes `(` as Inpar (\u{e088}); check both.
             || unquoted(s, '(')
-            || unquoted(s, '\u{88}')
+            || unquoted(s, '\u{e088}')
             // Glob alternation `(a|b|c)` is a primary zsh feature
             // (no extendedglob required). Direct port of zsh's
             // pattern.c P_BRANCH `|` at the path level —
@@ -6976,9 +6976,9 @@ impl ZshCompiler {
             // dropped the markers and `untoked.contains()` saw them
             // as unquoted glob alternation, routing the word through
             // expand_glob which then "bad pattern"-errored at runtime.
-            || ((unquoted(s, '(') || unquoted(s, '\u{88}'))
-                && (unquoted(s, '|') || unquoted(s, '\u{8e}'))
-                && (unquoted(s, ')') || unquoted(s, '\u{8a}')))
+            || ((unquoted(s, '(') || unquoted(s, '\u{e088}'))
+                && (unquoted(s, '|') || unquoted(s, '\u{e08e}'))
+                && (unquoted(s, ')') || unquoted(s, '\u{e08a}')))
             // zsh numeric range glob `<N-M>`: any `<…-…>` shape with
             // optional digits on either side outside a bracket-class.
             || has_numeric_range_glob(&untoked));
@@ -7018,7 +7018,7 @@ impl ZshCompiler {
         // became `a2` and stopped matching), and `[[ -n a{2,3} ]]` split one
         // operand into two words and returned 1 where zsh returns 0.
         //
-        // A DQ-marker-wrapped word (`\u{9e}…\u{9e}`) counts as the same state:
+        // A DQ-marker-wrapped word (`\u{e09e}…\u{e09e}`) counts as the same state:
         // braces are literal inside `"…"` (`print -r -- "{a,b}"` → `{a,b}`), and
         // the `=~` arm wraps its RHS in those markers precisely to reach
         // singsub semantics. Same spelling as `has_quote_markers` (line 4118).
@@ -7030,7 +7030,7 @@ impl ZshCompiler {
         let trigger_brace = !in_prefork_single && looks_like_brace_expansion(&untoked);
 
         // Process substitution `<(cmd)` / `>(cmd)`. The lexer marks the
-        // outer angle bracket with Inang (`\u{94}`) / Outang (`\u{95}`)
+        // outer angle bracket with Inang (`\u{e094}`) / Outang (`\u{e095}`)
         // and the parens as Inpar/Outpar. After untokenize, the form
         // is `<(...)` / `>(...)`. Compile the inner program as a
         // sub-chunk and emit ProcessSubIn/Out which wires up the
@@ -7118,7 +7118,7 @@ impl ZshCompiler {
         if !trigger_dollar && !trigger_glob && !trigger_tilde && !trigger_brace && !has_bnull {
             // Pure literal.
             //
-            // Bnull (`\u{9f}`) words have `\X` backslash escapes that
+            // Bnull (`\u{e09f}`) words have `\X` backslash escapes that
             // untokenize materializes back to literal `\` — emitting
             // them as LoadConst would print the raw backslash. C zsh's
             // c:Src/subst.c prefork → stringsubst → untokenize chain
@@ -7130,7 +7130,7 @@ impl ZshCompiler {
             //
             // NOTE: an earlier `strip_quote_markers` pass here removed
             // every `\x00` as a "bslashquote sentinel" — but the
-            // current lexer marks quoted chars with Bnull `\u{9f}`
+            // current lexer marks quoted chars with Bnull `\u{e09f}`
             // (lex.rs:1723/2124/2256), never `\x00`, so the only NULs
             // reaching this point are REAL data bytes decoded from
             // `$'\0'` (c:Src/utils.c getkeystring → raw NUL, written
@@ -7297,7 +7297,7 @@ impl ZshCompiler {
         // empty literal keeps its Dnull/Snull and anchors the edge node, which
         // the segment path honours (WORD_DROP_KEEPS_FIRST / _LAST).
         let quoted_affix_word =
-            (s.contains('\u{9d}') || s.contains('\u{9e}')) && !word_is_single_dq_span(s);
+            (s.contains('\u{e09d}') || s.contains('\u{e09e}')) && !word_is_single_dq_span(s);
         let bare_target = if !has_bnull && !quoted_affix_word {
             if untoked == "$@" || untoked == "$*" {
                 Some(&untoked[1..])
@@ -7315,7 +7315,7 @@ impl ZshCompiler {
         if let Some(name) = bare_target {
             let idx = self.builder.add_constant(Value::str(name));
             // Detect DQ context two ways: (a) the raw input `s` is
-            // DQ-wrapped (`\u{9e}$*\u{9e}`), or (b) we're inside a
+            // DQ-wrapped (`\u{e09e}$*\u{e09e}`), or (b) we're inside a
             // recursive compile_word_str whose parent set
             // dq_context_depth. zsh: `"$*"` joins by IFS first char,
             // `"$@"` keeps splice semantics (each positional its own
@@ -7466,8 +7466,8 @@ impl ZshCompiler {
                                 && key != "*"
                             {
                                 let quoted = self.dq_context_depth > 0
-                                    || s.contains('\u{9d}')
-                                    || s.contains('\u{9e}');
+                                    || s.contains('\u{e09d}')
+                                    || s.contains('\u{e09e}');
                                 self.emit_unbraced_subscript(nm, key, "", quoted);
                                 return;
                             }
@@ -7486,7 +7486,7 @@ impl ZshCompiler {
         // Dnull+$+a+Dnull+bar; after untokenize it looks like `$abar`
         // and the fast-path reads the wrong name). The bridge below
         // handles those correctly by routing through expand_string.
-        let has_quote_markers = s.contains('\u{9d}') || s.contains('\u{9e}');
+        let has_quote_markers = s.contains('\u{e09d}') || s.contains('\u{e09e}');
         // c:Src/subst.c:2622 (inull skip) + c:2696 (post-subexp skip)
         // + c:2993-3004 (operator gate) — quote markers INSIDE a
         // `${…}` body are paramsubst's business: `${(f)"$(cmd)"}` is
@@ -7502,9 +7502,9 @@ impl ZshCompiler {
             let mut found = false;
             for c in s.chars() {
                 match c {
-                    '\u{8f}' => depth += 1,                 // Inbrace
-                    '\u{90}' => depth = (depth - 1).max(0), // Outbrace
-                    '\u{9d}' | '\u{9e}' if depth > 0 => {
+                    '\u{e08f}' => depth += 1,                 // Inbrace
+                    '\u{e090}' => depth = (depth - 1).max(0), // Outbrace
+                    '\u{e09d}' | '\u{e09e}' if depth > 0 => {
                         found = true;
                         break;
                     }
@@ -7956,7 +7956,7 @@ impl ZshCompiler {
                 // empty elements survive (compiler-direct read, runtime
                 // in_dq_context==0). Detect quoting the same way the
                 // `$@`/`$*` arm does: the recursive dq-depth OR the raw
-                // token wrapped in DQ markers (`\u{9e}…\u{9e}`) — the
+                // token wrapped in DQ markers (`\u{e09e}…\u{e09e}`) — the
                 // brace form arrives 9e-wrapped with dq_depth==0.
                 // c:Src/subst.c:4226 — under `ssub` an array result is joined
                 // with `sepjoin(aval, NULL, 1)` (IFS[0]) and never split.
@@ -7984,8 +7984,8 @@ impl ZshCompiler {
                 // (`a=(x y ""); print -rl -- ${a}""` → `x` `y` ``).
                 if bid == crate::vm_helper::BUILTIN_GET_VAR
                     && self.word_seg_depth == 0
-                    && !s.contains('\u{9d}')
-                    && !s.contains('\u{9e}')
+                    && !s.contains('\u{e09d}')
+                    && !s.contains('\u{e09e}')
                 {
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_ELIDE_EMPTY, 1),
@@ -8562,7 +8562,7 @@ impl ZshCompiler {
         // text-expansion path emits BUILTIN_EXPAND_TEXT mode 1
         // which routes through multsub → prefork → stringsubst,
         // and the Qstring-preserving `untokenize_preserve_quotes`
-        // ensures the `$` is tokenized as `\u{8c}` so stringsubst
+        // ensures the `$` is tokenized as `\u{e08c}` so stringsubst
         // sees Qstring and sets qt=true. This is the C path.
         if !has_bnull && !flag_operand_quoted && !sq_literal_opener {
             if let Some((flags, name)) = parse_zsh_flag(&untoked) {
@@ -8765,7 +8765,7 @@ impl ZshCompiler {
                     {
                         // Carry the DQ context the same way the sibling
                         // BRIDGE_BRACE_ARRAY site below does: prefix the body with
-                        // Qstring (\u{8c}) so the bridge bumps `in_dq_context` and
+                        // Qstring (\u{e08c}) so the bridge bumps `in_dq_context` and
                         // `paramsubst_to_value` derives qt == true. Without it this
                         // opcode handed paramsubst a RAW `${...}` body with qt
                         // false, and c:Src/subst.c:4354's nulstring marking
@@ -9184,7 +9184,7 @@ impl ZshCompiler {
                         // qt sepjoin runs BEFORE the SUB_FILTER getmatch
                         // at c:3540, so `"${(M)a:#pat}"` tests ONE joined
                         // word, not each element. Prefix Qstring
-                        // (\u{8c}) — same DQ signal the zip path below
+                        // (\u{e08c}) — same DQ signal the zip path below
                         // uses — so BRIDGE_BRACE_ARRAY bumps
                         // in_dq_context and paramsubst sees qt=true.
                         // Without this, the filter ran per-element in DQ
@@ -9212,7 +9212,7 @@ impl ZshCompiler {
                             inner_safe
                         };
                         let body_text = if in_dq_ba {
-                            format!("\u{8c}{}", inner_safe)
+                            format!("\u{e08c}{}", inner_safe)
                         } else {
                             inner_safe
                         };
@@ -9314,13 +9314,13 @@ impl ZshCompiler {
                     || after_flags.contains(":^^")
                     || after_flags.contains(":^");
                 if has_array_op {
-                    // Prefix with Qstring (\u{8c}) to signal DQ to
+                    // Prefix with Qstring (\u{e08c}) to signal DQ to
                     // paramsubst_to_value via the body's leading
                     // marker; the bridge strips it before
                     // reconstruction. Mirrors how stringsubst at
                     // subst.rs:692 derives qt from `c == Qstring`.
                     let body_text = if in_dq {
-                        format!("\u{8c}{}", inner)
+                        format!("\u{e08c}{}", inner)
                     } else {
                         inner.to_string()
                     };
@@ -9417,7 +9417,7 @@ impl ZshCompiler {
                             //
                             // This arm compiles the NESTED `${${…}op}` shape.
                             // It handed the body to BRIDGE_BRACE_ARRAY without
-                            // the Qstring (\u{8c}) DQ marker, so the bridge
+                            // the Qstring (\u{e08c}) DQ marker, so the bridge
                             // never bumped `in_dq_context`, paramsubst ran with
                             // qt=false, and the INNER expansion applied its
                             // array flags: `"${${(o)a}//o/0}"` came out
@@ -9429,16 +9429,16 @@ impl ZshCompiler {
                             // compiles through the DQ-string splitter). A word
                             // that is ENTIRELY one quoted expansion — `"${…}"` —
                             // never bumps it; the lexer instead hands us the
-                            // token wrapped in Dnull (\u{9e}). Test both, the
+                            // token wrapped in Dnull (\u{e09e}). Test both, the
                             // same way the `:#` / zip arms above do, or the bare
                             // form keeps running the operator per-element:
                             // `"${${(u)a}%e}"` gave `on two thre four` instead of
                             // zsh's `one two three four`.
                             let in_dq =
-                                (s.len() >= 2 && s.starts_with('\u{9e}') && s.ends_with('\u{9e}'))
+                                (s.len() >= 2 && s.starts_with('\u{e09e}') && s.ends_with('\u{e09e}'))
                                     || self.dq_context_depth > 0;
                             let body_text = if in_dq {
-                                format!("\u{8c}{}", inner)
+                                format!("\u{e08c}{}", inner)
                             } else {
                                 inner.to_string()
                             };
@@ -9512,7 +9512,7 @@ impl ZshCompiler {
                     depth = (depth - 1).max(0);
                     false
                 }
-                '\u{9d}' | '\u{9e}' => depth == 0,
+                '\u{e09d}' | '\u{e09e}' => depth == 0,
                 _ => false,
             })
         };
@@ -9635,8 +9635,8 @@ impl ZshCompiler {
                 // inside `"…"` / `'…'`. Bug #39 in docs/BUGS.md.
                 //
                 // Shape: `${NAME[(@)…]:#PAT}` → raw s is
-                // `\u{85}\u{8f}NAME…:\u{84}PAT\u{90}` where
-                // `\u{84}` = Pound (the `#`) and `\u{90}` = Outbrace
+                // `\u{e085}\u{e08f}NAME…:\u{e084}PAT\u{e090}` where
+                // `\u{e084}` = Pound (the `#`) and `\u{e090}` = Outbrace
                 // (the closing `}`).
                 if let ParamModifierKind::FilterRemoveMatching { .. } = &modifier.kind {
                     if let Some(new_pat) = extract_filter_pat_from_raw_s(s) {
@@ -9715,13 +9715,13 @@ impl ZshCompiler {
                 // Word-split the result on IFS when the surrounding
                 // word is unquoted. zsh: `f $(echo a b c)` passes
                 // three args; `f "$(echo a b c)"` passes one. The
-                // outer DQ wrapper appears as a leading `\u{9e}` in
+                // outer DQ wrapper appears as a leading `\u{e09e}` in
                 // `s`; inside DQ context (dq_context_depth>0) we also
                 // skip the split. POSIX/SH_WORD_SPLIT semantics for
                 // the cmd-subst case — applies even without the
                 // option set because zsh splits cmd-subst by default
                 // when the arg is bare.
-                let in_dq = s.starts_with('\u{9e}') || self.dq_context_depth > 0;
+                let in_dq = s.starts_with('\u{e09e}') || self.dq_context_depth > 0;
                 let in_assign = self.assign_context_depth > 0;
                 if !in_dq && !in_assign {
                     self.builder
@@ -9765,7 +9765,7 @@ impl ZshCompiler {
         // runtime PENDING flag was never consumed and the default came out
         // as the literal `b|a` where zsh globs it to `b`.
         let has_glob_meta = default_word_may_glob(s);
-        let has_default_op = s.contains('-') || s.contains('+') || s.contains('\u{9b}');
+        let has_default_op = s.contains('-') || s.contains('+') || s.contains('\u{e09b}');
         let default_word_glob_bracket = self.word_seg_depth == 0
             && self.dq_context_depth == 0
             && self.scalar_assign_depth == 0 // scalar `v=${x:-*}` RHS doesn't glob
@@ -9881,7 +9881,7 @@ impl ZshCompiler {
                 // pattern wants variable expansion but no filesystem
                 // glob — `[[ "$PATH" != *"$SCRIPTS"* ]]`).
                 // A word is WHOLE-WORD double-quoted only when its outer
-                // Dnull (`\u{9e}`) pair is the SINGLE span covering
+                // Dnull (`\u{e09e}`) pair is the SINGLE span covering
                 // everything. `s.starts_with && s.ends_with` alone
                 // misfires on sibling spans like `"x"${a}"y"`, where the
                 // leading and trailing Dnulls belong to DIFFERENT quote
@@ -10056,7 +10056,7 @@ impl ZshCompiler {
                             // expansion segments (`"$X"{a,b,c}`), the
                             // post-CONCAT BRACE_EXPAND emit relies on
                             // Inbrace/Outbrace/Comma TOKEN bytes
-                            // (\u{8f}/\u{90}/\u{9a}) to detect the
+                            // (\u{e08f}/\u{e090}/\u{e09a}) to detect the
                             // brace structure. A full untokenize here
                             // would erase them, so when needs_brace
                             // fires we partial-untokenize: strip all
@@ -10086,8 +10086,8 @@ impl ZshCompiler {
                             // INDIVIDUAL `$` token, not of the word:
                             //   n = paramsubst(list, n, &str, (c == Qstring), …)
                             // The lexer (Src/lex.c dquote_parse) emits Qstring
-                            // (`\u{8c}`) for a `$` inside `"…"` and Stringg
-                            // (`\u{85}`) outside, so `"$a"post` has a QUOTED
+                            // (`\u{e08c}`) for a `$` inside `"…"` and Stringg
+                            // (`\u{e085}`) outside, so `"$a"post` has a QUOTED
                             // expansion even though the WORD is not a single DQ
                             // span. `word_is_single_dq_span` only sees the word
                             // shape, so this segment used to compile unquoted:
@@ -10096,7 +10096,7 @@ impl ZshCompiler {
                             // one word (`x y zpost`). Bump dq_context_depth for
                             // exactly this segment so its compile takes the same
                             // DQ paths a whole-word `"$a"` takes. Qtick
-                            // (`\u{99}`) is the same marker for `` ` `` inside
+                            // (`\u{e099}`) is the same marker for `` ` `` inside
                             // DQ.
                             let seg_is_dq = exp.starts_with(crate::ported::zsh_h::Qstring)
                                 || exp.starts_with(crate::ported::zsh_h::Qtick);
@@ -10478,16 +10478,16 @@ impl ZshCompiler {
         // the literal text. Direct port of subst.c:166 where
         // xpandbraces fires AFTER prefork's expansion pass.
         // c:Src/subst.c:166 — xpandbraces fires AFTER prefork's expansion
-        // pass. Trigger on Inbrace TOKEN (\u{8f}) only — escaped `\{`
+        // pass. Trigger on Inbrace TOKEN (\u{e08f}) only — escaped `\{`
         // is Bnull+ASCII`{` which (post-remnulargs) is plain `{` and
-        // must NOT brace-expand. The Star TOKEN (\u{87}) tail is for
+        // must NOT brace-expand. The Star TOKEN (\u{e087}) tail is for
         // pattern words that also need expand_glob to run from the
         // brace-expand builtin (kept legacy-compatible).
         let preserved_str = preserved.as_str();
         // Mode 10 already brace-expanded inside EXPAND_TEXT, and its
         // still-tokenized result must reach BUILTIN_GLOBLIST as is.
         let brace_emitted = !preserved_str.is_empty()
-            && (preserved_str.contains('\u{8f}') || preserved_str.contains('\u{87}'))
+            && (preserved_str.contains('\u{e08f}') || preserved_str.contains('\u{e087}'))
             && self.dq_context_depth == 0
             && !defer_text_glob;
         if brace_emitted {
@@ -11342,21 +11342,21 @@ impl ZshCompiler {
     /// regardless of the global option). Shared by the `[[ = ]]` cond path and
     /// the `case` pattern path, which must classify `$~p` identically.
     fn seg_forces_glob_subst(text: &str) -> bool {
-        // Word text may carry the lexer's token form: `$` as String (U+0085) /
-        // Qstring (U+008C), `{` as Inbrace (U+008F), `~` as Tilde (U+0098).
+        // Word text may carry the lexer's token form: `$` as String (U+E085) /
+        // Qstring (U+E08C), `{` as Inbrace (U+E08F), `~` as Tilde (U+E098).
         let cs: Vec<char> = text.chars().take(4).collect();
         let dollar = matches!(
             cs.first().map(|c| *c as u32),
-            Some(0x24) | Some(0x85) | Some(0x8c)
+            Some(0x24) | Some(0xe085) | Some(0xe08c)
         );
         if !dollar {
             return false;
         }
         let flag_at = match cs.get(1) {
-            Some(c) if *c == '{' || *c as u32 == 0x8f => 2,
+            Some(c) if *c == '{' || *c as u32 == 0xe08f => 2,
             _ => 1,
         };
-        let is_tilde = |c: Option<&char>| matches!(c, Some(c) if *c == '~' || *c as u32 == 0x98);
+        let is_tilde = |c: Option<&char>| matches!(c, Some(c) if *c == '~' || *c as u32 == 0xe098);
         is_tilde(cs.get(flag_at)) && !is_tilde(cs.get(flag_at + 1))
     }
 
@@ -11371,9 +11371,9 @@ impl ZshCompiler {
             matches!(
                 c,
                 // `$` raw / String / Qstring — parameter, arithmetic, `$(…)`.
-                '$' | '\u{85}' | '\u{8c}'
+                '$' | '\u{e085}' | '\u{e08c}'
                 // backtick raw / Tick / Qtick — command substitution.
-                | '`' | '\u{93}' | '\u{99}'
+                | '`' | '\u{e093}' | '\u{e099}'
             )
         })
     }
@@ -11407,8 +11407,8 @@ impl ZshCompiler {
         // `_pick_variant` fell through to the default variant label.
         let normalized: Option<String> = {
             let cs: Vec<char> = word.chars().collect();
-            let is_dollar = |c: char| matches!(c as u32, 0x24 | 0x85 | 0x8c);
-            let is_tilde = |c: char| matches!(c as u32, 0x7e | 0x98);
+            let is_dollar = |c: char| matches!(c as u32, 0x24 | 0xe085 | 0xe08c);
+            let is_tilde = |c: char| matches!(c as u32, 0x7e | 0xe098);
             let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_';
             let mut out = String::with_capacity(word.len() + 4);
             let mut i = 0usize;
@@ -11416,7 +11416,7 @@ impl ZshCompiler {
             while i < cs.len() {
                 // A `$` the source ESCAPED (`\$~p`, Bnull/Bnullkeep + `$`) is
                 // DATA, not a substitution — c:Src/zsh.h Bnull/Bnullkeep.
-                let escaped = i > 0 && matches!(cs[i - 1], '\\' | '\u{9f}' | '\u{a0}');
+                let escaped = i > 0 && matches!(cs[i - 1], '\\' | '\u{e09f}' | '\u{e0a0}');
                 if is_dollar(cs[i])
                     && !escaped
                     && cs.get(i + 1).copied().is_some_and(is_tilde)
@@ -11424,7 +11424,7 @@ impl ZshCompiler {
                 {
                     rewrote = true;
                     out.push(cs[i]);
-                    out.push('\u{8f}'); // Inbrace
+                    out.push('\u{e08f}'); // Inbrace
                     out.push(cs[i + 1]); // `~` / Tilde — the GLOB_SUBST flag
                     i += 2;
                     while i < cs.len() && is_name(cs[i]) {
@@ -11435,15 +11435,15 @@ impl ZshCompiler {
                     // getindex), so it goes INSIDE the braces or it would
                     // become a `[...]` character class. Same depth-balancing
                     // as split_pattern_for_glob_subst's subscript arm.
-                    if matches!(cs.get(i), Some('[') | Some('\u{91}')) {
+                    if matches!(cs.get(i), Some('[') | Some('\u{e091}')) {
                         let mut depth = 0i32;
                         while i < cs.len() {
                             let cc = cs[i];
                             out.push(cc);
                             i += 1;
                             match cc {
-                                '[' | '\u{91}' => depth += 1,
-                                ']' | '\u{92}' => {
+                                '[' | '\u{e091}' => depth += 1,
+                                ']' | '\u{e092}' => {
                                     depth -= 1;
                                     if depth == 0 {
                                         break;
@@ -11453,7 +11453,7 @@ impl ZshCompiler {
                             }
                         }
                     }
-                    out.push('\u{90}'); // Outbrace
+                    out.push('\u{e090}'); // Outbrace
                     continue;
                 }
                 out.push(cs[i]);
@@ -11638,9 +11638,9 @@ impl ZshCompiler {
                 let raw = pattern.as_str();
                 let has_expand = raw.contains('$')
                     || raw.contains('`')
-                    || raw.contains('\u{85}')
-                    || raw.contains('\u{8c}')
-                    || raw.contains('\u{99}');
+                    || raw.contains('\u{e085}')
+                    || raw.contains('\u{e08c}')
+                    || raw.contains('\u{e099}');
                 if has_expand {
                     let segments = split_pattern_for_glob_subst(raw);
                     for (sidx, seg) in segments.iter().enumerate() {
@@ -11664,7 +11664,7 @@ impl ZshCompiler {
                             PatSeg::Literal(text) => {
                                 // Pass the tokenized form straight to
                                 // QUOTE_TOKENIZED_OUTPUT — it maps
-                                // `\u{84}..\u{a1}` token chars back to
+                                // `\u{e084}..\u{e0a1}` token chars back to
                                 // their source ASCII via ztokens
                                 // (Star → `*` unescaped). Don't
                                 // untokenize first because untokenize
@@ -11721,8 +11721,8 @@ impl ZshCompiler {
                 // matched. Bug #292 in docs/BUGS.md.
                 //
                 // Detect tokenized expansion markers (lexer encodes
-                // `$` as `\u{85}` Stringg, `$'...'` as `\u{8c}`
-                // Qstring, backticks as `\u{99}` Tick) AND raw `$` /
+                // `$` as `\u{e085}` Stringg, `$'...'` as `\u{e08c}`
+                // Qstring, backticks as `\u{e099}` Tick) AND raw `$` /
                 // backtick chars. When found, push the original
                 // tokenized pattern as a const and run
                 // BUILTIN_SINGSUB_PAT at runtime which calls
@@ -11732,9 +11732,9 @@ impl ZshCompiler {
                 let raw = pattern.as_str();
                 let needs_runtime_expand = raw.contains('$')
                     || raw.contains('`')
-                    || raw.contains('\u{85}') // META-`$`
-                    || raw.contains('\u{8c}') // Qstring (ANSI-C)
-                    || raw.contains('\u{99}'); // META-`` ` ``
+                    || raw.contains('\u{e085}') // META-`$`
+                    || raw.contains('\u{e08c}') // Qstring (ANSI-C)
+                    || raw.contains('\u{e099}'); // META-`` ` ``
                 if needs_runtime_expand {
                     // A case pattern honors GLOB_SUBST exactly like a `[[ = ]]`
                     // RHS: glob metachars from a SUBSTITUTION (`$p` → `a*`) are
@@ -11857,8 +11857,8 @@ impl ZshCompiler {
             // Match `Stringg Inparmath (...) Outparmath` (with optional
             // outer parens already consumed by the tokenizer's
             // Inparmath/Outparmath sentinels).
-            if let Some(rest) = s.strip_prefix("\u{85}\u{89}") {
-                if let Some(inner) = rest.strip_suffix("\u{8b}") {
+            if let Some(rest) = s.strip_prefix("\u{e085}\u{e089}") {
+                if let Some(inner) = rest.strip_suffix("\u{e08b}") {
                     // Inner is `(2+3)` — strip the parens too.
                     let inner = inner.trim_matches(|c| c == '(' || c == ')');
                     inner.to_string()
@@ -12022,7 +12022,7 @@ impl ZshCompiler {
         };
 
         for raw_name in &f.names {
-            // Strip any trailing Inpar+Outpar markers (\u{88}\u{8a})
+            // Strip any trailing Inpar+Outpar markers (\u{e088}\u{e08a})
             // that the lexer may pack into a single String token under
             // some `function name() { body }` paths, then untokenize
             // unconditionally so Dash/Bang/etc. bytes inside the name
@@ -12032,8 +12032,8 @@ impl ZshCompiler {
             // raw tokenized form and the call site (which DOES
             // untokenize) misses the lookup.
             let stripped = raw_name
-                .trim_end_matches('\u{8a}')
-                .trim_end_matches('\u{88}');
+                .trim_end_matches('\u{e08a}')
+                .trim_end_matches('\u{e088}');
             // c:Src/exec.c execfuncdef — the function NAME word is
             // prefork-expanded before registration, so `function $x()`,
             // `function name"$x"()` and `function $0_inner()` define the
@@ -12043,11 +12043,11 @@ impl ZshCompiler {
             // be expanded at runtime; otherwise it registers under the
             // literal token text and the call site never finds it.
             let name_needs_expand = stripped.contains('$')
-                || stripped.contains('\u{85}')  // String ($ token)
-                || stripped.contains('\u{8c}')  // Qstring (DQ $ token)
+                || stripped.contains('\u{e085}')  // String ($ token)
+                || stripped.contains('\u{e08c}')  // Qstring (DQ $ token)
                 || stripped.contains('`')
-                || stripped.contains('\u{93}')  // Tick
-                || stripped.contains('\u{99}')  // Qtick
+                || stripped.contains('\u{e093}')  // Tick
+                || stripped.contains('\u{e099}')  // Qtick
                 // c:Src/exec.c:2745-2746 — execsubst also runs `globlist`
                 // over the names, so a name carrying the lexer's glob
                 // tokens (`function a* { … }`) is filename-generated: one
@@ -12120,10 +12120,10 @@ impl ZshCompiler {
             }
             // f.names[0] is the auto-generated name from parse_anon_funcdef.
             if let Some(raw_name) = f.names.first() {
-                let cleaned = if raw_name.ends_with('\u{8a}') && raw_name.contains('\u{88}') {
+                let cleaned = if raw_name.ends_with('\u{e08a}') && raw_name.contains('\u{e088}') {
                     let stripped = raw_name
-                        .trim_end_matches('\u{8a}')
-                        .trim_end_matches('\u{88}');
+                        .trim_end_matches('\u{e08a}')
+                        .trim_end_matches('\u{e088}');
                     crate::lex::untokenize(stripped)
                 } else {
                     raw_name.clone()
@@ -12372,9 +12372,9 @@ impl ZshCompiler {
         let push_word_pattern = |s: &mut Self, word: &str| {
             let has_expand = word.contains('$')
                 || word.contains('`')
-                || word.contains('\u{85}')
-                || word.contains('\u{8c}')
-                || word.contains('\u{99}');
+                || word.contains('\u{e085}')
+                || word.contains('\u{e08c}')
+                || word.contains('\u{e099}');
             if has_expand {
                 let segments = split_pattern_for_glob_subst(word);
                 let mut first = true;
@@ -12595,7 +12595,7 @@ impl ZshCompiler {
                     // runtime parses the subscript. Previously the operand
                     // was always emitted literally, so `[[ -v $n ]]` fed
                     // the runtime the raw text `$n` → "bad substitution".
-                    let has_dollar = arg.chars().any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
+                    let has_dollar = arg.chars().any(|c| matches!(c as u32, 0x24 | 0xe085 | 0xe08c));
                     if has_dollar {
                         self.compile_singsub_word_noglob(arg);
                     } else {
@@ -12647,10 +12647,10 @@ impl ZshCompiler {
                     let cs: Vec<char> = right.chars().collect();
                     let dollar = matches!(
                         cs.first().map(|c| *c as u32),
-                        Some(0x24) | Some(0x85) | Some(0x8c)
+                        Some(0x24) | Some(0xe085) | Some(0xe08c)
                     );
                     let tilde_bare = dollar
-                        && matches!(cs.get(1).map(|c| *c as u32), Some(0x7e) | Some(0x98))
+                        && matches!(cs.get(1).map(|c| *c as u32), Some(0x7e) | Some(0xe098))
                         && cs
                             .get(2)
                             .map_or(false, |c| c.is_ascii_alphanumeric() || *c == '_')
@@ -12660,9 +12660,9 @@ impl ZshCompiler {
                     if tilde_bare {
                         let mut s = String::new();
                         s.push(cs[0]);
-                        s.push('\u{8f}'); // Inbrace
+                        s.push('\u{e08f}'); // Inbrace
                         s.extend(&cs[1..]);
-                        s.push('\u{90}'); // Outbrace
+                        s.push('\u{e090}'); // Outbrace
                         Some(s)
                     } else {
                         None
@@ -12685,7 +12685,7 @@ impl ZshCompiler {
                         // literally. Mirrors the Unary `-v` arm — see the
                         // comment there. `[[ -v $n ]]` must check the
                         // variable named by $n, not the literal text $n.
-                        let has_dollar = op.chars().any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
+                        let has_dollar = op.chars().any(|c| matches!(c as u32, 0x24 | 0xe085 | 0xe08c));
                         if has_dollar {
                             self.compile_singsub_word_noglob(op);
                         } else {
@@ -12727,7 +12727,7 @@ impl ZshCompiler {
                 // `[[ a* = a* ]]` hit \"no matches found: a*\" because
                 // the LHS was glob-expanded before reaching the test
                 // runtime.
-                // Inbrace (`\u{8f}`) joins the list for the same reason: C runs
+                // Inbrace (`\u{e08f}`) joins the list for the same reason: C runs
                 // every cond operand through singsub → prefork(PREFORK_SINGLE)
                 // (cond.c:53 / subst.c:520), and subst.c:170 skips xpandbraces
                 // under that flag. So a LHS of `a{2,3}` stays ONE literal word;
@@ -12769,7 +12769,7 @@ impl ZshCompiler {
                     // a filesystem path. Wrap in DQ to suppress brace
                     // expansion + filesystem globbing during expansion
                     // — UNLESS the operand is ALREADY single-quoted
-                    // (Snull-wrapped, `\u{9d}…\u{9d}`). zsh treats
+                    // (Snull-wrapped, `\u{e09d}…\u{e09d}`). zsh treats
                     // `[[ x =~ '(pat)' ]]` as a literal regex; double-
                     // wrapping in DQ markers makes compile_word_str's
                     // markup-strip skip the Snull pair and the regex
@@ -12803,18 +12803,18 @@ impl ZshCompiler {
                     //   `[[ "?" == "?" ]]` returned NOMATCH because
                     //   the escape made the RHS `\?` while the LHS
                     //   stayed `?`).
-                    let needs_expand = right.contains('\u{85}')   // META-$
-                        || right.contains('\u{8c}')                  // Qstring-$
-                        || right.contains('\u{93}')                  // Tick
+                    let needs_expand = right.contains('\u{e085}')   // META-$
+                        || right.contains('\u{e08c}')                  // Qstring-$
+                        || right.contains('\u{e093}')                  // Tick
                         || right.contains('$')
                         || right.contains('`');
                     // Detect DQ-wrapped RHS upfront so we can pick the
                     // right RHS-emit shape. See the comment at the
                     // dispatch below — when the RHS is one DQ span,
                     // zsh treats it as a literal string for `[[ == ]]`.
-                    let rhs_is_pure_dq_pre = right.starts_with('\u{9e}')
-                        && right.ends_with('\u{9e}')
-                        && right.chars().filter(|&c| c == '\u{9e}').count() == 2;
+                    let rhs_is_pure_dq_pre = right.starts_with('\u{e09e}')
+                        && right.ends_with('\u{e09e}')
+                        && right.chars().filter(|&c| c == '\u{e09e}').count() == 2;
                     if needs_expand && !rhs_is_pure_dq_pre {
                         // c:Src/options.c GLOB_SUBST. When the RHS
                         // pattern came from variable / cmd
@@ -12898,8 +12898,8 @@ impl ZshCompiler {
                         let mut iter = escaped.chars().peekable();
                         while let Some(c) = iter.next() {
                             match c {
-                                '\u{9d}' | '\u{9e}' => {} // strip Snull/Dnull
-                                '\u{9f}' => {
+                                '\u{e09d}' | '\u{e09e}' => {} // strip Snull/Dnull
+                                '\u{e09f}' => {
                                     // Bnull-escape — emit `\` + next char
                                     // literally so patcompile sees the
                                     // backslash-escape sequence.
@@ -12957,12 +12957,12 @@ impl ZshCompiler {
                 // these cases, mirroring the difference between
                 // `[[ x == "$pat" ]]` (literal) and `[[ x == $pat ]]`
                 // (pattern). Skip for `=~` (regex), file tests, etc.
-                let rhs_is_pure_dq = right.starts_with('\u{9e}') && right.ends_with('\u{9e}') && {
+                let rhs_is_pure_dq = right.starts_with('\u{e09e}') && right.ends_with('\u{e09e}') && {
                     // No unquoted glob meta outside the DQ wrap.
                     // The DQ pair brackets the whole word — count
                     // Dnull markers; if exactly 2, the whole word
                     // is one DQ span.
-                    right.chars().filter(|&c| c == '\u{9e}').count() == 2
+                    right.chars().filter(|&c| c == '\u{e09e}').count() == 2
                 };
                 if is_pattern_op && op_clean != "=~" && rhs_is_pure_dq {
                     if op_clean == "!=" {
@@ -13245,10 +13245,10 @@ impl ZshCompiler {
     /// existed for the left operand only.
     ///
     /// The check is on the RAW tokenized word: an already-quoted operand
-    /// (Snull `\u{9d}` / Dnull `\u{9e}`) never globs anyway, and bumping
+    /// (Snull `\u{e09d}` / Dnull `\u{e09e}`) never globs anyway, and bumping
     /// `dq_context_depth` for it would disturb the DQ handling that path
-    /// already does correctly. Tokens tested: Star `\u{87}`,
-    /// Quest `\u{86}`, Inbrack `\u{91}`, Inbrace `\u{8f}`.
+    /// already does correctly. Tokens tested: Star `\u{e087}`,
+    /// Quest `\u{e086}`, Inbrack `\u{e091}`, Inbrace `\u{e08f}`.
     fn cond_operand_suppresses_glob(w: &str) -> bool {
         // c:Src/cond.c:41-54 `cond_subst` — a `[[ … ]]` operand is
         // `singsub`'d (substitution, NO filename generation) UNLESS
@@ -13262,12 +13262,12 @@ impl ZshCompiler {
         if Self::cond_operand_has_globqual(w) {
             return false;
         }
-        !w.contains('\u{9e}')
-            && !w.contains('\u{9d}')
-            && (w.contains('\u{87}')
-                || w.contains('\u{86}')
-                || w.contains('\u{91}')
-                || w.contains('\u{8f}'))
+        !w.contains('\u{e09e}')
+            && !w.contains('\u{e09d}')
+            && (w.contains('\u{e087}')
+                || w.contains('\u{e086}')
+                || w.contains('\u{e091}')
+                || w.contains('\u{e08f}'))
     }
 
     /// c:Src/glob.c:1157 `checkglobqual(str, sl, nobareglob = 1, NULL)` as
@@ -13342,14 +13342,14 @@ impl ZshCompiler {
         let pure_span = |q: char| -> bool {
             w.starts_with(q) && w.ends_with(q) && w.chars().filter(|&c| c == q).count() == 2
         };
-        if pure_span('\u{9e}') || pure_span('\u{9d}') {
+        if pure_span('\u{e09e}') || pure_span('\u{e09d}') {
             self.compile_word_str(w);
-        } else if w.contains('\u{9e}') || w.contains('\u{9d}') {
+        } else if w.contains('\u{e09e}') || w.contains('\u{e09d}') {
             self.dq_context_depth += 1;
             self.compile_word_str(w);
             self.dq_context_depth -= 1;
         } else {
-            self.compile_word_str(&format!("\u{9e}{}\u{9e}", w));
+            self.compile_word_str(&format!("\u{e09e}{}\u{e09e}", w));
         }
     }
 
@@ -14112,14 +14112,14 @@ fn default_word_may_glob(s: &str) -> bool {
                 | '<'
                 | '#'
                 | '^'
-                | '\u{87}' // Star
-                | '\u{97}' // Quest
-                | '\u{91}' // Inbrack
-                | '\u{88}' // Inpar
-                | '\u{8e}' // Bar
-                | '\u{94}' // Inang
-                | '\u{84}' // Pound
-                | '\u{86}' // Hat
+                | '\u{e087}' // Star
+                | '\u{e097}' // Quest
+                | '\u{e091}' // Inbrack
+                | '\u{e088}' // Inpar
+                | '\u{e08e}' // Bar
+                | '\u{e094}' // Inang
+                | '\u{e084}' // Pound
+                | '\u{e086}' // Hat
         )
     })
 }
@@ -14879,8 +14879,8 @@ fn split_kv_element(raw: &str) -> Option<(String, String, bool)> {
     let mut end: Option<usize> = None;
     for (i, &c) in chars.iter().enumerate().skip(1) {
         match c {
-            '\u{9d}' => in_sq = !in_sq, // Snull
-            '\u{9e}' => in_dq = !in_dq, // Dnull
+            '\u{e09d}' => in_sq = !in_sq, // Snull
+            '\u{e09e}' => in_dq = !in_dq, // Dnull
             _ if c == Outbrack || (c == ']' && !in_sq && !in_dq) => {
                 end = Some(i);
                 break;
@@ -14912,7 +14912,7 @@ fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
     // DoubleQuoted: starts AND ends with raw Dnull, no inner unescaped
     // Dnull pair (i.e. exactly one matching pair wrapping the whole
     // word). Looking at the raw form catches escape-context correctly.
-    if raw.starts_with('\u{9e}') && raw.ends_with('\u{9e}') && raw.len() >= 2 {
+    if raw.starts_with('\u{e09e}') && raw.ends_with('\u{e09e}') && raw.len() >= 2 {
         // Count interior DNULLs — for a simple `"…"` it's exactly 0 in
         // the inside (the start/end are the two DNULLs). Mixed shapes
         // like `"a"b"c"` would have inner DNULLs and we route to
@@ -14924,7 +14924,7 @@ fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
                 .next_back()
                 .map(|(i, _)| i)
                 .unwrap_or(raw.len())];
-        if !inner.contains('\u{9e}') {
+        if !inner.contains('\u{e09e}') {
             return 1;
         }
     }
@@ -14976,10 +14976,10 @@ fn literal_segments_glob_brace(segs: &[WordSegment]) -> (bool, bool) {
         let mut saw_outpar = false;
         for c in lit.chars() {
             match c {
-                '\u{9d}' => in_sq = !in_sq,
-                '\u{9e}' => in_dq = !in_dq,
-                _ if in_sq || in_dq || prev == '\u{9f}' || prev == '\0' => {}
-                '*' | '\u{87}' | '?' | '\u{97}' | '[' | '\u{91}' => {
+                '\u{e09d}' => in_sq = !in_sq,
+                '\u{e09e}' => in_dq = !in_dq,
+                _ if in_sq || in_dq || prev == '\u{e09f}' || prev == '\0' => {}
+                '*' | '\u{e087}' | '?' | '\u{e097}' | '[' | '\u{e091}' => {
                     needs_glob = true;
                 }
                 // c:Src/lex.c:1201-1206 — an unquoted `<N-M>`
@@ -14987,12 +14987,12 @@ fn literal_segments_glob_brace(segs: &[WordSegment]) -> (bool, bool) {
                 // haswilds fires on Inang (c:Src/pattern.c:4362-
                 // 4364). Missing here, `$x<1-2>` never reached
                 // filename generation while `a<1-2>` did.
-                '<' | '\u{94}' => needs_glob = true,
+                '<' | '\u{e094}' => needs_glob = true,
                 // c:Src/pattern.c:4326-4335 — haswilds
                 // fires on ANY Inpar TOKEN unless SHGLOB
                 // is set; the runtime zglob short-
                 // circuits under SHGLOB.
-                '\u{88}' => needs_glob = true,
+                '\u{e088}' => needs_glob = true,
                 '(' => saw_inpar = true,
                 '|' => saw_bar = true,
                 ')' => saw_outpar = true,
@@ -15020,10 +15020,10 @@ fn literal_segments_glob_brace(segs: &[WordSegment]) -> (bool, bool) {
                 // hands back the literal when the option is
                 // off — same as C, where a Pound-carrying word
                 // always reaches zglob and haswilds decides.
-                '#' | '\u{84}' | '^' | '\u{86}' => {
+                '#' | '\u{e084}' | '^' | '\u{e086}' => {
                     needs_glob = true;
                 }
-                '{' | '\u{8f}' | '}' | '\u{90}' => {
+                '{' | '\u{e08f}' | '}' | '\u{e090}' => {
                     needs_brace = true;
                 }
                 _ => {}
@@ -15052,10 +15052,10 @@ enum WordSegment {
 /// are handled by the existing single-expansion fast paths. Returns
 /// `Some(segs)` with `segs.len() >= 2` for concat shapes.
 ///
-/// Walks the chars looking for META-$ (`\u{85}`), Qstring-`$` inside
-/// double-quotes (`\u{8c}`), or backtick (`` ` ``) markers. Each marker
+/// Walks the chars looking for META-$ (`\u{e085}`), Qstring-`$` inside
+/// double-quotes (`\u{e08c}`), or backtick (`` ` ``) markers. Each marker
 /// plus its body becomes one Expansion segment; everything else is
-/// Literal. NOTE: `\u{84}` is Pound (`#`), not a `$`-marker; including
+/// Literal. NOTE: `\u{e084}` is Pound (`#`), not a `$`-marker; including
 /// it here would treat `${#arr[@]}` as a concat with `#arr` as the
 /// expansion body.
 /// True for expansions that splice with FIRST/LAST sticking semantics:
@@ -15063,7 +15063,7 @@ enum WordSegment {
 /// word sticks only to the first or last array element.
 fn is_splice_expansion(s: &str) -> bool {
     let pq = crate::lex::untokenize_preserve_quotes(s);
-    // c:Src/zsh.h:167 Qstring (`\u{8c}`) is the DQ-context `$` marker
+    // c:Src/zsh.h:167 Qstring (`\u{e08c}`) is the DQ-context `$` marker
     // — preserved by untokenize_preserve_quotes so stringsubst's qt
     // detection at Src/subst.c:283 can fire. For splice-shape
     // detection, treat both `$` and Qstring uniformly: strip outer
@@ -15414,7 +15414,7 @@ impl ZshCompiler {
     /// inside `"…"`". The bridge derives it from the executor's
     /// `in_dq_context`, which only `BUILTIN_EXPAND_TEXT` bumps, so an opcode
     /// that hands over a RAW body has to carry the flag itself. The channel is
-    /// a leading Qstring (`\u{8c}`) marker, which the bridge strips before
+    /// a leading Qstring (`\u{e08c}`) marker, which the bridge strips before
     /// reconstructing the body — the same convention the array-op site uses.
     ///
     /// Every subscripted spelling used to skip this, so `qt` was false and
@@ -15571,25 +15571,25 @@ impl ZshCompiler {
         // skips brace + glob expansion. `$var` / `$(cmd)` / `$((expr))` still
         // expand inside DQ context.
         //
-        // c:Src/zsh.h token constants: Star = \u{87}, Quest = \u{97},
-        // Inbrack = \u{91}, Inbrace = \u{8f}.
+        // c:Src/zsh.h token constants: Star = \u{e087}, Quest = \u{e097},
+        // Inbrack = \u{e091}, Inbrace = \u{e08f}.
         // A word that can stop prefork on an `(e)` NULL keeps its own tokens:
         // the stopped value is the node text with its quote tokens rendered
         // (c:Src/subst.c:1878, c:Src/exec.c:2134), and a synthetic Dnull would
         // render as a `"` zsh never prints (`v=x${(e)a}z` → `x`). Mode 8 applies
         // the same no-glob (c:Src/exec.c:2603-2613) and no-brace
         // (c:Src/subst.c:170) rules the wrap stands in for.
-        let needs_dq_wrap = !s.starts_with('\u{9e}')
-            && !s.starts_with('\u{9d}')
+        let needs_dq_wrap = !s.starts_with('\u{e09e}')
+            && !s.starts_with('\u{e09d}')
             && !expansion_may_null_prefork(s)
-            && (s.contains('*') || s.contains('\u{87}')      // Star
-                || s.contains('?') || s.contains('\u{97}')   // Quest
-                || s.contains('[') || s.contains('\u{91}')   // Inbrack
-                || s.contains('{') || s.contains('\u{8f}')); // Inbrace
+            && (s.contains('*') || s.contains('\u{e087}')      // Star
+                || s.contains('?') || s.contains('\u{e097}')   // Quest
+                || s.contains('[') || s.contains('\u{e091}')   // Inbrack
+                || s.contains('{') || s.contains('\u{e08f}')); // Inbrace
         self.assign_context_depth += 1;
         self.scalar_assign_depth += 1;
         if needs_dq_wrap {
-            let wrapped = format!("\u{9e}{}\u{9e}", s);
+            let wrapped = format!("\u{e09e}{}\u{e09e}", s);
             // The Dnull pair is SYNTHETIC — it stands in for C's PREFORK_SINGLE
             // (c:Src/exec.c:2603), not for a user's `"…"`. Flag it so the
             // qt-deriving emit sites don't read it as `qt=1`
@@ -15608,7 +15608,7 @@ impl ZshCompiler {
         let in_dq = (word_is_single_dq_span(word) && self.synthetic_dq_wrap_depth == 0)
             || self.dq_context_depth > 0;
         if in_dq {
-            format!("\u{8c}{}", inner)
+            format!("\u{e08c}{}", inner)
         } else {
             inner.to_string()
         }
@@ -15693,7 +15693,7 @@ fn word_is_single_dq_span(s: &str) -> bool {
         Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Outbrack, Outpar, Outparmath,
     };
     let chars: Vec<char> = s.chars().collect();
-    if chars.len() < 2 || chars[0] != '\u{9e}' || *chars.last().unwrap() != '\u{9e}' {
+    if chars.len() < 2 || chars[0] != '\u{e09e}' || *chars.last().unwrap() != '\u{e09e}' {
         return false;
     }
     let mut depth = 0i32;
@@ -15706,7 +15706,7 @@ fn word_is_single_dq_span(s: &str) -> bool {
                     depth -= 1;
                 }
             }
-            '\u{9e}' if depth == 0 => depth0_dnull += 1,
+            '\u{e09e}' if depth == 0 => depth0_dnull += 1,
             _ => {}
         }
     }
@@ -15869,7 +15869,7 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     // shape with NO following name char (e.g. `$+ ` / `$+}`), which the
     // segment splitter still can't model — route those to EXPAND_TEXT.
     for (k, w) in chars.windows(2).enumerate() {
-        let dollar = w[0] == '$' || w[0] == '\u{85}' || w[0] == '\u{8c}';
+        let dollar = w[0] == '$' || w[0] == '\u{e085}' || w[0] == '\u{e08c}';
         if dollar && w[1] == '+' {
             let after = chars.get(k + 2).copied();
             let name_follows = after.is_some_and(|n| {
@@ -15890,7 +15890,7 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     // Top-level (depth 0) markers are real concat boundaries.
     let mut brace_depth = 0i32;
     let mut brack_depth = 0i32;
-    // Snull (`\u{9d}`) span tracking — c:Src/subst.c:282-330
+    // Snull (`\u{e09d}`) span tracking — c:Src/subst.c:282-330
     // stringsubst only fires substitution on String/Qstring TOKENS;
     // chars inside a single-quoted span stay plain ASCII and are
     // never expansion boundaries. Without this, the literal `$` in
@@ -15902,11 +15902,11 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     while i < n {
         let c = chars[i];
         match c {
-            '\u{9d}' => inside_sq = !inside_sq,                 // Snull
-            '\u{8f}' => brace_depth += 1,                       // Inbrace
-            '\u{90}' => brace_depth = (brace_depth - 1).max(0), // Outbrace
-            '\u{91}' => brack_depth += 1,                       // Inbrack
-            '\u{92}' => brack_depth = (brack_depth - 1).max(0), // Outbrack
+            '\u{e09d}' => inside_sq = !inside_sq,                 // Snull
+            '\u{e08f}' => brace_depth += 1,                       // Inbrace
+            '\u{e090}' => brace_depth = (brace_depth - 1).max(0), // Outbrace
+            '\u{e091}' => brack_depth += 1,                       // Inbrack
+            '\u{e092}' => brack_depth = (brack_depth - 1).max(0), // Outbrack
             _ => {}
         }
         if inside_sq {
@@ -15914,15 +15914,15 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
             continue;
         }
         // Recognize segment boundaries:
-        // - META-$ (\u{85}) and META-Qstring (\u{8c}) — emitted by the
+        // - META-$ (\u{e085}) and META-Qstring (\u{e08c}) — emitted by the
         //   lexer for `$` outside / inside double quotes
         // - Literal `$` (0x24) — emitted in some lexer paths where the
         //   `$` survives untokenized but the surrounding braces / brackets
         //   are META-marked. Followed by Inbrace/Inpar/alphanumeric to
         //   distinguish from a literal trailing `$`.
-        let is_meta_dollar = c == '\u{85}' || c == '\u{8c}';
+        let is_meta_dollar = c == '\u{e085}' || c == '\u{e08c}';
         // An ESCAPED dollar is literal: the lexer marks `\$` as
-        // Bnull(\u{9f})+`$`, and raw-source paths may carry `\$`
+        // Bnull(\u{e09f})+`$`, and raw-source paths may carry `\$`
         // verbatim (odd backslash run). Without this, the cond
         // pattern `\$[{]` (f-sy-h's -fast-highlight-string dollar
         // matcher) compiled as `$[…]` old-style math with the
@@ -15930,7 +15930,7 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
         // illegal character:" per keystroke, and the plugin's
         // while loop then spun the shell at 100% CPU.
         let escaped_dollar = c == '$'
-            && (chars.get(i.wrapping_sub(1)).is_some_and(|&p| p == '\u{9f}') || {
+            && (chars.get(i.wrapping_sub(1)).is_some_and(|&p| p == '\u{e09f}') || {
                 let bs = chars[..i].iter().rev().take_while(|&&b| b == '\\').count();
                 bs % 2 == 1
             });
@@ -15942,9 +15942,9 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
             chars
                 .get(i + 1)
                 .map(|&n| {
-                    n == '\u{8f}'  // Inbrace
+                    n == '\u{e08f}'  // Inbrace
                         || n == '{'        // literal `${`
-                        || n == '\u{88}'  // Inpar
+                        || n == '\u{e088}'  // Inpar
                         || n == '('        // literal `$(`
                         || n == '_'
                         || n.is_ascii_alphanumeric()
@@ -15963,12 +15963,12 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
         };
         let is_dollar = is_meta_dollar || is_literal_dollar_with_expansion;
         // Backtick trigger: literal `` ` `` OR the lexer's Tick
-        // (`\u{93}`) / Qtick (`\u{99}`) markers. Without the marker
+        // (`\u{e093}`) / Qtick (`\u{e099}`) markers. Without the marker
         // forms, `\`echo $foo\`` (which the lexer emits as
-        // `\u{93}echo $foo\u{93}`) only split on `$foo`, treating
+        // `\u{e093}echo $foo\u{e093}`) only split on `$foo`, treating
         // the surrounding Tick chars as literal text — the bridge
         // never saw a whole-word backquote.
-        let is_backtick = c == '`' || c == '\u{93}' || c == '\u{99}';
+        let is_backtick = c == '`' || c == '\u{e093}' || c == '\u{e099}';
         let at_top = brace_depth == 0 && brack_depth == 0;
         if !(is_dollar || is_backtick) || !at_top {
             i += 1;
@@ -16005,26 +16005,26 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
                 return false;
             };
             let ec: Vec<char> = exp.chars().collect();
-            if ec.len() < 2 || matches!(ec[1], '\u{88}' | '(') {
+            if ec.len() < 2 || matches!(ec[1], '\u{e088}' | '(') {
                 return false;
             }
             // A braced body's modifiers sit one brace level down, after the
             // `:` that starts a history modifier (not `:-` / `:=` / offset).
-            let braced = matches!(ec[1], '\u{8f}' | '{');
+            let braced = matches!(ec[1], '\u{e08f}' | '{');
             let base = i32::from(braced);
             let mut depth = 0i32;
             let mut in_mods = false;
             for (k, &ch) in ec.iter().enumerate().skip(1) {
                 match ch {
-                    '\u{91}' | '[' | '\u{8f}' | '{' | '\u{88}' | '(' => depth += 1,
-                    '\u{92}' | ']' | '\u{90}' | '}' | '\u{8a}' | ')' => depth -= 1,
+                    '\u{e091}' | '[' | '\u{e08f}' | '{' | '\u{e088}' | '(' => depth += 1,
+                    '\u{e092}' | ']' | '\u{e090}' | '}' | '\u{e08a}' | ')' => depth -= 1,
                     ':' if depth == base
                         && (!braced
                             || ec.get(k + 1).is_some_and(|m| "gsSwWfF&".contains(*m))) =>
                     {
                         in_mods = true
                     }
-                    '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}' if in_mods => return true,
+                    '\u{e085}' | '\u{e08c}' | '\u{e093}' | '\u{e099}' if in_mods => return true,
                     _ => {}
                 }
             }
@@ -16190,14 +16190,14 @@ fn walk_bare_modifier_chain(chars: &[char], j: &mut usize) {
 
 fn find_expansion_end(chars: &[char], i: usize) -> usize {
     let c = chars[i];
-    if c == '`' || c == '\u{93}' || c == '\u{99}' {
+    if c == '`' || c == '\u{e093}' || c == '\u{e099}' {
         // Backtick: find matching `, Tick, or Qtick. The opening
         // marker MUST match the closing form per parse/tokens
         // (Tick pairs with Tick, etc.) but in practice the lexer
         // is consistent within a word — accept any of the three
         // as the close.
         let mut j = i + 1;
-        while j < chars.len() && chars[j] != '`' && chars[j] != '\u{93}' && chars[j] != '\u{99}' {
+        while j < chars.len() && chars[j] != '`' && chars[j] != '\u{e093}' && chars[j] != '\u{e099}' {
             j += 1;
         }
         return (j + 1).min(chars.len());
@@ -16206,14 +16206,14 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
     let next = chars.get(i + 1).copied();
     match next {
         // ANSI-C quote: $'...' lexed as `Stringg Snull <body> Snull`
-        // (`\u{85}\u{9d}…\u{9d}`). Without this arm, split_word_segments
+        // (`\u{e085}\u{e09d}…\u{e09d}`). Without this arm, split_word_segments
         // saw the lone Stringg as an "expansion" returning i+1, leaving
         // the Stringg byte as a single-segment "$" that multsub then
         // emitted as a literal `$`. Result: `$'\t'$X` produced
         // `$<tab>val` instead of `<tab>val`. Walk the full Snull-
         // delimited body so the segment is the whole `$'…'` token,
         // dispatched by multsub's stringsubstquote arm.
-        Some('\u{9d}') => {
+        Some('\u{e09d}') => {
             let mut j = i + 2;
             let mut escaped = false;
             while j < chars.len() {
@@ -16222,13 +16222,13 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                     j += 1;
                     continue;
                 }
-                if chars[j] == '\u{9f}' {
+                if chars[j] == '\u{e09f}' {
                     // Bnull-escape: skip the literal next char
                     escaped = true;
                     j += 1;
                     continue;
                 }
-                if chars[j] == '\u{9d}' {
+                if chars[j] == '\u{e09d}' {
                     j += 1;
                     break;
                 }
@@ -16236,20 +16236,20 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             j
         }
-        // Inbrace: ${...}. Track BOTH token (\u{8f}/\u{90}) AND literal
+        // Inbrace: ${...}. Track BOTH token (\u{e08f}/\u{e090}) AND literal
         // `{`/`}` braces — a nested `${…}` inside the body can arrive in
         // either form (e.g. `${${x%${x##pat}}/a/b}` mixes Inbrace tokens
         // with literal inner braces), and counting only the token form
         // closed the outer expansion at the first INNER `}`, so the
         // trailing expansion in `${…nested…}${x##pat}` was left literal.
         // Mirrors the literal-`{` arm below.
-        Some('\u{8f}') => {
+        Some('\u{e08f}') => {
             let mut depth = 1;
             let mut j = i + 2;
             while j < chars.len() && depth > 0 {
                 match chars[j] {
-                    '{' | '\u{8f}' => depth += 1,
-                    '}' | '\u{90}' => depth -= 1,
+                    '{' | '\u{e08f}' => depth += 1,
+                    '}' | '\u{e090}' => depth -= 1,
                     _ => {}
                 }
                 j += 1;
@@ -16264,8 +16264,8 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             let mut j = i + 2;
             while j < chars.len() && depth > 0 {
                 match chars[j] {
-                    '{' | '\u{8f}' => depth += 1,
-                    '}' | '\u{90}' => depth -= 1,
+                    '{' | '\u{e08f}' => depth += 1,
+                    '}' | '\u{e090}' => depth -= 1,
                     _ => {}
                 }
                 j += 1;
@@ -16277,18 +16277,18 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         //   `$(cmd)`    → META-$ Inpar <body chars> Outpar
         //   `$((expr))` → META-$ Inpar <body w/ literal `(`/`)`> Outparmath
         // For `$((`, the inner `(` is kept literal and the closing `))`
-        // is collapsed into a single Outparmath (\u{8b}). We detect by
+        // is collapsed into a single Outparmath (\u{e08b}). We detect by
         // peeking after Inpar — if the next char is literal `(` (0x28)
         // or Inparmath, we're in arith mode and end at Outparmath.
-        Some('\u{88}') => {
+        Some('\u{e088}') => {
             let after = chars.get(i + 2).copied();
-            let is_arith = matches!(after, Some('(') | Some('\u{89}'));
-            let close_match = if is_arith { '\u{8b}' } else { '\u{8a}' };
+            let is_arith = matches!(after, Some('(') | Some('\u{e089}'));
+            let close_match = if is_arith { '\u{e08b}' } else { '\u{e08a}' };
             let mut depth = 1;
             let mut j = i + 2;
             while j < chars.len() && depth > 0 {
                 let c = chars[j];
-                if !is_arith && c == '\u{88}' {
+                if !is_arith && c == '\u{e088}' {
                     depth += 1;
                 } else if c == close_match {
                     depth -= 1;
@@ -16301,19 +16301,19 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         // Track depth so nested `$((expr1 + $((expr2)) ))` finds the
         // OUTER Outparmath, not the first inner one. Bug #21 in
         // docs/BUGS.md: without depth tracking, `"$(( a + $((2*5)) ))"`
-        // truncated at the inner `\u{8b}` and left the outer's ` )\u{8b}`
+        // truncated at the inner `\u{e08b}` and left the outer's ` )\u{e08b}`
         // dangling in the literal-suffix segment — paramsubst then saw
         // half a math expression and emitted the literal `( a + 10 ))`
-        // instead of `12`. Mirror the `\u{88}` (Inpar) arm above which
+        // instead of `12`. Mirror the `\u{e088}` (Inpar) arm above which
         // already depth-tracks for nested cmd-substitution.
-        Some('\u{89}') => {
+        Some('\u{e089}') => {
             let mut depth = 1;
             let mut j = i + 2;
             while j < chars.len() && depth > 0 {
                 let c = chars[j];
-                if c == '\u{89}' {
+                if c == '\u{e089}' {
                     depth += 1;
-                } else if c == '\u{8b}' {
+                } else if c == '\u{e08b}' {
                     depth -= 1;
                 }
                 j += 1;
@@ -16321,13 +16321,13 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             j
         }
         // Inbrack: $[...]
-        Some('\u{91}') => {
+        Some('\u{e091}') => {
             let mut depth = 1;
             let mut j = i + 2;
             while j < chars.len() && depth > 0 {
                 match chars[j] {
-                    '\u{91}' => depth += 1,
-                    '\u{92}' => depth -= 1,
+                    '\u{e091}' => depth += 1,
+                    '\u{e092}' => depth -= 1,
                     _ => {}
                 }
                 j += 1;
@@ -16343,7 +16343,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         // glob/syntax chars) when they appear as a token; after a META-$
         // they're still the variable-name char even in their META form.
         // Match both the literal char and its META code-point so e.g.
-        // `X$?` lexed as `X\u{85}\u{97}` (META-$, META-?) detects the
+        // `X$?` lexed as `X\u{e085}\u{e097}` (META-$, META-?) detects the
         // expansion as `$?` rather than falling through to the
         // "advance by 1" default (which left `?` as a literal-glob in
         // the trailing literal segment).
@@ -16351,13 +16351,13 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             if matches!(
                 ch,
                 '@' | '*' | '#' | '?' | '!' | '-' | '$'
-                    | '\u{87}' // META-* (Star)
-                    | '\u{84}' // META-# (Pound)
-                    | '\u{97}' // META-? (Quest)
-                    | '\u{9b}' // META-- (Dash)
-                    | '\u{9c}' // META-! (Bang)
-                    | '\u{85}' // META-$ ($$ → PID; second $ also lexed as STRING)
-                    | '\u{8c}' // META-Qstring ($ in DQ context)
+                    | '\u{e087}' // META-* (Star)
+                    | '\u{e084}' // META-# (Pound)
+                    | '\u{e097}' // META-? (Quest)
+                    | '\u{e09b}' // META-- (Dash)
+                    | '\u{e09c}' // META-! (Bang)
+                    | '\u{e085}' // META-$ ($$ → PID; second $ also lexed as STRING)
+                    | '\u{e08c}' // META-Qstring ($ in DQ context)
             ) =>
         {
             // `$#@`, `$#*`, `$#NAME` — `$#`-then-suffix shapes. After
@@ -16369,7 +16369,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             // [META-$, #] + literal `@`, leaving the `@` outside the
             // expansion. Same for `X$#Y` where `Y` got dropped from
             // the name lookup.
-            if matches!(ch, '#' | '\u{84}') && i + 2 < chars.len() {
+            if matches!(ch, '#' | '\u{e084}') && i + 2 < chars.len() {
                 let after = chars[i + 2];
                 // Single-char specials terminate the `$#` walk after
                 // one trailing char: `$#?`, `$#!`, `$#-`, `$#0`, `$#$`
@@ -16384,12 +16384,12 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                         | '-'
                         | '0'
                         | '$'
-                        | '\u{87}'
-                        | '\u{97}'
-                        | '\u{96}'
-                        | '\u{9b}'
-                        | '\u{85}'
-                        | '\u{84}'
+                        | '\u{e087}'
+                        | '\u{e097}'
+                        | '\u{e096}'
+                        | '\u{e09b}'
+                        | '\u{e085}'
+                        | '\u{e084}'
                 ) {
                     return i + 3;
                 }
@@ -16408,9 +16408,9 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             // c:Src/lex.c gettokstr — bare `$@[SUB]` is a recognized
             // positional-array subscript shape.
             let mut j = i + 2;
-            if j < chars.len() && (chars[j] == '\u{91}' || chars[j] == '[') {
+            if j < chars.len() && (chars[j] == '\u{e091}' || chars[j] == '[') {
                 let in_b = chars[j];
-                let out_b = if in_b == '\u{91}' { '\u{92}' } else { ']' };
+                let out_b = if in_b == '\u{e091}' { '\u{e092}' } else { ']' };
                 let mut depth = 1;
                 let mut k = j + 1;
                 while k < chars.len() && depth > 0 {
@@ -16430,7 +16430,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             j
         }
         // c:Src/subst.c:2596 — `$~NAME` / `$~` is the GLOB_SUBST flag
-        // prefix. The `~` (literal or Tilde token `\u{98}`) is part of
+        // prefix. The `~` (literal or Tilde token `\u{e098}`) is part of
         // the paramsubst syntax. When followed by an identifier, the
         // expansion spans `$~NAME`; when followed by anything else
         // (whitespace, `]`, end-of-string, etc.), the bare `$~`
@@ -16440,10 +16440,10 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         // the trailing literal — so the bridge emitted `$` + literal
         // `~` instead of routing the whole `$~` through paramsubst.
         // Bug #547 in docs/BUGS.md (surrounding-text DQ form).
-        Some('~') | Some('\u{98}') => {
+        Some('~') | Some('\u{e098}') => {
             let mut j = i + 2;
             // Optional second `~` for the `$~~NAME` toggle-off form.
-            if j < chars.len() && (chars[j] == '~' || chars[j] == '\u{98}') {
+            if j < chars.len() && (chars[j] == '~' || chars[j] == '\u{e098}') {
                 j += 1;
             }
             // Optional trailing identifier.
@@ -16473,9 +16473,9 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             } else {
                 j += 1; // single-char special (@/*/#/?)
             }
-            if j < chars.len() && (chars[j] == '\u{91}' || chars[j] == '[') {
+            if j < chars.len() && (chars[j] == '\u{e091}' || chars[j] == '[') {
                 let in_b = chars[j];
-                let out_b = if in_b == '\u{91}' { '\u{92}' } else { ']' };
+                let out_b = if in_b == '\u{e091}' { '\u{e092}' } else { ']' };
                 let mut depth = 1;
                 let mut k = j + 1;
                 while k < chars.len() && depth > 0 {
@@ -16522,11 +16522,11 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             // Pull a trailing `[subscript]` into the same expansion so
             // `$NAME[idx]` (especially in DQ context) is one piece, not
             // `$NAME` + literal `[idx]`. The lexer emits Inbrack
-            // (`\u{91}`) / Outbrack (`\u{92}`) for top-level `[]`, but
+            // (`\u{e091}`) / Outbrack (`\u{e092}`) for top-level `[]`, but
             // some lex paths leave bare `[`/`]` (DQ context, etc.).
-            if j < chars.len() && (chars[j] == '\u{91}' || chars[j] == '[') {
+            if j < chars.len() && (chars[j] == '\u{e091}' || chars[j] == '[') {
                 let in_b = chars[j];
-                let out_b = if in_b == '\u{91}' { '\u{92}' } else { ']' };
+                let out_b = if in_b == '\u{e091}' { '\u{e092}' } else { ']' };
                 let mut depth = 1;
                 let mut k = j + 1;
                 while k < chars.len() && depth > 0 {
@@ -16603,9 +16603,9 @@ fn strip_arith_subst(s: &str) -> Option<String> {
 /// arithmetic and `${var…}` parameter expansion do not.
 ///
 /// Detects both raw-source form (`$(`, backtick) and the tokenized
-/// form produced by ported::lex (Stringg+Inpar = `\u{85}\u{88}`, Tick
-/// = `\u{93}`, Qtick = `\u{99}`). The Stringg+Inparmath sequence
-/// (`\u{85}\u{89}`) is `$((` arithmetic — skip.
+/// form produced by ported::lex (Stringg+Inpar = `\u{e085}\u{e088}`, Tick
+/// = `\u{e093}`, Qtick = `\u{e099}`). The Stringg+Inparmath sequence
+/// (`\u{e085}\u{e089}`) is `$((` arithmetic — skip.
 fn scalar_rhs_has_cmd_subst(s: &str) -> bool {
     use crate::ported::zsh_h::{Inpar, Inparmath, Qstring, Qtick, Stringg, Tick};
     let chars: Vec<char> = s.chars().collect();
@@ -16615,7 +16615,7 @@ fn scalar_rhs_has_cmd_subst(s: &str) -> bool {
         // Tokenized `$(`: Stringg or Qstring (DQ-context `$`) followed
         // by Inpar. Bug #122 in docs/BUGS.md: the previous port only
         // matched Stringg+Inpar, missing the DQ-wrapped form. For
-        // `y="${x:-$(false)}"` the lexer emits Qstring (\u{8c}) for the
+        // `y="${x:-$(false)}"` the lexer emits Qstring (\u{e08c}) for the
         // inner `$` because the outer DQ context tokenized it, so the
         // detector falsely returned false and the post-assignment
         // status reset clobbered the cmd-subst's exit.
@@ -16847,7 +16847,7 @@ pub(crate) enum ParamModifierKind {
 /// pattern bodies (e.g. `${(M)a:#"*"}`) reach paramsubst with
 /// backslash-escaped metachars instead of bare glob characters.
 /// The body of a double-quoted whole-word `"${…}"` for BUILTIN_BRIDGE_BRACE_ARRAY,
-/// untokenized like `untoked` except that every Qstring (`\u{8c}`) survives.
+/// untokenized like `untoked` except that every Qstring (`\u{e08c}`) survives.
 /// `s` is the lexer's word: an optional Dnull pair around `Qstring Inbrace …
 /// Outbrace` (a segment of a DQ parent arrives without the Dnulls). Returns
 /// `None` for any other shape, and the caller keeps its plain body.
@@ -16952,23 +16952,23 @@ enum PatSeg {
 /// `$(…)` / `\`…\`` (gated by `GLOB_SUBST`) and bytes that are
 /// source-level glob metas (always treated as globs). Used by the
 /// `[[ x = pat ]]` compile path so `[[ foo = $H* ]]` with H=foo
-/// matches: the `\u{8c}H` segment expands+guards to `foo`, the
-/// trailing `\u{87}` segment untokenizes to literal `*` which the
+/// matches: the `\u{e08c}H` segment expands+guards to `foo`, the
+/// trailing `\u{e087}` segment untokenizes to literal `*` which the
 /// pattern matcher treats as a glob.
 ///
 /// Segment boundaries:
-///   - `\u{85}` (Stringg `$`), `\u{8c}` (Qstring `$`), bare `$`:
+///   - `\u{e085}` (Stringg `$`), `\u{e08c}` (Qstring `$`), bare `$`:
 ///     start of a parameter expansion. Consume the `$` marker plus
 ///     a following name (`[A-Za-z_][A-Za-z0-9_]*`) OR a brace
 ///     `${…}` / paren `$(…)` span (depth-balanced) OR an arith
 ///     `$((…))`.
-///   - `\u{93}` (Tick) / `` ` ``: backtick command substitution.
+///   - `\u{e093}` (Tick) / `` ` ``: backtick command substitution.
 ///     Consume until the matching close tick.
-///   - `\u{9e}` (Dnull) / `\u{9d}` (Snull) / `"` / `'`: quoted
+///   - `\u{e09e}` (Dnull) / `\u{e09d}` (Snull) / `"` / `'`: quoted
 ///     span. Consume the entire matched pair as ONE Subst — the
 ///     expander processes the contents as a single string.
 ///   - Everything else: Literal. Includes source-level meta tokens
-///     (`\u{87}` Star, `\u{97}` Quest, `\u{91}` Inbrack, …) and
+///     (`\u{e087}` Star, `\u{e097}` Quest, `\u{e091}` Inbrack, …) and
 ///     plain ASCII.
 fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
     use crate::ported::zsh_h::{Inpar, Inparmath, Outpar, Outparmath};
@@ -16984,7 +16984,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
     while i < chars.len() {
         let c = chars[i];
         match c {
-            '\u{85}' | '\u{8c}' | '$' => {
+            '\u{e085}' | '\u{e08c}' | '$' => {
                 // Parameter / arith / cmd-subst start. Collect the
                 // marker plus body.
                 flush_lit(&mut lit, &mut out);
@@ -16997,11 +16997,11 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                     // length OPERATOR when a parameter name follows, not the
                     // `$#` positional-count special. See the bare-`$NAME` arm
                     // below for what mis-splitting it broke.
-                    let hash_is_len_prefix = matches!(nxt, '#' | '\u{84}')
+                    let hash_is_len_prefix = matches!(nxt, '#' | '\u{e084}')
                         && chars
                             .get(i + 1)
                             .is_some_and(|&c2| c2.is_ascii_alphanumeric() || c2 == '_');
-                    if nxt == '\u{9d}' {
+                    if nxt == '\u{e09d}' {
                         // `$'…'` ANSI-C span — Stringg/Qstring + Snull
                         // body Snull (parse/lex token form). Keep the
                         // WHOLE span in one Subst segment so
@@ -17020,7 +17020,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                             let cc = chars[i];
                             subst.push(cc);
                             i += 1;
-                            if cc == '\u{9f}' || cc == '\\' {
+                            if cc == '\u{e09f}' || cc == '\\' {
                                 // Bnull / raw-backslash escape — keep
                                 // the escaped char inside the span.
                                 if i < chars.len() {
@@ -17029,14 +17029,14 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                                 }
                                 continue;
                             }
-                            if cc == '\u{9d}' {
+                            if cc == '\u{e09d}' {
                                 break; // close Snull
                             }
                         }
-                    } else if nxt == '{' || nxt == '\u{8f}' {
+                    } else if nxt == '{' || nxt == '\u{e08f}' {
                         // `${…}` — depth-balance braces.
                         let open = nxt;
-                        let close = if nxt == '{' { '}' } else { '\u{90}' };
+                        let close = if nxt == '{' { '}' } else { '\u{e090}' };
                         subst.push(nxt);
                         i += 1;
                         let mut depth = 1i32;
@@ -17083,12 +17083,12 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                     } else if (matches!(nxt, '$' | '?' | '#' | '*' | '@' | '-' | '!')
                         || matches!(
                             nxt,
-                            '\u{85}' /* Stringg `$` */
-                            | '\u{97}' /* Quest `?` */
-                            | '\u{84}' /* Pound `#` */
-                            | '\u{87}' /* Star `*` */
-                            | '\u{9b}' /* Dash `-` */
-                            | '\u{9c}' /* Bang `!` */
+                            '\u{e085}' /* Stringg `$` */
+                            | '\u{e097}' /* Quest `?` */
+                            | '\u{e084}' /* Pound `#` */
+                            | '\u{e087}' /* Star `*` */
+                            | '\u{e09b}' /* Dash `-` */
+                            | '\u{e09c}' /* Bang `!` */
                         ))
                         && !hash_is_len_prefix
                     {
@@ -17124,7 +17124,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                         // completion whose completer list starts with
                         // `_expand` (the comptest default, Y01/Y02/Y03)
                         // spun forever inside `zle complete-word`.
-                        if matches!(nxt, '#' | '\u{84}') {
+                        if matches!(nxt, '#' | '\u{e084}') {
                             subst.push(nxt);
                             i += 1;
                         }
@@ -17149,15 +17149,15 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                         // never matched. Depth-balance `[`/Inbrack ↔
                         // `]`/Outbrack so nested subscripts (`$a[$b[1]]`)
                         // stay intact.
-                        if matches!(chars.get(i), Some('[') | Some('\u{91}')) {
+                        if matches!(chars.get(i), Some('[') | Some('\u{e091}')) {
                             let mut depth = 0i32;
                             while i < chars.len() {
                                 let cc = chars[i];
                                 subst.push(cc);
                                 i += 1;
                                 match cc {
-                                    '[' | '\u{91}' => depth += 1,
-                                    ']' | '\u{92}' => {
+                                    '[' | '\u{e091}' => depth += 1,
+                                    ']' | '\u{e092}' => {
                                         depth -= 1;
                                         if depth == 0 {
                                             break;
@@ -17171,7 +17171,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                 }
                 out.push(PatSeg::Subst(subst));
             }
-            '\u{93}' | '`' => {
+            '\u{e093}' | '`' => {
                 // Backtick substitution — match to closing tick.
                 flush_lit(&mut lit, &mut out);
                 let close = c;
@@ -17188,7 +17188,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                 }
                 out.push(PatSeg::Subst(subst));
             }
-            '\u{9e}' | '"' => {
+            '\u{e09e}' | '"' => {
                 // Double-quoted span: zsh expands the entire body as
                 // a single string. Treat the whole span as one Subst.
                 flush_lit(&mut lit, &mut out);
@@ -17206,7 +17206,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                 }
                 out.push(PatSeg::Subst(subst));
             }
-            '\u{9d}' | '\'' => {
+            '\u{e09d}' | '\'' => {
                 // Single-quoted span: pure literal. Take the entire
                 // span as Literal so untokenize strips the markers.
                 let close = c;
@@ -17231,7 +17231,7 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
             // `$[…]` math on the class body and errored "bad math
             // expression: illegal character: 0x8f" per keystroke,
             // then its while loop spun the shell at 100% CPU).
-            '\u{9f}' | '\u{a0}' | '\\' => {
+            '\u{e09f}' | '\u{e0a0}' | '\\' => {
                 // Emit the RAW-ASCII escape form (`\X`) — the STRMATCH
                 // runtime re-tokenizes the assembled pattern, folding
                 // `\X` to a Bnull literal for patcompile; a raw marker
@@ -18428,8 +18428,8 @@ fn array_splice_is_star(s: &str) -> bool {
 /// glob metas (`*`, `?`, `[`) that fall INSIDE single/double-quoted
 /// regions with backslash-escaped versions. Quoted glob metas should
 /// match literally per zsh. Markers used by the lexer:
-///   `\u{9d}` (Snull) — single-bslashquote boundary
-///   `\u{9e}` (Dnull) — double-bslashquote boundary
+///   `\u{e09d}` (Snull) — single-bslashquote boundary
+///   `\u{e09e}` (Dnull) — double-bslashquote boundary
 fn escape_quoted_glob_metas(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut in_squote = false;
@@ -18443,7 +18443,7 @@ fn escape_quoted_glob_metas(s: &str) -> String {
             continue;
         }
         match c {
-            '\u{9f}' => {
+            '\u{e09f}' => {
                 after_bnull = true;
                 out.push(c);
             }
@@ -18455,11 +18455,11 @@ fn escape_quoted_glob_metas(s: &str) -> String {
                 out.push('\\');
                 out.push('\\');
             }
-            '\u{9d}' => {
+            '\u{e09d}' => {
                 in_squote = !in_squote;
                 out.push(c);
             }
-            '\u{9e}' => {
+            '\u{e09e}' => {
                 in_dquote = !in_dquote;
                 out.push(c);
             }
@@ -18791,7 +18791,7 @@ fn bare_subscript_with_suffix(s: &str) -> Option<(&str, &str, &str)> {
 /// (`$var`, `${arr[@]}`) DO NOT get IFS-split unless `SH_WORD_SPLIT`
 /// is set, so we deliberately don't trigger on those.
 ///
-/// Lexer markers: `\u{85}` = META-$, `\u{88}` = Inpar.
+/// Lexer markers: `\u{e085}` = META-$, `\u{e088}` = Inpar.
 /// Detect any unquoted parameter expansion (`$VAR`, `${VAR}`,
 /// `${VAR:...}`) OR command substitution (`$(...)`, backticks) in
 /// the lexer-tokenized word `s`. Superset of `has_unquoted_expansion`:
@@ -18807,28 +18807,28 @@ fn has_unquoted_param_or_subst(s: &str) -> bool {
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        if c == '\u{9d}' {
+        if c == '\u{e09d}' {
             in_sq = !in_sq;
             i += 1;
             continue;
         }
-        if c == '\u{9e}' {
+        if c == '\u{e09e}' {
             in_dq = !in_dq;
             i += 1;
             continue;
         }
         if !in_dq && !in_sq {
-            // META-$ (Stringg = \u{85}) — any param / cmd-subst marker.
-            if c == '\u{85}' || c == '$' {
+            // META-$ (Stringg = \u{e085}) — any param / cmd-subst marker.
+            if c == '\u{e085}' || c == '$' {
                 return true;
             }
-            // Qstring (\u{8c}) — DQ-context $-marker; in non-DQ here
+            // Qstring (\u{e08c}) — DQ-context $-marker; in non-DQ here
             // it's a real expansion marker too.
-            if c == '\u{8c}' {
+            if c == '\u{e08c}' {
                 return true;
             }
-            // Backticks (literal or Tick = \u{96}, Qtick = \u{95}).
-            if c == '`' || c == '\u{96}' || c == '\u{95}' {
+            // Backticks (literal or Tick = \u{e096}, Qtick = \u{e095}).
+            if c == '`' || c == '\u{e096}' || c == '\u{e095}' {
                 return true;
             }
         }
@@ -18909,12 +18909,12 @@ fn cmdsubst_only_inside_braces(e: &str) -> bool {
     let mut saw_any = false;
     while i < chars.len() {
         let c = chars[i];
-        if c == '\u{9d}' {
+        if c == '\u{e09d}' {
             in_sq = !in_sq;
             i += 1;
             continue;
         }
-        if c == '\u{9e}' {
+        if c == '\u{e09e}' {
             in_dq = !in_dq;
             i += 1;
             continue;
@@ -18923,23 +18923,23 @@ fn cmdsubst_only_inside_braces(e: &str) -> bool {
             i += 1;
             continue;
         }
-        let is_dollar = matches!(c, '$' | '\u{85}' | '\u{8c}');
+        let is_dollar = matches!(c, '$' | '\u{e085}' | '\u{e08c}');
         let next = chars.get(i + 1).copied();
         // `${` — Inbrace TOKEN or a raw brace.
-        if is_dollar && matches!(next, Some('\u{8f}') | Some('{')) {
+        if is_dollar && matches!(next, Some('\u{e08f}') | Some('{')) {
             brace_depth += 1;
             i += 2;
             continue;
         }
-        if matches!(c, '\u{90}' | '}') && brace_depth > 0 {
+        if matches!(c, '\u{e090}' | '}') && brace_depth > 0 {
             brace_depth -= 1;
             i += 1;
             continue;
         }
         // `$(` — Inpar TOKEN or a raw paren; plus the backtick forms
         // (Tick / Qtick), matching has_unquoted_expansion's set.
-        let is_cmdsub = (is_dollar && matches!(next, Some('\u{88}') | Some('(')))
-            || matches!(c, '`' | '\u{93}' | '\u{99}');
+        let is_cmdsub = (is_dollar && matches!(next, Some('\u{e088}') | Some('(')))
+            || matches!(c, '`' | '\u{e093}' | '\u{e099}');
         if is_cmdsub && !in_dq {
             saw_any = true;
             if brace_depth == 0 {
@@ -18958,23 +18958,23 @@ fn has_unquoted_expansion(s: &str) -> bool {
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        if c == '\u{9d}' {
+        if c == '\u{e09d}' {
             in_sq = !in_sq;
             i += 1;
             continue;
         }
-        if c == '\u{9e}' {
+        if c == '\u{e09e}' {
             in_dq = !in_dq;
             i += 1;
             continue;
         }
         if !in_dq && !in_sq {
             // `$(...)` — META-$ followed by Inpar
-            if c == '\u{85}' && i + 1 < chars.len() && chars[i + 1] == '\u{88}' {
+            if c == '\u{e085}' && i + 1 < chars.len() && chars[i + 1] == '\u{e088}' {
                 return true;
             }
             // Plain `$` followed by Inpar (lexer sometimes leaves `$` literal)
-            if c == '$' && i + 1 < chars.len() && chars[i + 1] == '\u{88}' {
+            if c == '$' && i + 1 < chars.len() && chars[i + 1] == '\u{e088}' {
                 return true;
             }
             // Fully-raw `$(` — intypeset-context words (typeset-family
@@ -18986,13 +18986,13 @@ fn has_unquoted_expansion(s: &str) -> bool {
                 return true;
             }
             // Backtick command sub — literal `` ` ``, Tick TOKEN
-            // (`\u{93}`), or Qtick TOKEN (`\u{99}` — DQ-context backtick
-            // marker). The previous version checked `\u{96}` (Bang) and
-            // `\u{95}` (OutangProc) which are unrelated TOKENs — backtick
+            // (`\u{e093}`), or Qtick TOKEN (`\u{e099}` — DQ-context backtick
+            // marker). The previous version checked `\u{e096}` (Bang) and
+            // `\u{e095}` (OutangProc) which are unrelated TOKENs — backtick
             // cmd-subst inside an unquoted array literal never matched, so
             // `a=(\`cmd\`)` got no word-split and the output joined as one
             // element. Matches Src/zsh.h:174/180 Tick/Qtick constants.
-            if c == '`' || c == '\u{93}' || c == '\u{99}' {
+            if c == '`' || c == '\u{e093}' || c == '\u{e099}' {
                 return true;
             }
         }
@@ -19066,7 +19066,7 @@ fn render_cond(c: &crate::parse::ZshCond) -> String {
 fn word_is_bare_param_ref(word: &str) -> bool {
     let c: Vec<char> = word.chars().collect();
     // The lexer replaces a bare `$` with the `Stringg` token (zsh.h:160,
-    // \u{85}); `${...}` keeps a literal `$`. Accept both spellings —
+    // \u{e085}); `${...}` keeps a literal `$`. Accept both spellings —
     // matching only the literal one made `local -a $t` miss while
     // `local -a ${t}` hit, which is the same word in zsh's grammar.
     if c.len() < 2 || !(c[0] == '$' || c[0] == crate::ported::zsh_h::Stringg) {
@@ -19116,10 +19116,10 @@ fn word_is_bare_param_ref(word: &str) -> bool {
 /// subscript.
 ///
 /// Spans skipped: `${…}` / `$(…)` / `$((…))`, `` `…` ``, `'…'`, `"…"`, and
-/// bracket nesting. Token forms of the delimiters (Inbrace `\u{8f}` /
-/// Outbrace `\u{90}` / Inpar `\u{88}` / Outpar `\u{89}` / Inbrack `\u{91}` /
-/// Outbrack `\u{92}` / Qstring `\u{8c}` / Stringg `\u{85}` / Tick `\u{86}` /
-/// Qtick `\u{8b}`, zsh.h token table) count the same as their ASCII spellings
+/// bracket nesting. Token forms of the delimiters (Inbrace `\u{e08f}` /
+/// Outbrace `\u{e090}` / Inpar `\u{e088}` / Outpar `\u{e089}` / Inbrack `\u{e091}` /
+/// Outbrack `\u{e092}` / Qstring `\u{e08c}` / Stringg `\u{e085}` / Tick `\u{e086}` /
+/// Qtick `\u{e08b}`, zsh.h token table) count the same as their ASCII spellings
 /// because the lexer may hand over either.
 fn subscript_has_toplevel_comma(key: &str) -> bool {
     let chars: Vec<char> = key.chars().collect();
@@ -19138,7 +19138,7 @@ fn subscript_has_toplevel_comma(key: &str) -> bool {
             continue;
         }
         if in_tick {
-            if c == '`' || c == '\u{86}' || c == '\u{8b}' {
+            if c == '`' || c == '\u{e086}' || c == '\u{e08b}' {
                 in_tick = false;
             }
             i += 1;
@@ -19147,9 +19147,9 @@ fn subscript_has_toplevel_comma(key: &str) -> bool {
         match c {
             '\'' if !in_dquote => in_squote = true,
             '"' => in_dquote = !in_dquote,
-            '`' | '\u{86}' | '\u{8b}' => in_tick = true,
-            '{' | '\u{8f}' | '(' | '\u{88}' | '[' | '\u{91}' => depth += 1,
-            '}' | '\u{90}' | ')' | '\u{89}' | ']' | '\u{92}' => depth -= 1,
+            '`' | '\u{e086}' | '\u{e08b}' => in_tick = true,
+            '{' | '\u{e08f}' | '(' | '\u{e088}' | '[' | '\u{e091}' => depth += 1,
+            '}' | '\u{e090}' | ')' | '\u{e089}' | ']' | '\u{e092}' => depth -= 1,
             ',' if depth == 0 && !in_dquote => return true,
             _ => {}
         }
@@ -19173,13 +19173,13 @@ fn is_typeset_scalar_assign(word: &str) -> bool {
         return false;
     }
     // Optional `[subscript]` — literal or Inbrack/Outbrack tokens
-    // (\u{91}/\u{92}, zsh.h:171-172).
-    if matches!(chars.get(i), Some('[') | Some('\u{91}')) {
+    // (\u{e091}/\u{e092}, zsh.h:171-172).
+    if matches!(chars.get(i), Some('[') | Some('\u{e091}')) {
         let mut depth = 0i32;
         while i < chars.len() {
             match chars[i] {
-                '[' | '\u{91}' => depth += 1,
-                ']' | '\u{92}' => {
+                '[' | '\u{e091}' => depth += 1,
+                ']' | '\u{e092}' => {
                     depth -= 1;
                     if depth == 0 {
                         i += 1;
@@ -19197,8 +19197,8 @@ fn is_typeset_scalar_assign(word: &str) -> bool {
     if chars.get(i) == Some(&'+') {
         i += 1;
     }
-    // `=` may arrive literal or as the Equals token (\u{8d}).
-    matches!(chars.get(i), Some('=') | Some('\u{8d}'))
+    // `=` may arrive literal or as the Equals token (\u{e08d}).
+    matches!(chars.get(i), Some('=') | Some('\u{e08d}'))
 }
 
 /// Split a typeset-family paren-init arg `name=( e1 e2 … )` /
@@ -19228,19 +19228,19 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
     if chars.get(i) == Some(&'+') {
         i += 1;
     }
-    // `=` may arrive literal or as the Equals token (\u{8d}).
-    if !matches!(chars.get(i), Some('=') | Some('\u{8d}')) {
+    // `=` may arrive literal or as the Equals token (\u{e08d}).
+    if !matches!(chars.get(i), Some('=') | Some('\u{e08d}')) {
         return None;
     }
     i += 1;
-    // `(` literal or Inpar token (\u{88}).
-    if !matches!(chars.get(i), Some('(') | Some('\u{88}')) {
+    // `(` literal or Inpar token (\u{e088}).
+    if !matches!(chars.get(i), Some('(') | Some('\u{e088}')) {
         return None;
     }
     i += 1;
-    // Body runs to the LAST `)` / Outpar (\u{8a}, zsh.h:165) — must
+    // Body runs to the LAST `)` / Outpar (\u{e08a}, zsh.h:165) — must
     // be the final char of the word.
-    if !matches!(chars.last(), Some(')') | Some('\u{8a}')) {
+    if !matches!(chars.last(), Some(')') | Some('\u{e08a}')) {
         return None;
     }
     let body = &chars[i..chars.len() - 1];
@@ -19273,7 +19273,7 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
     // `_arguments` spec list that way, which is what silenced `psql <TAB>`.
     //
     // c:Src/lex.c — a BACKSLASH-escaped metachar is inert. The lexer hands
-    // `\(` down as Bnull (`\u{9f}`) + `(`, and raw-source paths keep the
+    // `\(` down as Bnull (`\u{e09f}`) + `(`, and raw-source paths keep the
     // literal `\`. Neither opens a nesting level, so step over the escaped
     // char instead of counting it.
     let mut esc = false;
@@ -19283,53 +19283,53 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
             cur.push(c);
             continue;
         }
-        if c == '\u{9f}' || (c == '\\' && !in_sq) {
+        if c == '\u{e09f}' || (c == '\\' && !in_sq) {
             esc = true;
             cur.push(c);
             continue;
         }
         match c {
-            '\u{9d}' => {
+            '\u{e09d}' => {
                 in_sq = !in_sq;
                 cur.push(c);
             }
-            '\u{9e}' => {
+            '\u{e09e}' => {
                 in_dq = !in_dq;
                 cur.push(c);
             }
-            '\u{93}' | '\u{99}' | '`' if !in_sq && !in_dq => {
+            '\u{e093}' | '\u{e099}' | '`' if !in_sq && !in_dq => {
                 in_tick = !in_tick;
                 cur.push(c);
             }
-            // Inbrace \u{8f} / Outbrace \u{90} (zsh.h:169-170). Braces are
+            // Inbrace \u{e08f} / Outbrace \u{e090} (zsh.h:169-170). Braces are
             // counted unconditionally: they bound `${…}` and brace expansion,
             // and the whitespace they enclose is word-internal.
-            '{' | '\u{8f}' if !in_sq && !in_dq => {
+            '{' | '\u{e08f}' if !in_sq && !in_dq => {
                 depth += 1;
                 brace_nest += 1;
                 cur.push(c);
             }
-            '}' | '\u{90}' if !in_sq && !in_dq => {
+            '}' | '\u{e090}' if !in_sq && !in_dq => {
                 depth -= 1;
                 brace_nest = (brace_nest - 1).max(0);
                 cur.push(c);
             }
-            // Inpar \u{88} / Inparmath \u{89} open; Outpar \u{8a} /
-            // Outparmath \u{8b} close (zsh.h:163-166 — Outpar is \u{8a}, NOT
-            // \u{89}; the first cut used \u{89} so a `$(…)` element never
+            // Inpar \u{e088} / Inparmath \u{e089} open; Outpar \u{e08a} /
+            // Outparmath \u{e08b} close (zsh.h:163-166 — Outpar is \u{e08a}, NOT
+            // \u{e089}; the first cut used \u{e089} so a `$(…)` element never
             // re-balanced and the splitter bailed as unbalanced, skipping the
-            // pack rewrite). Inbrack \u{91} / Outbrack \u{92} (zsh.h:171-172).
+            // pack rewrite). Inbrack \u{e091} / Outbrack \u{e092} (zsh.h:171-172).
             //
             // Counted only OUTSIDE a `${…}` body: in there the parens and
             // brackets are the substitution's PATTERN / REPLACEMENT text and
             // are under no obligation to balance —
             //     ${(@)common_opts_conn/#\(-U/(2 -U}      (_postgresql:993)
             // has one `(` in the replacement `(2 -U` with no `)`.
-            '(' | '\u{88}' | '\u{89}' | '[' | '\u{91}' if !in_sq && !in_dq && brace_nest == 0 => {
+            '(' | '\u{e088}' | '\u{e089}' | '[' | '\u{e091}' if !in_sq && !in_dq && brace_nest == 0 => {
                 depth += 1;
                 cur.push(c);
             }
-            ')' | '\u{8a}' | '\u{8b}' | ']' | '\u{92}' if !in_sq && !in_dq && brace_nest == 0 => {
+            ')' | '\u{e08a}' | '\u{e08b}' | ']' | '\u{e092}' if !in_sq && !in_dq && brace_nest == 0 => {
                 depth -= 1;
                 cur.push(c);
             }
@@ -19365,8 +19365,8 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
 
 fn unquoted(s: &str, target: char) -> bool {
     // True iff `target` appears in the un-quoted portion of `s`. The
-    // word may carry lexer-level bslashquote markers — `\u{9d}` (Snull,
-    // single-quoted span) and `\u{9e}` (Dnull, double-quoted span)
+    // word may carry lexer-level bslashquote markers — `\u{e09d}` (Snull,
+    // single-quoted span) and `\u{e09e}` (Dnull, double-quoted span)
     // bracket regions where globbing is suppressed. C zsh's pattern
     // compiler (Src/pattern.c::patcompswitch) skips meta-interpretation
     // for bytes inside these spans; the trigger detector must match
@@ -19375,23 +19375,23 @@ fn unquoted(s: &str, target: char) -> bool {
     // are inside DQ.
     //
     // Also honors `\x00` literal-marker (one-char escape from
-    // expand_string preprocessing) and `\u{9f}` (Bnull — lexer
+    // expand_string preprocessing) and `\u{e09f}` (Bnull — lexer
     // backslash-escape).
     let mut prev = ' ';
     let mut inside_sq = false;
     let mut inside_dq = false;
     for c in s.chars() {
-        if c == '\u{9d}' {
+        if c == '\u{e09d}' {
             inside_sq = !inside_sq;
             prev = c;
             continue;
         }
-        if c == '\u{9e}' {
+        if c == '\u{e09e}' {
             inside_dq = !inside_dq;
             prev = c;
             continue;
         }
-        if c == target && prev != '\x00' && prev != '\u{9f}' && !inside_sq && !inside_dq {
+        if c == target && prev != '\x00' && prev != '\u{e09f}' && !inside_sq && !inside_dq {
             return true;
         }
         prev = c;
@@ -19444,7 +19444,7 @@ fn has_numeric_range_glob(s: &str) -> bool {
 }
 
 /// Untokenize like `lex::untokenize`, but preserve the three brace TOKEN
-/// bytes (Inbrace \u{8f}, Outbrace \u{90}, Comma \u{9a}) so a subsequent
+/// bytes (Inbrace \u{e08f}, Outbrace \u{e090}, Comma \u{e09a}) so a subsequent
 /// `xpandbraces` call still sees the brace structure. Used by the
 /// segment-fast-path when a literal segment carries an in-flight brace
 /// pattern that crosses the segment boundary (e.g. `"$X"{a,b,c}`).
@@ -19465,14 +19465,14 @@ fn has_numeric_range_glob(s: &str) -> bool {
 /// `case` to parity.)
 fn case_pattern_for_match(pattern: &str) -> String {
     let mut out = String::with_capacity(pattern.len());
-    let mut in_q = false; // inside a Snull (\u{9d}) / Dnull (\u{9e}) span
+    let mut in_q = false; // inside a Snull (\u{e09d}) / Dnull (\u{e09e}) span
     let mut chars = pattern.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '\u{9d}' | '\u{9e}' => {
+            '\u{e09d}' | '\u{e09e}' => {
                 in_q = !in_q; // strip the marker, toggle quote state
             }
-            '\u{9f}' | '\u{8b}' => {
+            '\u{e09f}' | '\u{e08b}' => {
                 // Bnull / Bnullkeep escape — keep it and its escaped char
                 // verbatim (already a literal escape patcompile honors).
                 out.push(c);
@@ -19486,7 +19486,7 @@ fn case_pattern_for_match(pattern: &str) -> String {
                     c,
                     '*' | '?' | '[' | ']' | '(' | ')' | '|' | '#' | '^' | '~' | '<' | '>' | '\\'
                 ) {
-                    out.push('\u{9f}'); // Bnull
+                    out.push('\u{e09f}'); // Bnull
                 }
                 out.push(c);
             }
@@ -19505,7 +19505,7 @@ fn untokenize_keep_braces(s: &str) -> String {
     let mut buf = String::new();
     let mut group: Vec<char> = Vec::new();
     for c in s.chars() {
-        if c == '\u{8f}' || c == '\u{90}' || c == '\u{9a}' {
+        if c == '\u{e08f}' || c == '\u{e090}' || c == '\u{e09a}' {
             if !group.is_empty() {
                 buf.clear();
                 buf.extend(group.iter());
@@ -20002,16 +20002,16 @@ mod tests {
     fn compile_glob_expansion_compiles_without_panic() {
         // `*.txt` lowers to LoadConst(<tokenized>) + arg-processing
         // CallBuiltin chain. The lexer tokenizes the bare `*` to
-        // `Star` (`\u{87}`, per Src/zsh.h:162 + ported/zsh_h.rs:144);
+        // `Star` (`\u{e087}`, per Src/zsh.h:162 + ported/zsh_h.rs:144);
         // glob expansion happens at runtime through the arg-process
         // CallBuiltin chain (un-tokenizing as it goes), not via a
         // dedicated Op::Glob at compile. Pin just that the pattern
         // made it into the constant pool — accept either the raw
-        // `*.txt` (untokenized) or the tokenized `\u{87}.txt`.
+        // `*.txt` (untokenized) or the tokenized `\u{e087}.txt`.
         let chunk = compile_src("echo *.txt");
         assert!(
             chunk.constants.iter().any(|c| matches!(c,
-                fusevm::Value::Str(s) if s.contains("*.txt") || s.contains("\u{87}.txt"))),
+                fusevm::Value::Str(s) if s.contains("*.txt") || s.contains("\u{e087}.txt"))),
             "glob pattern (tokenized or literal) must be in the constant pool: {:?}",
             chunk.constants,
         );
@@ -20024,12 +20024,12 @@ mod tests {
         // CallBuiltin chain, not via a dedicated Op::TildeExpand at
         // compile time.
         let chunk = compile_src("echo ~/x");
-        // Lexer tokenizes the leading `~` to `Tilde` (`\u{98}`,
+        // Lexer tokenizes the leading `~` to `Tilde` (`\u{e098}`,
         // per Src/zsh.h:179 + ported/zsh_h.rs:178). Accept either
         // form (raw or tokenized).
         assert!(
             chunk.constants.iter().any(|c| matches!(c,
-                fusevm::Value::Str(s) if s.contains("~/x") || s.contains("\u{98}/x"))),
+                fusevm::Value::Str(s) if s.contains("~/x") || s.contains("\u{e098}/x"))),
             "tilde pattern must be in the constant pool: {:?}",
             chunk.constants,
         );

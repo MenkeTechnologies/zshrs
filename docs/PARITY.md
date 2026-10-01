@@ -55,13 +55,11 @@ individually from an interactive shell and failed as a suite.
 fallback path expects the binary pre-built; without it they fail for a
 harness reason, not a code gap. Build the daemon before reading this suite.
 
-`fuzz_discovered_parity::quote_flag_formatting::nul_quoting_format` shares a
-root cause with the `quote` fuzz mode: zshrs represents zsh's token bytes
-(`0x84`–`0xA1`, `Src/lex.c:38` `ztokens`) as Rust `char`s, so a genuine
-codepoint in U+0084–U+00A1 is indistinguishable from a token. C avoids the
-collision by Meta-escaping bytes. Verified boundary: U+009F/A0/A1 mangle,
-U+00A2 and above round-trip cleanly. Fixing it needs a representation
-change, not a call-site patch.
+zshrs keeps zsh's lexer tokens (the bytes `0x84`–`0xA2`, `Src/zsh.h:159-224`)
+as Private Use Area chars at U+E084–U+E0A2 (`src/token_char.rs`), so real
+U+0084–U+00A2 text (NBSP, `¡`, `¢`, NEL, C1 controls) never reads as a token.
+The older U+0084–U+00A1 encoding mangled those chars under `(q)`, `(V)` and
+`(qqqq)`, and on the line-at-a-time stdin path.
 
 ## Relationship to the other two measurements
 

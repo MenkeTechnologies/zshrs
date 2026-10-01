@@ -3010,12 +3010,19 @@ pub fn set_comp_sep() -> i32 {
     // ── single-byte-metafied <-> char-per-byte String conversions ──
     // Each metafied byte is one `char` in the port's string world, so
     // `c as u8` for c < 0x100 reconstructs the C single-byte buffer
-    // (markers 0x9d/0x9e/0x9f = one byte, Meta-escapes = 0x83 + xor).
+    // (Meta-escapes = 0x83 + xor). A token char (crate::token_char) is its
+    // one C token byte; real U+0084..=U+00A2 text is metafied the way C
+    // holds data in that range, so it cannot come back as a token.
     let to_sb = |s: &str| -> Vec<u8> {
         let mut v = Vec::with_capacity(s.len());
         for c in s.chars() {
             let cp = c as u32;
-            if cp < 0x100 {
+            if let Some(t) = crate::token_char::token_byte(c) {
+                v.push(t);
+            } else if (0x84..=0xa2).contains(&cp) {
+                v.push(Meta);
+                v.push(cp as u8 ^ 32);
+            } else if cp < 0x100 {
                 v.push(cp as u8);
             } else {
                 let mut b = [0u8; 4];
@@ -3024,7 +3031,21 @@ pub fn set_comp_sep() -> i32 {
         }
         v
     };
-    let from_sb = |b: &[u8]| -> String { b.iter().map(|&x| x as char).collect() };
+    let from_sb = |b: &[u8]| -> String {
+        let mut out = String::with_capacity(b.len());
+        let mut i = 0;
+        while i < b.len() {
+            let x = b[i];
+            if x == Meta && i + 1 < b.len() && (0x84..=0xa2).contains(&(b[i + 1] ^ 32)) {
+                out.push((b[i + 1] ^ 32) as char); // data char to_sb metafied
+                i += 2;
+                continue;
+            }
+            out.push(crate::token_char::token_char_from_byte(x).unwrap_or(x as char));
+            i += 1;
+        }
+        out
+    };
     let snap = |g: &'static OnceLock<Mutex<String>>| -> String {
         g.get_or_init(|| Mutex::new(String::new()))
             .lock()
@@ -8457,7 +8478,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:1259-1311: `$FOO` with cursor inside the name → return b.
-        OFFS.store(2, Ordering::Relaxed);
+        // OFFS is a byte offset into the UTF-8 word: one past the token.
+        OFFS.store(Stringg.len_utf8() as i32 + 1, Ordering::Relaxed);
         let s = format!("{}FOO", Stringg);
         let r = check_param(&s, false, true, false);
         assert!(r.is_some(), "expected Some(b) inside $FOO");

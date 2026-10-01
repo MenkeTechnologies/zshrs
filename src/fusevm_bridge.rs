@@ -5871,7 +5871,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // The compiler hands this opcode the RAW subscript text, so a
         // dynamic key arrived literally ("$k") and matched nothing.
         // singsub is identity for plain keys.
-        let key = if key.contains('$') || key.contains('`') || key.contains('\u{8c}') {
+        let key = if key.contains('$') || key.contains('`') || key.contains('\u{e08c}') {
             crate::ported::subst::singsub(&key)
         } else {
             key
@@ -5936,11 +5936,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
         // Inner body of `${(...)...}` (already stripped of `${`/`}` by
         // the caller). The compiler optionally prefixes Qstring
-        // (\u{8c}) to signal "expanded in DQ context" — strip it
+        // (\u{e08c}) to signal "expanded in DQ context" — strip it
         // here and bump in_dq_context for the paramsubst call so the
         // SUB_ZIP and other qt-aware paths fire.
         let body = vm.pop().to_str();
-        let (dq, inner) = if let Some(rest) = body.strip_prefix('\u{8c}') {
+        let (dq, inner) = if let Some(rest) = body.strip_prefix('\u{e08c}') {
             (true, rest.to_string())
         } else {
             (false, body)
@@ -6850,7 +6850,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // c:Src/exec.c:2114 `quote_tokenized_output`. The canonical
     // port at exec::quote_tokenized_output operates on bytes
     // (zsh's metafied encoding); zshrs strings are UTF-8 so
-    // `\u{87}` Star is `[0xC2, 0x87]`, and a byte walk writes
+    // `\u{e087}` Star is `[0xC2, 0x87]`, and a byte walk writes
     // 0xC2 raw (invalid UTF-8 lead → U+FFFD on lossy decode).
     // Walk by char and dispatch the same switch the byte port
     // uses, but with the token chars matching the UTF-8 form.
@@ -6878,7 +6878,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 continue;
             }
             // c:2124 — Nularg: skip.
-            if c == '\u{a1}' {
+            if c == '\u{e0a1}' {
                 i += 1;
                 continue;
             }
@@ -6918,12 +6918,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 _ => {}
             }
             // c:2163 — `if (itok(*s)) putc(ztokens[*s - Pound]);`
-            // Map zsh token chars (`\u{84}`..`\u{a1}` range, the
+            // Map zsh token chars (`\u{e084}`..`\u{e0a1}` range, the
             // ones the lexer emits for `#$^*()…`) back to their
             // source ASCII via the `ztokens` table.
             let cp = c as u32;
-            if (0x84..=0xa1).contains(&cp) {
-                let idx = (cp - 0x84) as usize;
+            if (0xe084..=0xe0a1).contains(&cp) {
+                let idx = (cp - 0xe084) as usize;
                 let ztokens = crate::ported::lex::ztokens.as_bytes();
                 if idx < ztokens.len() {
                     out.push(ztokens[idx] as char);
@@ -7644,12 +7644,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // then escapes to the normalizer's literal-backslash `\\`).
         fn active_pattern_token(c: char) -> Option<char> {
             let cu = c as u32;
-            if !(0x84..=0x9c).contains(&cu) {
+            if !(0xe084..=0xe09c).contains(&cu) {
                 return None;
             }
             let m = crate::ported::lex::ztokens
                 .chars()
-                .nth((cu - 0x84) as usize)?;
+                .nth((cu - 0xe084) as usize)?;
             is_pattern_meta(m).then_some(m)
         }
         // !!! RUST-ONLY HELPER — no C counterpart. C needs no such pass: its
@@ -10230,7 +10230,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // condtab lookup + arity check, cond.c:149-185, over the four cotab[]
                         // entries at complete.c:1697-1702). Handlers return 1=match/true.
         let name: String = op
-            .trim_start_matches(|c: char| c == '-' || c == '\u{9b}')
+            .trim_start_matches(|c: char| c == '-' || c == '\u{e09b}')
             .to_string();
         // c:Src/cond.c:149-150 — `cd = getconddef((ctype == COND_MODI),
         // name + 1, 1)`. The `autol = 1` argument is what makes an
@@ -10273,7 +10273,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     COND_BAD_PATTERN.with(|c| c.set(true)); // c:193
                     crate::ported::utils::zerr(&format!(
                         "unknown condition: {}",
-                        op.replace('\u{9b}', "-")
+                        op.replace('\u{e09b}', "-")
                     ));
                     return Value::Bool(false);
                 }
@@ -10297,7 +10297,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             COND_BAD_PATTERN.with(|c| c.set(true)); // c:180
             crate::ported::utils::zerr(&format!(
                 "unknown condition: {}",
-                op.replace('\u{9b}', "-")
+                op.replace('\u{e09b}', "-")
             ));
             return Value::Bool(false);
         }
@@ -14194,8 +14194,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     text.as_str()
                 };
                 // The lexer's dquote_parse (Src/lex.c) already tokenized
-                // DQ contents: `$` → Qstring (\u{8c}), `\$`/`\\`/`\"`/
-                // `` \` `` → Bnull (\u{9f}) + literal. Stringsubst /
+                // DQ contents: `$` → Qstring (\u{e08c}), `\$`/`\\`/`\"`/
+                // `` \` `` → Bnull (\u{e09f}) + literal. Stringsubst /
                 // multsub recognize these markers natively. We pass
                 // `inner` through verbatim — no re-tokenization needed.
                 let prepped: String = inner.to_string();
@@ -14223,7 +14223,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // the Nularg empty-word sentinel remnulargs left in
                 // place and folds any remaining token chars. Without
                 // it, quoted splits with empty pieces
-                // ("${(s:|:)x}" on "|a|b|") leak U+00A1 into argv.
+                // ("${(s:|:)x}" on "|a|b|") leak Nularg into argv.
                 let result_value = if mode == 5 {
                     let out = crate::ported::subst::singsub(&prepped);
                     if crate::ported::subst::PREFORK_STOPPED.with(|c| c.get()) {
@@ -14530,7 +14530,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let brace_expanded: Vec<String> = pre_brace
                     .into_iter()
                     .flat_map(|w| {
-                        if brace_expand && w.contains('\u{8f}') {
+                        if brace_expand && w.contains('\u{e08f}') {
                             crate::ported::glob::xpandbraces(&w, brace_ccl)
                         } else {
                             vec![w]
@@ -14584,13 +14584,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .into_iter()
                     .flat_map(|s| {
                         // The lexer leaves glob metacharacters in their
-                        // META-encoded form: `*` → `\u{87}`, `?` →
-                        // `\u{86}`, `[` → `\u{91}`, etc. expand_string
+                        // META-encoded form: `*` → `\u{e087}`, `?` →
+                        // `\u{e086}`, `[` → `\u{e091}`, etc. expand_string
                         // doesn't untokenize them, so the literal-char
                         // checks below (`s.contains('*')`) would miss
                         // every real glob and skip expand_glob — that
                         // bug let `echo *.toml` print the literal
-                        // `*.toml` because the META `\u{87}` never
+                        // `*.toml` because the META `\u{e087}` never
                         // matched the literal `*`. Untokenize once so
                         // the metacharacter checks see the canonical
                         // form. zsh's pattern.c expects `*` etc. as
@@ -14783,8 +14783,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // quoted span never drops: `x"${v[-1]}"y` (v empty)
                     // is the scalar "xy", and a standalone `"${v[-1]}"`
                     // is ONE empty arg. The lexer marks DQ/SQ spans with
-                    // Dnull(\u{9e})/Snull(\u{9d})/Qstring(\u{8c})/
-                    // Bnull(\u{9f}); their presence in the SOURCE word
+                    // Dnull(\u{e09e})/Snull(\u{e09d})/Qstring(\u{e08c})/
+                    // Bnull(\u{e09f}); their presence in the SOURCE word
                     // means qt semantics apply. Without this gate, zpwr's
                     // global `setopt rc_expand_param` turned autopair's
                     // `local lchar="${LBUFFER[-1]}"` (empty prompt +
@@ -14799,14 +14799,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // empty and must ELIDE, matching zsh (`a=(A ${x:+'q'}
                         // C)` → 2 elements, not 3). So only count quote
                         // markers at brace-depth 0 (outside `${…}`). Inbrace
-                        // = \u{8f}, Outbrace = \u{90}.
+                        // = \u{e08f}, Outbrace = \u{e090}.
                         let mut depth = 0i32;
                         let mut word_has_quoted_span = false;
                         for c in text.chars() {
                             match c {
-                                '\u{8f}' => depth += 1,
-                                '\u{90}' => depth -= 1,
-                                '\u{9e}' | '\u{9d}' | '\u{8c}' | '\u{9f}' | '"' | '\''
+                                '\u{e08f}' => depth += 1,
+                                '\u{e090}' => depth -= 1,
+                                '\u{e09e}' | '\u{e09d}' | '\u{e08c}' | '\u{e09f}' | '"' | '\''
                                     if depth <= 0 =>
                                 {
                                     word_has_quoted_span = true;
@@ -14950,7 +14950,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (matches observed zsh: the pattern's `$'\0'` matches a
         // real NUL while the repl's stays literal).
         let repl = if dq_flag {
-            repl.replace('$', "\u{8c}")
+            repl.replace('$', "\u{e08c}")
         } else {
             repl
         };
@@ -15677,7 +15677,7 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // for all-empty results). These fast-path bridges are terminal —
     // their output lands directly in argv slots — so apply it here.
     // Without it, quoted splits with empty pieces ("${(s:|:)x}" on
-    // "|a|b|") leak U+00A1 into argv.
+    // "|a|b|") leak Nularg into argv.
     // c:Src/subst.c:178-181 — `prefork` runs `filesub` on the word AFTER
     // `stringsubst` and BEFORE anything untokenizes it, which is what makes a
     // `~` inside an expansion body expand: `filesubstr` (c:741) matches the
@@ -15707,7 +15707,7 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // own (`nodes_to_value`'s `in_dq_context` arm), so there is no drop to
     // protect it from — and the paths a quoted word takes do not all run
     // remnulargs afterwards, so keeping the marker there put a literal
-    // U+00A1 in the output: `b=(1 2 3 4 5); c=(2 4 6);
+    // Nularg in the output: `b=(1 2 3 4 5); c=(2 4 6);
     // print -r -- "[${(j: :)b:*c}]"` printed `[¡]` instead of `[]`.
     let lone_marker = !qt
         && nodes.len() == 1
@@ -16323,13 +16323,13 @@ fn word_assemble_plan9(segments: &[Value], plan9_flags: &[bool]) -> Value {
 }
 
 fn nodes_to_value(nodes: Vec<String>) -> Value {
-    // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{a1}`)
+    // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{e0a1}`)
     //   sentinel and other INULL bytes that paramsubst's splat block
     //   emits for empty array elements (so prefork's empty-node-delete
     //   pass doesn't drop them). Downstream consumers (cond `-z`/`-n`,
     //   command args, etc.) must see the post-remnulargs strings. Bug
     //   #185 in docs/BUGS.md: `[[ -z "${b[@]}" ]]` for b=("") returned
-    //   false because the leftover `\u{a1}` had StringLen=1.
+    //   false because the leftover `\u{e0a1}` had StringLen=1.
     //
     // ORDER MATTERS, and the single-node drop below is the second half of
     // it. C tests a node's emptiness at c:183 BEFORE remnulargs runs at
@@ -20355,8 +20355,8 @@ impl fusevm::ShellHost for ZshrsHost {
         // port at src/ported/modules/regex.rs:58.
         //
         // The bridge passthru path delivers TOKEN-form bytes here
-        // (Inbrack \u{91}, Outbrack \u{92}, Star \u{87}, Quest
-        // \u{86}, etc.) since the lexer tokenizes regex meta chars
+        // (Inbrack \u{e091}, Outbrack \u{e092}, Star \u{e087}, Quest
+        // \u{e086}, etc.) since the lexer tokenizes regex meta chars
         // inside `[[ ]]`. The host regex engine expects ASCII, so
         // untokenize the pattern (and subject, for safety) once at
         // this boundary. zsh C reaches its POSIX-ERE engine through

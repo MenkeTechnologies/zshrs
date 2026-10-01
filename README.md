@@ -882,17 +882,16 @@ parity-fuzz --mode <mode> --count 300 --verify 3 --timeout-ms 20000
 | | zsh oracle | emulation targets |
 |---|---|---|
 | Cases | 22,200 (74 modes) | 2,100 (7 shells) |
-| Divergences | **27 (0.12%)** | 709 (33.8%) |
-| Modes/targets at zero | **71 of 74** | -- |
+| Divergences | **18 (0.08%)** | 709 (33.8%) |
+| Modes/targets at zero | **73 of 74** | -- |
 
-All residual zsh-mode divergence is in three modes, and each has a single
-identified root cause:
+All residual zsh-mode divergence is in one mode, with a single identified
+root cause (`quote` and `zmv`, the other two modes that diverged, were
+re-measured at 0 on 2026-10-01):
 
 | Mode | Count | Root cause |
 |---|---|---|
 | `unicode` | 18 | `unsetopt multibyte` is not honoured. zsh drops to BYTE semantics (so `[[:alpha:]]` matches one byte of a multibyte character); zshrs stays in character mode. All 18 cases set the option. |
-| `quote` | 8 | zsh's token bytes `0x84`-`0xA1` (`Src/lex.c:38` `ztokens`) are stored as Rust `char`s, so a real codepoint in U+0084-U+00A1 is indistinguishable from a token. Verified boundary: U+009F/A0/A1 mangle under `(V)`/`(q)`/`(qqqq)`, U+00A2 and above are clean. C avoids this by Meta-escaping bytes. |
-| `zmv` | 1 | `zmv -W` no-match error reports the unconverted pattern and the shell's own name (`zsh:1: no matches found: *.*`) instead of zsh's converted pattern and function context (`zmv:239: no matches found: (*).(*)`). |
 
 Two further notes on reading this table:
 

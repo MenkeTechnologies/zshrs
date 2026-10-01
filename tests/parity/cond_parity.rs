@@ -1214,7 +1214,7 @@ mod bracket_versus_test_spelling {
 ///
 /// The token now survives the VM round-trip, so these run live.
 ///
-/// `untok_and_escape` (src/ported/subst.rs) returns the Quest token (U+0097)
+/// `untok_and_escape` (src/ported/subst.rs) returns the Quest token (U+E097)
 /// and `prefork(PREFORK_SINGLE)` hands it back intact. What used to destroy it
 /// was `BUILTIN_EXPAND_TEXT` untokenizing the expanded word before
 /// `BUILTIN_GLOB_SUBST_GUARD` had read it: with the token gone the guard could

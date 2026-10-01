@@ -345,7 +345,7 @@ pub fn is_potential_path(
             Comma => clean_potential_path_fragment.push(','),
             Dash => clean_potential_path_fragment.push('-'),
             Bang => clean_potential_path_fragment.push('!'),
-            c if ('\u{84}'..='\u{a1}').contains(&c) => {
+            c if ('\u{e084}'..='\u{e0a1}').contains(&c) => {
                 // fish:267-277 — remaining ITOK range (Pound..Nularg, zsh_h.rs:144-204):
                 // globs (Star/Quest/Inbrack/Pound/Hat/Bar/Inang), expansions
                 // (String/Qstring/Tick/Qtick/Inpar/Inbrace/Equals) — all magic.

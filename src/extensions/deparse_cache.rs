@@ -44,7 +44,8 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 /// "ZRDP" little-endian.
 pub const SHARD_MAGIC: u32 = 0x5A52_4450;
 /// Bump when the key recipe or the entry layout changes.
-pub const SHARD_FORMAT_VERSION: u32 = 1;
+/// v2: token chars moved to the Private Use Area (crate::token_char).
+pub const SHARD_FORMAT_VERSION: u32 = 2;
 /// Entries buffered before a flush is forced. A memory bound for a process
 /// that never reaches a prompt; the real batch boundary is the prompt.
 const PENDING_FLUSH_MAX: usize = 4096;

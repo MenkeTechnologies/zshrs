@@ -370,8 +370,8 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
     let mut str: String = strp.clone(); // c:4578 char *str = *strp
 
     // c:4580-4584 — for (s = str; *s; s++) if (inull(*s)) { qt = 1; break; }
-    for s in str.bytes() {
-        if inull(s) {
+    for s in str.chars() {
+        if crate::token_char::token_byte(s).is_some_and(inull) {
             // c:4581
             qt = 1; // c:4582
             break; // c:4583
@@ -12981,7 +12981,7 @@ pub fn stripkshdef(
 
     // c:6383-6388 — name match, tolerating Dash-tokenised hyphens
     // on either side. C walks bytes, and there the Dash token is ONE
-    // byte; the port's String holds it as the char U+009B (two UTF-8
+    // byte; the port's String holds it as the char U+E09B (three UTF-8
     // bytes), so the walk must be per char. Walking `as_bytes()` put the
     // two sides out of step at the first hyphen, so a ksh-style
     // `foo-bar() { … }` autoload file was never recognised as its own

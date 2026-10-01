@@ -588,7 +588,7 @@ pub fn cmphaswilds(str: &str) -> i32 {
 /// BYTES and every parser token (`String`, `Qstring`, `Dnull`, …) is
 /// exactly one byte, so C's pointer arithmetic and `offs` agree. In
 /// this port `s` is a metafied Rust `String` whose token chars live at
-/// U+0080..U+009F and therefore occupy TWO UTF-8 bytes each, so byte
+/// the Private Use Area (crate::token_char) and occupy THREE UTF-8 bytes each, so byte
 /// indices are NOT commensurate with `offs`. The whole scan runs over
 /// `Vec<char>` with CHAR indices — the same convention the brace tail
 /// of `get_comp_string` uses. `at()` returns `'\0'` past the end so
@@ -1788,7 +1788,7 @@ pub fn dupbrinfo(
 ///
 /// The input is a LEXED word, not raw user text: every character the
 /// parser found special has already been rewritten to its `Ztoken`
-/// marker (`Star` = U+0087 for a glob `*`, `Stringg` = U+0085 for a
+/// marker (`Star` = U+E087 for a glob `*`, `Stringg` = U+E085 for a
 /// live `$`, …), and a character that was quoted keeps its literal
 /// form. So the test C makes is on the token BYTE, never on the
 /// printable character:
@@ -1837,10 +1837,10 @@ pub fn has_real_token(s: &str) -> bool {
             continue;
         }
         // c:1072-1073 — `if (itok(*s) && !inull(*s)) return 1;`.
-        // C indexes `typtab` with `(unsigned char) *s`; a metafied word
-        // holds no char above U+00FF, and anything that did could not be
-        // a token, so it maps to a byte that is never ITOK.
-        let b = if (c as u32) < 0x100 { c as u32 as u8 } else { 0 };
+        // C indexes `typtab` with the token byte; zshrs tokens are PUA chars
+        // (crate::token_char), and any other char maps to a byte that is
+        // never ITOK.
+        let b = crate::token_char::token_byte(c).unwrap_or(0);
         if itok(b) && !inull(b) {
             return true; // c:1073
         }
@@ -2349,7 +2349,7 @@ pub fn get_comp_string() -> Option<String> {
                         // Snull/Dash are multi-byte chars in the Rust meta
                         // string, so step by chars — byte-stepping and slicing
                         // (`ttv[idx..]`) inside a token panics on the char
-                        // boundary (e.g. `\u{9b}` Dash spans 2 bytes).
+                        // boundary (e.g. `\u{e09b}` Dash spans 2 bytes).
                         for (idx, ch) in ttv.char_indices() {
                             if ch == snull {
                                 // c:1376
@@ -2459,7 +2459,7 @@ pub fn get_comp_string() -> Option<String> {
             // c:1424 `sl = strlen(tokstr)` is a BYTE count and c:1444's
             // `chuck_at` is a BYTE index into the same string. This port
             // CANNOT use either directly: a token marker is one C byte but
-            // the port stores it as a `char` in U+0080..U+00A2, i.e. TWO
+            // the port stores it as a PUA `char` (crate::token_char), i.e. THREE
             // UTF-8 bytes, so `zlemetacs - wb` (a metafied LINE byte offset)
             // and a byte index into `tokstr` are not commensurate. Counting
             // in chars keeps the two in step for a word whose only non-ASCII
@@ -2643,7 +2643,7 @@ pub fn get_comp_string() -> Option<String> {
                 c == Some('=') || c == Some(crate::ported::zsh_h::Equals)
             } {
                 // c:1520-1539 — an `=`: split VAR=value. The lexer emits the
-                // assignment `=` as the Equals token (a 2-byte UTF-8 char in
+                // assignment `=` as the Equals token (a 3-byte UTF-8 char in
                 // this port, single byte in C), so compare the CHAR and count
                 // in chars: the token is one char just like the literal `=`
                 // on the metaline, so char offsets map straight to metaline
@@ -3271,7 +3271,7 @@ pub fn get_comp_string() -> Option<String> {
         // REPRESENTATION NOTE (Rust-only, no C counterpart): C walks `s` as
         // BYTES and each parser token is exactly one byte, which is also the
         // one line byte it stands for, so C's `p` and `i` advance together.
-        // Here the token chars live at U+0080..U+009F and take TWO UTF-8 bytes
+        // Here the token chars live in the PUA (crate::token_char) and take THREE UTF-8 bytes
         // in `s` while still standing for ONE byte of the metafied line, so
         // the scan runs over `Vec<char>` (`p` is a char index) and `i` stays a
         // line BYTE offset — the same convention `WB`/`WE`/`ZLEMETACS` use.
@@ -3283,7 +3283,7 @@ pub fn get_comp_string() -> Option<String> {
             /// `inull()` over a token char. The typtab predicate is byte-wide
             /// (`Src/ztype.h:62`), and every INULL token is < U+0100.
             fn inull_ch(c: char) -> bool {
-                (c as u32) < 0x100 && inull(c as u32 as u8)
+                crate::token_char::token_byte(c).is_some_and(crate::ported::ztype_h::inull)
             }
             /// C's `memcpy(zlemetaline + at, t, strlen(t))` (c:1852) — overwrite
             /// the line bytes `t` is exactly as long as.
@@ -3496,10 +3496,10 @@ pub fn get_comp_string() -> Option<String> {
         // BYTES and every parser token (`Inbrace`, `Comma`, …) is exactly one
         // byte, so C's `i` / `dp` / `boffs` / `pos` are byte offsets that also
         // count one unit per token. In this port `s` is a metafied Rust
-        // `String` whose token chars live at U+0080..U+009F and therefore
-        // occupy TWO UTF-8 bytes each, so `String::len()` is NOT C's
+        // `String` whose token chars live in the PUA (crate::token_char) and therefore
+        // occupy THREE UTF-8 bytes each, so `String::len()` is NOT C's
         // `strlen()`. The one-unit-per-C-byte quantity here is the CHAR count
-        // (a metafied string holds no char above U+00FF), so the whole scan
+        // (each char is one C byte), so the whole scan
         // runs over `Vec<char>` with char indices, and every `strlen()` in the
         // C below becomes `.chars().count()`. That also keeps `boffs`
         // commensurate with `offs`, which indexes the untokenized return

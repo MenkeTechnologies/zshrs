@@ -4223,7 +4223,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     let s = *pptr;
     // c:2006 — `*s++ = '['`. Caller asserts s[0] is '[' (or its
     // tokenised form Inbrack); skip it. The byte test here read
-    // `s.as_bytes()[0] != 0xa9`, which is neither `Inbrack` (U+0091,
+    // `s.as_bytes()[0] != 0xa9`, which is neither `Inbrack` (U+E091,
     // encoded 0xC2 0x91 in a Rust `str`) nor anything else in the
     // token range, so a lexer-tokenised subscript never got past this
     // guard. Compare the leading CHARACTER instead.
@@ -19066,7 +19066,7 @@ mod tests {
     #[test]
     fn underscoregetfn_runs_untokenize_on_zunderscore() {
         let _g = crate::test_util::global_state_lock();
-        // Inject zunderscore containing a Pound token byte (\u{84})
+        // Inject zunderscore containing a Pound token byte (\u{e084})
         // and verify it gets stripped by untokenize in the return.
         let saved = zunderscore_lock().lock().unwrap().clone();
 
@@ -19081,7 +19081,7 @@ mod tests {
 
         let result = underscoregetfn();
         // c:5156 — untokenize replaces Pound (ITOK) with '#'
-        // (its ztokens entry). The raw \u{84} byte must NOT survive.
+        // (its ztokens entry). The raw \u{e084} byte must NOT survive.
         assert!(
             !result.contains(pound),
             "c:5156 — untokenize must strip Pound token byte from $_"

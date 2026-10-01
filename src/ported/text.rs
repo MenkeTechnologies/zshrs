@@ -130,8 +130,7 @@ macro_rules! tbuf_cwidth {
         for chunk in ($buf).utf8_chunks() {
             for ch in chunk.valid().chars() {
                 let code = ch as u32;
-                if code < 0x100
-                    && (crate::ported::ztype_h::itok(code as u8) || code == Meta as u32)
+                if (crate::token_char::itok_char(ch) || code == Meta as u32)
                 {
                     width += 1;
                 } else {
