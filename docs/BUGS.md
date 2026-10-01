@@ -61067,7 +61067,13 @@ removed. The autoload, script and deparse cache formats were bumped, because
 cached chunks hold the old token chars. The stdin high-byte sweep
 (`non_utf8_script_parity::every_high_byte_round_trips_on_stdin`, previously
 `#[ignore]`d for this collision) now passes for all 128 bytes. Quote-mode fuzz
-goes from 5 divergences to 0, and the parity suite shows no new failures.
+goes from 5 divergences to 0.
+
+**Correction (same day).** The first parity comparison ran a stale test binary, so the
+in-process suites still linked the old lexer. Rebuilt, `parity_harness::corpus_parity` had
+fallen to 47/128: the `.zwc` AST decoder (`zwc_decode.rs`) still widened pool token bytes
+with `b as char`. Fixed in `a534c30ee1`. A full rebuilt-binary comparison against the
+pre-remap tree then showed no remap regressions.
 
 ## #1169 — every `compdef` re-published the whole 50k-entry `_comps`; plugin loading was quadratic — fixed
 
@@ -61093,3 +61099,53 @@ and a direct `_comps[x]=` assignment surviving later compdefs all match zsh
 5.9.2; `${#_comps}` is unchanged from before the fix. A 40 s sample of an
 interactive startup no longer shows the publish path at all (1289 samples
 before).
+
+## #1170 — `<N-M>` inside `${…}` followed the dev tree, not zsh 5.9.2 — fixed
+
+**Status:** `fixed` 2026-10-01 (`d9eed73731`, which carries the lexer change under another title,
+and `8e23b007d1`).
+
+```console
+print -r -- ${:-a<1-3>}        # files a1 a2
+zsh 5.9.2        a1 a2
+zshrs (before)   a<1-3>
+print -r - ${(l<3><->):-}
+zsh 5.9.2        error in flags near position 8 in '${(l<3><->):-}'
+zshrs (before)   ---
+```
+
+**Root cause.** zsh 5.9.2's `gettokstr` (c:Src/lex.c:1198 in 5.9.1) tokenizes a `<N-M>` as
+Inang…Outang inside a brace parameter too. The dev tree's `9d9b6ba322` (54437) adds
+`!in_brace_param &&`, and the port and two tests followed it. Per the 5.9.2 target,
+`lex::NUMGLOB_IN_BRACE_PARAM` now selects the release rule, and subst's
+`default_word_lexer_tokens` (which undid the pair for the dev rule) stands down under it. The
+lexer corpus's `42_zinit_side.zsh` wordcode is now byte-identical (`wordcode_parity` 44/44).
+
+## #1171 — `${a:s/%/X/}` / `${a:s/#/X/}` under HIST_SUBST_PATTERN did nothing — fixed
+
+**Status:** `fixed` 2026-10-01 (`3fae96bdc3`).
+
+```console
+setopt histsubstpattern; a=abc; print ${a:s/%/Q/} ${a:s/#/Q/}
+zsh 5.9.2        abcQ Qabc
+zshrs (before)   abc abc
+```
+
+**Root cause.** An anchor with nothing after it reaches `igetmatch` as an empty pattern. The
+port's head loop started at `end = 1` and its tail loop stopped before `start = len`, so the
+empty prefix/suffix C tries (c:Src/glob.c:2919, c:2950, the `t <= send` walk at c:2981) was
+never tried. An empty subject also returned "no match" outright, where every C arm reduces to
+one `pattrylen` on the empty string (`a=; ${a:s/*/Q/}` is `Q`).
+
+## #1172 — a non-UTF-8 command-line argument panicked zshrs at startup — fixed
+
+**Status:** `fixed` 2026-10-01 (`72b7f2b298`).
+
+```console
+zshrs -fc $'print -rn -- caf\xe9'
+zsh 5.9.2        caf<0xe9>
+zshrs (before)   thread 'main' panicked … env.rs:878
+```
+
+**Root cause.** The drop-in mode probe added for bundled docs (`35c2c28394`) read
+`std::env::args()`, which panics on an argument that is not valid UTF-8. It now uses `args_os()`.
