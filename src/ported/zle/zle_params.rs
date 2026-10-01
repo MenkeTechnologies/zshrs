@@ -358,21 +358,14 @@ pub fn makezleparams(ro: i32) {
     /// Scope level to stamp on the ZLE specials — c:206 `pm->level =
     /// locallevel + 1`.
     ///
-    /// `ro != 0` (completion c:820, trap c:2108) is C's value verbatim: the
-    /// params die with the function `doshfunc` is about to run.
-    ///
-    /// `ro == 0` (widget entry, zle_main.c:1534) uses `locallevel`, one
-    /// LESS than C. zshrs has no gsu setters, so a widget's `BUFFER=…`
-    /// write lands in the paramtab and only reaches the editor when
-    /// `zle_param_sync::sync_from_paramtab()` reads it back — and that read
-    /// happens AFTER `doshfunc` returns (zle_main.rs:1649). At
-    /// `locallevel + 1` the params would be the widget function's own
-    /// locals, so `doshfunc`'s `endparamscope` would delete them before the
-    /// read and every widget assignment would be silently dropped.
-    /// `locallevel` puts them in the scope `execzlefunc` pushed at
-    /// zle_main.rs:1620, which is popped at zle_main.rs:1652 — one line
-    /// after the sync. Both choices are torn down before the prompt
-    /// returns; only this one survives long enough to be read back.
+    /// Every call site gets C's value: the params belong to the function
+    /// `doshfunc` is about to run (widget c:1534/1537, completion
+    /// c:820, trap c:2108), so inside the widget body they are locals of
+    /// the current scope — `typeset -p BUFFER` prints `typeset`, not
+    /// `typeset -g`. The widget's paramtab write-back
+    /// (`zle_param_sync::sync_from_paramtab`) therefore runs at the end
+    /// of the body, inside `doshfunc`'s scope, before its `endparamscope`
+    /// deletes them (zle_main::execzlefunc's body runner).
     fn zleparams_level(ro: i32) -> i32 {
         let ll = crate::ported::params::locallevel.load(Ordering::Relaxed);
         if ro != 0 {
@@ -402,8 +395,8 @@ pub fn makezleparams(ro: i32) {
                 return remembered;
             }
         }
-        WIDGET_PARAM_LEVEL.store(ll, Ordering::Relaxed);
-        ll
+        WIDGET_PARAM_LEVEL.store(ll + 1, Ordering::Relaxed);
+        ll + 1 // c:206
     }
 
     /// Clear the `PM_READONLY` bit a previous publish stamped — c:200.
@@ -2896,7 +2889,7 @@ mod scope_tests {
         ZMOD.lock().unwrap().flags = 0;
         locallevel.fetch_add(1, Ordering::Relaxed); // c:1533 startparamscope
         makezleparams(0); // c:1534
-        locallevel.load(Ordering::Relaxed)
+        locallevel.load(Ordering::Relaxed) + 1 // c:206 `locallevel + 1`
     }
 
     fn leave_widget_scope() {

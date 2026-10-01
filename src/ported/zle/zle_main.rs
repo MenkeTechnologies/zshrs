@@ -2049,7 +2049,19 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         let name_for_body = call_name.to_string();
         let body_args: Vec<String> = args.to_vec();
         let body_runner = move || -> i32 {
-            crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
+            let ret =
+                crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0);
+            // RUST-ONLY WRITE-BACK (C: live GSU setters — see
+            // crate::zle_param_sync): apply the widget's pending
+            // $BUFFER/$LBUFFER/$RBUFFER/$CURSOR/... writes to the editor,
+            // then drop the widget scope. It runs HERE, still inside
+            // doshfunc's param scope, because makezleparams stamps the
+            // family at C's `locallevel + 1` (zle_params.c:206) — the
+            // widget function's own level — so doshfunc's endparamscope
+            // deletes them before control returns to execzlefunc.
+            crate::zle_param_sync::sync_from_paramtab();
+            crate::zle_param_sync::clear_snapshot();
+            ret
         };
         // c:1533 — `startparamscope();`. Same fresh-table shape as
         // zlebeforetrap (c:2107) below.
@@ -2098,11 +2110,10 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         ); // c:1538
            // c:1539 — `sfcontext = osc;`.
         crate::ported::exec::sfcontext.store(osc, Ordering::Relaxed); // c:1539
-                                                                      // RUST-ONLY WRITE-BACK (C: live GSU setters — see
-                                                                      // crate::zle_param_sync): apply any widget mutations of
-                                                                      // $BUFFER/$LBUFFER/$RBUFFER/$CURSOR still pending in the
-                                                                      // paramtab, then drop the widget scope.
-        crate::zle_param_sync::sync_from_paramtab();
+        // RUST-ONLY: the body runner already synced and cleared the
+        // widget snapshot; this clear covers a doshfunc that returned
+        // without running the body (e.g. the FUNCNEST limit), so the
+        // snapshot never outlives the widget.
         crate::zle_param_sync::clear_snapshot();
         // c:1540 — `endparamscope();`.
         crate::ported::params::endparamscope(); // c:1540
