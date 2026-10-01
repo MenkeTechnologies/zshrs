@@ -6421,6 +6421,8 @@ impl ShellExecutor {
     /// Flags:
     ///   --in PATHS...  / -i PATHS...   script sources (1+, required)
     ///   --out PATH     / -o PATH       output binary (required)
+    ///   --native / -n                  AOT-compile to native machine code
+    ///                                  (Cranelift object linked standalone)
     ///   --help / -h                    print usage
     pub(crate) fn builtin_zbuild(&self, args: &[String]) -> i32 {
         let mut inputs: Vec<std::path::PathBuf> = Vec::new();
