@@ -9976,6 +9976,33 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // AUGMENT prepend below must not run again — clear the flag.
     let mut val = val;
     let mut flags = flags;
+    // !!! WARNING: RUST-ONLY ARM — ZLE GSU adapter (array twin of the
+    // assignsparam arm for BUFFER/LBUFFER/RBUFFER/CURSOR) !!!
+    // C installs `region_highlight` with a live GSU
+    // (Src/Zle/zle_params.c:132-133,169 `region_highlight_gsu`): a widget's assignment runs
+    // set_region_highlight (Src/Zle/zle_refresh.c:488), which parses each
+    // entry, and every read runs get_region_highlight (c:430), which
+    // re-renders it — so `memo=someplugin,futureattribute=x` reads back as
+    // `memo=someplugin`. zshrs stores the published copy in paramtab, so
+    // inside an active widget scope route the write through the setter and
+    // store what the getter renders. `+=` is resolved against the current
+    // value first, as C's setarrvalue does before calling the setfn.
+    if name == "region_highlight"
+        && (flags & ASSPM_KEY_VALUE) == 0
+        && crate::zle_param_sync::active()
+        && !crate::zle_param_sync::in_live_write()
+    {
+        let full: Vec<String> = if (flags & ASSPM_AUGMENT) != 0 {
+            let mut cur = getaparam(name).unwrap_or_default();
+            cur.extend(std::mem::take(&mut val));
+            cur
+        } else {
+            std::mem::take(&mut val)
+        };
+        crate::ported::zle::zle_refresh::set_region_highlight(Some(&full)); // c:zle_refresh.c:488
+        val = crate::ported::zle::zle_refresh::get_region_highlight(&param::default()); // c:zle_refresh.c:430
+        flags &= !ASSPM_AUGMENT;
+    }
     if (flags & ASSPM_KEY_VALUE) != 0 {
         let ksh = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
         // c:3399 — `origptr = v->pm->gsu.a->getfn(v->pm)`: the prior
