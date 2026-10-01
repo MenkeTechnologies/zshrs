@@ -1681,16 +1681,16 @@ fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, e
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
     // ADDED bit to live on (see MODULE_FEATURE_ENABLES there).
-    let set = enables.as_ref().map(|e| e.to_vec());
-    let ret = crate::ported::module::handlefeatures("zsh/system", &featuresarray(m, f), enables);
-    // c:Src/module.c:3394-3395 — the SET arm commits through this module's
-    // own `setfeatureenables`, whose c:3374 `setmathfuncs` adds or removes
-    // `systell` in the global MATHFUNCS list. Without it `zmodload -F
-    // zsh/system -f:systell` left `$(( systell(0) ))` callable.
-    match set {
-        Some(e) => setfeatureenables(m, f, Some(&e)),
-        None => ret,
+    // c:Src/module.c:3394-3395 — `if (!enables || *enables) return
+    // setfeatureenables(m, f, enables ? *enables : NULL);` — the SET arm
+    // commits through this module's own `setfeatureenables`, whose c:3374
+    // `setmathfuncs` adds or removes `systell` in the global MATHFUNCS list.
+    if let Some(e) = enables.as_ref() {
+        let e = e.clone();
+        return setfeatureenables(m, f, Some(&e));
     }
+    // c:3396 — `*enables = getfeatureenables(m, f);`
+    crate::ported::module::handlefeatures("zsh/system", &featuresarray(m, f), enables)
 }
 
 // WARNING: NOT IN SYSTEM.C — Rust-only module-framework shim.
@@ -1698,8 +1698,8 @@ fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, e
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    m: *const module,
+    f: &Mutex<crate::ported::zsh_h::features>,
     e: Option<&[i32]>,
 ) -> i32 {
     // c:Src/module.c:3354-3382 walks the enables bitmap block by block in
@@ -1708,6 +1708,11 @@ fn setfeatureenables(
     // ledger in module.rs; the mftab block goes through c:3374
     // `setmathfuncs`, so it starts at offset 6. `e == NULL` (cleanup_)
     // removes everything.
+    // c:3358-3367 + c:3376-3378 — the bintab and partab blocks
+    // (setbuiltins / setparamdefs), kept by the name-keyed ledger; with
+    // `e == NULL` from cleanup_ (c:957) this is what deletes `errnos` and
+    // `sysparams` on `zmodload -u zsh/system`.
+    let mut ret = crate::ported::module::setfeatureenables("zsh/system", &featuresarray(m, f), e);
     let tab_mutex = MFTAB.get_or_init(|| {
         // NUMMATHFUNC expansion — zsh.h:133.
         Mutex::new(vec![crate::ported::zsh_h::mathfunc {
@@ -1724,7 +1729,10 @@ fn setfeatureenables(
     });
     let mut tab = tab_mutex.lock().unwrap();
     let mf_e = e.map(|a| a.get(6..7).unwrap_or(&[0]));
-    crate::ported::module::setmathfuncs("zsh/system", &mut tab, mf_e)
+    if crate::ported::module::setmathfuncs("zsh/system", &mut tab, mf_e) != 0 {
+        ret = 1; // c:3375
+    }
+    ret // c:3382
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

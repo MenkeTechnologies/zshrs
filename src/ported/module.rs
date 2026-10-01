@@ -25,7 +25,7 @@ use crate::ported::zsh_h::{
     paramdef, Hookfn, Param, BINF_AUTOALL, CASMOD_LOWER, CASMOD_UPPER, CONDF_AUTOALL, HOOKF_ALL,
     MFF_USERFUNC, MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD,
     OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_AUTOALL, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT, PM_HASHED,
-    PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE, PRINT_LIST,
+    PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_SPECIAL, PM_TIED, PM_TYPE, PRINT_LIST,
 };
 pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
 use crate::zsh_h::module;
@@ -7931,7 +7931,7 @@ static MODULE_FEATURE_ENABLES: Lazy<Mutex<HashMap<String, std::collections::Hash
 /// `None` clears every bit.
 pub fn setfeatureenables(modname: &str, features: &[String], e: Option<&[i32]>) -> i32 {
     // c:3354
-    let ret = 0; // c:3356
+    let mut ret = 0; // c:3356
                  // Collect the p:-feature transitions while the ledger lock is held, and
                  // apply them after it is dropped: `mark_module_param_used` re-enters
                  // this fn through `ensurefeature` -> `require_module` ->
@@ -7967,11 +7967,57 @@ pub fn setfeatureenables(modname: &str, features: &[String], e: Option<&[i32]>) 
             }
         }
     }
+    // c:3377 setparamdefs (c:1169-1196) for the zmodload-gated specials
+    // (`errnos`/`sysparams`, `mapfile`, `langinfo`): unlike the
+    // `zsh/parameter` rows, which zshrs seeds eagerly and toggles through
+    // the side set above, these enter paramtab only when their module turns
+    // them on, so `d->pm` is "the live node is the module's special".
+    let gated = crate::vm_helper::module_gated_params_for(modname);
+    let live_special = |name: &str| -> Option<Option<Param>> {
+        let tab = paramtab().read().ok()?;
+        Some(tab.get(name).cloned())
+    };
     for p in &param_on {
         crate::vm_helper::mark_module_param_used(p); // c:1069-1073 createspecialhash/createparam
+        if gated.contains(&p.as_str()) {
+            match live_special(p) {
+                // c:1176-1179 — `if (d->pm) { d++; continue; }`
+                Some(Some(pm)) if (pm.node.flags as u32 & PM_SPECIAL) != 0 => {}
+                // c:1180-1183 — addparamdef fails when a non-special of the
+                // same name is in the way (checkaddparam, c:1062).
+                Some(Some(_)) => {
+                    zwarnnam(modname, &format!("error when adding parameter `{}'", p));
+                    ret = 1;
+                }
+                // c:1180 — `addparamdef(d)`.
+                _ => crate::vm_helper::seed_partab_param(p),
+            }
+        }
     }
     for p in &param_off {
         crate::vm_helper::unmark_module_param_used(p); // c:1177 unsetparam_pm
+        if gated.contains(&p.as_str()) {
+            // c:1186-1189 — `if (!d->pm) { d++; continue; }`: only the
+            // module's own special node is deleted.
+            if let Some(Some(pm)) = live_special(p) {
+                if (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+                    let mut d = paramdef {
+                        name: p.clone(),
+                        flags: pm.node.flags,
+                        var: 0,
+                        gsu: 0,
+                        getnfn: None,
+                        scantfn: None,
+                        pm: Some(pm),
+                    };
+                    // c:1190 — `if (deleteparamdef(d))`
+                    if deleteparamdef(&mut d) != 0 {
+                        zwarnnam(modname, &format!("parameter `{}' already deleted", p)); // c:1191
+                        ret = 1; // c:1192
+                    }
+                }
+            }
+        }
     }
     ret // c:3382
 }

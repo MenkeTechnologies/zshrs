@@ -607,8 +607,11 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
-    0
+fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
+    // c:Src/module.c:3354-3382 — only the partab block (c:3376-3378
+    // setparamdefs). cleanup_ passes `e == NULL`, which deletes the
+    // parameter on `zmodload -u zsh/mapfile`.
+    crate::ported::module::setfeatureenables("zsh/mapfile", &featuresarray(m, f), e)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
