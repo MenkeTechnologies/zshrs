@@ -284,24 +284,21 @@ mod default_word_alternation {
     }
 }
 
-/// c:Src/lex.c:1201 — `if (!in_brace_param && isnumglob())`: inside a brace
-/// parameter the lexer leaves `<N-M>` as plain text, so a numeric range in a
-/// default / alternative word never reaches filename generation (zsh
-/// 9d9b6ba322, "fix <-> in parameter flags"; zsh 5.9.2 predates it and globs,
-/// so the expectation is written out instead of compared). A `*` in the same
-/// word is still a lexer glob token.
+/// zshrs follows zsh 5.9.2 here: its c:Src/lex.c:1198 (5.9.1) `if(isnumglob())`
+/// tokenizes `<N-M>` inside a brace parameter too, so a numeric range in a
+/// default / alternative word reaches filename generation like a `*` does.
+/// The dev tree's 9d9b6ba322 ("fix <-> in parameter flags") leaves it literal;
+/// `lex::NUMGLOB_IN_BRACE_PARAM` selects the release rule.
 mod default_word_numeric_range {
     use super::*;
 
     #[test]
-    fn numeric_range_in_default_word_stays_literal() {
+    fn numeric_range_in_default_word_globs() {
         let d = tdir();
         make_files(d.path(), &["5", "x5"]);
-        let r = run_zshrs_in(
+        assert_parity_in(
             d.path(),
             "print ${:-<->} ${:-x<->} ${x-<1-9>}; y=1; print ${y:+<->} ${y+x<->}; print ${:-x*}",
         );
-        assert_eq!(r.stdout, "<-> x<-> <1-9>\n<-> x<->\nx5\n");
-        assert_eq!(r.exit, 0);
     }
 }

@@ -1985,13 +1985,16 @@ mod brace_param_lexer_current_source {
         assert_eq!(r.exit, 0, "script:\n{script}\nstderr: {}", r.stderr);
     }
 
-    /// c:Src/lex.c:1201 `if (!in_brace_param && isnumglob())` — `<->` in a
-    /// flag argument stays literal; the pattern forms still match numbers.
+    /// zshrs follows 5.9.2 here, not the current source: c:Src/lex.c:1198
+    /// (5.9.1) `if(isnumglob())` tokenizes `<N-M>` inside `${…}` too (see
+    /// `lex::NUMGLOB_IN_BRACE_PARAM`). So a flag argument `${(l<3><->):-}`
+    /// is `error in flags`, as in zsh 5.9.2, and the pattern forms still match
+    /// numbers. Compared against the reference shell, not pinned text.
     #[test]
     fn numeric_glob_text_in_flag_argument() {
-        assert_zshrs(
-            r#"print -r - ${(l<3><->):-}; print -r - ${(l<3><1->):-}; str=abc123xyz; print -r - ${str//<->/.}; arr=(abc 123 xyz); print -r - ${arr[(r)<1->]}"#,
-            "---\n-1-\nabc.xyz\n123\n",
+        assert_parity(r#"print -r - ${(l<3><->):-}"#);
+        assert_parity(
+            r#"str=abc123xyz; print -r - ${str//<->/.}; arr=(abc 123 xyz); print -r - ${arr[(r)<1->]}"#,
         );
     }
 
