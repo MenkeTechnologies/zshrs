@@ -27,7 +27,7 @@ render() {
         # Print level i of A, B, C.
         for tname in a b c; do
             local -a t
-            eval "t=( \"\${$tname[@]}\" )"
+            t=( "${(@P)tname}" )
             if (( ${#t} >= i )); then
                 local d=${t[i]}
                 local block=""

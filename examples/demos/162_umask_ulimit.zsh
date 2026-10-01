@@ -77,10 +77,9 @@ zassert_ok "$un"                       "ulimit -n returns value"
 # subshell umask is isolated.
 sub_um="$(umask 077 && umask)"
 zassert_eq "$sub_um" "077"             "subshell umask isolated"
-# NOTE: zshrs's command-substitution subshell does not roll back umask on
-# exit (see also the (umask 077; ...) explicit-subshell line above producing
-# 077 carry-over) — pin actual behavior.
-zassert_eq "$(umask)" "077"            "outer umask carries subshell change (zshrs)"
+# The subshell's umask does not reach the parent (zsh prints `outside: 022`
+# for the explicit-subshell block above too).
+zassert_eq "$(umask)" "$um"            "outer umask unchanged by subshell"
 # Soft <= hard for -n.
 soft="$(ulimit -Sn)"
 hard="$(ulimit -Hn)"
