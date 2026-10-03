@@ -166,6 +166,7 @@
   <div class="stat-card"><div class="stat-val green">1,290</div><div class="stat-label">Names Matched</div><div class="stat-sub">0 missing</div></div>
   <div class="stat-card"><div class="stat-val">49,218</div><div class="stat-label">cargo Parity Pass</div><div class="stat-sub">12 fail &middot; 8 timing</div></div>
   <div class="stat-card"><div class="stat-val yellow">98</div><div class="stat-label">C Fn Stubs</div><div class="stat-sub">of 2,476 C functions</div></div>
+  <div class="stat-card"><div class="stat-val">8-Way</div><div class="stat-label">Emulation Fuzz</div><div class="stat-sub">--zsh 0 / 2,000 divergent</div></div>
   <div class="stat-card"><div class="stat-val magenta">41</div><div class="stat-label">zshrs-only Passes</div><div class="stat-sub">fail or unrunnable in this zsh build</div></div>
 </div>
 
@@ -212,6 +213,23 @@
   <thead><tr><th>Set</th><th class="num">zsh 5.9.2</th><th class="num">zshrs</th><th class="num">Missing</th><th>Status</th></tr></thead>
   <tbody id="surface"></tbody>
 </table></div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>8-WAY EMULATION PARITY</h2>
+<div class="note cyan"><code>parity-fuzz --shell &lt;target&gt; --count 2000 --seed 1 --verify 2</code>, one run per leg. Each leg runs <code>zshrs</code> in an emulation mode against the real shell it imitates and compares stdout and exit status. A case counts only when it diverges on two consecutive runs. Each target has its own script generator, so rates are not comparable across rows. On this host <code>ash</code> is a symlink to <code>dash</code>, and with no pdksh installed the <code>pdksh</code> leg falls back to <code>mksh</code>, so the 10 legs reduce to the 8 distinct comparisons below. &ldquo;Distinct&rdquo; counts the different minimized programs among the divergent cases.</div>
+<div class="tbl"><table class="fn-table">
+  <thead><tr><th>Leg</th><th>zshrs</th><th>Reference</th><th class="num">Cases</th><th class="num">Divergent</th><th class="num">Rate</th><th class="num">Distinct</th><th>Most frequent minimized divergence</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>zsh</td><td><code>--zsh</code></td><td>zsh 5.9.2</td><td class="num">2,000</td><td class="num">0</td><td class="num">0.0%</td><td class="num">0</td><td>&mdash;</td><td><span class="pill pass">match</span></td></tr>
+    <tr><td>sh, zsh-style</td><td><code>--sh --zsh</code></td><td>zsh 5.9.2 <code>emulate sh</code></td><td class="num">2,000</td><td class="num">0</td><td class="num">0.0%</td><td class="num">0</td><td>1,577 cases had no signal: the oracle exited non-zero with empty stdout</td><td><span class="pill pass">match</span></td></tr>
+    <tr><td>ksh, zsh-style</td><td><code>--ksh --zsh</code></td><td>zsh 5.9.2 <code>emulate ksh</code></td><td class="num">2,000</td><td class="num">1</td><td class="num">0.05%</td><td class="num">1</td><td><code>setopt NO_UNSET; [[ -z ${arr[99]} ]]; print -r -- $?</code></td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>dash (= ash)</td><td><code>--dash</code></td><td>dash 0.5.13.5</td><td class="num">2,000</td><td class="num">44</td><td class="num">2.2%</td><td class="num">3</td><td><code>f() { local x; printf '[%s]\n' "$x"; }; x=out; f</code> &mdash; dash's <code>local x</code> keeps the outer value</td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>sh</td><td><code>--sh</code></td><td>/bin/sh (bash 3.2.57, POSIX mode)</td><td class="num">2,000</td><td class="num">200</td><td class="num">10.0%</td><td class="num">8</td><td><code>(set -u; : "$nope") 2&gt;/dev/null; printf '%d\n' $?</code> &mdash; exit status of expansion errors</td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>bash</td><td><code>--bash</code></td><td>bash 5.3.20</td><td class="num">2,000</td><td class="num">503</td><td class="num">25.2%</td><td class="num">54</td><td><code>$LINENO</code> inside a function, <code>caller</code></td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>ksh</td><td><code>--ksh</code></td><td>ksh 93u+m/1.0.10</td><td class="num">2,000</td><td class="num">901</td><td class="num">45.1%</td><td class="num">71</td><td><code>${.sh.fun}</code>, <code>typeset -p</code> of an export, <code>${.sh.version}</code></td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>mksh (= pdksh)</td><td><code>--mksh</code></td><td>mksh R59</td><td class="num">2,000</td><td class="num">958</td><td class="num">47.9%</td><td class="num">74</td><td><code>${KSH_VERSION+set}</code>, base-N integers <code>typeset -i v=8#17</code></td><td><span class="pill fail">diverged</span></td></tr>
+  </tbody>
+</table></div>
+<div class="note">The curated nine-way corpus (<code>cargo test --test emulation_parity</code>) found all reference shells (&ldquo;tested 9 way(s), 0 missing&rdquo;) and passed 47 of 48 tests. The failure: <code>pdksh_line_has_pipestatus_but_ksh93_does_not</code>, where <code>zshrs --mksh</code> reports <code>PIPESTATUS</code> as <code>[0]</code> instead of <code>[0 1 0]</code>.</div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>DAILY DRIVER</h2>
 <div class="note cyan">Both shells started interactively in a pty with the real <code>~/.zshrc</code> (zpwr, zinit turbo) and probed through a sourced file once the prompt settled.</div>
