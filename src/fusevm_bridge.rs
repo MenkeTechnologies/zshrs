@@ -1056,6 +1056,19 @@ pub(crate) fn is_registered_builtin(name: &str) -> bool {
     registered_builtin(name).is_some() || crate::native_cmds::is_enabled(name)
 }
 
+/// Whether NAME is an autoload stub that has not been loaded yet: an enabled
+/// shfunctab entry with PM_UNDEFINED set (c:Src/zsh.h:1895). Loading clears
+/// the flag (c:Src/exec.c:5790, c:5815); a function defined in the shell
+/// never carries it. Gates the native zmv/zcp/zln/zcalc ports, which stand
+/// in for the fpath load of the stock autoload functions only.
+fn autoload_stub_pending(name: &str) -> bool {
+    crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).map(|f| (f.node.flags as u32 & crate::ported::zsh_h::PM_UNDEFINED as u32) != 0))
+        .unwrap_or(false)
+}
+
 /// Whether a shell function named NAME shadows a builtin of that name at
 /// command dispatch (c:Src/exec.c:3485-3489: `shfunctab->getnode` before
 /// `builtintab->getnode`). `getnode` skips DISABLED nodes (c:Src/hashtable.c:239), so a function
@@ -21007,6 +21020,14 @@ impl fusevm::ShellHost for ZshrsHost {
         // can hang zshrs's parser on zsh-specific syntax); when NOT autoloaded
         // we fall through (return None → resolution ends in command-not-found),
         // matching `zsh -f; zmv` → "command not found: zmv".
+        // A DEFINED zmv/zcp/zln/zcalc body (user-written, or a stub already
+        // loaded by `autoload +X`) is an ordinary shell function and runs as
+        // one through the function dispatch below. The native port stands in
+        // only for the fpath load of a still-PM_UNDEFINED stub
+        // (c:Src/exec.c:5691-5695 execautofn → loadautofn, which clears
+        // PM_UNDEFINED at c:5790/c:5815).
+        let native_autoload =
+            matches!(name, "zmv" | "zcp" | "zln" | "zcalc") && autoload_stub_pending(name);
         if matches!(name, "zmv" | "zcp" | "zln" | "zcalc")
             && !with_executor(|exec| exec.function_exists(name))
         {
@@ -21019,16 +21040,16 @@ impl fusevm::ShellHost for ZshrsHost {
         // the same function check as the builtintab arm further down.
         let has_user_fn = user_fn_shadows_builtin(name);
         match name {
-            "zmv" => {
+            "zmv" if native_autoload => {
                 return Some(crate::extensions::ext_builtins::zmv(&args, "mv"));
             }
-            "zcp" => {
+            "zcp" if native_autoload => {
                 return Some(crate::extensions::ext_builtins::zmv(&args, "cp"));
             }
-            "zln" => {
+            "zln" if native_autoload => {
                 return Some(crate::extensions::ext_builtins::zmv(&args, "ln"));
             }
-            "zcalc" => {
+            "zcalc" if native_autoload => {
                 return Some(crate::extensions::ext_builtins::zcalc(&args));
             }
             // znative — the plugin package manager (src/extensions/pkg/). Installs
@@ -22262,20 +22283,22 @@ impl ShellExecutor {
             // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln/zcalc are zsh autoload
             // functions — implemented natively in Rust so `autoload -Uz zmv`
             // works without shipping the function source (and without the
-            // fpath source hanging the parser). The `function_exists` guard
-            // keeps them command-not-found until autoloaded, exactly like zsh;
+            // fpath source hanging the parser). The stub guard keeps them command-not-found until autoloaded, exactly like zsh;
             // an un-guarded arm ran them for bare `zmv`, diverging from
             // `zsh -f; zmv` → "command not found: zmv".
-            "zmv" if self.function_exists("zmv") => {
+            // Only a still-undefined autoload stub takes the native port; a
+            // defined body runs as the shell function (see
+            // `autoload_stub_pending`).
+            "zmv" if autoload_stub_pending("zmv") => {
                 return crate::extensions::ext_builtins::zmv(&rest_vec, "mv")
             }
-            "zcp" if self.function_exists("zcp") => {
+            "zcp" if autoload_stub_pending("zcp") => {
                 return crate::extensions::ext_builtins::zmv(&rest_vec, "cp")
             }
-            "zln" if self.function_exists("zln") => {
+            "zln" if autoload_stub_pending("zln") => {
                 return crate::extensions::ext_builtins::zmv(&rest_vec, "ln")
             }
-            "zcalc" if self.function_exists("zcalc") => {
+            "zcalc" if autoload_stub_pending("zcalc") => {
                 return crate::extensions::ext_builtins::zcalc(&rest_vec)
             }
             "zselect" => {
@@ -23057,5 +23080,52 @@ mod function_shadows_builtin_tests {
         );
         assert_eq!(exec.scalar("hit").as_deref(), Some(""));
         assert_ne!(exec.scalar("st").as_deref(), Some("42"));
+    }
+}
+
+#[cfg(test)]
+mod zmv_native_autoload_tests {
+    //! zmv/zcp/zln/zcalc are zsh autoload functions with native ports. The
+    //! port stands in only for loading a PM_UNDEFINED stub (c:Src/exec.c:
+    //! 5691-5695); a defined body is an ordinary shell function.
+    use crate::vm_helper::ShellExecutor;
+
+    fn run(script: &str) -> ShellExecutor {
+        let mut exec = ShellExecutor::new();
+        let _ = exec.execute_script(script);
+        exec
+    }
+
+    #[test]
+    fn user_defined_zmv_and_zcalc_bodies_run() {
+        let _g = crate::test_util::global_state_lock();
+        let exec = run("hit=; zmv() { hit=fn; return 44 }; zmv a b; st=$?; unfunction zmv");
+        assert_eq!(exec.scalar("hit").as_deref(), Some("fn"));
+        assert_eq!(exec.scalar("st").as_deref(), Some("44"));
+        let exec = run("hit=; zcalc() { hit=fn; return 45 }; zcalc; st=$?; unfunction zcalc");
+        assert_eq!(exec.scalar("hit").as_deref(), Some("fn"));
+        assert_eq!(exec.scalar("st").as_deref(), Some("45"));
+    }
+
+    #[test]
+    fn undefined_autoload_stub_uses_native_port() {
+        let _g = crate::test_util::global_state_lock();
+        // The native zmv prints its own usage and returns 1 for a missing
+        // pattern pair; the stub stays PM_UNDEFINED, which an fpath load
+        // (stock zmv body) would have cleared.
+        let exec = run("autoload -Uz zmv; zmv 2>/dev/null; st=$?");
+        assert_eq!(exec.scalar("st").as_deref(), Some("1"));
+        assert!(super::autoload_stub_pending("zmv"));
+        run("unfunction zmv 2>/dev/null");
+    }
+
+    #[test]
+    fn disabled_or_absent_zmv_is_command_not_found() {
+        let _g = crate::test_util::global_state_lock();
+        let exec = run("zmv 2>/dev/null; st=$?");
+        assert_eq!(exec.scalar("st").as_deref(), Some("127"));
+        let exec = run("autoload -Uz zmv; disable -f zmv; zmv 2>/dev/null; st=$?");
+        assert_eq!(exec.scalar("st").as_deref(), Some("127"));
+        run("unfunction zmv 2>/dev/null");
     }
 }
