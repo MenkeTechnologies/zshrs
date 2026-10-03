@@ -4717,4 +4717,21 @@ setopt bashrematch; [[ xz =~ 'x(z)(y)?' ]]; print -r -- ${#BASH_REMATCH} "(${(j:
         assert_parity("false; typeset a=([y z])");
         assert_parity("local a=( [y ) b");
     }
+
+    /// c:Src/utils.c sepsplit keeps every field; c:Src/subst.c:4404 then leaves an
+    /// INTERIOR empty field of a forced split (isarr == 2) unmarked, so prefork
+    /// drops it — but only if it is still empty after the per-element flags.
+    /// zshrs dropped empties at split time, before (q)/(o)/padding/affixes
+    /// could make them non-empty. zsh: `<'a'><''><'b'>`, `<><a><b>`, `< a><  >< b>`,
+    /// `<x><a><b><y>`, `<a><''><b>`.
+    #[test]
+    fn split_empty_fields_survive_per_element_flags() {
+        assert_parity(
+            r#"v=a::b; printf '<%s>' "${(s.:.qq)v}" ${(s.:.qq)v} "${(s.:.o)v}" "${(s.:.l:2:)v}"; echo
+v=:a::b:; printf '<%s>' ${(s.:.)v} "${(s.:.)v}" x${(s.:.)v}y "x${(s.:.)v}y"; echo
+a=('  ' x); print -r -- "[${(s: :qqqq)a}]"
+v=$'a\n\nb'; printf '<%s>' "${(fq)v}" "${(f)v}" "${(@f)v}"; echo
+v=a::b; print -r -- ${#${(s.:.)v}} ${#${(s.:.qq)v}} "${${(s.:.)v}[2]}""#,
+        );
+    }
 }

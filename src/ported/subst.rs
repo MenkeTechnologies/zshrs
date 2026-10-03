@@ -22838,46 +22838,11 @@ pub fn paramsubst(
                 // c:3920-3928 — multiple parts: leave `value` alone so
                 // scalar-context reads preserve the original delimiter.
             }
-            // c:Src/subst.c sepsplit — `(s.X.)` split COLLAPSES runs
-            // of consecutive separators in array context (like awk
-            // FS) unless `(@)` is also set (nojoin=2 path at
-            // c:2165). For `aXXb` → 2 elements; `aXXXb` → 2; `X` → 2
-            // (leading+trailing empty preserved); `Xab` → 2 (leading
-            // empty preserved); `abX` → 2 (trailing empty preserved).
-            // Only the INTERIOR empties between two non-empty
-            // neighbours collapse — leading/trailing empties stay.
-            // Bug #542.
-            //
-            // C reality (utils.c:3962 sepsplit → wordcount(s,sep,1),
-            // mul=1 so line 3887 always increments): the split itself
-            // NEVER drops empties — every field, interior included, is
-            // kept. The observed collapse is downstream: prefork
-            // (subst.c:100 `else if (!keep) uremnode`) drops the
-            // truly-empty NODES the array emits, but only where they
-            // render empty and unprotected. This split-time collapse is
-            // a hack approximating that, and it MUST NOT fire under
-            // RC_EXPAND_PARAM (`plan9`): there the cross-product
-            // emission (subst.rs:15826) applies the surrounding
-            // prefix/suffix to EACH element, so an interior empty
-            // becomes e.g. `xy` (non-empty) and must survive —
-            // `v=a:b::c; setopt rcexpandparam; print -r x${(s.:.)v}y`
-            // → `xay xby xy xcy`. With no affix, the empty renders `""`
-            // and the existing `!qt` drop (subst.rs:15874) elides it in
-            // unquoted context while quoted keeps it, exactly matching
-            // zsh (unquoted → 3 elems, quoted `"…"` → 4). Gating on
-            // `!plan9` leaves the non-plan9 Bug #542 path untouched.
-            if nojoin != 2 && !plan9 && parts.len() >= 3 {
-                let mut collapsed: Vec<String> = Vec::with_capacity(parts.len());
-                let n = parts.len();
-                for (i, p) in parts.iter().enumerate() {
-                    let is_interior = i > 0 && i + 1 < n;
-                    if is_interior && p.is_empty() {
-                        continue;
-                    }
-                    collapsed.push(p.clone());
-                }
-                parts = collapsed;
-            }
+            // c:Src/utils.c:3962 sepsplit -> wordcount(s, sep, 1): the split keeps
+            // EVERY field, interior empties included. Which empties vanish is
+            // decided at emission (c:Src/subst.c:4343-4437 + prefork's
+            // `else if (!keep) uremnode`), after (q)/(o)/padding/affixes have had
+            // their chance to make a field non-empty — see the node-building loop.
             split_parts = Some(parts.clone()); // c:3950
                                                // c:3922-3927 — `if (!aval || !aval[0]) val = dupstring("");
                                                // else if (!aval[1]) val = aval[0]; else isarr = nojoin ? 1 : 2;`
@@ -25013,9 +24978,7 @@ pub fn paramsubst(
                 // Qstring token carries in C: `v="a::b";
                 // "${(j:|:)${(@s.:.)v}}"` is `a||b` in zsh, while the non-`(@)`
                 // spelling (isarr == 2) is `a|b`.
-                if !qt && !(subexp_dq && nojoin == 2) && !plan9 && spsep.is_some() {
-                    sp.into_iter().filter(|s| !s.is_empty()).collect()
-                } else if crate::bash_arrays::has_holes(&var_name)
+                if crate::bash_arrays::has_holes(&var_name)
                     // Deliberately bypasses the clamp — see the identity test
                     // in the sepjoin arm above.
                     && crate::ported::subst::arrays_get(&var_name).as_deref()
@@ -25311,8 +25274,8 @@ pub fn paramsubst(
             // markers are what keep a leading/trailing empty of an isarr == 2
             // split alive in C (c:4386 / c:4436 strcatsub over ostr/fstr —
             // `x="|a|b|"; set -- "${(s:|:)x}"` is 4 words in zsh). Its
-            // interior empties are dropped by the split-time collapse at
-            // subst.rs:16697, so `qt` alone stays the right test there.
+            // interior empties are dropped at node building below, after the
+            // per-element flags have run, so `qt` alone marks the edges.
             //
             // c:Src/subst.c:3938 `isarr = nojoin ? 1 : 2;` — the isarr == 2
             // half of the c:4354 guard means precisely "this array came from a
@@ -25502,6 +25465,17 @@ pub fn paramsubst(
 
             let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
             for (i, part) in parts.iter().enumerate() {
+                // c:Src/subst.c:4404 `if (qt && !*x && isarr != 2)` — an INTERIOR
+                // field of a forced split (isarr == 2) that is still empty after
+                // every per-element flag ((q), (o), padding, …) is not marked with
+                // nulstring, so prefork drops it even inside quotes. The first and
+                // last fields survive in C via the Dnull markers strcatsub glues
+                // on (c:4386/:4436); this port marks those on `qt` instead.
+                if qt && !subexp_dq && split_isarr_2 && !plan9
+                    && i > 0 && i + 1 < parts.len() && part.is_empty()
+                {
+                    continue;
+                }
                 let s = if plan9 || parts.len() == 1 {
                     // c:Src/subst.c:3960-3985 — RC_EXPAND_PARAM / `${^arr}`
                     // plan9 CROSS-PRODUCT: EVERY element gets BOTH the prefix
