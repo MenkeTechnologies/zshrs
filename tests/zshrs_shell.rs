@@ -13966,6 +13966,17 @@ fn test_nameref_invalid_refname_rejected() {
 }
 
 #[test]
+fn test_private_from_deeper_scope_is_read_only() {
+    // V10 "privates are not visible in anonymous functions, part 3":
+    // createparam's reuse arm on a PM_RO_BY_DESIGN node,
+    // c:Src/params.c:1117-1120 `zerr("%s: can't modify read-only parameter")`.
+    let (st, _, err) =
+        run_zshrs_parity("zmodload zsh/param/private; f() { private -a a=(1); () { a+=(2) } }; f");
+    assert_ne!(st, 0);
+    assert!(err.contains("a: can't modify read-only parameter"), "got: {err:?}");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.

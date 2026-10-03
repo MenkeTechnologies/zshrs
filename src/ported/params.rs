@@ -2337,15 +2337,6 @@ pub fn createparam(
                 // c:1068-1069
             };
             if reject {
-                if (op.node.flags as u32 & PM_NAMEREF) == 0 {
-                    // zsh 5.9.2 has no c:1064-1080 block: a hidden outer-scope
-                    // private falls through to the reuse arm and fails there
-                    // with "can't change parameter attribute" (params.c:1018-1020
-                    // in the 5.9.1/5.9.2 sources). Only named references, which
-                    // exist in the dev tree alone, keep its wording.
-                    zerr(&format!("{}: can't change parameter attribute", name));
-                    return None;
-                }
                 zerr(&format!("{}: can't modify read-only parameter", name)); // c:1071
                 return None; // c:1072
             }
@@ -2510,9 +2501,7 @@ pub fn createparam(
             // c:1135-1138
             if (opf & PM_RO_BY_DESIGN) != 0 {
                 // c:1139
-                // zsh 5.9.2 wording (params.c:1018-1020 in the 5.9.1/5.9.2
-                // sources); the dev tree says "can't modify read-only parameter".
-                zerr(&format!("{}: can't change parameter attribute", name)); // c:1140-1141
+                zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140-1141
                 return None; // c:1142
             }
             if let Ok(mut tab) = paramtab().write() {
@@ -8981,9 +8970,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 // getvalue then finds the revived node.
                 if (f & PM_RO_BY_DESIGN) != 0 {
                     drop(tab); // zerr redraws ZLE, which reads paramtab
-                    // zsh 5.9.2 wording (params.c:1018-1020 in the 5.9.1/5.9.2
-                    // sources); the dev tree says "can't modify read-only parameter".
-                    zerr(&format!("{}: can't change parameter attribute", name)); // c:1140
+                    zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140
                     unqueue_signals(); // c:3241
                     return None; // c:3242
                 }
@@ -9890,10 +9877,9 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     {
         // c:1139-1142 — createparam's reuse arm on a RO_BY_DESIGN node (an
         // outer-scope private hidden by scopeprivate) errors, and the c:3368
-        // re-fetch then finds nothing: return NULL. zsh 5.9.2 wording
-        // (params.c:1018-1020 in the 5.9.1/5.9.2 sources).
+        // re-fetch then finds nothing: return NULL.
         if (prior_flags as u32 & PM_RO_BY_DESIGN) != 0 {
-            zerr(&format!("{}: can't change parameter attribute", name));
+            zerr(&format!("{}: can't modify read-only parameter", name));
             return None;
         }
         if let Ok(mut tab) = paramtab().write() {

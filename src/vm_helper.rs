@@ -1790,7 +1790,7 @@ impl ShellExecutor {
         // test only through fetchvalue, which reports a node that is PM_UNSET
         // without PM_DECLARED as ABSENT; createparam then decides (for an
         // outer-scope private, hidden by scopeprivate's PM_UNSET|PM_READONLY,
-        // that is "can't change parameter attribute"). So such a node is not
+        // that is "can't modify read-only parameter"). So such a node is not
         // a read-only rejection here; assignsparam reports it.
         if (flags & crate::ported::zsh_h::PM_UNSET) != 0 && (flags & crate::ported::zsh_h::PM_DECLARED) == 0 {
             return false;
