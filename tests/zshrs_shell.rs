@@ -10055,6 +10055,25 @@ fn test_strftime_dangling_modifier_prints_percent() {
 }
 
 #[test]
+fn test_zstyle_too_many_arguments() {
+    // Src/Modules/zutil.c:565-584 — per-option max argument counts.
+    for code in [
+        "zstyle -b :a s r x",
+        "zstyle -s :a s r x y",
+        "zstyle -a :a s r x",
+        "zstyle -m :a s v x",
+        "zstyle -g a b c d",
+    ] {
+        let (status, _, stderr) = run_zshrs(code);
+        assert_eq!(status, 1, "{code}");
+        assert!(stderr.ends_with("too many arguments\n"), "{code}: {stderr}");
+    }
+    let (status, _, stderr) = run_zshrs("zstyle -s :a s r x");
+    assert_eq!(status, 1);
+    assert!(stderr.is_empty(), "got: {stderr}");
+}
+
+#[test]
 fn test_pwd_too_many_args_errors() {
     // zsh: `pwd extra arg` -> `pwd:1: too many arguments` exit 1.
     // pwd takes only flags; positional args are an error. zshrs

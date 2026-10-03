@@ -1242,6 +1242,26 @@ pub fn bin_zstyle(
         crate::ported::utils::zwarnnam(nam, "not enough arguments");
         return 1;
     }
+    // c:565-573 — the same switch's `max`: s 4, b/a/m 3, g 3, q 2
+    // (d/t/T unbounded). c:582-584 `else if (max >= 0 && n > max)
+    // { zwarnnam(nam, "too many arguments"); return 1; }`.
+    let max_args = if OPT_ISSET(ops, b'd') || OPT_ISSET(ops, b't') || OPT_ISSET(ops, b'T') {
+        None
+    } else if OPT_ISSET(ops, b's') {
+        Some(4)
+    } else if OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b'a') || OPT_ISSET(ops, b'm') {
+        Some(3)
+    } else if OPT_ISSET(ops, b'g') {
+        Some(3)
+    } else if OPT_ISSET(ops, b'q') {
+        Some(2)
+    } else {
+        None
+    };
+    if max_args.is_some_and(|m| args.len() > m) {
+        crate::ported::utils::zwarnnam(nam, "too many arguments");
+        return 1;
+    }
     // c:491-492 — C reaches the bare-list arm only when `!args[0]`, i.e.
     // NO argument at all was given. `positional_start == 1` means an
     // option letter was consumed off args[0], so this is `zstyle -X`
