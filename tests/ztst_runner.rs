@@ -9,8 +9,9 @@
 //! captured to files (ztst.zsh:484) and compared per test block.
 //!
 //! Transport: zshrs does not yet execute a stdin script incrementally
-//! (it buffers to EOF — verified by probe), so chunks are delivered by
-//! sourcing a FIFO in a loop from a driver script; a marker line printed
+//! (it buffers to EOF — verified by probe), so chunks are delivered
+//! through a FIFO that a driver script reads in a loop and runs as the
+//! body of a function (the ZTST_test frame of ztst.zsh:604); a marker line printed
 //! to the harness fd (ztst.zsh:198 `exec {ZTST_fd}>&1`) signals chunk
 //! completion and carries `$ZTST_status` (ztst.zsh:301).
 //!
@@ -721,7 +722,7 @@ enum ChunkOutcome {
 ///                     rebuilds $fpath from $ZTST_srcdir/../*)
 ///   <root>/home     — $HOME (keeps `~/x` writes out of the real home)
 ///   <root>/tmp      — $TMPDIR; holds the ztst.zsh:117-129 capture files
-///   <root>/cmd.fifo — chunk transport (sourced in a loop by driver.zsh)
+///   <root>/cmd.fifo — chunk transport (read in a loop by driver.zsh)
 struct PersistentShell {
     child: Child,
     pgid: i32,
@@ -935,8 +936,14 @@ ZTST_execchunk() {{
 # mainopts setopt. Re-enter that state for the first chunk (later
 # chunks inherit whatever earlier chunks set, as via ZTST_testopts).
 emulate -R zsh
+# ztst.zsh:604 calls ZTST_test, and ztst.zsh:484 calls ZTST_execchunk
+# from inside it (ztst.zsh:315 likewise from ZTST_prepclean), so a chunk
+# runs at `toplevel shfunc shfunc shfunc eval`. Sourcing the payload
+# straight from this loop put a `file` frame where that outer `shfunc`
+# belongs; run it as the body of a function instead.
 while true; do
-  . {fifo}
+  eval "ZTST_test() {{"$'\n'"$(<{fifo})"$'\n'"}}"
+  ZTST_test
 done
 "#,
             srcdir = sq(&srcdir_stub.to_string_lossy()),
