@@ -351,7 +351,7 @@ Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.zshrs/
 |------|---------|
 | **`index.rkyv`** | Top-level index: fq_name → shard id, generation, byte offset |
 | **`images/{hash8}-*.rkyv`** | Mmap-ready shards (system, completions, plugins, scripts, `.zshrc`, …) |
-| **`autoloads.rkyv`** | One compiled definition program per autoloaded function, keyed by name and stamped with the resolved fpath directory, a SHA-256 of the exact definition text, and the identity of the `zshrs` binary that compiled it |
+| **`autoloads.rkyv`** | One compiled definition program per autoloaded function, keyed by name and stamped with the resolved fpath directory, a SHA-256 of the exact definition text, and the identity of the `zshrs` binary that compiled it. Each entry also records what the `$fpath` search found (the body it read and the state of the files it could have read there), so a later load is served by name with no `$fpath` search while the directory is still on `fpath` and those files are unchanged |
 | **`scripts.rkyv`** | One compiled chunk per script file, keyed by path + mtime |
 | **`deparse.rkyv`** | Deparsed function bodies (the text `$functions` prints), keyed by a SHA-256 of the name, the body text and the option state the body is re-lexed under, and stamped with the identity of the `zshrs` binary that wrote them |
 

@@ -8211,12 +8211,25 @@ struct AutoloadSource {
 /// lexed under [`ZwcRelexGuard`] wherever it is lexed, and whether the file's
 /// one parse rejected it.
 fn autoload_register_source(name: &str, body: &str) -> AutoloadSource {
+    let ksh_style = autoload_is_ksh_style(name);
+    // `loadautofn` took this body from autoloads.rkyv: the registration it
+    // was stored with is the one the parse below would produce.
+    if let Some((text, from_wordcode, parse_failed)) =
+        crate::autoload_cache::take_hit(name, body, ksh_style)
+    {
+        return AutoloadSource {
+            text,
+            from_wordcode,
+            parse_failed,
+        };
+    }
     // c:Src/exec.c:5725 `stripkshdef(prog, …)` — the ksh-vs-zsh wrap decision
     // below PARSES `body`, so it is itself a second lex of the deparse and
     // needs the same pin as the compile that follows it.
     let from_wordcode = autoload_body_from_wordcode(name, body);
     let _relex = from_wordcode.then(ZwcRelexGuard::enter);
-    let (text, parse_failed) = autoload_definition_source(name, body, autoload_is_ksh_style(name));
+    let (text, parse_failed) = autoload_definition_source(name, body, ksh_style);
+    crate::autoload_cache::commit_search(name, body, &text, parse_failed, ksh_style);
     AutoloadSource {
         text,
         from_wordcode,

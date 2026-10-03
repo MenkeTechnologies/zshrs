@@ -342,6 +342,12 @@ fn first_call_of_self_calling_file(name: &str) -> bool {
     {
         return false;
     }
+    // autoloads.rkyv holds the directory and text a previous probe found;
+    // take them from there rather than walking `$fpath` and reading the file.
+    let fpath = crate::ported::params::getaparam("fpath").unwrap_or_default();
+    if let Some((_, text)) = crate::autoload_cache::try_port_body(name, &fpath) {
+        return is_self_calling_definition(name, &text);
+    }
     let mut fdir: Option<String> = None;
     let mut dump = None;
     // c:6219 `getfpfunc(…, test_only)` — a pure probe that fills the dir.
@@ -351,8 +357,11 @@ fn first_call_of_self_calling_file(name: &str) -> bool {
     let Some(dir) = fdir else {
         return false;
     };
-    std::fs::read_to_string(std::path::Path::new(&dir).join(name))
-        .is_ok_and(|text| is_self_calling_definition(name, &text))
+    let Ok(text) = std::fs::read_to_string(std::path::Path::new(&dir).join(name)) else {
+        return false;
+    };
+    crate::autoload_cache::record_port_probe(name, &dir, &text);
+    is_self_calling_definition(name, &text)
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
