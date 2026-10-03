@@ -120,3 +120,26 @@ fn eval_defined_function_records_file_line() {
     // Output verified against zsh 5.9.2 on the same script.
     assert_eq!(String::from_utf8_lossy(&out.stdout), "h 6\nk 8 9 1\n");
 }
+
+/// c:Src/exec.c:1471-1473 / 2056 — every pipeline sets `lineno` from its
+/// WC_PIPE_LINENO, which inside a function body is function-relative.
+/// zshrs compiled pipeline stages, `&` jobs, `time`, `select` and `coproc`
+/// into sub-chunks that dropped the function's line context, so `$LINENO`
+/// there was the absolute file line.
+#[test]
+fn lineno_in_function_sub_chunks_is_function_relative() {
+    let script = "f() {\n\
+                  \x20 :\n\
+                  \x20 { print c $LINENO } | cat\n\
+                  \x20 ( print d $LINENO ) | cat\n\
+                  \x20 { print j $LINENO } &\n\
+                  \x20 wait\n\
+                  \x20 select x in a; do print s $LINENO; break; done <<<1 2>/dev/null\n\
+                  \x20 { print m $LINENO\n\
+                  \x20   print n $LINENO } | cat\n\
+                  }\n\
+                  f";
+    let (_ec, out, _err) = run(script);
+    // Verified against zsh 5.9.2 on the same script.
+    assert_eq!(out, "c 2\nd 3\nj 4\ns 6\nm 7\nn 8\n");
+}

@@ -1138,7 +1138,7 @@ impl ZshCompiler {
             // `coproc … &` — the coproc flag already forces Z_ASYNC inside
             // execpline (c:Src/exec.c:1764-1765). Compile the sublist into
             // a sub-chunk + emit BUILTIN_RUN_BG.
-            let mut sub = ZshCompiler::new();
+            let mut sub = self.sub_compiler();
             sub.compile_sublist(&list.sublist);
             let sub_end = sub.builder.current_pos();
             for patch in std::mem::take(&mut sub.return_patches) {
@@ -1200,6 +1200,19 @@ impl ZshCompiler {
         // an `&&`/`||` chain is one sublist and is not interrupted
         // mid-chain.
         self.emit_break_escape_check();
+    }
+
+    /// A fresh compiler for a sub-chunk cut from THIS compiler's AST — a
+    /// pipeline stage, a `&` job, `time`, `select`, `coproc`. The nodes keep
+    /// the parser's raw lines, so the sub-chunk needs the same line context
+    /// to report the same `$LINENO`: C runs these in the function's own
+    /// `lineno` frame (c:Src/exec.c:1471-1473, 2056 `lineno = lnp1 - 1`).
+    fn sub_compiler(&self) -> ZshCompiler {
+        let mut sub = ZshCompiler::new();
+        sub.lineno_offset = self.lineno_offset;
+        sub.is_function_body = self.is_function_body;
+        sub.nested_lineno_base = self.nested_lineno_base;
+        sub
     }
 
     /// Body-relative `$LINENO` for a raw parser line, using the same
@@ -1569,7 +1582,7 @@ impl ZshCompiler {
         // Single-stage: execcmd forks once for the whole command
         // (c:Src/exec.c:2891-2907). Compile it into a sub-chunk + emit
         // BUILTIN_RUN_BG with one proc.
-        let mut sub = ZshCompiler::new();
+        let mut sub = self.sub_compiler();
         sub.emit_execcmd_forked_level(&pipe.cmd);
         // c:Src/exec.c:2916-2918 + c:4417 — see compile_pipe_stages: a SIMPLE
         // command forked for `cmd &` leaves through `_realexit()` without
@@ -1618,7 +1631,7 @@ impl ZshCompiler {
         // coproc flag covers the ENTIRE pipeline, so `coproc a | b`
         // wires the whole pipe (compile_pipe), not just the first
         // command.
-        let mut sub = ZshCompiler::new();
+        let mut sub = self.sub_compiler();
         if pipe.next.is_none() {
             sub.emit_execcmd_forked_level(&pipe.cmd);
             sub.forked_simple_exec = matches!(pipe.cmd, ZshCommand::Simple(_));
@@ -2004,7 +2017,7 @@ impl ZshCompiler {
             let stage_is_simple = matches!(stage_cmd, ZshCommand::Simple(_));
             let mut install_at_top = !stage_is_simple;
             let chunk = loop {
-                let mut sub = ZshCompiler::new();
+                let mut sub = self.sub_compiler();
                 sub.emit_execcmd_forked_level(stage_cmd);
                 // c:Src/exec.c::execpline2 — recursive pipeline emit
                 // pushes CS_PIPE BEFORE each recursive call into the
@@ -2342,7 +2355,7 @@ impl ZshCompiler {
                     // Compile the timed sublist as a sub-chunk; the
                     // BUILTIN_TIME_SUBLIST handler runs it and prints
                     // elapsed wall-clock time in zsh's format.
-                    let mut sub = ZshCompiler::new();
+                    let mut sub = self.sub_compiler();
                     sub.compile_sublist(sublist);
                     let sub_end = sub.builder.current_pos();
                     for patch in std::mem::take(&mut sub.return_patches) {
@@ -10950,7 +10963,7 @@ impl ZshCompiler {
 
     fn compile_select(&mut self, f: &crate::parse::ZshFor) {
         // Build the body sub-chunk so RUN_SELECT can run it per pick.
-        let mut sub = ZshCompiler::new();
+        let mut sub = self.sub_compiler();
         sub.compile_program(&f.body);
         let sub_end = sub.builder.current_pos();
         for patch in std::mem::take(&mut sub.return_patches) {
