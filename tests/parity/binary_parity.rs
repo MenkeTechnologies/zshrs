@@ -5,13 +5,45 @@ use std::fs;
 use zsh::daemon::client::Client;
 use zsh::daemon::paths::CachePaths;
 
-/// Helper to get the daemon binary path.
+/// Path to the daemon binary, built on demand.
+///
+/// `zshrs-daemon` lives in the `zshrs-daemon` workspace package, so cargo
+/// sets `CARGO_BIN_EXE_zshrs-daemon` only for that package's own tests and
+/// `cargo test --test parity` never builds it. Falling back to whatever
+/// `target/debug/zshrs-daemon` happens to exist either spawns nothing on a
+/// fresh checkout (`daemon spawn: NotFound`) or a stale daemon that predates
+/// the code under test. Build it once per process, as
+/// tests/daemon_integration.rs does; the nested cargo is a no-op when current.
 fn zshrs_daemon_binary() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs-daemon") {
         return std::path::PathBuf::from(p);
     }
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.join("target").join("debug").join("zshrs-daemon")
+    static BUILT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+            let out = std::process::Command::new(cargo)
+                .current_dir(&manifest)
+                .args(["build", "-p", "zshrs-daemon", "--bin", "zshrs-daemon"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .output()
+                .expect("spawn cargo build -p zshrs-daemon");
+            assert!(
+                out.status.success(),
+                "cargo build -p zshrs-daemon failed:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let target = std::env::var_os("CARGO_TARGET_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| manifest.join("target"));
+            let bin = target.join("debug").join("zshrs-daemon");
+            assert!(bin.exists(), "zshrs-daemon missing after build: {}", bin.display());
+            bin
+        })
+        .clone()
 }
 
 struct DaemonHandle {
