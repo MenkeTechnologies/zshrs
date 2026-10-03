@@ -591,17 +591,6 @@ impl ShellExecutor {
         if fpath_missing > 0 {
             println!("  {} {} missing fpath directories", red("!"), fpath_missing);
         }
-        println!("  functions:   {} loaded", self.function_names().len());
-        // Count canonical shfunctab entries with PM_UNDEFINED set.
-        let autoload_count = crate::ported::hashtable::shfunctab_lock()
-            .read()
-            .map(|t| {
-                t.iter()
-                    .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
-                    .count()
-            })
-            .unwrap_or(0);
-        println!("  autoload:    {} pending", autoload_count);
         println!();
 
         // --- Caches (rkyv-mmapped) ---
@@ -770,6 +759,21 @@ impl ShellExecutor {
 
         // --- Shell State ---
         println!("{}", bold("Shell State"));
+        // shfunctab is what `${#functions}` counts; PM_UNDEFINED marks an
+        // autoload stub whose body has not been loaded yet.
+        let (defined, autoload) = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .map(|t| {
+                t.iter().fold((0, 0), |(d, a), (_, shf)| {
+                    if (shf.node.flags as u32 & PM_UNDEFINED) != 0 {
+                        (d, a + 1)
+                    } else {
+                        (d + 1, a)
+                    }
+                })
+            })
+            .unwrap_or((0, 0));
+        println!("  functions:   {} defined, {} autoload", defined, autoload);
         println!("  aliases:     {}", self.alias_entries().len());
         println!(
             "  global:      {} aliases",
