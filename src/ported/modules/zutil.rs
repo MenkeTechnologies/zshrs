@@ -448,6 +448,27 @@ impl style_table {
     }
 
     /// WARNING: NOT IN ZUTIL.C — method on Rust-only `style_table` wrapper.
+    /// Every entry as `(pattern, style, values, is_eval)`, in [`list`]'s
+    /// order (style name sorted, each style's patterns by weight) — what
+    /// `zstyle -L` prints, `-e` included (c:Src/Modules/zutil.c:201
+    /// `printf("zstyle %s", (p->eval ? "-e " : ""))`). The recorder snapshots it so a
+    /// replay can call `setstypat` with the same arguments.
+    ///
+    /// [`list`]: style_table::list
+    pub fn entries(&self) -> Vec<(String, String, Vec<String>, bool)> {
+        let mut style_names: Vec<&String> = self.styles.keys().collect();
+        style_names.sort();
+        style_names
+            .into_iter()
+            .flat_map(|style| {
+                self.styles[style]
+                    .iter()
+                    .map(move |p| (p.pat.clone(), style.clone(), p.vals.clone(), p.eval.is_some()))
+            })
+            .collect()
+    }
+
+    /// WARNING: NOT IN ZUTIL.C — method on Rust-only `style_table` wrapper.
     /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// List all registered style names (bin_zstyle -g without args).
     pub fn list_styles(&self) -> Vec<&str> {

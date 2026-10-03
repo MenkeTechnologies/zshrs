@@ -14,9 +14,11 @@ pass over a user's shell init that captures every state modification
 — alias, function definition, export, fpath append, hash -d, zstyle,
 bindkey, compdef, zmodload, setopt, trap, sched — with the **exact
 source file and line number** where each modification happened, plus
-the function call-stack at the time. Records flow to `zshrs-daemon`,
-which stores them in SQLite + a rkyv shard for read-only mmap'd
-lookup from any future shell.
+the function call-stack at the time. At end of run the recorder folds
+the records into a canonical rkyv shard,
+`~/.zshrs/images/{hash8}-recorder.rkyv`, and writes it itself — no
+daemon is involved. Every later `zshrs` start replays that shard
+instead of sourcing the startup files (see *Startup replay* below).
 
 The result: `zwhere alias gst` answers
 `~/.zpwr/env/.shell_aliases_functions.sh:1742 (zpwrLoadAliases ← _zpwr_init)`
@@ -584,20 +586,13 @@ Runtime AOP at the dispatcher level avoids all five. The aspect runs *inside the
                   │  AOP intercept   │   ← weaves before-advice on every
                   │  on dispatchers  │      state-mutating builtin
                   └────────┬─────────┘
-                           │ batched RecordEvent
-                           │ (unix socket, daemon.sock)
+                           │ end of run: fold + write (no IPC)
                            ▼
                   ┌─────────────────────────┐
-                  │   zshrs-daemon          │
-                  │ ┌────────────────────┐  │
-                  │ │ catalog (SQLite)   │  │  ← canonical, queryable
-                  │ │  definitions table │  │
-                  │ ├────────────────────┤  │
-                  │ │ rkyv shard         │  │  ← mmap-fast read path
-                  │ │  records-{run}.rkyv│  │     for thin clients
-                  │ └────────────────────┘  │
+                  │ ~/.zshrs/images/        │
+                  │  {hash8}-recorder.rkyv  │  ← canonical end-state
                   └────────────┬────────────┘
-                               │
+                               │ read at startup (no IPC)
                                ▼
                   ┌─────────────────────────┐
                   │   zshrs (any shell)     │
@@ -616,8 +611,8 @@ the compiler before linking.
 
 | Binary | Built with | Purpose |
 |---|---|---|
-| `zshrs` | `cargo build` (default features, **no** `recorder` feature) | Daily-driver. Read path only. **Contains zero bytes of recorder code** — verified by `objdump`/`nm` post-build. Looks up records that the recorder previously persisted via daemon for `zwhere` queries. |
-| `zshrs-recorder` | `cargo build --bin zshrs-recorder --features recorder` | One-shot indexing. Source the user's init, capture every state mutation via AOP aspects, batch-emit to daemon, exit. Used for first-time setup or after major config changes. |
+| `zshrs` | `cargo build` (default features, **no** `recorder` feature) | Daily-driver. Read path only. **Contains zero bytes of recorder code** — verified by `objdump`/`nm` post-build. Replays the recorder shard at startup instead of sourcing the startup files. |
+| `zshrs-recorder` | `cargo build --bin zshrs-recorder --features recorder` | One-shot indexing. Source the user's init, capture every state mutation via AOP aspects, write the rkyv shard, exit. No daemon required. Used for first-time setup or after major config changes. |
 
 Three usage modes from the user's perspective:
 
@@ -934,6 +929,75 @@ Total recorder run overhead estimate (zpwr + zinit + p10k): **~1.5×
 normal startup time**, dominated by SQLite IO. Acceptable for a
 one-shot indexing run; not suitable for daily driver (which is why
 recorder is opt-in).
+
+## Startup replay
+
+When `~/.zshrs/images/*-recorder.rkyv` exists and `[shell].skip_configs`
+is not `"off"` (default `"auto"`), an interactive `zshrs` sources NONE of
+the startup files — `/etc/zshenv`, `~/.zshenv`, `~/.zprofile`,
+`~/.zshrc`, `~/.zlogin` — and applies the shard instead
+(`canonical_apply::replay_startup`, called from `run_init_scripts`).
+`-f`, PRIVILEGED and the `--zsh` parity mode keep the faithful C chain.
+A shard that applies zero rows falls back to sourcing. `zshrs -i -c`
+replays the same way; a plain `zshrs -c` reads only `.zshenv`, as zsh
+does, and sources it.
+
+The decision reads only the shard on disk; whether `zshrs-daemon` is
+running has no effect. Editing an rc file does not invalidate the shard:
+re-run `zshrs-recorder`. A stale shard is logged and shown by
+`zshrs --doctor`.
+
+The writer runs once, in the recording process: a forked subshell or
+`$(...)` inherits the atexit hook and a copy of the event buffer, and is
+refused by a pid check so a child's partial buffer never replaces the
+parent's recording. `zshrs-recorder --dry-run` (alias `--no-daemon`)
+captures without writing.
+
+### What a recording holds
+
+The recorder sources the chain as an interactive login shell would see
+it — `interactive`, `loginshell` and `monitor` set (a p10k config
+returns early under `[[ ! -o monitor ]]`) — then runs `precmd` and
+drains every pending `sched` entry, so deferred loaders (zinit turbo,
+`wait''`) load their plugins before anything is read.
+
+It then snapshots the shell's **end state** from the live tables, not
+from the event log. Events cannot say what survived: `local`,
+`setopt localoptions`, `unalias`, `unfunction` and `x+=(…)` all leave
+events whose last value is not the end state, and some forms
+(`typeset -g x=(…)`, `zmodload -F`) leave none. The snapshot holds:
+
+| Table | Source | Replayed with |
+|---|---|---|
+| aliases (regular, `-g`, `-s`) | `aliastab`, `sufaliastab` | the alias tables |
+| functions | `shfunc.body` (source text; `$functions` deparse as fallback) | `shfunctab`, compiled on first call; `TRAP*` via `setfunction` |
+| autoload stubs | `PM_UNDEFINED` entries | stub registration; `autoload -Uz DIR/NAME` for `PM_LOADDIR` ones |
+| math functions | `functions -M` table | `functions -M …` |
+| parameters | every global that differs from the pre-source baseline, typed (scalar/integer/float/array/association), with export, `-U`/`-H`/`-h`/`-l`/`-u`/`-t` and `typeset -T` ties | `setsparam`/`setiparam`/`setnparam`/`assignaparam`/`sethparam`, `addenv`, `typeset` |
+| unset parameters | baseline globals gone at the end (`unset CDPATH`) | `unsetparam` |
+| options | canonical options that differ from the baseline (process-mode ones such as `interactive`/`monitor` excluded) | the option store |
+| modules | every loaded module with its enabled features (`zmodload -LF`) | `zmodload -F MODULE f…`, or `zmodload MODULE` for a featureless one |
+| zstyle | the `zstyle` table, `-e` included | `setstypat` |
+| widgets | user widgets that differ from the baseline | `zle -N` / `zle -C` |
+| keymaps | per-keymap binding diff vs the baseline, new keymaps, links (`main`→`viins`) | `bindkey -N` / `-A` / `-M KM SEQ W` / `-s` / `-r`, keys as `\NNN` octal |
+
+Still replayed from the event fold: `hash -d`, compdef. Not replayed:
+traps other than `TRAP*` functions, pending `sched` entries.
+
+The native p10k engine activates when the theme is sourced
+(`p10k::maybe_intercept_theme_source`); the recorder logs that source,
+and the startup replay hands each recorded path back to the same
+intercept.
+
+A recording made by an older recorder (no end state) still replays
+from the event fold.
+
+### Limits
+
+Values a config computes from its own process carry the recorder's
+copy: `$(tty)` (`not a tty`), anything derived from `$$`, a snapshot of
+`$-`. A config that wants those per-shell should compute them in a
+`precmd` hook or a function, which replay runs in the real shell.
 
 ## End-of-run autoload prewarm
 

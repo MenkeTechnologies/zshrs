@@ -4,9 +4,10 @@
 //! recorder bin was invoked with), captures every state mutation as it
 //! flows through a state-mutating dispatcher, prints `Captured ...` to
 //! stderr in real time, mirrors every line into the zshrs tracing log,
-//! bundles the full set on shell exit, IPCs it once to `zshrs-daemon`,
-//! prints summary stats, then exits. The daemon ingests the bundle and
-//! rebuilds the rkyv + SQLite read caches from it.
+//! bundles the full set on shell exit, folds it into the canonical rkyv
+//! shard (`~/.zshrs/images/{hash8}-recorder.rkyv`), prints summary stats,
+//! then exits. No daemon is involved: the shell reads that shard back at
+//! startup with `canonical_apply::apply_all`.
 //!
 //! Per docs/RECORDER.md: only the recorder can capture state at 100%
 //! fidelity; the daemon never walks user config. New plugin installs
@@ -29,10 +30,14 @@ use serde::{Deserialize, Serialize};
 /// (this module doesn't exist in that build).
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Skip the end-of-run daemon IPC. Used by hermetic tests
-/// (`tests/recorder_harness.rs`) and one-off `--no-daemon` runs that
-/// just want stderr capture without spawning a daemon.
-static DAEMON_DISABLED: AtomicBool = AtomicBool::new(false);
+/// Skip the end-of-run shard write. Set by `--dry-run` (alias
+/// `--no-daemon`); hermetic tests (`tests/recorder_harness.rs`) use it so
+/// a corpus run never replaces the user's recording.
+static NO_WRITE: AtomicBool = AtomicBool::new(false);
+
+/// Pid that installed the atexit hook. A forked subshell or `$(...)`
+/// inherits the hook and the buffer; only this pid may finalize.
+static OWNER_PID: AtomicU64 = AtomicU64::new(0);
 
 /// Suppress the per-event "Captured KIND NAME ..." stderr line. Set
 /// by `zshrs-recorder --quiet`. The summary footer + tracing log still
@@ -45,7 +50,7 @@ static QUIET: AtomicBool = AtomicBool::new(false);
 static JSON_SUMMARY: AtomicBool = AtomicBool::new(false);
 
 /// Optional path to write the bundle to as a JSON file (alongside
-/// the daemon ship-out, or instead of it under --no-daemon). Set by
+/// the shard write, or instead of it under --dry-run). Set by
 /// `zshrs-recorder -o PATH`. Lock contention is irrelevant — we set
 /// it once at startup and read it once at flush time.
 static OUTPUT_PATH: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
@@ -65,12 +70,12 @@ static ORDER_IDX: AtomicU64 = AtomicU64::new(0);
 /// Recorder start time, used by the summary footer for `runs.started_at_ns`.
 static START_NS: AtomicU64 = AtomicU64::new(0);
 
-/// In-process buffer of every captured event. Flushed to the daemon
-/// in one IPC call at end-of-run.
+/// In-process buffer of every captured event. Folded into the shard
+/// once at end-of-run.
 static BUFFER: Lazy<Mutex<Vec<RecordEvent>>> = Lazy::new(|| Mutex::new(Vec::with_capacity(4096)));
 
 /// Mirror of the SQLite `definitions.kind` discriminant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DefKind {
     /// `Alias` variant.
@@ -329,6 +334,11 @@ pub struct RecorderBundle {
     /// for individual records (lets one bundle carry mixed sources).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_id: Option<String>,
+    /// End-of-run snapshot from [`capture_end_state`]; the shard fold
+    /// prefers it over the events for aliases, functions, parameters and
+    /// options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_state: Option<crate::daemon::recorder_shard::EndState>,
 }
 /// `enable` — see implementation.
 #[inline]
@@ -343,28 +353,646 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// Free-fn equivalent of `ShellExecutor::recorder_ctx()` — synthesizes
-/// a RecordCtx from the live env vars (`$LINENO`, `$ZSH_SCRIPT`,
-/// `$funcstack`) so canonical free-fn ports of C builtins (which
-/// don't take a `&ShellExecutor`) can emit recorder events without
-/// the executor in scope. Mirrors src/extensions/recorder.rs at
-/// line 62 — same source-of-truth, different binding.
+/// Distinct `(kind, name)` definitions captured so far, leaving out the
+/// parameter and option churn (`assign`, `typeset`, `unset`, `setopt`,
+/// `unsetopt`) that any function body produces. Distinct, so a deferred
+/// loader that re-arms the same `sched` entry or trap on every pass of
+/// its own scheduler adds nothing. The recorder's deferred-work drain
+/// stops once passes stop adding these.
+pub fn definition_count() -> usize {
+    BUFFER
+        .lock()
+        .map(|b| {
+            b.iter()
+                .filter(|e| {
+                    !matches!(
+                        e.kind,
+                        DefKind::Assign
+                            | DefKind::Typeset
+                            | DefKind::Unset
+                            | DefKind::Setopt
+                            | DefKind::Unsetopt
+                    )
+                })
+                .map(|e| (e.kind, e.name.as_str()))
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        })
+        .unwrap_or(0)
+}
+
+/// Run every `sched` entry pending NOW, whatever its due time, through
+/// the ported `checksched` walk (Src/Builtins/sched.c:93). Entries the
+/// run schedules itself (`sched +1 …`) carry a future time and wait for
+/// the next call. Returns how many entries were pending.
+///
+/// The recorder never reaches a prompt, so a `sched` deadline never
+/// comes due on its own — and zinit turbo (`wait''`) hangs every
+/// deferred plugin off `sched`.
+pub fn run_pending_sched() -> usize {
+    use crate::ported::builtins::sched::schedcmd;
+    let mut list = schedcmd::subsh_save();
+    let mut pending = 0;
+    let mut node = list.as_deref_mut();
+    while let Some(sch) = node {
+        sch.time = 0;
+        pending += 1;
+        node = sch.next.as_deref_mut();
+    }
+    if pending > 0 {
+        schedcmd::subsh_restore(list);
+        crate::ported::builtins::sched::checksched();
+    }
+    pending
+}
+
+/// Shell state before the first recorded file ran; [`capture_end_state`]
+/// keeps only what the files changed.
+struct Baseline {
+    options: std::collections::HashMap<&'static str, bool>,
+    params: std::collections::HashMap<String, crate::daemon::recorder_shard::TypedParam>,
+    keymaps: KeymapState,
+    widgets: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// Set by [`mark_baseline`], consumed by [`capture_end_state`].
+static BASELINE: Lazy<Mutex<Option<Baseline>>> = Lazy::new(|| Mutex::new(None));
+
+/// Snapshot taken by [`capture_end_state`], attached to the bundle by
+/// [`flush`].
+static END_STATE: Lazy<Mutex<Option<crate::daemon::recorder_shard::EndState>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Options that describe how THIS process was started — the recorder is
+/// a non-interactive script runner, the replaying shell usually an
+/// interactive login one — never something a config file chose.
+const UNRECORDED_OPTIONS: &[&str] = &[
+    "interactive",
+    "loginshell",
+    "shinstdin",
+    "singlecommand",
+    "privileged",
+    "restricted",
+    "monitor",
+    "zle",
+    "rcs",
+    "globalrcs",
+];
+
+/// Parameters whose value belongs to the running process or to the
+/// command that last ran, not to the config: replaying the recorder's
+/// copy would be wrong in every shell.
+const UNRECORDED_PARAMS: &[&str] = &[
+    "_",
+    "0",
+    "argv",
+    "PWD",
+    "OLDPWD",
+    "SHLVL",
+    "SECONDS",
+    "RANDOM",
+    "LINENO",
+    "TTY",
+    "TTYIDLE",
+    "pipestatus",
+    "ZSH_SCRIPT",
+    "ZSH_ARGZERO",
+    "ZSH_EXECUTION_STRING",
+    "ZSH_SUBSHELL",
+    "match",
+    "mbegin",
+    "mend",
+    "MATCH",
+    "MBEGIN",
+    "MEND",
+    "reply",
+    "REPLY",
+];
+
+/// Every canonical option and its state. `OPTNS` also lists the
+/// `OPT_ALIAS` rows (`login`, `dotglob`, …); an alias is skipped because
+/// its canonical row carries the same state.
+fn option_states() -> std::collections::HashMap<&'static str, bool> {
+    use crate::ported::options::{optlookup, opt_state_get, OPTNS};
+    OPTNS
+        .iter()
+        .copied()
+        .filter(|&n| {
+            let no = optlookup(n);
+            no > 0 && crate::ported::zsh_h::opt_name(no) == n
+        })
+        .filter_map(|n| opt_state_get(n).map(|on| (n, on)))
+        .collect()
+}
+
+/// One global parameter as the replay needs it, or `None` for one that
+/// cannot or must not be replayed: read-only, the special hashes
+/// (`$aliases`, `$functions`, `$options`, … — views of tables the
+/// snapshot carries itself), or a name in [`UNRECORDED_PARAMS`].
+fn read_global_param(name: &str) -> Option<crate::daemon::recorder_shard::TypedParam> {
+    use crate::ported::params::{getaparam, gethparam, getsparam, paramtab};
+    if UNRECORDED_PARAMS.contains(&name) {
+        return None;
+    }
+    // `${(t)name}` (Src/Modules/parameter.c:43 `paramtypestr`), plus the
+    // tie partner and separator a `typeset -T` scalar carries (`ename`,
+    // `u.tied->joinchar`, Src/zsh.h:1864, 1870-1873).
+    let (ty, tie) = paramtab().read().ok().and_then(|t| {
+        t.get(name).map(|pm| {
+            let tie = pm.ename.clone().map(|arr| {
+                let sep = pm.u_tied.as_ref().map(|t| t.joinchar).unwrap_or(b':' as i32);
+                (arr, char::from_u32(sep as u32).unwrap_or(':').to_string())
+            });
+            (crate::ported::modules::parameter::paramtypestr(pm), tie)
+        })
+    })?;
+    let parts: Vec<&str> = ty.split('-').collect();
+    let kind = parts[0];
+    let special = parts.contains(&"special");
+    if parts.contains(&"readonly") || (kind == "association" && special) {
+        return None;
+    }
+    let (value, elements) = match kind {
+        "array" => (None, getaparam(name)),
+        // `gethparam` is the VALUES only (Src/params.c:3118
+        // `SCANPM_WANTVALS`); `gethkparam` the keys, in the same scan
+        // order (c:3138).
+        "association" => {
+            let keys = crate::ported::params::gethkparam(name).unwrap_or_default();
+            let vals = gethparam(name).unwrap_or_default();
+            let flat = keys.into_iter().zip(vals).flat_map(|(k, v)| [k, v]).collect();
+            (None, Some(flat))
+        }
+        "scalar" | "integer" | "float" => (getsparam(name), None),
+        _ => return None,
+    };
+    // The `paramtypestr` words (c:72-90) that `typeset` sets with a
+    // plain letter.
+    let attrs: String = [("unique", 'U'), ("hideval", 'H'), ("hide", 'h'), ("lower", 'l'), ("upper", 'u'), ("tag", 't')]
+        .iter()
+        .filter(|(word, _)| parts.contains(word))
+        .map(|(_, c)| *c)
+        .collect();
+    Some(crate::daemon::recorder_shard::TypedParam {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        export: parts.contains(&"export"),
+        value,
+        elements,
+        attrs,
+        // A special pair (`PATH`/`path`) is tied in every shell already.
+        tie: tie.filter(|_| kind == "scalar" && parts.contains(&"tied") && !special),
+    })
+}
+
+/// Every global parameter the replay could restore, keyed by name.
+fn global_params() -> std::collections::HashMap<String, crate::daemon::recorder_shard::TypedParam> {
+    // Names first: the readers below take `paramtab` themselves.
+    let names: Vec<String> = crate::ported::params::paramtab()
+        .read()
+        .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
+        .unwrap_or_default();
+    names
+        .into_iter()
+        .filter_map(|n| read_global_param(&n).map(|p| (n, p)))
+        .collect()
+}
+
+/// Every loaded module and its enabled features — what `zmodload -LF`
+/// prints (`bin_zmodload_features`, Src/module.c:3022-3024 via
+/// `printmodulenode` c:218-262). Replaying `zmodload -F MODULE f…` gives a
+/// module exactly these features whether the files ran a bare
+/// `zmodload zsh/datetime` or `zmodload -F zsh/files b:zf_rm`.
+fn loaded_module_features() -> std::collections::HashMap<String, Vec<String>> {
+    use crate::ported::module::{enables_module, features_module, MODULESTAB};
+    use crate::ported::zsh_h::{MOD_ALIAS, MOD_INIT_B, MOD_UNLOAD};
+    let mut out = std::collections::HashMap::new();
+    let Ok(mut table) = MODULESTAB.lock() else {
+        return out;
+    };
+    let table = &mut *table;
+    let names: Vec<String> = table
+        .modules
+        .iter()
+        .filter(|(_, m)| {
+            let f = m.node.flags;
+            f & MOD_ALIAS == 0 && f & MOD_INIT_B != 0 && f & MOD_UNLOAD == 0
+        })
+        .map(|(n, _)| n.clone())
+        .collect();
+    for name in names {
+        let mut features = Vec::new();
+        if features_module(table, &name, &mut features) != 0 {
+            continue;
+        }
+        // A module with no features (`zsh/complist`) is loaded or not;
+        // an empty list replays as a plain `zmodload MODULE`.
+        if features.is_empty() {
+            out.insert(name, Vec::new());
+            continue;
+        }
+        let mut enables = None;
+        if enables_module(table, &name, &mut enables) != 0 {
+            continue;
+        }
+        let enables = enables.unwrap_or_default();
+        let on: Vec<String> = features
+            .into_iter()
+            .zip(enables)
+            .filter(|(_, e)| *e != 0)
+            .map(|(f, _)| f)
+            .collect();
+        out.insert(name, on);
+    }
+    out
+}
+
+/// What one key sequence does in a keymap: run a widget, or send a
+/// string (`bindkey -s`).
+#[derive(Clone, PartialEq)]
+enum KeyAction {
+    Widget(String),
+    Send(String),
+}
+
+/// Every keymap, as `bindkey -lL` and `bindkey -LM` would show it.
+struct KeymapState {
+    /// Keymap name → the name its bindings are listed under. Names that
+    /// share one keymap (`main` after `bindkey -v` is `viins`) map to
+    /// that keymap's primary name (Src/Zle/zle_keymap.c:78 `primary`).
+    names: std::collections::HashMap<String, String>,
+    /// Primary name → its bindings.
+    binds: std::collections::HashMap<String, std::collections::HashMap<Vec<u8>, KeyAction>>,
+}
+
+/// Read `keymapnamtab`.
+fn keymap_state() -> KeymapState {
+    use crate::ported::zle::zle_keymap::keymapnamtab;
+    let mut state = KeymapState {
+        names: Default::default(),
+        binds: Default::default(),
+    };
+    let Ok(tab) = keymapnamtab().lock() else {
+        return state;
+    };
+    let named: Vec<(String, std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>)> =
+        tab.iter().map(|(n, kmn)| (n.clone(), kmn.keymap.clone())).collect();
+    drop(tab);
+    for (name, km) in &named {
+        // The primary name when the keymap has one and it is linked,
+        // else the alphabetically first name sharing the keymap.
+        let mut sharing: Vec<&String> = named
+            .iter()
+            .filter(|(_, other)| std::sync::Arc::ptr_eq(km, other))
+            .map(|(n, _)| n)
+            .collect();
+        sharing.sort();
+        let primary = km
+            .primary
+            .as_ref()
+            .filter(|p| sharing.contains(p))
+            .unwrap_or(sharing[0])
+            .clone();
+        state.names.insert(name.clone(), primary.clone());
+        if state.binds.contains_key(&primary) {
+            continue;
+        }
+        let mut binds = std::collections::HashMap::new();
+        for (byte, t) in km.first.iter().enumerate() {
+            if let Some(t) = t.as_ref().filter(|t| t.nam != "undefined-key") {
+                binds.insert(vec![byte as u8], KeyAction::Widget(t.nam.clone()));
+            }
+        }
+        for (seq, kb) in &km.multi {
+            // A `multi` node with neither is only a prefix of longer
+            // sequences (c:85-91 `prefixct`).
+            let action = match (&kb.bind, &kb.str) {
+                (Some(t), _) if t.nam != "undefined-key" => KeyAction::Widget(t.nam.clone()),
+                (_, Some(s)) => KeyAction::Send(s.clone()),
+                _ => continue,
+            };
+            binds.insert(seq.clone(), action);
+        }
+        state.binds.insert(primary, binds);
+    }
+    state
+}
+
+/// A key sequence as `\NNN` octal escapes, one per byte. `bindkey`
+/// decodes both its sequence and its `-s` string with
+/// `GETKEYS_BINDKEY`, which includes `GETKEY_OCTAL_ESC` (Src/zsh.h:3141,
+/// 3185; Src/Zle/zle_keymap.c:1022, 1038), so any byte — NUL, `^`, `\`,
+/// high-bit — round-trips without quoting.
+fn key_escape(seq: &[u8]) -> String {
+    seq.iter().map(|b| format!("\\{b:03o}")).collect()
+}
+
+/// The `bindkey` argvs that turn keymap state `base` into `end`: new
+/// keymaps (`-N`), links (`-A`), then per-keymap binds and removals
+/// (`-M KEYMAP SEQ WIDGET`, `-s`, `-r`), keys as [`key_escape`] writes them.
+fn keymap_diff(base: &KeymapState, end: &KeymapState) -> Vec<Vec<String>> {
+    let mut created = Vec::new();
+    let mut linked = Vec::new();
+    let mut names: Vec<&String> = end.names.keys().collect();
+    names.sort();
+    for name in names {
+        let primary = &end.names[name];
+        if name == primary {
+            if !base.names.contains_key(name) {
+                created.push(vec!["-N".to_string(), name.clone()]);
+            }
+        } else if base.names.get(name) != Some(primary) {
+            linked.push(vec!["-A".to_string(), primary.clone(), name.clone()]);
+        }
+    }
+
+    let empty = std::collections::HashMap::new();
+    let mut bound = Vec::new();
+    let mut primaries: Vec<&String> = end.binds.keys().collect();
+    primaries.sort();
+    for km in primaries {
+        let before = base
+            .names
+            .get(km)
+            .and_then(|p| base.binds.get(p))
+            .unwrap_or(&empty);
+        let after = &end.binds[km];
+        let mut seqs: Vec<&Vec<u8>> = after.keys().chain(before.keys()).collect();
+        seqs.sort();
+        seqs.dedup();
+        for seq in seqs {
+            let mut argv = vec!["-M".to_string(), km.clone()];
+            match (before.get(seq), after.get(seq)) {
+                (b, Some(a)) if b == Some(a) => continue,
+                (_, Some(KeyAction::Widget(w))) => argv.extend([key_escape(seq), w.clone()]),
+                (_, Some(KeyAction::Send(s))) => {
+                    argv.extend(["-s".to_string(), key_escape(seq), key_escape(s.as_bytes())])
+                }
+                (Some(_), None) => argv.extend(["-r".to_string(), key_escape(seq)]),
+                (None, None) => continue,
+            }
+            bound.push(argv);
+        }
+    }
+    created.into_iter().chain(linked).chain(bound).collect()
+}
+
+/// User widgets in `thingytab`, name → the `zle` argv that defines it
+/// (`zle -N NAME FUNC`, `zle -C NAME WIDGET FUNC`).
+fn widget_state() -> std::collections::HashMap<String, Vec<String>> {
+    use crate::ported::zle::zle_h::WidgetImpl;
+    let Ok(tab) = crate::ported::zle::zle_thingy::thingytab().lock() else {
+        return Default::default();
+    };
+    tab.iter()
+        .filter_map(|(name, t)| {
+            let argv = match &t.widget.as_ref()?.u {
+                WidgetImpl::UserFunc(f) => vec!["-N".to_string(), name.clone(), f.clone()],
+                WidgetImpl::Comp { wid, func, .. } => {
+                    vec!["-C".to_string(), name.clone(), wid.clone(), func.clone()]
+                }
+                WidgetImpl::Internal(_) => return None,
+            };
+            Some((name.clone(), argv))
+        })
+        .collect()
+}
+
+/// Bring up the line editor's tables the way `zsh_main` does for an
+/// interactive shell (Src/init.c, `init.rs` `zle_load_state` block), so
+/// the baseline holds the keymaps and widgets the replaying shell starts
+/// with. The recorder never runs `zsh_main`.
+fn init_zle_tables() {
+    use crate::ported::zle::zle_keymap::{createkeymapnamtab, default_bindings, keymapnamtab};
+    crate::ported::zle::zle_thingy::init_thingies();
+    createkeymapnamtab();
+    // `default_bindings` rebuilds every keymap; only on an empty table.
+    if keymapnamtab().lock().map(|t| !t.contains_key("main")).unwrap_or(false) {
+        default_bindings();
+    }
+}
+
+/// Record the option and parameter state before any file is sourced.
+pub fn mark_baseline() {
+    init_zle_tables();
+    let base = Baseline {
+        options: option_states(),
+        params: global_params(),
+        keymaps: keymap_state(),
+        widgets: widget_state(),
+    };
+    if let Ok(mut b) = BASELINE.lock() {
+        *b = Some(base);
+    }
+}
+
+/// Snapshot what the init chain left behind — aliases, functions,
+/// autoload stubs, and the global parameters and options that differ
+/// from [`mark_baseline`] — for the shard fold to use instead of
+/// replaying events. Read from the live tables, not the event log:
+/// events miss `typeset -g x=(…)` and cannot say what `local`,
+/// `localoptions`, `unalias` or `unfunction` left behind. Run after the
+/// deferred-work drain, while the executor is still alive; `flush`
+/// attaches it to the bundle.
+pub fn capture_end_state() {
+    use crate::daemon::recorder_shard::EndState;
+    use crate::ported::hashtable::{aliastab_lock, shfunctab_lock, sufaliastab_lock};
+    use crate::ported::zsh_h::{
+        ALIAS_GLOBAL, DISABLED, MFF_STR, MFF_USERFUNC, PM_KSHSTORED, PM_LOADDIR, PM_TAGGED,
+        PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED,
+    };
+
+    let mut end = EndState::default();
+    if let Ok(tab) = aliastab_lock().read() {
+        for (name, a) in tab.iter() {
+            if a.node.flags & DISABLED != 0 {
+                continue;
+            }
+            let bucket = if a.node.flags & ALIAS_GLOBAL != 0 {
+                &mut end.global_aliases
+            } else {
+                &mut end.aliases
+            };
+            bucket.insert(name.clone(), a.text.clone());
+        }
+    }
+    if let Ok(tab) = sufaliastab_lock().read() {
+        for (name, a) in tab.iter() {
+            if a.node.flags & DISABLED == 0 {
+                end.suffix_aliases.insert(name.clone(), a.text.clone());
+            }
+        }
+    }
+
+    // A defined function's body is the source text the shell itself
+    // compiles from (`shfunc.body`). The `$functions[name]` deparse is
+    // the fallback only: zshrs's deparse loses quoting
+    // (`'_.!~*'\''()-'` comes back as `'_.!~*'()-'`) and so does not
+    // always parse again.
+    let mut deparse: Vec<String> = Vec::new();
+    if let Ok(tab) = shfunctab_lock().read() {
+        for (name, shf) in tab.iter() {
+            if shf.node.flags & DISABLED != 0 {
+                continue;
+            }
+            let flags = shf.node.flags as u32;
+            if flags & PM_UNDEFINED != 0 {
+                match shf.filename.as_ref().filter(|_| flags & PM_LOADDIR != 0) {
+                    // `autoload -Uz DIR/NAME` (Src/builtin.c:3288-3290 `add_autoload_function`):
+                    // the function comes from DIR, not `$fpath`.
+                    Some(dir) => {
+                        let mut letters = String::from("-");
+                        for (bit, c) in [
+                            (PM_UNALIASED, 'U'),
+                            (PM_ZSHSTORED, 'z'),
+                            (PM_KSHSTORED, 'k'),
+                            (PM_TAGGED, 't'),
+                            (PM_TAGGED_LOCAL, 'T'),
+                        ] {
+                            if flags & bit != 0 {
+                                letters.push(c);
+                            }
+                        }
+                        let mut argv = Vec::new();
+                        if letters.len() > 1 {
+                            argv.push(letters);
+                        }
+                        argv.push(format!("{dir}/{name}"));
+                        end.autoload_paths.push((name.clone(), argv));
+                    }
+                    None => end.autoloads.push(name.clone()),
+                }
+            } else if let Some(body) = shf.body.as_ref().filter(|b| !b.is_empty()) {
+                end.functions.insert(name.clone(), body.clone());
+            } else {
+                deparse.push(name.clone());
+            }
+        }
+    }
+    end.autoloads.sort();
+    end.autoload_paths.sort();
+
+    // User math functions, as the `functions -M` argv `listusermathfunc`
+    // prints for each (Src/builtin.c:3243-3277): the min/max/function
+    // words appear only as far as they differ from the defaults.
+    if let Ok(table) = crate::ported::module::MATHFUNCS.lock() {
+        for p in table.iter().filter(|p| p.flags & MFF_USERFUNC != 0) {
+            let mut showargs = if p.module.is_some() {
+                3
+            } else if p.maxargs != if p.minargs != 0 { p.minargs } else { -1 } {
+                2
+            } else if p.minargs != 0 {
+                1
+            } else {
+                0
+            };
+            let mut argv = vec![
+                if p.flags & MFF_STR != 0 { "-Ms" } else { "-M" }.to_string(),
+                p.name.clone(),
+            ];
+            for word in [p.minargs.to_string(), p.maxargs.to_string(), p.module.clone().unwrap_or_default()] {
+                if showargs == 0 {
+                    break;
+                }
+                argv.push(word);
+                showargs -= 1;
+            }
+            end.math_functions.push((p.name.clone(), argv));
+        }
+    }
+    end.math_functions.sort();
+
+    if let Ok(t) = crate::ported::modules::zutil::zstyletab.lock() {
+        end.zstyles = t.entries();
+    }
+
+    // Src/Modules/parameter.c:388 `getfunction`, read after the table
+    // guard drops (it takes the same lock).
+    for name in deparse {
+        let body = crate::ported::modules::parameter::getpmfunction(std::ptr::null_mut(), &name)
+            .and_then(|pm| pm.u_str);
+        if let Some(body) = body {
+            end.functions.insert(name, body);
+        }
+    }
+
+    if let Some(base) = BASELINE.lock().ok().and_then(|mut b| b.take()) {
+        let now = global_params();
+        let mut unset: Vec<String> = base.params.keys().filter(|n| !now.contains_key(*n)).cloned().collect();
+        unset.sort();
+        end.unset_params = unset;
+        let mut params: Vec<_> = now
+            .into_values()
+            .filter(|p| base.params.get(&p.name) != Some(p))
+            .collect();
+        params.sort_by(|a, b| a.name.cmp(&b.name));
+        end.params = params;
+
+        for (name, on) in option_states() {
+            if UNRECORDED_OPTIONS.contains(&name) || base.options.get(name) == Some(&on) {
+                continue;
+            }
+            if on {
+                end.setopts.push(name.to_string());
+            } else {
+                end.unsetopts.push(name.to_string());
+            }
+        }
+        end.setopts.sort();
+        end.unsetopts.sort();
+
+        // Every loaded module, not a diff: the recorder's baseline already
+        // has modules the replaying shell may not (`zsh/complist`, whose
+        // `.menu-select` a recorded `zle -C menu-select` needs).
+        let mut modules: Vec<(String, Vec<String>)> = loaded_module_features().into_iter().collect();
+        modules.sort();
+        end.modules = modules;
+
+        let mut widgets: Vec<(String, Vec<String>)> = widget_state()
+            .into_iter()
+            .filter(|(name, argv)| base.widgets.get(name) != Some(argv))
+            .collect();
+        widgets.sort();
+        end.widgets = widgets.into_iter().map(|(_, argv)| argv).collect();
+        end.bindkeys = keymap_diff(&base.keymaps, &keymap_state());
+    }
+
+    tracing::info!(
+        aliases = end.aliases.len() + end.global_aliases.len() + end.suffix_aliases.len(),
+        functions = end.functions.len(),
+        autoloads = end.autoloads.len(),
+        params = end.params.len(),
+        unset_params = end.unset_params.len(),
+        modules = end.modules.len(),
+        autoload_paths = end.autoload_paths.len(),
+        math_functions = end.math_functions.len(),
+        zstyles = end.zstyles.len(),
+        widgets = end.widgets.len(),
+        bindkeys = end.bindkeys.len(),
+        setopts = end.setopts.len(),
+        unsetopts = end.unsetopts.len(),
+        "recorder: end state captured"
+    );
+    if let Ok(mut s) = END_STATE.lock() {
+        *s = Some(end);
+    }
+}
+
+/// Free-fn equivalent of `ShellExecutor::recorder_ctx()` — the same
+/// RecordCtx built from the shell's parameter table (`$LINENO`,
+/// `$funcstack`) and C's `scriptfilename` global, so canonical free-fn
+/// ports of C builtins (which don't take a `&ShellExecutor`) can emit
+/// recorder events without the executor in scope. These are shell
+/// parameters, not environment variables: reading them through
+/// `std::env` left every event's file and line unset.
 pub fn recorder_ctx_global() -> RecordCtx {
-    let line = std::env::var("LINENO")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok());
-    let file = std::env::var("ZSH_SCRIPT")
-        .ok()
-        .or_else(|| std::env::var("ZSH_ARGZERO").ok())
-        .or_else(|| std::env::var("0").ok());
-    // funcstack is an array param exposed as a colon-joined env var via
-    // ksh93::setsparam (the canonical free-fn bridge); split + reverse
-    // to match the executor-side `funcstack > parent > grand` chain.
-    let fn_chain = std::env::var("funcstack").ok().and_then(|s| {
+    let line = crate::ported::params::getsparam("LINENO").and_then(|s| s.parse::<u32>().ok());
+    let file = crate::ported::utils::scriptfilename_get();
+    let fn_chain = crate::ported::params::getaparam("funcstack").and_then(|s| {
         if s.is_empty() {
             None
         } else {
-            let mut parts: Vec<&str> = s.split(':').collect();
+            let mut parts: Vec<&str> = s.iter().map(String::as_str).collect();
             parts.reverse();
             Some(parts.join(" > "))
         }
@@ -375,15 +1003,15 @@ pub fn recorder_ctx_global() -> RecordCtx {
         fn_chain,
     }
 }
-/// `set_daemon_disabled` — see implementation.
+/// Skip the end-of-run shard write (`--dry-run`).
 #[inline]
-pub fn set_daemon_disabled(v: bool) {
-    DAEMON_DISABLED.store(v, Ordering::Relaxed);
+pub fn set_no_write(v: bool) {
+    NO_WRITE.store(v, Ordering::Relaxed);
 }
 
 #[inline]
-fn daemon_disabled() -> bool {
-    DAEMON_DISABLED.load(Ordering::Relaxed)
+fn no_write() -> bool {
+    NO_WRITE.load(Ordering::Relaxed)
 }
 /// `set_quiet` — see implementation.
 #[inline]
@@ -1079,15 +1707,17 @@ pub fn print_summary() {
     }
 }
 
-/// Bundle every captured event, send a single IPC frame to
-/// `zshrs-daemon`'s `recorder_ingest` op, and clear the buffer. Returns
-/// `true` if the daemon accepted the bundle. Called from `atexit`, so
-/// avoids tracing/TLS-touching helpers (use `eprintln!` only).
+/// Bundle every captured event, fold it into the canonical rkyv shard
+/// and write `~/.zshrs/images/{hash8}-recorder.rkyv`, then clear the
+/// buffer. Returns `true` when the shard was written. No daemon: the
+/// recorder owns this write so a recording lands on a machine where
+/// `zshrs-daemon` was never started. Called from `atexit`, so avoids
+/// tracing/TLS-touching helpers (use `eprintln!` only).
 ///
-/// `--no-daemon` skips the IPC step but `-o PATH` still writes the
-/// bundle to disk so post-mortem inspection works without a daemon.
+/// `--dry-run` skips the shard write; `-o PATH` still writes the
+/// bundle JSON so post-mortem inspection works either way.
 #[cfg(feature = "daemon")]
-pub fn flush_to_daemon() -> bool {
+pub fn flush() -> bool {
     if !is_enabled() {
         return false;
     }
@@ -1108,15 +1738,14 @@ pub fn flush_to_daemon() -> bool {
         // rebrand experiments). Default = "zshrs" since this code
         // path is exclusive to the AOP-instrumented zshrs-recorder.
         shell_id: Some(shell_id_override().unwrap_or_else(|| "zshrs".to_string())),
+        end_state: END_STATE.lock().ok().and_then(|mut s| s.take()),
     };
 
     // `-o PATH` writes the bundle to a JSON file alongside (or instead
-    // of, under --no-daemon) shipping it to the daemon. Useful for
-    // post-mortem inspection without spinning a daemon up. Empty
-    // bundles still write — caller asked for the file, give them the
-    // file (even if it just confirms "recorder ran, captured nothing"
-    // — that itself is a useful diagnostic when a parse error caused
-    // zero events).
+    // of, under --dry-run) the shard. Empty bundles still write —
+    // caller asked for the file, give them the file (even if it just
+    // confirms "recorder ran, captured nothing" — that itself is a
+    // useful diagnostic when a parse error caused zero events).
     if let Some(path) = output_path() {
         match serde_json::to_string(&bundle) {
             Ok(s) => {
@@ -1134,48 +1763,90 @@ pub fn flush_to_daemon() -> bool {
         eprintln!("recorder: no events to flush");
         return false;
     }
-
-    if daemon_disabled() {
+    if no_write() {
         return false;
     }
-    let event_count = bundle.events.len();
-    let payload = match serde_json::to_value(&bundle) {
-        Ok(v) => v,
+
+    let t0 = Instant::now();
+    // `RecordEvent` and the shard fold's `BundleEvent` share one wire
+    // format; round-tripping through serde keeps the two crates'
+    // types independent.
+    let folded_input = serde_json::to_value(&bundle).and_then(serde_json::from_value::<
+        crate::daemon::recorder_shard::Bundle,
+    >);
+    let shard_bundle = match folded_input {
+        Ok(b) => b,
         Err(e) => {
-            eprintln!("recorder: bundle serialize failed: {}", e);
+            eprintln!("recorder: bundle conversion failed: {e}");
             return false;
         }
     };
-    let t0 = Instant::now();
-    // `call_once` (not `_no_spawn`) so the recorder spawns the daemon if
-    // it isn't already running — first-time-setup runs must succeed even
-    // on a cold machine.
-    match crate::daemon::client::call_once("recorder_ingest", payload) {
-        Ok(_) => {
-            let took_ms = t0.elapsed().as_millis();
+    let paths = match crate::daemon::paths::CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("recorder: cache paths unresolved: {e}");
+            return false;
+        }
+    };
+    if let Err(e) = paths.ensure_dirs() {
+        eprintln!("recorder: {}: {e}", paths.images.display());
+        return false;
+    }
+    match crate::daemon::recorder_shard::write_bundle_shard(&paths, &shard_bundle) {
+        Ok(path) => {
             eprintln!(
-                "recorder: bundled {} events to daemon in {} ms",
-                event_count, took_ms
+                "recorder: {} events written to {} in {} ms",
+                shard_bundle.events.len(),
+                path.display(),
+                t0.elapsed().as_millis()
             );
             true
         }
         Err(e) => {
-            eprintln!("recorder: daemon ingest failed: {}", e);
+            eprintln!("recorder: shard write failed: {e}");
             false
         }
     }
 }
-/// `flush_to_daemon` — see implementation.
+/// Non-daemon builds carry no shard writer.
 #[cfg(not(feature = "daemon"))]
-pub fn flush_to_daemon() -> bool {
+pub fn flush() -> bool {
     if !is_enabled() {
         return false;
     }
-    eprintln!("recorder: daemon feature off — bundle not sent");
+    eprintln!("recorder: daemon feature off — shard not written");
     false
 }
 
+/// Set once the summary + shard write ran, so the natural end of
+/// `main` and the atexit hook never both fire.
+static FINALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Print the summary and write the shard. `bins/zshrs-recorder.rs`
+/// calls this at the end of `main`, while thread-locals are still
+/// alive — `write_canonical_shard` logs through `tracing`, which
+/// panics with `AccessError` once `main` has returned. The atexit
+/// hook covers the paths that never get back to `main` (`exit` inside
+/// the sourced files).
+pub fn finalize() {
+    if FINALIZED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    print_summary();
+    flush();
+}
+
 extern "C" fn atexit_finalize() {
+    // A forked subshell or `$(...)` inherits this hook AND a copy of the
+    // buffer holding every event captured so far. Finalizing there wrote
+    // a partial shard (and a partial summary) per child, and whichever
+    // child exited last won — the parent's full recording was lost.
+    if std::process::id() as u64 != OWNER_PID.load(Ordering::Relaxed) {
+        return;
+    }
+    if FINALIZED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     // libc atexit runs AFTER the Rust runtime starts tearing down
     // thread-locals. `tracing::*` and `once_cell::Lazy` both touch TLS,
     // so we must catch the AccessError they raise during destruction —
@@ -1188,13 +1859,15 @@ extern "C" fn atexit_finalize() {
         print_summary();
     });
     let _ = std::panic::catch_unwind(|| {
-        flush_to_daemon();
+        flush();
     });
 }
 
-/// Register `print_summary` + `flush_to_daemon` as a libc `atexit` hook
-/// so they run even when the shell exits via `std::process::exit`.
+/// Register `print_summary` + `flush` as a libc `atexit` hook so they
+/// run even when the shell exits via `std::process::exit`. Only the
+/// calling process finalizes; forked children skip the hook.
 pub fn install_atexit() {
+    OWNER_PID.store(std::process::id() as u64, Ordering::Relaxed);
     // SAFETY: `atexit_finalize` is a plain `extern "C"` function with the
     // libc-required signature.
     unsafe {

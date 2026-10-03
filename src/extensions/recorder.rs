@@ -67,9 +67,10 @@ impl crate::ported::vm_helper::ShellExecutor {
                 Some(parts.join(" > "))
             }
         });
-        let file = crate::ported::params::getsparam("ZSH_SCRIPT")
-            .or_else(|| crate::ported::params::getsparam("ZSH_ARGZERO"))
-            .or_else(|| crate::ported::params::getsparam("0"));
+        // The file being sourced right now — C's `scriptfilename`, which
+        // `source()` sets per file and PS4's `%x` reports. `$ZSH_SCRIPT` /
+        // `$0` named the recorder binary for every event.
+        let file = crate::ported::utils::scriptfilename_get();
         crate::recorder::RecordCtx {
             file,
             line,

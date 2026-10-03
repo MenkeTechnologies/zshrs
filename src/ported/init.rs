@@ -1632,6 +1632,20 @@ pub fn run_init_scripts() {
             let _ = source("/etc/suid_profile");
         }
     } else {
+        // !!! RUST-ONLY — no C counterpart. A `zshrs-recorder` shard
+        // (~/.zshrs/images/*-recorder.rkyv) holds the end-state of this
+        // whole chain; with `[shell].skip_configs` not "off", replay it
+        // and source NONE of the files below, /etc/zshenv included.
+        // `-f` (RCS unset), PRIVILEGED and the `--zsh` parity mode
+        // (`emulating()`) keep the faithful C chain. A shard that
+        // applies zero rows falls through to sourcing.
+        if isset(RCS)
+            && !privileged
+            && !crate::extensions::emulation_startup::emulating()
+            && crate::canonical_apply::replay_startup()
+        {
+            return;
+        }
         // c:1473 — source(GLOBAL_ZSHENV);
         let _ = source(&crate::extensions::global_rc::global_rc_path(
             crate::ported::config_h::GLOBAL_ZSHENV,

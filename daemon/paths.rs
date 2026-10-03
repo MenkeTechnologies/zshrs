@@ -101,13 +101,12 @@ enabled = \"auto\"
 
 [shell]
 # Whether to skip sourcing /etc/zshenv + ~/.{zshenv,zprofile,zshrc,
-# zlogin} and rebuild executor state from the daemon's canonical
-# rkyv shard instead. Saves ~150ms on shells with heavy plugin
-# loads.
-#   auto — skip iff daemon is up AND has a recorded zshrs shard
-#   on   — always skip (config files become inert; recorder owns
-#          all state)
-#   off  — never skip (canonical state ignored even when present)
+# zlogin} and rebuild shell state from the recorder shard
+# (~/.zshrs/images/*-recorder.rkyv, written by `zshrs-recorder`)
+# instead. The daemon plays no part in either the write or the read.
+#   auto — skip iff a recorder shard exists (default)
+#   on   — same as auto
+#   off  — never skip (the shard is ignored even when present)
 skip_configs = \"auto\"
 
 # Optional: zsh script run once after dotfiles (or after canonical_apply

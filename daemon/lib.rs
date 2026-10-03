@@ -54,6 +54,8 @@ pub mod paths;
 pub mod pidlock;
 /// `pubsub` submodule.
 pub mod pubsub;
+/// `recorder_shard` submodule.
+pub mod recorder_shard;
 /// `schedule` submodule.
 pub mod schedule;
 /// `server` submodule.

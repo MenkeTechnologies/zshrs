@@ -1,15 +1,16 @@
-//! Apply daemon canonical state to a freshly-built ShellExecutor —
-//! by reading the daemon's rkyv shard directly from disk. No IPC.
+//! Apply a recorded shell state to a freshly-built ShellExecutor —
+//! by reading the recorder's rkyv shard directly from disk. No IPC.
 //!
 //! **zshrs-original infrastructure — no C source counterpart.** C
 //! zsh always runs `Src/init.c::source_startup_files()` to set up
 //! a fresh shell from the user's dotfiles. zshrs adds a fast path:
-//! if `zshrs-daemon` has a canonical-state shard on disk
-//! (`~/.zshrs/images/*-recorder.rkyv`), we mmap and apply it
-//! directly into the executor's `pub` HashMaps, skipping the
+//! if `zshrs-recorder` has written a shard
+//! (`~/.zshrs/images/*-recorder.rkyv`), we read it and apply it to
+//! the shell's tables, skipping the
 //! `.zshenv`/`.zprofile`/`.zshrc`/`.zlogin` source pass entirely.
-//! The shard format is rkyv (zero-copy archived structs) so the
-//! cold-start cost is ~1ms instead of ~150ms.
+//! The shard is deserialized whole (`read_canonical_shard`), not read
+//! zero-copy; on a zpwr-sized recording (~20 MB) that read is the
+//! largest single cost of the replay.
 //!
 //! **Why direct shard read, not IPC.** The original spec
 //! (`docs/DAEMON.md` "NO WALKING IN CLIENTS" + cache-architecture
@@ -37,6 +38,10 @@
 use std::path::PathBuf;
 
 use crate::daemon::paths::CachePaths;
+use crate::daemon::recorder_shard::{
+    TypedParam, ARGV_SEP, AUTOLOAD_PATHS_EXTRA, MATH_FUNCTIONS_EXTRA, MODULES_END_EXTRA,
+    BINDKEYS_EXTRA, PARAMS_END_EXTRA, UNSET_PARAMS_EXTRA, WIDGETS_EXTRA, ZSTYLES_EXTRA,
+};
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
 use crate::vm_helper::{zstyle_entry, AutoloadFlags, ShellExecutor};
 // Legacy `zle()` / `KeymapName` removed alongside the
@@ -46,13 +51,48 @@ use crate::vm_helper::{zstyle_entry, AutoloadFlags, ShellExecutor};
 // `ported::zle::zle_keymap::keymapnamtab` / `zle_thingy::thingytab`
 // is wired.
 
+/// Startup replay for `zsh_main`'s `run_init_scripts`: when
+/// `[shell].skip_configs` resolved to skip (a recorder shard exists),
+/// apply the shard to the session executor INSTEAD of sourcing the
+/// startup files. Returns `false` when there is nothing to skip with —
+/// no skip decision, no executor in scope, or a shard that applied zero
+/// rows — and the caller sources the files as C does.
+/// zshrs-original — no C counterpart.
+pub fn replay_startup() -> bool {
+    crate::fusevm_bridge::try_with_executor(replay_startup_into).unwrap_or(false)
+}
+
+/// [`replay_startup`] against an executor the caller holds — the `-c`
+/// driver in `bins/zshrs.rs`, which runs before any VM context exists.
+/// zshrs-original — no C counterpart.
+pub fn replay_startup_into(executor: &mut ShellExecutor) -> bool {
+    if !crate::daemon_presence::should_skip_configs() {
+        return false;
+    }
+    let rows = apply_latest(executor, true);
+    tracing::info!(rows, "skip_configs: startup files bypassed, recorder shard replayed");
+    rows > 0
+}
+
 /// Read the latest recorder shard and apply its canonical state to
 /// the executor. Returns total rows applied (`0` if no shard or
 /// read failure → caller falls back to vanilla dotfile source).
 /// zshrs-original — no C counterpart. C zsh's
 /// `source_startup_files()` (Src/init.c) is the only path; this is
-/// a faster alternative built on top of the daemon shard.
+/// a faster alternative built on the recorder shard.
 pub fn apply_all(executor: &mut ShellExecutor) -> usize {
+    apply_latest(executor, false)
+}
+
+/// [`apply_all`], plus — for the startup replay only — the prompt theme.
+/// The native p10k engine switches on when the theme is sourced
+/// (`p10k::maybe_intercept_theme_source`), which a replay never does; the
+/// recorder logs that source like any other, so each recorded path goes
+/// back through the same intercept, which ignores all but the theme.
+/// The in-editor compsys thread (`compsys::in_editor`) wants the state
+/// without a prompt engine, so `apply_all` leaves it out.
+/// zshrs-original — no C counterpart.
+fn apply_latest(executor: &mut ShellExecutor, startup: bool) -> usize {
     let t0 = std::time::Instant::now();
 
     let paths = match CachePaths::resolve() {
@@ -82,7 +122,12 @@ pub fn apply_all(executor: &mut ShellExecutor) -> usize {
         }
     };
 
+    crate::startup_trace::mark("replay: shard read");
+    let sourced = if startup { shard.sourced_files.clone() } else { Vec::new() };
     let total = apply_shard(executor, shard);
+    for path in &sourced {
+        let _ = crate::p10k::maybe_intercept_theme_source(std::slice::from_ref(path));
+    }
     let elapsed_us = t0.elapsed().as_micros();
     tracing::info!(
         rows = total,
@@ -118,6 +163,64 @@ fn latest_recorder_shard(paths: &CachePaths) -> Option<PathBuf> {
 fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     let mut total = 0;
 
+    // Modules first: the rest leans on what they provide
+    // (`zsh/parameter`, `zsh/datetime`, `zsh/files`' `zf_rm`, …).
+    // `zmodload -F MODULE f…` leaves the module with those features
+    // enabled, the state `zmodload -LF` showed at the end of the
+    // recording.
+    if let Some(modules) = shard.extras.get(MODULES_END_EXTRA) {
+        for (module, features) in modules {
+            // No features (`zsh/complist`): a plain load.
+            let argv = if features.is_empty() {
+                vec![module.clone()]
+            } else {
+                let mut argv = vec!["-F".to_string(), module.clone()];
+                argv.extend(features.split(' ').map(str::to_string));
+                argv
+            };
+            crate::fusevm_bridge::dispatch_builtin_raw("zmodload", argv);
+            total += 1;
+        }
+    }
+
+    crate::startup_trace::mark("replay: modules");
+    // setopt / unsetopt, ahead of the function bodies: `setfunction`
+    // parses under the live options (`extendedglob`, `kshglob`, …), as
+    // the recorded files did when they defined them.
+    for opt in shard.setopts {
+        crate::ported::options::opt_state_set(&opt, true);
+        total += 1;
+    }
+    for opt in shard.unsetopts {
+        crate::ported::options::opt_state_set(&opt, false);
+        total += 1;
+    }
+
+    crate::startup_trace::mark("replay: options");
+    // Functions, stored as source text the way zshrs's own definition
+    // path stores them (`shfunc_with_body`): the body is compiled on the
+    // first call (`execshfunc`'s `body` arm), not here — parsing every
+    // recorded body up front cost ~0.5 s of startup for ~700 functions.
+    // `TRAP*` names still go through `setfunction`, which also arms the
+    // signal trap (Src/Modules/parameter.c:305-313).
+    {
+        let mut traps = Vec::new();
+        if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+            for (name, body) in shard.functions {
+                if name.starts_with("TRAP") {
+                    traps.push((name, body));
+                } else {
+                    tab.add(crate::ported::hashtable::shfunc_with_body(&name, &body));
+                }
+                total += 1;
+            }
+        }
+        for (name, body) in traps {
+            crate::ported::modules::parameter::setfunction(&name, body, 0);
+        }
+    }
+
+    crate::startup_trace::mark("replay: functions");
     // Aliases (3 flavors).
     for (n, v) in shard.aliases {
         executor.set_alias(n, v);
@@ -132,46 +235,75 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         total += 1;
     }
 
-    // Exported env: mirror to process env so child commands inherit.
-    for (n, v) in shard.env_exports {
-        std::env::set_var(&n, &v);
-        executor.set_scalar(n, v);
-        total += 1;
+    crate::startup_trace::mark("replay: aliases");
+    // Parameters. A recording with an end-state snapshot carries them
+    // typed; older shards only have the joined scalar views.
+    if let Some(typed) = shard.extras.get(PARAMS_END_EXTRA) {
+        // What the files unset (`unset CDPATH`) goes first.
+        if let Some(unsets) = shard.extras.get(UNSET_PARAMS_EXTRA) {
+            for name in unsets.keys() {
+                crate::ported::params::unsetparam(name);
+                total += 1;
+            }
+        }
+        let params: Vec<TypedParam> =
+            typed.values().filter_map(|json| serde_json::from_str(json).ok()).collect();
+        // Ties first: `typeset -T` creates both halves, and a value
+        // assigned to either before it would be a plain parameter that
+        // the tie then has to convert.
+        for p in &params {
+            if let Some((array, sep)) = &p.tie {
+                let argv = vec!["-gT".to_string(), p.name.clone(), array.clone(), sep.clone()];
+                crate::fusevm_bridge::dispatch_builtin_raw("typeset", argv);
+            }
+        }
+        for p in params {
+            apply_typed_param(executor, p);
+            total += 1;
+        }
+    } else {
+        // Exported env: mirror to process env so child commands inherit.
+        for (n, v) in shard.env_exports {
+            std::env::set_var(&n, &v);
+            executor.set_scalar(n, v);
+            total += 1;
+        }
+
+        // Non-exported shell params.
+        for (n, v) in shard.params {
+            executor.set_scalar(n, v);
+            total += 1;
+        }
     }
 
-    // Non-exported shell params.
-    for (n, v) in shard.params {
-        executor.set_scalar(n, v);
-        total += 1;
+    // path + fpath: ordered Vec<String> in the shard. An end-state
+    // recording already restored both (and their export bits) as typed
+    // parameters above; only the executor's own fpath copy follows them.
+    if shard.extras.contains_key(PARAMS_END_EXTRA) {
+        executor.fpath = crate::ported::params::getaparam("fpath")
+            .unwrap_or_default()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+    } else {
+        if !shard.path.is_empty() {
+            let joined = shard.path.join(":");
+            std::env::set_var("PATH", &joined);
+            executor.set_scalar("PATH".to_string(), joined);
+            total += shard.path.len();
+            executor.set_array("path".to_string(), shard.path);
+        }
+        if !shard.fpath.is_empty() {
+            let joined = shard.fpath.join(":");
+            std::env::set_var("FPATH", &joined);
+            executor.set_scalar("FPATH".to_string(), joined);
+            total += shard.fpath.len();
+            executor.fpath = shard.fpath.iter().map(PathBuf::from).collect();
+            executor.set_array("fpath".to_string(), shard.fpath);
+        }
     }
 
-    // setopt / unsetopt.
-    for opt in shard.setopts {
-        crate::ported::options::opt_state_set(&opt, true);
-        total += 1;
-    }
-    for opt in shard.unsetopts {
-        crate::ported::options::opt_state_set(&opt, false);
-        total += 1;
-    }
-
-    // path + fpath: ordered Vec<String> in the shard.
-    if !shard.path.is_empty() {
-        let joined = shard.path.join(":");
-        std::env::set_var("PATH", &joined);
-        executor.set_scalar("PATH".to_string(), joined);
-        total += shard.path.len();
-        executor.set_array("path".to_string(), shard.path);
-    }
-    if !shard.fpath.is_empty() {
-        let joined = shard.fpath.join(":");
-        std::env::set_var("FPATH", &joined);
-        executor.set_scalar("FPATH".to_string(), joined);
-        total += shard.fpath.len();
-        executor.fpath = shard.fpath.iter().map(PathBuf::from).collect();
-        executor.set_array("fpath".to_string(), shard.fpath);
-    }
-
+    crate::startup_trace::mark("replay: parameters");
     // named_dir (hash -d): insert into canonical `nameddirtab` (port
     // of C `Src/hashnameddir.c::nameddirtab`).
     for (name, path) in shard.named_dirs {
@@ -201,6 +333,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // `autoload_func` at `Src/exec.c:5215+` flow. `AutoloadFlags`
     // (-U/-z/-k/-t/-d) details were never consumed elsewhere; the
     // canonical bit is just "shfunc exists with PM_UNDEFINED".
+    crate::startup_trace::mark("replay: named dirs");
     let _ = AutoloadFlags::NO_ALIAS;
     // Register through compinit's own helper so the stubs carry the flag
     // word `autoload -rUz` produces — PM_UNDEFINED | PM_UNALIASED |
@@ -213,11 +346,41 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     total +=
         crate::compsys::ported::compinit::register_autoload_stubs(shard.autoload_functions.keys());
 
+    crate::startup_trace::mark("replay: autoload stubs");
+    // Autoloads bound to a directory (`autoload -Uz DIR/NAME`) and user
+    // math functions (`functions -M`): each is the argv that recreated it,
+    // run through the builtin itself.
+    for (extra, builtin) in [
+        (AUTOLOAD_PATHS_EXTRA, "autoload"),
+        (MATH_FUNCTIONS_EXTRA, "functions"),
+        (WIDGETS_EXTRA, "zle"),
+        (BINDKEYS_EXTRA, "bindkey"),
+    ] {
+        for argv in argv_rows(&shard.extras, extra) {
+            crate::fusevm_bridge::dispatch_builtin_raw(builtin, argv);
+            total += 1;
+        }
+    }
+
+    crate::startup_trace::mark("replay: autoload dirs, math, widgets, bindkey");
     // zstyle: shard stores `Vec<(pattern, "style val val ...")>` —
     // split the joined-rest back into (style, values) so the exec
     // side has the same `zstyle_entry { pattern, style, values: Vec<_> }`
     // shape it would build by sourcing `zstyle :ctx style val val …`
     // statements.
+    //
+    // An end-state recording carries the real table instead: each entry
+    // goes back through `setstypat` (Src/Modules/zutil.c:295), the store
+    // `zstyle` itself writes and `zstyle -L` / lookups read.
+    for words in argv_rows(&shard.extras, ZSTYLES_EXTRA) {
+        let mut words = words.into_iter();
+        let (Some(pat), Some(style), Some(eval)) = (words.next(), words.next(), words.next()) else {
+            continue;
+        };
+        let vals: Vec<String> = words.collect();
+        crate::ported::modules::zutil::setstypat(&style, &pat, None, vals, (eval == "e") as i32);
+        total += 1;
+    }
     for (pattern, rest) in shard.zstyle {
         let mut parts = rest.split_whitespace();
         let style = match parts.next() {
@@ -250,6 +413,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         }
     }
 
+    crate::startup_trace::mark("replay: zstyle");
     // compdef: each (function, "cmd1 cmd2 ...") row replays through
     // the ported runtime `compdef()` entry point in
     // `crate::compsys::ported::compinit::compdef` — matches what an
@@ -293,33 +457,109 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         }
     }
 
-    // inline-defined functions: captured in shard but not yet wired.
-    // Two paths to install:
-    //   (a) parse body string + fusevm-compile here on cold-start.
-    //       ~50ms for 1k functions on M-series — defeats the
-    //       zero-cost goal.
-    //   (b) recorder ships pre-compiled bytecode in the shard;
-    //       shell installs the chunk directly.
-    // Path (b) is the right one (needs recorder-side change to
-    // capture body bytecode at definition time + a new
-    // `functions_compiled: HashMap<String, Vec<u8>>` shard field).
-    // Until then, autoload-pending fallback covers the case: when
-    // the user calls a function that wasn't pre-installed, the
-    // autoload resolver fires + parses the body lazily.
-    let _ = shard.functions;
-
-    // zmodload / manpath / plugins / sourced_files / extras: no
-    // executor surface today (modules call `zmodload` builtin
-    // directly at use time; manpath is read from $MANPATH env;
-    // plugins/sourced_files are diagnostic-only; extras is a
+    // zmodload / manpath / plugins / extras: no executor surface today
+    // (modules call `zmodload` builtin directly at use time; manpath is
+    // read from $MANPATH env; plugins is diagnostic-only; extras is a
     // catch-all).
     let _ = shard.zmodload;
     let _ = shard.manpath;
     let _ = shard.plugins;
-    let _ = shard.sourced_files;
     let _ = shard.extras;
 
+    crate::startup_trace::mark("replay: compdef");
     total
+}
+
+/// An `extras` bucket of argvs (`recorder_shard::ordered_argvs`, or
+/// name-keyed), in key order, each split back into its words.
+/// zshrs-original — no C counterpart.
+fn argv_rows(
+    extras: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    extra: &str,
+) -> Vec<Vec<String>> {
+    let Some(rows) = extras.get(extra) else {
+        return Vec::new();
+    };
+    let mut keys: Vec<&String> = rows.keys().collect();
+    keys.sort();
+    keys.into_iter()
+        .map(|k| rows[k].split(ARGV_SEP).map(str::to_string).collect())
+        .collect()
+}
+
+/// Restore one end-state parameter with its recorded type, export it
+/// when the recording had it exported, then re-apply its other
+/// `typeset` attributes (`-U`, `-H`, …). `addenv` (Src/params.c:5448)
+/// sets `PM_EXPORTED` and the environment entry together.
+/// zshrs-original — no C counterpart.
+fn apply_typed_param(executor: &mut ShellExecutor, p: TypedParam) {
+    use crate::ported::params::{addenv, getsparam, sethparam, setiparam, setnparam};
+    use crate::ported::zsh_h::{mnumber, MN_FLOAT};
+    let TypedParam {
+        name,
+        kind,
+        export,
+        value,
+        elements,
+        attrs,
+        tie: _,
+    } = p;
+    // A same-named parameter of another type — typically a scalar
+    // imported from the environment where the files declared `integer
+    // ZUID_ID` — keeps its type through `setiparam`/`setsparam`; drop it
+    // so the recorded type is the one created. Specials keep theirs.
+    let existing = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(&name).map(|pm| crate::ported::modules::parameter::paramtypestr(pm)));
+    if let Some(ty) = existing {
+        let parts: Vec<&str> = ty.split('-').collect();
+        if parts[0] != kind && !parts.contains(&"special") {
+            crate::ported::params::unsetparam(&name);
+        }
+    }
+    let value = value.unwrap_or_default();
+    match kind.as_str() {
+        "array" => executor.set_array(name.clone(), elements.unwrap_or_default()),
+        "association" => {
+            let _ = sethparam(&name, elements.unwrap_or_default());
+        }
+        "integer" => match value.parse::<i64>() {
+            Ok(n) => {
+                let _ = setiparam(&name, n);
+            }
+            Err(_) => executor.set_scalar(name.clone(), value),
+        },
+        "float" => match value.parse::<f64>() {
+            Ok(d) => {
+                let _ = setnparam(&name, mnumber { l: 0, d, type_: MN_FLOAT });
+            }
+            Err(_) => executor.set_scalar(name.clone(), value),
+        },
+        _ => executor.set_scalar(name.clone(), value),
+    }
+    // The export bit both ways. A scalar goes through `addenv`
+    // (Src/params.c:5448); an array or association only carries the flag
+    // — `export_param` never puts one in the environment (c:2659) — so
+    // `typeset -gx` sets it. A parameter the recording had unexported but
+    // this shell imported from its environment (`FPATH`) is unexported.
+    let exported_now = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(&name).map(|pm| pm.node.flags as u32 & crate::ported::zsh_h::PM_EXPORTED != 0))
+        .unwrap_or(false);
+    if export && !exported_now {
+        if matches!(kind.as_str(), "array" | "association") {
+            crate::fusevm_bridge::dispatch_builtin_raw("typeset", vec!["-gx".to_string(), name.clone()]);
+        } else {
+            let _ = addenv(&name, &getsparam(&name).unwrap_or_default());
+        }
+    } else if !export && exported_now {
+        crate::fusevm_bridge::dispatch_builtin_raw("typeset", vec!["-g".to_string(), "+x".to_string(), name.clone()]);
+    }
+    if !attrs.is_empty() {
+        crate::fusevm_bridge::dispatch_builtin_raw("typeset", vec![format!("-g{attrs}"), name]);
+    }
 }
 
 /// Decode a recorder-emitted bindkey value into (keymap, widget).

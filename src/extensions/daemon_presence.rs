@@ -37,13 +37,14 @@
 //! enabled = "auto"
 //!
 //! [shell]
-//! # "off"  (default) = always source .zshenv/.zprofile/.zshrc/.zlogin
-//! # "auto"           = if daemon is present + has zshrs rows, skip
-//! #                    every dotfile and apply canonical state
-//! #                    from the daemon instead. ~10ms cold-start.
-//! # "on"             = always skip dotfiles when the daemon is up;
-//! #                    don't even check for zshrs rows. Strict mode.
-//! skip_configs = "off"
+//! # "auto" (default) = when a recorder shard exists
+//! #                    (~/.zshrs/images/*-recorder.rkyv), skip every
+//! #                    startup file — /etc/zshenv and ~/.zshrc included —
+//! #                    and replay the shard instead. No shard → source
+//! #                    the files. The daemon plays no part.
+//! # "on"             = same as "auto".
+//! # "off"            = always source .zshenv/.zprofile/.zshrc/.zlogin.
+//! skip_configs = "auto"
 //!
 //! # Optional: zsh script sourced once after dotfiles / canonical_apply,
 //! # before compsys + first prompt (omit key for default: none).
@@ -112,15 +113,13 @@ pub enum ConfigSetting {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SkipConfigs {
-    /// Always source dotfiles (legacy / vanilla zsh behavior). Default.
+    /// Always source dotfiles (vanilla zsh behavior).
     Off = 0,
-    /// Skip dotfiles iff daemon is present AND has zshrs canonical
-    /// rows. Falls back to dotfile sourcing otherwise. The recommended
-    /// setting once the recorder has populated canonical state.
+    /// Skip dotfiles iff a recorder shard exists; replay it instead.
+    /// Default.
     Auto = 1,
-    /// Always skip dotfiles when the daemon is up; don't bother
-    /// checking for zshrs rows. Strict mode for users who know their
-    /// daemon is fully populated.
+    /// Same decision as `Auto` — there is nothing to replay without a
+    /// shard. Kept so existing configs that say "on" keep working.
     On = 2,
 }
 
@@ -138,8 +137,8 @@ impl ConfigSetting {
 impl SkipConfigs {
     fn parse(s: &str) -> Option<Self> {
         match s {
-            "off" | "false" | "no" | "0" | "" => Some(Self::Off),
-            "auto" => Some(Self::Auto),
+            "off" | "false" | "no" | "0" => Some(Self::Off),
+            "auto" | "" => Some(Self::Auto),
             "on" | "true" | "yes" | "1" => Some(Self::On),
             _ => None,
         }
@@ -147,8 +146,8 @@ impl SkipConfigs {
 }
 
 /// Knobs from `~/.zshrs/zshrs.toml`. Missing file / section
-/// / key returns the safe defaults (`daemon=auto`,
-/// `skip_configs=off`, no `startup_config`). Unrecognized values
+/// / key returns the defaults (`daemon=auto`,
+/// `skip_configs=auto`, no `startup_config`). Unrecognized values
 /// fall back with a log warning.
 /// zshrs-original — no C counterpart.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,7 +197,7 @@ fn resolve_startup_config_path(raw: &str) -> PathBuf {
 pub fn read_config_full() -> Config {
     let defaults = Config {
         daemon: ConfigSetting::Auto,
-        skip_configs: SkipConfigs::Off,
+        skip_configs: SkipConfigs::Auto,
         startup_config: None,
         // OFF by default — old scripts run against system /bin/X
         // out of the box. Opt-in to the in-process speedup via
@@ -244,12 +243,12 @@ pub fn read_config_full() -> Config {
             SkipConfigs::parse(s).unwrap_or_else(|| {
                 tracing::warn!(
                     value = s,
-                    "zshrs.toml: [shell].skip_configs invalid; using off"
+                    "zshrs.toml: [shell].skip_configs invalid; using auto"
                 );
-                SkipConfigs::Off
+                SkipConfigs::Auto
             })
         })
-        .unwrap_or(SkipConfigs::Off);
+        .unwrap_or(SkipConfigs::Auto);
     let startup_config = parsed
         .get("shell")
         .and_then(|v| v.as_table())
@@ -390,9 +389,9 @@ pub fn read_log_directive() -> String {
 /// shell-init path before sourcing dotfiles.
 static SKIP_CONFIGS: AtomicU8 = AtomicU8::new(0);
 
-/// Have we confirmed the daemon has zshrs canonical rows? Set during
-/// the same probe pass so the `skip_configs` decision is one atomic
-/// load on the hot path.
+/// Resolved skip decision: `skip_configs` is not `off` AND a recorder
+/// shard exists. Set during the probe pass so the shell-init path pays
+/// one atomic load.
 static SHOULD_SKIP_CONFIGS: AtomicU8 = AtomicU8::new(0);
 
 /// Resolve `$ZSHRS_HOME/zshrs.toml` or `~/.zshrs/zshrs.toml`.
@@ -427,12 +426,24 @@ pub fn probe() -> Mode {
     }
     SKIP_CONFIGS.store(cfg.skip_configs as u8, Ordering::Relaxed);
 
+    // The skip decision reads the recorder shard on disk and nothing
+    // else: `zshrs-recorder` writes it itself and `canonical_apply`
+    // reads it without IPC, so whether a daemon is up is irrelevant.
+    let should_skip = cfg.skip_configs != SkipConfigs::Off && recording_present();
+    SHOULD_SKIP_CONFIGS.store(should_skip as u8, Ordering::Relaxed);
+    if should_skip {
+        tracing::info!(
+            "shell: skip_configs active — bypassing /etc/zshenv + ~/.{{zshenv,zprofile,zshrc,zlogin}} and \
+             replaying the recorder shard"
+        );
+    } else if cfg.skip_configs != SkipConfigs::Off {
+        tracing::info!("shell: no recorder shard — sourcing dotfiles normally");
+    }
+
     match cfg.daemon {
         ConfigSetting::Off => {
             tracing::info!("daemon: disabled in config ([daemon] enabled = \"off\")");
             STATE.store(Mode::Disabled as u8, Ordering::Relaxed);
-            // Disabled daemon → no skip; dotfiles always source.
-            SHOULD_SKIP_CONFIGS.store(0, Ordering::Relaxed);
             return Mode::Disabled;
         }
         ConfigSetting::Auto | ConfigSetting::Require => {}
@@ -461,42 +472,9 @@ pub fn probe() -> Mode {
             }
         }
     }
-
-    // Resolve [shell].skip_configs against daemon presence + zshrs-row
-    // availability. Three settings collapse to a yes/no decision:
-    //   Off  → never skip
-    //   On   → skip iff daemon Present (don't even check rows)
-    //   Auto → skip iff daemon Present AND has zshrs canonical rows
-    let should_skip = match cfg.skip_configs {
-        SkipConfigs::Off => false,
-        SkipConfigs::On => mode == Mode::Present,
-        SkipConfigs::Auto => mode == Mode::Present && daemon_has_zshrs_rows(),
-    };
-    SHOULD_SKIP_CONFIGS.store(if should_skip { 1 } else { 0 }, Ordering::Relaxed);
-    if should_skip {
-        tracing::info!(
-            "shell: skip_configs active — bypassing /etc/zshenv + ~/.{{zshenv,zprofile,zshrc,zlogin}} and \
-             applying canonical state from daemon"
-        );
-    } else if cfg.skip_configs != SkipConfigs::Off {
-        tracing::info!(
-            mode = ?cfg.skip_configs,
-            daemon = ?mode,
-            "shell: skip_configs configured but conditions not met — sourcing dotfiles normally"
-        );
-    }
     mode
 }
 
-/// Cheap probe: does the daemon have a recorder shard on disk for
-/// shell_id "zshrs"? A `*-recorder.rkyv` file in `~/.zshrs/images/`
-/// means the recorder ran at least once and we have canonical state to
-/// apply. **No IPC** — this is a directory listing + filename match,
-/// because the shell cold-start path can afford zero IPC roundtrips
-/// (the architecture's whole speed thesis).
-///
-/// Returns false on any I/O error → caller falls through to vanilla
-/// `source_startup_files()`.
 /// Is the recorded environment STALE relative to the user's rc files?
 ///
 /// "Configs are ignored after the recorder" is the speed thesis, but that
@@ -589,33 +567,8 @@ pub fn recording_present() -> bool {
     false
 }
 
-#[cfg(feature = "daemon")]
-fn daemon_has_zshrs_rows() -> bool {
-    let paths = match crate::daemon::paths::CachePaths::resolve() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-    let entries = match std::fs::read_dir(&paths.images) {
-        Ok(it) => it,
-        Err(_) => return false,
-    };
-    for entry in entries.flatten() {
-        if let Some(s) = entry.file_name().to_str() {
-            if s.ends_with("-recorder.rkyv") {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-#[cfg(not(feature = "daemon"))]
-fn daemon_has_zshrs_rows() -> bool {
-    false
-}
-
 /// Should the shell-init path skip every `/etc/zsh*` + `~/.zsh*`
-/// dotfile and apply canonical state from the daemon instead? O(1)
+/// dotfile and replay the recorder shard instead? O(1)
 /// atomic load — set by `probe()` at startup.
 /// zshrs-original — no C counterpart. C zsh's Src/init.c always
 /// sources every startup file unconditionally.

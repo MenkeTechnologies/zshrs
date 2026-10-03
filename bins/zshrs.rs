@@ -2872,24 +2872,13 @@ pub fn zshrs_main() {
                 zsh::ported::options::opt_state_get("interactive").unwrap_or(false),
                 no_rcs_flag,
             );
-        } else {
+        } else if !replay_recording_for_c(&mut executor, no_rcs_flag) {
             source_startup_files(
                 &mut executor,
                 zsh::ported::options::opt_state_get("loginshell").unwrap_or(false),
                 zsh::ported::options::opt_state_get("interactive").unwrap_or(false),
                 no_rcs_flag,
             );
-        }
-
-        // Skip-configs apply: when the daemon is up + has zshrs
-        // canonical state, apply it here so `zshrs -c 'gst'`
-        // resolves the alias the same way an interactive shell
-        // would. This runs AFTER zshenv so user env wins on
-        // collision (canonical state seeds defaults; `.zshenv` is
-        // the user's authoritative source).
-        #[cfg(feature = "daemon")]
-        if zsh::daemon_presence::should_skip_configs() {
-            let _applied = zsh::canonical_apply::apply_all(&mut executor);
         }
 
         maybe_source_zshrs_startup_config(&mut executor, no_rcs_flag);
@@ -3764,6 +3753,25 @@ fn source_emulation_startup_files(
         };
         source_from_memory(executor, &path, &contents);
     }
+}
+
+/// The `-c` driver's half of `run_init_scripts`' recording replay: a
+/// recorder shard stands in for the startup files only where `.zshrc`
+/// would be read — `-i -c`, RCS set, not the `--zsh` parity mode. A plain
+/// `zshrs -c` reads `.zshenv` alone (Src/init.c:1473, 1489), which the
+/// interactive recording does not describe, so it sources normally.
+/// Returns `true` when the shard replaced the files.
+/// !!! RUST-ONLY — no C counterpart.
+fn replay_recording_for_c(executor: &mut ShellExecutor, no_rcs: bool) -> bool {
+    #[cfg(feature = "daemon")]
+    {
+        let interactive = zsh::ported::options::opt_state_get("interactive").unwrap_or(false);
+        if interactive && !no_rcs && !zsh::emulation_startup::emulating() {
+            return zsh::canonical_apply::replay_startup_into(executor);
+        }
+    }
+    let _ = (executor, no_rcs);
+    false
 }
 
 /// Source zsh startup files in correct order per zshall(1) STARTUP/SHUTDOWN FILES

@@ -13,11 +13,11 @@
 //!   2. `recorder::enable()` flips the global. Every state-mutating
 //!      dispatcher in `src/vm_helper` checks this and emits a record.
 //!   3. `recorder::install_atexit()` registers the libc atexit hook so
-//!      the end-of-run summary + daemon IPC bundle still fire when the
+//!      the end-of-run summary + shard write still fire when the
 //!      shell exits via `std::process::exit` (skipping Rust Drop).
 //!   4. Build a fresh `ShellExecutor` and source the requested file.
-//!   5. Process exits naturally; atexit hook prints summary, ships the
-//!      bundle to `zshrs-daemon` via `recorder_ingest`, returns.
+//!   5. Process exits naturally; atexit hook prints summary and writes
+//!      the canonical rkyv shard itself. No daemon involved.
 
 #![cfg(feature = "recorder")]
 
@@ -28,7 +28,9 @@ use zsh::vm_helper::ShellExecutor;
 
 const USAGE: &str = "\
 zshrs-recorder — capture every state-mutating dispatcher fire during
-shell init and ship the bundle to zshrs-daemon. Single-shot.
+shell init and write it to ~/.zshrs/images/*-recorder.rkyv, the shard
+zshrs replays at startup instead of sourcing the rc files. Single-shot;
+no daemon required.
 
 USAGE
     zshrs-recorder [OPTIONS]
@@ -38,13 +40,13 @@ OPTIONS
                        Use this to test recorder coverage on a small
                        script without dragging in the real .zshrc.
     -o, --output PATH  Write the captured bundle as JSON to PATH (in
-                       addition to shipping it to the daemon, or as the
-                       sole output under --no-daemon). Useful for
+                       addition to the shard, or as the sole output
+                       under --dry-run). Useful for
                        post-mortem inspection / diffing two runs.
         --shell-id ID  Override the bundle's shell_id (default `zshrs`).
                        Used for federation testing — let a recorder
                        impersonate `bash` / `fish` etc. against the
-                       same daemon. See docs/SHELL_IDS.md.
+                       same catalog. See docs/SHELL_IDS.md.
         --quiet        Suppress the per-event `Captured KIND ...` stderr
                        firehose. Summary footer + tracing log still fire.
         --json         Emit the end-of-run summary as one JSON line on
@@ -55,12 +57,12 @@ OPTIONS
                        recorded $fpath into ~/.zshrs/autoloads.rkyv so
                        the first `ls -<TAB>` of a later shell is an O(1)
                        shard probe instead of a parse + compile.
-        --no-daemon    Skip the end-of-run IPC bundle. Captured events
-                       still print to stderr + log; nothing reaches the
-                       daemon (no rkyv shard, no SQLite hydration). Used
-                       by `tests/recorder_harness.rs` for hermetic runs.
+        --dry-run      Capture without writing the shard; the existing
+                       recording is left untouched. Captured events still
+                       print to stderr + log. Used by
+                       `tests/recorder_harness.rs` for hermetic runs.
                        Combine with -o PATH to capture the bundle to a
-                       file with no daemon at all.
+                       file. `--no-daemon` is an alias.
         --help         Print this message and exit.
         --version      Print version and exit.
 
@@ -86,14 +88,14 @@ DEFAULT BEHAVIOR (no --file)
 OUTPUT
     Realtime stderr   `Captured KIND NAME[=value], file: PATH:LINE [(fn)]`
     End-of-run        Summary stats (counts per kind + elapsed_ms).
-    Daemon IPC        One `recorder_ingest` op shipping the full bundle.
+    Shard             ~/.zshrs/images/{hash8}-recorder.rkyv, replaced whole.
     Log               Same lines mirrored via tracing::info to the zshrs
                       log file.
 ";
 
 struct Args {
     file: Option<PathBuf>,
-    no_daemon: bool,
+    dry_run: bool,
     output: Option<PathBuf>,
     shell_id: Option<String>,
     quiet: bool,
@@ -103,7 +105,7 @@ struct Args {
 
 fn parse_args() -> Result<Args, ExitCode> {
     let mut file: Option<PathBuf> = None;
-    let mut no_daemon = false;
+    let mut dry_run = false;
     let mut output: Option<PathBuf> = None;
     let mut shell_id: Option<String> = None;
     let mut quiet = false;
@@ -137,7 +139,7 @@ fn parse_args() -> Result<Args, ExitCode> {
             },
             "--quiet" => quiet = true,
             "--json" => json = true,
-            "--no-daemon" => no_daemon = true,
+            "--dry-run" | "--no-daemon" => dry_run = true,
             "--no-prewarm" => no_prewarm = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -157,7 +159,7 @@ fn parse_args() -> Result<Args, ExitCode> {
     }
     Ok(Args {
         file,
-        no_daemon,
+        dry_run,
         output,
         shell_id,
         quiet,
@@ -217,8 +219,8 @@ fn main() -> ExitCode {
     zsh::log::init_named("zshrs-recorder.log");
 
     zsh::recorder::enable();
-    if args.no_daemon {
-        zsh::recorder::set_daemon_disabled(true);
+    if args.dry_run {
+        zsh::recorder::set_no_write(true);
     }
     if args.quiet {
         zsh::recorder::set_quiet(true);
@@ -233,13 +235,15 @@ fn main() -> ExitCode {
         zsh::recorder::set_output_path(Some(out.display().to_string()));
     }
     // libc atexit covers the `std::process::exit` paths inside builtins
-    // (`exit`, fatal error sites). Without this, summary + IPC bundle
+    // (`exit`, fatal error sites). Without this, summary + shard write
     // would only fire on natural fall-through from `main` — which is
     // not how shell scripts usually terminate.
     zsh::recorder::install_atexit();
 
     let mut executor = ShellExecutor::new();
     let mut last_status: i32 = 0;
+    // The options and parameters the files change are diffed against this.
+    zsh::recorder::mark_baseline();
 
     if let Some(path) = args.file {
         // Single-file mode (-f / --file): source ONLY that file, no
@@ -256,6 +260,9 @@ fn main() -> ExitCode {
         tracing::info!(file = %disp, "zshrs-recorder: sourcing");
         eprintln!("zshrs-recorder: sourcing {}", disp);
         executor.set_scalar("0".to_string(), disp.clone());
+        // `source()` sets C's `scriptfilename` per file; this path runs the
+        // text directly, so set it here or every event is attributed to no file.
+        zsh::ported::utils::set_scriptfilename(Some(disp.clone()));
         last_status = executor.execute_script(&content).unwrap_or_else(|e| {
             eprintln!("zshrs-recorder: {}: {}", disp, e);
             1
@@ -267,6 +274,17 @@ fn main() -> ExitCode {
         // /etc/zprofile etc. don't exist on the host). $0 is set to
         // each file as it's sourced so introspection in those scripts
         // sees the right name.
+        //
+        // The chain is the one an interactive login shell reads, and the
+        // files test for it: a p10k config returns before defining a
+        // single POWERLEVEL9K_* parameter under `[[ ! -o monitor ]]`.
+        // Set the options `zsh -l -i` starts with. `zle` and `shinstdin`
+        // stay off — stdin is not a terminal, as for `zsh -i </dev/null`.
+        // The baseline was taken first, so none of these reach the shard;
+        // they are also on the recorder's never-replayed option list.
+        for opt in ["interactive", "loginshell", "monitor"] {
+            zsh::ported::options::opt_state_set(opt, true);
+        }
         for path in login_chain() {
             if !path.exists() {
                 continue;
@@ -282,11 +300,48 @@ fn main() -> ExitCode {
             tracing::info!(file = %disp, "zshrs-recorder: sourcing");
             eprintln!("zshrs-recorder: sourcing {}", disp);
             executor.set_scalar("0".to_string(), disp.clone());
+            // `source()` sets C's `scriptfilename` per file; this path runs the
+            // text directly, so set it here or every event is attributed to no file.
+            zsh::ported::utils::set_scriptfilename(Some(disp.clone()));
             last_status = executor.execute_script(&content).unwrap_or_else(|e| {
                 eprintln!("zshrs-recorder: {}: {}", disp, e);
                 1
             });
         }
+    }
+
+    // Deferred init. A real shell reaches its first prompt here and
+    // keeps loading: `precmd` hooks run, then every due `sched` entry.
+    // zinit turbo (`wait''`) and similar deferred loaders hang their
+    // plugins off exactly that — zinit loads ONE plugin per scheduler
+    // pass — so a recording that stops at the end of .zshrc misses most
+    // of the environment (37 of ~2100 aliases on a zpwr config). Run
+    // precmd once, as `preprompt` does, then fire every pending `sched`
+    // entry pass by pass. Stop when nothing is pending, or after IDLE
+    // consecutive passes that define nothing new (a loader that keeps
+    // re-arming itself with an empty queue). IDLE is generous because a
+    // run of plugins can legitimately add nothing — zpwr opens with ~15
+    // completion-only snippets. MAX_PASSES is the backstop.
+    {
+        const MAX_PASSES: usize = 4096;
+        const IDLE: usize = 32;
+        zsh::ported::exec::install_session_executor(&mut executor);
+        zsh::fusevm_bridge::with_session_context(|| {
+            zsh::ported::utils::callhookfunc("precmd", None, 1, std::ptr::null_mut());
+            let mut idle = 0;
+            for _ in 0..MAX_PASSES {
+                let before = zsh::recorder::definition_count();
+                if zsh::recorder::run_pending_sched() == 0 {
+                    break;
+                }
+                idle = if zsh::recorder::definition_count() == before { idle + 1 } else { 0 };
+                if idle == IDLE {
+                    break;
+                }
+            }
+            // Read the end state inside the same context the drain ran in.
+            zsh::recorder::capture_end_state();
+        });
     }
 
     // The init chain has finished, so every fpath dir the user's
@@ -295,7 +350,7 @@ fn main() -> ExitCode {
     // `compinit`: `parse()` walks process-global lexer state, and
     // compiling 46k completers beside a live ZLE corrupted the prompt
     // when that was tried. Nothing runs after this but the summary and
-    // the daemon bundle.
+    // the shard write.
     //
     // Result: the first `ls -<TAB>` in any later shell is an O(1) probe
     // into `~/.zshrs/autoloads.rkyv` instead of a parse + compile of
@@ -315,7 +370,10 @@ fn main() -> ExitCode {
         }
     }
 
-    // Process exits with the last sourced script's status. atexit fires
-    // on the way out; that's where summary + daemon IPC happen.
+    // Summary + shard write, here rather than in the atexit hook: after
+    // `main` returns, thread-locals are gone and `tracing` panics.
+    zsh::recorder::finalize();
+
+    // Process exits with the last sourced script's status.
     ExitCode::from(last_status as u8)
 }

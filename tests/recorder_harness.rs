@@ -604,3 +604,104 @@ fn zinit_git_process_output() {
     // mistaking `(` for a grouping paren that swallows `then`.
     assert_counts("zinit/git-process-output.zsh", &[]);
 }
+
+/// Record `25_end_state_replay.zsh` into a scratch `$ZSHRS_HOME`, replay
+/// the shard in `zshrs -i -c` (the replay stands in for the rc files
+/// there, as it does at an interactive start), and read every table the
+/// file set back out of the replaying shell. Each line pins one shape the
+/// event fold used to lose: deparse-mangled quoting, association keys,
+/// `-U`/`-H`/`typeset -T`, integer type, unset, `zstyle` values with
+/// spaces and `-e`, a vicmd binding leaking into `main`, an undecoded
+/// `bindkey -s` string, widgets, math functions, `zmodload -F`, and a
+/// directory-bound autoload.
+#[test]
+fn recorder_end_state_replays_into_a_shell() {
+    let recorder = env!("CARGO_BIN_EXE_zshrs-recorder");
+    let shell = env!("CARGO_BIN_EXE_zshrs");
+    let corpus = Path::new(CORPUS_DIR)
+        .canonicalize()
+        .unwrap_or_else(|e| panic!("canonicalize {CORPUS_DIR}: {e}"));
+    let home = tempfile::tempdir().expect("tempdir");
+    let zshrs_home = home.path().join(".zshrs");
+    let with_env = |cmd: &mut Command| {
+        cmd.env_clear()
+            .env("HOME", home.path())
+            .env("ZSHRS_HOME", &zshrs_home)
+            .env("PATH", "/usr/bin:/bin")
+            .env("REPLAY_GONE", "1");
+    };
+
+    let mut rec = Command::new(recorder);
+    with_env(&mut rec);
+    let out = rec
+        .args(["--quiet", "--no-prewarm", "--file"])
+        .arg(corpus.join("25_end_state_replay.zsh"))
+        .output()
+        .expect("spawn zshrs-recorder");
+    assert!(
+        out.status.success(),
+        "recorder failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let probe = r#"
+        print -r -- "quote=$(f_quote)"
+        print -r -- "assoc=${H[k 2]}|${H[k1]}"
+        print -r -- "uarr=${(t)uarr}:$uarr"
+        print -r -- "tied=${(t)TIED_S}:$TIED_S"
+        print -r -- "num=${(t)NUM}:$NUM"
+        print -r -- "hidden=${(t)HIDDEN}"
+        print -r -- "local=${+GONE_LOCAL} global=${+KEPT_GLOBAL} unset=${+REPLAY_GONE}"
+        zstyle -s ':t:x' fmt v; print -r -- "zstyle=$v"
+        print -r -- "zstyle_e=$(zstyle -L ':t:e')"
+        print -r -- "main_a=$(bindkey -M main 'a-')"
+        print -r -- "vicmd_a=$(bindkey -M vicmd 'a-')"
+        print -r -- "send=$(bindkey -M emacs '^Xq')"
+        print -r -- "widget=$(zle -lL my-widget)"
+        print -r -- "math=$(( mf(4) ))"
+        print -r -- "zf_rm=$(whence -w zf_rm)"
+        print -r -- "dirfn=$(replay_dir_fn)"
+        print -r -- "alias=$(alias ll) galias=$(alias -g G)"
+        print -r -- "opt=$options[extendedglob]"
+    "#;
+    let mut sh = Command::new(shell);
+    with_env(&mut sh);
+    let out = sh.args(["-i", "-c", probe]).output().expect("spawn zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let got: BTreeMap<&str, &str> = stdout
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, _)| k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .collect();
+    let expect = [
+        ("quote", r#"_.!~*'()-"#),
+        ("assoc", "v 2|v1"),
+        ("uarr", "array-unique:a b"),
+        ("tied", "scalar-tied:x;y"),
+        ("num", "integer:42"),
+        ("hidden", "scalar-hideval"),
+        ("local", "0 global=1 unset=0"),
+        ("zstyle", "%d (errors: %e)"),
+        ("zstyle_e", "zstyle -e :t:e ev 'reply=(x)'"),
+        ("main_a", r#""a-" undefined-key"#),
+        ("vicmd_a", r#""a-" vi-add-next"#),
+        ("send", r#""^Xq" "hi""#),
+        ("widget", "zle -N my-widget f_quote"),
+        ("math", "8"),
+        ("zf_rm", "zf_rm: builtin"),
+        ("dirfn", "from-dir"),
+        ("alias", "ll='ls -l' galias=G='| head'"),
+        ("opt", "on"),
+    ];
+    let wrong: Vec<String> = expect
+        .iter()
+        .filter(|(k, v)| got.get(k) != Some(v))
+        .map(|(k, v)| format!("  {k}: want {v:?}, got {:?}", got.get(k)))
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "replayed shell differs from the recorded file:\n{}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}",
+        wrong.join("\n")
+    );
+}

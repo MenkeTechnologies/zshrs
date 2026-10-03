@@ -133,6 +133,12 @@ pub fn maybe_intercept_theme_source(args: &[String]) -> Option<i32> {
         return None;
     }
     ENGINE_ACTIVE.store(true, Ordering::Relaxed);
+    // The intercept returns before `bin_dot` records the source, so record
+    // it here: a recorder replay re-activates the engine from this event.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() {
+        crate::recorder::emit_source(path, crate::recorder::recorder_ctx_global());
+    }
     // wizard:1620 — `$__p9k_root_dir/config/p10k-*.zsh`: the config
     // wizard reads its base templates relative to the p10k install
     // root. The theme entry point IS `<root>/powerlevel10k.zsh-theme`,
