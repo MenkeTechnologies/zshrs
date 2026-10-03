@@ -857,3 +857,32 @@ mod return_exit_with_too_many_arguments {
         assert_parity("f() { eval 'return 7'; echo no; }; f; echo $?");
     }
 }
+
+/// A backslash in a function name is a quote, not part of the name: `\gtl`
+/// lexes as `Bnull gtl`, and execfuncdef's htok pass (c:Src/exec.c:5333-5334)
+/// runs remnulargs over it, so the definition registers `gtl`. The port
+/// untokenized Bnull to a literal `\` and registered `\gtl`, leaving `gtl`
+/// "command not found".
+mod backslash_quoted_function_name {
+    use super::*;
+
+    #[test]
+    fn function_keyword_backslash_name() {
+        assert_parity(r#"function \gtl { print hi; }; gtl; print -r -- ${(k)functions}"#);
+    }
+
+    #[test]
+    fn function_keyword_backslash_name_with_parens() {
+        assert_parity(r#"function \gtl() { print hi; }; gtl"#);
+    }
+
+    #[test]
+    fn posix_form_backslash_name() {
+        assert_parity(r#"\gtl() { print hi; }; gtl"#);
+    }
+
+    #[test]
+    fn backslash_inside_name() {
+        assert_parity(r#"function a\-b { print hi; }; a-b; functions +"#);
+    }
+}

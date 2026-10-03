@@ -12268,7 +12268,15 @@ impl ZshCompiler {
                 // builtin takes every leading argument as a name.
                 self.compile_word_str(stripped);
             } else {
-                let cleaned = crate::lex::untokenize(stripped);
+                // c:Src/exec.c:5333-5334 — a name carrying any token sets
+                // `htok`, so execsubst's prefork runs remnulargs over it
+                // (c:Src/glob.c:3649) before registration: `function \gtl`
+                // (lexed `Bnull gtl`) defines `gtl`. untokenize alone maps
+                // Bnull to `\` and registered `\gtl`, which no call site
+                // could reach.
+                let mut nulls_removed = stripped.to_string();
+                crate::ported::glob::remnulargs(&mut nulls_removed);
+                let cleaned = crate::lex::untokenize(&nulls_removed);
                 // Bug #27: track defined names so later dispatch sites can
                 // route to CallFunction (user fn) instead of the extension
                 // builtin fast-path.
