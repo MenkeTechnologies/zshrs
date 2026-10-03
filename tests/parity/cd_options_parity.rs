@@ -178,6 +178,103 @@ mod auto_cd {
         std::fs::create_dir(d.path().join("sub")).unwrap();
         assert_parity_in(d.path(), "setopt auto_cd; sub; basename $PWD");
     }
+
+    /// AUTO_CD only fires when the shell reads commands from stdin
+    /// (c:Src/exec.c:3595 `isset(SHINSTDIN)`), so `-c` never reaches it.
+    /// Feed the script as a file on stdin instead.
+    fn run_stdin_in(bin: &Path, pre: &[&str], d: &Path, s: &str) -> R {
+        let script = d.join(".script.zsh");
+        std::fs::write(&script, s).unwrap();
+        let o = Command::new(bin)
+            .args(pre)
+            .current_dir(d)
+            .env_remove("ZSHRS_CACHE")
+            .stdin(std::fs::File::open(&script).unwrap())
+            .output()
+            .expect("spawn");
+        R {
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            exit: o.status.code().unwrap_or(-1),
+        }
+    }
+
+    /// `mytool` is both an executable in $path and a directory in $cdpath.
+    fn cmd_and_cdpath_dir(d: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(d.join("bin")).unwrap();
+        std::fs::create_dir_all(d.join("cdp/mytool")).unwrap();
+        let tool = d.join("bin/mytool");
+        std::fs::write(&tool, "#!/bin/sh\necho ran\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn assert_stdin_parity_in(d: &Path, s: &str, want: &str) {
+        let r = run_stdin_in(&zshrs_bin(), &["--zsh", "-f"], d, s);
+        assert_eq!(r.stdout, want, "zshrs on:\n{s}");
+        if zsh_available() {
+            let z = run_stdin_in(Path::new(zsh_path()), &["-f"], d, s);
+            assert_eq!(z.stdout, r.stdout, "zsh vs zshrs on:\n{s}");
+        }
+    }
+
+    /// c:Src/exec.c:3619 `hn = hashcmd(cmdarg, checkpath)` — a command
+    /// found in $path is a non-NULL `hn`, which skips AUTOCD at c:3625.
+    /// A run-time-expanded head lost that result and cd'd into the
+    /// same-named $cdpath directory instead of running the command.
+    #[test]
+    fn expanded_head_found_in_path_runs_not_cds() {
+        let d = tdir();
+        cmd_and_cdpath_dir(d.path());
+        assert_stdin_parity_in(
+            d.path(),
+            "setopt auto_cd\ncdpath=($PWD/cdp)\npath=($PWD/bin $path)\nC=mytool\n$C\nprint -r -- ${PWD:t}\n",
+            &format!("ran\n{}\n", d.path().file_name().unwrap().to_string_lossy()),
+        );
+    }
+
+    /// Control for the case above: with no `mytool` in $path the same
+    /// expanded head does AUTOCD into the $cdpath directory.
+    #[test]
+    fn expanded_head_not_in_path_cds_via_cdpath() {
+        let d = tdir();
+        cmd_and_cdpath_dir(d.path());
+        assert_stdin_parity_in(
+            d.path(),
+            "setopt auto_cd\ncdpath=($PWD/cdp)\nC=mytool\n{ $C } >/dev/null\nprint -r -- ${PWD:t}\n",
+            "mytool\n",
+        );
+    }
+
+    /// c:Src/exec.c:3596 `(!redir || empty(redir))` — a command with its
+    /// own redirection never AUTOCDs; it is "command not found". The VM
+    /// opens an expanded head's redirections before dispatch, so the
+    /// dispatcher saw none and cd'd. A redirection on an enclosing group
+    /// is not the command's own and still AUTOCDs (the control above).
+    #[test]
+    fn expanded_head_with_redirection_does_not_cd() {
+        let d = tdir();
+        cmd_and_cdpath_dir(d.path());
+        assert_stdin_parity_in(
+            d.path(),
+            "setopt auto_cd\ncdpath=($PWD/cdp)\nC=mytool\n$C </dev/null 2>/dev/null\nprint -r -- $? ${PWD:t}\n",
+            &format!("127 {}\n", d.path().file_name().unwrap().to_string_lossy()),
+        );
+    }
+
+    /// c:Src/exec.c:3607-3614 — under AUTOCD a cmdnamtab entry that no
+    /// longer names a real file (`isreallycom` fails) is removed from the
+    /// table before the AUTOCD fallback. The port rebuilt a throwaway
+    /// node instead of removing it, so the stale `hash` entry survived.
+    #[test]
+    fn stale_hashed_entry_is_dropped_before_autocd() {
+        let d = tdir();
+        cmd_and_cdpath_dir(d.path());
+        assert_stdin_parity_in(
+            d.path(),
+            "setopt auto_cd\ncdpath=($PWD/cdp)\nhash mytool=/nonexistent/mytool\nC=mytool\n{ $C } >/dev/null\nprint -r -- ${PWD:t}\nhash | grep -c mytool\n",
+            "mytool\n0\n",
+        );
+    }
 }
 
 mod oldpwd {

@@ -568,6 +568,9 @@ thread_local! {
     /// VM ops, and errflag alone cannot tell this skip from an error raised
     /// by the command words, which C handles at c:3760 instead.
     static PREFIX_ASSIGN_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set by BUILTIN_EXEC_DYNAMIC_REDIRS, taken by the next
+    /// BUILTIN_EXEC_DYNAMIC: that command had redirections.
+    static EXEC_DYNAMIC_REDIRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Facts about the next command that only its EXTERNAL spawn acts on; an
     /// external spawn consumes them, any other command clears them.
     /// EXEC_CARRIER_DASH — c:Src/exec.c:772-776, the `-` precommand
@@ -13151,8 +13154,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // See BUILTIN_EXEC_DYNAMIC_REDIRS.
+    vm.register_builtin(BUILTIN_EXEC_DYNAMIC_REDIRS, |_vm, _argc| {
+        EXEC_DYNAMIC_REDIRS.with(|c| c.set(true));
+        Value::Int(0)
+    });
     vm.register_builtin(BUILTIN_EXEC_DYNAMIC, |vm, argc| {
         let raw = pop_args(vm, argc);
+        // Taken first so every return path below clears it.
+        let had_redirs = EXEC_DYNAMIC_REDIRS.with(|c| c.replace(false));
         // Flatten Array entries into argv slots (matches fusevm
         // Op::Exec's flatten at vm.rs:1660-1665) so `${arr[@]}` /
         // splice expansions produce one argv slot per element.
@@ -13336,6 +13346,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = newjob as i32;
         }
+        crate::ported::exec::REDIRS_PREAPPLIED.with(|c| c.set(had_redirs));
         crate::ported::exec::execcmd_exec(
             &mut state,
             &mut eparams,
@@ -13345,6 +13356,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             2,                                   // last1=2 — shell continues (c:2014)
             -1,                                  // close_if_forked
         );
+        crate::ported::exec::REDIRS_PREAPPLIED.with(|c| c.set(false));
         // c:Src/exec.c:1828-1835 — execpline's Z_SYNC tail: waitjobs()
         // reaps the forked external. c:Src/jobs.c:487-495 + 551-552 —
         // the job's LAST proc sets lastval (0200|sig when signalled,
@@ -18101,6 +18113,11 @@ pub const BUILTIN_NULLCMD_EXEC: u16 = 607;
 /// is `zerr("redirection with no command")` with `lastval = 1` and
 /// ERRFLAG_ERROR. argc=0; Bool(true) = go on to NULLCMD_EXEC.
 pub const BUILTIN_NULLCMD_CHECK: u16 = 760;
+/// Emitted right before BUILTIN_EXEC_DYNAMIC when the simple command has
+/// redirections. No args. The VM has already opened them, so the dispatch
+/// passes `execcmd_exec` an empty `redir` list; this tells its AUTOCD test
+/// (c:Src/exec.c:3596 `(!redir || empty(redir))`) that there were some.
+pub const BUILTIN_EXEC_DYNAMIC_REDIRS: u16 = 761;
 /// `.` (dot) — alias of source/bin_dot but dispatches with the
 /// literal name "." so the diagnostic prefix matches zsh's
 /// (`zsh:.:1: …` vs source's `zsh:source:1: …`).

@@ -9344,6 +9344,16 @@ pub fn execode_wordcode(
 }
 
 thread_local! {
+    /// !!! WARNING: RUST-ONLY CARRIER !!! The VM opens a simple command's
+    /// redirections itself and hands `execcmd_exec` an empty `redir` list
+    /// for a run-time-expanded head (fusevm_bridge BUILTIN_EXEC_DYNAMIC).
+    /// Set for that call when the command HAD redirections, so `trycd`
+    /// still sees c:3596 `(!redir || empty(redir))` as false.
+    pub(crate) static REDIRS_PREAPPLIED: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+thread_local! {
     /// The long-lived interactive executor for the top-level `loop()`
     /// REPL (the `zsh_main` path). Set once by the bin before
     /// `zsh_main`; [`execode`] runs each parsed program through it.
@@ -11532,9 +11542,13 @@ pub fn execcmd_exec(
     // c:3593-3632 — external resolution + AUTOCD.
     if (typ == WC_SIMPLE as i32 || typ == WC_TYPESET as i32) && nullexec == 0 {
         // c:3593
+        // Consumed here so a nested command dispatched from this one
+        // (a function body) does not inherit it.
+        let redirs_preapplied = REDIRS_PREAPPLIED.with(|c| c.replace(false));
         let trycd = isset(AUTOCD)
             && isset(SHINSTDIN)
             && redir.as_ref().map(|v| v.is_empty()).unwrap_or(true)
+            && !redirs_preapplied
             && args.as_ref().map(|v| v.len() == 1).unwrap_or(false)
             && !args.as_ref().unwrap()[0].is_empty(); // c:3595-3597
         let mut external_found = false;
@@ -11553,15 +11567,15 @@ pub fn execcmd_exec(
             };
             if have_cmdnam.is_some() && trycd && !isreallycom(have_cmdnam.as_ref().unwrap()) {
                 // c:3607
-                // c:3608-3614 — remove the cached entry; force rehash.
-                cmdnam_unhashed(&cmdarg, Vec::new());
-                have_cmdnam = None;
-                if let Some(cn) = have_cmdnam.as_ref() {
-                    if (cn.node.flags & crate::ported::zsh_h::HASHED) == 0 {
-                        // checkpath = path; dohashcmd = 1;
-                        dohashcmd = true;
-                    }
+                // c:3608-3611 — `if (!(hn->flags & HASHED)) { checkpath = path; dohashcmd = 1; }`
+                if (have_cmdnam.as_ref().unwrap().node.flags & crate::ported::zsh_h::HASHED) == 0 {
+                    dohashcmd = true;
                 }
+                // c:3612-3614 — removenode + freenode; `hn = NULL`.
+                if let Ok(mut tab) = cmdnamtab_lock().write() {
+                    tab.remove(&cmdarg);
+                }
+                have_cmdnam = None;
             }
             if have_cmdnam.is_none() && dohashcmd && cmdarg != ".." {
                 // c:3616 — `if (!hn && dohashcmd && strcmp(cmdarg, "..")) `

@@ -3245,6 +3245,15 @@ impl ZshCompiler {
             // the cmd-subst's last_status. Op::Exec hardcodes 0 for
             // empty argv (fusevm vm.rs:1722-1723) which clobbered \$?
             // in chains like `\$(exit 1); echo \$?`.
+            // c:Src/exec.c:3596 — AUTOCD needs to know this command had
+            // redirections, which the scope above already opened.
+            if has_redirects {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXEC_DYNAMIC_REDIRS, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+            }
             self.builder.emit(
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_DYNAMIC, argc),
                 0,
