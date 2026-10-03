@@ -1,26 +1,67 @@
 #compdef zjob
 
-# Manage background jobs through the daemon: `zjob submit -- cmd …`
-# queues, `zjob status ID`, `zjob output ID`, `zjob wait ID`, `zjob
-# kill ID`. Jobs survive shell exit because the daemon owns them.
+# Manage daemon-supervised background jobs: submit, list, status, output,
+# attach, kill, cancel, wait. Jobs survive shell exit because the daemon
+# owns them.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); verbs mirror the dispatch in daemon/zjob_builtin.rs.
+# (daemon/builtins.rs); verbs and flags mirror the dispatch in
+# daemon/zjob_builtin.rs; --state values mirror JobState::label and
+# --signal names mirror parse_signal in daemon/jobs.rs.
 # Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
 
 local -a verbs
 verbs=(
-    submit
-    list
-    ls
-    status
-    output
-    out
-    kill
-    cancel
-    attach
-    wait
+    'submit:run a command under the daemon; prints the job id'
+    'list:list jobs'
+    'ls:same as list'
+    'status:print one job'
+    'output:print the captured stdout (or --stderr) of a job'
+    'out:same as output'
+    'attach:follow a running job until it exits'
+    'kill:send a signal to a job (default TERM)'
+    'cancel:TERM, wait --grace seconds, then KILL'
+    'wait:block until a job finishes'
+    '--help:print usage'
 )
+
+# Job ids and tags come from `zjob list` (the daemon's job_list op). The
+# builtin spawns the daemon on demand, so only ask when it is already up.
+_zjob_daemon_up() {
+    local root=${ZSHRS_HOME:-$HOME/.zshrs} pid
+    [[ -S $root/daemon.sock && -s $root/daemon.pid ]] || return 1
+    pid=$(<$root/daemon.pid)
+    [[ $pid == <-> ]] && kill -0 $pid 2>/dev/null
+}
+
+# print_jobs_table rows: ID STATE EXIT STARTED TAGS COMMAND.
+_zjob_ids() {
+    local -a rows ids
+    local row
+    _zjob_daemon_up || return 1
+    rows=( ${(f)"$(zjob list 2>/dev/null)"} )
+    [[ $rows[1] == ID* ]] || return 1
+    for row in ${rows[2,-1]}; do
+        ids+=( "${${=row}[1]}:${${=row}[2]} ${${=row}[6,-1]}" )
+    done
+    (( $#ids )) && _describe -t jobs 'job id' ids -V jobs
+}
+
+_zjob_tags() {
+    local -a rows tags
+    local row
+    _zjob_daemon_up || return 1
+    rows=( ${(f)"$(zjob list 2>/dev/null)"} )
+    [[ $rows[1] == ID* ]] || return 1
+    for row in ${rows[2,-1]}; do
+        [[ ${${=row}[5]} == - ]] || tags+=( ${(s:,:)${${=row}[5]}} )
+    done
+    tags=( ${(u)tags} )
+    (( $#tags )) && compadd -a tags
+}
 
 _arguments -C \
     '1:sub-command:->verb' \
@@ -28,7 +69,124 @@ _arguments -C \
 
 case $state in
     verb) _describe -t commands 'sub-command' verbs && return 0 ;;
-    rest) _default && return 0 ;;
+    rest)
+        local prev=$words[CURRENT-1]
+        local -a flags states signals
+        case $words[1] in
+            submit)
+                # Flags until the first bare word (or `--`); that word and
+                # everything after it is the command.
+                local i start=0
+                for (( i = 2; i < CURRENT; i++ )); do
+                    case $words[i] in
+                        --cwd|--tag|--env) (( i++ )) ;;
+                        --pty) ;;
+                        --) start=$(( i + 1 )); break ;;
+                        *) start=$i; break ;;
+                    esac
+                done
+                if (( start && CURRENT >= start )); then
+                    words=( ${words[start,-1]} )
+                    (( CURRENT -= start - 1 ))
+                    _normal && return 0
+                    return 1
+                fi
+                flags=(
+                    '--cwd:directory to run in'
+                    '--tag:tag the job (repeatable)'
+                    '--env:KEY=VALUE for the job (repeatable)'
+                    '--pty:run under a pseudo-terminal'
+                    '--:end of options; the command follows'
+                )
+                case $prev in
+                    --cwd) _directories && return 0 ;;
+                    --tag) _zjob_tags || _message 'tag'; return 0 ;;
+                    --env)
+                        if compset -P '*='; then
+                            _message 'value' && return 0
+                        else
+                            _parameters -g '*export*' -qS= && return 0
+                        fi
+                        ;;
+                    *)
+                        if [[ $PREFIX == -* ]]; then
+                            _describe -t options 'option' flags && return 0
+                        else
+                            _command_names -e && return 0
+                        fi
+                        ;;
+                esac
+                ;;
+            list|ls)
+                flags=(
+                    '--state:only jobs in this state'
+                    '--tag:only jobs with this tag'
+                    '--limit:maximum rows'
+                )
+                states=(
+                    'running:still running'
+                    'exited:exited on its own'
+                    'killed:ended by a signal'
+                    'failed:could not be run'
+                )
+                case $prev in
+                    --state) _describe -t states 'state' states && return 0 ;;
+                    --tag) _zjob_tags || _message 'tag'; return 0 ;;
+                    --limit) _message 'maximum rows' && return 0 ;;
+                    *) _describe -t options 'option' flags && return 0 ;;
+                esac
+                ;;
+            status|attach)
+                (( CURRENT == 2 )) && _zjob_ids && return 0
+                (( CURRENT == 2 )) && _message 'job id' && return 0
+                ;;
+            output|out)
+                # The id may sit anywhere among the flags.
+                flags=(
+                    '--follow:keep printing new output until the job ends'
+                    '-f:same as --follow'
+                    '--stderr:read stderr instead of stdout'
+                    '--lines:only the last N lines'
+                    '-n:same as --lines'
+                )
+                if [[ $prev == (--lines|-n) ]]; then
+                    _message 'number of lines' && return 0
+                elif [[ $PREFIX == -* ]]; then
+                    _describe -t options 'option' flags && return 0
+                else
+                    _zjob_ids && return 0
+                    _message 'job id' && return 0
+                fi
+                ;;
+            kill)
+                flags=( '--signal:signal to send (default TERM)' )
+                signals=( TERM KILL INT QUIT HUP STOP CONT USR1 USR2 )
+                if (( CURRENT == 2 )); then
+                    _zjob_ids && return 0
+                    _message 'job id' && return 0
+                elif [[ $prev == --signal ]]; then
+                    _describe -t signals 'signal' signals && return 0
+                else
+                    _describe -t options 'option' flags && return 0
+                fi
+                ;;
+            cancel|wait)
+                if [[ $words[1] == cancel ]]; then
+                    flags=( '--grace:seconds between TERM and KILL (default 5)' )
+                else
+                    flags=( '--timeout:give up after this many seconds' )
+                fi
+                if (( CURRENT == 2 )); then
+                    _zjob_ids && return 0
+                    _message 'job id' && return 0
+                elif [[ $prev == (--grace|--timeout) ]]; then
+                    _message 'seconds' && return 0
+                else
+                    _describe -t options 'option' flags && return 0
+                fi
+                ;;
+        esac
+        ;;
 esac
 
 return 1

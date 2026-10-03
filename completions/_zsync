@@ -1,21 +1,40 @@
 #compdef zsync
 
-# Force a flush of the daemon's in-memory state to the SQLite
-# catalog. Normally happens in the background; `zsync` makes it
-# synchronous so a snapshot is consistent.
+# Push, pull, diff and watch the zshrs daemon's canonical state: the
+# cross-shell copy of path, aliases, functions, zstyles and the rest.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); verbs mirror the dispatch in daemon/zsync_builtin.rs.
+# (daemon/builtins.rs); verbs mirror the dispatch in
+# daemon/zsync_builtin.rs, subsystems mirror ALL_SUBSYSTEMS there.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-local -a verbs
+local -a verbs subsystems allflag
 verbs=(
-    up
-    push
-    pull
-    diff
-    watch
+    'up:promote one entry, a JSON object, or every subsystem (--all)'
+    'push:same as up'
+    'pull:print a subsystem'"'"'s canonical entries'
+    'diff:compare a JSON overlay against the canonical entries'
+    'watch:stream canonical changes for subsystems until Ctrl-C'
+    '--help:print usage'
 )
+subsystems=(
+    'path:command search path'
+    'fpath:function search path'
+    'manpath:manual search path'
+    'named_dir:named directories (hash -d)'
+    'alias:regular aliases'
+    'galias:global aliases'
+    'salias:suffix aliases'
+    'function:shell functions'
+    'compdef:completion bindings'
+    'env:exported environment variables'
+    'params:shell parameters'
+    'zstyle:zstyle settings'
+    'bindkey:key bindings'
+    'setopt:shell options'
+    'zmodload:loaded modules'
+)
+allflag=( '--all:promote every subsystem from this shell' )
 
 _arguments -C \
     '1:sub-command:->verb' \
@@ -23,7 +42,65 @@ _arguments -C \
 
 case $state in
     verb) _describe -t commands 'sub-command' verbs && return 0 ;;
-    rest) _default && return 0 ;;
+    rest)
+        case $words[1] in
+            up|push)
+                # zsync push(): --all | SUBSYSTEM KEY VALUE |
+                # SUBSYSTEM --json OBJECT | SUBSYSTEM VALUE.
+                local -a keys expl
+                if (( CURRENT == 2 )); then
+                    _describe -t subsystems 'subsystem' subsystems -- allflag && return 0
+                elif (( CURRENT == 3 )) && [[ $words[2] != --all ]]; then
+                    if [[ $PREFIX == -* ]]; then
+                        compadd -- --json && return 0
+                    fi
+                    # The key names an entry of the subsystem in this shell.
+                    case $words[2] in
+                        alias)     keys=( ${(k)aliases} ) ;;
+                        galias)    keys=( ${(k)galiases} ) ;;
+                        salias)    keys=( ${(k)saliases} ) ;;
+                        function)  keys=( ${(k)functions} ) ;;
+                        compdef)   keys=( ${(k)_comps} ) ;;
+                        env)       keys=( ${(k)parameters[(R)*export*]} ) ;;
+                        params)    keys=( ${(k)parameters} ) ;;
+                        named_dir) keys=( ${(k)nameddirs} ) ;;
+                        setopt)    keys=( ${(k)options} ) ;;
+                        zmodload)  keys=( ${(k)modules} ) ;;
+                    esac
+                    if (( $#keys )); then
+                        _wanted keys expl "$words[2] key" compadd -a keys && return 0
+                    else
+                        _message 'key, or a single value' && return 0
+                    fi
+                elif (( CURRENT == 4 )) && [[ $words[3] == --json ]]; then
+                    _message 'JSON object of key/value pairs' && return 0
+                elif (( CURRENT == 4 )); then
+                    _message 'value' && return 0
+                fi
+                ;;
+            pull)
+                (( CURRENT == 2 )) && _describe -t subsystems 'subsystem' subsystems && return 0
+                ;;
+            diff)
+                # zsync diff(): SUBSYSTEM [--overlay JSON].
+                if (( CURRENT == 2 )); then
+                    _describe -t subsystems 'subsystem' subsystems && return 0
+                elif [[ $words[CURRENT-1] == --overlay ]]; then
+                    _message 'JSON overlay object' && return 0
+                elif [[ ${words[(I)--overlay]} -eq 0 ]]; then
+                    compadd -- --overlay && return 0
+                fi
+                ;;
+            watch)
+                # Any number of subsystems; skip the ones already given.
+                local w
+                for w in $words[2,CURRENT-1]; do
+                    subsystems=( ${subsystems:#$w:*} )
+                done
+                _describe -t subsystems 'subsystem' subsystems && return 0
+                ;;
+        esac
+        ;;
 esac
 
 return 1

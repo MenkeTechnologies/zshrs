@@ -1,13 +1,29 @@
 #compdef ztag
 
-# Tag the current shell session with one or more labels. `ztag prod-
-# deploy`. Other shells can filter by tag via `zls --tag prod-
-# deploy`.
+# Add one or more tags to the daemon session; prints the session's tag
+# list. Other shells can target tagged shells via `zls --tag`,
+# `zsend --tag`, `znotify --tag` and `tag:NAME.*` subscriptions.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); arguments mirror ztag() in daemon/builtins.rs:
+# every word is a tag, there are no flags.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+# Offer the tags already in use so a shell can join an existing group;
+# any new word is accepted too.
+# Live shells: parse the `zls` table (ID PID TTY UPTIME TAGS CWD,
+# print_shells_table in daemon/builtins.rs). Silent when the daemon is down.
+local zhome=${ZSHRS_HOME:-$HOME/.zshrs} row expl
+local -a cols shells tags
+if [[ -S $zhome/daemon.sock ]]; then
+    for row in ${${(f)"$(zls 2>/dev/null)"}[2,-1]}; do
+        cols=( ${=row} )
+        [[ $cols[1] == <-> ]] || continue
+        shells+=( "$cols[1]:pid $cols[2], tty $cols[3], $cols[6,-1]" )
+        [[ $cols[5] == - ]] || tags+=( ${(s:,:)cols[5]} )
+    done
+    tags=( ${(u)tags} )
+fi
+tags=( ${tags:|words} )
+
+_wanted tags expl 'tag' compadd -a tags

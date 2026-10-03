@@ -1,13 +1,80 @@
 #compdef zwhere
 
-# Locate which shell / bundle / cwd defined a given alias / function
-# / env var in the federated catalog. `zwhere alias ll` → list of
-# every shell that set `ll`.
+# Query the zshrs daemon's definitions catalog: which shell defined an
+# alias, function, parameter, ... and where. Prints
+# kind<TAB>name<TAB>value<TAB>shell_id<TAB>file:line rows.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); flags mirror zwhere() in daemon/builtins.rs,
+# kinds mirror KNOWN_KINDS in daemon/definitions.rs.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+local -a kinds
+kinds=(
+    'alias:regular aliases'
+    'galias:global aliases'
+    'salias:suffix aliases'
+    'function:shell functions'
+    'function_autoload:autoloaded functions'
+    'env:exported environment variables'
+    'params:shell parameters'
+    'params_typed:shell parameters with their types'
+    'bindkey:key bindings'
+    'compdef:completion bindings'
+    'named_dir:named directories (hash -d)'
+    'zstyle:zstyle settings'
+    'zmodload:loaded modules'
+    'setopt:shell options'
+    'trap:traps'
+    'sched:scheduled commands'
+    'source:sourced files'
+    'zle:zle widgets'
+    'completion:completion definitions'
+    'path:command search path'
+    'fpath:function search path'
+    'manpath:manual search path'
+)
+
+_arguments -C \
+    '(- *)'{-h,--help}'[print usage]' \
+    '(- *)--kinds[list every kind that has rows]' \
+    '--prefix[only names starting with STR]:name prefix:->names' \
+    '--shell-id[only rows recorded by this shell id]:shell id:->shellids' \
+    '--limit[maximum rows to print (default 1000)]:row limit: ' \
+    '1:kind:->kinds' \
+    '2:name:->names' && return 0
+
+case $state in
+    kinds) _describe -t kinds 'kind' kinds && return 0 ;;
+    names|shellids)
+        # Live values come from zwhere itself; it needs the daemon, so stay
+        # silent when the socket is missing. Rows are tab-separated:
+        # kind name value shell_id file:line.
+        local zhome=${ZSHRS_HOME:-$HOME/.zshrs} row expl kind=$line[1]
+        local -a values query
+        if [[ -S $zhome/daemon.sock ]]; then
+            if [[ $state == names ]]; then
+                if [[ -n $kind ]]; then
+                    query=( $kind --prefix "$PREFIX" --limit 1000 )
+                    for row in ${(f)"$(zwhere $query 2>/dev/null)"}; do
+                        values+=( "${${(@ps:\t:)row}[2]}" )
+                    done
+                fi
+            else
+                query=( --limit 10000 )
+                [[ -n $kind ]] && query=( $kind $query )
+                for row in ${(f)"$(zwhere $query 2>/dev/null)"}; do
+                    values+=( "${${(@ps:\t:)row}[4]}" )
+                done
+            fi
+            values=( ${(u)values} )
+        fi
+        if [[ $state == names ]]; then
+            _wanted names expl "${kind:-definition} name" compadd -a values && return 0
+        else
+            _wanted shell-ids expl 'shell id' compadd -a values && return 0
+        fi
+        ;;
+esac
+
+return 1

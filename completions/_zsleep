@@ -6,4 +6,4 @@
 # zsleep (src/extensions/ext_builtins.rs); keep in sync.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-_arguments ':seconds (fractions allowed): '
+_arguments '1:seconds (fractions allowed): '

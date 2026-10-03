@@ -1,12 +1,34 @@
 #compdef zpublish
 
-# Publish a JSON event to a pubsub topic. `zpublish topic.name
-# '{"key":"val"}'`. Subscribers receive via `zsubscribe`.
+# Publish an event on the zshrs daemon's pub/sub bus from this shell's
+# scope (shell:ID). Subscribers receive it via `zsubscribe`.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); arguments mirror zpublish() in
+# daemon/builtins.rs: TOPIC is always the first word, then a bare DATA
+# string or --json VALUE (the last one wins).
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+_arguments -C \
+    '1:topic:->topic' \
+    '--json[send DATA parsed as JSON]:JSON value: ' \
+    '*:data string: ' && return 0
+
+case $state in
+    topic)
+        # Topics the daemon itself publishes: chpwd (daemon/ops.rs
+        # op_chpwd) and the job topics (daemon/jobs.rs JobSupervisor
+        # publish). Any other name is a user topic.
+        local -a topics
+        topics=(
+            'chpwd:a shell changed directory (shell scope)'
+            'start:a daemon job started (job scope)'
+            'stdout:a daemon job wrote to stdout (job scope)'
+            'stderr:a daemon job wrote to stderr (job scope)'
+            'complete:a daemon job finished (job scope)'
+        )
+        _describe -t topics 'topic' topics && return 0
+        ;;
+esac
+
+return 1

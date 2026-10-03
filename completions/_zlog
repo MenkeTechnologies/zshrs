@@ -1,21 +1,22 @@
 #compdef zlog
 
-# Append a structured log entry to the daemon's log catalog. `zlog
-# 'message' [key=val …]`. Queryable later via `zhistory` / `dbview`.
+# Inspect and manage the zshrs log files (zshrs.log*, zshrs-daemon.log*,
+# zshrs-recorder.log*) under ${ZSHRS_HOME:-~/.zshrs}. No verb means `path`.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); verbs mirror the dispatch in daemon/builtins.rs.
+# (daemon/builtins.rs); verbs and flags mirror zlog() and its zlog_*
+# helpers in daemon/builtins.rs.
 # Bundled into ~/.zshrs/functions by build.rs.
 
 local -a verbs
 verbs=(
-    path
-    tail
-    grep
-    clear
-    stats
-    level
-    rotate
+    'path:print the newest log file path (default)'
+    'tail:print the last lines across every log file'
+    'grep:print log lines matching a regex'
+    'clear:truncate every log file'
+    'stats:bytes and line counts per log file'
+    'level:set the daemon log filter directive (needs the daemon)'
+    'rotate:rotate the daemon log file (needs the daemon)'
 )
 
 _arguments -C \
@@ -24,7 +25,38 @@ _arguments -C \
 
 case $state in
     verb) _describe -t commands 'sub-command' verbs && return 0 ;;
-    rest) _default && return 0 ;;
+    rest)
+        case $words[1] in
+            tail)
+                # zlog_tail: only -n/--lines; other words are ignored.
+                _arguments \
+                    '(-n --lines)'{-n,--lines}'[number of lines to print (default 100)]:line count: ' \
+                    && return 0
+                ;;
+            grep)
+                # zlog_grep: the first word is a Rust regex.
+                (( CURRENT == 2 )) && _message 'regular expression' && return 0
+                ;;
+            level)
+                # zlog_level sends one tracing EnvFilter directive:
+                # LEVEL or TARGET=LEVEL, comma-separated.
+                local -a levels
+                levels=(
+                    'trace:everything'
+                    'debug:debug and above'
+                    'info:info and above (the default)'
+                    'warn:warnings and errors'
+                    'error:errors only'
+                    'off:disable logging'
+                )
+                if (( CURRENT == 2 )); then
+                    compset -P '*,'
+                    compset -P '*='
+                    _describe -t levels 'log level' levels && return 0
+                fi
+                ;;
+        esac
+        ;;
 esac
 
 return 1

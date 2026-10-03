@@ -1,13 +1,14 @@
 #compdef zsuggest
 
-# Query the daemon's suggestion engine for the next command, given
-# the current cwd + history. Used by ZLE's autosuggestion widget
-# when the local history can't supply a candidate.
+# Ask the zshrs daemon's suggestion engine for a completion of a
+# command-line prefix, optionally scored for a directory.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); flags mirror zsuggest() in
+# daemon/zcomplete_builtin.rs: one prefix, optional --cwd DIR.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+_arguments \
+    '(- *)'{-h,--help}'[print usage]' \
+    '--cwd[directory to suggest for (default: the current one)]:directory:_directories' \
+    '1:command-line prefix: '

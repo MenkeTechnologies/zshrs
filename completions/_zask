@@ -1,23 +1,90 @@
 #compdef zask
 
-# Send an ask-style request to the daemon and print the JSON
-# response. Used by tools/agents that want a single synchronous
-# query against the shared catalog.
+# Queue UI requests (picker, input, dialog, menu, progress) for a shell
+# through the daemon, and pull / answer the requests queued for this one.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); verbs mirror the dispatch in daemon/zask_builtin.rs.
+# (daemon/builtins.rs); verbs and flags mirror the dispatch in
+# daemon/zask_builtin.rs (zask, ask_with_target, progress, pending, take,
+# dismiss, response); kinds mirror AskKind::from_str in daemon/zask.rs.
 # Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
 
 local -a verbs
 verbs=(
-    ask
-    progress
-    pending
-    take
-    dismiss
-    inbox-clear
-    response
+    '--target:push a request to shell:N, tag:T or * (then KIND)'
+    'ask:legacy push form: SHELL_ID KIND PROMPT'
+    'progress:update a status-line progress indicator'
+    'pending:list the requests queued for a shell'
+    'take:pop the next (or a given) queued request'
+    'dismiss:drop one queued request'
+    'inbox-clear:drop every request queued for this connection'
+    'response:return a result to the asking shell'
+    '--help:print usage'
 )
+
+# Shell ids and tags come from `zls` (the daemon's list_shells op). The
+# builtin spawns the daemon on demand, so only ask when it is already up.
+_zask_daemon_up() {
+    local root=${ZSHRS_HOME:-$HOME/.zshrs} pid
+    [[ -S $root/daemon.sock && -s $root/daemon.pid ]] || return 1
+    pid=$(<$root/daemon.pid)
+    [[ $pid == <-> ]] && kill -0 $pid 2>/dev/null
+}
+
+# zls rows: ID PID TTY UPTIME TAGS CWD.
+_zask_shell_ids() {
+    local -a rows ids
+    local row
+    _zask_daemon_up || return 1
+    rows=( ${(f)"$(zls 2>/dev/null)"} )
+    for row in ${rows[2,-1]}; do
+        ids+=( "${${=row}[1]}:pid ${${=row}[2]} ${${=row}[6,-1]}" )
+    done
+    (( $#ids )) && _describe -t shells 'shell id' ids
+}
+
+_zask_tags() {
+    local -a rows tags
+    local row
+    _zask_daemon_up || return 1
+    rows=( ${(f)"$(zls 2>/dev/null)"} )
+    for row in ${rows[2,-1]}; do
+        [[ ${${=row}[5]} == - ]] || tags+=( ${(s:,:)${${=row}[5]}} )
+    done
+    tags=( ${(u)tags} )
+    (( $#tags )) && compadd -a tags
+}
+
+# parse_target: `*`, `shell:N`, `tag:NAME` or a bare shell id.
+_zask_target() {
+    local -a scopes
+    if compset -P 'shell:'; then
+        _zask_shell_ids
+    elif compset -P 'tag:'; then
+        _zask_tags
+    else
+        scopes=(
+            '*:every connected shell'
+            'shell\::one shell by id'
+            'tag\::every shell carrying a tag'
+        )
+        _describe -t scopes 'target' scopes -S ''
+        _zask_shell_ids
+    fi
+}
+
+local -a kinds urgencies
+kinds=(
+    'picker:choose from --items'
+    'input:free-text answer'
+    'dialog:message with --options buttons'
+    'menu:menu of --items'
+    'progress:passive progress indicator'
+)
+urgencies=( low normal high critical )
 
 _arguments -C \
     '1:sub-command:->verb' \
@@ -25,7 +92,124 @@ _arguments -C \
 
 case $state in
     verb) _describe -t commands 'sub-command' verbs && return 0 ;;
-    rest) _default && return 0 ;;
+    rest)
+        local prev=$words[CURRENT-1]
+        local -a flags
+        case $words[1] in
+            --target)
+                # ask_with_target: SCOPE KIND, then --key value passthrough.
+                flags=(
+                    '--prompt:prompt text'
+                    '--message:message text'
+                    '--items:items to pick from'
+                    '--options:dialog buttons (e.g. yes,no)'
+                    '--title:title text'
+                    '--urgency:low, normal, high or critical'
+                    '--timeout:timeout in seconds'
+                    '--timeout-ms:timeout in milliseconds'
+                    '--multi:allow several picks'
+                    '--secret:hide typed input'
+                    '--no-timeout:never expire'
+                )
+                if (( CURRENT == 2 )); then
+                    _zask_target && return 0
+                elif (( CURRENT == 3 )); then
+                    _describe -t kinds 'kind' kinds && return 0
+                elif [[ $prev == --urgency ]]; then
+                    _describe -t urgencies 'urgency' urgencies && return 0
+                elif [[ $prev == (--prompt|--message|--items|--options|--title|--timeout|--timeout-ms) ]]; then
+                    _message "${prev#--} value" && return 0
+                else
+                    _describe -t options 'option' flags && return 0
+                fi
+                ;;
+            ask)
+                # ask: SHELL_ID KIND PROMPT [--urgency L] [--timeout-ms N]
+                flags=(
+                    '--urgency:low, normal, high or critical'
+                    '--timeout-ms:timeout in milliseconds'
+                )
+                if (( CURRENT == 2 )); then
+                    _zask_shell_ids && return 0
+                    _message 'shell id' && return 0
+                elif (( CURRENT == 3 )); then
+                    _describe -t kinds 'kind' kinds && return 0
+                elif (( CURRENT == 4 )); then
+                    _message 'prompt' && return 0
+                elif [[ $prev == --urgency ]]; then
+                    _describe -t urgencies 'urgency' urgencies && return 0
+                elif [[ $prev == --timeout-ms ]]; then
+                    _message 'milliseconds' && return 0
+                else
+                    _describe -t options 'option' flags && return 0
+                fi
+                ;;
+            progress)
+                flags=(
+                    '--target:shell:N, tag:T or * (required)'
+                    '--label:indicator label'
+                    '--percent:percent complete'
+                    '--eta:estimated time left in milliseconds'
+                    '--request-id:request id to update'
+                    '--done:mark the indicator finished'
+                )
+                case $prev in
+                    --target) _zask_target && return 0 ;;
+                    --label|--percent|--eta|--request-id) _message "${prev#--} value" && return 0 ;;
+                    *) _describe -t options 'option' flags && return 0 ;;
+                esac
+                ;;
+            pending)
+                flags=(
+                    '--shell:list the queue of another shell id'
+                    '--all:accepted, no effect'
+                )
+                if [[ $prev == --shell ]]; then
+                    _zask_shell_ids && return 0
+                    _message 'shell id' && return 0
+                else
+                    _describe -t options 'option' flags && return 0
+                fi
+                ;;
+            take)
+                # Request ids are scoped to the asking connection; there is
+                # no listing a completion could read them from.
+                flags=( '--id:take a specific request id' )
+                if [[ $prev == --id ]]; then
+                    _message 'request id' && return 0
+                else
+                    _describe -t options 'option' flags && return 0
+                fi
+                ;;
+            dismiss)
+                flags=( '--reason:reason text' )
+                if (( CURRENT == 2 )); then
+                    _message 'request id' && return 0
+                elif [[ $prev == --reason ]]; then
+                    _message 'reason' && return 0
+                else
+                    _describe -t options 'option' flags && return 0
+                fi
+                ;;
+            response)
+                # response: REQUEST_ID [DATA...] [--cancelled] [--from-shell N]
+                flags=(
+                    '--cancelled:report the request as declined'
+                    '--from-shell:shell id the response is routed to'
+                )
+                if [[ $prev == --from-shell ]]; then
+                    _zask_shell_ids && return 0
+                    _message 'shell id' && return 0
+                elif [[ $PREFIX == -* ]]; then
+                    _describe -t options 'option' flags && return 0
+                elif (( CURRENT == 2 )); then
+                    _message 'request id' && return 0
+                else
+                    _message 'data (JSON or text)' && return 0
+                fi
+                ;;
+        esac
+        ;;
 esac
 
 return 1

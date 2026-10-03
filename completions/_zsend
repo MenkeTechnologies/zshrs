@@ -1,13 +1,58 @@
 #compdef zsend
 
-# Send a one-shot message to another shell (by `shell_id` or
-# `bundle_id`). Like `znotify` but targets a specific shell, not the
-# user's desktop.
+# Send a command line to other shells through the zshrs daemon: one
+# shell by id, every shell (--all), the shells carrying a tag (--tag)
+# or a user's shells (--user). --wait relays the target's output and
+# exit status.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); flags mirror zsend() and parse_send_args() in
+# daemon/builtins.rs. The target must be the first word once --json,
+# --wait and --timeout SECS are removed.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+_arguments -C \
+    '--json[print the raw JSON response]' \
+    '--wait[wait for the command result and relay its output and exit status]' \
+    '--timeout[seconds to wait with --wait (default 60)]:seconds: ' \
+    '(1 --tag --user)--all[send to every shell]' \
+    '(1 --all --user)--tag[send to the shells carrying a tag]:tag:->tags' \
+    '(1 --all --tag)--user[send to the shells of a user]:user:_users' \
+    '(--all --tag --user)1:shell id:->shells' \
+    '*::command:->command' && return 0
+
+case $state in
+    shells|tags)
+        # Live shells: parse the `zls` table (ID PID TTY UPTIME TAGS CWD,
+        # print_shells_table in daemon/builtins.rs). Silent when the
+        # daemon is down.
+        local zhome=${ZSHRS_HOME:-$HOME/.zshrs} row expl
+        local -a cols shells tags
+        if [[ -S $zhome/daemon.sock ]]; then
+            for row in ${${(f)"$(zls 2>/dev/null)"}[2,-1]}; do
+                cols=( ${=row} )
+                [[ $cols[1] == <-> ]] || continue
+                shells+=( "$cols[1]:pid $cols[2], tty $cols[3], $cols[6,-1]" )
+                [[ $cols[5] == - ]] || tags+=( ${(s:,:)cols[5]} )
+            done
+            tags=( ${(u)tags} )
+        fi
+        if [[ $state == shells ]]; then
+            _describe -t shells 'shell id' shells && return 0
+        else
+            _wanted tags expl 'tag' compadd -a tags && return 0
+        fi
+        ;;
+    command)
+        # The remaining words are joined into one command line that the
+        # target shell runs. `*::` keeps a positional shell id in $words,
+        # so drop it when no --all/--tag/--user target was given.
+        if (( ! ${+opt_args[--all]} && ! ${+opt_args[--tag]} && ! ${+opt_args[--user]} )); then
+            shift words
+            (( CURRENT-- ))
+        fi
+        _normal && return 0
+        ;;
+esac
+
+return 1

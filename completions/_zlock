@@ -1,21 +1,42 @@
 #compdef zlock
 
-# Acquire / release / try a named cross-shell lock. `zlock acquire
-# NAME [TIMEOUT]` / `zlock release NAME TOKEN` / `zlock try NAME` /
-# `zlock do NAME -- cmd …`. PID-tagged so the daemon GCs stale
-# entries.
+# Named cross-process locks held by the daemon: `zlock try NAME`,
+# `zlock acquire NAME [--timeout S]`, `zlock release NAME TOKEN`,
+# `zlock list`. A lock is released automatically when its holder dies.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); verbs mirror the dispatch in daemon/builtins.rs.
+# (daemon/builtins.rs); verbs and flags mirror zlock in
+# daemon/builtins.rs.
 # Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
 
 local -a verbs
 verbs=(
-    try
-    acquire
-    release
-    list
+    'try:take a lock if it is free; never waits'
+    'acquire:wait for a lock (until --timeout)'
+    'release:release a held lock with its token'
+    'list:list every held lock'
 )
+
+# Held lock names come from `zlock list` (the daemon's lock_list op). The
+# builtin spawns the daemon on demand, so only ask when it is already up.
+_zlock_daemon_up() {
+    local root=${ZSHRS_HOME:-$HOME/.zshrs} pid
+    [[ -S $root/daemon.sock && -s $root/daemon.pid ]] || return 1
+    pid=$(<$root/daemon.pid)
+    [[ $pid == <-> ]] && kill -0 $pid 2>/dev/null
+}
+
+# lock_list prints pretty JSON; every lock has a `"name": "<lock>",` line.
+_zlock_names() {
+    local -a names expl
+    _zlock_daemon_up || return 1
+    names=( ${(M)${(f)"$(zlock list 2>/dev/null)"}:#*\"name\": \"*} )
+    names=( ${${names#*\"name\": \"}%\"*} )
+    (( $#names )) && _wanted locks expl 'lock name' compadd -a names
+}
 
 _arguments -C \
     '1:sub-command:->verb' \
@@ -23,7 +44,28 @@ _arguments -C \
 
 case $state in
     verb) _describe -t commands 'sub-command' verbs && return 0 ;;
-    rest) _default && return 0 ;;
+    rest)
+        local -a flags
+        case $words[1] in
+            try|acquire|release)
+                if (( CURRENT == 2 )); then
+                    _zlock_names && return 0
+                    _message 'lock name' && return 0
+                elif [[ $words[1] == release ]] && (( CURRENT == 3 )); then
+                    # Tokens are only printed by try/acquire; lock_list
+                    # does not return them.
+                    _message 'token printed by try/acquire' && return 0
+                elif [[ $words[1] == acquire ]]; then
+                    flags=( '--timeout:seconds to wait before giving up' )
+                    if [[ $words[CURRENT-1] == --timeout ]]; then
+                        _message 'seconds' && return 0
+                    else
+                        _describe -t options 'option' flags && return 0
+                    fi
+                fi
+                ;;
+        esac
+        ;;
 esac
 
 return 1

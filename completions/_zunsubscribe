@@ -1,12 +1,74 @@
 #compdef zunsubscribe
 
-# Cancel a `zsubscribe` stream. `zunsubscribe TOPIC` or
-# `zunsubscribe --all`.
+# Remove one of this client's pub/sub subscriptions, by pattern or by
+# id. A foreground `zsubscribe` is removed by Ctrl-C instead.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); flags mirror zunsubscribe() in
+# daemon/builtins.rs. The pattern is <scope>.<topic>
+# (daemon/pubsub.rs Subscription::parse); --id wins over a pattern.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+_arguments -C \
+    '(- *)'{-h,--help}'[print usage]' \
+    '--id[subscription id to remove]:subscription id: ' \
+    '1:pattern:->pattern' && return 0
+
+case $state in
+    pattern)
+        # Scopes per daemon/pubsub.rs Scope::matches_scope; scope and
+        # topic are globs (`*`, `?`).
+        local zhome=${ZSHRS_HOME:-$HOME/.zshrs} row expl
+        local -a cols shells tags zjobs scopes anyscope topics
+        topics=(
+            '*:every topic'
+            'chpwd:a shell changed directory (shell scope)'
+            'start:a daemon job started (job scope)'
+            'stdout:a daemon job wrote to stdout (job scope)'
+            'stderr:a daemon job wrote to stderr (job scope)'
+            'complete:a daemon job finished (job scope)'
+        )
+        # Live shells: parse the `zls` table (ID PID TTY UPTIME TAGS CWD,
+        # print_shells_table in daemon/builtins.rs). Silent when the
+        # daemon is down.
+        if [[ -S $zhome/daemon.sock ]]; then
+            for row in ${${(f)"$(zls 2>/dev/null)"}[2,-1]}; do
+                cols=( ${=row} )
+                [[ $cols[1] == <-> ]] || continue
+                shells+=( "$cols[1]:pid $cols[2], tty $cols[3], $cols[6,-1]" )
+                [[ $cols[5] == - ]] || tags+=( ${(s:,:)cols[5]} )
+            done
+            tags=( ${(u)tags} )
+        fi
+        if compset -P '*.'; then
+            _describe -t topics 'topic' topics && return 0
+        elif compset -P 'shell:'; then
+            _describe -t shells 'shell id' shells -S . && return 0
+        elif compset -P 'tag:'; then
+            _wanted tags expl 'tag' compadd -S . -a tags && return 0
+        elif compset -P 'job:'; then
+            # Live jobs: parse the `zjob list` table (ID STATE EXIT
+            # STARTED TAGS COMMAND, daemon/zjob_builtin.rs).
+            if [[ -S $zhome/daemon.sock ]]; then
+                for row in ${${(f)"$(zjob list 2>/dev/null)"}[2,-1]}; do
+                    cols=( ${=row} )
+                    [[ $cols[1] == <-> ]] && zjobs+=( "$cols[1]:$cols[2] $cols[6,-1]" )
+                done
+            fi
+            _describe -t jobs 'job id' zjobs -S . && return 0
+        elif compset -P 'user:'; then
+            _users -S . && return 0
+        else
+            scopes=(
+                'shell\::one shell by id'
+                'tag\::every shell carrying a tag'
+                'job\::one daemon job by id'
+                'user\::every shell of a user'
+            )
+            anyscope=( '*:every shell and job' )
+            _describe -t scopes 'scope' scopes -S '' -- anyscope -S . && return 0
+        fi
+        ;;
+esac
+
+return 1

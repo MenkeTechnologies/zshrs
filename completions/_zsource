@@ -1,13 +1,14 @@
 #compdef zsource
 
-# Push a sourced-file event to the daemon's federated catalog. Used
-# by `source`/`.` hooks so the daemon knows which rc files have been
-# loaded by which shells.
+# Ask the zshrs daemon's compiled-file registry about a sourced file:
+# hit, stale or miss for its cached body.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); flags mirror zsource() in
+# daemon/zsource_builtin.rs: one path, optional --stat.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+_arguments \
+    '(- *)'{-h,--help}'[print usage]' \
+    '--stat[also send the file'"'"'s mtime and inode for a staleness check]' \
+    '1:file to resolve:_files'

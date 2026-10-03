@@ -1,12 +1,13 @@
 #compdef zping
 
-# Round-trip latency probe against the daemon. Prints the RTT in
-# microseconds; non-zero exit if the daemon is unreachable.
+# Round-trip probe against the zshrs daemon: prints the daemon uptime
+# and the RTT; --all also lists every registered shell.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); flags mirror zping() in daemon/builtins.rs.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+# A bare word is sent as the ping's echo payload (the last one wins).
+_arguments \
+    '--all[also list every shell registered with the daemon]' \
+    '*:echo payload: '

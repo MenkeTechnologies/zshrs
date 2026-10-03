@@ -4,26 +4,30 @@
 # the caches the shell writes itself.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); verbs mirror the dispatch in daemon/builtins.rs.
+# (daemon/builtins.rs); verbs mirror the dispatch in daemon/builtins.rs
+# (zcache and the zcache_* functions it routes to).
 # Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
 
 local -a verbs
 verbs=(
-    info
-    daemon
-    clean
-    verify
-    compact
-    list
-    jobs
-    view
-    export
-    import
-    hydrate-view
-    watch
-    log
-    config
-    doctor
+    'info:daemon catalog snapshot (the default verb)'
+    'daemon:daemon status, stop or restart'
+    'clean:remove cached artifacts'
+    'verify:check every shard and the catalog for damage'
+    'compact:sweep stale temporary files'
+    'list:print every view/export target'
+    'jobs:daemon snapshot (same as info)'
+    'view:render one target in a readable format'
+    'export:render one target for eval or a file'
+    'import:load a zcompdump, zwc, history, catalog or shard'
+    'hydrate-view:refresh the catalog.db canonical view table'
+    'watch:register directories with the daemon file watcher'
+    'log:zlog verbs (path, tail, grep, clear, stats, level, rotate)'
+    'config:get, set or list runtime knobs'
+    'doctor:health-report sweep'
 )
 
 _arguments -C \
@@ -67,7 +71,199 @@ case $state in
                     _describe -t targets 'clean target' targets && return 0
                 fi
                 ;;
-            *) _default && return 0 ;;
+            daemon)
+                # zcache_daemon -> ops::op_daemon verbs.
+                local -a dverbs
+                dverbs=(
+                    'status:pid, uptime, version and session count (default)'
+                    'stop:shut the daemon down'
+                    'restart:spawn a replacement daemon and stop this one'
+                )
+                (( CURRENT == 2 )) && _describe -t commands 'daemon verb' dverbs && return 0
+                ;;
+            view|export)
+                # zcache_view / zcache_export. The first word is the target;
+                # the first bare word after it is the per-target name.
+                local -a targets formats shards expl
+                targets=(
+                    'path:$path entries'
+                    'fpath:$fpath entries'
+                    'manpath:$manpath entries'
+                    'infopath:$infopath entries'
+                    'cdpath:$cdpath entries'
+                    'ld_library_path:$LD_LIBRARY_PATH entries'
+                    'named_dir:named directories (hash -d)'
+                    'command_hash:command hash table'
+                    'autoload_table:autoloaded functions'
+                    'aliases:regular aliases'
+                    'galiases:global aliases'
+                    'saliases:suffix aliases'
+                    'functions:function definitions (optional NAME)'
+                    '_comps:compdef command-to-completer map'
+                    '_services:compdef service map'
+                    '_patcomps:compdef pattern completers'
+                    '_describe_handlers:describe handlers'
+                    'zstyle:zstyle settings'
+                    'bindkey:key bindings'
+                    'setopt:shell options'
+                    'zmodload:loaded modules'
+                    'env:exported environment'
+                    'params:shell parameters'
+                    'theme:prompt theme state'
+                    'history:command history'
+                    'entry_stats:catalog entry usage stats'
+                    'subscriptions:pub/sub subscriptions'
+                    'shells:connected shells'
+                    'plugins:plugins'
+                    'shard:one daemon shard (NAME required for export)'
+                    'index:index.rkyv'
+                    'catalog:catalog.db'
+                    'script:one cached script (PATH)'
+                    'sourced:one sourced file (PATH)'
+                    'compiled_files:every compiled file row'
+                    'zcompdump:the zcompdump view'
+                    'daemon_state:daemon state'
+                    'all-state:every eval-compatible shell-state target'
+                )
+                formats=(
+                    'sh:eval-compatible shell code'
+                    'json:JSON'
+                    'yaml:YAML'
+                    'text:human-readable text'
+                    'csv:CSV'
+                    'sql:SQL'
+                    'native:native format'
+                    'disasm:bytecode disassembly'
+                    'zcompdump:zcompdump format'
+                    'zsh-histfile:EXTENDED_HISTORY lines (history only)'
+                    'pdf:paginated PDF (base64 in the JSON reply)'
+                )
+                if [[ $words[1] == view ]]; then
+                    _arguments -C \
+                        '1:target:->target' \
+                        '2:name:->name' \
+                        '--format[output format (default text)]:format:->format' \
+                        '--filter[only rows matching a pattern]:pattern:' \
+                        '--range[row range]:range:' \
+                        '--all[include every row]' && return 0
+                else
+                    targets+=(
+                        '--all-state:same as all-state'
+                        '--all:archive every cache artifact (needs --out)'
+                    )
+                    _arguments -C \
+                        '1:target:->target' \
+                        '2:name:->name' \
+                        '--format[output format (default sh)]:format:->format' \
+                        '--additive[omit the wipe prefix]' \
+                        '--out[write to a file]:output file:_files' \
+                        '--include-sensitive[include files flagged sensitive]' \
+                        '--show-sensitive[print sensitive file contents]' && return 0
+                fi
+                case $state in
+                    target) _describe -t targets 'target' targets && return 0 ;;
+                    format) _describe -t formats 'format' formats && return 0 ;;
+                    name)
+                        case $words[2] in
+                            functions)
+                                _wanted functions expl 'function' compadd -k functions && return 0
+                                ;;
+                            shard)
+                                shards=( ${ZSHRS_HOME:-$HOME/.zshrs}/images/*.rkyv(N:t:r) )
+                                shards=( ${shards#*-} )
+                                _wanted shards expl 'shard' compadd -a shards && return 0
+                                ;;
+                            script|sourced) _files && return 0 ;;
+                        esac
+                        ;;
+                esac
+                ;;
+            import)
+                # zcache_import: target, then (shard only) NAME, then PATH.
+                local -a targets shards expl
+                targets=(
+                    'zcompdump:a .zcompdump file'
+                    'zwc:a .zwc file, or a tree with --tree'
+                    'history:a history file'
+                    'catalog:a catalog export'
+                    'shard:a shard file under a NAME'
+                    '--all:an archive written by export --all'
+                )
+                _arguments -C \
+                    '1:target:->target' \
+                    '2:path:->second' \
+                    '3:path:_files' \
+                    '--tree[import every .zwc under a directory]:directory:_directories' \
+                    '--force[overwrite existing entries]' \
+                    '--name[shard name]:shard name:' && return 0
+                case $state in
+                    target) _describe -t targets 'import target' targets && return 0 ;;
+                    second)
+                        if [[ $words[2] == shard ]]; then
+                            shards=( ${ZSHRS_HOME:-$HOME/.zshrs}/images/*.rkyv(N:t:r) )
+                            shards=( ${shards#*-} )
+                            _wanted shards expl 'shard name' compadd -a shards && return 0
+                        else
+                            _files && return 0
+                        fi
+                        ;;
+                esac
+                ;;
+            watch)
+                _directories && return 0
+                ;;
+            log)
+                # Routed to zlog(args); verbs mirror zlog in daemon/builtins.rs.
+                local -a lverbs
+                lverbs=(
+                    'path:print the newest log file path'
+                    'tail:print the last lines of the logs'
+                    'grep:print log lines matching a regex'
+                    'clear:truncate every log file'
+                    'stats:bytes and lines per log file'
+                    'level:set the daemon log filter directive'
+                    'rotate:rotate the daemon log'
+                )
+                if (( CURRENT == 2 )); then
+                    _describe -t commands 'log verb' lverbs && return 0
+                elif [[ $words[2] == tail ]]; then
+                    local -a tflags
+                    tflags=(
+                        '-n:number of lines (default 100)'
+                        '--lines:number of lines (default 100)'
+                    )
+                    if [[ $words[CURRENT-1] == (-n|--lines) ]]; then
+                        _message 'number of lines' && return 0
+                    else
+                        _describe -t options 'option' tflags && return 0
+                    fi
+                elif [[ $words[2] == level && CURRENT -eq 3 ]]; then
+                    _message 'directive (e.g. info, debug, info,fsnotify=trace)' && return 0
+                elif [[ $words[2] == grep && CURRENT -eq 3 ]]; then
+                    _message 'regex' && return 0
+                fi
+                ;;
+            config)
+                # zcache_config; the keys are the ones op_config_set validates.
+                local -a cverbs keys
+                cverbs=(
+                    'list:show every runtime override (default)'
+                    'get:read one knob'
+                    'set:override one knob'
+                )
+                keys=(
+                    'long_cmd_threshold:seconds before a command counts as long'
+                    'log_max_bytes:log size before rotation'
+                    'log_max_rotations:rotated log files kept'
+                )
+                if (( CURRENT == 2 )); then
+                    _describe -t commands 'config verb' cverbs && return 0
+                elif (( CURRENT == 3 )) && [[ $words[2] == (get|set) ]]; then
+                    _describe -t keys 'config key' keys && return 0
+                elif (( CURRENT == 4 )) && [[ $words[2] == set ]]; then
+                    _message 'value' && return 0
+                fi
+                ;;
         esac
         ;;
 esac

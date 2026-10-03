@@ -1,13 +1,14 @@
 #compdef zcomplete
 
-# Push a completion candidate to the daemon's shared completion
-# cache. Other shells running compinit will see it without re-
-# walking fpath.
+# Ask the daemon's `complete` op for candidates (commands, handlers,
+# history) matching a command-line prefix, and print the JSON reply.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
-# (daemon/builtins.rs); takes no sub-commands.
+# (daemon/builtins.rs); arguments mirror zcomplete in
+# daemon/zcomplete_builtin.rs: one PREFIX and --limit N.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-# No sub-commands: fall through to the default completer so
-# file/parameter arguments still complete.
-_default
+_arguments \
+    '--limit[maximum candidates]:limit:' \
+    '(- *)'{-h,--help}'[print usage]' \
+    '1:command-line prefix:_command_names -e'
