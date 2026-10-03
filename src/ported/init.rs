@@ -1417,31 +1417,26 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
 
     crate::ported::prompt::set_default_colour_sequences(); // c:1313
 
-    // ZSH_EXEPATH                                                           // c:1315
-    {
-        let exename = argv0.lock().unwrap().clone(); // c:1318
-        let exename = unmeta(&exename); // c:1318
-                                        // c:1319 — `cwd = pwd;` (the in-shell logical cwd global).
-                                        //          Read paramtab; was reading OS env which can lag.
-        let cwd = getsparam("PWD").map(|s| unmeta(&s));
-        let mypath = getmypath(
-            Some(&exename), // c:1320
-            cwd.as_deref(),
-        );
-        if let Some(mp) = mypath {
-            // c:1323
-            std::env::set_var("ZSH_EXEPATH", &mp); // c:1324
-        }
-    }
+    // zsh-5.9.1 Src/init.c:1182-1186 (no ZSH_EXEPATH block: that param is
+    // dev-branch only; zsh 5.9.2 has no $ZSH_EXEPATH).
+    //
+    // These are PARAMETERS (`setsparam`), not environment entries. The port
+    // used `std::env::set_var`, which put ZSH_EXEPATH / ZSH_SCRIPT /
+    // ZSH_EXECUTION_STRING / ZSH_NAME into the environ every external
+    // command inherits; under zsh a child sees none of them.
     if let Some(cmd) = cmd {
-        // c:1340
-        std::env::set_var("ZSH_EXECUTION_STRING", cmd); // c:1340
+        // c:1182
+        crate::ported::params::setsparam("ZSH_EXECUTION_STRING", cmd); // c:1183
     }
     if let Some(rs) = runscript {
-        // c:1340
-        std::env::set_var("ZSH_SCRIPT", rs); // c:1340
+        // c:1184
+        crate::ported::params::setsparam("ZSH_SCRIPT", rs); // c:1185
     }
-    std::env::set_var("ZSH_NAME", zsh_name); // c:1340
+    // c:1186 — `setsparam("ZSH_NAME", ztrdup(zsh_name));`. Not repeated
+    // here: ShellExecutor::new (vm_helper.rs, `setsparam("ZSH_NAME", "zsh")`)
+    // has already created the param with the literal "zsh", and writing the
+    // basename of argv[0] ("zshrs") over it would change $ZSH_NAME.
+    let _ = zsh_name;
 }
 
 /// Port of `static void setupshin(char *runscript)` from Src/init.c:1340.

@@ -418,3 +418,54 @@ mod startup_environment_order {
         assert_eq!(run(Path::new(zsh_path()), false), run(&zshrs_bin(), true));
     }
 }
+
+/// Parameters the shell sets for itself must not reach a child's environ.
+///
+/// zsh-5.9.1 Src/init.c:1182-1186 creates ZSH_EXECUTION_STRING / ZSH_SCRIPT /
+/// ZSH_NAME with `setsparam` (unexported), and Src/jobs.c:2123 keeps the
+/// `jobs -Z` span in a file-static. The port wrote all of them, plus the
+/// dev-only ZSH_EXEPATH, with `std::env::set_var`, so every external command
+/// run from a `zsh_main` shell (`-s`, `-i`, a terminal) saw them.
+mod shell_internal_env {
+    use super::*;
+    use std::io::Write;
+    use std::process::Stdio;
+
+    fn run_stdin(shell: &Path, zshrs: bool) -> String {
+        let script = "/usr/bin/env | /usr/bin/grep -E '^(ZSH_|__zshrs)'\n\
+                      print -r -- exepath=${+ZSH_EXEPATH}\n";
+        let mut c = Command::new(shell);
+        if zshrs {
+            c.arg("--zsh");
+        }
+        let mut child = c
+            .args(["-f", "-s"])
+            .env_clear()
+            .env("HOME", "/tmp")
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn shell");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let o = child.wait_with_output().expect("wait shell");
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    }
+
+    #[test]
+    fn stdin_shell_exports_no_internal_params() {
+        if !zsh_available() {
+            return;
+        }
+        let z = run_stdin(Path::new(zsh_path()), false);
+        assert_eq!(z, "exepath=0\n", "reference zsh output changed");
+        assert_eq!(run_stdin(&zshrs_bin(), true), z);
+        assert_eq!(run_stdin(&zshrs_bin(), false), z);
+    }
+}

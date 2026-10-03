@@ -2877,6 +2877,11 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
     -1 // c:2145-2147
 }
 
+/// Port of `static int hackspace;` from `Src/jobs.c:2073` (zsh-5.9.1):
+/// length of the writable argv/envp span `jobs -Z` may overwrite.
+#[allow(non_upper_case_globals)]
+pub static hackspace: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Port of `init_jobs(char **argv, char **envp)` from `Src/jobs.c:2164`.
 ///
 /// C body allocates the `jobtab[]` array sized to `MAXJOBS_ALLOC`,
@@ -2914,21 +2919,24 @@ pub fn init_jobs(argv: &[String], envp: &[String]) -> JobTable {
                                  // `hackspace` globals (the bin_fg -Z arm uses prctl directly on
                                  // Linux + pthread_setname_np on macOS, both bypassing the argv
                                  // overwrite trick). The scan computes the byte-distance only;
-                                 // record it via env-var bridge so a future setproctitle fallback
+                                 // record it in `hackspace` so a future setproctitle fallback
                                  // can read it.
     if !argv.is_empty() {
         // c:2187 hackzero = *argv
         let zero = argv[0].as_str();
-        let mut hackspace = zero.len(); // c:2208 p - hackzero
+        let mut space = zero.len(); // c:2208 p - hackzero
                                         // Walk argv tail then envp; each element must be contiguous
                                         // (the C check is `q != p+1` after the previous's NUL).
         for entry in argv.iter().skip(1).chain(envp.iter()) {
             // c:2191/2197 walks
             // Without raw argv pointers we can't verify contiguity from
             // Rust's String wrappers — accumulate length conservatively.
-            hackspace += 1 + entry.len(); // c:2207-style p+1
+            space += 1 + entry.len(); // c:2207-style p+1
         }
-        env::set_var("__zshrs_hackspace", hackspace.to_string()); // record for jobs -Z
+        // c:2123 — `hackspace = p - hackzero;` stores into the file-static
+        // (c:2073), NOT the environment: an env entry was inherited by
+        // every external command the shell ran.
+        hackspace.store(space, std::sync::atomic::Ordering::Relaxed);
     }
     table // c:2210 done
 }
