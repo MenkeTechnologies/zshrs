@@ -6335,6 +6335,33 @@ impl ShellExecutor {
                     .map(|p| p.display().to_string());
             }
         }
+        // c:Src/exec.c:3650-3652 + c:3678-3685 — AUTOCD. With no command
+        // found, a one-word command with no redirections, in a shell
+        // reading commands from its input (SHINSTDIN), that names a
+        // directory — or, under CDABLEVARS, a parameter or user whose value
+        // or home is one — runs as `cd -- DIR`:
+        //     trycd = isset(AUTOCD) && isset(SHINSTDIN) && (!redir ||
+        //             empty(redir)) && args && !empty(args) &&
+        //             !nextnode(firstnode(args)) && *peekfirst(args);
+        //     if (!hn && trycd && (s = cancd(peekfirst(args)))) { … "cd" … }
+        // The ported execcmd_exec carries this; the compiled path every
+        // literal command takes reaches only here, so `tmp` from `/`,
+        // `/tmp` or a CDABLEVARS name reported "command not found".
+        if hashed_prog.is_none()
+            && defpath == 0
+            && args.is_empty()
+            && !cmd.is_empty()
+            && crate::ported::zsh_h::isset(crate::ported::zsh_h::AUTOCD)
+            && crate::ported::zsh_h::isset(crate::ported::zsh_h::SHINSTDIN)
+            && !crate::fusevm_bridge::own_redirect_scope(self)
+        {
+            if let Some(dir) = crate::ported::exec::cancd(cmd) {
+                return Ok(crate::fusevm_bridge::dispatch_builtin_raw(
+                    "cd",
+                    vec!["--".to_string(), dir],
+                ));
+            }
+        }
         // c:Src/exec.c:810-828 — `/* for command -p, search the default path */
         //     if (defpath) {
         //         char pbuf[MAXCMDLEN];

@@ -16312,3 +16312,34 @@ fn test_autocd_skips_a_word_that_names_a_command() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// c:Src/exec.c:3650-3652 + c:3678-3685 — AUTOCD for a literal command
+/// word. The ported execcmd_exec had the step; the compiled path every
+/// literal command takes did not, so `tmp`, `/tmp` and a CDABLEVARS name
+/// all reported "command not found". A redirection, or a word that names
+/// nothing, still does. SHINSTDIN comes from reading the script on stdin.
+/// Expected output is zsh 5.9's.
+#[test]
+fn test_autocd_for_a_literal_command_word() {
+    let script = "PS1=\nsetopt autocd cdablevars\nbuiltin cd /\ntmp\nprint -r -- \"A=$PWD\"\nbuiltin cd /\ncdv=/usr\ncdv\nprint -r -- \"B=$PWD\"\nbuiltin cd /\n/tmp\nprint -r -- \"C=$PWD\"\nbuiltin cd /\ntmp >/dev/null 2>&1\nprint -r -- \"D=$PWD\"\nbuiltin cd /\nnosuchthing_zz 2>/dev/null\nprint -r -- \"E=$PWD\"\n";
+    let mut child = Command::new(zshrs_bin())
+        .args(["-f", "-i"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn zshrs");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(script.as_bytes())
+        .expect("write script");
+    let out = child.wait_with_output().expect("wait zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let got: Vec<&str> = stdout
+        .split(|c: char| c.is_whitespace() || c == '%')
+        .filter(|w| w.len() > 2 && w.as_bytes()[1] == b'=' && w.as_bytes()[0].is_ascii_uppercase())
+        .collect();
+    assert_eq!(got, ["A=/tmp", "B=/usr", "C=/tmp", "D=/", "E=/"], "stdout: {stdout:?}");
+}

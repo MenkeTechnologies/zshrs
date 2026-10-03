@@ -1177,6 +1177,16 @@ fn command_whence(post: &[String], dash_p: bool) -> i32 {
     )
 }
 
+/// Whether the redirect scope on top of the stack was opened by the
+/// command now dispatching — its OWN redirections — rather than by an
+/// enclosing compound command. C asks the same of the command's local
+/// `redir` list / `save[]` array (c:Src/exec.c:3651, c:4300).
+/// !!! RUST-ONLY — no C counterpart.
+pub(crate) fn own_redirect_scope(exec: &ShellExecutor) -> bool {
+    let depth = exec.redirect_scope_stack.len();
+    depth > 0 && REDIR_SCOPE_OPENED.with(|c| c.get()) == (SUBLIST_SERIAL.with(|c| c.get()), depth)
+}
+
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native p10k engine intercept (src/extensions/p10k): sourcing
@@ -1958,10 +1968,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // c:Src/exec.c:4300 `save[1] == -2` — this command's own redirections
     // did not touch fd 1.
     let stdout_unredirected = with_executor(|exec| {
-        let depth = exec.redirect_scope_stack.len();
-        let own_scope = REDIR_SCOPE_OPENED.with(|c| c.get())
-            == (SUBLIST_SERIAL.with(|c| c.get()), depth);
-        !(own_scope
+        !(own_redirect_scope(exec)
             && exec
                 .redirect_scope_stack
                 .last()
