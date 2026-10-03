@@ -1,10 +1,10 @@
 #compdef intercept_proceed
 
 # Inside an `intercept around` body, run the intercepted command with its
-# original $INTERCEPT_NAME / $INTERCEPT_ARGS. Takes no arguments.
+# original $INTERCEPT_NAME / $INTERCEPT_ARGS.
 #
-# zshrs builtin. Mirrors builtin_intercept_proceed
-# (src/extensions/ext_builtins.rs), which ignores its argv; keep in sync.
+# zshrs builtin. builtin_intercept_proceed (src/extensions/ext_builtins.rs)
+# ignores its argv, so nothing is completed.
 # Bundled into ~/.zshrs/functions by build.rs.
 
 _message 'no arguments'

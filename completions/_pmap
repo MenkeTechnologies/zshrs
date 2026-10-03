@@ -9,9 +9,12 @@
 # same name is unrelated to it.
 #
 # Arguments mirror builtin_pmap (src/extensions/ext_builtins.rs): argv[0]
-# is the template, argv[1..] the items, no options; keep in sync.
+# is the template, argv[1..] the items (at least one), no options; keep in
+# sync. Each item runs `zshrs --zsh -c TEMPLATE` with {} bound to the
+# item, word-split on IFS. Items are arbitrary words; files are only the
+# common case.
 # Bundled into ~/.zshrs/functions by build.rs.
 
 _arguments \
     '1:command template ({} is replaced by each item):_cmdstring' \
-    '*:item:_files'
+    '*:item:_default'

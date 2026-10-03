@@ -3,10 +3,10 @@
 # Block on a job started by `async`, print its captured stdout and return
 # its exit status: `await $id`.
 #
-# zshrs builtin. builtin_await (src/extensions/ext_builtins.rs) reads only
-# argv[0] as a numeric job ID and takes no options. Job IDs are held in the
-# shell's async table and are not exposed to shell code, so they cannot be
-# listed here; keep in sync.
+# zshrs builtin. builtin_await (src/extensions/ext_builtins.rs) takes no
+# options and reads only the first argument, a numeric job ID. The IDs live
+# in the executor's async_jobs table (src/vm_helper.rs), which no parameter
+# or builtin exposes, so they cannot be listed here.
 # Bundled into ~/.zshrs/functions by build.rs.
 
 _arguments '1:async job ID (printed by async):'

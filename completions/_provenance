@@ -4,16 +4,19 @@
 # tracking, `provenance NAME` prints where its bytes came from.
 #
 # zshrs builtin. Flags mirror builtin_provenance
-# (src/extensions/ext_builtins.rs); keep in sync.
+# (src/extensions/ext_builtins.rs); keep in sync. Leading words of the
+# form -X... are bundled flags; `--` or the first other word ends them,
+# and every word after that is a name. Precedence: -c, then -a (-ua
+# stops tracking everything), then -m, -u, -j, then -l / no names.
 # Bundled into ~/.zshrs/functions by build.rs.
 
 local curcontext=$curcontext state line
 typeset -A opt_args
 
-_arguments -s -S -C \
+_arguments -s -S -A '-*' -C \
   '-m[start tracking the named parameters or functions]' \
   '-u[stop tracking the named ones and drop their lineage (-ua: stop tracking everything)]' \
-  '-j[print the lineage as JSON]' \
+  '-j[print the first name'\''s lineage as JSON]' \
   '-l[list every tracked parameter and function]' \
   '-c[clear every lineage and disarm]' \
   '-f[act on shell functions instead of parameters]' \
@@ -22,11 +25,30 @@ _arguments -s -S -C \
 
 case $state in
   name)
-    # A bare name reads whichever namespace holds it; -f picks functions.
-    if (( $+opt_args[-f] )); then
-      _functions
-    else
-      _alternative 'parameters:parameter:_parameters' 'functions:function:_functions'
+    local -a tracked expl
+    if (( $+opt_args[-m] )); then
+      # -m arms any parameter or function; a bare name that is only a
+      # function arms the function.
+      if (( $+opt_args[-f] )); then
+        _functions
+      else
+        _alternative 'parameters:parameter:_parameters' 'functions:function:_functions'
+      fi
+      return
     fi
+    if (( $+opt_args[-c] || $+opt_args[-a] || $+opt_args[-l] )); then
+      _message 'no names'
+      return
+    fi
+    # -u, -j and a bare read act on tracked names only. `provenance -l`
+    # prints each one unindented: NAME for a parameter, NAME() for a
+    # function; the rest of the listing is indented or starts with `…`.
+    tracked=( ${(M)${(f)"$(provenance -l 2>/dev/null)"}:#[^[:space:]…]*} )
+    if (( $+opt_args[-f] )); then
+      tracked=( ${${(M)tracked:#*\(\)}%\(\)} )
+    else
+      tracked=( ${tracked%\(\)} )
+    fi
+    _wanted names expl 'tracked name' compadd -a tracked
     ;;
 esac

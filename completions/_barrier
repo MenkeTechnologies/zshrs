@@ -1,13 +1,14 @@
 #compdef barrier
 
 # Run commands in parallel and wait for all of them:
-# `barrier 'cmd1' ::: 'cmd2' ::: 'cmd3'`; returns the highest exit status.
+# `barrier cmd1 args ::: cmd2 args ::: cmd3`; returns the highest exit status.
 #
-# zshrs builtin. builtin_barrier (src/extensions/ext_builtins.rs) splits
-# its arguments on `:::` and joins each group into one `sh -c` command, so
-# the words after `barrier` or after the last `:::` complete as a command
-# line; keep in sync.
+# zshrs builtin. builtin_barrier (src/extensions/ext_builtins.rs) takes no
+# options: it splits its arguments on `:::` words and runs each group with
+# `sh -c`, so each group completes as a command line.
 # Bundled into ~/.zshrs/functions by build.rs.
+
+local ret=1 expl
 
 # Drop everything up to the last `:::`; otherwise drop `barrier` itself.
 if ! compset -N ':::'; then
@@ -15,4 +16,11 @@ if ! compset -N ':::'; then
     (( CURRENT-- ))
 fi
 
-_normal
+# Once a group has a command word, `:::` may start the next group.
+if (( CURRENT > 1 )) && [[ -z $PREFIX || $PREFIX == :* ]]; then
+    _wanted separators expl 'group separator' compadd -- ::: && ret=0
+fi
+
+_normal && ret=0
+
+return ret

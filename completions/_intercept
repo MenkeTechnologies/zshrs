@@ -2,25 +2,18 @@
 
 # AOP advice on commands: `intercept before|after|around PATTERN { code }`
 # registers, `intercept list` shows, `intercept remove ID` drops one,
-# `intercept clear` drops all. PATTERN is a command name, `*`/`all`, or a
-# glob matched against the command name or full command line.
+# `intercept clear` drops all.
 #
 # zshrs builtin. Sub-commands mirror builtin_intercept
-# (src/extensions/ext_builtins.rs); pattern rules mirror intercept_matches
-# (src/extensions/intercepts.rs); keep in sync.
+# (src/extensions/ext_builtins.rs): the advice verbs take PATTERN and join
+# the remaining words into the code, stripping one surrounding `{ }`.
+# PATTERN rules mirror intercept_matches (src/extensions/intercepts.rs):
+# `*` or `all`, an exact command name, or a glob with `*`/`?` matched
+# against the command name or the full command line.
 # Bundled into ~/.zshrs/functions by build.rs.
 
 local curcontext=$curcontext state line
-local -a verbs
-
-verbs=(
-    'before:run code before every matching command'
-    'after:run code after every matching command'
-    'around:run code in place of every matching command (intercept_proceed runs it)'
-    'list:show all registered intercepts'
-    'remove:remove the intercept with the given ID'
-    'clear:remove all intercepts'
-)
+typeset -A opt_args
 
 _arguments -C \
     '1:sub-command:->verb' \
@@ -28,21 +21,64 @@ _arguments -C \
 
 case $state in
     verb)
+        local -a verbs
+        verbs=(
+            'before:run code before every matching command'
+            'after:run code after every matching command'
+            'around:run code in place of every matching command (intercept_proceed runs it)'
+            'list:show all registered intercepts'
+            'remove:remove the intercept with the given ID'
+            'clear:remove all intercepts'
+        )
         _describe -t commands 'sub-command' verbs && return 0
         ;;
     rest)
         case $words[1] in
             before|after|around)
                 if (( CURRENT == 2 )); then
-                    _alternative \
-                        'all:match every command:(all)' \
-                        'commands:command:_command_names -e' && return 0
+                    # PATTERN: a match-all word or a command name (a glob
+                    # with `*`/`?` is typed by hand).
+                    local ret=1
+                    local -a all
+                    all=(
+                        'all:match every command'
+                        '*:match every command'
+                    )
+                    _describe -t patterns 'match-all pattern' all && ret=0
+                    _command_names && ret=0
+                    return ret
                 else
-                    _message 'advice code' && return 0
+                    # The code is shell code: complete it as a command line
+                    # after an optional opening `{`.
+                    local ret=1 expl
+                    if (( CURRENT == 3 )) && [[ -z $PREFIX ]]; then
+                        _wanted braces expl 'code block' compadd -- '{' && ret=0
+                    fi
+                    if ! compset -N '{'; then
+                        shift 2 words
+                        (( CURRENT -= 2 ))
+                    fi
+                    _normal && ret=0
+                    return ret
                 fi
                 ;;
             remove)
-                (( CURRENT == 2 )) && _message 'intercept ID (see intercept list)' && return 0
+                if (( CURRENT == 2 )); then
+                    # IDs from `intercept list`, the same table remove edits.
+                    local -a rows ids
+                    local row
+                    rows=( ${(f)"$(intercept list 2>/dev/null)"} )
+                    rows=( ${rows//$'\e'\[[0-9;]#m/} )
+                    for row in ${rows[2,-1]}; do
+                        row=${row##[[:space:]]#}
+                        [[ $row == <->* ]] || continue
+                        ids+=( "${row%%[[:space:]]*}:${${row#*[[:space:]]}##[[:space:]]#}" )
+                    done
+                    _describe -t intercept-ids 'intercept ID' ids && return 0
+                fi
+                ;;
+            list|clear)
+                _message 'no arguments'
                 ;;
         esac
         ;;

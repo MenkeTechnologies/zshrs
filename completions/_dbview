@@ -1,43 +1,70 @@
 #compdef dbview
 
-# Browse the zshrs SQLite caches without SQL: `dbview` lists tables,
-# `dbview TABLE [NAME|PATTERN] [--count]` dumps or filters one.
+# Browse the zshrs SQLite caches without SQL: `dbview` lists the caches,
+# `dbview TABLE [FILTER] [--count|-c]` dumps or filters one table.
 #
-# zshrs builtin. Tables and flags mirror builtin_dbview
-# (src/extensions/ext_builtins.rs); keep in sync. The first word is
-# always the table (a leading -c is read as a table name), so the
-# --count/-c flag is offered only after it.
+# zshrs builtin. builtin_dbview (src/extensions/ext_builtins.rs) takes no
+# options before the table: argv[0] is always the table, argv[1] the
+# filter, and a `--count`/`-c` word anywhere after the table prints only
+# the row count. The plugins table ignores both the filter and the count.
 # Bundled into ~/.zshrs/functions by build.rs.
 
-local -a tables
-tables=(
-  'autoloads:autoload cache (name, source, body and bytecode size)'
-  'comps:command to completion-function map'
-  'executables:PATH executables cache'
-  'history:recent history entries, or a search'
-  'plugins:plugin source cache counts'
-)
+local curcontext=$curcontext state line
+typeset -A opt_args
 
-if (( CURRENT == 2 )); then
-  _describe -t tables 'table' tables
-  return
-fi
+_arguments -C \
+    '1:table:->table' \
+    '*::arg:->rest' && return 0
 
-local -a flags
-flags=(
-  '--count:print only the row count'
-  '-c:print only the row count'
-)
-
-if [[ $PREFIX == -* ]] || (( CURRENT > 3 )); then
-  _describe -t options 'option' flags
-  return
-fi
-
-# The second word is the row filter; its meaning depends on the table.
-case $words[2] in
-  autoloads)         _functions ;;
-  comps|executables) _command_names -e ;;
-  history)           _message -e patterns 'history search pattern' ;;
-  *)                 _message 'no filter' ;;
+case $state in
+    table)
+        local -a tables
+        tables=(
+            'autoloads:compsys.db fpath completion functions: name, source, body and bytecode size'
+            'comps:compsys.db command to completion-function map ($_comps)'
+            'executables:compsys.db PATH executables cache'
+            'history:history.db recent entries, or a search'
+            'plugins:plugins.db plugin and cached-function counts'
+        )
+        _describe -t tables 'table' tables && return 0
+        ;;
+    rest)
+        # words is shifted: words[1] is the table, CURRENT 2 the filter.
+        local -a flags names expl
+        flags=(
+            '--count:print only the row count'
+            '-c:print only the row count'
+        )
+        if [[ $words[1] == plugins ]]; then
+            _message "no arguments (plugins ignores filter and count)"
+            return 1
+        fi
+        if (( CURRENT > 2 )) || [[ $PREFIX == -* ]]; then
+            _describe -O 'option' flags && return 0
+            return 1
+        fi
+        case $words[1] in
+            autoloads)
+                # Exact-name lookup (get_autoload). Rows are the files
+                # compinit scans in fpath (compinit sh:524 glob).
+                names=( ${^fpath}/^([^_]*|*[\;\|\&]*|*~|*.zwc)(N:t) )
+                _wanted functions expl 'autoload name' compadd -a names && return 0
+                ;;
+            comps)
+                # Substring match on the command column (the $_comps keys).
+                names=( ${(k)_comps} )
+                _wanted commands expl 'command (substring)' compadd -a names && return 0
+                ;;
+            executables)
+                # Substring match on the executable name ($PATH commands).
+                _command_names -e && return 0
+                ;;
+            history)
+                # FTS5 prefix-phrase search (HistoryEngine::search).
+                _message -e patterns "history search text"
+                ;;
+        esac
+        ;;
 esac
+
+return 1

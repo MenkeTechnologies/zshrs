@@ -1,26 +1,34 @@
 #compdef nameref
 
-# ksh93 named reference: `nameref NAME=REFERENT` is `typeset -n NAME=REFERENT`.
+# ksh93 named reference: `nameref [-gpru] NAME[=REFERENT] ...` is
+# `typeset -n NAME=REFERENT`.
 #
-# zshrs builtin. Options mirror the `nameref` BUILTIN entry in
-# src/ported/builtin.rs (bin_typeset, optstr "gpru", default flag "n"),
-# itself a port of Src/Modules/ksh93.c bintab; keep in sync.
+# zshrs builtin. The `nameref` BUILTIN entry in src/ported/builtin.rs
+# (bin_typeset, BINF_ASSIGN, optstr "gpru", default flag "n") is a port of
+# Src/Modules/ksh93.c bintab; option meanings are typeset's for -n
+# (Doc/Zsh/builtins.yo, typeset -n).
 # Bundled into ~/.zshrs/functions by build.rs.
 
 local curcontext=$curcontext state line
 typeset -A opt_args
 
 _arguments -s -S -C \
-    '-g[do not restrict the reference to local scope]' \
+    '-g[global: do not make the reference local to the function]' \
     '-p[print the named references as typeset commands]' \
     '-r[mark the references readonly]' \
     '-u[resolve the referent in the calling function scope]' \
-    '*: :->ref' && return 0
+    '*:name[=referent]:->ref' && return 0
 
 case $state in
     ref)
+        local -a refs expl
         if compset -P '*='; then
+            # The referent: any parameter, set or not yet.
             _parameters && return 0
+        elif (( $+opt_args[-p] )); then
+            # -p NAME prints existing references.
+            refs=( ${(k)parameters[(R)nameref*]} )
+            _wanted namerefs expl 'named reference' compadd -a refs && return 0
         else
             _parameters -q -S = && return 0
         fi

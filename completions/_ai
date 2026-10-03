@@ -1,71 +1,102 @@
 #compdef ai
 
-# zsh completion for the `ai` builtin (src/extensions/ai.rs).
-# Mirrors the flag table in `HELP` there — keep in sync when a flag is
-# added or renamed.
+# Call a language model from the shell: stream the answer to stdout, or
+# assign it to a parameter with -v/-a.
+#
+# zshrs builtin. builtin_ai (src/extensions/ext_builtins.rs) hands argv to
+# parse_flags (src/extensions/ai.rs). Every flag is its own word (no
+# clustering: `-nk` is a bad option), flags are read up to `--` anywhere on
+# the line, and a lone `-` reads the prompt from stdin. The report flags
+# (-c -K -H -G -h --help -M) print and ignore the prompt; -S is applied
+# before them. Providers mirror the dispatch in call(), config keys mirror
+# config_set(). Bundled into ~/.zshrs/functions by build.rs.
 
-local -a providers config_keys
+local curcontext=$curcontext state line
+typeset -A opt_args
 
-providers=(
-    'anthropic:api.anthropic.com — the default'
-    'openai:api.openai.com'
-    'local:any OpenAI-compatible server ($ZSHRS_AI_BASE_URL)'
-    'compat:alias for local'
-    'openai_compat:alias for local'
-    'ollama:local Ollama daemon ($OLLAMA_HOST)'
-    'gemini:Google AI Studio ($GOOGLE_API_KEY)'
-    'google:alias for gemini'
-)
+# A report flag ends the call: no prompt and no request flag goes with it.
+local report='(-c -K -H -G -h --help -M -m -s -P -t -T -o -n -k -b -v -a *)'
 
-config_keys=(
-    'provider:default provider'
-    'model:default model id'
-    'api_key_env:name of the env var holding the API key'
-    'base_url:base URL for the local and ollama providers'
-    'cache:in-process response cache on or off'
-    'max_cost_run:USD ceiling for this shell process (0 disables)'
-    'max_tokens:default max output tokens'
-    'timeout:default request timeout in seconds'
-)
-
-# The reporting flags each end the command line on their own, so they
-# are mutually exclusive with everything else.
-_arguments -s -S \
-    '(- *)-c[report cost and token counts for this session]' \
-    '(- *)-K[clear the response cache]' \
-    '(- *)-H[show recent call history]' \
-    '(- *)-G[show the session configuration]' \
-    '(- *)'{-h,--help}'[show usage]' \
+_arguments -S -C \
+    "$report-c[report cost and token counts for this session]" \
+    "$report-K[clear the response cache]" \
+    "$report-H[show recent call history]" \
+    "$report-G[show the session configuration]" \
+    "$report"{-h,--help}'[show usage]' \
+    "$report-M[install a mock response]:pattern=response (regex=text):" \
     '*-S[set a session default]:key=value:->configkey' \
-    '-M[install a mock response]:pattern=response:' \
-    '-m[model id]:model:(claude-opus-5 claude-sonnet-5 claude-haiku-4-5 claude-fable-5-1 claude-opus-4-8)' \
+    '-m[model id]:model:->model' \
     '-s[system prompt]:system prompt:' \
     '-P[provider]:provider:->provider' \
-    '-t[max output tokens]:tokens:' \
-    '-T[temperature]:temperature:(0 0.2 0.5 0.7 1)' \
-    '-o[request timeout in seconds]:seconds:' \
+    '-t[max output tokens]:max output tokens (integer):' \
+    '-T[temperature]:temperature (number):' \
+    '-o[request timeout]:timeout (integer seconds):' \
     '-n[bypass the response cache]' \
     '-k[cache the system prefix (Anthropic prompt caching)]' \
     '-b[buffer the response instead of streaming it]' \
-    '(-a)-v[assign the response to a scalar parameter]:parameter:_parameters -g "scalar*"' \
-    '(-v)-a[assign the response lines to an array parameter]:parameter:_parameters -g "array*"' \
-    '*:prompt:' && return 0
+    '(-a)-v[assign the response to a scalar parameter]:scalar parameter:_parameters' \
+    '(-v)-a[assign the response lines to an array parameter]:array parameter:_parameters -g "array*"' \
+    '*:prompt word (none or - reads stdin):' && return 0
 
 case $state in
     provider)
+        local -a providers
+        providers=(
+            'anthropic:api.anthropic.com (the default)'
+            'openai:api.openai.com'
+            'local:any OpenAI-compatible server ($ZSHRS_AI_BASE_URL)'
+            'compat:alias for local'
+            'openai_compat:alias for local'
+            'ollama:local Ollama daemon'
+            'gemini:Google AI Studio'
+            'google:alias for gemini'
+        )
         _describe -t providers 'provider' providers && return 0
         ;;
+    model)
+        # The builtin keeps no model catalog; offer the session default
+        # (the model= line of `ai -G`) and accept any id.
+        local -a models expl
+        models=( ${${(M)${(f)"$(ai -G 2>/dev/null)"}:#model=*}#model=} )
+        if (( $#models )); then
+            _wanted models expl 'model id' compadd -a models && return 0
+        else
+            _message 'model id'
+        fi
+        ;;
     configkey)
-        # Complete the key half only; the value is free-form.
-        compset -P '*='
-        if [[ $IPREFIX == *= ]]; then
+        local -a keys providers expl
+        if compset -P '*='; then
             case ${IPREFIX%=} in
-                provider) _describe -t providers 'provider' providers && return 0 ;;
-                cache)    _values 'boolean' true false && return 0 ;;
+                provider)
+                    providers=( anthropic openai local compat openai_compat ollama gemini google )
+                    _wanted providers expl 'provider' compadd -a providers && return 0
+                    ;;
+                cache)
+                    # config_set: 1/true/yes/on enable, anything else disables.
+                    _wanted values expl 'cache' compadd true false on off yes no 1 0 && return 0
+                    ;;
+                api_key_env)
+                    _parameters -g '*export*' && return 0
+                    ;;
+                max_cost_run) _message 'USD ceiling (number, 0 disables)' ;;
+                max_tokens)   _message 'max output tokens (integer)' ;;
+                timeout)      _message 'timeout (integer seconds)' ;;
+                *)            _message 'value' ;;
             esac
             return 1
         fi
-        _describe -t config-keys 'config key' config_keys -S = && return 0
+        keys=(
+            'provider:default provider'
+            'model:default model id'
+            'api_key_env:name of the env var holding the API key'
+            'base_url:base URL for the local and ollama providers'
+            'cache:response cache on or off'
+            'max_cost_run:USD ceiling for this shell process (0 disables)'
+            'max_tokens:default max output tokens'
+            'timeout:default request timeout in seconds'
+        )
+        _describe -t config-keys 'config key' keys -S = && return 0
         ;;
 esac
 

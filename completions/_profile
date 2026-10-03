@@ -5,12 +5,12 @@
 # `profile --clear`, `profile --dump`.
 #
 # zshrs builtin. Modes mirror builtin_profile
-# (src/extensions/ext_builtins.rs); only the FIRST word is a mode flag.
-# Keep in sync.
+# (src/extensions/ext_builtins.rs); keep in sync. Only args[0] is
+# compared against a mode; every other spelling is code: the args are
+# joined with spaces and run through execute_script, so the first word
+# may be any command, function, alias or builtin. `-s` and `-f` run
+# args[1..] joined the same way.
 # Bundled into ~/.zshrs/functions by build.rs.
-
-local curcontext=$curcontext state line
-typeset -A opt_args
 
 local -a modes
 modes=(
@@ -20,19 +20,23 @@ modes=(
   '-f:profile a function call'
 )
 
-if (( CURRENT == 2 )); then
-  if [[ $PREFIX == -* ]]; then
-    _describe -t modes 'mode' modes
-  else
-    _command_names -e
-  fi
+if (( CURRENT == 2 )) && [[ $PREFIX == -* ]]; then
+  _describe -t modes 'mode' modes
   return
 fi
 
 case $words[2] in
-  --clear|--dump) _message 'no arguments' ;;
-  -s) _message -e scripts 'script string' ;;
+  --clear|--dump)
+    _message 'no arguments' ;;
+  -s)
+    if (( CURRENT == 3 )); then
+      _cmdstring
+    else
+      _message 'more script words (joined with spaces)'
+    fi
+    ;;
   -f)
+    # `-f FUNC ARGS...` runs "FUNC ARGS..." as code.
     if (( CURRENT == 3 )); then
       _functions
     else
