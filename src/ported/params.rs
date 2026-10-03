@@ -6465,7 +6465,10 @@ pub fn getsparam(name: &str) -> Option<String> {
                     Some(p) => p,
                     None => return Some(None), // dangling target
                 };
-                if (pm.node.flags as u32 & PM_UNSET) != 0 {
+                // c:2261-2263 — fetchvalue drops an unset referent unless it
+                // is DECLARED; a declared one still has its element read.
+                let f = pm.node.flags as u32;
+                if (f & PM_UNSET) != 0 && (subscript.is_none() || (f & PM_DECLARED) == 0) {
                     return Some(None);
                 }
                 match subscript {
@@ -7719,7 +7722,32 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         new_s.push_str(us);
                     }
                     if new_s != s {
-                        return assignsparam(&new_s, val, flags);
+                        // c:2264-2287 — through a reference slice the Value's
+                        // pm is the ELEMENT (getarg's c:1584-1588 createparam
+                        // in the hash's table), so c:3270 `v->pm->node.flags
+                        // &= ~PM_DEFAULTED` never touches the base: a
+                        // TYPESET_TO_UNSET hash keeps reading as unset to
+                        // `typeset -p` while its element is stored. The direct
+                        // `name[sub]=` path below clears it on the base
+                        // (c:3229), so put the bits back.
+                        let base_defaulted = if rsub.is_some() {
+                            paramtab()
+                                .read()
+                                .ok()
+                                .and_then(|tb| tb.get(&t).map(|p| p.node.flags as u32 & PM_DEFAULTED))
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        let r = assignsparam(&new_s, val, flags);
+                        if base_defaulted == PM_DEFAULTED && r.is_some() {
+                            if let Ok(mut tb) = paramtab().write() {
+                                if let Some(p) = tb.get_mut(&t) {
+                                    p.node.flags |= PM_DEFAULTED as i32;
+                                }
+                            }
+                        }
+                        return r;
                     }
                 }
                 crate::ported::params::nameref_resolution::NotRef => {}

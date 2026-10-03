@@ -14063,6 +14063,20 @@ fn test_unset_through_reference_keeps_outer_declared() {
 }
 
 #[test]
+fn test_reference_slice_assignment_leaves_base_defaulted() {
+    // K01 "create hash by element nameref" (an expected failure upstream):
+    // through a reference slice the Value's pm is the element
+    // (c:Src/params.c:2264-2287), so c:3270 never clears PM_DEFAULTED on a
+    // TYPESET_TO_UNSET hash; the element is stored all the same.
+    let (st, out, err) = run_zshrs_parity(
+        "setopt typeset_to_unset; f() { typeset -A hash; typeset -n p='hash[y]'; p=HIT; \
+         typeset -p hash; print -r -- \"${hash[y]} $p\" }; f",
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(out, "typeset -A hash\nHIT HIT\n");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.
