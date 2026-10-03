@@ -56,9 +56,15 @@ struct ShellResult {
     exit: i32,
 }
 
+/// `$OLDPWD` is removed from both shells' environment. zsh master imports
+/// it at startup (Src/init.c:1255-1259, workers/52999) and zshrs ports that;
+/// the 5.9.2 reference predates it and always starts from `$PWD`. Inherited,
+/// it made every row that prints `$OLDPWD` (and `export -p`) pass or fail
+/// by the directory the INVOKING shell had last left.
 fn run_zsh(script: &str) -> ShellResult {
     let out = Command::new(zsh_path())
         .args(["-fc", script])
+        .env_remove("OLDPWD")
         .output()
         .expect("invoke zsh");
     ShellResult {
@@ -71,6 +77,7 @@ fn run_zsh(script: &str) -> ShellResult {
 fn run_zshrs(script: &str) -> ShellResult {
     let out = Command::new(zshrs_bin())
         .args(["--zsh", "-fc", script])
+        .env_remove("OLDPWD")
         .env_remove("ZSHRS_CACHE")
         .output()
         .expect("invoke zshrs");
