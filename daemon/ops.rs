@@ -1405,8 +1405,7 @@ async fn op_canonical_hydrate_view(state: &Arc<DaemonState>) -> OpResult {
 /// observe state at 100% fidelity, so this is the daemon's only path for
 /// learning .zshrc state — the static-walk pipeline was deleted.
 async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    use super::recorder_shard::{build_shard, fold_bundle, AttrRow, Bundle};
-    use std::collections::HashMap;
+    use super::recorder_shard::{build_shard, catalog_rows, fold_bundle, Bundle};
 
     let started = std::time::Instant::now();
 
@@ -1429,84 +1428,9 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // file/line carried through via replace_subsystem_with_attrs so
     // `zwhere alias gst` shows where it was defined.
     let canon = &state.canonical;
-    let sid = || Some(bundle_shell_id.clone());
-    let map4 =
-        |m: &HashMap<String, AttrRow>| -> Vec<(String, String, Option<String>, Option<u32>)> {
-            m.iter()
-                .map(|(k, (v, file, line))| (k.clone(), json_string(v), file.clone(), *line))
-                .collect()
-        };
-    canon.replace_subsystem_with_attrs("alias", map4(&folded.aliases), None, sid());
-    canon.replace_subsystem_with_attrs("galias", map4(&folded.galias), None, sid());
-    canon.replace_subsystem_with_attrs("salias", map4(&folded.salias), None, sid());
-    canon.replace_subsystem_with_attrs("function", map4(&folded.functions), None, sid());
-    canon.replace_subsystem_with_attrs("env", map4(&folded.env_exports), None, sid());
-    canon.replace_subsystem_with_attrs("params", map4(&folded.params), None, sid());
-    canon.replace_subsystem_with_attrs("bindkey", map4(&folded.bindkeys), None, sid());
-    canon.replace_subsystem_with_attrs("compdef", map4(&folded.compdef), None, sid());
-    canon.replace_subsystem_with_attrs("named_dir", map4(&folded.named_dirs), None, sid());
-    canon.replace_subsystem_with_attrs(
-        "zstyle",
-        folded
-            .zstyle
-            .iter()
-            .enumerate()
-            .map(|(i, (p, (r, file, line)))| {
-                (format!("{}:{}", i, p), json_string(r), file.clone(), *line)
-            })
-            .collect::<Vec<_>>(),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_with_attrs(
-        "zmodload",
-        folded
-            .zmodload
-            .iter()
-            .map(|(m, (_v, file, line))| (m.clone(), json_string(""), file.clone(), *line))
-            .collect::<Vec<_>>(),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_with_attrs(
-        "setopt",
-        folded
-            .setopts
-            .iter()
-            .map(|(o, (_v, file, line))| (o.clone(), "\"on\"".to_string(), file.clone(), *line))
-            .chain(folded.unsetopts.iter().map(|(o, (_v, file, line))| {
-                (o.clone(), "\"off\"".to_string(), file.clone(), *line)
-            }))
-            .collect::<Vec<_>>(),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_with_attrs("trap", map4(&folded.traps), None, sid());
-    canon.replace_subsystem_with_attrs("sched", map4(&folded.sched), None, sid());
-    canon.replace_subsystem_with_attrs("zle", map4(&folded.zle_widgets), None, sid());
-    canon.replace_subsystem_with_attrs("completion", map4(&folded.completions), None, sid());
-    // params_typed values are already JSON; pass them through verbatim
-    // so the canonical row preserves the structured payload (attrs +
-    // value + value_array + value_assoc) for replay.
-    canon.replace_subsystem_with_attrs(
-        "params_typed",
-        folded
-            .params_typed
-            .iter()
-            .map(|(k, (v, file, line))| (k.clone(), v.clone(), file.clone(), *line))
-            .collect::<Vec<_>>(),
-        None,
-        sid(),
-    );
-    let positional = |v: &[(String, AttrRow)]| -> Vec<(String, String, Option<String>, Option<u32>)> {
-        v.iter()
-            .enumerate()
-            .map(|(i, (p, (_v, file, line)))| (i.to_string(), json_string(p), file.clone(), *line))
-            .collect()
-    };
-    canon.replace_subsystem_with_attrs("source", positional(&folded.sourced), None, sid());
-    canon.replace_subsystem_with_attrs("path", positional(&folded.path), None, sid());
-    canon.replace_subsystem_with_attrs("fpath", positional(&folded.fpath), None, sid());
+    for (sub, rows) in catalog_rows(&folded) {
+        canon.replace_subsystem_with_attrs(sub, rows, None, Some(bundle_shell_id.clone()));
+    }
 
     let shard = build_shard(&bundle, &folded);
     let shard_path = match super::shard::write_canonical_shard(&state.paths, &shard) {
@@ -1551,12 +1475,6 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     );
     state.metrics.record_recorder_events(total as u64);
     Ok(payload)
-}
-
-/// Local helper: JSON-string-encode a value so canonical rows store the
-/// same shape (escaped + quoted) the legacy walker pipeline used.
-fn json_string(s: &str) -> String {
-    serde_json::Value::String(s.to_string()).to_string()
 }
 
 async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {

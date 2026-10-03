@@ -98,6 +98,9 @@ struct InMemory {
     /// Most-recent rkyv-shard mtime per file (for staleness checks; daemon-
     /// only — clients never read this).
     last_persist_at_ns: i64,
+    /// mtime of each `*-recorder.rkyv` as last applied by
+    /// [`CanonicalEngine::sync_recorder_shards`].
+    recorder_shard_mtimes: BTreeMap<PathBuf, std::time::SystemTime>,
 }
 
 /// Canonical-state engine. One instance lives in DaemonState; clients address
@@ -124,6 +127,7 @@ impl CanonicalEngine {
     pub fn load_from_disk(&self) -> Result<()> {
         let path = self.shard_path();
         if !path.exists() {
+            self.sync_recorder_shards();
             return Ok(());
         }
         let shard = read_canonical_shard(&path)?;
@@ -131,13 +135,86 @@ impl CanonicalEngine {
         g.rows.clear();
         Self::ingest_shard_into(&mut g.rows, &shard);
         g.last_persist_at_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        g.recorder_shard_mtimes.clear();
         tracing::info!(
             path = %path.display(),
             generation = shard.header.generation,
             entries = subsystem_total(&g.rows),
             "canonical engine loaded from disk"
         );
+        drop(g);
+        self.sync_recorder_shards();
         Ok(())
+    }
+
+    /// Apply every `images/*-recorder.rkyv` written since the last call.
+    ///
+    /// `zshrs-recorder` writes its shard itself, with no daemon in the
+    /// loop (`recorder_shard::write_bundle_shard`), so this is how the
+    /// daemon's catalog learns a recording: at startup, and before every
+    /// `definitions_*` read, a shard whose mtime moved replaces the
+    /// subsystems it carries. A shard with the
+    /// [`super::recorder_shard::CATALOG_EXTRA`] rows brings their file,
+    /// line and shell id; one written before that extra existed brings
+    /// values only. Returns the number of shards applied.
+    pub fn sync_recorder_shards(&self) -> usize {
+        let Ok(dir) = std::fs::read_dir(&self.paths.images) else {
+            return 0;
+        };
+        let mut changed: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+        {
+            let g = self.inner.read();
+            for entry in dir.flatten() {
+                let path = entry.path();
+                let is_recorder = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with("-recorder.rkyv"));
+                if !is_recorder {
+                    continue;
+                }
+                let Ok(mtime) = entry.metadata().and_then(|m| m.modified()) else {
+                    continue;
+                };
+                if g.recorder_shard_mtimes.get(&path) != Some(&mtime) {
+                    changed.push((path, mtime));
+                }
+            }
+        }
+        // Oldest first, so the most recent recording wins a subsystem two
+        // shards both carry.
+        changed.sort_by_key(|(_, mtime)| *mtime);
+        let mut applied = 0;
+        for (path, mtime) in changed {
+            let shard = match read_canonical_shard(&path) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), ?e, "recorder shard unreadable; catalog unchanged");
+                    continue;
+                }
+            };
+            let rows = match super::recorder_shard::decode_catalog(&shard.extras) {
+                Some((subs, shell_id)) => {
+                    for (sub, rows) in subs {
+                        self.replace_subsystem_with_attrs(&sub, rows, None, shell_id.clone());
+                    }
+                    "catalog"
+                }
+                None => {
+                    let mut by_sub = BTreeMap::new();
+                    Self::ingest_shard_into(&mut by_sub, &shard);
+                    for (sub, map) in by_sub {
+                        let rows = map.into_values().map(|r| (r.key, r.value, None, None));
+                        self.replace_subsystem_with_attrs(&sub, rows, None, None);
+                    }
+                    "values only"
+                }
+            };
+            self.inner.write().recorder_shard_mtimes.insert(path.clone(), mtime);
+            applied += 1;
+            tracing::info!(path = %path.display(), rows, "recorder shard applied to canonical catalog");
+        }
+        applied
     }
 
     fn ingest_shard_into(
@@ -592,4 +669,86 @@ fn unjson(s: &str) -> String {
         }
     }
     s.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::recorder_shard::{write_bundle_shard, Bundle};
+    use serde_json::json;
+
+    fn bundle(finished_at_ns: u64, aliases: &[(&str, &str, u32)]) -> Bundle {
+        let events: Vec<_> = aliases
+            .iter()
+            .enumerate()
+            .map(|(i, (name, value, line))| {
+                json!({
+                    "order_idx": i,
+                    "ts_ns": finished_at_ns,
+                    "kind": "alias",
+                    "name": name,
+                    "value": value,
+                    "file": "/home/u/.zshrc",
+                    "line": line,
+                    "fn_chain": null,
+                })
+            })
+            .collect();
+        serde_json::from_value(json!({
+            "started_at_ns": 1,
+            "finished_at_ns": finished_at_ns,
+            "cmdline": null,
+            "zdotdir": "/home/u",
+            "home": "/home/u",
+            "events": events,
+        }))
+        .unwrap()
+    }
+
+    fn alias_rows(engine: &CanonicalEngine) -> Vec<(String, String, Option<String>, Option<u32>)> {
+        let mut rows: Vec<_> = engine
+            .rows_for("alias")
+            .into_iter()
+            .map(|r| (r.key, unjson(&r.value), r.file, r.line))
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    /// `zshrs-recorder` writes its shard with no daemon running. The
+    /// catalog must pick it up both at startup and, for a recording made
+    /// while the daemon runs, on the next read, with each row's
+    /// definition site, and a re-recording must drop what it no longer
+    /// defines. Before the catalog read the shard, `zwhere alias gst`
+    /// printed nothing after every recording.
+    #[test]
+    fn recorder_shard_reaches_the_catalog_with_its_definition_site() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let paths = CachePaths::with_root(tmp.path());
+        paths.ensure_dirs().unwrap();
+
+        let first = write_bundle_shard(&paths, &bundle(10, &[("gst", "git status", 1), ("gco", "git checkout", 2)]))
+            .unwrap();
+        let engine = CanonicalEngine::new(paths.clone());
+        engine.load_from_disk().unwrap();
+        assert_eq!(
+            alias_rows(&engine),
+            vec![
+                ("gco".into(), "git checkout".into(), Some("/home/u/.zshrc".into()), Some(2)),
+                ("gst".into(), "git status".into(), Some("/home/u/.zshrc".into()), Some(1)),
+            ]
+        );
+        assert_eq!(engine.sync_recorder_shards(), 0, "an unchanged shard is not re-applied");
+
+        let second = write_bundle_shard(&paths, &bundle(20, &[("gst", "git status -sb", 1)])).unwrap();
+        assert_eq!(first, second, "one recorder shard per source root");
+        // A rewrite inside the same mtime tick must still count as new.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&second).unwrap().set_modified(later).unwrap();
+        assert_eq!(engine.sync_recorder_shards(), 1);
+        assert_eq!(
+            alias_rows(&engine),
+            vec![("gst".into(), "git status -sb".into(), Some("/home/u/.zshrc".into()), Some(1))]
+        );
+    }
 }

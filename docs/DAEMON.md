@@ -261,10 +261,19 @@ plugins change. See `docs/RECORDER.md` for the recorder design and
 The daemon's role narrowed from "active analyzer" to "passive
 canonical store + queryable catalog":
 
+- **Recorder shards** (`images/*-recorder.rkyv`) are how a recording
+  reaches the catalog. `zshrs-recorder` writes its shard with no
+  daemon in the loop; the canonical engine applies every shard whose
+  mtime moved at startup and before each `definitions_*` read
+  (`CanonicalEngine::sync_recorder_shards`), so `zwhere` sees a
+  recording without a daemon restart. The shard's `catalog_rows`
+  extra carries each row's file, line and `shell_id`; a shard written
+  before that extra existed contributes values only.
 - **Recorder ingest** (`recorder_ingest` op) folds a `RecorderBundle`
-  into the canonical engine, replaces every subsystem's row set
-  for the bundle's `shell_id`, hydrates the SQLite mirror, and
-  broadcasts `recorder_ingested` to opted-in subscribers.
+  sent over IPC into the same rows (`recorder_shard::catalog_rows`),
+  replaces every subsystem's row set for the bundle's `shell_id`,
+  hydrates the SQLite mirror, and broadcasts `recorder_ingested` to
+  opted-in subscribers.
 - **fsnotify** still watches files the recorder registered through
   `source_resolve`. When a watched file changes, the daemon emits
   `shard_updated` so subscribed clients know to re-mmap, but does

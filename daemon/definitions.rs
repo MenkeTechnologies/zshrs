@@ -51,6 +51,8 @@ const KNOWN_KINDS: &[&str] = &[
 ];
 /// `op_definitions_kinds` — see implementation.
 pub async fn op_definitions_kinds(state: &Arc<DaemonState>, _args: Value) -> OpResult {
+    // A recording since the last read lands in its shard, not over IPC.
+    state.canonical.sync_recorder_shards();
     // Filter to kinds that actually have rows so `kinds` reflects what
     // the user can usefully query right now.
     let mut populated: Vec<&str> = KNOWN_KINDS
@@ -68,6 +70,8 @@ pub async fn op_definitions_kinds(state: &Arc<DaemonState>, _args: Value) -> OpR
 }
 /// `op_definitions_query` — see implementation.
 pub async fn op_definitions_query(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    // A recording since the last read lands in its shard, not over IPC.
+    state.canonical.sync_recorder_shards();
     let kind_arg = args.get("kind").and_then(Value::as_str);
     let name_arg = args.get("name").and_then(Value::as_str);
     let prefix_arg = args.get("prefix").and_then(Value::as_str);
@@ -230,6 +234,8 @@ pub async fn op_definitions_emit(state: &Arc<DaemonState>, args: Value) -> OpRes
 ///   shell_b   REQUIRED — second shell_id (e.g. "bash")
 ///   kind      OPTIONAL — restrict to one kind; default = every known kind
 pub async fn op_definitions_diff(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    // A recording since the last read lands in its shard, not over IPC.
+    state.canonical.sync_recorder_shards();
     let shell_a = args
         .get("shell_a")
         .and_then(Value::as_str)

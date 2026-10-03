@@ -284,6 +284,131 @@ pub struct Folded {
     pub fpath: Vec<(String, AttrRow)>,
 }
 
+/// `extras` key holding the `zwhere` catalog: every folded row with its
+/// definition site, so the daemon can answer `zwhere alias gst` from the
+/// shard alone. Keys are `subsystem` [`ARGV_SEP`] `name`; values are the
+/// JSON-encoded value, file, line and shell id joined by [`ARGV_SEP`],
+/// with an empty field for a missing file or line.
+pub const CATALOG_EXTRA: &str = "catalog_rows";
+
+/// One `zwhere` catalog row: name, JSON-encoded value, file, line.
+pub type CatalogRow = (String, String, Option<String>, Option<u32>);
+
+/// The folded bundle as the daemon's canonical rows, subsystem by
+/// subsystem. The single source for both `recorder_ingest` (rows over
+/// IPC) and [`CATALOG_EXTRA`] (rows in the shard), so the two cannot
+/// disagree about what `zwhere` shows.
+pub fn catalog_rows(f: &Folded) -> Vec<(&'static str, Vec<CatalogRow>)> {
+    let keyed = |m: &HashMap<String, AttrRow>| -> Vec<CatalogRow> {
+        m.iter()
+            .map(|(k, (v, file, line))| (k.clone(), json_string(v), file.clone(), *line))
+            .collect()
+    };
+    let positional = |v: &[(String, AttrRow)]| -> Vec<CatalogRow> {
+        v.iter()
+            .enumerate()
+            .map(|(i, (p, (_v, file, line)))| (i.to_string(), json_string(p), file.clone(), *line))
+            .collect()
+    };
+    let zstyle = f
+        .zstyle
+        .iter()
+        .enumerate()
+        .map(|(i, (p, (r, file, line)))| (format!("{i}:{p}"), json_string(r), file.clone(), *line))
+        .collect();
+    let zmodload = f
+        .zmodload
+        .iter()
+        .map(|(m, (_v, file, line))| (m.clone(), json_string(""), file.clone(), *line))
+        .collect();
+    let setopt = f
+        .setopts
+        .iter()
+        .map(|(o, (_v, file, line))| (o.clone(), "\"on\"".to_string(), file.clone(), *line))
+        .chain(
+            f.unsetopts
+                .iter()
+                .map(|(o, (_v, file, line))| (o.clone(), "\"off\"".to_string(), file.clone(), *line)),
+        )
+        .collect();
+    // params_typed values are already JSON; they pass through verbatim so
+    // the row keeps the structured payload (attrs + value + value_array +
+    // value_assoc).
+    let params_typed = f
+        .params_typed
+        .iter()
+        .map(|(k, (v, file, line))| (k.clone(), v.clone(), file.clone(), *line))
+        .collect();
+    vec![
+        ("alias", keyed(&f.aliases)),
+        ("galias", keyed(&f.galias)),
+        ("salias", keyed(&f.salias)),
+        ("function", keyed(&f.functions)),
+        ("env", keyed(&f.env_exports)),
+        ("params", keyed(&f.params)),
+        ("bindkey", keyed(&f.bindkeys)),
+        ("compdef", keyed(&f.compdef)),
+        ("named_dir", keyed(&f.named_dirs)),
+        ("zstyle", zstyle),
+        ("zmodload", zmodload),
+        ("setopt", setopt),
+        ("trap", keyed(&f.traps)),
+        ("sched", keyed(&f.sched)),
+        ("zle", keyed(&f.zle_widgets)),
+        ("completion", keyed(&f.completions)),
+        ("params_typed", params_typed),
+        ("source", positional(&f.sourced)),
+        ("path", positional(&f.path)),
+        ("fpath", positional(&f.fpath)),
+    ]
+}
+
+/// [`catalog_rows`] encoded as the [`CATALOG_EXTRA`] bucket.
+fn encode_catalog(f: &Folded, shell_id: &str) -> HashMap<String, String> {
+    let sep = ARGV_SEP.to_string();
+    let mut out = HashMap::new();
+    for (sub, rows) in catalog_rows(f) {
+        for (name, value, file, line) in rows {
+            let line = line.map(|l| l.to_string()).unwrap_or_default();
+            let file = file.unwrap_or_default();
+            out.insert(
+                [sub, name.as_str()].join(&sep),
+                [value.as_str(), file.as_str(), line.as_str(), shell_id].join(&sep),
+            );
+        }
+    }
+    out
+}
+
+/// Decode the [`CATALOG_EXTRA`] bucket back into per-subsystem rows plus
+/// the recording's shell id. `None` when the shard predates the extra.
+pub fn decode_catalog(
+    extras: &HashMap<String, HashMap<String, String>>,
+) -> Option<(Vec<(String, Vec<CatalogRow>)>, Option<String>)> {
+    let bucket = extras.get(CATALOG_EXTRA)?;
+    let mut by_sub: HashMap<String, Vec<CatalogRow>> = HashMap::new();
+    let mut shell_id = None;
+    for (k, v) in bucket {
+        let Some((sub, name)) = k.split_once(ARGV_SEP) else {
+            continue;
+        };
+        let mut fields = v.split(ARGV_SEP);
+        let value = fields.next().unwrap_or("").to_string();
+        let file = fields.next().filter(|s| !s.is_empty()).map(str::to_string);
+        let line = fields.next().and_then(|s| s.parse().ok());
+        if let Some(sid) = fields.next().filter(|s| !s.is_empty()) {
+            shell_id = Some(sid.to_string());
+        }
+        by_sub.entry(sub.to_string()).or_default().push((name.to_string(), value, file, line));
+    }
+    Some((by_sub.into_iter().collect(), shell_id))
+}
+
+/// A JSON string literal for `s`, the encoding canonical rows store.
+fn json_string(s: &str) -> String {
+    serde_json::Value::String(s.to_string()).to_string()
+}
+
 /// Fold every event into its subsystem bucket. The bundle is end-state
 /// for the run, so a later event for the same key replaces an earlier
 /// one.
@@ -432,6 +557,8 @@ pub fn build_shard(bundle: &Bundle, f: &Folded) -> CanonicalShard {
     if let Some(end) = &bundle.end_state {
         apply_end_state(&mut shard, end);
     }
+    let shell_id = bundle.shell_id.as_deref().unwrap_or("zshrs");
+    shard.extras.insert(CATALOG_EXTRA.to_string(), encode_catalog(f, shell_id));
     shard
 }
 
