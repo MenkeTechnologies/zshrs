@@ -3311,6 +3311,12 @@ pub fn bin_zparseopts(
                 } else if i + 1 < args.len() {
                     i += 1; // c:366 — `else if ((arg = *++argv))`
                     args[i].clone()
+                } else if matches!(c, b'a' | b'A') {
+                    // 5.9.2 c:1820-1823 / c:1836-1839 — the `-a` / `-A` arms
+                    // own their missing-name diagnostic:
+                    // `else { zwarnnam(nam, "missing array name"); return 1; }`
+                    zwarnnam(nam, "missing array name");
+                    return 1;
                 } else {
                     // c:368-370 — `zwarnnam(name, "argument expected: -%c", execop)`
                     zwarnnam(nam, &format!("argument expected: -{}", c as char));
@@ -3443,21 +3449,25 @@ pub fn bin_zparseopts(
         }
     };
 
-    // c:1882-1888 — "allow a single '' or - spec to signify no options
-    // recognised":
+    // 5.9.2 (src/zsh/Src/Modules/zutil.c:1865-1877): the flag scan leaves
+    // `o` NULL only when it ran off the end of `args`; a `-` / `--`
+    // terminator sets `o = ""` first:
     //
-    //     if (*args && !args[1] && (!**args || !strcmp(*args, "-")))
-    //         args++;
-    //     else if (!*args) {
+    //     if (!o) { o = ""; break; }       /* terminator */
+    //     ...
+    //     if (!o) {
     //         zwarnnam(nam, "missing option descriptions");
     //         return 1;
     //     }
+    //
+    // So `zparseopts -D -` (terminator, no specs) parses nothing and returns
+    // 0, while `zparseopts -D` is the error. A lone `''` spec is not special
+    // in 5.9.2: it reaches the description loop below and is "invalid option
+    // description: ". (The "single '' or - spec" rule is 5.9.999's c:1882.)
     let mut i = spec_start;
-    if i < args.len() && args.len() - i == 1 && (args[i].is_empty() || args[i] == "-") {
-        i += 1; // c:1884
-    } else if i >= args.len() {
-        zwarnnam(nam, "missing option descriptions"); // c:1886
-        return 1; // c:1887
+    if i >= args.len() && !OPT_ISSET(ops, b'-') {
+        zwarnnam(nam, "missing option descriptions");
+        return 1;
     }
 
     // Phase 2: parse option descriptions (c:1890-1966).

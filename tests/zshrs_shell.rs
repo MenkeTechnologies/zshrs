@@ -9931,6 +9931,38 @@ fn test_zparseopts_no_args_errors() {
 }
 
 #[test]
+fn test_zparseopts_terminator_without_specs_succeeds() {
+    // zsh 5.9.2 Src/Modules/zutil.c:1865-1877: a `-` / `--` terminator in
+    // the flag scan sets `o = ""`, so running out of specs afterwards is not
+    // "missing option descriptions" — it parses nothing and returns 0.
+    // Only running off the end of the flag words is the error.
+    for code in ["zparseopts -D -", "zparseopts -a x -", "zparseopts -- -"] {
+        let (status, _, stderr) = run_zshrs(&format!("set -- -a; {code}"));
+        assert_eq!(status, 0, "{code}: {stderr}");
+        assert!(stderr.is_empty(), "{code}: {stderr}");
+    }
+    let (status, _, stderr) = run_zshrs("zparseopts -D");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("missing option descriptions"), "got: {stderr}");
+}
+
+#[test]
+fn test_zparseopts_empty_spec_and_missing_array_name() {
+    // zsh 5.9.2: a lone '' spec is "invalid option description: "
+    // (c:1881-1884), and `-a` / `-A` with nothing after them report the
+    // arms' own "missing array name" (c:1820-1823, c:1836-1839), not the
+    // generic parser's "argument expected".
+    let (status, _, stderr) = run_zshrs("zparseopts ''");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("invalid option description: "), "got: {stderr}");
+    for flag in ["-a", "-A"] {
+        let (status, _, stderr) = run_zshrs(&format!("zparseopts {flag}"));
+        assert_eq!(status, 1);
+        assert!(stderr.ends_with("missing array name\n"), "{flag}: {stderr}");
+    }
+}
+
+#[test]
 fn test_pwd_too_many_args_errors() {
     // zsh: `pwd extra arg` -> `pwd:1: too many arguments` exit 1.
     // pwd takes only flags; positional args are an error. zshrs
