@@ -14006,6 +14006,20 @@ fn test_typeset_g_keeps_autoload_stub() {
     assert_eq!(out, "stub\nSRANDOM (zsh/random)\n");
 }
 
+#[test]
+fn test_nameref_to_hidden_autoload_stub_fails_to_load() {
+    // K01 "Dereferring an autoload variable fails to load it if its hidden":
+    // resolve_nameref_rec's loadparamnode (c:Src/params.c:6347) loads the
+    // module, whose addparamdef is blocked by the local (Src/module.c:
+    // 1040-1048), so the parameter is never defined.
+    let (st, out, err) = run_zshrs_parity(
+        "g() { typeset -n ref=SRANDOM; zmodload -u zsh/random; typeset -h SRANDOM=x; \
+         print -r -- ${ref}; print NOT REACHED }; g",
+    );
+    assert_eq!((st, out.as_str()), (1, ""), "stderr: {err:?}");
+    assert!(err.contains("Can't add module parameter `SRANDOM': local parameter exists"), "got: {err:?}");
+    assert!(err.contains("autoloading module zsh/random failed to define parameter: SRANDOM"), "got: {err:?}");
+}
 
 #[test]
 fn test_typeset_p_reports_hide_flag() {

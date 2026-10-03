@@ -21754,7 +21754,7 @@ pub fn resolve_nameref_name(name: &str, stop_at: Option<(&str, i32)>) -> nameref
             }
             Some(Box::new(cur.clone()))
         };
-    let tab = match paramtab().read() {
+    let mut tab = match paramtab().read() {
         Ok(t) => t,
         Err(_) => return nameref_resolution::NotRef,
     };
@@ -21816,6 +21816,18 @@ pub fn resolve_nameref_name(name: &str, stop_at: Option<(&str, i32)>) -> nameref
             let resolved = tab
                 .get(&base_name)
                 .and_then(|vis| upscope_clone(vis, cur.node.flags as u32, cur.level, cur.base));
+            // c:2258-2259 (fetchvalue) — `pm = loadparamnode(paramtab,
+            // upscope(p1, pm), ref)`: a PM_AUTOLOAD stub loads its module;
+            // a load that fails to define it leaves the element unset.
+            let resolved = if resolved
+                .as_ref()
+                .is_some_and(|p| (p.node.flags as u32 & PM_AUTOLOAD) != 0)
+            {
+                drop(tab);
+                newparamtable(0, "paramtab").and_then(|ht| loadparamnode(&ht, resolved, &base_name))
+            } else {
+                resolved
+            };
             let lvl = resolved.as_ref().map(|p| p.level).unwrap_or(0);
             return nameref_resolution::Target {
                 name: base_name,
@@ -21835,6 +21847,24 @@ pub fn resolve_nameref_name(name: &str, stop_at: Option<(&str, i32)>) -> nameref
         let next = match tab.get(&refname_full) {
             Some(vis) => {
                 match upscope_clone(vis, cur.node.flags as u32, cur.level, cur.base) {
+                    // c:6347 `loadparamnode(paramtab, upscope(pm, ref),
+                    // refname)` — a PM_AUTOLOAD stub loads its module; if
+                    // that fails to define the parameter, resolution is NULL.
+                    Some(n) if (n.node.flags as u32 & PM_AUTOLOAD) != 0 => {
+                        drop(tab);
+                        match newparamtable(0, "paramtab")
+                            .and_then(|ht| loadparamnode(&ht, Some(n), &refname_full))
+                        {
+                            Some(loaded) => {
+                                tab = match paramtab().read() {
+                                    Ok(t) => t,
+                                    Err(_) => return nameref_resolution::NotRef,
+                                };
+                                loaded
+                            }
+                            None => return nameref_resolution::OutOfScope,
+                        }
+                    }
                     Some(n) => n,
                     None => {
                         // c:6347-6349 — name exists but upscope ran
@@ -22164,6 +22194,16 @@ pub fn setscope_by_name(name: &str, level: Option<i32>) -> i32 {
     // whose refname is its own name binds to the ENCLOSING binding.
     let mut basepm_is_self = false;
     if (ref_flags & PM_UPPER) == 0 && !head.is_empty() {
+        // c:6405-6406 — `basepm = loadparamnode(realparamtab, basepm,
+        // refname)`: binding a reference to an autoloadable parameter
+        // loads its module.
+        let stub = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(&head).filter(|p| (p.node.flags as u32 & PM_AUTOLOAD) != 0).cloned());
+        if let Some(stub) = stub {
+            let _ = newparamtable(0, "paramtab").and_then(|ht| loadparamnode(&ht, Some(stub), &head));
+        }
         let base_level: Option<i32> = {
             let tab = paramtab().read().unwrap();
             match tab.get(&head) {
