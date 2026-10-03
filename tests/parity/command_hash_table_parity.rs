@@ -55,25 +55,35 @@ fn zsh_path() -> Option<&'static str> {
 /// of them has to be distinguishable by its OUTPUT so the "explicit hash
 /// entry is what execs" case can tell which binary ran.
 fn bin_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join("zqhash_parity_bin");
-    std::fs::create_dir_all(&dir).expect("create private PATH dir");
-    for (name, body) in [
-        ("zqhq", "#!/bin/sh\nexit 0\n"),
-        ("zqhq2", "#!/bin/sh\nexit 0\n"),
-        ("zqhecho", "#!/bin/sh\nprintf '%s\\n' \"$*\"\n"),
-    ] {
-        let p = dir.join(name);
-        let mut f = std::fs::File::create(&p).expect("write probe command");
-        f.write_all(body.as_bytes()).expect("write probe body");
-        drop(f);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod probe command");
+    // Written ONCE per process, into a directory no other process shares.
+    // Rewriting the probes on every run, in one fixed directory, raced:
+    // `File::create` truncates a script another test (or another `cargo
+    // test` of the same suite) is executing at that moment, and the oracle
+    // came back with a half-written script's answer.
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir()
+            .join(format!("zqhash_parity_bin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create private PATH dir");
+        for (name, body) in [
+            ("zqhq", "#!/bin/sh\nexit 0\n"),
+            ("zqhq2", "#!/bin/sh\nexit 0\n"),
+            ("zqhecho", "#!/bin/sh\nprintf '%s\\n' \"$*\"\n"),
+        ] {
+            let p = dir.join(name);
+            let mut f = std::fs::File::create(&p).expect("write probe command");
+            f.write_all(body.as_bytes()).expect("write probe body");
+            drop(f);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
+                    .expect("chmod probe command");
+            }
         }
-    }
-    dir
+        dir
+    })
+    .clone()
 }
 
 /// `hck NAME` reports `HIT`/`MISS` for NAME in the command hash table

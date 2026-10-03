@@ -66,24 +66,34 @@ fn zsh_path() -> Option<&'static str> {
 /// path anywhere — so `command -p zqdpq` must fail even though plain
 /// `zqdpq` succeeds.
 fn bin_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join("zqdefpath_parity_bin");
-    std::fs::create_dir_all(&dir).expect("create private PATH dir");
-    for (name, body) in [
-        ("sh", "#!/bin/sh\nprintf FAKE\n"),
-        ("zqdpq", "#!/bin/sh\nexit 0\n"),
-    ] {
-        let p = dir.join(name);
-        let mut f = std::fs::File::create(&p).expect("write probe command");
-        f.write_all(body.as_bytes()).expect("write probe body");
-        drop(f);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod probe command");
+    // Written ONCE per process, into a directory no other process shares.
+    // Rewriting the probes on every run, in one fixed directory, raced:
+    // `File::create` truncates a script another test (or another `cargo
+    // test` of the same suite) is executing at that moment, and the oracle
+    // came back with a half-written script's answer.
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir()
+            .join(format!("zqdefpath_parity_bin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create private PATH dir");
+        for (name, body) in [
+            ("sh", "#!/bin/sh\nprintf FAKE\n"),
+            ("zqdpq", "#!/bin/sh\nexit 0\n"),
+        ] {
+            let p = dir.join(name);
+            let mut f = std::fs::File::create(&p).expect("write probe command");
+            f.write_all(body.as_bytes()).expect("write probe body");
+            drop(f);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
+                    .expect("chmod probe command");
+            }
         }
-    }
-    dir
+        dir
+    })
+    .clone()
 }
 
 /// `hck NAME` reports `HIT`/`MISS` for NAME in the command hash table
