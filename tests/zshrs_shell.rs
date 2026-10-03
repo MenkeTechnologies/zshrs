@@ -10013,6 +10013,38 @@ fn test_hidden_local_shadows_regenerator_special() {
 }
 
 #[test]
+fn test_zle_widget_errors_are_reported() {
+    // Src/Zle/zle_thingy.c:478/555/558/572/575/594 — each failing zle
+    // operation names the reason on stderr, not just a status of 1.
+    let (_, stdout, stderr) = run_zshrs(
+        "zle -D foo beep bar; echo $?; zle -U x; echo $?; zle -A nosuch y; echo $?; \
+         zle -D .beep; echo $?; zle -N .beep f; echo $?",
+    );
+    assert_eq!(stdout, "1\n1\n1\n1\n1\n");
+    assert_eq!(
+        stderr,
+        "zshrs:zle:1: no such widget `foo'\n\
+         zshrs:zle:1: no such widget `bar'\n\
+         zshrs:zle:1: can only be called from widget function\n\
+         zshrs:zle:1: no such widget `nosuch'\n\
+         zshrs:zle:1: widget name `.beep' is protected\n\
+         zshrs:zle:1: widget name `.beep' is protected\n"
+    );
+}
+
+#[test]
+fn test_bindkey_meta_warns_multibyte() {
+    // Src/Zle/zle_keymap.c:976-978 — `bindkey -m` warns that it disables
+    // multibyte support, and still succeeds.
+    let (status, _, stderr) = run_zshrs("bindkey -m >/dev/null");
+    assert_eq!(status, 0);
+    assert!(
+        stderr.ends_with("bindkey:1: warning: `bindkey -m' disables multibyte support\n"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_pwd_too_many_args_errors() {
     // zsh: `pwd extra arg` -> `pwd:1: too many arguments` exit 1.
     // pwd takes only flags; positional args are an error. zshrs

@@ -911,9 +911,10 @@ pub fn bin_zle_mesg(name: &str, args: &[String], _ops: &options, _func: i32) -> 
 /// `zle -U str` — push string bytes back onto input queue in
 /// reverse so subsequent reads return them in original order.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(name, args, ops, func)
-pub fn bin_zle_unget(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
+pub fn bin_zle_unget(name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:473
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
+        crate::ported::utils::zwarnnam(name, "can only be called from widget function"); // c:478
         return 1; // c:479
     }
     if let Some(arg) = args.first() {
@@ -1101,16 +1102,18 @@ pub fn scanlistwidgets(hn: Option<&str>, list: i32) -> i32 {
 /// thingytab. Returns 1 if any widget was missing or protected
 /// (TH_IMMORTAL), else 0.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_del(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
+pub fn bin_zle_del(name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:548
     let mut ret = 0;
     for arg in args {
         // c:552-561 do-while
         let exists = thingytab().lock().unwrap().contains_key(arg);
         if !exists {
+            crate::ported::utils::zwarnnam(name, &format!("no such widget `{}'", arg)); // c:555
             ret = 1; // c:556
         } else if unbindwidget(arg, 0) != 0 {
             // c:557
+            crate::ported::utils::zwarnnam(name, &format!("widget name `{}' is protected", arg)); // c:558
             ret = 1; // c:559
         }
     }
@@ -1146,12 +1149,14 @@ pub fn bin_zle_link(_name: &str, args: &[String], _ops: &options, _func: i32) ->
         tab.get(src).and_then(|t| t.widget.clone())
     };
     let Some(w) = widget else {
+        crate::ported::utils::zwarnnam(_name, &format!("no such widget `{}'", src)); // c:572
         return 1; // c:573
     };
     rthingy(dst); // c:574 rthingy(args[1])
     if bindwidget(w, dst) != 0 {
         // c:574 bindwidget(...)
-        return 1; // c:575
+        crate::ported::utils::zwarnnam(_name, &format!("widget name `{}' is protected", dst)); // c:575
+        return 1; // c:576
     }
     // PFA-SMR: `zle -A SRC DST` aliases an existing widget under a
     // new name. Record as a zle event with DST as the widget name
@@ -1223,6 +1228,7 @@ pub fn bin_zle_new(_name: &str, args: &[String], _ops: &options, _func: i32) -> 
     }
     // c:593-594 — bindwidget failed (TH_IMMORTAL) → free + warn.
     freewidget(w);
+    crate::ported::utils::zwarnnam(_name, &format!("widget name `{}' is protected", args[0])); // c:594
     1 // c:595
 }
 

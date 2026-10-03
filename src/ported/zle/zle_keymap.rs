@@ -1731,6 +1731,15 @@ pub fn bin_bindkey_meta(
         Some(k) => k,
         None => return 1,
     };
+    if (km_arc.flags & KM_IMMUTABLE) != 0 {
+        // c:972-975
+        crate::ported::utils::zwarnnam(name, &format!("keymap `{}' is protected", target));
+        return 1;
+    }
+    // c:976-978 — `#ifdef MULTIBYTE_SUPPORT zwarnnam(name, "warning:
+    // `bindkey -m' disables multibyte support"); #endif` (zshrs is always
+    // built with multibyte support).
+    crate::ported::utils::zwarnnam(name, "warning: `bindkey -m' disables multibyte support");
 
     // c:978-987 — walk i = 128..256 (bytes with high bit set).
     for i in 128usize..256 {
