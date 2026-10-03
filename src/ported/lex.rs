@@ -3812,7 +3812,16 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
         b.len = 0;
     });
     let parse_err = dquote_parse(endchar, false).is_err();
-    let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
+    // c:1767 `toklen = (int)lexbuf.len` — an offset into `s`, because C's
+    // tokens are single bytes. zshrs's tokens are multi-byte `char`s, so
+    // the raw lexbuf length overshoots `s` whenever the subscript holds a
+    // token (`$(echo 2)` lexes to 16 bytes from 10). Untokenize is one char
+    // in, one char out, so the untokenized lexbuf's length is the offset C
+    // means.
+    let toklen = LEX_LEXBUF.with_borrow(|b| {
+        let p = b.ptr.as_deref().unwrap_or("");
+        untokenize(p.get(..b.len as usize).unwrap_or(p)).len()
+    });
     // c:1771 — DPUTS(toklen > l, "Bad length for parsed subscript")
     DPUTS!(toklen > l, "Bad length for parsed subscript"); // c:1771
                                                            // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
@@ -7061,6 +7070,15 @@ mod tests {
     fn parsestr_returns_result_type() {
         let _g = crate::test_util::global_state_lock();
         let _: Result<String, String> = parsestr("");
+    }
+
+    /// c:1767 — the returned offset indexes the INPUT, even when the
+    /// subscript lexes to multi-byte tokens (`$(` → Qstring, Inpar).
+    #[test]
+    fn parse_subscript_offset_indexes_input_past_tokens() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(parse_subscript("$(echo 2)]", ']'), Some(9));
+        assert_eq!(parse_subscript("y]", ']'), Some(1));
     }
 
     /// c:2751 — `parse_subst_string("")` empty returns Ok("").
