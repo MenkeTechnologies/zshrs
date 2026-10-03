@@ -354,6 +354,15 @@ fn append_redir_line(buf: &mut String, content: &str) {
     buf.push('\n');
 }
 
+/// `$ZTST_redir` for a `<` block (ztst.zsh:260-266): its lines joined by
+/// `\n`, with no trailing newline. `stdin_data` holds each line plus `\n`
+/// (append_redir_line), so `print -r -- "$ZTST_redir"` (ztst.zsh:283,285)
+/// writes exactly `stdin_data`; printing `stdin_data` itself doubled the
+/// final newline and the chunk read an extra empty line.
+fn ztst_redir(stdin_data: &str) -> &str {
+    stdin_data.strip_suffix('\n').unwrap_or(stdin_data)
+}
+
 /// Parse "NUMBER[FLAGS]:message" — returns (status, flags, message)
 fn parse_status_line(line: &str) -> Option<(Option<i32>, String, String)> {
     let line = line.trim();
@@ -1236,12 +1245,12 @@ fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
             let _ = fs::write(&shell.ztst_in, "");
             body.push_str(&format!(
                 "ZTST_redir={}\n\\builtin print -r -- \"${{(e)ZTST_redir}}\" >\"$ZTST_in\"\n",
-                sq(&test.stdin_data)
+                sq(ztst_redir(&test.stdin_data))
             ));
         } else if test.stdin_data.is_empty() {
             let _ = fs::write(&shell.ztst_in, "");
         } else {
-            let _ = fs::write(&shell.ztst_in, format!("{}\n", test.stdin_data));
+            let _ = fs::write(&shell.ztst_in, &test.stdin_data);
         }
 
         // ztst.zsh:484 — the chunk runs in THIS shell via eval, with all
@@ -1531,12 +1540,12 @@ fn run_file_results(zshrs: &Path, ztst_path: &Path) -> Vec<TestResult> {
             let _ = fs::write(&shell.ztst_in, "");
             body.push_str(&format!(
                 "ZTST_redir={}\n\\builtin print -r -- \"${{(e)ZTST_redir}}\" >\"$ZTST_in\"\n",
-                sq(&test.stdin_data)
+                sq(ztst_redir(&test.stdin_data))
             ));
         } else if test.stdin_data.is_empty() {
             let _ = fs::write(&shell.ztst_in, "");
         } else {
-            let _ = fs::write(&shell.ztst_in, format!("{}\n", test.stdin_data));
+            let _ = fs::write(&shell.ztst_in, &test.stdin_data);
         }
         body.push_str(&format!(
             "ZTST_code={}\n\\ZTST_execchunk <\"$ZTST_in\" >\"$ZTST_tout\" 2>\"$ZTST_terr\"",
