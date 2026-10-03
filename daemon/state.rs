@@ -107,9 +107,6 @@ pub struct ShellRecord {
     pub shell_id: u64,
     /// The shell's pid (`$$`).
     pub pid: i32,
-    /// The shell's start time from the Hello (`shell_start_ns`); with `pid`
-    /// it tells a recycled pid from the shell that held it before.
-    pub start_ns: Option<u64>,
     /// Most recent tty reported by any of this shell's connections.
     pub tty: Option<String>,
     /// Most recent cwd reported by any of this shell's connections.
@@ -146,8 +143,6 @@ pub struct ShellSnapshot {
     /// Live connections this shell holds right now (usually 0 between
     /// builtin calls — push events reach a shell only while this is > 0).
     pub connections: usize,
-    /// Requests waiting in this shell's `zask` queue (`zls --ask-pending`).
-    pub ask_pending: usize,
 }
 
 /// Inner mutable state behind a single mutex.
@@ -211,7 +206,6 @@ impl DaemonStateInner {
                 .values()
                 .filter(|s| s.shell_id == Some(r.shell_id))
                 .count(),
-            ask_pending: 0,
         }
     }
 
@@ -356,44 +350,23 @@ impl DaemonState {
         self.started_at.elapsed().as_millis() as u64
     }
 
-    /// Register a shell connection post-handshake: a Hello carrying
-    /// `shell_pid` (`pid`) and, from current shells, `shell_start_ns`
-    /// (`start_ns`). The connection joins that shell's record, minting one
-    /// (with a fresh stable shell id) on the shell's first connection. A known
-    /// pid with a different start time is a new shell on a recycled pid: the
-    /// old record and everything it owned (tags, zask queue, subscriptions) is
-    /// dropped and a new one minted. Returns (client_id, session_id); the
+    /// Register a shell connection post-handshake. `pid` is the shell pid
+    /// from the Hello (`shell_pid`, else `client_pid`); the connection joins
+    /// that pid's shell record, minting one (with a fresh stable shell id) on
+    /// the pid's first connection. Returns (client_id, session_id); the
     /// stable id is `shell_id_of(client_id)`.
-    pub fn register_shell_session(
+    pub fn register_session(
         &self,
         pid: i32,
-        start_ns: Option<u64>,
         tty: Option<String>,
         cwd: Option<String>,
         argv0: Option<String>,
         outbound: mpsc::UnboundedSender<Frame>,
     ) -> (u64, String) {
         let mut g = self.inner.lock();
-        let mut replaced = None;
-        let known = g.shell_by_pid.get(&pid).copied();
-        let reuse = match known.and_then(|id| g.shells.get_mut(&id)) {
-            Some(r) => match (r.start_ns, start_ns) {
-                (Some(old), Some(new)) if old != new => false,
-                (None, Some(new)) => {
-                    r.start_ns = Some(new);
-                    true
-                }
-                _ => true,
-            },
-            None => false,
-        };
-        let shell_id = match known {
-            Some(id) if reuse => id,
-            _ => {
-                if let Some(old) = known {
-                    Self::remove_shell_locked(&mut g, old);
-                    replaced = Some(old);
-                }
+        let shell_id = match g.shell_by_pid.get(&pid) {
+            Some(&id) => id,
+            None => {
                 let id = g.next_shell_id;
                 g.next_shell_id += 1;
                 g.shell_by_pid.insert(pid, id);
@@ -402,7 +375,6 @@ impl DaemonState {
                     ShellRecord {
                         shell_id: id,
                         pid,
-                        start_ns,
                         tty: None,
                         cwd: None,
                         argv0: None,
@@ -425,41 +397,20 @@ impl DaemonState {
                 r.argv0 = argv0.clone();
             }
         }
-        let out = Self::insert_session(&mut g, pid, tty, cwd, argv0, Some(shell_id), outbound);
-        drop(g);
-        if let Some(old) = replaced {
-            self.ask_inbox.drop_for_shell(old);
-            tracing::info!(pid, old_shell = old, new_shell = shell_id, "shell pid recycled; old record dropped");
-        }
-        out
+        Self::insert_session(&mut g, pid, tty, cwd, argv0, Some(shell_id), outbound)
     }
 
-    /// `register_shell_session` without a start time (tests, old shells).
-    pub fn register_session(
-        &self,
-        pid: i32,
-        tty: Option<String>,
-        cwd: Option<String>,
-        argv0: Option<String>,
-        outbound: mpsc::UnboundedSender<Frame>,
-    ) -> (u64, String) {
-        self.register_shell_session(pid, None, tty, cwd, argv0, outbound)
-    }
-
-    /// Register a session that is not a shell: HTTP synthetic sessions and
-    /// socket clients whose Hello carries no `shell_pid` (the `zd` binary,
-    /// the bench, anything that never called `set_shell_identity`). It never
+    /// Register an HTTP synthetic session. It is not a shell: it never
     /// creates or joins a shell record, and everything it owns
     /// (subscriptions) is dropped when it unregisters.
     pub fn register_ephemeral_session(
         &self,
-        pid: i32,
         tty: Option<String>,
         argv0: Option<String>,
         outbound: mpsc::UnboundedSender<Frame>,
     ) -> (u64, String) {
         let mut g = self.inner.lock();
-        Self::insert_session(&mut g, pid, tty, None, argv0, None, outbound)
+        Self::insert_session(&mut g, self.pid, tty, None, argv0, None, outbound)
     }
 
     fn insert_session(
@@ -493,25 +444,17 @@ impl DaemonState {
         (client_id, session_id)
     }
 
-    /// Remove a shell record and its subscriptions (caller drops its zask
-    /// queue once the lock is released).
-    fn remove_shell_locked(g: &mut DaemonStateInner, shell_id: u64) {
-        if let Some(r) = g.shells.remove(&shell_id) {
-            if g.shell_by_pid.get(&r.pid) == Some(&shell_id) {
-                g.shell_by_pid.remove(&r.pid);
-            }
-        }
-        g.subscriptions.retain(|_, s| s.shell_id != Some(shell_id));
-    }
-
-    /// Drop a closed connection, and with it every subscription that
-    /// delivers to it (it can never deliver again). The shell record it
-    /// belonged to — tags, zask queue — stays until `reap_dead_shells` sees
-    /// the pid gone.
+    /// Drop a closed connection. The shell record it belonged to — tags,
+    /// zask queue, subscriptions — stays until `reap_dead_shells` sees the
+    /// pid gone. HTTP sessions own their subscriptions outright, so those
+    /// go with the connection.
     pub fn unregister_session(&self, client_id: u64) {
         let mut g = self.inner.lock();
-        if g.sessions.remove(&client_id).is_some() {
-            g.subscriptions.retain(|_, sub| sub.client_id != client_id);
+        if let Some(s) = g.sessions.remove(&client_id) {
+            if s.shell_id.is_none() {
+                g.subscriptions
+                    .retain(|_, sub| !(sub.shell_id.is_none() && sub.client_id == client_id));
+            }
         }
     }
 
@@ -532,14 +475,8 @@ impl DaemonState {
 
     /// `zls` rows: every registered shell.
     pub fn snapshot_shells(&self) -> Vec<ShellSnapshot> {
-        let mut rows: Vec<ShellSnapshot> = {
-            let g = self.inner.lock();
-            g.shells.values().map(|r| g.shell_snapshot(r)).collect()
-        };
-        for row in &mut rows {
-            row.ask_pending = self.ask_inbox.pending_count(row.shell_id);
-        }
-        rows
+        let g = self.inner.lock();
+        g.shells.values().map(|r| g.shell_snapshot(r)).collect()
     }
 
     /// Remove every shell record whose pid `is_alive` rejects, together with
@@ -559,8 +496,12 @@ impl DaemonState {
         }
         {
             let mut g = self.inner.lock();
-            for (id, _) in &dead {
-                Self::remove_shell_locked(&mut g, *id);
+            for (id, pid) in &dead {
+                g.shells.remove(id);
+                if g.shell_by_pid.get(pid) == Some(id) {
+                    g.shell_by_pid.remove(pid);
+                }
+                g.subscriptions.retain(|_, s| s.shell_id != Some(*id));
             }
         }
         for (id, _) in &dead {
@@ -1071,17 +1012,6 @@ mod tests {
         r.unwrap_or_else(|e| panic!("{op} failed: {} ({})", e.msg, e.code))
     }
 
-    /// A running `zsubscribe` stream: subscribe on a connection left open.
-    /// Returns (connection id, subscription id).
-    async fn open_stream(state: &Arc<DaemonState>, pid: i32, pattern: &str) -> (u64, u64) {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let (cid, _) = state.register_session(pid, None, None, None, tx);
-        let r = dispatch(state, cid, "subscribe", json!({ "pattern": pattern }))
-            .await
-            .unwrap();
-        (cid, r["subscription_id"].as_u64().unwrap())
-    }
-
     /// A pid that existed and is now gone: spawn `true` and reap it.
     fn dead_pid() -> i32 {
         let mut child = std::process::Command::new("true").spawn().unwrap();
@@ -1129,11 +1059,11 @@ mod tests {
         let mut other_proc = std::process::Command::new("sleep").arg("30").spawn().unwrap();
         let other = other_proc.id() as i32;
 
-        // ztag, zask --target self: each its own connection. zsubscribe is a
-        // stream: its connection stays open while the later calls run.
+        // ztag, zsubscribe, zask --target self: each its own connection.
         one_shot(&state, me, "tag", json!({ "tags": ["prod"] })).await;
         one_shot(&state, other, "tag", json!({ "tags": ["dev"] })).await;
-        let (stream, sub_id) = open_stream(&state, me, "*.chpwd").await;
+        let sub = one_shot(&state, me, "subscribe", json!({ "pattern": "*.chpwd" })).await;
+        let sub_id = sub["subscription_id"].as_u64().unwrap();
         for _ in 0..2 {
             one_shot(
                 &state,
@@ -1169,10 +1099,6 @@ mod tests {
         assert_eq!(ids, vec![sub_id]);
         let theirs = one_shot(&state, other, "subscribe", json!({ "pattern": "--list" })).await;
         assert!(theirs["subscriptions"].as_array().unwrap().is_empty());
-        // Stream ends: its subscription can never deliver again, so it goes.
-        state.unregister_session(stream);
-        let listed = one_shot(&state, me, "subscribe", json!({ "pattern": "--list" })).await;
-        assert!(listed["subscriptions"].as_array().unwrap().is_empty());
 
         // zask pending, then dismiss --all, from later connections.
         let p = one_shot(&state, me, "ask_pending", json!({})).await;
@@ -1201,7 +1127,7 @@ mod tests {
 
         for pid in [gone, alive] {
             one_shot(&state, pid, "tag", json!({ "tags": ["t"] })).await;
-            open_stream(&state, pid, "*.x").await;
+            one_shot(&state, pid, "subscribe", json!({ "pattern": "*.x" })).await;
             one_shot(
                 &state,
                 pid,
@@ -1245,7 +1171,7 @@ mod tests {
     async fn shell_registry_http_sessions_create_no_records() {
         let state = fresh();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let (cid, _) = state.register_ephemeral_session(state.pid, Some("http".into()), None, tx);
+        let (cid, _) = state.register_ephemeral_session(Some("http".into()), None, tx);
         assert_eq!(state.shell_id_of(cid), None);
         assert!(state.snapshot_shells().is_empty());
         // Shell-only ops refuse; pub/sub still works for the connection and
@@ -1259,77 +1185,5 @@ mod tests {
         state.unregister_session(cid);
         assert_eq!(state.subscription_count(), 0);
         assert!(state.snapshot_shells().is_empty());
-    }
-
-    /// `zsubscribe --list` lists the shell's live streams: subscriptions on
-    /// other open connections of the same shell. Closing a stream drops its
-    /// subscription; another shell's stream is never listed or dropped.
-    #[tokio::test]
-    async fn shell_registry_subscription_dies_with_its_connection() {
-        let state = fresh();
-        let me = std::process::id() as i32;
-        let mut other_proc = std::process::Command::new("sleep").arg("30").spawn().unwrap();
-        let other = other_proc.id() as i32;
-
-        let (s1, id1) = open_stream(&state, me, "*.chpwd").await;
-        let (_s2, id2) = open_stream(&state, me, "tag:prod.commands").await;
-        let (_s3, _) = open_stream(&state, other, "*.chpwd").await;
-
-        let list = |v: serde_json::Value| -> Vec<u64> {
-            v["subscriptions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|s| s["id"].as_u64().unwrap())
-                .collect()
-        };
-        let mine = one_shot(&state, me, "subscribe", json!({ "pattern": "--list" })).await;
-        assert_eq!(list(mine), vec![id1, id2]);
-
-        state.unregister_session(s1);
-        let mine = one_shot(&state, me, "subscribe", json!({ "pattern": "--list" })).await;
-        assert_eq!(list(mine), vec![id2]);
-        let theirs = one_shot(&state, other, "subscribe", json!({ "pattern": "--list" })).await;
-        assert_eq!(list(theirs).len(), 1);
-        assert_eq!(state.subscription_count(), 2);
-
-        let _ = other_proc.kill();
-        let _ = other_proc.wait();
-    }
-
-    /// `list_shells` carries each shell's queued zask count (`zls --ask-pending`).
-    #[tokio::test]
-    async fn shell_registry_list_shells_reports_ask_pending() {
-        let state = fresh();
-        let me = std::process::id() as i32;
-        let mut other_proc = std::process::Command::new("sleep").arg("30").spawn().unwrap();
-        let other = other_proc.id() as i32;
-
-        one_shot(&state, other, "tag", json!({ "tags": ["idle"] })).await;
-        for _ in 0..3 {
-            one_shot(
-                &state,
-                me,
-                "ask_ask",
-                json!({ "kind": "input", "target": { "self": true }, "payload": {} }),
-            )
-            .await;
-        }
-        let v = one_shot(&state, me, "list_shells", json!({})).await;
-        let by_pid = |pid: i32| -> u64 {
-            v["shells"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|s| s["pid"].as_i64() == Some(pid as i64))
-                .unwrap()["ask_pending"]
-                .as_u64()
-                .unwrap()
-        };
-        assert_eq!(by_pid(me), 3);
-        assert_eq!(by_pid(other), 0);
-
-        let _ = other_proc.kill();
-        let _ = other_proc.wait();
     }
 }

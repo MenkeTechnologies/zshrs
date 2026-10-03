@@ -18,23 +18,16 @@ use super::{DaemonError, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The shell's `$$`, recorded once at shell startup by `set_shell_identity`.
+/// The shell's `$$`, recorded once at shell startup by `set_shell_pid`.
 /// 0 = unset (non-shell clients such as `zd` or the bench), in which case the
 /// Hello carries only `client_pid`. A forked subshell inherits the parent's
 /// value, so a builtin run there still identifies as the parent shell.
 static SHELL_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// The shell's start time (ns since the epoch), recorded alongside
-/// `SHELL_PID`. With the pid it identifies one shell process, so the daemon
-/// can tell a recycled pid from the shell that used it before. 0 = unset.
-static SHELL_START_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Record the shell's `$$` and start time so every later Hello carries them
-/// as `shell_pid` / `shell_start_ns`. Called once by the shell at startup;
-/// a Hello without them is a non-shell client.
-pub fn set_shell_identity(pid: i32, start_ns: u64) {
+/// Record the shell's `$$` so every later Hello carries it as `shell_pid`.
+/// Called once by the shell at startup.
+pub fn set_shell_pid(pid: i32) {
     SHELL_PID.store(pid, std::sync::atomic::Ordering::Relaxed);
-    SHELL_START_NS.store(start_ns, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// A live connection to the daemon, post-handshake.
@@ -89,10 +82,6 @@ impl Client {
             shell_pid: match SHELL_PID.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => None,
                 pid => Some(pid),
-            },
-            shell_start_ns: match SHELL_START_NS.load(std::sync::atomic::Ordering::Relaxed) {
-                0 => None,
-                ns => Some(ns),
             },
         };
         ipc::write_frame_sync(&mut stream, &Frame::hello(hello))?;

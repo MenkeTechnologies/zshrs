@@ -56,6 +56,10 @@ _arguments -S -s : \
   '--zsh-compat[enable zsh compatibility mode (use .zcompdump, fpath scanning)]' \
   '--zsh[alias for --zsh-compat]' \
   '--posix[POSIX strict mode (no SQLite, no worker pool, no zsh extensions)]' \
+  '--norc[with --bash: do not read /etc/bash.bashrc or ~/.bashrc]' \
+  '--noprofile[with --bash: do not read /etc/profile or the ~/.bash_profile family]' \
+  '(--init-file)--rcfile[with --bash: read FILE instead of ~/.bashrc]:startup file:_files' \
+  '(--rcfile)--init-file[with --bash: read FILE instead of ~/.bashrc]:startup file:_files' \
   '--no-rcs[do not source startup files]' \
   '-f[equivalent to --no-rcs]' \
   '-i[force interactive mode]' \

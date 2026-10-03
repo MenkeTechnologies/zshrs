@@ -151,17 +151,29 @@ impl AskInbox {
         let idx = q.iter().position(|r| r.request_id == req_id)?;
         q.remove(idx)
     }
-    /// Remove one request from a shell's queue; returns it so the caller can
-    /// tell its originator it was cancelled.
-    pub fn dismiss(&self, shell_id: u64, req_id: &str) -> Option<AskRequest> {
-        self.take_specific(shell_id, req_id)
-    }
-    /// Empty a shell's queue; returns the removed requests.
-    pub fn clear(&self, shell_id: u64) -> Vec<AskRequest> {
+    /// `dismiss` — see implementation.
+    pub fn dismiss(&self, shell_id: u64, req_id: &str) -> bool {
         let mut g = self.queues.lock();
-        g.get_mut(&shell_id)
-            .map(|q| q.drain(..).collect())
-            .unwrap_or_default()
+        let Some(q) = g.get_mut(&shell_id) else {
+            return false;
+        };
+        if let Some(idx) = q.iter().position(|r| r.request_id == req_id) {
+            q.remove(idx);
+            true
+        } else {
+            false
+        }
+    }
+    /// `clear` — see implementation.
+    pub fn clear(&self, shell_id: u64) -> usize {
+        let mut g = self.queues.lock();
+        if let Some(q) = g.get_mut(&shell_id) {
+            let n = q.len();
+            q.clear();
+            n
+        } else {
+            0
+        }
     }
 
     /// Drop every request queued for a shell (called when the shell is reaped).
@@ -361,39 +373,16 @@ pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) 
 /// `op_ask_dismiss` — see implementation.
 pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let shell = caller_shell(state, client_id)?;
-    let reason = args.get("reason").cloned().unwrap_or(Value::Null);
-    let removed: Vec<AskRequest> = if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
-        state.ask_inbox.clear(shell)
-    } else {
-        let req_id = args
-            .get("request_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ErrPayload::new("bad_args", "missing `request_id` or `all`"))?;
-        state.ask_inbox.dismiss(shell, req_id).into_iter().collect()
-    };
-    // Per docs/DAEMON.md (`zask dismiss`): the originator gets cancelled=true,
-    // as the same `ask:response` event a real answer would be — pushed to the
-    // originating shell's live connections; none open = no delivery.
-    let mut notified = 0;
-    for r in &removed {
-        if r.from_shell == 0 {
-            continue; // HTTP originator: not a shell, nothing to route to
-        }
-        let frame = Frame::event(
-            "ask:response",
-            json!({
-                "request_id": r.request_id,
-                "value": null,
-                "cancelled": true,
-                "dismissed_by": shell,
-                "reason": reason,
-            }),
-        );
-        if state.send_to_shell(r.from_shell, frame) > 0 {
-            notified += 1;
-        }
+    if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
+        let n = state.ask_inbox.clear(shell);
+        return Ok(json!({ "dismissed": n }));
     }
-    Ok(json!({ "dismissed": removed.len(), "originators_notified": notified }))
+    let req_id = args
+        .get("request_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `request_id` or `all`"))?;
+    let removed = state.ask_inbox.dismiss(shell, req_id);
+    Ok(json!({ "dismissed": if removed { 1 } else { 0 } }))
 }
 /// `op_ask_response` — see implementation.
 pub async fn op_ask_response(state: &Arc<DaemonState>, args: Value) -> OpResult {

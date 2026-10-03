@@ -239,26 +239,16 @@ async fn handle_connection(
     // Outbound channel for this session — tasks use this to push responses + events.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Frame>();
 
-    // Only a Hello carrying `shell_pid` (the shell's `$$`) is a shell: it
-    // creates or joins the record keyed by (shell_pid, shell_start_ns).
-    // Anything else (the bench, a client that never called
-    // `set_shell_identity`) is an ephemeral session, like HTTP.
-    let (client_id, session_id) = match hello.shell_pid {
-        Some(shell_pid) => state.register_shell_session(
-            shell_pid,
-            hello.shell_start_ns,
-            hello.tty.clone(),
-            hello.cwd.clone(),
-            hello.argv0.clone(),
-            out_tx.clone(),
-        ),
-        None => state.register_ephemeral_session(
-            hello.client_pid,
-            hello.tty.clone(),
-            hello.argv0.clone(),
-            out_tx.clone(),
-        ),
-    };
+    // The shell record is keyed by the shell's `$$` (`shell_pid`) when the
+    // client sends it, else by the connecting process's pid.
+    let shell_pid = hello.shell_pid.unwrap_or(hello.client_pid);
+    let (client_id, session_id) = state.register_session(
+        shell_pid,
+        hello.tty.clone(),
+        hello.cwd.clone(),
+        hello.argv0.clone(),
+        out_tx.clone(),
+    );
 
     let welcome = Welcome {
         version: PROTOCOL_VERSION,
@@ -437,7 +427,6 @@ mod tests {
         state: &Arc<DaemonState>,
         client_pid: i32,
         shell_pid: Option<i32>,
-        shell_start_ns: Option<u64>,
     ) -> (UnixStream, Welcome) {
         let (mut client, server) = UnixStream::pair().unwrap();
         let st = Arc::clone(state);
@@ -451,7 +440,6 @@ mod tests {
             cwd: None,
             argv0: None,
             shell_pid,
-            shell_start_ns,
         };
         ipc::write_frame(&mut client, &Frame::hello(hello)).await.unwrap();
         match ipc::read_frame(&mut client).await.unwrap() {
@@ -481,11 +469,11 @@ mod tests {
         let (_tmp, state) = fresh();
         let shell = std::process::id() as i32;
 
-        let (mut c1, w1) = connect(&state, shell, Some(shell), Some(7)).await;
+        let (mut c1, w1) = connect(&state, shell, Some(shell)).await;
         call(&mut c1, 1, "tag", json!({ "tags": ["build"] })).await;
         drop(c1);
 
-        let (mut c2, w2) = connect(&state, shell + 100_000, Some(shell), Some(7)).await;
+        let (mut c2, w2) = connect(&state, shell + 100_000, Some(shell)).await;
         assert_ne!(w1.client_id, w2.client_id);
         assert_eq!(w1.shell_id, w2.shell_id);
         assert_ne!(w1.shell_id, 0);
@@ -494,119 +482,8 @@ mod tests {
         assert_eq!(shells["shells"][0]["shell_id"].as_u64(), Some(w1.shell_id));
         assert_eq!(shells["shells"][0]["pid"].as_i64(), Some(shell as i64));
 
-        // No shell_pid (a non-shell client): an ephemeral session, no record.
-        let (_c3, w3) = connect(&state, shell + 200_000, None, None).await;
-        assert_eq!(w3.shell_id, 0);
-        assert_eq!(state.snapshot_shells().len(), 1);
-    }
-
-    /// A Hello with a known pid but a different start time is a new shell on
-    /// a recycled pid: new stable id, and the old record's tags and queue go.
-    #[tokio::test]
-    async fn shell_registry_recycled_pid_replaces_record() {
-        let (_tmp, state) = fresh();
-        let pid = std::process::id() as i32;
-
-        let (mut old, w_old) = connect(&state, pid, Some(pid), Some(111)).await;
-        call(&mut old, 1, "tag", json!({ "tags": ["stale"] })).await;
-        call(
-            &mut old,
-            2,
-            "ask_ask",
-            json!({ "kind": "input", "target": { "self": true }, "payload": {} }),
-        )
-        .await;
-        assert_eq!(state.ask_inbox.pending_count(w_old.shell_id), 1);
-        drop(old);
-
-        // Same pid, same start: the same shell.
-        let (_same, w_same) = connect(&state, pid, Some(pid), Some(111)).await;
-        assert_eq!(w_same.shell_id, w_old.shell_id);
-
-        // Same pid, new start: a different process.
-        let (mut new, w_new) = connect(&state, pid, Some(pid), Some(222)).await;
-        assert_ne!(w_new.shell_id, w_old.shell_id);
-        assert_eq!(state.ask_inbox.pending_count(w_old.shell_id), 0);
-        let stale = call(&mut new, 1, "list_shells", json!({ "tag": "stale" })).await;
-        assert_eq!(stale["total"].as_u64(), Some(0));
-        let all = call(&mut new, 2, "list_shells", json!({})).await;
-        assert_eq!(all["total"].as_u64(), Some(1));
-        assert_eq!(all["shells"][0]["shell_id"].as_u64(), Some(w_new.shell_id));
-    }
-
-    /// `zask dismiss` (single and --all) pushes `ask:response` with
-    /// cancelled=true to the originator's live connection; with none open,
-    /// nothing is delivered.
-    #[tokio::test]
-    async fn shell_registry_dismiss_notifies_originator() {
-        let (_tmp, state) = fresh();
-        let asker_pid = std::process::id() as i32;
-        let mut target_proc = std::process::Command::new("sleep").arg("30").spawn().unwrap();
-        let target_pid = target_proc.id() as i32;
-
-        // The asker keeps this connection open (a script blocked on the answer).
-        let (mut asker, _) = connect(&state, asker_pid, Some(asker_pid), Some(1)).await;
-        let (mut target, w_target) = connect(&state, target_pid, Some(target_pid), Some(2)).await;
-        let ask = |id: u64| {
-            json!({
-                "kind": "dialog",
-                "target": { "shell_id": w_target.shell_id },
-                "payload": { "message": format!("q{id}") },
-            })
-        };
-        let r1 = call(&mut asker, 1, "ask_ask", ask(1)).await;
-        let rid1 = r1["request_id"].as_str().unwrap().to_string();
-        call(&mut asker, 2, "ask_ask", ask(2)).await;
-        call(&mut asker, 3, "ask_ask", ask(3)).await;
-
-        async fn next_cancel(c: &mut UnixStream) -> serde_json::Value {
-            loop {
-                if let Frame::Event { event, payload } = ipc::read_frame(c).await.unwrap() {
-                    if event == "ask:response" {
-                        return payload;
-                    }
-                }
-            }
-        }
-
-        // Single dismiss.
-        let d = call(
-            &mut target,
-            1,
-            "ask_dismiss",
-            json!({ "request_id": rid1, "reason": "busy" }),
-        )
-        .await;
-        assert_eq!(d["dismissed"].as_u64(), Some(1));
-        assert_eq!(d["originators_notified"].as_u64(), Some(1));
-        let ev = next_cancel(&mut asker).await;
-        assert_eq!(ev["request_id"].as_str(), Some(rid1.as_str()));
-        assert_eq!(ev["cancelled"].as_bool(), Some(true));
-        assert_eq!(ev["reason"].as_str(), Some("busy"));
-
-        // --all: one cancel per remaining request.
-        let d = call(&mut target, 2, "ask_dismiss", json!({ "all": true })).await;
-        assert_eq!(d["dismissed"].as_u64(), Some(2));
-        assert_eq!(d["originators_notified"].as_u64(), Some(2));
-        for _ in 0..2 {
-            assert_eq!(next_cancel(&mut asker).await["cancelled"].as_bool(), Some(true));
-        }
-
-        // Originator with no open connection: queued fine, no delivery.
-        call(&mut asker, 4, "ask_ask", ask(4)).await;
-        drop(asker);
-        // Wait for the server side to notice the close.
-        for _ in 0..200 {
-            if state.snapshot_shells().iter().all(|s| s.pid != asker_pid || s.connections == 0) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        let d = call(&mut target, 3, "ask_dismiss", json!({ "all": true })).await;
-        assert_eq!(d["dismissed"].as_u64(), Some(1));
-        assert_eq!(d["originators_notified"].as_u64(), Some(0));
-
-        let _ = target_proc.kill();
-        let _ = target_proc.wait();
+        // No shell_pid (a non-shell client): keyed on client_pid instead.
+        let (_c3, w3) = connect(&state, shell + 200_000, None).await;
+        assert_ne!(w3.shell_id, w1.shell_id);
     }
 }

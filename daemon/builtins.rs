@@ -761,11 +761,9 @@ fn zcache_list_targets() -> i32 {
 
 fn zls(args: &[String]) -> i32 {
     let mut tag_filter: Option<String> = None;
-    let mut ask_pending = false;
     let mut iter = args.iter().skip(1);
     while let Some(a) = iter.next() {
         match a.as_str() {
-            "--ask-pending" => ask_pending = true,
             "--tag" => {
                 if let Some(t) = iter.next() {
                     tag_filter = Some(t.clone());
@@ -793,28 +791,28 @@ fn zls(args: &[String]) -> i32 {
     match client.call("list_shells", args_payload) {
         Ok(v) => {
             let shells = v.get("shells").cloned().unwrap_or(Value::Null);
-            print!("{}", format_shells_table(&shells, ask_pending));
+            print_shells_table(&shells);
             0
         }
         Err(e) => err_exit("zls", &e.to_string()),
     }
 }
 
-/// Render `list_shells` rows as the `zls` table (ID PID TTY UPTIME TAGS CWD;
-/// completions parse these columns). `ask_pending` (`zls --ask-pending`)
-/// inserts an ASK column — the shell's queued `zask` requests — before CWD.
-fn format_shells_table(shells: &Value, ask_pending: bool) -> String {
-    use std::fmt::Write;
+fn print_shells_table(shells: &Value) {
     let arr = match shells.as_array() {
-        Some(a) if !a.is_empty() => a,
-        _ => return "(no shells)\n".to_string(),
+        Some(a) => a,
+        None => {
+            println!("(no shells)");
+            return;
+        }
     };
-    let mut out = String::new();
-    let ask_head = if ask_pending { format!("{:<5} ", "ASK") } else { String::new() };
-    let _ = writeln!(
-        out,
-        "{:<6} {:<8} {:<14} {:<8} {:<10} {}CWD",
-        "ID", "PID", "TTY", "UPTIME", "TAGS", ask_head
+    if arr.is_empty() {
+        println!("(no shells)");
+        return;
+    }
+    println!(
+        "{:<6} {:<8} {:<14} {:<8} {:<10} CWD",
+        "ID", "PID", "TTY", "UPTIME", "TAGS"
     );
     for s in arr {
         let id = s.get("shell_id").and_then(Value::as_u64).unwrap_or(0);
@@ -837,25 +835,16 @@ fn format_shells_table(shells: &Value, ask_pending: bool) -> String {
         } else {
             tags
         };
-        let ask = if ask_pending {
-            let n = s.get("ask_pending").and_then(Value::as_u64).unwrap_or(0);
-            format!("{:<5} ", n)
-        } else {
-            String::new()
-        };
-        let _ = writeln!(
-            out,
-            "{:<6} {:<8} {:<14} {:<8} {:<10} {}{}",
+        println!(
+            "{:<6} {:<8} {:<14} {:<8} {:<10} {}",
             id,
             pid,
             tty,
             format!("{}s", uptime),
             tags,
-            ask,
             cwd
         );
     }
-    out
 }
 
 // -------- zid --------
@@ -2267,30 +2256,5 @@ mod tests {
                 name
             );
         }
-    }
-
-    #[test]
-    fn shell_registry_zls_ask_pending_column() {
-        let rows = json!([
-            { "shell_id": 3, "pid": 77, "tty": "/dev/ttys001", "uptime_secs": 5,
-              "tags": ["prod"], "cwd": "/tmp/a b", "ask_pending": 2 },
-            { "shell_id": 4, "pid": 78, "tty": null, "uptime_secs": 0,
-              "tags": [], "cwd": "/", "ask_pending": 0 }
-        ]);
-        // Default table: the six columns completions parse, unchanged.
-        let plain = format_shells_table(&rows, false);
-        let lines: Vec<&str> = plain.lines().collect();
-        assert_eq!(lines[0].split_whitespace().collect::<Vec<_>>(), ["ID", "PID", "TTY", "UPTIME", "TAGS", "CWD"]);
-        assert_eq!(
-            lines[1].split_whitespace().collect::<Vec<_>>(),
-            ["3", "77", "/dev/ttys001", "5s", "prod", "/tmp/a", "b"]
-        );
-        // --ask-pending: ASK column before CWD.
-        let ask = format_shells_table(&rows, true);
-        let lines: Vec<&str> = ask.lines().collect();
-        assert_eq!(lines[0].split_whitespace().collect::<Vec<_>>(), ["ID", "PID", "TTY", "UPTIME", "TAGS", "ASK", "CWD"]);
-        assert_eq!(lines[1].split_whitespace().nth(5), Some("2"));
-        assert_eq!(lines[2].split_whitespace().collect::<Vec<_>>(), ["4", "78", "-", "0s", "-", "0", "/"]);
-        assert_eq!(format_shells_table(&json!([]), true), "(no shells)\n");
     }
 }
