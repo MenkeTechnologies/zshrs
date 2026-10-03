@@ -76,7 +76,9 @@ pub const SHARD_MAGIC: u32 = 0x5A52414C;
 /// exact definition text, and the producing binary's identity.
 /// v4: token chars moved to the Private Use Area (crate::token_char); v3
 /// chunks hold the old U+0084..=U+00A2 tokens.
-pub const SHARD_FORMAT_VERSION: u32 = 4;
+/// v5: an entry can carry its [`ResolvedLoad`], so a load is served by name
+/// with no `$fpath` search.
+pub const SHARD_FORMAT_VERSION: u32 = 5;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
@@ -115,6 +117,50 @@ pub struct AutoloadEntry {
     pub source_sha: [u8; 32],
     /// bincode of the `fusevm::Chunk` for the definition program.
     pub chunk_blob: Vec<u8>,
+    /// Everything the `$fpath` search and the file read produced for this
+    /// function, so the next load needs neither (see [`try_resolve`]).
+    /// `None` for an entry written without it; that entry is still served by
+    /// `(dir, sha)` after a search.
+    pub resolved: Option<ResolvedLoad>,
+}
+
+/// The outcome of resolving and reading one autoload, as `loadautofn` and
+/// the registration step computed it: the body `getfpfunc` led to and the
+/// definition text that body registers as.
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq)]
+#[archive(check_bytes)]
+pub struct ResolvedLoad {
+    /// The body `loadautofn` installs: the file text, or a `.zwc` deparse.
+    pub body: String,
+    /// The definition text the body registers as (the `name() { … }` wrap
+    /// decision applied). Its SHA-256 is the entry's `source_sha`.
+    pub registered: String,
+    /// The dump's ksh style (`try_dump_file`'s `*ksh`), or -1 for a plain file.
+    pub dump_ksh: i32,
+    /// The body is a `.zwc` deparse.
+    pub from_wordcode: bool,
+    /// The registration parse rejected the body.
+    pub parse_failed: bool,
+    /// `autoload_is_ksh_style` when the body was registered; the wrap
+    /// decision depends on it.
+    pub ksh_style: bool,
+    /// Every file in `source_dir` the resolution could have read
+    /// ([`stamp_candidates`]), as it was then.
+    pub stamps: Vec<FileStamp>,
+}
+
+/// One file's identity at resolution time.
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq)]
+#[archive(check_bytes)]
+pub struct FileStamp {
+    /// Absolute path.
+    pub path: String,
+    /// Whether it existed.
+    pub exists: bool,
+    /// mtime in nanoseconds.
+    pub mtime_ns: i64,
+    /// Size in bytes.
+    pub len: u64,
 }
 /// `AutoloadShard` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
@@ -203,6 +249,9 @@ pub struct AutoloadCache {
     /// of `_*` helpers, which is how a keypress came to cost 30+ s.
     /// Entries accumulate here and leave in ONE `put_many`.
     pending: Mutex<Vec<(String, Vec<u8>, String, [u8; 32])>>,
+    /// Resolutions waiting for their entry's write ([`note_resolved`]). The
+    /// next write of that name's entry takes the one stored here.
+    resolved_pending: Mutex<HashMap<String, ResolvedLoad>>,
 }
 
 /// Cap on un-flushed [`AutoloadCache::pending`] entries.
@@ -231,6 +280,7 @@ impl AutoloadCache {
             lock_path,
             mmap: Mutex::new(None),
             pending: Mutex::new(Vec::new()),
+            resolved_pending: Mutex::new(HashMap::new()),
         })
     }
 
@@ -251,8 +301,10 @@ impl AutoloadCache {
     /// [`AutoloadCache::get_for_source`], which also proves the entry
     /// describes the definition text about to be installed.
     pub fn get(&self, name: &str) -> Option<Vec<u8>> {
+        // An empty chunk is a probe-only entry (`record_port_probe`): no
+        // bytecode.
         if let Some(blob) = self.pending_lookup(name, None, None) {
-            return Some(blob);
+            return (!blob.is_empty()).then_some(blob);
         }
         self.ensure_mmap();
         let guard = self.mmap.lock();
@@ -264,7 +316,7 @@ impl AutoloadCache {
         if !entry_binary_matches(entry) {
             return None;
         }
-        Some(entry.chunk_blob.as_slice().to_vec())
+        (!entry.chunk_blob.is_empty()).then(|| entry.chunk_blob.as_slice().to_vec())
     }
 
     /// The chunk for `name`, but only if this exact binary compiled it
@@ -362,7 +414,9 @@ impl AutoloadCache {
     pub fn flush_pending(&self) -> Result<(), String> {
         let batch = {
             let mut pending = self.pending.lock();
-            if pending.is_empty() {
+            // A resolution can be waiting without a chunk: the chunk was
+            // already cached, so nothing called `put_one`.
+            if pending.is_empty() && self.resolved_pending.lock().is_empty() {
                 return Ok(());
             }
             std::mem::take(&mut *pending)
@@ -422,7 +476,7 @@ impl AutoloadCache {
     /// shard 46k times. Existing entries not named here are preserved,
     /// so a prewarm of one fpath dir does not discard the rest.
     pub fn put_many(&self, entries: &[(String, Vec<u8>, String, [u8; 32])]) -> Result<(), String> {
-        if entries.is_empty() {
+        if entries.is_empty() && self.resolved_pending.lock().is_empty() {
             return Ok(());
         }
         let Some(lock) = acquire_lock(&self.lock_path) else {
@@ -442,6 +496,24 @@ impl AutoloadCache {
         let (bin_mtime, bin_len) = current_binary_identity().unwrap_or((0, 0));
         let now = now_secs();
         for (name, chunk_blob, source_dir, source_sha) in entries {
+            // A resolution noted for this name describes this write only if
+            // it registers the same text; otherwise keep the one already on
+            // disk when the entry itself is unchanged.
+            // A probe-only write (`record_port_probe`: no chunk) never replaces
+            // a compiled entry; its resolution is attached below instead.
+            if chunk_blob.is_empty() && shard.entries.contains_key(name) {
+                continue;
+            }
+            let noted = self
+                .resolved_pending
+                .lock()
+                .remove(name)
+                .filter(|r| r.registered.is_empty() || registered_digest(r) == *source_sha);
+            let prior = shard
+                .entries
+                .get(name)
+                .filter(|e| e.source_dir == *source_dir && e.source_sha == *source_sha)
+                .and_then(|e| e.resolved.clone());
             shard.entries.insert(
                 name.clone(),
                 AutoloadEntry {
@@ -451,8 +523,30 @@ impl AutoloadCache {
                     source_dir: source_dir.clone(),
                     source_sha: *source_sha,
                     chunk_blob: chunk_blob.clone(),
+                    resolved: noted.or(prior),
                 },
             );
+        }
+        // Resolutions for entries this batch did not rewrite: attach each to
+        // the entry it registers, when that entry still holds the same text
+        // from the same directory.
+        for (name, r) in std::mem::take(&mut *self.resolved_pending.lock()) {
+            if let Some(e) = shard.entries.get_mut(&name) {
+                let same_dir = r
+                    .stamps
+                    .first()
+                    .is_some_and(|s| s.path == format!("{}/{}", e.source_dir, name));
+                // A probe resolution (empty `registered`) only fills an entry
+                // that has none; a load's resolution must register its text.
+                let fits = if r.registered.is_empty() {
+                    e.resolved.is_none()
+                } else {
+                    registered_digest(&r) == e.source_sha
+                };
+                if same_dir && fits {
+                    e.resolved = Some(r);
+                }
+            }
         }
         shard.header.built_at_secs = now as u64;
         write_shard_atomic(&self.path, &shard)?;
@@ -470,6 +564,7 @@ impl AutoloadCache {
         // Drop any buffered copy first, or the next flush would write
         // back the very entry just proven wrong.
         self.pending.lock().retain(|(n, _, _, _)| n != name);
+        self.resolved_pending.lock().remove(name);
         let _lock = match acquire_lock(&self.lock_path) {
             Some(l) => l,
             None => return Ok(()),
@@ -679,6 +774,233 @@ pub fn try_save_one(
     cache.put_one(name, chunk_blob.to_vec(), source_dir, source_sha)
 }
 
+/// The identity of every file `getfpfunc` could have read for `name` in
+/// `dir`: the plain file, the per-function dump and the directory digest
+/// (c:Src/parse.c:3725 `try_dump_file` tries `<dir>.zwc` and
+/// `<dir>/<name>.zwc` before `<dir>/<name>`).
+pub fn stamp_candidates(dir: &str, name: &str) -> Vec<FileStamp> {
+    [
+        format!("{dir}/{name}"),
+        format!("{dir}/{name}.zwc"),
+        format!("{dir}.zwc"),
+    ]
+    .into_iter()
+    .map(|path| match std::fs::metadata(&path) {
+        Ok(m) => FileStamp {
+            exists: true,
+            mtime_ns: m.mtime() * 1_000_000_000 + m.mtime_nsec(),
+            len: m.len(),
+            path,
+        },
+        Err(_) => FileStamp {
+            path,
+            exists: false,
+            mtime_ns: 0,
+            len: 0,
+        },
+    })
+    .collect()
+}
+
+/// The `source_sha` an entry for `r` carries: a `.zwc` deparse is hashed with
+/// a `\0zwc\0` prefix (vm_helper `autoload_source_key`), so it never shares
+/// a key with a plain file of the same text.
+fn registered_digest(r: &ResolvedLoad) -> [u8; 32] {
+    if r.from_wordcode {
+        source_digest(&format!("\0zwc\0{}", r.registered))
+    } else {
+        source_digest(&r.registered)
+    }
+}
+
+fn stamps_fresh(stamps: &[FileStamp]) -> bool {
+    stamps.iter().all(|s| match std::fs::metadata(&s.path) {
+        Ok(m) => {
+            s.exists && m.mtime() * 1_000_000_000 + m.mtime_nsec() == s.mtime_ns && m.len() == s.len
+        }
+        Err(_) => !s.exists,
+    })
+}
+
+impl AutoloadCache {
+    /// The stored resolution for `name`, if it is still the one a search
+    /// would produce. See [`try_resolve`].
+    fn resolve(&self, name: &str, fpath: &[String]) -> Option<(String, ResolvedLoad)> {
+        let pending_dir = self
+            .pending
+            .lock()
+            .iter()
+            .rev()
+            .find(|(n, ..)| n == name)
+            .map(|(_, _, dir, _)| dir.clone());
+        let (dir, resolved) = match pending_dir.and_then(|d| {
+            self.resolved_pending.lock().get(name).cloned().map(|r| (d, r))
+        }) {
+            Some(hit) => hit,
+            None => {
+                self.ensure_mmap();
+                let guard = self.mmap.lock();
+                let shard = guard.as_ref()?;
+                if !shard.header_ok() {
+                    return None;
+                }
+                let entry = shard.lookup(name)?;
+                if !entry_binary_matches(entry) {
+                    return None;
+                }
+                let resolved: ResolvedLoad =
+                    entry.resolved.as_ref()?.deserialize(&mut rkyv::Infallible).ok()?;
+                (entry.source_dir.as_str().to_string(), resolved)
+            }
+        };
+        (fpath.iter().any(|d| *d == dir) && stamps_fresh(&resolved.stamps)).then_some((dir, resolved))
+    }
+}
+
+/// The directory and resolved body for `name`, read from the shard instead
+/// of searching `$fpath` and reading the file.
+///
+/// !!! RUST-ONLY — NO C COUNTERPART !!! C's `loadautofn` runs `getfpfunc`
+/// (c:Src/exec.c:5759) on every first call of an autoload in every
+/// process. The entry records which directory that search chose and the
+/// state of every file it could have read there, so a hit costs three
+/// `stat`s: the directory must still be on `fpath`, and those files must be
+/// unchanged. A file added to an EARLIER `fpath` directory, which would now
+/// shadow this one, is not seen until the entry is rewritten (a prewarm, or
+/// a load after this entry goes stale).
+pub fn try_resolve(name: &str, fpath: &[String]) -> Option<(String, ResolvedLoad)> {
+    // A probe resolution (`record_port_probe`) has no registration to install.
+    CACHE.as_ref()?.resolve(name, fpath).filter(|(_, r)| !r.registered.is_empty())
+}
+
+/// The directory and file text for a native completer `name`, read from the
+/// shard: what a `getfpfunc` existence probe plus a read of `<dir>/<name>`
+/// would return. `None` for a `.zwc`-resolved entry (its body is a deparse,
+/// not the file) and for anything stale.
+pub fn try_port_body(name: &str, fpath: &[String]) -> Option<(String, String)> {
+    let (dir, r) = CACHE.as_ref()?.resolve(name, fpath)?;
+    (!r.from_wordcode).then_some((dir, r.body))
+}
+
+/// Record what a native-completer probe found: `name` lives in `dir` and its
+/// file reads `body`. Stored as a resolution with no registration and no
+/// chunk, which [`try_port_body`] and [`try_source_dir`] serve and the loader
+/// ignores.
+pub fn record_port_probe(name: &str, dir: &str, body: &str) {
+    let Some(cache) = CACHE.as_ref() else {
+        return;
+    };
+    note_resolved(
+        name,
+        ResolvedLoad {
+            body: body.to_string(),
+            registered: String::new(),
+            dump_ksh: -1,
+            from_wordcode: false,
+            parse_failed: false,
+            ksh_style: false,
+            stamps: stamp_candidates(dir, name),
+        },
+    );
+    let _ = cache.put_one(name, Vec::new(), dir, [0u8; 32]);
+}
+
+/// The `$fpath` directory the entry for `name` was resolved from, while
+/// that directory is still on `fpath` and still holds the file. The
+/// shard-backed answer to a `getfpfunc` existence probe (test_only), with
+/// the same caveat as [`try_resolve`] about a later shadowing file.
+pub fn try_source_dir(name: &str, fpath: &[String]) -> Option<String> {
+    let cache = CACHE.as_ref()?;
+    if let Some((dir, _)) = cache.resolve(name, fpath) {
+        return Some(dir);
+    }
+    cache.ensure_mmap();
+    let guard = cache.mmap.lock();
+    let shard = guard.as_ref()?;
+    if !shard.header_ok() {
+        return None;
+    }
+    let dir = shard.lookup(name)?.source_dir.as_str().to_string();
+    let on_fpath = fpath.iter().any(|d| *d == dir);
+    (on_fpath && std::path::Path::new(&format!("{dir}/{name}")).exists()).then_some(dir)
+}
+
+/// Remember `resolved` for `name`; it is written with the next write of
+/// that name's entry (`put_one` / `put_many`).
+pub fn note_resolved(name: &str, resolved: ResolvedLoad) {
+    if let Some(cache) = CACHE.as_ref() {
+        cache.resolved_pending.lock().insert(name.to_string(), resolved);
+    }
+}
+
+/// What `loadautofn` resolved for one load, held until the registration
+/// step adds the definition text (see [`stage_search`], [`commit_search`]).
+struct StagedSearch {
+    dir: String,
+    body: String,
+    dump_ksh: i32,
+    from_wordcode: bool,
+}
+
+thread_local! {
+    static STAGED_SEARCH: std::cell::RefCell<HashMap<String, StagedSearch>> =
+        std::cell::RefCell::new(HashMap::new());
+    static STAGED_HIT: std::cell::RefCell<HashMap<String, ResolvedLoad>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// `loadautofn` searched `$fpath` and read `body` out of `dir`.
+pub fn stage_search(name: &str, dir: &str, body: &str, dump_ksh: Option<i32>, from_wordcode: bool) {
+    STAGED_SEARCH.with(|s| {
+        s.borrow_mut().insert(
+            name.to_string(),
+            StagedSearch {
+                dir: dir.to_string(),
+                body: body.to_string(),
+                dump_ksh: dump_ksh.unwrap_or(-1),
+                from_wordcode,
+            },
+        )
+    });
+}
+
+/// The registration step turned the staged body into `registered`; record
+/// the whole resolution for the entry that compile is about to write.
+pub fn commit_search(name: &str, body: &str, registered: &str, parse_failed: bool, ksh_style: bool) {
+    let Some(s) = STAGED_SEARCH.with(|s| s.borrow_mut().remove(name)) else {
+        return;
+    };
+    if s.body != body {
+        return;
+    }
+    let stamps = stamp_candidates(&s.dir, name);
+    note_resolved(
+        name,
+        ResolvedLoad {
+            body: s.body,
+            registered: registered.to_string(),
+            dump_ksh: s.dump_ksh,
+            from_wordcode: s.from_wordcode,
+            parse_failed,
+            ksh_style,
+            stamps,
+        },
+    );
+}
+
+/// `loadautofn` installed `resolved.body` from the shard.
+pub fn stage_hit(name: &str, resolved: ResolvedLoad) {
+    STAGED_HIT.with(|s| s.borrow_mut().insert(name.to_string(), resolved));
+}
+
+/// The stored registration for a body `loadautofn` took from the shard:
+/// `(registered, from_wordcode, parse_failed)`. `None` unless `body` and
+/// the ksh-style decision are the ones it was registered under.
+pub fn take_hit(name: &str, body: &str, ksh_style: bool) -> Option<(String, bool, bool)> {
+    let r = STAGED_HIT.with(|s| s.borrow_mut().remove(name))?;
+    (r.body == body && r.ksh_style == ksh_style).then_some((r.registered, r.from_wordcode, r.parse_failed))
+}
+
 /// Bulk write-through for the prewarm path. See
 /// [`AutoloadCache::put_many`].
 pub fn try_put_many(entries: &[(String, Vec<u8>, String, [u8; 32])]) -> Result<(), String> {
@@ -794,6 +1116,43 @@ mod tests {
         cache.flush_pending().unwrap();
         assert_eq!(cache.get("foo"), Some(vec![1, 2, 3]));
         assert_eq!(cache.entry_count(), 1);
+    }
+
+    /// A load is served by name, with no `$fpath` search, only while the
+    /// recorded resolution is current: its directory still on `fpath`, its
+    /// files unchanged. A flushed entry carries it into a new handle.
+    #[test]
+    fn resolution_served_by_name_until_its_inputs_change() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = tempdir().unwrap();
+        let fdir = tmp.path().join("fns");
+        std::fs::create_dir(&fdir).unwrap();
+        let file = fdir.join("_foo");
+        std::fs::write(&file, "print one\n").unwrap();
+        let fdir_s = fdir.to_string_lossy().to_string();
+        let fpath = vec!["/elsewhere".to_string(), fdir_s.clone()];
+        let resolved = ResolvedLoad {
+            body: "print one\n".to_string(),
+            registered: "_foo() {\nprint one\n}".to_string(),
+            dump_ksh: -1,
+            from_wordcode: false,
+            parse_failed: false,
+            ksh_style: false,
+            stamps: stamp_candidates(&fdir_s, "_foo"),
+        };
+        let cache_path = tmp.path().join("autoloads.rkyv");
+        let cache = AutoloadCache::open(&cache_path).unwrap();
+        cache.resolved_pending.lock().insert("_foo".to_string(), resolved.clone());
+        cache
+            .put_one("_foo", vec![1], &fdir_s, registered_digest(&resolved))
+            .unwrap();
+        cache.flush_pending().unwrap();
+
+        let fresh = AutoloadCache::open(&cache_path).unwrap();
+        assert_eq!(fresh.resolve("_foo", &fpath), Some((fdir_s.clone(), resolved)));
+        assert_eq!(fresh.resolve("_foo", &["/elsewhere".to_string()]), None, "dir left fpath");
+        std::fs::write(&file, "print two!\n").unwrap();
+        assert_eq!(fresh.resolve("_foo", &fpath), None, "file edited");
     }
 
     #[test]

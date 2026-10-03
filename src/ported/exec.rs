@@ -723,192 +723,223 @@ pub fn loadautofn(
             None
         }
     };
-    let mut looked_up = getfpfunc(
-        &name,
-        &mut dir_path,
-        loaddir_spec.as_deref(),
-        0,
-        &mut dump_hit,
-    ); // c:5753 / c:5759
-       // c:5754-5756 — the explicit load directory missed; `-d` (PM_CUR_FPATH,
-       // set by `autoload -d`, c:3383) or an explicit `current_fpath` argument
-       // means "also try $fpath". The Rust port never retried, so
-       // `autoload -dUz $PWD/extra/def; def` and
-       // `def() { autoload -dXUz $PWD/extra; }; def` both reported
-       // "function definition file not found" where zsh loads ./def
-       // (C04funcdef:33,40).
-    if looked_up.is_none()
-        && loaddir_spec.is_some()
-        && (current_fpath != 0 || (fn_flags & crate::ported::zsh_h::PM_CUR_FPATH) != 0)
-    {
-        dir_path = None;
-        dump_hit = None;
-        looked_up = getfpfunc(&name, &mut dir_path, None, 0, &mut dump_hit); // c:5756
-    }
-    let path = match looked_up {
-        Some(p) => p,
-        None => {
-            // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
-            // compsys ships as native Rust functions (src/compsys/router.rs),
-            // so names like `_main_complete` have no definition file in
-            // $fpath. C zsh always loads them from files; zshrs must let
-            // `autoload +X -Uz _main_complete` (e.g. fzf-tab via zinit's
-            // :zinit-tmp-subst-autoload, zinit.zsh:356) succeed without one.
-            // Mark the stub loaded and return success — call-time dispatch
-            // short-circuits to the native fn (vm_helper.rs:2276), so no
-            // funcdef/body is needed.
-            if crate::compsys::router::is_intercepted(&name) {
-                unsafe {
-                    (*shf).node.flags &= !(PM_UNDEFINED as i32);
-                }
-                if let Ok(mut tab) = shfunctab_lock().write() {
-                    if let Some(existing) = tab.get_mut(&name) {
-                        existing.node.flags &= !(PM_UNDEFINED as i32);
-                    }
-                }
-                return 0;
-            }
-            // c:Src/exec.c:5713-5719 — file not found path. C:
-            //   `if (prog == &dummy_eprog) {
-            //        locallevel--;
-            //        zwarn("%s: function definition file not found",
-            //              shf->node.nam);
-            //        locallevel++;
-            //        popheap();
-            //        return NULL;
-            //    }`
-            // C's getfpfunc returns &dummy_eprog as the "not found"
-            // sentinel when test_only==0; loadautofn detects it and
-            // emits the diagnostic before returning NULL. Rust's
-            // getfpfunc returns Option::None for the same condition,
-            // so we emit the same diagnostic here. The locallevel
-            // dance is preserved as a comment because the Rust
-            // port's zwarn doesn't reference locallevel in the
-            // format string itself (the dance in C is only to keep
-            // the prefix line counter consistent with the function-
-            // body context). Bug #107 in docs/BUGS.md.
-            crate::ported::utils::zwarn(&format!("{}: function definition file not found", name));
-            return 1; // c:5719 NULL
-        }
-    };
-    let _ = autol;
-    // Previously the Rust port treated this parameter as
-    // "test_only" and early-returned when set, so the `+X`
-    // call from `eval_autoload` (`loadautofn(shf, mode, 1, d)`)
-    // never actually loaded the file. C's parameter is `autol`
-    // (autoload mode), NOT a test-only flag — the C body
-    // unconditionally loads/parses regardless of autol. autol=1
-    // controls the EF_RUN / map-flag dance for the wordcode prog
-    // (c:5725-5749), but the loaded-body / PM_UNDEFINED-clear
-    // path runs in all cases. Removing the early-return so
-    // `autoload -U +X funcname` actually loads the body and
-    // `type funcname` reports `function from /path/file` instead
-    // of `autoload shell function`. Bug #160 in docs/BUGS.md.
-    // c:5100-5140 — read the file. C uses zopen + read + parse_string +
-    // execsave; Rust port stores raw text on the ShFunc and defers
-    // parse-to-Eprog until the first call.
-    //
-    // c:Src/exec.c:6238 / parse.c:3833 — when getfpfunc resolved the
-    // function out of a compiled `.zwc` dump, there is no source file
-    // to read; the wordcode Eprog came back through `dump_hit`. C
-    // executes that wordcode directly (`shf->funcdef = stripkshdef(
-    // prog, ...)`, exec.c:5753-5755). zshrs executes function bodies
-    // through the fusevm bytecode pipeline which consumes source
-    // text, so bridge wordcode → text with the canonical text.c
-    // renderer (`getpermtext`, ported at text.rs:189) — the same
-    // walker `functions NAME` printing uses for wordcode-backed
-    // funcdefs (C hashtable.c:954). The downstream
-    // `autoload_register_source` step (vm_helper.rs:3162) performs
-    // the `stripkshdef` shape decision, matching c:5725-5760.
-    // c:5706-5710 — the ksh-mode precedence chain:
-    //   `if (ksh == 1) { ksh = fksh; if (ksh == 1)
-    //        ksh = PM_KSHSTORED ? 2 : PM_ZSHSTORED ? 0 : 1; }`
-    // The dump header flag (FDHF_KSHLOAD/FDHF_ZSHLOAD via `*ksh`
-    // from try_dump_file) outranks the stub's PM_*STORED bits, which
-    // are only consulted when the dump says 1 (no explicit style).
-    // zshrs's load/register split (vm_helper's
-    // `autoload_register_source` makes the c:5725 ksh-vs-zsh
-    // decision later, from the tab entry's flags + KSHAUTOLOAD) —
-    // fold a decisive dump flag into the PM bits so the downstream
-    // decision sees the same precedence.
-    let dump_ksh = dump_hit.as_ref().map(|(_, k)| *k);
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
-    // C installs the dump's wordcode itself (c:5753-5755) and never lexes it
-    // again; zshrs installs a `getpermtext` deparse whose real compile happens
-    // at the call that defines the function, so the provenance has to be
-    // recorded for that later compile. See vm_helper::autoload_note_wordcode_body.
-    let from_wordcode = dump_hit.is_some();
-    let body = match dump_hit {
-        // The wordcode C executes carries a line number on every pipe
-        // (`WCB_PIPE(type, toklineno + 1)`, c:Src/parse.c:911/935/944, read
-        // back by `lineno = WC_PIPE_LINENO(pcode) - 1` at c:Src/exec.c:2057
-        // and `lineno = code - 1` at c:Src/exec.c:1356), so a dump-loaded
-        // function reports exactly the `$LINENO` of its ORIGINAL source.
-        //
-        // `getpermtext` cannot reproduce that: `gettext2` is a pretty-printer
-        // (`Src/text.c`), so it drops comments and blank lines and re-breaks
-        // compounds onto its own lines — `if X; then` becomes `if X` NEWLINE
-        // `then`. Re-parsing that text yields a DIFFERENT line for every
-        // statement, and `$LINENO` / error prefixes / `funcfiletrace` inside
-        // any `.zwc`-loaded function drift from zsh (measured: 29 vs 32 for
-        // `_parameters` loaded out of a `comp_utils.zwc` digest).
-        //
-        // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
-        // C has no choice to make here: `shf->funcdef = stripkshdef(prog, …)`
-        // (c:Src/exec.c:5753-5755) runs the DUMP's wordcode and never looks at
-        // the source file again. zshrs executes function bodies as TEXT, so it
-        // has to render the wordcode back — and that render is what loses the
-        // line numbers. The source file is preferred ONLY when it still renders
-        // to the same program as the dump; then it is provably the text the
-        // wordcode was compiled from and keeps the original line numbering.
-        //
-        // The previous version skipped that test and took the source file
-        // whenever it existed, on the theory that try_dump_file's mtime gate
-        // (parse.rs, c:Src/parse.c:3762-3784) already proved they agree. It
-        // does not: the gate is `stc.st_mtime >= stn.st_mtime` at SECOND
-        // granularity, so a source rewritten within the same second as the
-        // dump — or back-dated — passes it while holding completely different
-        // code. `zcompile f; print 'print FRESH' > f; touch f; autoload f; f`
-        // ran FRESH where zsh runs the compiled body.
-        Some((prog, _ksh)) => {
-            let dump_text = crate::ported::text::getpermtext(Box::new(prog), None, 0); // c:5753
-            // The equality test below LEXES the source file, and it is asking
-            // whether that file is the text the dump's wordcode was compiled
-            // from. `zcompile` resolved the dump with the lexer state C uses
-            // for a compile, so the comparison has to be made in that same
-            // state or it answers a different question: under RCQUOTES an
-            // adjacent quote pair re-lexes as one literal quote
-            // (c:Src/lex.c:1328) and a live alias rewrites words from inside
-            // the lexer (c:Src/lex.c:1909), so a source that IS the dump's
-            // original compared unequal and the deparse was taken instead —
-            // losing the original line numbering for no reason. Same pin the
-            // `source` leg uses (vm_helper::execute_zwc_program).
-            let _relex = crate::vm_helper::ZwcRelexGuard::enter();
-            // Raw-byte read (c:Src/exec.c:5745 `getfpfunc` → `metafy`):
-            // an autoload file is not required to be UTF-8.
-            match crate::script_bytes::read_script_file(&path) {
-                // Both sides go through the SAME renderer, so a `.zwc` written
-                // by C zsh (metafied string pool) still compares equal to a
-                // locally parsed source.
-                Ok(t)
-                    if crate::ported::exec::parse_string(&t, 1).is_some_and(|p| {
-                        crate::ported::text::getpermtext(Box::new(p), None, 0) == dump_text
-                    }) =>
-                {
-                    t
-                }
-                _ => dump_text,
-            }
+    // C runs getfpfunc (c:5753/c:5759) — a walk of `$fpath`, then a read and
+    // parse of the file — on the first call of every autoload in every
+    // process. autoloads.rkyv records what that search chose and read
+    // (`autoload_cache::ResolvedLoad`), so a plain `$fpath` autoload whose
+    // entry is still current installs the stored body without touching
+    // `$fpath` at all. With an explicit load directory (the c:5747 arm) the
+    // entry must have come from that directory.
+    let shard_hit = {
+        let dirs = match loaddir_spec.as_deref() {
+            Some(spec) => spec.to_vec(),
+            None => crate::ported::params::getaparam("fpath").unwrap_or_default(),
+        };
+        crate::autoload_cache::try_resolve(&name, &dirs)
+    };
+    let (path, dump_ksh, from_wordcode, body) = if let Some((dir, resolved)) = shard_hit {
+        dir_path = Some(dir.clone());
+        let hit = (
+            format!("{dir}/{name}"),
+            (resolved.dump_ksh >= 0).then_some(resolved.dump_ksh),
+            resolved.from_wordcode,
+            resolved.body.clone(),
+        );
+        crate::autoload_cache::stage_hit(&name, resolved);
+        hit
+    } else {
+        let mut looked_up = getfpfunc(
+            &name,
+            &mut dir_path,
+            loaddir_spec.as_deref(),
+            0,
+            &mut dump_hit,
+        ); // c:5753 / c:5759
+           // c:5754-5756 — the explicit load directory missed; `-d` (PM_CUR_FPATH,
+           // set by `autoload -d`, c:3383) or an explicit `current_fpath` argument
+           // means "also try $fpath". The Rust port never retried, so
+           // `autoload -dUz $PWD/extra/def; def` and
+           // `def() { autoload -dXUz $PWD/extra; }; def` both reported
+           // "function definition file not found" where zsh loads ./def
+           // (C04funcdef:33,40).
+        if looked_up.is_none()
+            && loaddir_spec.is_some()
+            && (current_fpath != 0 || (fn_flags & crate::ported::zsh_h::PM_CUR_FPATH) != 0)
+        {
+            dir_path = None;
+            dump_hit = None;
+            looked_up = getfpfunc(&name, &mut dir_path, None, 0, &mut dump_hit); // c:5756
         }
-        // c:Src/exec.c:5745 `getfpfunc` reads the function file with
-        // `read()` and hands the bytes to `metafy` — there is no encoding
-        // requirement. `read_to_string` rejected the file on the first
-        // non-UTF-8 byte and this arm returned 1, so an $fpath completer
-        // carrying one legacy byte autoloaded to NOTHING, silently.
-        None => match crate::script_bytes::read_script_file(&path) {
-            Ok(t) => t,
-            Err(_) => return 1,
-        },
+        let path = match looked_up {
+            Some(p) => p,
+            None => {
+                // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
+                // compsys ships as native Rust functions (src/compsys/router.rs),
+                // so names like `_main_complete` have no definition file in
+                // $fpath. C zsh always loads them from files; zshrs must let
+                // `autoload +X -Uz _main_complete` (e.g. fzf-tab via zinit's
+                // :zinit-tmp-subst-autoload, zinit.zsh:356) succeed without one.
+                // Mark the stub loaded and return success — call-time dispatch
+                // short-circuits to the native fn (vm_helper.rs:2276), so no
+                // funcdef/body is needed.
+                if crate::compsys::router::is_intercepted(&name) {
+                    unsafe {
+                        (*shf).node.flags &= !(PM_UNDEFINED as i32);
+                    }
+                    if let Ok(mut tab) = shfunctab_lock().write() {
+                        if let Some(existing) = tab.get_mut(&name) {
+                            existing.node.flags &= !(PM_UNDEFINED as i32);
+                        }
+                    }
+                    return 0;
+                }
+                // c:Src/exec.c:5713-5719 — file not found path. C:
+                //   `if (prog == &dummy_eprog) {
+                //        locallevel--;
+                //        zwarn("%s: function definition file not found",
+                //              shf->node.nam);
+                //        locallevel++;
+                //        popheap();
+                //        return NULL;
+                //    }`
+                // C's getfpfunc returns &dummy_eprog as the "not found"
+                // sentinel when test_only==0; loadautofn detects it and
+                // emits the diagnostic before returning NULL. Rust's
+                // getfpfunc returns Option::None for the same condition,
+                // so we emit the same diagnostic here. The locallevel
+                // dance is preserved as a comment because the Rust
+                // port's zwarn doesn't reference locallevel in the
+                // format string itself (the dance in C is only to keep
+                // the prefix line counter consistent with the function-
+                // body context). Bug #107 in docs/BUGS.md.
+                crate::ported::utils::zwarn(&format!("{}: function definition file not found", name));
+                return 1; // c:5719 NULL
+            }
+        };
+        let _ = autol;
+        // Previously the Rust port treated this parameter as
+        // "test_only" and early-returned when set, so the `+X`
+        // call from `eval_autoload` (`loadautofn(shf, mode, 1, d)`)
+        // never actually loaded the file. C's parameter is `autol`
+        // (autoload mode), NOT a test-only flag — the C body
+        // unconditionally loads/parses regardless of autol. autol=1
+        // controls the EF_RUN / map-flag dance for the wordcode prog
+        // (c:5725-5749), but the loaded-body / PM_UNDEFINED-clear
+        // path runs in all cases. Removing the early-return so
+        // `autoload -U +X funcname` actually loads the body and
+        // `type funcname` reports `function from /path/file` instead
+        // of `autoload shell function`. Bug #160 in docs/BUGS.md.
+        // c:5100-5140 — read the file. C uses zopen + read + parse_string +
+        // execsave; Rust port stores raw text on the ShFunc and defers
+        // parse-to-Eprog until the first call.
+        //
+        // c:Src/exec.c:6238 / parse.c:3833 — when getfpfunc resolved the
+        // function out of a compiled `.zwc` dump, there is no source file
+        // to read; the wordcode Eprog came back through `dump_hit`. C
+        // executes that wordcode directly (`shf->funcdef = stripkshdef(
+        // prog, ...)`, exec.c:5753-5755). zshrs executes function bodies
+        // through the fusevm bytecode pipeline which consumes source
+        // text, so bridge wordcode → text with the canonical text.c
+        // renderer (`getpermtext`, ported at text.rs:189) — the same
+        // walker `functions NAME` printing uses for wordcode-backed
+        // funcdefs (C hashtable.c:954). The downstream
+        // `autoload_register_source` step (vm_helper.rs:3162) performs
+        // the `stripkshdef` shape decision, matching c:5725-5760.
+        // c:5706-5710 — the ksh-mode precedence chain:
+        //   `if (ksh == 1) { ksh = fksh; if (ksh == 1)
+        //        ksh = PM_KSHSTORED ? 2 : PM_ZSHSTORED ? 0 : 1; }`
+        // The dump header flag (FDHF_KSHLOAD/FDHF_ZSHLOAD via `*ksh`
+        // from try_dump_file) outranks the stub's PM_*STORED bits, which
+        // are only consulted when the dump says 1 (no explicit style).
+        // zshrs's load/register split (vm_helper's
+        // `autoload_register_source` makes the c:5725 ksh-vs-zsh
+        // decision later, from the tab entry's flags + KSHAUTOLOAD) —
+        // fold a decisive dump flag into the PM bits so the downstream
+        // decision sees the same precedence.
+        let dump_ksh = dump_hit.as_ref().map(|(_, k)| *k);
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // C installs the dump's wordcode itself (c:5753-5755) and never lexes it
+        // again; zshrs installs a `getpermtext` deparse whose real compile happens
+        // at the call that defines the function, so the provenance has to be
+        // recorded for that later compile. See vm_helper::autoload_note_wordcode_body.
+        let from_wordcode = dump_hit.is_some();
+        let body = match dump_hit {
+            // The wordcode C executes carries a line number on every pipe
+            // (`WCB_PIPE(type, toklineno + 1)`, c:Src/parse.c:911/935/944, read
+            // back by `lineno = WC_PIPE_LINENO(pcode) - 1` at c:Src/exec.c:2057
+            // and `lineno = code - 1` at c:Src/exec.c:1356), so a dump-loaded
+            // function reports exactly the `$LINENO` of its ORIGINAL source.
+            //
+            // `getpermtext` cannot reproduce that: `gettext2` is a pretty-printer
+            // (`Src/text.c`), so it drops comments and blank lines and re-breaks
+            // compounds onto its own lines — `if X; then` becomes `if X` NEWLINE
+            // `then`. Re-parsing that text yields a DIFFERENT line for every
+            // statement, and `$LINENO` / error prefixes / `funcfiletrace` inside
+            // any `.zwc`-loaded function drift from zsh (measured: 29 vs 32 for
+            // `_parameters` loaded out of a `comp_utils.zwc` digest).
+            //
+            // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
+            // C has no choice to make here: `shf->funcdef = stripkshdef(prog, …)`
+            // (c:Src/exec.c:5753-5755) runs the DUMP's wordcode and never looks at
+            // the source file again. zshrs executes function bodies as TEXT, so it
+            // has to render the wordcode back — and that render is what loses the
+            // line numbers. The source file is preferred ONLY when it still renders
+            // to the same program as the dump; then it is provably the text the
+            // wordcode was compiled from and keeps the original line numbering.
+            //
+            // The previous version skipped that test and took the source file
+            // whenever it existed, on the theory that try_dump_file's mtime gate
+            // (parse.rs, c:Src/parse.c:3762-3784) already proved they agree. It
+            // does not: the gate is `stc.st_mtime >= stn.st_mtime` at SECOND
+            // granularity, so a source rewritten within the same second as the
+            // dump — or back-dated — passes it while holding completely different
+            // code. `zcompile f; print 'print FRESH' > f; touch f; autoload f; f`
+            // ran FRESH where zsh runs the compiled body.
+            Some((prog, _ksh)) => {
+                let dump_text = crate::ported::text::getpermtext(Box::new(prog), None, 0); // c:5753
+                // The equality test below LEXES the source file, and it is asking
+                // whether that file is the text the dump's wordcode was compiled
+                // from. `zcompile` resolved the dump with the lexer state C uses
+                // for a compile, so the comparison has to be made in that same
+                // state or it answers a different question: under RCQUOTES an
+                // adjacent quote pair re-lexes as one literal quote
+                // (c:Src/lex.c:1328) and a live alias rewrites words from inside
+                // the lexer (c:Src/lex.c:1909), so a source that IS the dump's
+                // original compared unequal and the deparse was taken instead —
+                // losing the original line numbering for no reason. Same pin the
+                // `source` leg uses (vm_helper::execute_zwc_program).
+                let _relex = crate::vm_helper::ZwcRelexGuard::enter();
+                // Raw-byte read (c:Src/exec.c:5745 `getfpfunc` → `metafy`):
+                // an autoload file is not required to be UTF-8.
+                match crate::script_bytes::read_script_file(&path) {
+                    // Both sides go through the SAME renderer, so a `.zwc` written
+                    // by C zsh (metafied string pool) still compares equal to a
+                    // locally parsed source.
+                    Ok(t)
+                        if crate::ported::exec::parse_string(&t, 1).is_some_and(|p| {
+                            crate::ported::text::getpermtext(Box::new(p), None, 0) == dump_text
+                        }) =>
+                    {
+                        t
+                    }
+                    _ => dump_text,
+                }
+            }
+            // c:Src/exec.c:5745 `getfpfunc` reads the function file with
+            // `read()` and hands the bytes to `metafy` — there is no encoding
+            // requirement. `read_to_string` rejected the file on the first
+            // non-UTF-8 byte and this arm returned 1, so an $fpath completer
+            // carrying one legacy byte autoloaded to NOTHING, silently.
+            None => match crate::script_bytes::read_script_file(&path) {
+                Ok(t) => t,
+                Err(_) => return 1,
+            },
+        };
+        if let Some(dir) = dir_path.as_deref() {
+            crate::autoload_cache::stage_search(&name, dir, &body, dump_ksh, from_wordcode);
+        }
+        (path, dump_ksh, from_wordcode, body)
     };
     // c:Src/exec.c:5735/5757 — `loadautofnsetfile(shf, fdir)`. The
     // helper stamps PM_LOADDIR alongside the filename when fdir is
@@ -7267,11 +7298,17 @@ pub fn doshfunc(
             None => {
                 let mut fdir: Option<String> = None;
                 let mut dump: Option<(eprog, i32)> = None;
+                // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+                // autoloads.rkyv already records which `$fpath` directory
+                // holds this name; take it from there instead of walking
+                // `$fpath` for every native completer a new shell calls.
+                let fpath = crate::ported::params::getaparam("fpath").unwrap_or_default();
+                let from_shard = crate::autoload_cache::try_source_dir(&name, &fpath);
                 // c:6219 `getfpfunc(s, ksh, test, fdir, 1)` with test_only —
                 // a pure probe: it fills `*fdir` (c:6240 `*fdir = *pp;`)
                 // without parsing the file.
-                let hit = getfpfunc(&name, &mut fdir, None, 1, &mut dump)
-                    .and(fdir)
+                let hit = from_shard
+                    .or_else(|| getfpfunc(&name, &mut fdir, None, 1, &mut dump).and(fdir))
                     // c:1061 (Src/hashtable.c, getshfuncfile) — a PM_LOADDIR
                     // filename renders as
                     // `zhtricat(shf->filename, "/", shf->node.nam)`.

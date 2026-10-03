@@ -97,12 +97,30 @@ pub fn prewarm_fpath(dirs: &[PathBuf]) -> PrewarmStats {
             // The exact text the loader would compile, and its digest —
             // the cache key. Muted the same way the compile is, because
             // building it runs a probe parse.
-            let Some(source) = definition_source(&name, &path) else {
+            let Some((body, source, parse_failed)) = definition_source(&name, &path) else {
                 stats.failed += 1;
                 continue;
             };
             let sha = crate::autoload_cache::source_digest(&source);
             let dir_key = dir.to_string_lossy().to_string();
+            // Record what a load would resolve, so the loader can skip the
+            // `$fpath` search. Only when no `.zwc` could win over the plain
+            // file (c:Src/parse.c:3725 try_dump_file runs first).
+            let stamps = crate::autoload_cache::stamp_candidates(&dir_key, &name);
+            if stamps.iter().skip(1).all(|s| !s.exists) {
+                crate::autoload_cache::note_resolved(
+                    &name,
+                    crate::autoload_cache::ResolvedLoad {
+                        body,
+                        registered: source.clone(),
+                        dump_ksh: -1,
+                        from_wordcode: false,
+                        parse_failed,
+                        ksh_style: false,
+                        stamps,
+                    },
+                );
+            }
             if crate::autoload_cache::try_load_for_source(&name, &dir_key, &sha).is_some() {
                 stats.fresh += 1;
                 continue;
@@ -164,12 +182,14 @@ fn muted<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
 /// `autoload -rUz` (sh:337/541), which is zsh-style, and the loader
 /// declines to use a cached chunk for a ksh-style autoload anyway — so
 /// caching one would be dead weight at best and wrong at worst.
-fn definition_source(name: &str, path: &Path) -> Option<String> {
+fn definition_source(name: &str, path: &Path) -> Option<(String, String, bool)> {
     let body = std::fs::read_to_string(path).ok()?;
     // The `parse_failed` half is the loader's business (it silences the second
     // report of a parse error C only makes once); the prewarm already runs
     // `muted` and only wants the text it would compile.
-    muted(|| Some(crate::vm_helper::autoload_definition_source(name, &body, false).0))
+    let (source, parse_failed) =
+        muted(|| Some(crate::vm_helper::autoload_definition_source(name, &body, false)))?;
+    Some((body, source, parse_failed))
 }
 
 /// Parse + compile one definition text into the chunk the loader installs.
