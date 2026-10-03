@@ -16787,18 +16787,23 @@ pub fn paramsubst(
                     // (word-split). `${(A)=out::=$v}` for v="1 2 3" is a 3-elem
                     // array; the port previously stored one "1 2 3" element.
                     let split_arrasg = |v: &str| -> Vec<String> {
-                        let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
-                            v.split(|c: char| sep.contains(c))
-                                .filter(|s| !s.is_empty())
-                                .map(|s| s.to_string())
-                                .collect()
-                        } else {
-                            // c:3273 sepsplit(val, NULL, …) → IFS word-split.
-                            crate::ported::utils::sepsplit(v, None, false)
-                                .into_iter()
-                                .filter(|s| !s.is_empty())
-                                .collect()
+                        // c:3273 — `aval = sepsplit(val, spsep, 0, 1)` keeps EVERY
+                        // field (an IFS split's non-white empties as nulstring).
+                        let mut p: Vec<String> = match spsep.as_deref() {
+                            Some(sep) => crate::ported::utils::sepsplit(v, Some(sep), true),
+                            None => crate::ported::utils::sepsplit(v, None, false),
                         };
+                        // c:3275-3279 — drop ONE truly-empty trailing field and ONE
+                        // leading one; interior empties stay (`a::b` is 3 fields).
+                        if p.last().is_some_and(|s| s.is_empty()) {
+                            p.pop();
+                        }
+                        if p.first().is_some_and(|s| s.is_empty()) {
+                            p.remove(0);
+                        }
+                        // c:3293 — `untokenize(*t)` strips the nulstring sentinel.
+                        let p: Vec<String> =
+                            p.iter().map(|s| crate::ported::lex::untokenize(s)).collect();
                         // c:3287 — (A) with an all-empty split still yields ONE
                         // empty element; (AA) empty stays a zero-element hash.
                         if p.is_empty() && arrasg == 1 && spsep.is_none() {
@@ -16934,17 +16939,19 @@ pub fn paramsubst(
                         value = singsub(default);
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
                         let split_arrasg = |v: &str| -> Vec<String> {
-                            let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
-                                v.split(|c: char| sep.contains(c))
-                                    .filter(|s| !s.is_empty())
-                                    .map(|s| s.to_string())
-                                    .collect()
-                            } else {
-                                crate::ported::utils::sepsplit(v, None, false)
-                                    .into_iter()
-                                    .filter(|s| !s.is_empty())
-                                    .collect()
+                            // c:3273-3293 — same field rule as the `::=` arm above.
+                            let mut p: Vec<String> = match spsep.as_deref() {
+                                Some(sep) => crate::ported::utils::sepsplit(v, Some(sep), true),
+                                None => crate::ported::utils::sepsplit(v, None, false),
                             };
+                            if p.last().is_some_and(|s| s.is_empty()) {
+                                p.pop();
+                            }
+                            if p.first().is_some_and(|s| s.is_empty()) {
+                                p.remove(0);
+                            }
+                            let p: Vec<String> =
+                                p.iter().map(|s| crate::ported::lex::untokenize(s)).collect();
                             if p.is_empty() && arrasg == 1 && spsep.is_none() {
                                 vec![String::new()]
                             } else {
@@ -17076,17 +17083,19 @@ pub fn paramsubst(
                         value = singsub(default);
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
                         let split_arrasg = |v: &str| -> Vec<String> {
-                            let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
-                                v.split(|c: char| sep.contains(c))
-                                    .filter(|s| !s.is_empty())
-                                    .map(|s| s.to_string())
-                                    .collect()
-                            } else {
-                                crate::ported::utils::sepsplit(v, None, false)
-                                    .into_iter()
-                                    .filter(|s| !s.is_empty())
-                                    .collect()
+                            // c:3273-3293 — same field rule as the `::=` arm above.
+                            let mut p: Vec<String> = match spsep.as_deref() {
+                                Some(sep) => crate::ported::utils::sepsplit(v, Some(sep), true),
+                                None => crate::ported::utils::sepsplit(v, None, false),
                             };
+                            if p.last().is_some_and(|s| s.is_empty()) {
+                                p.pop();
+                            }
+                            if p.first().is_some_and(|s| s.is_empty()) {
+                                p.remove(0);
+                            }
+                            let p: Vec<String> =
+                                p.iter().map(|s| crate::ported::lex::untokenize(s)).collect();
                             if p.is_empty() && arrasg == 1 && spsep.is_none() {
                                 vec![String::new()]
                             } else {

@@ -4734,4 +4734,17 @@ v=$'a\n\nb'; printf '<%s>' "${(fq)v}" "${(f)v}" "${(@f)v}"; echo
 v=a::b; print -r -- ${#${(s.:.)v}} ${#${(s.:.qq)v}} "${${(s.:.)v}[2]}""#,
         );
     }
+
+    /// c:Src/subst.c:3273-3293 — an `(A)`/`(AA)` assignment with `(s:X:)` keeps every
+    /// sepsplit field and drops only ONE leading and ONE trailing empty. zshrs
+    /// dropped every empty. zsh: `<a><><b>3`, `<>1`, `a b 2`.
+    #[test]
+    fn split_array_assignment_trims_only_edge_empties() {
+        assert_parity(
+            r#"v=:a::b:; : ${(As.:.)arr::=$v}; printf '<%s>' "${arr[@]}"; echo ${#arr}
+v=::; : ${(As.:.)arr::=$v}; printf '<%s>' "${arr[@]}"; echo ${#arr}
+v=a::b::; : ${(AAs.:.)h::=$v}; print -r -- ${(kv)h} ${#h}
+v=:a::b:; unset arr; : ${(As.:.)arr=$v}; printf '<%s>' "${arr[@]}"; echo ${#arr}"#,
+        );
+    }
 }
