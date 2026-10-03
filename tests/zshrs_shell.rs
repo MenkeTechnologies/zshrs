@@ -16625,3 +16625,19 @@ fn test_let_nounset_error_returns_2() {
     assert_eq!(status, 0);
     assert!(stderr.contains("noexist: parameter not set"), "{stderr}");
 }
+
+#[test]
+fn test_compound_status_skips_sublist_errexit() {
+    // Src/loop.c:799 (exectry) and execcursh / the loops / if / case
+    // (c:Src/exec.c:493, Src/loop.c:211-707) end with `this_noerrexit = 1`,
+    // so the enclosing sublist's ZERR / ERR_EXIT block (c:Src/exec.c:1598)
+    // does not judge the compound's status again (C03traps.ztst:866,1001).
+    let (_, out, err) = run_zshrs_parity(
+        "( setopt err_exit; { false && true } always { print A }; print OK )
+( setopt errexit; true && { false && true }; print ok1 )
+( setopt errexit; true && if true; then false && true; fi; print ok2 )
+( setopt errexit; true && for i in 1; do false && true; done; print ok3 )
+( trap 'print T' ERR; true && {false} always {true} )",
+    );
+    assert_eq!(out, "A\nOK\nok1\nok2\nok3\nT\n", "{err}");
+}

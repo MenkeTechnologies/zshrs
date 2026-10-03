@@ -1541,7 +1541,10 @@ impl ZshCompiler {
             // c:1548-1549 — `if (isnot) this_noerrexit = 1;` on the END
             // element skips the whole c:1651 block, so a trailing `! cmd`
             // gets no ZERR / errexit handling at all.
-            if i == ops.len() - 1 && !pipe_nots[i + 1] {
+            // A compound command that ends by setting `this_noerrexit = 1`
+            // (execcursh c:Src/exec.c:493, Src/loop.c:211-799) skips the
+            // same block: its status was already judged inside it.
+            if i == ops.len() - 1 && !pipe_nots[i + 1] && !sets_this_noerrexit(pipes[i + 1]) {
                 // Suppression is already back at the enclosing level here
                 // (the per-element bump above is balanced), so this is the
                 // sublist's own c:1651 check.
@@ -2633,18 +2636,18 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::SetStatus, 0);
-                // c:Src/exec.c — errexit applies to the whole
-                // `{ try } always { finally }` construct: when the
-                // restored try-block status is non-zero, the shell
-                // aborts at the end of the construct. Without this
-                // emit, `setopt err_exit; { false } always { :; };
-                // echo after` printed `after`. Bug #240 in
-                // docs/BUGS.md.
+                // c:Src/loop.c:799 — `this_noerrexit = 1;`: the construct's
+                // own status never triggers ZERR / ERR_EXIT / ERR_RETURN
+                // (c:Src/exec.c:1598); a failing command inside the try
+                // list already did. Only the fatal-errflag half of the
+                // check remains (C03traps.ztst:866, 1001).
                 // RESTORE_TRY_BLOCK_STATUS has just re-armed BREAKS for
                 // the level-accurate probes below; the generic execlist
                 // gate must not eat it first.
                 self.break_escape_suppress += 1;
+                self.errexit_suppress_depth += 1;
                 self.emit_errexit_check();
+                self.errexit_suppress_depth -= 1;
                 self.break_escape_suppress -= 1;
                 // If the try-block fired a return/break/continue, the
                 // canonical RETFLAG / BREAKS / CONTFLAG atomics are
@@ -14145,6 +14148,29 @@ fn is_cursh_command(cmd: &ZshCommand) -> bool {
         ZshCommand::Redirected(inner, _) => is_cursh_command(inner),
         _ => true,
     }
+}
+
+/// Whether running `pipe` leaves C's `this_noerrexit = 1`, so the enclosing
+/// sublist skips its ZERR / ERR_EXIT block (c:Src/exec.c:1598): a lone `{ }`
+/// (execcursh, c:Src/exec.c:493), `for` / `select` / `while` / `until` /
+/// `repeat` / `if` / `case` / `{ } always { }` (Src/loop.c:211, 339, 493,
+/// 547, 593, 707, 799).
+fn sets_this_noerrexit(pipe: &ZshPipe) -> bool {
+    fn cmd(c: &ZshCommand) -> bool {
+        match c {
+            ZshCommand::Redirected(inner, _) => cmd(inner),
+            ZshCommand::Cursh(_)
+            | ZshCommand::For(_)
+            | ZshCommand::While(_)
+            | ZshCommand::Until(_)
+            | ZshCommand::Repeat(_)
+            | ZshCommand::If(_)
+            | ZshCommand::Case(_)
+            | ZshCommand::Try(_) => true,
+            _ => false,
+        }
+    }
+    pipe.next.is_none() && cmd(&pipe.cmd)
 }
 
 fn list_is_cmplx(list: &ZshList) -> bool {
