@@ -4679,4 +4679,18 @@ for i in 1 2; do (for j in a b; do break 2; done; print -n "in$i "); print -n "$
 a=(x y x y); print ${a[(n:1+1:i)x]}; print ${a[(ne:2:i)x]}; print not-reached"#,
         );
     }
+
+    /// c:Src/prompt.c:1343 + c:1179-1184 — the truncation width comes from
+    /// countprompt, which skips Inpar..Outpar spans. zshrs fed it U+0088 instead
+    /// of the Inpar token char, so `%F{4}` counted as visible text and `%1<<`
+    /// dropped every visible char. zsh: `ESC[34mdESC[39m`, `XYESC[34meESC[39m`.
+    #[test]
+    fn prompt_left_truncation_ignores_invisible_escapes() {
+        assert_parity(
+            r#"print -P -- '%1<<ab%F{4}cd%f'
+print -P -- '%2<<ab%F{4}cd%f'
+print -P -- 'XY%-5<<abcdef|%F{4}blue%f'
+print -P -- '%-1<<abcdef|%^|%U under %u'"#,
+        );
+    }
 }
