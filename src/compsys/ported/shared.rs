@@ -1560,7 +1560,7 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
     // directory itself, EACCES, so zsh prints `permission denied: `; so
     // does a non-executable file of that name on `$path`.
     let mut eno = 0;
-    for pp in getsparam("PATH").unwrap_or_default().split(':') {
+    for pp in crate::ported::params::getsparam("PATH").unwrap_or_default().split(':') {
         let candidate = if pp.is_empty() || pp == "." {
             cmd.to_string() // c:821-822
         } else {
