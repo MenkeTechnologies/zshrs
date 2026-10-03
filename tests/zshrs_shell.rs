@@ -9352,6 +9352,33 @@ fn test_wait_unrealistic_jobspec_errors() {
 }
 
 #[test]
+fn test_wait_skips_current_shell_jobs() {
+    // c:Src/exec.c:3674-3682 marks the job slot of a builtin, a function
+    // call or a compound command STAT_CURSH|STAT_NOPRINT, and bin_fg
+    // rejects such a slot (c:Src/jobs.c:2585-2590). Unmarked, the
+    // enclosing function's / `{ }`'s / `eval`'s slot was a live job:
+    // `wait %1` inside it waited on it and returned 0 (A05execution.ztst:33).
+    for code in [
+        "f() { wait %1 }; f",
+        "{ wait %1 } >/dev/null",
+        "if true; then wait %1; fi",
+        "f() { eval 'wait %1' }; f",
+    ] {
+        let (status, _, stderr) = run_zshrs_parity(code);
+        assert_eq!(status, 127, "{code}: {stderr}");
+        assert!(stderr.contains("%1: no such job"), "{code}: {stderr}");
+    }
+    // `%%` after a finished background job: its freed slot is reused by
+    // the eval's own pipeline, which zsh reports as no such job.
+    let (status, _, stderr) =
+        run_zshrs_parity("sleep 0.05 & wait; f() { eval 'wait %%' }; f </dev/null");
+    assert_eq!(status, 127, "{stderr}");
+    // A real background job inside a function is still waitable.
+    let (status, _, stderr) = run_zshrs_parity("f() { sleep 0.05 & wait %2 }; f");
+    assert_eq!(status, 0, "{stderr}");
+}
+
+#[test]
 fn test_source_no_args_zsh_format() {
     // zsh: bare `source` -> `source:1: not enough arguments` exit
     // 1. zshrs printed `source: filename argument required` —

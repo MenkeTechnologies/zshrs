@@ -1260,10 +1260,22 @@ impl ZshCompiler {
             self.compile_pipe(pipe);
             return;
         }
+        // c:Src/exec.c:3635 `is_cursh = (... || type >= WC_CURSH)`: a lone
+        // compound command (not a `( )` subshell, not `time`) runs in the
+        // current shell, and execcmd_exec marks the pipeline's job for it
+        // (c:3674-3682). A simple command is marked at dispatch, once it is
+        // known to be a builtin or a function.
+        let cursh = pipe.next.is_none() && is_cursh_command(&pipe.cmd);
         let depth = self.execpline_depth;
         self.builder.emit(Op::LoadInt(depth as i64), 0);
+        if cursh {
+            self.builder.emit(Op::LoadInt(1), 0);
+        }
         self.builder.emit(
-            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_BLOCK, 1),
+            Op::CallBuiltin(
+                crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_BLOCK,
+                if cursh { 2 } else { 1 },
+            ),
             0,
         );
         self.builder.emit(Op::Pop, 0);
@@ -4518,6 +4530,11 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_TYPESET_RESWD, 0), 0);
                 self.builder.emit(Op::Pop, 0);
             }
+            // c:Src/exec.c:3635,3674-3682 — a builtin (or a function
+            // shadowing it) runs in the current shell.
+            self.builder
+                .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_MARK_CURSH, 0), 0);
+            self.builder.emit(Op::Pop, 0);
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             self.emit_print_exit_value(); // c:Src/exec.c:4308-4316
@@ -14119,6 +14136,17 @@ fn meta_encode_byte(out: &mut String, b: u8) {
 /// c:Src/parse.c:769 `par_list` — `*cmplx |= c` per sublist (c:784),
 /// plus `if (tok != SEPER) *cmplx = 1` (c:786-787), i.e. a list
 /// terminated by `&` / `&|` rather than `;` is cmplx.
+/// c:Src/exec.c:3635 — `type >= WC_CURSH`: every compound command except a
+/// `( )` subshell (WC_SUBSH, which forks) and `time` (WC_TIMED, which
+/// execpline handles as a timed pipeline, never reaching execcmd_exec).
+fn is_cursh_command(cmd: &ZshCommand) -> bool {
+    match cmd {
+        ZshCommand::Simple(_) | ZshCommand::Subsh(_) | ZshCommand::Time(_) => false,
+        ZshCommand::Redirected(inner, _) => is_cursh_command(inner),
+        _ => true,
+    }
+}
+
 fn list_is_cmplx(list: &ZshList) -> bool {
     list.flags.async_ || list.flags.disown || sublist_is_cmplx(&list.sublist)
 }

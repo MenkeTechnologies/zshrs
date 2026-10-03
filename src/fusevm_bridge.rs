@@ -1232,6 +1232,8 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     if let Some(status) = crate::p10k::maybe_intercept_command(name, &args) {
         return status;
     }
+    // c:Src/exec.c:3674-3682 — a builtin runs in the current shell.
+    crate::exec_jobs::mark_thisjob_cursh(true);
     // c:Src/exec.c:2700-2717 — `private` is an autoloaded builtin in
     // zsh (autofeature b:private of zsh/param/private): first use
     // runs ensurefeature → require_module → load_module → boot_,
@@ -3740,10 +3742,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // was added (the autoload cache); those keep the signal half only.
     vm.register_builtin(BUILTIN_EXECPLINE_CHILD_BLOCK, |vm, argc| {
         crate::ported::signals_h::child_block(); // c:Src/exec.c:1748
-        if argc == 1 {
+        // argc 2: the pipeline is a lone current-shell compound command.
+        let cursh = argc == 2 && vm.pop().to_int() != 0;
+        if argc >= 1 {
             let depth = vm.pop().to_int() as u32;
             let frame = vm as *const fusevm::VM as usize;
             crate::exec_jobs::execpline_slot_open(frame, depth); // c:Src/exec.c:1656-1666
+            if cursh {
+                crate::exec_jobs::mark_thisjob_cursh(false); // c:Src/exec.c:3674-3680
+            }
         }
         Value::Int(0)
     });
@@ -13154,6 +13161,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // See BUILTIN_MARK_CURSH.
+    vm.register_builtin(BUILTIN_MARK_CURSH, |_vm, _argc| {
+        crate::exec_jobs::mark_thisjob_cursh(true); // c:Src/exec.c:3674-3682
+        Value::Int(0)
+    });
     // See BUILTIN_EXEC_DYNAMIC_REDIRS.
     vm.register_builtin(BUILTIN_EXEC_DYNAMIC_REDIRS, |_vm, _argc| {
         EXEC_DYNAMIC_REDIRS.with(|c| c.set(true));
@@ -18133,6 +18145,11 @@ pub const BUILTIN_NULLCMD_CHECK: u16 = 760;
 /// passes `execcmd_exec` an empty `redir` list; this tells its AUTOCD test
 /// (c:Src/exec.c:3596 `(!redir || empty(redir))`) that there were some.
 pub const BUILTIN_EXEC_DYNAMIC_REDIRS: u16 = 761;
+/// Emitted right before a command word compiled to a builtin opcode: the
+/// command runs in the current shell, so execcmd_exec's is_cursh arm
+/// (c:Src/exec.c:3674-3682) marks the pipeline's job STAT_CURSH, plus
+/// STAT_NOPRINT while it has no processes. No args; pushes Int(0).
+pub const BUILTIN_MARK_CURSH: u16 = 762;
 /// `.` (dot) — alias of source/bin_dot but dispatches with the
 /// literal name "." so the diagnostic prefix matches zsh's
 /// (`zsh:.:1: …` vs source's `zsh:source:1: …`).
@@ -21250,6 +21267,10 @@ impl fusevm::ShellHost for ZshrsHost {
         let exec_dash = take_exec_carrier();
         let job_text = JOB_TEXT.with(|t| t.borrow_mut().take());
         PREFORK_CUT.with(|c| c.set(false)); // the words are complete
+        // c:Src/exec.c:3674-3680 — a shell function runs in the current shell.
+        if with_executor(|exec| exec.function_exists(&fn_name)) {
+            crate::exec_jobs::mark_thisjob_cursh(false);
+        }
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
         if status.is_none() {
             EXEC_DASH.with(|c| c.set(exec_dash));

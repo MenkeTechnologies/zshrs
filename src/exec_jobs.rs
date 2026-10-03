@@ -444,6 +444,38 @@ pub fn execpline_slots_forget_to(mark: usize) {
     HELD_SLOTS.with(|h| h.borrow_mut().truncate(mark));
 }
 
+/// Port of execcmd_exec's current-shell arm (c:Src/exec.c:3674-3682), for
+/// the VM's direct builtin and shell-function dispatch, which does not pass
+/// through `execcmd_exec`:
+/// ```c
+/// } else if (is_cursh) {
+///     jobtab[thisjob].stat |= STAT_CURSH;
+///     if (!jobtab[thisjob].procs)
+///         jobtab[thisjob].stat |= STAT_NOPRINT;
+///     if (is_builtin)
+///         jobtab[thisjob].stat |= STAT_BUILTIN;
+/// ```
+/// Without STAT_NOPRINT the running function's own slot is a live job to
+/// getjob/bin_fg: `f() { wait %1 }; f` waited on it and returned 0 where
+/// zsh reports `%1: no such job` and returns 127 (c:Src/jobs.c:2585-2590).
+pub fn mark_thisjob_cursh(is_builtin: bool) {
+    let tj = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
+    if tj < 0 {
+        return;
+    }
+    let table = crate::ported::jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(j) = tab.get_mut(tj as usize) {
+        j.stat |= stat::CURSH; // c:3678
+        if j.procs.is_empty() {
+            j.stat |= stat::NOPRINT; // c:3679-3680
+        }
+        if is_builtin {
+            j.stat |= stat::BUILTIN; // c:3681-3682
+        }
+    }
+}
+
 /// The job slot of the innermost running pipeline, if one is held.
 pub fn execpline_slot_current() -> Option<usize> {
     HELD_SLOTS.with(|h| h.borrow().last().map(|s| s.slot))
