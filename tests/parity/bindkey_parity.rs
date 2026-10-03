@@ -192,11 +192,20 @@ fn zle_dash_l_lists_dotted_internal_widgets() {
     // registered under both bare `name` and `.name` (TH_IMMORTAL).
     // `.complete-word` is the canonical base for compsys compinit
     // (zle -C complete-word .complete-word _main_complete).
+    //
+    // `-a` is required: with NAME arguments, `zle -l` fails any thingy
+    // whose widget is WIDGET_INT unless `-a` is given
+    // (zle_thingy.c:403-407), so `zle -lL .complete-word` is rc 1 in zsh
+    // too. The reference is checked first so a wrong premise fails here
+    // instead of pinning zshrs to it.
     if !zsh_available() {
         return;
     }
-    let r = run_zshrs("zle -lL .complete-word");
+    let z = run_zsh("zle -laL .complete-word");
+    assert_eq!(z.exit, 0, "reference zsh does not list `.complete-word`");
+    let r = run_zshrs("zle -laL .complete-word");
     assert_eq!(r.exit, 0, "`.complete-word` must be registered");
+    assert_eq!(r.stdout, z.stdout, "`zle -laL .complete-word` output");
 }
 
 #[test]
