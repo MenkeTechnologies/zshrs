@@ -16859,3 +16859,21 @@ fn test_function_entered_with_pending_break_runs_nothing() {
     );
     assert_eq!(output, "end\n");
 }
+
+#[test]
+fn test_hlgroup_and_ksh93_modules_load_with_their_features() {
+    // V01zmodload.ztst "Test loading of all compiled modules" loads every
+    // module config.modules lists. Src/Modules/hlgroup.c:166-169 provides the
+    // `.zle.esc` / `.zle.sgr` special hashes over `.zle.hlgroups`;
+    // Src/Modules/ksh93.c:116-131 the `.sh.*` parameters, the namerefs among
+    // them resolving to ZSH_PATCHLEVEL / ZSH_SUBSHELL.
+    let (code, output, err) = run_zshrs_parity(
+        "typeset -gA .zle.hlgroups=(foo bold); zmodload zsh/hlgroup zsh/ksh93 || exit 9
+print -r -- ${(q)${.zle.esc[foo]}} ${.zle.sgr[foo]} ${(k).zle.sgr}
+[[ ${.sh.version} = $ZSH_PATCHLEVEL ]] && print ver; ( print sub=${.sh.subshell} )
+setopt extendedglob; [[ abc = (#b)a(b)c ]]; print match=${.sh.match}
+zmodload -u zsh/hlgroup zsh/ksh93 && print ${+.zle.esc} ${+.sh.version}",
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(output, "$'\\033'\\[1m 1 foo\nver\nsub=1\nmatch=b\n0 0\n");
+}

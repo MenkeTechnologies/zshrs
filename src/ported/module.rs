@@ -1129,10 +1129,43 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
                 let lower = casemodify(&pm.node.nam, CASMOD_LOWER);
                 pm.ename = Some(ztrdup(&lower)); // c:1089
             }
-            // c:1092 pm->gsu.s = d->gsu ? d->gsu : &varscalar_gsu;
-            // gsu vtable wireup is opaque (function pointers via usize);
-            // the Rust param dispatch reads directly from typed accessors.
-            let _ = d.gsu; // c:1092
+            // c:1092 — `pm->gsu.s = d->gsu ? (GsuScalar)d->gsu :
+            // &varscalar_gsu;`. A module's `gsu` is the address of its static
+            // `gsu_scalar` (`&sh_name_gsu`, Src/Modules/ksh93.c:100); with
+            // none the param keeps the plain variable accessors. And c:1080
+            // `pm->u.data = d->var`: for a PM_NAMEREF row (ksh93.c:121-130)
+            // `var` is the referent name GETREFNAME reads back, here the
+            // address of a `&'static str`. `pm` is a copy, so both go onto the
+            // live node too.
+            let gsu = (d.gsu != 0).then(|| {
+                let g = unsafe { &*(d.gsu as *const crate::ported::zsh_h::gsu_scalar) };
+                (g.getfn, g.setfn, g.unsetfn)
+            });
+            let refname = (t == PM_NAMEREF && d.var != 0)
+                .then(|| unsafe { *(d.var as *const &'static str) }.to_string());
+            let mk = |g: (
+                fn(&crate::ported::zsh_h::param) -> String,
+                fn(&mut crate::ported::zsh_h::param, String),
+                fn(&mut crate::ported::zsh_h::param, i32),
+            )| {
+                Box::new(crate::ported::zsh_h::gsu_scalar { getfn: g.0, setfn: g.1, unsetfn: g.2 })
+            };
+            if let Some(g) = gsu {
+                pm.gsu_s = Some(mk(g)); // c:1092
+            }
+            if let Some(r) = &refname {
+                pm.u_str = Some(r.clone()); // c:1080
+            }
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(live) = tab.get_mut(&d.name) {
+                    if let Some(g) = gsu {
+                        live.gsu_s = Some(mk(g));
+                    }
+                    if let Some(r) = refname {
+                        live.u_str = Some(r);
+                    }
+                }
+            }
         } else if t == PM_INTEGER {
             // c:1095-1096 — `pm->gsu.i = d->gsu ? (GsuInteger)d->gsu :
             // &varinteger_gsu;`. A module's `gsu` is the address of its
@@ -1581,6 +1614,12 @@ impl modulestab {
                 ][..],
             ),
             ("zsh/langinfo", &[][..]),
+            // c:Src/Modules/hlgroup.mdd — `link=either`, no builtins; its
+            // features are the `.zle.esc` / `.zle.sgr` special hashes.
+            ("zsh/hlgroup", &[][..]),
+            // c:Src/Modules/ksh93.mdd — `link=either`, `moddeps="zsh/zle"`;
+            // ksh93.c:40-42 bintab is `nameref`.
+            ("zsh/ksh93", &["nameref"][..]),
             ("zsh/mapfile", &[][..]),
             ("zsh/mathfunc", &[][..]),
             ("zsh/nearcolor", &[][..]),
@@ -1774,8 +1813,10 @@ impl modulestab {
         // well under the `ct >= 34` re-hash of the 17-bucket table.
         //
         // `zsh/hlgroup` and `zsh/ksh93` also carry `load=yes` in the
-        // reference tree's config.modules but zshrs implements neither,
-        // so they contribute no boot node.
+        // reference tree's config.modules. They are linked (loadable with
+        // `zmodload`) but get no boot node or autoload stubs here: each
+        // would add to `${#modules}` / `${#parameters}` at startup, which the
+        // 5.9.x oracle rows pin.
         //
         // The `autofeatures` column below is each `.mdd`'s
         // `autofeatures=` line VERBATIM — that string is what

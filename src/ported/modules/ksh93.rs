@@ -32,7 +32,7 @@ use crate::ported::params::{createparam, paramtab, setiparam, setloopvar, setspa
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::{dupstring, ztrdup};
 use crate::ported::zsh_h::{
-    eprog, features, funcstack, funcwrap, isset, module, param, paramdef, EMULATE_KSH, EMULATION,
+    eprog, features, funcstack, funcwrap, gsu_scalar, isset, module, param, paramdef, EMULATE_KSH, EMULATION,
     KSHARRAYS, PARAMDEF, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET, VIMODE,
 };
 use crate::ported::ztype_h::INAMESPC;
@@ -185,10 +185,65 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {
 // static const struct gsu_scalar sh_name_gsu                         c:100
 // static const struct gsu_scalar sh_subscript_gsu                    c:102
 //
-// GSU vtables for the `.sh.*` parameters. Wired into `partab[]` below.
-// Static-link path: dispatcher invokes the getfn/setfn directly.
-// Tables omitted pending param-table port.
+// GSU vtables for the `.sh.*` parameters, wired into `partab[]` (c:116-131)
+// through `setfeatureenables` below. C points `pm->u.data` at the
+// sh_name / sh_subscript / sh_edchar / sh_edmode statics and lets
+// strvargetfn / strgetfn dereference it; the Rust getfns read the same
+// statics directly.
 // =====================================================================
+
+/// `static const struct gsu_scalar constant_gsu` (c:91-92) —
+/// `{ strgetfn, NULL, nullunsetfn }`: the readonly namerefs' vtable.
+static constant_gsu: gsu_scalar = gsu_scalar {
+    getfn: crate::ported::params::strgetfn, // c:92
+    setfn: crate::ported::params::nullstrsetfn, // c:92 NULL
+    unsetfn: crate::ported::params::nullunsetfn, // c:92
+};
+
+/// `static const struct gsu_scalar sh_edchar_gsu` (c:94-95) —
+/// `{ strvargetfn, edcharsetfn, nullunsetfn }`.
+static sh_edchar_gsu: gsu_scalar = gsu_scalar {
+    getfn: |_pm| sh_edchar.lock().map(|s| s.clone()).unwrap_or_default(), // c:95 strvargetfn(&sh_edchar)
+    setfn: |_pm, _x| {}, // c:95 edcharsetfn — its body is empty (c:47-57)
+    unsetfn: crate::ported::params::nullunsetfn, // c:95
+};
+
+/// `static const struct gsu_scalar sh_edmode_gsu` (c:96-97) —
+/// `{ strgetfn, nullstrsetfn, nullunsetfn }` over `u.str = sh_edmode`.
+static sh_edmode_gsu: gsu_scalar = gsu_scalar {
+    getfn: |_pm| {
+        // c:97 strgetfn — `sh_edmode` is a NUL-terminated char[2].
+        let m = sh_edmode.lock().map(|m| *m).unwrap_or([0, 0]);
+        let n = m.iter().position(|&b| b == 0).unwrap_or(m.len());
+        String::from_utf8_lossy(&m[..n]).into_owned()
+    },
+    setfn: crate::ported::params::nullstrsetfn, // c:97
+    unsetfn: crate::ported::params::nullunsetfn, // c:97
+};
+
+/// `static const struct gsu_scalar sh_name_gsu` (c:100-101) —
+/// `{ strvargetfn, nullstrsetfn, nullunsetfn }` over `&sh_name`.
+static sh_name_gsu: gsu_scalar = gsu_scalar {
+    getfn: |_pm| sh_name.lock().map(|s| s.clone()).unwrap_or_default(), // c:101
+    setfn: crate::ported::params::nullstrsetfn, // c:101
+    unsetfn: crate::ported::params::nullunsetfn, // c:101
+};
+
+/// `static const struct gsu_scalar sh_subscript_gsu` (c:102-103).
+static sh_subscript_gsu: gsu_scalar = gsu_scalar {
+    getfn: |_pm| sh_subscript.lock().map(|s| s.clone()).unwrap_or_default(), // c:103
+    setfn: crate::ported::params::nullstrsetfn, // c:103
+    unsetfn: crate::ported::params::nullunsetfn, // c:103
+};
+
+/// The referents of the four readonly namerefs (c:121,122,128,130). C's
+/// PARAMDEF `var` is the referent name itself (`pm->u.data = d->var`,
+/// Src/module.c:1080, read back by GETREFNAME); here `var` is the address
+/// of one of these.
+static sh_file_ref: &str = "ZSH_SCRIPT"; // c:121
+static sh_lineno_ref: &str = "LINENO"; // c:122
+static sh_subshell_ref: &str = "ZSH_SUBSHELL"; // c:128
+static sh_version_ref: &str = "ZSH_PATCHLEVEL"; // c:130
 
 // =====================================================================
 // static char sh_unsetval[2];	/* Dummy to treat as NULL */          c:105
@@ -640,6 +695,14 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:3394-3395 — `if (!enables || *enables) return
+    // setfeatureenables(m, f, enables ? *enables : NULL);` — the SET arm
+    // commits through this module's own setfeatureenables, which installs
+    // the partab rows.
+    if let Some(e) = enables.as_ref() {
+        let e = e.clone();
+        return setfeatureenables(m, f, Some(&e));
+    }
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
     // ADDED bit to live on (see MODULE_FEATURE_ENABLES there).
@@ -650,9 +713,38 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
-    0
+fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
+    // c:3354-3382 — the bintab block (`nameref`, c:40-42) and the `.sh.match`
+    // array go through the name-keyed ledger (the array is a PARTAB_ARRAY
+    // row, like zsh/system's errnos); the remaining partab rows through
+    // setparamdefs (c:3376-3378). Feature order: b:nameref, then partab
+    // c:116-131 in declaration order, `.sh.match` being partab index 4.
+    let mut ret = crate::ported::module::setfeatureenables("zsh/ksh93", &featuresarray(m, f), e);
+    let pd_e: Option<Vec<i32>> =
+        e.map(|a| [1, 2, 3, 4, 6, 7, 8, 9].iter().map(|&i| a.get(i).copied().unwrap_or(0)).collect());
+    let gsu = |g: &'static gsu_scalar| g as *const gsu_scalar as usize;
+    let var = |r: &'static &'static str| r as *const &'static str as usize;
+    let patab = PATAB.get_or_init(|| {
+        Mutex::new(vec![
+            PARAMDEF(".sh.edchar", (PM_SCALAR | PM_SPECIAL) as i32, 0, gsu(&sh_edchar_gsu)), // c:117
+            PARAMDEF(".sh.edmode", (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, gsu(&sh_edmode_gsu)), // c:119
+            PARAMDEF(".sh.file", (PM_NAMEREF | PM_READONLY) as i32, var(&sh_file_ref), gsu(&constant_gsu)), // c:121
+            PARAMDEF(".sh.lineno", (PM_NAMEREF | PM_READONLY) as i32, var(&sh_lineno_ref), gsu(&constant_gsu)), // c:122
+            PARAMDEF(".sh.name", (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, gsu(&sh_name_gsu)), // c:124
+            PARAMDEF(".sh.subscript", (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, gsu(&sh_subscript_gsu)), // c:126
+            PARAMDEF(".sh.subshell", (PM_NAMEREF | PM_READONLY) as i32, var(&sh_subshell_ref), gsu(&constant_gsu)), // c:128
+            PARAMDEF(".sh.version", (PM_NAMEREF | PM_READONLY) as i32, var(&sh_version_ref), gsu(&constant_gsu)), // c:130
+        ])
+    });
+    if crate::ported::module::setparamdefs("zsh/ksh93", &mut patab.lock().unwrap(), pd_e.as_deref()) != 0 {
+        ret = 1; // c:3377
+    }
+    ret // c:3382
 }
+
+/// `static struct paramdef partab[]` (c:116-131) less `.sh.match`; `d->pm`
+/// is the per-parameter enable bit setparamdefs keeps.
+static PATAB: OnceLock<Mutex<Vec<paramdef>>> = OnceLock::new();
 
 // =====================================================================
 // External ported / globals from other Src/*.c files. Stubbed locally

@@ -9465,6 +9465,8 @@ fn module_gated_partab_module(name: &str) -> Option<&'static str> {
         "sysparams" | "errnos" => Some("zsh/system"),
         "mapfile" => Some("zsh/mapfile"),
         "langinfo" => Some("zsh/langinfo"),
+        ".zle.esc" | ".zle.sgr" => Some("zsh/hlgroup"),
+        ".sh.match" => Some("zsh/ksh93"),
         _ => None,
     }
 }
@@ -9723,6 +9725,9 @@ pub fn init_partab_params() {
         "errnos",    // zsh/system
         "mapfile",   // zsh/mapfile
         "langinfo",  // zsh/langinfo
+        ".zle.esc",  // zsh/hlgroup
+        ".zle.sgr",  // zsh/hlgroup
+        ".sh.match", // zsh/ksh93
     ];
     // c:Src/module.c:1065 `addparamdef` — `checkaddparam` (c:1026) finds
     // the PM_AUTOLOAD stub `init_bltinmods` planted, calls
@@ -9957,6 +9962,8 @@ pub fn module_gated_params_for(module: &str) -> &'static [&'static str] {
         "zsh/system" => &["sysparams", "errnos"],
         "zsh/mapfile" => &["mapfile"],
         "zsh/langinfo" => &["langinfo"],
+        "zsh/hlgroup" => &[".zle.esc", ".zle.sgr"],
+        "zsh/ksh93" => &[".sh.match"],
         _ => &[],
     }
 }

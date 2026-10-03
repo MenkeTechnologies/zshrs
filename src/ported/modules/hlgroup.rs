@@ -338,35 +338,84 @@ pub fn scangroup(sgr: bool) -> Vec<(String, String)> {
 }
 
 /// Port of `getpmesc(UNUSED(HashTable ht), const char *name)` from `Src/Modules/hlgroup.c:141`.
-/// C body is `return getgroup(name, 0);` — escape-form variant.
-/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getpmesc(name: &str) -> Option<String> {
+/// C body is `return getgroup(name, 0);` — escape-form variant. getgroup
+/// (c:82-108) hands back a fresh PM_SCALAR|PM_SPECIAL node carrying the
+/// converted value, or PM_UNSET with "" when the group is not defined.
+pub fn getpmesc(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
     // c:141
-    getgroup(name, false) // c:148
+    use crate::ported::zsh_h::{hashnode, param, PM_SCALAR, PM_SPECIAL, PM_UNSET};
+    let val = getgroup(name, false); // c:143
+    let unset = if val.is_none() { PM_UNSET } else { 0 }; // c:101-103
+    Some(Box::new(param {
+        node: hashnode {
+            next: None,
+            nam: name.to_string(),                               // c:92
+            flags: (PM_SCALAR | PM_SPECIAL | unset) as i32, // c:93
+        },
+        u_str: Some(val.unwrap_or_default()), // c:102 / c:105
+        ..Default::default()
+    }))
 }
 
 /// Port of `scanpmesc(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/hlgroup.c:148`.
-/// C body is `scangroup(func, flags, 0);` — escape-form scanner.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanpmesc() -> Vec<(String, String)> {
+/// C body is `scangroup(func, flags, 0);` — escape-form scanner: every
+/// `$.zle.hlgroups` entry reaches `func` as a PM_SCALAR node (c:128-137).
+pub fn scanpmesc(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    func: Option<crate::ported::zsh_h::ParamScanFunc>,
+    flags: i32,
+) {
     // c:148
-    scangroup(false) // c:155
+    use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
+    let Some(func) = func else { return };
+    for (nam, val) in scangroup(false) {
+        // c:150 scangroup(func, flags, 0)
+        let pm = param {
+            node: hashnode { next: None, nam, flags: PM_SCALAR as i32 }, // c:129, c:135
+            u_str: Some(val),                                             // c:134
+            ..Default::default()
+        };
+        func(&pm, flags); // c:136
+    }
 }
 
 /// Port of `getpmsgr(UNUSED(HashTable ht), const char *name)` from `Src/Modules/hlgroup.c:155`.
 /// C body is `return getgroup(name, 1);` — SGR-form variant.
-/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getpmsgr(name: &str) -> Option<String> {
+pub fn getpmsgr(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
     // c:155
-    getgroup(name, true) // c:162
+    use crate::ported::zsh_h::{hashnode, param, PM_SCALAR, PM_SPECIAL, PM_UNSET};
+    let val = getgroup(name, true); // c:157
+    let unset = if val.is_none() { PM_UNSET } else { 0 }; // c:101-103
+    Some(Box::new(param {
+        node: hashnode {
+            next: None,
+            nam: name.to_string(),                               // c:92
+            flags: (PM_SCALAR | PM_SPECIAL | unset) as i32, // c:93
+        },
+        u_str: Some(val.unwrap_or_default()), // c:102 / c:105
+        ..Default::default()
+    }))
 }
 
 /// Port of `scanpmsgr(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/hlgroup.c:162`.
 /// C body is `scangroup(func, flags, 1);` — SGR-form scanner.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanpmsgr() -> Vec<(String, String)> {
+pub fn scanpmsgr(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    func: Option<crate::ported::zsh_h::ParamScanFunc>,
+    flags: i32,
+) {
     // c:162
-    scangroup(true) // c:162
+    use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
+    let Some(func) = func else { return };
+    for (nam, val) in scangroup(true) {
+        // c:164 scangroup(func, flags, 1)
+        let pm = param {
+            node: hashnode { next: None, nam, flags: PM_SCALAR as i32 }, // c:129, c:135
+            u_str: Some(val),                                             // c:134
+            ..Default::default()
+        };
+        func(&pm, flags); // c:136
+    }
 }
 
 // =====================================================================
@@ -451,8 +500,11 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
-    0
+fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
+    // c:3354-3382 — only a paramdef block (`partab`, c:166-169); the
+    // name-keyed ledger adds or removes the `.zle.esc` / `.zle.sgr`
+    // special hashes, as for zsh/langinfo.
+    crate::ported::module::setfeatureenables("zsh/hlgroup", &featuresarray(m, f), e)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -500,6 +552,21 @@ fn module_features() -> &'static Mutex<features> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Collects what a ScanFunc-shaped scanner (c:148/162) hands its callback.
+    fn collect_scan(
+        scan: fn(*mut crate::ported::zsh_h::HashTable, Option<crate::ported::zsh_h::ParamScanFunc>, i32),
+    ) -> Vec<(String, String)> {
+        thread_local! {
+            static OUT: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        fn cb(pm: &crate::ported::zsh_h::param, _flags: i32) {
+            OUT.with(|o| o.borrow_mut().push((pm.node.nam.clone(), pm.u_str.clone().unwrap_or_default())));
+        }
+        OUT.with(|o| o.borrow_mut().clear());
+        scan(std::ptr::null_mut(), Some(cb), 0);
+        OUT.with(|o| o.borrow().clone())
+    }
 
     /// `convertattr("bold", false)` emits `\e[1m` per Src/prompt.c
     /// attribute table.
@@ -653,29 +720,29 @@ mod tests {
         );
     }
 
-    /// c:141 — `getpmesc` for empty/unknown name returns None.
+    /// c:141 — `getpmesc` for empty/unknown name is a PM_UNSET node.
     #[test]
     fn getpmesc_empty_or_unknown_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getpmesc("").is_none());
-        assert!(getpmesc("definitely_not_in_table_xyzzy").is_none());
+        assert!(getpmesc(std::ptr::null_mut(), "").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
+        assert!(getpmesc(std::ptr::null_mut(), "definitely_not_in_table_xyzzy").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
-    /// c:155 — `getpmsgr` symmetric with getpmesc; empty + unknown → None.
+    /// c:155 — `getpmsgr` symmetric with getpmesc; empty + unknown → PM_UNSET node.
     #[test]
     fn getpmsgr_empty_or_unknown_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getpmsgr("").is_none());
-        assert!(getpmsgr("definitely_not_in_table_xyzzy").is_none());
+        assert!(getpmsgr(std::ptr::null_mut(), "").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
+        assert!(getpmsgr(std::ptr::null_mut(), "definitely_not_in_table_xyzzy").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
-    /// c:148/162 — `scanpmesc` and `scanpmsgr` always return empty
+    /// c:148/162 — `scanpmesc` and `scanpmsgr` hand nothing to the callback
     /// vec until paramtable wiring lands.
     #[test]
     fn scanpmesc_and_scanpmsgr_are_empty_until_wired() {
         let _g = crate::test_util::global_state_lock();
-        assert!(scanpmesc().is_empty());
-        assert!(scanpmsgr().is_empty());
+        assert!(collect_scan(scanpmesc).is_empty());
+        assert!(collect_scan(scanpmsgr).is_empty());
     }
 
     /// c:182-210 — module-lifecycle stubs return 0.
@@ -989,18 +1056,18 @@ mod tests {
         let _ = scangroup(true);
     }
 
-    /// c:297 — getpmesc unknown → None.
+    /// c:297 — getpmesc unknown → PM_UNSET node.
     #[test]
     fn getpmesc_unknown_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getpmesc("zshrs_never_real_esc_xyz").is_none());
+        assert!(getpmesc(std::ptr::null_mut(), "zshrs_never_real_esc_xyz").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
-    /// c:313 — getpmsgr unknown → None.
+    /// c:313 — getpmsgr unknown → PM_UNSET node.
     #[test]
     fn getpmsgr_unknown_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getpmsgr("zshrs_never_real_sgr_xyz").is_none());
+        assert!(getpmsgr(std::ptr::null_mut(), "zshrs_never_real_sgr_xyz").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
     /// Lifecycle (c:337/366) split per-hook.
@@ -1081,23 +1148,23 @@ mod tests {
         }
     }
 
-    /// c:297 — `getpmesc(empty)` returns None.
+    /// c:297 — `getpmesc(empty)` is a PM_UNSET node.
     #[test]
     fn getpmesc_empty_returns_none() {
-        assert!(getpmesc("").is_none());
+        assert!(getpmesc(std::ptr::null_mut(), "").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
-    /// c:313 — `getpmsgr(empty)` returns None.
+    /// c:313 — `getpmsgr(empty)` is a PM_UNSET node.
     #[test]
     fn getpmsgr_empty_returns_none() {
-        assert!(getpmsgr("").is_none());
+        assert!(getpmsgr(std::ptr::null_mut(), "").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
     /// c:305 + c:321 — `scanpmesc`/`scanpmsgr` return Vec (type pin).
     #[test]
     fn scanpm_variants_return_vec_type() {
-        let _: Vec<(String, String)> = scanpmesc();
-        let _: Vec<(String, String)> = scanpmsgr();
+        let _: Vec<(String, String)> = collect_scan(scanpmesc);
+        let _: Vec<(String, String)> = collect_scan(scanpmsgr);
     }
 
     /// c:337-373 — full lifecycle setup→features→enables→boot→cleanup→finish.
@@ -1174,31 +1241,31 @@ mod tests {
         assert_eq!(t1, t2, "scangroup(true) must be deterministic");
     }
 
-    /// c:297 — `getpmesc` returns Option<String> (compile-time pin).
+    /// c:297 — `getpmesc` returns Option<Param> (compile-time pin).
     #[test]
     fn getpmesc_returns_option_string_type() {
-        let _: Option<String> = getpmesc("anykey");
+        let _: Option<crate::ported::zsh_h::Param> = getpmesc(std::ptr::null_mut(), "anykey");
     }
 
-    /// c:313 — `getpmsgr` returns Option<String> (compile-time pin).
+    /// c:313 — `getpmsgr` returns Option<Param> (compile-time pin).
     #[test]
     fn getpmsgr_returns_option_string_type() {
-        let _: Option<String> = getpmsgr("anykey");
+        let _: Option<crate::ported::zsh_h::Param> = getpmsgr(std::ptr::null_mut(), "anykey");
     }
 
     /// c:305 — `scanpmesc` is deterministic.
     #[test]
     fn scanpmesc_is_deterministic() {
-        let a = scanpmesc();
-        let b = scanpmesc();
+        let a = collect_scan(scanpmesc);
+        let b = collect_scan(scanpmesc);
         assert_eq!(a, b, "scanpmesc must be deterministic");
     }
 
     /// c:321 — `scanpmsgr` is deterministic.
     #[test]
     fn scanpmsgr_is_deterministic() {
-        let a = scanpmsgr();
-        let b = scanpmsgr();
+        let a = collect_scan(scanpmsgr);
+        let b = collect_scan(scanpmsgr);
         assert_eq!(a, b, "scanpmsgr must be deterministic");
     }
 

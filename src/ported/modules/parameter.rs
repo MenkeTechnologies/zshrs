@@ -5326,6 +5326,22 @@ pub static PARTAB: &[PartabHashEntry] = &[
         module: Some("zsh/langinfo"),
         scanfn: crate::ported::modules::langinfo::scanlanginfo,
     },
+    // Src/Modules/hlgroup.c:166-169 — `SPECIALPMDEF(".zle.esc",
+    // PM_READONLY_SPECIAL, 0, getpmesc, scanpmesc)` and the `.zle.sgr` twin.
+    PartabHashEntry {
+        name: ".zle.esc",
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // hlgroup.c:167 PM_READONLY_SPECIAL
+        getfn: crate::ported::modules::hlgroup::getpmesc,
+        module: Some("zsh/hlgroup"),
+        scanfn: crate::ported::modules::hlgroup::scanpmesc,
+    },
+    PartabHashEntry {
+        name: ".zle.sgr",
+        flags: PM_HASHED as i32 | PM_READONLY as i32 | PM_RO_BY_DESIGN as i32, // hlgroup.c:168 PM_READONLY_SPECIAL
+        getfn: crate::ported::modules::hlgroup::getpmsgr,
+        module: Some("zsh/hlgroup"),
+        scanfn: crate::ported::modules::hlgroup::scanpmsgr,
+    },
 ];
 
 // scanpmfunction_source / scanpmdisfunction_source already ported
@@ -5516,6 +5532,16 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         getfn: crate::ported::builtins::sched::schedgetfn,
         setfn: None,
         module: None,
+    },
+    // Src/Modules/ksh93.c:123 — `PARAMDEF(".sh.match", PM_ARRAY|PM_READONLY,
+    // NULL, &sh_match_gsu)`; sh_match_gsu (c:98-99) reads through
+    // matchgetfn, which works on the node it is handed.
+    PartabArrayEntry {
+        name: ".sh.match",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // ksh93.c:123
+        getfn: |_pm| crate::ported::modules::ksh93::matchgetfn(&mut crate::ported::zsh_h::param::default()),
+        setfn: None,
+        module: Some("zsh/ksh93"),
     },
 ];
 
