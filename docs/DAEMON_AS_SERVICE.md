@@ -338,7 +338,7 @@ SNAPSHOT — portable canonical-state artifacts
   snapshot_bisect / publish / pull / sign / verify                                       ⏳
 
 SHELL — cross-shell coordination (extends zsend/znotify/zsubscribe)
-  list_shells   {tag?}                        → {shells[{shell_id, pid, tty, tags, …}]}  ✅
+  list_shells   {tag?}                        → {shells[{shell_id, pid, tty, tags, ask_pending, …}]}  ✅
   send          {target_id, msg, …}           → {delivered}                               ✅
   notify        {message, urgency, …}         → {fanout}                                  ✅
   tag / untag   {label}                       → {tags}                                    ✅

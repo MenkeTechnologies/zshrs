@@ -1,13 +1,15 @@
 #compdef zls
 
-# List the shells connected to the zshrs daemon (ID, PID, TTY, uptime,
-# tags, cwd), optionally only those carrying one tag.
+# List the shells registered with the zshrs daemon (ID, PID, TTY, uptime,
+# tags, cwd), optionally only those carrying one tag, or with each shell's
+# queued zask request count (--ask-pending).
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
 # (daemon/builtins.rs); flags mirror zls() in daemon/builtins.rs.
 # Bundled into ~/.zshrs/functions by build.rs.
 
 _arguments -C \
+    '--ask-pending[add an ASK column with the queued zask request count per shell]' \
     '--tag[list only shells carrying this tag]:tag:->tags' && return 0
 
 case $state in
