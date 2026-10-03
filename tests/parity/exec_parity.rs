@@ -126,22 +126,20 @@ mod persistent_redirect {
 
     /// `exec > FILE` (no cmd) applies redirect to current shell
     /// permanently. Subsequent stdout goes to FILE.
+    ///
+    /// stdout is saved on fd 3 and restored before the file is read back.
+    /// Reading FILE while stdout still points at it makes `cat` append the
+    /// file to itself without end: an earlier form of this test did that
+    /// and filled 132 GB of $TMPDIR when run with `--ignored`.
     #[test]
-    #[ignore = "BOTH SHELLS HANG: cat after `exec > FILE` blocks waiting for output to flush"]
     fn exec_redirect_only_persists() {
-        if !zsh_available() {
-            return;
-        }
         let d = tempfile::tempdir().unwrap();
         let f = d.path().join("out.txt");
-        let script = format!(r#"exec > {0}; echo one; echo two; cat {0}"#, f.display());
-        // After exec > FILE, the first cat reads the same file we just wrote.
-        // Run in dir so paths resolve.
-        let z = run_zsh_in(d.path(), &script);
-        let r = run_zshrs_in(d.path(), &script);
-        // Skip strict compare since the cat output mixes with redirected output;
-        // pin exit code parity only.
-        let _ = (z, r);
+        let script = format!(
+            r#"exec 3>&1 > {0}; echo one; echo two; exec >&3 3>&-; cat {0}"#,
+            f.display()
+        );
+        assert_parity_in(d.path(), &script);
     }
 
     /// `exec 2> FILE` redirects stderr persistently.
