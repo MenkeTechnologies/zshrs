@@ -1564,11 +1564,23 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
 
     // Look up the real shfunc; if missing we still want doshfunc's
     // scope around the Rust port (synth_shf carries just the name).
+    //
+    // c:552 / c:835 — C hands `doshfunc` the node `getshfunc(fn)` returned,
+    // flags included. PM_UNDEFINED is what keeps `doshfunc` from setting
+    // `scriptname = name` (exec.c:5835-5836) before the autoload lookup, so a
+    // corrupt `.zwc` met while loading `_main_complete` is reported under the
+    // CALLER's name (`zsh:2: invalid zwc file:`); hardcoded 0 printed
+    // `_main_complete: invalid zwc file:`. PM_LOADDIR is dropped for the same
+    // reason `vm_helper::dispatch_function_call` drops it: it describes a
+    // `filename` field this synthesized node does not carry.
+    let real_flags = crate::ported::utils::getshfunc(fn_name)
+        .map(|f| f.node.flags & !(crate::ported::zsh_h::PM_LOADDIR as i32))
+        .unwrap_or(0);
     let mut synth_shf = crate::ported::zsh_h::shfunc {
         node: crate::ported::zsh_h::hashnode {
             next: None,
             nam: fn_name.to_string(),
-            flags: 0,
+            flags: real_flags,
         },
         filename: None,
         lineno: 0,

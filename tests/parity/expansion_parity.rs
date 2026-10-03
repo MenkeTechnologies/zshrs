@@ -2070,3 +2070,44 @@ print -r -- "[${c[$E]-unset}] [${+c[$E]}] [${#c[$E]}] [${(@)c[$E]}]""#,
         );
     }
 }
+
+/// `${(@)arr:#(alt1|…|altN)}` compiles its pattern ONCE and runs every
+/// element against that program (`getmatcharr`, Src/glob.c:2724-2736 —
+/// `compgetmatch` at c:2729, then `igetmatch` per element at c:2734).
+/// compdump filters its file list this way
+/// (`${(@)_d_files:#(${(j:|:)_d_wfiles})}`, Completion/compdump:32), with one
+/// alternative per insecure file. The port recompiled the pattern for each
+/// element — re-tokenizing it and re-hashing it into the pattern cache — so
+/// 4000 elements against 2000 alternatives took ~7 s in a debug build
+/// (~0.7 s compiled once; zsh ~0.2 s). Bounded at 4 s so a return of
+/// the per-element compile fails here instead of hanging compinit.
+#[test]
+fn filter_with_a_large_alternation_compiles_the_pattern_once() {
+    if !zsh_available() {
+        eprintln!("skip: zsh not found");
+        return;
+    }
+    let script = r#"a=( /fp/_f{0001..4000} ); w=( ${a[1,2000]} ); r=( "${(@)a:#(${(j:|:)~w})}" ); print $#r $r[1] $r[-1]"#;
+    let z = run_zsh(script);
+    assert_eq!(z.stdout, "2000 /fp/_f2001 /fp/_f4000\n", "zsh sanity");
+    let mut child = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", script])
+        .env_remove("ZSHRS_CACHE")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("invoke zshrs");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    loop {
+        if child.try_wait().expect("try_wait").is_some() {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("`:#` filter over a 2000-way alternation took longer than 4 s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let out = child.wait_with_output().expect("zshrs output");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), z.stdout);
+}

@@ -1026,3 +1026,72 @@ fn arguments_compadd_diagnostic_names_line_551() {
         "_arguments' -D equal compadd diagnostic named line 551",
     );
 }
+
+/// A completion function is called by `callcompfunc` with the node
+/// `getshfunc(fn)` returned (Src/Zle/compcore.c:552, c:835), so for a
+/// not-yet-loaded autoload `doshfunc` sees PM_UNDEFINED and leaves
+/// `scriptname` alone (Src/exec.c:5835-5836): a truncated `<dir>.zwc` met
+/// while loading it is reported under the TOP-LEVEL name, and the loaded body
+/// then runs under its own (`execautofn_basic`, c:5553). zshrs passed a
+/// synthesized node with flags 0 and printed the function's own name for the
+/// load (`_zzcomp: invalid zwc file:`) with no line number.
+///
+/// The top-level name is `$0` — the path the pty was opened with, which
+/// differs between the two shells — so only its basename is compared.
+#[test]
+fn a_corrupt_digest_met_loading_a_completion_function_names_the_caller() {
+    let zsh = if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else {
+        "zsh"
+    };
+    let tmp = tempfile::TempDir::new().expect("tmp");
+    let fp = tmp.path().join("fp");
+    std::fs::create_dir(&fp).unwrap();
+    std::fs::write(fp.join("_zzcomp"), "compadd zzfoo\n_zzhelper\n").unwrap();
+    std::fs::write(fp.join("_zzhelper"), ":\n").unwrap();
+    // Enough entries that the digest header is longer than the 60 bytes kept.
+    for i in 0..6 {
+        std::fs::write(fp.join(format!("_zzpad{i}")), ":\n").unwrap();
+    }
+    let built = std::process::Command::new(zsh)
+        .args(["-fc", "zcompile fp.zwc fp/*"])
+        .current_dir(tmp.path())
+        .status();
+    if !built.map(|s| s.success()).unwrap_or(false) {
+        eprintln!("skip: zsh could not zcompile the fixture digest");
+        return;
+    }
+    let zwc = tmp.path().join("fp.zwc");
+    let mut perm = std::fs::metadata(&zwc).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perm.set_readonly(false);
+    std::fs::set_permissions(&zwc, perm).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&zwc)
+        .unwrap()
+        .set_len(60)
+        .unwrap();
+    // Newer than the directory, so the digest is the one consulted.
+    filetime::set_file_mtime(&zwc, filetime::FileTime::from_unix_time(1893456000, 0)).unwrap();
+    let setup = sq(&format!(
+        "fpath=({} $fpath); autoload -Uz _zzcomp _zzhelper",
+        fp.display()
+    ));
+    let driver = format!(
+        r#"{OPEN_PUMPED}
+zpty -w w {setup}; pump
+zpty -w w 'zle -C zzw complete-word _zzcomp; bindkey "^X" zzw; exec 2>>$OUTFILE'; pump
+zpty -w -n w 'x '; pump
+zpty -w -n w $'\C-x'; pump; pump
+zpty -w -n w $'\C-u'; pump
+zpty -w -n w $'\r'; pump
+zpty -d w 2>/dev/null
+local -a ls
+ls=( ${{(f)"$(<$OUTFILE)"}} )
+print -rl -- ${{${{(M)ls:#*invalid zwc*}}/#*\/zsh(|rs):/zsh:}} >| $OUTFILE
+"#
+    );
+    assert_same_dump(&driver, "invalid zwc warnings while loading a completion function");
+}

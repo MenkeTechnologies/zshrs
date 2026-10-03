@@ -7340,8 +7340,19 @@ pub fn doshfunc(
     // it to 0 during body execution; restore on exit. This makes
     // warnings inside functions emit `f: ...` matching zsh's
     // single-line-function format. Bug #54/#74/#86 in docs/BUGS.md.
+    //
+    // NOT for a PM_UNDEFINED function. Its `prog` is the `mkautofn` stub
+    // (c:Src/builtin.c:3662, zsh-5.9.1), which carries no line marker, so in C the
+    // `loadautofn` -> `getfpfunc` lookup it runs (c:5626-5632) still sees the
+    // CALLER's `lineno`: a corrupt digest on `$fpath` is reported as
+    // `_main_complete:218: invalid zwc file:` (c:Src/parse.c:3288 `zwarnnam`),
+    // and zeroing it here printed `_main_complete: invalid zwc file:`. The load
+    // runs inside `body_runner`; `run_function_body_only` zeroes `lineno` once
+    // the definition is loaded, just before the body itself runs.
     let saved_lineno = crate::ported::lex::lineno();
-    crate::ported::lex::set_lineno(0);
+    if (flags as u32 & PM_UNDEFINED) == 0 {
+        crate::ported::lex::set_lineno(0);
+    }
     // c:Src/exec.c:6173-6175 + c:6196-6198 — `runshfunc` saves
     // zunderscore before the body runs and restores it after, so
     // `$_` reads outside the function continue to reflect the

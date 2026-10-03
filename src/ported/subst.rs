@@ -16023,8 +16023,17 @@ pub fn paramsubst(
                 let p = pat_operand(pat); // c:3540
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Sibling of #605/#606. Bug #607.
-                if !p.is_empty()
-                    && patcompile(
+                //
+                // c:Src/glob.c:2724-2736 — `getmatcharr` compiles the pattern
+                // ONCE (`compgetmatch`, c:2729) and runs every element against
+                // that one program. Recompiling it inside `match_fn` re-tokenized
+                // the whole pattern and re-hashed it into the pattern cache for
+                // each element: compdump's `${(@)_d_files:#(${(j:|:)_d_wfiles})}`
+                // (998 alternatives over 998 files) took ~5 s against ~2 ms.
+                let prog_opt = if p.is_empty() {
+                    None
+                } else {
+                    patcompile(
                         &{
                             let mut __pat_tok = (&p).to_string();
                             crate::ported::glob::tokenize(&mut __pat_tok);
@@ -16033,8 +16042,8 @@ pub fn paramsubst(
                         PAT_HEAPDUP as i32,
                         None,
                     )
-                    .is_none()
-                {
+                };
+                if !p.is_empty() && prog_opt.is_none() {
                     zerr(&format!("bad pattern: {}", pat_display(&p)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
@@ -16126,16 +16135,8 @@ pub fn paramsubst(
                         // c:3417 — empty pattern ⇔ empty subject
                         elem.is_empty()
                     } else {
-                        patcompile(
-                            &{
-                                let mut __pat_tok = (&p).to_string();
-                                crate::ported::glob::tokenize(&mut __pat_tok);
-                                __pat_tok
-                            },
-                            PAT_HEAPDUP as i32,
-                            None,
-                        )
-                        .map_or(false, |__p| pattry(&__p, elem))
+                        // c:2734 — `igetmatch(pp, p, …)` with the c:2729 program.
+                        prog_opt.as_ref().map_or(false, |__p| pattry(__p, elem))
                     }
                 };
                 // c:Src/subst.c — when a prior operator (e.g. (@k)/

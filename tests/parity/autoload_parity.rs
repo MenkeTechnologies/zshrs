@@ -362,6 +362,61 @@ fn autoload_zwc_digest_and_zwc_fpath_entry() {
     assert_eq!(r.stdout, z.stdout, "zshrs zwc-as-fpath-entry lookup broken");
 }
 
+/// A truncated `<dir>.zwc` digest is reported by `load_dump_header`
+/// (c:Src/parse.c:3286-3288 `zwarnnam(nam, "invalid zwc file: %s")`) on
+/// every lookup that reaches it, and the PREFIX of that warning says who was
+/// running: an autoload reached as a quoted command word (`"$tmp"` — how
+/// `_main_complete:218` calls each completer) goes through `doshfunc` with a
+/// PM_UNDEFINED node, so the lookup happens before `scriptname` changes and at
+/// the caller's `lineno` (`f:2:`), and the loaded body then runs under its own
+/// name (`execautofn_basic`, c:Src/exec.c:5553, so `outer:2:`). zshrs zeroed
+/// `lineno` before the load (`f:`) and kept the caller's name for the body
+/// (`f:2:`).
+#[test]
+fn corrupt_digest_warning_names_the_caller_then_the_autoloaded_body() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let fns = d.path().join("fns");
+    std::fs::create_dir(&fns).unwrap();
+    std::fs::write(fns.join("outer"), "print in-outer\ninner\n").unwrap();
+    std::fs::write(fns.join("inner"), "print in-inner\n").unwrap();
+    // Enough entries that the digest header is longer than the 60 bytes kept.
+    for i in 0..6 {
+        std::fs::write(fns.join(format!("pad{i}")), ":\n").unwrap();
+    }
+    let z = run_zsh_in(d.path(), "zcompile fns.zwc fns/*");
+    assert_eq!(z.exit, 0, "zsh digest zcompile sanity");
+    let zwc = d.path().join("fns.zwc");
+    let mut perm = std::fs::metadata(&zwc).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perm.set_readonly(false);
+    std::fs::set_permissions(&zwc, perm).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&zwc)
+        .unwrap()
+        .set_len(60)
+        .unwrap();
+    // Newer than the directory, so the digest is the one consulted.
+    let future = filetime::FileTime::from_unix_time(1893456000, 0);
+    filetime::set_file_mtime(&zwc, future).unwrap();
+    let script = format!(
+        "fpath=({}); autoload -Uz outer inner\nf() {{\n  local tmp=outer\n  \"$tmp\"\n}}\nf",
+        fns.display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    let zwc_s = zwc.display().to_string();
+    let want = format!(
+        "f:2: invalid zwc file: {zwc_s}\nouter:2: invalid zwc file: {zwc_s}\n"
+    );
+    assert_eq!(z.stderr, want, "zsh sanity");
+    assert_eq!(r.stderr, z.stderr, "corrupt-digest warning prefix diverges");
+    assert_eq!(r.stdout, z.stdout);
+}
+
 /// `source file` with a newer sibling `file.zwc` loads the compiled
 /// body (c:init.c:1566 try_source_file), including when the plain
 /// file is deleted entirely (slash-path arm, c:builtin.c:6092-6100).

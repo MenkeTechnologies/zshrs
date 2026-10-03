@@ -5246,6 +5246,27 @@ impl ShellExecutor {
         // across the body run and dropped with the VM below.
         let _load_ctx =
             did_autoload.then(|| crate::ported::exec::EvalContextFrame::push("loadautofunc"));
+        // c:Src/exec.c:5551-5557 (zsh-5.9.1, execautofn_basic) — the freshly
+        // loaded body runs with `scriptname = shf->node.nam` and
+        // `scriptfilename = getshfuncfile(shf)`, restored afterwards.
+        // `doshfunc` skips its own `scriptname = name` for a PM_UNDEFINED
+        // function (c:5835-5836), so without this every diagnostic in a body
+        // autoloaded here kept the CALLER's name: `_complete:117:` printed as
+        // `_main_complete:117:`. `lineno` is zeroed for the body here rather
+        // than in `doshfunc` (see the PM_UNDEFINED note there), because the
+        // load above must still see the caller's line.
+        let autofn_saved = did_autoload.then(|| {
+            let saved = (
+                crate::ported::utils::scriptname_get(),
+                crate::ported::utils::scriptfilename_get(),
+            );
+            crate::ported::utils::set_scriptname(Some(name.to_string())); // c:5553
+            crate::ported::utils::set_scriptfilename(crate::ported::hashtable::getshfuncfile(
+                name,
+            )); // c:5554
+            crate::ported::lex::set_lineno(0);
+            saved
+        });
         let seed_status = self.last_status();
         let _ = args; // fusevm body reads $1..$N from PPARAMS
                       // Reuse a VM from the per-thread pool instead of building one from
@@ -5269,6 +5290,10 @@ impl ShellExecutor {
         let status = vm.last_status;
         drop(vm);
         self.unwind_redirect_scopes_to(redir_depth);
+        if let Some((sn, sfn)) = autofn_saved {
+            crate::ported::utils::set_scriptname(sn); // c:5556
+            crate::ported::utils::set_scriptfilename(sfn); // c:5557
+        }
         Some(status)
     }
 
