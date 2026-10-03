@@ -1982,9 +1982,15 @@ pub fn preprompt() {
             -1 => 2,
             tty => tty,
         };
-        let columns = adjustcolumns() as i32;
+        // c:1561 reads the `zterm_columns` global as it stands. With no tty
+        // it is never resampled (adjustwinsize returns early on SHTTY == -1,
+        // c:Src/utils.c:1900), so it can be 0; `adjustcolumns()` would
+        // instead seed 80 into it, changing $COLUMNS as a side effect.
+        let columns = ZTERM_COLUMNS.load(Ordering::SeqCst);
         // c:1561-1562 — `fprintf(shout, "%*s\r%*s\r",
-        //   zterm_columns - w - !hasxn, "", w, "")`.
+        //   zterm_columns - w - !hasxn, "", w, "")`. A negative `%*s`
+        // width means left-justify in a field of its magnitude (C99
+        // 7.21.6.1p5), so the pad is |n| spaces, never clamped to zero.
         let pad = (columns
             - w
             - if crate::ported::init::hasxn.load(Ordering::SeqCst) != 0 {
@@ -1992,7 +1998,7 @@ pub fn preprompt() {
             } else {
                 1
             })
-        .max(0) as usize;
+        .unsigned_abs() as usize;
         // zshrs's `promptexpand` keeps C's Inpar/Outpar non-printing spans as
         // readline RL_PROMPT_*_IGNORE bytes (\x01/\x02) — `countprompt` reads
         // them (prompt.rs:3458) but the TERMINAL must never see them, exactly

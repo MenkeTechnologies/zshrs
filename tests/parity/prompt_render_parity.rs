@@ -249,3 +249,56 @@ fn prompt_sp_goes_to_stderr_without_a_tty() {
         );
     }
 }
+
+/// c:Src/utils.c:1561 pads the PROMPT_SP mark with `zterm_columns - w -
+/// !hasxn` spaces, reading the global as it stands. Without a tty that
+/// global is never resampled (adjustwinsize returns at once on SHTTY == -1,
+/// c:Src/utils.c:1900), so it stays 0 whether COLUMNS is unset or `0`, and
+/// the negative `%*s` width prints |n| spaces. zshrs called `adjustcolumns()`
+/// there, which seeded 80 into the global: an 80-column pad, and `$COLUMNS`
+/// reading 80 after the first prompt where zsh reads 0.
+#[test]
+fn prompt_sp_pad_uses_the_unsampled_column_count_without_a_tty() {
+    use std::io::Write as _;
+    let zsh = "/opt/homebrew/bin/zsh";
+    if !std::path::Path::new(zsh).exists() {
+        return;
+    }
+    let zshrs = std::env::var("CARGO_BIN_EXE_zshrs")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug/zshrs").to_string());
+    let run = |bin: &str, args: &[&str], columns: Option<&str>, term: &str| {
+        let mut cmd = std::process::Command::new(bin);
+        cmd.args(args)
+            .env("PS1", "%% ")
+            .env("TERM", term)
+            .env_remove("LINES")
+            .env_remove("ZSHRS_CACHE");
+        match columns {
+            Some(c) => cmd.env("COLUMNS", c),
+            None => cmd.env_remove("COLUMNS"),
+        };
+        let mut child = cmd
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"print -r -- \"[$COLUMNS]\"\nexit\n")
+            .unwrap();
+        let o = child.wait_with_output().expect("wait");
+        (o.stdout, o.stderr, o.status.code())
+    };
+    for columns in [None, Some("0")] {
+        for term in ["xterm", "dumb"] {
+            assert_eq!(
+                run(zsh, &["+Z", "-fi"], columns, term),
+                run(&zshrs, &["--zsh", "+Z", "-fi"], columns, term),
+                "COLUMNS={columns:?} TERM={term}"
+            );
+        }
+    }
+}
