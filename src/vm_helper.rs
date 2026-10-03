@@ -1787,10 +1787,19 @@ impl ShellExecutor {
     /// carry PM_RO_BY_DESIGN WITHOUT PM_READONLY and need the
     /// scope-gated test. Bug #418-family / test_lineno_intrinsic_readonly.
     pub fn is_readonly_param(&self, name: &str) -> bool {
+        // c:Src/params.c:2235 fetchvalue looks the name up through
+        // realparamtab->getnode, i.e. getprivatenode (Src/Modules/
+        // param_private.c:678): a private of an enclosing scope with nothing
+        // beneath it is ABSENT, and createparam reports the write.
         let (flags, pm_level) = crate::ported::params::paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get(name).map(|p| (p.node.flags as u32, p.level)))
+            .and_then(|t| {
+                t.get(name).and_then(|p| {
+                    let vis = crate::ported::modules::param_private::getprivatenode(&**p as *const _);
+                    (!vis.is_null()).then(|| unsafe { ((*vis).node.flags as u32, (*vis).level) })
+                })
+            })
             .unwrap_or((0, 0));
         // c:Src/params.c:2264-2265 — assignsparam reaches its c:3216 PM_READONLY
         // test only through fetchvalue, which reports a node that is PM_UNSET

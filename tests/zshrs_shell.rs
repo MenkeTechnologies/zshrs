@@ -14107,6 +14107,22 @@ fn test_private_nameref_survives_callee_local_of_same_name() {
 }
 
 #[test]
+fn test_declared_private_hidden_from_callee_assignment() {
+    // V10 "function may not access private declared in nofork" /
+    // "redirection cannot assign private in wrong scope": lookups go through
+    // getprivatenode (Src/Modules/param_private.c:678), so even a
+    // TYPESET_TO_UNSET (declared) private of the caller is absent and
+    // createparam's RO_BY_DESIGN check reports it (c:Src/params.c:1049).
+    let (st, out, err) = run_zshrs_parity(
+        "zmodload zsh/param/private; setopt typeset_to_unset; \
+         () { private q fd; () { q=x }; () { exec {fd}>&2 }; print NOT REACHED }",
+    );
+    assert_eq!((st, out.as_str()), (1, ""), "stderr: {err:?}");
+    assert!(err.contains("q: can't modify read-only parameter"), "got: {err:?}");
+    assert!(!err.contains("read-only variable"), "got: {err:?}");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.

@@ -9807,10 +9807,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let varid = vm.pop().to_str();
         let path = vm.pop().to_str();
         // Param introspection used by both the open and close forms.
-        let param_flags = crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get(&varid).map(|p| p.node.flags));
+        // c:Src/exec.c:2188 `getvalue(&vbuf, &s, 0)` reaches the node through
+        // realparamtab->getnode, which is getprivatenode once zsh/param/private
+        // is set up (Src/Modules/param_private.c:678): a private from an
+        // enclosing scope is not this parameter.
+        let param_flags = crate::ported::params::paramtab().read().ok().and_then(|t| {
+            t.get(&varid).and_then(|p| {
+                let vis = crate::ported::modules::param_private::getprivatenode(&**p as *const _);
+                (!vis.is_null()).then(|| unsafe { (*vis).node.flags })
+            })
+        });
         let param_readonly = param_flags
             .map(|f| (f & crate::ported::zsh_h::PM_READONLY as i32) != 0)
             .unwrap_or(false);

@@ -8980,6 +8980,20 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // force it to be recreated as either scalar or array").
     let existing = match tab.get_mut(name) {
         None => false,
+        Some(pm)
+            if (pm.node.flags as u32 & PM_RO_BY_DESIGN) != 0
+                && crate::ported::modules::param_private::getprivatenode(&**pm as *const param)
+                    .is_null() =>
+        {
+            // c:2233-2235 — fetchvalue's `paramtab->getnode` is getprivatenode
+            // (Src/Modules/param_private.c:678), which hides a private of an
+            // enclosing scope, so c:3234 createparam runs and its c:1045-1052
+            // RO_BY_DESIGN check (getnode2 is NULL too) rejects the write.
+            drop(tab); // zerr redraws ZLE, which reads paramtab
+            zerr(&format!("{}: can't modify read-only parameter", name)); // c:1049
+            unqueue_signals(); // c:3241
+            return None; // c:3242
+        }
         Some(pm) => {
             let f = pm.node.flags as u32;
             if (f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0 {
