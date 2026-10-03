@@ -701,15 +701,18 @@ zregexparse  zutil       zmodload     zle
 zcache                              # alias for `zcache info`
 zcache info                         # daemon stats: shard sizes, entry counts, in-flight jobs
 zcache jobs                         # list active compile jobs
-zcache clean [--wait]               # regenerable only (preserves entry_stats)
-zcache clean --all [--wait]         # everything (no prompt)
+zcache clean [--wait]               # regenerable only: shards, index.rkyv, shell caches (preserves entry_stats)
+zcache clean --all [--wait]         # same as `zcache clean` (no prompt)
 zcache clean shards [--wait]
 zcache clean shard <name> [--wait]
 zcache clean catalog [--wait]       # preserves entry_stats via dump+reimport
 zcache clean catalog --no-stats     # loses entry_stats
 zcache clean index [--wait]
+zcache clean shell                  # autoloads.rkyv, deparse.rkyv, scripts.rkyv (the shell-written caches)
 zcache clean stats
 zcache clean log
+# all | shards | shard | index | shell | log run in-process when no daemon is up;
+# catalog | stats | zwc | zcompdump | legacy need the running daemon.
 zcache rebuild [--wait]
 zcache rebuild shard <name> [--wait]
 zcache rebuild --parallel N

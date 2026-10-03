@@ -1566,6 +1566,10 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .unwrap_or(false);
     let shard_name = args.get("name").and_then(Value::as_str).map(str::to_string);
 
+    if FILE_CLEAN_TARGETS.contains(&target.as_str()) {
+        return clean_files(&state.paths, &target, shard_name.as_deref(), dry_run);
+    }
+
     let mut removed: Vec<String> = Vec::new();
     let mut would_remove: Vec<String> = Vec::new();
     let paths = &state.paths;
@@ -1580,37 +1584,6 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
     };
 
     match target.as_str() {
-        "all" => {
-            for shard in super::shard::list_shards(paths).unwrap_or_default() {
-                record(shard);
-            }
-            if paths.index_rkyv.exists() {
-                record(paths.index_rkyv.clone());
-            }
-        }
-        "shards" => {
-            for shard in super::shard::list_shards(paths).unwrap_or_default() {
-                record(shard);
-            }
-        }
-        // `zcache clean shard <name>` per DAEMON.md:676.
-        "shard" => {
-            let name = shard_name
-                .as_ref()
-                .ok_or_else(|| ErrPayload::new("bad_args", "missing `name` for shard target"))?;
-            let target_match = format!("-{}.rkyv", name);
-            for shard in super::shard::list_shards(paths).unwrap_or_default() {
-                let fname = shard.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if fname.contains(&target_match) || fname == format!("{}.rkyv", name) {
-                    record(shard);
-                }
-            }
-        }
-        "index" => {
-            if paths.index_rkyv.exists() {
-                record(paths.index_rkyv.clone());
-            }
-        }
         // `zcache clean catalog [--no-stats]` per DAEMON.md:677-678.
         "catalog" => {
             // Default: preserve entry_stats by reading them out, blowing away
@@ -1678,27 +1651,6 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
                 removed.push(format!("entry_stats ({} rows)", n));
             }
         }
-        "log" => {
-            // Truncate today's rolled file (don't unlink — tracing-appender holds an fd).
-            for entry in std::fs::read_dir(&paths.root)
-                .map_err(|e| ErrPayload::new("io", e.to_string()))?
-                .flatten()
-            {
-                let name = entry.file_name();
-                let s = name.to_string_lossy();
-                if super::paths::is_zshrs_log_file(&s) {
-                    if dry_run {
-                        would_remove.push(entry.path().display().to_string());
-                    } else {
-                        let _ = std::fs::OpenOptions::new()
-                            .write(true)
-                            .truncate(true)
-                            .open(entry.path());
-                        removed.push(entry.path().display().to_string());
-                    }
-                }
-            }
-        }
         // `zcache clean zwc` / `zcompdump` / `legacy` per DAEMON.md:387-396.
         // Walks only directories the daemon knows about: $HOME, $ZDOTDIR,
         // $ZPWR_LOCAL, $XDG_CACHE_HOME, plus every dir referenced in the
@@ -1734,17 +1686,127 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
                 }
             }
         }
-        other => {
-            return Err(ErrPayload::new(
-                "bad_target",
-                format!(
-                    "clean target `{}` not supported (try all|shards|shard|index|log|catalog|stats|zwc|zcompdump|legacy)",
-                    other
-                ),
-            ));
-        }
+        other => return Err(bad_clean_target(other)),
     }
 
+    Ok(clean_report(&target, dry_run, removed, would_remove))
+}
+
+/// Caches the shell process writes itself, beside the daemon's shards:
+/// compiled autoload bodies (`autoload_cache.rs`), deparsed function text
+/// (`deparse_cache.rs`) and compiled scripts (`script_cache.rs`). Each is
+/// rebuilt on the next miss. The `.lock` side files stay: a shell may hold
+/// one, and the caches open them by path.
+pub const SHELL_CACHE_FILES: &[&str] = &["autoloads.rkyv", "deparse.rkyv", "scripts.rkyv"];
+
+/// The `zcache clean` targets [`clean_files`] handles. They only delete or
+/// truncate files under the cache root, so `zcache clean` runs them in
+/// process when no daemon is up. The rest read the daemon's catalog
+/// connection or the directories it tracks.
+pub const FILE_CLEAN_TARGETS: &[&str] = &["all", "shards", "shard", "index", "shell", "log"];
+
+/// `zcache clean` for the [`FILE_CLEAN_TARGETS`]. Needs only the paths,
+/// never a running daemon; `op_clean` and the daemon-less fallback in
+/// `builtins::zcache_clean` both call it, so the two report identically.
+pub fn clean_files(
+    paths: &super::paths::CachePaths,
+    target: &str,
+    shard_name: Option<&str>,
+    dry_run: bool,
+) -> OpResult {
+    let mut removed: Vec<String> = Vec::new();
+    let mut would_remove: Vec<String> = Vec::new();
+    let mut record = |path: std::path::PathBuf| {
+        if dry_run {
+            would_remove.push(path.display().to_string());
+        } else {
+            let _ = std::fs::remove_file(&path);
+            removed.push(path.display().to_string());
+        }
+    };
+    let shell_caches = || {
+        SHELL_CACHE_FILES
+            .iter()
+            .map(|f| paths.root.join(f))
+            .filter(|p| p.exists())
+    };
+
+    match target {
+        "all" => {
+            for shard in super::shard::list_shards(paths).unwrap_or_default() {
+                record(shard);
+            }
+            if paths.index_rkyv.exists() {
+                record(paths.index_rkyv.clone());
+            }
+            shell_caches().for_each(&mut record);
+        }
+        "shards" => {
+            for shard in super::shard::list_shards(paths).unwrap_or_default() {
+                record(shard);
+            }
+        }
+        // `zcache clean shard <name>` per DAEMON.md:676.
+        "shard" => {
+            let name = shard_name
+                .ok_or_else(|| ErrPayload::new("bad_args", "missing `name` for shard target"))?;
+            let target_match = format!("-{}.rkyv", name);
+            for shard in super::shard::list_shards(paths).unwrap_or_default() {
+                let fname = shard.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if fname.contains(&target_match) || fname == format!("{}.rkyv", name) {
+                    record(shard);
+                }
+            }
+        }
+        "index" => {
+            if paths.index_rkyv.exists() {
+                record(paths.index_rkyv.clone());
+            }
+        }
+        "shell" => shell_caches().for_each(&mut record),
+        "log" => {
+            // Truncate today's rolled file (don't unlink — tracing-appender holds an fd).
+            for entry in std::fs::read_dir(&paths.root)
+                .map_err(|e| ErrPayload::new("io", e.to_string()))?
+                .flatten()
+            {
+                let name = entry.file_name();
+                let s = name.to_string_lossy();
+                if super::paths::is_zshrs_log_file(&s) {
+                    if dry_run {
+                        would_remove.push(entry.path().display().to_string());
+                    } else {
+                        let _ = std::fs::OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .open(entry.path());
+                        removed.push(entry.path().display().to_string());
+                    }
+                }
+            }
+        }
+        other => return Err(bad_clean_target(other)),
+    }
+
+    Ok(clean_report(target, dry_run, removed, would_remove))
+}
+
+fn bad_clean_target(target: &str) -> ErrPayload {
+    ErrPayload::new(
+        "bad_target",
+        format!(
+            "clean target `{}` not supported (try all|shards|shard|index|shell|log|catalog|stats|zwc|zcompdump|legacy)",
+            target
+        ),
+    )
+}
+
+fn clean_report(
+    target: &str,
+    dry_run: bool,
+    removed: Vec<String>,
+    would_remove: Vec<String>,
+) -> Value {
     let mut out = json!({
         "target": target,
         "dry_run": dry_run,
@@ -1755,7 +1817,7 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         out["would_remove"] = json!(would_remove);
         out["would_remove_count"] = json!(would_remove.len());
     }
-    Ok(out)
+    out
 }
 
 /// Build the directory scope for legacy artifact (`.zwc` / `.zcompdump`)
@@ -4141,5 +4203,68 @@ mod doctor_tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let md = std::fs::metadata(tmp.path()).unwrap();
         assert!(nix_inode(&md) > 0);
+    }
+}
+
+#[cfg(test)]
+mod clean_files_tests {
+    use super::*;
+
+    fn touch(p: &std::path::Path) {
+        std::fs::write(p, b"x").unwrap();
+    }
+
+    #[test]
+    fn all_removes_shards_index_and_shell_caches_but_keeps_locks_and_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = super::super::paths::CachePaths::with_root(dir.path());
+        std::fs::create_dir_all(&paths.images).unwrap();
+        let shard = paths.images.join("aaaaaaaa-foo.rkyv");
+        touch(&shard);
+        touch(&paths.index_rkyv);
+        touch(&paths.catalog_db);
+        for f in SHELL_CACHE_FILES {
+            touch(&dir.path().join(f));
+        }
+        let lock = dir.path().join("autoloads.rkyv.lock");
+        touch(&lock);
+
+        let dry = clean_files(&paths, "all", None, true).unwrap();
+        assert_eq!(dry["would_remove_count"], 2 + SHELL_CACHE_FILES.len());
+        assert!(shard.exists(), "--dry-run deleted a file");
+
+        clean_files(&paths, "all", None, false).unwrap();
+        assert!(!shard.exists());
+        assert!(!paths.index_rkyv.exists());
+        for f in SHELL_CACHE_FILES {
+            assert!(!dir.path().join(f).exists(), "{f} survived `clean all`");
+        }
+        assert!(lock.exists(), "a shell may hold the lock file");
+        assert!(paths.catalog_db.exists(), "`all` is regenerable-only");
+    }
+
+    #[test]
+    fn shell_target_touches_only_the_shell_caches() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = super::super::paths::CachePaths::with_root(dir.path());
+        std::fs::create_dir_all(&paths.images).unwrap();
+        let shard = paths.images.join("aaaaaaaa-foo.rkyv");
+        touch(&shard);
+        touch(&dir.path().join("autoloads.rkyv"));
+
+        let report = clean_files(&paths, "shell", None, false).unwrap();
+        assert_eq!(report["removed_count"], 1);
+        assert!(!dir.path().join("autoloads.rkyv").exists());
+        assert!(shard.exists());
+    }
+
+    #[test]
+    fn a_daemon_only_target_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = super::super::paths::CachePaths::with_root(dir.path());
+        for target in ["catalog", "stats", "zwc", "zcompdump", "legacy"] {
+            assert!(!FILE_CLEAN_TARGETS.contains(&target));
+            assert!(clean_files(&paths, target, None, false).is_err());
+        }
     }
 }

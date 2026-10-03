@@ -637,7 +637,7 @@ fn zcache_clean(args: &[String]) -> i32 {
     //   zcache clean shards [--wait]
     //   zcache clean shard <name> [--wait]
     //   zcache clean catalog [--no-stats] [--wait]
-    //   zcache clean index | stats | log
+    //   zcache clean index | shell | stats | log
     //   zcache clean zwc | zcompdump | legacy [--dry-run]
     let mut target: Option<String> = None;
     let mut shard_name: Option<String> = None;
@@ -650,8 +650,8 @@ fn zcache_clean(args: &[String]) -> i32 {
             "--dry-run" => dry_run = true,
             "--no-stats" => no_stats = true,
             "--wait" => {} // accepted; daemon clean is synchronous already
-            "shards" | "index" | "log" | "stats" | "catalog" | "zwc" | "zcompdump" | "legacy"
-            | "all" => target = Some(a.clone()),
+            "shards" | "index" | "shell" | "log" | "stats" | "catalog" | "zwc" | "zcompdump"
+            | "legacy" | "all" => target = Some(a.clone()),
             "shard" => {
                 target = Some("shard".into());
                 if let Some(n) = iter.next() {
@@ -662,6 +662,29 @@ fn zcache_clean(args: &[String]) -> i32 {
         }
     }
     let target = target.unwrap_or_else(|| "all".to_string());
+
+    // No daemon: the file-only targets need nothing but the paths, so run
+    // them here rather than fail on the socket.
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit("zcache clean", &e.to_string()),
+    };
+    if !Client::is_daemon_alive(&paths) {
+        if !super::ops::FILE_CLEAN_TARGETS.contains(&target.as_str()) {
+            return err_exit(
+                "zcache clean",
+                &format!("target `{}` needs the running daemon", target),
+            );
+        }
+        return match super::ops::clean_files(&paths, &target, shard_name.as_deref(), dry_run) {
+            Ok(report) => {
+                print_pretty(&report);
+                0
+            }
+            Err(e) => err_exit("zcache clean", &e.msg),
+        };
+    }
+
     let mut payload = json!({ "target": target, "dry_run": dry_run, "no_stats": no_stats });
     if let Some(n) = shard_name {
         payload["name"] = json!(n);
