@@ -7571,6 +7571,26 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                             })
                             .unwrap_or(true); // c:2262-2263
                         if !endpoint_visible {
+                            // c:1062-1084 + c:1117-1120 — createparam is
+                            // called with the REFERENCE's name; it takes
+                            // the unset endpoint as `oldpm`, and a private's
+                            // PM_RO_BY_DESIGN rejects the write under that
+                            // name (Src/Modules/param_private.c:174).
+                            let endpoint_ro = paramtab().read().ok().is_some_and(|t| {
+                                let mut cur = t.get(&last).map(|b| &**b);
+                                while let Some(p) = cur {
+                                    if p.level == plevel {
+                                        return (p.node.flags as u32 & PM_RO_BY_DESIGN) != 0;
+                                    }
+                                    cur = p.old.as_deref();
+                                }
+                                false
+                            });
+                            if endpoint_ro {
+                                let refnam = s.split('[').next().unwrap_or(s);
+                                zerr(&format!("{}: can't modify read-only parameter", refnam)); // c:1118
+                                return None;
+                            }
                             let mut new_s = last.clone();
                             if let Some(us) = s.find('[').map(|i| &s[i..]) {
                                 new_s.push_str(us);

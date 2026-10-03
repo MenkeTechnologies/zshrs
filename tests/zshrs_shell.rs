@@ -14123,6 +14123,19 @@ fn test_declared_private_hidden_from_callee_assignment() {
 }
 
 #[test]
+fn test_reference_to_hidden_private_placeholder_names_the_reference() {
+    // V10 "up-reference for private namerefs, end not in scope": createparam
+    // gets the reference's own name and rejects through the private endpoint's
+    // PM_RO_BY_DESIGN (c:Src/params.c:1062-1084, c:1117-1120).
+    let (st, _, err) = run_zshrs_parity(
+        "zmodload zsh/param/private; setopt typeset_to_unset; \
+         () { typeset -n ptr1=ptr2; private -n ptr2=; () { ptr1=val; print NOT REACHED } }",
+    );
+    assert_ne!(st, 0);
+    assert!(err.contains("ptr1: can't modify read-only parameter"), "got: {err:?}");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.
