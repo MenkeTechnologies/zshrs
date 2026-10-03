@@ -4712,13 +4712,13 @@ pub fn addmatches(
             }
         }
     }
-    if ppre_nomatch {
-        return if mnum.load(Ordering::Relaxed) == _nm {
-            1
-        } else {
-            0
-        };
-    }
+    // c:2339 / c:2366 — `*argv = NULL` only EMPTIES the word list. Everything
+    // after it still runs: the c:2370-2420 pattern probe, the `-A`/`-O`/`-D`
+    // arrays (c:2596-2603), `addexpl` (c:2604-2605), the `-C` all-match
+    // (c:2606-2609), the `-E` dummies (c:2610-2611) and the c:2617-2627
+    // restores. Returning here instead made `compadd -p , -C` on the word
+    // `a` add NOTHING and fail, where zsh adds `<all>` and returns 0.
+    let argv: &[String] = if ppre_nomatch { &[] } else { argv };
 
     // c:2360-2389 — when `$compstate[pattern_match]` is set, compile the
     // line prefix+suffix (with the completion point as a `*` placeholder)
