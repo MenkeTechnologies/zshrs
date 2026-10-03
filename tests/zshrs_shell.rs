@@ -16697,3 +16697,19 @@ fn test_compound_status_skips_sublist_errexit() {
     );
     assert_eq!(out, "A\nOK\nok1\nok2\nok3\nT\n", "{err}");
 }
+
+#[test]
+fn test_leading_redirection_applies_to_compound_command() {
+    // Src/parse.c:964-969 — par_cmd parses leading redirections before the
+    // token switch, so they belong to a `{ … }` group or a loop as much as
+    // to a simple command. zshrs handed them only to par_simple and
+    // silently dropped them for compound forms.
+    let dir = tempdir_for_test();
+    let script = format!(
+        "cd {dir}; >| a {{\nprint x\n;}}; >b for i in 1 2; do print $i; done; \
+         print -r -- \"[$(<a)] [${{(j:,:)${{(f)\"$(<b)\"}}}}]\""
+    );
+    let (_, output, _) = run_zshrs(&script);
+    assert_eq!(output, "[x] [1,2]\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

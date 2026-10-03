@@ -1393,6 +1393,11 @@ fn par_cmd(zsh_construct: bool) -> Option<ZshCommand> {
             redirs.push(redir);
         }
     }
+    // c:964-969 — the leading redirections belong to WHATEVER command
+    // follows, compound or simple: `>| f { print x ;}` captures the group
+    // (Src/subst.c:1993 builds exactly that for `${ … }`). par_simple takes
+    // them itself; a compound form gets them ahead of its trailing ones.
+    let mut leading = Some(redirs);
 
     // c:Src/parse.c:970-1030 par_cmd — push the open construct onto the
     // cmdstack for the duration of its sub-parse, then pop. The cmdstack
@@ -1475,15 +1480,16 @@ fn par_cmd(zsh_construct: bool) -> Option<ZshCommand> {
         }
         DINPAR => parse_arith(),
         TIME => par_time(),
-        _ => par_simple(redirs),
+        _ => par_simple(leading.take().unwrap_or_default()),
     };
+    let leading = leading.unwrap_or_default();
 
     // Parse trailing redirections. For Simple commands the redirs were
     // already captured inside par_simple; for compound forms (Cursh,
     // Subsh, If, While, etc.) we collect them here and wrap in
     // ZshCommand::Redirected so compile_zsh can scope-bracket them.
     if let Some(inner) = cmd {
-        let mut trailing: Vec<ZshRedir> = Vec::new();
+        let mut trailing: Vec<ZshRedir> = leading;
         while IS_REDIROP(tok()) {
             if let Some(redir) = par_redir() {
                 trailing.push(redir);
