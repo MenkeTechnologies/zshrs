@@ -14136,6 +14136,20 @@ fn test_reference_to_hidden_private_placeholder_names_the_reference() {
 }
 
 #[test]
+fn test_typeset_n_lists_name_of_lifted_private_reference() {
+    // V10 "up-reference for private namerefs, end is in scope": the scan
+    // selects on the table node (the private nameref, c:Src/builtin.c:2793)
+    // and printprivatenode prints the node beneath it (Src/Modules/
+    // param_private.c:632-643).
+    let (st, out, err) = run_zshrs_parity(
+        "zmodload zsh/param/private; setopt typeset_to_unset; typeset ptr2; \
+         () { typeset -n ptr1=ptr2; private -n ptr2; () { ptr1=val; typeset -n } }",
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(out, "ptr1=ptr2\nptr2=val\n");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.

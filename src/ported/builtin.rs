@@ -4484,6 +4484,15 @@ pub fn bin_typeset(
                     // paramtab->printnode, printflags)`. `flags2` (exclude) is
                     // scanhashtable's REJECT mask: c:Src/hashtable.c:394
                     // `if (... (flags2 && (hn->flags & flags2))) continue;`.
+                    // c:Src/hashtable.c:394 tests the TABLE node's flags; for
+                    // a name whose private wrap_private lifted, that node is the
+                    // private in C (printprivatenode then prints the one
+                    // beneath, which is the node here).
+                    let f = crate::ported::modules::param_private::LIFTED_PRIVATES
+                        .lock()
+                        .ok()
+                        .and_then(|l| l.iter().rev().find(|(n, _)| n == *k).map(|(_, fl)| *fl as u32))
+                        .unwrap_or(f);
                     if exclude != 0 && (f & exclude) != 0 {
                         return false; // c:394
                     }

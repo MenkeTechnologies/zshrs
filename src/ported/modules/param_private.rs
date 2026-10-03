@@ -1049,6 +1049,7 @@ pub fn wrap_private(
         // a shadow frame of the private's level was lifted with it).
         let mut lifted: Vec<(String, Box<param>, Option<Option<indexmap::IndexMap<String, String>>>)> =
             Vec::new();
+        let lifted_mark = LIFTED_PRIVATES.lock().map(|l| l.len()).unwrap_or(0);
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
                 scopeprivate(&mut **pm as *mut param, PM_UNSET as i32); // c:555
@@ -1064,6 +1065,9 @@ pub fn wrap_private(
                 if let Some(slot) = tab.get_mut(&name) {
                     if let Some(outer) = slot.old.take() {
                         let private = std::mem::replace(slot, outer);
+                        if let Ok(mut l) = LIFTED_PRIVATES.lock() {
+                            l.push((name.clone(), private.node.flags));
+                        }
                         lifted.push((name, private, None));
                     }
                 }
@@ -1104,6 +1108,9 @@ pub fn wrap_private(
         // runs doshfunc's endparamscope after the wrapper chain returns —
         // so the private goes BENEATH any node above its level, where C's
         // createparam would have chained a callee `local` over it.
+        if let Ok(mut l) = LIFTED_PRIVATES.lock() {
+            l.truncate(lifted_mark);
+        }
         for (name, mut private, row) in lifted.into_iter().rev() {
             let lvl = private.level;
             if let Some(private_row) = row {
@@ -1449,6 +1456,16 @@ pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::
 /// `PRIVATE_PARAMS` static.
 pub static PRIVATE_PARAMS: std::sync::LazyLock<Mutex<std::collections::HashSet<String>>> =
     std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// !!! RUST-ONLY STATE — NO C COUNTERPART !!!
+/// `(name, flags)` of every private wrap_private has lifted off its name
+/// for the duration of a deeper call (see the lift there). In C the
+/// private stays the table's node for that name, so a flag-matching scan
+/// (`typeset -n`, c:Src/builtin.c:2793) still selects it and
+/// printprivatenode (c:632-643) prints the node beneath; listings read
+/// the private's flags from here to make the same selection.
+pub static LIFTED_PRIVATES: std::sync::LazyLock<Mutex<Vec<(String, i32)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
 // `fakelevel` — file-scope global from `Src/Modules/param_private.c:215`.
 // Set by `bin_private` to the locallevel at which it ran, used by
