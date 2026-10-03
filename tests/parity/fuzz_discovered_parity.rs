@@ -4693,4 +4693,18 @@ print -P -- 'XY%-5<<abcdef|%F{4}blue%f'
 print -P -- '%-1<<abcdef|%^|%U under %u'"#,
         );
     }
+
+    /// c:Src/Modules/pcre.c:477 + c:202-203 — `=~` under REMATCH_PCRE sizes the
+    /// capture arrays by pcre2_match's return (highest participating group + 1).
+    /// A trailing non-participating group is absent, and with no captured group
+    /// `match` is left as it was. zsh: `1 (old) |`, `1 (z) 2|2`, `2 (xz,z)`.
+    #[test]
+    fn rematchpcre_drops_trailing_unset_groups() {
+        assert_parity(
+            r#"setopt rematchpcre; match=(old); [[ xz =~ 'x(y)?z' ]]; print -r -- ${#match} "(${(j:,:)match})" "$mbegin|$mend"
+[[ xz =~ 'x(z)(y)?(q)?' ]]; print -r -- ${#match} "(${(j:,:)match})" "$mbegin|$mend"
+[[ xz =~ 'x(y)?(z)' ]]; print -r -- ${#match} "(${(j:,:)match})"
+setopt bashrematch; [[ xz =~ 'x(z)(y)?' ]]; print -r -- ${#BASH_REMATCH} "(${(j:,:)BASH_REMATCH})""#,
+        );
+    }
 }

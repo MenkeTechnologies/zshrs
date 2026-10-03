@@ -948,12 +948,21 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                     // and gates `match` on captures existing (c:202-203
                     // `!want_begin_end || nelem`). The named-captures
                     // assoc `.pcre.match` populates in BOTH modes.
-                    let nelem = caps.len() - 1; // c:177
+                    // c:Src/Modules/pcre.c:477 — `ovec_count` is pcre2_match's return:
+                    // the highest PARTICIPATING group plus one, not the pattern's
+                    // group count (same rule as bin_pcre_match above). `x(y)?z` on
+                    // `xz` has nelem 0, so `match` is left untouched (c:202-203).
+                    let captured_count = (1..caps.len())
+                        .filter(|&i| caps.get(i).is_some())
+                        .max()
+                        .map(|hi| hi + 1)
+                        .unwrap_or(1);
+                    let nelem = captured_count - 1; // c:177
                     if bashre {
                         // c:445-447 + matchedinarr=1: BASH_REMATCH array,
                         // [0]=full match, [1..n]=captures; no scalar.
-                        let mut arr: Vec<String> = Vec::with_capacity(caps.len());
-                        for i in 0..caps.len() {
+                        let mut arr: Vec<String> = Vec::with_capacity(captured_count);
+                        for i in 0..captured_count {
                             arr.push(
                                 caps.get(i)
                                     .map(|m| subject_text(m.as_str()))
@@ -984,7 +993,7 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                             let mut subs: Vec<String> = Vec::with_capacity(nelem);
                             let mut mbegin_arr: Vec<String> = Vec::with_capacity(nelem);
                             let mut mend_arr: Vec<String> = Vec::with_capacity(nelem);
-                            for i in 1..caps.len() {
+                            for i in 1..captured_count {
                                 match caps.get(i) {
                                     Some(m) => {
                                         subs.push(subject_text(m.as_str())); // c:209
