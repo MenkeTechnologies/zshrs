@@ -27,7 +27,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_dump, dump_widget, DRAIN, DUMP_KEY, OPEN};
+use crate::zpty_probe::{assert_same_dump, dump_widget, DUMP_KEY_PUMPED, OPEN_PUMPED};
 use std::path::PathBuf;
 
 /// A directory with a name nothing else in its parent shares a prefix
@@ -60,18 +60,13 @@ fn word() -> String {
 fn tab_inside_a_quote_opened_on_the_previous_line_completes_nothing() {
     let w = word();
     let driver = format!(
-        "{OPEN}
-zpty -w w 'unsetopt beep'
+        "{OPEN_PUMPED}
 {}
-zpty -w -n w $'print \\'aaa\\r'
-sleep 2
-zpty -w -n w '{w}'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-{DUMP_KEY}
-{DRAIN}
-",
+pump
+zpty -w -n w $'print \\'aaa\\r'; pump; pump
+zpty -w -n w '{w}'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+{DUMP_KEY_PUMPED}",
         dump_widget("\"BUF=[$BUFFER] PRE=[$PREBUFFER]\"")
     );
     assert_same_dump(
@@ -89,16 +84,12 @@ sleep 3
 fn tab_inside_a_quote_opened_on_the_same_line_still_completes() {
     let w = word();
     let driver = format!(
-        "{OPEN}
-zpty -w w 'unsetopt beep'
+        "{OPEN_PUMPED}
 {}
-zpty -w -n w \"print 'aaa {w}\"
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-{DUMP_KEY}
-{DRAIN}
-",
+pump
+zpty -w -n w \"print 'aaa {w}\"; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+{DUMP_KEY_PUMPED}",
         dump_widget("\"BUF=[$BUFFER] PRE=[$PREBUFFER]\"")
     );
     assert_same_dump(

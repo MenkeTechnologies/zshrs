@@ -32,7 +32,9 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_dump, assert_same_verdict, sq, DRAIN, OPEN, OPEN_PUMPED};
+use crate::zpty_probe::{
+    assert_same_dump, assert_same_verdict, sq, CLOSE_PUMPED, DRAIN, OPEN, OPEN_PUMPED,
+};
 use std::path::{Path, PathBuf};
 
 /// A directory holding one unique name and two that share a prefix.
@@ -58,6 +60,19 @@ fn open_in_fixture() -> String {
 zpty -w w 'cd {}'
 zpty -w w 'unsetopt beep'
 sleep 1
+",
+        dir.display()
+    )
+}
+
+/// [`open_in_fixture`] for a driver that pumps between writes (see
+/// `zpty_probe::OPEN_PUMPED`): the long compsys sequences fill the pty's
+/// output buffer under blind sleeps and lose the measurement.
+fn open_in_fixture_pumped() -> String {
+    let dir = fixture_dir();
+    format!(
+        "{OPEN_PUMPED}
+zpty -w w 'cd {}'; pump
 ",
         dir.display()
     )
@@ -321,19 +336,14 @@ fn compsys_lists_both_candidates_when_ambiguous() {
     }
     let driver = format!(
         "{}
-zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'
-zpty -w w 'autoload -Uz compinit; compinit -u -D'
-sleep 20
-zpty -w -n w 'print fxa'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-zpty -w -n w $'\\r'
-sleep 2
-{DRAIN}
-if [[ $all == *fxa1* && $all == *fxa2* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w -n w 'print fxa'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w $'\\r'; pump; pump
+{CLOSE_PUMPED}if [[ $all == *fxa1* && $all == *fxa2* ]]; then print \"K=yes\"; else print \"K=no\"; fi
 ",
-        open_in_fixture()
+        open_in_fixture_pumped()
     );
     assert_same_verdict(
         &driver,
@@ -356,23 +366,16 @@ fn compsys_completer_setopt_does_not_leak() {
     }
     let driver = format!(
         "{}
-zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'
-zpty -w w 'autoload -Uz compinit; compinit -u -D'
-sleep 20
-zpty -w w '_gdleak() {{ setopt globdots; compadd aaa }}; compdef _gdleak true'
-sleep 1
-zpty -w -n w 'true '
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-zpty -w -n w $'\\r'
-sleep 2
-zpty -w w 'print GD=$options[globdots]'
-sleep 2
-{DRAIN}
-if [[ $all == *GD=off* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w w '_gdleak() {{ setopt globdots; compadd aaa }}; compdef _gdleak true'; pump; pump
+zpty -w -n w 'true '; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w $'\\r'; pump; pump
+zpty -w w 'print GD=$options[globdots]'; pump; pump
+{CLOSE_PUMPED}if [[ $all == *GD=off* ]]; then print \"K=yes\"; else print \"K=no\"; fi
 ",
-        open_in_fixture()
+        open_in_fixture_pumped()
     );
     assert_same_verdict(&driver, "K", "a completer's setopt was undone after TAB");
 }

@@ -30,7 +30,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 
 use crate::zpty_probe::{
-    assert_same_dump, assert_same_verdict, sq, DRAIN, DUMP_KEY, DUMP_WIDGET, OPEN,
+    assert_same_dump, assert_same_verdict, sq, CLOSE_PUMPED, DUMP_KEY_PUMPED, DUMP_WIDGET, OPEN_PUMPED,
 };
 use std::path::PathBuf;
 
@@ -61,11 +61,9 @@ fn stock_fpath_exists() -> bool {
 fn open_in_fixture() -> String {
     let dir = fixture_dir();
     format!(
-        "{OPEN}
-zpty -w w 'cd {}'
-zpty -w w 'unsetopt beep'
-zpty -w w 'setopt autoremoveslash autoparamslash'
-sleep 1
+        "{OPEN_PUMPED}
+zpty -w w 'cd {}'; pump
+zpty -w w 'setopt autoremoveslash autoparamslash'; pump
 ",
         dir.display()
     )
@@ -89,8 +87,7 @@ zstyle ':completion:*:descriptions' format '%B%d%b'";
 /// rather than off the drawn line means a redraw artifact cannot decide
 /// the case, and a shell whose Return did nothing scores no match at all.
 const RUN_IT: &str = "\
-zpty -w -n w $'\\r'
-sleep 3
+zpty -w -n w $'\\r'; pump; pump
 ";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -105,15 +102,11 @@ sleep 3
 fn a_letter_after_a_completed_slash_keeps_the_slash() {
     let driver = format!(
         "{}
-zpty -w -n w 'print Rustrover'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-zpty -w -n w 'M'
-sleep 2
+zpty -w -n w 'print Rustrover'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w 'M'; pump; pump
 {RUN_IT}
-{DRAIN}
-if [[ $all == *'RustroverProjects/M'* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+{CLOSE_PUMPED}if [[ $all == *'RustroverProjects/M'* ]]; then print \"K=yes\"; else print \"K=no\"; fi
 ",
         open_in_fixture()
     );
@@ -132,15 +125,11 @@ if [[ $all == *'RustroverProjects/M'* ]]; then print \"K=yes\"; else print \"K=n
 fn a_space_after_a_completed_slash_removes_the_slash() {
     let driver = format!(
         "{}
-zpty -w -n w 'print Rustrover'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-zpty -w -n w ' zz'
-sleep 2
+zpty -w -n w 'print Rustrover'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w ' zz'; pump; pump
 {RUN_IT}
-{DRAIN}
-if [[ $all == *'RustroverProjects zz'* && $all != *'RustroverProjects/ zz'* ]]; then
+{CLOSE_PUMPED}if [[ $all == *'RustroverProjects zz'* && $all != *'RustroverProjects/ zz'* ]]; then
   print \"K=yes\"
 else
   print \"K=no\"
@@ -171,20 +160,14 @@ fn compsys_with_zstyles_keeps_the_slash_before_a_letter() {
     let styles = sq(ZSTYLES);
     let driver = format!(
         "{}
-zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'
-zpty -w w 'autoload -Uz compinit; compinit -u -D'
-sleep 20
-zpty -w w {styles}
-sleep 2
-zpty -w -n w 'print Rustrover'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 4
-zpty -w -n w 'M'
-sleep 2
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w w {styles}; pump; pump
+zpty -w -n w 'print Rustrover'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w 'M'; pump; pump
 {RUN_IT}
-{DRAIN}
-if [[ $all == *'RustroverProjects/M'* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+{CLOSE_PUMPED}if [[ $all == *'RustroverProjects/M'* ]]; then print \"K=yes\"; else print \"K=no\"; fi
 ",
         open_in_fixture()
     );
@@ -208,16 +191,11 @@ fn the_buffer_itself_keeps_the_slash_before_a_letter() {
     let driver = format!(
         "{}
 {DUMP_WIDGET}
-sleep 1
-zpty -w -n w 'print Rustrover'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-zpty -w -n w 'M'
-sleep 2
-{DUMP_KEY}
-{DRAIN}
-",
+pump
+zpty -w -n w 'print Rustrover'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w 'M'; pump; pump
+{DUMP_KEY_PUMPED}",
         open_in_fixture()
     );
     assert_same_dump(
@@ -243,14 +221,10 @@ fn a_user_widget_fired_straight_after_tab_still_sees_the_slash() {
     let driver = format!(
         "{}
 {DUMP_WIDGET}
-sleep 1
-zpty -w -n w 'print Rustrover'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-{DUMP_KEY}
-{DRAIN}
-",
+pump
+zpty -w -n w 'print Rustrover'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+{DUMP_KEY_PUMPED}",
         open_in_fixture()
     );
     assert_same_dump(
@@ -274,17 +248,11 @@ fn an_internal_widget_called_from_a_user_widget_removes_the_slash() {
     let driver = format!(
         "{}
 {DUMP_WIDGET}
-zpty -w w 'wrapeol(){{ zle end-of-line }}; zle -N wrapeol; bindkey \"^X^E\" wrapeol'
-sleep 1
-zpty -w -n w 'print Rustrover'
-sleep 1
-zpty -w -n w $'\\t'
-sleep 3
-zpty -w -n w $'\\C-x\\C-e'
-sleep 2
-{DUMP_KEY}
-{DRAIN}
-",
+zpty -w w 'wrapeol(){{ zle end-of-line }}; zle -N wrapeol; bindkey \"^X^E\" wrapeol'; pump; pump
+zpty -w -n w 'print Rustrover'; pump; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w $'\\C-x\\C-e'; pump; pump
+{DUMP_KEY_PUMPED}",
         open_in_fixture()
     );
     assert_same_dump(

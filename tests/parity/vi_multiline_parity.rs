@@ -30,7 +30,9 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_dump, DRAIN, DUMP_KEY, DUMP_WIDGET, OPEN};
+use crate::zpty_probe::{
+    assert_same_dump, DRAIN, DUMP_KEY, DUMP_KEY_PUMPED, DUMP_WIDGET, OPEN, OPEN_PUMPED,
+};
 
 /// A vi-mode session holding a three-line buffer with DIFFERENT indents,
 /// so "first non-blank" is a different column on every line and a widget
@@ -326,29 +328,21 @@ fn ci_quote_does_what_zsh_does_with_an_unbound_object() {
 #[test]
 fn ci_quote_via_the_autoloaded_select_quoted_function() {
     let driver = format!(
-        "{OPEN}
-zpty -w w 'fpath=(/usr/share/zsh/*/functions(N) /opt/homebrew/share/zsh/functions(N) $fpath)'
-zpty -w w 'autoload -Uz select-quoted; zle -N select-quoted'
-zpty -w w 'for m in visual viopp; do bindkey -M $m i\\\" select-quoted; bindkey -M $m a\\\" select-quoted; done'
-zpty -w w 'bindkey -v'
-zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
-sleep 1
+        "{OPEN_PUMPED}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N) /opt/homebrew/share/zsh/functions(N) $fpath)'; pump
+zpty -w w 'autoload -Uz select-quoted; zle -N select-quoted'; pump
+zpty -w w 'for m in visual viopp; do bindkey -M $m i\\\" select-quoted; bindkey -M $m a\\\" select-quoted; done'; pump
+zpty -w w 'bindkey -v'; pump
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'; pump; pump
 {DUMP_WIDGET}
-sleep 1
-zpty -w -n w 'echo \\\"hello world\\\" tail'
-sleep 2
-zpty -w -n w $'\\e'
-sleep 1
-zpty -w -n w '0'
-sleep 1
-zpty -w -n w 'ci\\\"'
-sleep 2
-zpty -w -n w 'X'
-sleep 1
-zpty -w -n w $'\\e'
-sleep 1
-{DUMP_KEY}
-{DRAIN}
+pump
+zpty -w -n w 'echo \\\"hello world\\\" tail'; pump; pump
+zpty -w -n w $'\\e'; pump; pump
+zpty -w -n w '0'; pump; pump
+zpty -w -n w 'ci\\\"'; pump; pump
+zpty -w -n w 'X'; pump; pump
+zpty -w -n w $'\\e'; pump; pump
+{DUMP_KEY_PUMPED}
 "
     );
     assert_same_dump(&driver, "ci\" through the autoloaded select-quoted function");

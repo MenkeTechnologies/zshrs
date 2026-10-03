@@ -99,6 +99,17 @@ zpty -w w 'PS1="RDY> "'; pump
 zpty -w w 'unsetopt beep'; pump
 "#;
 
+/// The escape-stripping tail shared by [`DRAIN`] and [`CLOSE_PUMPED`].
+macro_rules! strip_escapes {
+    () => {
+        r#"setopt extended_glob
+all="${all//$'\e'\[[0-9;?]#[a-zA-Z]/}"
+all="${all//$'\e'\][0-9]#;[^$'\a'$'\e']#($'\a'|$'\e'\\)/}"
+all="${all//$'\e'[()][A-Za-z0-9]/}"
+"#
+    };
+}
+
 /// Drain whatever the pty has produced into `$all`, close the pty, and
 /// STRIP THE ESCAPE SEQUENCES.
 ///
@@ -114,18 +125,38 @@ zpty -w w 'unsetopt beep'; pump
 /// Carriage returns are deliberately KEPT: they are the only thing
 /// separating one redraw of the line from the next, and folding them
 /// away would let two unrelated fragments match as one string.
-pub const DRAIN: &str = r#"
+pub const DRAIN: &str = concat!(
+    r#"
 local out all=
 integer i=0
 while (( i++ < 60 )); do
   if zpty -r -t w out 2>/dev/null; then all+="$out"; else sleep 0.1; fi
 done
 zpty -d w 2>/dev/null
-setopt extended_glob
-all="${all//$'\e'\[[0-9;?]#[a-zA-Z]/}"
-all="${all//$'\e'\][0-9]#;[^$'\a'$'\e']#($'\a'|$'\e'\\)/}"
-all="${all//$'\e'[()][A-Za-z0-9]/}"
-"#;
+"#,
+    strip_escapes!()
+);
+
+/// [`DRAIN`] for a driver opened with [`OPEN_PUMPED`]: one last `pump`,
+/// close the pty, strip the escapes — WITHOUT resetting `$all`, which
+/// already holds everything the pumps collected. `DRAIN`'s `local all=`
+/// would throw that transcript away and leave a verdict matching against
+/// only the tail.
+pub const CLOSE_PUMPED: &str = concat!(
+    r#"
+pump
+zpty -d w 2>/dev/null
+"#,
+    strip_escapes!()
+);
+
+/// [`DUMP_KEY`] for a driver opened with [`OPEN_PUMPED`]: fire `dumpbuf`,
+/// pump until the shell is quiet so the widget has run and its redraw has
+/// been drained, then close the pty. A blind `sleep` here loses the dump
+/// the same way it loses everything else once the pty buffer fills.
+pub const DUMP_KEY_PUMPED: &str = "zpty -w -n w $'\\C-x\\C-g'; pump
+zpty -d w 2>/dev/null
+";
 
 /// Wrap `s` in single quotes for embedding in a driver script,
 /// escaping any single quote the standard way (`'` → `'\''`).

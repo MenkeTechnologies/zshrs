@@ -23,7 +23,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::zpty_probe::{assert_same_dump, dump_widget, DRAIN, DUMP_KEY, OPEN};
+use crate::zpty_probe::{assert_same_dump, dump_widget, DUMP_KEY_PUMPED, OPEN_PUMPED};
 
 fn stock_fpath_exists() -> bool {
     std::fs::read_dir("/usr/share/zsh")
@@ -41,23 +41,17 @@ fn failed_cmdsubst_in_an_action_still_assigns_the_word_list() {
         return;
     }
     let driver = format!(
-        "{OPEN}
-zpty -w w 'unsetopt beep'
-zpty -w w 'fpath=(/usr/share/zsh/*/functions(N)); autoload -Uz $^fpath/_*(N:t)'
-zpty -w w '_t1() {{ _alternative \"x:y:((alpha\\\\:\\\"at \\`nosuchcmdzz\\` sub\\\" five\\\\:b))\" 2>/dev/null; n1=$compstate[nmatches] }}'
-zpty -w w '_t2() {{ _arguments \"1:x:app or factory:fn; env: U):\" 2>$OUTFILE.err; n2=$? }}'
-zpty -w w 'zle -C w1 complete-word _t1; zle -C w2 complete-word _t2; bindkey \"^Xa\" w1; bindkey \"^Xb\" w2'
+        "{OPEN_PUMPED}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N)); autoload -Uz $^fpath/_*(N:t)'; pump
+zpty -w w '_t1() {{ _alternative \"x:y:((alpha\\\\:\\\"at \\`nosuchcmdzz\\` sub\\\" five\\\\:b))\" 2>/dev/null; n1=$compstate[nmatches] }}'; pump
+zpty -w w '_t2() {{ _arguments \"1:x:app or factory:fn; env: U):\" 2>$OUTFILE.err; n2=$? }}'; pump
+zpty -w w 'zle -C w1 complete-word _t1; zle -C w2 complete-word _t2; bindkey \"^Xa\" w1; bindkey \"^Xb\" w2'; pump
 {}
-sleep 1
-zpty -w -n w 'ea '
-sleep 1
-zpty -w -n w $'\\C-xb'
-sleep 2
-zpty -w -n w $'\\C-xa'
-sleep 2
-{DUMP_KEY}
-{DRAIN}
-",
+pump
+zpty -w -n w 'ea '; pump
+zpty -w -n w $'\\C-xb'; pump; pump
+zpty -w -n w $'\\C-xa'; pump; pump
+{DUMP_KEY_PUMPED}",
         dump_widget(r#""N1=[$n1] ERR=[$(<$OUTFILE.err)] RC=[$n2]""#)
     );
     assert_same_dump(
