@@ -12969,7 +12969,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let n = (argc as usize).saturating_sub(1);
         let mut words: Vec<Value> = (0..n).map(|_| vm.pop()).collect();
         words.reverse();
-        eprintln!("RMDBG mask={mask} words={:?}", words.iter().map(|w| format!("{:?}", w)).collect::<Vec<_>>());
         // c:3549-3551 — `type == WC_SIMPLE && interact && unset(RMSTARSILENT)
         // && isset(SHINSTDIN)` and at least one argument after `rm`.
         if interact() && !isset(RMSTARSILENT) && isset(SHINSTDIN) && n > 0 {
