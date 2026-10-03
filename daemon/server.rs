@@ -239,8 +239,11 @@ async fn handle_connection(
     // Outbound channel for this session — tasks use this to push responses + events.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Frame>();
 
+    // The shell record is keyed by the shell's `$$` (`shell_pid`) when the
+    // client sends it, else by the connecting process's pid.
+    let shell_pid = hello.shell_pid.unwrap_or(hello.client_pid);
     let (client_id, session_id) = state.register_session(
-        hello.client_pid,
+        shell_pid,
         hello.tty.clone(),
         hello.cwd.clone(),
         hello.argv0.clone(),
@@ -250,6 +253,7 @@ async fn handle_connection(
     let welcome = Welcome {
         version: PROTOCOL_VERSION,
         client_id,
+        shell_id: state.shell_id_of(client_id).unwrap_or(0),
         session_id: session_id.clone(),
         daemon_pid: state.pid,
         daemon_uptime_ms: state.uptime_ms(),
@@ -400,5 +404,86 @@ fn peer_uid(stream: &UnixStream) -> std::io::Result<u32> {
         // Unknown platform: fall back to "trust the directory perms" — the
         // ~/.zshrs/ being 0700 already gates this.
         Ok(nix::unistd::Uid::current().as_raw())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ipc::Hello;
+    use serde_json::json;
+
+    fn fresh() -> (tempfile::TempDir, Arc<DaemonState>) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let paths = CachePaths::with_root(tmp.path().join("zshrs"));
+        paths.ensure_dirs().unwrap();
+        let state = DaemonState::new(paths).unwrap();
+        (tmp, state)
+    }
+
+    /// Open a connection over a socketpair, send a Hello, return the client
+    /// end and the Welcome.
+    async fn connect(
+        state: &Arc<DaemonState>,
+        client_pid: i32,
+        shell_pid: Option<i32>,
+    ) -> (UnixStream, Welcome) {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let st = Arc::clone(state);
+        tokio::spawn(async move {
+            let _ = handle_connection(server, st, Arc::new(tokio::sync::Notify::new())).await;
+        });
+        let hello = Hello {
+            version: PROTOCOL_VERSION,
+            client_pid,
+            tty: None,
+            cwd: None,
+            argv0: None,
+            shell_pid,
+        };
+        ipc::write_frame(&mut client, &Frame::hello(hello)).await.unwrap();
+        match ipc::read_frame(&mut client).await.unwrap() {
+            Frame::Welcome { welcome } => (client, welcome),
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    async fn call(client: &mut UnixStream, id: u64, op: &str, args: serde_json::Value) -> serde_json::Value {
+        ipc::write_frame(client, &Frame::request(id, op, args)).await.unwrap();
+        loop {
+            match ipc::read_frame(client).await.unwrap() {
+                Frame::Response { id: rid, ok, payload } if rid == id => {
+                    assert!(ok, "{op}: {payload}");
+                    return payload;
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    /// A builtin run in a forked subshell connects with its own pid but the
+    /// shell's `$$` as `shell_pid`: it must land on the same stable shell id,
+    /// and a tag set over one connection must show on a later one.
+    #[tokio::test]
+    async fn shell_registry_welcome_shell_id_follows_shell_pid() {
+        let (_tmp, state) = fresh();
+        let shell = std::process::id() as i32;
+
+        let (mut c1, w1) = connect(&state, shell, Some(shell)).await;
+        call(&mut c1, 1, "tag", json!({ "tags": ["build"] })).await;
+        drop(c1);
+
+        let (mut c2, w2) = connect(&state, shell + 100_000, Some(shell)).await;
+        assert_ne!(w1.client_id, w2.client_id);
+        assert_eq!(w1.shell_id, w2.shell_id);
+        assert_ne!(w1.shell_id, 0);
+        let shells = call(&mut c2, 1, "list_shells", json!({ "tag": "build" })).await;
+        assert_eq!(shells["total"].as_u64(), Some(1));
+        assert_eq!(shells["shells"][0]["shell_id"].as_u64(), Some(w1.shell_id));
+        assert_eq!(shells["shells"][0]["pid"].as_i64(), Some(shell as i64));
+
+        // No shell_pid (a non-shell client): keyed on client_pid instead.
+        let (_c3, w3) = connect(&state, shell + 200_000, None).await;
+        assert_ne!(w3.shell_id, w1.shell_id);
     }
 }

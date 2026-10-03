@@ -338,7 +338,7 @@ SNAPSHOT — portable canonical-state artifacts
   snapshot_bisect / publish / pull / sign / verify                                       ⏳
 
 SHELL — cross-shell coordination (extends zsend/znotify/zsubscribe)
-  list_shells   {}                            → {shells[{id, pid, tty, …}]}               ✅
+  list_shells   {tag?}                        → {shells[{shell_id, pid, tty, tags, …}]}  ✅
   send          {target_id, msg, …}           → {delivered}                               ✅
   notify        {message, urgency, …}         → {fanout}                                  ✅
   tag / untag   {label}                       → {tags}                                    ✅
@@ -361,7 +361,8 @@ formats are transport-only differences.
 | `GET /stream/events?channel=PATTERN` | `pub` | `{topic, data, scope, subscription_id}` | `publish` |
 | `GET /stream/definitions` | `defs` | `{events_ingested, rows_written, elapsed_ms, …}` | `recorder_ingest` |
 
-Each connection registers a synthetic IPC session for its lifetime;
+Each connection registers a synthetic IPC session for its lifetime (not a
+shell: it never appears in `list_shells` and cannot `tag` or own a zask queue);
 disconnect (TCP close) auto-deregisters. Keep-alive comments are
 emitted every 15 seconds so HTTP intermediaries don't drop idle
 connections. CORS is **not** enabled in v1 (same-origin tooling only;

@@ -377,6 +377,7 @@ fn render_filtered(
                             json!({
                                 "id": s.id,
                                 "client_id": s.client_id,
+                                "shell_id": s.shell_id,
                                 "pattern": s.pattern,
                                 "scope_pat": s.scope_pat,
                                 "topic_pat": s.topic_pat,
@@ -981,8 +982,8 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
     // Daemon-introspection targets (no canonical/walk subsystem mapping).
     match target {
         "shells" => {
-            let sessions = state.snapshot_sessions();
-            let payload: Vec<Value> = sessions
+            let shells = state.snapshot_shells();
+            let payload: Vec<Value> = shells
                 .iter()
                 .map(|s| serde_json::to_value(s).unwrap_or(Value::Null))
                 .collect();
@@ -996,6 +997,7 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
                     json!({
                         "id": s.id,
                         "client_id": s.client_id,
+                        "shell_id": s.shell_id,
                         "pattern": s.pattern,
                         "scope_pat": s.scope_pat,
                         "topic_pat": s.topic_pat,
@@ -1306,13 +1308,12 @@ fn render_csv(state: &DaemonState, target: &str) -> std::result::Result<String, 
         }
         "shells" => {
             let mut out = String::from(
-                "client_id,session_id,pid,tty,cwd,argv0,tags,login_time,uptime_secs\n",
+                "shell_id,pid,tty,cwd,argv0,tags,login_time,uptime_secs,connections\n",
             );
-            for s in state.snapshot_sessions() {
+            for s in state.snapshot_shells() {
                 out.push_str(&format!(
                     "{},{},{},{},{},{},{},{},{}\n",
-                    s.client_id,
-                    esc(&s.session_id),
+                    s.shell_id,
                     s.pid,
                     s.tty.as_deref().map(esc).unwrap_or_default(),
                     s.cwd.as_deref().map(esc).unwrap_or_default(),
@@ -1320,6 +1321,7 @@ fn render_csv(state: &DaemonState, target: &str) -> std::result::Result<String, 
                     esc(&s.tags.join("|")),
                     esc(&s.login_time),
                     s.uptime_secs,
+                    s.connections,
                 ));
             }
             Ok(out)

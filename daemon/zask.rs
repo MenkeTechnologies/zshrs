@@ -176,7 +176,7 @@ impl AskInbox {
         }
     }
 
-    /// Drop every request whose target shell is the given client (called on disconnect).
+    /// Drop every request queued for a shell (called when the shell is reaped).
     pub fn drop_for_shell(&self, shell_id: u64) {
         let mut g = self.queues.lock();
         g.remove(&shell_id);
@@ -219,22 +219,24 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
     let target = args.get("target").cloned().unwrap_or(Value::Null);
 
     // Resolve target → list of shell ids (supports shell_id, self, all, tag).
-    // For an explicit shell_id, we eagerly refuse if the shell isn't connected
-    // — the caller named a specific target and expects to know if it failed.
-    // For tag/all, an empty match is silently accepted (those scopes can
-    // legitimately resolve to zero recipients).
+    // Ids are stable shell ids (`zls` / `zid`), and the queue is keyed on
+    // them, so it survives the one-shot connections that fill and drain it.
+    // For an explicit shell_id, we eagerly refuse if the shell isn't
+    // registered — the caller named a specific target and expects to know if
+    // it failed. For tag/all, an empty match is silently accepted (those
+    // scopes can legitimately resolve to zero recipients).
+    let caller = state.shell_id_of(client_id);
     let (target_shells, strict): (Vec<u64>, bool) =
         if let Some(id) = target.get("shell_id").and_then(Value::as_u64) {
             (vec![id], true)
         } else if target.get("self").and_then(Value::as_bool).unwrap_or(false) {
-            (vec![client_id], true)
+            (vec![caller_shell(state, client_id)?], true)
         } else if target.get("all").and_then(Value::as_bool).unwrap_or(false) {
             (
                 state
-                    .snapshot_sessions()
+                    .shell_ids()
                     .into_iter()
-                    .filter(|s| s.client_id != client_id)
-                    .map(|s| s.client_id)
+                    .filter(|&id| Some(id) != caller)
                     .collect(),
                 false,
             )
@@ -248,18 +250,14 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
         };
 
     // Strict-mode (explicit shell_id / self): require the named shell to be
-    // connected. Lax-mode (tag / all): allow zero matches and return
+    // registered. Lax-mode (tag / all): allow zero matches and return
     // queued: [] so callers can distinguish "no recipients" from a hard error.
     if strict {
         for sid in &target_shells {
-            if state
-                .snapshot_sessions()
-                .iter()
-                .all(|s| s.client_id != *sid)
-            {
+            if !state.shell_exists(*sid) {
                 return Err(ErrPayload::new(
                     "no_shell",
-                    format!("target shell_id {} not connected", sid),
+                    format!("target shell_id {} not registered", sid),
                 ));
             }
         }
@@ -278,18 +276,14 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
 
     let mut request_ids = Vec::new();
     for target_shell in &target_shells {
-        // Skip targets that aren't actually connected (tag / all may stale-include).
-        if state
-            .snapshot_sessions()
-            .iter()
-            .all(|s| s.client_id != *target_shell)
-        {
+        // Skip targets reaped between resolution and here.
+        if !state.shell_exists(*target_shell) {
             continue;
         }
         let request_id = state.ask_inbox.next_id();
         let req = AskRequest {
             request_id: request_id.clone(),
-            from_shell: client_id,
+            from_shell: caller.unwrap_or(0),
             target_shell: *target_shell,
             kind: kind.clone(),
             payload: payload.clone(),
@@ -303,13 +297,15 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
         let evt = json!({
             "request_id": request_id,
             "kind": kind.as_str(),
-            "from_shell": client_id,
+            "from_shell": caller.unwrap_or(0),
             "target_shell": *target_shell,
             "urgency": urgency,
             "pending_count": pending_count,
         });
         let frame = Frame::event("ask:pending", evt);
-        state.send_to(*target_shell, frame);
+        // Status-line nudge for any live connection; the queue holds the
+        // request whether or not one exists.
+        state.send_to_shell(*target_shell, frame);
         request_ids.push((request_id, *target_shell, pending_count));
     }
 
@@ -335,7 +331,7 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
 pub async fn op_ask_pending(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let target_shell = match args.get("shell_id").and_then(Value::as_u64) {
         Some(id) => id,
-        None => client_id,
+        None => caller_shell(state, client_id)?,
     };
     let reqs = state.ask_inbox.pending(target_shell);
     Ok(json!({
@@ -353,10 +349,11 @@ pub async fn op_ask_pending(state: &Arc<DaemonState>, client_id: u64, args: Valu
 }
 /// `op_ask_take` — see implementation.
 pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let shell = caller_shell(state, client_id)?;
     let req = if let Some(req_id) = args.get("request_id").and_then(Value::as_str) {
-        state.ask_inbox.take_specific(client_id, req_id)
+        state.ask_inbox.take_specific(shell, req_id)
     } else {
-        state.ask_inbox.take(client_id)
+        state.ask_inbox.take(shell)
     };
     match req {
         Some(r) => Ok(json!({
@@ -365,7 +362,7 @@ pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) 
             "from_shell": r.from_shell,
             "urgency": r.urgency,
             "payload": r.payload,
-            "remaining_pending": state.ask_inbox.pending_count(client_id),
+            "remaining_pending": state.ask_inbox.pending_count(shell),
         })),
         None => Ok(json!({
             "request_id": null,
@@ -375,15 +372,16 @@ pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) 
 }
 /// `op_ask_dismiss` — see implementation.
 pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let shell = caller_shell(state, client_id)?;
     if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
-        let n = state.ask_inbox.clear(client_id);
+        let n = state.ask_inbox.clear(shell);
         return Ok(json!({ "dismissed": n }));
     }
     let req_id = args
         .get("request_id")
         .and_then(Value::as_str)
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `request_id` or `all`"))?;
-    let removed = state.ask_inbox.dismiss(client_id, req_id);
+    let removed = state.ask_inbox.dismiss(shell, req_id);
     Ok(json!({ "dismissed": if removed { 1 } else { 0 } }))
 }
 /// `op_ask_response` — see implementation.
@@ -410,7 +408,7 @@ pub async fn op_ask_response(state: &Arc<DaemonState>, args: Value) -> OpResult 
             "cancelled": cancelled,
         });
         let frame = Frame::event("ask:response", payload);
-        if !state.send_to(orig, frame) {
+        if state.send_to_shell(orig, frame) == 0 {
             return Err(ErrPayload::new(
                 "no_originator",
                 format!("originating shell {} no longer connected", orig),
@@ -418,6 +416,14 @@ pub async fn op_ask_response(state: &Arc<DaemonState>, args: Value) -> OpResult 
         }
     }
     Ok(json!({ "delivered": from_shell.is_some() }))
+}
+
+/// The caller's stable shell id — the key of its zask queue. An HTTP
+/// session is not a shell and has no queue of its own.
+fn caller_shell(state: &Arc<DaemonState>, client_id: u64) -> Result<u64, ErrPayload> {
+    state
+        .shell_id_of(client_id)
+        .ok_or_else(|| ErrPayload::new("no_shell", "caller is not a registered shell"))
 }
 
 fn summary_of(payload: &Value) -> String {
@@ -452,9 +458,14 @@ mod tests {
         (tmp, state)
     }
 
+    /// One connection from a fresh shell pid. In a fresh state every call
+    /// mints the next connection id AND the next shell id, so the returned
+    /// id doubles as the shell id the tests target.
     fn add_dummy_session(state: &Arc<DaemonState>) -> u64 {
+        static NEXT_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(90_000);
+        let pid = NEXT_PID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (tx, _rx) = mpsc::unbounded_channel();
-        let (id, _) = state.register_session(100, None, None, None, tx);
+        let (id, _) = state.register_session(pid, None, None, None, tx);
         id
     }
 

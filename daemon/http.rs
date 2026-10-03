@@ -507,11 +507,8 @@ async fn handler_stream_events(
     // op_publish would never select us — `state.publish` only
     // delivers to subscribers whose registered topic-pattern matches.
     let (tx, rx) = mpsc::unbounded_channel::<Frame>();
-    let pid = std::process::id() as i32;
-    let (client_id, _session_id) = s.daemon.register_session(
-        pid,
+    let (client_id, _session_id) = s.daemon.register_ephemeral_session(
         Some("http-sse".to_string()),
-        None,
         Some("http-sse-events".to_string()),
         tx,
     );
@@ -602,11 +599,8 @@ where
     F: Fn(&Frame) -> Option<(String, Value)> + Send + 'static,
 {
     let (tx, rx) = mpsc::unbounded_channel::<Frame>();
-    let pid = std::process::id() as i32;
-    let (client_id, _session_id) = state.register_session(
-        pid,
+    let (client_id, _session_id) = state.register_ephemeral_session(
         Some("http-sse".to_string()),
-        None,
         Some("http-sse".to_string()),
         tx,
     );
@@ -719,11 +713,8 @@ async fn handler_op(
     // Outbound channel is /dev/null since the response goes back on
     // the HTTP body, not via the broadcast bus.
     let (tx, _rx) = mpsc::unbounded_channel::<Frame>();
-    let pid = std::process::id() as i32;
-    let (client_id, _session_id) = s.daemon.register_session(
-        pid,
+    let (client_id, _session_id) = s.daemon.register_ephemeral_session(
         Some("http".to_string()),
-        None,
         Some(format!("http-op:{}", name)),
         tx,
     );

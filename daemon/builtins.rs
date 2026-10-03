@@ -815,7 +815,7 @@ fn print_shells_table(shells: &Value) {
         "ID", "PID", "TTY", "UPTIME", "TAGS"
     );
     for s in arr {
-        let id = s.get("client_id").and_then(Value::as_u64).unwrap_or(0);
+        let id = s.get("shell_id").and_then(Value::as_u64).unwrap_or(0);
         let pid = s.get("pid").and_then(Value::as_i64).unwrap_or(0);
         let tty = s.get("tty").and_then(Value::as_str).unwrap_or("-");
         let uptime = s.get("uptime_secs").and_then(Value::as_u64).unwrap_or(0);
@@ -854,7 +854,7 @@ fn zid(_args: &[String]) -> i32 {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    println!("{}", client.welcome.client_id);
+    println!("{}", client.welcome.shell_id);
     drop(client); // hold for full RTT, then close cleanly
     0
 }
@@ -908,7 +908,7 @@ fn zping(args: &[String]) -> i32 {
                 println!("registered shells: {}", count);
                 if let Some(arr) = arr {
                     for s in arr {
-                        let id = s.get("client_id").and_then(Value::as_u64).unwrap_or(0);
+                        let id = s.get("shell_id").and_then(Value::as_u64).unwrap_or(0);
                         let pid = s.get("pid").and_then(Value::as_i64).unwrap_or(0);
                         let tty = s.get("tty").and_then(Value::as_str).unwrap_or("-");
                         let uptime = s.get("uptime_secs").and_then(Value::as_u64).unwrap_or(0);
@@ -1490,14 +1490,15 @@ fn zpublish(args: &[String]) -> i32 {
 // -------- zsubscribe --------
 //
 // Streaming foreground consumer. Holds the daemon connection open for the
-// lifetime of the process; on Ctrl-C / EOF the connection drops and the
-// daemon's `unregister_session` automatically removes the subscription.
+// lifetime of the process; events are delivered only while it is open. The
+// subscription belongs to the shell and outlives the connection (listed by
+// `--list`, removed by `zunsubscribe` or when the shell exits).
 //
 // Forms:
 //   zsubscribe <pattern>             # default human format
 //   zsubscribe --json <pattern>      # one raw JSON object per event
 //   zsubscribe --count N <pattern>   # exit after N events
-//   zsubscribe --list                # this client's existing subs (then exit)
+//   zsubscribe --list                # this shell's subscriptions (then exit)
 
 fn zsubscribe(args: &[String]) -> i32 {
     let mut json_out = false;

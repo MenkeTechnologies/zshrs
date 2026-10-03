@@ -43,6 +43,10 @@ pub struct Hello {
     pub cwd: Option<String>,
     /// `argv0` field.
     pub argv0: Option<String>,
+    /// The shell's `$$`. Differs from `client_pid` when a builtin runs in a
+    /// forked subshell; the daemon keys the shell record on this when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_pid: Option<i32>,
 }
 
 /// Daemon's response to a successful Hello.
@@ -50,8 +54,12 @@ pub struct Hello {
 pub struct Welcome {
     /// `version` field.
     pub version: u32,
-    /// `client_id` field.
+    /// Per-connection id (changes on every connect).
     pub client_id: u64,
+    /// Stable id of the shell this connection belongs to — same for every
+    /// connection from one shell pid. What `zid` prints.
+    #[serde(default)]
+    pub shell_id: u64,
     /// `session_id` field.
     pub session_id: String,
     /// `daemon_pid` field.
@@ -302,6 +310,7 @@ mod tests {
             tty: Some("/dev/ttys003".into()),
             cwd: Some("/home/wizard".into()),
             argv0: Some("zshrs".into()),
+            shell_pid: None,
         };
         let frame = Frame::hello(h);
 

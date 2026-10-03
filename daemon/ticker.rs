@@ -56,6 +56,7 @@ pub fn spawn(state: Arc<DaemonState>) {
             sweep_tmp(&state);
             rotate_logs_if_needed(&state);
             ask_timeouts(&state);
+            reap_dead_shells(&state);
 
             if last_vacuum.elapsed() >= VACUUM_INTERVAL {
                 vacuum_catalog(&state);
@@ -214,6 +215,15 @@ fn vacuum_catalog(state: &DaemonState) {
     match res {
         Ok(()) => tracing::info!("ticker: catalog VACUUM complete"),
         Err(e) => tracing::warn!(?e, "ticker: catalog VACUUM failed"),
+    }
+}
+
+/// Drop shell records (tags, zask queue, subscriptions) whose pid has exited.
+/// Shell state outlives connections, so this is its only removal path.
+fn reap_dead_shells(state: &DaemonState) {
+    let reaped = state.reap_dead_shells();
+    if !reaped.is_empty() {
+        tracing::info!(shells = ?reaped, "ticker: reaped shells whose pid exited");
     }
 }
 

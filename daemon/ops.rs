@@ -317,14 +317,18 @@ async fn op_ping(state: &Arc<DaemonState>, args: Value) -> OpResult {
 async fn op_list_shells(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let tag_filter = args.get("tag").and_then(|v| v.as_str()).map(str::to_string);
 
-    let mut sessions = state.snapshot_sessions();
+    // Registered shells (stable ids), not live connections. Drop any whose
+    // pid already exited so a short-lived client (`zd`, a script) does not
+    // linger until the next ticker pass.
+    let _ = state.reap_dead_shells();
+    let mut shells = state.snapshot_shells();
     if let Some(t) = tag_filter.as_ref() {
-        sessions.retain(|s| s.tags.iter().any(|x| x == t));
+        shells.retain(|s| s.tags.iter().any(|x| x == t));
     }
 
     Ok(json!({
-        "shells": sessions,
-        "total": sessions.len(),
+        "shells": shells,
+        "total": shells.len(),
     }))
 }
 
@@ -332,7 +336,7 @@ async fn op_tag(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResu
     let tags = parse_tags(&args)?;
     let updated = state
         .add_tags(client_id, &tags)
-        .ok_or_else(|| ErrPayload::new("no_session", "client session not found"))?;
+        .ok_or_else(|| ErrPayload::new("no_shell", "caller is not a registered shell"))?;
     Ok(json!({ "tags": updated }))
 }
 
@@ -341,11 +345,13 @@ async fn op_untag(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpRe
     let tags = if all { Vec::new() } else { parse_tags(&args)? };
     let updated = state
         .remove_tags(client_id, &tags)
-        .ok_or_else(|| ErrPayload::new("no_session", "client session not found"))?;
+        .ok_or_else(|| ErrPayload::new("no_shell", "caller is not a registered shell"))?;
     Ok(json!({ "tags": updated }))
 }
 
-async fn op_send(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult {
+async fn op_send(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    // `from_shell` is the caller's stable shell id (0 for an HTTP caller).
+    let from = state.shell_id_of(client_id).unwrap_or(0);
     let command = args
         .get("command")
         .and_then(Value::as_str)
@@ -447,15 +453,19 @@ fn resolve_target(
     from: u64,
     frame: Frame,
 ) -> std::result::Result<Vec<u64>, ErrPayload> {
+    // Ids here are stable shell ids; `from` is the caller's (0 = not a
+    // shell). A frame reaches a shell only through its live connections —
+    // a registered shell with none gets no delivery and is not listed.
+    let to_every_other_shell = |frame: Frame| -> Vec<u64> {
+        state
+            .shell_ids()
+            .into_iter()
+            .filter(|&id| id != from && state.send_to_shell(id, frame.clone()) > 0)
+            .collect()
+    };
     if let Some(all) = target.get("all").and_then(Value::as_bool) {
         if all {
-            let _ = state.broadcast(frame, &[from]);
-            return Ok(state
-                .snapshot_sessions()
-                .into_iter()
-                .filter(|s| s.client_id != from)
-                .map(|s| s.client_id)
-                .collect());
+            return Ok(to_every_other_shell(frame));
         }
         return Err(ErrPayload::new(
             "bad_args",
@@ -466,13 +476,16 @@ fn resolve_target(
         return Ok(state.send_tag(tag, frame));
     }
     if let Some(shell_id) = target.get("shell_id").and_then(Value::as_u64) {
-        if state.send_to(shell_id, frame) {
+        if !state.shell_exists(shell_id) {
+            return Err(ErrPayload::new(
+                "no_shell",
+                format!("shell_id {shell_id} not found"),
+            ));
+        }
+        if state.send_to_shell(shell_id, frame) > 0 {
             return Ok(vec![shell_id]);
         }
-        return Err(ErrPayload::new(
-            "no_shell",
-            format!("shell_id {shell_id} not found"),
-        ));
+        return Ok(Vec::new());
     }
     if let Some(user) = target.get("user").and_then(Value::as_str) {
         // V1 user routing: same-user only. The daemon listens on a UNIX socket
@@ -481,13 +494,7 @@ fn resolve_target(
         // clear error rather than silently delivering to local-user sessions.
         let daemon_user = std::env::var("USER").unwrap_or_default();
         if user == daemon_user || daemon_user.is_empty() {
-            let _ = state.broadcast(frame, &[from]);
-            return Ok(state
-                .snapshot_sessions()
-                .into_iter()
-                .filter(|s| s.client_id != from)
-                .map(|s| s.client_id)
-                .collect());
+            return Ok(to_every_other_shell(frame));
         }
         return Err(ErrPayload::new(
             "user_mismatch",
@@ -503,7 +510,8 @@ fn resolve_target(
     ))
 }
 
-async fn op_notify(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult {
+async fn op_notify(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let from = state.shell_id_of(client_id).unwrap_or(0);
     let message = args
         .get("message")
         .and_then(Value::as_str)
@@ -1177,15 +1185,15 @@ async fn op_register(state: &Arc<DaemonState>, client_id: u64, args: Value) -> O
     let updated = state
         .update_session(client_id, cwd.clone(), tty.clone(), argv0.clone())
         .ok_or_else(|| ErrPayload::new("no_session", "client session not found"))?;
-    if !added_tags.is_empty() {
-        let _ = state.add_tags(client_id, &added_tags);
-    }
+    // Tags live on the shell record; adding none just reads them back
+    // (empty for an HTTP caller, which has no shell).
+    let tags = state.add_tags(client_id, &added_tags).unwrap_or_default();
 
     // chpwd subscribers on this scope expect a structured event.
     if let Some(new_cwd) = cwd {
         if let Some(scope) = state.origin_scope(client_id) {
             let payload = json!({
-                "from_shell": client_id,
+                "from_shell": scope.shell_id,
                 "cwd": new_cwd,
                 "ts_ns": chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
             });
@@ -1195,10 +1203,11 @@ async fn op_register(state: &Arc<DaemonState>, client_id: u64, args: Value) -> O
 
     Ok(json!({
         "client_id": client_id,
+        "shell_id": updated.shell_id,
         "cwd": updated.cwd,
         "tty": updated.tty,
         "argv0": updated.argv0,
-        "tags": updated.tags,
+        "tags": tags,
     }))
 }
 
@@ -2230,7 +2239,7 @@ async fn op_subscribe(state: &Arc<DaemonState>, client_id: u64, args: Value) -> 
         .to_string();
 
     if pattern.starts_with("--list") {
-        // --list: report this client's existing subscriptions. Convention used by zsubscribe --list.
+        // --list: report the caller's shell's subscriptions (any of its connections). Convention used by zsubscribe --list.
         let subs = state.list_subscriptions_for(client_id);
         return Ok(json!({
             "subscriptions": subs.iter().map(|s| json!({

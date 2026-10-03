@@ -31,8 +31,13 @@ use serde::{Deserialize, Serialize};
 pub struct Subscription {
     /// `id` field.
     pub id: u64,
-    /// `client_id` field.
+    /// Connection that created the subscription; deliveries go here.
     pub client_id: u64,
+    /// Stable id of the shell that owns it (list / pause / unsubscribe from
+    /// any of that shell's connections; reaped with the shell). `None` for
+    /// HTTP sessions, whose subscriptions die with the connection.
+    #[serde(default)]
+    pub shell_id: Option<u64>,
     /// `pattern` field.
     pub pattern: String,
     /// `scope_pat` field.
@@ -64,6 +69,7 @@ impl Subscription {
         Ok(Self {
             id,
             client_id,
+            shell_id: None,
             pattern: pattern.to_string(),
             scope_pat: scope_pat.to_string(),
             topic_pat: topic_pat.to_string(),

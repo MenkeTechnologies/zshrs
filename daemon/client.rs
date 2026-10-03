@@ -18,6 +18,18 @@ use super::{DaemonError, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The shell's `$$`, recorded once at shell startup by `set_shell_pid`.
+/// 0 = unset (non-shell clients such as `zd` or the bench), in which case the
+/// Hello carries only `client_pid`. A forked subshell inherits the parent's
+/// value, so a builtin run there still identifies as the parent shell.
+static SHELL_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Record the shell's `$$` so every later Hello carries it as `shell_pid`.
+/// Called once by the shell at startup.
+pub fn set_shell_pid(pid: i32) {
+    SHELL_PID.store(pid, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A live connection to the daemon, post-handshake.
 pub struct Client {
     /// `stream` field.
@@ -67,6 +79,10 @@ impl Client {
                 .ok()
                 .map(|p| p.display().to_string()),
             argv0: std::env::args().next(),
+            shell_pid: match SHELL_PID.load(std::sync::atomic::Ordering::Relaxed) {
+                0 => None,
+                pid => Some(pid),
+            },
         };
         ipc::write_frame_sync(&mut stream, &Frame::hello(hello))?;
 

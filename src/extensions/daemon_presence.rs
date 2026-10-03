@@ -420,6 +420,11 @@ pub fn config_file_path() -> Option<std::path::PathBuf> {
 /// signal to the user that they configured the shell to expect a
 /// daemon but didn't actually start one.
 pub fn probe() -> Mode {
+    // Hand the daemon client this shell's `$$` (we are the shell process
+    // here, before any fork). Every later Hello carries it, so a z* builtin
+    // run in a forked subshell still identifies as this shell.
+    #[cfg(feature = "daemon")]
+    crate::daemon::client::set_shell_pid(std::process::id() as i32);
     let cfg = read_config_full();
     if let Ok(mut slot) = STARTUP_CONFIG_PATH.lock() {
         *slot = cfg.startup_config.clone();

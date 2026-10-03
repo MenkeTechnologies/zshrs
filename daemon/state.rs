@@ -37,8 +37,10 @@ pub struct Session {
     pub cwd: Option<String>,
     /// `argv0` field.
     pub argv0: Option<String>,
-    /// `tags` field.
-    pub tags: BTreeSet<String>,
+    /// Stable shell id this connection belongs to (the record keyed by the
+    /// shell pid from the Hello). `None` for HTTP synthetic sessions, which
+    /// are not shells and never create or join a shell record.
+    pub shell_id: Option<u64>,
     /// `connected_at` field.
     pub connected_at: Instant,
     /// `login_time` field.
@@ -60,25 +62,71 @@ impl Session {
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             client_id: self.client_id,
+            shell_id: self.shell_id,
             session_id: self.session_id.clone(),
             pid: self.pid,
             tty: self.tty.clone(),
             cwd: self.cwd.clone(),
             argv0: self.argv0.clone(),
-            tags: self.tags.iter().cloned().collect(),
             login_time: self.login_time.to_rfc3339(),
             uptime_secs: self.connected_at.elapsed().as_secs(),
         }
     }
 }
-/// `SessionSnapshot` — see fields for layout.
+/// One live connection, as seen by `snapshot_sessions` (connection-level
+/// view; `zls` lists shells via `ShellSnapshot` instead).
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SessionSnapshot {
-    /// `client_id` field.
+    /// Per-connection id (the `client_id` in the Welcome).
     pub client_id: u64,
+    /// Stable shell id, `None` for HTTP synthetic sessions.
+    pub shell_id: Option<u64>,
     /// `session_id` field.
     pub session_id: String,
     /// `pid` field.
+    pub pid: i32,
+    /// `tty` field.
+    pub tty: Option<String>,
+    /// `cwd` field.
+    pub cwd: Option<String>,
+    /// `argv0` field.
+    pub argv0: Option<String>,
+    /// `login_time` field.
+    pub login_time: String,
+    /// `uptime_secs` field.
+    pub uptime_secs: u64,
+}
+
+/// One registered shell. Keyed by the shell pid the Hello carries
+/// (`shell_pid`, falling back to `client_pid`); outlives the connections
+/// that created it, so per-shell state set by one one-shot builtin call is
+/// seen by the next. Removed only by `reap_dead_shells` once the pid is gone.
+pub struct ShellRecord {
+    /// Daemon-minted id, stable for the life of the pid. What `zid` prints,
+    /// what `zls` lists, what `shell:N` resolves against.
+    pub shell_id: u64,
+    /// The shell's pid (`$$`).
+    pub pid: i32,
+    /// Most recent tty reported by any of this shell's connections.
+    pub tty: Option<String>,
+    /// Most recent cwd reported by any of this shell's connections.
+    pub cwd: Option<String>,
+    /// Most recent argv0 reported by any of this shell's connections.
+    pub argv0: Option<String>,
+    /// `ztag` / `zuntag` tags.
+    pub tags: BTreeSet<String>,
+    /// First registration (wall clock).
+    pub login_time: chrono::DateTime<chrono::Utc>,
+    /// First registration (monotonic, for uptime).
+    pub registered_at: Instant,
+}
+
+/// Serializable view of a `ShellRecord` — one `zls` row / `list_shells` entry.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct ShellSnapshot {
+    /// Stable shell id.
+    pub shell_id: u64,
+    /// The shell's pid.
     pub pid: i32,
     /// `tty` field.
     pub tty: Option<String>,
@@ -90,16 +138,25 @@ pub struct SessionSnapshot {
     pub tags: Vec<String>,
     /// `login_time` field.
     pub login_time: String,
-    /// `uptime_secs` field.
+    /// Seconds since the shell first registered.
     pub uptime_secs: u64,
+    /// Live connections this shell holds right now (usually 0 between
+    /// builtin calls — push events reach a shell only while this is > 0).
+    pub connections: usize,
 }
 
 /// Inner mutable state behind a single mutex.
 pub struct DaemonStateInner {
-    /// `sessions` field.
+    /// Live connections, keyed by per-connection client_id.
     pub sessions: BTreeMap<u64, Session>,
     /// `next_client_id` field.
     pub next_client_id: u64,
+    /// Registered shells, keyed by stable shell id.
+    pub shells: BTreeMap<u64, ShellRecord>,
+    /// Shell pid → stable shell id.
+    pub shell_by_pid: HashMap<i32, u64>,
+    /// `next_shell_id` field.
+    pub next_shell_id: u64,
     /// `subscriptions` field.
     pub subscriptions: BTreeMap<u64, Subscription>,
     /// `next_subscription_id` field.
@@ -120,11 +177,58 @@ impl DaemonStateInner {
         Self {
             sessions: BTreeMap::new(),
             next_client_id: 1,
+            shells: BTreeMap::new(),
+            shell_by_pid: HashMap::new(),
+            next_shell_id: 1,
             subscriptions: BTreeMap::new(),
             next_subscription_id: 1,
             pending_responses: HashMap::new(),
             config: HashMap::new(),
         }
+    }
+
+    fn shell_of(&self, client_id: u64) -> Option<u64> {
+        self.sessions.get(&client_id).and_then(|s| s.shell_id)
+    }
+
+    fn shell_snapshot(&self, r: &ShellRecord) -> ShellSnapshot {
+        ShellSnapshot {
+            shell_id: r.shell_id,
+            pid: r.pid,
+            tty: r.tty.clone(),
+            cwd: r.cwd.clone(),
+            argv0: r.argv0.clone(),
+            tags: r.tags.iter().cloned().collect(),
+            login_time: r.login_time.to_rfc3339(),
+            uptime_secs: r.registered_at.elapsed().as_secs(),
+            connections: self
+                .sessions
+                .values()
+                .filter(|s| s.shell_id == Some(r.shell_id))
+                .count(),
+        }
+    }
+
+    /// Does the caller own this subscription? A shell caller owns every
+    /// subscription its shell made (from any connection); an HTTP session
+    /// owns only the ones made on that connection.
+    fn owns_subscription(&self, client_id: u64, sub: &Subscription) -> bool {
+        match self.shell_of(client_id) {
+            Some(shell) => sub.shell_id == Some(shell),
+            None => sub.shell_id.is_none() && sub.client_id == client_id,
+        }
+    }
+}
+
+/// `kill(pid, 0)` liveness: alive unless the pid does not exist (ESRCH).
+/// EPERM means a process exists under another uid — still alive.
+pub fn pid_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    match nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None) {
+        Ok(()) => true,
+        Err(e) => e != nix::errno::Errno::ESRCH,
     }
 }
 
@@ -246,7 +350,11 @@ impl DaemonState {
         self.started_at.elapsed().as_millis() as u64
     }
 
-    /// Register a new session post-handshake. Returns (client_id, session_id) assigned.
+    /// Register a shell connection post-handshake. `pid` is the shell pid
+    /// from the Hello (`shell_pid`, else `client_pid`); the connection joins
+    /// that pid's shell record, minting one (with a fresh stable shell id) on
+    /// the pid's first connection. Returns (client_id, session_id); the
+    /// stable id is `shell_id_of(client_id)`.
     pub fn register_session(
         &self,
         pid: i32,
@@ -255,42 +363,162 @@ impl DaemonState {
         argv0: Option<String>,
         outbound: mpsc::UnboundedSender<Frame>,
     ) -> (u64, String) {
-        let session_id = uuid_like();
         let mut g = self.inner.lock();
+        let shell_id = match g.shell_by_pid.get(&pid) {
+            Some(&id) => id,
+            None => {
+                let id = g.next_shell_id;
+                g.next_shell_id += 1;
+                g.shell_by_pid.insert(pid, id);
+                g.shells.insert(
+                    id,
+                    ShellRecord {
+                        shell_id: id,
+                        pid,
+                        tty: None,
+                        cwd: None,
+                        argv0: None,
+                        tags: BTreeSet::new(),
+                        login_time: chrono::Utc::now(),
+                        registered_at: Instant::now(),
+                    },
+                );
+                id
+            }
+        };
+        if let Some(r) = g.shells.get_mut(&shell_id) {
+            if tty.is_some() {
+                r.tty = tty.clone();
+            }
+            if cwd.is_some() {
+                r.cwd = cwd.clone();
+            }
+            if argv0.is_some() {
+                r.argv0 = argv0.clone();
+            }
+        }
+        Self::insert_session(&mut g, pid, tty, cwd, argv0, Some(shell_id), outbound)
+    }
+
+    /// Register an HTTP synthetic session. It is not a shell: it never
+    /// creates or joins a shell record, and everything it owns
+    /// (subscriptions) is dropped when it unregisters.
+    pub fn register_ephemeral_session(
+        &self,
+        tty: Option<String>,
+        argv0: Option<String>,
+        outbound: mpsc::UnboundedSender<Frame>,
+    ) -> (u64, String) {
+        let mut g = self.inner.lock();
+        Self::insert_session(&mut g, self.pid, tty, None, argv0, None, outbound)
+    }
+
+    fn insert_session(
+        g: &mut DaemonStateInner,
+        pid: i32,
+        tty: Option<String>,
+        cwd: Option<String>,
+        argv0: Option<String>,
+        shell_id: Option<u64>,
+        outbound: mpsc::UnboundedSender<Frame>,
+    ) -> (u64, String) {
+        let session_id = uuid_like();
         let client_id = g.next_client_id;
         g.next_client_id += 1;
-
-        let session = Session {
+        g.sessions.insert(
             client_id,
-            session_id: session_id.clone(),
-            pid,
-            tty,
-            cwd,
-            argv0,
-            tags: BTreeSet::new(),
-            connected_at: Instant::now(),
-            login_time: chrono::Utc::now(),
-            outbound,
-            definitions_subscribed: false,
-        };
-        g.sessions.insert(client_id, session);
-
+            Session {
+                client_id,
+                session_id: session_id.clone(),
+                pid,
+                tty,
+                cwd,
+                argv0,
+                shell_id,
+                connected_at: Instant::now(),
+                login_time: chrono::Utc::now(),
+                outbound,
+                definitions_subscribed: false,
+            },
+        );
         (client_id, session_id)
     }
-    /// `unregister_session` — see implementation.
+
+    /// Drop a closed connection. The shell record it belonged to — tags,
+    /// zask queue, subscriptions — stays until `reap_dead_shells` sees the
+    /// pid gone. HTTP sessions own their subscriptions outright, so those
+    /// go with the connection.
     pub fn unregister_session(&self, client_id: u64) {
+        let mut g = self.inner.lock();
+        if let Some(s) = g.sessions.remove(&client_id) {
+            if s.shell_id.is_none() {
+                g.subscriptions
+                    .retain(|_, sub| !(sub.shell_id.is_none() && sub.client_id == client_id));
+            }
+        }
+    }
+
+    /// Stable shell id of a connection (`None` for HTTP sessions / unknown).
+    pub fn shell_id_of(&self, client_id: u64) -> Option<u64> {
+        self.inner.lock().shell_of(client_id)
+    }
+
+    /// Is `shell_id` a registered shell (live pid, connected or not)?
+    pub fn shell_exists(&self, shell_id: u64) -> bool {
+        self.inner.lock().shells.contains_key(&shell_id)
+    }
+
+    /// Every registered shell id.
+    pub fn shell_ids(&self) -> Vec<u64> {
+        self.inner.lock().shells.keys().copied().collect()
+    }
+
+    /// `zls` rows: every registered shell.
+    pub fn snapshot_shells(&self) -> Vec<ShellSnapshot> {
+        let g = self.inner.lock();
+        g.shells.values().map(|r| g.shell_snapshot(r)).collect()
+    }
+
+    /// Remove every shell record whose pid `is_alive` rejects, together with
+    /// its subscriptions and zask queue. Returns the reaped shell ids. The
+    /// ticker passes `pid_alive` (kill(pid, 0)).
+    pub fn reap_dead_shells_with(&self, is_alive: impl Fn(i32) -> bool) -> Vec<u64> {
+        let dead: Vec<(u64, i32)> = {
+            let g = self.inner.lock();
+            g.shells
+                .values()
+                .filter(|r| !is_alive(r.pid))
+                .map(|r| (r.shell_id, r.pid))
+                .collect()
+        };
+        if dead.is_empty() {
+            return Vec::new();
+        }
         {
             let mut g = self.inner.lock();
-            g.sessions.remove(&client_id);
-            // Drop every subscription belonging to this client.
-            g.subscriptions.retain(|_, s| s.client_id != client_id);
+            for (id, pid) in &dead {
+                g.shells.remove(id);
+                if g.shell_by_pid.get(pid) == Some(id) {
+                    g.shell_by_pid.remove(pid);
+                }
+                g.subscriptions.retain(|_, s| s.shell_id != Some(*id));
+            }
         }
-        // Also drop any pending zask requests targeting this disconnected shell.
-        self.ask_inbox.drop_for_shell(client_id);
+        for (id, _) in &dead {
+            self.ask_inbox.drop_for_shell(*id);
+        }
+        dead.into_iter().map(|(id, _)| id).collect()
+    }
+
+    /// `reap_dead_shells_with(pid_alive)`.
+    pub fn reap_dead_shells(&self) -> Vec<u64> {
+        self.reap_dead_shells_with(pid_alive)
     }
 
     /// Add a subscription. Returns the assigned subscription id, or None if the
-    /// pattern is malformed (caller surfaces the parse error).
+    /// pattern is malformed (caller surfaces the parse error). Delivery goes
+    /// to the creating connection; ownership (list / pause / unsubscribe) is
+    /// the caller's shell, so later connections of the same shell see it.
     pub fn add_subscription(
         &self,
         client_id: u64,
@@ -299,39 +527,47 @@ impl DaemonState {
         let mut g = self.inner.lock();
         let id = g.next_subscription_id;
         g.next_subscription_id += 1;
-        let sub = Subscription::parse(client_id, id, pattern)?;
+        let mut sub = Subscription::parse(client_id, id, pattern)?;
+        sub.shell_id = g.shell_of(client_id);
         g.subscriptions.insert(id, sub);
         Ok(id)
     }
 
-    /// Remove subscriptions matching pattern (exact pattern match). Returns the count
-    /// removed.
+    /// Remove the caller's subscriptions matching pattern (exact pattern
+    /// match). Returns the count removed.
     pub fn remove_subscription_by_pattern(&self, client_id: u64, pattern: &str) -> usize {
         let mut g = self.inner.lock();
-        let before = g.subscriptions.len();
-        g.subscriptions
-            .retain(|_, s| !(s.client_id == client_id && s.pattern == pattern));
-        before - g.subscriptions.len()
+        let doomed: Vec<u64> = g
+            .subscriptions
+            .values()
+            .filter(|s| s.pattern == pattern && g.owns_subscription(client_id, s))
+            .map(|s| s.id)
+            .collect();
+        for id in &doomed {
+            g.subscriptions.remove(id);
+        }
+        doomed.len()
     }
 
-    /// Remove a subscription by id (only the owning client may unsubscribe).
+    /// Remove a subscription by id (only its owner may unsubscribe).
     pub fn remove_subscription_by_id(&self, client_id: u64, sub_id: u64) -> bool {
         let mut g = self.inner.lock();
-        match g.subscriptions.get(&sub_id) {
-            Some(s) if s.client_id == client_id => {
-                g.subscriptions.remove(&sub_id);
-                true
-            }
-            _ => false,
+        let owned = g
+            .subscriptions
+            .get(&sub_id)
+            .is_some_and(|s| g.owns_subscription(client_id, s));
+        if owned {
+            g.subscriptions.remove(&sub_id);
         }
+        owned
     }
 
-    /// List a client's active subscriptions.
+    /// List the caller's subscriptions (its whole shell's, for a shell caller).
     pub fn list_subscriptions_for(&self, client_id: u64) -> Vec<Subscription> {
         let g = self.inner.lock();
         g.subscriptions
             .values()
-            .filter(|s| s.client_id == client_id)
+            .filter(|s| g.owns_subscription(client_id, s))
             .cloned()
             .collect()
     }
@@ -345,6 +581,7 @@ impl DaemonState {
     /// Publish an event: fan it out to every matching subscription. Returns the
     /// number of recipients the event was queued to. Paused subscriptions are
     /// silently skipped (the subscription stays registered, but no delivery).
+    /// A subscription whose creating connection has closed gets no delivery.
     pub fn publish(&self, origin: &Scope, topic: &str, frame: Frame) -> usize {
         let g = self.inner.lock();
         let mut count = 0;
@@ -367,40 +604,52 @@ impl DaemonState {
         count
     }
 
-    /// Pause a subscription owned by the given client. Returns true if the
-    /// subscription existed and was found owned by this client (or already paused).
+    /// Pause one of the caller's subscriptions. Returns true if it exists and
+    /// the caller owns it.
     pub fn set_subscription_paused(&self, client_id: u64, sub_id: u64, paused: bool) -> bool {
         let mut g = self.inner.lock();
-        match g.subscriptions.get_mut(&sub_id) {
-            Some(s) if s.client_id == client_id => {
+        let owned = g
+            .subscriptions
+            .get(&sub_id)
+            .is_some_and(|s| g.owns_subscription(client_id, s));
+        if owned {
+            if let Some(s) = g.subscriptions.get_mut(&sub_id) {
                 s.paused = paused;
-                true
             }
-            _ => false,
         }
+        owned
     }
 
-    /// Pause every subscription owned by the given client. Returns the number
-    /// of subscriptions affected.
+    /// Pause every subscription the caller owns. Returns the number of
+    /// subscriptions affected.
     pub fn pause_all_subscriptions(&self, client_id: u64, paused: bool) -> usize {
         let mut g = self.inner.lock();
-        let mut n = 0;
-        for s in g.subscriptions.values_mut() {
-            if s.client_id == client_id && s.paused != paused {
+        let ids: Vec<u64> = g
+            .subscriptions
+            .values()
+            .filter(|s| s.paused != paused && g.owns_subscription(client_id, s))
+            .map(|s| s.id)
+            .collect();
+        for id in &ids {
+            if let Some(s) = g.subscriptions.get_mut(id) {
                 s.paused = paused;
-                n += 1;
             }
         }
-        n
+        ids.len()
     }
 
-    /// Build a Scope from a session id (for use as event origin).
+    /// Build the event-origin Scope for a connection: its shell's stable id
+    /// and tags. An HTTP session (not a shell) publishes as `shell:0`.
     pub fn origin_scope(&self, client_id: u64) -> Option<Scope> {
         let g = self.inner.lock();
         let s = g.sessions.get(&client_id)?;
+        let (shell_id, tags) = match s.shell_id.and_then(|id| g.shells.get(&id)) {
+            Some(r) => (r.shell_id, r.tags.clone()),
+            None => (0, BTreeSet::new()),
+        };
         Some(Scope {
-            shell_id: s.client_id,
-            tags: s.tags.clone(),
+            shell_id,
+            tags,
             user: None,
             job_id: None,
         })
@@ -484,6 +733,18 @@ impl DaemonState {
         argv0: Option<String>,
     ) -> Option<SessionSnapshot> {
         let mut g = self.inner.lock();
+        let shell_id = g.shell_of(client_id);
+        if let Some(r) = shell_id.and_then(|id| g.shells.get_mut(&id)) {
+            if cwd.is_some() {
+                r.cwd = cwd.clone();
+            }
+            if tty.is_some() {
+                r.tty = tty.clone();
+            }
+            if argv0.is_some() {
+                r.argv0 = argv0.clone();
+            }
+        }
         let s = g.sessions.get_mut(&client_id)?;
         if let Some(c) = cwd {
             s.cwd = Some(c);
@@ -496,27 +757,31 @@ impl DaemonState {
         }
         Some(s.snapshot())
     }
-    /// `add_tags` — see implementation.
+    /// Add tags to the caller's shell record. `None` when the caller is not
+    /// a shell (HTTP session) or unknown.
     pub fn add_tags(&self, client_id: u64, tags: &[String]) -> Option<Vec<String>> {
         let mut g = self.inner.lock();
-        let s = g.sessions.get_mut(&client_id)?;
+        let id = g.shell_of(client_id)?;
+        let r = g.shells.get_mut(&id)?;
         for t in tags {
-            s.tags.insert(t.clone());
+            r.tags.insert(t.clone());
         }
-        Some(s.tags.iter().cloned().collect())
+        Some(r.tags.iter().cloned().collect())
     }
-    /// `remove_tags` — see implementation.
+    /// Remove tags from the caller's shell record (all of them when `tags`
+    /// is empty).
     pub fn remove_tags(&self, client_id: u64, tags: &[String]) -> Option<Vec<String>> {
         let mut g = self.inner.lock();
-        let s = g.sessions.get_mut(&client_id)?;
+        let id = g.shell_of(client_id)?;
+        let r = g.shells.get_mut(&id)?;
         if tags.is_empty() {
-            s.tags.clear();
+            r.tags.clear();
         } else {
             for t in tags {
-                s.tags.remove(t);
+                r.tags.remove(t);
             }
         }
-        Some(s.tags.iter().cloned().collect())
+        Some(r.tags.iter().cloned().collect())
     }
 
     /// Register a pending zsend --wait response slot. Returns the receiver
@@ -538,18 +803,31 @@ impl DaemonState {
             None => false,
         }
     }
-    /// `shells_with_tag` — see implementation.
+    /// Stable ids of every registered shell carrying `tag`.
     pub fn shells_with_tag(&self, tag: &str) -> Vec<u64> {
         let g = self.inner.lock();
-        g.sessions
+        g.shells
             .values()
-            .filter(|s| s.tags.contains(tag))
-            .map(|s| s.client_id)
+            .filter(|r| r.tags.contains(tag))
+            .map(|r| r.shell_id)
             .collect()
     }
 
-    /// Send a frame to a specific client. Returns false if the client is unknown or
-    /// its outbound channel is closed.
+    /// Push a frame to every live connection of a shell. Returns how many
+    /// connections it was queued to — 0 when the shell exists but holds no
+    /// connection right now (no delivery; there is no long-lived client
+    /// connection to hold it for).
+    pub fn send_to_shell(&self, shell_id: u64, frame: Frame) -> usize {
+        let g = self.inner.lock();
+        g.sessions
+            .values()
+            .filter(|s| s.shell_id == Some(shell_id))
+            .filter(|s| s.outbound.send(frame.clone()).is_ok())
+            .count()
+    }
+
+    /// Send a frame to a specific connection (responses). Returns false if the
+    /// client is unknown or its outbound channel is closed.
     pub fn send_to(&self, client_id: u64, frame: Frame) -> bool {
         let g = self.inner.lock();
         match g.sessions.get(&client_id) {
@@ -558,13 +836,14 @@ impl DaemonState {
         }
     }
 
-    /// Broadcast a frame to every connected session except optionally excluded ones.
-    /// Returns the number of clients the frame was queued to.
-    pub fn broadcast(&self, frame: Frame, exclude: &[u64]) -> usize {
+    /// Broadcast a frame to every live connection except those belonging to
+    /// the excluded stable shell ids. Returns the number of connections the
+    /// frame was queued to.
+    pub fn broadcast(&self, frame: Frame, exclude_shells: &[u64]) -> usize {
         let g = self.inner.lock();
         let mut count = 0;
-        for (id, s) in g.sessions.iter() {
-            if exclude.contains(id) {
+        for s in g.sessions.values() {
+            if s.shell_id.is_some_and(|id| exclude_shells.contains(&id)) {
                 continue;
             }
             if s.outbound.send(frame.clone()).is_ok() {
@@ -600,16 +879,13 @@ impl DaemonState {
         Some(prev)
     }
 
-    /// Broadcast to every session matching a tag. Returns the recipient ids.
+    /// Push a frame to every live connection of every shell tagged `tag`.
+    /// Returns the stable ids of the shells it reached.
     pub fn send_tag(&self, tag: &str, frame: Frame) -> Vec<u64> {
-        let g = self.inner.lock();
-        let mut out = Vec::new();
-        for s in g.sessions.values() {
-            if s.tags.contains(tag) && s.outbound.send(frame.clone()).is_ok() {
-                out.push(s.client_id);
-            }
-        }
-        out
+        self.shells_with_tag(tag)
+            .into_iter()
+            .filter(|&id| self.send_to_shell(id, frame.clone()) > 0)
+            .collect()
     }
 }
 
@@ -714,5 +990,200 @@ mod tests {
         assert!(rx2.try_recv().is_ok());
 
         let _ = id2; // suppress unused warning if any
+    }
+
+    // ---- persistent shell registry (shell identity = pid, not connection) ----
+
+    use super::super::ops::dispatch;
+    use serde_json::json;
+
+    /// One one-shot builtin call: connect as `pid`, run `op`, disconnect —
+    /// the shape every z* builtin has from the command line.
+    async fn one_shot(
+        state: &Arc<DaemonState>,
+        pid: i32,
+        op: &str,
+        args: serde_json::Value,
+    ) -> serde_json::Value {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (cid, _) = state.register_session(pid, None, None, None, tx);
+        let r = dispatch(state, cid, op, args).await;
+        state.unregister_session(cid);
+        r.unwrap_or_else(|e| panic!("{op} failed: {} ({})", e.msg, e.code))
+    }
+
+    /// A pid that existed and is now gone: spawn `true` and reap it.
+    fn dead_pid() -> i32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        assert!(!pid_alive(pid), "reaped child pid {pid} still alive");
+        pid
+    }
+
+    fn shell_row(state: &Arc<DaemonState>, shell_id: u64) -> Option<ShellSnapshot> {
+        state
+            .snapshot_shells()
+            .into_iter()
+            .find(|s| s.shell_id == shell_id)
+    }
+
+    #[test]
+    fn shell_registry_stable_id_across_connections() {
+        let state = fresh();
+        let (tx1, _r1) = mpsc::unbounded_channel();
+        let (tx2, _r2) = mpsc::unbounded_channel();
+        let (tx3, _r3) = mpsc::unbounded_channel();
+        let (a, _) = state.register_session(4242, None, None, None, tx1);
+        state.unregister_session(a);
+        let (b, _) = state.register_session(4242, None, None, None, tx2);
+        let (other, _) = state.register_session(4343, None, None, None, tx3);
+        assert_ne!(a, b, "connection ids are per-connection");
+        assert_eq!(state.shell_id_of(a), None, "closed connection is gone");
+        let sb = state.shell_id_of(b).unwrap();
+        let so = state.shell_id_of(other).unwrap();
+        assert_ne!(sb, so);
+        assert_eq!(state.snapshot_shells().len(), 2);
+        // The pid's second connection rejoined the record minted by the first.
+        let (tx4, _r4) = mpsc::unbounded_channel();
+        let (c, _) = state.register_session(4242, None, None, None, tx4);
+        assert_eq!(state.shell_id_of(c), Some(sb));
+        assert_eq!(shell_row(&state, sb).unwrap().connections, 2);
+    }
+
+    #[tokio::test]
+    async fn shell_registry_state_visible_to_later_connection() {
+        let state = fresh();
+        // Real live pids: `list_shells` reaps records whose pid is gone.
+        let me = std::process::id() as i32;
+        let mut other_proc = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let other = other_proc.id() as i32;
+
+        // ztag, zsubscribe, zask --target self: each its own connection.
+        one_shot(&state, me, "tag", json!({ "tags": ["prod"] })).await;
+        one_shot(&state, other, "tag", json!({ "tags": ["dev"] })).await;
+        let sub = one_shot(&state, me, "subscribe", json!({ "pattern": "*.chpwd" })).await;
+        let sub_id = sub["subscription_id"].as_u64().unwrap();
+        for _ in 0..2 {
+            one_shot(
+                &state,
+                me,
+                "ask_ask",
+                json!({ "kind": "input", "target": { "self": true }, "payload": {} }),
+            )
+            .await;
+        }
+        one_shot(
+            &state,
+            other,
+            "ask_ask",
+            json!({ "kind": "input", "target": { "self": true }, "payload": {} }),
+        )
+        .await;
+
+        // zls from a later connection sees the tag on the stable id.
+        let shells = one_shot(&state, me, "list_shells", json!({ "tag": "prod" })).await;
+        let rows = shells["shells"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["pid"].as_i64(), Some(me as i64));
+        let my_shell = rows[0]["shell_id"].as_u64().unwrap();
+
+        // zsubscribe --list from a later connection.
+        let listed = one_shot(&state, me, "subscribe", json!({ "pattern": "--list" })).await;
+        let ids: Vec<u64> = listed["subscriptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![sub_id]);
+        let theirs = one_shot(&state, other, "subscribe", json!({ "pattern": "--list" })).await;
+        assert!(theirs["subscriptions"].as_array().unwrap().is_empty());
+
+        // zask pending, then dismiss --all, from later connections.
+        let p = one_shot(&state, me, "ask_pending", json!({})).await;
+        assert_eq!(p["shell_id"].as_u64(), Some(my_shell));
+        assert_eq!(p["pending_count"].as_u64(), Some(2));
+        let d = one_shot(&state, me, "ask_dismiss", json!({ "all": true })).await;
+        assert_eq!(d["dismissed"].as_u64(), Some(2));
+        let p = one_shot(&state, me, "ask_pending", json!({})).await;
+        assert_eq!(p["pending_count"].as_u64(), Some(0));
+
+        // The other shell's tag and queue are untouched.
+        let p = one_shot(&state, other, "ask_pending", json!({})).await;
+        assert_eq!(p["pending_count"].as_u64(), Some(1));
+        let dev = one_shot(&state, other, "list_shells", json!({ "tag": "dev" })).await;
+        assert_eq!(dev["total"].as_u64(), Some(1));
+        assert_eq!(dev["shells"][0]["pid"].as_i64(), Some(other as i64));
+        let _ = other_proc.kill();
+        let _ = other_proc.wait();
+    }
+
+    #[tokio::test]
+    async fn shell_registry_reaps_dead_pid_with_tags_queue_and_subs() {
+        let state = fresh();
+        let gone = dead_pid();
+        let alive = std::process::id() as i32;
+
+        for pid in [gone, alive] {
+            one_shot(&state, pid, "tag", json!({ "tags": ["t"] })).await;
+            one_shot(&state, pid, "subscribe", json!({ "pattern": "*.x" })).await;
+            one_shot(
+                &state,
+                pid,
+                "ask_ask",
+                json!({ "kind": "menu", "target": { "self": true }, "payload": {} }),
+            )
+            .await;
+        }
+        assert_eq!(state.snapshot_shells().len(), 2);
+        assert_eq!(state.subscription_count(), 2);
+        let gone_shell = state
+            .snapshot_shells()
+            .into_iter()
+            .find(|s| s.pid == gone)
+            .unwrap()
+            .shell_id;
+        let alive_shell = state
+            .snapshot_shells()
+            .into_iter()
+            .find(|s| s.pid == alive)
+            .unwrap()
+            .shell_id;
+        assert_eq!(state.ask_inbox.pending_count(gone_shell), 1);
+
+        assert_eq!(state.reap_dead_shells(), vec![gone_shell]);
+
+        assert!(shell_row(&state, gone_shell).is_none());
+        assert_eq!(state.ask_inbox.pending_count(gone_shell), 0);
+        assert!(state.shells_with_tag("t") == vec![alive_shell]);
+        assert_eq!(state.subscription_count(), 1);
+        // The live shell keeps everything.
+        assert_eq!(state.ask_inbox.pending_count(alive_shell), 1);
+        assert_eq!(shell_row(&state, alive_shell).unwrap().tags, vec!["t"]);
+        // A fresh shell reusing that pid number later gets a new id.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (cid, _) = state.register_session(gone, None, None, None, tx);
+        assert_ne!(state.shell_id_of(cid), Some(gone_shell));
+    }
+
+    #[tokio::test]
+    async fn shell_registry_http_sessions_create_no_records() {
+        let state = fresh();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (cid, _) = state.register_ephemeral_session(Some("http".into()), None, tx);
+        assert_eq!(state.shell_id_of(cid), None);
+        assert!(state.snapshot_shells().is_empty());
+        // Shell-only ops refuse; pub/sub still works for the connection and
+        // dies with it.
+        assert!(dispatch(&state, cid, "tag", json!({ "tags": ["x"] })).await.is_err());
+        assert!(dispatch(&state, cid, "ask_pending", json!({})).await.is_err());
+        dispatch(&state, cid, "subscribe", json!({ "pattern": "*.x" }))
+            .await
+            .unwrap();
+        assert_eq!(state.subscription_count(), 1);
+        state.unregister_session(cid);
+        assert_eq!(state.subscription_count(), 0);
+        assert!(state.snapshot_shells().is_empty());
     }
 }
