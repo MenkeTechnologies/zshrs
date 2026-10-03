@@ -67,3 +67,22 @@ fn pattern_disables_do_not_leak_out_of_subshells() {
         assert_eq!(out, want, "{script:?}");
     }
 }
+
+/// c:Src/glob.c:1230-1233 — zglob returns before globbing when EXECOPT is
+/// unset, so under NO_EXEC a glob in the COMMAND word never reports
+/// NOMATCH. zshrs gated the argument words but not the command word
+/// (E01options.ztst: `setopt noexec; typeset -A hash; hash['…']`).
+#[test]
+fn noexec_never_globs_the_command_word() {
+    for script in [
+        "setopt noexec\nx[a] foo",
+        "setopt noexec\n/nonexistent-dir-zshrs/*",
+        "(setopt noexec\ntypeset -A hash\nhash['this is a string'])",
+    ] {
+        let (ec, out, err) = run(script);
+        assert_eq!((ec, out.as_str(), err.as_str()), (0, "", ""), "{script:?}");
+    }
+    // With EXECOPT on the command word still globs and fails.
+    let (_ec, _out, err) = run("/nonexistent-dir-zshrs/*");
+    assert!(err.contains("no matches found"), "{err}");
+}

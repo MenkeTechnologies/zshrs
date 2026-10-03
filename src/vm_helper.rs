@@ -8818,6 +8818,13 @@ impl ShellExecutor {
     /// cell so the dispatch layer skips the current command on NOMATCH +
     /// looks_like_glob instead of exiting the shell.
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
+        // c:Src/glob.c:1230-1233 — `if (unset(GLOBOPT) || !haswilds(ostr) ||
+        // unset(EXECOPT)) { untokenize(ostr); return; }`: under NO_EXEC zglob
+        // never globs, so no word (the command word included) can report
+        // NOMATCH.
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT) {
+            return vec![crate::ported::lex::untokenize(pattern)];
+        }
         let errflag_before =
             crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
         let expanded = glob_path(pattern);
