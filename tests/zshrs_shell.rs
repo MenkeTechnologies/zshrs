@@ -16764,3 +16764,16 @@ fn test_nofork_body_assignment_is_not_a_prefix_assignment() {
     );
     assert_eq!(output, "OUTER\nOUTER\n");
 }
+
+#[test]
+fn test_subshell_does_not_leak_stopmsg() {
+    // `stopmsg` is a process global the forked `( … )` child owns a copy of.
+    // A nofork `${ exit N }` sets it (Src/subst.c:2100) inside the subshell;
+    // leaked to the parent it made the next `exit` skip its deferral
+    // (Src/builtin.c:5884), so the second subshell ran on and exited 0
+    // (D10nofork.ztst "exit statement inside stdout capture").
+    let (_, output, _) = run_zshrs(
+        "( print \"${ exit 7 }\"; print no ); print A $?; ( print \"${ exit 8 }\"; print no ); print B $?",
+    );
+    assert_eq!(output, "A 7\nB 8\n");
+}

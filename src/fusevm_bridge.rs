@@ -20198,6 +20198,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 flock_fds: current_flock_fds(),
                 loop_flags: loop_flags_snap,
                 cmdoutval: crate::ported::exec::cmdoutval.load(std::sync::atomic::Ordering::Relaxed),
+                stopmsg: crate::ported::builtin::STOPMSG.load(std::sync::atomic::Ordering::Relaxed),
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
                 special_globals: special_globals_snap,
@@ -20481,6 +20482,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 // c:Src/exec.c:225 `cmdoutval` — the child's copy dies with
                 // it. See SubshellSnapshot::cmdoutval.
                 crate::ported::exec::cmdoutval.store(snap.cmdoutval, std::sync::atomic::Ordering::Relaxed);
+                // See SubshellSnapshot::stopmsg.
+                crate::ported::builtin::STOPMSG.store(snap.stopmsg, std::sync::atomic::Ordering::Relaxed);
                 // c:Src/utils.c:2155-2164 `zcloselockfd` — release the
                 // `zsystem flock` locks the subshell itself took. Under C
                 // the forked child's fds close on exit; here we close the

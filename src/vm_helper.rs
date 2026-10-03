@@ -561,6 +561,12 @@ pub struct SubshellSnapshot {
     /// 3>f` still reports 3 in zsh although the subshell's assignment reset
     /// its own copy (c:2796). Restored by hand like `loop_flags`.
     pub cmdoutval: i32,
+    /// `stopmsg` (c:Src/builtin.c) at subshell entry. Another process
+    /// global the child owns a copy of: a nofork `${ exit N }` in a
+    /// subshell sets it (c:Src/subst.c:2100) and the child then exits, so
+    /// in C it never reaches the parent. Leaked here it made every later
+    /// `exit` in a function or nofork skip its deferral (c:5884).
+    pub stopmsg: i32,
     /// Parent's traps at subshell entry. zsh's `(trap "echo X" EXIT;
     /// true)` runs the trap when the subshell exits — BEFORE the parent
     /// continues. Without this snapshot, the trap inherited from parent
