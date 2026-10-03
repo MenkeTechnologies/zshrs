@@ -16713,3 +16713,15 @@ fn test_leading_redirection_applies_to_compound_command() {
     assert_eq!(output, "[x] [1,2]\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_nofork_braces_count_under_ignorebraces() {
+    // Src/lex.c:1426-1429 sets `cmdsubst` for the char after `${` when it
+    // opens a nofork substitution; c:1138 then counts braces inside it even
+    // under IGNOREBRACES, so the inner group's `}` does not end the word
+    // (D10nofork.ztst "ignored braces, part 3").
+    let (code, output, _) =
+        run_zshrs("setopt ignorebraces\nprint -r -- ${ { echo nested ;} } DONE");
+    assert_eq!(code, 0);
+    assert_eq!(output, "nested DONE\n");
+}

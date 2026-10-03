@@ -2174,6 +2174,24 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         if in_brace_param == 0 {
                             in_brace_param = bct;
                         }
+                        // c:1426-1429 — `if (!cmdsubst && in_brace_param &&
+                        // act == LX2_STRING && (c == '|' || c == Bar ||
+                        // c == '{' || c == Inbrace || inblank(c))) { cmdsubst =
+                        // in_brace_param; cmdpush(CS_CURSH); }` — the char after
+                        // `${` opens a nofork substitution, whose braces count
+                        // even under IGNOREBRACES (c:1138).
+                        if !cmdsubst {
+                            if let Some(n) = hgetc() {
+                                hungetc(n);
+                                if matches!(n, '|' | '{' | ' ' | '\t' | '\n')
+                                    || n == Bar
+                                    || n == Inbrace
+                                {
+                                    cmdsubst = true;
+                                    cmdpush(CS_CURSH as u8);
+                                }
+                            }
+                        }
                     }
                     Some('\'') if crate::dash_mode::dash_strict() => {
                         // !!! DASH-STRICT GATE (no C counterpart) !!!
