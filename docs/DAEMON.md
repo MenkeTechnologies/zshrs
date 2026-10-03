@@ -880,11 +880,16 @@ Every z\* builtin opens its own connection and closes it on return, and
 clients hold no state, so per-shell state cannot live on a connection. The
 daemon keeps a **shell record** keyed by the shell process instead:
 
-- **Key.** The Hello's `shell_pid` (the shell's `$$`) and `shell_start_ns`
-  (its start time), both recorded once at startup by
-  `daemon_presence::probe` → `client::set_shell_identity`. A builtin run
-  in a forked subshell still sends the parent's pair, so it identifies as
-  that shell; the `zd` builtin, running inside the shell, does too.
+- **Key.** The Hello's `shell_pid` (the shell's `$$`) and `shell_start`
+  (the kernel's start time for that process), both read once at startup by
+  `daemon_presence::probe` → `client::set_shell_identity`. The start time
+  comes from `state::process_start_time`, the same function the daemon
+  uses: macOS `proc_pidinfo(PROC_PIDTBSDINFO)` `pbi_start_tvsec`/`usec`
+  (µs since the epoch), Linux field 22 (`starttime`, clock ticks since
+  boot) of `/proc/<pid>/stat`. On other platforms it is absent and
+  identity is the pid alone. A builtin run in a forked subshell still
+  sends the parent's pair, so it identifies as that shell; the `zd`
+  builtin, running inside the shell, does too.
 - **Only shells get records.** A Hello without `shell_pid` (the standalone
   `zd` binary, which talks HTTP anyway; the bench; any client that never
   called `set_shell_identity`) gets an ephemeral session like HTTP: no
@@ -895,9 +900,10 @@ daemon keeps a **shell record** keyed by the shell process instead:
   what `shell:N` resolves against in `zask --target`, `zsend`, `znotify`
   and subscription scopes. `client_id` stays per connection.
 - **Recycled pids.** A Hello with a known pid but a different
-  `shell_start_ns` is a new shell: the old record and everything it owned
-  (tags, `zask` queue, subscriptions) is dropped and a new id minted. (A
-  Hello without `shell_start_ns`, from an older shell, joins by pid alone.)
+  `shell_start` is a new shell: the old record and everything it owned
+  (tags, `zask` queue, subscriptions) is dropped and a new id minted. The
+  reaper catches reuse even before the new process connects (see
+  Lifetime). A Hello without `shell_start` joins by pid alone.
 - **Owned by the shell, not the connection:** tags (`ztag` / `zuntag`) and
   the `zask` queue (`pending` / `take` / `dismiss`). Closing a connection
   drops neither.
@@ -908,9 +914,10 @@ daemon keeps a **shell record** keyed by the shell process instead:
   — subscriptions held by its other open connections (a running
   `zsubscribe`).
 - **Lifetime.** A record and everything it owns is removed when its pid no
-  longer exists (`kill(pid, 0)` → `ESRCH`), checked by the daemon ticker
-  every 60 s and before each `list_shells`, or when a recycled pid
-  replaces it.
+  longer exists (`kill(pid, 0)` → `ESRCH`) or the process now holding the
+  pid has a different kernel start time than the record, checked by the
+  daemon ticker every 60 s and before each `list_shells`, or when a
+  recycled pid's new shell connects.
 - **Push delivery** (`notify`, `cmd:execute`, `ask:pending`, `ask:response`,
   pub/sub matches) goes to live connections only. A registered shell with
   no open connection gets no push (the `zask` queue still holds its
@@ -1125,7 +1132,7 @@ zask progress --target shell:42 --request-id <id> --done
 zask pending                                  # list queued requests in this shell
 zask take                                     # render the oldest pending; blocks for response
 zask take <id>                                # render a specific pending request by id
-zask dismiss [<id>|--all]                     # decline/cancel pending request(s); originator gets an `ask:response` event with cancelled=true (live connection only)
+zask dismiss [<id>|--all]                     # decline/cancel pending request(s); originator gets an `ask:response` event with cancelled=true (its live connections, never the one issuing the dismiss)
 zask inbox-clear                              # dismiss every pending request in this shell at once
 ```
 

@@ -47,11 +47,13 @@ pub struct Hello {
     /// forked subshell; the daemon keys the shell record on this when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_pid: Option<i32>,
-    /// The shell's start time (ns since the epoch), captured once at shell
-    /// startup. With `shell_pid` it names one shell process: a known pid with
-    /// a different start is a new shell on a recycled pid.
+    /// The shell process's kernel start time (`state::process_start_time`:
+    /// µs since the epoch on macOS, clock ticks since boot on Linux), read
+    /// once at shell startup. With `shell_pid` it names one shell process: a
+    /// known pid with a different start is a new shell on a recycled pid.
+    /// Absent on platforms where it cannot be read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shell_start_ns: Option<u64>,
+    pub shell_start: Option<u64>,
 }
 
 /// Daemon's response to a successful Hello.
@@ -316,7 +318,7 @@ mod tests {
             cwd: Some("/home/wizard".into()),
             argv0: Some("zshrs".into()),
             shell_pid: None,
-            shell_start_ns: None,
+            shell_start: None,
         };
         let frame = Frame::hello(h);
 

@@ -373,7 +373,9 @@ pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Valu
     };
     // Per docs/DAEMON.md (`zask dismiss`): the originator gets cancelled=true,
     // as the same `ask:response` event a real answer would be — pushed to the
-    // originating shell's live connections; none open = no delivery.
+    // originating shell's live connections, except the one issuing this dismiss
+    // (when a shell dismisses its own request, the caller already has the
+    // answer as this response). None open = no delivery.
     let mut notified = 0;
     for r in &removed {
         if r.from_shell == 0 {
@@ -389,7 +391,7 @@ pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Valu
                 "reason": reason,
             }),
         );
-        if state.send_to_shell(r.from_shell, frame) > 0 {
+        if state.send_to_shell_except(r.from_shell, frame, Some(client_id)) > 0 {
             notified += 1;
         }
     }

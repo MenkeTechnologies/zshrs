@@ -107,9 +107,9 @@ pub struct ShellRecord {
     pub shell_id: u64,
     /// The shell's pid (`$$`).
     pub pid: i32,
-    /// The shell's start time from the Hello (`shell_start_ns`); with `pid`
+    /// The shell's start time from the Hello (`shell_start`); with `pid`
     /// it tells a recycled pid from the shell that held it before.
-    pub start_ns: Option<u64>,
+    pub start: Option<u64>,
     /// Most recent tty reported by any of this shell's connections.
     pub tty: Option<String>,
     /// Most recent cwd reported by any of this shell's connections.
@@ -238,6 +238,72 @@ pub fn pid_alive(pid: i32) -> bool {
     }
 }
 
+/// The kernel's start time for `pid`, as an opaque token: equal values mean
+/// the same process, a different value on the same pid means the pid was
+/// recycled. The shell sends its own in the Hello (`shell_start`); the daemon
+/// reads it again for live pids when reaping. Units are per platform and
+/// only ever compared on one machine:
+/// - macOS: `proc_pidinfo(PROC_PIDTBSDINFO)` → `pbi_start_tvsec` * 10^6 +
+///   `pbi_start_tvusec` (µs since the epoch).
+/// - Linux: field 22 (`starttime`, clock ticks since boot) of
+///   `/proc/<pid>/stat`.
+/// - Elsewhere, or if the read fails: `None` (identity falls back to pid).
+pub fn process_start_time(pid: i32) -> Option<u64> {
+    if pid <= 0 {
+        return None;
+    }
+    process_start_time_os(pid)
+}
+
+#[cfg(target_os = "macos")]
+fn process_start_time_os(pid: i32) -> Option<u64> {
+    // SAFETY: proc_pidinfo writes at most `size` bytes into `info`, a plain
+    // C struct for which all-zero bytes are a valid value.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    if n != size {
+        return None;
+    }
+    Some(info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
+}
+
+#[cfg(target_os = "linux")]
+fn process_start_time_os(pid: i32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Field 2 (comm) is parenthesised and may hold spaces or `)`; fields
+    // resume after the LAST `)`, starting at field 3, so field 22 is the
+    // 20th token there.
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(22 - 3)?.parse().ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn process_start_time_os(_pid: i32) -> Option<u64> {
+    None
+}
+
+/// Is the process a shell record describes still the one running? Its pid
+/// must exist and, when both the record and the kernel know a start time,
+/// the two must match (a mismatch = the pid now belongs to another process).
+pub fn shell_alive(pid: i32, start: Option<u64>) -> bool {
+    if !pid_alive(pid) {
+        return false;
+    }
+    match (start, process_start_time(pid)) {
+        (Some(recorded), Some(now)) => recorded == now,
+        _ => true,
+    }
+}
+
 /// Shared handle — clone freely; every clone holds the same Arc<Mutex<...>> + paths.
 pub struct DaemonState {
     /// `inner` field.
@@ -357,8 +423,8 @@ impl DaemonState {
     }
 
     /// Register a shell connection post-handshake: a Hello carrying
-    /// `shell_pid` (`pid`) and, from current shells, `shell_start_ns`
-    /// (`start_ns`). The connection joins that shell's record, minting one
+    /// `shell_pid` (`pid`) and, from current shells, `shell_start`
+    /// (`start`). The connection joins that shell's record, minting one
     /// (with a fresh stable shell id) on the shell's first connection. A known
     /// pid with a different start time is a new shell on a recycled pid: the
     /// old record and everything it owned (tags, zask queue, subscriptions) is
@@ -367,7 +433,7 @@ impl DaemonState {
     pub fn register_shell_session(
         &self,
         pid: i32,
-        start_ns: Option<u64>,
+        start: Option<u64>,
         tty: Option<String>,
         cwd: Option<String>,
         argv0: Option<String>,
@@ -377,10 +443,10 @@ impl DaemonState {
         let mut replaced = None;
         let known = g.shell_by_pid.get(&pid).copied();
         let reuse = match known.and_then(|id| g.shells.get_mut(&id)) {
-            Some(r) => match (r.start_ns, start_ns) {
+            Some(r) => match (r.start, start) {
                 (Some(old), Some(new)) if old != new => false,
                 (None, Some(new)) => {
-                    r.start_ns = Some(new);
+                    r.start = Some(new);
                     true
                 }
                 _ => true,
@@ -402,7 +468,7 @@ impl DaemonState {
                     ShellRecord {
                         shell_id: id,
                         pid,
-                        start_ns,
+                        start,
                         tty: None,
                         cwd: None,
                         argv0: None,
@@ -545,12 +611,12 @@ impl DaemonState {
     /// Remove every shell record whose pid `is_alive` rejects, together with
     /// its subscriptions and zask queue. Returns the reaped shell ids. The
     /// ticker passes `pid_alive` (kill(pid, 0)).
-    pub fn reap_dead_shells_with(&self, is_alive: impl Fn(i32) -> bool) -> Vec<u64> {
+    pub fn reap_dead_shells_with(&self, is_alive: impl Fn(i32, Option<u64>) -> bool) -> Vec<u64> {
         let dead: Vec<(u64, i32)> = {
             let g = self.inner.lock();
             g.shells
                 .values()
-                .filter(|r| !is_alive(r.pid))
+                .filter(|r| !is_alive(r.pid, r.start))
                 .map(|r| (r.shell_id, r.pid))
                 .collect()
         };
@@ -569,9 +635,10 @@ impl DaemonState {
         dead.into_iter().map(|(id, _)| id).collect()
     }
 
-    /// `reap_dead_shells_with(pid_alive)`.
+    /// `reap_dead_shells_with(shell_alive)`: a record is dead when its pid is
+    /// gone or now belongs to a process with a different start time.
     pub fn reap_dead_shells(&self) -> Vec<u64> {
-        self.reap_dead_shells_with(pid_alive)
+        self.reap_dead_shells_with(shell_alive)
     }
 
     /// Add a subscription. Returns the assigned subscription id, or None if the
@@ -877,10 +944,16 @@ impl DaemonState {
     /// connection right now (no delivery; there is no long-lived client
     /// connection to hold it for).
     pub fn send_to_shell(&self, shell_id: u64, frame: Frame) -> usize {
+        self.send_to_shell_except(shell_id, frame, None)
+    }
+
+    /// `send_to_shell`, skipping connection `except` (the caller, which gets
+    /// its answer as the op response instead).
+    pub fn send_to_shell_except(&self, shell_id: u64, frame: Frame, except: Option<u64>) -> usize {
         let g = self.inner.lock();
         g.sessions
             .values()
-            .filter(|s| s.shell_id == Some(shell_id))
+            .filter(|s| s.shell_id == Some(shell_id) && Some(s.client_id) != except)
             .filter(|s| s.outbound.send(frame.clone()).is_ok())
             .count()
     }
@@ -1331,5 +1404,101 @@ mod tests {
 
         let _ = other_proc.kill();
         let _ = other_proc.wait();
+    }
+
+    #[test]
+    fn shell_registry_process_start_time_is_stable_and_per_process() {
+        let me = std::process::id() as i32;
+        let a = process_start_time(me).expect("start time readable on this platform");
+        assert_eq!(process_start_time(me), Some(a));
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let c = process_start_time(child.id() as i32).unwrap();
+        assert_ne!(c, a, "a later process must report a different start");
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(process_start_time(dead_pid()), None);
+    }
+
+    /// The reaper reads the live pid's start time: a record whose recorded
+    /// start does not match the process now holding that pid is dead, even
+    /// though the pid exists and no new shell has connected yet.
+    #[test]
+    fn shell_registry_reaper_detects_reused_pid_by_start_time() {
+        let state = fresh();
+        let mut reused = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let mut same = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let reused_pid = reused.id() as i32;
+        let same_pid = same.id() as i32;
+        let real = process_start_time(reused_pid).unwrap();
+
+        // A record left by the "previous" holder of reused_pid.
+        let (tx1, _r1) = mpsc::unbounded_channel();
+        let (c1, _) =
+            state.register_shell_session(reused_pid, Some(real + 1), None, None, None, tx1);
+        let stale = state.shell_id_of(c1).unwrap();
+        state.add_tags(c1, &["stale".into()]).unwrap();
+        // A record that matches the live process.
+        let (tx2, _r2) = mpsc::unbounded_channel();
+        let (c2, _) = state.register_shell_session(
+            same_pid,
+            process_start_time(same_pid),
+            None,
+            None,
+            None,
+            tx2,
+        );
+        let live = state.shell_id_of(c2).unwrap();
+        assert!(pid_alive(reused_pid));
+
+        assert_eq!(state.reap_dead_shells(), vec![stale]);
+        assert!(shell_row(&state, stale).is_none());
+        assert!(state.shells_with_tag("stale").is_empty());
+        assert!(shell_row(&state, live).is_some());
+
+        for c in [&mut reused, &mut same] {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    /// A shell dismissing requests it asked itself: the cancel goes to its
+    /// other live connections (a script waiting on the answer), never to the
+    /// connection that issued the dismiss.
+    #[tokio::test]
+    async fn shell_registry_self_dismiss_skips_caller_connection() {
+        let state = fresh();
+        let me = std::process::id() as i32;
+        let (tx_call, mut rx_call) = mpsc::unbounded_channel();
+        let (tx_wait, mut rx_wait) = mpsc::unbounded_channel();
+        let (caller, _) = state.register_session(me, None, None, None, tx_call);
+        let (_waiter, _) = state.register_session(me, None, None, None, tx_wait);
+        for _ in 0..2 {
+            dispatch(
+                &state,
+                caller,
+                "ask_ask",
+                json!({ "kind": "input", "target": { "self": true }, "payload": {} }),
+            )
+            .await
+            .unwrap();
+        }
+        let cancels = |rx: &mut mpsc::UnboundedReceiver<Frame>| -> usize {
+            let mut n = 0;
+            while let Ok(f) = rx.try_recv() {
+                if let Frame::Event { event, payload } = f {
+                    if event == "ask:response" && payload["cancelled"] == json!(true) {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        };
+        let d = dispatch(&state, caller, "ask_dismiss", json!({ "all": true }))
+            .await
+            .unwrap();
+        assert_eq!(d["dismissed"].as_u64(), Some(2));
+        assert_eq!(d["originators_notified"].as_u64(), Some(2));
+        assert_eq!(cancels(&mut rx_call), 0);
+        assert_eq!(cancels(&mut rx_wait), 2);
     }
 }

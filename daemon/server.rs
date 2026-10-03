@@ -240,13 +240,13 @@ async fn handle_connection(
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Frame>();
 
     // Only a Hello carrying `shell_pid` (the shell's `$$`) is a shell: it
-    // creates or joins the record keyed by (shell_pid, shell_start_ns).
+    // creates or joins the record keyed by (shell_pid, shell_start).
     // Anything else (the bench, a client that never called
     // `set_shell_identity`) is an ephemeral session, like HTTP.
     let (client_id, session_id) = match hello.shell_pid {
         Some(shell_pid) => state.register_shell_session(
             shell_pid,
-            hello.shell_start_ns,
+            hello.shell_start,
             hello.tty.clone(),
             hello.cwd.clone(),
             hello.argv0.clone(),
@@ -437,7 +437,7 @@ mod tests {
         state: &Arc<DaemonState>,
         client_pid: i32,
         shell_pid: Option<i32>,
-        shell_start_ns: Option<u64>,
+        shell_start: Option<u64>,
     ) -> (UnixStream, Welcome) {
         let (mut client, server) = UnixStream::pair().unwrap();
         let st = Arc::clone(state);
@@ -451,7 +451,7 @@ mod tests {
             cwd: None,
             argv0: None,
             shell_pid,
-            shell_start_ns,
+            shell_start,
         };
         ipc::write_frame(&mut client, &Frame::hello(hello)).await.unwrap();
         match ipc::read_frame(&mut client).await.unwrap() {
@@ -481,11 +481,11 @@ mod tests {
         let (_tmp, state) = fresh();
         let shell = std::process::id() as i32;
 
-        let (mut c1, w1) = connect(&state, shell, Some(shell), Some(7)).await;
+        let (mut c1, w1) = connect(&state, shell, Some(shell), crate::state::process_start_time(shell)).await;
         call(&mut c1, 1, "tag", json!({ "tags": ["build"] })).await;
         drop(c1);
 
-        let (mut c2, w2) = connect(&state, shell + 100_000, Some(shell), Some(7)).await;
+        let (mut c2, w2) = connect(&state, shell + 100_000, Some(shell), crate::state::process_start_time(shell)).await;
         assert_ne!(w1.client_id, w2.client_id);
         assert_eq!(w1.shell_id, w2.shell_id);
         assert_ne!(w1.shell_id, 0);
@@ -507,7 +507,8 @@ mod tests {
         let (_tmp, state) = fresh();
         let pid = std::process::id() as i32;
 
-        let (mut old, w_old) = connect(&state, pid, Some(pid), Some(111)).await;
+        // Start 1 stands in for the earlier process that held this pid.
+        let (mut old, w_old) = connect(&state, pid, Some(pid), Some(1)).await;
         call(&mut old, 1, "tag", json!({ "tags": ["stale"] })).await;
         call(
             &mut old,
@@ -520,11 +521,11 @@ mod tests {
         drop(old);
 
         // Same pid, same start: the same shell.
-        let (_same, w_same) = connect(&state, pid, Some(pid), Some(111)).await;
+        let (_same, w_same) = connect(&state, pid, Some(pid), Some(1)).await;
         assert_eq!(w_same.shell_id, w_old.shell_id);
 
         // Same pid, new start: a different process.
-        let (mut new, w_new) = connect(&state, pid, Some(pid), Some(222)).await;
+        let (mut new, w_new) = connect(&state, pid, Some(pid), crate::state::process_start_time(pid)).await;
         assert_ne!(w_new.shell_id, w_old.shell_id);
         assert_eq!(state.ask_inbox.pending_count(w_old.shell_id), 0);
         let stale = call(&mut new, 1, "list_shells", json!({ "tag": "stale" })).await;
@@ -545,8 +546,8 @@ mod tests {
         let target_pid = target_proc.id() as i32;
 
         // The asker keeps this connection open (a script blocked on the answer).
-        let (mut asker, _) = connect(&state, asker_pid, Some(asker_pid), Some(1)).await;
-        let (mut target, w_target) = connect(&state, target_pid, Some(target_pid), Some(2)).await;
+        let (mut asker, _) = connect(&state, asker_pid, Some(asker_pid), crate::state::process_start_time(asker_pid)).await;
+        let (mut target, w_target) = connect(&state, target_pid, Some(target_pid), crate::state::process_start_time(target_pid)).await;
         let ask = |id: u64| {
             json!({
                 "kind": "dialog",

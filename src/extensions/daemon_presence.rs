@@ -425,14 +425,7 @@ pub fn probe() -> Mode {
     // both, so a z* builtin run in a forked subshell still identifies as this
     // shell, and a later shell that recycles the pid is told apart.
     #[cfg(feature = "daemon")]
-    crate::daemon::client::set_shell_identity(
-        std::process::id() as i32,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(1)
-            .max(1),
-    );
+    crate::daemon::client::set_shell_identity(std::process::id() as i32);
     let cfg = read_config_full();
     if let Ok(mut slot) = STARTUP_CONFIG_PATH.lock() {
         *slot = cfg.startup_config.clone();

@@ -24,17 +24,19 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// value, so a builtin run there still identifies as the parent shell.
 static SHELL_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// The shell's start time (ns since the epoch), recorded alongside
-/// `SHELL_PID`. With the pid it identifies one shell process, so the daemon
-/// can tell a recycled pid from the shell that used it before. 0 = unset.
-static SHELL_START_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The shell process's kernel start time (`state::process_start_time`),
+/// recorded alongside `SHELL_PID`. With the pid it identifies one shell
+/// process, so the daemon can tell a recycled pid from the shell that used
+/// it before. 0 = unset or unknown on this platform.
+static SHELL_START: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Record the shell's `$$` and start time so every later Hello carries them
-/// as `shell_pid` / `shell_start_ns`. Called once by the shell at startup;
-/// a Hello without them is a non-shell client.
-pub fn set_shell_identity(pid: i32, start_ns: u64) {
+/// Record the shell's `$$` and read its kernel start time once, so every
+/// later Hello carries them as `shell_pid` / `shell_start`. Called once by
+/// the shell at startup; a Hello without `shell_pid` is a non-shell client.
+pub fn set_shell_identity(pid: i32) {
     SHELL_PID.store(pid, std::sync::atomic::Ordering::Relaxed);
-    SHELL_START_NS.store(start_ns, std::sync::atomic::Ordering::Relaxed);
+    let start = super::state::process_start_time(pid).unwrap_or(0);
+    SHELL_START.store(start, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// A live connection to the daemon, post-handshake.
@@ -90,7 +92,7 @@ impl Client {
                 0 => None,
                 pid => Some(pid),
             },
-            shell_start_ns: match SHELL_START_NS.load(std::sync::atomic::Ordering::Relaxed) {
+            shell_start: match SHELL_START.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => None,
                 ns => Some(ns),
             },
