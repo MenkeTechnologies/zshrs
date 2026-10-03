@@ -23145,6 +23145,10 @@ pub fn paramsubst(
             let save_subst = isset(PROMPTSUBST);
             let save_bang = isset(PROMPTBANG);
             let save_percent = isset(PROMPTPERCENT);
+            // c:3980-3981 — `zattr savecurrent = txtcurrentattrs;
+            //               zattr saveunknown = txtunknownattrs;`
+            let savecurrent = *crate::ported::prompt::current_attrs_lock().lock().unwrap();
+            let saveunknown = crate::ported::prompt::txtunknownattrs.load(Ordering::Relaxed);
             if presc < 2 {
                 opt_state_set(opt_name(PROMPTPERCENT), true); // c:3984
                 opt_state_set(opt_name(PROMPTSUBST), false); // c:3985
@@ -23159,6 +23163,11 @@ pub fn paramsubst(
                 // ASCII braces, so untokenize first — otherwise `%D{%Y}`
                 // falls back to the bare `%D` (yy-mm-dd) form.
                 let untok = crate::ported::lex::untokenize(s);
+                // c:4004/4014 — `txtunknownattrs = TXT_ATTR_ALL;`: the terminal's
+                // attributes are unknown, so an attribute turned off is
+                // turned off by its own sequence, never by a blanket reset.
+                crate::ported::prompt::txtunknownattrs
+                    .store(crate::ported::zsh_h::TXT_ATTR_ALL, Ordering::Relaxed);
                 let (expanded, _, _) = promptexpand(&untok, 0, None);
                 expanded
             };
@@ -23173,6 +23182,11 @@ pub fn paramsubst(
             } else {
                 value = prompt_one(&value); // c:3977
             }
+            // c:4020-4021 — `txtpendingattrs = txtcurrentattrs = savecurrent;
+            //               txtunknownattrs = saveunknown;`
+            *crate::ported::prompt::current_attrs_lock().lock().unwrap() = savecurrent;
+            crate::ported::prompt::set_pending_text_attrs(savecurrent);
+            crate::ported::prompt::txtunknownattrs.store(saveunknown, Ordering::Relaxed);
             // c:4022-4024 — restore the saved prompt-option states.
             opt_state_set(opt_name(PROMPTSUBST), save_subst);
             opt_state_set(opt_name(PROMPTBANG), save_bang);

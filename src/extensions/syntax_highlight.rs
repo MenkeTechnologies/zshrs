@@ -485,7 +485,7 @@ fn parse_style_for_highlight(spec: &str) -> Option<zattr> {
     if spec.is_empty() {
         return None;
     }
-    let (mask_on, _mask_off, _) = match_highlight(spec);
+    let (mask_on, _mask_off, _) = match_highlight(spec, None);
     Some(mask_on)
 }
 

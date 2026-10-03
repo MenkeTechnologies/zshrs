@@ -60905,9 +60905,11 @@ highlighting, `$region_highlight` (layer 10), then the region (layer 20).
 `V` widens to line bounds and vicmd `v` extends the end by one. Selection
 extents match zsh 5.9.2 for `vll`, `bvll` and `V`.
 
-**Open.** A `layer=N` clause in a `$region_highlight` entry is still dropped
-by `set_region_highlight`, so every user entry takes layer 10; paste (15) and
-isearch (20) are not painted by `compute_render_attrs`.
+**Follow-up (closed).** `set_region_highlight` now reads `layer=N` and
+`opacity=` (c:Src/prompt.c:2063-2096) and keeps each entry's mask, and
+`compute_render_attrs` walks all four special entries (region, isearch,
+suffix, paste) at their `$zle_highlight` layers, mixing with `mixattrs`;
+X04zlehighlight passes 20/20.
 
 ## #1164 — vi on a multi-line buffer: `k` did nothing, `j` jumped to the last line; `de`/`dE`/`df` one short — fixed
 

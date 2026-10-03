@@ -2943,175 +2943,124 @@ pub fn cmdpop() {
     });
 }
 
-/// Port of `applytextattributes(int flags)` from `Src/prompt.c:1645`.
+/// Port of `mod_export void applytextattributes(int flags)` from
+/// `Src/prompt.c:1645-1716`.
 ///
-/// C body diff-syncs `txtcurrentattrs` against `txtpendingattrs`
-/// and emits the minimal termcap-driven sequence to transition
-/// the terminal — `tsetcap(TCALLATTRSOFF…)`, `TCBOLDFACEBEG`, etc.
-///
-/// Rust port: returns the SGR diff string built by [`treplaceattrs`]
-/// over the (current, pending) pair, and updates current = pending.
-/// The previous port was an empty `void` shim that emitted nothing
-/// — output gets emitted at flush time, which broke any caller
-/// expecting incremental attr changes. New shape returns the diff
-/// the caller can write to the terminal.
-///
-/// `_flags` parameter (currently unused in zshrs port — C uses it
-/// to gate "force reset" mode).
-#[allow(unused_variables)]
+/// Emits the minimal termcap sequence that moves the terminal from
+/// `txtcurrentattrs` to `txtpendingattrs`, then records the pending set
+/// as current. C writes each sequence as it goes — through `tsetcap` /
+/// `set_colour_attribute`, to the prompt buffer under `TSC_PROMPT` or to
+/// `shout` otherwise. The Rust attribute layer is string-returning: the
+/// bytes come back in emission order, unbracketed, and the caller writes
+/// them (zle) or wraps them in `Inpar`/`Outpar` (prompt expansion).
 pub fn applytextattributes(flags: i32) -> String {
+    use crate::ported::zsh_h::{
+        TCALLATTRSOFF, TCBOLDFACEBEG, TCFAINTBEG, TCITALICSBEG, TCITALICSEND, TCSTANDOUTBEG,
+        TCSTANDOUTEND, TCUNDERLINEBEG, TCUNDERLINEEND, TXTFAINT, TXTITALIC,
+        TXT_ATTR_FONT_WEIGHT,
+    };
+    let _ = flags; // only selects C's output channel; see the doc comment
+    let mut out = String::new();
+    // `tsetcap(cap, flags)`: its c:1085 guard, then `tputs(tcstr[cap], 1,
+    // putshout)` (c:1092) collected rather than written.
+    let cap = |out: &mut String, cap: i32| {
+        let can = {
+            let tclen = crate::ported::init::tclen.lock().unwrap();
+            cap >= 0 && (cap as usize) < tclen.len() && tclen[cap as usize] != 0
+        };
+        let termflags = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst);
+        if can && termflags & (TERM_NOUP | TERM_BAD | TERM_UNKNOWN) == 0 {
+            let s = crate::ported::init::tcstr.lock().unwrap()[cap as usize].clone();
+            out.push_str(&String::from_utf8_lossy(&crate::shout::tputs(&s)));
+        }
+    };
     let mut current = current_attrs_lock().lock().expect("current_attrs poisoned");
-    let pending = pending_attrs_lock()
-        .lock()
-        .expect("pending_attrs poisoned")
-        .clone();
+    let pending = *pending_attrs_lock().lock().expect("pending_attrs poisoned");
 
-    // SGR diff emission — inlined from the prior Rust-only helper that
-    // miscarried the `treplaceattrs` name. C emits the same diff via
-    // sequential tsetcap calls (Src/prompt.c:1640-1718). Rust returns
-    // the assembled escape string for the caller to write.
-    let mut result = String::new();
-    let old = *current;
-    let new = pending;
+    let mut change = *current ^ pending; // c:1647
+    let mut keepon = !change & pending & TXT_ATTR_ALL; // c:1648
+    let mut turnoff = change & !pending & TXT_ATTR_ALL; // c:1649
+    let mut keepcount: i32; // c:1650
+    let mut turncount: i32 = 0;
 
-    let old_b = old & TXTBOLDFACE != 0;
-    let new_b = new & TXTBOLDFACE != 0;
-    let old_u = old & TXTUNDERLINE != 0;
-    let new_u = new & TXTUNDERLINE != 0;
-    let old_s = old & TXTSTANDOUT != 0;
-    let new_s = new & TXTSTANDOUT != 0;
-
-    // c:Src/prompt.c:1640-1718 — tsetcap dispatch. Observable
-    // /opt/homebrew/bin/zsh output (cross-checked via od -c):
-    //   - `%b` (bold off):       full reset \e[0m + re-apply ALL
-    //     (no terminfo "bold off" cap; uses `me` = SGR 0).
-    //   - `%u` (underline off):  selective \e[24m (terminfo `ue`).
-    //   - `%s` (standout off):   selective \e[23m (terminfo `se`,
-    //     when standout is mapped to italic).
-    //   - `%f` (fg off):         selective \e[39m.
-    //   - `%k` (bg off):         selective \e[49m.
-    //   - `%B`/`%U`/`%S` (attr on): emit attr-on cap + re-apply
-    //     active colors.
-    // c:Src/prompt.c:1085 — tsetcap() is a no-op when `termflags &
-    // (TERM_NOUP|TERM_BAD|TERM_UNKNOWN)`; every attribute transition
-    // in the C body routes through tsetcap, so an unknown/bad/dumb
-    // terminal emits no attribute SGRs at all (probe: TERM=dumb
-    // `zsh -fc 'print -P "%Shi%s"' | od -c` → plain `hi`). Colours
-    // are NOT gated — set_colour_attribute (c:Src/prompt.c:2440)
-    // falls back to raw SGR colour sequences when termcap caps are
-    // unavailable, so `%F`/`%K` still emit under TERM=dumb.
-    let tc_ok = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst)
-        & (TERM_NOUP | TERM_BAD | TERM_UNKNOWN)
-        == 0;
-    let bold_off = tc_ok && old_b && !new_b;
-    let underline_off = tc_ok && old_u && !new_u;
-    let standout_off = tc_ok && old_s && !new_s;
-    let attr_on = tc_ok && ((!old_b && new_b) || (!old_u && new_u) || (!old_s && new_s));
-    let fg_emit_color = |attrs, out: &mut String| {
-        if attrs & TXTFGCOLOUR != 0 {
-            let raw = (attrs & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
-            let c = if attrs & TXT_ATTR_FG_24BIT != 0 {
-                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-            } else {
-                raw as Color
-            };
-            out.push_str(&color_to_ansi(c, true));
-        }
-    };
-    let bg_emit_color = |attrs, out: &mut String| {
-        if attrs & TXTBGCOLOUR != 0 {
-            let raw = (attrs & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
-            let c = if attrs & TXT_ATTR_BG_24BIT != 0 {
-                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-            } else {
-                raw as Color
-            };
-            out.push_str(&color_to_ansi(c, false));
-        }
-    };
-    if bold_off {
-        // `%b` uses the `me` terminfo cap = full reset; re-apply
-        // every surviving attribute + color.
-        result.push_str("\x1b[0m");
-        if new_b {
-            result.push_str("\x1b[1m");
-        }
-        if new_u {
-            result.push_str("\x1b[4m");
-        }
-        if new_s {
-            // c:1703 — `tsetcap(TCSTANDOUTBEG, flags);` — the `so`
-            // termcap cap fetched by init_term (TERM-dependent:
-            // xterm* → \e[7m reverse, screen*/tmux* → \e[3m italic).
-            // Fall back to the SGR-standout spec default when the
-            // cap table was never initialised (lib tests, TERM-less
-            // environments).
-            let cap = crate::ported::init::tcstr.lock().unwrap()
-                [crate::ported::zsh_h::TCSTANDOUTBEG as usize]
-                .clone();
-            result.push_str(if cap.is_empty() { "\x1b[7m" } else { &cap });
-        }
-        fg_emit_color(new, &mut result);
-        bg_emit_color(new, &mut result);
-        *current = pending;
-        return result;
-    }
-    if underline_off {
-        result.push_str("\x1b[24m");
-    }
-    if standout_off {
-        // c:1685 — `tsetcap(TCSTANDOUTEND, flags);` — the `se`
-        // termcap cap (xterm* → \e[27m, screen*/tmux* → \e[23m).
-        // SGR 27 spec-default fallback for uninitialised cap table.
-        let cap = crate::ported::init::tcstr.lock().unwrap()
-            [crate::ported::zsh_h::TCSTANDOUTEND as usize]
-            .clone();
-        result.push_str(if cap.is_empty() { "\x1b[27m" } else { &cap });
-    }
-    if attr_on {
-        if !old_b && new_b {
-            result.push_str("\x1b[1m");
-        }
-        if !old_u && new_u {
-            result.push_str("\x1b[4m");
-        }
-        if !old_s && new_s {
-            // c:1703 — `tsetcap(TCSTANDOUTBEG, flags);` — `so` cap
-            // (TERM-dependent); SGR 7 spec-default fallback.
-            let cap = crate::ported::init::tcstr.lock().unwrap()
-                [crate::ported::zsh_h::TCSTANDOUTBEG as usize]
-                .clone();
-            result.push_str(if cap.is_empty() { "\x1b[7m" } else { &cap });
-        }
-        // Re-apply colors after attribute-on so terminal that
-        // resets colors on bold-cap doesn't lose them. Mirrors
-        // /opt/homebrew/bin/zsh: `%F{red}%B` emits
-        // `\e[31m \e[1m \e[31m`.
-        fg_emit_color(new, &mut result);
-        bg_emit_color(new, &mut result);
+    // c:1653-1654 — bail out early if we wouldn't do anything
+    if change == 0 {
+        return out;
     }
 
-    // c:1709-1712 — `if (change & TXT_ATTR_FG_MASK)
-    //                    set_colour_attribute(txtpendingattrs, COL_SEQ_FG, flags);`
-    // Both arms of a colour change go through set_colour_attribute: with
-    // the channel's TXT*COLOUR bit set it emits the colour, with the bit
-    // clear it emits the `.def` reset. Composing the reset (rather than
-    // hardcoding \e[39m / \e[49m) is what lets $zle_highlight's
-    // {fg,bg}_default_code / _start_code / _end_code override it.
-    //
-    // Flags are 0, not TSC_PROMPT: this function returns a raw escape
-    // diff and its callers do the single Inpar/Outpar wrap, so wrapping
-    // here too would double-bracket.
-    if (old & TXT_ATTR_FG_MASK) != (new & TXT_ATTR_FG_MASK) && !attr_on {
-        result.push_str(&set_colour_attribute(new, COL_SEQ_FG, 0));
-    }
-    if (old & TXT_ATTR_BG_MASK) != (new & TXT_ATTR_BG_MASK) && !attr_on {
-        result.push_str(&set_colour_attribute(new, COL_SEQ_BG, 0));
+    let mut unknown = txtunknownattrs.load(Ordering::Relaxed);
+    if unknown != 0 {
+        // c:1656-1659 — changes cease to be unknown; can't turn unknown
+        // attrs back on so avoid wiping them
+        unknown &= !change;
+        keepcount = 1;
+    } else {
+        // c:1660-1667 — count bits: fewer sequences to turn everything off
+        // when more attributes go off than stay on.
+        keepcount = 0;
+        while keepon != 0 {
+            keepon &= keepon - 1;
+            keepcount += 1;
+        }
+        while turnoff != 0 {
+            turnoff &= turnoff - 1;
+            turncount += 1;
+        }
     }
 
-    let diff = result;
-    *current = pending;
-    diff
+    // c:1669-1674 — enabling bold can be relied upon to disable faint
+    if *current & TXTFAINT != 0 && pending & TXTBOLDFACE != 0 {
+        turncount -= 1;
+        change &= !TXTFAINT;
+    }
+
+    if keepcount < turncount || (change & !pending & TXT_ATTR_FONT_WEIGHT) != 0 {
+        // c:1676-1682 — this cleared all attributes, may need to restore some
+        cap(&mut out, TCALLATTRSOFF);
+        change = pending & TXT_ATTR_ALL & !unknown;
+        unknown = 0;
+    } else {
+        if change & !pending & TXTSTANDOUT != 0 {
+            // c:1684-1689 — in some cases, that clears all attributes
+            cap(&mut out, TCSTANDOUTEND);
+            change = (pending & TXT_ATTR_ALL & !unknown) | (TXTUNDERLINE & change);
+        }
+        if change & !pending & TXTUNDERLINE != 0 {
+            // c:1690-1694 — in some cases, that clears all attributes
+            cap(&mut out, TCUNDERLINEEND);
+            change = pending & TXT_ATTR_ALL & !unknown;
+        }
+        if change & !pending & TXTITALIC != 0 {
+            cap(&mut out, TCITALICSEND); // c:1695-1696
+        }
+    }
+    txtunknownattrs.store(unknown, Ordering::Relaxed);
+    if change & pending & TXTBOLDFACE != 0 {
+        cap(&mut out, TCBOLDFACEBEG); // c:1698-1699
+    }
+    if change & pending & TXTFAINT != 0 {
+        cap(&mut out, TCFAINTBEG); // c:1700-1701
+    }
+    if change & pending & TXTSTANDOUT != 0 {
+        cap(&mut out, TCSTANDOUTBEG); // c:1702-1703
+    }
+    if change & pending & TXTUNDERLINE != 0 {
+        cap(&mut out, TCUNDERLINEBEG); // c:1704-1705
+    }
+    if change & pending & TXTITALIC != 0 {
+        cap(&mut out, TCITALICSBEG); // c:1706-1707
+    }
+
+    // c:1709-1712 — flags 0: the bytes are returned bare (see above).
+    if change & TXT_ATTR_FG_MASK != 0 {
+        out.push_str(&set_colour_attribute(pending, COL_SEQ_FG, 0));
+    }
+    if change & TXT_ATTR_BG_MASK != 0 {
+        out.push_str(&set_colour_attribute(pending, COL_SEQ_BG, 0));
+    }
+
+    *current = pending; // c:1714
+    out
 }
 
 /// Port of `void treplaceattrs(zattr newattrs)` from `Src/prompt.c:1719`.
@@ -3289,33 +3238,124 @@ pub fn map256toRGB(atr: &mut u64, shift: u32, set24: u64) {
     *atr |= set24 | ((((red as u64) << 8 | green as u64) << 8 | blue as u64) << shift);
 }
 
-/// Mix two sets of text attributes through a mask.
-/// Port of `mixattrs(zattr primary, zattr mask, zattr secondary)` from Src/prompt.c:1802 — primary wins
-/// where the mask says "set"; secondary fills the rest.
+/// Port of `mod_export zattr mixattrs(zattr primary, zattr mask,
+/// zattr secondary)` from `Src/prompt.c:1802-1875`.
+///
+/// Merge two attribute sets: `secondary` is the background base,
+/// `primary` is overlaid and takes precedence for every attribute
+/// `mask` says it explicitly set (so an explicitly disabled attribute
+/// in `primary` wins too). A colour channel whose opacity field in
+/// `mask` is non-zero is blended instead: both colours are taken to
+/// 24-bit (from the 256 palette when `tccolours == 256`) and mixed by
+/// the opacity percentage; on a terminal without truecolor the result
+/// goes back through the `GETCOLORATTR` hook (`zsh/nearcolor`, loaded on
+/// demand). When either side has no 24-bit value the opacity only picks
+/// the side that wins (`<= 50` the primary).
 pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
-    // Bit-level mix: for each TXT* bit set in `mask`, take the
-    // value from `primary`; else from `secondary`. Mirrors the C
-    // idiom `(mask & primary) | (!mask & secondary)`.
-    let mut out: zattr = 0;
-    for bit in [TXTBOLDFACE, TXTUNDERLINE, TXTSTANDOUT] {
-        if mask & bit != 0 {
-            out |= primary & bit;
-        } else {
-            out |= secondary & bit;
-        }
+    use crate::ported::zsh_h::TXT_ATTR_FONT_WEIGHT;
+    let mut mix: zattr = 0; // c:1804 — attributes resulting from colour mixing
+    let mut replace: zattr = mask & TXT_ATTR_ALL; // c:1806 — attributes from primary
+    let mut toset: zattr = TXT_ATTR_FG_MASK; // c:1807
+    let mut isset: zattr = TXTFGCOLOUR; // c:1808
+    let mut istrue: zattr = TXT_ATTR_FG_24BIT; // c:1809
+    let mut shift: u32 = TXT_ATTR_FG_COL_SHIFT; // c:1810
+
+    if mask & TXT_ATTR_FONT_WEIGHT != 0 {
+        replace |= TXT_ATTR_FONT_WEIGHT; // c:1813-1814
     }
     if mask & TXTFGCOLOUR != 0 {
-        out |= primary & TXT_ATTR_FG_MASK;
-    } else {
-        out |= secondary & TXT_ATTR_FG_MASK;
+        replace |= TXT_ATTR_FG_MASK; // c:1815-1816
     }
     if mask & TXTBGCOLOUR != 0 {
-        out |= primary & TXT_ATTR_BG_MASK;
-    } else {
-        out |= secondary & TXT_ATTR_BG_MASK;
+        replace |= TXT_ATTR_BG_MASK; // c:1817-1818
     }
-    out
+    let mut keep: zattr = !replace; // c:1819 — attributes from secondary
+
+    loop {
+        // c:1822 — `if (mask & isset && (opacity = (mask >> shift) & 127))`
+        let opacity = (mask >> shift) & 127;
+        if mask & isset != 0 && opacity != 0 {
+            // c:1824-1826 — we may know the default colours from the
+            // startup query
+            let memo = memo_term_color.load(Ordering::Relaxed);
+            let mut aatt = if primary & isset != 0 { primary } else { memo };
+            let mut batt = if secondary & isset != 0 { secondary } else { memo };
+
+            keep &= !toset; // c:1828
+            replace &= !toset; // c:1829
+
+            if crate::ported::init::tccolours.load(Ordering::Relaxed) == 256 {
+                map256toRGB(&mut aatt, shift, istrue); // c:1832
+                map256toRGB(&mut batt, shift, istrue); // c:1833
+            }
+
+            // c:1836 — can only mix if we now have truecolor
+            if aatt & batt & istrue != 0 {
+                mix |= istrue | isset; // c:1837
+                for i in (0..24).step_by(8) {
+                    // c:1838-1843
+                    let argb = (aatt >> (shift + i)) & 0xff;
+                    let brgb = (batt >> (shift + i)) & 0xff;
+                    mix |= ((argb * (100 - opacity) + brgb * opacity) / 100) << (shift + i);
+                }
+                // c:1844-1845 — `if (!truecolor_terminal() &&
+                // (!empty(GETCOLORATTR->funcs) ||
+                //  !load_module("zsh/nearcolor", NULL, 1)))`
+                let hook = crate::ported::module::gethookdef("get_color_attr");
+                // SAFETY: hooktab entries live for the life of the process.
+                let hooked = !hook.is_null()
+                    && unsafe { !(*hook).funcs.is_null() && (*(*hook).funcs).first.is_some() };
+                if !truecolor_terminal()
+                    && (hooked
+                        || crate::ported::module::MODULESTAB
+                            .lock()
+                            .unwrap()
+                            .load_module("zsh/nearcolor", None, false)
+                            == 0)
+                {
+                    // c:1846-1850
+                    let mut color = crate::ported::zsh_h::color_rgb {
+                        red: ((mix >> (shift + 16)) & 0xff) as u32,
+                        green: ((mix >> (shift + 8)) & 0xff) as u32,
+                        blue: ((mix >> shift) & 0xff) as u32,
+                    };
+                    // c:1851 — `runhookdef(GETCOLORATTR, &color) - 1`
+                    let hook = crate::ported::module::gethookdef("get_color_attr");
+                    let color_idx = if hook.is_null() {
+                        -1
+                    } else {
+                        crate::ported::module::runhookdef(
+                            hook,
+                            &mut color as *mut crate::ported::zsh_h::color_rgb
+                                as *mut std::ffi::c_void,
+                        ) - 1
+                    };
+                    if color_idx >= 0 {
+                        // c:1852-1855
+                        mix &= !toset;
+                        mix |= isset | ((color_idx as zattr) << shift);
+                    }
+                }
+            } else if opacity <= 50 {
+                replace |= toset; // c:1857-1858
+            } else {
+                keep |= toset; // c:1859-1860
+            }
+        }
+
+        if isset == TXTBGCOLOUR {
+            break; // c:1863-1864
+        }
+
+        shift = TXT_ATTR_BG_COL_SHIFT; // c:1866
+        toset = TXT_ATTR_BG_COL_MASK; // c:1867
+        isset = TXTBGCOLOUR; // c:1868
+        istrue = TXT_ATTR_BG_24BIT; // c:1869
+    }
+
+    (primary & replace) | (secondary & keep) | mix // c:1872
 }
+
 
 // ---------------------------------------------------------------------------
 // Missing functions from prompt.c
@@ -3764,86 +3804,162 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
     on | ((colour as zattr) << shft) // c:2018
 }
 
-/// Match a set of highlights in `spec`, returning `(on_var, mask, rest)`.
-/// Port of `const char *match_highlight(const char *teststr, zattr *on_var)`
-/// from 5.9.1 `Src/prompt.c:1717-1768` (zshrs targets zsh 5.9.2; the dev
-/// tree's `hl=`/`layer=`/`opacity=` directives, `no` prefix and
-/// `reset`/`faint`/`italic` names do not exist there).
+/// Port of `static const struct highlight highlights[]` from
+/// `Src/prompt.c:1896-1904`: `(name, mask_on, mask_off)`.
+pub const HIGHLIGHTS: [(&str, zattr, zattr); 6] = [
+    ("reset", 0, TXT_ATTR_ALL),                                                   // c:1897
+    ("bold", TXTBOLDFACE, crate::ported::zsh_h::TXTFAINT),                        // c:1898
+    ("faint", crate::ported::zsh_h::TXTFAINT, TXTBOLDFACE),                       // c:1899
+    ("standout", TXTSTANDOUT, 0),                                                 // c:1900
+    ("underline", TXTUNDERLINE, 0),                                               // c:1901
+    ("italic", crate::ported::zsh_h::TXTITALIC, 0),                               // c:1902
+];
+
+/// Port of `mod_export const char *match_highlight(const char *teststr,
+/// zattr *on_var, zattr *setmask, int *layer)` from
+/// `Src/prompt.c:2031-2133`.
 ///
-/// Scans a SPACE-or-`,`-delimited run of `fg=`/`bg=` colours and the
-/// `highlights[]` names (`none`, `bold`, `standout`, `underline`,
-/// c:1609-1615), accumulating the attribute bits into `*on_var`. Anything
-/// else stops the scan: zsh 5.9.2 reads `region_highlight=("0 4 italic,bold")`
-/// back as `0 4 none`. C returns the first unconsumed character; Rust
-/// returns it as `rest`, the unconsumed tail of `spec` —
-/// `set_region_highlight` (5.9.1 zle_refresh.c:519-524) continues from it to
-/// read the `memo=` field. `mask` (no 5.9.x counterpart) is the set of
-/// attribute flags the spec named.
-/// WARNING: param names don't match C — Rust=(spec) vs C=(teststr, on_var)
-pub fn match_highlight(spec: &str) -> (zattr, zattr, &str) {
-    // c:1609-1615 — highlights[]: (name, mask_on, mask_off). `none` clears
-    // TXT_ATTR_ON_MASK (5.9.1 zsh.h:2683), the five "on" flags; the colour
-    // values stay.
-    const TXT_ATTR_ON_MASK: zattr =
-        TXTBOLDFACE | TXTSTANDOUT | TXTUNDERLINE | TXTFGCOLOUR | TXTBGCOLOUR;
-    const HIGHLIGHTS: &[(&str, zattr, zattr)] = &[
-        ("none", 0, TXT_ATTR_ON_MASK),   // c:1610
-        ("bold", TXTBOLDFACE, 0),        // c:1611
-        ("standout", TXTSTANDOUT, 0),    // c:1612
-        ("underline", TXTUNDERLINE, 0),  // c:1613
-    ];
+/// Scans a run of `,`-separated highlight words — `fg=`/`bg=` colours,
+/// `layer=N` (only when `layer` is given), `opacity=F[%][/B[%]]`, and the
+/// [`HIGHLIGHTS`] names, each optionally prefixed `no` to turn it off —
+/// stopping at a space or at the first word it does not understand.
+/// Returns `(*on_var, *setmask, rest)`: the attributes, the mask of
+/// attributes explicitly named (with the inverted opacities in the colour
+/// fields), and the unconsumed tail (C's return value).
+///
+/// The `hl=GROUP` word (c:2041-2046) resolves `GROUP` through
+/// `.zle.hlgroups` via C's `parsehighlight` (c:285); that resolver is not
+/// ported (the Rust `parsehighlight` is a different function), so `hl=`
+/// stops the scan like any unknown word.
+/// WARNING: param names don't match C — Rust=(teststr, layer) vs C=(teststr, on_var, setmask, layer)
+pub fn match_highlight<'a>(teststr: &'a str, mut layer: Option<&mut i32>) -> (zattr, zattr, &'a str) {
+    let bytes = teststr.as_bytes();
+    let mut pos = 0usize; // teststr
+    let mut found = true; // c:2033
+    let mut mask: zattr = 0; // c:2034
+    let mut on_var: zattr = 0; // c:2036
 
-    let bytes = spec.as_bytes();
-    let mut pos: usize = 0; // teststr
-    let mut on_var: zattr = 0; // c:1729 — *on_var = 0
-    let mut mask: zattr = 0;
-    let mut found = true; // c:1727
+    // `*teststr == ','` → skip it; `*teststr && *teststr != ' '` → stop.
+    // Shared tail of every word (c:2052-2055, c:2066-2069, c:2091-2094, …).
+    enum Sep {
+        Next(usize),
+        Stop,
+    }
+    let sep = |p: usize| match bytes.get(p).copied() {
+        Some(b',') => Sep::Next(p + 1),
+        Some(c) if c != b' ' => Sep::Stop,
+        _ => Sep::Next(p),
+    };
 
-    // c:1730 — while (found && *teststr)
     while found && pos < bytes.len() {
-        found = false; // c:1733
-        let rest = &spec[pos..];
+        // c:2037
+        found = false; // c:2041
+        let rest = &teststr[pos..];
         if rest.starts_with("fg=") || rest.starts_with("bg=") {
-            // c:1734
-            let is_fg = bytes[pos] == b'f'; // c:1735
-            pos += 3; // c:1738
-            let atr = match_colour(Some(&mut pos), spec, is_fg, 0); // c:1739
-            // c:1740-1743
-            match bytes.get(pos).copied() {
-                Some(b',') => pos += 1,
-                Some(c) if c != b' ' => break,
-                _ => {}
+            // c:2047-2063
+            let is_fg = bytes[pos] == b'f';
+            pos += 3;
+            let atr = match_colour(Some(&mut pos), teststr, is_fg, 0);
+            match sep(pos) {
+                Sep::Next(p) => pos = p,
+                Sep::Stop => break,
             }
-            found = true; // c:1744
-            // c:1745-1747 — "skip out of range colours but keep scanning
-            // attributes"
+            found = true;
+            // c:2057-2062 — skip out of range colours but keep scanning
+            // attributes
             if atr != TXT_ERROR {
+                on_var &= if is_fg { !TXT_ATTR_FG_MASK } else { !TXT_ATTR_BG_MASK };
                 on_var |= atr;
                 mask |= if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
             }
-        } else {
-            // c:1749-1763 — every table entry that prefixes the text.
-            for &(name, mask_on, mask_off) in HIGHLIGHTS {
-                if spec[pos..].starts_with(name) {
-                    // c:1750
-                    let mut vp = pos + name.len(); // c:1751
-                    // c:1753-1756
-                    match bytes.get(vp).copied() {
-                        Some(b',') => vp += 1,
-                        Some(c) if c != b' ' => break,
-                        _ => {}
-                    }
-                    on_var |= mask_on; // c:1758
-                    on_var &= !mask_off; // c:1759
-                    mask |= mask_on | mask_off;
-                    pos = vp; // c:1760
-                    found = true; // c:1761
+        } else if layer.is_some() && rest.starts_with("layer=") {
+            // c:2063-2071
+            pos += 6;
+            let (val, tail) = crate::ported::utils::zstrtol(&teststr[pos..], 10);
+            pos = teststr.len() - tail.len();
+            if let Some(l) = layer.as_deref_mut() {
+                *l = val as i32;
+            }
+            match sep(pos) {
+                Sep::Next(p) => pos = p,
+                Sep::Stop => break,
+            }
+            found = true;
+        } else if rest.starts_with("opacity=") {
+            // c:2071-2096
+            pos += 8;
+            let (opacity, tail) = crate::ported::utils::zstrtol(&teststr[pos..], 10);
+            pos = teststr.len() - tail.len();
+            // c:2074 — `zulong opacity`: a negative value wraps above 100.
+            let mut opacity = opacity as u64;
+            if opacity > 100 {
+                break; // c:2075-2076
+            }
+            if bytes.get(pos) == Some(&b'%') {
+                pos += 1; // c:2077-2078
+            }
+            // c:2079-2080 — invert sense so 0 is fully opaque
+            mask |= (100 - opacity) << TXT_ATTR_FG_COL_SHIFT;
+            if bytes.get(pos) == Some(&b'/') {
+                // c:2081-2088
+                pos += 1;
+                let (bg, tail) = crate::ported::utils::zstrtol(&teststr[pos..], 10);
+                pos = teststr.len() - tail.len();
+                opacity = bg as u64;
+                if opacity > 100 {
+                    break;
+                }
+                if bytes.get(pos) == Some(&b'%') {
+                    pos += 1;
                 }
             }
+            mask |= (100 - opacity) << TXT_ATTR_BG_COL_SHIFT; // c:2089
+            match sep(pos) {
+                Sep::Next(p) => pos = p,
+                Sep::Stop => break,
+            }
+            found = true;
+        } else {
+            // c:2096-2124
+            let mut turn_off = false;
+            let mut stop = false;
+            for (i, &(name, mask_on, mask_off)) in HIGHLIGHTS.iter().enumerate() {
+                if found {
+                    break; // c:2098 — `!found &&` loop condition
+                }
+                if teststr[pos..].starts_with(name) {
+                    // c:2099-2116
+                    let val = match sep(pos + name.len()) {
+                        Sep::Next(p) => p,
+                        Sep::Stop => {
+                            stop = true; // c:2104 — `break` out of the table walk
+                            break;
+                        }
+                    };
+                    if turn_off {
+                        on_var &= !mask_on & !mask_off; // c:2107
+                    } else {
+                        on_var |= mask_on; // c:2109
+                        on_var &= !mask_off; // c:2110
+                    }
+                    mask |= mask_on | mask_off; // c:2112
+                    pos = val; // c:2113
+                    found = true; // c:2114
+                }
+                // c:2117-2120 — delayed this to the end of the first iteration
+                // because "noclear" isn't valid
+                if i == 0 {
+                    turn_off = teststr[pos..].starts_with("no");
+                    if turn_off {
+                        pos += 2;
+                    }
+                }
+            }
+            let _ = stop; // `found` stays false either way, ending the scan
         }
     }
-    // c:1767 — `return teststr;`
-    (on_var, mask, &spec[pos..])
+    // c:2127-2128 — `if (setmask) *setmask = mask;`
+    (on_var, mask, &teststr[pos..]) // c:2130
 }
 
 /// Build the ANSI SGR escape for an indexed colour (e.g. `\x1b[31m`).
@@ -3874,69 +3990,100 @@ pub fn output_colour(colour: u8, is_fg: bool) -> String {
     }
 }
 
-/// Port of `int output_highlight(zattr atr, char *buf)` from 5.9.1
-/// `Src/prompt.c:1823-1877` (zshrs targets zsh 5.9.2; the dev tree added
-/// a mask argument and `no`/`reset` output). Format the attribute bits as
-/// the zsh highlight SPEC — the foreground colour, the background colour,
-/// then each set entry of the `highlights[]` table (`bold`, `standout`,
-/// `underline`), comma-separated, or `none` when nothing is set
-/// (c:1872-1876). This is the textual form `$region_highlight` reads back
-/// (`get_region_highlight`), NOT an ANSI SGR escape. C's `buf`/length
-/// convention collapses to a Rust `String`.
-pub fn output_highlight(atr: zattr) -> String {
-    use crate::ported::zsh_h::{
-        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT,
-        TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK,
-        TXT_ATTR_FG_COL_SHIFT,
+/// Port of `mod_export int output_highlight(zattr atr, zattr mask,
+/// char *buf)` from `Src/prompt.c:2202-2322`.
+///
+/// Formats an attribute set as the textual highlight SPEC that
+/// `$region_highlight` reads back (`fg=red,bold,layer…` is added by the
+/// caller) — not an SGR escape. Only attributes named in `mask` are
+/// written: colours first (`fg=default` when the mask names a colour the
+/// attributes leave unset), then each [`HIGHLIGHTS`] entry, `no`-prefixed
+/// when it is masked but off. A full mask with three or more attributes
+/// off starts with `reset` instead. `none` when nothing is written; the
+/// opacity fields of `mask` append `opacity=F%[/B%]`. C counts the length
+/// when `buf` is NULL; the Rust caller just takes the `String`.
+pub fn output_highlight(atr: zattr, mask: zattr) -> String {
+    use crate::ported::zsh_h::{TXT_ATTR_BG_COL_MASK, TXT_ATTR_FG_COL_MASK};
+    let mut mask = mask;
+    let mut out = String::new();
+    // `if (atrlen) strcpy(ptr, ",")` before each later element.
+    let comma = |out: &mut String| {
+        if !out.is_empty() {
+            out.push(',');
+        }
     };
-    let mut parts: Vec<String> = Vec::new();
-
-    // `output_colour` (5.9.1 c:1777-1812) as the spec: "fg=NAME" /
-    // "fg=NUM" / "fg=#rrggbb".
-    let colour_spec = |col: u32, is_fg: bool, truecol: bool| -> String {
+    // c:2165-2196 — `output_colour`: "fg=NAME", "fg=NUM" or "fg=#rrggbb".
+    let colour_spec = |col: zattr, is_fg: bool, truecol: bool| -> String {
         let prefix = if is_fg { "fg=" } else { "bg=" };
         if truecol {
-            // c:1785-1788 — 24-bit hex triplet.
-            format!(
-                "{}#{:02x}{:02x}{:02x}",
-                prefix,
-                (col >> 16) & 0xff,
-                (col >> 8) & 0xff,
-                col & 0xff
-            )
+            format!("{}#{:02x}{:02x}{:02x}", prefix, col >> 16, (col >> 8) & 0xff, col & 0xff)
         } else if col > 7 {
-            format!("{}{}", prefix, col) // c:1795-1800 — numeric index
+            format!("{}{}", prefix, col)
         } else {
-            format!("{}{}", prefix, COLOUR_NAMES[col as usize]) // c:1802-1806 — ansi name
+            format!("{}{}", prefix, COLOUR_NAMES[col as usize])
         }
     };
 
-    // c:1829-1837 — foreground colour.
-    if atr & TXTFGCOLOUR != 0 {
-        let col = ((atr & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT) as u32;
-        parts.push(colour_spec(col, true, atr & TXT_ATTR_FG_24BIT != 0));
-    }
-    // c:1838-1853 — background colour.
-    if atr & TXTBGCOLOUR != 0 {
-        let col = ((atr & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT) as u32;
-        parts.push(colour_spec(col, false, atr & TXT_ATTR_BG_24BIT != 0));
-    }
-    // c:1854-1870 — `for (hp = highlights; hp->name; hp++) if (hp->mask_on
-    // & atr)`; the table is 5.9.1 c:1609-1615 (`none` has no on-bits).
-    for (name, mask_on) in [
-        ("bold", TXTBOLDFACE),
-        ("standout", TXTSTANDOUT),
-        ("underline", TXTUNDERLINE),
-    ] {
-        if mask_on & atr != 0 {
-            parts.push(name.to_string());
+    if mask == TXT_ATTR_ALL {
+        // c:2208-2220
+        let mut threebits = !atr & TXT_ATTR_ALL;
+        threebits &= threebits.wrapping_sub(1); // can't be both bold and faint
+        threebits &= threebits.wrapping_sub(1); // allow one "no" entry
+        if threebits != 0 {
+            // more remain - shorter to start with "reset"
+            mask &= atr; // mark unset bits from atr as done
+            out.push_str("reset");
         }
     }
-    // c:1872-1876 — `if (atrlen == 0) { strcpy(ptr, "none"); return 4; }`
-    if parts.is_empty() {
-        return "none".to_string();
+
+    if mask & TXTFGCOLOUR != 0 {
+        // c:2222-2240
+        comma(&mut out);
+        if atr & TXTFGCOLOUR != 0 {
+            let col = (atr & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
+            out.push_str(&colour_spec(col, true, atr & TXT_ATTR_FG_24BIT != 0));
+        } else {
+            out.push_str("fg=default");
+        }
     }
-    parts.join(",")
+    if mask & TXTBGCOLOUR != 0 {
+        // c:2241-2259
+        comma(&mut out);
+        if atr & TXTBGCOLOUR != 0 {
+            let col = (atr & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
+            out.push_str(&colour_spec(col, false, atr & TXT_ATTR_BG_24BIT != 0));
+        } else {
+            out.push_str("bg=default");
+        }
+    }
+
+    for &(name, mask_on, mask_off) in HIGHLIGHTS.iter() {
+        // c:2261-2283
+        if mask_on & mask != 0 && mask_off & mask & atr == 0 {
+            mask &= !mask_off;
+            comma(&mut out);
+            if mask_on & atr == 0 {
+                out.push_str("no");
+            }
+            out.push_str(name);
+        }
+    }
+
+    if out.is_empty() {
+        return "none".to_string(); // c:2285-2289
+    }
+
+    if mask & (TXT_ATTR_FG_COL_MASK | TXT_ATTR_BG_COL_MASK) != 0 {
+        // c:2291-2319
+        let fg_op = (mask >> TXT_ATTR_FG_COL_SHIFT) & 127;
+        let bg_op = (mask >> TXT_ATTR_BG_COL_SHIFT) & 127;
+        comma(&mut out);
+        out.push_str(&format!("opacity={}%", 100 - fg_op));
+        if fg_op != bg_op {
+            out.push_str(&format!("/{}%", 100 - bg_op));
+        }
+    }
+    out
 }
 
 /// Port of `void set_default_colour_sequences(void)` from
@@ -4902,25 +5049,37 @@ pub fn set_pending_text_attrs(attrs: zattr) {
 mod tests {
     use super::*;
 
-    /// 5.9.1 prompt.c:1823-1877 — output_highlight produces the zsh
-    /// highlight SPEC (not SGR): colours first, then the set attributes
-    /// in table order, `none` when nothing is set. zsh 5.9.2 reads
-    /// `region_highlight=("2 5 bold,fg=#ff0000")` back as
-    /// `2 5 fg=#ff0000,bold` and an attribute-less entry as `none`.
+    /// prompt.c:2202-2322 — output_highlight produces the highlight SPEC
+    /// (not SGR) for the attributes `mask` names: colours first, then the
+    /// `highlights[]` entries, `no`-prefixed when masked but off, `none`
+    /// when nothing is named, the opacities last.
     #[test]
     fn output_highlight_emits_spec_not_sgr() {
         use crate::ported::zsh_h::{
-            TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT,
+            TXTBOLDFACE, TXTFAINT, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_24BIT,
+            TXT_ATTR_FG_COL_SHIFT,
         };
         // fg=red (colour index 1) → "fg=red", not an SGR escape.
         let atr = TXTFGCOLOUR | (1u64 << TXT_ATTR_FG_COL_SHIFT);
-        assert_eq!(output_highlight(atr), "fg=red");
-        assert_eq!(output_highlight(TXTBOLDFACE | TXTUNDERLINE), "bold,underline");
+        assert_eq!(output_highlight(atr, TXTFGCOLOUR), "fg=red");
+        let bu = TXTBOLDFACE | TXTUNDERLINE;
+        assert_eq!(output_highlight(bu, bu), "bold,underline");
         let tc = TXTFGCOLOUR | TXT_ATTR_FG_24BIT | (0xff0000u64 << TXT_ATTR_FG_COL_SHIFT);
-        assert_eq!(output_highlight(TXTBOLDFACE | tc), "fg=#ff0000,bold");
-        assert_eq!(output_highlight(0), "none");
+        assert_eq!(output_highlight(TXTBOLDFACE | tc, TXTBOLDFACE | TXTFGCOLOUR), "fg=#ff0000,bold");
+        assert_eq!(output_highlight(0, 0), "none");
+        // c:2261-2283 — masked but off reads back `no…`; bold's mask_off is
+        // faint, so `bold` consumes the faint bit and faint is not repeated.
+        assert_eq!(output_highlight(0, TXTBOLDFACE | TXTFAINT), "nobold");
+        // c:2232-2238 — a masked colour the attributes leave unset.
+        assert_eq!(output_highlight(0, TXTFGCOLOUR), "fg=default");
+        // c:2208-2220 — a full mask with three or more attributes off starts
+        // with `reset`.
+        assert_eq!(output_highlight(TXTBOLDFACE, TXT_ATTR_ALL), "reset,bold");
+        // c:2291-2319 — opacities, inverted back from the mask fields.
+        let op = TXTFGCOLOUR | (40u64 << TXT_ATTR_FG_COL_SHIFT) | (60u64 << TXT_ATTR_BG_COL_SHIFT);
+        assert_eq!(output_highlight(atr, op), "fg=red,opacity=60%/40%");
         // never an escape.
-        assert!(!output_highlight(atr).contains('\u{1b}'));
+        assert!(!output_highlight(atr, TXTFGCOLOUR).contains('\u{1b}'));
     }
 
     /// c:1935-1944 — `truecolor_terminal` returns true iff
@@ -5588,12 +5747,18 @@ mod tests {
     }
 
     // ── Color escape edge cases ────────────────────────────────────
-    /// `%F{green}HI%f` → wrapped color escapes around plain `HI`.
+    /// `%F{green}HI%f` → wrapped color escapes around plain `HI`. With the
+    /// terminal's attributes known (`txtunknownattrs == 0`, as ZLE sets
+    /// them before expanding PS1, zle_main.c:1273) turning the only
+    /// attribute off is cheapest as `sgr0` (prompt.c:1676-1682): zsh
+    /// master draws `PS1='%F{green}HI%f'` as `\e[32mHI\e[0m`.
     #[test]
     fn promptexpand_color_frames_text() {
+        let _g = crate::test_util::global_state_lock();
+        txtunknownattrs.store(0, Ordering::Relaxed);
         assert_eq!(
-            expand("%F{green}HI%f"),
-            "\x01\x1b[32m\x02HI\x01\x1b[39m\x02"
+            expand_prompt("%F{green}HI%f"),
+            "\x01\x1b[32m\x02HI\x01\x1b[0m\x02"
         );
     }
 
@@ -6009,13 +6174,20 @@ mod tests {
         assert_eq!(out, "\x01\x1b[1m\x02X\x01\x1b[0m\x02");
     }
 
-    /// `%F{red}TEXT%f` emits red SGR, then TEXT, then default-fg
-    /// reset. Pins the color_frames_text pattern.
+    /// `%F{green}HI%f` emits the colour, then HI, then the reset. With the
+    /// attributes known (ZLE, zle_main.c:1273) the reset is `sgr0`
+    /// (prompt.c:1676-1682); with them unknown (`print -P`, builtin.c:4746)
+    /// only the colour's own default sequence may be used.
     #[test]
     fn putpromptchar_color_brackets_text() {
         let _g = crate::test_util::global_state_lock();
+        txtunknownattrs.store(0, Ordering::Relaxed);
+        let out = expand_prompt("%F{green}HI%f");
+        assert_eq!(out, "\x01\x1b[32m\x02HI\x01\x1b[0m\x02");
+        txtunknownattrs.store(TXT_ATTR_ALL, Ordering::Relaxed);
         let out = expand_prompt("%F{green}HI%f");
         assert_eq!(out, "\x01\x1b[32m\x02HI\x01\x1b[39m\x02");
+        txtunknownattrs.store(0, Ordering::Relaxed);
     }
 
     /// `%F{red}%K{blue}` stacks fg + bg attributes — diff after both
@@ -6571,27 +6743,118 @@ mod tests {
     #[test]
     fn match_highlight_returns_tuple_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: (zattr, zattr, &str) = match_highlight("");
-        assert_eq!(match_highlight("bold memo=x").2, " memo=x");
-        assert_eq!(match_highlight("fg=red,bold").2, "");
+        let _: (zattr, zattr, &str) = match_highlight("", None);
+        assert_eq!(match_highlight("bold memo=x", None).2, " memo=x");
+        assert_eq!(match_highlight("fg=red,bold", None).2, "");
     }
 
-    /// 5.9.1 prompt.c:1609-1615 / :1725-1768 — only `fg=`, `bg=`, `none`,
-    /// `bold`, `standout` and `underline` are understood; any other word
-    /// stops the scan where it starts. zsh 5.9.2 reads `0 4 italic,bold`,
-    /// `0 4 nobold,underline` and `0 4 layer=5,bold` back as `0 4 none`,
-    /// and `0 4 bold,italic` as `0 4 bold`.
+    /// prompt.c:1645-1716 — applytextattributes moves the terminal with
+    /// the fewest sequences: turning off standout while bold stays on
+    /// sends `se`, which may also clear bold, so bold is sent again
+    /// (c:1684-1689); turning off the only attribute on sends `sgr0`
+    /// (c:1676-1682); a colour change alone sends just the colour; with
+    /// unknown attributes (`print -P`) an attribute is never turned off
+    /// by `sgr0`.
     #[test]
-    fn match_highlight_knows_only_the_5_9_names() {
+    fn applytextattributes_emits_the_minimal_transition() {
+        use crate::ported::zsh_h::{TCALLATTRSOFF, TCBOLDFACEBEG, TCSTANDOUTEND, TCUNDERLINEEND};
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(match_highlight("italic,bold"), (0, 0, "italic,bold"));
-        assert_eq!(match_highlight("nobold,underline").0, 0);
-        assert_eq!(match_highlight("layer=5,bold").0, 0);
-        assert_eq!(match_highlight("reset").0, 0);
-        let (on, _, rest) = match_highlight("bold,italic");
-        assert_eq!((on, rest), (TXTBOLDFACE, "italic"));
-        // `none` clears the flags named before it (c:1610).
-        assert_eq!(match_highlight("bold,underline,none,standout").0, TXTSTANDOUT);
+        let cap = |c: i32| {
+            let tclen = crate::ported::init::tclen.lock().unwrap()[c as usize];
+            if tclen == 0 {
+                String::new()
+            } else {
+                let s = crate::ported::init::tcstr.lock().unwrap()[c as usize].clone();
+                String::from_utf8_lossy(&crate::shout::tputs(&s)).into_owned()
+            }
+        };
+        txtunknownattrs.store(0, Ordering::Relaxed);
+        *current_attrs_lock().lock().unwrap() = TXTSTANDOUT | TXTBOLDFACE;
+        treplaceattrs(TXTBOLDFACE);
+        assert_eq!(
+            applytextattributes(0),
+            cap(TCSTANDOUTEND) + &cap(TCBOLDFACEBEG)
+        );
+        treplaceattrs(0);
+        assert_eq!(applytextattributes(0), cap(TCALLATTRSOFF));
+        assert_eq!(applytextattributes(0), "", "no change, nothing sent");
+        // c:1656-1667 — turning underline off: `sgr0` when nothing else is
+        // known to be on, but its own `ue` while attributes are unknown
+        // (and underline is then known) — `print -P '%u'`, which goes
+        // through tunsetattrs (c:1755-1765).
+        *current_attrs_lock().lock().unwrap() = TXTUNDERLINE;
+        treplaceattrs(0);
+        assert_eq!(applytextattributes(0), cap(TCALLATTRSOFF));
+        txtunknownattrs.store(TXT_ATTR_ALL, Ordering::Relaxed);
+        *current_attrs_lock().lock().unwrap() = 0;
+        set_pending_text_attrs(0);
+        let _ = tunsetattrs(TXTUNDERLINE);
+        assert_eq!(applytextattributes(0), cap(TCUNDERLINEEND));
+        assert_eq!(txtunknownattrs.load(Ordering::Relaxed), TXT_ATTR_ALL & !TXTUNDERLINE);
+        txtunknownattrs.store(0, Ordering::Relaxed);
+        *current_attrs_lock().lock().unwrap() = 0;
+        set_pending_text_attrs(0);
+    }
+
+    /// prompt.c:1802-1875 — mixattrs overlays only what the mask names,
+    /// and blends a colour channel by its opacity. The numbers are
+    /// X04zlehighlight "foreground and background opacity": `#e00020`
+    /// at opacity 60% over `#00005f` is `#860039`.
+    #[test]
+    fn mixattrs_overlays_by_mask_and_blends_by_opacity() {
+        use crate::ported::zsh_h::TXTFAINT;
+        let _g = crate::test_util::global_state_lock();
+        let rgb = |c: zattr| TXTFGCOLOUR | TXT_ATTR_FG_24BIT | (c << TXT_ATTR_FG_COL_SHIFT);
+        // Unmasked attributes come from the secondary.
+        assert_eq!(mixattrs(TXTBOLDFACE, TXTBOLDFACE, TXTUNDERLINE), TXTBOLDFACE | TXTUNDERLINE);
+        // A masked weight replaces both bold and faint.
+        assert_eq!(mixattrs(TXTBOLDFACE, TXTBOLDFACE | TXTFAINT, TXTFAINT), TXTBOLDFACE);
+        // An explicitly disabled attribute (masked, off) wins.
+        assert_eq!(mixattrs(0, TXTBOLDFACE, TXTBOLDFACE), 0);
+        let _ = setaparam(".term.extensions", vec!["truecolor".to_string()]);
+        let mask = TXTFGCOLOUR | (40 << TXT_ATTR_FG_COL_SHIFT); // opacity=60%
+        assert_eq!(mixattrs(rgb(0xe00020), mask, rgb(0x00005f)), rgb(0x860039));
+        // c:1857-1860 — without a 24-bit value on both sides the opacity
+        // only picks a side.
+        let red = TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT);
+        assert_eq!(mixattrs(red, mask, 0) & TXT_ATTR_FG_MASK, red);
+        let faint = TXTFGCOLOUR | (60 << TXT_ATTR_FG_COL_SHIFT); // opacity=40%
+        assert_eq!(mixattrs(red, faint, 0) & TXT_ATTR_FG_MASK, 0);
+        crate::ported::params::unsetparam(".term.extensions");
+    }
+
+    /// prompt.c:1896-1904 / :2031-2133 — the highlight words: the six
+    /// `highlights[]` names with an optional `no` prefix, `layer=` (only
+    /// when a layer is asked for), `opacity=`; an unknown word stops the
+    /// scan where it starts and drops everything after it.
+    #[test]
+    fn match_highlight_words() {
+        use crate::ported::zsh_h::{TXTFAINT, TXTITALIC};
+        let _g = crate::test_util::global_state_lock();
+        let (on, mask, rest) = match_highlight("italic,bold", None);
+        assert_eq!((on, mask, rest), (TXTITALIC | TXTBOLDFACE, TXTITALIC | TXTBOLDFACE | TXTFAINT, ""));
+        // c:2105-2108 — `no` turns the named attribute (and its mask_off) off
+        // but still marks it as explicitly set.
+        let (on, mask, _) = match_highlight("nobold,underline", None);
+        assert_eq!((on, mask), (TXTUNDERLINE, TXTBOLDFACE | TXTFAINT | TXTUNDERLINE));
+        // c:2109-2110 — a later contradicting attribute wins.
+        assert_eq!(match_highlight("faint,bold", None).0, TXTBOLDFACE);
+        // c:2063-2071 — `layer=` is read only when the caller asks.
+        let mut layer = 10;
+        assert_eq!(match_highlight("layer=5,bold", Some(&mut layer)).0, TXTBOLDFACE);
+        assert_eq!(layer, 5);
+        assert_eq!(match_highlight("layer=5,bold", None), (0, 0, "layer=5,bold"));
+        // c:1897 — `reset` names every attribute, turning all off.
+        assert_eq!(match_highlight("reset", None), (0, TXT_ATTR_ALL, ""));
+        // c:2071-2096 — opacity is stored inverted in the colour fields.
+        let (_, mask, _) = match_highlight("opacity=60/40", None);
+        assert_eq!(
+            mask,
+            (40u64 << TXT_ATTR_FG_COL_SHIFT) | (60u64 << TXT_ATTR_BG_COL_SHIFT)
+        );
+        // An unknown word ends the scan: `faint` after it is not read.
+        let (on, _, rest) = match_highlight("bold,unrecognised,faint", None);
+        assert_eq!((on, rest), (TXTBOLDFACE, "unrecognised,faint"));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -6635,7 +6898,11 @@ mod tests {
     #[test]
     fn promptexpand_colour_spec_tolerates_escaped_close_brace() {
         let _g = crate::test_util::global_state_lock();
+        // subst.c:4014 — `${(%)p}` (the reference below) expands with
+        // `txtunknownattrs = TXT_ATTR_ALL`.
+        txtunknownattrs.store(TXT_ATTR_ALL, Ordering::Relaxed);
         let (got, _, _) = promptexpand("%K{000\\}%F{003\\}seg%f%k", 0, None);
+        txtunknownattrs.store(0, Ordering::Relaxed);
         assert_eq!(
             strip_np_markers(&got),
             "\x1b[40m\x1b[33mseg\x1b[39m\x1b[49m",

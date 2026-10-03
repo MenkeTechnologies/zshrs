@@ -1476,7 +1476,7 @@ pub fn getzlequery() -> i32 {
     if c != '\n' {
         // c:1226-1228 — `REFRESH_ELEMENT re; re.chr = c; re.atr = 0;`
         let re = crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: c, atr: 0 };
-        crate::ported::zle::zle_refresh::zwcputc(&re, None); // c:1229
+        crate::ported::zle::zle_refresh::zwcputc(&re); // c:1229
     }
     // c:1231 — return c == ZWC('y');
     if c == 'y' {
@@ -2862,6 +2862,8 @@ mod findbol_findeol_tests {
             start,
             end,
             attr: Default::default(),
+            atrmask: 0,
+            layer: 10,
             memo: None,
             flags,
         };
@@ -2910,6 +2912,8 @@ mod findbol_findeol_tests {
                 start: 5,
                 end: 8,
                 attr: Default::default(),
+                atrmask: 0,
+                layer: 10,
                 memo: None,
                 flags: 0,
             });
@@ -2918,6 +2922,8 @@ mod findbol_findeol_tests {
                 start: 1,
                 end: 2,
                 attr: Default::default(),
+                atrmask: 0,
+                layer: 10,
                 memo: None,
                 flags: 0,
             });

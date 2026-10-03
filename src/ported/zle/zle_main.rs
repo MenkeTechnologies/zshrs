@@ -1413,6 +1413,11 @@ pub fn zleread(
         (!crate::ported::zsh_h::isset(crate::ported::zsh_h::OVERSTRIKE)) as i32,
         SeqCst,
     );
+    // c:1273 — `txtcurrentattrs = txtpendingattrs = txtunknownattrs = 0;`
+    // before the prompts are expanded: ZLE knows the terminal's attributes.
+    *crate::ported::prompt::current_attrs_lock().lock().unwrap() = 0;
+    crate::ported::prompt::set_pending_text_attrs(0);
+    crate::ported::prompt::txtunknownattrs.store(0, SeqCst);
     *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
     *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
     // Fresh edit session on a fresh terminal row — the multiline
@@ -2702,7 +2707,7 @@ pub fn trashzle() {
         treplaceattrs(PROMPT_ATTR.load(Ordering::Relaxed));
         // c:2084 — `applytextattributes(0);`. Emit the SGR diff bytes
         // to take the pending attrs live.
-        applytextattributes(0);
+        crate::shout::write(applytextattributes(0).as_bytes());
         // c:2085 — `moveto(nlnct, 0);`. Park cursor one row past the
         // last drawn line, column 0.
         moveto(NLNCT.load(Ordering::Relaxed) as usize, 0);

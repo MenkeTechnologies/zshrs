@@ -1970,6 +1970,9 @@ pub fn preprompt() {
         // is set to; restore the option afterwards (c:1559).
         let percents = crate::ported::options::opt_state_get("promptpercent");
         crate::ported::options::opt_state_set("promptpercent", true);
+        // c:1556 — `txtunknownattrs = TXT_ATTR_ALL;`
+        crate::ported::prompt::txtunknownattrs
+            .store(crate::ported::zsh_h::TXT_ATTR_ALL, Ordering::Relaxed);
         let (mark, _, _) = crate::ported::prompt::promptexpand(&eolmark, 1, None); // c:1557
         let mut w: i32 = 0; // c:1552
         let mut h: i32 = 1;
