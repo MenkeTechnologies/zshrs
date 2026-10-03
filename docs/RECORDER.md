@@ -993,17 +993,53 @@ intercept.
 A recording made by an older recorder (no end state) still replays
 from the event fold.
 
-### Limits
+### Per-shell values
 
-The recorder gives the recorded files a pty of their own, so `$TTY` and
-`tty` name a terminal as they do in an interactive shell. Wherever that
-path ends up in a parameter value (`ZPWR_TTY=$TTY`, `$(tty)`), the
-recording stores a placeholder and the replay substitutes its own `$TTY`.
+A recording is shared by every shell that replays it, so anything one
+process owns has to be made per shell again:
 
-Other values a config computes from its own process still carry the
-recorder's copy: anything derived from `$$` or `$PPID`, a snapshot of `$-`.
-A config that wants those per shell should compute them in a `precmd`
-hook or a function, which replay runs in the real shell.
+- **The terminal.** The recorder gives the recorded files a pty of
+  their own, so `$TTY` and `tty` name a terminal as they do in an
+  interactive shell. Wherever that path ends up in a parameter value
+  (`ZPWR_TTY=$TTY`, `$(tty)`), the recording stores a placeholder and
+  the replay substitutes its own `$TTY`.
+- **`$$`.** The recording runs with its real pid; every occurrence of it
+  as a whole number in a parameter value (`.temp$$-…`) becomes a
+  placeholder for the replaying shell's `$$`.
+- **Descriptors, locks, session IDs.** A parameter that holds a
+  descriptor (`exec {fd}>lock`, `zsystem flock -f fd`, `sysopen -u fd`)
+  names nothing in another process — replayed, it pointed at whatever
+  that shell had open at the same number, and zconvey wrote `$$` into
+  it. Such parameters are left out, and the file that took the
+  descriptor is sourced again at replay, so each shell takes its own
+  descriptor, lock and ID (zconvey's and zsh-unique-id's plugin files
+  on zpwr). A startup file itself is never sourced again; a descriptor
+  it took is dropped.
+
+Still the recorder's copy: values derived from `$PPID`, a snapshot of
+`$-`. A config that wants those per shell should compute them in a
+`precmd` hook or a function, which replay runs in the real shell.
+
+### Startup cost
+
+zpwr config, debug build (`cargo build`), five `zshrs -i` starts per
+mode under `script(1)`, timings from `ZSHRS_STARTUP_TRACE` in
+`zshrs.log`, medians:
+
+| | startup files done (`run_init_scripts`) | first prompt painted |
+|---|---|---|
+| sourcing the rc files (`skip_configs = "off"`) | 1848 ms | 2003 ms |
+| replaying the recording | 301 ms | 489 ms |
+| speedup | 6.1× | 4.1× |
+
+The two prompts are not equivalent: sourcing reaches its first prompt
+with every zinit `wait''` plugin still to load (about 100 of them on
+zpwr, one per scheduler pass after the prompt), while the replayed
+shell's first prompt already has all of them. Of the 301 ms, about
+140 ms reads the 20.8 MB shard (deserialized whole, not mapped) and
+about 85 ms restores parameters, mostly compsys's `_comps` with ~51k
+entries; function bodies are compiled on first call rather than at
+startup.
 
 ## End-of-run autoload prewarm
 

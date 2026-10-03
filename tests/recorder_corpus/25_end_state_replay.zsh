@@ -44,6 +44,11 @@ autoload -Uz ${0:A:h}/replay_fns/replay_dir_fn
 typeset -g MY_TTY="tty=$TTY"
 hash -d RTD=${0:A:h}
 
+# `$$` in a value is the replaying shell's; a file that takes a descriptor
+# runs again, so the descriptor is open and this shell's.
+typeset -g MY_PID_FILE=/tmp/rt.$$
+source ${0:A:h}/replay_fns/fd_owner.zsh
+
 alias ll='ls -l'
 alias -g G='| head'
 setopt extendedglob

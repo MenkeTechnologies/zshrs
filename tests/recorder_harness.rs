@@ -665,6 +665,9 @@ fn recorder_end_state_replays_into_a_shell() {
         print -r -- "opt=$options[extendedglob]"
         print -r -- "mytty=$MY_TTY"
         builtin cd ~RTD; print -r -- "named=${(D)PWD}"
+        print -r -- "pidfile=$(( ${MY_PID_FILE#/tmp/rt.} == $$ ))"
+        print -r -- "fdowner=$(( RT_FD_PID == $$ ))"
+        print -u $RT_FD -n && print -r -- "fdopen=yes"
     "#;
     let mut sh = Command::new(shell);
     with_env(&mut sh);
@@ -697,6 +700,9 @@ fn recorder_end_state_replays_into_a_shell() {
         ("opt", "on"),
         ("mytty", "tty="),
         ("named", "~RTD"),
+        ("pidfile", "1"),
+        ("fdowner", "1"),
+        ("fdopen", "yes"),
     ];
     let wrong: Vec<String> = expect
         .iter()

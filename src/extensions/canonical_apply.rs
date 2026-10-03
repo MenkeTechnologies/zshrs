@@ -70,6 +70,12 @@ pub fn replay_startup_into(executor: &mut ShellExecutor) -> bool {
     if !crate::daemon_presence::should_skip_configs() {
         return false;
     }
+    // The `-c` driver calls this before any VM context exists, and the
+    // replay runs builtins (`source` of the resource files, `zmodload`,
+    // `bindkey`, …) that reach the executor through it; without one,
+    // `source` did nothing. `enter` is a no-op when the startup path
+    // already holds a context.
+    let _ctx = crate::fusevm_bridge::ExecutorContext::enter(executor);
     let rows = apply_latest(executor, true);
     tracing::info!(rows, "skip_configs: startup files bypassed, recorder shard replayed");
     rows > 0

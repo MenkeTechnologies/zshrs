@@ -445,10 +445,21 @@ fn mark_process_values(params: &mut [crate::daemon::recorder_shard::TypedParam])
     }
 }
 
-/// Names the recorded files had a descriptor assigned to: `exec {name}>…`,
-/// `zsystem flock -f name`, `sysopen -u name`.
-static DESCRIPTOR_PARAMS: Lazy<Mutex<std::collections::HashSet<String>>> =
-    Lazy::new(|| Mutex::new(std::collections::HashSet::new()));
+/// The files the recorder sources itself (the login chain, or `--file`).
+static STARTUP_FILES: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Record the files the recorder sources itself; see [`STARTUP_FILES`].
+pub fn set_startup_files(files: Vec<String>) {
+    if let Ok(mut s) = STARTUP_FILES.lock() {
+        *s = files;
+    }
+}
+
+/// Names the recorded files had a descriptor assigned to (`exec {name}>…`,
+/// `zsystem flock -f name`, `sysopen -u name`), each with the order of the
+/// assignment and the file running it (C's `scriptfilename`).
+static DESCRIPTOR_PARAMS: Lazy<Mutex<std::collections::HashMap<String, (u64, Option<String>)>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// Called where the shell stores a descriptor in a named parameter
 /// (Src/exec.c:2404-2412 `addfd`'s varid arm; Src/Modules/system.c:414,
@@ -457,8 +468,10 @@ static DESCRIPTOR_PARAMS: Lazy<Mutex<std::collections::HashSet<String>>> =
 /// setting (`POWERLEVEL9K_DIR_MAX_LENGTH=40` and an open fd 40).
 pub fn note_descriptor_param(name: &str) {
     if is_enabled() {
+        let file = crate::ported::utils::scriptfilename_get();
+        let order = ORDER_IDX.load(Ordering::Relaxed);
         if let Ok(mut s) = DESCRIPTOR_PARAMS.lock() {
-            s.insert(name.to_string());
+            s.insert(name.to_string(), (order, file));
         }
     }
 }
@@ -480,33 +493,29 @@ fn take_descriptor_params(end: &mut crate::daemon::recorder_shard::EndState) {
     };
     let noted = DESCRIPTOR_PARAMS.lock().map(|s| s.clone()).unwrap_or_default();
     let (fds, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut end.params).into_iter().partition(|p| {
-        noted.contains(&p.name)
+        noted.contains_key(&p.name)
             && p.value.as_deref().and_then(|v| v.parse::<i32>().ok()).is_some_and(|fd| fd >= 10 && held(fd))
     });
     end.params = kept;
     if fds.is_empty() {
         return;
     }
-    // The file of each parameter's last assignment, ordered by when that
-    // assignment ran.
-    let mut files: Vec<(u64, String)> = BUFFER
-        .lock()
-        .map(|b| {
-            fds.iter()
-                .filter_map(|p| {
-                    b.iter()
-                        .rev()
-                        .find(|e| {
-                            matches!(e.kind, DefKind::Assign | DefKind::Typeset | DefKind::Export)
-                                && e.name.split('[').next() == Some(p.name.as_str())
-                        })
-                        .and_then(|e| Some((e.order_idx, e.file.clone()?)))
-                })
-                .collect()
+    // The file that took each descriptor, in the order they were taken.
+    let mut files: Vec<(u64, String)> = fds
+        .iter()
+        .filter_map(|p| {
+            let (order, file) = noted.get(&p.name)?;
+            Some((*order, file.clone()?))
         })
-        .unwrap_or_default();
+        .collect();
     files.sort();
+    // Never a startup file: sourcing `.zshrc` again would be the whole
+    // startup the replay replaces. A descriptor taken there is dropped.
+    let startup = STARTUP_FILES.lock().map(|s| s.clone()).unwrap_or_default();
     for (_, file) in files {
+        if startup.contains(&file) {
+            continue;
+        }
         if !end.resource_files.contains(&file) {
             end.resource_files.push(file);
         }

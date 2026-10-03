@@ -303,6 +303,7 @@ fn main() -> ExitCode {
     zsh::recorder::mark_baseline();
 
     if let Some(path) = args.file {
+        zsh::recorder::set_startup_files(vec![path.display().to_string()]);
         // Single-file mode (-f / --file): source ONLY that file, no
         // /etc/zshenv, no .zshenv chain. Used by tests + ad-hoc
         // recorder runs against a small script.
@@ -342,6 +343,7 @@ fn main() -> ExitCode {
         for opt in ["interactive", "loginshell", "monitor"] {
             zsh::ported::options::opt_state_set(opt, true);
         }
+        zsh::recorder::set_startup_files(login_chain().iter().map(|p| p.display().to_string()).collect());
         for path in login_chain() {
             if !path.exists() {
                 continue;
