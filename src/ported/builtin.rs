@@ -5505,6 +5505,13 @@ pub fn bin_typeset(
             // !roff && !ASG_VALUEP(asg)`, c:2237) stays on the print path
             // below, which is where typeset_single returns early anyway.
             if (on | roff) != 0 || m_value.is_some() {
+                // c:3090 — the typeset_single loop runs once per match; with
+                // none it does nothing. Re-entering bin_typeset with an empty
+                // name list would instead reach its no-argument LIST path and
+                // print every parameter carrying the flags.
+                if matched.is_empty() {
+                    continue;
+                }
                 let names: Vec<String> = matched
                     .iter()
                     .map(|pm| match m_value {

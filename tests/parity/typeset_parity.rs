@@ -455,6 +455,17 @@ mod m_pattern_listing {
         assert_parity(r#"typeset +m 'TPSM_NO_MATCH_AT_ALL_*'; echo END"#);
     }
 
+    /// An attribute change over a pattern with no matches — `typeset +x -m
+    /// .term.\*` in X06termquery — does nothing: c:3090 runs
+    /// typeset_single once per match. It used to fall into the no-argument
+    /// listing and print the name of every exported parameter.
+    #[test]
+    fn attribute_change_with_no_match_is_silent() {
+        assert_parity(
+            r#"export TPSM_K=1; typeset +x -m 'TPSM_NO_MATCH_*'; typeset -x -m 'TPSM_NONE_*'; echo END 0"#,
+        );
+    }
+
     /// Quantifier `?` in pattern — single-char match works.
     #[test]
     fn dash_m_question_metachar() {
