@@ -768,16 +768,27 @@ pub fn bin_zle_list(_name: &str, args: &[String], ops: &options, _func: i32) -> 
     };
     if args.is_empty() {
         // c:396-397 — walk thingytab, call scanlistwidgets per node.
-        let _ = scanlistwidgets(list_mode);
+        let _ = scanlistwidgets(None, list_mode);
         return 0;
     }
     let mut ret = 0;
     for arg in args {
-        // c:403-411
-        let exists = thingytab().lock().unwrap().contains_key(arg);
-        if !exists {
-            ret = 1;
+        // c:403 — `for (; *args && !ret; args++)`
+        if ret != 0 {
             break;
+        }
+        // c:404-407 — missing, widget-less, or (without -a) an internal
+        // widget: status 1.
+        let listable = thingytab().lock().unwrap().get(arg).is_some_and(|t| {
+            t.widget
+                .as_ref()
+                .is_some_and(|w| OPT_ISSET(ops, b'a') || (w.flags & WIDGET_INT) == 0)
+        });
+        if !listable {
+            ret = 1;
+        } else if OPT_ISSET(ops, b'L') {
+            // c:408-410 — `scanlistwidgets(hn, 1);`
+            let _ = scanlistwidgets(Some(arg), 1);
         }
     }
     ret // c:412
@@ -945,8 +956,10 @@ pub fn bin_zle_keymap(name: &str, args: &[String], _ops: &options, _func: i32) -
 ///   - `list == 0`: emits `zle -N name [fn]` (re-definable shell form);
 ///   - `list != 0`: emits `name (fn)` when fn != name, else just `name`.
 /// Output goes to stdout (C uses `putc('\n', stdout)`).
-/// WARNING: param names don't match C — Rust=(list) vs C=(hn, list).
-pub fn scanlistwidgets(list: i32) -> i32 {
+/// `hn` is the node C's `scanhashtable` hands in; `None` stands for that
+/// whole-table walk (c:396), `Some(name)` for the single node
+/// `bin_zle_list` passes (c:409).
+pub fn scanlistwidgets(hn: Option<&str>, list: i32) -> i32 {
     // c:505
     use std::io::Write;
     let tab = thingytab().lock().unwrap();
@@ -954,7 +967,7 @@ pub fn scanlistwidgets(list: i32) -> i32 {
     // The `-la` path emits raw name, includes INTERNAL widgets, and
     // does not filter or annotate. Bug #379.
     if list < 0 {
-        let mut names: Vec<String> = tab.keys().cloned().collect();
+        let mut names: Vec<String> = tab.keys().filter(|n| hn.is_none_or(|h| h == n.as_str())).cloned().collect();
         drop(tab);
         names.sort();
         let stdout = std::io::stdout();
@@ -976,6 +989,9 @@ pub fn scanlistwidgets(list: i32) -> i32 {
     }
     let mut entries: Vec<(String, Listed)> = Vec::new();
     for (name, t) in tab.iter() {
+        if hn.is_some_and(|h| h != name.as_str()) {
+            continue;
+        }
         let w = match t.widget.as_ref() {
             Some(w) => w,
             None => continue,

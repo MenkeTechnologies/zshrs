@@ -1843,7 +1843,13 @@ pub fn bin_bindkey_bind(
             's' => KeyBinding {
                 // c:1030 send-string
                 bind: None,
-                str: target,
+                // c:1038 — `str = getkeystring(*++argv, &len,
+                // GETKEYS_BINDKEY, NULL);`: the string is decoded like the
+                // sequence (`\e`, `^X`, `\NNN`), not stored as typed.
+                str: target.map(|t| {
+                    let bytes = crate::ported::zle::zle_bindings::getkeystring(&t);
+                    String::from_utf8_lossy(&bytes).into_owned()
+                }),
                 prefixct: 0,
             },
             _ => KeyBinding {
