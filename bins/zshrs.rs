@@ -2818,7 +2818,10 @@ pub fn zshrs_main() {
         let basename = if is_zsh_mode() {
             "zsh".to_string()
         } else {
-            std::path::Path::new(&zero)
+            // The name of the file that was executed, not argv[0]: `ARGV0=sh
+            // zshrs -c cd` hands the shell argv[0] "sh", and the prefix read
+            // `sh:cd:1:` where zsh prints its own name (B01cd.ztst:144).
+            std::path::Path::new(&executed_path().unwrap_or_else(|| zero.clone()))
                 .file_name()
                 .and_then(|s| s.to_str())
                 .map(|s| s.trim_start_matches('-').to_string())
@@ -3752,6 +3755,50 @@ fn source_emulation_startup_files(
             continue;
         };
         source_from_memory(executor, &path, &contents);
+    }
+}
+
+/// The path the kernel executed this process from, as given to `execve`
+/// — before symlink resolution and independent of argv[0], which `ARGV0`
+/// or `exec -a` can set to anything. `None` when the platform cannot say;
+/// the caller falls back to argv[0].
+/// !!! RUST-ONLY — no C counterpart. C's `-c` prefix is the literal
+/// "zsh" (Src/init.c:497); zshrs names itself after the file it runs as.
+fn executed_path() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        // AT_EXECFN: the filename argument of execve, unresolved, so the
+        // test harness's `Src/zsh -> zshrs` symlink still reads as `zsh`.
+        // SAFETY: getauxval returns 0 or a pointer to a NUL-terminated
+        // string in the process's auxiliary vector, valid for its life.
+        let p = unsafe { libc::getauxval(libc::AT_EXECFN) } as *const libc::c_char;
+        if !p.is_null() {
+            let s = unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned();
+            return (!s.is_empty()).then_some(s);
+        }
+        None
+    }
+    #[cfg(target_os = "macos")]
+    #[allow(deprecated)] // libc points at the `mach2` crate; same call as init.rs getmypath
+    {
+        let mut n: u32 = libc::PATH_MAX as u32;
+        let mut buf = vec![0u8; n as usize];
+        // SAFETY: _NSGetExecutablePath writes at most `n` bytes, NUL-
+        // terminated, and reports the needed size when `buf` is short.
+        let mut rc = unsafe { libc::_NSGetExecutablePath(buf.as_mut_ptr().cast(), &mut n) };
+        if rc < 0 {
+            buf.resize(n as usize, 0);
+            rc = unsafe { libc::_NSGetExecutablePath(buf.as_mut_ptr().cast(), &mut n) };
+        }
+        if rc != 0 {
+            return None;
+        }
+        let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) }.to_string_lossy().into_owned();
+        (!s.is_empty()).then_some(s)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
     }
 }
 
