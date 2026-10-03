@@ -16234,3 +16234,27 @@ fn savehistfile_buffers_its_writes_instead_of_one_syscall_per_entry() {
          times: {times:?}"
     );
 }
+
+/// c:Src/Zle/zle_main.c:204 `watch_fds` belongs to the process: a `zle -F`
+/// handler armed inside `$(…)` or `( … )` dies with the forked child. zinit's
+/// `chpwd` hook arms one (`exec {AFD}< <(…); zle -F $AFD @zinit-scheduler`),
+/// so a `$(cd x; …)` left the parent watching a descriptor the subshell had
+/// closed, and the handler later failed with "failed to close file
+/// descriptor 17: bad file descriptor". Expected output is zsh 5.9's.
+#[test]
+fn test_zle_fd_watch_does_not_leak_from_subshell() {
+    let code = r#"h() { exec {AFD}< <(print run); zle -F "$AFD" h2 2>/dev/null; }
+chpwd_functions=(h)
+x=$(builtin cd /tmp; print sub)
+(builtin cd /)
+print -r -- "after subshells:[$(zle -F)]"
+h
+print -r -- "parent armed:[$(zle -F)]""#;
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-i", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(
+        out,
+        "after subshells:[]\nparent armed:[zle -F 11 h2]\n",
+        "stderr: {err}"
+    );
+}

@@ -5262,6 +5262,12 @@ pub struct SubshForkCopy {
     reswds_disabled: std::collections::HashSet<String>,
     /// `schedcmds` (`Src/Builtins/sched.c:52`) — `sched`.
     schedcmds: Option<Box<crate::ported::builtins::sched::schedcmd>>,
+    /// `watch_fds` (`Src/Zle/zle_main.c:204`) — `zle -F`. A forked
+    /// child's handlers die with it; kept here, a `$(cd x)` whose `chpwd`
+    /// hook armed one (zinit's `@zinit-scheduler`: `exec {AFD}< <(…);
+    /// zle -F $AFD @zinit-scheduler`) left the parent watching a descriptor
+    /// the frame had closed: `failed to close file descriptor 17`.
+    watch_fds: Vec<crate::ported::zle::zle_h::watch_fd>,
     /// `shtimer` (`Src/params.c:147`) — assigning `SECONDS` moves it.
     shtimer: std::time::Duration,
     /// `donetrap` (`Src/exec.c:1413`) — a ZERR trap that ran inside the body
@@ -5339,6 +5345,10 @@ impl SubshForkCopy {
                 })
                 .unwrap_or_default(),
             schedcmds: crate::ported::builtins::sched::schedcmd::subsh_save(),
+            watch_fds: crate::ported::zle::zle_main::WATCH_FDS
+                .lock()
+                .map(|t| t.clone())
+                .unwrap_or_default(),
             shtimer: crate::ported::params::shtimer_lock()
                 .lock()
                 .map(|t| *t)
@@ -5409,6 +5419,9 @@ impl SubshForkCopy {
             }
         }
         crate::ported::builtins::sched::schedcmd::subsh_restore(self.schedcmds);
+        if let Ok(mut t) = crate::ported::zle::zle_main::WATCH_FDS.lock() {
+            *t = self.watch_fds;
+        }
         if let Ok(mut t) = crate::ported::params::shtimer_lock().lock() {
             *t = self.shtimer;
         }

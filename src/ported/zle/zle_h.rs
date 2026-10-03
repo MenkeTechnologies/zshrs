@@ -1120,6 +1120,7 @@ pub type WatchFdPtr = Box<watch_fd>; // c:570
 
 /// Port of `struct watch_fd` from `Src/Zle/zle.h:572-578`.
 /// One `zle -F` file-descriptor watcher.
+#[derive(Clone)]
 pub struct watch_fd {
     // c:572
     /// Function to call.
