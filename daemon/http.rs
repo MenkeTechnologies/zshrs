@@ -508,6 +508,7 @@ async fn handler_stream_events(
     // delivers to subscribers whose registered topic-pattern matches.
     let (tx, rx) = mpsc::unbounded_channel::<Frame>();
     let (client_id, _session_id) = s.daemon.register_ephemeral_session(
+        s.daemon.pid,
         Some("http-sse".to_string()),
         Some("http-sse-events".to_string()),
         tx,
@@ -600,6 +601,7 @@ where
 {
     let (tx, rx) = mpsc::unbounded_channel::<Frame>();
     let (client_id, _session_id) = state.register_ephemeral_session(
+        state.pid,
         Some("http-sse".to_string()),
         Some("http-sse".to_string()),
         tx,
@@ -714,6 +716,7 @@ async fn handler_op(
     // the HTTP body, not via the broadcast bus.
     let (tx, _rx) = mpsc::unbounded_channel::<Frame>();
     let (client_id, _session_id) = s.daemon.register_ephemeral_session(
+        s.daemon.pid,
         Some("http".to_string()),
         Some(format!("http-op:{}", name)),
         tx,

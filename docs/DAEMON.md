@@ -817,6 +817,7 @@ zcache daemon restart               # graceful + respawn
 # Shell registry (cross-shell coordination)
 zls                                 # list registered shells: stable shell id, pid, tty, uptime, tags, cwd
 zls --tag <name>                    # filter by tag
+zls --ask-pending                   # add an ASK column: each shell's queued zask request count
 zls --user <user>                   # filter by user (root only for cross-user)
 zid                                 # print this shell's daemon-assigned stable shell id
 zping                               # daemon liveness + roundtrip latency
@@ -842,7 +843,7 @@ znotify --urgency <low|normal|critical> <shell_id> <msg…>
 # Pub/sub
 zsubscribe <pattern>                # e.g. shell:42.commands, *.commands, tag:prod.chpwd
 zunsubscribe <pattern>
-zsubscribe --list                   # show this shell's subscriptions (from any of its connections)
+zsubscribe --list                   # show this shell's live streams (subscriptions on its open connections)
 zsubscribe --pause                  # mute deliveries without dropping subscriptions
 zsubscribe --resume
 
@@ -877,38 +878,46 @@ zlog stats
 
 Every z\* builtin opens its own connection and closes it on return, and
 clients hold no state, so per-shell state cannot live on a connection. The
-daemon keeps a **shell record** keyed by the shell's pid instead:
+daemon keeps a **shell record** keyed by the shell process instead:
 
-- **Key.** The Hello's `shell_pid` (the shell's `$$`, recorded once at
-  startup by `daemon_presence::probe` → `client::set_shell_pid`), falling
-  back to `client_pid` for clients that do not send it (`zd`, the bench).
-  A builtin run in a forked subshell still sends the parent's `$$`, so it
-  identifies as that shell.
-- **Stable shell id.** The first connection from a pid mints a shell id;
-  every later connection from that pid joins the same record. It is what
-  `zid` prints (`welcome.shell_id`), what `zls` lists in the `ID` column,
-  and what `shell:N` resolves against in `zask --target`, `zsend`,
-  `znotify` and subscription scopes. `client_id` stays per connection.
-- **Owned by the shell, not the connection:** tags (`ztag` / `zuntag`),
-  the `zask` queue (`pending` / `take` / `dismiss`), and subscription
-  ownership (`zsubscribe --list` / `--pause` / `--resume`, `zunsubscribe`).
-  Closing a connection does not drop any of them.
-- **Lifetime.** A record and everything it owns is removed only when its
-  pid no longer exists (`kill(pid, 0)` → `ESRCH`), checked by the daemon
-  ticker every 60 s and before each `list_shells`.
-- **Push delivery** (`notify`, `cmd:execute`, `ask:pending`, pub/sub
-  matches) goes to live connections only. A registered shell with no open
-  connection gets no push (the `zask` queue still holds its requests). A
-  subscription delivers to the connection that created it, so a streaming
-  `zsubscribe` receives events while it runs; after it exits the
-  subscription stays listed, without delivery, until `zunsubscribe` or
-  shell exit.
+- **Key.** The Hello's `shell_pid` (the shell's `$$`) and `shell_start_ns`
+  (its start time), both recorded once at startup by
+  `daemon_presence::probe` → `client::set_shell_identity`. A builtin run
+  in a forked subshell still sends the parent's pair, so it identifies as
+  that shell; the `zd` builtin, running inside the shell, does too.
+- **Only shells get records.** A Hello without `shell_pid` (the standalone
+  `zd` binary, which talks HTTP anyway; the bench; any client that never
+  called `set_shell_identity`) gets an ephemeral session like HTTP: no
+  record, `welcome.shell_id` = 0, never listed by `zls`.
+- **Stable shell id.** The first connection from a shell mints a shell id;
+  every later connection from it joins the same record. It is what `zid`
+  prints (`welcome.shell_id`), what `zls` lists in the `ID` column, and
+  what `shell:N` resolves against in `zask --target`, `zsend`, `znotify`
+  and subscription scopes. `client_id` stays per connection.
+- **Recycled pids.** A Hello with a known pid but a different
+  `shell_start_ns` is a new shell: the old record and everything it owned
+  (tags, `zask` queue, subscriptions) is dropped and a new id minted. (A
+  Hello without `shell_start_ns`, from an older shell, joins by pid alone.)
+- **Owned by the shell, not the connection:** tags (`ztag` / `zuntag`) and
+  the `zask` queue (`pending` / `take` / `dismiss`). Closing a connection
+  drops neither.
+- **Subscriptions** deliver to the connection that created them and are
+  dropped when it closes (they could never deliver again). Ownership is
+  the shell's, so `zsubscribe --list` / `--pause` / `--resume` and
+  `zunsubscribe` from any connection of the shell act on its live streams
+  — subscriptions held by its other open connections (a running
+  `zsubscribe`).
+- **Lifetime.** A record and everything it owns is removed when its pid no
+  longer exists (`kill(pid, 0)` → `ESRCH`), checked by the daemon ticker
+  every 60 s and before each `list_shells`, or when a recycled pid
+  replaces it.
+- **Push delivery** (`notify`, `cmd:execute`, `ask:pending`, `ask:response`,
+  pub/sub matches) goes to live connections only. A registered shell with
+  no open connection gets no push (the `zask` queue still holds its
+  requests).
 - **HTTP sessions** are not shells: they never create or join a record,
   cannot tag or own a `zask` queue, publish as `shell:0`, and their
   subscriptions die with the request.
-- **Known limitations.** A pid reused by a new process before the next
-  reap inherits the old record (tags, queue). A non-zshrs client of the
-  socket appears in `zls` under its own pid until it exits.
 
 Subscription pattern grammar: `<scope>.<topic>`.
 
@@ -1116,7 +1125,7 @@ zask progress --target shell:42 --request-id <id> --done
 zask pending                                  # list queued requests in this shell
 zask take                                     # render the oldest pending; blocks for response
 zask take <id>                                # render a specific pending request by id
-zask dismiss [<id>|--all]                     # decline/cancel pending request(s); originator gets cancelled=true
+zask dismiss [<id>|--all]                     # decline/cancel pending request(s); originator gets an `ask:response` event with cancelled=true (live connection only)
 zask inbox-clear                              # dismiss every pending request in this shell at once
 ```
 
@@ -1136,7 +1145,7 @@ zask inbox-clear                              # dismiss every pending request in
 
 **Timeouts:** every queued UI request has a default 60-minute timeout. Originator gets `ask:timeout` event if user never engages. Configurable per-request via `--timeout <seconds>` or `--no-timeout`.
 
-**Visibility model:** `zask pending` shows this shell's queue (keyed on the stable shell id, so it persists across the one-shot builtin connections — see "Shell identity"). `zls --ask-pending` shows pending requests across all of the user's registered shells. Every push, take, dismiss, timeout logged to `~/.zshrs/zshrs.log`.
+**Visibility model:** `zask pending` shows this shell's queue (keyed on the stable shell id, so it persists across the one-shot builtin connections — see "Shell identity"). `zls --ask-pending` shows pending requests across all of the user's registered shells, as a per-shell count (ASK column; `ask_pending` in `list_shells`). Every push, take, dismiss, timeout logged to `~/.zshrs/zshrs.log`.
 
 ### Daemon logging (every action goes to logfile)
 
