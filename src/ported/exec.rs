@@ -11500,6 +11500,7 @@ pub fn execcmd_exec(
             && redir.as_ref().map(|v| v.is_empty()).unwrap_or(true)
             && args.as_ref().map(|v| v.len() == 1).unwrap_or(false)
             && !args.as_ref().unwrap()[0].is_empty(); // c:3595-3597
+        let mut external_found = false;
         if hn.is_none() {
             // c:3600
             let cmdarg = args.as_ref().unwrap()[0].clone();
@@ -11535,14 +11536,18 @@ pub fn execcmd_exec(
                     have_cmdnam = hashcmd(&cmdarg, &dirs);
                 }
             }
-            // hn stays None for external commands — the resolution
-            // value matters only for builtin/shfunc dispatch in the
-            // following blocks.
-            let _ = have_cmdnam;
+            // C keeps the resolved command in `hn` (c:3619), which the
+            // AUTOCD test below reads as "found": `hn` here only carries
+            // builtins and functions, so the external lookup is carried
+            // separately. Dropped, a found external such as `mysql` was
+            // treated as not found, and with AUTOCD + CDABLEVARS
+            // `${=ZPWR_LEARN_COMMAND} 2>>log` ran `cd -- /var/empty`
+            // (user mysql's home) and printed `~mysql`.
+            external_found = have_cmdnam.is_some();
         }
 
         // c:3625-3631 — AUTOCD: command not found, try directory.
-        if hn.is_none() && trycd {
+        if hn.is_none() && !external_found && trycd {
             let cmdarg = args.as_ref().unwrap()[0].clone();
             if let Some(s) = cancd(&cmdarg) {
                 // c:3625

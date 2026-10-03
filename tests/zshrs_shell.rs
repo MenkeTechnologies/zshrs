@@ -16258,3 +16258,38 @@ print -r -- "parent armed:[$(zle -F)]""#;
         "stderr: {err}"
     );
 }
+
+/// c:Src/exec.c:3619-3625 — AUTOCD only applies when the word resolved to
+/// no command: C keeps the `hashcmd` result in `hn`, and `if (!hn && trycd
+/// && …)` then skips the `cd`. The port dropped the external lookup, so a
+/// found command in a pipeline stage was treated as not found; with
+/// CDABLEVARS, zpwr's `se` (`echo … | ${=ZPWR_LEARN_COMMAND} 2>>log | nl`)
+/// ran `cd -- /var/empty` for `mysql` instead of mysql and listed `~mysql`.
+/// Commands read from stdin, so SHINSTDIN is set (c:3650). `ls=/tmp` makes
+/// `ls` cdable; the one-word stage must still run `ls` (nothing to list in
+/// an empty directory), not `cd` (which prints /tmp). Expected output is
+/// zsh 5.9's.
+#[test]
+fn test_autocd_skips_a_word_that_names_a_command() {
+    let script = "PS1=\nsetopt autocd cdablevars\nls=/tmp\nC=ls\nbuiltin cd $(mktemp -d)\nf() { print -r -- x | ${=C} 2>> /dev/null | wc -l; }\nr=$(f)\nprint -r -- \"r=[${r// /}]\"\n";
+    let mut child = Command::new(zshrs_bin())
+        .args(["-f", "-i"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn zshrs");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(script.as_bytes())
+        .expect("write script");
+    let out = child.wait_with_output().expect("wait zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("r=[0]"),
+        "stdout: {stdout:?}\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
