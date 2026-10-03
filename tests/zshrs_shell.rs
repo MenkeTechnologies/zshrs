@@ -14077,6 +14077,21 @@ fn test_reference_slice_assignment_leaves_base_defaulted() {
 }
 
 #[test]
+fn test_assign_default_through_reference_slice_is_no_identifier() {
+    // K01 "create hash by element substitution" (an expected failure
+    // upstream): fetchvalue's reference slice moves the scan into a dyncat
+    // copy (c:Src/params.c:2280-2284), so c:Src/subst.c:3251's
+    // `*idend = '\0'` misses the word and setsparam rejects the rest of it.
+    let (st, out, err) =
+        run_zshrs_parity("typeset -A hash; typeset -n p='hash[y]'; print ${p::=HIT}");
+    assert_eq!((st, out.as_str()), (1, ""), "stderr: {err:?}");
+    assert!(err.contains("not an identifier: p::=HIT}"), "got: {err:?}");
+    // A plain reference assigns as usual.
+    let (st, out, _) = run_zshrs_parity("typeset -n r=s; print ${r::=V} $s");
+    assert_eq!((st, out.as_str()), (0, "V V\n"));
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.

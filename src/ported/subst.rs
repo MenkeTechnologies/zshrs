@@ -16907,6 +16907,23 @@ pub fn paramsubst(
                                 var_name,
                                 crate::subscript_escape::subscript_requote_for_assign(k)
                             ),
+                            // c:2280-2284 — fetchvalue's reference slice moves `s` into a
+                            // fresh dyncat buffer, so c:3038 `idend = s` and c:3251
+                            // `*idend = '\0'` cut that copy, not the word: setsparam gets
+                            // everything from the name to the end of the word.
+                            None if crate::ported::params::is_nameref(&var_name)
+                                && matches!(
+                                    crate::ported::params::resolve_nameref_name(&var_name, None),
+                                    crate::ported::params::nameref_resolution::Target { subscript: Some(_), .. }
+                                ) =>
+                            {
+                                // C's `idbeg` runs on to the end of the word `s`.
+                                let word = untokenize(s.get(start_pos..).unwrap_or(""));
+                                match word.get(2..).and_then(|w| w.find(var_name.as_str())) {
+                                    Some(i) => word[i + 2..].to_string(),
+                                    None => format!("{}{}}}", var_name, r),
+                                }
+                            }
                             None => var_name.clone(),
                         };
                         // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
@@ -17049,6 +17066,23 @@ pub fn paramsubst(
                                     var_name,
                                     crate::subscript_escape::subscript_requote_for_assign(k)
                                 ),
+                                // c:2280-2284 — fetchvalue's reference slice moves `s` into a
+                                // fresh dyncat buffer, so c:3038 `idend = s` and c:3251
+                                // `*idend = '\0'` cut that copy, not the word: setsparam gets
+                                // everything from the name to the end of the word.
+                                None if crate::ported::params::is_nameref(&var_name)
+                                    && matches!(
+                                        crate::ported::params::resolve_nameref_name(&var_name, None),
+                                        crate::ported::params::nameref_resolution::Target { subscript: Some(_), .. }
+                                    ) =>
+                                {
+                                    // C's `idbeg` runs on to the end of the word `s`.
+                                    let word = untokenize(s.get(start_pos..).unwrap_or(""));
+                                    match word.get(2..).and_then(|w| w.find(var_name.as_str())) {
+                                        Some(i) => word[i + 2..].to_string(),
+                                        None => format!("{}{}}}", var_name, r),
+                                    }
+                                }
                                 None => var_name.clone(),
                             };
                             // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
@@ -17193,6 +17227,23 @@ pub fn paramsubst(
                                     var_name,
                                     crate::subscript_escape::subscript_requote_for_assign(k)
                                 ),
+                                // c:2280-2284 — fetchvalue's reference slice moves `s` into a
+                                // fresh dyncat buffer, so c:3038 `idend = s` and c:3251
+                                // `*idend = '\0'` cut that copy, not the word: setsparam gets
+                                // everything from the name to the end of the word.
+                                None if crate::ported::params::is_nameref(&var_name)
+                                    && matches!(
+                                        crate::ported::params::resolve_nameref_name(&var_name, None),
+                                        crate::ported::params::nameref_resolution::Target { subscript: Some(_), .. }
+                                    ) =>
+                                {
+                                    // C's `idbeg` runs on to the end of the word `s`.
+                                    let word = untokenize(s.get(start_pos..).unwrap_or(""));
+                                    match word.get(2..).and_then(|w| w.find(var_name.as_str())) {
+                                        Some(i) => word[i + 2..].to_string(),
+                                        None => format!("{}{}}}", var_name, r),
+                                    }
+                                }
                                 None => var_name.clone(),
                             };
                             // c:3316-3323 — `pm = setsparam(idbeg, val)` then `val =
