@@ -6579,6 +6579,40 @@ mod tests {
         assert_eq!(INSUBSCR.load(Ordering::SeqCst), 0);
     }
 
+    /// c:1170 — get_comp_string lexes with `lexflags = LEXFLAGS_ZLE`, so an
+    /// unclosed `{` is an ordinary word and every word after it is split
+    /// as usual; nothing closes the brace. A lone `{` at the cursor stays
+    /// a word; the c:1940 brace scan moves it into the brace prefix, so
+    /// the cursor word is empty (zsh: `$PREFIX` empty). Covers the zshrs-only
+    /// `intercept … { body }` capture (src/extensions/intercepts.rs),
+    /// which swallowed an unclosed body to end of input and returned
+    /// LEXERR, so `intercept before ls { ech<TAB>` lost `{ ech` from
+    /// `$words` and completed nothing.
+    #[test]
+    fn get_comp_string_unclosed_brace_word_splits_like_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let cases: &[(&str, &[&str], i32, &str)] = &[
+            ("dbgw a { b", &["dbgw", "a", "{", "b"], 3, "b"),
+            ("dbgw { b", &["dbgw", "{", "b"], 2, "b"),
+            ("dbgw a {", &["dbgw", "a", "{"], 2, ""),
+            (
+                "intercept before ls { ech",
+                &["intercept", "before", "ls", "{", "ech"],
+                4,
+                "ech",
+            ),
+        ];
+        for &(line, words, pos, cur) in cases {
+            seed_metaline(line, line.chars().count() as i32);
+            let word = get_comp_string();
+            let got = CLWORDS.lock().unwrap().clone();
+            assert_eq!(got, words, "$words for {line:?}");
+            assert_eq!(CLWPOS.load(Ordering::SeqCst), pos, "clwpos for {line:?}");
+            assert_eq!(word.as_deref(), Some(cur), "cursor word for {line:?}");
+        }
+    }
+
     /// Seed the metafied completion line + cursor the way `docomplete`
     /// does before calling `get_comp_string`.
     fn seed_metaline(line: &str, cursor: i32) {
