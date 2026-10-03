@@ -7611,7 +7611,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         }
                         if !val.is_empty() && !valid_refname(val, flags) {
                             // c:3258-3264
-                            zerr(&format!("invalid variable name: {}", val));
+                            zerr(&format!("invalid name reference: {}", val));
                             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                             return None;
                         }
@@ -9173,7 +9173,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         if !valid_refname(val, pm.node.flags) {
             // c:3259
             drop(tab); // zerr redraws ZLE, which reads paramtab
-            zerr(&format!("invalid variable name: {}", val)); // c:3260
+            zerr(&format!("invalid name reference: {}", val)); // c:3260
             errflag.fetch_or(
                 // c:3263
                 ERRFLAG_ERROR,
@@ -16328,13 +16328,6 @@ pub fn setloopvar(name: &str, value: &str) {
                     // c:6373 — `return;`
                     return;
                 }
-                // c:6375-6378 — `if (!valid_refname(value, pm->node.flags)) {
-                //     zerr("invalid variable name: %s", value); return; }`
-                if !valid_refname(value, pm.node.flags) {
-                    drop(tab); // zerr redraws ZLE, which reads paramtab
-                    zerr(&format!("invalid variable name: {}", value));
-                    return;
-                }
                 // c:6376 — `pm->base = pm->width = 0;`
                 pm.base = 0;
                 pm.width = 0;
@@ -16477,43 +16470,65 @@ pub fn upscope(mut pm: Param, reference: &param) -> Param {
     pm
 }
 
-/// Port of `valid_refname()` from `Src/params.c:6466`.
+/// Port of `valid_refname()` from `Src/params.c:6466-6511`.
 ///
-/// ```c
-/// static int
-/// valid_refname(char *val, int flags)
-/// {
-///     if (flags & PM_UPPER) {
-///         /* Upward reference to positionals is doomed to fail */
-///         if (idigit(*val) || !strcmp(val, "argv") || !strcmp(val, "ARGC"))
-///             return 0;
-///     }
-///     if (*val == '!' || *val == '?' || *val == '$' || *val == '-')
-///         return !*(++val);
-///     return !*itype_end(val, INAMESPC, 0) && isident(val);
-/// }
-/// ```
-///
-/// The whole value must be a (namespaced) identifier: a subscript
-/// (`arr[1]`) or a trailing `@` is not a valid referent.
+/// The referent is a (namespaced) identifier, an all-digit positional,
+/// or one of the one-char specials `! ? $ - _`, optionally followed by
+/// one or more complete `[subscript]`s and nothing else. A `-u`
+/// (PM_UPPER) reference may not name a positional, `argv` or `ARGC`.
 pub fn valid_refname(val: &str, flags: i32) -> bool {
-    // c:6468
+    let b = val.as_bytes();
+    let mut t: usize;
     if (flags as u32 & PM_UPPER) != 0 {
-        // c:6470
-        // c:6471 — Upward reference to positionals is doomed to fail
-        if val.starts_with(|c: char| c.is_ascii_digit()) || val == "argv" || val == "ARGC" {
-            // c:6472
+        // c:6470-6478 — upward reference to positionals is doomed to fail
+        if b.first().is_some_and(u8::is_ascii_digit) {
             return false; // c:6473
         }
+        t = crate::ported::utils::itype_end(val, crate::ported::ztype_h::INAMESPC, false); // c:6474
+        if t == 4 && (val.starts_with("argv") || val.starts_with("ARGC")) {
+            return false; // c:6478
+        }
+    } else if b.first().is_some_and(u8::is_ascii_digit) {
+        // c:6479-6485 — an all-digit positional, optionally subscripted
+        t = 1;
+        while t < b.len() && b[t].is_ascii_digit() {
+            t += 1;
+        }
+        if t < b.len() && b[t] != b'[' {
+            return false; // c:6485
+        }
+    } else {
+        t = crate::ported::utils::itype_end(val, crate::ported::ztype_h::INAMESPC, false); // c:6487
     }
 
-    if let Some(rest) = val.strip_prefix(['!', '?', '$', '-']) {
-        // c:6476
-        return rest.is_empty(); // c:6477
+    if t == 0 {
+        // c:6489-6495
+        if !matches!(b.first(), Some(b'!' | b'?' | b'$' | b'-' | b'_')) {
+            return false;
+        }
+        t = 1;
     }
-
-    crate::ported::utils::itype_end(val, crate::ported::ztype_h::INAMESPC, false) == val.len() // c:6479
-        && isident(val)
+    if b.get(t) == Some(&b'[') {
+        // c:6496-6509 — every `[...]` must close, and nothing may follow
+        // the last one.
+        let mut rest = &val[t + 1..];
+        loop {
+            match parse_subscript(rest, ']') {
+                Some(close) if rest.get(close..).is_some_and(|r| r.starts_with(']')) => {
+                    rest = &rest[close + 1..]; // c:6499 `*t++ == Outbrack`
+                    match rest.strip_prefix('[') {
+                        Some(next) => rest = next, // c:6500-6501
+                        None => break,
+                    }
+                }
+                _ => return false, // c:6510 `return !!t` with t == NULL
+            }
+        }
+        if !rest.is_empty() {
+            return false; // c:6505-6508
+        }
+    }
+    true // c:6510
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -18694,9 +18709,15 @@ mod tests {
         assert!(valid_refname("_bar", 0));
         assert!(valid_refname("1", 0));
         assert!(valid_refname("!", 0));
-        // 54718 (c:Src/params.c:6479): subscripted referents are rejected.
-        assert!(!valid_refname("arr[1]", 0));
-        assert!(!valid_refname("foo@", 0));
+        // c:6496-6509 — complete subscripts may follow; nothing after them.
+        assert!(valid_refname("arr[1]", 0));
+        assert!(valid_refname("hash[y][1,2]", 0));
+        assert!(valid_refname("1[1]", 0));
+        assert!(valid_refname("![1]", 0));
+        assert!(!valid_refname("not[2]good", 0));
+        assert!(!valid_refname("arr[1", 0));
+        assert!(!valid_refname("12x", 0));
+        assert!(!valid_refname("@", 0));
         assert!(!valid_refname("", 0));
         // C semantics: empty leader without one of `! ? $ - _` is rejected.
         assert!(!valid_refname(" ", 0));
