@@ -13986,6 +13986,16 @@ fn test_nameref_invalid_refname_rejected() {
 }
 
 #[test]
+fn test_typeset_p_reports_hide_flag() {
+    // B02 "parameter hiding preserved by typeset -p": pmtypes row
+    // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.
+    let (st, out, err) =
+        run_zshrs_parity("() { local -h status; typeset -p status; local -h x=1; typeset -p x; typeset +m x }");
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(out, "typeset -h status=''\ntypeset -h x=1\nlocal hide x\n");
+}
+
+#[test]
 fn test_nameref_element_reference_reads() {
     // K01 "references to builtin specials": fetchvalue's reference slice
     // (c:Src/params.c:2247-2270) reads the element through the special's
