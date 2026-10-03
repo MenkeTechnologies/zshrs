@@ -1916,24 +1916,14 @@ fn zwhere(args: &[String]) -> i32 {
     {
         let paths = match CachePaths::resolve() {
             Ok(p) => p,
-            Err(e) => {
-                eprintln!("zwhere: cannot resolve $ZSHRS_HOME: {e}");
-                return 1;
-            }
+            Err(e) => return err_exit("zwhere", &format!("cannot resolve $ZSHRS_HOME: {e}")),
         };
         if !Client::is_daemon_alive(&paths) {
-            eprintln!(
-                "zwhere: daemon is not running (no socket at {}).\n\
-                 zwhere queries the canonical catalog the daemon serves; \
-                 there's no source-of-truth fallback.\n\
-                 Start it via:\n  \
-                   zshrs-daemon                                  # foreground manual\n  \
-                   systemctl --user start zshrs-daemon           # Linux\n  \
-                   launchctl load ~/Library/LaunchAgents/com.menketechnologies.zshrs-daemon.plist\n  \
-                   brew services start zshrs",
-                paths.socket.display(),
+            // zwhere reads only the daemon's catalog; there is no fallback.
+            return err_exit(
+                "zwhere",
+                &format!("daemon is not running (no socket at {})", paths.socket.display()),
             );
-            return 1;
         }
     }
 
@@ -2093,22 +2083,13 @@ fn zd(args: &[String]) -> i32 {
     // builtins.
     let paths = match CachePaths::resolve() {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("zd: cannot resolve $ZSHRS_HOME: {e}");
-            return 1;
-        }
+        Err(e) => return err_exit("zd", &format!("cannot resolve $ZSHRS_HOME: {e}")),
     };
     if !Client::is_daemon_alive(&paths) {
-        eprintln!(
-            "zd: daemon is not running (no socket at {}).\n\
-             Start it via:\n  \
-               zshrs-daemon                                  # foreground manual\n  \
-               systemctl --user start zshrs-daemon           # Linux\n  \
-               launchctl load ~/Library/LaunchAgents/com.menketechnologies.zshrs-daemon.plist\n  \
-               brew services start zshrs",
-            paths.socket.display(),
+        return err_exit(
+            "zd",
+            &format!("daemon is not running (no socket at {})", paths.socket.display()),
         );
-        return 1;
     }
     let mut client = match Client::connect_existing(&paths) {
         Ok(c) => c,
