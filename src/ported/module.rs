@@ -1134,8 +1134,26 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
             // the Rust param dispatch reads directly from typed accessors.
             let _ = d.gsu; // c:1092
         } else if t == PM_INTEGER {
-            // c:1095
-            let _ = d.gsu; // c:1096
+            // c:1095-1096 — `pm->gsu.i = d->gsu ? (GsuInteger)d->gsu :
+            // &varinteger_gsu;`. A module's `gsu` is the address of its
+            // static `gsu_integer` (`&srandom_gsu`, Src/Modules/random.c:219).
+            // `pm` is a copy, so the vtable goes onto the live node too.
+            if d.gsu != 0 {
+                let g = unsafe { &*(d.gsu as *const crate::ported::zsh_h::gsu_integer) };
+                let mk = || {
+                    Box::new(crate::ported::zsh_h::gsu_integer {
+                        getfn: g.getfn,
+                        setfn: g.setfn,
+                        unsetfn: g.unsetfn,
+                    })
+                };
+                pm.gsu_i = Some(mk());
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(live) = tab.get_mut(&d.name) {
+                        live.gsu_i = Some(mk());
+                    }
+                }
+            }
         } else if t == PM_FFLOAT || t == PM_EFLOAT {
             // c:1099-1100
             let _ = d.gsu; // c:1101
@@ -1573,6 +1591,8 @@ impl modulestab {
                 "zsh/pcre",
                 &["pcre_compile", "pcre_match", "pcre_study"][..],
             ),
+            // c:Src/Modules/random.mdd — `link=either`, no builtins.
+            ("zsh/random", &[][..]),
             ("zsh/regex", &[][..]),
             ("zsh/sched", &["sched"][..]),
             ("zsh/stat", &["zstat"][..]),
@@ -1750,16 +1770,12 @@ impl modulestab {
         // pins terminfo-before-watch, parameter-before-computil,
         // zle-before-zleparameter and rlimits-before-param/private.
         //
-        // The resulting node count is 16 (15 here + `zsh/main` below),
-        // which is also what the running zsh measures: adding module
-        // aliases one at a time, the 18th alias is the one that
-        // re-hashes the table (17 buckets, expand at `ct >= 34`), so
-        // the boot count is exactly 34 - 18 = 16.
+        // The resulting node count is 17 (16 here + `zsh/main` below),
+        // well under the `ct >= 34` re-hash of the 17-bucket table.
         //
-        // `zsh/hlgroup`, `zsh/ksh93` and `zsh/random` carry `load=yes`
-        // in current zsh git but do not exist in the 5.9.x line this
-        // parity target ships, and zshrs implements none of them, so
-        // they contribute no boot node.
+        // `zsh/hlgroup` and `zsh/ksh93` also carry `load=yes` in the
+        // reference tree's config.modules but zshrs implements neither,
+        // so they contribute no boot node.
         //
         // The `autofeatures` column below is each `.mdd`'s
         // `autofeatures=` line VERBATIM — that string is what
@@ -1824,6 +1840,12 @@ impl modulestab {
                     "p:saliases",
                     "p:dis_saliases",
                 ][..],
+                &[][..],
+            ),
+            // Src/Modules/random.mdd:5
+            (
+                "zsh/random",
+                &["p:SRANDOM", "f:zrand_float", "f:zrand_int"][..],
                 &[][..],
             ),
             // Src/Modules/termcap.mdd:15

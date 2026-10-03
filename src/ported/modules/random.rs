@@ -164,20 +164,29 @@ pub fn get_srandom() -> u32 {
     RAND_BUFF.with(|r| r.borrow()[new_cnt]) // c:145
 }
 
-/// `math_zrand_int(upper, lower, inclusive)` math function.
 /// Port of `math_zrand_int(UNUSED(char *name), int argc, mnumber *argv, UNUSED(int id))` from Src/Modules/random.c:161 — the
-/// C source's math-function entry point exposed to `${(( ... ))}`.
-/// All three arguments are optional; behaviour matches the C
-/// source's bound-checks (`lower < 0`, `upper < lower`, etc.).
-/// WARNING: param names don't match C — Rust=(upper, lower, inclusive) vs C=(name, argc, argv, id)
+/// `zrand_int([upper [, lower [, inclusive]]])` math function.
 pub fn math_zrand_int(
-    upper: Option<i64>,
-    lower: Option<i64>,
-    inclusive: bool,
-) -> Result<i64, String> {
+    _name: &str,
+    argc: i32,
+    argv: &[crate::ported::zsh_h::mnumber],
+    _id: i32,
+) -> crate::ported::zsh_h::mnumber {
     // c:161
-    let lower = lower.unwrap_or(0);
-    let upper = upper.unwrap_or(u32::MAX as i64);
+    let mut ret = crate::ported::zsh_h::mnumber {
+        l: 0,
+        d: 0.0,
+        type_: crate::ported::zsh_h::MN_INTEGER, // c:168
+    };
+    // c:170-177 — `switch (argc)`, falling through from the most
+    // arguments to the fewest.
+    if argc == 0 {
+        ret.l = get_srandom() as i64; // c:171
+        return ret; // c:172
+    }
+    let inclusive = argc >= 3 && argv[2].l != 0; // c:173
+    let lower: i64 = if argc >= 2 { argv[1].l } else { 0 }; // c:174
+    let upper: i64 = argv[0].l; // c:175
 
     // c:179-185 — bound checks are a WARN-ONLY if/else-if chain:
     //
@@ -229,12 +238,14 @@ pub fn math_zrand_int(
     if diff == 0 {
         // c:187
         /* still not convinced this shouldn't be an error. */
-        return Ok(upper); // c:188
+        ret.l = upper; // c:188
+        return ret;
     }
     // c:190 — `get_bound_random_buffer(&i,1,(uint32_t) diff);` — the
     // cast truncates exactly like C for warned out-of-range inputs.
     let r = bounded(diff as u32);
-    Ok(r as i64 + lower) // c:191
+    ret.l = r as i64 + lower; // c:191
+    ret // c:193
 }
 
 /// `math_zrand_float()` math function.
@@ -256,18 +267,23 @@ pub fn math_zrand_int(
 /// returns -1 as the math-function result; prior Rust port skipped
 /// the warn so callers had no signal that `[[ $((zrand_float())) ]]`
 /// produced a sentinel instead of a real probability.
-/// WARNING: param names don't match C — Rust=() vs C=(name, argc, argv, id)
-pub fn math_zrand_float() -> f64 {
+pub fn math_zrand_float(
+    name: &str,
+    _argc: i32,
+    _argv: &[crate::ported::zsh_h::mnumber],
+    _id: i32,
+) -> crate::ported::zsh_h::mnumber {
     // c:204
     let r = random_real(); // c:210
     if r < 0.0 {
         // c:211
-        crate::ported::utils::zwarnnam(
-            "zrand_float", // c:212 — C uses `name`, the math-function name.
-            "Failed to get sufficient random data.",
-        );
+        crate::ported::utils::zwarnnam(name, "Failed to get sufficient random data."); // c:212
     }
-    r // c:215
+    crate::ported::zsh_h::mnumber {
+        l: 0,
+        d: r,                                   // c:214
+        type_: crate::ported::zsh_h::MN_FLOAT, // c:213
+    }
 }
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/random.c:243`.
@@ -480,9 +496,16 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
-    // c:3392 — the name-keyed variant in src/ported/module.rs; this
-    // module ships no `Features` descriptor tables for the per-feature
-    // ADDED bit to live on (see MODULE_FEATURE_ENABLES there).
+    // c:3394-3395 — `if (!enables || *enables) return
+    // setfeatureenables(m, f, enables ? *enables : NULL);`
+    if let Some(e) = enables.as_ref() {
+        let e = e.clone();
+        return setfeatureenables(m, f, Some(&e));
+    }
+    // c:3396 — `*enables = getfeatureenables(m, f);` read from the
+    // name-keyed ADDED ledger in src/ported/module.rs (this module ships
+    // no `Features` descriptor tables for the bit to live on; see
+    // MODULE_FEATURE_ENABLES there).
     crate::ported::module::handlefeatures("zsh/random", &featuresarray(m, f), enables)
 }
 
@@ -490,9 +513,64 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
-    0
+fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
+    // c:3354-3382 — walk bn/cd/mf/pd in that order, each block taking its
+    // slice of the positional enables bitmap; `e == NULL` disables
+    // everything. random.c has no builtins or conditions (c:233-238).
+    let mut ret = crate::ported::module::setfeatureenables("zsh/random", &featuresarray(m, f), e);
+    let (mf_size, pd_size) = {
+        let g = f.lock().unwrap();
+        (g.mf_size as usize, g.pd_size as usize)
+    };
+    let block = |start: usize, len: usize| -> Option<Vec<i32>> {
+        e.map(|a| (0..len).map(|i| a.get(start + i).copied().unwrap_or(0)).collect())
+    };
+    // c:3368-3372 — setmathfuncs over `mftab` (c:228-231).
+    let mf_e = block(0, mf_size);
+    let mftab = MFTAB.get_or_init(|| {
+        Mutex::new(vec![
+            crate::ported::zsh_h::NUMMATHFUNC("zrand_float", math_zrand_float, 0, 0, 0), // c:229
+            crate::ported::zsh_h::NUMMATHFUNC("zrand_int", math_zrand_int, 0, 3, 0),    // c:230
+        ])
+    });
+    if crate::ported::module::setmathfuncs("zsh/random", &mut mftab.lock().unwrap(), mf_e.as_deref()) != 0 {
+        ret = 1; // c:3370
+    }
+    // c:3373-3378 — setparamdefs over `patab` (c:222-225).
+    let pd_e = block(mf_size, pd_size);
+    let patab = PATAB.get_or_init(|| {
+        Mutex::new(vec![crate::ported::zsh_h::PARAMDEF(
+            "SRANDOM", // c:223
+            (crate::ported::zsh_h::PM_INTEGER
+                | crate::ported::zsh_h::PM_READONLY_SPECIAL
+                | crate::ported::zsh_h::PM_HIDEVAL) as i32,
+            0,
+            &SRANDOM_GSU as *const crate::ported::zsh_h::gsu_integer as usize, // c:224
+        )])
+    });
+    if crate::ported::module::setparamdefs("zsh/random", &mut patab.lock().unwrap(), pd_e.as_deref()) != 0 {
+        ret = 1; // c:3377
+    }
+    ret // c:3382
 }
+
+/// `static const struct gsu_integer srandom_gsu` (random.c:219-220).
+static SRANDOM_GSU: crate::ported::zsh_h::gsu_integer = crate::ported::zsh_h::gsu_integer {
+    // c:219 `get_srandom` — its `Param` argument is unused.
+    getfn: |_pm| get_srandom() as i64,
+    setfn: crate::ported::params::nullintsetfn,
+    unsetfn: crate::ported::params::stdunsetfn,
+};
+
+
+/// `static struct mathfunc mftab[]` (random.c:228-231); the per-row
+/// `MFF_ADDED` bit setmathfuncs keeps lives here, as on C's static table.
+static MFTAB: OnceLock<Mutex<Vec<crate::ported::zsh_h::mathfunc>>> = OnceLock::new();
+
+/// `static struct paramdef patab[]` (random.c:222-225); `d->pm` is the
+/// per-parameter enable bit setparamdefs keeps.
+static PATAB: OnceLock<Mutex<Vec<crate::ported::zsh_h::paramdef>>> = OnceLock::new();
+
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
@@ -539,6 +617,22 @@ fn module_features() -> &'static Mutex<features> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `zrand_int(upper, lower, inclusive)` through the mathfunc entry.
+    fn zri(upper: Option<i64>, lower: Option<i64>, incl: bool) -> Result<i64, String> {
+        let mk = |l: i64| crate::ported::zsh_h::mnumber {
+            l,
+            d: 0.0,
+            type_: crate::ported::zsh_h::MN_INTEGER,
+        };
+        let argv = [mk(upper.unwrap_or(u32::MAX as i64)), mk(lower.unwrap_or(0)), mk(incl as i64)];
+        Ok(math_zrand_int("zrand_int", 3, &argv, 0).l)
+    }
+
+    /// `zrand_float()` through the mathfunc entry.
+    fn zrf() -> f64 {
+        math_zrand_float("zrand_float", 0, &[], 0).d
+    }
 
     #[test]
     fn test_random_state() {
@@ -588,17 +682,17 @@ mod tests {
     #[test]
     fn test_zrand_int() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(Some(100), Some(50), false).unwrap();
+        let r = zri(Some(100), Some(50), false).unwrap();
         assert!((50..100).contains(&r));
 
-        let r = math_zrand_int(Some(100), Some(50), true).unwrap();
+        let r = zri(Some(100), Some(50), true).unwrap();
         assert!((50..=100).contains(&r));
     }
 
     #[test]
     fn test_zrand_int_no_args() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(None, None, false).unwrap();
+        let r = zri(None, None, false).unwrap();
         assert!(r >= 0);
     }
 
@@ -608,15 +702,15 @@ mod tests {
         // c:179-185 — bound violations WARN (zwarn, no return); C
         // falls through to the (uint32_t)diff truncating draw, so the
         // call still yields a value.
-        assert!(math_zrand_int(Some(50), Some(100), false).is_ok());
-        assert!(math_zrand_int(Some(-1), None, false).is_ok());
+        assert!(zri(Some(50), Some(100), false).is_ok());
+        assert!(zri(Some(-1), None, false).is_ok());
     }
 
     #[test]
     fn test_zrand_float() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..100 {
-            let r = math_zrand_float();
+            let r = zrf();
             assert!((0.0..1.0).contains(&r));
         }
     }
@@ -653,7 +747,7 @@ mod tests {
         assert!(!buf.iter().all(|&b| b == 0));
     }
 
-    /// c:161 — `math_zrand_int(upper, lower, inclusive=true)` returns
+    /// c:161 — `zri(upper, lower, inclusive=true)` returns
     /// values in `[lower, upper]`. 50 iterations to verify EVERY
     /// returned value lies in range — regression returning out-of-
     /// bounds values would silently corrupt arithmetic-driven scripts.
@@ -661,7 +755,7 @@ mod tests {
     fn math_zrand_int_inclusive_range_respects_bounds() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            let v = math_zrand_int(Some(10), Some(5), true).unwrap();
+            let v = zri(Some(10), Some(5), true).unwrap();
             assert!(
                 (5..=10).contains(&v),
                 "value {v} out of inclusive range [5, 10]"
@@ -675,7 +769,7 @@ mod tests {
     fn math_zrand_int_exclusive_excludes_upper_bound() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            let v = math_zrand_int(Some(10), Some(5), false).unwrap();
+            let v = zri(Some(10), Some(5), false).unwrap();
             assert!(
                 (5..10).contains(&v),
                 "value {v} out of exclusive range [5, 10)"
@@ -690,7 +784,7 @@ mod tests {
     fn math_zrand_float_in_unit_interval() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            let v = math_zrand_float();
+            let v = zrf();
             assert!(
                 (0.0..1.0).contains(&v),
                 "value {v} out of unit interval [0.0, 1.0)"
@@ -730,7 +824,7 @@ mod tests {
     fn random_corpus_math_zrand_float_unit_interval() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            let v = math_zrand_float();
+            let v = zrf();
             assert!((0.0..1.0).contains(&v), "value {v} out of [0.0, 1.0)");
         }
     }
@@ -777,12 +871,12 @@ mod tests {
     // Additional C-parity tests for Src/Modules/random.c.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// c:161 — `math_zrand_int(None, None, false)` returns Ok value in
+    /// c:161 — `zri(None, None, false)` returns Ok value in
     /// [0, u32::MAX) range (defaults: lower=0, upper=u32::MAX, exclusive).
     #[test]
     fn math_zrand_int_default_bounds_returns_ok() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(None, None, false).expect("default bounds → Ok");
+        let r = zri(None, None, false).expect("default bounds → Ok");
         assert!(r >= 0, "result must be ≥ 0");
         assert!(r <= u32::MAX as i64, "result must fit in u32 range");
     }
@@ -792,7 +886,7 @@ mod tests {
     #[test]
     fn math_zrand_int_negative_lower_warns_and_continues() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(Some(100), Some(-1), false);
+        let r = zri(Some(100), Some(-1), false);
         let v = r.expect("c:179 warns without returning");
         assert!((-1..100).contains(&v), "result in wrapped range, got {}", v);
     }
@@ -802,7 +896,7 @@ mod tests {
     #[test]
     fn math_zrand_int_lower_above_u32_max_warns_and_continues() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(Some(100), Some((u32::MAX as i64) + 1), false);
+        let r = zri(Some(100), Some((u32::MAX as i64) + 1), false);
         assert!(r.is_ok(), "c:179 warns without returning");
     }
 
@@ -812,7 +906,7 @@ mod tests {
     #[test]
     fn math_zrand_int_upper_below_lower_warns_and_continues() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(Some(5), Some(10), false);
+        let r = zri(Some(5), Some(10), false);
         assert!(r.is_ok(), "c:181 warns without returning");
     }
 
@@ -821,7 +915,7 @@ mod tests {
     #[test]
     fn math_zrand_int_upper_equals_lower_returns_bound() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(Some(7), Some(7), false).expect("equal bounds OK");
+        let r = zri(Some(7), Some(7), false).expect("equal bounds OK");
         assert_eq!(r, 7, "diff=0 → returns upper");
     }
 
@@ -830,7 +924,7 @@ mod tests {
     #[test]
     fn math_zrand_int_inclusive_single_point_returns_lower() {
         let _g = crate::test_util::global_state_lock();
-        let r = math_zrand_int(Some(42), Some(42), true).expect("OK");
+        let r = zri(Some(42), Some(42), true).expect("OK");
         assert_eq!(r, 42, "inclusive single-point → that point");
     }
 
@@ -839,21 +933,21 @@ mod tests {
     fn math_zrand_int_result_in_range() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            let r = math_zrand_int(Some(10), Some(0), false).unwrap();
+            let r = zri(Some(10), Some(0), false).unwrap();
             assert!(r >= 0 && r < 10, "exclusive [0,10): got {}", r);
         }
         for _ in 0..50 {
-            let r = math_zrand_int(Some(10), Some(0), true).unwrap();
+            let r = zri(Some(10), Some(0), true).unwrap();
             assert!(r >= 0 && r <= 10, "inclusive [0,10]: got {}", r);
         }
     }
 
-    /// c:204 — `math_zrand_float()` returns value in [0.0, 1.0).
+    /// c:204 — `zrf()` returns value in [0.0, 1.0).
     #[test]
     fn math_zrand_float_in_zero_one_range() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            let r = math_zrand_float();
+            let r = zrf();
             assert!(r >= 0.0 && r < 1.0, "must be in [0,1): got {}", r);
         }
     }
@@ -864,8 +958,8 @@ mod tests {
     #[test]
     fn math_zrand_float_produces_varied_output() {
         let _g = crate::test_util::global_state_lock();
-        let first = math_zrand_float();
-        let any_different = (0..100).any(|_| math_zrand_float() != first);
+        let first = zrf();
+        let any_different = (0..100).any(|_| zrf() != first);
         assert!(
             any_different,
             "100 calls should produce ≥ 1 different value"
@@ -951,12 +1045,12 @@ mod tests {
         let _: u32 = get_srandom();
     }
 
-    /// c:219 — `math_zrand_float()` returns f64 strictly in [0.0, 1.0).
+    /// c:219 — `zrf()` returns f64 strictly in [0.0, 1.0).
     #[test]
     fn math_zrand_float_strictly_in_half_open_unit() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            let v = math_zrand_float();
+            let v = zrf();
             assert!(
                 v >= 0.0 && v < 1.0,
                 "math_zrand_float = {} must be in [0.0, 1.0)",
@@ -1171,7 +1265,7 @@ mod tests {
     #[test]
     fn math_zrand_float_returns_f64_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: f64 = math_zrand_float();
+        let _: f64 = zrf();
     }
 
     /// c:219 — `math_zrand_float` outputs always finite (no NaN/Inf).
@@ -1179,7 +1273,7 @@ mod tests {
     fn math_zrand_float_always_finite() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..500 {
-            let v = math_zrand_float();
+            let v = zrf();
             assert!(
                 v.is_finite(),
                 "math_zrand_float must always be finite, got {}",

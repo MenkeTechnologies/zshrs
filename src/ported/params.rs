@@ -6561,7 +6561,10 @@ pub fn getsparam(name: &str) -> Option<String> {
             // case) fall through unchanged. Bug #24 in docs/BUGS.md.
             let raw: Option<String> = if t == PM_INTEGER {
                 let base = if pm.base > 0 { pm.base } else { 10 };
-                Some(convbase(pm.u_val, base as u32))
+                // c:2364 `convbase(buf, v->pm->gsu.i->getfn(v->pm), …)` — a
+                // module integer (`$SRANDOM`) answers through its getfn.
+                let val = pm.gsu_i.as_ref().map_or(pm.u_val, |g| (g.getfn)(pm));
+                Some(convbase(val, base as u32))
             } else if t == PM_EFLOAT || t == PM_FFLOAT {
                 Some(convfloat(pm.u_dval, pm.base, pm.node.flags as u32))
             } else if t == PM_SCALAR && pm.gsu_s.is_some() {

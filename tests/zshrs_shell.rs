@@ -13977,6 +13977,24 @@ fn test_private_from_deeper_scope_is_read_only() {
 }
 
 #[test]
+fn test_srandom_autoloads_from_zsh_random() {
+    // B02 "Global non -h variable doesn't hide special variable": the boot
+    // autofeatures of Src/Modules/random.mdd plant a PM_AUTOLOAD stub for
+    // SRANDOM, `zmodload -u` restores it (c:Src/module.c:2903-2909), and
+    // the next read loads the module again through its gsu getfn.
+    let (st, out, err) = run_zshrs_parity(
+        "print ${(t)SRANDOM}; zmodload -u zsh/random; zmodload -ap | grep SRANDOM; \
+         print ${SRANDOM/<->/integer} $(( zrand_int(5) < 5 )) $(( zrand_float() < 1 ))",
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(
+        out,
+        "integer-readonly-hideval-special\nSRANDOM (zsh/random)\ninteger 1 1\n"
+    );
+}
+
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.
