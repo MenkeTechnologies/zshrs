@@ -187,7 +187,7 @@
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZTST DIVERGENCES</h2>
 <div class="tbl"><table class="fn-table">
-  <thead><tr><th>File</th><th class="num">#</th><th>Assertion</th><th>Differs in</th><th>Status</th></tr></thead>
+  <thead><tr><th>File</th><th class="num">#</th><th>Assertion</th><th>Differs in</th><th>v0.13.3</th><th>main, 2026-10-03</th></tr></thead>
   <tbody id="ztfail"></tbody>
 </table></div>
 <div class="note">Other direction: zshrs passes 3 assertions zsh marks expected-to-fail (D04parameter #231, E03posix #13, V01zmodload #35), and 41 that fail or cannot run in this zsh build (V07pcre, V10private, and 4 V01zmodload checks that need every module to load).</div>
@@ -252,6 +252,7 @@
   <li>TAB screens: <code>scripts/comptab_parity.py</code>, native mode, pinned zsh-written compdump.</li>
   <li>Surface and daily-driver checks compare against the host zsh 5.9.2.</li>
   <li>C port coverage is read from the published port report (generated 2026-10-01), not regenerated for this page.</li>
+  <li>The <i>main, 2026-10-03</i> column re-runs the 7 files holding the 9 divergences through <code>scripts/ztst_compsys.py --core</code> with a debug build of main against a zsh 5.9.1 built from the <code>zsh-5.9.1</code> tag; every other figure on this page is the v0.13.3 run.</li>
 </ul>
 </main>
 </div>
@@ -281,15 +282,15 @@ const CATS = [
 ];
 const FILES = [["A01grammar",109,109],["A02alias",18,18],["A03quoting",11,11],["A04redirect",78,77],["A05execution",39,37],["A06assign",103,102],["A07control",17,17],["A09zwc",2,2],["B01cd",6,5],["B02typeset",79,79],["B03print",66,66],["B04read",16,16],["B05eval",4,4],["B06fc",4,4],["B07emulate",20,20],["B08shift",2,2],["B09hash",10,10],["B10getopts",20,20],["B11kill",8,8],["B12limit",2,2],["B13whence",3,3],["C01arith",73,73],["C02cond",59,59],["C03traps",75,75],["C04funcdef",52,52],["C05debug",8,8],["D01prompt",15,15],["D02glob",74,74],["D03procsubst",19,19],["D04parameter",241,241],["D05array",20,20],["D06subscript",36,36],["D07multibyte",49,49],["D08cmdsubst",26,26],["D09brace",28,28],["E01options",94,92],["E02xtrace",14,13],["E03posix",10,10],["P01privileged",0,0],["V01zmodload",34,34],["V02zregexparse",61,61],["V03mathfunc",11,11],["V04features",24,24],["V05styles",23,23],["V06parameter",4,4],["V07pcre",0,0],["V08zpty",2,2],["V09datetime",14,14],["V10private",0,0],["V11db_gdbm",0,0],["V12zparseopts",14,14],["V13zformat",6,6],["V14system",14,14],["W01history",7,7],["W02jobs",11,10],["W03jobparameters",3,3],["X02zlevi",94,94],["X03zlebindkey",9,9],["X04zlehighlight",12,12],["Z01is-at-least",2,2],["Z02zmathfunc",6,6],["Z03run-help",12,12],["Y01completion",27,27],["Y02compmatch",51,51],["Y03arguments",97,97],["Y04regexargs",0,0],["Y05describe",0,0],["Y06values",0,0]];
 const ZTFAIL = [
-  ["A04redirect", 34, "multio with globbing", "stderr"],
-  ["A05execution", 33, "'wait' exit status and warning for unknown ID", "stderr"],
-  ["A05execution", 34, "'wait' exit status for unknown ID (POSIX mode)", "stdout"],
-  ["A06assign", 76, "GLOB_ASSIGN doesn't monkey with type if not scalar assignment", "stderr"],
-  ["B01cd", 5, "Implicit cd with unset HOME", "stderr"],
-  ["E01options", 12, "CLOBBER option", "stderr"],
-  ["E01options", 92, "RM_STAR_SILENT", "stdout"],
-  ["E02xtrace", 6, "a function that redefines itself preserves tracing", "stdout"],
-  ["W02jobs", 11, "various `kill` signals with multiple running jobs", "stdout"]
+  ["A04redirect", 34, "multio with globbing", "stderr", "pass", "passes with no code change; the 0.13.3 miss did not recur in repeated runs"],
+  ["A05execution", 33, "'wait' exit status and warning for unknown ID", "stderr", "fail", "open: zsh gives every running pipeline a job slot (exec.c initjob), so a function in progress becomes $prevjob and leaves %% pointing at a freed slot; zshrs allocates slots only at fork time"],
+  ["A05execution", 34, "'wait' exit status for unknown ID (POSIX mode)", "stdout", "fail", "open: same job-slot cause as #33"],
+  ["A06assign", 76, "GLOB_ASSIGN doesn't monkey with type if not scalar assignment", "stderr", "pass", "passes with no code change"],
+  ["B01cd", 5, "Implicit cd with unset HOME", "stderr", "pass", "fixed: the -c error prefix names the executed file, not argv[0]"],
+  ["E01options", 12, "CLOBBER option", "stderr", "pass", "fixed: a debug print in the RM_STAR check wrote to stderr"],
+  ["E01options", 92, "RM_STAR_SILENT", "stdout", "pass", "fixed: same debug print"],
+  ["E02xtrace", 6, "a function that redefines itself preserves tracing", "stdout", "build", "oracle build: this zsh was configured without --enable-unicode9, so it prints byte 0xE3 as \\M-c under LC_ALL=C; zsh 5.9.2 from Homebrew prints the raw byte, as zshrs does"],
+  ["W02jobs", 11, "various `kill` signals with multiple running jobs", "stdout", "pass", "passes with no code change"]
 ];
 const TABFAIL = [
   ["echo $", 324, 340, "candidate count"], ["echo ${", 324, 340, "candidate count"],
@@ -351,8 +352,9 @@ document.getElementById("wall").innerHTML = FILES.map(([f, z, b]) => {
   return `<div class="tile ${cls}" title="${esc(f)}"><span class="n">${esc(f)}</span><span class="c">${z === 0 ? "not run" : b + " / " + z}</span></div>`;
 }).join("");
 
-document.getElementById("ztfail").innerHTML = ZTFAIL.map(([f, n, msg, kind]) =>
-  `<tr><td><code>${esc(f)}</code></td><td class="num">${n}</td><td>${esc(msg)}</td><td>${kind}</td><td>${pill("fail", "fail")}</td></tr>`).join("");
+document.getElementById("ztfail").innerHTML = ZTFAIL.map(([f, n, msg, kind, now, why]) =>
+  `<tr><td><code>${esc(f)}</code></td><td class="num">${n}</td><td>${esc(msg)}</td><td>${kind}</td><td>${pill("fail", "fail")}</td>` +
+  `<td>${now === "pass" ? pill("pass", "pass") : now === "build" ? pill("tag", "oracle build") : pill("fail", "fail")} ${esc(why)}</td></tr>`).join("");
 
 document.getElementById("tabfail").innerHTML = TABFAIL.map(([buf, z, r, what]) => {
   const d = z == null ? "" : (r < z ? `<span style="color:#ff6b6b">&minus;${z - r}</span>` : `+${r - z}`);
