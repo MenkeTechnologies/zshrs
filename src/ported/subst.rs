@@ -6829,9 +6829,25 @@ pub fn paramsubst(
                     _ => ('\0', '\0'),
                 };
                 if open != '\0' {
+                    // c:2672 `skipparens(*s, outtok, &s)` counts only the
+                    // Inbrace/Outbrace (Inpar/Outpar) TOKENS; a source `\{`
+                    // lexes to Bnull + literal `{` and never counts. On the
+                    // raw-ASCII bridge body the escape survives as `\` / Bnull
+                    // before the brace, so an escaped ASCII brace is skipped
+                    // here — the same gate the entry pre-tokenize pass uses.
+                    // Without it `${(M)${(s:,:)${j//\{/,}}:#a*}` never closed
+                    // the nested `${`, swallowing `:#a*` into the inner text.
+                    let ascii = open == '{' || open == '(';
                     let mut depth = 0_i32;
                     while p < body_chars.len() {
                         let ch = body_chars[p];
+                        let escaped = ascii
+                            && p > 0
+                            && (body_chars[p - 1] == '\\' || body_chars[p - 1] == Bnull);
+                        if escaped {
+                            p += 1;
+                            continue;
+                        }
                         if ch == open {
                             depth += 1;
                         } else if ch == close {

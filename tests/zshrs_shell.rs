@@ -16343,3 +16343,25 @@ fn test_autocd_for_a_literal_command_word() {
         .collect();
     assert_eq!(got, ["A=/tmp", "B=/usr", "C=/tmp", "D=/", "E=/"], "stdout: {stdout:?}");
 }
+
+/// c:Src/subst.c:2672 `skipparens(*s, outtok, &s)` closes a nested `${…}`
+/// on Inbrace/Outbrace tokens only; a source `\{` is Bnull + literal `{`
+/// and never counts. The `(M)`/`(@)` + `:#` bridge path hands paramsubst a
+/// raw-ASCII body, and its nested-subexp scan counted the escaped `{`, so
+/// the inner `${` never closed and the outer `:#pat` was swallowed into
+/// the inner text (`b}:#a*` appeared as a word). Expected output is zsh 5.9's.
+#[test]
+fn test_nested_subexp_escaped_brace_keeps_outer_filter() {
+    let (status, out, err) = run_zshrs_parity(
+        r#"j='{"a":1,"b":2}'; x=( ${(M)${(s:,:)${j//\{/,}}:#\"a\":*} ); print -rl -- $x
+           j='{a,b}'
+           print -rl -- ${(M)${(s:,:)${j//\{/,}}:#a*}
+           print -rl -- ${(@)${(s:,:)${j//\{/,}}:#a*}
+           print -rl -- ${(M)${j//\{/,}:#,a*}
+           print -r -- "${(M)${(s:,:)${j//\{/,}}:#a*}"
+           x=${(M)${(s:,:)${j//\{/,}}:#a*}; print -r -- $x
+           j='(a,b)'; print -rl -- ${(M)${(s:,:)${j//\(/,}}:#a*}"#,
+    );
+    assert_eq!(status, 0, "stderr: {err}");
+    assert_eq!(out, "\"a\":1\na\nb}\n,a,b}\na b}\na\na\n", "stderr: {err}");
+}
