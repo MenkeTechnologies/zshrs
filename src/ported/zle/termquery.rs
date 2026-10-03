@@ -724,7 +724,7 @@ pub fn handle_query(
 }
 
 /// Direct port of `void query_terminal(void)` from
-/// `Src/Zle/termquery.c:505`. Sends the terminal probes that
+/// `Src/Zle/termquery.c:505-546`. Sends the terminal probes that
 /// `$.term.extensions` does not rule out, in one burst, and parses the
 /// replies with `probe_terminal`: default colours into `$.term.fg` /
 /// `$.term.bg` / `$.term.mode`, name and version into `$.term.id` /
@@ -734,50 +734,32 @@ pub fn query_terminal() {
     // c:505
     let mut tquery = String::new(); // c:506-507
     let flist = crate::ported::params::getaparam(EXTVAR).unwrap_or_default(); // c:509
-    let envid = crate::ported::params::getsparam("TERM_PROGRAM"); // c:510
-    let mut badapple = false; // c:511
 
-    /* If TERM_PROGRAM is set in the environment, use that and
-     * skip the XTVERSION query */
-    if let Some(envid) = envid.as_deref() {
-        // c:516
-        handle_query(4, &[], 0, envid.as_bytes(), envid.len() as i32, &mut None); // c:518
-        if let Some(envver) = crate::ported::params::getsparam("TERM_PROGRAM_VERSION") {
-            // c:519
-            handle_query(5, &[], 0, envver.as_bytes(), envver.len() as i32, &mut None); // c:520
-            /* Older macOS terminal doesn't consume RGB queries,
-             * nor does it support truecolor. Given that it's widely
-             * used, we handle it explicitly. */
-            badapple = envid == "Apple_Terminal"
-                && crate::ported::utils::zstrtol(&envver, 10).0 < 470; // c:524-525
-        }
-    }
-
-    // c:529-531
+    // c:512-514
     if flist.iter().any(|f| f == "-query") {
         return; /* disable all queries */
     }
 
     for i in 0..QUERIES.len() {
-        // c:533
-        let last = i >= FEATURES.len(); // c:534
-        let mut found = last && tquery.is_empty(); // c:535
-        let mut enable = false; // c:536
+        // c:516
+        let last = i >= FEATURES.len(); // c:517
+        let mut found = last && tquery.is_empty(); // c:518
+        let mut enable = false; // c:519
 
         /* skip if the query or corresponding feature is already in the list */
-        // c:540 — `for (f = flist; !last && !found && f && *f; f++)`
+        // c:523 — `for (f = flist; !last && !found && f && *f; f++)`
         for f in flist.iter() {
             if last || found {
                 break;
             }
             /* just i=3(TQ_KITTYKB) is disabled by default */
-            enable = i == 3 && f.strip_prefix("query-") == Some(FEATURES[i]); // c:542
+            enable = i == 3 && f.strip_prefix("query-") == Some(FEATURES[i]); // c:525
             found = enable
                 || f.strip_prefix('-').unwrap_or(f) == FEATURES[i]
-                || f.strip_prefix("-query-") == Some(FEATURES[i]); // c:543-544
+                || f.strip_prefix("-query-") == Some(FEATURES[i]); // c:526-527
         }
         if if found { !enable } else { i == 3 } {
-            continue; // c:546-547
+            continue; // c:529-530
         }
         /* if termcap indicates 24-bit color, assume support - even
          * though this is only based on the initial $TERM
@@ -787,15 +769,15 @@ pub fn query_terminal() {
             && (crate::ported::init::tccolours.load(Ordering::SeqCst) == 1 << 24
                 || matches!(cterm.as_deref(), Some("truecolor") | Some("24bit")))
         {
-            handle_query(3, &[], 0, &[], 0, &mut None); // c:551-555
-        } else if (i != 4 || !badapple) && (i != 5 || envid.is_none()) {
-            tquery.push_str(QUERIES[i]); /* collate escape sequences */ // c:556-558
+            handle_query(3, &[], 0, &[], 0, &mut None); // c:534-538
+        } else {
+            tquery.push_str(QUERIES[i]); /* collate escape sequences */ // c:539-541
         }
     }
 
     if !tquery.is_empty() {
         /* unless nothing left after filtering */
-        probe_terminal(&tquery, QUERY_STATES, handle_query, &mut None); // c:561-562
+        probe_terminal(&tquery, QUERY_STATES, handle_query, &mut None); // c:544-545
     }
 }
 
