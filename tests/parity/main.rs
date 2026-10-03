@@ -56,6 +56,7 @@ mod command_hash_table_parity;
 mod command_precedence_parity;
 mod compinit_compautos_parity;
 mod compset_pattern_parity;
+mod compsys_special_params_lifecycle_parity;
 mod compsys_local_leak_parity;
 mod arguments_empty_action_parity;
 mod completion_invalid_bytes_parity;

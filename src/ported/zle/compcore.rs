@@ -1412,15 +1412,20 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     };
     set_compstate_str("insert", &ins); // c:781
 
-    // c:790-794 — `$compstate[exact]` & `$compstate[exact_string]`.
-    set_compstate_str(
-        "exact",
-        if useexact.load(Ordering::Relaxed) != 0 {
-            "accept"
-        } else {
-            ""
-        },
-    );
+    // c:785-790 — `$compstate[exact]`:
+    //     if (useexact) compexact = ztrdup("accept");
+    //     else { compexact = ztrdup(""); kset &= ~CP_EXACT; }
+    // Outside `kset` the key is PM_UNSET (c:818 comp_setunset), so it is
+    // not in `${(k)compstate}`. The store has no per-key unset bit, so the
+    // unset key is represented by its absence; the c:912 read-back treats
+    // an absent key as the "" published here (useexact stays 0).
+    if useexact.load(Ordering::Relaxed) != 0 {
+        set_compstate_str("exact", "accept"); // c:786
+    } else if let Ok(mut tab) = paramtab_hashed_storage().lock() {
+        if let Some(h) = tab.get_mut("compstate") {
+            h.shift_remove("exact"); // c:788-789
+        }
+    }
 
     // c:791-794 — `$compstate[to_end]` per movetoend.
     set_compstate_str(
