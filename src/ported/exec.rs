@@ -5306,6 +5306,11 @@ pub struct SubshForkCopy {
     /// for the subshell's failing status (`c:1651-1659`) must still see the
     /// value it had on entry, or `(false)` runs ZERR once instead of twice.
     donetrap: i32,
+    /// `zpc_disables[]` (`Src/pattern.c:4179`) — `disable -p` / `enable -p`.
+    /// A fork leaves the parent's array alone, so `( disable -p '*' )`
+    /// must not keep `*` disabled afterwards. Held as the
+    /// `savepatterndisables()` bitmap (`c:4220`).
+    pattern_disables: u32,
 }
 
 impl SubshForkCopy {
@@ -5385,6 +5390,7 @@ impl SubshForkCopy {
                 .map(|t| *t)
                 .unwrap_or_default(),
             donetrap: DONETRAP.load(Ordering::Relaxed),
+            pattern_disables: crate::ported::pattern::savepatterndisables(),
         }
     }
 
@@ -5457,6 +5463,7 @@ impl SubshForkCopy {
             *t = self.shtimer;
         }
         DONETRAP.store(self.donetrap, Ordering::Relaxed);
+        crate::ported::pattern::restorepatterndisables(self.pattern_disables); // c:4258
         if let Ok(mut t) = crate::ported::hashtable::aliastab_lock().write() {
             t.restore(self.aliastab);
         }

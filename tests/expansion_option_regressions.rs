@@ -50,3 +50,20 @@ fn subscript_only_lhs_is_not_an_identifier() {
     let (_ec, _out, err) = run("echo [a]=b");
     assert!(err.contains("no matches found: [a]=b"), "{err}");
 }
+
+/// c:Src/pattern.c:4179 `zpc_disables[]` lives in the forked child, so a
+/// `disable -p` / `enable -p` inside `( … )` or `$( … )` never reaches the
+/// parent. zshrs runs subshells in-process and did not roll the array back,
+/// so D02glob.ztst's `disable -p '*'` chunk broke every later glob.
+#[test]
+fn pattern_disables_do_not_leak_out_of_subshells() {
+    for (script, want) in [
+        ("( disable -p '*' ); disable -p; echo end", "end\n"),
+        ("x=$(disable -p '('); disable -p; echo end", "end\n"),
+        ("( disable -p '*'; disable -p ); disable -p; echo end", "'*'\nend\n"),
+        ("disable -p '*'; ( enable -p '*' ); disable -p", "'*'\n"),
+    ] {
+        let (_ec, out, _err) = run(script);
+        assert_eq!(out, want, "{script:?}");
+    }
+}
