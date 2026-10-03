@@ -2119,7 +2119,7 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ### `[ "5" \> "3" ]` and `[ "5" \< "3" ]` silently returned 0 (string-compared) instead of erroring
 
-- zsh's POSIX `[`-test does NOT accept `<` or `>` as string comparators — they're redirection operators outside `[`/`]`. `[ "5" \> "3" ]` -> `1: condition expected: >` exit 2. zshrs's match arms had `[a, "<", b]` and `[a, ">", b]` doing string compares (a bashism), hiding the syntax error. Replaced both arms with the zsh diagnostic. The `[[`-cond compiler still handles them as proper string comparators where they ARE valid. Test: `test_test_lt_gt_not_string_comparators`.
+- zsh's POSIX `[`-test does NOT accept `<` or `>` as string comparators — they're redirection operators outside `[`/`]`. `[ "5" \> "3" ]` -> `1: condition expected: >` exit 2. zshrs's match arms had `[a, "<", b]` and `[a, ">", b]` doing string compares (a bashism), hiding the syntax error. Replaced both arms with the zsh diagnostic. The `[[`-cond compiler still handles them as proper string comparators where they ARE valid. Superseded by upstream 54103, in the zsh master the ztst corpus tracks: `[`/`test` now accept `<` and `>` as string comparators (C02cond.ztst:217,220), and zshrs follows it.
 
 ## Closed (eighty-third-pass)
 

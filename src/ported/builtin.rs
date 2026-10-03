@@ -16665,25 +16665,6 @@ struct TestParse<'a> {
     /// (c:Src/parse.c:89-96). `bin_test` checks it before anything else and
     /// returns 2 with no further diagnostic (c:7284-7288).
     errflag: bool,
-    /// !!! WARNING: RUST-ONLY FIELD (no C counterpart) !!!
-    ///
-    /// C zsh grew `<` / `>` lexical string comparison in the `test` builtin
-    /// with commit f51fed9dda (54103), which added three things at once: the
-    /// INANG/OUTANG arms of `testlex` (c:Src/builtin.c:7246-7249), the two
-    /// extra spellings in `par_cond_2`'s binary-operator list
-    /// (c:Src/parse.c:2498-2499) and the `COND_STRGTR`/`COND_STRLT` arm of
-    /// `par_cond_triple` (c:Src/parse.c:2666-2671). The zsh this build is
-    /// checked against (5.9.2) predates it and reports
-    /// `condition expected: >` instead, which
-    /// `tests/zshrs_shell.rs::test_test_lt_gt_not_string_comparators` pins.
-    /// Bourne-family drop-ins (`sh`/`ksh`/`dash`/`bash`) have always accepted
-    /// the operators, so the three arms stay live under `posix_faithful()`
-    /// and are switched off in `--zsh` mode.
-    ///
-    /// This replaces an argv-wide `any(a == "<" || a == ">")` rejection which
-    /// also killed the forms 5.9.2 ACCEPTS, where the angle bracket is an
-    /// operand rather than the operator (`[ -n \> ]` → true).
-    angle_ops: bool,
 }
 
 impl<'a> TestParse<'a> {
@@ -16696,7 +16677,6 @@ impl<'a> TestParse<'a> {
             tok: TEST_NULLTOK,
             tokstr: None,
             errflag: false,
-            angle_ops: crate::dash_mode::posix_faithful(),
         }
     }
 
@@ -16731,11 +16711,8 @@ impl<'a> TestParse<'a> {
             "!" => TEST_BANG,    // c:7215
             "(" => TEST_INPAR,   // c:7217
             ")" => TEST_OUTPAR,  // c:7219
-            // c:7221-7224 — the INANG/OUTANG arms only exist from 54103 on;
-            // see `TestParse::angle_ops`. Without them `<` / `>` lex as a
-            // plain STRING, which is what pre-54103 zsh does.
-            "<" if self.angle_ops => TEST_INANG,  // c:7221
-            ">" if self.angle_ops => TEST_OUTANG, // c:7223
+            "<" => TEST_INANG,  // c:7221
+            ">" => TEST_OUTANG, // c:7223
             _ => TEST_STRING,                     // c:7225
         };
         self.idx += 1; // c:7226 — `testargs++`
@@ -16825,8 +16802,8 @@ impl<'a> TestParse<'a> {
         if n_testargs > 2 {
             let nxt = self.next_arg().unwrap_or_default().to_string();
             let is_binop = nxt == "="
-                // c:2498-2499 — added by 54103; see `TestParse::angle_ops`.
-                || (self.angle_ops && (nxt == "<" || nxt == ">"))
+                || nxt == "<" // c:2500
+                || nxt == ">" // c:2501
                 || nxt == "=="
                 || nxt == "!="
                 || (nxt.starts_with(crate::ported::zsh_h::IS_DASH)
@@ -16954,9 +16931,7 @@ impl<'a> TestParse<'a> {
     /// else is a parse error naming the middle argument.
     fn par_cond_triple(&mut self, a: String, b: String, c: String) -> Option<TestCond> {
         let known = matches!(b.as_str(), "=" | "==" | "!=" | "=~") // c:2663-2691
-            // c:2666-2671 — the COND_STRGTR / COND_STRLT arm added by 54103;
-            // see `TestParse::angle_ops`.
-            || (self.angle_ops && matches!(b.as_str(), "<" | ">"))
+            || matches!(b.as_str(), "<" | ">") // c:2666-2671 COND_STRLT/STRGTR
             || b.starts_with(crate::ported::zsh_h::IS_DASH)                    // c:2692
             || (a.starts_with(crate::ported::zsh_h::IS_DASH) && a.chars().count() > 1); // c:2703
         if known {
@@ -17138,13 +17113,6 @@ pub fn bin_test(
         }
     }
 
-    // The `<` / `>` rejection zsh 5.9.2 performs is NOT a blanket argv scan:
-    // it falls out of the grammar, so it only fires when the angle bracket
-    // reaches OPERATOR position. `[ -n \> ]` is accepted (the `>` is the
-    // operand of `-n`), and `[ 5 \> 3 ]` is rejected with
-    // `condition expected: >`. See `TestParse::angle_ops` for the three
-    // grammar arms that carry it and the mode gate.
-    //
     // c:7276-7281 — `zcontext_save(); testargs = argv; tok = NULLTOK;
     //                condlex = testlex; testlex(); prog = parse_cond();`
     let mut p = TestParse::new(&argv);

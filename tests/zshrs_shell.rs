@@ -9708,18 +9708,17 @@ fn test_funcnest_recursion_guard_no_overflow() {
 }
 
 #[test]
-fn test_test_lt_gt_not_string_comparators() {
-    // zsh's POSIX `[`-test does NOT accept `<`/`>` as string
-    // comparators (they're redirection ops). `[ "5" \> "3" ]`
-    // errors `1: condition expected: >` exit 2. zshrs's earlier
-    // impl had string-compare arms for both, hiding the syntax
-    // error.
-    let (status, _, stderr) = run_zshrs(r#"[ "5" \> "3" ]"#);
-    assert_eq!(status, 2);
-    assert!(stderr.contains("condition expected: >"), "got: {stderr}");
-    let (status, _, stderr) = run_zshrs(r#"[ "5" \< "3" ]"#);
-    assert_eq!(status, 2);
-    assert!(stderr.contains("condition expected: <"), "got: {stderr}");
+fn test_test_lt_gt_string_comparators() {
+    // c:Src/builtin.c:7220-7223 testlex lexes `<` / `>` as INANG/OUTANG and
+    // c:Src/parse.c:2500-2501,2666-2671 compile them to COND_STRLT /
+    // COND_STRGTR (upstream 54103; C02cond.ztst:217,220). Released zsh
+    // <= 5.9.2 rejected them with `condition expected: >`.
+    assert_eq!(run_zshrs(r#"[ "5" \> "3" ]"#).0, 0);
+    assert_eq!(run_zshrs(r#"[ "5" \< "3" ]"#).0, 1);
+    assert_eq!(run_zshrs("[ zzd '>' zzb -a e '<' x ]").0, 0);
+    // An angle bracket in operand position is still a plain string.
+    assert_eq!(run_zshrs(r#"[ -o \> -a ]"#).0, 0);
+    assert_eq!(run_zshrs(r#"[ -n \> ]"#).0, 0);
 }
 
 #[test]
