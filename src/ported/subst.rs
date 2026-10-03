@@ -12074,14 +12074,13 @@ pub fn paramsubst(
                                 // Direct port of Src/params.c getindex.
                                 // Unset param → NULL value → whole `${foo[(i)pat]}`
                                 // expands empty (getindex never runs), so both
-                                // (i)/(I) yield "". A SET-but-empty value ("")
-                                // hits the `if (!*s) return 0` empty guard
-                                // (c:1630) → 0 for both. A non-empty no-match
-                                // returns len+1 for (i), 0 for (I).
+                                // (i)/(I) yield "". A set value — empty or not —
+                                // reaches c:1801 `if (!d) return 0`, which only
+                                // rejects a NULL value (51278 dropped the old
+                                // `|| !*d`), so a miss falls to c:2001 `return
+                                // down ? 0 : slen + 1`: len+1 for (i), 0 for (I).
                                 if !scalar_is_set {
                                     String::new()
-                                } else if n == 0 {
-                                    "0".to_string()
                                 } else if flags.contains('i') {
                                     ksh_search_index(n as i64 + 1).to_string()
                                 } else {
@@ -32713,6 +32712,16 @@ mod tests {
             "${ZS_NM[(i)x]}",
         );
         assert_eq!(result, "61", "ztst:32 — (i) no-match returns len+1");
+    }
+
+    /// `Test/D06subscript.ztst` "Can check off end of zero length string" —
+    /// c:Src/params.c:1801 rejects only a NULL value (zsh 51278), so a set
+    /// but EMPTY scalar misses like any other: `(i)` is len+1 = 1, `(I)` is 0.
+    #[test]
+    fn paramsubst_scalar_subscript_i_on_empty_string_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("ZS_EI", "", "${ZS_EI[(i)x]}"), "1");
+        assert_eq!(psubst_one("ZS_EI", "", "${ZS_EI[(I)x]}"), "0");
     }
 
     // ─── Length and case-modifier pins ────────────────────────────────
