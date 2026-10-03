@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>zshrs Parity Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hud-static.css">
+<link rel="stylesheet" href="tutorial.css">
+<style>
+  .tutorial-main { max-width: 96rem; }
+  .stat-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:0.6rem;margin:1rem 0; }
+  .stat-card { border:1px solid var(--border);border-top:3px solid var(--cyan);background:var(--bg-card);padding:0.7rem 0.9rem;border-radius:2px;text-align:center; }
+  .stat-card .stat-val { font-family:'Orbitron',sans-serif;font-size:22px;font-weight:900;color:var(--cyan);line-height:1.1;text-shadow:0 0 14px var(--cyan-glow); }
+  .stat-card .stat-val.green   { color:var(--green); text-shadow:0 0 14px rgba(57,255,20,.35); }
+  .stat-card .stat-val.red     { color:#ff6b6b; text-shadow:0 0 14px rgba(255,107,107,.35); }
+  .stat-card .stat-val.yellow  { color:#ffb800; text-shadow:0 0 14px rgba(255,184,0,.35); }
+  .stat-card .stat-val.magenta { color:#d300c5; text-shadow:0 0 14px rgba(211,0,197,.35); }
+  .stat-card .stat-label { font-family:'Orbitron',sans-serif;font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-top:0.4rem; }
+  .stat-card .stat-sub { font-family:'Share Tech Mono',monospace;font-size:10.5px;color:var(--text-dim);margin-top:0.25rem; }
+
+  .tbl { overflow-x:auto; }
+  table.fn-table { width:100%;border-collapse:collapse;font-size:11.5px;margin:0.8rem 0; }
+  table.fn-table th { background:var(--bg-secondary);color:var(--cyan);font-family:'Orbitron',sans-serif;font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;text-align:left;padding:7px 10px;border:1px solid var(--border); }
+  table.fn-table td { padding:6px 10px;border:1px solid var(--border);color:var(--text-dim);vertical-align:top; }
+  table.fn-table tr:hover td { background:var(--bg-hover); }
+  table.fn-table code { font-size:11px;color:var(--accent-light);background:var(--bg-primary);padding:1px 4px;border-radius:2px;white-space:nowrap; }
+  table.fn-table td.num, table.fn-table th.num { text-align:right;font-family:'Share Tech Mono',monospace; }
+
+  .pill { display:inline-block;padding:1px 7px;border-radius:2px;
+    font-family:'Share Tech Mono',monospace;font-size:10.5px;font-weight:700;
+    letter-spacing:0.5px;text-transform:uppercase;white-space:nowrap; }
+  .pill.pass { background:rgba(57,255,20,.12);color:var(--green);border:1px solid rgba(57,255,20,.3); }
+  .pill.fail { background:rgba(255,107,107,.12);color:#ff6b6b;border:1px solid rgba(255,107,107,.3); }
+  .pill.flaky { background:rgba(255,184,0,.12);color:#ffb800;border:1px solid rgba(255,184,0,.3); }
+  .pill.tag { background:rgba(139,148,158,.12);color:#8b949e;border:1px solid rgba(139,148,158,.3); }
+  .pill.indep { background:rgba(211,0,197,.12);color:#d300c5;border:1px solid rgba(211,0,197,.3); }
+
+  .note { border:1px solid var(--border);border-left:3px solid #ffb800;
+    background:var(--bg-card);padding:0.6rem 0.9rem;margin:0.9rem 0;
+    font-family:'Share Tech Mono',monospace;font-size:11.5px;color:var(--text-dim); }
+  .note.cyan { border-left-color:var(--cyan); }
+  .note code { color:var(--accent-light); }
+
+  /* parity meter: the stat-card idiom stretched into one bar per method */
+  .meter-row { display:grid;grid-template-columns:minmax(0,15rem) minmax(0,1fr) 7.5rem;gap:0.4rem 1rem;align-items:center;
+    padding:0.55rem 0.9rem;border:1px solid var(--border);border-left:3px solid var(--cyan);background:var(--bg-card);margin-bottom:0.4rem; }
+  .meter-row .lbl { font-family:'Orbitron',sans-serif;font-size:10px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:var(--text); }
+  .meter-row .lbl small { display:block;font-family:'Share Tech Mono',monospace;font-size:10.5px;letter-spacing:0;text-transform:none;font-weight:400;color:var(--text-dim);margin-top:2px; }
+  .meter-row .val { text-align:right;font-family:'Orbitron',sans-serif;font-size:17px;font-weight:900;color:var(--green);text-shadow:0 0 12px rgba(57,255,20,.3); }
+  .meter-row .val small { display:block;font-family:'Share Tech Mono',monospace;font-size:10px;font-weight:400;color:var(--text-dim);text-shadow:none; }
+  .bar { height:8px;background:var(--bg-primary);border:1px solid var(--border);display:flex;overflow:hidden; }
+  .bar i { display:block;height:100%; }
+  .bar i.g { background:var(--green);box-shadow:0 0 8px rgba(57,255,20,.45); }
+  .bar i.y { background:#ffb800; }
+  .bar i.r { background:#ff6b6b; }
+  @media (max-width: 720px) {
+    .meter-row { grid-template-columns:1fr auto; }
+    .meter-row .bar { grid-column:1 / -1;grid-row:2; }
+  }
+
+  /* one tile per .ztst file */
+  .wall { display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:0.35rem;margin:0.8rem 0; }
+  .tile { border:1px solid var(--border);border-top:2px solid var(--green);background:var(--bg-card);padding:0.35rem 0.55rem;font-family:'Share Tech Mono',monospace;font-size:11px;min-width:0; }
+  .tile .n { display:block;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+  .tile .c { color:var(--text-dim); }
+  .tile.diff { border-top-color:#ff6b6b;background:rgba(255,107,107,.07); }
+  .tile.diff .c { color:#ff6b6b; }
+  .tile.na { border-top-color:#8b949e;opacity:0.6; }
+  .legend { display:flex;flex-wrap:wrap;gap:0.4rem 1rem;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim); }
+  .legend span::before { content:"";display:inline-block;width:10px;height:3px;margin-right:6px;vertical-align:middle;background:var(--green); }
+  .legend span.d::before { background:#ff6b6b; }
+  .legend span.x::before { background:#8b949e; }
+
+  .lede { font-family:'Share Tech Mono',monospace;font-size:13px;color:var(--text);margin:0.8rem 0;max-width:78ch;line-height:1.6; }
+  .lede b { color:var(--green);font-weight:400;text-shadow:0 0 10px rgba(57,255,20,.35); }
+  .body-txt { font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text-dim);margin:0.4rem 0;max-width:90ch;line-height:1.6; }
+  .body-txt code { color:var(--accent-light); }
+  ul.body-txt { padding-left:1.2rem; }
+  ul.body-txt li { margin:0.25rem 0; }
+    .hub-scheme-strip {
+      border-bottom: 1px dashed var(--border);
+      background: color-mix(in srgb, var(--bg-secondary) 85%, transparent);
+      padding: 0.55rem 1.5rem 0.65rem;
+      position: relative;
+    }
+    .hub-scheme-strip-inner {
+      max-width: 68rem;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+    .hub-scheme-strip .hud-scheme-label {
+      flex: 0 0 auto;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent);
+      text-align: left;
+    }
+    .hub-scheme-strip .scheme-grid {
+      flex: 1 1 auto;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+    }
+    @media (max-width: 720px) {
+      .hub-scheme-strip-inner { flex-direction: column; align-items: stretch; }
+      .hub-scheme-strip .scheme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+</style>
+</head>
+<body>
+<div class="app tutorial-app" id="docsApp">
+<div class="crt-scanline" id="crtH" aria-hidden="true"></div>
+<div class="crt-scanline-v" id="crtV" aria-hidden="true"></div>
+
+<header class="tutorial-header">
+  <div class="tutorial-header-inner">
+    <div>
+      <h1 class="tutorial-brand">// ZSHRS &mdash; PARITY REPORT</h1>
+      <nav class="tutorial-crumbs" aria-label="Breadcrumb">
+        <span class="current">Parity Report</span>
+        <span class="sep">/</span>
+        <a href="index.html">zshrs Docs</a>
+        <span class="sep">/</span>
+        <a href="port_report.html">C Port Report</a>
+        <span class="sep">/</span>
+        <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.8;">
+        zshrs 0.13.3 (<code>e93ff67c6a</code>) against zsh. Oracle: zsh-5.9.1's own
+        <code>Test/*.ztst</code>, built from source; surface and daily-driver checks against
+        the host zsh 5.9.2. One pinned debug binary for every run. Measured 2026-10-03, aarch64-apple-darwin.
+      </p>
+    </div>
+    <div class="tutorial-toolbar">
+      <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
+      <button type="button" class="btn btn-secondary active" id="btnCrt" title="CRT scanline overlay">CRT</button>
+      <button type="button" class="btn btn-secondary active" id="btnNeon" title="Neon border pulse">Neon</button>
+      <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </div>
+  </div>
+</header>
+
+<div class="hub-scheme-strip">
+  <div class="hub-scheme-strip-inner">
+    <span class="hud-scheme-label">// Color scheme</span>
+    <div class="scheme-grid" id="hudSchemeGrid"></div>
+  </div>
+</div>
+
+<main class="tutorial-main">
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SUMMARY</h2>
+<p class="lede">On zsh's own regression suite, zshrs passes <b>2,039</b> of the <b>2,048</b> assertions that zsh 5.9.1 passes (<b>99.56%</b>). Every assertion it misses, and every other difference measured today, is listed below.</p>
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-val green">99.56%</div><div class="stat-label">zsh Test Suite</div><div class="stat-sub">2,039 / 2,048</div></div>
+  <div class="stat-card"><div class="stat-val red">9</div><div class="stat-label">ztst Divergences</div><div class="stat-sub">core suite only</div></div>
+  <div class="stat-card"><div class="stat-val green">182/182</div><div class="stat-label">Completion ztst</div><div class="stat-sub">Y01&ndash;Y03, same verdict</div></div>
+  <div class="stat-card"><div class="stat-val">472/487</div><div class="stat-label">TAB Screens</div><div class="stat-sub">byte-identical</div></div>
+  <div class="stat-card"><div class="stat-val green">1,290</div><div class="stat-label">Names Matched</div><div class="stat-sub">0 missing</div></div>
+  <div class="stat-card"><div class="stat-val">49,218</div><div class="stat-label">cargo Parity Pass</div><div class="stat-sub">12 fail &middot; 8 timing</div></div>
+  <div class="stat-card"><div class="stat-val yellow">98</div><div class="stat-label">C Fn Stubs</div><div class="stat-sub">of 2,476 C functions</div></div>
+  <div class="stat-card"><div class="stat-val magenta">41</div><div class="stat-label">zshrs-only Passes</div><div class="stat-sub">fail or unrunnable in this zsh build</div></div>
+</div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>BY METHOD</h2>
+<div id="meters"></div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZTST BY CATEGORY</h2>
+<div class="note cyan">Only assertions zsh 5.9.1 passes in this build count, so tests zsh skips or cannot run here never count against zshrs. Y is the completion suite (Y01&ndash;Y03 in 5.9.1); every other letter is the core suite, run with zshrs as its own ztst harness via <code>scripts/ztst_compsys.py --core</code>.</div>
+<div class="tbl"><table class="fn-table">
+  <thead><tr><th>Cat</th><th>Area</th><th class="num">Files</th><th class="num">zsh pass</th><th class="num">zshrs pass</th><th class="num">Missed</th><th>Status</th></tr></thead>
+  <tbody id="cats"></tbody>
+</table></div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>EVERY TEST FILE</h2>
+<div class="legend"><span>same result as zsh on every assertion</span><span class="d">zshrs misses an assertion zsh passes</span><span class="x">zsh passes nothing here in this build (root, gdbm, pcre, private module)</span></div>
+<div class="wall" id="wall"></div>
+<p class="body-txt">Tile figures: zshrs pass / zsh pass. Y04&ndash;Y06 exist only in the zsh development tree, not in 5.9.1, so they hold no assertions here.</p>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZTST DIVERGENCES</h2>
+<div class="tbl"><table class="fn-table">
+  <thead><tr><th>File</th><th class="num">#</th><th>Assertion</th><th>Differs in</th><th>Status</th></tr></thead>
+  <tbody id="ztfail"></tbody>
+</table></div>
+<div class="note">Other direction: zshrs passes 3 assertions zsh marks expected-to-fail (D04parameter #231, E03posix #13, V01zmodload #35), and 41 that fail or cannot run in this zsh build (V07pcre, V10private, and 4 V01zmodload checks that need every module to load).</div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>TAB COMPLETION SCREENS</h2>
+<div class="note cyan">Each cell types a buffer, presses TAB once, and diffs the 40&times;110 grid zsh draws against the grid zshrs draws (<code>-f -i</code>, the same pinned zsh-written compdump, native mode, 30 s key budget). 490 cells: the shared corpus plus 300 commands discovered on this host. 472 identical, 15 diverged, 3 skipped (npm, zinit and zpwr are not on the test shell's PATH).</div>
+<div class="tbl"><table class="fn-table">
+  <thead><tr><th>Buffer</th><th class="num">zsh</th><th class="num">zshrs</th><th class="num">&Delta;</th><th>What differs</th></tr></thead>
+  <tbody id="tabfail"></tbody>
+</table></div>
+<p class="body-txt">13 of 15 differ only in the candidate count the listing prompt reports. Where zshrs lists more, the extras are its own: 16 parameters zsh does not have (<code>ZSHRS_VERSION</code>, <code>HELPDIR</code>, &hellip;) and 41 completion functions shipped in <code>~/.zshrs/functions</code>. <code>unset&nbsp;</code> runs the other way, 9 fewer than zsh.</p>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>CARGO PARITY TESTS</h2>
+<div class="note cyan"><code>cargo test --test parity</code>: 49,218 passed, 20 failed, 24 ignored (known divergences, not counted). Each failure was then re-run alone, single-threaded: 12 still fail, 8 pass and failed only under parallel load.</div>
+<div class="tbl"><table class="fn-table">
+  <thead><tr><th>Test</th><th>Re-run alone</th></tr></thead>
+  <tbody id="cargofail"></tbody>
+</table></div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SURFACE</h2>
+<div class="note cyan">Name-by-name diff of <code>zsh -fc</code> against <code>zshrs --zsh -fc</code>. Without <code>--zsh</code>, zshrs exposes 121 builtins of its own (224 total).</div>
+<div class="tbl"><table class="fn-table">
+  <thead><tr><th>Set</th><th class="num">zsh 5.9.2</th><th class="num">zshrs</th><th class="num">Missing</th><th>Status</th></tr></thead>
+  <tbody id="surface"></tbody>
+</table></div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>DAILY DRIVER</h2>
+<div class="note cyan">Both shells started interactively in a pty with the real <code>~/.zshrc</code> (zpwr, zinit turbo) and probed through a sourced file once the prompt settled.</div>
+<div class="tbl"><table class="fn-table">
+  <thead><tr><th>Check</th><th class="num">zsh</th><th class="num">zshrs</th><th>Status</th><th>Reading</th></tr></thead>
+  <tbody>
+    <tr><td><code>$#_comps</code>, no key pressed</td><td class="num">51,735</td><td class="num">51,795</td><td><span class="pill pass">match</span></td><td>zinit turbo drains while the prompt sits idle, 3 of 3 runs. It did not on 0.13.1.</td></tr>
+    <tr><td><code>$#fpath</code></td><td class="num">49</td><td class="num">52</td><td><span class="pill tag">expected</span></td><td>zshrs adds its bundled function directories</td></tr>
+    <tr><td>zstyles defined</td><td class="num">204</td><td class="num">190</td><td><span class="pill tag">by design</span></td><td>.zshrc skips fast-syntax-highlighting and the p10k theme code under zshrs (<code>ZPWR_NATIVE_ZLE</code>), dropping their vcs_info and theme styles</td></tr>
+    <tr><td>3 commands typed in one burst</td><td class="num">3/3</td><td class="num">3/3</td><td><span class="pill pass">match</span></td><td>no type-ahead lost</td></tr>
+    <tr><td>Fast-typed <code>$(</code> <code>[</code> <code>'</code> <code>${</code> lines</td><td class="num">varies</td><td class="num">5/5</td><td><span class="pill pass">match</span></td><td>zsh's own result varied between runs while its turbo plugins were still loading</td></tr>
+  </tbody>
+</table></div>
+
+<h2 class="tutorial-title"><span class="step-hash">&gt;_</span>METHOD</h2>
+<ul class="body-txt">
+  <li>zshrs built from tag v0.13.3 in a clean checkout and snapshotted, so other work in the shared tree could not relink it mid-run.</li>
+  <li>Oracle: zsh 5.9.1, the closest tagged release to the 5.9.2 target, built from source. <code>scripts/ztst_compsys.py</code> ran the suite once with zsh as baseline and once with zshrs as the shell under test.</li>
+  <li>This zsh build could not load pcre or <code>zsh/param/private</code>, has no gdbm, and P01privileged needs root. Those 74 assertions are excluded from both sides.</li>
+  <li>TAB screens: <code>scripts/comptab_parity.py</code>, native mode, pinned zsh-written compdump.</li>
+  <li>Surface and daily-driver checks compare against the host zsh 5.9.2.</li>
+  <li>C port coverage is read from the published port report (generated 2026-10-01), not regenerated for this page.</li>
+</ul>
+</main>
+</div>
+
+<script src="hud-theme.js"></script>
+<script>
+const METERS = [
+  ["zsh core ztst", "62 files: grammar, builtins, expansion, options, modules, jobs, ZLE", 1864, 1873, 0, "99.5%", "1,864 / 1,873"],
+  ["zsh completion ztst", "Y01–Y03: compsys, matching control, _arguments", 175, 175, 0, "100%", "175 / 175"],
+  ["TAB screens", "490 cells, single TAB, byte-compared", 472, 487, 0, "96.9%", "472 / 487"],
+  ["cargo parity", "cargo test --test parity, 24 ignored", 49218, 49238, 8, "99.96%", "12 fail · 8 timing"],
+  ["Shell surface", "builtins, options, params, widgets, keymaps, reswords, modules", 1290, 1290, 0, "100%", "1,290 / 1,290"],
+  ["C functions ported", "port report, 2026-10-01", 2378, 2476, 98, "96.0%", "98 stubs"]
+];
+const CATS = [
+  ["A", "Grammar & execution", 8, 377, 373],
+  ["B", "Builtins", 13, 240, 239],
+  ["C", "Arithmetic, conditions, traps", 5, 267, 267],
+  ["D", "Expansion & substitution", 9, 508, 508],
+  ["E", "Options & xtrace", 3, 118, 115],
+  ["P", "Privileged", 1, 0, 0],
+  ["V", "Modules", 14, 207, 207],
+  ["W", "History & jobs", 3, 21, 20],
+  ["X", "ZLE", 3, 115, 115],
+  ["Z", "Shell functions", 3, 20, 20],
+  ["Y", "Completion", 3, 175, 175]
+];
+const FILES = [["A01grammar",109,109],["A02alias",18,18],["A03quoting",11,11],["A04redirect",78,77],["A05execution",39,37],["A06assign",103,102],["A07control",17,17],["A09zwc",2,2],["B01cd",6,5],["B02typeset",79,79],["B03print",66,66],["B04read",16,16],["B05eval",4,4],["B06fc",4,4],["B07emulate",20,20],["B08shift",2,2],["B09hash",10,10],["B10getopts",20,20],["B11kill",8,8],["B12limit",2,2],["B13whence",3,3],["C01arith",73,73],["C02cond",59,59],["C03traps",75,75],["C04funcdef",52,52],["C05debug",8,8],["D01prompt",15,15],["D02glob",74,74],["D03procsubst",19,19],["D04parameter",241,241],["D05array",20,20],["D06subscript",36,36],["D07multibyte",49,49],["D08cmdsubst",26,26],["D09brace",28,28],["E01options",94,92],["E02xtrace",14,13],["E03posix",10,10],["P01privileged",0,0],["V01zmodload",34,34],["V02zregexparse",61,61],["V03mathfunc",11,11],["V04features",24,24],["V05styles",23,23],["V06parameter",4,4],["V07pcre",0,0],["V08zpty",2,2],["V09datetime",14,14],["V10private",0,0],["V11db_gdbm",0,0],["V12zparseopts",14,14],["V13zformat",6,6],["V14system",14,14],["W01history",7,7],["W02jobs",11,10],["W03jobparameters",3,3],["X02zlevi",94,94],["X03zlebindkey",9,9],["X04zlehighlight",12,12],["Z01is-at-least",2,2],["Z02zmathfunc",6,6],["Z03run-help",12,12],["Y01completion",27,27],["Y02compmatch",51,51],["Y03arguments",97,97],["Y04regexargs",0,0],["Y05describe",0,0],["Y06values",0,0]];
+const ZTFAIL = [
+  ["A04redirect", 34, "multio with globbing", "stderr"],
+  ["A05execution", 33, "'wait' exit status and warning for unknown ID", "stderr"],
+  ["A05execution", 34, "'wait' exit status for unknown ID (POSIX mode)", "stdout"],
+  ["A06assign", 76, "GLOB_ASSIGN doesn't monkey with type if not scalar assignment", "stderr"],
+  ["B01cd", 5, "Implicit cd with unset HOME", "stderr"],
+  ["E01options", 12, "CLOBBER option", "stderr"],
+  ["E01options", 92, "RM_STAR_SILENT", "stdout"],
+  ["E02xtrace", 6, "a function that redefines itself preserves tracing", "stdout"],
+  ["W02jobs", 11, "various `kill` signals with multiple running jobs", "stdout"]
+];
+const TABFAIL = [
+  ["echo $", 324, 340, "candidate count"], ["echo ${", 324, 340, "candidate count"],
+  ["echo $path[", 367, 383, "candidate count"], ["echo ${path[", 367, 383, "candidate count"],
+  ["unset ", 388, 379, "candidate count"], ["functions ", 46763, 46804, "candidate count"],
+  ["unfunction ", 46763, 46804, "candidate count"], ["which ", 52399, 52440, "candidate count"],
+  ["env ", 52787, 52856, "candidate count"], ["sudo ", 5563, 5571, "candidate count"],
+  ["function ", 52755, 52816, "candidate count"], ["diff <(", 52755, 52816, "candidate count"],
+  ["tee >(", 52751, 52816, "candidate count"],
+  ["echo $((", null, null, "RANDOM description row"], ["echo $arr[$((", null, null, "RANDOM description row"]
+];
+const CARGO = [
+  ["always_break_parity::compinit_autoload_stubs::the_stub_set_matches_the_reference_shell", 0],
+  ["binary_parity::zcompdump_byte_identical_roundtrip", 0],
+  ["binary_parity::zcompdump_synthesize_format", 0],
+  ["binary_parity::zstyle_canonical_roundtrip", 0],
+  ["bindkey_parity::zle_dash_l_lists_dotted_internal_widgets", 0],
+  ["completion_old_list_parity::history_complete_older_second_press_redraws_the_kept_list", 0],
+  ["emulation_builtin_fmt_parity::getopts_state_matches_reference_shells", 0],
+  ["history_expansion_parity::hist_verify_leaves_open_s_modifier_in_the_buffer", 0],
+  ["zle_widget_parity::lastwidget_names_the_inner_widget_and_nolast_keeps_it", 0],
+  ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_l::bulk_l_param_OLDPWD_default", 0],
+  ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_l::bulk_l_zmodload_zsh_deltochar", 0],
+  ["zsh_compat_parity_gaps::typeset_and_dump::export_minus_p_full_dump", 0],
+  ["history_expansion_parity::hist_verify_leaves_bang_bang_in_the_buffer", 1],
+  ["quoted_command_word_parity::a_quoted_precommand_still_recurses_onto_the_real_command", 1],
+  ["vi_multiline_parity::ci_quote_via_the_autoloaded_select_quoted_function", 1],
+  ["zle_buffer_state_parity::multibyte::word_motion_counts_accented_characters", 1],
+  ["zle_buffer_state_parity::ztst_x0::a_csi_introducer_binding_does_not_fire_on_a_full_sequence", 1],
+  ["zle_buffer_state_parity::ztst_x0::cia_changes_the_inside_of_a_quoted_shell_word", 1],
+  ["zle_editor_params_parity::a_numeric_prefix_is_visible_to_the_next_widget", 1],
+  ["zsh_compat_parity_gaps::probe_sweep_2026_06_12_b::probe_b_row_149", 1]
+];
+const SURFACE = [["Builtins",103,103],["Options",197,197],["Parameters",527,527],["ZLE widgets",386,386],["Keymaps",9,9],["Reserved words",31,31],["Loadable modules",37,37]];
+
+const fmt = n => n.toLocaleString("en-US");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const pill = (cls, txt) => `<span class="pill ${cls}">${txt}</span>`;
+
+function bar(ok, of, warn) {
+  const pct = v => (100 * v / of) + "%";
+  const bad = of - ok - warn;
+  return `<div class="bar"><i class="g" style="width:${pct(ok)}"></i>` +
+    (warn ? `<i class="y" style="width:${pct(warn)}"></i>` : "") +
+    (bad > 0 ? `<i class="r" style="width:${pct(bad)}"></i>` : "") + `</div>`;
+}
+
+document.getElementById("meters").innerHTML = METERS.map(([lbl, sub, ok, of, warn, fig, small]) =>
+  `<div class="meter-row"><div class="lbl">${esc(lbl)}<small>${esc(sub)}</small></div>${bar(ok, of, warn)}` +
+  `<div class="val">${fig}<small>${esc(small)}</small></div></div>`).join("");
+
+document.getElementById("cats").innerHTML = CATS.map(([k, area, files, z, b]) => {
+  const st = z === 0 ? pill("tag", "not run") : (b === z ? pill("pass", "match") : pill("fail", "diverged"));
+  return `<tr><td><code>${k}</code></td><td>${esc(area)}</td><td class="num">${files}</td><td class="num">${fmt(z)}</td><td class="num">${fmt(b)}</td><td class="num">${z - b}</td><td>${st}</td></tr>`;
+}).join("");
+
+document.getElementById("wall").innerHTML = FILES.map(([f, z, b]) => {
+  const cls = z === 0 ? "na" : (b < z ? "diff" : "ok");
+  return `<div class="tile ${cls}" title="${esc(f)}"><span class="n">${esc(f)}</span><span class="c">${z === 0 ? "not run" : b + " / " + z}</span></div>`;
+}).join("");
+
+document.getElementById("ztfail").innerHTML = ZTFAIL.map(([f, n, msg, kind]) =>
+  `<tr><td><code>${esc(f)}</code></td><td class="num">${n}</td><td>${esc(msg)}</td><td>${kind}</td><td>${pill("fail", "fail")}</td></tr>`).join("");
+
+document.getElementById("tabfail").innerHTML = TABFAIL.map(([buf, z, r, what]) => {
+  const d = z == null ? "" : (r < z ? `<span style="color:#ff6b6b">&minus;${z - r}</span>` : `+${r - z}`);
+  return `<tr><td><code>${esc(buf)}</code></td><td class="num">${z == null ? "&mdash;" : fmt(z)}</td><td class="num">${r == null ? "&mdash;" : fmt(r)}</td><td class="num">${d}</td><td>${esc(what)}</td></tr>`;
+}).join("");
+
+document.getElementById("cargofail").innerHTML = CARGO.map(([name, alone]) =>
+  `<tr><td><code>${esc(name)}</code></td><td>${alone ? pill("flaky", "passes · timing") : pill("fail", "still fails")}</td></tr>`).join("");
+
+document.getElementById("surface").innerHTML = SURFACE.map(([s, z, r]) =>
+  `<tr><td>${esc(s)}</td><td class="num">${z}</td><td class="num">${r}</td><td class="num">0</td><td>${pill("pass", "match")}</td></tr>`).join("");
+</script>
+</body>
+</html>
