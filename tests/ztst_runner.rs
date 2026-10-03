@@ -876,6 +876,15 @@ ZTST_tout=${{ZTST_tmp}}/ztst.tout       # ztst.zsh:128
 ZTST_terr=${{ZTST_tmp}}/ztst.terr       # ztst.zsh:129
 setopt extendedglob nonomatch           # ztst.zsh:61 (mainopts; preamble only)
 rm -rf dummy.tmp *.tmp                  # ztst.zsh:142
+# ztst.zsh:186-191 verbatim. Chunks call it inside long loops
+# (A05execution.ztst:225); left undefined, every call is a
+# command-not-found fork and the chunk outruns its timeout.
+ZTST_hashmark() {{
+  if [[ ZTST_verbose -le 0 && -t $ZTST_fd ]]; then
+    print -n -u$ZTST_fd -- ${{(pl:SECONDS::\#::\#\r:)}}
+  fi
+  (( SECONDS > COLUMNS+1 && (SECONDS -= COLUMNS) ))
+}}
 exec {{ZTST_fd}}>&1                     # ztst.zsh:198
 # ztst.zsh:294-307. The $options save/restore (ZTST_testopts /
 # ZTST_mainopts, ztst.zsh:296,303-304) is omitted: zshrs rejects
