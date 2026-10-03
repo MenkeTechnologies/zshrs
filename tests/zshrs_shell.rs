@@ -10045,6 +10045,28 @@ fn test_bindkey_meta_warns_multibyte() {
 }
 
 #[test]
+fn test_math_function_arguments_split_at_top_level_commas() {
+    // Src/math.c:1069-1099 — each argument is parsed by mathevall(a,
+    // MPREC_ARG, &a), so commas inside a nested call or parentheses stay
+    // with their argument, leading blanks are skipped (`sin( )` has zero
+    // arguments) and a trailing comma ends the list.
+    let (status, stdout, stderr) = run_zshrs(
+        "zmodload zsh/mathfunc; print $(( atan(hypot(3,4),2) )) $(( hypot((1,3),4) )) \
+         $(( hypot( 3 , 4 ) )) $(( hypot(3,4,) ))",
+    );
+    assert_eq!(status, 0, "{stderr}");
+    assert_eq!(stdout, "1.1902899496825317 5. 5. 5.\n");
+    let (status, _, stderr) = run_zshrs("zmodload zsh/mathfunc; print $(( sin( ) ))");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("wrong number of arguments: sin( )"), "got: {stderr}");
+    let (_, stdout, _) = run_zshrs(
+        "f() { (( $# )); print -r -- \"$#:$*\" }; functions -M f 0 -1; \
+         print $(( f(1, 2+3, (4,5)) ))",
+    );
+    assert_eq!(stdout, "3:1 5 5\n3\n");
+}
+
+#[test]
 fn test_strftime_dangling_modifier_prints_percent() {
     // Src/utils.c ztrftime: modifiers running off the end of the format
     // reach `case '\0': *buf++ = '%';` and are dropped.

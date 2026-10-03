@@ -3137,6 +3137,45 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // Parse function name and args
     let paren = call.find('(').unwrap_or(call.len());
     let name = &call[..paren];
+    // c:1069-1099 — the numeric argument walk: skip leading blanks
+    // (`while (iblank(*a)) a++;`), then `while (*a)` parse ONE argument
+    // with `mathevall(a, MPREC_ARG, &a)` — which stops at a top-level
+    // comma and leaves `a` just past it — until `errflag || mtok !=
+    // COMMA`; text left over is "illegal character". A nested call's own
+    // commas (`atan(hypot(3,4),2)`) and a parenthesised comma expression
+    // (`hypot((1,3),4)`) belong to their argument, and `sin( )` has no
+    // arguments. `None` means an error was already raised.
+    let eval_math_args = |a: &str| -> Option<Vec<mnumber>> {
+        let mut rest: &str = a.trim_start_matches([' ', '\t']); // c:1070-1071
+        let mut out = Vec::new();
+        while !rest.is_empty() {
+            // c:1073
+            let saved = save_state();
+            let inherited_vars = saved.variables.clone();
+            new(rest);
+            m_variables_set(inherited_vars);
+            let result = mathevall(prec_type::MPREC_ARG); // c:1087
+            let (pos, tok) = (m_pos(), m_mtok());
+            restore_state(saved);
+            match result {
+                Ok(n) => out.push(n), // c:1088
+                Err(msg) => {
+                    crate::ported::utils::zerr(&msg);
+                    return None;
+                }
+            }
+            rest = &rest[pos.min(rest.len())..];
+            if tok != COMMA {
+                break; // c:1090-1091
+            }
+        }
+        if let Some(c) = rest.chars().next() {
+            // c:1094-1095
+            crate::ported::utils::zerr(&format!("bad math expression: illegal character: {}", c));
+            return None;
+        }
+        Some(out)
+    };
     // c:Src/math.c:1108-1116 — MFF_USERFUNC branch: when the named
     // math function points at a user shfunc (registered via
     // `functions -M`), dispatch via doshfunc instead of looking it
@@ -3203,31 +3242,22 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
                 // c:1081-1090 — each argument is `mathevall(a, MPREC_ARG, &a)`
                 // and the value is handed to the shell function as text:
                 // `convfloat(marg.u.d, 0, 0, NULL)` or `convbase(buf, marg.u.l, 10)`.
-                let mut strs = Vec::new();
-                for arg in a.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                    let saved = save_state();
-                    let inherited_vars = saved.variables.clone();
-                    new(arg);
-                    m_variables_set(inherited_vars);
-                    let result = mathevall(prec_type::MPREC_TOP);
-                    restore_state(saved);
-                    match result {
-                        Ok(n) if n.type_ == MN_FLOAT => {
-                            strs.push(crate::ported::params::convfloat(n.d, 0, 0))
+                let Some(nums) = eval_math_args(a) else {
+                    return mnumber {
+                        l: 0,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    };
+                };
+                nums.into_iter()
+                    .map(|n| {
+                        if (n.type_ & MN_FLOAT) != 0 {
+                            crate::ported::params::convfloat(n.d, 0, 0) // c:1083-1084
+                        } else {
+                            crate::ported::params::convbase(n.l, 10) // c:1086-1088
                         }
-                        Ok(n) => strs.push(crate::ported::params::convbase(n.l, 10)),
-                        Err(msg) => {
-                            // c:1095 — `if (errflag || mtok != COMMA) break;`
-                            crate::ported::utils::zerr(&msg);
-                            return mnumber {
-                                l: 0,
-                                d: 0.0,
-                                type_: MN_INTEGER,
-                            };
-                        }
-                    }
-                }
-                strs
+                    })
+                    .collect()
             };
             // c:Src/math.c:1106-1107 — `if (argc >= f->minargs &&
             // (f->maxargs < 0 || argc <= f->maxargs))`. The actual arg count
@@ -3367,35 +3397,12 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
 
     // c:1087-1090 — `*q = mathevall(a, MPREC_ARG, &a); addlinknode(l, q);`
     // one mnumber per comma-separated argument.
-    let arg_nums: Vec<mnumber> = if args_str.is_empty() {
-        vec![]
-    } else {
-        args_str
-            .split(',')
-            .filter_map(|arg| {
-                // Save caller's eval state, sub-eval each arg in a
-                // fresh state inheriting caller's variables, restore.
-                // C `mathevall()` xyy* save/restore (math.c:367).
-                let saved = save_state();
-                let inherited_vars = saved.variables.clone();
-                new(arg.trim());
-                m_variables_set(inherited_vars);
-                let result = mathevall(prec_type::MPREC_TOP);
-                restore_state(saved);
-                // c:math.c::callmathfunc — when a function-arg subeval
-                // fails, the C body's mathevall has already zerr'd the
-                // parse error. Rust's mathevall captures the message
-                // in Err; the previous .ok() discarded it silently,
-                // so `$(( abs(1 2) ))` returned 0 instead of erroring.
-                match result {
-                    Ok(n) => Some(n),
-                    Err(msg) => {
-                        crate::ported::utils::zerr(&msg);
-                        None
-                    }
-                }
-            })
-            .collect()
+    let Some(arg_nums) = eval_math_args(args_str) else {
+        return mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
     };
     // c:1104-1105 — `if (argc >= f->minargs && (f->maxargs < 0 ||
     // argc <= f->maxargs))`, else c:1127 `zerr("wrong number of
