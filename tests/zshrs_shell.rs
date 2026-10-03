@@ -14048,6 +14048,21 @@ fn test_nameref_element_of_hidden_special_hash() {
 }
 
 #[test]
+fn test_unset_through_reference_keeps_outer_declared() {
+    // K01 "unset various types via nameref": bin_unset marks a referent from
+    // an enclosing scope unset and PM_DECLARED in place (c:Src/builtin.c:
+    // 3940-3949); a readonly one is refused.
+    let (st, out, err) = run_zshrs_parity(
+        "() { typeset -gA .t.assoc=(x y); typeset -gi .t.int=1; typeset -gr .t.ro=RO; typeset -n r; \
+         for r in .t.assoc .t.int .t.ro; do { unset r } always { TRY_BLOCK_ERROR=0 }; done; \
+         typeset -p .t.assoc .t.int .t.ro }",
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(out, "typeset -g -A .t.assoc\ntypeset -g -i .t.int\ntypeset -g -r .t.ro=RO\n");
+    assert!(err.contains("read-only variable: .t.ro"), "got: {err:?}");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.
