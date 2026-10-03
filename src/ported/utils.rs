@@ -5216,6 +5216,19 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime, use_gmt: bool) -> String
         let bytes = fmt.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
+            if bytes[i] == b'%'
+                && i + 1 < bytes.len()
+                && bytes[i + 1..].iter().all(|c| b"OE^#_-0123456789".contains(c))
+            {
+                // c:3329-3337 `morefmt:` skips the modifier/width chars
+                // (`while (*fmt && strchr("OE^#_-0123456789", *fmt))`); when
+                // that runs off the end, `switch (*fmt++)` sees the NUL and
+                // c:3368-3372 `case '\0': *buf++ = '%'; fmt--;` emits a bare
+                // `%`, dropping the dangling modifiers (`a%E` -> `a%`).
+                // `%%` so strftime(3) below renders that single `%`.
+                preprocessed.push_str("%%");
+                break;
+            }
             if bytes[i] == b'%' && i + 1 < bytes.len() {
                 // c:3374-3384 — parse optional `N.` prefix (digit count
                 // for the `%.` fractional-seconds specifier).

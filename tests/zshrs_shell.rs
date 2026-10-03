@@ -10045,6 +10045,16 @@ fn test_bindkey_meta_warns_multibyte() {
 }
 
 #[test]
+fn test_strftime_dangling_modifier_prints_percent() {
+    // Src/utils.c ztrftime: modifiers running off the end of the format
+    // reach `case '\0': *buf++ = '%';` and are dropped.
+    let (_, stdout, _) = run_zshrs(
+        "zmodload zsh/datetime; for f in a%E a%- a%5 a%-E; do TZ=UTC strftime $f 1; done",
+    );
+    assert_eq!(stdout, "a%\na%\na%\na%\n");
+}
+
+#[test]
 fn test_pwd_too_many_args_errors() {
     // zsh: `pwd extra arg` -> `pwd:1: too many arguments` exit 1.
     // pwd takes only flags; positional args are an error. zshrs
