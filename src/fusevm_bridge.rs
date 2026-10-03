@@ -6816,10 +6816,45 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             && (crate::dash_mode::korn_mode()
                 || crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT));
         let out = with_executor(|exec| {
+            use std::sync::atomic::Ordering::Relaxed;
             exec.set_last_status(live_status);
-            // c:2044 — `parse_string(cmdarg, 0)`: the `${| … }` / `${{VAR} … }`
-            // body is parsed from the running line, not from 1.
+            // c:2044 — `parse_string(cmdarg, 0)`: the body is parsed from the
+            // running line, not from 1.
             let lineno: u64 = exec.scalar("LINENO").and_then(|s| s.parse().ok()).unwrap_or(0);
+            // c:1908 — `int trim = (!EMULATION(EMULATE_ZSH)) ? 2 : !qt;`
+            let trim: i32 = if crate::dash_mode::korn_mode()
+                || !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH)
+            {
+                2
+            } else if qt {
+                0
+            } else {
+                1
+            };
+            // c:1993-2007 — `${ cmd }` takes advantage of the parameter
+            // scope and `$(<file)` semantics: the body runs in the CURRENT
+            // shell as `>| TMP {\nBODY\n;}` and the file is read back. The
+            // spelling is C's byte for byte; a body parse error's line
+            // number depends on it.
+            let rplytmp: Option<String> = if kind == 0 {
+                crate::ported::utils::gettempname(None, true) // c:1996
+            } else {
+                None
+            };
+            let cmdarg: String = match (kind, &rplytmp) {
+                (0, Some(t)) => format!(
+                    ">| {} {{\n{}\n;}}", // c:1993 outfmt
+                    crate::ported::utils::quotestring(t, crate::ported::zsh_h::QT_BACKSLASH),
+                    body
+                ),
+                (0, None) => {
+                    // c:2004-2007 — TMPPREFIX not writable: `cmdoutval =
+                    // lastval; cmdarg = NULL;`.
+                    crate::ported::exec::cmdoutval.store(live_status, Relaxed);
+                    String::new()
+                }
+                _ => body.clone(),
+            };
             // c:2016 — `startparamscope(); /* "local" behaves as if in a
             // function */`, paired with c:2093 `endparamscope()`. All three
             // forms take it (the C block is under `if (rplyvar)`), which is
@@ -6827,23 +6862,79 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // the outer value alone (D10nofork.ztst "local declaration
             // inside").
             crate::ported::utils::inc_locallevel(); // c:2016
+            // c:2018-2024 — `${| cmd }`: `rplypm = createparam("REPLY",
+            // PM_LOCAL|PM_UNSET|PM_HIDE)` inside the scope, so the body sees
+            // NO outer REPLY and the outer value is intact afterwards
+            // (D10nofork.ztst "Basic substitution and REPLY scoping"). mksh's
+            // valsub is identical, so one save/clear/restore serves both.
+            let saved_reply = if kind == 1 {
+                let saved = crate::ported::params::getsparam(&rplyvar);
+                crate::ported::params::unsetparam(&rplyvar);
+                saved
+            } else {
+                None
+            };
+            // c:2025-2031 — `${ cmd }` scopes its result under the reserved
+            // `.zsh.cmdsubst`: local, unset, hidden and PM_READONLY_SPECIAL,
+            // so the body cannot assign it (D10nofork.ztst "reserved
+            // parameter name").
+            if kind == 0 {
+                use crate::ported::zsh_h::{PM_HIDE, PM_LOCAL, PM_READONLY_SPECIAL, PM_UNSET};
+                crate::ported::params::createparam(
+                    ".zsh.cmdsubst",
+                    (PM_LOCAL | PM_UNSET | PM_HIDE | PM_READONLY_SPECIAL) as i32,
+                ); // c:2025-2027
+                if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                    if let Some(pm) = tab.get_mut(".zsh.cmdsubst") {
+                        pm.level = crate::ported::utils::locallevel(); // c:2029
+                    }
+                }
+            }
+            if !cmdarg.trim().is_empty() {
+                // c:2039-2053 — `int obreaks = breaks; … cmdprog =
+                // parse_string(cmdarg, 0); if (cmdprog) { execode(cmdprog, 1,
+                // 0, "cmdsubst"); cmdoutval = lastval; if (retflag) { retflag
+                // = 0; breaks = obreaks; } } else errflag |= ERRFLAG_ERROR;`
+                // — `return` ends the body only; `exit` stays pending for the
+                // c:2094 zexit below; `break` keeps unwinding the loop around
+                // the command.
+                use crate::ported::builtin::{BREAKS, RETFLAG};
+                let obreaks = BREAKS.load(Relaxed); // c:2041
+                // The body's commands are not inside the word's quotes.
+                let saved_dq = std::mem::replace(&mut exec.in_dq_context, 0);
+                let saved_subexp =
+                    crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.replace(0));
+                // c:Src/exec.c:4410 save_params records only the names in the
+                // prefix-assignment list (varspc); an assignment the body
+                // makes while `X=${| … } cmd` is being evaluated is not one
+                // of them. The inline-env frame records every SET_VAR while
+                // open (D10nofork.ztst "environment assignment" left REPLY
+                // unset), so park it for the body.
+                let frames = std::mem::take(&mut exec.inline_env_stack);
+                let ran = exec.execute_string_at_lineno(&cmdarg, lineno);
+                exec.inline_env_stack = frames;
+                match ran {
+                    Ok(st) => {
+                        exec.set_last_status(st);
+                        crate::ported::exec::cmdoutval.store(st, Relaxed); // c:2047
+                    }
+                    Err(_) => {
+                        crate::ported::utils::errflag
+                            .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed); // c:2053
+                    }
+                }
+                crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.set(saved_subexp));
+                exec.in_dq_context = saved_dq;
+                if RETFLAG.load(Relaxed) != 0 {
+                    RETFLAG.store(0, Relaxed); // c:2050
+                    BREAKS.store(obreaks, Relaxed); // c:2051
+                }
+            }
             let val = match kind {
                 1 => {
-                    // c:2018-2024 — `${| cmd }`: `rplypm = createparam(
-                    // "REPLY", PM_LOCAL|PM_UNSET|PM_HIDE)` inside a
-                    // `startparamscope()`, so the body sees NO outer REPLY
-                    // and the outer value is intact afterwards
-                    // (D10nofork.ztst "Basic substitution and REPLY
-                    // scoping": `REPLY=OUTER; purr ${| REPLY=INNER } $REPLY`
-                    // → `INNER OUTER`). mksh's valsub is identical
-                    // (`mksh -c 'REPLY=outer; y=${|:;}; print "[$y][$REPLY]"'`
-                    // → `[][outer]`), so one save/clear/restore serves both.
-                    let saved = crate::ported::params::getsparam(&rplyvar);
-                    crate::ported::params::unsetparam(&rplyvar);
-                    let st = exec.execute_string_at_lineno(&body, lineno).unwrap_or(0);
-                    exec.set_last_status(st);
+                    // c:2082-2083 — `val = dupstring(getsparam(rplyvar))`.
                     let reply = crate::ported::params::getsparam(&rplyvar).unwrap_or_default();
-                    match saved {
+                    match saved_reply {
                         Some(v) => {
                             crate::ported::params::setsparam(&rplyvar, &v);
                         }
@@ -6855,15 +6946,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 2 => {
                     // c:2026-2033 — `${{VAR} cmd }`: VAR is the result
-                    // parameter and gets NO local scope (`rplypm` stays
-                    // NULL for the Inbrace form), so an assignment inside
-                    // is global. c:2082-2083 then re-enters the ordinary
-                    // parameter path with `s = dyncat(rplyvar, s)`, which
-                    // is why an ARRAY result stays an array
-                    // (D10nofork.ztst "Basic substitution, brace quoting,
-                    // and array result").
-                    let st = exec.execute_string_at_lineno(&body, lineno).unwrap_or(0);
-                    exec.set_last_status(st);
+                    // parameter and gets NO local scope, so an assignment
+                    // inside is global. c:2089-2091 then re-enters the
+                    // ordinary parameter path with `s = dyncat(rplyvar, s)`,
+                    // which is why an ARRAY result stays an array.
                     match exec.array(&rplyvar) {
                         Some(items) => {
                             Value::array(items.into_iter().map(Value::str).collect::<Vec<_>>())
@@ -6874,34 +6960,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 _ => {
-                    // c:2035-2075 — `${ cmd }`: C redirects the body's
-                    // stdout into a temp file (`">| %s {\n%s\n;}"`,
-                    // c:2107) and reads it back, so the body still runs in
-                    // the CURRENT shell. `run_shared_state_substitution`
-                    // is the same thing with an fd-level capture instead
-                    // of a temp file.
-                    let captured = exec.run_shared_state_substitution(&body);
-                    // c:1908 — `int trim = (!EMULATION(EMULATE_ZSH)) ? 2 : !qt;`
-                    // and c:2062-2069: trim==2 strips EVERY trailing
-                    // newline (ksh/bash behaviour), trim==1 strips exactly
-                    // one, trim==0 strips none.
-                    let trim: i32 = if crate::dash_mode::korn_mode()
-                        || !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH)
-                    {
-                        2
-                    } else if qt {
-                        0
-                    } else {
-                        1
-                    };
-                    let mut b = captured;
-                    // c:2064-2069 — `while (rplylen > 0 && cmdarg[rplylen-1]
-                    // == '\n') { rplylen--; if (trim == 1) break; }`
-                    while trim > 0 && b.ends_with('\n') {
-                        b.pop();
-                        if trim == 1 {
-                            break;
+                    // c:2056-2057 — `rplypm->node.flags &= ~PM_READONLY_SPECIAL;`
+                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                        if let Some(pm) = tab.get_mut(".zsh.cmdsubst") {
+                            pm.node.flags &= !(crate::ported::zsh_h::PM_READONLY_SPECIAL as i32);
                         }
+                    }
+                    // c:2058-2075 — `if (rplytmp && !errflag) { noerrs = 2;
+                    // rplylen = zstuff(&cmdarg, rplytmp); … }`: trim==2 strips
+                    // EVERY trailing newline (ksh/bash), trim==1 exactly one,
+                    // trim==0 none.
+                    let mut b = String::new();
+                    if let Some(t) = &rplytmp {
+                        if crate::ported::utils::errflag.load(Relaxed) == 0 {
+                            if let Ok((txt, _)) = crate::ported::input::zstuff(t) {
+                                b = txt;
+                            }
+                        }
+                        while trim > 0 && b.ends_with('\n') {
+                            b.pop();
+                            if trim == 1 {
+                                break;
+                            }
+                        }
+                        let _ = std::fs::remove_file(t); // c:2079-2080
                     }
                     Value::str(b)
                 }
@@ -6929,8 +7011,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         });
         // A nofork substitution IS a command substitution, so it publishes
         // the body's exit the way `$( … )` does: `ksh -c 'v=${ false; };
-        // print "rc=$?"'` → `rc=1`. `run_shared_state_substitution` /
-        // `execute_script` leave it in the executor; the VM's own counter
+        // print "rc=$?"'` → `rc=1`. The body run above leaves it in the
+        // executor; the VM's own counter
         // is what BUILTIN_SET_VAR hands back as the assignment's status
         // (c:Src/exec.c:3396 `lastval = cmdoutval`), so mirror it here.
         vm.last_status = with_executor(|exec| exec.last_status());

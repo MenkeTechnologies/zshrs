@@ -4849,28 +4849,30 @@ pub fn paramsubst(
                         //   c:1996 `rplytmp = gettempname(NULL, 1)`
                         //   c:1998 `tmpfile = quotestring(rplytmp, QT_BACKSLASH)`
                         //   c:1993 `outfmt = ">| %s {\n%s\n;}"`
-                        // DEVIATION: the redirection is written AFTER the
-                        // group (`{ … ;} >| file`) rather than before it.
-                        // zshrs's parser does not accept a leading
-                        // redirection on a compound command — `>| f { print
-                        // x ;}` runs the group with stdout untouched — so
-                        // the C spelling would silently lose the capture.
-                        // Both spellings are the same redirection applied to
-                        // the same group.
+                        // The spelling is C's, byte for byte: the body's line
+                        // numbers in a parse error depend on it (D10nofork.ztst
+                        // "ignored braces, part 4" — `(eval):3: parse error
+                        // near `}'`).
                         rplytmp = crate::ported::utils::gettempname(None, true); // c:1996
                         text_to_run = match &rplytmp {
                             Some(t) => format!(
-                                "{{\n{}\n;}} >| {}",
-                                cmdtext,
+                                ">| {} {{\n{}\n;}}", // c:1993 outfmt
                                 crate::ported::utils::quotestring(
                                     t,
                                     crate::ported::zsh_h::QT_BACKSLASH
-                                ) // c:1998
+                                ), // c:1998
+                                cmdtext
                             ),
-                            // c:2004-2007 — TMPPREFIX not writable: C skips
-                            // the command entirely. Run it uncaptured so the
-                            // body's side effects still happen.
-                            None => cmdtext.clone(),
+                            // c:2004-2007 — TMPPREFIX not writable:
+                            // `cmdoutval = lastval; cmdarg = NULL;` — the body
+                            // is not run at all.
+                            None => {
+                                crate::ported::exec::cmdoutval.store(
+                                    crate::ported::builtin::LASTVAL.load(Ordering::Relaxed),
+                                    Ordering::Relaxed,
+                                ); // c:2006
+                                String::new() // c:2007
+                            }
                         };
                     } else if kind == 1 {
                         // c:2018-2023 — `rplypm = createparam("REPLY",
@@ -4891,15 +4893,82 @@ pub fn paramsubst(
                         // inside is global.
                         text_to_run = cmdtext.clone();
                     }
-                    // c:2046 — `execode(cmdprog, 1, 0, "cmdsubst");`
-                    crate::ported::exec::execstring(&text_to_run, 1, 0, "cmdsubst");
+                    // c:2025-2031 — `${ cmd }` scopes its result under the
+                    // reserved `.zsh.cmdsubst`, created local, unset, hidden
+                    // and PM_READONLY_SPECIAL so the body cannot assign it
+                    // (D10nofork.ztst "reserved parameter name").
+                    if kind == 0 {
+                        use crate::ported::zsh_h::{PM_HIDE, PM_LOCAL, PM_READONLY_SPECIAL, PM_UNSET};
+                        crate::ported::params::createparam(
+                            ".zsh.cmdsubst",
+                            (PM_LOCAL | PM_UNSET | PM_HIDE | PM_READONLY_SPECIAL) as i32,
+                        ); // c:2025-2027
+                        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                            if let Some(pm) = tab.get_mut(".zsh.cmdsubst") {
+                                pm.level = crate::ported::utils::locallevel(); // c:2029
+                            }
+                        }
+                    }
+                    if !text_to_run.is_empty() {
+                        // c:2039-2052 — `int obreaks = breaks; … execode(cmdprog,
+                        // 1, 0, "cmdsubst"); cmdoutval = lastval; if (retflag)
+                        // { retflag = 0; breaks = obreaks; }` — `return`
+                        // behaves as if in a function: it ends the body only.
+                        // A parse error sets errflag (c:2053-2054).
+                        use crate::ported::builtin::{BREAKS, LASTVAL, RETFLAG};
+                        let obreaks = BREAKS.load(Ordering::Relaxed); // c:2041
+                        // c:2044-2046 — `cmdprog = parse_string(cmdarg, 0); if
+                        // (cmdprog) execode(cmdprog, 1, 0, "cmdsubst"); else
+                        // errflag |= ERRFLAG_ERROR;` — parsed from the running
+                        // line (reset_lineno 0), so a body error reports the
+                        // outer line plus its offset in the built text.
+                        let running = crate::ported::lex::lineno();
+                        match crate::fusevm_bridge::try_with_executor(|exec| {
+                            // c:Src/exec.c:4410 save_params records only the
+                            // names in the prefix-assignment list (varspc); an
+                            // assignment the body makes while `X=${| … } cmd`
+                            // is being evaluated is not one of them. zshrs's
+                            // inline-env frame records every SET_VAR while open,
+                            // so park it for the body.
+                            let frames = std::mem::take(&mut exec.inline_env_stack);
+                            let r = exec.execute_string_at_lineno(&text_to_run, running);
+                            exec.inline_env_stack = frames;
+                            r
+                        }) {
+                            Some(Err(_)) => errflag_set_error(), // c:2053
+                            Some(Ok(_)) => {}
+                            None => {
+                                let _ = crate::ported::exec::execute_script_zsh_pipeline(
+                                    &text_to_run,
+                                );
+                            }
+                        }
+                        crate::ported::exec::cmdoutval
+                            .store(LASTVAL.load(Ordering::Relaxed), Ordering::Relaxed); // c:2047
+                        if RETFLAG.load(Ordering::Relaxed) != 0 {
+                            RETFLAG.store(0, Ordering::Relaxed); // c:2050
+                            BREAKS.store(obreaks, Ordering::Relaxed); // c:2051
+                        }
+                    }
+                    if kind == 0 {
+                        // c:2056-2057 — `rplypm->node.flags &= ~PM_READONLY_SPECIAL;`
+                        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                            if let Some(pm) = tab.get_mut(".zsh.cmdsubst") {
+                                pm.node.flags &=
+                                    !(crate::ported::zsh_h::PM_READONLY_SPECIAL as i32);
+                            }
+                        }
+                    }
                     let mut val = String::new();
                     if kind == 0 {
-                        // c:2059-2075 — `rplylen = zstuff(&cmdarg, rplytmp);`
-                        // then strip trailing newlines per `trim` and
-                        // `setsparam(rplyvar, …)`.
+                        // c:2058-2075 — `if (rplytmp && !errflag) { rplylen =
+                        // zstuff(&cmdarg, rplytmp); … }` then strip trailing
+                        // newlines per `trim`.
+                        let failed = errflag.load(Ordering::Relaxed) != 0;
                         if let Some(t) = &rplytmp {
-                            if let Ok((mut txt, _rplylen)) = crate::ported::input::zstuff(t) {
+                            if let Some(Ok((mut txt, _rplylen))) =
+                                (!failed).then(|| crate::ported::input::zstuff(t))
+                            {
                                 // c:2064-2069 — `while (rplylen > 0 &&
                                 // cmdarg[rplylen-1] == '\n') { rplylen--;
                                 // if (trim == 1) break; }`

@@ -16725,3 +16725,42 @@ fn test_nofork_braces_count_under_ignorebraces() {
     assert_eq!(code, 0);
     assert_eq!(output, "nested DONE\n");
 }
+
+#[test]
+fn test_nofork_return_ends_only_the_body() {
+    // Src/subst.c:2049-2052 — `if (retflag) { retflag = 0; breaks =
+    // obreaks; }`: `return` inside `${| … }` ends the body, not the
+    // enclosing function, and its status is the assignment's
+    // (D10nofork.ztst "return status propages in assignment like $(...)").
+    let (_, output, _) = run_zshrs(
+        "f() { x=${| return 7}; print a $?; x=${| REPLY=${| return 7}}; print b $?; print c }; f",
+    );
+    assert_eq!(output, "a 7\nb 7\nc\n");
+}
+
+#[test]
+fn test_nofork_stdout_capture_is_the_c_command() {
+    // Src/subst.c:1993-2031 — `${ cmd }` runs `>| TMP {\ncmd\n;}` with the
+    // reserved `.zsh.cmdsubst` local and PM_READONLY_SPECIAL, so the body
+    // cannot assign it, and a body parse error is reported two lines below
+    // the substitution's own line (D10nofork.ztst "reserved parameter name",
+    // "ignored braces, part 4").
+    let (code, output, err) = run_zshrs("print -r -- ${ .zsh.cmdsubst=x }; print after");
+    assert_eq!((code, output.as_str()), (1, ""));
+    assert!(err.ends_with(":2: .zsh.cmdsubst: can't modify read-only parameter\n"), "{err}");
+    let (code, _, err) = run_zshrs("setopt ignorebraces\nprint ${ { echo nested } } DONE");
+    assert_eq!(code, 1);
+    assert!(err.ends_with(":4: parse error near `}'\n"), "{err}");
+}
+
+#[test]
+fn test_nofork_body_assignment_is_not_a_prefix_assignment() {
+    // Src/exec.c:4410 save_params records only the names in the prefix
+    // assignment list; REPLY set by a `${| … }` evaluated for `w=… cmd` is
+    // not one of them and keeps its outer value afterwards (D10nofork.ztst
+    // "ignored braces, part 2" read a REPLY this had unset).
+    let (_, output, _) = run_zshrs(
+        "REPLY=OUTER; w=${| REPLY=in } true; print $REPLY; w=${ print x } true; print $REPLY",
+    );
+    assert_eq!(output, "OUTER\nOUTER\n");
+}
