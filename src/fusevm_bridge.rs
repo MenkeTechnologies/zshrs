@@ -1056,6 +1056,24 @@ pub(crate) fn is_registered_builtin(name: &str) -> bool {
     registered_builtin(name).is_some() || crate::native_cmds::is_enabled(name)
 }
 
+/// Whether a shell function named NAME shadows a builtin of that name at
+/// command dispatch (c:Src/exec.c:3485-3489: `shfunctab->getnode` before
+/// `builtintab->getnode`). `getnode` skips DISABLED nodes (c:Src/hashtable.c:239), so a function
+/// switched off with `disable -f NAME` does not shadow (Bug #221 in
+/// docs/BUGS.md). `functions_compiled` keeps the body regardless of the
+/// DISABLED flag, hence the shfunctab probe first.
+fn user_fn_shadows_builtin(name: &str) -> bool {
+    let disabled = crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .and_then(|t| {
+            let entry = t.get_including_disabled(name)?;
+            Some((entry.node.flags as u32 & crate::ported::zsh_h::DISABLED as u32) != 0)
+        })
+        .unwrap_or(false);
+    !disabled && with_executor(|exec| exec.functions_compiled.contains_key(name))
+}
+
 /// The builtin table as the `builtin` precommand modifier consults it
 /// (c:Src/exec.c:3489 `builtintab->getnode(builtintab, cmdarg)`): the ported
 /// table minus DISABLED nodes (`getnode` skips them, so `disable typeset;
@@ -20987,6 +21005,12 @@ impl fusevm::ShellHost for ZshrsHost {
         {
             return None;
         }
+        // c:Src/exec.c:3485-3489 — `shfunctab->getnode` is consulted before
+        // `builtintab`: a shell function shadows every builtin of the same
+        // name. The zshrs-only builtins dispatched by name below (znative,
+        // ztest_*, the daemon z* family) are builtins too, so they sit behind
+        // the same function check as the builtintab arm further down.
+        let has_user_fn = user_fn_shadows_builtin(name);
         match name {
             "zmv" => {
                 return Some(crate::extensions::ext_builtins::zmv(&args, "mv"));
@@ -21003,7 +21027,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // znative — the plugin package manager (src/extensions/pkg/). Installs
             // + loads zsh script and native (Rust cdylib) plugins from a global
             // content-addressed store. `znative add owner/repo`, `znative load`, ...
-            "znative" => {
+            "znative" if !has_user_fn => {
                 return Some(crate::extensions::pkg::builtin::znative(&args));
             }
             // ztest framework (src/extensions/ztest.rs — port of
@@ -21011,7 +21035,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // ztest_* names route through the single try_dispatch
             // helper so adding/removing assertions only touches
             // ztest.rs.
-            n if crate::extensions::ztest::try_dispatch_known(n) => {
+            n if !has_user_fn && crate::extensions::ztest::try_dispatch_known(n) => {
                 let status = with_executor(|exec| {
                     crate::extensions::ztest::try_dispatch(exec, n, &args).unwrap_or(1)
                 });
@@ -21022,7 +21046,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // "command not found". The name list is owned by the daemon crate
             // (zshrs_daemon::builtins::ZSHRS_BUILTIN_NAMES); routing through
             // try_dispatch keeps this site zero-touch as new z* builtins land.
-            n if crate::daemon::builtins::is_zshrs_builtin(n) => {
+            n if !has_user_fn && crate::daemon::builtins::is_zshrs_builtin(n) => {
                 let argv: Vec<String> = std::iter::once(name.to_string()).chain(args).collect();
                 return Some(crate::daemon::builtins::try_dispatch(n, &argv).unwrap_or(1));
             }
@@ -21047,18 +21071,9 @@ impl fusevm::ShellHost for ZshrsHost {
         // accessor) returns NULL for entries flipped to DISABLED via
         // `disable -f NAME`. functions_compiled holds the body
         // independently of the DISABLED flag, so check shfunctab first
-        // and mask the lookup when the entry is disabled. Bug #221
+        // and mask the lookup when the entry is disabled (see
+        // `user_fn_shadows_builtin`; `has_user_fn` computed above). Bug #221
         // in docs/BUGS.md.
-        let user_fn_disabled = crate::ported::hashtable::shfunctab_lock()
-            .read()
-            .ok()
-            .and_then(|t| {
-                let entry = t.get_including_disabled(name)?;
-                Some((entry.node.flags as u32 & crate::ported::zsh_h::DISABLED as u32) != 0)
-            })
-            .unwrap_or(false);
-        let has_user_fn =
-            !user_fn_disabled && with_executor(|exec| exec.functions_compiled.contains_key(name));
         if !has_user_fn {
             // c:Src/exec.c:3056 — `builtintab->getnode(builtintab,
             // cmdarg)` returns NULL for DISABLED entries, falling
@@ -22986,5 +23001,54 @@ mod builtin_completer_coverage_tests {
             missing.is_empty(),
             "zshrs builtins with no `#compdef` completer in completions/: {missing:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod function_shadows_builtin_tests {
+    //! c:Src/exec.c:3485-3489 — command lookup consults `shfunctab` before
+    //! `builtintab`, so a shell function shadows a builtin of the same name.
+    //! The zshrs-only builtins dispatched by name in `call_function` (daemon
+    //! z* family, ztest_*, znative) used to be matched before that check.
+    use crate::vm_helper::ShellExecutor;
+
+    fn run(script: &str) -> (ShellExecutor, i32) {
+        let mut exec = ShellExecutor::new();
+        let st = exec.execute_script(script).unwrap_or(-1);
+        (exec, st)
+    }
+
+    #[test]
+    fn function_shadows_daemon_z_builtin() {
+        let _g = crate::test_util::global_state_lock();
+        let (exec, _) = run("hit=; zls() { hit=fn; return 42 }; zls; st=$?");
+        assert_eq!(exec.scalar("hit").as_deref(), Some("fn"));
+        assert_eq!(exec.scalar("st").as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn function_shadows_extension_builtin() {
+        let _g = crate::test_util::global_state_lock();
+        let (exec, _) =
+            run("hit=; basename() { hit=fn; return 43 }; basename a/b; st=$?");
+        assert_eq!(exec.scalar("hit").as_deref(), Some("fn"));
+        assert_eq!(exec.scalar("st").as_deref(), Some("43"));
+    }
+
+    #[test]
+    fn builtin_prefix_and_disable_f_bypass_the_function() {
+        let _g = crate::test_util::global_state_lock();
+        // c:Src/exec.c:3483-3487 — after `builtin`, shfunctab is skipped.
+        let (exec, _) = run(
+            "hit=; zls() { hit=fn; return 42 }; builtin zls >/dev/null 2>&1; st=$?",
+        );
+        assert_eq!(exec.scalar("hit").as_deref(), Some(""));
+        assert_ne!(exec.scalar("st").as_deref(), Some("42"));
+        // c:Src/hashtable.c:239 — getnode skips a DISABLED shfunc node.
+        let (exec, _) = run(
+            "hit=; zls() { hit=fn; return 42 }; disable -f zls; zls >/dev/null 2>&1; st=$?",
+        );
+        assert_eq!(exec.scalar("hit").as_deref(), Some(""));
+        assert_ne!(exec.scalar("st").as_deref(), Some("42"));
     }
 }
