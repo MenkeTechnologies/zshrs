@@ -913,6 +913,24 @@ mod heredoc_members_of_an_input_multio {
     }
 }
 
+/// c:Src/exec.c:2288 closemn — a multio's tee / cat helper is a forked
+/// process, so it outlives the execve of the `-c` string's last command,
+/// which zsh runs in place. zshrs's helpers are threads; exec'ing in place
+/// killed them, and the command wrote into a pipe nobody read (SIGPIPE,
+/// nothing printed) or read EOF before the concatenator ran.
+mod multio_on_the_last_command_of_dash_c {
+    use super::*;
+
+    #[test]
+    fn the_helper_survives_the_exec() {
+        let d = tdir();
+        std::fs::write(d.path().join("o1"), "out1\n").unwrap();
+        assert_parity_in(d.path(), "exec 3>&1; /bin/echo hi >a1 >&3");
+        assert_parity_in(d.path(), "exec 3>&1; /bin/echo hi >a1 >&3; print rc=$?");
+        assert_parity_in(d.path(), "/bin/cat <o1 <<<x");
+    }
+}
+
 /// c:Src/lex.c:649-668 + c:828-836 / c:868-870 — a digit before `<` or `>` is
 /// taken as a redirection fd, but when the operator turns out to open a
 /// process substitution (`2<(…)`, `2>(…)`) the `unpeekfd:` step pushes the

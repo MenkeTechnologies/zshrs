@@ -6455,8 +6455,21 @@ impl ShellExecutor {
         let exec_dash = carrier & crate::fusevm_bridge::EXEC_CARRIER_DASH != 0;
         // c:Src/exec.c:4369 — this process was forked for the command
         // (BUILTIN_EXEC_FORKED_SIMPLE): exec it here rather than spawn.
-        let in_place = !background && carrier & crate::fusevm_bridge::EXEC_CARRIER_FORKED != 0;
-        if in_place && carrier & crate::fusevm_bridge::EXEC_CARRIER_SHLVL != 0 {
+        //
+        // !!! WARNING: RUST-ONLY !!! C's multio helpers are forked tee/cat
+        // processes (closemn, c:Src/exec.c:2288), so they outlive the execve
+        // that replaces the shell. zshrs runs them as threads of the shell
+        // (multios_scope_stack), and an execve kills every thread: the
+        // concatenator of `cat <o1 <<<x` died before writing (cat read EOF)
+        // and the splitter of `/bin/echo hi >a >b` left the command writing
+        // into a pipe nobody reads (SIGPIPE, both files empty). While any
+        // such thread is live the command is spawned and waited for instead,
+        // which lets the threads finish before the shell exits. The command
+        // still takes the shell's place for SHLVL, as it does in C.
+        let exec_forked = !background && carrier & crate::fusevm_bridge::EXEC_CARRIER_FORKED != 0;
+        let multio_threads_live = self.multios_scope_stack.iter().any(|scope| !scope.is_empty());
+        let in_place = exec_forked && !multio_threads_live;
+        if exec_forked && carrier & crate::fusevm_bridge::EXEC_CARRIER_SHLVL != 0 {
             crate::fusevm_bridge::exec_shlvl_decrement(); // c:Src/exec.c:4334-4336
         }
         let argv0_env = std::env::var("ARGV0").ok(); // c:760 zgetenv("ARGV0")
