@@ -14092,6 +14092,21 @@ fn test_assign_default_through_reference_slice_is_no_identifier() {
 }
 
 #[test]
+fn test_private_nameref_survives_callee_local_of_same_name() {
+    // V10 "assignment to private nameref in wrong scope, part 2": the
+    // callee's `typeset ref=XX` is a plain local over the hidden private;
+    // leaving it re-exposes the private (wrap_private's restore scan,
+    // Src/Modules/param_private.c:557) without replaying its value through
+    // the reference, since a removable special is "normal" (c:Src/params.c:5904).
+    let (st, out, err) = run_zshrs_parity(
+        "zmodload zsh/param/private; setopt typeset_to_unset; \
+         () { typeset -a ary; local -P -n ref=ary; () { typeset ref=XX }; typeset -p ary ref }",
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(out, "typeset -a ary\ntypeset -hn ref=ary\n");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.

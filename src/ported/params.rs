@@ -14806,8 +14806,11 @@ pub fn endparamscope() {
                     // saved value through the tied setter (by gsu
                     // setfn when present, else name-routed setsparam)
                     // so fpath/path/cdpath roll back with the scalar.
-                    let restored_is_special =
-                        (prev.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0;
+                    // c:5904 — a REMOVABLE special (a private, c:Src/Modules/
+                    // param_private.c:174) is "normal": the local is unset
+                    // and the old node re-added, with no value replay.
+                    let restored_is_special = (prev.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0
+                        && (prev.node.flags as u32 & PM_REMOVABLE) == 0;
                     let restored_is_array = (PM_TYPE(prev.node.flags as u32) & PM_ARRAY) != 0;
                     // c:5961-5962 — `case PM_HASHED: pm->gsu.h->setfn(pm,
                     // tpm->u.hash)`. typeset_single's copy of a magic hash

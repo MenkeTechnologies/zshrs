@@ -1151,7 +1151,14 @@ pub fn wrap_private(
         }
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
-                scopeprivate(&mut **pm as *mut param, 0); // c:557
+                // C's scan sees the private on top because runshfunc has
+                // already ended the callee's scope; here the callee's locals
+                // can still cover it (see the splice above), so walk down.
+                let mut cur: Option<&mut Box<param>> = Some(pm);
+                while let Some(node) = cur {
+                    scopeprivate(&mut **node as *mut param, 0); // c:557
+                    cur = node.old.as_mut();
+                }
             }
         }
         locallevel.store(hoisted, Ordering::Relaxed);
