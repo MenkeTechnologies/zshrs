@@ -16618,3 +16618,19 @@ fn test_colon_s_replacement_keeps_glob_tokens() {
         "stderr: {err}"
     );
 }
+
+#[test]
+fn test_alias_func_def_warning_is_the_only_diagnostic() {
+    // c:Src/parse.c:2061-2068 — the ALIAS_FUNC_DEF refusal sets
+    // ERRFLAG_ERROR before YYERROR, so the caller's yyerror stays silent:
+    // no trailing "parse error near `()'" (A02alias.ztst:124,130).
+    let (status, _, stderr) = run_zshrs_parity(
+        "alias firstalias=notacommand; alias secondalias=firstalias
+eval 'secondalias() { print no; }'",
+    );
+    assert_eq!(status, 1, "{stderr}");
+    assert_eq!(
+        stderr,
+        "(eval):1: defining function based on alias `secondalias'\n"
+    );
+}

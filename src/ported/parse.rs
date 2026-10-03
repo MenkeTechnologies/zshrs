@@ -3175,16 +3175,16 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     // The ALIAS_FUNC_DEF gate applies to EVERY route into the
                     // funcdef body, not just the match arm below; this early
                     // return is the single-word shape.
-                    // c:2056-2060 (zsh 5.9.1/5.9.2 Src/parse.c) — `if
+                    // c:2061-2068 — `if
                     // (isset(EXECOPT) && hasalias && !isset(ALIASFUNCDEF) &&
                     // argc && hasalias != input_hasalias()) {
                     // zwarn("defining function based on alias `%s'",
                     // hasalias); YYERROR(oecused); }`
                     //
-                    // No herrflush() and no ERRFLAG_ERROR: those arrived with
-                    // workers/51307 after 5.9.2. With errflag still clear,
-                    // yyerror's zwarn reports "parse error near `()'" after
-                    // the warning, which is what 5.9.2 prints.
+                    // c:2064-2066 — `herrflush(); if (noerrs != 2) errflag |=
+                    // ERRFLAG_ERROR;` before YYERROR: with errflag set, the caller's
+                    // yyerror (c:673) stays silent (zwarn bails on errflag, c:Src/utils.c:220),
+                    // so the warning is the only diagnostic.
                     //
                     // `hasalias != input_hasalias()` is the "the alias body
                     // was NOT itself a complete definition" test: when the
@@ -3202,7 +3202,12 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                             "defining function based on alias `{}'",
                             hasalias.as_deref().unwrap_or("")
                         ));
-                        set_tok(LEXERR); // c:2059 YYERROR
+                        crate::ported::hist::herrflush(); // c:2064
+                        if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+                            // c:2065-2066
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                        }
+                        set_tok(LEXERR); // c:2067 YYERROR
                         return None;
                     }
                     return parse_inline_funcdef(std::mem::take(&mut words));
@@ -3259,16 +3264,16 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     set_tok(LEXERR); // c:2060 YYERROR(oecused)
                     return None;
                 }
-                // c:2056-2060 (zsh 5.9.1/5.9.2 Src/parse.c) — `if
+                // c:2061-2068 — `if
                 // (isset(EXECOPT) && hasalias && !isset(ALIASFUNCDEF) &&
                 // argc && hasalias != input_hasalias()) {
                 // zwarn("defining function based on alias `%s'", hasalias);
                 // YYERROR(oecused); }`
                 //
-                // No herrflush() and no ERRFLAG_ERROR: those arrived with
-                // workers/51307 after 5.9.2. With errflag still clear,
-                // yyerror's zwarn reports "parse error near `()'" after the
-                // warning, which is what 5.9.2 prints.
+                // c:2064-2066 — `herrflush(); if (noerrs != 2) errflag |=
+                // ERRFLAG_ERROR;` before YYERROR: with errflag set, the caller's
+                // yyerror (c:673) stays silent (zwarn bails on errflag, c:Src/utils.c:220),
+                // so the warning is the only diagnostic.
                 //
                 // `hasalias != input_hasalias()` is the "the alias body
                 // was NOT itself a complete definition" test: when the
@@ -3286,7 +3291,12 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                         "defining function based on alias `{}'",
                         hasalias.as_deref().unwrap_or("")
                     ));
-                    set_tok(LEXERR); // c:2059 YYERROR
+                    crate::ported::hist::herrflush(); // c:2064
+                    if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+                        // c:2065-2066
+                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    }
+                    set_tok(LEXERR); // c:2067 YYERROR
                     return None;
                 }
                 // foo() { ... } / multi-name `f1 f2 f3() { ... }` style
