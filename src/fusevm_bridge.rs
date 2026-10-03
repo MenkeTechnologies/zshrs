@@ -15302,6 +15302,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let body_source = iter.next().unwrap_or_default();
         let line_base_str = iter.next().unwrap_or_default();
         let line_base: i64 = line_base_str.parse().unwrap_or(0);
+        // c:Src/exec.c:5384-5388 — `shf->lineno = (funcstack && (tp == FS_FUNC ||
+        // tp == FS_EVAL)) ? funcstack->flineno + lineno : lineno;`. Inside an
+        // `eval` the compiled line is relative to the eval text, so add the
+        // eval frame's file offset. (A function body is compiled with file
+        // lines already, so the FS_FUNC arm needs no adjustment here.)
+        let line_base: i64 = match crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .ok()
+            .and_then(|stk| stk.last().map(|top| (top.tp, top.flineno)))
+        {
+            Some((tp, flineno)) if tp == crate::ported::zsh_h::FS_EVAL && line_base >= 0 => {
+                flineno + line_base // c:5387
+            }
+            _ => line_base,
+        };
         // c:Src/exec.c:5382 `do_tracing = *state->pc++;` — the `-T` of
         // `function -T name { … }`, carried across from compile_funcdef.
         let do_tracing = iter.next().map(|s| s == "1").unwrap_or(false); // c:5382

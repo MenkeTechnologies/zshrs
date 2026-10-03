@@ -86,3 +86,37 @@ fn noexec_never_globs_the_command_word() {
     let (_ec, _out, err) = run("/nonexistent-dir-zshrs/*");
     assert!(err.contains("no matches found"), "{err}");
 }
+
+/// c:Src/exec.c:5384-5388 — a function defined inside `eval` records
+/// `funcstack->flineno + lineno`, the FILE line of its definition, which
+/// `$funcsourcetrace` and `%I` (c:Src/prompt.c:901-919) then report. zshrs
+/// stored the eval-relative line (E02xtrace.ztst `functions -T` chunk).
+#[test]
+fn eval_defined_function_records_file_line() {
+    let dir = std::env::temp_dir().join(format!("zshrs-evalline-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("s.zsh");
+    std::fs::write(
+        &script,
+        ":\n:\n:\n\
+         eval ':\n\
+         h() { print -r -- \"h ${funcsourcetrace[1]#*:}\"; }\n\
+         h\n\
+         k() {\n\
+         \x20 print -rP -- \"k ${funcsourcetrace[1]#*:} %I %i\"\n\
+         }\n\
+         k'\n",
+    )
+    .unwrap();
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f"])
+        .arg(&script)
+        .env_remove("ZSHRS_CACHE")
+        .env_remove("ZDOTDIR")
+        .output()
+        .expect("spawn zshrs");
+    let _ = std::fs::remove_dir_all(&dir);
+    // eval runs at file line 4 (flineno 4); h is eval line 2, k eval line 4.
+    // Output verified against zsh 5.9.2 on the same script.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "h 6\nk 8 9 1\n");
+}
