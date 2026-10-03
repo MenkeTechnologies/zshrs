@@ -474,20 +474,47 @@ fn add_path_dirs(args: &[String]) -> bool {
     // sh:116 — `path_dirs=(${^path}/*(/N:t))`: the basename of every
     // DIRECTORY one level under each `$path` entry, in glob (sorted)
     // order per entry, with a non-matching entry contributing nothing.
+    //
+    // !!! WARNING: RUST-ONLY CACHE — NO UPSTREAM COUNTERPART !!!
+    // The glob re-reads every `$path` directory on each command-position TAB.
+    // A directory's entry list changes only when its mtime does (an entry
+    // added, removed or renamed, including a file replaced by a directory),
+    // so each directory's sorted subdirectory names are kept with the mtime
+    // they were read at: one stat per `$path` entry instead of a readdir of
+    // every file in it.
+    thread_local! {
+        static SUBDIRS: std::cell::RefCell<
+            std::collections::HashMap<String, (std::time::SystemTime, Vec<String>)>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
     let mut dirs: Vec<String> = Vec::new();
     for p in &path {
-        let mut here: Vec<String> = match std::fs::read_dir(p) {
-            Ok(rd) => rd
-                .filter_map(|e| e.ok())
-                // `(/)` tests the entry itself, lstat-style: a symlink to a
-                // directory does not match. `file_type()` is exactly that and
-                // comes from readdir's d_type, so no stat per PATH entry.
-                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect(),
-            Err(_) => Vec::new(),
+        let mtime = std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let cached = mtime.and_then(|t| {
+            SUBDIRS.with(|c| c.borrow().get(p).filter(|(at, _)| *at == t).map(|(_, d)| d.clone()))
+        });
+        let here = match cached {
+            Some(d) => d,
+            None => {
+                let mut here: Vec<String> = match std::fs::read_dir(p) {
+                    Ok(rd) => rd
+                        .filter_map(|e| e.ok())
+                        // `(/)` tests the entry itself, lstat-style: a symlink
+                        // to a directory does not match. `file_type()` is
+                        // exactly that and comes from readdir's d_type, so no
+                        // stat per PATH entry.
+                        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+                here.sort();
+                if let Some(t) = mtime {
+                    SUBDIRS.with(|c| c.borrow_mut().insert(p.clone(), (t, here.clone())));
+                }
+                here
+            }
         };
-        here.sort();
         dirs.extend(here);
     }
     // sh:117
