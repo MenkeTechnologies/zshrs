@@ -109,6 +109,27 @@ pub fn last_exec_duration() -> Option<std::time::Duration> {
 /// p10k:_p9k_save_status does exactly this.
 static LAST_STATUS: AtomicI64 = AtomicI64::new(0);
 
+/// Where engine state that outlives one shell is kept — the role of
+/// p10k's state dump (`_p9k_dump_state`, p10k:6630-6650, which writes
+/// every `_p9k_[^_]*` parameter for the next shell to source):
+/// `$ZSHRS_HOME/NAME`, else `~/.zshrs/NAME`.
+pub(crate) fn state_file(name: &str) -> std::path::PathBuf {
+    std::env::var_os("ZSHRS_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".zshrs")))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join(name)
+}
+
+/// Write `bytes` to `path` through a per-process temporary and a rename,
+/// so a shell starting concurrently never reads half a file.
+pub(crate) fn write_state_file(path: &std::path::Path, bytes: &[u8]) {
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    if std::fs::write(&tmp, bytes).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
 pub fn last_status() -> i64 {
     LAST_STATUS.load(Ordering::Relaxed)
 }

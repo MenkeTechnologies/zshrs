@@ -80,7 +80,27 @@ type StatSig = Vec<(PathBuf, i64)>;
 /// `_p9k_cache_stat_set`: a cached value stays valid while every
 /// witness file keeps its mtime (missing file == mtime -1, also a
 /// valid, comparable state).
+///
+/// p10k keeps it in `_p9k_cache`, which its state dump carries to the
+/// next shell (`typeset -pm '_p9k_[^_]*'`, p10k:6645). Kept only in
+/// memory, every new shell ran `rustc --version`, `go version` and the
+/// rest before its first prompt; it is loaded from and written to
+/// [`STAT_CACHE_FILE`] instead. An entry is only reused while its
+/// witnesses' mtimes match, so a stale one is never served.
 static STAT_CACHE: OnceLock<Mutex<HashMap<String, (StatSig, Vec<String>)>>> = OnceLock::new();
+
+/// [`STAT_CACHE`] on disk, under `p10k::state_file`.
+const STAT_CACHE_FILE: &str = "p10k-stat-cache.json";
+
+fn stat_cache() -> &'static Mutex<HashMap<String, (StatSig, Vec<String>)>> {
+    STAT_CACHE.get_or_init(|| {
+        let loaded = fs::read(crate::extensions::p10k::state_file(STAT_CACHE_FILE))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        Mutex::new(loaded)
+    })
+}
 
 fn stat_sig(files: &[PathBuf]) -> StatSig {
     files.iter().map(|f| (f.clone(), mtime(f))).collect()
@@ -88,8 +108,7 @@ fn stat_sig(files: &[PathBuf]) -> StatSig {
 
 fn cache_get(key: &str, files: &[PathBuf]) -> Option<Vec<String>> {
     let sig = stat_sig(files);
-    let m = STAT_CACHE.get_or_init(Default::default);
-    if let Ok(guard) = m.lock() {
+    if let Ok(guard) = stat_cache().lock() {
         if let Some((cached_sig, vals)) = guard.get(key) {
             if *cached_sig == sig {
                 return Some(vals.clone());
@@ -101,9 +120,15 @@ fn cache_get(key: &str, files: &[PathBuf]) -> Option<Vec<String>> {
 
 fn cache_set(key: &str, files: &[PathBuf], vals: Vec<String>) -> Vec<String> {
     let sig = stat_sig(files);
-    let m = STAT_CACHE.get_or_init(Default::default);
-    if let Ok(mut guard) = m.lock() {
+    if let Ok(mut guard) = stat_cache().lock() {
         guard.insert(key.to_string(), (sig, vals.clone()));
+        // Only a miss gets here, so the write is rare.
+        if let Ok(json) = serde_json::to_vec(&*guard) {
+            crate::extensions::p10k::write_state_file(
+                &crate::extensions::p10k::state_file(STAT_CACHE_FILE),
+                &json,
+            );
+        }
     }
     vals
 }

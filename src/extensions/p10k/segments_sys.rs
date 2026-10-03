@@ -8,7 +8,8 @@
 //! content, hide rules) mirror the zsh theme; the async worker layer
 //! (`_p9k_worker_invoke` + `_p9k_print_params` round-trips) collapses
 //! into synchronous reads behind a small TTL cache for the segments
-//! that fork (vm_stat, pmset, todo.sh, task).
+//! that fork (vm_stat, pmset, todo.sh); taskwarrior keeps p10k's own
+//! file-signature cache, persisted across shells.
 //!
 //! Phase-1 scope notes (each also traced at the call site):
 //! - battery: macOS `pmset -g batt` (p10k:1381-1406) and the Linux
@@ -1439,47 +1440,48 @@ fn timewarrior_inner() -> Option<Vec<Segment>> {
 // ---------------------------------------------------------------------
 
 fn taskwarrior_segments() -> Vec<Segment> {
-    // p10k:5183 — init cond gates on $commands[task].
+    // p10k:5322 — init cond gates on $commands[task].
     let Some(bin) = cmd_on_path("task") else {
         return vec![];
     };
-    // p10k:5136-5141 — `task +PENDING count` / `task +OVERDUE count`
-    // (rc.color=0 rc._forcecolor=0, stdin null); only values ≥ 1
-    // count. The mtime-signature cache (p10k:5111-5121) becomes a 30s
-    // TTL over the assembled text.
-    let text = cached_ttl("taskwarrior.counts", Duration::from_secs(30), || {
-        let count = |tag: &str| -> Option<i64> {
-            let out = run_tool(
-                &bin,
-                &[
-                    &format!("+{tag}"),
-                    "count",
-                    "rc.color=0",
-                    "rc._forcecolor=0",
-                ],
-            )?;
-            let n: i64 = out.trim().parse().ok()?;
-            (n >= 1).then_some(n) // p10k:5139 — [[ $val == <1-> ]]
-        };
-        // p10k:5165-5177 — "!O" then "/" then "P".
-        let mut text = String::new();
-        if let Some(o) = count("OVERDUE") {
-            text.push_str(&format!("!{o}"));
+    // p10k:5296-5304 — reuse the counters while the data signature holds;
+    // otherwise re-check (or re-read) the config, then re-count.
+    let state = {
+        let mut g = TASKWARRIOR.lock().unwrap_or_else(|e| e.into_inner());
+        let st = g.get_or_insert_with(TaskwarriorState::load);
+        if !st.nonfunctional_sig.is_empty() && st.nonfunctional_sig == TaskwarriorState::meta_sig_now() {
+            return vec![];
         }
-        if let Some(p) = count("PENDING") {
-            if !text.is_empty() {
-                text.push('/');
+        if !st.check_data() {
+            if !st.check_meta() && !st.init_meta(&bin) {
+                *st = TaskwarriorState {
+                    nonfunctional_sig: TaskwarriorState::meta_sig_now(),
+                    ..TaskwarriorState::default()
+                };
+                st.save();
+                return vec![];
             }
-            text.push_str(&p.to_string());
+            st.init_data(&bin);
+            st.save();
         }
-        Some(text)
-    })
-    .unwrap_or_default();
-    // p10k:5178 — [[ -n $text ]] || return.
+        st.clone()
+    };
+    // p10k:5305-5316 — "!O" then "/" then "P".
+    let mut text = String::new();
+    if let Some(o) = state.overdue {
+        text.push_str(&format!("!{o}"));
+    }
+    if let Some(p) = state.pending {
+        if !text.is_empty() {
+            text.push('/');
+        }
+        text.push_str(&p.to_string());
+    }
+    // p10k:5317 — [[ -n $text ]] || return.
     if text.is_empty() {
         return vec![];
     }
-    // p10k:5179 — `$0 6 $_p9k_color1 TASKWARRIOR_ICON 0 '' $text`
+    // p10k:5318 — `$0 6 $_p9k_color1 TASKWARRIOR_ICON 0 '' $text`
     vec![make_segment(
         "taskwarrior",
         None,
@@ -1488,6 +1490,183 @@ fn taskwarrior_segments() -> Vec<Segment> {
         "TASKWARRIOR_ICON",
         text,
     )]
+}
+
+/// p10k's taskwarrior cache (p10k:5199-5292): the counts stand while the
+/// mtimes of the data files and `$TASKRC` (and `$TASKRC`/`$TASKDATA`
+/// themselves) are unchanged and the next due date has not passed.
+/// p10k carries it to the next shell in its state dump
+/// (`_p9k__state_dump_scheduled=1`); here it is
+/// `$ZSHRS_HOME/p10k-taskwarrior.json`. A new shell then reads the counts
+/// with a few `stat`s instead of running `task` — two to three
+/// invocations, most of a second — before its first prompt.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+struct TaskwarriorState {
+    /// `_p9k_taskwarrior_meta_sig` — empty when the config is unread.
+    meta_sig: String,
+    /// `_p9k_taskwarrior_data_dir` — `task show data.location`.
+    data_dir: String,
+    /// `_p9k_taskwarrior_data_sig` — empty when the data is unread.
+    data_sig: String,
+    /// `_p9k_taskwarrior_counters[PENDING]`.
+    pending: Option<i64>,
+    /// `_p9k_taskwarrior_counters[OVERDUE]`.
+    overdue: Option<i64>,
+    /// `_p9k_taskwarrior_next_due` — epoch seconds, 0 for none.
+    next_due: i64,
+    /// The meta signature under which `task show data.location` failed —
+    /// p10k clears `_p9k__taskwarrior_functional` then (p10k:5237) and the
+    /// segment condition (p10k:5322) stays off. Persisted, so a `task` that
+    /// is not taskwarrior (go-task's `task` fails `task show`) costs one run
+    /// until `$TASKRC` changes, not one per shell.
+    #[serde(default)]
+    nonfunctional_sig: String,
+}
+
+static TASKWARRIOR: Mutex<Option<TaskwarriorState>> = Mutex::new(None);
+
+impl TaskwarriorState {
+    fn path() -> PathBuf {
+        crate::extensions::p10k::state_file("p10k-taskwarrior.json")
+    }
+
+    fn load() -> Self {
+        std::fs::read(Self::path())
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self) {
+        if let Ok(json) = serde_json::to_vec(self) {
+            crate::extensions::p10k::write_state_file(&Self::path(), &json);
+        }
+    }
+
+    /// `${(pj:\0:)stat}` over `files` — each file's mtime in seconds,
+    /// `-` for one that does not exist (p10k keeps those in `*_non_files`
+    /// and fails the check when one appears).
+    fn mtimes(files: &[PathBuf]) -> String {
+        files
+            .iter()
+            .map(|f| {
+                std::fs::metadata(f)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or_else(|| "-".to_string(), |d| d.as_secs().to_string())
+            })
+            .collect::<Vec<_>>()
+            .join("\0")
+    }
+
+    /// `files=(${TASKRC:-~/.taskrc})` (p10k:5219).
+    fn meta_files() -> Vec<PathBuf> {
+        let rc = env_or_param("TASKRC");
+        if rc.is_empty() {
+            dirs::home_dir().map(|h| vec![h.join(".taskrc")]).unwrap_or_default()
+        } else {
+            vec![PathBuf::from(rc)]
+        }
+    }
+
+    /// p10k:5225 — `${(pj:\0:)stat}$'\0'$TASKRC$'\0'$TASKDATA`.
+    fn meta_sig_now() -> String {
+        format!(
+            "{}\0{}\0{}",
+            Self::mtimes(&Self::meta_files()),
+            env_or_param("TASKRC"),
+            env_or_param("TASKDATA")
+        )
+    }
+
+    /// p10k:5253-5256 — the data files under `data.location`.
+    fn data_files(&self) -> Vec<PathBuf> {
+        let dir = PathBuf::from(&self.data_dir);
+        vec![dir.join("pending.data"), dir.join("completed.data"), dir.join("taskchampion.sqlite3")]
+    }
+
+    /// p10k:5260-5267 — the data mtimes, then the meta signature.
+    fn data_sig_now(&self) -> String {
+        format!("{}\0{}", Self::mtimes(&self.data_files()), Self::meta_sig_now())
+    }
+
+    /// `_p9k_taskwarrior_check_data` (p10k:5241-5250).
+    fn check_data(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        !self.data_sig.is_empty()
+            && self.data_sig == self.data_sig_now()
+            && (self.next_due == 0 || self.next_due > now)
+    }
+
+    /// `_p9k_taskwarrior_check_meta` (p10k:5199-5207).
+    fn check_meta(&self) -> bool {
+        !self.meta_sig.is_empty() && self.meta_sig == Self::meta_sig_now()
+    }
+
+    /// `_p9k_taskwarrior_init_meta` (p10k:5209-5239): `data.location`
+    /// from `task show`, `~` expanded.
+    fn init_meta(&mut self, bin: &std::path::Path) -> bool {
+        let Some(cfg) = run_tool(bin, &["show", "data.location", "rc.color=0", "rc._forcecolor=0"]) else {
+            return false;
+        };
+        let lines: Vec<&str> = cfg.lines().filter(|l| l.starts_with("data.location")).collect();
+        let [line] = lines.as_slice() else {
+            return false;
+        };
+        let Some(dir) = line.strip_prefix("data.location").map(str::trim).filter(|d| !d.is_empty()) else {
+            return false;
+        };
+        self.data_dir = match (dir.strip_prefix('~'), dirs::home_dir()) {
+            (Some(rest), Some(home)) => format!("{}{}", home.display(), rest),
+            _ => dir.to_string(),
+        };
+        self.meta_sig = Self::meta_sig_now();
+        true
+    }
+
+    /// `_p9k_taskwarrior_init_data` (p10k:5252-5292).
+    fn init_data(&mut self, bin: &std::path::Path) {
+        self.data_sig = self.data_sig_now();
+        let count = |tag: &str| -> Option<i64> {
+            let out = run_tool(bin, &[&format!("+{tag}"), "count", "rc.color=0", "rc._forcecolor=0"])?;
+            let n: i64 = out.trim().parse().ok()?;
+            (n >= 1).then_some(n) // p10k:5273 — [[ $val == <1-> ]]
+        };
+        self.pending = count("PENDING");
+        self.overdue = count("OVERDUE");
+        // p10k:5277-5290 — the earliest due date among pending tasks that
+        // are not yet overdue; the counts expire then.
+        self.next_due = 0;
+        if self.pending.unwrap_or(0) > self.overdue.unwrap_or(0) {
+            let args = [
+                "+PENDING",
+                "-OVERDUE",
+                "list",
+                "rc.verbose=nothing",
+                "rc.color=0",
+                "rc._forcecolor=0",
+                "rc.report.list.labels=",
+                "rc.report.list.columns=due.epoch",
+            ];
+            let words: Vec<String> = run_tool(bin, &args)
+                .map(|o| o.split_whitespace().map(str::to_string).collect())
+                .unwrap_or_default();
+            // p10k:5285 — every word an (optionally negative, fractional)
+            // number, or none are used (taskwarrior 3.0.1 workaround).
+            let nums: Option<Vec<f64>> = words.iter().map(|w| w.parse::<f64>().ok()).collect();
+            if let Some(mut nums) = nums.filter(|n| !n.is_empty()) {
+                nums.sort_by(|a, b| a.total_cmp(b));
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64);
+                let first = nums[0] as i64;
+                self.next_due = if first > now { first } else { now + 60 };
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
