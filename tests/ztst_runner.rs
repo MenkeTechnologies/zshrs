@@ -797,6 +797,22 @@ impl PersistentShell {
                     let _ = std::os::unix::fs::symlink(&real, sandbox.join(name));
                 }
             }
+            // V01zmodload.ztst %prep reads the build tree's module list,
+            // `done < $ZTST_testdir/../config.modules`, and each listed
+            // module's definition, `$ZTST_srcdir/../$modfile` (modfile is
+            // `Src/Modules/foo.mdd` etc.). In the zsh build tree ztst.zsh
+            // runs in, configure writes the former beside Test/ and the
+            // latter live in Src/. Supply both from the same source tree.
+            let modules = zsh_src.join("config.modules");
+            if modules.is_file() {
+                let _ = std::os::unix::fs::symlink(&modules, sandbox.join("config.modules"));
+            }
+            for name in ["zsh.mdd", "Builtins", "Modules", "Zle"] {
+                let real = zsh_src.join("Src").join(name);
+                if real.exists() {
+                    let _ = std::os::unix::fs::symlink(&real, srcdir.join(name));
+                }
+            }
         }
 
         let fifo = sandbox.join("cmd.fifo");
@@ -843,6 +859,7 @@ ZTST_find_UTF8 () {{
 }}
 typeset +x WORDCHARS                    # ztst.zsh:46
 [[ -d Modules/zsh ]] && module_path=( $PWD/Modules )  # ztst.zsh:50
+zmodload zsh/parameter                  # ztst.zsh:54
 ZTST_testdir=$PWD                       # ztst.zsh:70
 # ztst.zsh:80-100 verbatim
 tail() {{
