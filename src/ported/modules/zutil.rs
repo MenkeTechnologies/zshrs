@@ -231,6 +231,9 @@ impl style_table {
         values: Vec<String>,
         eval_prog: Option<Eprog>,
     ) {
+        if let Ok(m) = self.memo.get_mut() {
+            m.clear(); // the patterns change: drop memoized matches
+        }
         let style_patterns = self.styles.entry(style.to_string()).or_default();
         // c:319-333 — Exists → replace.
         if let Some(existing) = style_patterns.iter_mut().find(|p| p.pat == pattern) {
@@ -316,16 +319,9 @@ impl style_table {
     /// list, return values from the first weight-sorted entry whose
     /// pat matches the context.
     pub fn get(&self, context: &str, style: &str) -> Option<&[String]> {
-        self.styles.get(style).and_then(|patterns| {
-            patterns
-                .iter()
-                .find(|p| {
-                    // c:455 — `pattry(p->prog, context)` on the prog compiled
-                    // when the style was set.
-                    p.pat == "*" || p.prog.as_ref().is_some_and(|prog| pattry(prog, context))
-                })
-                .map(|p| p.vals.as_slice())
-        })
+        let patterns = self.styles.get(style)?;
+        self.matched_pat(patterns, context, style)
+            .map(|i| patterns[i].vals.as_slice())
     }
 
     /// c:Src/Modules/zutil.c:768-779 — `bin_zstyle -g` retrieval. Unlike
@@ -348,16 +344,34 @@ impl style_table {
     /// `lookupstyle` can decide to execute the body (C reads the matched
     /// `Stypat`'s `eval` field inline; the wrapper keeps the map private).
     pub fn get_match(&self, context: &str, style: &str) -> Option<(Vec<String>, bool)> {
-        self.styles.get(style).and_then(|patterns| {
-            patterns
-                .iter()
-                .find(|p| {
-                    // c:455 — `pattry(p->prog, context)` on the prog compiled
-                    // when the style was set.
-                    p.pat == "*" || p.prog.as_ref().is_some_and(|prog| pattry(prog, context))
-                })
-                .map(|p| (p.vals.clone(), p.eval.is_some()))
-        })
+        let patterns = self.styles.get(style)?;
+        self.matched_pat(patterns, context, style)
+            .map(|i| (patterns[i].vals.clone(), patterns[i].eval.is_some()))
+    }
+
+    /// WARNING: NOT IN ZUTIL.C — method on the Rust-only `style_table`
+    /// wrapper. The c:452-458 walk shared by `get` and `get_match`: the index
+    /// of the first pattern, in weight order, whose prog matches `context`
+    /// (c:455 `pattry(p->prog, context)`, on the prog compiled when the style
+    /// was set). Answers are memoized per (style, context); see `memo`.
+    fn matched_pat(&self, patterns: &[stypat], context: &str, style: &str) -> Option<usize> {
+        if let Some(hit) = self
+            .memo
+            .lock()
+            .ok()
+            .and_then(|m| m.get(style).and_then(|c| c.get(context)).copied())
+        {
+            return hit;
+        }
+        let found = patterns
+            .iter()
+            .position(|p| p.pat == "*" || p.prog.as_ref().is_some_and(|prog| pattry(prog, context)));
+        if let Ok(mut m) = self.memo.lock() {
+            m.entry(style.to_string())
+                .or_default()
+                .insert(context.to_string(), found);
+        }
+        found
     }
 
     /// WARNING: NOT IN ZUTIL.C — method on Rust-only `style_table` wrapper.
@@ -365,6 +379,9 @@ impl style_table {
     /// Remove style/pattern entries from the table. Mirrors the
     /// `-d` dispatch arms of `bin_zstyle` (Src/Modules/zutil.c:487).
     pub fn delete(&mut self, pattern: Option<&str>, style: Option<&str>) {
+        if let Ok(m) = self.memo.get_mut() {
+            m.clear(); // the patterns change: drop memoized matches
+        }
         match (pattern, style) {
             (None, None) => self.styles.clear(),
             (Some(pat), None) => {
@@ -1043,7 +1060,7 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
     // survives the whole completion in zsh and was disappearing here.
     let style_exists = zstyletab
         .lock()
-        .map(|t| t.list_styles().iter().any(|n| *n == style))
+        .map(|t| t.styles.contains_key(style))
         .unwrap_or(false);
     if !style_exists {
         return Vec::new(); // c:447 `found = NULL` → c:461 `return found`
@@ -1089,7 +1106,7 @@ pub fn testforstyle(ctxt: &str, style: &str) -> i32 {
     // c:471-472 — same `if (s)` gate as lookupstyle above.
     let style_exists = zstyletab
         .lock()
-        .map(|t| t.list_styles().iter().any(|n| *n == style))
+        .map(|t| t.styles.contains_key(style))
         .unwrap_or(false);
     if !style_exists {
         return 1; // c:483 `return !found` with found == 0
@@ -4031,7 +4048,7 @@ pub struct MatchData {
 // already exist at lines 1608 / 1596 below.
 /// `style_table` — see fields for layout.
 #[allow(non_camel_case_types)]
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct style_table {
     /// `styles` field.
     ///
@@ -4040,6 +4057,23 @@ pub struct style_table {
     /// so `clone()` must be a refcount bump. A compsys configuration runs
     /// to hundreds of styles; only a body that runs `zstyle` pays for a copy.
     styles: crate::cow_map::CowHashMap<String, Vec<stypat>>,
+    /// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    /// style -> context -> index of the first pattern (in weight order) that
+    /// matched, or None. C pattries every pattern on every lookup
+    /// (c:452-458); a completion asks the same few hundred (style, context)
+    /// pairs on every TAB. The answer depends only on the table, since each
+    /// prog is compiled once in `set`, so `set` and `delete` drop the memo
+    /// and a clone starts with an empty one.
+    memo: Mutex<HashMap<String, HashMap<String, Option<usize>>>>,
+}
+
+impl Clone for style_table {
+    fn clone(&self) -> Self {
+        Self {
+            styles: self.styles.clone(),
+            memo: Mutex::default(),
+        }
+    }
 }
 
 /// Namespace for the recursive zformat walker — distinct from
