@@ -5489,6 +5489,112 @@ pub fn add_match_data(
         }
     }
 
+    // c:2869 — `stl = strlen(str);`
+    // c:2870-2920 — MULTIBYTE_SUPPORT.
+    // c:2871 — "If "str" contains a character that won't convert into a wide
+    // c:2872 —  character, change it into a $'\123' sequence."
+    // `mbrtowc` is the locale gate: under UTF-8 a stray 0x9b is MB_INVALID and
+    // becomes `$'\233'` in cm->str — which is then what the listing prints and
+    // what do_single inserts — while under LC_ALL=C every byte converts and the
+    // string is kept as is. Without this the raw byte reached the listing (as
+    // mb_niceformat's `\M-^[`) and the line.
+    //
+    // C walks the byte-metafied string and decodes each `Meta, c^32` pair
+    // inline (c:2876-2877, c:2897-2898). `str` here is the char-level
+    // metafied form (`unmetafy_str`), so the pairs are decoded up front and
+    // the loop below runs on the same raw bytes C's `curchar` sees. Copied
+    // runs (c:2911-2912) go back out in that form: a run that is valid UTF-8
+    // stays as its characters, any other byte >= 0x80 is re-metafied as
+    // `Meta, b^32` (utils.c:4880-4886 `if (imeta(c)) { *p++ = Meta; *p++ = c ^ 32; }`).
+    let mut new_str: Option<String> = None;
+    {
+        use crate::ported::utils::{
+            mbrtowc, unmetafy_str, MbStateBuf, MBSTATE_ZERO, MB_INCOMPLETE, MB_INVALID,
+        };
+        let src = unmetafy_str(str);
+        let fe = src.len();
+        let copy_run = |out: &mut String, run: &[u8]| match std::str::from_utf8(run) {
+            Ok(s) => out.push_str(s),
+            Err(_) => {
+                for &b in run {
+                    if b < 0x80 {
+                        out.push(b as char);
+                    } else {
+                        out.push(crate::ported::zsh_h::Meta as char);
+                        out.push(char::from(b ^ 32));
+                    }
+                }
+            }
+        };
+        // c:2874 — `memset(&mbs, '\0', sizeof mbs);`
+        let mut mbs: MbStateBuf = MBSTATE_ZERO;
+        // c:2875 — `for (t = f = fs = str, fe = f + stl; fs < fe; )`. `t` (the
+        // output end) is `fs` until the first invalid byte allocates new_str.
+        let (mut t, mut f, mut fs) = (0usize, 0usize, 0usize);
+        while fs < fe {
+            // c:2876-2877 — `curchar = *f++` (Meta pair already decoded).
+            let curchar = src[f];
+            f += 1;
+            // c:2878 — `cnt = mbrtowc(&wc, &curchar, 1, &mbs);`
+            let mut wc: libc::wchar_t = 0;
+            let cnt = unsafe {
+                mbrtowc(
+                    &mut wc,
+                    &curchar as *const u8 as *const libc::c_char,
+                    1,
+                    &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+                )
+            };
+            match cnt {
+                // c:2880-2882 — `case MB_INCOMPLETE: if (f < fe) continue;`
+                MB_INCOMPLETE if f < fe => continue,
+                // c:2883-2884 — FALL THROUGH into `case MB_INVALID:`
+                MB_INCOMPLETE | MB_INVALID => {
+                    // c:2885-2886 — "Get mbs out of its undefined state."
+                    mbs = MBSTATE_ZERO;
+                    // c:2887-2892 — `if (!new_str) { new_str = zhalloc(...);
+                    // memcpy(new_str, str, t - str); ... }`
+                    let out = new_str.get_or_insert_with(|| {
+                        let mut s = String::new();
+                        copy_run(&mut s, &src[..t]);
+                        s
+                    });
+                    // c:2893-2895 — "Output one byte from the start of this
+                    // invalid multibyte sequence unless we got MB_INCOMPLETE at
+                    // the end of the string, in which case we output all the
+                    // incomplete bytes."
+                    loop {
+                        // c:2897-2898
+                        let c = src[fs];
+                        fs += 1;
+                        // c:2899-2905 — `$'\NNN'`
+                        out.push_str("$'\\");
+                        out.push((b'0' + ((c >> 6) & 7)) as char);
+                        out.push((b'0' + ((c >> 3) & 7)) as char);
+                        out.push((b'0' + (c & 7)) as char);
+                        out.push('\'');
+                        // c:2906 — `} while (cnt == MB_INCOMPLETE && fs < fe);`
+                        if !(cnt == MB_INCOMPLETE && fs < fe) {
+                            break;
+                        }
+                    }
+                    // c:2907-2908 — "Scanning restarts from the spot after the
+                    // char we skipped."
+                    f = fs;
+                }
+                // c:2910-2913 — `default: while (fs < f) *t++ = *fs++;`
+                _ => {
+                    match new_str.as_mut() {
+                        Some(out) => copy_run(out, &src[fs..f]),
+                        None => t = f,
+                    }
+                    fs = f;
+                }
+            }
+        }
+    }
+    // c:2916-2920 — `if (new_str) { *t = '\0'; str = new_str; stl = t - str; }`
+    let str: &str = new_str.as_deref().unwrap_or(str);
     let stl = str.len();
 
     // c:2929-2932 — Cmatch allocation + str/orig/ppre/psuf.
