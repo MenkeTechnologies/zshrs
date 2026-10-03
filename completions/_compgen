@@ -1,0 +1,107 @@
+#compdef compgen complete
+
+# bash-compatibility builtins: `compgen` prints candidate words, `complete`
+# records (or lists, or removes) a bash completion spec for commands.
+#
+# zshrs builtins (native mode only; --zsh reports them as not found).
+# Parsers: builtin_compgen and builtin_complete in
+# src/extensions/ext_builtins.rs; keep in sync.
+#
+# Both parsers match whole words: every flag is its own word, nothing
+# bundles (`-ab` is a bad option to compgen), and a value is always the
+# NEXT word. Flags below are exactly the ones each parser matches.
+#
+# `complete` shares this file because a `_complete` file would shadow
+# compsys's own `_complete` completer.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local curcontext=$curcontext state line ret=1
+typeset -A opt_args
+
+case $service in
+  compgen)
+    # Only -a -b -d -f -v generate words; -c -e -j -k -u are accepted
+    # into the action list but have no generator. -A -D -E -I -r are
+    # no-ops that take NO value; -F -C -S -P -X -o swallow one value and
+    # ignore it. The last non-option word is the prefix filter.
+    _arguments -C \
+      '-W[split a word list on whitespace and add the words]:word list: ' \
+      '-G[add files globbed as PREFIX* (the pattern value is ignored)]:glob pattern: ' \
+      '-a[alias names]' \
+      '-b[builtin names, including zshrs extension builtins]' \
+      '-c[command names (accepted, generates nothing)]' \
+      '-d[directories in the current directory]' \
+      '-e[exported variables (accepted, generates nothing)]' \
+      '-f[files in the current directory]' \
+      '-j[job names (accepted, generates nothing)]' \
+      '-k[reserved words (accepted, generates nothing)]' \
+      '-u[user names (accepted, generates nothing)]' \
+      '-v[scalar parameters and environment variables]' \
+      '-F[completion function (accepted and ignored)]:function:->function' \
+      '-C[command (accepted and ignored)]:command:_command_names' \
+      '-S[suffix (accepted and ignored)]:suffix: ' \
+      '-P[prefix (accepted and ignored)]:prefix: ' \
+      '-X[filter pattern (accepted and ignored)]:filter pattern: ' \
+      '-o[bash comp-option (accepted and ignored)]:comp-option:->compopt' \
+      '-A[no-op (takes no action name)]' \
+      '-D[no-op]' \
+      '-E[no-op]' \
+      '-I[no-op]' \
+      '-r[no-op]' \
+      ':prefix (keep candidates starting with it): ' && ret=0
+    ;;
+  complete)
+    # -r removes the specs of every following word and stops. Any other
+    # dash word the parser does not match is skipped without taking a
+    # value; every non-dash word is a command the spec is stored for.
+    _arguments -C \
+      '-W[word list]:word list: ' \
+      '-F[completion function]:function:->function' \
+      '-C[command whose output supplies the words]:command:_command_names' \
+      '-G[glob pattern]:glob pattern: ' \
+      '-P[prefix added to each word]:prefix: ' \
+      '-S[suffix added to each word]:suffix: ' \
+      '-a[action: alias names]' \
+      '-b[action: builtin names]' \
+      '-c[action: command names]' \
+      '-d[action: directory names]' \
+      '-e[action: exported variables]' \
+      '-f[action: file names]' \
+      '-j[action: job names]' \
+      '(- *)-r[remove the specs of the named commands]:*:registered command:->registered' \
+      '*:command:_command_names' && ret=0
+    ;;
+  *)
+    return 1 ;;
+esac
+
+case $state in
+  function)
+    local -a expl
+    _wanted functions expl 'function' compadd -k functions && ret=0
+    ;;
+  compopt)
+    # The option names bash's compgen/complete -o accept.
+    local -a compopts
+    compopts=(
+      'bashdefault:fall back to the default bash completions'
+      'default:fall back to readline default file completion'
+      'dirnames:fall back to directory names'
+      'filenames:treat the words as file names'
+      'noquote:do not quote the words'
+      'nosort:do not sort the words'
+      'nospace:do not append a space'
+      'plusdirs:add directory names to the words'
+    )
+    _describe -t comp-options 'comp-option' compopts && ret=0
+    ;;
+  registered)
+    # Commands with a stored spec: the last word of each line `complete`
+    # prints with no arguments.
+    local -a cmds expl
+    cmds=( ${${(f)"$(complete 2>/dev/null)"}##* } )
+    _wanted commands expl 'command with a spec' compadd -a cmds && ret=0
+    ;;
+esac
+
+return ret
