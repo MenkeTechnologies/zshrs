@@ -1881,6 +1881,11 @@ impl ShellExecutor {
     pub fn assoc(&self, name: &str) -> Option<IndexMap<String, String>> {
         // c:Src/params.c:570-575 — nameref deref before the read.
         let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+            // c:2264-2267 + c:2297 — a reference to an ELEMENT leaves its
+            // `[sub]` unparsed for a bracks-0 getvalue, so it is no hash.
+            crate::ported::params::nameref_resolution::Target { subscript: Some(_), .. } => {
+                return Default::default()
+            }
             crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
             _ => name.to_string(),
         };
@@ -1949,6 +1954,11 @@ impl ShellExecutor {
     pub fn has_assoc(&self, name: &str) -> bool {
         // c:Src/params.c:570-575 — nameref deref before the read.
         let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+            // c:2264-2267 + c:2297 — a reference to an ELEMENT leaves its
+            // `[sub]` unparsed for a bracks-0 getvalue, so it is no hash.
+            crate::ported::params::nameref_resolution::Target { subscript: Some(_), .. } => {
+                return Default::default()
+            }
             crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
             _ => name.to_string(),
         };

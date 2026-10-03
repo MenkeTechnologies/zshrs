@@ -6834,9 +6834,12 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
                 if (pm.node.flags as u32 & PM_UNSET) != 0 {
                     return Some(None);
                 }
-                if let Some(k) = subscript {
-                    // single element reads back as a 1-element array view
-                    return Some(nameref_element_read(&pm, &t, &k).map(|v| vec![v]));
+                if subscript.is_some() {
+                    // c:3107-3110 — getvalue with bracks 0: fetchvalue's
+                    // reference slice leaves `[sub]` unparsed (c:2264-2267),
+                    // so c:2297 `if (!bracks && *s) return NULL` and the
+                    // read is not an array one.
+                    return Some(None);
                 }
                 if PM_TYPE(pm.node.flags as u32) != PM_ARRAY {
                     return Some(None);
@@ -21818,14 +21821,12 @@ pub fn resolve_nameref_name(name: &str, stop_at: Option<(&str, i32)>) -> nameref
         };
         // c:6339 — `pm->width` is the subscript offset; a subscripted
         // ref is the end of any chain (see fetchvalue c:2250-2256).
-        if cur.width != 0 || refname_full.contains('[') {
-            let (base_name, sub) = match refname_full.find('[') {
-                Some(i) => {
-                    let tail = &refname_full[i + 1..];
-                    let key = tail.strip_suffix(']').unwrap_or(tail);
-                    (refname_full[..i].to_string(), Some(key.to_string()))
-                }
-                None => (refname_full.clone(), None),
+        if cur.width > 0 && (cur.width as usize) < refname_full.len() {
+            let (base_name, sub) = {
+                let i = cur.width as usize;
+                let tail = &refname_full[i + 1..];
+                let key = tail.strip_suffix(']').unwrap_or(tail);
+                (refname_full[..i].to_string(), Some(key.to_string()))
             };
             let resolved = tab
                 .get(&base_name)
@@ -22026,16 +22027,34 @@ fn param_scalar_value(pm: &param) -> Option<String> {
 /// end), assocs a literal key, scalars a char index.
 fn nameref_element_read(pm: &param, target: &str, key: &str) -> Option<String> {
     let t = PM_TYPE(pm.node.flags as u32);
+    // The resolved binding is the visible one unless the upscope walk
+    // (c:6455) landed on a hidden `old`-chain node.
+    let visible = paramtab()
+        .read()
+        .ok()
+        .and_then(|tab| tab.get(target).map(|p| p.level))
+        == Some(pm.level);
+    // c:2265 `scanflags |= SCANPM_NOEXEC` for a reference slice, so
+    // getarg's c:1563-1570 parses the subscript and singsubs it with
+    // EXECOPT off: a `$(...)` in the referent expands to nothing.
+    let key: String = {
+        let exe = opt_state_get("exec").unwrap_or(true);
+        let tok = match crate::ported::lex::parsestr(key) {
+            Ok(t) => t,
+            Err(_) => return None, // c:1566-1567
+        };
+        opt_state_set("exec", false); // c:1568-1569
+        let out = crate::ported::subst::singsub(&tok);
+        opt_state_set("exec", exe); // c:1571
+        out
+    };
+    let key = key.as_str();
     if t == PM_HASHED {
         // The assoc backing is name-keyed (paramtab_hashed_storage);
         // when the resolved binding is a HIDDEN old-chain node (a
         // `local` shadow covers it), the outer's data lives on the
         // shadow STACK (pushed by createparam's PM_HASHED save).
-        let visible_level = paramtab()
-            .read()
-            .ok()
-            .and_then(|tab| tab.get(target).map(|p| p.level));
-        if visible_level != Some(pm.level) {
+        if !visible {
             if let Some(stk) = crate::ported::params::PARAMTAB_HASHED_SHADOW_STACK.get() {
                 if let Ok(stk) = stk.lock() {
                     if let Some(frames) = stk.get(target) {
@@ -22053,16 +22072,20 @@ fn nameref_element_read(pm: &param, target: &str, key: &str) -> Option<String> {
             .ok()
             .and_then(|m| m.get(target).and_then(|h| h.get(key).cloned()));
     }
-    // numeric (math) index for arrays / scalars
-    let idx: i64 = match key.trim().parse::<i64>() {
-        Ok(i) => i,
-        Err(_) => match crate::ported::math::mathevali(key) {
-            Ok(i) => i,
-            Err(_) => return None,
-        },
-    };
+    // c:1597 `r = mathevalarg(s, &s)` — reports a bad (or empty) index.
+    let idx = crate::ported::math::mathevalarg(key);
+    if errflag.load(Ordering::Relaxed) != 0 {
+        return None;
+    }
+    // A visible binding reads through the canonical getters, so the
+    // specials' getfns (`argv`, `ARGC`, `_`, ...) answer, not the
+    // node's stored slot.
     if t == PM_ARRAY {
-        let arr = pm.u_arr.as_ref()?;
+        let arr = if visible {
+            getaparam(target)?
+        } else {
+            pm.u_arr.clone()?
+        };
         let len = arr.len() as i64;
         let pos = if idx < 0 { len + idx + 1 } else { idx };
         if pos >= 1 && pos <= len {
@@ -22071,7 +22094,11 @@ fn nameref_element_read(pm: &param, target: &str, key: &str) -> Option<String> {
         return Some(String::new());
     }
     // scalar char index (1-based)
-    let s = param_scalar_value(pm)?;
+    let s = if visible {
+        getsparam(target)?
+    } else {
+        param_scalar_value(pm)?
+    };
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len() as i64;
     let pos = if idx < 0 { len + idx + 1 } else { idx };
@@ -22133,10 +22160,16 @@ pub fn setscope_by_name(name: &str, level: Option<i32>) -> i32 {
         }
     };
     let refname_full = refname_opt.unwrap_or_default();
-    // c:6388-6400 — split refname at `[`, stamp pm->width.
-    let (head, width) = match refname_full.find('[') {
-        Some(i) => (refname_full[..i].to_string(), i as i32),
-        None => (refname_full.clone(), 0),
+    // c:6388-6400 — `t = itype_end(refname, INAMESPC, 0)`; only a `[`
+    // right after the NAME is a subscript, so `![1]` keeps width 0 and
+    // names the (nonexistent) parameter `![1]`.
+    let (head, width) = {
+        let t = crate::ported::utils::itype_end(&refname_full, crate::ported::ztype_h::INAMESPC, false);
+        if t > 0 && refname_full[t..].starts_with('[') {
+            (refname_full[..t].to_string(), t as i32)
+        } else {
+            (refname_full.clone(), 0)
+        }
     };
     if width != 0 {
         with_node(&mut |pm: &mut param| pm.width = width); // c:6398 pm->width = t - refname

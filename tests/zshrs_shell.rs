@@ -13986,6 +13986,27 @@ fn test_nameref_invalid_refname_rejected() {
 }
 
 #[test]
+fn test_nameref_element_reference_reads() {
+    // K01 "references to builtin specials": fetchvalue's reference slice
+    // (c:Src/params.c:2247-2270) reads the element through the special's
+    // own getter; `![1]` has no name before its `[`, so setscope
+    // (c:6385-6400) leaves width 0 and it names no parameter.
+    let (st, out, err) = run_zshrs_parity(
+        r#"f() { local -n x=$1; print -r "[$x]"; }; f 'argv[1]'; f 'ARGC[1]'; f '![1]'; f '?[1]'; typeset -A h=(x MISS y HIT); typeset -n p='h[y]'; print -r -- $p ${p}"#,
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(out, "[argv[1]]\n[1]\n[]\n[]\nHIT HIT\n");
+    // K01 "attempt deferred command substitution in subscript": c:2265
+    // SCANPM_NOEXEC, so the subscript expands to "" and mathevalarg reports
+    // it once.
+    let (st, _, err) = run_zshrs_parity(
+        r#"typeset -n ptr='ary[$(echo 2)]'; typeset -a ary=(one two three); print $ptr"#,
+    );
+    assert_ne!(st, 0);
+    assert_eq!(err.matches("bad math expression: empty string").count(), 1, "got: {err:?}");
+}
+
+#[test]
 fn test_nameref_referent_shape_follows_valid_refname() {
     // c:Src/params.c:6466-6511 — only a `[` after the name is examined, so
     // `foo@` and `.foo.` are accepted, a subscript must close, and nothing
