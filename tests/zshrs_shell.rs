@@ -256,6 +256,25 @@ fn test_compgen_commands() {
     );
 }
 
+#[test]
+fn test_compgen_A_takes_an_action_name() {
+    // `-A builtin` must select the action, not leave `builtin` behind as
+    // the prefix (which matched nothing).
+    let (status, by_name, _) = run_zshrs("compgen -A builtin ech");
+    let (_, by_letter, _) = run_zshrs("compgen -b ech");
+    assert_eq!(status, 0);
+    assert!(by_name.lines().any(|l| l == "echo"), "got: {by_name}");
+    assert_eq!(by_name, by_letter);
+}
+
+#[test]
+fn test_complete_o_value_is_not_stored_as_a_command() {
+    // `-o default` takes a value; it used to be registered as a command
+    // named `default`.
+    let (_, output, _) = run_zshrs("complete -o default -A builtin mycmd; complete");
+    assert_eq!(output.trim(), "complete -b mycmd", "got: {output}");
+}
+
 // ---------------------------------------------------------------------------
 // builtin read
 // ---------------------------------------------------------------------------

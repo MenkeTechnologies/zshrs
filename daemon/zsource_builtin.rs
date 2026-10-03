@@ -18,7 +18,6 @@
 // CLI shape:
 //   zsource <path>                   # resolve (hit | stale | miss)
 //   zsource --stat <path>            # stat first, send mtime/inode for sanity check
-//   zsource --info <path>            # show compiled_files row for the path
 
 use serde_json::{json, Value};
 

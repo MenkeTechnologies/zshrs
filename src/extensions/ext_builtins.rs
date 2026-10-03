@@ -2102,6 +2102,11 @@ impl ShellExecutor {
 
     /// Generate completion candidates
     pub(crate) fn builtin_compgen(&self, args: &[String]) -> i32 {
+        // The actions generated below, by the names `-A` takes.
+        const COMPGEN_ACTIONS: &[&str] = &[
+            "alias", "builtin", "command", "directory", "export", "file", "job", "keyword", "user",
+            "variable",
+        ];
         let mut i = 0;
         let mut prefix = String::new();
         let mut actions = Vec::new();
@@ -2132,6 +2137,17 @@ impl ShellExecutor {
                 "-k" => actions.push("keyword"),
                 "-u" => actions.push("user"),
                 "-v" => actions.push("variable"),
+                // `-A ACTION`: the long name of an action the letter flags
+                // above select. An action this builtin does not generate
+                // is accepted and produces nothing, like `-c` and `-j`.
+                "-A" => {
+                    i += 1;
+                    if let Some(name) = args.get(i) {
+                        if let Some(action) = COMPGEN_ACTIONS.iter().find(|a| **a == name.as_str()) {
+                            actions.push(action);
+                        }
+                    }
+                }
                 s if !s.starts_with('-') => prefix = s.to_string(),
                 s => {
                     // bash compgen has many flags. Reject unknown
@@ -2143,7 +2159,7 @@ impl ShellExecutor {
                         if i + 1 < args.len() {
                             i += 1;
                         }
-                    } else if matches!(s, "-r" | "-A" | "-D" | "-E" | "-I") {
+                    } else if matches!(s, "-r" | "-D" | "-E" | "-I") {
                         // Multi-letter or single-arg flags accepted as no-op.
                     } else {
                         eprintln!("zshrs:compgen:1: bad option: {}", s);
@@ -2355,6 +2371,26 @@ impl ShellExecutor {
                 "-e" => spec.actions.push("e".to_string()),
                 "-f" => spec.actions.push("f".to_string()),
                 "-j" => spec.actions.push("j".to_string()),
+                // `-A ACTION`: the long name of a letter action above.
+                "-A" => {
+                    i += 1;
+                    let letter = match args.get(i).map(String::as_str) {
+                        Some("alias") => Some("a"),
+                        Some("builtin") => Some("b"),
+                        Some("command") => Some("c"),
+                        Some("directory") => Some("d"),
+                        Some("export") => Some("e"),
+                        Some("file") => Some("f"),
+                        Some("job") => Some("j"),
+                        _ => None,
+                    };
+                    if let Some(l) = letter {
+                        spec.actions.push(l.to_string());
+                    }
+                }
+                // `-o COMP-OPTION` and `-X FILTERPAT` take a value this spec
+                // does not store. Consume it, or it becomes a command name.
+                "-o" | "-X" => i += 1,
                 "-r" => {
                     // Remove completion spec
                     i += 1;

@@ -9,7 +9,7 @@
 // CLI shape:
 //   zhistory append <line> [--exit-code N] [--cwd D] [--duration-ns N]
 //                          [--ts-ns N] [--shell-id N]
-//   zhistory query [--filter <pat>] [--mode match|fts|exact|prefix|cwd]
+//   zhistory query [--filter <pat>] [--mode match|fts|like|prefix|exact]
 //                  [--cwd D] [--limit N] [--asc] [--after-ns N] [--before-ns N]
 //   zhistory count
 
@@ -57,7 +57,7 @@ pub fn zhistory(args: &[String]) -> i32 {
         "" | "-h" | "--help" => {
             println!("usage: zhistory append <line> [--exit-code N] [--cwd DIR]");
             println!("                              [--duration-ns N] [--ts-ns N] [--shell-id N]");
-            println!("       zhistory query [--filter <pat>] [--mode match|fts|exact|prefix|cwd]");
+            println!("       zhistory query [--filter <pat>] [--mode match|fts|like|prefix|exact]");
             println!("                      [--cwd DIR] [--limit N] [--asc] [--after-ns N] [--before-ns N]");
             println!("       zhistory count");
             0
@@ -136,9 +136,12 @@ fn query(args: &[String]) -> i32 {
                 None => return err_exit("query: --filter requires a value"),
             },
             "--mode" => match iter.next() {
-                Some(m) => {
+                // The modes history::query matches on; anything else used
+                // to fall through to exact match without a word.
+                Some(m) if matches!(m.as_str(), "match" | "fts" | "like" | "prefix" | "exact") => {
                     payload["mode"] = Value::String(m.clone());
                 }
+                Some(m) => return err_exit(&format!("query: unknown mode `{}`", m)),
                 None => return err_exit("query: --mode requires a value"),
             },
             "--cwd" => match iter.next() {

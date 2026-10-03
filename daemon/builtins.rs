@@ -153,7 +153,9 @@ fn zcache(args: &[String]) -> i32 {
         "import" => zcache_import(rest),
         "hydrate-view" => zcache_hydrate_view(),
         "watch" => zcache_watch(rest),
-        "log" => super::builtins::zlog(args), // alias for `zlog ...`
+        // Alias for `zlog ...`: drop `zcache` so `log` sits where zlog
+        // expects its own name and the verb after it is read as the verb.
+        "log" => super::builtins::zlog(&args[1..]),
         "config" => zcache_config(rest),
         "doctor" => zcache_simple_op("doctor", json!({})),
         other => err_exit("zcache", &format!("unknown verb `{}`", other)),
