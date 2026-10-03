@@ -961,6 +961,15 @@ returns early under `[[ ! -o monitor ]]`) — then runs `precmd` and
 drains every pending `sched` entry, so deferred loaders (zinit turbo,
 `wait''`) load their plugins before anything is read.
 
+It starts from the environment a new terminal's login shell gets, not
+from the shell that ran it: everything but the session variables
+(`HOME`, `USER`, `SHELL`, `TMPDIR`, `TERM*`, `LANG`/`LC_*`, `TMUX*`,
+`SSH_*`, `DISPLAY`, `XDG_*`, `ZDOTDIR`, `ZSHRS_*`, …) is removed and
+`PATH` is reset to the system default (`confstr(_CS_PATH)`). Run from a
+configured shell, the recorder used to inherit that shell's exports, and
+a guarded assignment (`[[ -z $X ]] && export X=…`) then assigned nothing
+and was never recorded.
+
 It then snapshots the shell's **end state** from the live tables, not
 from the event log. Events cannot say what survived: `local`,
 `setopt localoptions`, `unalias`, `unfunction` and `x+=(…)` all leave

@@ -247,11 +247,69 @@ fn attach_recording_tty() -> Option<String> {
     Some(name)
 }
 
+/// Variables a new terminal's login shell gets from its session rather
+/// than from shell configuration; [`scrub_environment`] keeps only these.
+const SESSION_ENV: &[&str] = &[
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "TERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "COLORTERM",
+    "LANG",
+    "TMUX",
+    "TMUX_PANE",
+    "SSH_AUTH_SOCK",
+    "SSH_CONNECTION",
+    "SSH_CLIENT",
+    "SSH_TTY",
+    "DISPLAY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "__CF_USER_TEXT_ENCODING",
+    "ZDOTDIR",
+];
+
+/// Start the recording from the environment a new terminal's login shell
+/// starts with, not from the shell that ran `zshrs-recorder`.
+///
+/// The recording stands in for the startup files in every later shell,
+/// so it must hold what the files set given a fresh session. Run from a
+/// zpwr shell, the recorder inherited that shell's ~180 exported `ZPWR_*`
+/// variables; `.zpwr_re_env.sh`'s `[[ -z $ZPWR_EXA_COMMAND ]] && export
+/// ZPWR_EXA_COMMAND=…` then assigned nothing, nothing was recorded, and a
+/// shell replayed in a new terminal had no `$ZPWR_EXA_COMMAND` —
+/// `zpwrClearList` listed nothing. Keeps [`SESSION_ENV`], `LC_*`, `XDG_*`
+/// and `ZSHRS_*` (the recorder's own settings), and resets `PATH` to the
+/// system default (`confstr(_CS_PATH)`) that `/etc/zprofile` builds on.
+fn scrub_environment() {
+    let keep = |name: &str| {
+        SESSION_ENV.contains(&name) || ["LC_", "XDG_", "ZSHRS_"].iter().any(|p| name.starts_with(p))
+    };
+    for (name, _) in std::env::vars_os() {
+        if let Some(n) = name.to_str() {
+            if !keep(n) {
+                std::env::remove_var(n);
+            }
+        }
+    }
+    let mut buf = vec![0u8; 1024];
+    // SAFETY: confstr writes at most buf.len() bytes, NUL-terminated.
+    let n = unsafe { libc::confstr(libc::_CS_PATH, buf.as_mut_ptr().cast(), buf.len()) };
+    if n > 0 && n <= buf.len() {
+        let path = String::from_utf8_lossy(&buf[..n - 1]).into_owned();
+        std::env::set_var("PATH", path);
+    }
+}
+
 fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(a) => a,
         Err(code) => return code,
     };
+    scrub_environment();
 
     // Make sure ~/.zshrs exists with the default config files BEFORE
     // log init so the just-seeded `[log] level` in zshrs-recorder.toml

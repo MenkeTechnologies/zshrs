@@ -1058,8 +1058,28 @@ pub fn capture_end_state() {
 
     if let Some(base) = BASELINE.lock().ok().and_then(|mut b| b.take()) {
         let now = global_params();
-        let mut unset: Vec<String> = base.params.keys().filter(|n| !now.contains_key(*n)).cloned().collect();
+        // Gone since the baseline, or unset by the files outright — the
+        // recorder starts from a scrubbed environment, so a variable a
+        // session can carry (`unset CDPATH`) may never have been in its
+        // baseline to go missing.
+        let unset_by_files: Vec<String> = BUFFER
+            .lock()
+            .map(|b| {
+                b.iter()
+                    .filter(|e| e.kind == DefKind::Unset && !e.name.contains('['))
+                    .map(|e| e.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut unset: Vec<String> = base
+            .params
+            .keys()
+            .cloned()
+            .chain(unset_by_files)
+            .filter(|n| !now.contains_key(n) && !UNRECORDED_PARAMS.contains(&n.as_str()))
+            .collect();
         unset.sort();
+        unset.dedup();
         end.unset_params = unset;
         // Every global the files assigned, plus any other that changed. A
         // diff against the baseline alone dropped what the files set to the
