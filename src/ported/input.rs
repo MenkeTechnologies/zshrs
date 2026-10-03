@@ -714,6 +714,13 @@ pub fn inputline() -> i32 {
         let _ = io::stderr().write_all(&crate::ported::utils::unmetafy_str(&line));
         let _ = io::stderr().flush(); // c:436 fflush(stderr)
     }
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // `@ <code>` at the prompt runs stryke when the linking binary
+    // registered a handler (`zsh::set_stryke_handler`). It has to be taken
+    // here, as raw text, before the lexer sees it: stryke syntax is not
+    // shell syntax (`1:10 |> sum` is a pipe into a redirect, `$_` would be
+    // expanded), so parsing it as a command named `@` cannot work.
+    let line = crate::stryke_line(line);
     // c:498-500 — install the line as the live input buffer.
     let len = line.chars().count() as i32; // c:500 inbufleft (char count — inbufpos/inbufct are char-based)
     inbuf.with(|b| *b.borrow_mut() = line);

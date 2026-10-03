@@ -2396,6 +2396,11 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 // c:124 stophist == 3
                 hend(None); // c:125 hend(NULL)
             }
+            // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+            // A `@` line run by stryke from `inputline` reached the lexer as
+            // an empty line; its event is closed now, so record its text
+            // before the next event takes a number.
+            crate::stryke_history_flush();
             hbegin(1); // c:126 hbegin(1)
         }
         if isset(SHINSTDIN) && !hist_open_across_events {

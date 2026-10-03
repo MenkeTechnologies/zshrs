@@ -553,6 +553,67 @@ pub fn try_stryke_dispatch(code: &str) -> Option<i32> {
     STRYKE_HANDLER.get().map(|f| f(code))
 }
 
+/// Run an interactive `@ <code>` line through the registered stryke handler.
+///
+/// Called by `inputline` on each line it reads, before the lexer sees it:
+/// stryke syntax is not shell syntax (`1:10 |> sum` is a pipe into a
+/// redirect, `$_` would be expanded), so it cannot be parsed as a command
+/// named `@`. Only the first line of an interactive command is considered,
+/// so a `@` inside a continuation (heredoc body, open quote) stays shell
+/// input. On dispatch `$?` takes the handler's status, the line is queued for
+/// history (`stryke_history_flush`) unless HIST_IGNORE_SPACE drops it, and
+/// the lexer is handed an empty line. Without a handler — the
+/// thin binary — the line is returned untouched.
+pub(crate) fn stryke_line(line: String) -> String {
+    use crate::ported::zsh_h::{isset, HISTIGNORESPACE, SHINSTDIN};
+    use std::sync::atomic::Ordering;
+
+    if !(crate::ported::zsh_h::interact()
+        && isset(SHINSTDIN)
+        && crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.get()))
+    {
+        return line;
+    }
+    let text = line.trim_end_matches('\n');
+    let Some(code) = text.trim_start().strip_prefix('@') else {
+        return line;
+    };
+    let code = code.trim();
+    if code.is_empty() {
+        return line;
+    }
+    let Some(status) = try_stryke_dispatch(code) else {
+        return line;
+    };
+    crate::ported::builtin::LASTVAL.store(status, Ordering::SeqCst);
+    if !(text.starts_with(' ') && isset(HISTIGNORESPACE)) {
+        *STRYKE_HISTORY.lock().unwrap() = Some(text.to_string());
+    }
+    "\n".to_string()
+}
+
+/// A dispatched `@` line waiting to be recorded in history.
+static STRYKE_HISTORY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Record the last dispatched `@` line in history, the way `print -s` does.
+///
+/// Called by `r#loop` between the `hend` that closed the `@` line's (empty)
+/// event and the `hbegin` that opens the next one. Recording earlier, from
+/// inside `inputline`, takes the event number `hbegin` already gave the
+/// current line, and the duplicate number sends `fc -l` round the ring forever.
+pub(crate) fn stryke_history_flush() {
+    let Some(text) = STRYKE_HISTORY.lock().unwrap().take() else {
+        return;
+    };
+    let event_id = crate::ported::hist::prepnexthistent();
+    crate::ported::hashtable::addhistnode(&text, event_id as i32);
+    let ent = crate::ported::hist::make_histent(event_id, text);
+    if let Ok(mut ring) = crate::ported::hist::hist_ring.lock() {
+        ring.insert(0, ent);
+        crate::ported::hist::histlinect.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Register a native command contributed by the linking binary.
 ///
 /// Convenience re-spelling of [`native_cmds::register`] at the crate root, so
