@@ -4707,4 +4707,14 @@ print -P -- '%-1<<abcdef|%^|%U under %u'"#,
 setopt bashrematch; [[ xz =~ 'x(z)(y)?' ]]; print -r -- ${#BASH_REMATCH} "(${(j:,:)BASH_REMATCH})""#,
         );
     }
+
+    /// c:Src/exec.c:4218-4222 — a bad pattern in a typeset assignment ARRAY only
+    /// `break`s; lastval is not touched (unlike the argv globlist, c:3702-3705).
+    /// zshrs set $? = 1 from inside zglob. zsh: exit 0, then 1 after `false`.
+    #[test]
+    fn bad_pattern_in_typeset_array_keeps_previous_status() {
+        assert_parity("typeset -A h=([x]=1 [y z]=2)");
+        assert_parity("false; typeset a=([y z])");
+        assert_parity("local a=( [y ) b");
+    }
 }

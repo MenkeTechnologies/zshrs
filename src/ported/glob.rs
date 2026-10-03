@@ -4495,16 +4495,10 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
             "bad pattern: {}",
             crate::ported::utils::nicedup(pattern, 0)
         ));
-        // c:Src/exec.c:3760-3763 — every command runs its args through
-        // `globlist(args, 0)` and then `if (errflag) { lastval = 1; goto
-        // err; }`, so a bad pattern anywhere in argv leaves the shell's
-        // status at 1 no matter which command kind was being built.
-        // zshrs's builtin dispatcher reaches that via the per-command
-        // glob-failed cell, but the `command` / `builtin` prefixes and
-        // the external path do not, so those aborted with the PREVIOUS
-        // status: `zsh -fc 'command -v [[' ` exited 0 where zsh exits 1.
-        // LASTVAL is the same storage `set_last_status` writes.
-        crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+        // No lastval write here: C's zglob leaves it alone. The CALLER owns the
+        // status — c:Src/exec.c:3702-3705 `if (errflag) { lastval = 1; goto err; }`
+        // after an argv globlist, but c:4218-4222 (a typeset assignment array)
+        // only `break`s, so `typeset a=([y z])` keeps the previous status.
         return Vec::new();
     }
 
