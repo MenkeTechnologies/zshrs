@@ -145,47 +145,30 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {
     // Symptom of the previous form:
     //   typeset -gx VAR=val; echo "${parameters[VAR]}"
     //   zshrs (before): scalar        zsh: scalar-export
-    let value = {
-        let tab = crate::ported::params::paramtab().read().unwrap();
-        // c:107-114 — initial getnode2 returns the bare param (the
-        // nameref itself, not its target). After computing its type
-        // string, if the param is a nameref with a non-empty target
-        // u.str, re-resolve via getnode (which follows the nameref)
-        // and append "-{target_type}" with a hyphen separator.
-        //
-        // Prior Rust port stopped after the first paramtypestr call so
-        // `${parameters[my_nameref]}` returned "nameref" instead of
-        // C's "nameref-scalar" / "nameref-array" / etc. — the second
-        // hop tells the user what kind of param the reference points
-        // to, which is the whole reason to use ${parameters[X]} on a
-        // nameref in the first place.
-        if let Some(pm) = tab.get(name) {
-            let base = paramtypestr(pm);
-            // c:110 — `(rpm->node.flags & PM_NAMEREF) && rpm->u.str && *(rpm->u.str)`
-            let is_nameref = (pm.node.flags as u32 & PM_NAMEREF) != 0;
-            let target_name: Option<&str> = if is_nameref {
-                pm.u_str.as_deref().filter(|s| !s.is_empty())
-            } else {
-                None
-            };
-            if let Some(tn) = target_name {
-                // c:111-112 — getnode (resolves the nameref) → check PM_UNSET.
-                if let Some(target_pm) = tab.get(tn) {
-                    if (target_pm.node.flags as u32 & PM_UNSET) == 0 {
-                        // c:113 — `zhtricat(pm->u.str, "-", paramtypestr(rpm))`.
-                        format!("{}-{}", base, paramtypestr(target_pm))
-                    } else {
-                        base
-                    }
-                } else {
-                    base
+    // c:107-114 — `rpm = getnode2(name)` is the bare param (the nameref
+    // itself); for a nameref with a non-empty refname, `getnode(name)`
+    // (getparamnode, c:Src/params.c:570-575) resolves the chain from that
+    // same node and its type is appended after a `-`. A reference to an
+    // element ends the chain at itself (c:6339), so it reads
+    // `nameref-…-nameref-…`.
+    let rpm = crate::ported::params::paramtab().read().unwrap().get(name).cloned();
+    let value = match rpm {
+        Some(pm) if (pm.node.flags as u32 & PM_UNSET) == 0 => {
+            let base = paramtypestr(&pm);
+            let has_refname = (pm.node.flags as u32 & PM_NAMEREF) != 0
+                && pm.u_str.as_deref().is_some_and(|s| !s.is_empty());
+            match has_refname
+                .then(|| crate::ported::params::resolve_nameref(Some(pm)))
+                .flatten()
+            {
+                // c:112-113
+                Some(t) if (t.node.flags as u32 & PM_UNSET) == 0 => {
+                    format!("{}-{}", base, paramtypestr(&t))
                 }
-            } else {
-                base
+                _ => base,
             }
-        } else {
-            String::new()
         }
+        _ => String::new(),
     };
     let found = !value.is_empty();
     let pm = Box::new(param {

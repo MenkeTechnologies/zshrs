@@ -14034,6 +14034,20 @@ fn test_nameref_to_hidden_autoload_stub_fails_to_load() {
 }
 
 #[test]
+fn test_nameref_element_of_hidden_special_hash() {
+    // K01 "up-reference part 9, autoloading with hidden special": setscope
+    // loads zsh/parameter for the referent (c:Src/params.c:6405-6406), the
+    // element is read through the hidden special's getfn, and
+    // getpmparameter appends the type getnode resolves to (Src/Modules/
+    // parameter.c:110-113) — the reference itself, for an element reference.
+    let (st, out, err) = run_zshrs_parity(
+        "() { zmodload -u zsh/parameter; typeset -n myself=parameters[myself]; \
+         local -h parameters; print -r -- $myself }",
+    );
+    assert_eq!((st, out.as_str()), (0, "nameref-local-nameref-local\n"), "stderr: {err:?}");
+}
+
+#[test]
 fn test_typeset_p_reports_hide_flag() {
     // B02 "parameter hiding preserved by typeset -p": pmtypes row
     // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.

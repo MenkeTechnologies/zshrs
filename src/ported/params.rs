@@ -22065,6 +22065,13 @@ fn nameref_element_read(pm: &param, target: &str, key: &str) -> Option<String> {
     };
     let key = key.as_str();
     if t == PM_HASHED {
+        // c:2289 getindex reads the element through the hash's own
+        // `gsu.h->getfn`: a zsh/parameter special answers per key.
+        if (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+            if let Some(e) = crate::ported::modules::parameter::PARTAB.iter().find(|e| e.name == target) {
+                return (e.getfn)(std::ptr::null_mut(), key).and_then(|p| p.u_str);
+            }
+        }
         // The assoc backing is name-keyed (paramtab_hashed_storage);
         // when the resolved binding is a HIDDEN old-chain node (a
         // `local` shadow covers it), the outer's data lives on the
@@ -22203,6 +22210,10 @@ pub fn setscope_by_name(name: &str, level: Option<i32>) -> i32 {
             .and_then(|t| t.get(&head).filter(|p| (p.node.flags as u32 & PM_AUTOLOAD) != 0).cloned());
         if let Some(stub) = stub {
             let _ = newparamtable(0, "paramtab").and_then(|ht| loadparamnode(&ht, Some(stub), &head));
+        } else if crate::vm_helper::module_param_is_autoload_stub(&head) {
+            // The same load for a zsh/parameter row, whose PM_AUTOLOAD state
+            // zshrs keeps in vm_helper's MATERIALIZED_MODULE_PARAMS side set.
+            crate::vm_helper::mark_module_param_used(&head);
         }
         let base_level: Option<i32> = {
             let tab = paramtab().read().unwrap();
