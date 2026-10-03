@@ -5556,9 +5556,11 @@ fn is_valid_assignment_target(s: &str) -> bool {
     let mut chars = s.chars().peekable();
 
     // Reject leading token byte — `$VAR=` is parameter substitution,
-    // not assignment. Same for `*=`, `?=`, etc.
+    // not assignment. Same for `*=`, `?=`, etc. A leading Inbrack is
+    // exempt: c:1233-1238 itype_end stops on it and skipparens walks the
+    // `[...]`, so `[a]=b` is ENVSTRING (and fails in isident later).
     if let Some(&c) = chars.peek() {
-        if crate::token_char::itok_char(c) {
+        if crate::token_char::itok_char(c) && c != Inbrack {
             return false;
         }
     }
@@ -5589,7 +5591,6 @@ fn is_valid_assignment_target(s: &str) -> bool {
 
     // c:1233 — `t = itype_end(t, INAMESPC, 0);` — walk past
     // identifier chars (alpha/digit/_).
-    let mut has_ident = false;
     let mut after_ident_byte = 0usize;
     {
         let mut sub_chars = s.chars().peekable();
@@ -5613,7 +5614,6 @@ fn is_valid_assignment_target(s: &str) -> bool {
                 if consumed_bytes >= namespc_end {
                     return false;
                 }
-                has_ident = true;
                 consumed_bytes += 1;
                 sub_chars.next();
                 continue;
@@ -5639,7 +5639,6 @@ fn is_valid_assignment_target(s: &str) -> bool {
             if !c_is_ident && c != Stringg && !c_is_tok {
                 return false;
             }
-            has_ident = true;
             consumed_bytes += c.len_utf8();
             sub_chars.next();
         }
@@ -5664,8 +5663,12 @@ fn is_valid_assignment_target(s: &str) -> bool {
         }
     }
     // c:1243 — `if (t == lexbuf.ptr) ...` — full buffer consumed means
-    // this is a valid assignment target.
-    has_ident && cursor.is_empty()
+    // this is an assignment word. C does NOT require a non-empty name:
+    // `[a]=b` (subscript only) and `+=b` both reach ENVSTRING here and
+    // fail later in assignsparam/isident (params.c:3203-3204) with
+    // `not an identifier: [a]`. An empty buffer never gets here in C
+    // (intpos is still set at word start, c:1213).
+    !s.is_empty() && cursor.is_empty()
 }
 
 /// Untokenize a string - convert tokenized chars back to original

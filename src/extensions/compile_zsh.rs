@@ -5797,7 +5797,17 @@ impl ZshCompiler {
                 // otherwise leave last_status as the cmd-subst's exit.
                 let rhs_has_cmd_subst = scalar_rhs_has_cmd_subst(s);
 
-                let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
+                // c:Src/lex.c:1233-1238 lexes a subscript-only LHS (`[a]=b`,
+                // `[$key]=v`) as ENVSTRING; split_subscript rejects the empty
+                // base, so it lands here. Hand the store the untokenized text so
+                // assignsparam's isident gate reports it as C does
+                // (c:Src/params.c:3203-3204 `not an identifier: [a]`).
+                let store_name: &str = if untoked_name.starts_with('[') {
+                    untoked_name.as_str()
+                } else {
+                    assign.name.as_str()
+                };
+                let name_const = self.builder.add_constant(Value::str(store_name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 // The glob-meta DQ-wrap that used to live here (bug #603) moved
                 // into `compile_scalar_assign_value`, which the subscripted-LHS
