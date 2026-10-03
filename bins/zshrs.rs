@@ -3068,9 +3068,20 @@ pub fn zshrs_main() {
                 }
             }
         }
+        // c:1394 — `SHIN = movefd(open(funmeta, O_RDONLY | O_NOCTTY))`. The
+        // descriptor stays open for the whole run and occupies the first
+        // internal slot, so a script's first `exec {fd}>file` gets 11, as
+        // in zsh (and as the `-c` path's /dev/null SHIN already does).
+        let shin = sfname.as_deref().map_or(-1, |p| {
+            let c = std::ffi::CString::new(zsh::ported::utils::unmeta(p)).unwrap_or_default();
+            zsh::ported::utils::movefd(unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) })
+        });
         let runscript_open = match sfname {
             // c:1394-1399 — `if (!sfname || (SHIN = … open(…)) == -1)`
-            Some(p) if std::fs::File::open(&p).is_ok() => p,
+            Some(p) if shin != -1 => {
+                zsh::ported::input::SHIN.with(|s| s.set(shin));
+                p
+            }
             _ => {
                 eprintln!(
                     "{}: can't open input file: {}", // c:1397

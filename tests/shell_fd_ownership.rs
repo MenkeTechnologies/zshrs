@@ -126,3 +126,30 @@ fn the_scripts_own_descriptors_still_work() {
         "fd 2 must still be stderr; stderr=`{stderr}`"
     );
 }
+
+/// A script file is the shell's input: zsh keeps it open as SHIN,
+/// moved above 9 (c:Src/init.c:1394 `SHIN = movefd(open(funmeta, …))`),
+/// for the whole run. That descriptor takes the first internal slot, so
+/// the script's first `{var}` allocation is 11 — exactly as `-c` mode
+/// gets 11 with its /dev/null SHIN (c:Src/init.c:1533). zsh 5.9.2
+/// prints `11` and `rc=1` for this script; zshrs used to print `10`
+/// because it checked the file opened and dropped the handle.
+#[test]
+fn script_file_input_holds_the_first_internal_descriptor() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let script = home.path().join("fdnum.zsh");
+    std::fs::write(
+        &script,
+        "exec {fd}>/dev/null; print fd=$fd\nread -u 10 x; print rc=$?\n",
+    )
+    .unwrap();
+    let out = Command::new(zshrs_bin())
+        .arg("-f")
+        .arg(&script)
+        .env("ZSHRS_HOME", home.path())
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("spawn zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "fd=11\nrc=1\n", "stderr={}", String::from_utf8_lossy(&out.stderr));
+}
