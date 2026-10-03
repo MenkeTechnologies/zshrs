@@ -11,7 +11,7 @@
 //   zask ask <shell_id> <kind> <prompt> [--urgency LEVEL] [--timeout-ms N]
 //   zask pending [--all]
 //   zask take [--id ID]            — pop the next/specified request
-//   zask dismiss <id> [--reason R]
+//   zask dismiss <id> [--reason R] | --all
 //   zask response <id> <data>      — return a result to the asker
 //
 // kind = picker | input | dialog | menu | progress
@@ -411,17 +411,51 @@ fn take(args: &[String]) -> i32 {
     }
 }
 
-fn dismiss(args: &[String]) -> i32 {
-    let id = match args.first() {
-        Some(s) => s.clone(),
-        None => return err_exit("dismiss: missing <request_id>"),
-    };
-    let mut payload = json!({ "request_id": id });
-    if let Some(idx) = args.iter().position(|a| a == "--reason") {
-        if let Some(r) = args.get(idx + 1) {
-            payload["reason"] = Value::String(r.clone());
+/// Build the `ask_dismiss` payload for `zask dismiss <request_id> [--reason R] | --all`.
+/// `--all` maps to the op's `all: true` (same request `inbox-clear` sends); it is
+/// mutually exclusive with a request id.
+fn dismiss_payload(args: &[String]) -> Result<Value, String> {
+    let mut id: Option<String> = None;
+    let mut all = false;
+    let mut reason: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--all" => all = true,
+            "--reason" => match iter.next() {
+                Some(r) => reason = Some(r.clone()),
+                None => return Err("dismiss: --reason requires a value".to_string()),
+            },
+            other if other.starts_with("--") => {
+                return Err(format!("dismiss: unknown flag `{}`", other));
+            }
+            other => {
+                if id.is_some() {
+                    return Err("dismiss: expected exactly one <request_id>".to_string());
+                }
+                id = Some(other.to_string());
+            }
         }
     }
+    let mut payload = match (id, all) {
+        (Some(_), true) => {
+            return Err("dismiss: <request_id> and --all are mutually exclusive".to_string())
+        }
+        (None, false) => return Err("dismiss: missing <request_id> or --all".to_string()),
+        (Some(id), false) => json!({ "request_id": id }),
+        (None, true) => json!({ "all": true }),
+    };
+    if let Some(r) = reason {
+        payload["reason"] = Value::String(r);
+    }
+    Ok(payload)
+}
+
+fn dismiss(args: &[String]) -> i32 {
+    let payload = match dismiss_payload(args) {
+        Ok(p) => p,
+        Err(e) => return err_exit(&e),
+    };
     let mut client = match connect() {
         Ok(c) => c,
         Err(()) => return 1,
@@ -483,5 +517,35 @@ fn response(args: &[String]) -> i32 {
             0
         }
         Err(e) => err_exit(&format!("response: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn dismiss_all_is_not_a_request_id() {
+        let p = dismiss_payload(&argv(&["--all"])).unwrap();
+        assert_eq!(p, json!({ "all": true }));
+        assert!(p.get("request_id").is_none());
+    }
+
+    #[test]
+    fn dismiss_id_with_reason() {
+        let p = dismiss_payload(&argv(&["ask-7", "--reason", "busy"])).unwrap();
+        assert_eq!(p, json!({ "request_id": "ask-7", "reason": "busy" }));
+    }
+
+    #[test]
+    fn dismiss_rejects_id_plus_all_and_empty() {
+        assert!(dismiss_payload(&argv(&["ask-7", "--all"])).is_err());
+        assert!(dismiss_payload(&argv(&[])).is_err());
+        assert!(dismiss_payload(&argv(&["--bogus"])).is_err());
+        assert!(dismiss_payload(&argv(&["ask-1", "ask-2"])).is_err());
     }
 }

@@ -568,6 +568,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dismiss_all_leaves_other_shells_untouched() {
+        let (_tmp, state) = fresh();
+        let mine = add_dummy_session(&state);
+        let other = add_dummy_session(&state);
+        let asker = add_dummy_session(&state);
+
+        for target in [mine, mine, mine, other, other] {
+            op_ask_ask(
+                &state,
+                asker,
+                json!({ "kind": "input", "target": {"shell_id": target}, "payload": {}}),
+            )
+            .await
+            .unwrap();
+        }
+        let r = op_ask_dismiss(&state, mine, json!({ "all": true }))
+            .await
+            .unwrap();
+        assert_eq!(r["dismissed"].as_u64(), Some(3));
+        assert_eq!(state.ask_inbox.pending_count(mine), 0);
+        assert_eq!(state.ask_inbox.pending_count(other), 2);
+    }
+
+    #[tokio::test]
     async fn ask_to_unknown_shell_errors() {
         let (_tmp, state) = fresh();
         let asker = add_dummy_session(&state);
