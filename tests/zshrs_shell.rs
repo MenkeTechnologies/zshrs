@@ -9988,6 +9988,31 @@ fn test_private_unset_array_redeclared_scalar_is_inconsistent() {
 }
 
 #[test]
+fn test_hidden_local_shadows_regenerator_special() {
+    // `local -h` / `private -h` on SECONDS or RANDOM creates an ordinary
+    // parameter (Src/builtin.c:2083-2090); reads must return its stored
+    // value, not the special's getfn, and a private is not retyped to the
+    // special's declared integer type.
+    let (_, stdout, _) = run_zshrs(
+        "() { local -h SECONDS; echo ${(t)SECONDS}; SECONDS=5; echo $SECONDS }; \
+         () { local -h RANDOM; RANDOM=5; echo $RANDOM $RANDOM }",
+    );
+    assert_eq!(stdout, "scalar-local-hide\n5\n5 5\n");
+    let (_, stdout, _) = run_zshrs(
+        "zmodload zsh/param/private; \
+         () { private -h SECONDS; echo ${(t)SECONDS}; SECONDS=5; echo $SECONDS }; \
+         () { private -h RANDOM=3; echo ${(t)RANDOM} $RANDOM }",
+    );
+    assert_eq!(
+        stdout,
+        "scalar-local-hide-special\n5\nscalar-local-hide-special 3\n"
+    );
+    // A non-hidden local copy is still the special.
+    let (_, stdout, _) = run_zshrs("() { local SECONDS; echo ${(t)SECONDS} }");
+    assert_eq!(stdout, "integer-local-special\n");
+}
+
+#[test]
 fn test_pwd_too_many_args_errors() {
     // zsh: `pwd extra arg` -> `pwd:1: too many arguments` exit 1.
     // pwd takes only flags; positional args are an error. zshrs

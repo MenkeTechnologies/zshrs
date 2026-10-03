@@ -15450,7 +15450,15 @@ pub fn paramsubst(
                                                           // that came in via the environment but whose
                                                           // paramtab entry didn't carry the flag (set-
                                                           // before-export sequence loses the flag).
-                            let f_overlay = if (f & PM_SPECIAL) != 0 {
+                            // A private is PM_SPECIAL only by makeprivate's
+                            // tag (Src/Modules/param_private.c:174); it is
+                            // an ordinary param, so `private -h RANDOM`
+                            // reads `scalar-local-hide-special`, not the
+                            // special's declared integer type.
+                            let is_priv = crate::ported::modules::param_private::is_private(
+                                &**pm as *const _,
+                            ) != 0;
+                            let f_overlay = if (f & PM_SPECIAL) != 0 && !is_priv {
                                 let mut bits = f;
                                 if let Some(sp) = crate::ported::params::special_params
                                     .iter()

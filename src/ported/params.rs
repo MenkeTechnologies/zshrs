@@ -17085,6 +17085,33 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             _ => {}
         }
     }
+    // c:Src/builtin.c:2083-2090 — `local -h NAME` / `private -h NAME`
+    // (newspecial stays NS_NONE under PM_HIDE) creates an ORDINARY
+    // parameter that hides the special, so C's read goes through that
+    // node's plain gsu, never the special's getfn. A hidden node that is
+    // not PM_SPECIAL — or is PM_SPECIAL only because makeprivate tagged it
+    // (Src/Modules/param_private.c:174) — is therefore not this special:
+    // fall back to the stored value (`() { local -h SECONDS; SECONDS=5;
+    // echo $SECONDS }` prints 5).
+    if matches!(
+        name,
+        "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO"
+    ) && paramtab()
+        .read()
+        .ok()
+        .and_then(|t| {
+            t.get(name).map(|pm| {
+                let f = pm.node.flags as u32;
+                (f & PM_HIDE) != 0
+                    && ((f & PM_SPECIAL) == 0
+                        || crate::ported::modules::param_private::is_private(&**pm as *const param)
+                            != 0)
+            })
+        })
+        .unwrap_or(false)
+    {
+        return None;
+    }
     // c:Src/params.c:3853 — PM_UNSET-flagged specials skip getfn.
     // Only applies to regenerator-style specials (RANDOM, SECONDS,
     // EPOCHSECONDS, TTYIDLE, ERRNO) — identity specials like UID, GID,
