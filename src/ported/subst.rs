@@ -10006,11 +10006,19 @@ pub fn paramsubst(
                                 'n' | 'b' => {
                                     let delim = chars.next()?;
                                     let mut numstr = String::new();
+                                    let mut closed = false;
                                     for cc in chars.by_ref() {
                                         if cc == delim {
+                                            closed = true;
                                             break;
                                         }
                                         numstr.push(cc);
+                                    }
+                                    // c:Src/params.c:1432-1434 — `if (!*t) goto flagerr;`: with no closing
+                                    // delimiter the group is not flags at all, and the whole subscript is
+                                    // re-read as plain text (`${m[(ne:2:r)1]}` is a missing key, not math).
+                                    if !closed {
+                                        return None;
                                     }
                                     // c:Src/params.c:1458 / c:1471 — the argument is `mathevalarg`ed, so
                                     // `(n:1+1:)` / `(b:i+1:)` are arithmetic, not only literals.
@@ -10527,11 +10535,19 @@ pub fn paramsubst(
                                 'n' | 'b' => {
                                     let delim = chars.next()?;
                                     let mut numstr = String::new();
+                                    let mut closed = false;
                                     for cc in chars.by_ref() {
                                         if cc == delim {
+                                            closed = true;
                                             break;
                                         }
                                         numstr.push(cc);
+                                    }
+                                    // c:Src/params.c:1432-1434 — `if (!*t) goto flagerr;`: with no closing
+                                    // delimiter the group is not flags at all, and the whole subscript is
+                                    // re-read as plain text (`${m[(ne:2:r)1]}` is a missing key, not math).
+                                    if !closed {
+                                        return None;
                                     }
                                     // c:Src/params.c:1458 / c:1471 — the argument is `mathevalarg`ed, so
                                     // `(n:1+1:)` / `(b:i+1:)` are arithmetic, not only literals.
@@ -11833,11 +11849,19 @@ pub fn paramsubst(
                                     'n' | 'b' => {
                                         let delim = chars.next()?;
                                         let mut numstr = String::new();
+                                        let mut closed = false;
                                         for cc in chars.by_ref() {
                                             if cc == delim {
+                                                closed = true;
                                                 break;
                                             }
                                             numstr.push(cc);
+                                        }
+                                        // c:Src/params.c:1432-1434 — `if (!*t) goto flagerr;`: with no closing
+                                        // delimiter the group is not flags at all, and the whole subscript is
+                                        // re-read as plain text (`${m[(ne:2:r)1]}` is a missing key, not math).
+                                        if !closed {
+                                            return None;
                                         }
                                         // c:Src/params.c:1458,1471 — `(n.N.)`/`(b.N.)`
                                         // arg is `mathevalarg(...)`, a full math

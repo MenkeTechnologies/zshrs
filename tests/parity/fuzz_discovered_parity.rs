@@ -4667,4 +4667,16 @@ for i in 1 2; do for j in a b; do (break 2); print -n "$i$j "; done; done; print
 for i in 1 2; do (for j in a b; do break 2; done; print -n "in$i "); print -n "$i "; done; print"#,
         );
     }
+
+    /// c:Src/params.c:1432-1434 — `(n<D>NUM<D>)` with no closing `<D>` is
+    /// `goto flagerr`: the group is not flags and the whole subscript is plain
+    /// text. On a hash that is a missing key (empty); on an array the full
+    /// text is math. zsh: `[]` then `bad math expression: ':' without '?'`.
+    #[test]
+    fn subscript_n_flag_without_closing_delimiter_is_flagerr() {
+        assert_parity(
+            r#"typeset -A m; m=(k1 v1 k2 v2); print -r -- "[${m[(ne:2:r)1]}]"
+a=(x y x y); print ${a[(n:1+1:i)x]}; print ${a[(ne:2:i)x]}; print not-reached"#,
+        );
+    }
 }
