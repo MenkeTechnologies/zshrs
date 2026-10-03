@@ -554,9 +554,9 @@ impl cmdnam_table {
                 continue;
             }
 
-            let path = entry.path();
             let should_add = if self.hash_executables_only {
                 // Inline of the deleted is_executable helper.
+                let path = entry.path();
                 #[cfg(unix)]
                 {
                     path.metadata()

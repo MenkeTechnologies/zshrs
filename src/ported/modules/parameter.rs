@@ -1054,8 +1054,11 @@ pub fn setpmdisfunctions(pm: Param, ht: &[(String, String)]) {
 /// it on demand at c:Src/Modules/parameter.c:419 and again at :493, so a
 /// re-read costs one walk of already-parsed wordcode. zshrs stores the body as
 /// SOURCE TEXT, so reproducing C's output means re-LEXING and re-parsing it
-/// first — far more than C pays. Keyed by `name\0body`, which is
-/// self-invalidating: redefining a function changes the text and so the key.
+/// first — far more than C pays. Keyed by name, holding `(body, deparsed)`: a hit
+/// requires the stored body to equal the current one, so redefining a function
+/// invalidates its entry. The name-only key keeps a probe allocation-free —
+/// `${(P)i}` with `i=functions` (zpwr `_parameters`) probes every function on
+/// every TAB, and a `name\0body` key copied and hashed all of their bodies.
 ///
 /// Module-level rather than per-function because BOTH C copies of the value
 /// construction (`getfunction` c:401-443 and `scanfunctions` c:487-521) are
@@ -1063,7 +1066,7 @@ pub fn setpmdisfunctions(pm: Param, ht: &[(String, String)]) {
 /// each re-deparsing what the other already did.
 thread_local! {
     static FN_DEPARSE_CACHE: std::cell::RefCell<
-        std::collections::HashMap<String, String>,
+        std::collections::HashMap<String, (String, String)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -1175,9 +1178,12 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                     // Without it `${functions[f]}` and `whence -f f`
                     // disagreed with EACH OTHER for one function.
                     // docs/BUGS.md #1105.
-                    let cache_key = format!("{}\0{}", shf.node.nam, text);
-                    let deparsed = if let Some(hit) =
-                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(&cache_key).cloned())
+                    let deparsed = if let Some(hit) = FN_DEPARSE_CACHE.with(|c| {
+                        c.borrow()
+                            .get(&shf.node.nam)
+                            .filter(|(body, _)| body == text)
+                            .map(|(_, d)| d.clone())
+                    })
                     {
                         hit
                     } else {
@@ -1199,7 +1205,10 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                                 out
                             }
                         };
-                        FN_DEPARSE_CACHE.with(|c| c.borrow_mut().insert(cache_key, out.clone()));
+                        FN_DEPARSE_CACHE.with(|c| {
+                            c.borrow_mut()
+                                .insert(shf.node.nam.clone(), (text.to_string(), out.clone()))
+                        });
                         out
                     };
                     // c:422-425 — `if (shf->redir) start = "{\n\t"; else
@@ -1383,9 +1392,12 @@ pub fn scanfunctions(
                 Some(text) => {
                     // c:495 — `getpermtext(shf->funcdef, NULL, 1)`; zshrs keeps
                     // source text, so re-parse and deparse, memoized.
-                    let cache_key = format!("{}\0{}", shf.node.nam, text);
-                    let deparsed = if let Some(hit) =
-                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(&cache_key).cloned())
+                    let deparsed = if let Some(hit) = FN_DEPARSE_CACHE.with(|c| {
+                        c.borrow()
+                            .get(&shf.node.nam)
+                            .filter(|(body, _)| body == text)
+                            .map(|(_, d)| d.clone())
+                    })
                     {
                         hit
                     } else {
@@ -1406,7 +1418,10 @@ pub fn scanfunctions(
                                 o
                             }
                         };
-                        FN_DEPARSE_CACHE.with(|c| c.borrow_mut().insert(cache_key, o.clone()));
+                        FN_DEPARSE_CACHE.with(|c| {
+                            c.borrow_mut()
+                                .insert(shf.node.nam.clone(), (text.to_string(), o.clone()))
+                        });
                         o
                     };
                     // c:497-500 — `if (shf->redir) start = "{\n\t"; else "\t";`
