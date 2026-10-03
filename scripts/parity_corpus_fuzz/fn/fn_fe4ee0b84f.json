@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "-J",
+    "zpfgrp"
+  ],
+  "call": "_mac_applications '-J' 'zpfgrp'",
+  "call_label": "group-J",
+  "fingerprint": "fe4ee0b84f",
+  "function": "_mac_applications",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowtop/col0 | ref/$ | test/-- rc: #",
+  "ref_rows": [
+    "@CT@",
+    "<absent>"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _mac_applications --fn-call group-J --fn-derive-only _mac_applications --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/9cd54722-0671-42ae-b324-a30d7758a027/scratchpad/agent_fnsweep/zshrs-r4 --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_mac_applications:1-7 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "-- rc: 0",
+    "@CT@"
+  ]
+}

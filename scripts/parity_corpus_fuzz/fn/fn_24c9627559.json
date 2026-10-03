@@ -1,0 +1,24 @@
+{
+  "argv": [],
+  "call": "_as_if ",
+  "call_label": "bare",
+  "fingerprint": "24c9627559",
+  "function": "_as_if",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col2 | ref/nmatches: # -> # | test/nmatches: # -> #",
+  "ref_rows": [
+    "  nmatches: 0 -> 52433",
+    "  compstate[list_lines]: '0' -> '26207'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _as_if --fn-call bare --fn-derive-only _as_if --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/9cd54722-0671-42ae-b324-a30d7758a027/scratchpad/agent_fnsweep/zshrs-r4 --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_as_if:1-10 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  nmatches: 0 -> 52473",
+    "  compstate[list_lines]: '0' -> '26227'"
+  ]
+}

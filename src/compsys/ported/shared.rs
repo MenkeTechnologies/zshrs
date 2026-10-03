@@ -1552,6 +1552,39 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
         return 1;
     }
 
+    // c:Src/exec.c:820-833 — the `$path` walk `execute()` runs before it can
+    // say `command not found`: every `dir/arg0` is exec'd and a failure
+    // `isgooderr` accepts (c:613-621) is kept as `eno`; c:836-837 then
+    // reports THAT errno instead. The empty command word (`_arguments`
+    // sh:465 `"$action[1]"` for an empty action) makes each candidate the
+    // directory itself, EACCES, so zsh prints `permission denied: `; so
+    // does a non-executable file of that name on `$path`.
+    let mut eno = 0;
+    for pp in getsparam("PATH").unwrap_or_default().split(':') {
+        let candidate = if pp.is_empty() || pp == "." {
+            cmd.to_string() // c:821-822
+        } else {
+            format!("{}/{}", pp, cmd) // c:826-830
+        };
+        let ee = direct_exec_errno(&candidate);
+        if ee == 0 {
+            // A program the exec would start (see the slash arm above).
+            return 1;
+        }
+        if crate::ported::exec::isgooderr(ee, pp) {
+            eno = ee; // c:823-824 / c:831-832
+        }
+    }
+    if eno != 0 {
+        let _subsh = crate::ported::exec::SubshStateGuard::enter(); // c:1247-1248
+        crate::ported::utils::zwarn(&format!(
+            "{}: {}",
+            crate::ported::utils::zsh_errno_msg(eno),
+            cmd
+        )); // c:837
+        return if eno == libc::EACCES || eno == libc::ENOEXEC { 126 } else { 127 }; // c:842
+    }
+
     // c:Src/exec.c:903 — `zerr("command not found: %s", arg0);`
     //
     // The FORKED CHILD is not just about `errflag`. Before `execute()`

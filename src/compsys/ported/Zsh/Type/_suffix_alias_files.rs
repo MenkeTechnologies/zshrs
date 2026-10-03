@@ -1,7 +1,7 @@
 //! Port of `_suffix_alias_files` from
 //! `Completion/Zsh/Type/_suffix_alias_files`.
 //!
-//! Full upstream body (22 lines verbatim):
+//! Full upstream body (zsh-5.9.1 tag, 22 lines):
 //! ```text
 //! sh: 1  #autoload
 //! sh: 3  # Complete files for which a suffix alias exists.
@@ -11,40 +11,38 @@
 //! sh:10      pat="*.${(kq)saliases}"
 //! sh:11  else
 //! sh:12      local -a tmpa
-//! sh:13      tmpa=(${(kq)saliases})
-//! sh:14      pat="*.(${(kj.|.)tmpa})"
-//! sh:15  fi
-//! sh:16  [[ -o autocd ]] || pat+='(#q^/)'
-//! sh:18  # _wanted is called for us by _command_names
-//! sh:19  _path_files "$@" -g $pat
+//! sh:13      # This is so we can quote the alias names against expansion
+//! sh:14      # without quoting the `|' which needs to be active in the pattern
+//! sh:15      # --- remember that an alias name can be pretty much anything.
+//! sh:16      tmpa=(${(kq)saliases})
+//! sh:17      pat="*.(${(kj.|.)tmpa})"
+//! sh:18  fi
+//! sh:19
+//! sh:20  # _wanted is called for us by _command_names
+//! sh:21  _path_files "$@" -g $pat
 //! ```
 //!
-//! `saliases` is the shell-side suffix-alias assoc array. Keys are
-//! the suffixes (`.gz`, `.tar`, etc.). When AUTOCD is off, append
-//! the `(#q^/)` glob qualifier to exclude directories.
+//! The `[[ -o autocd ]] || pat+='(#q^/)'` line is zsh workers/50307,
+//! which is on the dev branch only; zsh 5.9.1/5.9.2 do not have it.
 
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::getaparam;
-use crate::ported::zsh_h::{isset, AUTOCD};
+use crate::ported::utils::quotestring;
+use crate::ported::zsh_h::QT_BACKSLASH;
 
 /// `_suffix_alias_files` — complete file paths that match a
 /// suffix-alias suffix.
 pub fn _suffix_alias_files(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_suffix_alias_files");
-    // sh:7,10,13 read the KEYS of the `saliases` magic assoc
-    // (`${#saliases}`, `${(kq)saliases}`). `getaparam` is the PM_ARRAY
-    // accessor and returns None for a PM_HASHED special
-    // (c:Src/params.c:3108 checks PM_TYPE == PM_ARRAY), so it never yielded
-    // anything here; `gethkparam` is C's `paramvalarr(..., SCANPM_WANTKEYS)`
-    // path (c:3131-3140) and is what the shell line resolves to. It also
-    // materializes the autoload stub (c:Src/params.c:589-594), which the
-    // shell read does and this port did not.
+    // sh:7,10,16 read the KEYS of `saliases` (`${#saliases}`,
+    // `${(kq)saliases}`). For the magic assoc that is gethkparam, C's
+    // `paramvalarr(..., SCANPM_WANTKEYS)` (c:Src/params.c:3131-3140), which
+    // also materializes the autoload stub (c:Src/params.c:589-594). If a
+    // caller's scope hides the special behind a plain array, `(k)` on an
+    // array yields its elements (zsh 5.9.2: `a=(x y); echo ${(k)a}` prints
+    // `x y`), so every element is a key.
     let keys: Vec<String> = crate::ported::params::gethkparam("saliases")
-        .or_else(|| {
-            // Fallback for a plain user array shadowing the special: the flat
-            // key/value pair layout the previous read assumed.
-            getaparam("saliases").map(|a| a.iter().step_by(2).cloned().collect())
-        })
+        .or_else(|| getaparam("saliases"))
         .unwrap_or_default();
 
     // sh:7
@@ -52,36 +50,26 @@ pub fn _suffix_alias_files(args: &[String]) -> i32 {
         return 1;
     }
 
-    // sh:9-15
-    let pat = if keys.len() == 1 {
-        format!("*.{}", keys[0])
+    // sh:10 / sh:16 — the `(q)` flag: backslash-quote each alias name so a
+    // pattern character in it matches literally.
+    let quoted: Vec<String> = keys.iter().map(|k| quotestring(k, QT_BACKSLASH)).collect();
+
+    // sh:9-18
+    let pat = if quoted.len() == 1 {
+        format!("*.{}", quoted[0]) // sh:10
     } else {
-        let joined = keys
-            .iter()
-            .map(|k| k.as_str())
-            .collect::<Vec<_>>()
-            .join("|");
-        format!("*.({})", joined)
+        format!("*.({})", quoted.join("|")) // sh:17
     };
 
-    // sh:16
-    let pat = if isset(AUTOCD) {
-        pat
-    } else {
-        format!("{}(#q^/)", pat)
-    };
-
-    // sh:19
+    // sh:21
     let mut argv: Vec<String> = args.to_vec();
     argv.push("-g".to_string());
     argv.push(pat);
-    // sh:22 is a COMMAND WORD, so `dispatch_action_command`
+    // sh:21 is a COMMAND WORD, so `dispatch_action_command`
     // (shared.rs:1407) resolves it exactly as `execcmd` does:
     // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
-    // `$PATH`, then c:903's `command not found` with c:908's 127. The
-    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
-    // that resolved nowhere returned in silence.
-    dispatch_action_command("_path_files", &argv, 22)
+    // `$PATH`, then c:903's `command not found` with c:908's 127.
+    dispatch_action_command("_path_files", &argv, 21)
 }
 
 #[cfg(test)]

@@ -1573,6 +1573,38 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         body: None,
         redir_text: None,
     };
+    // c:817-819 — `makecompparams(); comp_setunset(rset, …, kset,
+    // ~kset & CP_ALLKEYS);`. makecompparams creates every compkparams row
+    // (complete.c:1261-1290) inside `$compstate`; comp_setunset then marks
+    // the rows outside `kset` PM_UNSET. The rows below are in `kset` on
+    // every call — the c:562-564 initial mask never excludes them and no
+    // later c:565-812 statement clears them — so `${(k)compstate}` always
+    // lists them. Their values come from getters or C globals
+    // (get_compstate_str), never from a set_compstate_str publish, so
+    // without this the keys were missing from `${(k)compstate}` and from
+    // `_lastcomp`. The value stored is only a placeholder: assoc scans
+    // recompute it (params.rs, the get_compstate_str refresh).
+    for key in [
+        "nmatches",              // c:1262 GSU(nmatches_gsu)
+        "unambiguous",           // c:1275 GSU(unambig_gsu)
+        "unambiguous_cursor",    // c:1276 GSU(unambig_curs_gsu)
+        "unambiguous_positions", // c:1278 GSU(unambig_pos_gsu)
+        "insert_positions",      // c:1280 GSU(insert_pos_gsu)
+        "list_max",              // c:1282 VAL(complistmax)
+        "vared",                 // c:1287 VAL(compvared); c:569 only adds the bit
+        "list_lines",            // c:1288 GSU(listlines_gsu)
+        "all_quotes",            // c:1289 GSU(compqstack_gsu)
+        "ignored",               // c:1290 VAL(compignored)
+    ] {
+        let present = paramtab_hashed_storage()
+            .lock()
+            .map(|t| t.get("compstate").is_some_and(|h| h.contains_key(key)))
+            .unwrap_or(true);
+        if !present {
+            set_compstate_str(key, &get_compstate_str(key).unwrap_or_default());
+        }
+    }
+
     // c:816-817 — `startparamscope(); makecompparams();`.
     //
     // C creates `$words` / `$CURRENT` / `$PREFIX` / `$SUFFIX` /
@@ -1619,6 +1651,15 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
                     // c:1301 — the row's own type bits, which is where
                     // QIPREFIX/QISUFFIX's PM_READONLY comes from.
                     pm.node.flags |= ty & PM_READONLY as i32;
+                    // c:complete.c:1313-1315 — every comprparams integer
+                    // row is a `VAL(...)` row (`CURRENT`), so it gets
+                    // `pm->gsu.i = &compvarinteger_gsu; pm->base = 10;`,
+                    // which is why `typeset -p CURRENT` prints `-i10`.
+                    if crate::ported::zsh_h::PM_TYPE(ty as u32)
+                        == crate::ported::zsh_h::PM_INTEGER
+                    {
+                        pm.base = 10;
+                    }
                     // c:1301 — `cp->type | PM_SPECIAL | PM_REMOVABLE |
                     // PM_LOCAL`. PM_REMOVABLE is load-bearing:
                     // `scanendscope` (params.c:5905) only takes the
@@ -7417,20 +7458,26 @@ pub fn shfunc_call(name: &str) -> i32 {
 /// (created by `makecompparams` at `complete.rs:1499`), and shell
 /// scripts read it as such.
 pub fn set_compstate_str(key: &str, val: &str) {
-    // params.c:3350 — flat bracketed-param write (preserves the
-    // pre-existing access path used by `set_compstate_str` callers).
-    let pname = format!("compstate[{}]", key);
-    let _ = setsparam(&pname, val);
-
-    // Hash-storage write: dual-store under the `compstate` hash so
-    // `${compstate[KEY]}` shell reads (via the hashparam machinery)
-    // and any direct `paramtab_hashed_storage()` consumer see the
-    // same value.
+    // !!! RUST-ONLY: in C these keys are globals behind compstate_gsu and
+    // `$compstate` exists only between makecompparams (complete.c:1340)
+    // and endparamscope (compcore.c:839). This bridge publishes them
+    // through the param, so the association has to exist first.
+    //
+    // Hash-storage write FIRST: a `compstate` row in
+    // `paramtab_hashed_storage()` is what makes the setsparam below
+    // route `compstate[KEY]` as an association key rather than an
+    // arithmetic subscript. assignsparam does not special-case the
+    // name, because outside completion zsh has no `$compstate`.
     if let Ok(mut tab) = paramtab_hashed_storage().lock() {
         tab.entry("compstate".to_string())
             .or_default()
             .insert(key.to_string(), val.to_string());
     }
+
+    // params.c:3350 — flat bracketed-param write; creates the PM_HASHED
+    // node on first use and keeps it in step with the store.
+    let pname = format!("compstate[{}]", key);
+    let _ = setsparam(&pname, val);
 
     // The `VAL(...)` rows in `compkparams` (`Src/Zle/complete.c:1292`,
     // `:1297`, `:1300`) name a real variable rather than a getter, so in

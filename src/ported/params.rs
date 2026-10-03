@@ -8559,23 +8559,15 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     .map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0)
                     .unwrap_or(false)
             };
-            // c:Src/Zle/complete.c — `$compstate` is a special ASSOCIATIVE
-            // parameter of the completion system. zshrs does not wire it as a
-            // real PM_HASHED paramtab node (complete.rs:1682 defers that); its
-            // values live in the parallel `paramtab_hashed_storage()` store fed
-            // by set_compstate_str. A subscript WRITE like `compstate[insert]=
-            // menu` from a completion widget must take the ASSOCIATIVE path so
-            // the string key `insert` is NOT arithmetic-evaluated to 0 (which
-            // then errored `assignment to invalid subscript range` — flooding
-            // every tab-completion). Recognise it as hashed whenever the name
-            // is a known special assoc OR already has hash-storage backing.
-            // Removing the undeclared-subscript auto-vivify (correct for user
-            // params like `as[k1]=`) regressed this because compstate relied on
-            // that vivify; a truly-undeclared user param still errors.
-            // `$compstate` is the completion system's special assoc (the only
-            // special assoc user completers write with string keys).
+            // c:Src/Zle/complete.c:1340 — `$compstate` is created PM_HASHED by
+            // makecompparams for the duration of a completion function, so the
+            // node itself answers this test. zshrs keeps an association's
+            // pairs in the side store `paramtab_hashed_storage()`; a name with a
+            // row there is an association too. A bare `compstate` name is NOT:
+            // outside completion zsh has no such parameter and
+            // `compstate[list]=list` takes the createparam(PM_ARRAY) path below
+            // (c:3061) and errors "assignment to invalid subscript range".
             flagged
-                || name == "compstate"
                 || paramtab_hashed_storage()
                     .lock()
                     .map(|s| s.contains_key(name))

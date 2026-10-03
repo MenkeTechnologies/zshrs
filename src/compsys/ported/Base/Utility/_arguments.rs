@@ -48,7 +48,7 @@ use crate::ported::params::{
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_comparguments;
-use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::zsh_h::{isset, options, EXTENDEDGLOB, MAX_OPS};
 
 fn make_ops() -> options {
     options {
@@ -1319,8 +1319,13 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                     // sh:411 — comparguments -W line opt_args <nul>
                     let _ = comparguments(411, &["-W", "line", "opt_args", nul_sep.as_str()]);
 
-                    if action.chars().all(|c| c == ' ') {
-                        // sh:413 — [[ "$action" = \ # ]] empty action.
+                    // sh:413 — `[[ "$action" = \ # ]]`, a GLOB match under the
+                    // caller's live options: `\ #` is "any run of spaces" only
+                    // with EXTENDED_GLOB. A widget that reaches the completer
+                    // without `_main_complete` (`#compdef -K`, `compdef -k`) has
+                    // no `_comp_setup`, so under `zsh -f` the pattern is the
+                    // literal ` #` and an EMPTY action falls through to sh:463.
+                    if matchpat("\\ #", &action, isset(EXTENDEDGLOB), true) {
                         let _ = _message(&["-e".to_string(), subc.clone(), descr.clone()]);
                         mesg = true;
                         tried = true;
@@ -1433,7 +1438,18 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                                 Ok(words) => words,
                                 Err(scalar) => vec![scalar],
                             };
-                        if let Some((cmd, rest)) = parts.split_first() {
+                        if parts.is_empty() {
+                            // sh:455 — an all-blank action (reached only when
+                            // sh:413's `\ #` did not match, i.e. without
+                            // EXTENDED_GLOB) leaves `action=( )`, so
+                            // `"$action[@]"` is NO words: an empty command,
+                            // status 0, and `&& ret=0` fires per label.
+                            while _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])
+                                == 0
+                            {
+                                ret = 0;
+                            }
+                        } else if let Some((cmd, rest)) = parts.split_first() {
                             loop {
                                 if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])
                                     != 0
@@ -1474,6 +1490,15 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                                 Ok(words) => words,
                                 Err(scalar) => crate::compsys::ported::scalar_action_call(&scalar),
                             };
+                        // sh:465 — an EMPTY action (reached only when sh:413's
+                        // `\ #` did not match, i.e. without EXTENDED_GLOB) leaves
+                        // `action=( )`; the QUOTED `"$action[1]"` is still one
+                        // word, the empty string, which zsh runs and reports as
+                        // `_arguments:465: permission denied: `.
+                        let mut parts = parts;
+                        if parts.is_empty() {
+                            parts.push(String::new());
+                        }
                         if let Some((cmd, rest)) = parts.split_first() {
                             loop {
                                 if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])

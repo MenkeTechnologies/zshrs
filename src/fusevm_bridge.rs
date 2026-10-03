@@ -12917,6 +12917,51 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // MATCH-variable population stays in one place.
         Value::Bool(crate::vm_helper::glob_match_static(&s, &pat_eff))
     });
+    // See BUILTIN_RM_STAR_CHECK.
+    vm.register_builtin(BUILTIN_RM_STAR_CHECK, |vm, argc| {
+        use crate::ported::zsh_h::{interact, isset, ERRFLAG_ERROR, RMSTARSILENT, SHINSTDIN, Star};
+        use std::sync::atomic::Ordering;
+        let mask = vm.pop().to_int() as u64;
+        let n = (argc as usize).saturating_sub(1);
+        let mut words: Vec<Value> = (0..n).map(|_| vm.pop()).collect();
+        words.reverse();
+        eprintln!("RMDBG mask={mask} words={:?}", words.iter().map(|w| format!("{:?}", w)).collect::<Vec<_>>());
+        // c:3549-3551 — `type == WC_SIMPLE && interact && unset(RMSTARSILENT)
+        // && isset(SHINSTDIN)` and at least one argument after `rm`.
+        if interact() && !isset(RMSTARSILENT) && isset(SHINSTDIN) && n > 0 {
+            let is_star = |c: char| c == Star || c == '*';
+            for (i, word) in words.iter().enumerate() {
+                // c:3554 — `node && !errflag`
+                if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+                    break;
+                }
+                if i >= 64 || mask & (1u64 << i) == 0 {
+                    continue;
+                }
+                let s: Vec<char> = word.to_str().chars().collect();
+                let l = s.len();
+                let rmall = if l == 1 && is_star(s[0]) {
+                    // c:3559-3560 — `checkrmall(pwd)`
+                    let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+                    crate::ported::utils::checkrmall(&pwd)
+                } else if l >= 2 && s[l - 2] == '/' && is_star(s[l - 1]) {
+                    // c:3564-3570 — the word up to the `/`, or `/` itself.
+                    let dir: String = if l == 2 { "/".to_string() } else { s[..l - 2].iter().collect() };
+                    crate::ported::utils::checkrmall(&dir)
+                } else {
+                    true
+                };
+                if !rmall {
+                    crate::ported::utils::errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3561 / c:3573
+                    break;
+                }
+            }
+        }
+        for w in words {
+            vm.push(w);
+        }
+        Value::Int(0)
+    });
     // c:Src/cond.c:122-193, the COND_MODI arm: `[[ a -op b ]]` with an `-op`
     // that is not one of get_cond_num's (Src/parse.c:2697-2701). See
     // BUILTIN_COND_MODI.
@@ -18241,6 +18286,11 @@ pub const BUILTIN_COND_MOD: u16 = 651;
 /// condition named by the left word (c:173-177). Bool result; an unknown
 /// condition arms the status-2 carrier like BUILTIN_COND_MOD.
 pub const BUILTIN_COND_MODI: u16 = 749;
+/// c:Src/exec.c:3548-3579 — the `rm *` confirmation. Stack: the expanded
+/// argv words of an `rm` (left in place), then a mask (top) of the words
+/// whose source ends in an unquoted `*`. Sets ERRFLAG_ERROR when the user
+/// declines (checkrmall returns 0), which aborts the command.
+pub const BUILTIN_RM_STAR_CHECK: u16 = 750;
 
 /// `provenance` — report the lineage of a tracked parameter: where its
 /// bytes entered the shell (command substitution, glob, heredoc, an

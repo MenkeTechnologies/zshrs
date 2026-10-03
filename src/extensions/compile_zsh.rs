@@ -4135,6 +4135,30 @@ impl ZshCompiler {
             }
         }
 
+        // c:Src/exec.c:3548-3579 — `Warn about "rm *"`: after prefork and
+        // before globlist, each argument of an `rm` that is a lone `*` or
+        // ends in `/*` asks checkrmall for confirmation. Only an argument
+        // whose source ends in an unquoted `*` (the Star token) can be one;
+        // their argv positions go to BUILTIN_RM_STAR_CHECK as a mask.
+        if first_clean == "rm" && globlist_argv {
+            let rm_star_mask = argv_words
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| w.ends_with(crate::ported::zsh_h::Star))
+                .fold(0u64, |m, (i, _)| m | (1u64 << i));
+            if rm_star_mask != 0 {
+                self.builder.emit(Op::LoadInt(rm_star_mask as i64), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(
+                        crate::fusevm_bridge::BUILTIN_RM_STAR_CHECK,
+                        (argv_words.len() + 1) as u8,
+                    ),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+            }
+        }
+
         // c:Src/exec.c:3755-3757 `globlist(args, 0)` — filename generation
         // over the expanded argv, in order, stopping at the first error.
         // Stack: the argv values, the assembled-value mask, the
