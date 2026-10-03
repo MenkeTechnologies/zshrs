@@ -10964,26 +10964,10 @@ fn test_let_orphan_mul_at_op() {
     // orphan-at-start expressions like pure-binary ops with no
     // unary form (Mul, Div, Mod, Power).
     let (status, _, stderr) = run_zshrs("let \"*\"");
-    // Math-error STATUS. Every RELEASED zsh returns 1:
-    //   $ /bin/zsh -fc 'let "*"'; echo $?           (zsh 5.9)
-    //   zsh:1: bad math expression: operand expected at `*'
-    //   1
-    //   $ /opt/homebrew/bin/zsh -fc 'let "*"'; echo $?   (zsh 5.9.2)
-    //   zsh:1: bad math expression: operand expected at `*'
-    //   1
-    // The UNRELEASED dev source returns 2 — c:Src/builtin.c:7470
-    // `errflag &= ~ERRFLAG_ERROR; return 2;`, from upstream commit
-    // 9429940b7b ("54285: 'let' builtin should return 2 if error
-    // occurred", 2026-04-07), which is in ~/forkedRepos/zsh
-    // (5.9.999.3-test) but in no shipped zsh. zshrs deliberately
-    // follows the released binary (src/ported/builtin.rs bin_let,
-    // commits dbb891e9a0 / f33ebaa0a3) because the differential
-    // parity suite diffs zshrs against the LOCAL zsh
-    // (tests/parity/zsh_compat_parity_gaps.rs `let_division_by_zero`
-    // compares `print ex:$?` between the two shells), so 2 here would
-    // fail against every zsh that exists. Flip both sides together
-    // when a zsh carrying 54285 ships.
-    assert_eq!(status, 1);
+    // Math-error STATUS: c:Src/builtin.c:7475-7479 `errflag &=
+    // ~ERRFLAG_ERROR; return 2;` (upstream 54285, which the ztst corpus
+    // tracks: C01arith.ztst:497). Released zsh <= 5.9.2 returns 1.
+    assert_eq!(status, 2);
     assert!(stderr.contains("operand expected at `*'"), "got: {stderr}");
 }
 
@@ -10991,9 +10975,8 @@ fn test_let_orphan_mul_at_op() {
 fn test_let_orphan_div_at_op() {
     // Same orphan-binary case for Div.
     let (status, _, stderr) = run_zshrs("let \"/\"");
-    // Released zsh returns 1 here; see the note on
-    // `test_let_orphan_mul_at_op` for the 54285-dev-source divergence.
-    assert_eq!(status, 1);
+    // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
+    assert_eq!(status, 2);
     assert!(stderr.contains("operand expected at `/'"), "got: {stderr}");
 }
 
@@ -11004,9 +10987,8 @@ fn test_let_orphan_mul_with_right_includes_remaining() {
     // input (operator + everything after) becomes the error
     // context.
     let (status, _, stderr) = run_zshrs("let \"*5\"");
-    // Released zsh returns 1 here; see the note on
-    // `test_let_orphan_mul_at_op` for the 54285-dev-source divergence.
-    assert_eq!(status, 1);
+    // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
+    assert_eq!(status, 2);
     assert!(stderr.contains("operand expected at `*5'"), "got: {stderr}");
 }
 
@@ -11017,9 +10999,8 @@ fn test_let_trailing_mul_still_end_of_string() {
     // input has been exhausted. Our orphan-at-start check
     // explicitly only fires when stack.is_empty().
     let (status, _, stderr) = run_zshrs("let \"5*\"");
-    // Released zsh returns 1 here; see the note on
-    // `test_let_orphan_mul_at_op` for the 54285-dev-source divergence.
-    assert_eq!(status, 1);
+    // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
+    assert_eq!(status, 2);
     assert!(
         stderr.contains("operand expected at end of string"),
         "got: {stderr}"
@@ -16633,4 +16614,15 @@ eval 'secondalias() { print no; }'",
         stderr,
         "(eval):1: defining function based on alias `secondalias'\n"
     );
+}
+
+#[test]
+fn test_let_nounset_error_returns_2() {
+    // c:Src/builtin.c:7475-7479 — a math error in `let` (here NO_UNSET's
+    // "parameter not set") is non-fatal and returns 2 (C01arith.ztst:497).
+    let (status, out, stderr) =
+        run_zshrs_parity("( unsetopt unset; let noexist==0 ); print rc=$?");
+    assert_eq!(out, "rc=2\n", "{stderr}");
+    assert_eq!(status, 0);
+    assert!(stderr.contains("noexist: parameter not set"), "{stderr}");
 }

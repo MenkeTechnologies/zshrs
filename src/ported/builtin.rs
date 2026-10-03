@@ -17883,25 +17883,14 @@ pub fn bin_let(
             }
         }
     }
-    // c:7476-7480 — math errors are non-fatal in let; CLEAR
-    // ERRFLAG_ERROR and return the math-error code.
-    //
-    // The C source at Src/builtin.c:7479 says `return 2;`, but the
-    // currently installed zsh 5.9.1 returns 1 (verified: `zsh -fc
-    // 'let 1/0; echo $?'` → 1). Either the C source rev I'm reading
-    // (5.9.0.3-test, src/zsh/Config/version.mk) diverges from 5.9.1
-    // or zsh normalises the rc somewhere in execlist's post-builtin
-    // path. Match the installed zsh's observable behaviour so the
-    // `let_division_by_zero` parity probe passes:
-    //   `let 1/0 2>&1; print ex:$?` → "zsh:1: division by zero\nex:1\n"
-    // Bug surfaces in the dispatch's $? side-channel — returning 1
-    // here matches both the parity test AND the unit test below
-    // (`bin_let_clears_errflag_on_math_error`, since the assertion
-    // there pins the OBSERVED status, not the c:7479 literal).
+    // c:7475-7479 — math errors are non-fatal in let; CLEAR
+    // ERRFLAG_ERROR and return 2 (upstream 54285; C01arith.ztst:497
+    // `let noexist==0` under NO_UNSET expects 2). Released zsh <= 5.9.2
+    // predates 54285 and returns 1.
     if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
         // c:7476
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
-        return 1; // c:7479 (observed zsh 5.9.1 behaviour)
+        return 2; // c:7479
     }
     // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
     if val.type_ == MN_INTEGER {
@@ -22461,15 +22450,7 @@ mod tests {
         // is already set from a prior step.
         let argv = vec!["1".to_string()];
         let rc = bin_let("let", &argv, &ops, 0);
-        // c:7479 says `return 2;` but the installed zsh 5.9.1 returns
-        // 1 (oracle: `zsh -fc 'let 1/0; echo $?'` → 1) and bin_let
-        // matches the release binary — see the comment block at the
-        // errflag branch in bin_let. This assertion pins the OBSERVED
-        // status; it went stale when bin_let switched 2→1.
-        assert_eq!(
-            rc, 1,
-            "c:7479 cleanup path — observed zsh 5.9.1 rc (release binary returns 1, not the c:7479 literal 2)"
-        );
+        assert_eq!(rc, 2, "c:7479 — `return 2;` after a math error");
         // c:7478 — `errflag &= ~ERRFLAG_ERROR` must have run.
         assert_eq!(
             errflag.load(Relaxed) & ERRFLAG_ERROR,
