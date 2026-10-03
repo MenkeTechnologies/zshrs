@@ -13993,6 +13993,19 @@ fn test_srandom_autoloads_from_zsh_random() {
     );
 }
 
+#[test]
+fn test_typeset_g_keeps_autoload_stub() {
+    // B02 "Global non -h variable doesn't hide autoload variable": bin_typeset
+    // looks the name up with getnode2 "to avoid autoloading" (c:Src/
+    // builtin.c:3104-3106), so the stub survives and its module stays out.
+    let (st, out, err) = run_zshrs_parity(
+        "zmodload -u zsh/random; f() { typeset -g SRANDOM; zmodload -e zsh/random || print stub; \
+         zmodload -ap | grep SRANDOM }; f",
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(out, "stub\nSRANDOM (zsh/random)\n");
+}
+
 
 #[test]
 fn test_typeset_p_reports_hide_flag() {

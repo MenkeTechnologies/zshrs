@@ -8129,8 +8129,14 @@ pub fn bin_typeset(
                 returnval = 1;
                 continue; // c:2205 return NULL
             }
+            // c:3104-3106 — bin_typeset fetches the node with getnode2 "to
+            // avoid autoloading", so a PM_AUTOLOAD stub is reused as-is
+            // (its u.str is the module name) and its module stays unloaded.
+            let autoload_stub = entry_flags.is_some_and(|f| (f & PM_AUTOLOAD) != 0);
             let saved_val =
-                if (off as u32 & PM_NAMEREF) != 0 && crate::ported::params::is_nameref(arg) {
+                if autoload_stub
+                    || ((off as u32 & PM_NAMEREF) != 0 && crate::ported::params::is_nameref(arg))
+                {
                     paramtab()
                         .read()
                         .ok()
