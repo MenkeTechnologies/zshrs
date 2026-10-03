@@ -196,6 +196,57 @@ fn login_chain() -> [PathBuf; 8] {
     ]
 }
 
+/// Put a terminal of the recording's own on fd 0 and return its name.
+///
+/// The recorded files run in the interactive login shell's context, and
+/// that shell has a terminal: `$TTY` is set and `tty` names it. Without
+/// one, a config's `ZPWR_TTY=$(tty)` recorded `not a tty` and every
+/// replayed shell inherited it. A fresh pty gives the recording a `$TTY`
+/// path no other process has, so the recorder can mark every value
+/// derived from it and the replay can substitute its own `$TTY`
+/// (`recorder::set_recording_tty`). Must run before the executor is
+/// built: `init_io` reads `ttyname(0)` into `$TTY` (Src/init.c:624-626).
+///
+/// The master stays open for the life of the process — closing it would
+/// hang up the slave and it would stop being a tty. A thread drains
+/// whatever the files write to the terminal so a write never blocks, and
+/// a run of EOF characters is queued so a `read` from the terminal
+/// returns at once, as it did on `/dev/null`.
+fn attach_recording_tty() -> Option<String> {
+    use std::io::{Read, Write};
+    use std::os::fd::FromRawFd;
+    let (mut master, mut slave) = (-1, -1);
+    // SAFETY: openpty fills two descriptors; the null termios/winsize take
+    // the defaults.
+    let rc = unsafe {
+        libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    if rc != 0 {
+        return None;
+    }
+    // SAFETY: `slave` is a valid descriptor from openpty.
+    let name = unsafe {
+        let p = libc::ttyname(slave);
+        (!p.is_null()).then(|| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+    }?;
+    // SAFETY: plain descriptor moves; children must not inherit the master.
+    unsafe {
+        libc::dup2(slave, 0);
+        libc::close(slave);
+        libc::fcntl(master, libc::F_SETFD, libc::FD_CLOEXEC);
+    }
+    // SAFETY: the master is owned by this File from here on.
+    let mut writer = unsafe { std::fs::File::from_raw_fd(master) };
+    let mut reader = writer.try_clone().ok()?;
+    let _ = writer.write_all(&[0x04; 64]);
+    std::mem::forget(writer);
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while matches!(reader.read(&mut buf), Ok(n) if n > 0) {}
+    });
+    Some(name)
+}
+
 fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(a) => a,
@@ -240,7 +291,13 @@ fn main() -> ExitCode {
     // not how shell scripts usually terminate.
     zsh::recorder::install_atexit();
 
+    zsh::recorder::set_recording_tty(attach_recording_tty());
     let mut executor = ShellExecutor::new();
+    // `$$`. `zsh_main`'s `setupvals` sets it (Src/init.c:1227); the
+    // recorder never runs that, and every `$$`-derived name — zpwr's
+    // `.temp$$` files, zconvey's PID — was recorded with 0. The real pid
+    // is unique, so the recorder can mark it for the replay to substitute.
+    zsh::ported::params::mypid.store(std::process::id() as i64, std::sync::atomic::Ordering::Relaxed);
     let mut last_status: i32 = 0;
     // The options and parameters the files change are diffed against this.
     zsh::recorder::mark_baseline();

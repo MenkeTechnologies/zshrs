@@ -9751,6 +9751,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // In an in-process subshell the descriptor dies with the body.
                 crate::ported::exec::SubshFdFrame::opened(final_fd);
                 with_executor(|exec| {
+                    #[cfg(feature = "recorder")]
+                    crate::recorder::note_descriptor_param(&varid);
                     exec.set_scalar(varid, final_fd.to_string());
                 });
                 return Value::Status(0);
@@ -9832,6 +9834,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // In an in-process subshell the descriptor dies with the body.
             crate::ported::exec::SubshFdFrame::opened(final_fd);
             with_executor(|exec| {
+                #[cfg(feature = "recorder")]
+                crate::recorder::note_descriptor_param(&varid);
                 exec.set_scalar(varid, final_fd.to_string());
             });
             return Value::Status(0);
@@ -9918,6 +9922,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::exec::SubshFdFrame::opened(final_fd);
         let _ = Ordering::Relaxed;
         with_executor(|exec| {
+            #[cfg(feature = "recorder")]
+            crate::recorder::note_descriptor_param(&varid);
             exec.set_scalar(varid, final_fd.to_string());
         });
         Value::Status(0)

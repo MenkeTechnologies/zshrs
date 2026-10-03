@@ -40,7 +40,8 @@ use std::path::PathBuf;
 use crate::daemon::paths::CachePaths;
 use crate::daemon::recorder_shard::{
     TypedParam, ARGV_SEP, AUTOLOAD_PATHS_EXTRA, MATH_FUNCTIONS_EXTRA, MODULES_END_EXTRA,
-    BINDKEYS_EXTRA, PARAMS_END_EXTRA, UNSET_PARAMS_EXTRA, WIDGETS_EXTRA, ZSTYLES_EXTRA,
+    BINDKEYS_EXTRA, PARAMS_END_EXTRA, PID_PLACEHOLDER, RESOURCE_FILES_EXTRA, TTY_PLACEHOLDER,
+    UNSET_PARAMS_EXTRA, WIDGETS_EXTRA, ZSTYLES_EXTRA,
 };
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
 use crate::vm_helper::{zstyle_entry, AutoloadFlags, ShellExecutor};
@@ -124,10 +125,19 @@ fn apply_latest(executor: &mut ShellExecutor, startup: bool) -> usize {
 
     crate::startup_trace::mark("replay: shard read");
     let sourced = if startup { shard.sourced_files.clone() } else { Vec::new() };
+    // Files that took a descriptor, lock or session ID
+    // (`EndState::resource_files`) run again in this shell after the rest
+    // of the state is in place; every shell needs its own.
+    let resources = if startup { argv_rows(&shard.extras, RESOURCE_FILES_EXTRA) } else { Vec::new() };
     let total = apply_shard(executor, shard);
     for path in &sourced {
         let _ = crate::p10k::maybe_intercept_theme_source(std::slice::from_ref(path));
     }
+    crate::startup_trace::mark("replay: p10k");
+    for argv in resources {
+        crate::fusevm_bridge::dispatch_builtin_raw("source", argv);
+    }
+    crate::startup_trace::mark("replay: resource files");
     let elapsed_us = t0.elapsed().as_micros();
     tracing::info!(
         rows = total,
@@ -246,8 +256,23 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
                 total += 1;
             }
         }
-        let params: Vec<TypedParam> =
-            typed.values().filter_map(|json| serde_json::from_str(json).ok()).collect();
+        // A value built from the recording terminal carries
+        // `TTY_PLACEHOLDER`; this shell's own `$TTY` goes there.
+        // Likewise `PID_PLACEHOLDER` and this shell's `$$`.
+        let tty = crate::ported::params::getsparam("TTY").unwrap_or_default();
+        let pid = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed).to_string();
+        let params: Vec<TypedParam> = typed
+            .values()
+            .filter_map(|json| serde_json::from_str::<TypedParam>(json).ok())
+            .map(|mut p| {
+                for v in p.value.iter_mut().chain(p.elements.iter_mut().flatten()) {
+                    if v.contains('\0') {
+                        *v = v.replace(TTY_PLACEHOLDER, &tty).replace(PID_PLACEHOLDER, &pid);
+                    }
+                }
+                p
+            })
+            .collect();
         // Ties first: `typeset -T` creates both halves, and a value
         // assigned to either before it would be a plain parameter that
         // the tie then has to convert.
@@ -304,24 +329,13 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     }
 
     crate::startup_trace::mark("replay: parameters");
-    // named_dir (hash -d): insert into canonical `nameddirtab` (port
-    // of C `Src/hashnameddir.c::nameddirtab`).
+    // named_dir: `hash -d NAME=DIR`, through the builtin, as the recorded
+    // file ran it. A bare `nameddirtab` insert left `diff` at 0, and
+    // `finddir_scan` (Src/utils.c:1107, behind `%~` and `${(D)…}`) keeps the
+    // entry with the largest `diff`, so `~` always beat `~ZPWR`.
     for (name, path) in shard.named_dirs {
-        if let Ok(mut tab) = crate::ported::hashnameddir::nameddirtab().lock() {
-            tab.insert(
-                name.clone(),
-                crate::ported::zsh_h::nameddir {
-                    node: crate::ported::zsh_h::hashnode {
-                        next: None,
-                        nam: name,
-                        flags: 0,
-                    },
-                    dir: path.clone(),
-                    diff: 0,
-                },
-            );
-            total += 1;
-        }
+        crate::fusevm_bridge::dispatch_builtin_raw("hash", vec!["-d".to_string(), format!("{name}={path}")]);
+        total += 1;
     }
 
     // autoload_functions: register every name as autoload-pending

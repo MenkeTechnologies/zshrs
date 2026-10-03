@@ -581,6 +581,8 @@ pub fn bin_sysopen(
     // c:413-418 — `if (explicit == -1) { setiparam(fdvar, moved_fd); ... }`
     if explicit == -1 {
         setiparam(&fdvar, moved_fd as i64); // c:414
+        #[cfg(feature = "recorder")]
+        crate::recorder::note_descriptor_param(&fdvar);
     }
 
     0 // c:433
@@ -1156,6 +1158,8 @@ pub fn bin_zsystem_flock(
     // c:764-765 — `if (fdvar) setiparam(fdvar, flock_fd);`
     if let Some(ref var) = fdvar {
         setiparam(var, flock_fd as i64); // c:765
+        #[cfg(feature = "recorder")]
+        crate::recorder::note_descriptor_param(var);
     }
     0 // c:781
 }

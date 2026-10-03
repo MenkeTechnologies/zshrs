@@ -981,7 +981,8 @@ events whose last value is not the end state, and some forms
 | widgets | user widgets that differ from the baseline | `zle -N` / `zle -C` |
 | keymaps | per-keymap binding diff vs the baseline, new keymaps, links (`main`→`viins`) | `bindkey -N` / `-A` / `-M KM SEQ W` / `-s` / `-r`, keys as `\NNN` octal |
 
-Still replayed from the event fold: `hash -d`, compdef. Not replayed:
+Still replayed from the event fold: `hash -d` (through the `hash -d` builtin,
+so `%~` abbreviates with it), compdef. Not replayed:
 traps other than `TRAP*` functions, pending `sched` entries.
 
 The native p10k engine activates when the theme is sourced
@@ -994,10 +995,15 @@ from the event fold.
 
 ### Limits
 
-Values a config computes from its own process carry the recorder's
-copy: `$(tty)` (`not a tty`), anything derived from `$$`, a snapshot of
-`$-`. A config that wants those per-shell should compute them in a
-`precmd` hook or a function, which replay runs in the real shell.
+The recorder gives the recorded files a pty of their own, so `$TTY` and
+`tty` name a terminal as they do in an interactive shell. Wherever that
+path ends up in a parameter value (`ZPWR_TTY=$TTY`, `$(tty)`), the
+recording stores a placeholder and the replay substitutes its own `$TTY`.
+
+Other values a config computes from its own process still carry the
+recorder's copy: anything derived from `$$` or `$PPID`, a snapshot of `$-`.
+A config that wants those per shell should compute them in a `precmd`
+hook or a function, which replay runs in the real shell.
 
 ## End-of-run autoload prewarm
 

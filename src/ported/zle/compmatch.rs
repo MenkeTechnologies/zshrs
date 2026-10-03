@@ -2279,6 +2279,36 @@ pub fn comp_match(
     }
 
     // c:1169 — mstack-driven path.
+    //
+    // !!! WARNING: RUST-ONLY EARLY REJECT — NO C COUNTERPART !!!
+    // C quotes every candidate (c:1172) and runs `match_str` (c:1178) even
+    // when the first byte already differs; `compadd -k functions` does that
+    // for every function in the shell on each command-position TAB. With no
+    // matcher on the stack `match_str` only compares `pfx` byte by byte
+    // against the quoted word. When every quoting level is a backslash level
+    // and `pfx` holds only bytes `quotestring` never escapes or inserts, the
+    // quoted word starts with `pfx` exactly when the raw word does: an escape
+    // puts a byte outside that set before the byte it quotes, so a mismatch
+    // falls at the same place. Reject such candidates without quoting them.
+    // `useqbr` and the match buffers end in the state the C path leaves.
+    let plain = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'/' | b'+' | b'-');
+    if !w.as_bytes().starts_with(pfx.as_bytes())
+        && pfx.bytes().all(plain)
+        && mstack
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map(|g| g.is_none())
+            .unwrap_or(false)
+        && crate::ported::zle::complete::COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|q| q.bytes().all(|b| b as i32 == crate::ported::zsh_h::QT_BACKSLASH))
+            .unwrap_or(false)
+    {
+        useqbr.store(qu, Ordering::Relaxed); // c:1177
+        start_match(); // c:523, run by the match_str call skipped here
+        return None; // c:1179
+    }
     let w_quoted = if qu == 2 {
         tildequote(w, 0)
     }

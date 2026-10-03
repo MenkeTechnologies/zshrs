@@ -125,7 +125,7 @@ pub fn freematch(m: &mut MatchData) {
 pub struct stypat {
     pub next: Option<Box<stypat>>, // c:98 Stypat next
     pub pat: String,               // c:99 char *pat
-    pub prog: Option<Patprog>,     // c:100 Patprog prog (compiled)
+    pub prog: Option<crate::ported::pattern::Patprog>, // c:100 Patprog prog (compiled)
     pub weight: u64,               // c:101 zulong weight
     pub eval: Option<Eprog>,       // c:102 Eprog eval
     pub vals: Vec<String>,         // c:103 char **vals
@@ -284,11 +284,16 @@ impl style_table {
         }
         weight += tmp; // c:386
                        // c:337-342 — New pattern: build stypat.
-                       // c:339 — p->prog = prog; the C arg comes from patcompile()
-                       // before setstypat is called. The style_table::set API takes
-                       // pattern as &str and compiles at lookup-time via patmatch,
-                       // so we record None here and rely on get() to match.
-        let prog: Option<Patprog> = None;
+                       // c:339 — `p->prog = prog;`. bin_zstyle compiles the pattern
+                       // once, when the style is set (c:525-527 `tokenize(pat)`,
+                       // `patcompile(pat, PAT_ZDUP, NULL)`), and every lookup reuses
+                       // it. Compiling at lookup time instead re-ran patcompile for
+                       // every pattern of a style on every zstyle query.
+        let prog = {
+            let mut tok = pattern.to_string();
+            crate::ported::glob::tokenize(&mut tok); // c:526
+            patcompile(&tok, crate::ported::zsh_h::PAT_ZDUP, None) // c:527
+        };
         let sp = stypat {
             next: None,               // c:342
             pat: pattern.to_string(), // c:338
@@ -315,20 +320,9 @@ impl style_table {
             patterns
                 .iter()
                 .find(|p| {
-                    if p.pat == "*" {
-                        true
-                    } else {
-                        patcompile(
-                            &{
-                                let mut __pat_tok = (&p.pat).to_string();
-                                crate::ported::glob::tokenize(&mut __pat_tok);
-                                __pat_tok
-                            },
-                            PAT_HEAPDUP as i32,
-                            None,
-                        )
-                        .map_or(false, |prog| pattry(&prog, context))
-                    }
+                    // c:455 — `pattry(p->prog, context)` on the prog compiled
+                    // when the style was set.
+                    p.pat == "*" || p.prog.as_ref().is_some_and(|prog| pattry(prog, context))
                 })
                 .map(|p| p.vals.as_slice())
         })
@@ -358,20 +352,9 @@ impl style_table {
             patterns
                 .iter()
                 .find(|p| {
-                    if p.pat == "*" {
-                        true
-                    } else {
-                        patcompile(
-                            &{
-                                let mut __pat_tok = (&p.pat).to_string();
-                                crate::ported::glob::tokenize(&mut __pat_tok);
-                                __pat_tok
-                            },
-                            PAT_HEAPDUP as i32,
-                            None,
-                        )
-                        .map_or(false, |prog| pattry(&prog, context))
-                    }
+                    // c:455 — `pattry(p->prog, context)` on the prog compiled
+                    // when the style was set.
+                    p.pat == "*" || p.prog.as_ref().is_some_and(|prog| pattry(prog, context))
                 })
                 .map(|p| (p.vals.clone(), p.eval.is_some()))
         })
@@ -423,20 +406,8 @@ impl style_table {
             let patterns = &self.styles[style];
             for pat in patterns {
                 if let Some(ctx) = context {
-                    let matches = if pat.pat == "*" {
-                        true
-                    } else {
-                        patcompile(
-                            &{
-                                let mut __pat_tok = (&pat.pat).to_string();
-                                crate::ported::glob::tokenize(&mut __pat_tok);
-                                __pat_tok
-                            },
-                            PAT_HEAPDUP as i32,
-                            None,
-                        )
-                        .map_or(false, |prog| pattry(&prog, ctx))
-                    };
+                    let matches =
+                        pat.pat == "*" || pat.prog.as_ref().is_some_and(|prog| pattry(prog, ctx));
                     if !matches {
                         continue;
                     }

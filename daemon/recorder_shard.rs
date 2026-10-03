@@ -136,7 +136,29 @@ pub struct EndState {
     /// (`unset CDPATH`).
     #[serde(default)]
     pub unset_params: Vec<String>,
+    /// Files that left the shell holding a descriptor in a parameter
+    /// (`exec {fd}>lock`, `zsystem flock -f fd`): a lock, a session ID, an
+    /// open file only the process that opened it owns. Such a parameter is
+    /// left out of `params`, and the replay sources these files again, in
+    /// this order, so each shell takes its own.
+    #[serde(default)]
+    pub resource_files: Vec<String>,
 }
+
+/// Stands for the recording terminal's path inside a recorded parameter
+/// value. Each shell has its own `$TTY`; a value built from the
+/// recorder's (`ZPWR_TTY=$TTY`, `$(tty)`) is only right for the shell
+/// that reads it back, so the replay puts its own `$TTY` here. NUL
+/// cannot come out of the recorded config's own words.
+pub const TTY_PLACEHOLDER: &str = "\0TTY\0";
+
+/// Stands for the recording shell's `$$` inside a recorded parameter
+/// value (`ZPWR_TEMPFILE=…/.temp$$-…`); the replay puts its own `$$`
+/// there, so per-shell names stay per shell.
+pub const PID_PLACEHOLDER: &str = "\0PID\0";
+
+/// `extras` key holding [`EndState::resource_files`], position → path.
+pub const RESOURCE_FILES_EXTRA: &str = "resource_files";
 
 /// `extras` key holding [`EndState::unset_params`], name → "".
 pub const UNSET_PARAMS_EXTRA: &str = "unset_params";
@@ -477,6 +499,8 @@ fn apply_end_state(shard: &mut CanonicalShard, end: &EndState) {
     // `-C`; the snapshot replaces both.
     shard.bindkeys.clear();
     shard.extras.remove("zle");
+    let resources: Vec<Vec<String>> = end.resource_files.iter().map(|f| vec![f.clone()]).collect();
+    shard.extras.insert(RESOURCE_FILES_EXTRA.to_string(), ordered_argvs(&resources));
     let unsets = end.unset_params.iter().map(|n| (n.clone(), String::new())).collect();
     shard.extras.insert(UNSET_PARAMS_EXTRA.to_string(), unsets);
     shard.extras.insert(WIDGETS_EXTRA.to_string(), ordered_argvs(&end.widgets));

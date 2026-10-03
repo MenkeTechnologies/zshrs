@@ -39,6 +39,11 @@ functions -M mf 1 1 f_math
 zmodload -F zsh/files b:zf_rm
 autoload -Uz ${0:A:h}/replay_fns/replay_dir_fn
 
+# A value built from the terminal is the replaying shell's, not the
+# recorder's; a named directory abbreviates the prompt path.
+typeset -g MY_TTY="tty=$TTY"
+hash -d RTD=${0:A:h}
+
 alias ll='ls -l'
 alias -g G='| head'
 setopt extendedglob

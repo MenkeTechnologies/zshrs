@@ -418,6 +418,137 @@ struct Baseline {
 /// Set by [`mark_baseline`], consumed by [`capture_end_state`].
 static BASELINE: Lazy<Mutex<Option<Baseline>>> = Lazy::new(|| Mutex::new(None));
 
+/// Path of the terminal `zshrs-recorder` gave the recording
+/// (`attach_recording_tty`); [`capture_end_state`] marks it in parameter
+/// values with `TTY_PLACEHOLDER`.
+static RECORDING_TTY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
+/// Mark the values that belong to the recording process in every parameter
+/// value — the recording terminal's path (`TTY_PLACEHOLDER`) and its `$$`
+/// (`PID_PLACEHOLDER`) — so the replay can put its own there.
+fn mark_process_values(params: &mut [crate::daemon::recorder_shard::TypedParam]) {
+    use crate::daemon::recorder_shard::{PID_PLACEHOLDER, TTY_PLACEHOLDER};
+    let tty = RECORDING_TTY.lock().ok().and_then(|t| t.clone());
+    let pid = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed);
+    let pid = (pid > 0).then(|| pid.to_string());
+    for p in params {
+        for v in p.value.iter_mut().chain(p.elements.iter_mut().flatten()) {
+            if let Some(tty) = &tty {
+                if v.contains(tty.as_str()) {
+                    *v = v.replace(tty.as_str(), TTY_PLACEHOLDER);
+                }
+            }
+            if let Some(pid) = &pid {
+                *v = replace_number(v, pid, PID_PLACEHOLDER);
+            }
+        }
+    }
+}
+
+/// Names the recorded files had a descriptor assigned to: `exec {name}>…`,
+/// `zsystem flock -f name`, `sysopen -u name`.
+static DESCRIPTOR_PARAMS: Lazy<Mutex<std::collections::HashSet<String>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// Called where the shell stores a descriptor in a named parameter
+/// (Src/exec.c:2404-2412 `addfd`'s varid arm; Src/Modules/system.c:414,
+/// 765). Only these names can be descriptor-holding parameters — matching
+/// values against open descriptors alone also caught every small integer
+/// setting (`POWERLEVEL9K_DIR_MAX_LENGTH=40` and an open fd 40).
+pub fn note_descriptor_param(name: &str) {
+    if is_enabled() {
+        if let Ok(mut s) = DESCRIPTOR_PARAMS.lock() {
+            s.insert(name.to_string());
+        }
+    }
+}
+
+/// Pull out of `end.params` every parameter that holds a descriptor the
+/// recorded files opened and still hold — named in [`DESCRIPTOR_PARAMS`]
+/// and still open as `FDT_EXTERNAL` / `FDT_FLOCK` — and list the file that
+/// last assigned each one in `end.resource_files`.
+///
+/// The number means nothing in another process: replayed, it named
+/// whatever that shell had open at the same number, and zconvey wrote
+/// `$$` into it (`echo "$$" >&${ZCONVEY_FD}`) and reused the session ID
+/// it guarded. The descriptor, its lock and the ID it stands for have to
+/// be taken by each shell, so the replay sources those files again.
+fn take_descriptor_params(end: &mut crate::daemon::recorder_shard::EndState) {
+    use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC};
+    let held = |fd: i32| {
+        matches!(crate::ported::utils::fdtable_get(fd), k if k == FDT_EXTERNAL || k == FDT_FLOCK || k == FDT_FLOCK_EXEC)
+    };
+    let noted = DESCRIPTOR_PARAMS.lock().map(|s| s.clone()).unwrap_or_default();
+    let (fds, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut end.params).into_iter().partition(|p| {
+        noted.contains(&p.name)
+            && p.value.as_deref().and_then(|v| v.parse::<i32>().ok()).is_some_and(|fd| fd >= 10 && held(fd))
+    });
+    end.params = kept;
+    if fds.is_empty() {
+        return;
+    }
+    // The file of each parameter's last assignment, ordered by when that
+    // assignment ran.
+    let mut files: Vec<(u64, String)> = BUFFER
+        .lock()
+        .map(|b| {
+            fds.iter()
+                .filter_map(|p| {
+                    b.iter()
+                        .rev()
+                        .find(|e| {
+                            matches!(e.kind, DefKind::Assign | DefKind::Typeset | DefKind::Export)
+                                && e.name.split('[').next() == Some(p.name.as_str())
+                        })
+                        .and_then(|e| Some((e.order_idx, e.file.clone()?)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    for (_, file) in files {
+        if !end.resource_files.contains(&file) {
+            end.resource_files.push(file);
+        }
+    }
+    tracing::info!(
+        params = ?fds.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        files = ?end.resource_files,
+        "recorder: descriptor-holding parameters; their files are sourced again at replay"
+    );
+}
+
+/// Replace every occurrence of the decimal `number` in `s` that is not
+/// part of a longer run of digits — `.temp4242-x` matches 4242,
+/// `142429` does not.
+fn replace_number(s: &str, number: &str, with: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    let mut from = 0;
+    while let Some(off) = s[from..].find(number) {
+        let at = from + off;
+        let end = at + number.len();
+        let digit_before = at > 0 && bytes[at - 1].is_ascii_digit();
+        let digit_after = end < bytes.len() && bytes[end].is_ascii_digit();
+        if !digit_before && !digit_after {
+            out.push_str(&s[last..at]);
+            out.push_str(with);
+            last = end;
+        }
+        from = at + 1;
+    }
+    out.push_str(&s[last..]);
+    out
+}
+
+/// Record the recording terminal's path; see [`RECORDING_TTY`].
+pub fn set_recording_tty(path: Option<String>) {
+    if let Ok(mut t) = RECORDING_TTY.lock() {
+        *t = path;
+    }
+}
+
 /// Snapshot taken by [`capture_end_state`], attached to the bundle by
 /// [`flush`].
 static END_STATE: Lazy<Mutex<Option<crate::daemon::recorder_shard::EndState>>> =
@@ -927,6 +1058,8 @@ pub fn capture_end_state() {
             .collect();
         params.sort_by(|a, b| a.name.cmp(&b.name));
         end.params = params;
+        take_descriptor_params(&mut end);
+        mark_process_values(&mut end.params);
 
         for (name, on) in option_states() {
             if UNRECORDED_OPTIONS.contains(&name) || base.options.get(name) == Some(&on) {

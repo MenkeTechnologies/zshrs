@@ -663,6 +663,8 @@ fn recorder_end_state_replays_into_a_shell() {
         print -r -- "dirfn=$(replay_dir_fn)"
         print -r -- "alias=$(alias ll) galias=$(alias -g G)"
         print -r -- "opt=$options[extendedglob]"
+        print -r -- "mytty=$MY_TTY"
+        builtin cd ~RTD; print -r -- "named=${(D)PWD}"
     "#;
     let mut sh = Command::new(shell);
     with_env(&mut sh);
@@ -693,6 +695,8 @@ fn recorder_end_state_replays_into_a_shell() {
         ("dirfn", "from-dir"),
         ("alias", "ll='ls -l' galias=G='| head'"),
         ("opt", "on"),
+        ("mytty", "tty="),
+        ("named", "~RTD"),
     ];
     let wrong: Vec<String> = expect
         .iter()

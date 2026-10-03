@@ -76,15 +76,21 @@ pub fn eval_action_words_status(action: &str) -> Result<Vec<String>, String> {
         crate::compsys::ported::shared::PM_ARRAY,
     );
     let _ = crate::ported::params::setsparam("_cs_split_src", action);
+    // Whether the ASSIGNMENT happened, not the eval's status, is what decides
+    // array-vs-scalar: a command substitution that fails inside the word
+    // list (`((a\:"x `cmd` y"))`, `(eval):1: command not found: cmd`) makes
+    // the eval return 127, yet zsh still assigns `( a:x\ \ y )`. Only a
+    // parse error leaves the target unassigned, so start it UNSET and test
+    // `${+…}` afterwards.
     let _ = crate::ported::exec::execute_script(
-        "eval \"_cs_split_dst=( $_cs_split_src )\"\n_cs_split_rc=$?\n",
+        "unset _cs_split_dst\neval \"_cs_split_dst=( $_cs_split_src )\"\n_cs_split_rc=${+_cs_split_dst}\n",
     );
     let out = crate::ported::params::getaparam("_cs_split_dst").unwrap_or_default();
     let rc = crate::ported::params::getsparam("_cs_split_rc").unwrap_or_default();
     let _ = crate::ported::params::unsetparam("_cs_split_src");
     let _ = crate::ported::params::unsetparam("_cs_split_dst");
     let _ = crate::ported::params::unsetparam("_cs_split_rc");
-    if rc == "0" {
+    if rc == "1" {
         Ok(out)
     } else {
         Err(action.to_string())

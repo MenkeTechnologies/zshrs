@@ -62,6 +62,7 @@ mod arguments_empty_action_parity;
 mod completion_invalid_bytes_parity;
 mod compadd_all_match_parity;
 mod compaudit_getent_shim_parity;
+mod action_eval_assignment_parity;
 mod completion_keys_parity;
 mod completion_continuation_parity;
 mod completion_old_list_parity;
