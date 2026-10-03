@@ -612,8 +612,9 @@ fn zinit_git_process_output() {
 /// event fold used to lose: deparse-mangled quoting, association keys,
 /// `-U`/`-H`/`typeset -T`, integer type, unset, `zstyle` values with
 /// spaces and `-e`, a vicmd binding leaking into `main`, an undecoded
-/// `bindkey -s` string, widgets, math functions, `zmodload -F`, and a
-/// directory-bound autoload.
+/// `bindkey -s` string, widgets, math functions, `zmodload -F`, a
+/// directory-bound autoload, per-shell `$TTY`/`$$`/descriptors, and an
+/// export whose value the recorder had already inherited.
 #[test]
 fn recorder_end_state_replays_into_a_shell() {
     let recorder = env!("CARGO_BIN_EXE_zshrs-recorder");
@@ -633,6 +634,7 @@ fn recorder_end_state_replays_into_a_shell() {
 
     let mut rec = Command::new(recorder);
     with_env(&mut rec);
+    rec.env("RT_INHERITED", "-1");
     let out = rec
         .args(["--quiet", "--no-prewarm", "--file"])
         .arg(corpus.join("25_end_state_replay.zsh"))
@@ -668,6 +670,7 @@ fn recorder_end_state_replays_into_a_shell() {
         print -r -- "pidfile=$(( ${MY_PID_FILE#/tmp/rt.} == $$ ))"
         print -r -- "fdowner=$(( RT_FD_PID == $$ ))"
         print -u $RT_FD -n && print -r -- "fdopen=yes"
+        print -r -- "inherited=$RT_INHERITED"
     "#;
     let mut sh = Command::new(shell);
     with_env(&mut sh);
@@ -703,6 +706,7 @@ fn recorder_end_state_replays_into_a_shell() {
         ("pidfile", "1"),
         ("fdowner", "1"),
         ("fdopen", "yes"),
+        ("inherited", "-1"),
     ];
     let wrong: Vec<String> = expect
         .iter()

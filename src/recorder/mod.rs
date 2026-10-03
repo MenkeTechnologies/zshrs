@@ -1061,9 +1061,24 @@ pub fn capture_end_state() {
         let mut unset: Vec<String> = base.params.keys().filter(|n| !now.contains_key(*n)).cloned().collect();
         unset.sort();
         end.unset_params = unset;
+        // Every global the files assigned, plus any other that changed. A
+        // diff against the baseline alone dropped what the files set to the
+        // value the recorder already inherited: zpwr exports
+        // ZPWR_SEND_KEYS_PANE=-1, the recorder's parent shell had exported
+        // the same, and a shell replayed from a clean environment had none
+        // (`(( $ZPWR_SEND_KEYS_PANE != -1 ))`: operand expected).
+        let assigned: std::collections::HashSet<String> = BUFFER
+            .lock()
+            .map(|b| {
+                b.iter()
+                    .filter(|e| matches!(e.kind, DefKind::Assign | DefKind::Typeset | DefKind::Export))
+                    .map(|e| e.name.split('[').next().unwrap_or(&e.name).to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut params: Vec<_> = now
             .into_values()
-            .filter(|p| base.params.get(&p.name) != Some(p))
+            .filter(|p| assigned.contains(&p.name) || base.params.get(&p.name) != Some(p))
             .collect();
         params.sort_by(|a, b| a.name.cmp(&b.name));
         end.params = params;

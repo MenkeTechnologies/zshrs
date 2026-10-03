@@ -973,7 +973,7 @@ events whose last value is not the end state, and some forms
 | functions | `shfunc.body` (source text; `$functions` deparse as fallback) | `shfunctab`, compiled on first call; `TRAP*` via `setfunction` |
 | autoload stubs | `PM_UNDEFINED` entries | stub registration; `autoload -Uz DIR/NAME` for `PM_LOADDIR` ones |
 | math functions | `functions -M` table | `functions -M …` |
-| parameters | every global that differs from the pre-source baseline, typed (scalar/integer/float/array/association), with export, `-U`/`-H`/`-h`/`-l`/`-u`/`-t` and `typeset -T` ties | `setsparam`/`setiparam`/`setnparam`/`assignaparam`/`sethparam`, `addenv`, `typeset` |
+| parameters | every global the files assigned (even to the value the recorder inherited from its own environment) or that otherwise differs from the pre-source baseline, typed (scalar/integer/float/array/association), with export, `-U`/`-H`/`-h`/`-l`/`-u`/`-t` and `typeset -T` ties | `setsparam`/`setiparam`/`setnparam`/`assignaparam`/`sethparam`, `addenv`, `typeset` |
 | unset parameters | baseline globals gone at the end (`unset CDPATH`) | `unsetparam` |
 | options | canonical options that differ from the baseline (process-mode ones such as `interactive`/`monitor` excluded) | the option store |
 | modules | every loaded module with its enabled features (`zmodload -LF`) | `zmodload -F MODULE f…`, or `zmodload MODULE` for a featureless one |

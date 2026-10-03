@@ -49,6 +49,10 @@ hash -d RTD=${0:A:h}
 typeset -g MY_PID_FILE=/tmp/rt.$$
 source ${0:A:h}/replay_fns/fd_owner.zsh
 
+# Exported by the file with the value the recorder already inherited; a
+# shell started without it must still get it.
+export RT_INHERITED=-1
+
 alias ll='ls -l'
 alias -g G='| head'
 setopt extendedglob
