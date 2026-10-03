@@ -18472,7 +18472,11 @@ pub fn paramsubst(
                 let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
-                if let Some(arr) =
+                // `!has_scalar_subscript` decides whether the operator runs over an array at all. Test
+                // it first: the fallbacks below fetch the whole parameter, and for an
+                // assoc subscript (`${history[$n]//x/y}`) that walked all of $history only
+                // for a trailing `.filter` to discard it.
+                if let Some(arr) = if !has_scalar_subscript {
                     // c:Src/subst.c:2857-2890 — a range subscript already
                     // narrowed `aval`; the operator runs over the SLICE.
                     split_parts
@@ -18510,7 +18514,9 @@ pub fn paramsubst(
                             None
                         }
                     })
-                    .filter(|_| !has_scalar_subscript)
+                    } else {
+                        None
+                    }
                 {
                     if per_element {
                         let new_arr: Vec<String> = arr.iter().map(|e| replace_global(e)).collect();
@@ -19283,7 +19289,11 @@ pub fn paramsubst(
                 let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
-                if let Some(arr) =
+                // `!has_subscript_one` decides whether the operator runs over an array at all. Test
+                // it first: the fallbacks below fetch the whole parameter, and for an
+                // assoc subscript (`${history[$n]//x/y}`) that walked all of $history only
+                // for a trailing `.filter` to discard it.
+                if let Some(arr) = if !has_subscript_one {
                     // c:Src/subst.c:2857-2890 — a range subscript already
                     // narrowed `aval`; the operator runs over the SLICE.
                     split_parts
@@ -19316,7 +19326,9 @@ pub fn paramsubst(
                             None
                         }
                     })
-                    .filter(|_| !has_subscript_one)
+                    } else {
+                        None
+                    }
                 {
                     // c:Src/subst.c:3870 — single-`/` array shapes:
                     //   `${a[@]/p/P}` / `${(@)a/p/P}` (array shape):
@@ -19682,7 +19694,11 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) =
+                // `per_element_array` decides whether the operator runs over an array at all. Test
+                // it first: the fallbacks below fetch the whole parameter, and for an
+                // assoc subscript (`${history[$n]//x/y}`) that walked all of $history only
+                // for a trailing `.filter` to discard it.
+                if let Some(arr) = if per_element_array {
                     // c:Src/subst.c:2857-2890 — a range subscript already
                     // narrowed `aval`; the operator runs over the SLICE.
                     split_parts
@@ -19717,7 +19733,9 @@ pub fn paramsubst(
                             None
                         }
                     })
-                    .filter(|_| per_element_array)
+                    } else {
+                        None
+                    }
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e, 1)).collect();
                     value = new_arr.join(" "); // c:3540
@@ -20008,7 +20026,11 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) =
+                // `per_element_array` decides whether the operator runs over an array at all. Test
+                // it first: the fallbacks below fetch the whole parameter, and for an
+                // assoc subscript (`${history[$n]//x/y}`) that walked all of $history only
+                // for a trailing `.filter` to discard it.
+                if let Some(arr) = if per_element_array {
                     // c:Src/subst.c:2857-2890 — a range subscript already
                     // narrowed `aval`; the operator runs over the SLICE.
                     split_parts
@@ -20043,7 +20065,9 @@ pub fn paramsubst(
                             None
                         }
                     })
-                    .filter(|_| per_element_array)
+                    } else {
+                        None
+                    }
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
@@ -20324,7 +20348,11 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) =
+                // `per_element_array` decides whether the operator runs over an array at all. Test
+                // it first: the fallbacks below fetch the whole parameter, and for an
+                // assoc subscript (`${history[$n]//x/y}`) that walked all of $history only
+                // for a trailing `.filter` to discard it.
+                if let Some(arr) = if per_element_array {
                     // c:Src/subst.c:2857-2890 — a range subscript already
                     // narrowed `aval`; the operator runs over the SLICE.
                     split_parts
@@ -20359,7 +20387,9 @@ pub fn paramsubst(
                             None
                         }
                     })
-                    .filter(|_| per_element_array)
+                    } else {
+                        None
+                    }
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
@@ -20662,7 +20692,11 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) =
+                // `per_element_array` decides whether the operator runs over an array at all. Test
+                // it first: the fallbacks below fetch the whole parameter, and for an
+                // assoc subscript (`${history[$n]//x/y}`) that walked all of $history only
+                // for a trailing `.filter` to discard it.
+                if let Some(arr) = if per_element_array {
                     // c:Src/subst.c:2857-2890 — a range subscript already
                     // narrowed `aval`; the operator runs over the SLICE.
                     split_parts
@@ -20697,7 +20731,9 @@ pub fn paramsubst(
                             None
                         }
                     })
-                    .filter(|_| per_element_array)
+                    } else {
+                        None
+                    }
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
