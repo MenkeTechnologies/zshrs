@@ -16777,3 +16777,15 @@ fn test_subshell_does_not_leak_stopmsg() {
     );
     assert_eq!(output, "A 7\nB 8\n");
 }
+
+#[test]
+fn test_function_entered_with_pending_break_runs_nothing() {
+    // Src/exec.c:1390 — execlist runs `while (… && !breaks && …)` and
+    // doshfunc (c:5859) keeps `breaks`, so a function called while a
+    // `break 2` from a nofork body is still unwinding runs no list
+    // (D10nofork.ztst "break N propagates").
+    let (_, output, _) = run_zshrs(
+        "f() { print in-f; }; repeat 2 do f ${ for x in 1 2; do break 2; done }; done; print end",
+    );
+    assert_eq!(output, "end\n");
+}

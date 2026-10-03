@@ -2460,7 +2460,15 @@ pub fn runshfunc(
         }
         w_idx += 1; // c:6192
     }
-    // c:6195 — `execode(prog, 1, 0, "shfunc");`
+    // c:6195 — `execode(prog, 1, 0, "shfunc");`. execode runs execlist,
+    // whose loop is `while (wc_code(code) == WC_LIST && !breaks && !retflag
+    // && !errflag)` (c:1390), and doshfunc saved `breaks` without clearing
+    // it (c:5859): a function entered while a `break` is still unwinding —
+    // `repeat 3 do f ${ for …; do break 2; done }; done` — runs no list and
+    // leaves lastval alone (D10nofork.ztst "break N propagates").
+    if crate::ported::builtin::BREAKS.load(Ordering::Relaxed) != 0 {
+        return crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+    }
     body()
 }
 
