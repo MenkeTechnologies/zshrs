@@ -2711,6 +2711,11 @@ impl ShellExecutor {
         // `(( $+_i_opth[-C] )) && _i_check=`), so the cached path never
         // audits.  `-u` sets `_i_fail=use` (sh:88), which makes compaudit
         // itself return 0 before flagging anything.
+        if !use_cache && use_insecure && !self.posix_mode {
+            // `-u` still calls compaudit (sh:456-458); `_i_fail=use` makes it
+            // return 0 at its sh:86, which is AFTER its sh:18 getent shim.
+            crate::compsys::ported::compaudit::compaudit_getent_shim();
+        }
         if !use_cache && !use_insecure && !self.posix_mode {
             // sh:436 `if ! eval compaudit`.  This MUST be the faithful port,
             // not `plugin_cache::compaudit_cached`: that helper's

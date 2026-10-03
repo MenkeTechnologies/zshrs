@@ -82,6 +82,34 @@ impl CompauditError {
     }
 }
 
+/// sh:18-26 — `[[ -n $commands[getent] ]] || getent() { … }`.
+///
+/// The first statement of compaudit's body, run on every call compinit
+/// makes (compinit sh:456 `if [[ -n "$_i_check" ]]` — every invocation but
+/// `-C`), INCLUDING `-u`: `_i_fail=use` returns only at sh:86, after it.
+/// It has two observable effects, and both are run as the shell text
+/// itself so they happen the way zsh's do:
+///
+///   * the `$commands[getent]` lookup enables the `p:commands` feature of
+///     `zsh/parameter` (`zmodload -Fl zsh/parameter` shows `+p:commands`),
+///     which is what makes a later `local -A +h commands` inherit the
+///     special (`association-local-special`);
+///   * on a host with no `getent` binary (macOS) it DEFINES the `getent`
+///     shell function below.
+pub fn compaudit_getent_shim() {
+    let _ = crate::ported::exec::execute_script(concat!(
+        "[[ -n $commands[getent] ]] || getent() {\n",
+        "  if [[ $1 = hosts ]]; then\n",
+        "    sed 's/#.*//' /etc/$1 | grep -w $2\n",
+        "  elif [[ $2 = <-> ]]; then\n",
+        "    grep \":$2:[^:]*$\" /etc/$1\n",
+        "  else\n",
+        "    grep \"^$2:\" /etc/$1\n",
+        "  fi\n",
+        "}\n",
+    ));
+}
+
 /// `compaudit` — security audit of `$fpath` (or the supplied
 /// dir list). Faithful port of `Completion/compaudit:2-175`.
 ///
@@ -91,6 +119,9 @@ impl CompauditError {
 /// When `dirs` is empty, reads `$fpath` from the shell-side param
 /// table (sh:27 `set -- $fpath`).
 pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
+    // sh:18 — runs before anything else, `-u` included.
+    compaudit_getent_shim();
+
     // sh:22-30 — fpath source selection
     let fpath: Vec<PathBuf> = if !dirs.is_empty() {
         dirs.to_vec()
