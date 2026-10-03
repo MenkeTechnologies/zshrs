@@ -5873,6 +5873,20 @@ pub fn bin_typeset(
         // level to tell "re-declare same-level local" (usepm kept →
         // print) from "localize a higher-level/global var" (usepm=0 →
         // no print). Sentinel -1 when the param doesn't pre-exist.
+        // c:Src/builtin.c:2070-2071 — `if (!usepm && pm && (pm->node.flags &
+        // PM_SPECIAL)) usepm = 2;`: an UNSET special (a `private` declared
+        // under TYPESET_TO_UNSET carries PM_SPECIAL from makeprivate,
+        // Src/Modules/param_private.c:174) is still re-used for the type
+        // comparison, so `private -a a; local a=s` is "inconsistent type".
+        let special_unset_existing = paramtab()
+            .read()
+            .map(|t| {
+                t.get(arg_name).is_some_and(|pm| {
+                    let f = pm.node.flags as u32;
+                    (f & PM_UNSET) != 0 && (f & PM_SPECIAL) != 0
+                })
+            })
+            .unwrap_or(false);
         let pm_level_existing: i32 = paramtab()
             .read()
             .ok()
@@ -7424,7 +7438,11 @@ pub fn bin_typeset(
                 } else {
                     on
                 };
-                if usepm && target_is_arraylike && !requesting_type {
+                // c:2071 `usepm = 2` joins the c:2233 test (same c:2078 level rule).
+                let usepm_cmp = usepm
+                    || (special_unset_existing
+                        && !(pm_level_existing != cur_locallevel && (on as u32 & PM_LOCAL) != 0));
+                if usepm_cmp && target_is_arraylike && !requesting_type {
                     zerrnam(name, &format!("{}: inconsistent type for assignment", n)); // c:2236
                     returnval = 1;
                     continue;

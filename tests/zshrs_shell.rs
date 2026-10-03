@@ -9963,6 +9963,31 @@ fn test_zparseopts_empty_spec_and_missing_array_name() {
 }
 
 #[test]
+fn test_private_unset_array_redeclared_scalar_is_inconsistent() {
+    // Src/builtin.c:2070-2071 `usepm = 2`: an unset SPECIAL param (a
+    // `private` under TYPESET_TO_UNSET is PM_SPECIAL) is still compared
+    // against the assignment, so a scalar value for the private array is
+    // "inconsistent type for assignment" (V10private.ztst "private cannot
+    // be re-declared as local"). A plain unset `local -a` is not reused.
+    for builtin in ["local", "typeset"] {
+        let code = format!(
+            "zmodload zsh/param/private; setopt TYPESET_TO_UNSET; \
+             () {{ private -a a; {builtin} a=scalar }}"
+        );
+        let (status, _, stderr) = run_zshrs(&code);
+        assert_eq!(status, 1, "{builtin}: {stderr}");
+        assert!(
+            stderr.contains(&format!("{builtin}: a: inconsistent type for assignment")),
+            "{builtin}: {stderr}"
+        );
+    }
+    let (status, stdout, _) =
+        run_zshrs("setopt TYPESET_TO_UNSET; () { local -a a; local a=scalar; typeset -p a }");
+    assert_eq!(status, 0);
+    assert_eq!(stdout, "typeset a=scalar\n");
+}
+
+#[test]
 fn test_pwd_too_many_args_errors() {
     // zsh: `pwd extra arg` -> `pwd:1: too many arguments` exit 1.
     // pwd takes only flags; positional args are an error. zshrs
