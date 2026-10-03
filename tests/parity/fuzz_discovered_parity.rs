@@ -1571,12 +1571,32 @@ mod pcre_offset_and_captures {
         );
     }
 
-    /// A trailing group that did not participate is not reported.
+    /// A trailing group that did not participate IS reported, empty.
+    /// zshrs-behavior pin, not an oracle row: the vendored master source
+    /// (Src/Modules/pcre.c:384,393) sizes the array by
+    /// pcre2_get_ovector_count(), the pattern's group count + 1, which
+    /// V07pcre.ztst pins; the zsh 5.9.x binary used pcre_exec's return
+    /// and dropped trailing unset groups, so oracle comparison is
+    /// impossible by design (spec-over-oracle).
     #[test]
-    fn trailing_unset_group_is_truncated() {
-        assert_parity(
+    fn trailing_unset_group_is_reported_empty() {
+        let r = run_zshrs(
             r#"zmodload zsh/pcre; pcre_compile 'x(y)?z'; pcre_match -a arr 'xz'; print -r -- "n=${#arr}""#,
         );
+        assert_eq!(r.stdout, "n=1\n");
+    }
+
+    /// `pcre_match -d` (Src/Modules/pcre.c:372-389 pcre2_dfa_match): every
+    /// match at the leftmost start, longest first, all in the receptacle;
+    /// -b reports the longest. zshrs pin — the zsh 5.9.x binary has no -d.
+    /// A match ending before the subject end must still see `$` correctly.
+    #[test]
+    fn dfa_match_lists_all_matches_longest_first() {
+        let r = run_zshrs(
+            r#"zmodload zsh/pcre; pcre_compile 'cat(er(pillar)?)?'; pcre_match -d 'the caterpillar catchment' && print -r -- $match
+pcre_compile 'a$|ab'; pcre_match -b -d 'xab a'; print -r -- $? $ZPCRE_OP $match"#,
+        );
+        assert_eq!(r.stdout, "caterpillar cater cat\n0 1 3 ab\n");
     }
 
     /// An unset group BEFORE a participating one IS reported, as empty.
@@ -4694,17 +4714,24 @@ print -P -- '%-1<<abcdef|%^|%U under %u'"#,
         );
     }
 
-    /// c:Src/Modules/pcre.c:477 + c:202-203 — `=~` under REMATCH_PCRE sizes the
-    /// capture arrays by pcre2_match's return (highest participating group + 1).
-    /// A trailing non-participating group is absent, and with no captured group
-    /// `match` is left as it was. zsh: `1 (old) |`, `1 (z) 2|2`, `2 (xz,z)`.
+    /// c:Src/Modules/pcre.c:476-477 + c:202-213 — `=~` under REMATCH_PCRE sizes
+    /// the capture arrays by pcre2_get_ovector_count(), the pattern's group
+    /// count + 1, so a non-participating group is reported empty with
+    /// mbegin 1 / mend 0 (c:286,296). zshrs-behavior pin, not an oracle row:
+    /// the zsh 5.9.x binary used pcre_exec's return and dropped trailing unset
+    /// groups (`1 (old) |`), while the vendored master source and
+    /// V07pcre.ztst "Empty string for optional captures" keep them.
     #[test]
-    fn rematchpcre_drops_trailing_unset_groups() {
-        assert_parity(
+    fn rematchpcre_reports_trailing_unset_groups_empty() {
+        let r = run_zshrs(
             r#"setopt rematchpcre; match=(old); [[ xz =~ 'x(y)?z' ]]; print -r -- ${#match} "(${(j:,:)match})" "$mbegin|$mend"
 [[ xz =~ 'x(z)(y)?(q)?' ]]; print -r -- ${#match} "(${(j:,:)match})" "$mbegin|$mend"
 [[ xz =~ 'x(y)?(z)' ]]; print -r -- ${#match} "(${(j:,:)match})"
 setopt bashrematch; [[ xz =~ 'x(z)(y)?' ]]; print -r -- ${#BASH_REMATCH} "(${(j:,:)BASH_REMATCH})""#,
+        );
+        assert_eq!(
+            r.stdout,
+            "1 () 1|0\n3 (z,,) 2 1 1|2 0 0\n2 (,z)\n3 (xz,z,)\n"
         );
     }
 

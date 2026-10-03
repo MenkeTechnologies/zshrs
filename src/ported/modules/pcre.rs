@@ -602,11 +602,10 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
     if OPT_ISSET(ops, b'b') {
         want_offset_pair = 1;
     }
-    // c:372-389 — the -d pcre2_dfa_match engine has no regex-crate
-    // equivalent; -d approximates as a normal match. The OBSERVABLE
-    // -d contract is still honored: no scalar (matched_portion stays
-    // None per c:348-350), no named assoc, full match as receptacle
-    // element 0 (matchedinarr, c:402) — see the success block below.
+    // c:372-389 — -d (pcre2_dfa_match): every match at the leftmost
+    // start, longest first, all into the receptacle; no scalar
+    // (matched_portion stays None per c:348-350), no named assoc.
+    // Enumerated inside the match closure below.
 
     // c:364-365 — plaintext = ztrdup(*args); unmetafy(plaintext, &subject_len);
     // The subject can carry Meta-escaped bytes (NUL / 0x80-range bytes
@@ -621,8 +620,7 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
     plaintext = String::from_utf8_lossy(&buf).into_owned();
     let _ = subject_len;
 
-    // c:370-396 — pcre2_match path (use_dfa branch elided since the
-    // Rust regex crate has no DFA equivalent).
+    // c:370-396 — pcre2_match / pcre2_dfa_match.
     let search_base_offset: usize =
         if offset_start > 0 && (offset_start as usize) <= plaintext.len() {
             offset_start as usize
@@ -683,6 +681,61 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             // exhaustion) as `Err`; C treats every negative pcre2_match return
             // other than PCRE2_ERROR_NOMATCH the same way at c:409 (warn, no
             // variables set), so both map to "no match" here.
+            if use_dfa != 0 {
+                // c:372-389 — `pcre2_dfa_match(...)`: the DFA engine reports
+                // EVERY match that starts at the leftmost position where the
+                // pattern matches at all, longest first, in ovector pairs
+                // 0..ret (c:401 hands `ret` to zpcre_get_substrings as the
+                // captured count; with matchedinarr = use_dfa every pair goes
+                // into the receptacle, c:169-172/c:207-209).
+                //
+                // fancy_regex has no DFA engine, so enumerate the same set: a
+                // match that starts at `start` and ends at `end` exists iff the
+                // pattern, followed by a lookahead pinning the remaining char
+                // count, matches from `start`. The lookahead keeps the whole
+                // subject in view, so `$`, `\b` and lookarounds see the real
+                // context rather than a truncated slice.
+                let start = match re.find_from_pos(&plaintext, search_base_offset) {
+                    Ok(Some(m)) => m.start(),
+                    Ok(None) | Err(_) => return (None, None, Vec::new(), Vec::new()),
+                };
+                let mut found: Vec<(usize, usize)> = Vec::new();
+                let mut end = plaintext.len();
+                loop {
+                    if plaintext.is_char_boundary(end) {
+                        let rest = plaintext[end..].chars().count();
+                        let pinned =
+                            Regex::new(&format!("(?:{})(?=(?s:.){{{}}}\\z)", re.as_str(), rest));
+                        if let Ok(pinned) = pinned {
+                            if let Ok(Some(m)) = pinned.find_from_pos(&plaintext, start) {
+                                if m.start() == start {
+                                    found.push((start, end));
+                                }
+                            }
+                        }
+                    }
+                    if end == start {
+                        break;
+                    }
+                    end -= 1;
+                }
+                let Some(&(s0, e0)) = found.first() else {
+                    return (None, None, Vec::new(), Vec::new());
+                };
+                // Pair 0 is the longest match (c:180 ovec[0..1]); the
+                // receptacle gets every pair, pair 0 included (the caller
+                // prepends it under use_dfa).
+                let rest: Vec<Option<String>> = found[1..]
+                    .iter()
+                    .map(|&(s, e)| Some(plaintext[s..e].to_string()))
+                    .collect();
+                return (
+                    Some(plaintext[s0..e0].to_string()),
+                    Some((s0, e0)),
+                    rest,
+                    Vec::new(),
+                );
+            }
             let caps = match re.captures_from_pos(&plaintext, search_base_offset) {
                 Ok(Some(c)) => c,
                 Ok(None) | Err(_) => return (None, None, Vec::new(), Vec::new()),
@@ -697,23 +750,14 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             // c:206-207 — `zalloc(... captured_count+1-capture_start)` /
             //             `for (i = capture_start; i < captured_count; i++)`.
             //
-            // PCRE reports the number of ovector PAIRS SET — that is, the
-            // highest group that actually participated, plus one — NOT the
-            // number of groups the pattern declares. So a TRAILING group that
-            // did not participate is not reported at all, while a non-
-            // participating group BEFORE a participating one is reported empty:
-            //
-            //   x(y)?z   on "xz"  -> 0 captures   (zshrs previously reported 1)
-            //   (a)(b)?  on "a"   -> 1 capture
-            //   (a)?(b)  on "b"   -> 2 captures, the first empty
-            //
-            // Using the pattern's group count (`caps.len()`) instead padded the
-            // array with trailing empties that zsh never produces.
-            let captured_count = (1..caps.len())
-                .filter(|&i| caps.get(i).is_some())
-                .max()
-                .map(|hi| hi + 1)
-                .unwrap_or(1);
+            // pcre2_get_ovector_count() on match data created from the
+            // pattern (c:384) is the pattern's group count plus one, so EVERY
+            // declared group is reported; one that did not participate has
+            // both slots PCRE2_UNSET and c:209 yields an empty string
+            // (`x(y)?z` on "xz" -> one empty capture). zsh 5.9.x used
+            // pcre_exec's return (highest participating group + 1) and
+            // dropped trailing unset groups; master does not.
+            let captured_count = caps.len(); // c:393
             let mut subs = Vec::new();
             for i in 1..captured_count {
                 // c:207-209 ovector capture loop
@@ -948,15 +992,13 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                     // and gates `match` on captures existing (c:202-203
                     // `!want_begin_end || nelem`). The named-captures
                     // assoc `.pcre.match` populates in BOTH modes.
-                    // c:Src/Modules/pcre.c:477 — `ovec_count` is pcre2_match's return:
-                    // the highest PARTICIPATING group plus one, not the pattern's
-                    // group count (same rule as bin_pcre_match above). `x(y)?z` on
-                    // `xz` has nelem 0, so `match` is left untouched (c:202-203).
-                    let captured_count = (1..caps.len())
-                        .filter(|&i| caps.get(i).is_some())
-                        .max()
-                        .map(|hi| hi + 1)
-                        .unwrap_or(1);
+                    // c:Src/Modules/pcre.c:476-477 — `ovec_count =
+                    // pcre2_get_ovector_count(pcre_mdata)`: the pattern's group
+                    // count plus one (match data from the pattern, c:464), so
+                    // a trailing group that did not participate is still
+                    // reported, empty (V07pcre.ztst "Empty string for optional
+                    // captures that don't match").
+                    let captured_count = caps.len(); // c:477
                     let nelem = captured_count - 1; // c:177
                     if bashre {
                         // c:445-447 + matchedinarr=1: BASH_REMATCH array,
