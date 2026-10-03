@@ -90,6 +90,11 @@ pub struct ZshCompiler {
     break_escape_suppress: u32,
     /// `return_patches` field.
     return_patches: Vec<usize>,
+    /// Nesting depth of the synchronous pipeline being compiled, counted
+    /// from the chunk's top level. Passed to the execpline job-frame
+    /// builtins so a pipeline's close also covers the nested ones a `break`
+    /// or `return` jumped past (see `exec_jobs::execpline_slot_close`).
+    execpline_depth: u32,
     /// c:Src/exec.c — the analogue of C's file-scope `static Eprog
     /// redir_prog`, which `execcmd` fills in for `f() { … } > out` and
     /// `execfuncdef` consumes at c:5453 (`shf->redir = dupeprog(redir_prog,
@@ -433,6 +438,7 @@ impl ZshCompiler {
             open_loop_depth: 0,
             break_escape_suppress: 0,
             return_patches: Vec::new(),
+            execpline_depth: 0,
             redir_prog_text: None,
             errexit_suppress_depth: 0,
             async_subsh_skip_outer_errexit: false,
@@ -916,8 +922,9 @@ impl ZshCompiler {
         // pipeline it left; C's execpline still reaches it on its way out.
         // See compile_execpline. An empty program runs no pipeline.
         if end_pos > 0 {
+            self.builder.emit(Op::LoadInt(0), 0);
             self.builder.emit(
-                Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_UNBLOCK, 0),
+                Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_UNBLOCK, 1),
                 0,
             );
             self.builder.emit(Op::Pop, 0);
@@ -1240,14 +1247,19 @@ impl ZshCompiler {
             self.compile_pipe(pipe);
             return;
         }
+        let depth = self.execpline_depth;
+        self.builder.emit(Op::LoadInt(depth as i64), 0);
         self.builder.emit(
-            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_BLOCK, 0),
+            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_BLOCK, 1),
             0,
         );
         self.builder.emit(Op::Pop, 0);
+        self.execpline_depth += 1;
         self.compile_pipe(pipe);
+        self.execpline_depth -= 1;
+        self.builder.emit(Op::LoadInt(depth as i64), 0);
         self.builder.emit(
-            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_UNBLOCK, 0),
+            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXECPLINE_CHILD_UNBLOCK, 1),
             0,
         );
         self.builder.emit(Op::Pop, 0);

@@ -16365,3 +16365,31 @@ fn test_nested_subexp_escaped_brace_keeps_outer_filter() {
     assert_eq!(status, 0, "stderr: {err}");
     assert_eq!(out, "\"a\":1\na\nb}\n,a,b}\na b}\na\na\n", "stderr: {err}");
 }
+
+#[test]
+fn test_colon_s_replacement_keeps_glob_tokens() {
+    // A `:s` replacement keeps the lexer's tokens (c:Src/subst.c:4663-4675),
+    // so an unquoted `*` in it globs. zpwrCd's `${dir:gs/\//*\/}*(DN-/)`
+    // turned `a/c` into nothing instead of `autoload/common`. Quoted or
+    // double-quoted text stays literal. Expected output from `zsh -f`.
+    let dir = std::env::temp_dir().join(format!("zshrs_colon_s_glob_{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("autoload/common")).unwrap();
+    std::fs::create_dir_all(dir.join("autoload/comps")).unwrap();
+    let code = format!(
+        r#"cd {}; n=a/c
+           print -rl -- ${{n:gs/\//*\/}}*(N-/)
+           print -rl -- ${{n:s/\//*\/}}o*(N-/)
+           print -r -- "${{n:gs/\//*\/}}"
+           print -r -- ${{n:gs/\//\*\/}}
+           print -r -- ${{n:gs/\//'*'\/}}"#,
+        dir.display()
+    );
+    let (status, out, err) = run_zshrs_parity(&code);
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(status, 0, "stderr: {err}");
+    assert_eq!(
+        out,
+        "autoload/common\nautoload/comps\nautoload/common\nautoload/comps\na*/c\na*/c\na*/c\n",
+        "stderr: {err}"
+    );
+}

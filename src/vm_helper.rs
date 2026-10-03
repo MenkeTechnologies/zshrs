@@ -669,6 +669,10 @@ pub struct SubshellSnapshot {
     /// skips its `WithRedirectsEnd`; C's forked child takes those fds with
     /// it, so subshell_end unwinds to here.
     pub redir_depth: usize,
+    /// Pipeline job slots held at entry (`exec_jobs::execpline_slots_mark`).
+    /// Slots the body takes come from the cleared child table, so
+    /// subshell_end drops their records along with that table.
+    pub slots_mark: usize,
     /// `sigtrapped[]` at subshell entry (Src/signals.c:39). C's
     /// `entersubsh` clears per-signal trap STATE via `unsettrap(sig)`
     /// (c:Src/exec.c:1088-1092), which zeroes both the body and the
@@ -4091,8 +4095,12 @@ impl ShellExecutor {
         // writing into the failed redirection's sink. Same unwind the
         // function-call path does (`unwind_redirect_scopes_to`).
         let redir_depth = self.redirect_scope_stack.len();
+        // Same for the job slots of pipelines the chunk was running when it
+        // was abandoned (see exec_jobs::execpline_slot_open).
+        let slots_entry = crate::exec_jobs::execpline_slots_mark();
         let result = vm.run();
         crate::ported::builtin::LOOPS.store(loops_entry, Ordering::Relaxed);
+        crate::exec_jobs::execpline_slots_release_to(slots_entry);
         self.unwind_redirect_scopes_to(redir_depth);
         match result {
             fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
@@ -5284,11 +5292,15 @@ impl ShellExecutor {
                       // command still runs `fixfds(save)`. See
                       // `unwind_redirect_scopes_to`.
         let redir_depth = self.redirect_scope_stack.len();
+        // A `return` past an open pipeline leaves its job slot held; see
+        // exec_jobs::execpline_slots_mark.
+        let slots_entry = crate::exec_jobs::execpline_slots_mark();
         let mut vm = crate::vm_pool::acquire(chunk);
         vm.last_status = seed_status;
         let _ = vm.run();
         let status = vm.last_status;
         drop(vm);
+        crate::exec_jobs::execpline_slots_release_to(slots_entry);
         self.unwind_redirect_scopes_to(redir_depth);
         if let Some((sn, sfn)) = autofn_saved {
             crate::ported::utils::set_scriptname(sn); // c:5556
@@ -7090,6 +7102,9 @@ impl ShellExecutor {
                 let prevjob_snap = crate::ported::jobs::PREVJOB
                     .get()
                     .and_then(|t| t.lock().ok().map(|g| *g));
+                // Pipeline job slots the body takes come from the cleared
+                // table below; their records go when the parent's comes back.
+                let slots_snap = crate::exec_jobs::execpline_slots_mark();
                 {
                     let monitor = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
                     crate::ported::jobs::clearjobtab(&mut self.jobs, monitor);
@@ -7366,6 +7381,7 @@ impl ShellExecutor {
                             *g = pj;
                         }
                     }
+                    crate::exec_jobs::execpline_slots_forget_to(slots_snap);
                     crate::ported::signals_h::unqueue_signals();
                     // Now that the parent's traps are back, run the ones
                     // whose signal arrived during the body.

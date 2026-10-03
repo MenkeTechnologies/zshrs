@@ -21218,15 +21218,46 @@ pub fn paramsubst(
                     // unmarked `$` / `` ` `` here is a live substitution:
                     // give it back its token. The search text is
                     // untokenized again by modify (c:4661-4662), as in C.
+                    //
+                    // The glob characters get their tokens back too: inside
+                    // `${...}` the lexer tokenizes `* ? ~ # ^` (lextok2,
+                    // c:Src/lex.c:427-434), `[ ]` (c:1064-1077), `-`
+                    // (c:1390-1400) and, unless SHGLOB, `( ) |` (c:982-1009,
+                    // c:1078-1081). A `:s` replacement keeps them (c:4663-4675),
+                    // so `${n:gs/\//*\/}*(-/)` globs `a*/c*`. Quoted text and a
+                    // double-quoted expansion are not tokenized by the lexer.
                     let mod_str: String = {
+                        use crate::ported::zsh_h::{
+                            Bar, Bnullkeep, Dash, Dnull, Hat, Inbrack, Inpar, Outbrack, Outpar,
+                            Pound, Quest, Snull, Star, Tilde,
+                        };
+                        let shglob = isset(crate::ported::zsh_h::SHGLOB);
                         let mut out = String::with_capacity(slice.len() + 1);
                         out.push(':');
                         let mut prev = '\0';
+                        let (mut in_sq, mut in_dq) = (false, false);
                         for ch in slice.chars() {
-                            let quoted = prev == Bnull || prev == crate::ported::zsh_h::Bnullkeep;
+                            match ch {
+                                c if c == Snull && !in_dq => in_sq = !in_sq,
+                                c if c == Dnull && !in_sq => in_dq = !in_dq,
+                                _ => {}
+                            }
+                            let quoted = prev == Bnull || prev == Bnullkeep;
+                            let glob = !quoted && !qt && !in_sq && !in_dq;
                             out.push(match ch {
                                 '$' if !quoted => Stringg,
                                 '`' if !quoted => Tick,
+                                '*' if glob => Star,
+                                '?' if glob => Quest,
+                                '~' if glob => Tilde,
+                                '#' if glob => Pound,
+                                '^' if glob => Hat,
+                                '[' if glob => Inbrack,
+                                ']' if glob => Outbrack,
+                                '-' if glob => Dash,
+                                '(' if glob && !shglob => Inpar,
+                                ')' if glob && !shglob => Outpar,
+                                '|' if glob && !shglob => Bar,
                                 other => other,
                             });
                             prev = ch;

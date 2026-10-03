@@ -3733,11 +3733,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Int(0)
     });
     // See BUILTIN_EXECPLINE_CHILD_BLOCK / _UNBLOCK.
-    vm.register_builtin(BUILTIN_EXECPLINE_CHILD_BLOCK, |_vm, _argc| {
+    // The depth argument is absent from chunks compiled before the job frame
+    // was added (the autoload cache); those keep the signal half only.
+    vm.register_builtin(BUILTIN_EXECPLINE_CHILD_BLOCK, |vm, argc| {
         crate::ported::signals_h::child_block(); // c:Src/exec.c:1748
+        if argc == 1 {
+            let depth = vm.pop().to_int() as u32;
+            let frame = vm as *const fusevm::VM as usize;
+            crate::exec_jobs::execpline_slot_open(frame, depth); // c:Src/exec.c:1656-1666
+        }
         Value::Int(0)
     });
-    vm.register_builtin(BUILTIN_EXECPLINE_CHILD_UNBLOCK, |_vm, _argc| {
+    vm.register_builtin(BUILTIN_EXECPLINE_CHILD_UNBLOCK, |vm, argc| {
+        if argc == 1 {
+            let depth = vm.pop().to_int() as u32;
+            let frame = vm as *const fusevm::VM as usize;
+            crate::exec_jobs::execpline_slot_close(frame, depth); // c:Src/jobs.c:1754, exec.c:1981
+        }
         crate::ported::signals_h::child_unblock(); // c:Src/exec.c:2017
         Value::Int(0)
     });
@@ -13307,12 +13319,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
         };
-        let newjob = {
+        // The pipeline's job frame (BUILTIN_EXECPLINE_CHILD_BLOCK) already
+        // holds this command's slot; only a chunk compiled without one
+        // allocates here.
+        let held = crate::exec_jobs::execpline_slot_current();
+        let newjob = held.unwrap_or_else(|| {
             use crate::ported::jobs;
             let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
             let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
             jobs::initjob(&mut tab) // c:1700 `thisjob = newjob = initjob()`
-        };
+        });
         {
             use crate::ported::jobs;
             *jobs::THISJOB
@@ -13352,8 +13368,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
             // c:1977-1979 — `deletejob(jn, 0)` once done; c:1981
-            // `thisjob = pj` restores the caller's job.
-            if newjob < tab.len() {
+            // `thisjob = pj` restores the caller's job. A held slot is the
+            // job frame's to delete when the pipeline closes.
+            if held.is_none() && newjob < tab.len() {
                 jobs::deletejob(&mut tab[newjob], false);
             }
             *jobs::THISJOB
@@ -18640,10 +18657,13 @@ pub const BUILTIN_EXECCMD_FORKED_LEVEL: u16 = 740;
 /// `if (!forked && …)`); see redir_scope_forked.
 pub const BUILTIN_FORKED_REDIRS: u16 = 745;
 /// c:Src/exec.c:1748 — execpline's `child_block();` ahead of a synchronous
-/// pipeline. No args. Paired with BUILTIN_EXECPLINE_CHILD_UNBLOCK.
+/// pipeline, and its job frame (c:1656-1666 `pj = thisjob; thisjob = newjob =
+/// initjob()`). Stack: \[depth\], the pipeline's nesting depth in its chunk.
+/// Paired with BUILTIN_EXECPLINE_CHILD_UNBLOCK.
 pub const BUILTIN_EXECPLINE_CHILD_BLOCK: u16 = 746;
 /// c:Src/exec.c:2017 — execpline's `child_unblock();` once the pipeline
-/// has run (and been waited for). No args. Unconditional, as in C: a
+/// has run (and been waited for), after the job frame closes (the procs-less
+/// job is deleted, `thisjob = pj`). Stack: \[depth\]. Unconditional, as in C: a
 /// pipeline nested inside another one's command (a function body, `eval`)
 /// leaves SIGCHLD unblocked for the rest of the outer command.
 pub const BUILTIN_EXECPLINE_CHILD_UNBLOCK: u16 = 747;
@@ -20136,6 +20156,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // child's `exec >file` / `exec N<&-` die with it.
                 fd_frame: crate::ported::exec::SubshFdFrame::enter(),
                 redir_depth: exec.redirect_scope_stack.len(),
+                slots_mark: crate::exec_jobs::execpline_slots_mark(),
                 // c:Src/signals.c:39 `sigtrapped` — saved so End restores the
                 // parent's per-signal trap flags (see the field docs).
                 sigtrapped: crate::ported::signals::sigtrapped
@@ -20313,6 +20334,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // redirections a body error left open (`WithRedirectsEnd` skipped)
                 // go with it: `(print ${a[]} 2>&1); print -u2 err` keeps fd 2.
                 exec.unwind_redirect_scopes_to(snap.redir_depth);
+                crate::exec_jobs::execpline_slots_forget_to(snap.slots_mark);
                 // c:Src/exec.c::entersubsh fork semantics — `loops` /
                 // `breaks` / `contflag` are process globals the child
                 // owns a private copy of, so `(break)` inside a loop

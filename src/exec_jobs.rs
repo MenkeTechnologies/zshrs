@@ -345,6 +345,149 @@ fn setprevjob_locked(tab: &[job]) {
     *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = found; // c:716
 }
 
+/// One job slot held by a running synchronous pipeline.
+///
+/// !!! WARNING: RUST-ONLY ADAPTER !!! C keeps this on the C stack:
+/// execpline's locals `pj` and `newjob` (c:Src/exec.c:1637,1656,1666) live
+/// exactly as long as the pipeline runs. A compiled chunk has no such frame
+/// around the pipeline, and can jump past its end (`break`, `return`, an
+/// errflag abort), so the slot is recorded here with the VM that opened it
+/// (`frame`) and the pipeline's nesting depth inside that chunk (`depth`).
+struct HeldSlot {
+    frame: usize,
+    depth: u32,
+    slot: usize,
+    pj: i32,
+}
+
+thread_local! {
+    /// The job slots of the synchronous pipelines running on this thread,
+    /// outermost first. See [`HeldSlot`].
+    static HELD_SLOTS: std::cell::RefCell<Vec<HeldSlot>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// !!! WARNING: RUST-ONLY ADAPTER !!! The opening half of execpline's job
+/// frame, run by BUILTIN_EXECPLINE_CHILD_BLOCK:
+/// ```c
+/// pj = thisjob;                                  /* c:Src/exec.c:1656 */
+/// if ((thisjob = newjob = initjob()) == -1) {   /* c:Src/exec.c:1666 */
+/// ```
+/// Every synchronous pipeline that is not `execsimple` holds a slot while
+/// it runs, including a function call and a builtin. That is visible:
+/// a job started inside a function gets the slot after the function's
+/// own (`f() { sleep 1 & }; f` prints `[2]`), and setprevjob
+/// (c:Src/jobs.c:672-677) can pick the running function's slot as
+/// `prevjob`, which deletejob later frees without touching `prevjob`.
+///
+/// Slots this frame left at `depth` or deeper — skipped by a `break` or a
+/// `continue` before their close ran — are released first.
+///
+/// Worker threads take no slot: the job table is the main shell's, and C
+/// has no second thread to allocate from it.
+pub fn execpline_slot_open(frame: usize, depth: u32) {
+    if crate::worker::in_worker_thread() {
+        return;
+    }
+    execpline_slot_close(frame, depth);
+    let table = crate::ported::jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    let slot = {
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::jobs::initjob(&mut tab) // c:Src/exec.c:1666
+    };
+    let mut tj = THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
+    let pj = *tj; // c:Src/exec.c:1656
+    *tj = slot as i32; // c:Src/exec.c:1666
+    drop(tj);
+    HELD_SLOTS.with(|h| h.borrow_mut().push(HeldSlot { frame, depth, slot, pj }));
+}
+
+/// !!! WARNING: RUST-ONLY ADAPTER !!! The closing half of execpline's job
+/// frame, run by BUILTIN_EXECPLINE_CHILD_UNBLOCK: the procs-less job is
+/// deleted (waitonejob, c:Src/jobs.c:1750-1756) and `thisjob = pj` restores
+/// the enclosing pipeline's (c:Src/exec.c:1981).
+///
+/// Closes the slot `frame` holds at `depth` together with every slot opened
+/// after it: those belong to pipelines nested inside this one, which have
+/// necessarily finished, whether or not their own close ran.
+pub fn execpline_slot_close(frame: usize, depth: u32) {
+    let start = HELD_SLOTS.with(|h| {
+        h.borrow()
+            .iter()
+            .position(|s| s.frame == frame && s.depth >= depth)
+    });
+    if let Some(start) = start {
+        release_held_slots(start);
+    }
+}
+
+/// !!! WARNING: RUST-ONLY ADAPTER !!! How many pipeline slots are held now.
+/// A chunk runner takes this before running a chunk and hands it to
+/// [`execpline_slots_release_to`] afterwards, so a chunk abandoned mid-
+/// pipeline (errflag, `return` from a sourced file) holds nothing after it.
+pub fn execpline_slots_mark() -> usize {
+    HELD_SLOTS.with(|h| h.borrow().len())
+}
+
+/// !!! WARNING: RUST-ONLY ADAPTER !!! Close every pipeline slot opened since
+/// `mark`, as their closes would have.
+pub fn execpline_slots_release_to(mark: usize) {
+    release_held_slots(mark);
+}
+
+/// !!! WARNING: RUST-ONLY ADAPTER !!! Drop the record of every slot opened
+/// since `mark` WITHOUT touching the job table. For the in-process stand-ins
+/// for a fork (`$(...)`, `( ... )`): the slots were taken from the child's
+/// cleared table, which the parent's restored table has since replaced, so
+/// the indices name nothing of the child's any more.
+pub fn execpline_slots_forget_to(mark: usize) {
+    HELD_SLOTS.with(|h| h.borrow_mut().truncate(mark));
+}
+
+/// The job slot of the innermost running pipeline, if one is held.
+pub fn execpline_slot_current() -> Option<usize> {
+    HELD_SLOTS.with(|h| h.borrow().last().map(|s| s.slot))
+}
+
+/// Delete the job slots held from position `start` on, innermost first, and
+/// put `thisjob` back to what it was before the outermost of them opened.
+fn release_held_slots(start: usize) {
+    let released: Vec<HeldSlot> = HELD_SLOTS.with(|h| {
+        let mut h = h.borrow_mut();
+        if start >= h.len() {
+            return Vec::new();
+        }
+        h.split_off(start)
+    });
+    let Some(outermost) = released.first() else {
+        return;
+    };
+    let table = crate::ported::jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    {
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        for held in released.iter().rev() {
+            // A stopped job stays in the table for `fg` (zwaitjob returns on
+            // STAT_STOPPED and nothing deletes it), and a superjob belongs to
+            // the list_pipe machinery, not to this frame.
+            if let Some(jn) = tab.get_mut(held.slot) {
+                if (jn.stat & stat::INUSE) != 0
+                    && (jn.stat & (stat::STOPPED | stat::SUPERJOB)) == 0
+                {
+                    deletejob(jn, false); // c:Src/jobs.c:1754
+                }
+            }
+        }
+        // c:Src/jobs.c:1441-1443 — freejob's `maxjob` shrink, which the
+        // ported freejob (one job, no table) cannot do.
+        let mut mj = MAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap_or_else(|e| e.into_inner());
+        while *mj > 0 && tab.get(*mj).map_or(true, |j| (j.stat & stat::INUSE) == 0) {
+            *mj -= 1;
+        }
+    }
+    *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner()) =
+        outermost.pj; // c:Src/exec.c:1981 `thisjob = pj;`
+}
+
 /// Running-job state tracked alongside each `Child` handle.
 /// Maps to C's `STAT_*` bits but is exposed as a typed enum since
 /// the executor's safe-Rust path doesn't manipulate the bitfield.
