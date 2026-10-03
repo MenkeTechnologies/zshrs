@@ -1,9 +1,7 @@
 #compdef zcache
 
-# Read / write / list the per-shell cache namespace. `zcache get K`
-# / `zcache set K V [TTL]` / `zcache del K` / `zcache list
-# [PREFIX]`. Backed by the daemon's in-memory KV with optional
-# SQLite persistence.
+# Inspect and manage the zshrs caches: daemon shards, the catalog, and
+# the caches the shell writes itself.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
 # (daemon/builtins.rs); verbs mirror the dispatch in daemon/builtins.rs.
@@ -34,7 +32,44 @@ _arguments -C \
 
 case $state in
     verb) _describe -t commands 'sub-command' verbs && return 0 ;;
-    rest) _default && return 0 ;;
+    rest)
+        case $words[1] in
+            clean)
+                # Targets and flags mirror zcache_clean / ops::op_clean.
+                local -a targets flags shards expl
+                targets=(
+                    'all:shards, index.rkyv and the shell caches (default)'
+                    'shards:every daemon shard under images/'
+                    'shard:one daemon shard by name'
+                    'index:index.rkyv'
+                    'shell:autoloads.rkyv, deparse.rkyv, scripts.rkyv'
+                    'log:truncate the zshrs log files'
+                    'catalog:catalog.db, keeping entry_stats (needs the daemon)'
+                    'stats:entry_stats rows (needs the daemon)'
+                    'zwc:every .zwc in the tracked dirs (needs the daemon)'
+                    'zcompdump:every .zcompdump* in the tracked dirs (needs the daemon)'
+                    'legacy:zwc and zcompdump together (needs the daemon)'
+                )
+                flags=(
+                    '--dry-run:report what would be removed, remove nothing'
+                    '--all:same as the all target'
+                    '--no-stats:with catalog, drop entry_stats too'
+                    '--wait:accepted; clean is synchronous'
+                )
+                if [[ $words[CURRENT-1] == shard ]]; then
+                    # images/<hash>-<name>.rkyv; `shard <name>` matches <name>.
+                    shards=( ${ZSHRS_HOME:-$HOME/.zshrs}/images/*.rkyv(N:t:r) )
+                    shards=( ${shards#*-} )
+                    _wanted shards expl 'shard' compadd -a shards && return 0
+                elif [[ $PREFIX == -* ]]; then
+                    _describe -t options 'option' flags && return 0
+                else
+                    _describe -t targets 'clean target' targets && return 0
+                fi
+                ;;
+            *) _default && return 0 ;;
+        esac
+        ;;
 esac
 
 return 1
