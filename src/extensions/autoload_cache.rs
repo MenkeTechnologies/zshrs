@@ -352,6 +352,13 @@ impl AutoloadCache {
     /// once (read-only home, full disk) will fail again, and retrying it
     /// at every prompt would turn a broken cache into a stall. Dropping
     /// the batch only costs a recompile.
+    ///
+    /// The lock is taken WITHOUT blocking. This runs before every prompt,
+    /// and the holder may be another process rewriting a shard that has
+    /// reached 1 GB, which a debug build takes minutes to do; a blocking
+    /// `flock` here left a new shell with no prompt for that long. When
+    /// the lock is busy the batch goes back into the buffer for the next
+    /// prompt.
     pub fn flush_pending(&self) -> Result<(), String> {
         let batch = {
             let mut pending = self.pending.lock();
@@ -360,7 +367,23 @@ impl AutoloadCache {
             }
             std::mem::take(&mut *pending)
         };
-        self.put_many(&batch)
+        let Some(lock) = try_acquire_lock(&self.lock_path) else {
+            self.requeue(batch);
+            return Ok(());
+        };
+        self.put_many_locked(&batch, lock)
+    }
+
+    /// Put a batch whose flush found the lock busy back in front of
+    /// anything buffered since, so `pending_lookup`'s last-write-wins
+    /// order holds. Bounded by [`PENDING_FLUSH_MAX`]: past it the oldest
+    /// entries are dropped, which only costs a recompile.
+    fn requeue(&self, mut batch: Vec<(String, Vec<u8>, String, [u8; 32])>) {
+        let mut pending = self.pending.lock();
+        batch.append(&mut pending);
+        let excess = batch.len().saturating_sub(PENDING_FLUSH_MAX);
+        batch.drain(..excess);
+        *pending = batch;
     }
 
     /// Serve an entry that is buffered but not yet on disk.
@@ -402,10 +425,19 @@ impl AutoloadCache {
         if entries.is_empty() {
             return Ok(());
         }
-        let _lock = match acquire_lock(&self.lock_path) {
-            Some(l) => l,
-            None => return Ok(()),
+        let Some(lock) = acquire_lock(&self.lock_path) else {
+            return Ok(());
         };
+        self.put_many_locked(entries, lock)
+    }
+
+    /// The read-modify-write of [`AutoloadCache::put_many`], for a caller
+    /// that already holds the shard lock. The lock is released on return.
+    fn put_many_locked(
+        &self,
+        entries: &[(String, Vec<u8>, String, [u8; 32])],
+        _lock: nix::fcntl::Flock<File>,
+    ) -> Result<(), String> {
         let mut shard = self.owned_shard_for_write();
         let (bin_mtime, bin_len) = current_binary_identity().unwrap_or((0, 0));
         let now = now_secs();
@@ -513,6 +545,19 @@ fn acquire_lock(path: &Path) -> Option<nix::fcntl::Flock<File>> {
         .open(path)
         .ok()?;
     nix::fcntl::Flock::lock(f, nix::fcntl::FlockArg::LockExclusive).ok()
+}
+
+/// [`acquire_lock`] that returns `None` instead of waiting when another
+/// process holds the lock.
+fn try_acquire_lock(path: &Path) -> Option<nix::fcntl::Flock<File>> {
+    let f = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .ok()?;
+    nix::fcntl::Flock::lock(f, nix::fcntl::FlockArg::LockExclusiveNonblock).ok()
 }
 
 fn fresh_shard() -> AutoloadShard {
@@ -942,5 +987,40 @@ mod tests {
         assert!(cache.get("bad").is_none());
         let reopened = AutoloadCache::open(&cache_path).unwrap();
         assert!(reopened.get("bad").is_none());
+    }
+
+    #[test]
+    fn flush_with_the_lock_held_elsewhere_returns_and_keeps_the_batch() {
+        // flush_pending runs before every prompt. Another process holding
+        // the shard lock (a long rewrite) must not stall the prompt, and
+        // the batch must survive for the next one.
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache_path = dir.path().join("autoloads.rkyv");
+        let cache = std::sync::Arc::new(AutoloadCache::open(&cache_path).unwrap());
+        let sha = source_digest("body");
+        cache.put_one("f", vec![1], DIR, sha).unwrap();
+
+        // flock locks belong to the open file description, so a second
+        // open in this process contends exactly like another process.
+        let held = acquire_lock(&cache.lock_path).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let flusher = std::sync::Arc::clone(&cache);
+        // Detached rather than scoped: a flush that blocks must fail the
+        // test, not hang it. The panic drops `held`, which frees it.
+        std::thread::spawn(move || {
+            let _ = tx.send(flusher.flush_pending());
+        });
+        let res = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("flush_pending blocked on a lock held elsewhere");
+        assert!(res.is_ok());
+        assert!(!cache_path.exists(), "wrote the shard without the lock");
+        assert_eq!(cache.get_for_source("f", DIR, &sha), Some(vec![1]));
+
+        drop(held);
+        cache.flush_pending().unwrap();
+        assert!(cache_path.exists());
+        assert_eq!(cache.entry_count(), 1);
     }
 }

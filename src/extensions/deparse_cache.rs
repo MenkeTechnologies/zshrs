@@ -160,6 +160,10 @@ impl DeparseCache {
     /// Fold every buffered entry into the shard in one rewrite. A no-op when
     /// nothing is buffered. A failed write drops the batch instead of
     /// retrying at every prompt; the cost is one re-deparse per entry.
+    ///
+    /// The lock is taken without blocking: this runs before every prompt,
+    /// and waiting on another process's rewrite left a new shell with no
+    /// prompt. A busy lock puts the batch back for the next prompt.
     fn flush_pending(&self) -> Result<(), String> {
         let batch = {
             let mut pending = self.pending.lock();
@@ -171,7 +175,16 @@ impl DeparseCache {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let Some(_lock) = acquire_lock(&self.lock_path) else {
+        let Some(_lock) = try_acquire_lock(&self.lock_path) else {
+            // Entries buffered since the take are newer; keep them. Bounded
+            // by PENDING_FLUSH_MAX, past which the rest cost a re-deparse.
+            let mut pending = self.pending.lock();
+            for (key, deparsed) in batch {
+                if pending.len() >= PENDING_FLUSH_MAX {
+                    break;
+                }
+                pending.entry(key).or_insert(deparsed);
+            }
             return Ok(());
         };
         let Some((mtime, len)) = current_binary_identity() else {
@@ -204,7 +217,9 @@ impl DeparseCache {
     }
 }
 
-fn acquire_lock(path: &Path) -> Option<nix::fcntl::Flock<File>> {
+/// Exclusive lock on the shard's side file, or `None` when another
+/// process holds it.
+fn try_acquire_lock(path: &Path) -> Option<nix::fcntl::Flock<File>> {
     let f = File::options()
         .read(true)
         .write(true)
@@ -212,7 +227,7 @@ fn acquire_lock(path: &Path) -> Option<nix::fcntl::Flock<File>> {
         .truncate(false)
         .open(path)
         .ok()?;
-    nix::fcntl::Flock::lock(f, nix::fcntl::FlockArg::LockExclusive).ok()
+    nix::fcntl::Flock::lock(f, nix::fcntl::FlockArg::LockExclusiveNonblock).ok()
 }
 
 fn read_owned_shard(path: &Path) -> Option<DeparseShard> {
