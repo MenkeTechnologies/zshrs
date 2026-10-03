@@ -83,17 +83,22 @@ pub(crate) fn note_command_word(word: &str, quoted: bool) {
 /// `/bin/zsh`, which rejects the construct outright, so the capture must
 /// stand down and let the normal path produce zsh's own diagnostic.
 ///
-/// False while ZLE splits the line into words (`LEXFLAGS_ZLE`, set by
-/// get_comp_string at c:Src/Zle/zle_tricky.c:1170). Completion sees the
-/// line as zsh's lexer does — `{`, then each body word — and `_intercept`
-/// steps past the brace with `compset -N '{'`. Capturing there swallowed
-/// an unclosed body to end of input and returned LEXERR, so
-/// `intercept before ls { ech<TAB>` lost every word from `{` on.
+/// False whenever the lexer runs with any `lexflags` set. Only the
+/// execution parser lexes with `lexflags == 0`; every non-zero mode is a
+/// word splitter that must see the line as zsh's lexer does — `{`, then
+/// each body word, then `}`:
+///   * `LEXFLAGS_ZLE` — get_comp_string (c:Src/Zle/zle_tricky.c:1170) and
+///     the highlighter. Capturing there swallowed an unclosed body to end
+///     of input and returned LEXERR, so `intercept before ls { ech<TAB>`
+///     lost every word from `{` on; `_intercept` steps past the brace with
+///     `compset -N '{'` instead.
+///   * `LEXFLAGS_ACTIVE` plus the comment/newline modes — bufferwords for
+///     the `(z)` / `(Z:…:)` flags (c:Src/hist.c:3406). Capturing there
+///     returned the whole body as one quoted word.
 pub(crate) fn wants_block() -> bool {
     use crate::ported::lex::LEX_LEXFLAGS;
-    use crate::ported::zsh_h::LEXFLAGS_ZLE;
     LEX_ININTERCEPT.get()
-        && LEX_LEXFLAGS.get() & LEXFLAGS_ZLE == 0
+        && LEX_LEXFLAGS.get() == 0
         && !crate::dash_mode::zsh_dropin()
 }
 

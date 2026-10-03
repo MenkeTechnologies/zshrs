@@ -6623,6 +6623,46 @@ mod histsplitwords_uselex_tests {
         }
     }
 
+    /// c:3406 — bufferwords lexes with `lexflags = flags | LEXFLAGS_ACTIVE`,
+    /// so the zshrs-only `intercept … { body }` capture (execution lexing
+    /// only, src/extensions/intercepts.rs `wants_block`) must not fire:
+    /// `(z)` / `(Z+c+)` split the body into zsh's words. Regression: the
+    /// capture returned the body as ONE quoted word, and an unclosed body
+    /// dropped `{` and everything after it. Expected lists are
+    /// `zsh -f` output for `print -rl -- ${(z)s}`.
+    #[test]
+    fn bufferwords_splits_intercept_block_like_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP;
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "intercept before ls { echo hi }",
+                &["intercept", "before", "ls", "{", "echo", "hi", "}"],
+            ),
+            (
+                "intercept before ls { ech",
+                &["intercept", "before", "ls", "{", "ech"],
+            ),
+            (
+                "intercept around git { if x; then { y; }; fi }",
+                &[
+                    "intercept", "around", "git", "{", "if", "x", ";", "then", "{", "y", ";",
+                    "}", ";", "fi", "}",
+                ],
+            ),
+            (
+                "intercept after * { echo $? >> log }",
+                &["intercept", "after", "*", "{", "echo", "$?", ">>", "log", "}"],
+            ),
+        ];
+        for &(line, want) in cases {
+            for flags in [0, LEXFLAGS_COMMENTS_KEEP] {
+                let (got, _) = bufferwords(line, None, flags);
+                assert_eq!(got, want, "bufferwords({line:?}, flags={flags})");
+            }
+        }
+    }
+
     /// Trailing whitespace doesn't produce a phantom word.
     #[test]
     fn no_uselex_trailing_whitespace_no_phantom() {
