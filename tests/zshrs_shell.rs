@@ -17002,3 +17002,33 @@ fn test_zsh_exepath_names_the_running_binary() {
     let want = std::fs::canonicalize(zshrs_bin()).unwrap();
     assert_eq!(out, format!("{}\n0\n", want.display()), "stderr: {err}");
 }
+
+/// c:mkbltnmlst.sh:62-70 — zsh/hlgroup's `.zle.esc` / `.zle.sgr` autoloads
+/// are registered only under zsh emulation. Registering them under sh/bash
+/// emulation failed `isident`, left errflag set, and the shell then ran
+/// nothing: `--sh -c 'echo hi'` printed nothing and exited 0. It showed with
+/// an empty HOME (as ztst and CI give a spawned shell), so this test uses one.
+#[test]
+fn test_sh_and_bash_emulation_run_their_command_with_hlgroup_booted() {
+    let home = tempdir_for_test();
+    for args in [
+        &["--sh", "-f", "-c", "echo hi"][..],
+        &["--bash", "-f", "-c", "echo hi"][..],
+        &["--emulate", "sh", "-f", "-c", "echo hi"][..],
+        &["--emulate", "bash", "-f", "-c", "echo hi"][..],
+    ] {
+        let out = Command::new(zshrs_bin())
+            .args(args)
+            .env("HOME", &home)
+            .stdin(Stdio::null())
+            .output()
+            .expect("failed to spawn zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "hi\n",
+            "{args:?}; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&home);
+}

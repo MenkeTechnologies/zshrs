@@ -2112,6 +2112,18 @@ impl modulestab {
             if autofeature_list.is_empty() {
                 continue;
             }
+            // c:mkbltnmlst.sh:62-70 — zsh/hlgroup's autofeatures are the
+            // dotted `.zle.esc` / `.zle.sgr`, which are not identifiers under
+            // sh/bash emulation: add_autoparam's setsparam fails `isident`
+            // and leaves errflag set (c:Src/params.c:3203-3207), so the shell
+            // ran nothing at all. C never gets there — the call is inside
+            // `if (EMULATION(EMULATE_ZSH))` — and the emulation is already
+            // installed when this replay runs, so honour that gate here.
+            if *name == "zsh/hlgroup"
+                && !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH)
+            {
+                continue;
+            }
             let features: Vec<String> = autofeature_list.iter().map(|f| f.to_string()).collect();
             // c:3440 `autofeatures(cmdnam, module, features, prefchar,
             //          defflags)` — cmdnam "zsh" per mkbltnmlst.sh:69.
