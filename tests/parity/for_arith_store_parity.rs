@@ -17,7 +17,7 @@
 //! so the runners below enforce a wall-clock deadline and kill the child:
 //! a regression must fail as "timed out", never hang the suite.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -36,13 +36,7 @@ fn zshrs_bin() -> PathBuf {
 }
 
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() {
-        "/opt/homebrew/bin/zsh"
-    } else if Path::new("/usr/local/bin/zsh").exists() {
-        "/usr/local/bin/zsh"
-    } else {
-        "/bin/zsh"
-    }
+    crate::oracle::zsh_path()
 }
 
 fn zsh_available() -> bool {

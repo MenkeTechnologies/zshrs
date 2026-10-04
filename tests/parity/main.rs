@@ -20,6 +20,7 @@ mod param_setfn_lock_parity;
 mod param_type_flag_parity;
 mod parser_lock;
 mod zpty_probe;
+mod oracle;
 
 mod advanced_parity;
 mod alias_parity;

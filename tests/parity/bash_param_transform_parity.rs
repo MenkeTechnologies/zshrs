@@ -48,12 +48,8 @@ fn bash_path() -> Option<&'static str> {
 }
 
 fn zsh_path() -> Option<&'static str> {
-    for p in ["/opt/homebrew/bin/zsh", "/usr/local/bin/zsh", "/bin/zsh"] {
-        if Path::new(p).exists() {
-            return Some(p);
-        }
-    }
-    None
+    let p = crate::oracle::zsh_path();
+    std::path::Path::new(p).exists().then_some(p)
 }
 
 struct R {

@@ -9,7 +9,7 @@
 //! hide exactly the bytes under test. When a zsh is installed the pin is
 //! also re-checked against it.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 const LOCALE: &str = "en_US.UTF-8";
@@ -25,9 +25,8 @@ fn zshrs_bin() -> PathBuf {
 }
 
 fn zsh_path() -> Option<&'static str> {
-    ["/opt/homebrew/bin/zsh", "/usr/local/bin/zsh", "/bin/zsh"]
-        .into_iter()
-        .find(|p| Path::new(p).exists())
+    let p = crate::oracle::zsh_path();
+    std::path::Path::new(p).exists().then_some(p)
 }
 
 fn run(cmd: &mut Command, script: &str) -> Vec<u8> {

@@ -51,17 +51,7 @@ fn zshrs_bin() -> PathBuf {
 }
 
 fn zsh_path() -> &'static str {
-    for p in [
-        "/opt/homebrew/bin/zsh",
-        "/usr/local/bin/zsh",
-        "/bin/zsh",
-        "/usr/bin/zsh",
-    ] {
-        if Path::new(p).exists() {
-            return p;
-        }
-    }
-    "zsh"
+    crate::oracle::zsh_path()
 }
 
 /// The stock `Completion/` tree, wherever this zsh installed it. Both shells

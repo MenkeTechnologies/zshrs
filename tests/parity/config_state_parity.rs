@@ -28,14 +28,7 @@ fn zshrs_bin() -> PathBuf {
     manifest.join("target").join("debug").join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    use std::path::Path;
-    if Path::new("/opt/homebrew/bin/zsh").exists() {
-        "/opt/homebrew/bin/zsh"
-    } else if Path::new("/usr/local/bin/zsh").exists() {
-        "/usr/local/bin/zsh"
-    } else {
-        "/bin/zsh"
-    }
+    crate::oracle::zsh_path()
 }
 fn zsh_available() -> bool {
     Command::new(zsh_path())
@@ -77,7 +70,7 @@ zpwr__dump_state() {
     # VALUES are compared in the SPECIAL_ARRAYS section below instead.
     reswords patchars keymaps zle_bracketed_paste
     OSTYPE MACHTYPE VENDOR CPUTYPE HOST HOSTNAME LOGCHECK WATCHFMT
-    ZSHRS_VERSION ZSH_VERSION ZSH_PATCHLEVEL ZSH_NAME
+    ZSHRS_VERSION ZSH_VERSION ZSH_PATCHLEVEL ZSH_NAME ZSH_EXEPATH
     __CF_USER_TEXT_ENCODING PWD OLDPWD PATH path fpath FPATH cdpath
     manpath MANPATH module_path MODULE_PATH
   )

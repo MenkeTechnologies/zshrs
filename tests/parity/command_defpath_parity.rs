@@ -49,9 +49,8 @@ fn zshrs_bin() -> PathBuf {
 }
 
 fn zsh_path() -> Option<&'static str> {
-    ["/opt/homebrew/bin/zsh", "/usr/local/bin/zsh", "/bin/zsh", "/usr/bin/zsh"]
-        .into_iter()
-        .find(|p| Path::new(p).exists())
+    let p = crate::oracle::zsh_path();
+    std::path::Path::new(p).exists().then_some(p)
 }
 
 /// A `$PATH` directory of our own holding exactly two commands.

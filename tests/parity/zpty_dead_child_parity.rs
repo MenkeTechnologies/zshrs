@@ -42,13 +42,7 @@ fn zshrs_bin() -> PathBuf {
 }
 
 fn zsh_path() -> &'static str {
-    if std::path::Path::new("/opt/homebrew/bin/zsh").exists() {
-        "/opt/homebrew/bin/zsh"
-    } else if std::path::Path::new("/usr/local/bin/zsh").exists() {
-        "/usr/local/bin/zsh"
-    } else {
-        "/bin/zsh"
-    }
+    crate::oracle::zsh_path()
 }
 
 fn zsh_available() -> bool {

@@ -75,7 +75,7 @@ fn ash() -> Option<String> {
     find_shell(&["ash", "/opt/homebrew/bin/ash", "/bin/ash", "/usr/bin/ash"])
 }
 fn zsh() -> Option<String> {
-    find_shell(&["zsh", "/opt/homebrew/bin/zsh", "/bin/zsh", "/usr/bin/zsh"])
+    find_shell(&[crate::oracle::zsh_path()])
 }
 
 /// One `(zshrs flag, reference-shell resolver, label)` row of the matrix.

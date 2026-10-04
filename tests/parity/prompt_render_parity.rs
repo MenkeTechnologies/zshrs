@@ -215,7 +215,7 @@ fn a_partial_line_is_followed_by_a_fresh_prompt() {
 #[test]
 fn prompt_sp_goes_to_stderr_without_a_tty() {
     use std::io::Write as _;
-    let zsh = "/opt/homebrew/bin/zsh";
+    let zsh = crate::oracle::zsh_path();
     if !std::path::Path::new(zsh).exists() {
         return;
     }
@@ -260,7 +260,7 @@ fn prompt_sp_goes_to_stderr_without_a_tty() {
 #[test]
 fn prompt_sp_pad_uses_the_unsampled_column_count_without_a_tty() {
     use std::io::Write as _;
-    let zsh = "/opt/homebrew/bin/zsh";
+    let zsh = crate::oracle::zsh_path();
     if !std::path::Path::new(zsh).exists() {
         return;
     }

@@ -13,7 +13,7 @@
 //! property of the C library locale. A shell that never re-runs `setlocale`
 //! keeps quoting `日本語` as `346$'\227'245…` after `export LC_ALL=<utf8>`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
@@ -27,13 +27,7 @@ fn zshrs_bin() -> PathBuf {
 }
 
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() {
-        "/opt/homebrew/bin/zsh"
-    } else if Path::new("/usr/local/bin/zsh").exists() {
-        "/usr/local/bin/zsh"
-    } else {
-        "/bin/zsh"
-    }
+    crate::oracle::zsh_path()
 }
 
 fn zsh_available() -> bool {

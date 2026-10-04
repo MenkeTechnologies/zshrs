@@ -1043,11 +1043,7 @@ fn arguments_compadd_diagnostic_names_line_551() {
 /// differs between the two shells — so only its basename is compared.
 #[test]
 fn a_corrupt_digest_met_loading_a_completion_function_names_the_caller() {
-    let zsh = if Path::new("/opt/homebrew/bin/zsh").exists() {
-        "/opt/homebrew/bin/zsh"
-    } else {
-        "zsh"
-    };
+    let zsh = crate::oracle::zsh_path();
     let tmp = tempfile::TempDir::new().expect("tmp");
     let fp = tmp.path().join("fp");
     std::fs::create_dir(&fp).unwrap();
