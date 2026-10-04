@@ -8750,6 +8750,26 @@ fn test_prompt_attr_emitted_only_on_change() {
 }
 
 #[test]
+fn test_pcre_reports_every_declared_group() {
+    // Src/Modules/pcre.c:395,484 (workers 52405, 52502) size $match /
+    // BASH_REMATCH by pcre2_get_ovector_count(): every declared group,
+    // a non-participating one empty with mbegin 1 / mend 0
+    // (V07pcre.ztst "Empty string for optional captures that don't match").
+    // Expected output is zsh master's, byte for byte.
+    let (_, output, _) = run_zshrs(
+        r#"zmodload zsh/pcre; pcre_compile 'x(y)?z'; pcre_match -a arr 'xz'; print -r -- "n=${#arr}"
+setopt rematchpcre; match=(old); [[ xz =~ 'x(y)?z' ]]; print -r -- ${#match} "(${(j:,:)match})" "$mbegin|$mend"
+[[ xz =~ 'x(z)(y)?(q)?' ]]; print -r -- ${#match} "(${(j:,:)match})" "$mbegin|$mend"
+[[ xz =~ 'x(y)?(z)' ]]; print -r -- ${#match} "(${(j:,:)match})"
+setopt bashrematch; [[ xz =~ 'x(z)(y)?' ]]; print -r -- ${#BASH_REMATCH} "(${(j:,:)BASH_REMATCH})""#,
+    );
+    assert_eq!(
+        output,
+        "n=1\n1 () 1|0\n3 (z,,) 2 1 1|2 0 0\n2 (,z)\n3 (xz,z,)\n"
+    );
+}
+
+#[test]
 fn test_for_arith_comma_init_and_step() {
     // `for ((i=0,j=10; i<3; i++,j--))` should iterate with both
     // i and j updating. ArithCompiler only handled ONE op per

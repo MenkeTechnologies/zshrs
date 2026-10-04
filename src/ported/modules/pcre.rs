@@ -750,23 +750,14 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             // c:206-207 — `zalloc(... captured_count+1-capture_start)` /
             //             `for (i = capture_start; i < captured_count; i++)`.
             //
-            // PCRE reports the number of ovector PAIRS SET — that is, the
-            // highest group that actually participated, plus one — NOT the
-            // number of groups the pattern declares. So a TRAILING group that
-            // did not participate is not reported at all, while a non-
-            // participating group BEFORE a participating one is reported empty:
-            //
-            //   x(y)?z   on "xz"  -> 0 captures   (zshrs previously reported 1)
-            //   (a)(b)?  on "a"   -> 1 capture
-            //   (a)?(b)  on "b"   -> 2 captures, the first empty
-            //
-            // Using the pattern's group count (`caps.len()`) instead padded the
-            // array with trailing empties that zsh never produces.
-            let captured_count = (1..caps.len())
-                .filter(|&i| caps.get(i).is_some())
-                .max()
-                .map(|hi| hi + 1)
-                .unwrap_or(1);
+            // pcre2_get_ovector_count() on match data created from the
+            // pattern (c:384) is the pattern's group count plus one, so EVERY
+            // declared group is reported; one that did not participate has
+            // both slots PCRE2_UNSET and c:209 yields an empty string
+            // (`x(y)?z` on "xz" -> one empty capture). zsh 5.9.x used
+            // pcre_exec's return (highest participating group + 1) and
+            // dropped trailing unset groups; master does not.
+            let captured_count = caps.len(); // c:393
             let mut subs = Vec::new();
             for i in 1..captured_count {
                 // c:207-209 ovector capture loop
@@ -1001,15 +992,13 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                     // and gates `match` on captures existing (c:202-203
                     // `!want_begin_end || nelem`). The named-captures
                     // assoc `.pcre.match` populates in BOTH modes.
-                    // c:Src/Modules/pcre.c:477 — `ovec_count` is pcre2_match's return:
-                    // the highest PARTICIPATING group plus one, not the pattern's
-                    // group count (same rule as bin_pcre_match above). `x(y)?z` on
-                    // `xz` has nelem 0, so `match` is left untouched (c:202-203).
-                    let captured_count = (1..caps.len())
-                        .filter(|&i| caps.get(i).is_some())
-                        .max()
-                        .map(|hi| hi + 1)
-                        .unwrap_or(1);
+                    // c:Src/Modules/pcre.c:476-477 — `ovec_count =
+                    // pcre2_get_ovector_count(pcre_mdata)`: the pattern's group
+                    // count plus one (match data from the pattern, c:464), so
+                    // a trailing group that did not participate is still
+                    // reported, empty (V07pcre.ztst "Empty string for optional
+                    // captures that don't match").
+                    let captured_count = caps.len(); // c:477
                     let nelem = captured_count - 1; // c:177
                     if bashre {
                         // c:445-447 + matchedinarr=1: BASH_REMATCH array,
