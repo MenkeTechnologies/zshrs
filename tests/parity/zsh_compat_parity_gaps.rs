@@ -47793,7 +47793,10 @@ mod probe_sweep_2026_06_12_b {
         probe_b_row_146 => (r#"probe b 146"#, r###"sleep 0.05 & sleep 0.06 & wait; print rc=$?"###);
         probe_b_row_147 => (r#"probe b 147"#, r###"(sleep 0.02; exit 3) & wait $!; print rc=$?"###);
         probe_b_row_148 => (r#"probe b 148"#, r###"jobs -p | wc -l"###);
-        probe_b_row_149 => (r#"probe b 149"#, r###"/bin/echo bg & disown 2>/dev/null; print rc=$?"###);
+        // The bg echo and `print` raced for stdout order. The job writes into a
+        // FIFO and `cat` reads it after `print`, so the order is fixed; the
+        // disowned job and the rc of `disown 2>/dev/null` are unchanged.
+        probe_b_row_149 => (r#"probe b 149"#, r###"f=${TMPDIR:-/tmp}/zshrs-p149.$$; mkfifo $f; /bin/echo bg > $f & disown 2>/dev/null; print rc=$?; cat $f; rm -f $f"###);
         probe_b_row_150 => (r#"probe b 150"#, r###"suspend 2>/dev/null; print rc=$?"###);
         probe_b_row_151 => (r#"probe b 151"#, r###"print $$ | grep -qcE '^[0-9]+$'; print rc=$?"###);
         probe_b_row_152 => (r#"probe b 152"#, r###"(print $PPID | grep -qcE '^[0-9]+$'); print rc=$?"###);
