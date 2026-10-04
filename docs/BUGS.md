@@ -1670,7 +1670,8 @@ agreeing shapes: `time sleep 0`, `time /bin/true`, `time ( : )`, bare `time`.
 **Dotted parameter names — 1 test**
 `modules_parity::hlgroup_module::esc_and_sgr_for_named_group`.
 
-Not about `zsh/hlgroup`: `zmodload zsh/hlgroup` fails in BOTH shells. The
+Not about `zsh/hlgroup` itself: zsh 5.9.2 has no such module, while zshrs and
+the 5.9.0.3-test fork both boot it (`load=yes` in config.modules). The
 divergence is the next line, `typeset -gA .zle.hlgroups` — 5.9 answers
 `typeset: not valid in this context: .zle.hlgroups` and aborts the script, and
 rejects plain `typeset -g a.b=1` the same way. zshrs accepts both because

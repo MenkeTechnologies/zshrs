@@ -2220,6 +2220,8 @@ enum WrapKind {
     Private,
     /// `WRAPDEF(zprof_wrapper)` — `Src/Modules/zprof.c:318-320`.
     Zprof,
+    /// `WRAPDEF(ksh93_wrapper)` — `Src/Modules/ksh93.c:230-232`.
+    Ksh93,
 }
 
 /// One node of the `wrappers` linked list C keeps at `Src/module.c:570`,
@@ -2251,6 +2253,18 @@ struct BodyWrap {
 /// The chain in `addwrapper` tail-append order — module boot order, so
 /// the wrapper of the module booted first ends up OUTERMOST.
 static BODY_WRAPPERS: &[BodyWrap] = &[
+    // `Src/Modules/ksh93.c:230-232` — `static struct funcwrap wrapper[] =
+    // { WRAPDEF(ksh93_wrapper) };` — installed by c:260
+    // `return addwrapper(m, wrapper);` in `zsh/ksh93`'s `boot_`, removed
+    // by c:269 `deletewrapper(m, wrapper);` in `cleanup_`. zsh/ksh93 is a
+    // `load=yes` module (config.modules) that boots ahead of
+    // zsh/param/private and zsh/zprof, so its node comes first. The
+    // handler never calls the body — it creates the `.sh.*` locals and
+    // returns 1 (c:227), letting the walk continue.
+    BodyWrap {
+        module: "zsh/ksh93",
+        kind: WrapKind::Ksh93,
+    },
     // `Src/Zle/complete.c:1694-1695` — `static struct funcwrap wrapper[] =
     // { WRAPDEF(comp_wrapper) };` — installed by c:1767
     // `return addwrapper(m, wrapper);` in `zsh/complete`'s `boot_`.
@@ -2388,6 +2402,13 @@ pub fn runshfunc(
                     & crate::ported::module::WRAPPER_BIT_ZPROF)
                     != 0
             }
+            // Same `addwrapper` membership test as zprof: zsh/ksh93's boot_
+            // (c:260) and cleanup_ (c:269) mirror it into WRAPPERS_ADDED.
+            WrapKind::Ksh93 => {
+                (crate::ported::module::WRAPPERS_ADDED.load(Ordering::Relaxed)
+                    & crate::ported::module::WRAPPER_BIT_KSH93)
+                    != 0
+            }
         };
         if !armed {
             // Not in C's `wrappers` list right now — no node to step over.
@@ -2429,6 +2450,17 @@ pub fn runshfunc(
                     name,
                     || status = run_next(), // zprof.c:285
                 ),
+                // ksh93.c:143-227 never re-enters the chain: it sets up the
+                // `.sh.*` locals and returns 1, so `run_next` stays unused
+                // and the walk continues at c:6192.
+                WrapKind::Ksh93 => {
+                    let cname = std::ffi::CString::new(name).unwrap_or_default();
+                    crate::ported::modules::ksh93::ksh93_wrapper(
+                        std::ptr::null(),
+                        std::ptr::null(),
+                        cname.as_ptr() as *mut libc::c_char,
+                    )
+                }
             }
         };
 

@@ -320,8 +320,13 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
     }
 
     queue_signals(); // c:157
-    locallevel.fetch_add(1, Ordering::SeqCst); // c:158 ++locallevel;
-                                               /* Make these local */                                              // c:158 trailing comment
+    // c:158 — `++locallevel; /* Make these local */`. C runs the wrapper
+    // chain BEFORE runshfunc's `startparamscope()` (Src/exec.c:6194), so
+    // it bumps the level itself to create the function's locals one scope
+    // ahead. zshrs's doshfunc has already entered that scope before
+    // runshfunc walks the chain (see `exec::runshfunc`), so the current
+    // level IS the function's level: bumping again would park every
+    // `.sh.*` local one scope too deep, where the body never sees it.
 
     // c:160-165 — .sh.command setup
     pm = createparam(".sh.command", LOCAL_NAMEREF as i32)
@@ -516,7 +521,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
          * - special handling of .sh.value in math
          */
     }
-    locallevel.fetch_sub(1, Ordering::SeqCst); // c:224 --locallevel;
+    // c:224 — `--locallevel;` — paired with c:158 above; see there.
     unqueue_signals(); // c:225
 
     1 // c:227
@@ -580,11 +585,20 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/ksh93.c:258`.
 /// C body: `return addwrapper(m, wrapper);`
 pub fn boot_(m: *const module) -> i32 {
-    // c:258 — addwrapper(m, wrapper); zshrs's fusevm doesn't run
-    // through C's wrapper-dispatch chain, no-op until wrapper
-    // machinery gets a Rust equivalent.
+    // c:260 — `return addwrapper(m, wrapper);`. As in zsh/zprof's boot_,
+    // the module arrives as a name (see addwrapper's WARNING), and the
+    // node is C's c:230-232 `{ WRAPDEF(ksh93_wrapper) }` bookkeeping entry;
+    // `exec::runshfunc` dispatches the handler on the owning module.
     let _ = m;
-    0
+    crate::ported::module::addwrapper(
+        "zsh/ksh93",
+        funcwrap {
+            next: None,    // c:1371 WRAPDEF
+            flags: 0,      // c:1371
+            handler: None, // c:1371 — WRAPDEF(ksh93_wrapper); see above
+            module: None,  // c:1371
+        },
+    ) // c:260
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/ksh93.c:265`.
@@ -604,8 +618,8 @@ pub fn boot_(m: *const module) -> i32 {
 pub fn cleanup_(m: *const module) -> i32 {
     // c:267 — `struct paramdef *p;`
     let mut p: usize; // c:267 (index over partab)
-                      // c:269 — deletewrapper(m, wrapper); zshrs's fusevm wrapper
-                      // machinery is a no-op (see boot_ note).
+    // c:269 — `deletewrapper(m, wrapper);` (return value discarded in C).
+    let _ = crate::ported::module::deletewrapper("zsh/ksh93"); // c:269
 
     // c:116-131 — `static struct paramdef partab[]` inlined here
     // because Rust statics can't hold String-typed paramdef.name.
@@ -850,7 +864,7 @@ mod tests {
         emulation.store(EMULATE_KSH, Ordering::SeqCst);
         let rc = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
         assert_eq!(rc, 1);
-        // c:158 ++locallevel + c:224 --locallevel must net to 0.
+        // The wrapper runs inside doshfunc's scope and must leave locallevel as it found it.
         assert_eq!(locallevel.load(Ordering::SeqCst), 0);
         emulation.store(saved, Ordering::SeqCst);
     }

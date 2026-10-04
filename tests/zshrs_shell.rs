@@ -16921,5 +16921,43 @@ setopt extendedglob; [[ abc = (#b)a(b)c ]]; print match=${.sh.match}
 zmodload -u zsh/hlgroup zsh/ksh93 && print ${+.zle.esc} ${+.sh.version}",
     );
     assert_eq!(code, 0, "{err}");
-    assert_eq!(output, "$'\\033'\\[1m 1 foo\nver\nsub=1\nmatch=b\n0 0\n");
+    // Last line: zsh/hlgroup is `load=yes` (config.modules:39), so unloading
+    // it re-registers the `.zle.esc` autoload stub and `${+.zle.esc}` is 1 again;
+    // zsh/ksh93 lists `.sh.version` only in its emulation autofeatures, so it
+    // stays 0. The fork build prints `1 0`.
+    assert_eq!(output, "$'\\033'\\[1m 1 foo\nver\nsub=1\nmatch=b\n1 0\n");
+}
+
+/// config.modules (fork 5.9.0.3-test) marks `zsh/hlgroup` and `zsh/ksh93`
+/// `load=yes`, so a fresh shell lists them alongside the other autoloaded
+/// modules, and both load and unload on demand (V01zmodload.ztst:3,4,30,31).
+/// Expected lines are the fork build's.
+#[test]
+fn test_hlgroup_and_ksh93_are_booted_and_loadable() {
+    let (_, out, err) = run_zshrs(
+        "print -r -- ${modules[zsh/hlgroup]} ${modules[zsh/ksh93]}\n\
+         zmodload zsh/hlgroup zsh/ksh93 && print loaded ${modules[zsh/hlgroup]} ${modules[zsh/ksh93]}\n\
+         zmodload -u zsh/hlgroup zsh/ksh93 && print unloaded",
+    );
+    assert_eq!(
+        out,
+        "autoloaded autoloaded\nloaded loaded loaded\nunloaded\n",
+        "stderr: {err}"
+    );
+}
+
+/// c:Src/Modules/ksh93.c:143-227 — ksh93_wrapper creates the `.sh.*`
+/// locals for every function called under ksh emulation and nothing in
+/// zsh mode. `.sh.level` counts the function stack, so a nested call sees
+/// 2. Its `++locallevel` (c:158) must not stack on doshfunc's own scope,
+/// or the locals land one level too deep and the body reads them unset.
+#[test]
+fn test_ksh93_wrapper_sets_sh_locals_under_ksh_emulation() {
+    let (_, out, err) = run_zshrs(
+        "zmodload zsh/ksh93\n\
+         emulate ksh -c 'f() { print -r -- \"${.sh.fun} ${.sh.level}\"; g; }; g() { print -r -- \"${.sh.fun} ${.sh.level}\"; }; f'\n\
+         z() { print -r -- \"[${.sh.fun}]\"; }; z\n\
+         print -r -- \"top ${+.sh.fun}\"",
+    );
+    assert_eq!(out, "f 1\ng 2\n[]\ntop 0\n", "stderr: {err}");
 }

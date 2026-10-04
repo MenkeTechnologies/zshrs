@@ -1812,11 +1812,10 @@ impl modulestab {
         // The resulting node count is 17 (16 here + `zsh/main` below),
         // well under the `ct >= 34` re-hash of the 17-bucket table.
         //
-        // `zsh/hlgroup` and `zsh/ksh93` also carry `load=yes` in the
-        // reference tree's config.modules. They are linked (loadable with
-        // `zmodload`) but get no boot node or autoload stubs here: each
-        // would add to `${#modules}` / `${#parameters}` at startup, which the
-        // 5.9.x oracle rows pin.
+        // `zsh/hlgroup` and `zsh/ksh93` carry `load=yes` in the reference
+        // tree's config.modules (lines 39-40) and boot here like the rest;
+        // zsh 5.9.2 has neither, so its `${#modules}` / `${#parameters}`
+        // rows are two modules short of the fork's.
         //
         // The `autofeatures` column below is each `.mdd`'s
         // `autofeatures=` line VERBATIM — that string is what
@@ -1841,6 +1840,10 @@ impl modulestab {
                 &["b:sched", "p:zsh_scheduled_events"][..],
                 &[][..],
             ),
+            // Src/Modules/hlgroup.mdd:5
+            ("zsh/hlgroup", &["p:.zle.esc", "p:.zle.sgr"][..], &[][..]),
+            // Src/Modules/ksh93.mdd:5,9
+            ("zsh/ksh93", &["b:nameref"][..], &["zsh/zle"][..]),
             // Src/Modules/param_private.mdd:5
             ("zsh/param/private", &["b:private"][..], &[][..]),
             // Src/Modules/parameter.mdd:5
@@ -7643,6 +7646,10 @@ pub static WRAPPERS_ADDED: std::sync::atomic::AtomicU32 = std::sync::atomic::Ato
 /// `WRAPDEF(zprof_wrapper)` (`Src/Modules/zprof.c:318-320`).
 pub const WRAPPER_BIT_ZPROF: u32 = 1 << 0;
 
+/// [`WRAPPERS_ADDED`] bit for `zsh/ksh93`'s
+/// `WRAPDEF(ksh93_wrapper)` (`Src/Modules/ksh93.c:230-232`).
+pub const WRAPPER_BIT_KSH93: u32 = 1 << 1;
+
 /// Port of `addwrapper()` from `Src/module.c:577`. — C decl `addwrapper(Module m, FuncWrap w)`.
 /// Tail-appends a module's function wrapper onto the
 /// global [`WRAPPERS`] list. Returns 1 on error, 0 on success.
@@ -7718,6 +7725,7 @@ pub fn addwrapper(m: &str, mut w: funcwrap) -> i32 {
     // 0, which leaves the mask untouched.
     let bit = match m {
         "zsh/zprof" => WRAPPER_BIT_ZPROF,
+        "zsh/ksh93" => WRAPPER_BIT_KSH93,
         _ => 0,
     };
     WRAPPERS_ADDED.fetch_or(bit, std::sync::atomic::Ordering::Relaxed);
@@ -7780,6 +7788,7 @@ pub fn deletewrapper(m: &str) -> i32 {
         // Rust-only — see [`WRAPPERS_ADDED`].
         let bit = match m {
             "zsh/zprof" => WRAPPER_BIT_ZPROF,
+            "zsh/ksh93" => WRAPPER_BIT_KSH93,
             _ => 0,
         };
         WRAPPERS_ADDED.fetch_and(!bit, std::sync::atomic::Ordering::Relaxed);
