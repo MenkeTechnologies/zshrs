@@ -5195,23 +5195,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             };
             let pre_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_ERROR;
-            // zshrs's two `fpath` invariants, applied where a SHELL
-            // assignment lands rather than inside `assignaparam`: the
-            // bundled tree is always present, a host zsh's own function
-            // tree never is. Doing it in params caught the internal
-            // setter too -- compsys swaps `fpath` and restores it,
-            // `compaudit` needs a genuinely empty one, and a dozen unit
-            // tests assert an exact array; appending the bundle rewrote
-            // all of them (CI: 8 failures).
             // c:Src/exec.c:2573 — `flags = !(addflags & ADDVAR_RESTORE) ?
             // ASSPM_WARN : 0;`: a prefix assignment that is put back after
             // the command is implicitly scoped and never warns, the same rule
             // the scalar arm applies.
             let warn = if prefix_restored { 0 } else { crate::ported::zsh_h::ASSPM_WARN };
             let res = crate::ported::params::assignaparam(&name, values.clone(), warn | kv_flag);
-            if name == "fpath" {
-                crate::vm_helper::normalize_fpath_after_assignment();
-            }
             let now_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_ERROR;
             if res.is_none() && pre_err == 0 && now_err != 0 {
@@ -5407,22 +5396,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             };
             let pre_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_ERROR;
-            // zshrs's two `fpath` invariants, applied where a SHELL
-            // assignment lands rather than inside `assignaparam`: the
-            // bundled tree is always present, a host zsh's own function
-            // tree never is. Doing it in params caught the internal
-            // setter too -- compsys swaps `fpath` and restores it,
-            // `compaudit` needs a genuinely empty one, and a dozen unit
-            // tests assert an exact array; appending the bundle rewrote
-            // all of them (CI: 8 failures).
             let res = crate::ported::params::assignaparam(
                 &name,
                 values.clone(),
                 crate::ported::zsh_h::ASSPM_AUGMENT | kv_flag,
             );
-            if name == "fpath" {
-                crate::vm_helper::normalize_fpath_after_assignment();
-            }
             let now_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_ERROR;
             if res.is_none() && pre_err == 0 && now_err != 0 {

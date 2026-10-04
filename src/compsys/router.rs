@@ -143,10 +143,11 @@ fn is_abspath_autoload(flags: u32, filename: Option<&str>) -> bool {
 /// installed at `…/share/zsh/<version>/functions`. `site-functions` is NOT
 /// stock: third parties install there.
 fn is_stock_functions_dir(dir: &str) -> bool {
-    // The BUNDLED tree IS the stock tree. `normalize_fpath_after_assignment`
-    // (vm_helper.rs) deletes every `<prefix>/share/zsh/<ver>/functions` entry
-    // and substitutes `~/.zshrs/functions` AT THAT INDEX, and `default_fpath`
-    // omits the versioned host tree for the same reason.
+    // The BUNDLED tree IS the stock tree. Startup fpath construction
+    // (vm_helper.rs, FPATH import) deletes every inherited
+    // `<prefix>/share/zsh/<ver>/functions` entry and substitutes
+    // `~/.zshrs/functions` AT THAT INDEX, and `default_fpath` omits the
+    // versioned host tree for the same reason.
     //
     // WHICH host tree you compare against decides whether that swap is
     // observationally neutral, so name it. The reference binary here is

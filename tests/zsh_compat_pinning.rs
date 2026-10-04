@@ -1247,94 +1247,40 @@ fn add_zsh_hook_accepts_the_async_precmd_hook() {
     assert_eq!(out, "[]", "-d must remove the hook again");
 }
 
-/// A host zsh installation's function tree is refused even when the
-/// user's own config puts it back.
+/// A shell-level `fpath` assignment stores exactly what was assigned.
 ///
-/// The startup filter only sees the INHERITED `FPATH`. A `.zshrc` that
-/// re-adds `<prefix>/share/zsh/<ver>/functions`, or a plugin manager
-/// restoring a saved fpath, then put a foreign zsh's `add-zsh-hook`,
-/// `compinit` and `_git` back ahead of the bundled copies -- observed as
-///     add-zsh-hook is a shell function from
-///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/add-zsh-hook
-/// which meant zshrs's own override, the one that knows `async_precmd`,
-/// never ran. The rule has to hold on assignment.
-///
-/// `site-functions` is NOT a distribution tree and must survive: it is
-/// where third-party formulae install completions.
+/// zsh never edits a user's `fpath=( … )` / `fpath+=( … )`: `assignaparam`
+/// (c:Src/params.c) hands the words to the array setter and the tied `FPATH`
+/// re-derives from them. zshrs used to re-append `~/.zshrs/functions` and
+/// strip `<prefix>/share/zsh/<ver>/functions` after every assignment, which
+/// turned `fpath=( <host tree> )` into the bundle (a superset of the host
+/// tree), so `compinit` registered more stubs than zsh for the same fpath.
+/// The bundle is placed by startup fpath construction only, where zsh seeds
+/// its own function tree. Expected values measured with zsh 5.9.2.
 #[test]
-fn assigning_fpath_refuses_a_host_zsh_function_tree() {
-    let out = Command::new(zshrs_bin())
-        .args([
-            "--zsh",
-            "-f",
-            "-c",
-            "fpath=( /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions \
-                     /usr/share/zsh/5.9/functions /usr/share/zsh/functions \
-                     /opt/homebrew/share/zsh/site-functions /tmp/zshrs-pin-assign )\nprint -l $fpath",
-        ])
-        .env_remove("ZSHRS_CACHE")
-        .output()
-        .expect("invoke zshrs");
-    let got: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(str::to_string)
-        .collect();
-    for drop in [
-        "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions",
-        "/usr/share/zsh/5.9/functions",
-        "/usr/share/zsh/functions",
-    ] {
-        assert!(
-            !got.iter().any(|e| e == drop),
-            "{drop} must not survive an fpath assignment, got {got:?}"
-        );
-    }
-    for keep in ["/opt/homebrew/share/zsh/site-functions", "/tmp/zshrs-pin-assign"] {
-        assert!(got.iter().any(|e| e == keep), "{keep} must survive, got {got:?}");
-    }
-    // Both halves of the invariant, on the same assignment.
-    assert!(
-        got.last().is_some_and(|e| e.ends_with("/.zshrs/functions")),
-        "the bundled tree must be re-appended by the assignment, got {got:?}"
-    );
-}
-
-/// The bundled tree survives an assignment that drops it outright.
-///
-/// `fpath=( mydir )` and `fpath=( )` are both things a config does. The
-/// invariant is not "filter what was passed" but "the bundle is always
-/// there and a host zsh's tree never is" -- otherwise a single assignment
-/// leaves the shell unable to autoload `compinit` or `is-at-least` at all.
-#[test]
-fn assignment_that_drops_the_bundle_gets_it_back() {
-    let run = |script: &str| -> Vec<String> {
+fn fpath_assignment_stores_exactly_what_was_assigned() {
+    let run = |script: &str| -> String {
         let out = Command::new(zshrs_bin())
             .args(["--zsh", "-f", "-c", script])
             .env_remove("ZSHRS_CACHE")
             .output()
             .expect("invoke zshrs");
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(str::to_string)
-            .collect()
+        String::from_utf8_lossy(&out.stdout).into_owned()
     };
-
-    let only_mine = run("fpath=( /tmp/zshrs-pin-only ); print -l $fpath");
     assert_eq!(
-        only_mine,
-        vec![
-            "/tmp/zshrs-pin-only".to_string(),
-            dirs::home_dir().unwrap().join(".zshrs/functions").display().to_string(),
-        ],
-        "a replacing assignment keeps the user's dir first and the bundle last"
+        run("fpath=( /usr/share/zsh/5.9/functions /tmp/zshrs-pin-a ); print -r -- $FPATH"),
+        "/usr/share/zsh/5.9/functions:/tmp/zshrs-pin-a\n",
+        "a host zsh tree in an assignment is kept and nothing is appended"
     );
-
-    let emptied = run("fpath=( ); print -l $fpath");
-    assert!(
-        emptied.len() == 1 && emptied[0].ends_with("/.zshrs/functions"),
-        "even `fpath=( )` must leave the bundle, got {emptied:?}"
+    assert_eq!(
+        run("fpath=( /a ); fpath+=( /b ); print -r -- $FPATH"),
+        "/a:/b\n",
+        "`+=` appends only the given words"
+    );
+    assert_eq!(
+        run("fpath=( ); print -r -- \"[$FPATH] ${#fpath}\""),
+        "[] 0\n",
+        "`fpath=( )` leaves fpath empty"
     );
 }
 
