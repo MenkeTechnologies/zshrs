@@ -1159,27 +1159,6 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
             // Numeric prefix N on `%/` / `%~` / `%d` / `%c` / `%C` (keep N
             // trailing components; Bug #96) is handled inside `promptpath`,
             // which all five path directives below now route through.
-            // c:1647-1657 — the change test that opens master's
-            // applytextattributes, used by the %S/%s/%B/%b/%U/%u arms:
-            //     zattr change = txtcurrentattrs ^ txtpendingattrs;
-            //     if (!change) return;
-            //     if (txtunknownattrs) txtunknownattrs &= ~change;
-            // tsetattrs/tunsetattrs already folded unknown bits into the
-            // current state, so an attribute of unknown state always counts
-            // as changing; once emitted it becomes known.
-            let attrs_change_pending = || -> bool {
-                let cur = *current_attrs_lock().lock().expect("current_attrs poisoned");
-                let pend = *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                let change = cur ^ pend; // c:1647
-                if change == 0 {
-                    return false; // c:1652-1653
-                }
-                let unknown = txtunknownattrs.load(Ordering::Relaxed);
-                if unknown != 0 {
-                    txtunknownattrs.store(unknown & !change, Ordering::Relaxed); // c:1657
-                }
-                true
-            };
             match xc {
                 // c:540-542 — `%~`: pwd, home/named-dir tilde, optional N
                 // components. Routed through the faithful `promptpath`
@@ -1250,12 +1229,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     stradd(bv, &out);
                 }
                 // c:563-570 — `%S` (standout on) / `%s` (off)
-                // Emission sequences follow the zsh-5.9.1 release model:
-                // each %X arm updates the live attr state then emits its
-                // cap via tsetcap. Master's applytextattributes
-                // (c:1647-1657) gates that on an actual change, tracking
-                // txtunknownattrs, so `%Sa%Sb` emits smso once and
-                // `${(%):-%s%u%s}` drops the trailing rmso. END
+                // zsh-5.9.1 release model (the parity floor): each
+                // %X arm updates the live attr state then emits its
+                // cap UNCONDITIONALLY via tsetcap — no change-dedup
+                // (`%Sa%Sb` emits smso twice, oracle-verified). END
                 // caps, ALLATTRSOFF, and BOLDFACEBEG carry TSC_DIRTY
                 // so still-active attrs + colours are re-applied.
                 // Master's source routes these through the
@@ -1271,11 +1248,9 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // smso clobbers nothing (oracle: `%F{red}%Sx`
                     // emits no colour re-apply).
                     let _ = tsetattrs(TXTSTANDOUT);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(crate::ported::zsh_h::TCSTANDOUTBEG, TSC_PROMPT) } else { String::new() };
+                    let sgr = tsetcap(crate::ported::zsh_h::TCSTANDOUTBEG, TSC_PROMPT);
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1295,14 +1270,12 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // rmso can clear other attrs, re-apply (oracle:
                     // `%B%F{red}%Sx%sy` → rmso, bold, colour).
                     let _ = tunsetattrs(TXTSTANDOUT);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
+                    let sgr = tsetcap(
                         crate::ported::zsh_h::TCSTANDOUTEND,
                         TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1323,14 +1296,12 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // bold-begin resets colours on some terminals
                     // (oracle: `%F{red}%Bx` → `[31m[1m[31m`).
                     let _ = tsetattrs(TXTBOLDFACE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
+                    let sgr = tsetcap(
                         crate::ported::zsh_h::TCBOLDFACEBEG,
                         TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1350,14 +1321,12 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // re-applies the surviving attrs + colours
                     // (oracle: `%U%B%F{red}x%by` → `[0m[4m[31m`).
                     let _ = tunsetattrs(TXTBOLDFACE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
+                    let sgr = tsetcap(
                         crate::ported::zsh_h::TCALLATTRSOFF,
                         TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1377,11 +1346,9 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // tsetcap(TCUNDERLINEBEG, TSC_PROMPT); no DIRTY
                     // (oracle: `%S%F{red}%Ux` emits no re-apply).
                     let _ = tsetattrs(TXTUNDERLINE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(crate::ported::zsh_h::TCUNDERLINEBEG, TSC_PROMPT) } else { String::new() };
+                    let sgr = tsetcap(crate::ported::zsh_h::TCUNDERLINEBEG, TSC_PROMPT);
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1400,14 +1367,12 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // tsetcap(TCUNDERLINEEND, TSC_PROMPT|TSC_DIRTY)
                     // (oracle: `%S%F{red}%Ux%uy` → rmul, smso, colour).
                     let _ = tunsetattrs(TXTUNDERLINE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
+                    let sgr = tsetcap(
                         crate::ported::zsh_h::TCUNDERLINEEND,
                         TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -5068,7 +5033,7 @@ pub fn current_attrs_lock() -> &'static std::sync::Mutex<zattr> {
     CUR.get_or_init(|| std::sync::Mutex::new(0 as zattr))
 }
 
-pub fn pending_attrs_lock() -> &'static std::sync::Mutex<zattr> {
+fn pending_attrs_lock() -> &'static std::sync::Mutex<zattr> {
     static PND: std::sync::OnceLock<std::sync::Mutex<zattr>> = std::sync::OnceLock::new();
     PND.get_or_init(|| std::sync::Mutex::new(0 as zattr))
 }

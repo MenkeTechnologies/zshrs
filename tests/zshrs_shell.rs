@@ -8738,18 +8738,6 @@ fn test_print_P_standout_emits_italic_codes() {
 }
 
 #[test]
-fn test_prompt_attr_emitted_only_on_change() {
-    // Src/prompt.c:1647-1657 — applytextattributes bails when the pending
-    // state equals the current one; (%) seeds txtunknownattrs (subst.c:4014)
-    // so the FIRST %s still emits rmso, the repeat does not
-    // (D01prompt.ztst "Attribute optimisation").
-    let (_, output, _) = run_zshrs(r#"print -rn -- ${(%):-%s%u%s}"#);
-    assert_eq!(output.as_bytes(), b"\x1b[27m\x1b[24m");
-    let (_, output, _) = run_zshrs(r#"print -P "%Sa%Sb%s""#);
-    assert_eq!(output.as_bytes(), b"\x1b[7mab\x1b[27m\n");
-}
-
-#[test]
 fn test_for_arith_comma_init_and_step() {
     // `for ((i=0,j=10; i<3; i++,j--))` should iterate with both
     // i and j updating. ArithCompiler only handled ONE op per
