@@ -5,7 +5,6 @@
 #    APPEND_HISTORY (history not maintained)
 #    AUTO_LIST
 #    AUTO_MENU
-#    AUTO_NAME_DIRS  (named directory table not maintained)
 #    AUTO_PARAM_KEYS
 #    AUTO_PARAM_SLASH
 #    AUTO_REMOVE_SLASH
@@ -95,6 +94,15 @@
   zmodload zsh/zpty 2>/dev/null || true 
 
 %test
+
+# --version is technically an option
+  v=$( $ZTST_testdir/../Src/zsh --version )
+  print -r - $v
+  # patchlevel should appear in output if different from version
+  [[ $ZSH_PATCHLEVEL == zsh-$ZSH_VERSION-0-* ]] ||
+  [[ $v == *\[$ZSH_PATCHLEVEL\]* ]]
+0:zsh --version output
+*>zsh * \(*\)
 
   # setopt should move on to the next operation in the face of an error, but
   # preserve the >0 return code
@@ -1528,3 +1536,17 @@ F:compare E03posix.ztst
   foo
   "
 42:ERR_RETURN inside 'source' and 'if'
+
+  $ZTST_testdir/../Src/zsh --autonamedirs +Z -fic '
+    b=/bin; hash -d | grep "^b="
+  '
+0:AUTO_NAME_DIRS
+>b=/bin
+
+  $ZTST_testdir/../Src/zsh --autonamedirs +Z -fic '
+    () { local b=/bin; hash -d | grep "^b=" }
+    c=/bin
+    () { local c=/sbin; hash -d | grep "^c=" }
+  '
+0:workers/54309: AUTO_NAME_DIRS: local parameter not considered
+>c=/bin

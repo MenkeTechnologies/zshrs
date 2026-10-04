@@ -89,3 +89,251 @@
 >ipsum.bar
 >bazbaz
 >\esc:ape
+
+  zformat REPLY ''
+  zformat REPLY '' x:
+1:one of -f -F -a required
+?(eval):zformat:1: one of -afF expected
+?(eval):zformat:2: one of -afF expected
+
+  zformat -fff REPLY ''
+  zformat -FFF REPLY ''
+  zformat -aaa reply .
+0:duplicate -f -F -a ignored
+
+  zformat -af REPLY ''
+  zformat -fF REPLY '' x:
+1:more than one of -f -F -a not allowed
+?(eval):zformat:1: only one of -afF allowed
+?(eval):zformat:2: only one of -afF allowed
+
+  zformat -f
+  zformat -f REPLY
+  zformat -F
+  zformat -F REPLY
+1:-f and -F: param and format string required
+?(eval):zformat:1: not enough arguments
+?(eval):zformat:2: not enough arguments
+?(eval):zformat:3: not enough arguments
+?(eval):zformat:4: not enough arguments
+
+  zformat -a
+  zformat -a reply
+1:-a: param and separator required
+?(eval):zformat:1: not enough arguments
+?(eval):zformat:2: not enough arguments
+
+  zformat -a reply '' a:b && print -rl - $reply
+0:-a with empty separator
+>ab
+
+  zformat -F REPLY '<%1d>'  'd:é' && print -r - $REPLY
+  zformat -F REPLY '<%2d>'  'd:é' && print -r - $REPLY
+  zformat -F REPLY '<%3d>'  'd:é' && print -r - $REPLY
+  zformat -F REPLY '<%.1d>' 'd:é' && print -r - $REPLY
+  zformat -F REPLY '<%.2d>' 'd:é' && print -r - $REPLY
+  zformat -F REPLY '<%.3d>' 'd:é' && print -r - $REPLY
+0f:width specifier is multi-byte-aware
+><é>
+><é >
+><é  >
+><é>
+><é>
+><é>
+
+  zformat -F REPLY %B  && print -r - $REPLY
+  zformat -F REPLY %3B && print -r - $REPLY
+0:sequence with no matching spec falls through
+>%B
+>%3B
+
+  for 1 in - . 0 9; do
+    REPLY1= REPLY2=
+    zformat -F REPLY1 %$1
+    zformat -F REPLY2 %1$1
+    zformat -F REPLY3 %1%$1
+    print -r - $REPLY1 $REPLY2 $REPLY3
+  done
+0:impossible spec in format string
+>%- %1- %1%-
+>%. %1. %1%.
+>%0 %10 %1%0
+>%9 %19 %1%9
+
+  # extra char at end to avoid triggering premature eos condition
+  zformat -F REPLY '%% %3% %) %3) x'
+  print -r - $REPLY
+0:%% and %) in format string
+>% %3% ) %3) x
+
+  for 1 in % %% %%% %%%% %%%%% %%%%%%; do
+    zformat -F REPLY $1 &&
+    print -r - $REPLY
+  done
+0:more literal % in format string
+>%
+>%
+>%%
+>%%
+>%%%
+>%%%
+
+  for 1 in % \) - . 0 9 ''; do
+    zformat -F REPLY '' $1:
+  done
+1:spec with invalid char
+?(eval):zformat:2: invalid spec: %:
+?(eval):zformat:2: invalid spec: ):
+?(eval):zformat:2: invalid spec: -:
+?(eval):zformat:2: invalid spec: .:
+?(eval):zformat:2: invalid spec: 0:
+?(eval):zformat:2: invalid spec: 9:
+?(eval):zformat:2: invalid spec: :
+
+  zformat -F REPLY '' ab:
+  zformat -F REPLY '' é:
+-:spec char longer than 1 byte
+?(eval):zformat:1: invalid spec: ab:
+?(eval):zformat:2: invalid spec: \M-C\M-):
+
+  for 1 in ! $ + , : \; \\ $'\a' $'\xff'; do
+    zformat -F REPLY "<%$1>" $1:$1 &&
+    print -r - ${(V)REPLY}
+  done
+0:weird spec char
+><!>
+><$>
+><+>
+><,>
+><:>
+><;>
+><\>
+><^G>
+><\M-^?>
+
+  zformat -F REPLY '%(' &&
+  print -r - $REPLY
+0:%( at end of format string
+>%(
+
+  zformat -F REPLY '%(.'
+  zformat -F REPLY '%()'
+  zformat -F REPLY '%(..)'
+  zformat -F REPLY '<%(>'
+1:incomplete ternary expression
+?(eval):zformat:1: malformed format string: %(.
+?(eval):zformat:2: malformed format string: %()
+?(eval):zformat:3: malformed format string: %(..)
+?(eval):zformat:4: malformed format string: <%(>
+
+  for 1 in % - . 0 9; do
+    zformat -F REPLY "%($1.true.false)" &&
+    print -r - $REPLY
+  done
+1:ternary expression with impossible spec char
+>false
+?(eval):zformat:2: malformed format string: %(-.true.false)
+>false
+?(eval):zformat:2: malformed format string: %(0.true.false)
+?(eval):zformat:2: malformed format string: %(9.true.false)
+
+  for 1 in ! / : @; do
+    zformat -F REPLY "%(x${1}true${1}false)" &&
+    print -r - $REPLY
+  done
+0:ternary expression with alternate delimiters
+>false
+>false
+>false
+>false
+
+  zformat -F REPLY '%(x.%t.%f)' x:123 t:true f:false && print -r - $REPLY
+  zformat -F REPLY '%(X.%t.%f)' x:123 t:true f:false && print -r - $REPLY
+0:ternary expression returning matching spec
+>true
+>false
+
+  zformat -F REPLY '%(x.%T.%F)' x:123 && print -r - $REPLY
+  zformat -F REPLY '%(X.%T.%F)' x:123 && print -r - $REPLY
+0:ternary expression returning non-matching spec
+>%T
+>%F
+
+  zformat -F REPLY '%(x/%../%--)' x:123 && print -r - $REPLY
+  zformat -F REPLY '%(X/%../%--)' x:123 && print -r - $REPLY
+  zformat -F REPLY '%(X.%1%-.%2%-)' x:123 && print -r - $REPLY
+0:ternary expression returning impossible spec
+>%..
+>%--
+>%2%-
+
+  zformat -F REPLY '%(x.%%.%))' x:123 && print -r - $REPLY
+  zformat -F REPLY '%(X.%%.%))' x:123 && print -r - $REPLY
+0:ternary expression returning literal % or )
+>%
+>)
+
+  zformat -qa reply .
+  zformat -aq reply .
+  zformat -aQ reply .
+1:-a + -qQ not allowed
+?(eval):zformat:1: -qQ not allowed with -a
+?(eval):zformat:2: -qQ not allowed with -a
+?(eval):zformat:3: -qQ not allowed with -a
+
+  zformat -Fq     REPLY F && print -r - $REPLY
+  zformat -qF     REPLY F && print -r - $REPLY
+  zformat -FqF    REPLY F && print -r - $REPLY
+  zformat -qqF    REPLY F && print -r - $REPLY
+  zformat -qQF    REPLY F && print -r - $REPLY
+1:more than one of -qQ not allowed
+>F
+>F
+>F
+>F
+?(eval):zformat:5: only one of -qQ allowed
+
+  for 1 in -F -FQ -Fq; do
+    zformat $1 REPLY '%a, %b, %c, %d, %%e' a:%aaa% %b:%bbb% %%c:%ccc%
+    print -r - $REPLY
+  done
+0:spec quoting indicators, -Q vs -q
+>%aaa%, %%bbb%%, %ccc%, %d, %e
+>%%aaa%%, %%bbb%%, %ccc%, %d, %e
+>%%aaa%%, %%bbb%%, %ccc%, %d, %%e
+
+  zformat -Fq REPLY '%(x.%%/%d.%%/%D)' x:1 d:%foo% D:%bar% && print -r - $REPLY
+  zformat -Fq REPLY '%(X.%%/%d.%%/%D)' x:1 d:%foo% D:%bar% && print -r - $REPLY
+0:-q with ternary expression
+>%%/%%foo%%
+>%%/%%bar%%
+
+  zformat -Fq REPLY '<%1d>'  d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '<%5d>'  d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '<%6d>'  d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '<%7d>'  d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '<%-7d>' d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '<%-7d>' d:foo   && print -r - $REPLY
+0:-q: min-width specifier ignores extra %s
+><%%foo%%>
+><%%foo%%>
+><%%foo%% >
+><%%foo%%  >
+><  %%foo%%>
+><    foo>
+
+  zformat -Fq REPLY '%.1d' d:foo   && print -r - $REPLY
+  zformat -Fq REPLY '%.1d' d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '%.4d' d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '%.5d' d:%foo% && print -r - $REPLY
+0:-q: max-width specifier ignores extra %s
+>f
+>%%
+>%%foo
+>%%foo%%
+
+  zformat -Fq REPLY '%4(d.t.f) %5(d.t.f) %6(d.t.f)' d:%foo% && print -r - $REPLY
+  zformat -Fq REPLY '%-6(d.t.f) %-5(d.t.f) %-4(d.t.f)' d:%foo% && print -r - $REPLY
+0:-q: ternary width test ignores extra %s
+>t f f
+>t t f

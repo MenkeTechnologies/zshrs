@@ -373,19 +373,34 @@
 
  tst_arguments -S -x ':word:()'
  comptest $'tst -- -\t'
-0:disallowed option after --
+0:-S: disallowed option after --
 >line: {tst -- -}{}
 
  tst_arguments -S -x ':word:()'
+ comptest $'tst - -\t'
+0:-S: allowed option after -
+>line: {tst - -x }{}
+
+ tst_arguments -S -x ':word:()'
  comptest $'tst - --\eB\C-b\t'
-0:allowed option before --
+0:-S: allowed option before --
 >line: {tst -x }{ --}
 
  tst_arguments -S '1:one' '2:two'
  comptest $'tst -- -- \t'
-0:only first of duplicate -- is ignored
+0:-S: only first of duplicate -- is ignored
 >line: {tst -- -- }{}
 >DESCRIPTION:{two}
+
+ tst_arguments -S -S -x ':word:()'
+ comptest $'tst -- -\t'
+0:-S -S: disallowed option after --
+>line: {tst -- -}{}
+
+ tst_arguments -S -S -x ':word:()'
+ comptest $'tst - -\t'
+0:-S -S: disallowed option after -
+>line: {tst - -}{}
 
  tst_arguments -x :word
  comptest $'tst word -\t'
@@ -641,16 +656,75 @@ F:shouldn't offer -b as it is already on the command-line
 >NO:{-b}
 >NO:{-c}
 
+ tst_arguments : -a:arg -b -c --d
+ comptest $'tst -a -b -\t'
+ comptest $'tst -a --d -\t'
+0:single optarg that looks like an option
+>line: {tst -a -b -}{}
+>DESCRIPTION:{option}
+>NO:{--d}
+>NO:{-b}
+>NO:{-c}
+>line: {tst -a --d -}{}
+>DESCRIPTION:{option}
+>NO:{--d}
+>NO:{-b}
+>NO:{-c}
+
+ tst_arguments : -a:arg1::arg2::arg3 -b -c -d: --e --f --g:
+ comptest $'tst -a -b -c -d -\t'
+ comptest $'tst -a --e --f --g -\t'
+0:multiple optargs that look like options
+>line: {tst -a -b -c -d -}{}
+>DESCRIPTION:{option}
+>NO:{--e}
+>NO:{--f}
+>NO:{--g}
+>NO:{-b}
+>NO:{-c}
+>NO:{-d}
+>line: {tst -a --e --f --g -}{}
+>DESCRIPTION:{option}
+>NO:{--e}
+>NO:{--f}
+>NO:{--g}
+>NO:{-b}
+>NO:{-c}
+>NO:{-d}
+
+ tst_arguments : - set1 -a: -b -c - set2 -d: -e -f
+ comptest $'tst -a -b -\t'
+ comptest $'tst -d -e -\t'
+0:optarg that look like an option in a set
+>line: {tst -a -b -}{}
+>DESCRIPTION:{option}
+>NO:{-b}
+>NO:{-c}
+>line: {tst -d -e -}{}
+>DESCRIPTION:{option}
+>NO:{-e}
+>NO:{-f}
+
+ tst_arguments -S -S : -a: -b -c
+ comptest $'tst -a - -\t'
+ comptest $'tst -a -- -\t'
+0:optarg that looks like a terminator
+>line: {tst -a - -}{}
+>DESCRIPTION:{option}
+>NO:{-b}
+>NO:{-c}
+>line: {tst -a -- -}{}
+>DESCRIPTION:{option}
+>NO:{-b}
+>NO:{-c}
+
  tst_arguments '-a:arg' -b '(-b)-c'
  comptest $'tst -a -c -\t'
 0:exclusion with option argument that looks like an option
 >line: {tst -a -c -}{}
->MESSAGE:{no arguments}
-F:The current behaviour is wrong; the correct expected output is:
-F:>line: {tst -a -c -}{}
-F:>DESCRIPTION:{option}
-F:>NO:{-b}
-F:>NO:{-c}
+>DESCRIPTION:{option}
+>NO:{-b}
+>NO:{-c}
 
  tst_arguments + grp1 -a -b - onlyset '(-a grp3--y grp2 grp4--)-m' -n + grp2 -u -v + grp3 -x -y + grp4 -0 ':rest'
  comptest $'tst -m -\t'
@@ -712,6 +786,35 @@ F:should offer both sets of arguments in first case
 >NO:{-c}
 >NO:{-d}
 F:shouldn't offer -t in the first case (with stacked options)
+
+ tst_arguments -s : - set1 -a -b -c+: --d=: - set2 -e -f
+ comptest $'tst -ab -\t'   # stack with known options
+ comptest $'tst -ax -\t'   # stack with unknown option
+ comptest $'tst -cx -\t'   # short option with same-word optarg
+ comptest $'tst --d=x -\t' # long option with same-word optarg
+0:detection of foreign-set option in stack or with same-word optarg
+>line: {tst -ab -}{}
+>DESCRIPTION:{option}
+>NO:{--d}
+>NO:{-c}
+>line: {tst -ax -}{}
+>DESCRIPTION:{option}
+>NO:{--d}
+>NO:{-a}
+>NO:{-b}
+>NO:{-c}
+>NO:{-e}
+>NO:{-f}
+>line: {tst -cx -}{}
+>DESCRIPTION:{option}
+>NO:{--d}
+>NO:{-a}
+>NO:{-b}
+>line: {tst --d=x -}{}
+>DESCRIPTION:{option}
+>NO:{-a}
+>NO:{-b}
+>NO:{-c}
 
  tst_arguments -s '(set-a set--b grp-a grp--b grp-)-a' - set-a -s - set--b -t + grp-a -g + grp--b -h + grp- -i
  comptest $'tst -a\t'
@@ -796,6 +899,25 @@ F:shouldn't offer -t in the first case (with stacked options)
 >DESCRIPTION:{option}
 >NO:{-b}
 
+ tst_arguments : '-x+[%2Fxdesc%f]:%2Fxargdesc%f' -y '1:%2F1desc%f'
+ comptest $'tst -\t'
+ comptest $'tst -x\t'
+0:% in descriptions
+>line: {tst -}{}
+>DESCRIPTION:{%2F1desc%f}
+>DESCRIPTION:{option}
+>NO:{-x  -- %2Fxdesc%f}
+>NO:{-y}
+>line: {tst -x}{}
+>DESCRIPTION:{%2Fxargdesc%f}
+
+  tst_arguments : -x '-y[]'
+  comptest $'tst -\t'
+0:empty description
+>line: {tst -}{}
+>DESCRIPTION:{option}
+>NO:{-x}
+>NO:{-y}
 
 %clean
 

@@ -1771,7 +1771,7 @@ fn run_ztst(filename: &str) {
 }
 
 // Generate a test function for each .ztst file.
-// Macro keeps this DRY across all 70 files.
+// Macro keeps this DRY across every test_corpus/*.ztst file.
 macro_rules! ztst_tests {
     ($($fn_name:ident => $file:expr),* $(,)?) => {
         $(
@@ -1793,6 +1793,7 @@ ztst_tests! {
     a06_assign           => "A06assign.ztst",
     a07_control          => "A07control.ztst",
     a08_time             => "A08time.ztst",
+    a09_zwc              => "A09zwc.ztst",
     // B — Builtins
     b01_cd               => "B01cd.ztst",
     b02_typeset          => "B02typeset.ztst",
@@ -1848,6 +1849,7 @@ ztst_tests! {
     v12_zparseopts       => "V12zparseopts.ztst",
     v13_zformat          => "V13zformat.ztst",
     v14_system           => "V14system.ztst",
+    v15_nearcolor        => "V15nearcolor.ztst",
     // W — History / jobs
     w01_history          => "W01history.ztst",
     w02_jobs             => "W02jobs.ztst",
@@ -1862,10 +1864,15 @@ ztst_tests! {
     y01_completion       => "Y01completion.ztst",
     y02_compmatch        => "Y02compmatch.ztst",
     y03_arguments        => "Y03arguments.ztst",
+    y04_regexargs        => "Y04regexargs.ztst",
+    y05_describe         => "Y05describe.ztst",
+    y06_values           => "Y06values.ztst",
+    y07_call_program     => "Y07call_program.ztst",
     // Z — Utility functions
     z01_is_at_least      => "Z01is-at-least.ztst",
     z02_zmathfunc        => "Z02zmathfunc.ztst",
     z03_run_help         => "Z03run-help.ztst",
+    z04_zgetopt          => "Z04zgetopt.ztst",
 }
 
 /// Discovery test — finds all .ztst files and reports a summary.

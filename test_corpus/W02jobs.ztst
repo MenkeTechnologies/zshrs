@@ -3,10 +3,12 @@
 %prep
 
   if zmodload zsh/zpty 2> /dev/null; then
+    export ZTST_fd
     zpty_start() {
       export PS1= PS2=
       zpty -d
       zpty zsh "${(q)ZTST_testdir}/../Src/zsh -fiV +Z"
+      zpty -w zsh 'alias sleep="sleep </dev/null >/dev/null 2>&1"; exec {ZTST_fd}>&-'
     }
     zpty_input() {
       zpty -w zsh "${(F)@}" $'\n'
@@ -22,8 +24,7 @@
     zpty_stop() {
       # exit twice in case of check_jobs
       zpty -w zsh $'exit\nexit\n'
-      # zpty gives no output when piped without these braces (?)
-      { zpty -r zsh } | sed $'/[^[:space:]]/!d; s/\r$//;'
+      zpty -r zsh | sed $'/[^[:space:]]/!d; s/\r$//;'
       zpty -d
       :
     }
@@ -192,6 +193,143 @@
 *>\[3]  ? hangup*sleep*
 *>\[2]  ? interrupt*sleep*
 *>\[1]  ? kill*sleep*
+
+  zpty_start
+  zpty_input jobs
+  zpty_input '( jobs ); :'
+  zpty_stop
+0:jobs with no jobs
+
+  zpty_start
+  zpty_input 'sleep 2 &; ( jobs ); disown'
+  zpty_stop
+0:jobs in sub-shell with job in parent shell
+*>\[1] <->
+*>\[1]  + * sleep 2*
+
+  zpty_start
+  zpty_input '( sleep 2 &; jobs ); :'
+  zpty_stop
+0:jobs in sub-shell with job in same shell
+*>\[2]  + * sleep 2*
+
+  zpty_start
+  zpty_input 'sleep 2 &; jobs; ( sleep 3 &; jobs ); jobs; disown'
+  zpty_stop
+0:jobs in sub-shell with job in parent + same shell
+*>\[1] <->
+*>\[1]  + * sleep 2*
+*>\[2]  + * sleep 3*
+*>\[1]  + * sleep 2*
+
+  zpty_start
+  zpty_input '( sleep 2 &; sleep 3 &; jobs ); :'
+  zpty_stop
+0:jobs in sub-shell with two jobs in same shell
+*>\[2]  - * sleep 2*
+*>\[3]  + * sleep 3*
+
+  zpty_start
+  zpty_input 'sleep 2 &; sleep 3 &; disown; jobs; disown'
+  zpty_stop
+0:disown current job
+*>\[1] <->
+*>\[2] <->
+*>\[1]  + * sleep 2*
+
+  zpty_start
+  zpty_input disown
+  zpty_stop
+0:disown with no jobs
+>disown: no current job
+
+  zpty_start
+  zpty_input 'sleep 2 &; ( disown ); jobs; disown'
+  zpty_stop
+0:disown in sub-shell with job in parent shell
+*>\[1] <->
+*>disown: can't manipulate jobs in subshell
+*>\[1]  + * sleep 2*
+
+  zpty_start
+  zpty_input '( sleep 3 &; disown; jobs ); :'
+  zpty_stop
+0:disown in sub-shell with job in same shell
+
+  zpty_start
+  zpty_input 'sleep 2 &; ( sleep 3 &; disown; jobs ); jobs; disown'
+  zpty_stop
+0:disown in sub-shell with job in parent + same shell
+*>\[1] <->
+*>\[1]  + * sleep 2*
+
+# @todo apparently testing suspended jobs with zpty is error-prone. see above
+#  zpty_start
+#  zpty_input 'sleep 3 &'
+#  zpty_input 'kill -STOP ${${=${ jobs -p }}[3]}'
+#  zpty_input 'disown'
+#  zpty_stop
+#0:disown with stopped job
+#*>\[1] <->
+#*>\[1] * suspended * sleep 3
+#*>disown: warning: job is suspended*
+
+  zpty_start
+  zpty_input 'sleep 2 &; sleep 3 &; sleep 4 &; disown -a; jobs'
+  zpty_stop
+0:disown -a
+*>\[1] <->
+*>\[2] <->
+*>\[3] <->
+
+  zpty_start
+  zpty_input '( sleep 2 &; sleep 3 &; sleep 4 &; disown -a; jobs ); :'
+  zpty_stop
+0:disown -a in sub-shell
+
+  zpty_start
+  zpty_input 'sleep 2 &; sleep 3 &|; jobs; disown'
+  zpty_input 'sleep 2 &; sleep 3 &!; jobs; disown'
+  zpty_stop
+0:background and disown with &| and &!
+*>\[1] <->
+*>\[1] * sleep 2*
+*>\[1] <->
+*>\[1] * sleep 2*
+
+  zpty_start
+  zpty_input '( fg ); :'
+  zpty_input '( bg ); :'
+  zpty_stop
+0:fg + bg in sub-shell
+*>fg: no job control in this shell
+*>bg: no job control in this shell
+
+# The following test exercises a bug where setprevjob() could pick an
+# internal NOPRINT job (e.g. a builtin's own job entry) as the previous
+# job.  This happened when a function superjob was involved, because the
+# superjob's subjob was excluded but the builtin job was not.
+# The function's child stops itself, triggering the superjob mechanism.
+# Then fg %- resumes the superjob (which exits since the child is done).
+# Afterwards, the remaining sleep job should still be accessible.
+  zpty_start
+  zpty_input "f() { sh -c 'kill -TSTP 0' }"
+  zpty_input 'f'
+  zpty_line			# consume stopped message from f
+  zpty_input 'sleep 100 &'
+  zpty_line			# consume [N] PID
+  zpty_input 'kill -STOP %sleep'
+  zpty_line			# consume stopped message from kill
+  zpty_input 'fg %-'
+  zpty_line			# consume continued message
+  zpty_input 'jobs'
+  zpty_stop
+0:fg %- with function superjob does not pick internal job as previous
+*>zsh:*(stopped|suspended)*
+*>\[[0-9]##\] [0-9]##
+*>\[[0-9]##\]  + (stopped|suspended)*sleep*
+*>\[[0-9]##\]    continued*
+*>\[[0-9]##\]  + (stopped|suspended)*sleep*
 
 %clean
 
