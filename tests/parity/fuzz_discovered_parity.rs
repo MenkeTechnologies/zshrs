@@ -4287,10 +4287,19 @@ mod job_text_compound_placeholder {
         assert_parity("if true; then\nsleep 3\nfi &\njobs\nwait");
     }
 
-    /// FIXED (was `while ...`); zsh renders `while false; do; sleep 3; done`.
+    /// FIXED (was `while ...`); zsh renders `while false; do; sleep 3; done < $f`.
+    ///
+    /// `while false` exits at once, so without a gate the job could be
+    /// reaped before `jobs` ran (non-interactive `jobs` then prints nothing)
+    /// whenever the parent was descheduled after the fork. The child opens
+    /// the FIFO for reading before running the loop, and that open blocks
+    /// until the parent opens it for writing after `jobs`, so `jobs` always
+    /// sees the job running.
     #[test]
     fn while_job_text() {
-        assert_parity("while false; do\nsleep 3\ndone &\njobs\nwait");
+        assert_parity(
+            "f=${TMPDIR:-/tmp}/zshrs-jt.$$; mkfifo $f\nwhile false; do\nsleep 3\ndone < $f &\njobs\n: > $f\nwait; rm -f $f",
+        );
     }
 
     /// FIXED (was `until ...`); zsh renders `until true; do; sleep 3; done`.
