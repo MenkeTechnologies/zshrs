@@ -3751,27 +3751,39 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
             // nearest 88/256 palette index + 1 for the current tccolours,
             // or -1 when the terminal is neither. With no hook function
             // registered runhookdef returns 0, so colour == -1.
-            //
-            // c:1990-1992 (auto-load zsh/nearcolor when
-            // !truecolor_terminal()) is NOT ported: it is 5.9.999-only —
-            // /opt/homebrew/bin/zsh 5.9.2 emits 24-bit for `%F{#hex}`
-            // without the module, and zshrs never populates
-            // `.term.extensions` from a terminal query, so the auto-load
-            // would quantize every hex prompt colour to the 256 palette.
             let mut rgb = crate::ported::zsh_h::color_rgb {
                 red: r as u32,
                 green: g as u32,
                 blue: b as u32,
             };
-            let hook = crate::ported::module::gethookdef("get_color_attr");
-            let colour_hook = if hook.is_null() {
-                -1
-            } else {
-                crate::ported::module::runhookdef(
-                    hook,
-                    &mut rgb as *mut crate::ported::zsh_h::color_rgb as *mut std::ffi::c_void,
-                ) - 1 // c:1989
+            let run_hook = |rgb: &mut crate::ported::zsh_h::color_rgb| {
+                let hook = crate::ported::module::gethookdef("get_color_attr");
+                if hook.is_null() {
+                    -1
+                } else {
+                    crate::ported::module::runhookdef(
+                        hook,
+                        rgb as *mut crate::ported::zsh_h::color_rgb as *mut std::ffi::c_void,
+                    ) - 1
+                }
             };
+            let mut colour_hook = run_hook(&mut rgb); // c:1989
+            // c:1990-1992 — `if (colour == -1 && !truecolor_terminal() &&
+            //   !load_module("zsh/nearcolor", NULL, 1))
+            //   colour = runhookdef(GETCOLORATTR, &color) - 1;`
+            // (upstream 3085b88a64, "53379, 53380: autoload nearcolor based
+            // on truecolor detection"): unless `$.term.extensions` says
+            // truecolor, the hex colour is quantized through zsh/nearcolor.
+            if colour_hook == -1
+                && !truecolor_terminal()
+                && crate::ported::module::MODULESTAB
+                    .lock()
+                    .unwrap()
+                    .load_module("zsh/nearcolor", None, false)
+                    == 0
+            {
+                colour_hook = run_hook(&mut rgb);
+            }
             if colour_hook >= 0 {
                 colour = colour_hook; // c:1997 fall through to the range check
             } else if colour_hook <= -2 {
