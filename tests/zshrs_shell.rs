@@ -16961,3 +16961,12 @@ fn test_ksh93_wrapper_sets_sh_locals_under_ksh_emulation() {
     );
     assert_eq!(out, "f 1\ng 2\n[]\ntop 0\n", "stderr: {err}");
 }
+
+/// c:Src/init.c:1315-1326 — $ZSH_EXEPATH is the absolute path of the
+/// running executable, a parameter (not exported), in -c mode too.
+#[test]
+fn test_zsh_exepath_names_the_running_binary() {
+    let (_, out, err) = run_zshrs("print -r -- $ZSH_EXEPATH; env | grep -c '^ZSH_EXEPATH='");
+    let want = std::fs::canonicalize(zshrs_bin()).unwrap();
+    assert_eq!(out, format!("{}\n0\n", want.display()), "stderr: {err}");
+}

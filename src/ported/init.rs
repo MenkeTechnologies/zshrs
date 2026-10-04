@@ -895,7 +895,7 @@ pub fn init_term() -> i32 {
 }
 
 /// Port of `static char *getmypath(const char *name, const char *cwd)` from Src/init.c:909.
-fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<String> {
+pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<String> {
     // c:909
     #[cfg(target_os = "macos")]
     unsafe {
@@ -1417,9 +1417,18 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
 
     crate::ported::prompt::set_default_colour_sequences(); // c:1313
 
-    // zsh-5.9.1 Src/init.c:1182-1186 (no ZSH_EXEPATH block: that param is
-    // dev-branch only; zsh 5.9.2 has no $ZSH_EXEPATH).
-    //
+    // c:1315-1326 — `/* ZSH_EXEPATH */`: the absolute path of the running
+    // executable, from argv[0] resolved against the start-up cwd. zshrs
+    // keeps C's `pwd` global in $PWD.
+    {
+        let exename = argv0.lock().unwrap().clone(); // c:1318
+        let cwd = crate::ported::params::getsparam("PWD"); // c:1319
+        if let Some(mypath) = getmypath(Some(&exename), cwd.as_deref()) {
+            // c:1320-1323
+            crate::ported::params::setsparam("ZSH_EXEPATH", &mypath); // c:1324
+        }
+    }
+
     // These are PARAMETERS (`setsparam`), not environment entries. The port
     // used `std::env::set_var`, which put ZSH_EXEPATH / ZSH_SCRIPT /
     // ZSH_EXECUTION_STRING / ZSH_NAME into the environ every external

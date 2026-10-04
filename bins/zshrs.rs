@@ -2731,6 +2731,14 @@ pub fn zshrs_main() {
         // ported/init.rs set the env var, but setupvals isn't wired
         // into the bin entry path so the value was always empty.
         zsh::ported::params::setsparam("ZSH_EXECUTION_STRING", code);
+        // c:Src/init.c:1315-1326 — `/* ZSH_EXEPATH */`, the same setupvals
+        // block this path skips: argv[0] resolved against the start-up cwd.
+        if let Some(p) = zsh::ported::init::getmypath(
+            Some(&args[0]),
+            zsh::ported::params::getsparam("PWD").as_deref(),
+        ) {
+            zsh::ported::params::setsparam("ZSH_EXEPATH", &p);
+        }
         // c:Src/init.c:1535 — `execstring(cmd, 0, 1, "cmdarg")` pushes
         // "cmdarg" onto the zsh_eval_context stack BEFORE running the
         // -c command. ZSH_EVAL_CONTEXT is the `:`-joined view of that
@@ -3107,6 +3115,13 @@ pub fn zshrs_main() {
         // own path. Mirrors the -c branch above which sets
         // ZSH_EXECUTION_STRING.
         zsh::ported::params::setsparam("ZSH_SCRIPT", &args[1]);
+        // c:Src/init.c:1315-1326 — `/* ZSH_EXEPATH */`, as for -c above.
+        if let Some(p) = zsh::ported::init::getmypath(
+            Some(&args[0]),
+            zsh::ported::params::getsparam("PWD").as_deref(),
+        ) {
+            zsh::ported::params::setsparam("ZSH_EXEPATH", &p);
+        }
         // c:Src/init.c:1572 — `scriptname = ztrdup(runscript);` updates
         //   the C global `scriptname` to the script path; PS4's `%N`
         //   reads this (Src/prompt.c:555 promptpath(scriptname, ...))
