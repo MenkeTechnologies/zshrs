@@ -128,6 +128,10 @@ pub mod banner;
 pub mod bundled_docs;
 #[path = "extensions/bundled_functions.rs"]
 pub mod bundled_functions;
+/// `c_locale` submodule — `mbrtowc`/`wcrtomb` with one C-locale (ASCII)
+/// answer on every platform; re-exported by `ported::utils`.
+#[path = "extensions/c_locale.rs"]
+pub mod c_locale;
 /// `bash_complete` submodule.
 #[path = "extensions/bash_complete.rs"]
 pub mod bash_complete;

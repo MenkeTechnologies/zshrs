@@ -33,6 +33,7 @@ pub use crate::autoload_cache;
 pub use crate::banner;
 pub use crate::bash_arrays;
 pub use crate::bash_prompt;
+pub use crate::c_locale;
 pub use crate::canonical_apply;
 pub use crate::compile_zsh;
 pub use crate::completion;

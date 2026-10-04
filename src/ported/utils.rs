@@ -654,39 +654,30 @@ pub const MB_INVALID: usize = usize::MAX;
 
 // The libc conversion primitives themselves. The whole point of routing
 // through libc rather than Rust's native UTF-8 codecs is that these are
-// LOCALE-DRIVEN: under `LC_ALL=C` (`MB_CUR_MAX == 1`) `mbrtowc` consumes
-// exactly one byte and yields that byte's value as the wide character,
+// LOCALE-DRIVEN: in a single-byte locale (`MB_CUR_MAX == 1`) `mbrtowc`
+// consumes exactly one byte and yields that byte's value as the wide
+// character (under the ASCII C locale only for bytes up to 0x7f, below),
 // while under a UTF-8 locale it decodes the full sequence. zsh's
 // byte-vs-multibyte behaviour is entirely this distinction — no C caller
 // in `stringaszleline`/`zlelineasstring`/`getrestchar`/`zwcputc` tests
 // `MB_CUR_MAX` or `isset(MULTIBYTE)` itself. The `mbstate_t` argument is
 // typed as an opaque pointer; pass `&mut MBSTATE_ZERO`-initialised
 // [`MbStateBuf`]. The libc crate does not re-export these on unix.
+//
+// `mbrtowc`/`wcrtomb` come through `crate::c_locale`, which gives the C
+// locale (ASCII codeset) glibc's answer on every platform: a byte or wide
+// character above 0x7f does not convert. macOS libc would convert it, and
+// zsh's own tests expect the glibc output (E02xtrace.ztst `\M-c`). Every
+// other locale is libc unchanged. Returns: bytes consumed / written, `0` for
+// a NUL, [`MB_INCOMPLETE`] or [`MB_INVALID`].
+pub use crate::c_locale::{mbrtowc, wcrtomb};
 extern "C" {
-    /// libc `mbrtowc(3)`: decode one multibyte character from `s`
-    /// (at most `n` bytes) into `*pwc`, using restart state `ps`.
-    /// Returns the byte count consumed, `0` for a NUL,
-    /// [`MB_INCOMPLETE`] or [`MB_INVALID`].
-    pub fn mbrtowc(
-        pwc: *mut libc::wchar_t,
-        s: *const libc::c_char,
-        n: libc::size_t,
-        ps: *mut libc::c_void,
-    ) -> libc::size_t;
-
-    /// libc `wcrtomb(3)`: encode the wide character `wc` into `s`
-    /// (must hold `MB_CUR_MAX` bytes) using restart state `ps`.
-    /// Returns the byte count written, or [`MB_INVALID`] if the
-    /// character is not representable in the current locale.
-    pub fn wcrtomb(s: *mut libc::c_char, wc: libc::wchar_t, ps: *mut libc::c_void)
-        -> libc::size_t;
-
     /// libc `MB_CUR_MAX`: the maximum number of bytes in a multibyte
     /// character in the CURRENT locale — 1 in a single-byte codeset
     /// (`LC_ALL=C`), 4 under UTF-8, 2 under `zh_CN.GB2312`. It is a
     /// MACRO in C (`<stdlib.h>`), so the libc crate cannot re-export
     /// it; each platform's underlying function is declared here, the
-    /// same way `mbrtowc`/`wcrtomb` are above. Darwin spells it
+    /// same way `crate::c_locale` declares `mbrtowc`/`wcrtomb`. Darwin spells it
     /// `___mb_cur_max()` (SDK `_stdlib.h:133`), glibc
     /// `__ctype_get_mb_cur_max()`.
     #[cfg(target_vendor = "apple")]
@@ -7945,11 +7936,11 @@ pub fn mb_niceformat(
     // byte at a time when it is not UTF-8. Inlined rather than factored
     // out because src/ported/ forbids Rust-original helper fns.
     //
-    // Platform note: this reproduces a C locale whose `mbrtowc` accepts
-    // all 256 byte values (macOS, and every 8-bit locale). A locale whose
-    // `mbrtowc` rejects bytes >= 0x80 outright (glibc's ASCII C locale)
-    // takes C's `MB_INVALID` arm instead, which charges `nicechar_sel`'s
-    // `\M-b` (4) for the lead byte rather than 1.
+    // Platform note: an 8-bit locale's `mbrtowc` accepts all 256 byte
+    // values; the ASCII C locale rejects bytes >= 0x80 (glibc, and zshrs on
+    // every platform via `crate::c_locale` — macOS libc would accept them),
+    // so such a byte takes C's `MB_INVALID` arm and costs `nicechar_sel`'s
+    // `\M-b` (4) rather than 1, and the numbers above become 4+5+5 = 14.
     //
     // Scope: the branch applies to the WIDTH-ONLY shape — C names it
     // `ZMB_nicewidth(s)` = `mb_niceformat(s, NULL, NULL, 0)`
@@ -7972,7 +7963,8 @@ pub fn mb_niceformat(
     // zshrs metafies any lone byte (U+0083, byte ^ 32), so the String carries it
     // and `zputs` emits the ONE byte. Excluding this shape left
     // `LC_ALL=C which ヌ` printing the UTF-8 name raw where zsh prints
-    // `$'\xe3\M-\C-C\M-\C-L'` (0xe3 raw: printable under unicode9).
+    // `$'\M-c\M-\C-C\M-\C-L'` (E02xtrace.ztst; 0xe3 is MB_INVALID in
+    // the ASCII C locale).
     let mb_single_byte = unsafe {
             // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
             // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
@@ -8009,8 +8001,20 @@ pub fn mb_niceformat(
             cnt = 1;
         } else if mb_single_byte {
             // c:5393 — single-byte locale: `mbrtowc` returns 1 and sets
-            // `c` to the byte value itself.
-            decoded_c = Some(char::from(ums[ptr]));
+            // `c` to the byte value itself, except that the ASCII C locale
+            // rejects a byte above 0x7f (`crate::c_locale`), which then takes
+            // the c:5397 MB_INVALID arm and prints as `\M-c`.
+            let mut wc: libc::wchar_t = 0;
+            let mut mbs: MbStateBuf = MBSTATE_ZERO;
+            let r = unsafe {
+                mbrtowc(
+                    &mut wc,
+                    ums[ptr..].as_ptr() as *const libc::c_char,
+                    1,
+                    &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+                )
+            };
+            decoded_c = if r == MB_INVALID { None } else { Some(char::from(ums[ptr])) };
             cnt = 1;
         } else {
             // c:5393 — `mbrtowc` decodes at most ONE character and looks at no
@@ -8256,9 +8260,26 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
     };
     if mb_single_byte {
         // c:5486-5516 — one byte per `mbrtowc`; `case 0` (NUL) falls through
-        // to the default arm, so every byte reaches `is_wcs_nicechar`.
+        // to the default arm, so every converted byte reaches
+        // `is_wcs_nicechar`. A byte the ASCII C locale rejects
+        // (`crate::c_locale`) takes the c:5494 MB_INVALID arm: `is_nicechar`.
         while ret == 0 && ptr < umlen {
-            if is_wcs_nicechar(char::from(ums[ptr])) {
+            let mut wc: libc::wchar_t = 0;
+            let mut mbs: MbStateBuf = MBSTATE_ZERO;
+            let r = unsafe {
+                mbrtowc(
+                    &mut wc,
+                    ums[ptr..].as_ptr() as *const libc::c_char,
+                    1,
+                    &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+                )
+            };
+            let nice = if r == MB_INVALID {
+                is_nicechar(char::from(ums[ptr])) // c:5495
+            } else {
+                is_wcs_nicechar(char::from(ums[ptr])) // c:5508
+            };
+            if nice {
                 ret = 1; // c:5509
             }
             ptr += 1; // c:5515
@@ -9096,9 +9117,25 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             // With MULTIBYTE on an undecodable byte IS the WEOF case, so the
             // `cc != WEOF` conjunct short-circuits. With it off there is no
             // WEOF at all (c:5615-5617 always sets `*wcp` to the byte), so the
-            // test is `WC_ISPRINT` of that Latin-1 scalar.
+            // test is `WC_ISPRINT` of that Latin-1 scalar. In a single-byte
+            // locale c:5583 `mbrtowc` decides: the ASCII C locale rejects a
+            // byte above 0x7f (`crate::c_locale`) — WEOF, not printable.
             MetaChar::Raw(b) => {
-                (!mb || mb_sb) && crate::ported::compat::u9_iswprint(char::from(b))
+                let converts = || {
+                    let mut wc: libc::wchar_t = 0;
+                    let mut mbs: MbStateBuf = MBSTATE_ZERO;
+                    let r = unsafe {
+                        mbrtowc(
+                            &mut wc,
+                            &b as *const u8 as *const libc::c_char,
+                            1,
+                            &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+                        )
+                    };
+                    r != MB_INVALID
+                };
+                (!mb || (mb_sb && converts()))
+                    && crate::ported::compat::u9_iswprint(char::from(b))
             }
         }
     };

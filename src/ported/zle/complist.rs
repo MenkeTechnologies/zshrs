@@ -1363,8 +1363,24 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
         let (rep, cnt): (String, usize) = if mb_single_byte {
             // c:751/773-775 — single-byte locale: `mbrtowc` returns 1 and the
             // wide character IS the byte, so it always takes the `default:`
-            // (wcs_nicechar) arm, never MB_INVALID.
-            (wcs_nicechar(char::from(b0), None, None), 1)
+            // (wcs_nicechar) arm — except under the ASCII C locale, which
+            // rejects a byte above 0x7f (`crate::c_locale`): c:757-767
+            // MB_INVALID, nicechar of the byte.
+            let mut wc: libc::wchar_t = 0;
+            let mut mbs = crate::ported::utils::MBSTATE_ZERO;
+            let r = unsafe {
+                crate::ported::utils::mbrtowc(
+                    &mut wc,
+                    ubytes[idx..].as_ptr() as *const libc::c_char,
+                    1,
+                    &mut mbs as *mut crate::ported::utils::MbStateBuf as *mut libc::c_void,
+                )
+            };
+            if r == crate::ported::utils::MB_INVALID {
+                (nicechar(b0 as char), 1)
+            } else {
+                (wcs_nicechar(char::from(b0), None, None), 1)
+            }
         } else if seq_len >= 1 && idx + seq_len <= ubytes.len() {
             match std::str::from_utf8(&ubytes[idx..idx + seq_len]) {
                 Ok(cs) => {

@@ -246,29 +246,35 @@ fn unset_lc_all_restores_the_lang_locale() {
     ));
 }
 
-/// Under a single-byte locale `mbrtowc` hands back one byte per character
-/// (c:Src/utils.c:5393 / 5488), so `ヌ` (E3 83 8C) holds the non-printable
-/// 0x83 and 0x8C: `is_mb_niceformat` says "quote it" and `mb_niceformat`
-/// renders `$'\xe3\M-\C-C\M-\C-L'` (0xE3 printable, emitted raw and
-/// metafied, un-metafied again by the printer). The port decoded UTF-8
-/// regardless of locale and printed the name bare in `which`, `typeset -p`,
-/// `(q+)`, `(V)` and xtrace (E02xtrace.ztst).
+/// Under the C locale (ASCII codeset) a byte above 0x7f is not a character:
+/// glibc's `mbrtowc` returns `MB_INVALID` for it (c:Src/utils.c:5395 /
+/// 5489), so `ヌ` (E3 83 8C) is three unconvertible bytes, `is_mb_niceformat`
+/// says "quote it" and `mb_niceformat` renders each byte through
+/// `nicechar_sel` as `\M-…` — `$'\M-c\M-\C-C\M-\C-L'`, the output
+/// E02xtrace.ztst expects. macOS libc instead converts 0xE3 to a wide
+/// character, so a unicode9 macOS zsh prints it raw; zshrs gives the C
+/// locale the glibc answer on every platform (`crate::c_locale`), so this
+/// pins the bytes rather than comparing with whichever zsh is installed.
+/// Verified against zsh master 5.9.999.3-test (macOS) and zsh 5.9 on
+/// Linux/glibc.
 #[test]
 fn single_byte_locale_quotes_high_bytes_bytewise() {
-    if !zsh_available() {
-        return;
-    }
     let script = "exec 2>&1; PS4='+ '; f=ヌ; eval \"$f() { :; }\"; which $f; \
                   print -r -- ${(q+)f} ${(V)f}; typeset -p f; set -x; : $f";
-    let want = run(zsh_path(), &["-f", "-c"], script);
     let got = run(
         zshrs_bin().to_str().expect("bin path"),
         &["--zsh", "-f", "-c"],
         script,
     );
-    // Raw bytes: the expected output carries a lone 0xE3, which a lossy
-    // UTF-8 comparison would fold into U+FFFD on both sides.
-    assert_eq!(want, got, "script: {script}");
+    let q = r"$'\M-c\M-\C-C\M-\C-L'";
+    let want = format!(
+        "{q} () {{\n\t:\n}}\n{q} \\M-c\\M-^C\\M-^L\ntypeset f={q}\n+ : {q}\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&got),
+        want,
+        "script: {script}"
+    );
 }
 
 /// `$'…'` is decoded at EXPANSION time: `stringsubstquote` calls
@@ -296,4 +302,22 @@ fn undecodable_dollar_quote_errors_only_when_expanded() {
             "script: {script}",
         );
     }
+}
+
+/// `(q)` and `(q+)` under the C locale: `quotestring` asks `mbrtowc`
+/// (c:Src/utils.c:5579) whether each high byte is a character, and in the
+/// ASCII codeset none is, so every byte of `ヌ` is escaped on its own and
+/// `‐` (E2 80 90) inside `(q+)` becomes three `\M-` escapes. Same bytes on
+/// macOS and Linux; verified against zsh master and Linux/glibc zsh 5.9.
+#[test]
+fn c_locale_quote_flags_escape_every_high_byte() {
+    let got = run(
+        zshrs_bin().to_str().expect("bin path"),
+        &["--zsh", "-f", "-c"],
+        "f=ヌ; print -r -- ${(q)f}; x=$'a\\xe2\\x80\\x90b'; print -r -- ${(q+)x}",
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&got),
+        "$'\\343'$'\\203'$'\\214'\n$'a\\M-b\\M-\\C-@\\M-\\C-Pb'\n"
+    );
 }
