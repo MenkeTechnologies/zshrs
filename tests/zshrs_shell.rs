@@ -10027,7 +10027,8 @@ fn test_private_unset_array_redeclared_scalar_is_inconsistent() {
     // `private` under TYPESET_TO_UNSET is PM_SPECIAL) is still compared
     // against the assignment, so a scalar value for the private array is
     // "inconsistent type for assignment" (V10private.ztst "private cannot
-    // be re-declared as local"). A plain unset `local -a` is not reused.
+    // be re-declared as local"). Since 55020 a plain declared-but-unset
+    // `local -a` is reused as well (c:2059 `|| (pm->node.flags & PM_DECLARED)`).
     for builtin in ["local", "typeset"] {
         let code = format!(
             "zmodload zsh/param/private; setopt TYPESET_TO_UNSET; \
@@ -10040,10 +10041,11 @@ fn test_private_unset_array_redeclared_scalar_is_inconsistent() {
             "{builtin}: {stderr}"
         );
     }
-    let (status, stdout, _) =
+    let (status, stdout, stderr) =
         run_zshrs("setopt TYPESET_TO_UNSET; () { local -a a; local a=scalar; typeset -p a }");
-    assert_eq!(status, 0);
-    assert_eq!(stdout, "typeset a=scalar\n");
+    assert_eq!(status, 1);
+    assert_eq!(stdout, "");
+    assert!(stderr.contains("local: a: inconsistent type for assignment"), "{stderr}");
 }
 
 #[test]
