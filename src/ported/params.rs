@@ -16283,7 +16283,8 @@ pub fn resolve_nameref_rec(
 /// `gethashnode2` is the no-autoload paramtab lookup. The
 /// nameref branch updates the alias target in-place; the normal
 /// branch falls through to `setsparam`.
-/// Port of `setloopvar()` from `Src/params.c:6362`.
+/// Port of `setloopvar()` from `Src/params.c:6394` (the valid_refname
+/// check is c:6404-6407, added by 54718).
 pub fn setloopvar(name: &str, value: &str) {
     // c:6367 — `Param pm = (Param) gethashnode2(realparamtab, name);`
     // realparamtab and paramtab are the same backing store in zshrs
@@ -16304,7 +16305,15 @@ pub fn setloopvar(name: &str, value: &str) {
                     // c:6373 — `return;`
                     return;
                 }
-                // c:6376 — `pm->base = pm->width = 0;`
+                // c:6404-6407 (54718) — `if (!valid_refname(value,
+                // pm->node.flags)) { zerr("invalid variable name: %s",
+                // value); return; }`
+                if !valid_refname(value, pm.node.flags) {
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
+                    zerr(&format!("invalid variable name: {}", value));
+                    return;
+                }
+                // c:6408 — `pm->base = 0;`
                 pm.base = 0;
                 pm.width = 0;
                 // c:6377 — `SETREFNAME(pm, ztrdup(value));`
