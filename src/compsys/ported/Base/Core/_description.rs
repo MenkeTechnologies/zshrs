@@ -90,7 +90,7 @@
 //! sh: 86      [[ -n $match[3] ]] && argv+=( o:$match[3] )
 //! sh: 87    fi
 //! sh: 88
-//! sh: 89    zformat -F format "$format" "d:$1" "${(@)argv[2,-1]}"
+//! sh: 89    zformat -Fq format "$format" "d:$1" "${(@)argv[2,-1]}"
 //! sh: 90  fi
 //! sh: 91
 //! sh: 92  if [[ -n "$gname" ]]; then
@@ -542,10 +542,9 @@ pub fn _description_impl(args: &[String]) -> i32 {
             }
         }
 
-        // sh:89  zformat -F format "$format" "d:$1" "${(@)argv[2,-1]}"
+        // sh:89  zformat -Fq format "$format" "d:$1" "${(@)argv[2,-1]}"
         let descr_val = argv.first().cloned().unwrap_or_default();
         let mut zfmt_argv: Vec<String> = vec![
-            "-F".to_string(),
             "format".to_string(),
             format.clone(),
             format!("d:{}", descr_val),
@@ -564,7 +563,14 @@ pub fn _description_impl(args: &[String]) -> i32 {
         // Pre-set "format" param so bin_zformat -F has a target var
         // even if its internal write expects an existing entry.
         let _ = setsparam("format", "");
-        let _ = bin_zformat("zformat", &zfmt_argv, &make_ops(), 0);
+        // `-F` and `-q` are parsed flags (BUILTIN optstr "afFqQ",
+        // c:Src/Modules/zutil.c:2151). `-q` (upstream 74fa234140) doubles
+        // every `%` in the spec values so a description containing `%`
+        // survives the later prompt expansion of the group header.
+        let mut zf_ops = make_ops();
+        zf_ops.ind[b'F' as usize] = 1;
+        zf_ops.ind[b'q' as usize] = 1;
+        let _ = bin_zformat("zformat", &zfmt_argv, &zf_ops, 0);
         format = getsparam("format").unwrap_or_default();
     }
 

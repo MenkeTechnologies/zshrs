@@ -59,6 +59,7 @@ mod compinit_compautos_parity;
 mod compset_pattern_parity;
 mod compsys_special_params_lifecycle_parity;
 mod compsys_local_leak_parity;
+mod compsys_master_ports_parity;
 mod arguments_empty_action_parity;
 mod completion_invalid_bytes_parity;
 mod compadd_all_match_parity;
