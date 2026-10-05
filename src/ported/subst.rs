@@ -8608,9 +8608,10 @@ pub fn paramsubst(
         // `$`, a backquote, a brace, the `%`/`#` anchors — is emitted as
         // `Bnull` + character, the lexer's own spelling of a user-literal
         // character (c:Src/lex.c:1268 `add(Bnull)`), which every consumer
-        // already reads as literal. `/` is left bare: zsh 5.9.2 still
-        // splits `${x/'/'}` at a quoted `/` (upstream changed that later,
-        // workers/52202), and zshrs matches the release. Inside `"…"` a
+        // already reads as literal. `/` is left bare: inside a `/` pattern the
+        // lexer already spelled a quoted one Bnull + `/` (c:Src/lex.c:1312,
+        // workers/52202), and a `"…"` span of that pattern loses its quotes
+        // altogether (`dnull_chucked` below). Inside `"…"` a
         // `$…` substitution and a backquote stay live (dquote_parse emits
         // Qstring / Qtick for them, c:1519-1590) and are copied unmarked,
         // together with the `[…]` subscript of a `$name[…]` reference,
@@ -8632,9 +8633,66 @@ pub fn paramsubst(
             enum RestFrame {
                 Unquoted,
                 Dquote,
+                // A `"…"` span of a `/` operator's pattern whose Dnull
+                // markers the separator scan removes (see `dnull_chucked`).
+                ChuckedDquote,
                 Brace(i32),
             }
             let raw: &[char] = &body_chars[idx..];
+            // c:Src/subst.c:3107-3165 (workers/52202) — for `${v/pat/rep}`
+            // and its `//`, `/#`, `/%` and `:/` forms, the scan for the `/`
+            // that ends the pattern skips a backslash pair and CHUCKS both
+            // Dnull markers of a `"…"` span, stepping over the span:
+            //     } else if (c == Dnull) {
+            //         chuck(ptr);
+            //         while (*ptr && *ptr != c) ptr++;
+            //         if (*ptr == Dnull) chuck(ptr);
+            //         ptr--;
+            //     }
+            // so a `/` inside the quotes is pattern text, and once
+            // `parse_subst_string` (c:3401) re-lexes the pattern without its
+            // quotes, the span's metacharacters are pattern syntax:
+            //     x='a*b'; print ${x/"*"/Q}    -> Q
+            //     x='a(b'; print ${x//"("/Q}   -> bad pattern: (
+            // Single quotes and `\` keep their characters literal; the
+            // `#`/`%` operators never run this scan. These are the indices of
+            // the Dnull markers that scan removes, and where the pattern starts.
+            let (dnull_chucked, pat_start): (Vec<usize>, Option<usize>) = {
+                let mut chucked = Vec::new();
+                let mut pat_start = None;
+                let mut p = usize::from(raw.first() == Some(&':')); // c:3054 colf
+                if raw.get(p) == Some(&'/') {
+                    p += 1; // c:3105-3107 s++; s[-1] == '/'
+                    if raw.get(p) == Some(&'/') {
+                        p += 1; // c:3115-3118 doubled: SUB_GLOBAL
+                    }
+                    if matches!(raw.get(p), Some(&c) if c == '#' || c == Pound) {
+                        p += 1; // c:3120-3129 anchor at head
+                    }
+                    if raw.get(p) == Some(&'%') {
+                        p += 1; // c:3130-3134 anchor at tail
+                    }
+                    pat_start = Some(p);
+                    while p < raw.len() && raw[p] != '/' {
+                        let c = raw[p];
+                        if (c == Bnull || c == Bnullkeep || c == '\\') && p + 1 < raw.len() {
+                            p += 2; // c:3150-3154 the pair is skipped either way
+                        } else if c == Dnull {
+                            chucked.push(p); // c:3156 chuck(ptr)
+                            match raw[p + 1..].iter().position(|&d| d == Dnull) {
+                                Some(q) => {
+                                    chucked.push(p + 1 + q); // c:3159-3160
+                                    p += q + 2;
+                                }
+                                None => p = raw.len(),
+                            }
+                        } else {
+                            p += 1;
+                        }
+                    }
+                }
+                (chucked, pat_start)
+            };
             let fold = |c: char| -> Option<char> {
                 Some(match c {
                     x if x == Pound => '#',
@@ -8774,9 +8832,21 @@ pub fn paramsubst(
                     i = end;
                     continue;
                 }
-                if matches!(frames.last(), Some(RestFrame::Dquote)) {
+                let chucked = matches!(frames.last(), Some(RestFrame::ChuckedDquote));
+                if chucked || matches!(frames.last(), Some(RestFrame::Dquote)) {
                     if c == Dnull {
                         frames.pop();
+                    } else if chucked && c != '/' && !(0xe084..=0xe0a1).contains(&(c as u32)) {
+                        // The span lost its quotes (`dnull_chucked`): its
+                        // characters reach the re-lex as unquoted text.
+                        // Except that the anchors were already decided
+                        // (c:3121-3134 test the character after the `/`
+                        // operator, here the Dnull), so a `#` / `%` first
+                        // in the pattern stays text: `${x//"#"/Q}`.
+                        if matches!(c, '#' | '%') && pat_start.is_some_and(|p| i == p + 1) {
+                            out.push(Bnull);
+                        }
+                        out.push(c);
                     } else if (c == Bnull || c == Bnullkeep) && i + 1 < raw.len() {
                         // c:Src/lex.c:1501-1507 — `\$` `\\` `\"` `` \` ``
                         // are already a Bnull pair.
@@ -8817,7 +8887,11 @@ pub fn paramsubst(
                         continue;
                     }
                 } else if c == Dnull {
-                    frames.push(RestFrame::Dquote);
+                    frames.push(if dnull_chucked.contains(&i) {
+                        RestFrame::ChuckedDquote
+                    } else {
+                        RestFrame::Dquote
+                    });
                 } else if c == Inbrace {
                     if let Some(RestFrame::Brace(open)) = frames.last_mut() {
                         *open += 1;
