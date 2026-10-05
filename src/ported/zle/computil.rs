@@ -3318,6 +3318,7 @@ pub fn get_cadef(nam: &str, args: &[String]) -> i32 {
 pub fn ca_get_opt(
     d: &cadef,
     line: &str,
+    ign_active: i32, // c:1734 — 1: match inactive options too (e9d0e6a8ad)
     full: i32, // c:1706
     end: &mut usize,
 ) -> Option<Arc<caopt>> {
@@ -3327,7 +3328,7 @@ pub fn ca_get_opt(
     let mut cur = d.opts.as_ref();
     while let Some(p) = cur {
         // c:1712
-        if p.active.load(Ordering::Relaxed) != 0 {
+        if ign_active != 0 || p.active.load(Ordering::Relaxed) != 0 {
             // c:1713
             if let Some(name) = p.name.as_deref() {
                 if name == line {
@@ -3344,8 +3345,8 @@ pub fn ca_get_opt(
         // c:1722-1739 — prefix-match path for `name=value` / `nameSPC value`.
         let mut cur = d.opts.as_ref();
         while let Some(p) = cur {
-            if p.active.load(Ordering::Relaxed) != 0 {
-                // c:1723
+            if ign_active != 0 || p.active.load(Ordering::Relaxed) != 0 {
+                // c:1752
                 if let Some(name) = p.name.as_deref() {
                     // c:1723-1724 — short args/NEXT → exact match, else strpfx.
                     let is_match = if p.args.is_none() || p.r#type == CAO_NEXT {
@@ -3394,6 +3395,7 @@ pub fn ca_get_opt(
 pub fn ca_get_sopt(
     d: &cadef,
     line: &str, // c:1747
+    ign_active: i32, // c:1776 (e9d0e6a8ad)
     end: &mut usize,
     lp: &mut Option<Vec<Arc<caopt>>>,
 ) -> Option<Arc<caopt>> {
@@ -3434,7 +3436,9 @@ pub fn ca_get_sopt(
             p_cur = lookup;
         }
         let active_with_args =
-            lookup.filter(|p| p.active.load(Ordering::Relaxed) != 0 && p.args.is_some());
+            lookup.filter(|p| {
+            (ign_active != 0 || p.active.load(Ordering::Relaxed) != 0) && p.args.is_some()
+        });
 
         if let Some(p) = active_with_args {
             // c:1757
@@ -3457,7 +3461,8 @@ pub fn ca_get_sopt(
                 pp_cur = Some(p); // c:1770
                 break; // c:1771
             }
-        } else if p_cur.is_none() || p_cur.map_or(true, |p| p.active.load(Ordering::Relaxed) == 0)
+        } else if p_cur.is_none()
+            || p_cur.map_or(true, |p| !(ign_active != 0 || p.active.load(Ordering::Relaxed) != 0))
         {
             // c:1773
             return None; // c:1774
@@ -3502,14 +3507,17 @@ pub fn ca_foreign_opt(curset: &cadef, all: &cadef, option: &str) -> i32 {
             d_opt = d.snext.as_deref();
             continue;
         }
-        let mut p = d.opts.as_deref();
-        while let Some(opt) = p {
-            // c:1796
-            if opt.name.as_deref() == Some(option) {
-                // c:1797
-                return 1; // c:1798
-            }
-            p = opt.next.as_deref();
+        // c:1824-1827 (upstream e9d0e6a8ad) — match the word the way
+        // ca_parse_line would, active or not: a long option with its
+        // same-word argument (`--d=x`) or a clump of single-letter
+        // options (`-ab`), not just an exact option name.
+        let mut end = 0usize;
+        if ca_get_opt(d, option, 1, 0, &mut end).is_some() {
+            return 1;
+        }
+        let mut l = None;
+        if ca_get_sopt(d, option, 1, &mut end, &mut l).is_some() {
+            return 1;
         }
         d_opt = d.snext.as_deref();
     }
@@ -3758,7 +3766,7 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
             } else {
                 // c:1909 — ca_get_opt for full match.
                 let mut end_unused = 0usize;
-                if let Some(matched) = ca_get_opt(d, x, 1, &mut end_unused) {
+                if let Some(matched) = ca_get_opt(d, x, 0, 1, &mut end_unused) {
                     let grp_ok = grp.map_or(true, |g| {
                         matched
                             .gsname
@@ -4209,7 +4217,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 let lb = line.as_bytes();
                 if !lb.is_empty() && (lb[0] == b'-' || lb[0] == b'+') {
                     let mut end = 0usize;
-                    if let Some(found) = ca_get_opt(d, &line, 0, &mut end) {
+                    if let Some(found) = ca_get_opt(d, &line, 0, 0, &mut end) {
                         pe_off = end as i32;
                         // c:2158 — for OEQUAL/EQUAL check `=` boundary.
                         let pe_ok = match found.r#type {
@@ -4267,7 +4275,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     .map_or(false, |b| b == b'-' || b == b'+')
             {
                 let mut tmp_sopts: Option<Vec<Arc<caopt>>> = None;
-                let s_match = ca_get_sopt(d, &line, &mut sopt_end, &mut tmp_sopts); // c:2206
+                let s_match = ca_get_sopt(d, &line, 0, &mut sopt_end, &mut tmp_sopts); // c:2206
                 if let Some(queued) = tmp_sopts {
                     sopts.extend(queued);
                 }
@@ -5467,7 +5475,7 @@ pub fn bin_comparguments(
             while let Some(s) = state_clone {
                 if let Some(d) = s.d.as_ref() {
                     let mut end = 0usize;
-                    if let Some(opt) = ca_get_opt(d, &args[1], 1, &mut end) {
+                    if let Some(opt) = ca_get_opt(d, &args[1], 0, 1, &mut end) {
                         if opt.args.is_some() {
                             ret = 0;
                             let opt_name = opt.name.clone();
@@ -9773,7 +9781,7 @@ mod tests {
             cur = o.next.as_deref();
         }
         let mut end: usize = 0;
-        let hit = ca_get_opt(&def, "-foo", 1, &mut end).expect("hit");
+        let hit = ca_get_opt(&def, "-foo", 0, 1, &mut end).expect("hit");
         assert_eq!(hit.name.as_deref(), Some("-foo"));
         assert_eq!(end, 4);
     }
@@ -11587,7 +11595,7 @@ mod tests {
         for _ in 0..LOOKUPS {
             let mut end = 0usize;
             let mut lp: Option<Vec<Arc<caopt>>> = None;
-            let hit = ca_get_sopt(&d, &clump, &mut end, &mut lp);
+            let hit = ca_get_sopt(&d, &clump, 0, &mut end, &mut lp);
             // Every letter is CAO_NEXT, so the loop never terminates on a
             // match: c:1801 returns `pp` and all 62 land in `lp`.
             assert!(hit.is_some());
