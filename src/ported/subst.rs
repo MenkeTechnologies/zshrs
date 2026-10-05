@@ -4891,6 +4891,8 @@ pub fn paramsubst(
                             // inline-env frame records every SET_VAR while open,
                             // so park it for the body.
                             let frames = std::mem::take(&mut exec.inline_env_stack);
+                            // c:2048 — execode pushes the "cmdsubst" context.
+                            let _ctx = crate::ported::exec::EvalContextFrame::push("cmdsubst");
                             let r = exec.execute_string_at_lineno(&text_to_run, running);
                             exec.inline_env_stack = frames;
                             r

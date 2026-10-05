@@ -6882,7 +6882,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // open (D10nofork.ztst "environment assignment" left REPLY
                 // unset), so park it for the body.
                 let frames = std::mem::take(&mut exec.inline_env_stack);
+                // c:Src/subst.c:2048 — execode pushes the "cmdsubst" context.
+                let ctx = crate::ported::exec::EvalContextFrame::push("cmdsubst");
                 let ran = exec.execute_string_at_lineno(&cmdarg, lineno);
+                drop(ctx);
                 exec.inline_env_stack = frames;
                 match ran {
                     Ok(st) => {
