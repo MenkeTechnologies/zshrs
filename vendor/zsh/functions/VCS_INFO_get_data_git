@@ -244,7 +244,9 @@ if [[ -d "${gitdir}/rebase-merge" ]]; then
             (( $+REPLY )) && git_patches_applied+=( "$REPLY" )
         done
     fi
-    if [[ -f "${patchdir}/git-rebase-todo" ]] ; then
+    if zstyle -t ":vcs_info:${vcs}:${usercontext}:${rrn}" get-unapplied &&
+       [[ -f "${patchdir}/git-rebase-todo" ]]
+    then
         for p in ${(f)"$(< "${patchdir}/git-rebase-todo")"}; do
             VCS_INFO_git_map_rebase_line_to_hash_and_subject "$p"
             (( $+REPLY )) && git_patches_unapplied+=( "$REPLY" )
@@ -374,7 +376,9 @@ elif [[ -f "${gitdir}/CHERRY_PICK_HEAD" ]]; then
     # TODO: maybe read up to the first blank line
     IFS='' read -r subject < "${gitdir}/MERGE_MSG"
     git_patches_applied=( "$(<${gitdir}/CHERRY_PICK_HEAD) ${subject}" )
-    if [[ -f "${gitdir}/sequencer/todo" ]]; then
+    if zstyle -t ":vcs_info:${vcs}:${usercontext}:${rrn}" get-unapplied &&
+       [[ -f "${gitdir}/sequencer/todo" ]]
+    then
         # Get the next patches, and remove the one that's in CHERRY_PICK_HEAD.
         git_patches_unapplied=( ${${(M)${(f)"$(<"${gitdir}/sequencer/todo")"}:#pick *}#pick } )
         git_patches_unapplied[1]=()
@@ -384,7 +388,7 @@ elif [[ -f "${gitdir}/CHERRY_PICK_HEAD" ]]; then
     VCS_INFO_git_handle_patches
 elif command -v stg >/dev/null &&
         ${vcs_comm[cmd]} show-ref --quiet refs/stacks/${gitbranch} refs/heads/${gitbranch}.stgit 2>/dev/null &&
-        git_patches_applied=(${(f)"$(stg series --noprefix --applied 2>/dev/null)"})
+        git_patches_applied=(${${(f)"$(stg series --noprefix --applied --description 2>/dev/null)"}/ #[#]})
 then
     # Testing for StGit patches is done after testing for all git-proper
     # patches/states. If a StGit user's repo is in one of those states, they
@@ -404,7 +408,7 @@ then
     # --no-prefix.  The former is compatible with StGit versions going back to
     # 2008.
     if zstyle -t ":vcs_info:${vcs}:${usercontext}:${rrn}" get-unapplied; then
-        git_patches_unapplied=(${(f)"$(stg series --noprefix --unapplied 2>/dev/null)"})
+        git_patches_unapplied=(${${(f)"$(stg series --noprefix --unapplied --description 2>/dev/null)"}/ #[#]})
     fi
     VCS_INFO_git_handle_patches
 else

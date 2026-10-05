@@ -1,6 +1,6 @@
 #compdef run-help
 local d expl
-local HELPDIR=${HELPDIR:-/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/help}
+local HELPDIR=${HELPDIR:-@runhelpdir@}
 [[ -d $HELPDIR ]] && {
 	d=($HELPDIR/*(:t))
 	(($#d)) && d+=('.' ':') && _wanted commands expl 'command' compadd -a d

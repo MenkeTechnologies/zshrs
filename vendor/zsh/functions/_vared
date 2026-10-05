@@ -1,6 +1,6 @@
 #compdef vared
 
-_arguments -s -A "-*" \
+_arguments -s -S -S -A "-*" : \
   '(-a)-A[edit associative array]' \
   '(-A)-a[edit array parameter]' \
   "-c[create parameter or change type]" \
@@ -10,5 +10,7 @@ _arguments -s -A "-*" \
   '-f+[specify finish widget]:widget:_widgets' \
   '-h[allow access to history]' \
   '-e[exit on EOF (^D)]' \
+  '-M+[specify keymap to link to main]:keymap:compadd -a keymaps' \
+  '-m+[specify keymap to link to vicmd]:keymap:compadd -a keymaps' \
   '1:parameter spec:_vars'
 

@@ -44,7 +44,8 @@ local -a default max min keep tags units
 local -i i
 local -A opts
 
-zparseopts -K -D -A opts M+:=keep q+=keep s+:=keep S+:=keep J+: V+: 1 2 o+: n F: x+: X+: \
+zparseopts -K -D -A opts \
+  {M+:,q+,r+:,R+:,s+:,S+:}=keep J+: V+: 1 2 o+: n F: x+: X+: \
   t:=tags u:=units l:=min m:=max d:=default f=type e=type N=type
 
 desc="${1:-number}" tag="${tags[2]:-numbers}"
@@ -73,12 +74,13 @@ elif [[ -prefix $~pat || $PREFIX = $~partial ]]; then
   zstyle -s ":completion:${curcontext}:unit-suffixes" format suffixfmt || \
       suffixfmt='%(d.%U.)%x%(d.%u.)%(r..|)'
   for ((i=0;i<$#;i++)); do
-    zformat -f suffix "$suffixfmt" "x:${${${argv[i+1]#:}%%:*}//\%/%%}" \
-        "X:${${${argv[i+1]#:}#*:}//\%/%%}" "d:${#${argv[i+1]}[1]#:}" \
+    zformat -fq suffix "$suffixfmt" "x:${${argv[i+1]#:}%%:*}" \
+        "X:${${argv[i+1]#:}#*:}" "d:${#${argv[i+1]}[1]#:}" \
 	i:i r:$(( $# - i - 1))
     suffixes+=$suffix
   done
-  [[ -n $suffixes ]] && formats+=( x:$suffixes )
+  # don't quote %x so we can pass formatting through
+  [[ -n $suffixes ]] && formats+=( %%x:$suffixes )
 
   _comp_mesg=yes
   _description -x $tag expl "$desc" $formats

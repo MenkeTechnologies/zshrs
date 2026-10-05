@@ -183,7 +183,7 @@ repl=$2
 shift 2
 
 if [[ -n $opt_s && $action != ln ]]; then
-  print -r -- "$myname: invalid option: -s" >&2
+  print -r -- "$myname: bad option: -s" >&2
   return 1
 fi
 
@@ -236,20 +236,26 @@ if [[ $pat = (#b)(*)\((\*\*##/)\)(*) ]]; then
 else
   fpat=$pat
 fi
-files=(${~fpat})
 
 [[ -n $hasglobqual ]] && pat=$opat
 
 errs=()
 
+() {
+  # (#qN) breaks bareglobqual -Q option, so:
+  setopt localoptions nullglob
+  files=(${~fpat})
+}
+(( ${#files} )) || errs=( "no files matched \`$fpat'" )
+
 for f in $files; do
-  if [[ $pat = (#b)(*)\(\*\*##/\)(*) ]]; then
+  if [[ $pat = (#b)(*)(\(\*\*##/\)|\*\*##/)(*) ]]; then
     # This looks like a recursive glob.  This isn't good enough,
-    # because we should really enforce that $match[1] and $match[2]
+    # because we should really enforce that $match[1] and $match[3]
     # don't match slashes unless they were explicitly given.  But
     # it's a start.  It's fine for the classic case where (**/) is
     # at the start of the pattern.
-    pat="$match[1](*/|)$match[2]"
+    pat="$match[1](*/|)$match[3]"
   fi
   [[ -e $f && $f = (#b)${~pat} ]] || continue
   set -- "$match[@]"

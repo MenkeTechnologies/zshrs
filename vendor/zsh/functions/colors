@@ -9,6 +9,7 @@ color=(
 # Codes listed in this array are from ECMA-48, Section 8.3.117, p. 61.
 # Those that are commented out are not widely supported or aren't closely
 # enough related to color manipulation, but are included for completeness.
+# All codes need to be seperated by semi-colons(;), except as noted below.
 
 # Attribute codes:
   00 none                 # 20 gothic
@@ -22,6 +23,58 @@ color=(
 # 07 standout               27 no-standout
   08 conceal                28 no-conceal
 # 09 strikethrough        # 29 no-strikethrough
+
+# Additional information about the bold attribute.  On a number of terminal
+# emulators bold also changes the output to "bright" by default. In most cases
+# going into the colors portion of the emulators settings there is an option to
+# turn this action off. The option is sometimes labeled "bright on bold" or
+# something to the effect. One exception, kitty does not support bright on bold.
+
+# The following are Extended Underline SGR codes not defined in either
+# console_codes(4) or ECMA-48 but adopted by several terminal emulators(kitty,
+# iTerm2, WezTerm, Otty) either in part or as a whole. The following was taken
+# from https://docs.otty.sh/vt/csi/sgr. (It would appear that VTE based
+# terminal emeulators may also support this: tested on xfce4-terminal.)
+
+# NOTE:  Tmux multiplexer, even if running on a terminal emulator that supports
+#        many of these Extension, currently does not support them.
+
+# NOTE: Extended codes are seperated by colons(:).
+
+#  4:0  None    # clears underline
+#  4:1  Single  # 2 px underline (also via plain \e[4m)
+#  4:2  Double  # two stacked 2 px lines (use 4:2, not \e[21m — under ECMA-48,
+#               # 21 resets bold)
+#  4:3  Curly   # (undercurl) square-wave wavy line, fg or SGR 58 colored
+#  4:4  Dotted  # repeating dot pattern
+#  4:5  Dashed  # repeating short-dash pattern
+
+#  58:5:<n>
+#  58:2:<r>:<g>:<b>
+         # Underline color (independent of text color) applied to single /
+         # double / curly / dotted / dashed
+#  59   reset-underline-color # back to text color
+
+#  NOTE: kitty's writers usually emit the colon form 58:2::R:G:B (the empty
+#  colorspace slot before the RGB triple); the semicolon form 58;2;R;G;B is
+#  also accepted.
+
+# The following SGR codes, as definded in console_codes(4), are supported in the
+# Linux kernel for terminal devices(/dev/tty[1-<N>]).
+# 10  toggle-meta-flag
+      # reset selected mapping, display control flag, and toggle meta flag
+# 11  reset-toggle-meta-flag
+      # select null mapping, set display control flag, reset toggle meta flag
+# 12  set-toggle-meta-flag
+      # select null mapping, set display control flag, set toggle meta flag
+      # The toggle meta flag causes the high bit of a byte to be toggled before
+      # the mapping table translation is done.
+
+# Font selection:
+# The following are defined in ECMA-48. Its orginal purpose was to be able to
+# switch between fonts that were stored on ROM in hardware terminals. As modern
+# day virtual terminals do not have this hardware feature it is generally
+# ignored or not supported.
 
 # Font selection:
 # 10 font-default
@@ -44,8 +97,14 @@ color=(
   35 magenta                45 bg-magenta
   36 cyan                   46 bg-cyan
   37 white                  47 bg-white
-# 38 iso-8316-6           # 48 bg-iso-8316-6
+# 38 iso-8613-6           # 48 bg-iso-8613-6
   39 default                49 bg-default
+
+# 38 and 48 Usage:
+#   38;<N>  select color from terminal emulator predifined 256 color palette
+#   38;<red>;<green>;<blue>  for true/24bit color terminals
+#       allowabe range for each color <0-255>.
+#   48 Same as with 38
 
 # Other codes:
 # 50 no-proportional
@@ -54,8 +113,11 @@ color=(
 # 53 overline
 # 54 no-border
 # 55 no-overline
-# 56 through 59 reserved
-
+# 56 through 59 reserved (ECMA-48)
+# Exceptions:
+# 58 See Extended Underline SRG codes(above)
+# 59 See Extended Underline SRG codes(above)
+#
 # Ideogram markings:
 # 60 underline-or-right
 # 61 double-underline-or-right
@@ -63,6 +125,16 @@ color=(
 # 63 double-overline-or-left
 # 64 stress
 # 65 no-ideogram-marking
+
+# Bright color codes (xterm extension)
+  90 bright-gray            100 bg-bright-gray
+  91 bright-red             101 bg-bright-red
+  92 bright-green           102 bg-bright-green
+  93 bright-yellow          103 bg-bright-yellow
+  94 bright-blue            104 bg-bright-blue
+  95 bright-magenta         105 bg-bright-magenta
+  96 bright-cyan            106 bg-bright-cyan
+  97 bright-white           107 bg-bright-white
 )
 
 # A word about black and white:  The "normal" shade of white is really a
@@ -79,7 +151,7 @@ for k in ${(k)color}; do color[${color[$k]}]=$k; done
 
 # Add "fg-" keys for all the text colors, for clarity.
 
-for k in ${color[(I)3?]}; do color[fg-${color[$k]}]=$k; done
+for k in ${color[(I)[39]?]}; do color[fg-${color[$k]}]=$k; done
 
 # This is inaccurate, but the prompt theme system needs it.
 
@@ -89,7 +161,11 @@ for k in grey gray; do
   color[bg-$k]=${color[bg-black]}
 done
 
-# Assistance for the color-blind.
+# Assistance for the colo(u)r-blind.
+
+for k in '' fg- bg-; do
+  color[${k}bright-grey]=${color[${k}bright-gray]}
+done
 
 colour=(${(kv)color})	# A case where ksh namerefs would be useful ...
 
