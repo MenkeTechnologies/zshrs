@@ -14866,14 +14866,15 @@ fn test_zle_highlight_fg_default_code_overrides_reset_body() {
 #[test]
 fn test_prompt_colour_escapes_unaffected_without_zle_highlight() {
     // Regression net: with no override the emitted bytes must stay
-    // exactly what the stock shell produces — indexed, bright, 256-colour
-    // and 24-bit forms all take the built-in TC_COL_* codes.
+    // exactly what the stock shell produces — indexed, bright and 256-colour
+    // forms take the built-in TC_COL_* codes; a hex colour is quantized by
+    // zsh/nearcolor when the terminal does not report truecolor.
     for (code, want) in [
         ("%F{1}x%f", &b"\x1b[31mx\x1b[39m"[..]),
         ("%F{9}x%f", &b"\x1b[91mx\x1b[39m"[..]),
         ("%F{200}x%f", &b"\x1b[38;5;200mx\x1b[39m"[..]),
         ("%K{4}x%k", &b"\x1b[44mx\x1b[49m"[..]),
-        ("%F{#ff8800}x%f", &b"\x1b[38;2;255;136;0mx\x1b[39m"[..]),
+        ("%F{#ff8800}x%f", &b"\x1b[38;5;208mx\x1b[39m"[..]),
     ] {
         let (status, bytes) = run_zshrs_parity_bytes(&format!("print -Pn '{code}'"));
         assert_eq!(status, 0, "{code}");
