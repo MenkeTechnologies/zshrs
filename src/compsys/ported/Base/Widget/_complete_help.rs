@@ -182,10 +182,13 @@ fn zformat_align(sep: &str, specs: &[String]) -> Vec<String> {
         return Vec::new();
     }
     let tmp_name = ".complete_help.zf";
-    let mut argv = vec!["-a".to_string(), tmp_name.to_string(), sep.to_string()];
+    let mut argv = vec![tmp_name.to_string(), sep.to_string()];
     argv.extend(specs.iter().cloned());
     let _ = setaparam(tmp_name, Vec::new());
-    let _ = bin_zformat("zformat", &argv, &make_ops(), 0);
+    // `-a` is a parsed flag (BUILTIN optstr "afFqQ", c:Src/Modules/zutil.c:2151).
+    let mut zf_ops = make_ops();
+    zf_ops.ind[b'a' as usize] = 1;
+    let _ = bin_zformat("zformat", &argv, &zf_ops, 0);
     let out = getaparam(tmp_name).unwrap_or_default();
     // Tear the scratch array DOWN, not merely empty it. sh:56 is `zformat
     // -a tmp '  (' "$tmp[@]"` against sh:6's `local … tmp`, so upstream

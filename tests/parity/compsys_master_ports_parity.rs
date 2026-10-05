@@ -86,3 +86,31 @@ fn description_quotes_percent_in_the_description() {
         "_description's expl for a description containing %",
     );
 }
+
+/// `_complete_help` (`^Xh`) column-aligns each context's tags with
+/// `zformat -a tmp '  (' "$tmp[@]"` (Completion/Base/Widget/_complete_help:56)
+/// and prints them as `    <tags>  (<functions>)`. The port passed `-a` as
+/// an argv word after zformat gained its "afFqQ" optstring, got "one of
+/// -afF expected" and an empty array, and printed the context headers with
+/// no tag lines under them.
+#[test]
+fn complete_help_lists_the_aligned_tags() {
+    let Some(dir) = stock_dir() else {
+        eprintln!("skip: no zsh source tree for the master completion functions");
+        return;
+    };
+    let fp = sq(&format!("fpath=({})", dir.display()));
+    let driver = format!(
+        "{OPEN_PUMPED}
+zpty -w w {fp}; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w -n w 'print /usr/li'; pump
+zpty -w -n w $'\\030h'; sleep 3; pump
+zpty -w -n w $'\\025'; pump
+zpty -d w 2>/dev/null
+setopt extended_glob
+if [[ $all == *'tags in context :completion::complete:print::'*$'\\n'*'  (_'* ]]; then print \"H=yes\"; else print \"H=no\"; fi
+"
+    );
+    crate::zpty_probe::assert_same_verdict(&driver, "H", "^Xh printed aligned tag lines");
+}
