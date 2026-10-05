@@ -4225,12 +4225,12 @@ pub fn bin_typeset(
             off |= bit;
         }
         // c:2696-2697
-        // c:2698-2706 — `-n` only allows readonly/upper/hideval.
+        // c:2698-2706 — `-n` only allows readonly/upper/hideval/hide (55030).
         else {
             bit <<= 1;
             continue;
         }
-        if OPT_MINUS(&ops, b'n') && (bit & !(PM_READONLY | PM_UPPER | PM_HIDEVAL)) != 0
+        if OPT_MINUS(&ops, b'n') && (bit & !(PM_READONLY | PM_UPPER | PM_HIDEVAL | PM_HIDE)) != 0
         // c:2701
         {
             zwarnnam(name, &format!("-{} not allowed with -n", ch)); // c:2702
@@ -4239,11 +4239,11 @@ pub fn bin_typeset(
     }
     // c:2708-2715 — -n / +n conflict resolution.
     if OPT_MINUS(&ops, b'n') {
-        // c:2709-2711 — only readonly/upper/hideval combine with -n;
+        // c:2709-2711 — only readonly/upper/hideval/hide combine with -n;
         // anything else is a (silent) status-1 rejection (the zwarnnam
         // here is commented out in C — the per-bit loop above already
         // warned).
-        if ((on | off) & !(PM_READONLY | PM_UPPER | PM_HIDEVAL)) != 0 {
+        if ((on | off) & !(PM_READONLY | PM_UPPER | PM_HIDEVAL | PM_HIDE)) != 0 {
             // c:2710
             return 1; // c:2711
         }
@@ -5847,6 +5847,27 @@ pub fn bin_typeset(
             .ok()
             .and_then(|t| t.get(arg_name).map(|pm| pm.level))
             .unwrap_or(-1);
+        // c:2212-2222 (55030) — `-h` on a special or autoloadable parameter
+        // that is reused at this level (not localized: c:2075-2088 drops
+        // usepm then) is an error, where it used to be a silent no-op.
+        {
+            let cur_ll = locallevel.load(Relaxed) as i32;
+            let pm_flags = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg_name).map(|pm| pm.node.flags as u32));
+            let usepm_c = (usepm_existing || pm_flags.is_some_and(|f| (f & PM_SPECIAL) != 0)) // c:2058-2068
+                && !(pm_level_existing != cur_ll && (on as u32 & PM_LOCAL) != 0); // c:2075-2088
+            if usepm_c
+                && (on as u32 & PM_HIDE) != 0
+                && pm_flags.is_some_and(|f| (f & (PM_SPECIAL | PM_AUTOLOAD)) != 0)
+                && pm_level_existing <= cur_ll
+            {
+                zerrnam(name, &format!("{}: can't change parameter attribute", arg_name)); // c:2219
+                returnval = 1;
+                continue; // c:2220 return NULL
+            }
+        }
         let first_is_digit = arg_name
             .as_bytes()
             .first()
@@ -6080,8 +6101,11 @@ pub fn bin_typeset(
                     }
                     // crate::ported::zsh_h::PM_UPPER on a nameref marks the -u upscope variant (c:2698
                     // allows -u with -n); crate::ported::zsh_h::PM_HIDEVAL likewise.
+                    // 55030 lets -h (PM_HIDE) through as well.
                     flags |= (on
-                        & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL))
+                        & (crate::ported::zsh_h::PM_UPPER
+                            | crate::ported::zsh_h::PM_HIDEVAL
+                            | crate::ported::zsh_h::PM_HIDE))
                         as i32;
                     // c:1108-1132 — createparam REUSES the just-unset node at its
                     // own level when !PM_LOCAL (`typeset -gn` rebind of a local
@@ -6136,12 +6160,14 @@ pub fn bin_typeset(
                         if let Some(pm) = tab.get_mut(arg_name) {
                             pm.node.flags |= (on
                                 & (crate::ported::zsh_h::PM_UPPER
-                                    | crate::ported::zsh_h::PM_HIDEVAL))
+                                    | crate::ported::zsh_h::PM_HIDEVAL
+                                    | crate::ported::zsh_h::PM_HIDE))
                                 as i32;
                             pm.node.flags |= PM_NAMEREF as i32;
                             pm.node.flags &= !((off
                                 & (crate::ported::zsh_h::PM_UPPER
                                     | crate::ported::zsh_h::PM_HIDEVAL
+                                    | crate::ported::zsh_h::PM_HIDE
                                     | PM_READONLY))
                                 as i32);
                         }
