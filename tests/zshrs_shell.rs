@@ -14088,28 +14088,25 @@ fn test_unset_through_reference_removes_outer_referent() {
 
 #[test]
 fn test_reference_slice_assignment_leaves_base_defaulted() {
-    // K01 "create hash by element nameref" (an expected failure upstream):
-    // through a reference slice the Value's pm is the element
-    // (c:Src/params.c:2264-2287), so c:3270 never clears PM_DEFAULTED on a
-    // TYPESET_TO_UNSET hash; the element is stored all the same.
+    // K01 "create hash by element nameref": since 54718 there are no
+    // reference slices — valid_refname (c:Src/params.c:6489-6501) rejects
+    // `hash[y]` and the function stops there.
     let (st, out, err) = run_zshrs_parity(
         "setopt typeset_to_unset; f() { typeset -A hash; typeset -n p='hash[y]'; p=HIT; \
          typeset -p hash; print -r -- \"${hash[y]} $p\" }; f",
     );
-    assert_eq!(st, 0, "stderr: {err:?}");
-    assert_eq!(out, "typeset -A hash\nHIT HIT\n");
+    assert_eq!((st, out.as_str()), (1, ""));
+    assert!(err.contains("f: invalid variable name: hash[y]"), "got: {err:?}");
 }
 
 #[test]
 fn test_assign_default_through_reference_slice_is_no_identifier() {
-    // K01 "create hash by element substitution" (an expected failure
-    // upstream): fetchvalue's reference slice moves the scan into a dyncat
-    // copy (c:Src/params.c:2280-2284), so c:Src/subst.c:3251's
-    // `*idend = '\0'` misses the word and setsparam rejects the rest of it.
+    // K01 "create hash by element substitution": since 54718 the element
+    // reference itself is refused (c:Src/params.c:6489-6501).
     let (st, out, err) =
         run_zshrs_parity("typeset -A hash; typeset -n p='hash[y]'; print ${p::=HIT}");
     assert_eq!((st, out.as_str()), (1, ""), "stderr: {err:?}");
-    assert!(err.contains("not an identifier: p::=HIT}"), "got: {err:?}");
+    assert!(err.contains("invalid variable name: hash[y]"), "got: {err:?}");
     // A plain reference assigns as usual.
     let (st, out, _) = run_zshrs_parity("typeset -n r=s; print ${r::=V} $s");
     assert_eq!((st, out.as_str()), (0, "V V\n"));
