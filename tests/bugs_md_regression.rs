@@ -2157,7 +2157,8 @@ fn bug1132_unset_argv_clears_the_positional_vector() {
 /// single-index arm parsed it as a digit literal only, so `${s[(w)n]}` was
 /// empty where the range spelling `${s[(w)n,(w)n+1]}` resolved `n` fine.
 ///
-/// Every expectation below is `/bin/zsh -f` output.
+/// Every expectation below is upstream-master zsh output (5.9.999.3-test,
+/// 8cc5eade5f, run with `-f`); it differs from zsh 5.9.2 only where noted.
 #[test]
 fn word_flag_subscript_bounds_return_character_positions() {
     let cases: &[(&str, &str)] = &[
@@ -2187,10 +2188,11 @@ fn word_flag_subscript_bounds_return_character_positions() {
             "s='alpha beta gamma delta'; print -r -- \"${s[(w)-2,(w)-1]}\"",
             "gamma delta\n",
         ),
-        // c:1627-1630 — both clamps.
+        // Out-of-range word indices are empty, not clamped (upstream 54773);
+        // zsh 5.9.2 clamped both and printed the whole string.
         (
             "s='alpha beta gamma delta'; print -r -- \"${s[(w)0,(w)9]}\"",
-            "alpha beta gamma delta\n",
+            "\n",
         ),
         // Mixed word bound + numeric bound, each direction.
         (

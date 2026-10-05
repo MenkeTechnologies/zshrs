@@ -5979,8 +5979,10 @@ fn test_subscript_word_search_flags() {
     // itself (r/R); a miss is 0, an out-of-range `(b::)` is wordcount + 1.
     // An explicit separator keeps empty fields for the word number but
     // `findword` skips them (`a::b` → 0). On an array the search ignores the
-    // word flag (c:1760 precedes c:1782). c:1618-1634 clamps a numeric word
-    // index and shifts it under KSHARRAYS. Expected lines are zsh 5.9.2.
+    // word flag (c:1760 precedes c:1782). A numeric word index shifts under
+    // KSHARRAYS; out of range it is empty, not clamped (upstream 54773, so
+    // `${${:-a b c}[(w)5]}` is empty). Expected lines are upstream-master zsh
+    // (5.9.999.3-test, 8cc5eade5f); 5.9.2 printed `two 6 b c`.
     let (_, output, _) = run_zshrs(
         r#"s="one  two three"; print ${s[(wi)t*]} ${s[(wI)t*]} ${s[(wr)t*]} ${s[(wR)t*]} ${s[(wn:2:i)t*]}
 s="one two three"; print "[${s[(wi)zz]}] [${s[(wr)zz]}] [${s[(wI)zz]}] [${s[(wR)zz]}]"
@@ -5992,7 +5994,7 @@ setopt ksharrays; s="a b c"; print ${s[(w)0]} ${s[(w)1]} ${${:-a b c}[(w)0]} ${$
     );
     assert_eq!(
         output,
-        "6 10 two three 10\n[0] [] [0] []\n0 0 a\n[ ] 3 c\ntwo 6 b c\n3 2 c d\na b a 1\n",
+        "6 10 two three 10\n[0] [] [0] []\n0 0 a\n[ ] 3 c\ntwo 6 b\n3 2 c d\na b a 1\n",
         "got: {output:?}"
     );
 }
