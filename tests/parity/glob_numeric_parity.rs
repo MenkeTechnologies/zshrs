@@ -278,11 +278,9 @@ mod default_word_alternation {
     }
 }
 
-/// zshrs follows zsh 5.9.2 here: its c:Src/lex.c:1198 (5.9.1) `if(isnumglob())`
-/// tokenizes `<N-M>` inside a brace parameter too, so a numeric range in a
-/// default / alternative word reaches filename generation like a `*` does.
-/// The dev tree's 9d9b6ba322 ("fix <-> in parameter flags") leaves it literal;
-/// `lex::NUMGLOB_IN_BRACE_PARAM` selects the release rule.
+/// c:Src/lex.c:1201 `if (!in_brace_param && isnumglob())` (workers/54437)
+/// leaves `<N-M>` literal inside a brace parameter, so a numeric range in a
+/// default / alternative word is plain text, not a filename-generation pattern.
 mod default_word_numeric_range {
     use super::*;
 

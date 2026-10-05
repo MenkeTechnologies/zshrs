@@ -1989,11 +1989,11 @@ mod brace_param_lexer_current_source {
         assert_eq!(r.exit, 0, "script:\n{script}\nstderr: {}", r.stderr);
     }
 
-    /// zshrs follows 5.9.2 here, not the current source: c:Src/lex.c:1198
-    /// (5.9.1) `if(isnumglob())` tokenizes `<N-M>` inside `${…}` too (see
-    /// `lex::NUMGLOB_IN_BRACE_PARAM`). So a flag argument `${(l<3><->):-}`
-    /// is `error in flags`, as in zsh 5.9.2, and the pattern forms still match
-    /// numbers. Compared against the reference shell, not pinned text.
+    /// c:Src/lex.c:1201 `if (!in_brace_param && isnumglob())` (workers/54437)
+    /// leaves `<N-M>` literal inside `${…}`, so a flag argument
+    /// `${(l<3><->):-}` pads with `-`; the pattern forms still match numbers
+    /// because `parse_subst_string` re-lexes them outside the brace.
+    /// Compared against the reference shell, not pinned text.
     #[test]
     fn numeric_glob_text_in_flag_argument() {
         assert_parity(r#"print -r - ${(l<3><->):-}"#);

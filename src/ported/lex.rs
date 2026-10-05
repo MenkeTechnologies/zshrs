@@ -862,19 +862,6 @@ fn cmd_or_math_sub() -> i32 {
 // Additional parsing functions ported from lex.c
 // ============================================================================
 
-/// zsh version split at `gettokstr`'s `LX2_INANG` arm (c:1198 in 5.9.1).
-///
-/// * `true` (zsh **5.9.2**, `$ZSH_VERSION`): `if(isnumglob())`. A `<N-M>` is
-///   tokenized as Inang…Outang inside `${…}` too, so `${:-<->}` is a numeric
-///   glob (`no matches found`) and `${(l<3><->):-}` is `error in flags`.
-/// * `false` (zsh **5.9.999.3-test**): upstream `9d9b6ba322` ("54437: lex: fix
-///   <-> in parameter flags") adds `!in_brace_param &&`, so inside `${…}` the
-///   `<->` stays literal text.
-///
-/// zshrs targets 5.9.2 here, as `zparseopts`' `LONG_SPEC_NEEDS_GUARD` does.
-/// Retargeting is this one `const`.
-pub const NUMGLOB_IN_BRACE_PARAM: bool = true;
-
 /// Check whether we're looking at valid numeric globbing syntax
 /// `<N-M>` / `<N->` / `<-M>` / `<->`. Call pointing just after the
 /// Port of `static int isnumglob(void)` from `Src/lex.c:581`.
@@ -2623,10 +2610,11 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             // so isnumglob still fires below — but cond /
                             // case patterns stay raw.
                             add(c);
-                        } else if (NUMGLOB_IN_BRACE_PARAM || in_brace_param == 0) && isnumglob() {
-                            // c:1198 (5.9.1) `if(isnumglob())`; the dev tree's
-                            // c:1201 adds `!in_brace_param &&`. See
-                            // NUMGLOB_IN_BRACE_PARAM.
+                        } else if in_brace_param == 0 && isnumglob() {
+                            // c:1201 `if (!in_brace_param && isnumglob())`
+                            // (workers/54437): inside `${…}` a `<N-M>`
+                            // stays literal text, so `${(l<3><->):-}` pads
+                            // with `-` instead of failing `error in flags`.
                             // c:1202-1206 — emit Inang…Outang markers.
                             add(Inang); // c:1202
                             while let Some(ch) = hgetc() {

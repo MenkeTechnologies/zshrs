@@ -61124,6 +61124,11 @@ Inang…Outang inside a brace parameter too. The dev tree's `9d9b6ba322` (54437)
 `default_word_lexer_tokens` (which undid the pair for the dev rule) stands down under it. The
 lexer corpus's `42_zinit_side.zsh` wordcode is now byte-identical (`wordcode_parity` 44/44).
 
+**Superseded 2026-10-04.** The parity spec is now upstream zsh master, so 54437 is ported:
+`gettokstr` tests `in_brace_param == 0 && isnumglob()` and `NUMGLOB_IN_BRACE_PARAM` is gone.
+`${(l<3><->):-}` prints `---` again. `42_zinit_side.zsh.wordcode` was dumped by 5.9.2 and still
+expects Inang…Outang for the `/(#s)<->-/` pattern, so it needs regenerating against master.
+
 ## #1171 — `${a:s/%/X/}` / `${a:s/#/X/}` under HIST_SUBST_PATTERN did nothing — fixed
 
 **Status:** `fixed` 2026-10-01 (`3fae96bdc3`).
