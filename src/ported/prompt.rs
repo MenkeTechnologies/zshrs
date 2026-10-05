@@ -1159,26 +1159,27 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
             // Numeric prefix N on `%/` / `%~` / `%d` / `%c` / `%C` (keep N
             // trailing components; Bug #96) is handled inside `promptpath`,
             // which all five path directives below now route through.
-            // c:1647-1657 — the change test that opens master's
-            // applytextattributes, used by the %S/%s/%B/%b/%U/%u arms:
-            //     zattr change = txtcurrentattrs ^ txtpendingattrs;
-            //     if (!change) return;
-            //     if (txtunknownattrs) txtunknownattrs &= ~change;
-            // tsetattrs/tunsetattrs already folded unknown bits into the
-            // current state, so an attribute of unknown state always counts
-            // as changing; once emitted it becomes known.
-            let attrs_change_pending = || -> bool {
-                let cur = *current_attrs_lock().lock().expect("current_attrs poisoned");
-                let pend = *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                let change = cur ^ pend; // c:1647
-                if change == 0 {
-                    return false; // c:1652-1653
+            // c:1095-1112 / c:2490-2498 — applytextattributes(TSC_PROMPT)
+            // writes its sequences into the prompt buffer, bracketed by
+            // Inpar/Outpar unless inside `%{…%}` (`bv->dontcount`).
+            let putpromptattrs = |bv: &mut buf_vars| {
+                let sgr = applytextattributes(TSC_PROMPT);
+                if sgr.is_empty() {
+                    return;
                 }
-                let unknown = txtunknownattrs.load(Ordering::Relaxed);
-                if unknown != 0 {
-                    txtunknownattrs.store(unknown & !change, Ordering::Relaxed); // c:1657
+                if bv.dontcount == 0 {
+                    addbufspc(bv, 1);
+                    bv.buf[bv.bp] = Inpar as u8;
+                    bv.bp += 1;
                 }
-                true
+                for &b in sgr.as_bytes() {
+                    pputc(bv, b);
+                }
+                if bv.dontcount == 0 {
+                    addbufspc(bv, 1);
+                    bv.buf[bv.bp] = Outpar as u8;
+                    bv.bp += 1;
+                }
             };
             match xc {
                 // c:540-542 — `%~`: pwd, home/named-dir tilde, optional N
@@ -1249,265 +1250,95 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     };
                     stradd(bv, &out);
                 }
-                // c:563-570 — `%S` (standout on) / `%s` (off)
-                // Emission sequences follow the zsh-5.9.1 release model:
-                // each %X arm updates the live attr state then emits its
-                // cap via tsetcap. Master's applytextattributes
-                // (c:1647-1657) gates that on an actual change, tracking
-                // txtunknownattrs, so `%Sa%Sb` emits smso once and
-                // `${(%):-%s%u%s}` drops the trailing rmso. END
-                // caps, ALLATTRSOFF, and BOLDFACEBEG carry TSC_DIRTY
-                // so still-active attrs + colours are re-applied.
-                // Master's source routes these through the
-                // applytextattributes rewrite whose sequences diverge
-                // from the 5.9.x binary the parity suite diffs
-                // against. tsetcap's TSC_PROMPT mode wraps each
-                // emission in its own Inpar/Outpar pair (the markers
-                // are chars in the returned String — write them as
-                // raw token bytes, everything else through pputc).
-                b'S' => {
-                    // zsh-5.9.1 prompt.c — txtset(TXTSTANDOUT);
-                    // tsetcap(TCSTANDOUTBEG, TSC_PROMPT); no DIRTY:
-                    // smso clobbers nothing (oracle: `%F{red}%Sx`
-                    // emits no colour re-apply).
-                    let _ = tsetattrs(TXTSTANDOUT);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
-                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
-                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(crate::ported::zsh_h::TCSTANDOUTBEG, TSC_PROMPT) } else { String::new() };
-                    for ch in sgr.chars() {
-                        if ch == Inpar || ch == Outpar {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = ch as u8;
-                            bv.bp += 1;
-                        } else {
-                            let mut tmp = [0u8; 4];
-                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
-                                pputc(bv, b);
-                            }
-                        }
-                    }
-                }
-                b's' => {
-                    // zsh-5.9.1 — txtunset(TXTSTANDOUT);
-                    // tsetcap(TCSTANDOUTEND, TSC_PROMPT|TSC_DIRTY):
-                    // rmso can clear other attrs, re-apply (oracle:
-                    // `%B%F{red}%Sx%sy` → rmso, bold, colour).
-                    let _ = tunsetattrs(TXTSTANDOUT);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
-                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
-                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
-                        crate::ported::zsh_h::TCSTANDOUTEND,
-                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
-                    for ch in sgr.chars() {
-                        if ch == Inpar || ch == Outpar {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = ch as u8;
-                            bv.bp += 1;
-                        } else {
-                            let mut tmp = [0u8; 4];
-                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
-                                pputc(bv, b);
-                            }
-                        }
-                    }
-                }
-                // c:571-578 — `%B` (bold on) / `%b` (off)
-                b'B' => {
-                    // zsh-5.9.1 — txtset(TXTBOLDFACE);
-                    // tsetcap(TCBOLDFACEBEG, TSC_PROMPT|TSC_DIRTY):
-                    // bold-begin resets colours on some terminals
-                    // (oracle: `%F{red}%Bx` → `[31m[1m[31m`).
-                    let _ = tsetattrs(TXTBOLDFACE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
-                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
-                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
-                        crate::ported::zsh_h::TCBOLDFACEBEG,
-                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
-                    for ch in sgr.chars() {
-                        if ch == Inpar || ch == Outpar {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = ch as u8;
-                            bv.bp += 1;
-                        } else {
-                            let mut tmp = [0u8; 4];
-                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
-                                pputc(bv, b);
-                            }
-                        }
-                    }
-                }
-                b'b' => {
-                    // zsh-5.9.1 — txtunset(TXTBOLDFACE); no bold-off
-                    // cap exists, so `me` = TCALLATTRSOFF + DIRTY
-                    // re-applies the surviving attrs + colours
-                    // (oracle: `%U%B%F{red}x%by` → `[0m[4m[31m`).
-                    let _ = tunsetattrs(TXTBOLDFACE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
-                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
-                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
-                        crate::ported::zsh_h::TCALLATTRSOFF,
-                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
-                    for ch in sgr.chars() {
-                        if ch == Inpar || ch == Outpar {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = ch as u8;
-                            bv.bp += 1;
-                        } else {
-                            let mut tmp = [0u8; 4];
-                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
-                                pputc(bv, b);
-                            }
-                        }
-                    }
-                }
-                // c:579-586 — `%U` (underline on) / `%u` (off)
-                b'U' => {
-                    // zsh-5.9.1 — txtset(TXTUNDERLINE);
-                    // tsetcap(TCUNDERLINEBEG, TSC_PROMPT); no DIRTY
-                    // (oracle: `%S%F{red}%Ux` emits no re-apply).
-                    let _ = tsetattrs(TXTUNDERLINE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
-                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
-                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(crate::ported::zsh_h::TCUNDERLINEBEG, TSC_PROMPT) } else { String::new() };
-                    for ch in sgr.chars() {
-                        if ch == Inpar || ch == Outpar {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = ch as u8;
-                            bv.bp += 1;
-                        } else {
-                            let mut tmp = [0u8; 4];
-                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
-                                pputc(bv, b);
-                            }
-                        }
-                    }
-                }
-                b'u' => {
-                    // zsh-5.9.1 — txtunset(TXTUNDERLINE);
-                    // tsetcap(TCUNDERLINEEND, TSC_PROMPT|TSC_DIRTY)
-                    // (oracle: `%S%F{red}%Ux%uy` → rmul, smso, colour).
-                    let _ = tunsetattrs(TXTUNDERLINE);
-                    // c:1647-1657 — master applytextattributes: no change, no emission.
-                    let changed = attrs_change_pending();
-                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
-                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = if changed { tsetcap(
-                        crate::ported::zsh_h::TCUNDERLINEEND,
-                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
-                    ) } else { String::new() };
-                    for ch in sgr.chars() {
-                        if ch == Inpar || ch == Outpar {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = ch as u8;
-                            bv.bp += 1;
-                        } else {
-                            let mut tmp = [0u8; 4];
-                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
-                                pputc(bv, b);
-                            }
-                        }
-                    }
-                }
-                // c:621-644 — `%F` (fg colour) / `%K` (bg colour). Both
-                // delegate the argument parse to `parsecolorchar`
-                // (c:318) and fall through to the `%f`/`%k` reset when
-                // it yields 0 (`%F{default}`) or TXT_ERROR (malformed
-                // spec) — c:623/635 `if (atr && atr != TXT_ERROR)`.
-                b'F' | b'K' => {
-                    let is_fg = xc == b'F';
-                    // c:622/634 — `atr = parsecolorchar(arg, is_fg)`.
-                    // Bare `%F` (no brace, arg=0) yields `TXTFGCOLOUR | 0`
-                    // — truthy, colour 0 (black) → `\e[30m`; `%K` → `\e[40m`.
-                    let attr = if arg >= 0 || bv.fm.as_bytes().get(bv.fm_pos + 1) == Some(&b'{') {
-                        parsecolorchar(bv, arg as zattr, is_fg)
-                    } else {
-                        TXT_ERROR
+                // c:605-628 — `%B`/`%b`, `%U`/`%u`, `%S`/`%s`: set or clear
+                // the attribute in the pending state, then let
+                // applytextattributes emit whatever actually changed:
+                //     case 'B': tsetattrs(TXTBOLDFACE);
+                //               applytextattributes(TSC_PROMPT); break;
+                //     case 'b': tunsetattrs(TXTBOLDFACE);
+                //               applytextattributes(TSC_PROMPT); break;
+                b'S' | b's' | b'B' | b'b' | b'U' | b'u' => {
+                    let atr = match xc.to_ascii_uppercase() {
+                        b'S' => TXTSTANDOUT,
+                        b'B' => TXTBOLDFACE,
+                        _ => TXTUNDERLINE,
                     };
-                    if attr != 0 && attr != TXT_ERROR {
-                        // c:624-625 — `tsetattrs(atr); applytextattributes(TSC_PROMPT);`
-                        let _ = tsetattrs(attr);
-                        let sgr = applytextattributes(TSC_PROMPT);
-                        if !sgr.is_empty() {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = Inpar as u8;
-                            bv.bp += 1;
-                            for &b in sgr.as_bytes() {
-                                pputc(bv, b);
-                            }
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = Outpar as u8;
-                            bv.bp += 1;
-                        }
+                    if xc.is_ascii_uppercase() {
+                        let _ = tsetattrs(atr);
                     } else {
-                        // c:600-602 fall through to lowercase variant.
-                        // C's tunsetattrs/applytextattributes emits the
-                        // default-color SGR (`\e[39m`/`\e[49m`) even when
-                        // no color was previously set — `%F{invalid}`
-                        // produces visible recovery output. zshrs's
-                        // applytextattributes is a DIFF emitter so a
-                        // no-change tunsetattrs returns empty; emit the
-                        // default-color code explicitly here. Bug #372.
-                        let mask = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
-                        let _ = tunsetattrs(mask);
-                        let mut sgr = applytextattributes(TSC_PROMPT);
-                        if sgr.is_empty() {
-                            sgr = if is_fg {
-                                "\x1b[39m".to_string()
-                            } else {
-                                "\x1b[49m".to_string()
-                            };
-                        }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
-                        for &b in sgr.as_bytes() {
-                            pputc(bv, b);
-                        }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Outpar as u8;
-                        bv.bp += 1;
+                        let _ = tunsetattrs(atr);
                     }
+                    putpromptattrs(bv);
                 }
-                b'f' | b'k' => {
-                    // c:604-606 — bare `%f`/`%k` reset fg/bg only.
-                    // C's tunsetattrs path always emits the default-
-                    // color SGR for the corresponding axis. zshrs's
-                    // applytextattributes is diff-only, so the
-                    // no-color-set case returned empty; emit
-                    // `\e[39m`/`\e[49m` explicitly. Bug #372.
-                    let is_fg = xc == b'f';
-                    let mask = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
-                    let _ = tunsetattrs(mask);
-                    let mut sgr = applytextattributes(TSC_PROMPT);
-                    if sgr.is_empty() {
-                        sgr = if is_fg {
-                            "\x1b[39m".to_string()
+                // c:621-644 — `%F`/`%K` (colour) fall through to `%f`/`%k`
+                // when parsecolorchar yields 0 (`%F{default}`) or TXT_ERROR:
+                //     atr = parsecolorchar(arg, 1);
+                //     if (atr && atr != TXT_ERROR) {
+                //         tsetattrs(atr); applytextattributes(TSC_PROMPT); break;
+                //     }
+                //     /* else FALLTHROUGH */
+                // case 'f': tunsetattrs(TXTFGCOLOUR); applytextattributes(TSC_PROMPT);
+                b'F' | b'K' | b'f' | b'k' => {
+                    let is_fg = xc.to_ascii_uppercase() == b'F';
+                    let mut atr: zattr = 0;
+                    if xc.is_ascii_uppercase() {
+                        // Bare `%F` (no brace, arg=0) yields `TXTFGCOLOUR | 0`
+                        // — truthy, colour 0 (black) → `\e[30m`; `%K` → `\e[40m`.
+                        atr = if arg >= 0 || bv.fm.as_bytes().get(bv.fm_pos + 1) == Some(&b'{') {
+                            parsecolorchar(bv, arg as zattr, is_fg)
                         } else {
-                            "\x1b[49m".to_string()
+                            TXT_ERROR
                         };
                     }
-                    addbufspc(bv, 1);
-                    bv.buf[bv.bp] = Inpar as u8;
-                    bv.bp += 1;
-                    for &b in sgr.as_bytes() {
-                        pputc(bv, b);
+                    if atr != 0 && atr != TXT_ERROR {
+                        let _ = tsetattrs(atr); // c:624
+                    } else {
+                        let _ = tunsetattrs(if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR }); // c:630/642
                     }
-                    addbufspc(bv, 1);
-                    bv.buf[bv.bp] = Outpar as u8;
-                    bv.bp += 1;
+                    putpromptattrs(bv);
+                }
+                // c:645-656 — `%H` / `%H{group}`: replace every attribute
+                // with those of a `.zle.hlgroups` entry, or none.
+                //     if (bv->fm[1] == '{') {
+                //         bv->fm = parsehighlight(bv->fm + 2, '}', &atr, NULL);
+                //         --bv->fm;
+                //     } else atr = 0;
+                //     if (atr != TXT_ERROR) {
+                //         treplaceattrs(atr); applytextattributes(TSC_PROMPT);
+                //     }
+                // parsehighlight (c:285-314) is inlined: the name of that
+                // function in this port is taken by the match_highlight core.
+                b'H' => {
+                    let mut atr: zattr = 0;
+                    let fm = bv.fm.as_bytes();
+                    if fm.get(bv.fm_pos + 1) == Some(&b'{') {
+                        let body = bv.fm_pos + 2;
+                        // c:292-293, c:308-311 — the group name ends at `}`
+                        // or the end of the string; fm is left on it.
+                        let ep = fm[body..].iter().position(|&c| c == b'}').map_or(fm.len(), |i| body + i);
+                        let group = bv.fm[body..ep].to_string();
+                        // c:294-305 — look the group up in `.zle.hlgroups`.
+                        let keys = crate::ported::params::gethkparam(crate::ported::modules::hlgroup::GROUPVAR);
+                        let vals = crate::ported::params::gethparam(crate::ported::modules::hlgroup::GROUPVAR);
+                        let attrs = keys.zip(vals).and_then(|(k, v)| {
+                            k.iter().position(|n| *n == group).and_then(|i| v.get(i).cloned())
+                        });
+                        atr = match attrs {
+                            Some(spec) => {
+                                let (on, _mask, rest) = match_highlight(&spec, None);
+                                // c:302-303 — nothing parsed is an error.
+                                if rest.len() == spec.len() { TXT_ERROR } else { on }
+                            }
+                            None => TXT_ERROR,
+                        };
+                        // c:647 — `--bv->fm`: the loop's increment then steps
+                        // past the `}`.
+                        bv.fm_pos = if ep < bv.fm.len() { ep } else { ep - 1 };
+                    }
+                    if atr != TXT_ERROR {
+                        treplaceattrs(atr); // c:653
+                        putpromptattrs(bv); // c:654
+                    }
                 }
                 // c:676-696 — `%{` (begin dontcount span), which FALLS THROUGH
                 // into `%G` when it carries a positive arg:
@@ -2384,17 +2215,6 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
 
     let mut out = String::new();
 
-    // zsh-5.9.1 prompt.c tsetcap — TSC_DIRTY is a post-emission
-    // modifier (re-apply still-active attrs + colours after a cap
-    // that may clobber them); strip it for the mode dispatch below
-    // and run the dirty pass at the end. Master's source dropped
-    // TSC_DIRTY in the applytextattributes rewrite; the zshrs
-    // parity floor is the 5.9.x release binary whose emission
-    // sequences (oracle-probed: %B-beg, every END cap, and
-    // ALLATTRSOFF re-apply bold→standout→underline→FG→BG) need it.
-    let dirty = (flags & crate::ported::zsh_h::TSC_DIRTY) != 0;
-    let flags = flags & !crate::ported::zsh_h::TSC_DIRTY;
-
     // c:1085 — `if (tccan(cap) && !(termflags & ...))`
     let tclen_guard = crate::ported::init::tclen.lock().unwrap();
     let cap_ok = cap >= 0 && (cap as usize) < tclen_guard.len() && tclen_guard[cap as usize] != 0;
@@ -2453,41 +2273,6 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
             // buffered `shout` stream, so the cap lands in order with the
             // rest of a refresh frame instead of ahead of it.
             crate::shout::write(&crate::shout::tputs(&cap_str));
-        }
-    }
-    // zsh-5.9.1 tsetcap dirty pass — re-apply the attributes still
-    // recorded as active (skipping the attribute this cap just set,
-    // so BOLDFACEBEG doesn't re-emit itself) and then the active
-    // colours. Order pinned by the 5.9.1 oracle probes:
-    // bold, standout, underline, FG, BG. Recursion passes the
-    // stripped flags so the re-applied caps share this cap's mode
-    // (and each gets its own Inpar/Outpar wrap in TSC_PROMPT).
-    if dirty {
-        use crate::ported::zsh_h::{
-            TCBOLDFACEBEG, TCSTANDOUTBEG, TCUNDERLINEBEG, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR,
-            TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK,
-            TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT,
-        };
-        let cur = *current_attrs_lock().lock().expect("current_attrs poisoned");
-        if cur & TXTBOLDFACE != 0 && cap != TCBOLDFACEBEG {
-            out.push_str(&tsetcap(TCBOLDFACEBEG, flags));
-        }
-        if cur & TXTSTANDOUT != 0 && cap != TCSTANDOUTBEG {
-            out.push_str(&tsetcap(TCSTANDOUTBEG, flags));
-        }
-        if cur & TXTUNDERLINE != 0 && cap != TCUNDERLINEBEG {
-            out.push_str(&tsetcap(TCUNDERLINEBEG, flags));
-        }
-        // 5.9.1 set_colour_attribute(txtattrs, COL_SEQ_FG/BG,
-        // TSC_PROMPT) — Inpar/Outpar-wrapped for prompt mode
-        // (5.9.1 prompt.c is_prompt arm). This is the dirty *re-apply*
-        // pass, so it only restores colours that are currently on; the
-        // `def` reset arm is not reachable from here.
-        if cur & TXTFGCOLOUR != 0 {
-            out.push_str(&set_colour_attribute(cur, COL_SEQ_FG, flags));
-        }
-        if cur & TXTBGCOLOUR != 0 {
-            out.push_str(&set_colour_attribute(cur, COL_SEQ_BG, flags));
         }
     }
     out
