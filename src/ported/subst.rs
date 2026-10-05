@@ -5107,20 +5107,16 @@ pub fn paramsubst(
         // it loops `while (v || …)`, packs `aval` into a TEMPORARY PM_ARRAY
         // parameter (c:2890-2893 `pm = createparam(nulstring, PM_ARRAY);
         // pm->u.arr = aval`) and runs an ORDINARY `getindex` on it (c:2900).
-        // The temp Value inherits the first subscript's scan mask (c:2897), which
-        // is what decides whether the chained subscript reads an ELEMENT or is an
-        // INVERSE subscript that yields the index itself (c:1513-1531).
+        // Since workers/54093 the temp Value starts from a plain-array mask,
+        // `v->scanflags = isarr ? SCANPM_ARRONLY : 0` (c:2899), not the first
+        // subscript's scan mask, so a chained subscript is an ordinary array
+        // subscript: `${A[(K)p][2]}` is element 2 and `${A[(i)p][(i)x]}` an index.
         //
         // The plain-array RANGE arm already feeds that temp array from
         // `getarrvalue`; this carries the ASSOC pattern-SCAN result (c:1747
         // `ta = getvaluearr(v)`) into the very same path, so both first-subscript
-        // shapes chain through one implementation instead of two. The tuple is
-        // (temp array, carried SCANPM_WANTKEYS, carried SCANPM_WANTVALS).
-        let mut assoc_scan_chain: Option<(Vec<String>, bool, bool)> = None;
-        // c:Src/params.c:1745-1746 `if (down) v->scanflags |= SCANPM_MATCHMANY;`
-        // for the scan that filled `assoc_scan_chain` — decides whether a chained
-        // single index keeps the array shape (c:2174-2178).
-        let mut assoc_scan_matchmany = false;
+        // shapes chain through one implementation instead of two.
+        let mut assoc_scan_chain: Option<Vec<String>> = None;
         // c:Src/subst.c:2916-2917 `isarr = (v->scanflags & SCANPM_ISVAR_AT) ? -1 :
         // v->scanflags ? 1 : 0` — a hash pattern scan leaves `v->scanflags` set
         // (c:Src/params.c:1731-1747), so its result is `aval`, an ARRAY, for the
@@ -10453,34 +10449,9 @@ pub fn paramsubst(
                         isarr = 1;
                         assoc_scan_isarr = true;
                     }
-                    // c:Src/params.c:1513-1531 — the mask the scan hands to a
-                    // CHAINED subscript (`${A[(K)pat][N]}`). C only augments the
-                    // mask when the caller passed neither `(k)` nor `(v)`:
-                    //   c:1513  WANTKEYS already set  → mask unchanged
-                    //   c:1515  WANTVALS already set  → mask unchanged
-                    //   c:1520  else `ind` (i/I)      → set WANTKEYS, clear WANTVALS
-                    //   c:1523  else `rev`            → set WANTVALS
-                    // `rev` is 1 for every letter that reaches this arm (r/R/k/K/
-                    // i/I all set it, c:1414-1439), so the last case is the
-                    // fallthrough. c:Src/subst.c:2897 then hands the mask to the
-                    // temp array the chained subscript indexes, which is why
-                    // `${A[(K)p][2]}` reads an element while `${A[(i)p][2]}` is an
-                    // inverse subscript that yields `2`.
-                    let (chain_wantkeys, chain_wantvals) = if (hkeys & SCANPM_WANTKEYS) != 0
-                        || (hvals & SCANPM_WANTVALS) != 0
-                    {
-                        (
-                            (hkeys & SCANPM_WANTKEYS) != 0,
-                            (hvals & SCANPM_WANTVALS) != 0,
-                        )
-                    } else if seq_ind {
-                        (true, false) // c:1520-1521
-                    } else {
-                        (false, true) // c:1523
-                    };
-                    assoc_scan_chain = Some((out.clone(), chain_wantkeys, chain_wantvals));
-                    // c:1746 — `down` after the c:1510 `num < 0` flip, i.e. `return_all`.
-                    assoc_scan_matchmany = return_all;
+                    // c:Src/subst.c:2890-2900 — a chained subscript indexes this
+                    // match list as a plain array (SCANPM_ARRONLY, workers/54093).
+                    assoc_scan_chain = Some(out.clone());
                     out.join(" ")
                 } else if let Some(key) = sub
                     .trim_start()
@@ -13012,15 +12983,12 @@ pub fn paramsubst(
             // c:Src/subst.c:2868-2982 — one pass per chained subscript. Each pass
             // wraps the previous result in a temp param (c:2890-2900) and ends
             // with `v = NULL` (c:2982). `carried` is the temp ARRAY the next pass
-            // indexes (None: the next pass indexes the characters of `cur`), and
-            // `carried_keep` is whether its scan mask survives a single index —
-            // c:Src/params.c:2174-2178 clears `v->scanflags` after a non-range
-            // subscript unless SCANPM_MATCHMANY is set together with
-            // MATCHKEY/MATCHVAL/KEYMATCH, so `${A[(K)p][2][1]}` stays an element
-            // while `${a[1,3][2][1]}` reaches a character.
+            // indexes (None: the next pass indexes the characters of `cur`). Its
+            // mask is SCANPM_ARRONLY (c:2899, workers/54093), which
+            // c:Src/params.c:2174-2178 clears after a single index, so
+            // `${A[(K)p][2][1]}` and `${a[1,3][2][1]}` both reach a character.
             let mut cur: String = raw_value;
-            let mut carried: Option<(Vec<String>, bool, bool)> = None;
-            let mut carried_keep = false;
+            let mut carried: Option<Vec<String>> = None;
             for (step, s2) in chained_subscripts.iter().enumerate() {
             cur = {
             // c:Src/lex.c — in an UNQUOTED subscript the lexer tokenizes `-`
@@ -13106,15 +13074,15 @@ pub fn paramsubst(
                 crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
             });
             // c:Src/subst.c:2890-2900 — the temp PM_ARRAY parameter the chained
-            // subscript indexes, plus the scan mask c:2897 carries into it. Every
+            // subscript indexes. Every
             // first subscript that left an ARRAY builds one: a plain-array RANGE
             // (`${a[1,3][2]}`) and an assoc pattern SCAN (`${A[(K)pat][2]}`) alike.
             // `None` means the first subscript produced a SCALAR, and then the
             // chained subscript indexes CHARACTERS instead (the `else` far below).
-            let (chain, keep_c2174): (Option<(Vec<String>, bool, bool)>, bool) = if step > 0 {
-                (carried.take(), carried_keep)
+            let chain: Option<Vec<String>> = if step > 0 {
+                carried.take()
             } else if let Some(scan) = assoc_scan_chain.take() {
-                (Some(scan), assoc_scan_matchmany)
+                Some(scan)
             } else if let (true, Some(full)) = (
                 subscript.as_deref().is_some_and(|s| is_splat_txt!(s)),
                 arrays_get(&var_name),
@@ -13123,7 +13091,7 @@ pub fn paramsubst(
                 // ARRAY over the whole parameter (`v->start = 0; v->end = -1`),
                 // and c:Src/subst.c:2890-2900 wraps that array for the chained
                 // subscript: `a=(a b c); ${a[@][2]}` is `b`, not `a b c`.
-                (Some((full, false, false)), false)
+                Some(full)
             } else if let (Some(s1_raw), Some(full)) = (first_slice, arrays_get(&var_name)) {
                 // s1 (the first subscript) can carry the Dash and Comma tokens too.
                 let s1 = s1_raw
@@ -13136,10 +13104,10 @@ pub fn paramsubst(
                 // so the chain silently sliced the WHOLE array and the second
                 // subscript searched all of it. Route each bound through the
                 // same classifier the single-subscript slice arm uses.
-                let bound_idx = |t: &str, dflt: i64| -> (i64, bool) {
+                let bound_idx = |t: &str, dflt: i64| -> i64 {
                     match crate::subscript_escape::subscript_bound_classify(t, &full) {
-                        crate::subscript_escape::SubscriptBound::Search(n, wv) => (n, wv),
-                        crate::subscript_escape::SubscriptBound::Math(m) => (parse_idx(&m, dflt), false),
+                        crate::subscript_escape::SubscriptBound::Search(n, _) => n,
+                        crate::subscript_escape::SubscriptBound::Math(m) => parse_idx(&m, dflt),
                     }
                 };
                 let (lo1_s, hi1_s) = match s1.split_once(',') {
@@ -13149,35 +13117,17 @@ pub fn paramsubst(
                     // there is nothing to split, so treat it as `lo,lo`.
                     None => (s1.as_str(), s1.as_str()),
                 };
-                let (lo1, lo_wantvals) = bound_idx(lo1_s, 1);
-                let (hi1, hi_wantvals) = bound_idx(hi1_s, full.len() as i64);
-                // c:Src/params.c:1523 `v->isarr |= SCANPM_WANTVALS` — raised by
-                // a `r`/`R`/`k`/`K` bound. c:Src/subst.c:2896 `v->isarr = isarr`
-                // hands the WHOLE scanflags mask (not just a 0/1 arrayness) to
-                // the temporary Value the chained subscript indexes, so the bit
-                // survives; c:Src/params.c:1515 `else if (v->isarr &
-                // SCANPM_WANTVALS) *inv = 0;` then makes a chained `(i)`/`(I)`
-                // take getindex's NON-inv arm (c:2118-2163) — start = r - 1,
-                // scanflags cleared because `com` is 0 — i.e. return the
-                // ELEMENT at the match, not the index. That is why
-                // `a=(A b C d); ${a[1,(r)d][(I)C]}` is `C` in zsh and
-                // `${a[1,4][(I)C]}` is `3`.
-                let wantvals_c1523 = lo_wantvals || hi_wantvals;
-                // A RANGE never carries SCANPM_WANTKEYS: only `ind` (an i/I
-                // subscript flag) sets it at c:1520, and a range bound that used
-                // i/I would have gone through the scan arm instead.
-                (
-                    Some((
-                        crate::ported::params::getarrvalue(&full, lo1, hi1),
-                        false,
-                        wantvals_c1523,
-                    )),
-                    false,
-                )
+                let lo1 = bound_idx(lo1_s, 1);
+                let hi1 = bound_idx(hi1_s, full.len() as i64);
+                // A `r`/`R`/`k`/`K` bound raises SCANPM_WANTVALS on the first
+                // Value (c:Src/params.c:1523), but the chained subscript no
+                // longer sees it (c:Src/subst.c:2899): `a=(A b C d);
+                // ${a[1,(r)d][(I)C]}` is the index `3`, as `${a[1,4][(I)C]}` is.
+                Some(crate::ported::params::getarrvalue(&full, lo1, hi1))
             } else {
-                (None, false)
+                None
             };
-            if let Some((subarr, wantkeys_c1513, wantvals_c1523)) = chain {
+            if let Some(subarr) = chain {
                 // Flag subscript on the sub-array: `${a[lo,hi][(i|I|r|R)pat]}`.
                 // (i/I) return the 1-based index of the first/last matching
                 // element WITHIN the sub-array; (r/R) return the matched value.
@@ -13185,9 +13135,7 @@ pub fn paramsubst(
                 // can't read "(I)pat" and silently falls back to index 1,
                 // returning the wrong element. That broke e.g. `_compdef`'s
                 // `(( ! ${words[2,-1][(I)[^-]*]} || ... ))` with a bad-math error.
-                // The bool is whether getindex took the inverse arm
-                // (c:Src/params.c:2114-2118), which zeroes `v->scanflags`.
-                let flag_res: Option<(String, bool)> = if s2.starts_with('(') {
+                let flag_res: Option<String> = if s2.starts_with('(') {
                     s2[1..].find(')').and_then(|cr| {
                         let flags = &s2[1..1 + cr];
                         let pat = &s2[1 + cr + 1..];
@@ -13232,23 +13180,15 @@ pub fn paramsubst(
                                 .find(|&k| is_match(&subarr[k]))
                                 .map_or(n + 1, |k| k + 1)
                         };
-                        // c:Src/params.c:1513-1531 — `ind` (the i/I flag) only
-                        // decides `*inv` when the CARRIED mask has neither
-                        // WANTKEYS nor WANTVALS; either bit overrides it.
-                        let ind = want_i || want_ii;
-                        let inv_c2114 = if wantkeys_c1513 {
-                            ind || !wantvals_c1523 // c:1513-1514
-                        } else if wantvals_c1523 {
-                            false // c:1515-1516
-                        } else {
-                            ind // c:1531
-                        };
-                        if inv_c2114 {
+                        // c:Src/params.c:1513-1531 — under the SCANPM_ARRONLY
+                        // mask (neither WANTKEYS nor WANTVALS) `*inv = ind`.
+                        if want_i || want_ii {
                             // c:Src/params.c:2114-2118 — the inverse arm parks the
                             // raw match position in `v->start` and raises
                             // VALFLAG_INV, and c:Src/params.c:2336-2339
-                            // getstrvalue prints it: `${A[(i)pat][(r)x]}` is the
-                            // index, not the element.
+                            // getstrvalue prints it: `${A[(K)pat][(i)x]}` is the
+                            // index, not the element; a forward miss is len + 1
+                            // and a backward miss 0.
                             //
                             // c:Src/params.c:2112-2113 `if (start > 0 &&
                             // (isset(KSHARRAYS) || (v->pm->node.flags &
@@ -13259,7 +13199,7 @@ pub fn paramsubst(
                             // no-match answer of 0. `ksh_search_index` is the
                             // single port of that line; the standalone
                             // `${a[(i)pat]}` sites already share it.
-                            Some((ksh_search_index(start_c2058 as i64).to_string(), true))
+                            Some(ksh_search_index(start_c2058 as i64).to_string())
                         } else {
                             // c:Src/params.c:2144-2145 `start -= startprevlen`
                             // (1 by default, c:1404-1405) then c:2540 getarrvalue
@@ -13267,40 +13207,25 @@ pub fn paramsubst(
                             // array (0 → start -1 via VALFLAG_EMPTY at
                             // c:2146-2171, len+1 → past the end) and yield the
                             // empty string.
-                            Some((
+                            Some(
                                 start_c2058
                                     .checked_sub(1)
                                     .and_then(|k| subarr.get(k))
                                     .cloned()
                                     .unwrap_or_default(),
-                                false,
-                            ))
+                            )
                         }
                     })
                 } else {
                     None
                 };
-                // c:Src/params.c:1513-1531 with `ind` 0 — a NUMERIC chained
-                // subscript never sets `ind`, so `*inv` follows the carried mask
-                // alone: WANTKEYS without WANTVALS is the only inverse case.
-                let inv_c2114 = wantkeys_c1513 && !wantvals_c1523;
-                if let Some((res, res_inv)) = flag_res {
+                if let Some(res) = flag_res {
                     if res.is_empty() {
                         split_parts = Some(Vec::new());
                         isarr = -1;
                     } else {
                         split_parts = Some(vec![res.clone()]);
                         isarr = 1;
-                    }
-                    // c:2174-2178 — a kept MATCHMANY mask leaves the one-element
-                    // array for the next pass; the inverse arm never keeps it.
-                    if keep_c2174 && !res_inv {
-                        carried = Some((
-                            split_parts.clone().unwrap_or_default(),
-                            wantkeys_c1513,
-                            wantvals_c1523,
-                        ));
-                        carried_keep = true;
                     }
                     res
                 } else if matches!(s2, "@" | "*") {
@@ -13310,85 +13235,38 @@ pub fn paramsubst(
                     isarr = if subarr.is_empty() { -1 } else { 1 };
                     let joined = subarr.join(" ");
                     // c:2048-2053 leaves `v->scanflags` untouched: still an array.
-                    carried = Some((subarr.clone(), wantkeys_c1513, wantvals_c1523));
-                    carried_keep = keep_c2174;
+                    carried = Some(subarr.clone());
                     split_parts = Some(subarr);
                     joined
                 } else if let Some((lo2_s, hi2_s)) = s2.split_once(',') {
-                    if inv_c2114 {
-                        // c:Src/params.c:2120-2124 — the inverse arm rejects a
-                        // comma outright: `${A[(i)pat][1,2]}` is "invalid
-                        // subscript", not a slice.
-                        zerr("invalid subscript");
-                        errflag_set_error();
-                        split_parts = Some(Vec::new());
-                        isarr = -1;
-                        String::new()
-                    } else {
-                        // Slice-of-slice → array result.
-                        let lo2 = parse_idx(lo2_s, 1);
-                        let hi2 = parse_idx(hi2_s, subarr.len() as i64);
-                        let out = crate::ported::params::getarrvalue(&subarr, lo2, hi2);
-                        isarr = if out.is_empty() { -1 } else { 1 };
-                        let joined = out.join(" ");
-                        // c:2174 `!com` is false for a range: the mask survives.
-                        carried = Some((out.clone(), wantkeys_c1513, wantvals_c1523));
-                        carried_keep = keep_c2174;
-                        split_parts = Some(out);
-                        joined
-                    }
+                    // Slice-of-slice → array result.
+                    let lo2 = parse_idx(lo2_s, 1);
+                    let hi2 = parse_idx(hi2_s, subarr.len() as i64);
+                    let out = crate::ported::params::getarrvalue(&subarr, lo2, hi2);
+                    isarr = if out.is_empty() { -1 } else { 1 };
+                    let joined = out.join(" ");
+                    // c:2174 `!com` is false for a range: the mask survives.
+                    carried = Some(out.clone());
+                    split_parts = Some(out);
+                    joined
                 } else {
                     // Single index → scalar element of the sub-array. Seed
                     // split_parts so the unquoted array-output path
                     // (subst.rs:8328, which re-joins arrays_get) emits this
                     // one element instead of re-deriving the first slice.
+                    // c:2174-2178 clears the SCANPM_ARRONLY mask after it, so
+                    // the next pass reads characters of the element.
                     let k = parse_idx(s2, 1);
-                    let nl = subarr.len() as i64;
-                    if inv_c2114 {
-                        // c:Src/params.c:2114-2118 — no dereference at all; the
-                        // index IS the value. c:Src/subst.c:2945-2948 folds a
-                        // negative one against the temp array's length first
-                        // (`v->start += tmplen + 1` under VALFLAG_INV), then
-                        // c:Src/params.c:2336-2339 prints it: on a 3-match scan
-                        // `${A[(I)*][-1]}` is `3` and `${A[(I)*][-9]}` is `-5`.
-                        //
-                        // c:Src/params.c:2112-2113 runs FIRST, inside getindex,
-                        // and only on a positive index — so under KSHARRAYS the
-                        // `r++` c:1619 just applied comes straight back off and
-                        // a written index is echoed unchanged:
-                        // `${A[(i)k1][2]}` is `2` either way. The fold at
-                        // c:Src/subst.c:2945 happens afterwards, which is why
-                        // the shift has to be taken before it and not after.
-                        let k = ksh_search_index(k); // c:2112
-                        let k = if k < 0 { k + nl + 1 } else { k };
-                        let res = k.to_string();
-                        split_parts = Some(vec![res.clone()]);
+                    let idx = if k < 0 { subarr.len() as i64 + k } else { k - 1 };
+                    if idx >= 0 && (idx as usize) < subarr.len() {
+                        let elem = subarr[idx as usize].clone();
+                        split_parts = Some(vec![elem.clone()]);
                         isarr = 1;
-                        res
-                    } else {
-                        let idx = if k < 0 { nl + k } else { k - 1 };
-                        let elem = if idx >= 0 && (idx as usize) < subarr.len() {
-                            let elem = subarr[idx as usize].clone();
-                            split_parts = Some(vec![elem.clone()]);
-                            isarr = 1;
-                            elem
-                        } else {
-                            split_parts = Some(Vec::new());
-                            isarr = -1;
-                            String::new()
-                        };
-                        // c:2174-2178 — a single index keeps the array shape only
-                        // under a MATCHMANY scan mask; otherwise the next pass
-                        // reads characters of `elem`.
-                        if keep_c2174 {
-                            carried = Some((
-                                split_parts.clone().unwrap_or_default(),
-                                wantkeys_c1513,
-                                wantvals_c1523,
-                            ));
-                            carried_keep = true;
-                        }
                         elem
+                    } else {
+                        split_parts = Some(Vec::new());
+                        isarr = -1;
+                        String::new()
                     }
                 }
             } else {
