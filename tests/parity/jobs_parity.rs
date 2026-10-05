@@ -369,8 +369,8 @@ fn subshell_disown_silently_eats_control_job() {
 
 #[test]
 fn subshell_bg_then_disown_no_current_job() {
-    // c:Src/jobs.c:1900 — spawnjob in a subshell skips the curjob
-    // promotion, so `(cmd & disown)` errors "no current job" rc 1.
+    // c:Src/jobs.c:1899-1901 — spawnjob promotes curjob in a subshell
+    // too (upstream 54584), so `(cmd & disown)` finds the job, rc 0.
     assert_parity("(sleep 0.2 & disown); echo rc=$?");
 }
 

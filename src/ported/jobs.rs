@@ -2231,21 +2231,20 @@ pub fn spawnjob() {
     }
     let thisjob = thisjob_idx as usize;
 
-    // c:1900 — `if (!subsh) {` — when this isn't a subshell.
-    // `subsh` global tracks subshell-fork depth; mirror via FORKLEVEL
-    // (0 = top-level shell) plus SUBSHELL_DEPTH, the depth counter the
-    // fusevm in-process `(...)` host bumps in subshell_begin. C's
-    // forked subshell sets `subsh` in entersubsh (Src/exec.c:1154);
-    // the in-process model never calls entersubsh, so without this
-    // a `(cmd &)` would promote the job to the parent's curjob —
-    // making `(sleep 1 & disown)` silently succeed where zsh errors
-    // "no current job". Bug #462.
+    // `subsh` (c:1905) is mirrored via FORKLEVEL (0 = top-level shell)
+    // plus SUBSHELL_DEPTH, the depth counter the fusevm in-process `(...)`
+    // host bumps in subshell_begin. C's forked subshell sets `subsh` in
+    // entersubsh (Src/exec.c:1154).
     let in_subsh = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed) > 0
         || crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::Relaxed) > 0;
-    if !in_subsh {
-        // c:1901-1903 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))
+    {
+        // c:1899-1903 — curjob/prevjob move in a subshell as well (upstream
+        // 54584 dropped the `if (!subsh)` around them), so `(sleep 1 &
+        // disown)` finds its job. The in-process `(...)` host restores the
+        // parent's curjob/prevjob from its snapshot when the body ends.
+        // c:1899-1901 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))
         //                  { curjob = thisjob; setprevjob(); }`
-        // c:1904-1905 — else if prevjob also not stopped, prevjob = thisjob.
+        // c:1902-1903 — else if prevjob also not stopped, prevjob = thisjob.
         let curjob = *CURJOB
             .get_or_init(|| Mutex::new(-1))
             .lock()
@@ -2289,7 +2288,9 @@ pub fn spawnjob() {
                 }
             }
         }
-        // c:1906-1913 — `if (jobbing && jobtab[thisjob].procs)`
+    }
+    if !in_subsh {
+        // c:1905-1912 — `if (!subsh && jobbing && jobtab[thisjob].procs)`
         //               print "[N] pid1 pid2 ..." to shout/stderr.
         if isset(MONITOR) {
             let tab = JOBTAB
@@ -2596,8 +2597,7 @@ pub fn isanum(s: &str) -> bool {
 /// spawnjob (c:1901-1903) and printjob's delete tail (c:1357-1360).
 /// The previous Rust body picked the highest in-use job
 /// unconditionally, which resurrected a current job inside subshells
-/// where zsh reports "no current job" (bug #462 probe
-/// `(sleep 0.2 & disown)` → rc=1 in zsh).
+/// where zsh reports "no current job" (bug #462).
 pub fn setcurjob() {
     // c:2023
     let inuse = |jobno: i32| -> bool {
