@@ -17368,6 +17368,11 @@ fn forked_child_subsh_levels() {
         crate::ported::params::locallevel.load(Ordering::Relaxed),
         Ordering::Relaxed,
     ); // c:1221
+    // c:Src/exec.c:1263-1264 (55061) — `ancestor_loops += loops; loops = 0;`
+    crate::ported::builtin::ANCESTOR_LOOPS.fetch_add(
+        crate::ported::builtin::LOOPS.swap(0, Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
     crate::ported::builtin::SUBSHELL_DEPTH.store(0, Ordering::Relaxed);
     // !!! RUST-ONLY: a forked child is no longer inside the in-process
     // `$( … )` it was forked from; its signal traps print to its own fd 1,
@@ -20155,8 +20160,17 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::builtin::LOOPS.load(SeqCst),
                     crate::ported::builtin::BREAKS.load(SeqCst),
                     crate::ported::builtin::CONTFLAG.load(SeqCst),
+                    crate::ported::builtin::ANCESTOR_LOOPS.load(SeqCst),
                 )
             };
+            // c:Src/exec.c:1263-1264 (55061) — entersubsh's `ancestor_loops
+            // += loops; loops = 0;`: a `break` in `( … )` has no loop of its
+            // own to leave.
+            {
+                use std::sync::atomic::Ordering::SeqCst;
+                crate::ported::builtin::ANCESTOR_LOOPS
+                    .fetch_add(crate::ported::builtin::LOOPS.swap(0, SeqCst), SeqCst);
+            }
             exec.subshell_snapshots.push(SubshellSnapshot {
                 // c:Src/utils.c:2111 `addlockfd` — the fds carrying
                 // `zsystem flock` locks. Recorded so subshell_end can close
@@ -20441,7 +20455,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 // SubshellSnapshot::loop_flags.
                 {
                     use std::sync::atomic::Ordering::SeqCst;
-                    let (loops, breaks, contflag) = snap.loop_flags;
+                    let (loops, breaks, contflag, ancestor_loops) = snap.loop_flags;
+                    crate::ported::builtin::ANCESTOR_LOOPS.store(ancestor_loops, SeqCst);
                     crate::ported::builtin::LOOPS.store(loops, SeqCst);
                     crate::ported::builtin::BREAKS.store(breaks, SeqCst);
                     crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);

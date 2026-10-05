@@ -541,7 +541,9 @@ pub struct SubshellSnapshot {
     /// loop runs on: `for i in 1 2; do (break); print after; done` prints
     /// `after` twice. zshrs runs subshells in-process, so the three
     /// counters have to be restored by hand at the boundary.
-    pub loop_flags: (i32, i32, i32),
+    /// Fourth slot: `ancestor_loops` (c:Src/loop.c:36), which entry moves
+    /// `loops` into (c:Src/exec.c:1263-1264, 55061).
+    pub loop_flags: (i32, i32, i32, i32),
     /// `cmdoutval` (c:Src/exec.c:225) at subshell entry. A process global
     /// the forked child owns a private copy of: `x=$(exit 3); (y=1); exec
     /// 3>f` still reports 3 in zsh although the subshell's assignment reset
