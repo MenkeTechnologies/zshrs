@@ -642,6 +642,8 @@ impl ZFormat {
         endchar: char,
         specs: &HashMap<char, String>,
         presence: bool,
+        quote: bool,
+        qspecs: &HashMap<char, usize>,
         skip: bool,
     ) -> Option<()> {
         while *idx < bytes.len() {
@@ -714,8 +716,10 @@ impl ZFormat {
             if !testit {
                 let at = bytes.get(*idx).copied();
                 if matches!(at, None | Some('%') | Some(')') | Some('-') | Some('.')) {
-                    if *idx - start == 1 && matches!(at, Some('%') | Some(')')) {
-                        start += 1; // c:854 (quote is never set on this path)
+                    // c:853 — `-q` keeps `%%` and `%)` intact for the later
+                    // prompt expansion the quoted output is destined for.
+                    if !quote && *idx - start == 1 && matches!(at, Some('%') | Some(')')) {
+                        start += 1; // c:854
                     }
                     *idx = start; // c:855
                 }
@@ -734,6 +738,11 @@ impl ZFormat {
                         } else {
                             1
                         };
+                        // c:875-876 — "don't count extra %s from quoting when
+                        // testing this"; applied even to the bare-presence
+                        // value 1, so a `-q` spec holding a `%` with no test
+                        // width tests as absent, as in C.
+                        let cmp_val = cmp_val - qspecs.get(&spec_char).copied().unwrap_or(0) as i64;
                         actval = if right {
                             testval < cmp_val
                         } else {
@@ -801,12 +810,16 @@ impl ZFormat {
                 // without meeting its delimiter makes the whole format
                 // malformed; the previous port kept going and returned the
                 // partial text, so `zformat -F R '%(..)'` succeeded.
-                ZFormat::substring(bytes, idx, out, endcharl, specs, presence, skip || actval)?;
+                ZFormat::substring(
+                    bytes, idx, out, endcharl, specs, presence, quote, qspecs, skip || actval,
+                )?;
                 if *idx >= bytes.len() {
                     return None; // c:884
                 }
                 *idx += 1; // c:882 `s+1` — past the delimiter
-                ZFormat::substring(bytes, idx, out, ')', specs, presence, skip || !actval)?;
+                ZFormat::substring(
+                    bytes, idx, out, ')', specs, presence, quote, qspecs, skip || !actval,
+                )?;
                 if *idx >= bytes.len() {
                     return None; // c:887
                 }
@@ -837,6 +850,30 @@ impl ZFormat {
                 *idx += 1;
                 if let Some(spec_val) = specs.get(&spec_char).filter(|_| *idx - 1 != start) {
                     let mut val_chars: Vec<char> = spec_val.chars().collect();
+                    // c:908-920 — "the assumption with quoted specs is that the
+                    // output will be subject to further % expansion -- adjust
+                    // width specifiers so that the result will be correct
+                    // *after* that expansion": each doubled `%` inside the
+                    // width widens it by one.
+                    let (mut min, mut max) = (min, max);
+                    if (min > Some(0) || max > Some(0))
+                        && qspecs.get(&spec_char).copied().unwrap_or(0) > 0
+                    {
+                        let mut i = 0usize;
+                        while i < val_chars.len() {
+                            if val_chars[i] == '%' {
+                                let i64i = i as i64;
+                                if let Some(m) = min.filter(|&m| m > 0 && i64i < m) {
+                                    min = Some(m + 1);
+                                }
+                                if let Some(m) = max.filter(|&m| m > 0 && i64i < m) {
+                                    max = Some(m + 1);
+                                }
+                                i += 1;
+                            }
+                            i += 1;
+                        }
+                    }
                     let len = val_chars.len() as i64;
                     let len = match max {
                         Some(m) if m >= 0 && len > m => {
@@ -1696,120 +1733,132 @@ pub fn bin_zstyle(
     0 // c:951
 }
 
-/// Port of `bin_zformat(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:955`.
-/// C signature: `static int bin_zformat(char *nam, char **args,
-/// UNUSED(Options ops), UNUSED(int func))`.
-/// BUILTIN spec at zutil.c:2138 takes just two-or-more args (no
-/// option flags); the first arg is `-f`/`-F`/`-a` (a single letter
-/// after the dash) selecting the substitution mode.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
+/// Port of `bin_zformat(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/zutil.c:984`.
+/// BUILTIN spec at c:2151 is `BUILTIN("zformat", 0, bin_zformat, 2, -1,
+/// 0, "afFqQ", NULL)`: execbuiltin parses `-a`/`-f`/`-F` (mode) and
+/// `-q`/`-Q` (auto-quote `%` in spec values) into `ops`, so `args[0]` is
+/// the target parameter and `args[1]` the format / separator.
 pub fn bin_zformat(
     nam: &str,
-    args: &[String], // c:955
+    args: &[String], // c:984
     ops: &options,
     _func: i32,
 ) -> i32 {
-    let mut presence = 0i32; // c:958
-                             // C bin_zformat reads `args[0]` as the `-X` option directly (the
-                             // BUILTIN spec doesn't pre-parse flags). zshrs's dispatch layer
-                             // pre-parses flags into `ops` and strips them from args, so
-                             // args[0] here is already the FIRST positional. Reconstruct the
-                             // opt char from the parsed ops to match C's args[0][1] read.
-    let opt: u8 = if OPT_ISSET(ops, b'f') {
-        b'f'
-    } else if OPT_ISSET(ops, b'F') {
-        b'F'
-    } else if OPT_ISSET(ops, b'a') {
-        b'a'
-    } else if !args.is_empty() {
-        // Fallback to the C-shape read for old callers that still
-        // pass `-X` as args[0].
-        let opt_arg = &args[0];
-        let bytes = opt_arg.as_bytes();
-        if bytes.is_empty() || bytes[0] != b'-' || bytes.len() != 2 {
-            zwarnnam(nam, &format!("invalid argument: {}", opt_arg)); // c:962
-            return 1;
-        }
-        bytes[1]
+    // c:986 — `qopt = OPT_ISSET(ops,'q') ? 'q' : OPT_ISSET(ops,'Q') ? 'Q' : 0`
+    let qopt: u8 = if OPT_ISSET(ops, b'q') {
+        b'q'
+    } else if OPT_ISSET(ops, b'Q') {
+        b'Q'
     } else {
-        zwarnnam(nam, &format!("invalid argument: {}", ""));
-        return 1;
+        0
     };
-    // If ops carried the flag, args is already the post-flag list.
-    // If we read opt from args[0] (fallback path), advance past it.
-    let args_used_opt_from_args0 =
-        !OPT_ISSET(ops, b'f') && !OPT_ISSET(ops, b'F') && !OPT_ISSET(ops, b'a');
-    let args: &[String] = if args_used_opt_from_args0 {
-        &args[1..] // c:965 args++
+    let mut presence = false; // c:987
+
+    if OPT_ISSET(ops, b'q') && OPT_ISSET(ops, b'Q') {
+        zwarnnam(nam, "only one of -qQ allowed"); // c:990
+        return 1;
+    }
+    let modes = OPT_ISSET(ops, b'a') as i32 + OPT_ISSET(ops, b'f') as i32 + OPT_ISSET(ops, b'F') as i32;
+    if modes < 1 {
+        zwarnnam(nam, "one of -afF expected"); // c:994
+        return 1;
+    }
+    if modes > 1 {
+        zwarnnam(nam, "only one of -afF allowed"); // c:998
+        return 1;
+    }
+    if OPT_ISSET(ops, b'a') && qopt != 0 {
+        zwarnnam(nam, "-qQ not allowed with -a"); // c:1002
+        return 1;
+    }
+
+    // c:1006 — `switch (OPT_ISSET(ops,'a') ? 'a' : OPT_ISSET(ops,'f') ? 'f' : 'F')`
+    let opt: u8 = if OPT_ISSET(ops, b'a') {
+        b'a'
+    } else if OPT_ISSET(ops, b'f') {
+        b'f'
     } else {
-        args
+        b'F'
     };
 
     match opt {
-        // c:967
         b'F' | b'f' => {
-            // c:968 / c:971
             if opt == b'F' {
-                presence = 1;
-            } // c:969 fall-through
-              // c:973-994 — -f / -F branch.
-            if args.len() < 2 {
-                // c:973 args[0]/args[1]
-                zwarnnam(nam, "missing arguments to -f/-F");
-                return 1;
+                presence = true; // c:1008 (fall-through into 'f')
             }
-            let mut specs: HashMap<char, String> = HashMap::new(); // c:1021
-            // VERSION SPLIT — these two seeded entries exist in every
-            // RELEASED zsh (`specs['%'] = "%"; specs[')'] = ")";`, lines
-            // 975-976 of the tree this port was written against, and line
-            // 943 of the zsh-5.9.1 tag), and the 5.9.2 binary this repo
-            // measures against still has them. Upstream a04c944804
-            // ("54580: zformat: better handle literal % in format string",
-            // 2026-05-18, in NO tag) DELETED them and added the unwind at
-            // c:851-856 instead. ~/forkedRepos/zsh is past that commit, so
-            // its `specs[256] = {0}` at c:1021 is zero-initialised.
-            // Keeping the seeded entries matches released zsh; see the
-            // ledger entry for the measured behavioural split.
-            specs.insert('%', "%".to_string()); // pre-a04c944804 c:975
-            specs.insert(')', ")".to_string()); // pre-a04c944804 c:976
+            // c:1012-1014 — `char *specs[256] = {0}; int qspecs[256] = {0};`
+            // zero-initialised: `%` and `)` are never specs (upstream
+            // a04c944804 dropped the old seeding; `%%`/`%)` are handled by
+            // the unwind in zformat_substring instead).
+            let mut specs: HashMap<char, String> = HashMap::new();
+            let mut qspecs: HashMap<char, usize> = HashMap::new();
             for ap in &args[2..] {
-                // c:980
-                let ab = ap.as_bytes();
-                if ab.is_empty() || ab[0] == b'-' || ab[0] == b'.'            // c:981
-                    || ab[0] == b'%' || ab[0] == b')'                        // c:1028
-                    || ab[0].is_ascii_digit()
-                    || ab.len() < 2 || ab[1] != b':'
-                {
-                    zwarnnam(nam, &format!("invalid argument: {}", ap)); // c:984
-                    return 1; // c:985
+                // c:1017 — "quote by default (spec like d:...) with -qQ"
+                let mut quote = qopt != 0;
+                let mut arg: &str = ap;
+                if arg.starts_with("%%") {
+                    // c:1021-1023 — `%%d:...` explicitly disables quoting
+                    quote = false;
+                    arg = &arg[2..];
+                } else if arg.starts_with('%') {
+                    // c:1025-1027 — `%d:...` explicitly enables quoting
+                    quote = true;
+                    arg = &arg[1..];
                 }
-                specs.insert(ab[0] as char, ap[2..].to_string()); // c:987
+                let ab = arg.as_bytes();
+                if ab.is_empty()
+                    || ab[0] == b'-'
+                    || ab[0] == b'.'
+                    || ab[0] == b'%'
+                    || ab[0] == b')'
+                    || ab[0].is_ascii_digit()
+                    || ab.len() < 2
+                    || ab[1] != b':'
+                {
+                    zwarnnam(nam, &format!("invalid spec: {}", ap)); // c:1033
+                    return 1;
+                }
+                let key = ab[0] as char;
+                let val = &arg[2..];
+                if quote {
+                    // c:1037-1058 — double every `%` and remember how many
+                    // were added, for the width/presence corrections.
+                    let pct = val.matches('%').count();
+                    specs.insert(key, val.replace('%', "%%"));
+                    qspecs.insert(key, pct);
+                } else {
+                    // c:1060 — qspecs[c] is left as an earlier `-q` spec of
+                    // the same letter set it.
+                    specs.insert(key, val.to_string());
+                }
             }
-            // c:989-992 — `if (!zformat_substring(args[1], specs, &out, …))
-            // { zwarnnam(nam, "malformed format string"); return 1; }`.
-            // VERSION SPLIT — the same upstream a04c944804 that dropped the
-            // seeded specs above appended `: %s` (args[1]) to this message;
-            // the released text is kept to match them.
+
+            // c:1064-1069 — `if (!zformat_substring(args[1], specs, &out,
+            // &oused, &olen, '\0', presence, qopt == 'q', qspecs, 0))`
             let chars: Vec<char> = args[1].chars().collect();
             let mut out = String::with_capacity(chars.len() + 16);
             let mut idx = 0;
-            if ZFormat::substring(&chars, &mut idx, &mut out, '\0', &specs, presence != 0, false)
-                .is_none()
+            if ZFormat::substring(
+                &chars,
+                &mut idx,
+                &mut out,
+                '\0',
+                &specs,
+                presence,
+                qopt == b'q',
+                &qspecs,
+                false,
+            )
+            .is_none()
             {
-                zwarnnam(nam, "malformed format string"); // c:990
-                return 1; // c:991
-            }
-            setsparam(&args[0], &out); // c:993 setsparam
-            return 0; // c:994
-        }
-        b'a' => {
-            // c:996
-            // c:998-1083 — -a column-format branch.
-            if args.len() < 2 {
-                // c:998
-                zwarnnam(nam, "missing arguments to -a");
+                zwarnnam(nam, &format!("malformed format string: {}", args[1])); // c:1071
                 return 1;
             }
+            setsparam(&args[0], &out); // c:1076
+            return 0; // c:1077
+        }
+        b'a' => {
+            // c:1080 — -a column-format branch.
             let mut pre = 0usize; // c:1000
             let mut suf = 0usize; // c:1000
                                   // First pass: compute max prefix/suffix widths.
@@ -1900,11 +1949,8 @@ pub fn bin_zformat(
         }
         _ => {}
     }
-    zwarnnam(
-        nam, // c:1085
-        &format!("invalid option: -{}", opt as char),
-    );
-    1 // c:1086
+    // c:1176 — `DPUTS(1, "BUG: unhandled option"); return 1;`
+    1
 }
 
 /// Port of `connectstates(LinkList out, LinkList in)` from `Src/Modules/zutil.c:1119`.
@@ -4220,7 +4266,7 @@ pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: 
     let mut out = String::with_capacity(bytes.len() + 16);
     let mut idx = 0;
     let _ = ZFormat::substring(
-        &bytes, &mut idx, &mut out, '\0', &effective, presence, false,
+        &bytes, &mut idx, &mut out, '\0', &effective, presence, false, &HashMap::new(), false,
     );
     out
 }

@@ -18975,19 +18975,12 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             "zformat",
             0,
             Some(crate::ported::modules::zutil::bin_zformat as HandlerFunc),
-            3,
+            2,
             -1,
             0,
-            // c:Src/Modules/zutil.c:2136 — `BUILTIN("zformat", 0,
-            // bin_zformat, 3, -1, 0, NULL, NULL)`. NULL optstring:
-            // bin_zformat reads args[0] as the `-X` selector itself, so
-            // execbuiltin must not pre-eat the flag. Previously
-            // optstring="Faf" pre-parsed -F/-a/-f into ops, leaving
-            // args with the flag-letter stripped — combined with
-            // minargs=0 this let `zformat -F` slip past the dispatcher
-            // and emit "missing arguments to -f/-F" from the inner
-            // check instead of zsh's canonical "not enough arguments".
-            None,
+            // c:Src/Modules/zutil.c:2151 — `BUILTIN("zformat", 0,
+            // bin_zformat, 2, -1, 0, "afFqQ", NULL)`.
+            Some("afFqQ"),
             None,
         ),
         BUILTIN(
