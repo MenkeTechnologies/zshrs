@@ -5228,9 +5228,9 @@ mod tests {
     }
 
     #[test]
-    fn opt_size_at_186() {
+    fn opt_size_at_185() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(OPT_SIZE, 186);
+        assert_eq!(OPT_SIZE, 185);
     }
 
     #[test]
