@@ -5769,6 +5769,13 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                         // single-byte path increments by 1.
                         end += 1;
                     }
+                }
+                // c:2763-2766 (54700) — `if (v->end < v->start) v->end =
+                // v->start; else if (v->end > oldlen) v->end = oldlen;`: a
+                // reversed range (`a[6,3]=xyz`) inserts at start and keeps
+                // the whole tail.
+                if end < start {
+                    end = start;
                 } else if end > zlen {
                     end = zlen;
                 }
