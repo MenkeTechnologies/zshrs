@@ -9659,11 +9659,11 @@ fn test_autoload_X_no_function_errors() {
 #[test]
 fn test_shift_array_count_too_many_errors() {
     // zsh: `a=(1); shift 5 a` -> `shift:1: shift count must be <=
-    // $#` exit 1. zshrs silently shifted as much as it could, leaving
+    // ${#a}` exit 1. zshrs silently shifted as much as it could, leaving
     // the array partially mutated AND not signaling failure.
     let (_, _, stderr) = run_zshrs("a=(1); shift 5 a");
     assert!(
-        stderr.contains("shift count must be <= $#"),
+        stderr.contains("shift count must be <= ${#a}"),
         "got: {stderr}"
     );
 }
@@ -10661,14 +10661,14 @@ fn test_disown_unknown_jobspec_errors() {
 
 #[test]
 fn test_disown_dash_flag_treats_as_jobspec() {
-    // zsh: `disown -l` and `disown -h` (bash-style flags zsh
-    // doesn't have) are treated as job specs and error `disown:1:
-    // job not found: -l` exit 127 (c:Src/jobs.c:2589-2590).
-    // /bin/zsh and /opt/homebrew/bin/zsh both confirm rc=127.
+    // zsh: since 54585 gave disown an optstring ("a"), `disown -l` (a
+    // bash-style flag zsh doesn't have) is rejected by the generic option
+    // parser: `disown:1: bad option: -l` exit 1. (5.9.2 treated it as a
+    // job spec: "job not found: -l", 127.)
     let (status, _, stderr) = run_zshrs("disown -l");
-    assert_eq!(status, 127);
+    assert_eq!(status, 1);
     assert!(
-        stderr.contains("zshrs:disown:1: job not found: -l"),
+        stderr.contains("zshrs:disown:1: bad option: -l"),
         "got: {stderr}"
     );
 }
@@ -11916,12 +11916,14 @@ fn test_exec_flag_only_no_command_errors() {
         stderr.contains("exec requires a command to execute"),
         "got: {stderr}"
     );
-    let (status, _, stderr) = run_zshrs("exec -l 2>&1; echo done");
-    assert_eq!(status, 0);
+    // The error is fatal to the script, so `echo done` never runs.
+    let (status, stdout, stderr) = run_zshrs("exec -l 2>&1; echo done");
+    assert_eq!(status, 1);
+    assert!(!stdout.contains("done"), "got: {stdout}");
     assert!(
         stderr.contains("exec requires a command to execute") ||
             // Combined script: the error went to merged stdout/stderr
-            stderr.is_empty(),
+            stdout.contains("exec requires a command to execute"),
         "got: {stderr}"
     );
     let (status, _, _) = run_zshrs("exec");
