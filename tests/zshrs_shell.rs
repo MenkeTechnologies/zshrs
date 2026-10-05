@@ -13933,16 +13933,16 @@ fn test_nameref_chain_and_self_reference_loop() {
 
 #[test]
 fn test_nameref_subscript_element() {
-    // K01 "nameref to hash element" / "assign array element by nameref":
-    // valid_refname (c:Src/params.c:6496-6509) accepts a subscripted
-    // referent and setscope (c:6385-6400) records its width, so the
-    // reference reads and writes the element.
+    // 54718 removed references to subscripted variables: valid_refname
+    // (c:Src/params.c:6489-6501) rejects a referent with a subscript.
     let (st, out, err) =
         run_zshrs_parity("typeset -A hash=(x MISS y HIT); typeset -n p='hash[y]'; print -r -- $p");
-    assert_eq!((st, out.trim()), (0, "HIT"), "stderr: {err:?}");
-    let (st, out, err) =
+    assert_eq!((st, out.as_str()), (1, ""));
+    assert!(err.contains("invalid variable name: hash[y]"), "got: {err:?}");
+    let (st, _, err) =
         run_zshrs_parity("typeset -a ary=(1 2); typeset -n p='ary[2]'; p=TWO; typeset -p ary");
-    assert_eq!((st, out.trim()), (0, "typeset -a ary=( 1 TWO )"), "stderr: {err:?}");
+    assert_eq!(st, 1);
+    assert!(err.contains("invalid variable name: ary[2]"), "got: {err:?}");
 }
 
 #[test]
@@ -13987,13 +13987,13 @@ fn test_nameref_up_reference_reads_bind_scope() {
 
 #[test]
 fn test_nameref_invalid_refname_rejected() {
-    // K01 "invalid nameref" — valid_refname (c:6466) rejects text after
-    // the subscript; c:Src/params.c:3260 reports it as
-    // `invalid name reference: %s`.
+    // K01 "invalid nameref" — valid_refname (c:6489-6501) rejects a
+    // subscripted referent; c:Src/params.c:3221 reports it as
+    // `invalid variable name: %s` (54278).
     let (st, _, err) = run_zshrs_parity("typeset -n p='not[2]good'");
     assert_ne!(st, 0);
     assert!(
-        err.contains("invalid name reference: not[2]good"),
+        err.contains("invalid variable name: not[2]good"),
         "got: {err:?}"
     );
 }
@@ -14056,16 +14056,15 @@ fn test_nameref_to_hidden_autoload_stub_fails_to_load() {
 
 #[test]
 fn test_nameref_element_of_hidden_special_hash() {
-    // K01 "up-reference part 9, autoloading with hidden special": setscope
-    // loads zsh/parameter for the referent (c:Src/params.c:6405-6406), the
-    // element is read through the hidden special's getfn, and
-    // getpmparameter appends the type getnode resolves to (Src/Modules/
-    // parameter.c:110-113) — the reference itself, for an element reference.
+    // 54718: an element reference to a hidden special is no longer a
+    // reference at all — valid_refname (c:Src/params.c:6489-6501) rejects
+    // `parameters[myself]`.
     let (st, out, err) = run_zshrs_parity(
         "() { zmodload -u zsh/parameter; typeset -n myself=parameters[myself]; \
          local -h parameters; print -r -- $myself }",
     );
-    assert_eq!((st, out.as_str()), (0, "nameref-local-nameref-local\n"), "stderr: {err:?}");
+    assert_eq!((st, out.as_str()), (1, ""));
+    assert!(err.contains("invalid variable name: parameters[myself]"), "got: {err:?}");
 }
 
 #[test]
@@ -14182,38 +14181,34 @@ fn test_typeset_p_reports_hide_flag() {
 
 #[test]
 fn test_nameref_element_reference_reads() {
-    // K01 "references to builtin specials": fetchvalue's reference slice
-    // (c:Src/params.c:2247-2270) reads the element through the special's
-    // own getter; `![1]` has no name before its `[`, so setscope
-    // (c:6385-6400) leaves width 0 and it names no parameter.
+    // 54718 removed element references: valid_refname (c:Src/params.c:
+    // 6489-6501) rejects `argv[1]` and `ary[$(echo 2)]` before anything is
+    // read or expanded.
     let (st, out, err) = run_zshrs_parity(
-        r#"f() { local -n x=$1; print -r "[$x]"; }; f 'argv[1]'; f 'ARGC[1]'; f '![1]'; f '?[1]'; typeset -A h=(x MISS y HIT); typeset -n p='h[y]'; print -r -- $p ${p}"#,
+        r#"f() { local -n x=$1; print -r "[$x]"; }; f 'argv[1]'"#,
     );
-    assert_eq!(st, 0, "stderr: {err:?}");
-    assert_eq!(out, "[argv[1]]\n[1]\n[]\n[]\nHIT HIT\n");
-    // K01 "attempt deferred command substitution in subscript": c:2265
-    // SCANPM_NOEXEC, so the subscript expands to "" and mathevalarg reports
-    // it once.
+    assert_eq!((st, out.as_str()), (1, ""));
+    assert!(err.contains("f: invalid variable name: argv[1]"), "got: {err:?}");
     let (st, _, err) = run_zshrs_parity(
         r#"typeset -n ptr='ary[$(echo 2)]'; typeset -a ary=(one two three); print $ptr"#,
     );
     assert_ne!(st, 0);
-    assert_eq!(err.matches("bad math expression: empty string").count(), 1, "got: {err:?}");
+    assert!(err.contains("invalid variable name: ary[$(echo 2)]"), "got: {err:?}");
 }
 
 #[test]
 fn test_nameref_referent_shape_follows_valid_refname() {
-    // c:Src/params.c:6466-6511 — only a `[` after the name is examined, so
-    // `foo@` and `.foo.` are accepted, a subscript must close, and nothing
-    // may follow the last `]`.
-    for good in ["foo@", "arr[1]", ".foo.", "1[1]", "![1]"] {
+    // c:Src/params.c:6489-6501 (54718) — the referent must be an
+    // identifier (`!*itype_end(val, INAMESPC, 0) && isident(val)`) or a
+    // lone `! ? $ -`; subscripts and trailing junk are rejected.
+    for good in ["foo", ".foo.bar", "1", "!", "_"] {
         let (st, _, err) = run_zshrs_parity(&format!("typeset -n r='{good}'"));
         assert_eq!(st, 0, "{good} rejected: {err:?}");
     }
-    for bad in ["arr[1]x", "arr[1", "@"] {
+    for bad in ["foo@", "arr[1]", ".foo.", "1[1]", "![1]", "arr[1]x", "arr[1", "@"] {
         let (st, _, err) = run_zshrs_parity(&format!("typeset -n r='{bad}'"));
         assert_ne!(st, 0, "{bad} accepted");
-        assert!(err.contains(&format!("invalid name reference: {bad}")), "got: {err:?}");
+        assert!(err.contains(&format!("invalid variable name: {bad}")), "got: {err:?}");
     }
     let (st, out, _) = run_zshrs_parity("foo.bar=x; typeset -n r=foo.bar; print -r -- $r");
     assert_eq!((st, out.trim()), (0, "x"));
