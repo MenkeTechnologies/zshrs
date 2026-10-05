@@ -9706,7 +9706,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         };
         let _ = forks_before;
-        if is_cursh {
+        // c:Src/exec.c:1699 — execpline hands `how` (Z_TIMED included) to
+        // the pipeline's last stage, and a last stage that runs in the
+        // current shell reaches the c:4443 shelltime call below just as a
+        // timed builtin does: `time /bin/echo a | read x` prints the shell
+        // and children lines before dumptime's line for the forked stage.
+        let last_stage_cursh = timed_pipeline.as_ref().is_some_and(|t| !t.last_forks);
+        if is_cursh || last_stage_cursh {
             // c:Src/exec.c:4443-4444 — `if ((is_cursh || do_exec) && (how &
             // Z_TIMED)) shelltime(&shti, &chti, &then, 1);`
             //
@@ -9746,6 +9752,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "{}",
                 crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, "children")
             );
+        }
+        if is_cursh {
+            // A current-shell body is no job: nothing more to report.
         } else if let Some(report) = timed_pipeline.filter(|t| !t.procs.is_empty()).and_then(|t| {
             // c:Src/jobs.c:1029-1037 — `for (pn = jn->procs; pn; pn = pn->next)
             // printtime(dtime_ts(…, &pn->bgtime, &pn->endtime), &pn->ti,
@@ -9757,7 +9766,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::jobs::dumptime(&jn)
         }) {
             eprintln!("{}", report);
-        } else {
+        } else if !last_stage_cursh {
             // c:Src/jobs.c:1037 — the forked job's own printtime line, with
             // `pn->text` (the command source) as %J.
             let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);
