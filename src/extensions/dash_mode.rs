@@ -177,8 +177,9 @@ const BASH_SHOPTS_INVERTED_ZSH_OPT: &[(&str, &str)] = &[("xpg_echo", "bsdecho")]
 ///
 /// zshrs let both be written, so `shopt -s login_shell` made `$BASHOPTS`
 /// claim a login shell in a non-login one. Their VALUES come from the zsh
-/// options that already carry the same state (`LOGIN_SHELL` / `RESTRICTED`,
-/// `src/ported/options.rs:108` and `:1527`), which is why `zshrs --bash -l`
+/// option that already carries the same state (`LOGIN_SHELL`,
+/// `src/ported/options.rs:108`; `restricted_shell` has none since zsh
+/// dropped RESTRICTED in 54181 and stays off), which is why `zshrs --bash -l`
 /// now reports `shopt -s login_shell` as bash does.
 const BASH_SHOPTS_READONLY: &[&str] = &["login_shell", "restricted_shell"];
 
@@ -514,7 +515,7 @@ pub const BASH_SHOPTS: &[(&str, Option<&str>, bool)] = &[
     ("progcomp", None, true),
     ("progcomp_alias", None, false),
     ("promptvars", Some("promptvars"), true),
-    ("restricted_shell", Some("restricted"), false),
+    ("restricted_shell", None, false),
     ("shift_verbose", None, false),
     ("sourcepath", None, true),
     ("varredir_close", None, false),

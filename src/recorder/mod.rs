@@ -572,7 +572,6 @@ const UNRECORDED_OPTIONS: &[&str] = &[
     "shinstdin",
     "singlecommand",
     "privileged",
-    "restricted",
     "monitor",
     "zle",
     "rcs",

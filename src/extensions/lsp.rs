@@ -3677,12 +3677,6 @@ pub fn lookup_doc(name: &str) -> String {
             return format!("**{}** — _special variable_\n\n{}", d.0, d.1);
         }
     }
-    if let Some(d) = OPTION_DOCS_FALLBACK
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(name))
-    {
-        return format!("**{}** — _zsh option_\n\n{}", d.0, d.1);
-    }
     // Full doc-comment body (extracted from source `///` blocks by
     // `scripts/gen_ext_builtin_docs.py`). Wins over the hand one-liner
     // in EXT_BUILTIN_DOCS — the user's complaint was that `zwhere`/
@@ -6297,21 +6291,6 @@ const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
     ("zuntag", "Remove tags from this shell's daemon session, or every tag with `--all`, and print the remaining list. Inverse of `ztag`."),
     ("zwhere", "Query the daemon's definitions catalog for which shell defined an alias, function, parameter, key binding, ... and where. `zwhere [KIND] [NAME] [--prefix P] [--shell-id N] [--limit N]`; `zwhere --kinds` lists the kinds."),
 ];
-
-/// Hand-curated docs for options that no upstream yodl `item(tt(...))`
-/// block documents. The yodl alias-table-driven cascade covers 202/203
-/// canonical `ZSH_OPTIONS_SET` entries; this fills the remainder so
-/// every option gets real hover text instead of a `see man zshoptions`
-/// stub.
-const OPTION_DOCS_FALLBACK: &[(&str, &str)] = &[(
-    "RESTRICTED",
-    "Restricted-shell mode (equivalent to invoking zsh as `rzsh` or with `-r`).\
-         \n\nDisables: `cd`, modifying `$PATH` / `$ENV` / `$SHELL`, `>` / `>>` redirects,\
-         creating functions with the `function` keyword, `exec`-ing commands containing `/`,\
-         `kill`-ing by pid, and several `setopt` toggles. Designed for sandboxed login shells\
-         where the user must stay inside a curated command set. Once set, cannot be cleared\
-         within the running shell.",
-)];
 
 // ── Document symbols ────────────────────────────────────────────────────
 

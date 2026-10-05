@@ -1080,10 +1080,6 @@ pub const PRINTF_HAS_LLD: i32 = 1;
 /// Define if realpath() accepts NULL as its second argument.
 pub const REALPATH_ACCEPTS_NULL: i32 = 1;
 
-/// Undefine this if you don't want to get a restricted shell when zsh is
-/// exec'd with basename that starts with r. By default this is defined.
-pub const RESTRICTED_R: i32 = 1;
-
 /// Define to 1 if RLIMIT_RSS and RLIMIT_AS both exist and are equal.
 pub const RLIMIT_RSS_IS_AS: i32 = 1;
 

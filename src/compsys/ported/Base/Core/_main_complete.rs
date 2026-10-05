@@ -96,8 +96,8 @@ fn comps_entry(key: &str) -> String {
 /// that returns with LOCALOPTIONS set). Without them a completer's bare
 /// `setopt globdots` stayed on in the user's shell after the TAB. And
 /// because `_main_complete` itself runs with localoptions on, its exit
-/// restores EVERY option it entered with, except PRIVILEGED and
-/// RESTRICTED (c:6021-6024), not only the ones `_comp_options` names;
+/// restores EVERY option it entered with, except PRIVILEGED
+/// (c:6159-6161), not only the ones `_comp_options` names;
 /// `entry_opts` is that snapshot (`funcsave->opts`, c:5847).
 struct CompSetupGuard {
     saved_opts: Vec<(i32, bool)>,
@@ -170,7 +170,7 @@ impl CompSetupGuard {
 impl Drop for CompSetupGuard {
     fn drop(&mut self) {
         use crate::ported::options::dosetopt;
-        use crate::ported::zsh_h::{PRIVILEGED, RESTRICTED};
+        use crate::ported::zsh_h::PRIVILEGED;
         // c:Src/exec.c:6009 — `endpatternscope(); /* before restoring old
         // LOCALPATTERNS */`: with LOCALPATTERNS still on, the entry disables
         // come back (c:Src/pattern.c:4285-4286). doshfunc's own
@@ -182,10 +182,10 @@ impl Drop for CompSetupGuard {
         }
         // c:Src/exec.c:6020-6024 — `_main_complete` returns with
         // localoptions set, so every option goes back to its entry value
-        // except PRIVILEGED and RESTRICTED (c:6022-6023).
+        // except PRIVILEGED (c:6159-6160).
         for (idx, &was) in self.entry_opts.iter().enumerate() {
             let idx = idx as i32;
-            if idx != PRIVILEGED && idx != RESTRICTED && isset(idx) != was {
+            if idx != PRIVILEGED && isset(idx) != was {
                 dosetopt(idx, was as i32, 0);
             }
         }

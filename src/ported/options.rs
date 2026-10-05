@@ -22,7 +22,7 @@ use crate::ported::zsh_h::{
     EMULATE_CSH, EMULATE_FULLY, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH, EXECOPT,
     GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, LOGINSHELL, MAILWARNING,
     MONITOR, MULTIBYTE, OPT_INVALID, OPT_SIZE, PAT_HEAPDUP, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
-    SUNKEYBOARDHACK, USEZLE, VIMODE, RESTRICTED, PM_SPECIAL, PM_RESTRICTED, PM_SCALAR, PM_UNSET,
+    SUNKEYBOARDHACK, USEZLE, VIMODE,
 };
 use crate::utils::inittyptab;
 
@@ -820,18 +820,6 @@ pub fn optlookupc(c: char) -> i32 {
     0
 }
 
-/// `static char *rparams[]` from zsh 5.9.x `Src/options.c:743` — list of
-/// restricted parameters which are not otherwise special.
-#[allow(non_upper_case_globals)]
-static rparams: [&str; 6] = [
-    "SHELL",                // c:744
-    "HISTFILE",             // c:744
-    "LD_LIBRARY_PATH",      // c:744
-    "LD_AOUT_LIBRARY_PATH", // c:744
-    "LD_PRELOAD",           // c:745
-    "LD_AOUT_PRELOAD",      // c:745
-];
-
 /// Direct port of `dosetopt(int optno, int value, int force, char *new_opts)` from Src/options.c:735. C body:
 /// negate value when optno < 0 (the "no" prefix marker); look up
 /// option name by optno; reject emulation-locked options; write
@@ -857,42 +845,6 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         // c:739
         idx = -idx;
         value = if value != 0 { 0 } else { 1 }; // c:741
-    }
-    // c:763-770 (zsh 5.9.x Src/options.c) — once RESTRICTED is on it can
-    // never be turned off again; turning it on marks the parameters in
-    // `rparams` restricted.
-    if idx == RESTRICTED {
-        if isset(RESTRICTED) {
-            // c:764
-            return if value != 0 { 0 } else { -1 }; // c:765
-        }
-        if value != 0 {
-            // c:766
-            for nam in rparams {
-                // c:769 — `restrictparam(*s)`, the static helper at
-                // 5.9.x options.c:731-740, inlined (it no longer exists
-                // in the upstream tree the port gate snapshots).
-                // c:733 — `Param pm = paramtab->getnode(paramtab, nam);`
-                let found = {
-                    let mut tab = crate::ported::params::paramtab().write().unwrap();
-                    match tab.get_mut(nam) {
-                        Some(pm) => {
-                            pm.node.flags |= (PM_SPECIAL | PM_RESTRICTED) as i32; // c:736
-                            true // c:737 return
-                        }
-                        None => false,
-                    }
-                };
-                if !found {
-                    // c:739 — createparam(nam, PM_SCALAR | PM_UNSET |
-                    // PM_SPECIAL | PM_RESTRICTED);
-                    crate::ported::params::createparam(
-                        nam,
-                        (PM_SCALAR | PM_UNSET | PM_SPECIAL | PM_RESTRICTED) as i32,
-                    );
-                }
-            }
-        }
     }
     // c:743-755 — locked-option enforcement (force=0 path).
     if force == 0 {
@@ -1448,15 +1400,13 @@ pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 /// `ZSH_OPTIONS_SET` static.
 /// Port of the static `optns[]` table's NAME COLUMN in its C source
-/// order (`Src/options.c:80-280`). Order is load-bearing: it is the
+/// order (`Src/options.c:80-281`). Order is load-bearing: it is the
 /// `createoptiontable()` (c:471) insertion sequence that determines
 /// the `optiontab` bucket-chain layout, and therefore the scan order
 /// of `${(k)options}` / `${(v)options}` (`scanpmoptions`,
 /// Src/Modules/parameter.c:1025-1026) and the KSHARRAYS bare-`$options`
 /// first element. The 13 trailing names are the `OPT_ALIAS` tail
-/// (c:269-280). `restricted` sits between `rematchpcre` and
-/// `rmstarsilent` per zsh 5.9 (removed from master in workers/54181);
-/// kept for 5.9 parity.
+/// (c:269-280). Upstream 54181 removed `restricted` from the table.
 pub static OPTNS: &[&str] = &[
     "aliases",
     "aliasfuncdef",
@@ -1615,7 +1565,6 @@ pub static OPTNS: &[&str] = &[
     "rcs",
     "recexact",
     "rematchpcre",
-    "restricted",
     "rmstarsilent",
     "rmstarwait",
     "sharehistory",
@@ -2167,7 +2116,6 @@ fn optns_flags(name: &str) -> u16 {
         "rcs" => OPT_ALL as u16,       // c:231
         "recexact" => 0,               // c:232
         "rematchpcre" => 0,            // c:233
-        "restricted" => OPT_SPECIAL as u16, // c:234
         "rmstarsilent" => OPT_BOURNE as u16, // c:243
         "rmstarwait" => 0,             // c:236
         "sharehistory" => OPT_KSH as u16, // c:245

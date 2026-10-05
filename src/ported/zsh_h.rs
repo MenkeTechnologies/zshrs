@@ -3957,64 +3957,62 @@ pub const RCS: i32 = 155;
 pub const RECEXACT: i32 = 156;
 /// `REMATCHPCRE` constant.
 pub const REMATCHPCRE: i32 = 157;
-/// `RESTRICTED` constant.
-pub const RESTRICTED: i32 = 158;
 /// `RMSTARSILENT` constant.
-pub const RMSTARSILENT: i32 = 159;
+pub const RMSTARSILENT: i32 = 158;
 /// `RMSTARWAIT` constant.
-pub const RMSTARWAIT: i32 = 160;
+pub const RMSTARWAIT: i32 = 159;
 /// `SHAREHISTORY` constant.
-pub const SHAREHISTORY: i32 = 161;
+pub const SHAREHISTORY: i32 = 160;
 /// `SHFILEEXPANSION` constant.
-pub const SHFILEEXPANSION: i32 = 162;
+pub const SHFILEEXPANSION: i32 = 161;
 /// `SHGLOB` constant.
-pub const SHGLOB: i32 = 163;
+pub const SHGLOB: i32 = 162;
 /// `SHINSTDIN` constant.
-pub const SHINSTDIN: i32 = 164;
+pub const SHINSTDIN: i32 = 163;
 /// `SHNULLCMD` constant.
-pub const SHNULLCMD: i32 = 165;
+pub const SHNULLCMD: i32 = 164;
 /// `SHOPTIONLETTERS` constant.
-pub const SHOPTIONLETTERS: i32 = 166;
+pub const SHOPTIONLETTERS: i32 = 165;
 /// `SHORTLOOPS` constant.
-pub const SHORTLOOPS: i32 = 167;
+pub const SHORTLOOPS: i32 = 166;
 /// `SHORTREPEAT` constant.
-pub const SHORTREPEAT: i32 = 168;
+pub const SHORTREPEAT: i32 = 167;
 /// `SHWORDSPLIT` constant.
-pub const SHWORDSPLIT: i32 = 169;
+pub const SHWORDSPLIT: i32 = 168;
 /// `SINGLECOMMAND` constant.
-pub const SINGLECOMMAND: i32 = 170;
+pub const SINGLECOMMAND: i32 = 169;
 /// `SINGLELINEZLE` constant.
-pub const SINGLELINEZLE: i32 = 171;
+pub const SINGLELINEZLE: i32 = 170;
 /// `SOURCETRACE` constant.
-pub const SOURCETRACE: i32 = 172;
+pub const SOURCETRACE: i32 = 171;
 /// `SUNKEYBOARDHACK` constant.
-pub const SUNKEYBOARDHACK: i32 = 173;
+pub const SUNKEYBOARDHACK: i32 = 172;
 /// `TRANSIENTRPROMPT` constant.
-pub const TRANSIENTRPROMPT: i32 = 174;
+pub const TRANSIENTRPROMPT: i32 = 173;
 /// `TRAPSASYNC` constant.
-pub const TRAPSASYNC: i32 = 175;
+pub const TRAPSASYNC: i32 = 174;
 /// `TYPESETSILENT` constant.
-pub const TYPESETSILENT: i32 = 176;
+pub const TYPESETSILENT: i32 = 175;
 /// `TYPESETTOUNSET` constant.
-pub const TYPESETTOUNSET: i32 = 177;
+pub const TYPESETTOUNSET: i32 = 176;
 /// `UNSET` constant.
-pub const UNSET: i32 = 178;
+pub const UNSET: i32 = 177;
 /// `VERBOSE` constant.
-pub const VERBOSE: i32 = 179;
+pub const VERBOSE: i32 = 178;
 /// `VIMODE` constant.
-pub const VIMODE: i32 = 180;
+pub const VIMODE: i32 = 179;
 /// `WARNCREATEGLOBAL` constant.
-pub const WARNCREATEGLOBAL: i32 = 181;
+pub const WARNCREATEGLOBAL: i32 = 180;
 /// `WARNNESTEDVAR` constant.
-pub const WARNNESTEDVAR: i32 = 182;
+pub const WARNNESTEDVAR: i32 = 181;
 /// `XTRACE` constant.
-pub const XTRACE: i32 = 183;
+pub const XTRACE: i32 = 182;
 /// `USEZLE` constant.
-pub const USEZLE: i32 = 184;
+pub const USEZLE: i32 = 183;
 /// `DVORAK` constant.
-pub const DVORAK: i32 = 185;
+pub const DVORAK: i32 = 184;
 /// `OPT_SIZE` constant.
-pub const OPT_SIZE: i32 = 186;
+pub const OPT_SIZE: i32 = 185;
 /// `OptIndex` type alias.
 pub type OptIndex = u8; // c:2556
 
@@ -4243,7 +4241,6 @@ pub fn opt_name(opt: i32) -> &'static str {
                 x if x == RCS => "rcs",
                 x if x == RECEXACT => "recexact",
                 x if x == REMATCHPCRE => "rematchpcre",
-                x if x == RESTRICTED => "restricted",
                 x if x == RMSTARSILENT => "rmstarsilent",
                 x if x == RMSTARWAIT => "rmstarwait",
                 x if x == SHAREHISTORY => "sharehistory",
