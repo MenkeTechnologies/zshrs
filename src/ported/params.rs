@@ -18643,17 +18643,18 @@ mod tests {
         assert!(valid_refname("_bar", 0));
         assert!(valid_refname("1", 0));
         assert!(valid_refname("!", 0));
-        // c:6496-6509 — complete subscripts may follow; nothing after them.
-        assert!(valid_refname("arr[1]", 0));
-        assert!(valid_refname("hash[y][1,2]", 0));
-        assert!(valid_refname("1[1]", 0));
-        assert!(valid_refname("![1]", 0));
+        // c:6497-6500 (54718) — no subscripted referents.
+        assert!(!valid_refname("arr[1]", 0));
+        assert!(!valid_refname("hash[y][1,2]", 0));
+        assert!(!valid_refname("1[1]", 0));
+        assert!(!valid_refname("![1]", 0));
+        assert!(valid_refname(".a.b", 0));
         assert!(!valid_refname("not[2]good", 0));
         assert!(!valid_refname("arr[1", 0));
         assert!(!valid_refname("12x", 0));
         assert!(!valid_refname("@", 0));
         assert!(!valid_refname("", 0));
-        // C semantics: empty leader without one of `! ? $ - _` is rejected.
+        // C semantics: a leader that is neither an identifier nor `! ? $ -`.
         assert!(!valid_refname(" ", 0));
         // PM_UPPER rejects digit-leader and argv/ARGC.
         assert!(!valid_refname("1", PM_UPPER as i32));
