@@ -3143,12 +3143,12 @@ pub fn bin_fg(
     }
     let _ = lng;
 
-    // c:2461-2465 — fg/bg need job control.
+    // c:2474-2478 — fg/bg need job control.
     let jobbing = isset(MONITOR);
     if (func == BIN_FG || func == BIN_BG) && !jobbing {
-        // c:2461
-        zwarnnam(name, "no job control in this shell."); // c:2463
-        return 1; // c:2464
+        // c:2474
+        zwarnnam(name, "no job control in this shell"); // c:2476 (54584)
+        return 1; // c:2477
     }
 
     // c:2467 — `queue_signals();`
