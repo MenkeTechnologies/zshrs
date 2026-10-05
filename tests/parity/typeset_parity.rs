@@ -404,6 +404,17 @@ mod m_pattern_listing {
         assert_parity(r#"TPSM_A=1; TPSM_B=2; typeset -m 'TPSM_*' | sort"#);
     }
 
+    /// c:Src/builtin.c:3083-3091 — the `-m` loop walks paramtab's
+    /// buckets, so matches print in hash-table order, not sorted (only
+    /// `+m` goes through scanmatchtable with `sorted = 1`). Unpiped.
+    #[test]
+    fn dash_m_lists_in_hash_table_order() {
+        assert_parity(
+            r#"typeset .term.fg=a .term.bg=b .term.id=c .term.version=d .term.mode=e
+typeset -p -m '.term.*'; typeset +m '.term.*'"#,
+        );
+    }
+
     /// `+m PAT` prints names only (NAMEONLY). For typed params an
     /// attribute prefix (`integer NAME`, etc.) is included.
     #[test]

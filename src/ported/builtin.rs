@@ -5470,7 +5470,12 @@ pub fn bin_typeset(
                     // c:3087 `addlinknode(pmlist, pm)` — the match list.
                     .map(|(_, pm)| pm.clone())
                     .collect();
-                matched.sort_by(|a, b| hnamcmp(&a.node.nam, &b.node.nam));
+                // c:3065-3066 — only `+m` goes through scanmatchtable with
+                // `sorted = 1`; the `-m` loop (c:3083-3091) walks the
+                // buckets, so its matches stay in hash-table order.
+                if is_plus_m {
+                    matched.sort_by(|a, b| hnamcmp(&a.node.nam, &b.node.nam));
+                }
                 matched
             };
             // The table guard is dropped here, before any print.
