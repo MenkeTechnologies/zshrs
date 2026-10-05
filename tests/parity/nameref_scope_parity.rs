@@ -99,9 +99,9 @@ fn unset_of_placeholder_reference_has_no_effect() {
     );
 }
 
-// c:Src/builtin.c:3940-3949 — unset through a reference to a parameter of an
-// enclosing scope is "just mark unset, do not remove from table":
-// stdunsetfn plus PM_DECLARED, so `typeset -p` still lists both.
+// c:Src/builtin.c:3915-3919 (54722) — unset through a reference runs
+// unsetparam_pm on the referent in whatever scope it lives, so the
+// enclosing-scope parameters are gone.
 #[test]
 fn unset_through_reference_to_enclosing_scope() {
     let (_, out, _) = zshrs(
@@ -111,11 +111,12 @@ fn unset_through_reference_to_enclosing_scope() {
                     typeset -p g l 2>&1 } }
          f",
     );
-    assert_eq!(out, "typeset -g g\ntypeset l\n");
+    assert_eq!(out, "(anon):typeset:2: no such variable: g\n");
 }
 
-// c:Src/builtin.c:3940-3949 — the hidden global and the hidden local are both
-// marked unset and declared in place; the visible locals are untouched.
+// c:Src/builtin.c:3915-3919 (54722) — the hidden global and the hidden local
+// are both unset (the global deferred via scoperefs, c:Src/params.c:3852-3865);
+// the visible locals are untouched.
 #[test]
 fn unset_through_reference_to_hidden_parameters() {
     let (_, out, _) = zshrs(
@@ -127,7 +128,7 @@ fn unset_through_reference_to_hidden_parameters() {
     );
     assert_eq!(
         out,
-        "typeset g=hide-g\ntypeset l=hide-l\ntypeset -g g\ntypeset l\n"
+        "typeset g=hide-g\ntypeset l=hide-l\nf:typeset:3: no such variable: g\n"
     );
 }
 
