@@ -5806,11 +5806,15 @@ pub fn bin_typeset(
         // (c:2577+ createparam → c:2604 assignsparam) has NO errflag
         // check — `typeset -i x=3#8` zerrs the math but bin_typeset
         // still returns 0 (zsh 5.9 exit 0, lastval untouched).
+        // 55020 adds `|| (pm->node.flags & PM_DECLARED)` (c:2058-2059): a
+        // declared-but-unset parameter (TYPESET_TO_UNSET) is reused too.
         let usepm_existing = paramtab()
             .read()
             .map(|t| {
-                t.get(arg_name)
-                    .is_some_and(|pm| (pm.node.flags as u32 & PM_UNSET) == 0)
+                t.get(arg_name).is_some_and(|pm| {
+                    (pm.node.flags as u32 & PM_UNSET) == 0
+                        || (pm.node.flags as u32 & PM_DECLARED) != 0
+                })
             })
             .unwrap_or(false);
         // c:Src/builtin.c:2078 — snapshot the EXISTING param's local
@@ -6294,7 +6298,11 @@ pub fn bin_typeset(
         let (pname_in_tab, usepm_existing) = if nameref_rewrite.is_some() {
             let tab = paramtab().read().unwrap();
             match tab.get(arg_name.split('[').next().unwrap_or(arg_name)) {
-                Some(pm) => (true, (pm.node.flags as u32 & PM_UNSET) == 0),
+                Some(pm) => (
+                    true,
+                    (pm.node.flags as u32 & PM_UNSET) == 0
+                        || (pm.node.flags as u32 & PM_DECLARED) != 0, // c:2058-2059
+                ),
                 None => (false, false),
             }
         } else {
@@ -8040,6 +8048,7 @@ pub fn bin_typeset(
                 .and_then(|t| t.get(arg.as_str()).map(|p| p.node.flags as u32))
                 .map(|f| {
                     (f & PM_UNSET) == 0
+                        || (f & PM_DECLARED) != 0 // c:2059 (55020)
                         || (isset(crate::ported::zsh_h::POSIXBUILTINS)
                             && (f & (PM_READONLY | PM_EXPORTED)) != 0)
                 })
@@ -8064,6 +8073,13 @@ pub fn bin_typeset(
             let posix_keep_unset = posix_strict
                 && (on as u32 & (PM_READONLY | PM_EXPORTED)) != 0
                 && (!usepm_entry || entry_flags.is_some_and(|f| (f & PM_UNSET) != 0)); // c:2198-2201
+            // c:2294-2296 (55020) — `off |= PM_UNSET` is skipped for a
+            // PM_DECLARED parameter, so changing only the flags of a
+            // TYPESET_TO_UNSET declaration (`typeset -a h; typeset -U h`)
+            // leaves it unset.
+            let keep_declared_unset = usepm_entry
+                && entry_flags
+                    .is_some_and(|f| (f & (PM_DECLARED | PM_UNSET)) == (PM_DECLARED | PM_UNSET));
             if posix_strict
                 && !posix_keep_unset
                 && usepm_entry
@@ -8136,7 +8152,10 @@ pub fn bin_typeset(
             // c:2058-2060 — under POSIXBUILTINS an UNSET readonly/exported
             // parameter is still reused (`usepm`), and the reuse arm never
             // assigns; creating it here would trip its own readonly bit.
-            let was_fresh = saved_val.is_none() && !already_typed && !(posix_keep_unset && usepm_entry);
+            let was_fresh = saved_val.is_none()
+                && !already_typed
+                && !(posix_keep_unset && usepm_entry)
+                && !keep_declared_unset; // c:2059 (55020): a declared pm is reused, not assigned
             if was_fresh {
                 // c:3072 — `if (!getsparam(pname)) setsparam(pname, "")`.
                 // flags=0: a typeset-driven create never trips
@@ -8427,7 +8446,13 @@ pub fn bin_typeset(
                 // (verified vs /opt/homebrew/bin/zsh: `arr=(a b a c b);
                 // typeset -U arr; echo "$arr[@]"` → "a b c"). Apply the
                 // same dedup here.
-                if (post_assign_to_set as u32 & PM_UNIQUE) != 0 {
+                // A declared-but-unset array (TYPESET_TO_UNSET) has nothing to
+                // dedup; C's uniqarray on its empty getfn result is a no-op,
+                // whereas setaparam here would re-create it as a set array.
+                let declared_unset = paramtab().read().ok().and_then(|t| {
+                    t.get(arg).map(|pm| (pm.node.flags as u32 & PM_UNSET) != 0)
+                }) == Some(true);
+                if (post_assign_to_set as u32 & PM_UNIQUE) != 0 && !declared_unset {
                     let existing = crate::ported::params::getaparam(arg);
                     if let Some(arr) = existing {
                         let mut seen: std::collections::HashSet<String> =
@@ -8510,7 +8535,7 @@ pub fn bin_typeset(
             // c:2201 `on |= PM_UNSET` / c:2283-2286 "Keep unset if using readonly
             // in POSIX mode" — the valueless declaration leaves the parameter
             // unset after its attributes are stamped.
-            if posix_keep_unset {
+            if posix_keep_unset || keep_declared_unset {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
                         pm.node.flags |= PM_UNSET as i32;
@@ -8553,21 +8578,16 @@ pub fn bin_typeset(
             // for already-environment-exported names on every load;
             // without this gate zshrs spammed `VAR=value` for each on
             // startup.
-            // c:Src/builtin.c:2062-2064 — the print at c:2246 sits INSIDE the
-            // `usepm` branch, and usepm is false for an UNSET parameter:
-            //   usepm = pm && (!(pm->node.flags & PM_UNSET) || OPT_ISSET(ops,'p') ||
+            // c:Src/builtin.c:2058-2061 — the print at c:2249-2256 sits INSIDE
+            // the `usepm` branch:
+            //   usepm = pm && (!(pm->node.flags & PM_UNSET) ||
+            //                  (pm->node.flags & PM_DECLARED) || OPT_ISSET(ops,'p') ||
             //                  (isset(POSIXBUILTINS) &&
             //                   (pm->node.flags & (PM_READONLY|PM_EXPORTED))));
-            // with the comment "Here we just avoid using it for the present
-            // tests if it's unset." So `typeset NAME` on a declared-but-UNSET
-            // param prints NOTHING and re-declares instead.
-            //
-            // TYPESET_TO_UNSET creates exactly that state: PM_DEFAULTED is
-            // `PM_DECLARED|PM_UNSET` (zsh.h:1934). zshrs suppressed the print
-            // only while the OPTION was still set, so
-            // `setopt typesettounset; typeset x; unsetopt typesettounset;
-            // typeset x` printed `x=''` where zsh is silent — the gate has to
-            // key off the parameter's UNSET flag, not the live option.
+            // Since 55020 a TYPESET_TO_UNSET declaration (PM_DEFAULTED =
+            // PM_DECLARED|PM_UNSET) is reused, so `typeset NAME` on it prints
+            // the bare name (printparamnode c:Src/params.c:6158-6167); an
+            // unset, undeclared parameter still prints nothing.
             // The `-p` term of usepm is already covered by the `!OPT_ISSET(p)`
             // conjunct below. Bug #1056.
             if user_on == 0
@@ -8585,6 +8605,19 @@ pub fn bin_typeset(
                     0
                 };
                 let _ = with_ns;
+                // c:Src/params.c:6158-6167 — printparamnode shows a
+                // PM_DEFAULTED (declared, still unset) parameter by NAME
+                // only; since 55020 it reaches this print (usepm is set for
+                // PM_DECLARED, c:2059).
+                let defaulted_unset = paramtab().read().ok().and_then(|t| {
+                    t.get(arg).map(|pm| {
+                        (pm.node.flags as u32 & PM_DEFAULTED) == PM_DEFAULTED
+                    })
+                }) == Some(true);
+                if defaulted_unset {
+                    println!("{}", arg);
+                    continue;
+                }
                 // The paramtab entry for assoc/array shapes set via
                 // direct assignment (`a=(1 2 3)` / `h[k]=v`) doesn't
                 // always have PM_ARRAY/PM_HASHED set on flags — the
