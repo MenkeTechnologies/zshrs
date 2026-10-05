@@ -132,18 +132,16 @@ fn unset_through_reference_to_hidden_parameters() {
     );
 }
 
-// c:Src/params.c:6362-6380 setloopvar — a for-loop reference variable takes
-// each word as its refname without valid_refname (only assignsparam,
-// c:3258-3266, validates), so the loop runs to the end.
+// c:Src/params.c:6394-6414 setloopvar — since 54718 each word of a for-loop
+// reference variable is checked with valid_refname (c:6404-6407), so the loop
+// stops at the first invalid referent.
 #[test]
-fn for_loop_reference_takes_every_word() {
+fn for_loop_reference_stops_at_invalid_referent() {
     let (st, out, err) =
         zshrs("typeset -n ref=var; for ref in valid1 inv@lid valid2; do typeset -p ref; done");
-    assert_eq!(
-        out,
-        "typeset -n ref=valid1\ntypeset -n ref=inv@lid\ntypeset -n ref=valid2\n"
-    );
-    assert_eq!((st, err.as_str()), (0, ""));
+    assert_eq!(out, "typeset -n ref=valid1\n");
+    assert_eq!(st, 1);
+    assert!(err.contains("invalid variable name: inv@lid"), "got: {err:?}");
 }
 
 // c:Src/params.c:3740-3746 resetparam — a type change through a reference
