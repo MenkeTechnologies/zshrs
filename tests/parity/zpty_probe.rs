@@ -56,9 +56,19 @@ pub fn zsh_available() -> bool {
 /// Boilerplate every driver starts with: open a pty on `$UNDER_TEST`
 /// (the shell running the driver, so the loop under test is its own),
 /// let it reach a prompt, and give it a prompt with no escapes in it.
+///
+/// The `$'\e[?62;c'` written right after the spawn is the answer a
+/// terminal gives to the device-attributes query ZLE sends when it
+/// loads (c:Src/Zle/zle_main.c:2272 `query_terminal()`, TQ_DA at
+/// c:Src/Zle/termquery.c:167). A pty nobody answers is not a terminal
+/// either shell sees in use: the reference zsh then waits out the 0.5s
+/// probe timeout and its editor does not take the keystrokes that
+/// follow as edits (measured: typed `print OUT${:-}M3`, ^A ^K ^Y, CR
+/// ran an empty line; with the reply it ran `print OUTM3`).
 pub const OPEN: &str = r#"
 zmodload zsh/zpty || { print "NOZPTY"; return 0 }
 zpty -b w $UNDER_TEST -f -i || { print "NOZPTY"; return 0 }
+zpty -w -n w $'\e[?62;c'
 sleep 3
 zpty -w w 'PS1="RDY> "'
 "#;
@@ -78,9 +88,13 @@ zpty -w w 'PS1="RDY> "'
 ///
 /// A driver using this appends `; pump` to every `zpty -w` line and
 /// finishes with `zpty -d w`; it needs no separate `DRAIN`.
+///
+/// It answers the startup device-attributes query the same way [`OPEN`]
+/// does.
 pub const OPEN_PUMPED: &str = r#"
 zmodload zsh/zpty || { print "NOZPTY"; return 0 }
 zpty -b w $UNDER_TEST -f -i || { print "NOZPTY"; return 0 }
+zpty -w -n w $'\e[?62;c'
 local all= o
 pump() {
   integer j=0
