@@ -5478,18 +5478,14 @@ mod tests {
         assert_eq!(expand("%B"), "\x01\x1b[1m\x02");
     }
 
-    /// `%b` with NO prior bold STILL emits the `me` reset cap —
-    /// zsh 5.9.1 oracle: `zsh -fc 'print -Prn -- "%bx"' | cat -v`
-    /// → `^[[0mx` (caps emit unconditionally; the release model has
-    /// no change-dedup). Master's applytextattributes rewrite added
-    /// an early-out (`if (!change) return;`, prompt.c:1652) that
-    /// suppresses this — the parity floor is the 5.9.x release
-    /// binary, so the unconditional emission is the pinned behavior.
-    /// (History: originally asserted `\e[0m`, was flipped to `""`
-    /// citing master, now restored per the oracle.)
+    /// `%b` with nothing to turn off emits nothing: applytextattributes
+    /// returns early when `txtcurrentattrs == txtpendingattrs`
+    /// (c:Src/prompt.c:1647-1653). Seen in the oracle's ZLE prompt,
+    /// which expands with every attribute known (zle_refresh.c:1138):
+    /// `PS1='<%b|%f|%k>'` draws `<||>`.
     #[test]
-    fn promptexpand_lowercase_b_alone_emits_reset_cap() {
-        assert_eq!(expand("%b"), "\x01\x1b[0m\x02");
+    fn promptexpand_lowercase_b_alone_emits_nothing() {
+        assert_eq!(expand("%b"), "");
     }
 
     /// `%U` → SGR underline on.
@@ -5520,16 +5516,13 @@ mod tests {
         assert_eq!(expand("%F{red}"), "\x01\x1b[31m\x02");
     }
 
-    /// `%f` emits the default-foreground SGR (`\e[39m`) wrapped in
-    /// readline ignore markers (`\x01...\x02`). Verified against
-    /// `/bin/zsh -fc 'print -nP "%f"'` and `echo ${(%):-"%f"}`, both of
-    /// which produce `\e[39m` even from a fresh state — C zsh's prompt
-    /// state seeds non-zero attrs at init, so the `applytextattributes`
-    /// diff path emits even when no prior `%F{…}` ran. Bug #372 — the
-    /// Rust port mirrors that observed behavior at prompt.rs:1199.
+    /// `%f` with no colour set emits nothing (c:Src/prompt.c:1647-1653,
+    /// see `promptexpand_lowercase_b_alone_emits_nothing`). `print -P`
+    /// and `${(%)…}` still print `\e[39m`: they mark every attribute
+    /// unknown first (c:Src/builtin.c:4711, c:Src/subst.c:4029).
     #[test]
     fn promptexpand_lowercase_f_alone_no_reset_emitted() {
-        assert_eq!(expand("%f"), "\x01\x1b[39m\x02");
+        assert_eq!(expand("%f"), "");
     }
 
     /// `%K{blue}` → SGR bg blue (color index 4 + 40).
@@ -5538,12 +5531,10 @@ mod tests {
         assert_eq!(expand("%K{blue}"), "\x01\x1b[44m\x02");
     }
 
-    /// `%k` emits the default-background SGR (`\e[49m`) wrapped in
-    /// readline ignore markers — same logic as `%f` above. Verified
-    /// against `/bin/zsh -fc 'print -nP "%k"'` producing `\e[49m`.
+    /// `%k` with no colour set emits nothing — same as `%f` above.
     #[test]
     fn promptexpand_lowercase_k_alone_no_reset_emitted() {
-        assert_eq!(expand("%k"), "\x01\x1b[49m\x02");
+        assert_eq!(expand("%k"), "");
     }
 
     // ── Literal opaque %{...%} (passthrough) ───────────────────────
