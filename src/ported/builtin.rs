@@ -5724,8 +5724,9 @@ pub fn bin_typeset(
                         | PM_FFLOAT
                         | PM_HASHED
                         | PM_ARRAY
+                        | PM_NAMEREF
                         | PM_TIED
-                        | PM_AUTOLOAD); // c:2118-2120
+                        | PM_AUTOLOAD); // c:2115-2117 (PM_NAMEREF since 53776)
                 let tc = chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT); // c:2122
                                                                              // c:2078-2091 — a `local` at a DEEPER scope than the existing
                                                                              // param does not CHANGE that param's type; it SHADOWS it with a
@@ -5777,6 +5778,18 @@ pub fn bin_typeset(
                     // SECONDS: setsecondstype already installed the new type;
                     // c:2169's `tc = 0` skips the normal conversion below.
                     continue;
+                }
+                if tc && (pmf & PM_AUTOLOAD) != 0 && !creating_local_shadow {
+                    // c:2185-2190 — a parameter whose module is not loaded yet
+                    // may turn out special, so its type cannot change either.
+                    if !OPT_ISSET(&ops, b'p') {
+                        zerrnam(
+                            name,
+                            &format!("{arg_name}: can't change type of autoloaded parameter"),
+                        );
+                    }
+                    returnval = 1;
+                    continue; // c:2189 return NULL
                 }
             }
         }
