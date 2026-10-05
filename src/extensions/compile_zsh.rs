@@ -15086,19 +15086,15 @@ fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand, job: bool) -> String {
             let anon = fd.names.len() == 1 && fd.names[0].starts_with("_zshrs_anon_");
             let names = if anon { String::new() } else { fd.names.join(" ") };
             if job {
-                // c:586-590 — `if (tjob) { … taddstr("() { ... }"); }`.
-                //
-                // NOTE the dev tree (5.9.999.3-test) also emits a leading
-                // `"function "` and a bare `"{ ... }"` when `nargs > 1`
-                // (c:581-588, upstream b26b6b3fe0 "Tweaks to MULTI_FUNC_DEF",
-                // post-5.9). The 5.9.2 oracle this port is measured against
-                // predates that and prints `jt_a jt_b () { ... }`, so the
-                // release spelling is what is emitted here.
-                let mut out = names;
+                // c:581-590 — `if (nargs > 1) taddstr("function ");`, the
+                // names, a space when there are any, then under `tjob`
+                // `"{ ... }"` for several names and `"() { ... }"` otherwise.
+                let multi = !anon && fd.names.len() > 1;
+                let mut out = if multi { format!("function {}", names) } else { names }; // c:581-583
                 if !out.is_empty() {
                     out.push(' '); // c:584-585
                 }
-                out.push_str("() { ... }"); // c:590
+                out.push_str(if multi { "{ ... }" } else { "() { ... }" }); // c:587-590
                 out
             } else {
                 // c:601-620 — the permanent-text spelling: `name () {` then
