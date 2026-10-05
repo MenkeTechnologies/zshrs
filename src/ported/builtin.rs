@@ -6049,13 +6049,24 @@ pub fn bin_typeset(
 
                 let mut carried_value: Option<String> = value.map(String::from);
                 let mut reuse_existing = false;
+                // c:2359-2363 — converting a readonly NON-reference to a
+                // reference is a type change (`tc`, PM_NAMEREF is in chflags):
+                // the readonly bit is carried over (`on |= ~off & PM_READONLY &
+                // pm->node.flags`) and the old parameter recreated.
+                let mut carry_readonly = false;
 
                 let existing_level: Option<i32> = existing.as_ref().map(|(_, l, _)| *l);
                 if let Some((eflags, elevel, estr)) = existing {
+                    if (eflags & PM_READONLY) != 0 && (eflags & PM_NAMEREF) == 0 {
+                        carry_readonly = (off & PM_READONLY) == 0; // c:2361
+                    }
                     // c:2249-2256 — read-only guard (typeset_single). Fires when
                     // the existing pm is readonly, +r wasn't given, and either the
                     // nameref-ness changes or a nameref gets a new value.
+                    // Only a reference reaches it: for a non-reference the -n is a
+                    // type change, which clears usepm (c:2119-2126) first.
                     if (eflags & PM_READONLY) != 0
+                        && (eflags & PM_NAMEREF) != 0
                         && (off & PM_READONLY) == 0
                         && !OPT_ISSET(&ops, b'p')
                     {
@@ -6084,7 +6095,7 @@ pub fn bin_typeset(
                         // KEPT and handed to typeset_single (c:3148-3149), where
                         // `typeset +r -n ref[=val]` clears the flag in place and
                         // any =val ASSIGNS THROUGH the surviving refname.
-                        if (eflags & PM_READONLY) != 0 {
+                        if (eflags & (PM_READONLY | PM_NAMEREF)) == (PM_READONLY | PM_NAMEREF) {
                             reuse_existing = true;
                         } else if let Some(mut old) =
                             paramtab().write().ok().and_then(|mut t| t.remove(arg_name))
@@ -6096,7 +6107,7 @@ pub fn bin_typeset(
                                 }
                             }
                         }
-                    } else if (eflags & PM_READONLY) != 0 {
+                    } else if (eflags & (PM_READONLY | PM_NAMEREF)) == (PM_READONLY | PM_NAMEREF) {
                         // c:3142-3149 — only a READONLY ref survives as the pm
                         // handed to typeset_single (so `typeset -rn ref=var` can
                         // error properly); everything else gets `hn = NULL` and
@@ -6230,7 +6241,7 @@ pub fn bin_typeset(
 
                 // c:2618 — `pm->node.flags |= (on & PM_READONLY);` AFTER the
                 // assignment so `typeset -rn ref=var` can set its initial value.
-                if (on & PM_READONLY) != 0 {
+                if (on & PM_READONLY) != 0 || carry_readonly {
                     if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(arg_name) {
                             pm.node.flags |= PM_READONLY as i32;
