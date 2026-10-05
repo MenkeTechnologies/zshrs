@@ -4216,7 +4216,7 @@ pub fn bin_kill(
                     // (c:3067 `return returnval < 126 ? returnval : 1;`), so
                     // `kill a b c` exits 3. Assigning 1 collapsed every
                     // multi-operand failure to 1.
-                    zwarnnam(nam, &format!("illegal pid: {}", arg));
+                    zwarnnam(nam, &format!("invalid pid: {}", arg));
                     returnval += 1; // c:3040 returnval++
                 }
             }
@@ -4300,7 +4300,7 @@ pub fn bin_kill(
                     // (c:3067), so `kill a b c` exits 3 and `kill -INT a b c`
                     // exits 3. Assigning 1 collapsed every multi-operand
                     // failure to a single 1.
-                    zwarnnam(nam, &format!("illegal pid: {}", arg));
+                    zwarnnam(nam, &format!("invalid pid: {}", arg));
                     returnval += 1; // c:3040 returnval++
                 }
             }

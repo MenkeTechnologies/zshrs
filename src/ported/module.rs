@@ -5356,7 +5356,7 @@ pub fn bin_zmodload(
         if ops_bcpf || ops_au || OPT_ISSET(ops, b'd')                        // c:2460
            || (OPT_ISSET(ops, b'R') && OPT_ISSET(ops, b'e'))
         {
-            zwarnnam(nam, "illegal flags combined with -A or -R"); // c:2462
+            zwarnnam(nam, "invalid flags combined with -A or -R"); // c:2462
             return 1; // c:2463
         }
         if !OPT_ISSET(ops, b'e') {
@@ -6876,7 +6876,7 @@ pub fn ensurefeature(
 /// AUTOALL note: the ledger doesn't carry BINF_AUTOALL, so the
 /// ensurefeature arg is always `Some(name)` (the non-AUTOALL form).
 /// The AUTOALL path is unreachable for builtins via `zmodload -a MOD`
-/// (both shells error "`/' is illegal in a builtin"); revisit if the
+/// (both shells error "`/' is invalid in a builtin"); revisit if the
 /// ledger grows flags.
 pub fn resolvebuiltin(name: &str) -> Option<i32> {
     // c:2700
@@ -7052,7 +7052,7 @@ pub fn autofeatures(
         if fnam.contains('/') {
             crate::ported::utils::zwarnnam(
                 cmdnam,
-                &format!("{}: `/' is illegal in a {}", fnam, typnam),
+                &format!("{}: `/' is invalid in a {}", fnam, typnam),
             );
             ret = 1;
             continue;

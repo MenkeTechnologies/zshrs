@@ -4614,7 +4614,7 @@ pub fn bin_zcompile(
             && (OPT_ISSET(ops, b'U') || OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'z')))
         || (!(OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a')) && OPT_ISSET(ops, b'm'))
     {
-        zwarnnam(nam, "illegal combination of options"); // c:3192
+        zwarnnam(nam, "invalid combination of options"); // c:3192
         return 1;
     }
 

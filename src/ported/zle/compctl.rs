@@ -510,7 +510,7 @@ pub(crate) fn get_compctl(
                 'C' => {
                     // c:777
                     if cl != 0 {
-                        eprintln!("{}: illegal option -{}", name, c);
+                        eprintln!("{}: bad option: -{}", name, c);
                         return 1;
                     }
                     if first && !hx {
@@ -523,7 +523,7 @@ pub(crate) fn get_compctl(
                 'D' => {
                     // c:789
                     if cl != 0 {
-                        eprintln!("{}: illegal option -{}", name, c);
+                        eprintln!("{}: bad option: -{}", name, c);
                         return 1;
                     }
                     if first && !hx {
@@ -537,7 +537,7 @@ pub(crate) fn get_compctl(
                 'T' => {
                     // c:802
                     if cl != 0 {
-                        eprintln!("{}: illegal option -{}", name, c);
+                        eprintln!("{}: bad option: -{}", name, c);
                         return 1;
                     }
                     if first && !hx {
@@ -550,11 +550,11 @@ pub(crate) fn get_compctl(
                 'L' => {
                     // c:814
                     if cl != 0 {
-                        eprintln!("{}: illegal option -{}", name, c);
+                        eprintln!("{}: bad option: -{}", name, c);
                         return 1;
                     }
                     if !first || hx {
-                        eprintln!("{}: illegal use of -L flag", name);
+                        eprintln!("{}: invalid use of -L flag", name);
                         return 1;
                     }
                     cclist_local |= COMP_LIST;

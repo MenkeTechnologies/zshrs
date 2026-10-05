@@ -1001,7 +1001,7 @@ pub fn bin_zpty(
         // Prior Rust dispatch fell through to the first matching arm
         // for any combo, so `zpty -r -w foo` would silently take the
         // -w path and `zpty -d -e foo` would just delete. C rejects
-        // both with "illegal option combination".
+        // both with "invalid option combination".
         let r = OPT_ISSET(ops, b'r');
         let w = OPT_ISSET(ops, b'w');
         let d = OPT_ISSET(ops, b'd');
@@ -1018,7 +1018,7 @@ pub fn bin_zpty(
             || (d && (b || e || l || t || m))
             || (l && (b || e || m))
         {
-            return (1, "zpty: illegal option combination\n".to_string()); // c:789-790
+            return (1, "zpty: invalid option combination\n".to_string()); // c:789-790
         }
 
         if OPT_ISSET(ops, b'd') {

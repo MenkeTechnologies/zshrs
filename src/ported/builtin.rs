@@ -9158,7 +9158,7 @@ pub fn bin_functions(
         || (OPT_ISSET(ops, b'c')
             && (OPT_ISSET(ops, b'x') || OPT_ISSET(ops, b'X') || OPT_ISSET(ops, b'm')))
     {
-        zwarnnam(name, "invalid option(s)"); // c:3399
+        zwarnnam(name, "bad option(s)"); // c:3399
         return 1; // c:3400
     }
 
@@ -9302,7 +9302,7 @@ pub fn bin_functions(
             || OPT_ISSET(ops, b'U')
             || OPT_ISSET(ops, b'w')
         {
-            zwarnnam(name, "invalid option(s)"); // c:3475
+            zwarnnam(name, "bad option(s)"); // c:3475
             return 1; // c:3476
         }
         if argv.is_empty() {
@@ -12198,7 +12198,7 @@ pub fn bin_alias(
         // c:4464
         if type_opts > 1 {
             // c:4465
-            zwarnnam(name, "illegal combination of options"); // c:4466
+            zwarnnam(name, "invalid combination of options"); // c:4466
             return 1; // c:4467
         }
         if OPT_ISSET(ops, b'g') {

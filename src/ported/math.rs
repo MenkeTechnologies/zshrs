@@ -847,7 +847,7 @@ pub(crate) fn mathevall(prec_tp: prec_type) -> Result<mnumber, String> {
         } else {
             // c:1498-1499 — `if (*junk) zerr("bad math expression:
             // illegal character: %c", *junk);`
-            return Err(format!("bad math expression: illegal character: {}", c));
+            return Err(format!("bad math expression: invalid character: {}", c));
         }
     }
 
@@ -2838,7 +2838,7 @@ pub(crate) fn zzlex() -> i32 {
                 // `$(( .var.x = ++.var.d - -.var.f ))` (K02parameter). The
                 // previous walk was `is_ident_start` + `is_ident`, which is
                 // plain IIDENT and left the leading `.` to be reported as
-                // "bad math expression: illegal character: .".
+                // "bad math expression: invalid character: .".
                 let id_start = m_pos() - c.len_utf8();
                 let namespc_end = crate::ported::utils::itype_end(
                     &m_input_slice_from(id_start),
@@ -3171,7 +3171,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         }
         if let Some(c) = rest.chars().next() {
             // c:1094-1095
-            crate::ported::utils::zerr(&format!("bad math expression: illegal character: {}", c));
+            crate::ported::utils::zerr(&format!("bad math expression: invalid character: {}", c));
             return None;
         }
         Some(out)
@@ -4323,7 +4323,7 @@ pub(crate) fn bop(tk: i32) {
 /// x = mathevall(s, MPREC_TOP, &junk);
 /// mtok = xmtok;
 /// if (*junk)
-///     zerr("bad math expression: illegal character: %c", *junk);
+///     zerr("bad math expression: invalid character: %c", *junk);
 /// return x;
 /// ```
 ///

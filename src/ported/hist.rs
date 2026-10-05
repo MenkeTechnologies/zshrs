@@ -1156,7 +1156,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 _ => {
                     // c:947 default
                     herrflush(); // c:948
-                    zerr(&format!("illegal modifier: {}", c as u8 as char)); // c:949
+                    zerr(&format!("invalid modifier: {}", c as u8 as char)); // c:949
                     return -1; // c:950
                 }
             }

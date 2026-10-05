@@ -1236,8 +1236,8 @@ pub fn bin_zstyle(
                 ops_local.ind[oc as usize] = 1;
                 positional_start = 1;
             } else {
-                // c:597-599 default arm — "invalid option: -X".
-                crate::ported::utils::zwarnnam(nam, &format!("invalid option: {}", first));
+                // c:597-599 default arm — "bad option: -X".
+                crate::ported::utils::zwarnnam(nam, &format!("bad option: {}", first));
                 return 1;
             }
         } else if fb == b"-" || fb == b"--" {
