@@ -10472,10 +10472,10 @@ pub fn bin_unset(
                 }
             }
             None => {
-                // c:3939-3951 — nameref handling. Without -n the ref
-                // resolves and the TARGET is unset; refs bound to an
-                // outer scope are just marked unset (kept in table,
-                // PM_DECLARED). With -n the ref itself is removed.
+                // c:3915-3919 (54722) — nameref handling. Without -n the
+                // ref resolves and the TARGET is unset with unsetparam_pm,
+                // whatever scope it lives in. With -n the ref itself is
+                // removed.
                 let mut nm: &str = nm;
                 let mut resolved_target: Option<String> = None; // non-ref target to unset
                 let mut ref_removal: Option<String> = None; // ref entry to remove
@@ -10511,32 +10511,6 @@ pub fn bin_unset(
                                     ref_removal = Some(nm.to_string());
                                 } else if pm.is_none() {
                                     // dangling — nothing to unset (c:3942).
-                                    continue;
-                                } else if level < locallevel.load(Relaxed)
-                                    && pm.as_ref().is_some_and(|p| (p.node.flags as u32 & PM_READONLY) == 0)
-                                {
-                                    // c:3944-3949 — a referent from an
-                                    // enclosing scope is "just marked unset, do
-                                    // not remove from table": `stdunsetfn(pm,
-                                    // 0); pm->node.flags |= PM_DECLARED;`.
-                                    // The chain is owned by the visible node;
-                                    // take it out so stdunsetfn's own paramtab
-                                    // writes (LC_ALL, ...) do not deadlock.
-                                    let top = paramtab().write().ok().and_then(|mut tab| tab.remove(&t));
-                                    if let Some(mut top) = top {
-                                        let mut cur: Option<&mut crate::ported::zsh_h::param> = Some(top.as_mut());
-                                        while let Some(hpm) = cur {
-                                            if hpm.level == level {
-                                                crate::ported::params::stdunsetfn(hpm, 0);
-                                                hpm.node.flags |= PM_DECLARED as i32;
-                                                break;
-                                            }
-                                            cur = hpm.old.as_deref_mut();
-                                        }
-                                        if let Ok(mut tab) = paramtab().write() {
-                                            tab.insert(t.clone(), top);
-                                        }
-                                    }
                                     continue;
                                 } else {
                                     // c:3952 — `unsetparam_pm(pm, 0, 1)` on
