@@ -5742,7 +5742,15 @@ pub fn bin_typeset(
                                                                              // top level). Mirror the reuse-decision guard used at c:2078-2091.
                 let creating_local_shadow =
                     (on as u32 & PM_LOCAL) != 0 && pm_level != locallevel_param.load(Relaxed);
-                if tc && (pmf & PM_SPECIAL) != 0 && !creating_local_shadow {
+                // c:2084-2086 — the shadow of a special stays special
+                // (`newspecial = NS_NORMAL`) unless -h is given on either side,
+                // and c:2114 then still compares types: `local -i HOME` is
+                // refused, `local -h -i HOME` makes a plain local.
+                let newspecial = creating_local_shadow
+                    && (pmf & PM_SPECIAL) != 0
+                    && (on as u32 & PM_HIDE) == 0
+                    && (pmf & PM_HIDE & !(off as u32)) == 0;
+                if tc && (pmf & PM_SPECIAL) != 0 && (!creating_local_shadow || newspecial) {
                     let mut err = true; // c:2144
                     if arg_name == "SECONDS" {
                         // c:2171 — `else if (!setsecondstype(pm, on, off))`.

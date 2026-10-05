@@ -2870,7 +2870,10 @@ pub fn createparam(
     // PM_SPECIAL. Mirrors the back-fill at assignsparam:4981 but
     // covers the create-time path (local / typeset of fresh
     // shadow), not just the assign-existing path.
-    if !name.is_empty() {
+    // A shadow that typeset_single did NOT keep special (`local -h HOME`,
+    // c:Src/builtin.c:2084-2086: -h leaves newspecial NS_NONE) is an
+    // ordinary parameter: c:1155-1158 gives it plain accessors only.
+    if !name.is_empty() && !(shadow_displaced && (flags as u32 & PM_SPECIAL) == 0) {
         let special_gsu: Option<Box<gsu_scalar>> = match name {
             "HOME" => Some(Box::new(HOME_GSU.clone())),
             "IFS" => Some(Box::new(IFS_GSU.clone())),
@@ -17041,20 +17044,22 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     // not PM_SPECIAL — or is PM_SPECIAL only because makeprivate tagged it
     // (Src/Modules/param_private.c:174) — is therefore not this special:
     // fall back to the stored value (`() { local -h SECONDS; SECONDS=5;
-    // echo $SECONDS }` prints 5).
-    if matches!(
-        name,
-        "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO"
-    ) && paramtab()
+    // echo $SECONDS }` prints 5). This holds for every special, not only the
+    // regenerators: `() { local -h HOME; typeset -p HOME }` is `HOME=''`.
+    // A non-special node that shadows another (`pm->old`) is such a local
+    // even before its PM_HIDE attribute is stamped.
+    if paramtab()
         .read()
         .ok()
         .and_then(|t| {
             t.get(name).map(|pm| {
                 let f = pm.node.flags as u32;
-                (f & PM_HIDE) != 0
-                    && ((f & PM_SPECIAL) == 0
-                        || crate::ported::modules::param_private::is_private(&**pm as *const param)
-                            != 0)
+                ((f & PM_SPECIAL) == 0 && pm.old.is_some())
+                    || ((f & PM_HIDE) != 0
+                        && ((f & PM_SPECIAL) == 0
+                            || crate::ported::modules::param_private::is_private(
+                                &**pm as *const param,
+                            ) != 0))
             })
         })
         .unwrap_or(false)
