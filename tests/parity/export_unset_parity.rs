@@ -419,7 +419,9 @@ mod startup_environment_order {
 /// ZSH_NAME with `setsparam` (unexported), and Src/jobs.c:2123 keeps the
 /// `jobs -Z` span in a file-static. The port wrote all of them, plus the
 /// dev-only ZSH_EXEPATH, with `std::env::set_var`, so every external command
-/// run from a `zsh_main` shell (`-s`, `-i`, a terminal) saw them.
+/// run from a `zsh_main` shell (`-s`, `-i`, a terminal) saw them. Upstream
+/// master sets ZSH_EXEPATH as an ordinary unexported parameter, so it is set
+/// in the shell (`exepath=1`) and still absent from the child environ.
 mod shell_internal_env {
     use super::*;
     use std::io::Write;
@@ -458,7 +460,7 @@ mod shell_internal_env {
             return;
         }
         let z = run_stdin(Path::new(zsh_path()), false);
-        assert_eq!(z, "exepath=0\n", "reference zsh output changed");
+        assert_eq!(z, "exepath=1\n", "reference zsh output changed");
         assert_eq!(run_stdin(&zshrs_bin(), true), z);
         assert_eq!(run_stdin(&zshrs_bin(), false), z);
     }
