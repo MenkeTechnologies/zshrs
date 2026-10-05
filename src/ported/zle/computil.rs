@@ -2871,7 +2871,11 @@ pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
                         return None;
                     }
                     let d_slice = &name_buf[d_start..np];
-                    descr_str = Some(String::from_utf8_lossy(d_slice).into_owned());
+                    // c:1474-1476 — "treat empty description as if missing"
+                    // (upstream 2e7a39d1d5): `-y[]` lists bare, like `-y`.
+                    if !d_slice.is_empty() {
+                        descr_str = Some(String::from_utf8_lossy(d_slice).into_owned());
+                    }
                     np += 1;
                     c_byte = if np < nlen { name_buf[np] } else { 0 };
                 }
