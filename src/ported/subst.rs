@@ -28010,7 +28010,9 @@ pub fn apply_bare_modifier_chain(
             break;
         }
         let after = chars.get(s_pos).copied();
-        if after == Some('s') {
+        // c:4609-4611 — `:S` (workers/51816) takes the same delimited
+        // pattern/replacement pair as `:s`.
+        if matches!(after, Some('s' | 'S')) {
             let delim_pos = s_pos + 1;
             let delim = match chars.get(delim_pos).copied() {
                 Some(d) => d,

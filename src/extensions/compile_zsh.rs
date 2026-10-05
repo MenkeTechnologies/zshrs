@@ -16489,7 +16489,8 @@ fn walk_bare_modifier_chain(chars: &[char], j: &mut usize) {
             break;
         }
         let after = chars[probe];
-        if after == 's' {
+        // c:Src/subst.c:4609-4611 — `:S` (workers/51816) scans like `:s`.
+        if matches!(after, 's' | 'S') {
             // Position now: at `s`.
             probe += 1;
             if probe >= chars.len() {
