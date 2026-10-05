@@ -1633,11 +1633,34 @@ pub fn getnameddir(name: &str) -> Option<String> {
             return Some(nd.dir.clone());
         }
     }
-    // c:1260 — `if ((s = getsparam(name)) && *s == '/')`. paramtab read.
-    if let Some(s) = getsparam(name) {
-        if s.starts_with('/') {
-            adduserdir(name, &s, 0, true); // c:1264
-            return Some(s);
+    // c:1257-1264 — `if ((pm = realparamtab->getnode2(realparamtab, name)) &&
+    // !pm->level && (PM_TYPE(pm->node.flags) == PM_SCALAR) &&
+    // (str = getsparam(name)) && *str == '/') { pm->node.flags |=
+    // PM_NAMEDDIR; adduserdir(name, str, 0, 1); return str; }`. Only a
+    // GLOBAL string parameter names a directory (54328); a reference is
+    // PM_NAMEREF, not PM_SCALAR, so `~ref` does not resolve through it.
+    let global_scalar = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| {
+            t.get(name).map(|pm| {
+                pm.level == 0
+                    && crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
+                        == crate::ported::zsh_h::PM_SCALAR
+            })
+        })
+        .unwrap_or(false);
+    if global_scalar {
+        if let Some(s) = getsparam(name) {
+            if s.starts_with('/') {
+                if let Ok(mut t) = crate::ported::params::paramtab().write() {
+                    if let Some(pm) = t.get_mut(name) {
+                        pm.node.flags |= crate::ported::zsh_h::PM_NAMEDDIR as i32; // c:1261
+                    }
+                }
+                adduserdir(name, &s, 0, true); // c:1262
+                return Some(s); // c:1263
+            }
         }
     }
     #[cfg(unix)]

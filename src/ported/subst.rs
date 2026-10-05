@@ -2516,51 +2516,12 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                 .map(|&c| if c == '\u{e09b}' { '-' } else { c })
                 .collect();
             let suffix: String = chars[p..].iter().collect();
-            // Named-dir lookup FIRST — `hash -d name=path` registered
-            // names take precedence over OS users (zsh canonical).
-            // Direct port of subst.c filesub which checks
-            // nameddirtab via getnameddir before falling through to
-            // getpwnam.
-            // Canonical nameddirtab lookup (mirrors C'namptr
-            // `getnameddir(name)` at hashnameddir.c via gethashnode2).
-            let named = nameddirtab()
-                .lock()
-                .ok()
-                .and_then(|t| t.get(&user).map(|nd| nd.dir.clone()));
-            if let Some(path) = named {
-                return Some(format!("{}{}", path, suffix));
-            }
-            // c:Src/hashnameddir.c getnameddir — after nameddirtab, a
-            // SCALAR parameter whose value is an ABSOLUTE path acts as a
-            // dynamic named directory: `~NAME` expands to `$NAME` when
-            // `$NAME` begins with `/`. Checked BEFORE getpwnam (named
-            // directories outrank OS users in zsh). zpwr relies on this
-            // (`: ~ZPWR_PLUGIN_DIR`, `cd ~foo`). Only true SCALARS
-            // qualify — C guards on `PM_TYPE == PM_SCALAR`. getsparam
-            // joins an array/assoc into a string that can spuriously
-            // start with `/` (`arr=(/a /b)` → "/a /b"), so exclude those
-            // explicitly: zsh reports `~arr` as "no such … directory".
-            if arrays_get(&user).is_none() && !assoc_contains(&user) {
-                if let Some(val) = crate::ported::params::getsparam(&user) {
-                    if val.starts_with('/') {
-                        return Some(format!("{}{}", val, suffix));
-                    }
-                }
-            }
-            // libc getpwnam — cstring -> pw_dir
-            if let Ok(cname) = CString::new(user.clone()) {
-                unsafe {
-                    let pw = libc::getpwnam(cname.as_ptr());
-                    if !pw.is_null() {
-                        let home_ptr = (*pw).pw_dir;
-                        if !home_ptr.is_null() {
-                            let home = std::ffi::CStr::from_ptr(home_ptr)
-                                .to_string_lossy()
-                                .into_owned();
-                            return Some(format!("{}{}", home, suffix));
-                        }
-                    }
-                }
+            // c:791 — `if (!(hom = getnameddir(untok)))`: the named-directory
+            // table, then a global string parameter whose value starts with
+            // `/` (registered as a named dir, c:Src/utils.c:1257-1264), then
+            // the password database.
+            if let Some(hom) = crate::ported::utils::getnameddir(&user) {
+                return Some(format!("{}{}", hom, suffix)); // c:796
             }
             // c:Src/subst.c:803 — `zerr("no such user or named
             // directory: %s", str+1);` when neither nameddirtab nor
