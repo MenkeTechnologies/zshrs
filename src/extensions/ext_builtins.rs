@@ -110,8 +110,10 @@ pub fn builtin_owning_module(name: &str) -> Option<&'static str> {
         "strftime" => Some("zsh/datetime"),
         // zsh/param/private — Src/Modules/param_private.c:217.
         "private" => Some("zsh/param/private"),
+        // zsh/ksh93 — Src/Modules/ksh93.c:41.
+        "nameref" => Some("zsh/ksh93"),
         // zshrs-only debug / bytecode hooks with no upstream builtin.
-        "hashinfo" | "mem" | "patdebug" | "nameref" | "__rust_compile" => Some("__zshrs_only"),
+        "hashinfo" | "mem" | "patdebug" | "__rust_compile" => Some("__zshrs_only"),
         // zsh/main core builtins.
         _ => None,
     }
@@ -217,7 +219,7 @@ pub fn builtin_in_builtintab(name: &str) -> bool {
     //
     // The one thing this walk adds on top: zshrs-original entries that no
     // `zmodload` could ever produce in a real zsh (`hashinfo`, `mem`,
-    // `patdebug`, `nameref`, `__rust_compile`) must disappear from the
+    // `patdebug`, `__rust_compile`) must disappear from the
     // NAMESPACE under `--zsh` / ZSHRS_HIDE_EXT_BUILTINS, even though they stay
     // perfectly available (that flag never affects dispatch). The previous
     // gate got this for free by asking `is_loaded("__zshrs_only")`, which is
