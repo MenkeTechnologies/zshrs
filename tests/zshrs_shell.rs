@@ -9946,12 +9946,12 @@ fn test_history_d_event_id_propagates() {
 
 #[test]
 fn test_zstyle_unknown_flag_errors() {
-    // zsh: `zstyle -X` -> `zstyle:1: invalid option: -X` exit 1.
+    // zsh: `zstyle -X` -> `zstyle:1: bad option: -X` exit 1 (54721).
     // zshrs's `_ => {}` silent fallback let any unknown flag drop
     // through to set-style with `pattern=-X`.
     let (status, _, stderr) = run_zshrs("zstyle -X");
     assert_eq!(status, 1);
-    assert!(stderr.contains("invalid option: -X"), "got: {stderr}");
+    assert!(stderr.contains("bad option: -X"), "got: {stderr}");
 }
 
 #[test]
@@ -10614,12 +10614,12 @@ fn test_kill_n_invalid_signal_zsh_format() {
 #[test]
 fn test_alias_g_s_mutually_exclusive() {
     // zsh: `-g` (global) and `-s` (suffix) are mutually exclusive on
-    // alias — `alias -gs foo=bar` -> `alias:1: illegal combination
-    // of options` exit 1. zshrs accepted both flags silently.
+    // alias — `alias -gs foo=bar` -> `alias:1: invalid combination
+    // of options` exit 1 (54721 rewording). zshrs accepted both flags silently.
     let (status, _, stderr) = run_zshrs("alias -gs foo=bar");
     assert_eq!(status, 1);
     assert!(
-        stderr.contains("illegal combination of options"),
+        stderr.contains("invalid combination of options"),
         "got: {stderr}"
     );
 }
