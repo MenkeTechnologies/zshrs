@@ -1390,7 +1390,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
 
     // getrlimit loop                                                        // c:1286-1289
 
-    // breaks = loops = 0;                                                   // c:1292
+    // breaks = contflag = loops = ancestor_loops = 0;  (c:1328; statics start at 0)
     // lastmailcheck = zmonotime(NULL);                                      // c:1293
     // locallevel = sourcelevel = 0;                                         // c:1294
     sourcelevel.store(0, Ordering::SeqCst); // c:1294

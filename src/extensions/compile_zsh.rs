@@ -3412,8 +3412,8 @@ impl ZshCompiler {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.break_patches[idx].push(j);
             } else {
-                // c:Src/builtin.c:5832-5835 — `break` outside any
-                // loop: `zwarnnam(name, "not in while, until,
+                // c:Src/builtin.c:5801-5806 — `break` outside any
+                // loop: `zerrnam(name, "not in for, while, until,
                 // select, or repeat loop"); return 1;`. Route through
                 // BUILTIN_BREAK so `bin_break` (which already handles
                 // the loops==0 check + LASTVAL=1 + zwarnnam) runs.
