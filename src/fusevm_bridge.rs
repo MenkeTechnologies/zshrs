@@ -2314,7 +2314,13 @@ fn param_value_elems_c2916(exec: &mut ShellExecutor, name: &str) -> (Vec<String>
 /// assignment builtins: C walks every WC_ASSIGN in the chain regardless of
 /// its type (c:4510-4511 advances over WC_ASSIGN_SCALAR and array words alike).
 fn save_inline_prefix_param(exec: &mut ShellExecutor, name: &str) {
-    let name = name.to_string();
+    // c:Src/exec.c:4475-4478 (54941) — `ss = itype_end(s, INAMESPC, 0);
+    // slen = *ss == '[' || *ss == Inbrack ? ss - s : strlen(s);`: a
+    // subscripted assignment (`H[2,4]=oo f`) saves its base parameter.
+    let name = match name.find('[') {
+        Some(i) => name[..i].to_string(),
+        None => name.to_string(),
+    };
     let prev_env = env::var(&name).ok();
     // c:Src/exec.c:4476 — `pm = paramtab->getnode(paramtab, s)`.
     // c:4491-4493 — an existing name is SNAPSHOTTED, not removed:
@@ -5442,6 +5448,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SET_ARRAY_AT, |vm, argc| {
         let (name, values) = pop_array_args_with_name(vm, argc);
         let status = with_executor(|exec| {
+            // c:Src/exec.c:4475-4478 (54941) — `a[@]=(…) f` saves `a`.
+            if exec.inline_env_stack.last().is_some_and(|frame| frame.recording) {
+                save_inline_prefix_param(exec, &name);
+            }
             if exec.assoc(&name).is_some() {
                 // c:Src/params.c:3324-3327 — `[@]` (any slice) on a
                 // PM_HASHED target is an error.
@@ -5466,6 +5476,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_APPEND_ARRAY_AT, |vm, argc| {
         let (name, values) = pop_array_args_with_name(vm, argc);
         let status = with_executor(|exec| {
+            // c:Src/exec.c:4475-4478 (54941) — `a[@]+=(…) f` saves `a`.
+            if exec.inline_env_stack.last().is_some_and(|frame| frame.recording) {
+                save_inline_prefix_param(exec, &name);
+            }
             if exec.assoc(&name).is_some() {
                 crate::ported::utils::zerr(&format!(
                     "{}: attempt to set slice of associative array",
@@ -6257,18 +6271,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // c:Src/exec.c:4343-4348 — `A[k]=v extcmd`: a forked command's
-        // `addvars` runs in the CHILD, so the parent's `A` is never touched.
-        // zshrs assigns in-process, so snapshot the whole `A` for the frame
-        // to put back (see `InlineEnvFrame::forked`). For a builtin or shell
-        // function nothing is saved: C's `save_params` looks the raw `A[k]`
-        // text up with `getnode` (c:4476), misses, and the element
-        // assignment persists.
+        // c:Src/exec.c:4475-4478 (54941) — `A[k]=v cmd`: save_params cuts
+        // the assignment text at the subscript (`itype_end(s, INAMESPC, 0)`
+        // stopping at `[`) and snapshots the whole base parameter `A`, so
+        // the element assignment is undone after a builtin or shell
+        // function exactly as after a forked external (whose `addvars`
+        // runs in the child and never touches the parent's `A`).
         with_executor(|exec| {
             if exec
                 .inline_env_stack
                 .last()
-                .is_some_and(|frame| frame.recording && frame.forked)
+                .is_some_and(|frame| frame.recording)
             {
                 save_inline_prefix_param(exec, &name);
             }
@@ -10242,14 +10255,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             .read()
             .map(|t| t.get(&name).is_some())
             .unwrap_or(false); // c:4142-4143
-        // c:Src/exec.c:4343-4348 — neither a shell function nor a builtin
-        // means C forks and runs `addvars` in the child (also the
-        // not-found case: the child reports it). An expanded command word
-        // arrives empty and keeps the in-process arm (same KNOWN GAP as
-        // `export` above).
-        frame.forked = !name.is_empty()
-            && !frame.export
-            && !crate::ported::builtin::createbuiltintable().contains_key(&name);
         with_executor(|exec| {
             exec.inline_env_stack.push(frame);
         });
@@ -10662,6 +10667,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let append = marker == "1";
         let key = popped.pop().unwrap().to_str();
         let name = popped.pop().unwrap().to_str();
+        // c:Src/exec.c:4475-4478 (54941) — a subscripted prefix assignment
+        // (`H[2,4]=oo f`) saves its base parameter for restore_params.
+        with_executor(|exec| {
+            if exec
+                .inline_env_stack
+                .last()
+                .is_some_and(|frame| frame.recording)
+            {
+                save_inline_prefix_param(exec, &name);
+            }
+        });
         // c:Src/params.c:1585-1592 — `if (needtok) { parsestr(&s);
         // singsub(&s); }`: the subscript body is parameter-substituted
         // BEFORE it is read, whether it goes on to `mathevalarg`
