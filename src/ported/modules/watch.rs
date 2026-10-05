@@ -909,26 +909,12 @@ pub fn boot_(m: *const module) -> i32 {
     // the MODULESTAB lock, so re-locking here would deadlock.
     let mid_load =
         !m.is_null() && unsafe { ((*m).node.flags & crate::ported::zsh_h::MOD_SETUP) != 0 };
-    // zsh 5.9.2 Src/Modules/watch.c:722-723 (the shipped oracle; the
-    // forkedRepos tree replaced these with PM_TIED paramdefs in b2fb112ea6):
-    //     Param pma = (Param) paramtab->getnode(paramtab, "watch");
-    //     Param pms = (Param) paramtab->getnode(paramtab, "WATCH");
-    // `getnode` is getparamnode -> loadparamnode (Src/params.c:563-585),
-    // so whichever of the pair is still a PM_AUTOLOAD stub gets
-    // ensurefeature'd here: loading zsh/watch for ONE name enables BOTH
-    // (`zmodload -F zsh/watch p:WATCH; zmodload -lF zsh/watch` prints
-    // `+p:watch` in 5.9.2). zshrs models PM_AUTOLOAD as the
-    // MATERIALIZED_MODULE_PARAMS side-set, so resolving the name is marking
-    // it. Without this, `_parameters -g 'a*'` (Completion/Zsh/Type/_vars
-    // sh:19) never saw `watch` once `_parameters -g '^a*'` had loaded the
-    // module through `${(P)i}` on `WATCH`, and `read <TAB>` listed one name
-    // fewer than zsh. Only a real load runs these lookups: the startup
-    // registration shim (null `m`) must leave both names as stubs, as
-    // `zsh -f` has them.
-    if mid_load {
-        crate::vm_helper::mark_module_param_used("watch"); // c:722 (5.9.2)
-        crate::vm_helper::mark_module_param_used("WATCH"); // c:723 (5.9.2)
-    }
+    // Upstream b2fb112ea6 ("54383: Fix WATCH/watch tying") dropped boot_'s
+    // `paramtab->getnode(paramtab, "watch")` / `(…, "WATCH")` pair, whose
+    // getparamnode -> loadparamnode resolved whichever name was still a
+    // PM_AUTOLOAD stub: loading zsh/watch through ONE name now enables only
+    // that feature (`zmodload -F zsh/watch p:WATCH; zmodload -lF zsh/watch`
+    // lists `-p:watch`). The tie moved into the paramdefs (PM_TIED, below).
     // c:Src/Modules/watch.c:740-753 — `boot_` runs ONLY from `load_module`
     // (c:Src/module.c:2306), so a plain `zsh -f` has neither WATCHFMT nor
     // LOGCHECK and neither appears in `${(ko)parameters}`. The Rust-only
@@ -976,30 +962,37 @@ pub fn boot_(m: *const module) -> i32 {
             crate::ported::params::setiparam("LOGCHECK", 60); // c:759
         }
     }
-    // c:Src/Modules/watch.c:697-699 — register `watch` (PM_ARRAY |
-    // PM_SPECIAL) and `WATCH` (PM_SCALAR | PM_SPECIAL) in paramtab
-    // so introspection (`(t)watch` → `array-special`, `${(t)WATCH}`
-    // → `scalar-special`) sees them after `zmodload zsh/watch`.
-    // C zsh boots paramtab entries via `paramdef partab[]` which the
-    // module-load chain dispatches through `addparamdef`. zshrs's
-    // module shims don't run that path, so seed the entries here.
+    // c:Src/Modules/watch.c:697-701 — register `watch` (PM_ARRAY |
+    // PM_SPECIAL | PM_TIED) and `WATCH` (PM_SCALAR | PM_SPECIAL | PM_TIED)
+    // in paramtab so introspection (`(t)watch` → `array-tied-special`,
+    // `${(t)WATCH}` → `scalar-tied-special`) sees them after `zmodload
+    // zsh/watch`. C zsh boots paramtab entries via `paramdef partab[]`
+    // which the module-load chain dispatches through `addparamdef`.
+    // zshrs's module shims don't run that path, so seed the entries here.
     // Bug #270 in docs/BUGS.md.
-    use crate::ported::zsh_h::{PM_ARRAY, PM_SCALAR, PM_SPECIAL};
-    let watch_exists = crate::ported::params::paramtab()
-        .read()
-        .ok()
-        .map(|t| t.contains_key("watch"))
-        .unwrap_or(false);
-    if !watch_exists {
-        let _ = crate::ported::params::createparam("watch", (PM_ARRAY | PM_SPECIAL) as i32);
-    }
-    let watch_scalar_exists = crate::ported::params::paramtab()
-        .read()
-        .ok()
-        .map(|t| t.contains_key("WATCH"))
-        .unwrap_or(false);
-    if !watch_scalar_exists {
-        let _ = crate::ported::params::createparam("WATCH", (PM_SCALAR | PM_SPECIAL) as i32);
+    //
+    // PM_TIED is upstream b2fb112ea6 ("54383: Fix WATCH/watch tying"),
+    // which also made addparamdef name each row's partner in `ename`
+    // (c:Src/module.c:1088-1089 lowercases the scalar's name, c:1105-1106
+    // uppercases the array's).
+    use crate::ported::zsh_h::{PM_ARRAY, PM_SCALAR, PM_SPECIAL, PM_TIED};
+    for (name, flags, ename) in [
+        ("watch", PM_ARRAY | PM_SPECIAL | PM_TIED, "WATCH"), // c:699-700
+        ("WATCH", PM_SCALAR | PM_SPECIAL | PM_TIED, "watch"), // c:697-698
+    ] {
+        let exists = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .map(|t| t.contains_key(name))
+            .unwrap_or(false);
+        if !exists {
+            let _ = crate::ported::params::createparam(name, flags as i32);
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut(name) {
+                    pm.ename = Some(ename.to_string()); // c:module.c:1089/1106
+                }
+            }
+        }
     }
     // c:761 — `addprepromptfn(&checksched);`. Without this, the
     // watch module never gets driven on each prompt — `$watch`

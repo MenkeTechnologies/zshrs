@@ -7413,6 +7413,9 @@ pub(crate) const TIED_COLON_ARRAYS: &[(&str, &str)] = &[
     ("module_path", "MODULE_PATH"),
     ("fignore", "FIGNORE"),
     ("mailpath", "MAILPATH"),
+    // c:Src/Modules/watch.c:697-701 — zsh/watch's pair, PM_TIED since
+    // upstream b2fb112ea6 ("54383: Fix WATCH/watch tying").
+    ("watch", "WATCH"),
 ];
 
 /// Port of `assignsparam()` from `Src/params.c:3193`.
@@ -9356,6 +9359,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         "MODULE_PATH" => Some("module_path"),
         "FIGNORE" => Some("fignore"),
         "MAILPATH" => Some("mailpath"),
+        // c:Src/Modules/watch.c:697-701 — PM_TIED since upstream b2fb112ea6.
+        "WATCH" => Some("watch"),
         _ => None,
     };
     if let (Some(alt_name), true) = (alt, assigned_tied) {
@@ -11248,6 +11253,9 @@ pub fn unsetparam(name: &str) -> i32 {
         "fignore" => Some("FIGNORE"),
         "MAILPATH" => Some("mailpath"),
         "mailpath" => Some("MAILPATH"),
+        // c:Src/Modules/watch.c:697-701 — PM_TIED since upstream b2fb112ea6.
+        "WATCH" => Some("watch"),
+        "watch" => Some("WATCH"),
         _ => None,
     };
     queue_signals(); // c:3825
