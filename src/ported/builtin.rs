@@ -6210,11 +6210,13 @@ pub fn bin_typeset(
                 // PM_NAMEREF assignstrvalue arm + valid_refname + setscope).
                 let mut rc = 0;
                 if reuse_existing {
-                    // c:2326 — the surviving (previously-readonly) ref keeps its
-                    // refname; a =value assignment goes through the canonical
-                    // assignsparam which RESOLVES the chain (`typeset +r -n
-                    // ref=RW` writes RW into the referent, not the ref).
+                    // c:2235 + c:2330 — the surviving (previously-readonly) ref
+                    // is assigned with `flags = (on & PM_NAMEREF) ?
+                    // ASSPM_NONAMEREF : 0`, so `typeset +r -n ref=RW` sets the
+                    // REFERENCE's refname (fetchvalue under SCANPM_NONAMEREF,
+                    // c:Src/params.c:3163), not the referent.
                     if let Some(v) = value {
+                        let _no_deref = crate::ported::params::NamerefSuppressGuard::new();
                         if crate::ported::params::setsparam(arg_name, v).is_none() {
                             rc = 1;
                         }
