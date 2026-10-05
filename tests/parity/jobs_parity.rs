@@ -479,7 +479,7 @@ fn pipeline_bg_job_text() {
 
 #[test]
 fn fg_bg_error_without_job_control() {
-    // c:Src/jobs.c:2461-2464 — "no job control in this shell."
+    // c:Src/jobs.c:2474-2478 — "no job control in this shell"
     assert_parity("sleep 5 & fg; echo rc=$?; kill %1");
 }
 

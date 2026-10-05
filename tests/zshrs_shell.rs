@@ -5893,17 +5893,17 @@ fn test_kill_l_uses_platform_signal_numbers() {
 #[test]
 fn test_fg_bg_no_job_control_message() {
     // Non-interactive mode: zsh emits `zsh:fg:1: no job control in
-    // this shell.` and exits 1. Was emitting `fg: no current job`.
+    // this shell` and exits 1. Was emitting `fg: no current job`.
     let (status, _stdout, stderr) = run_zshrs(r#"fg"#);
     assert_eq!(status, 1);
     assert!(
-        stderr.contains("fg:1: no job control in this shell."),
+        stderr.contains("fg:1: no job control in this shell"),
         "stderr: {stderr:?}"
     );
     let (status, _stdout, stderr) = run_zshrs(r#"bg"#);
     assert_eq!(status, 1);
     assert!(
-        stderr.contains("bg:1: no job control in this shell."),
+        stderr.contains("bg:1: no job control in this shell"),
         "stderr: {stderr:?}"
     );
 }
