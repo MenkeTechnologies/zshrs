@@ -13597,7 +13597,7 @@ pub fn bin_shift(
 pub fn bin_getopts(
     _name: &str,
     argv: &[String], // c:5672
-    _ops: &options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     if argv.len() < 2 {
@@ -13688,6 +13688,9 @@ pub fn bin_getopts(
     }
 
     // c:5691-5693 — `quiet = *optstr == ':'; optstr += quiet; lenoptstr -= quiet;`
+    // c:5648 (54471) — `posix = isset(POSIXBUILTINS) || OPT_ISSET(ops, 'p');`
+    let posix = isset(POSIXBUILTINS) || OPT_ISSET(ops, b'p');
+
     let (quiet, optstr) = if optstr_full.starts_with(':') {
         // c:5691
         (true, &optstr_full[1..])
@@ -13731,7 +13734,8 @@ pub fn bin_getopts(
     // c:5705-5712 — first option char checks: not `-`/`+` → done; `--` → done.
     if optcind == 0 {
         // c:5705
-        if lenstr < 2 || (!str_buf.starts_with('-') && !str_buf.starts_with('+')) {
+        // c:5677 (54471) — `+` introduces options only without posix.
+        if lenstr < 2 || (!str_buf.starts_with('-') && (posix || !str_buf.starts_with('+'))) {
             ZOPTIND.store(zoptind, Relaxed);
             OPTCIND.store(optcind, Relaxed);
             // c:5707 — mirror to $OPTIND so callers see the post-loop
@@ -13761,9 +13765,13 @@ pub fn bin_getopts(
         }
         optcind += 1;
     }
-    // c:5715 — `opch = str[optcind++];`
+    // c:5685-5687 (54711) — `opch = str[optcind]; optcind += MB_CHARLENCONV(str + optcind, …, &wopch);`
     let opch = str_buf.as_bytes()[optcind as usize];
-    optcind += 1;
+    let wopch = str_buf
+        .get(optcind as usize..)
+        .and_then(|s| s.chars().next())
+        .unwrap_or(opch as char);
+    optcind += wopch.len_utf8() as i32;
 
     // c:5716-5721 — `lenoptbuf = (str[0] == '+') ? 2 : 1; optbuf[lenoptbuf-1] = opch;`
     let plus = str_buf.starts_with('+');
@@ -13773,8 +13781,7 @@ pub fn bin_getopts(
         format!("{}", opch as char)
     };
 
-    // c:5724-5740 — illegal option: `?` reply, OPTIND fixed under POSIXBUILTINS.
-    let posix = isset(POSIXBUILTINS);
+    // c:5724-5740 — illegal option: `?` reply, OPTIND fixed under posix.
     let found = optstr.bytes().position(|b| b == opch);
     if opch == b':' || found.is_none() {
         // c:5724
@@ -13790,7 +13797,7 @@ pub fn bin_getopts(
             setsparam("OPTARG", &optbuf); // c:5734
         } else {
             let prefix = if plus { "+" } else { "-" };
-            zwarn(&format!("bad option: {}{}", prefix, opch as char)); // c:5736
+            zwarn(&format!("bad option: {}{}", prefix, wopch)); // c:5736
             setsparam("OPTARG", "");
         }
         ZOPTIND.store(zoptind, Relaxed);
@@ -13824,7 +13831,7 @@ pub fn bin_getopts(
                     let prefix = if plus { "+" } else { "-" };
                     zwarn(&format!(
                         "argument expected after {}{} option",
-                        prefix, opch as char
+                        prefix, wopch
                     )); // c:5760
                 }
                 ZOPTIND.store(zoptind, Relaxed);
@@ -18423,7 +18430,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             2,
             -1,
             0,
-            None,
+            Some("p"), // c:79 (54471)
             None,
         ),
         BUILTIN(
