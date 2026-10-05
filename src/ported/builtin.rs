@@ -6022,25 +6022,6 @@ pub fn bin_typeset(
                     return 1;
                 }
 
-                // c:3118-3126 — refname target that is itself a PM_SPECIAL nameref.
-                if let Some(v) = value {
-                    let special_ref = paramtab()
-                        .read()
-                        .ok()
-                        .and_then(|t| {
-                            t.get(v).map(|pm| {
-                                let f = pm.node.flags as u32;
-                                (f & PM_NAMEREF) != 0 && (f & PM_SPECIAL) != 0
-                            })
-                        })
-                        .unwrap_or(false);
-                    if special_ref {
-                        zwarnnam(name, &format!("{}: invalid reference", v)); // c:3122
-                        unqueue_signals();
-                        return 1; // c:3123-3124
-                    }
-                }
-
                 let cur_ll = locallevel_param.load(Relaxed) as i32;
                 let existing = paramtab().read().ok().and_then(|t| {
                     t.get(arg_name)
