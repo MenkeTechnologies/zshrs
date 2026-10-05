@@ -3984,17 +3984,18 @@ pub(crate) fn getarg<'a>(
                     .filter(|&(a, b)| a < b)
                     .map(word_text)
                     .collect();
-                // c:1618-1634 — KSHARRAYS shifts a non-negative index, then the
-                // word number is CLAMPED into [1, wordcount]: `${${:-a b c}[(w)5]}`
-                // is `c`, `(w)-5` and `(w)0` are `a`.
+                // c:1636-1648 — KSHARRAYS shifts a non-negative index and a
+                // negative one counts from the end. Since workers/54773 an
+                // index outside [1, wordcount] yields nothing, like any other
+                // out-of-range subscript: `${${:-a b c}[(w)5]}`, `(w)-5` and
+                // `(w)0` are all empty.
                 let len = words.len() as i64;
                 let mut r = if isset(KSHARRAYS) && n >= 0 { n + 1 } else { n };
                 if r < 0 {
-                    r += len + 1;
+                    r += len + 1; // c:1645-1646
                 }
-                r = r.max(1).min(len);
-                return Some(getarg_out::Value(Value::str(if r < 1 {
-                    String::new() // c:1630 `if (!s || !*s) return 0;`
+                return Some(getarg_out::Value(Value::str(if r < 1 || r > len {
+                    String::new() // c:1647-1648 `if (r < 1 || r > i) return 0;`
                 } else {
                     words[r as usize - 1].clone()
                 })));

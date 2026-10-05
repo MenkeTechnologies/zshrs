@@ -11818,32 +11818,25 @@ pub fn paramsubst(
                                     .collect()
                             };
                             let len = words.len() as i64;
-                            // c:Src/params.c:1623-1631 — word subscript CLAMPS
-                            // the index into [1, wordcount]:
-                            //   if (r < 0) r += i + 1;   (negative from end)
-                            //   if (r < 1) r = 1;        (clamp low)
-                            //   if (r > i) r = i;        (clamp high)
-                            // So `${s[(w)2]}` on a 1-word string → "hello"
-                            // (clamped to word 1), `${s[(w)4]}` on "a b c" →
-                            // "c" (clamped to last), `${s[(w)0]}` → first.
-                            // The prior off-by-one returned "" out of range.
-                            if len == 0 {
-                                // c:1630 — `if (!s || !*s) return 0;`
-                                String::new()
+                            // c:Src/params.c:1640-1648 (workers/54773) — an
+                            // empty value, or a word index outside
+                            // [1, wordcount] after the negative fold, yields
+                            // nothing, like any other out-of-range subscript:
+                            //   if (!s || !*s) return 0;
+                            //   if (r < 0) r += i + 1;
+                            //   if (r < 1 || r > i) return 0;
+                            // So `${s[(w)2]}` on a 1-word string, `${s[(w)4]}`
+                            // on "a b c" and `${s[(w)0]}` are all empty.
+                            let mut r = idx_n;
+                            if isset(crate::ported::zsh_h::KSHARRAYS) && r >= 0 {
+                                r += 1; // c:1637-1638 `if (isset(KSHARRAYS) && r >= 0) r++;`
+                            }
+                            if r < 0 {
+                                r += len + 1; // c:1645-1646
+                            }
+                            if r < 1 || r > len {
+                                String::new() // c:1647-1648
                             } else {
-                                let mut r = idx_n;
-                                if isset(crate::ported::zsh_h::KSHARRAYS) && r >= 0 {
-                                    r += 1; // c:1619-1620 `if (isset(KSHARRAYS) && r >= 0) r++;`
-                                }
-                                if r < 0 {
-                                    r += len + 1; // c:1625
-                                }
-                                if r < 1 {
-                                    r = 1; // c:1627
-                                }
-                                if r > len {
-                                    r = len; // c:1629
-                                }
                                 words[(r - 1) as usize].clone()
                             }
                         } else {
@@ -12572,18 +12565,19 @@ pub fn paramsubst(
                                                     &singsub(pat_raw.trim()),
                                                 ),
                                             };
-                                            let iw = words.len() as i64; // c:1624
+                                            let iw = words.len() as i64; // c:1644
                                             if iw == 0 {
-                                                return 0; // c:1631-1632
+                                                return 0; // c:1642-1643
                                             }
                                             if r < 0 {
-                                                r += iw + 1; // c:1625-1626
+                                                r += iw + 1; // c:1645-1646
                                             }
-                                            if r < 1 {
-                                                r = 1; // c:1627-1628
-                                            }
-                                            if r > iw {
-                                                r = iw; // c:1629-1630
+                                            // c:1647-1648 (workers/54773) — an
+                                            // out-of-range word index is offset
+                                            // 0, like any other bad subscript,
+                                            // no longer clamped into range.
+                                            if r < 1 || r > iw {
+                                                return 0;
                                             }
                                             let (a, b) = words[(r - 1) as usize];
                                             // c:1640
