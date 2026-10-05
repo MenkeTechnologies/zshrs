@@ -9900,12 +9900,11 @@ fn test_print_u_bad_fd_errors() {
 
 #[test]
 fn test_kill_illegal_pid_zsh_format() {
-    // zsh: `kill -0 abc` (non-numeric pid) -> `kill:1: illegal pid:
-    // abc` exit 1. zshrs's bash-style `kill: abc: invalid pid` had
-    // no shell-name prefix and used different wording.
+    // zsh: `kill -0 abc` (non-numeric pid) -> `kill:1: invalid pid:
+    // abc` exit 1 (c:Src/jobs.c:3039; "illegal" before upstream 54721).
     let (status, _, stderr) = run_zshrs("kill -0 abc");
     assert_eq!(status, 1);
-    assert!(stderr.contains("illegal pid: abc"), "got: {stderr}");
+    assert!(stderr.contains("invalid pid: abc"), "got: {stderr}");
 }
 
 #[test]
