@@ -4402,7 +4402,11 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     let xvariables = m_variables_clone(); // c:395 `xstack = stack;`
     let xstring_variables = m_string_variables_clone();
     new(s);
+    // c:1496-1498 (54603) — `zsh_eval_context_push("math"); x = mathevall(…);
+    // zsh_eval_context_pop();`
+    let math_ctx = crate::ported::exec::EvalContextFrame::push("math");
     let result = mathevall(prec_type::MPREC_TOP);
+    drop(math_ctx);
     // c:455 — `stack = xstack;`, the cache goes out of scope with the
     // frame that owns it. At top level both maps were empty on entry,
     // so this is a clear; under a nested `matheval` it restores the
@@ -4548,7 +4552,9 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {
     let xvariables = m_variables_clone();
     let xstring_variables = m_string_variables_clone();
     new(s);
+    let math_ctx = crate::ported::exec::EvalContextFrame::push("math"); // c:1540
     let result = mathevall(prec_type::MPREC_ARG); // c:1541
+    drop(math_ctx); // c:1542 zsh_eval_context_pop()
     m_variables_set(xvariables);
     m_string_variables_set(xstring_variables);
     // c:1545 — `mtok = xmtok;` restore.
