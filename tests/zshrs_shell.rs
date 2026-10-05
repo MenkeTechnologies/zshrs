@@ -17032,3 +17032,33 @@ fn test_sh_and_bash_emulation_run_their_command_with_hlgroup_booted() {
     }
     let _ = std::fs::remove_dir_all(&home);
 }
+
+#[test]
+fn test_dquoted_span_of_replace_pattern_is_pattern_text() {
+    // c:Src/subst.c:3150-3165 (workers/52202) — the `/` operators' separator
+    // scan removes a `"…"` span's quotes, so after the re-lex its
+    // metacharacters are pattern syntax; `'…'`, `\` and the `#`/`%`
+    // operators keep theirs literal, and a leading `#` stays text because the
+    // anchors were decided on the quote.
+    let (_, output, _) = run_zshrs(
+        r##"x='a*b/c'; print -r -- ${x/"*"/Q} ${x/'*'/Q} ${x/\*/Q} ${x#"a*"} ${x/"*b/c"/Q}
+y='a#b'; print -r -- ${y//"#"/Q} ${y/"?"/Q}
+v='*'; print -r -- ${x/"$v"/Q}"##,
+    );
+    assert_eq!(output, "Q aQb/c aQb/c b/c Q\naQb Q#b\naQb/c\n", "got: {output:?}");
+    let (code, _, err) = run_zshrs(r##"x='a(b'; print -r -- ${x//"("/Q}"##);
+    assert_ne!(code, 0);
+    assert!(err.contains("bad pattern"), "stderr: {err:?}");
+}
+
+#[test]
+fn test_chained_subscript_indexes_a_plain_array() {
+    // c:Src/subst.c:2899 (workers/54093) — the temp Value a chained subscript
+    // indexes carries SCANPM_ARRONLY, not the first subscript's scan mask.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A A; A[zzq*]=_A; A[*aaa]=_B; A[z*a]=_C
+print -r -- "[${A[(K)zzqaaa][(i)_C]}][${A[(i)zzq*][2]}][${A[(I)*][-1]}][${(k)A[(R)_*][1]}][${A[(K)zzqaaa][1][2]}]"
+a=(Alpha beta Gamma delta); print -r -- "[${a[1,(r)Gamma][(I)beta]}][${a[1,(r)Gamma][(i)zz]}][${a[1,(r)Gamma][(I)zz]}]""#,
+    );
+    assert_eq!(output, "[2][][zzq*][*aaa][B]\n[2][4][0]\n", "got: {output:?}");
+}
