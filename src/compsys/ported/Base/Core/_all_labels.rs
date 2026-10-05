@@ -355,15 +355,16 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
             // sh:31  zformat -f __descr "${curtag#*:}" "d:$3"
             let after = curtag.splitn(2, ':').nth(1).unwrap_or("").to_string();
             let _ = setsparam("__descr", "");
+            let mut zf_ops = make_ops();
+            zf_ops.ind[b'f' as usize] = 1; // `-f` is a parsed flag (zutil.c:2151)
             let _ = bin_zformat(
                 "zformat",
                 &[
-                    "-f".to_string(),
                     "__descr".to_string(),
                     after,
                     format!("d:{}", descr_arg),
                 ],
-                &make_ops(),
+                &zf_ops,
                 0,
             );
             let descr = getsparam("__descr").unwrap_or_default();

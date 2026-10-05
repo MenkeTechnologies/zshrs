@@ -1291,7 +1291,6 @@ pub fn _main_complete(args: &[String]) -> i32 {
             };
             let _ = _setup(&["warnings".to_string()]);
             let zf_argv = vec![
-                "-f".to_string(),
                 "mesg".to_string(),
                 warn_format.clone(),
                 format!("d:{}", str_msg),
@@ -1307,7 +1306,9 @@ pub fn _main_complete(args: &[String]) -> i32 {
                 ),
             ];
             let _ = setsparam("mesg", "");
-            let _ = bin_zformat("zformat", &zf_argv, &make_ops(), 0);
+            let mut zf_ops = make_ops();
+            zf_ops.ind[b'f' as usize] = 1; // `-f` is a parsed flag (zutil.c:2151)
+            let _ = bin_zformat("zformat", &zf_argv, &zf_ops, 0);
             let mesg = getsparam("mesg").unwrap_or_else(|| warn_format.clone());
             let _ = bin_compadd("compadd", &["-x".to_string(), mesg], &make_ops(), 0);
         }

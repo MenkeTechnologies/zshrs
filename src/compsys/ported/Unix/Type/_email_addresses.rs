@@ -757,10 +757,11 @@ pub fn _email_addresses(args: &[String]) -> i32 {
                             )
                             .unwrap_or_else(|| "--".to_string());
                             // sh:165  zformat -a list " $sep " "${reply[@]}"
-                            let mut zf =
-                                vec!["-a".to_string(), "list".to_string(), format!(" {} ", sep)];
+                            let mut zf = vec!["list".to_string(), format!(" {} ", sep)];
                             zf.extend(reply.iter().cloned());
-                            let _ = bin_zformat("zformat", &zf, &make_ops(), 0);
+                            let mut zf_ops = make_ops();
+                            zf_ops.ind[b'a' as usize] = 1; // `-a` is a parsed flag (zutil.c:2151)
+                            let _ = bin_zformat("zformat", &zf, &zf_ops, 0);
                             // sh:166-167  _wanted mail-aliases expl 'alias' compadd "$@" -d list - ${reply%%:*}
                             let mut w = vec![
                                 "mail-aliases".to_string(),

@@ -214,12 +214,13 @@ pub fn _next_label_impl(args: &[String]) -> i32 {
         let after_colon = curtag.splitn(2, ':').nth(1).unwrap_or("").to_string();
         let _ = setsparam("__descr", "");
         let zfmt_argv = vec![
-            "-f".to_string(),
             "__descr".to_string(),
             after_colon,
             format!("d:{}", descr_arg),
         ];
-        let _ = bin_zformat("zformat", &zfmt_argv, &make_ops(), 0);
+        let mut zf_ops = make_ops();
+        zf_ops.ind[b'f' as usize] = 1; // `-f` is a parsed flag (zutil.c:2151)
+        let _ = bin_zformat("zformat", &zfmt_argv, &zf_ops, 0);
         let descr = getsparam("__descr").unwrap_or_default();
 
         // sh:14  _description "$__gopt[@]" "${curtag%:*}" "$2" "$__descr"

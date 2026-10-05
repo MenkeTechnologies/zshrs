@@ -557,9 +557,11 @@ pub fn _subscript(args: &[String]) -> i32 {
                         s("--")
                     };
                     // sh:114  zformat -a list " $sep " "$list[@]"
-                    let mut zf: Vec<String> = vec![s("-a"), s("list"), format!(" {} ", sep)];
+                    let mut zf: Vec<String> = vec![s("list"), format!(" {} ", sep)];
                     zf.extend(list);
-                    let _ = bin_zformat("zformat", &zf, &make_ops(), 0);
+                    let mut zf_ops = make_ops();
+                    zf_ops.ind[b'a' as usize] = 1; // `-a` is a parsed flag (zutil.c:2151)
+                    let _ = bin_zformat("zformat", &zf, &zf_ops, 0);
                     // sh:112  disp=( -d list )
                     disp = vec![s("-d"), s("list")];
                 } else {

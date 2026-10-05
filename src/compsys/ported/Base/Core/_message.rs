@@ -347,7 +347,6 @@ pub fn _message_impl(args: &[String]) -> i32 {
     } else {
         let descr = argv.first().cloned().unwrap_or_default();
         let mut zf_argv: Vec<String> = vec![
-            "-F".to_string(),
             "format".to_string(),
             format_seed.clone(),
             format!("d:{}", descr),
@@ -356,7 +355,9 @@ pub fn _message_impl(args: &[String]) -> i32 {
             zf_argv.extend(argv[1..].iter().cloned());
         }
         let _ = setsparam("format", "");
-        let _ = bin_zformat("zformat", &zf_argv, &make_ops(), 0);
+        let mut zf_ops = make_ops();
+        zf_ops.ind[b'F' as usize] = 1; // `-F` is a parsed flag (zutil.c:2151)
+        let _ = bin_zformat("zformat", &zf_argv, &zf_ops, 0);
         getsparam("format").unwrap_or_default()
     };
 
