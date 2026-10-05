@@ -4075,6 +4075,9 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             // option parsing at a bare `-`.
             if cur != compcur
                 && state.actopts != 0
+                // c:2128 (upstream 7a43a20cdf) — a word that is an
+                // option's argument is never a terminator.
+                && !(state.def.is_some() && state.inopt != 0)
                 && (((d.flags & CDF_SEP) != 0 && line == "--")
                     || ((d.flags & CDF_ZSEP) != 0 && line == "-"))
             {
@@ -4154,6 +4157,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     if state.def.is_some() {
                         state.argbeg = cur;
                         state.argend = argend_init;
+                        goto_cont = true; // c:2158 goto cont (7a43a20cdf)
                     } else if let Some(s) = sopts.first().cloned() {
                         // c:2128 — pop a queued single-letter opt arg.
                         sopts.remove(0);
@@ -4178,6 +4182,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     } else {
                         state.curopt = None;
                         state.opt = 1;
+                        goto_cont = true; // c:2173 goto cont (7a43a20cdf)
                     }
                 }
             } else {
