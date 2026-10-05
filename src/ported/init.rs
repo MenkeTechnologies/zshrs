@@ -53,7 +53,10 @@ pub static sourcelevel: AtomicI32 = AtomicI32::new(0); // c:60
 pub static SHTTY: AtomicI32 = AtomicI32::new(-1); // c:65
 
 // the FILE attached to the shell tty                                        // c:67
-// `mod_export FILE *shout;` — represented as a libc::FILE pointer.          // c:70
+// `mod_export FILE *shout;` (c:70). zshrs writes the tty through
+// `crate::shout` on SHTTY rather than a stdio stream, so this holds only
+// what C tests the pointer for: 0 is NULL, otherwise the fd the stream
+// was opened on, plus one (`shout = stderr` stores 3).
 pub static shout: Mutex<usize> = Mutex::new(0); // c:70
 
 // termcap strings                                                           // c:72
@@ -698,21 +701,20 @@ pub fn init_io(_cmd: Option<&str>) {
     }
 }
 
-/// Port of `mod_export void init_shout(void)` from Src/init.c:712.
-/// Rust idiom replacement: SHTTY atomic + `acquire_pgrp` covers the
-/// C `fdopen(SHTTY, "w")` + setpgrp dance; the FILE* stream is
-/// reconstituted on-demand by callers rather than stored as a
-/// global `shout` pointer.
+/// Port of `mod_export void init_shout(void)` from Src/init.c:728.
 pub fn init_shout() {
-    // c:712
-    if SHTTY.load(Ordering::SeqCst) == -1 {
-        // c:712
-        // shout = stderr; return;                                           // c:722-723
-        return;
+    // c:728
+    let fd = SHTTY.load(Ordering::SeqCst);
+    if fd == -1 {
+        // c:735-739 — "Since we're interactive, it's nice to have
+        // somewhere to write."
+        *shout.lock().unwrap() = 2 + 1; // c:738 shout = stderr
+        return; // c:739
     }
-    // shout = fdopen(SHTTY, "w");                                           // c:732
-    // setvbuf(shout, shoutbuf, _IOFBF, BUFSIZ);                             // c:735
-    let _ = crate::ported::utils::gettyinfo(); // c:771
+    // c:747-752 — `shout = fdopen(SHTTY, "w")` + setvbuf; the buffering
+    // lives in `crate::shout`.
+    *shout.lock().unwrap() = fd as usize + 1; // c:748
+    let _ = crate::ported::utils::gettyinfo(); // c:754 gettyinfo(&shttyinfo)
 }
 
 /// Port of `mod_export char *tccap_get_name(int cap)` from Src/init.c:756.

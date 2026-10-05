@@ -1383,6 +1383,15 @@ pub fn zleread(
     // user changes while this line is being edited takes effect on the
     // next line or at the next SIGALRM re-arm (handletrap, c:1002-1003),
     // exactly as in C.
+    // c:Src/init.c:1791-1806 — `zleentry` loads zsh/zle before it hands
+    // the call to zleread, so `setup_` (zle_main.c:2252-2291) runs first:
+    // `$zle_bracketed_paste` for start_edit() below, and the terminal
+    // probe (`if (shout) query_terminal();`) while the tty is still in
+    // the shell's own mode, before the prompt is drawn. zshrs links zle
+    // statically; run it once on first entry.
+    ZLE_MODULE_SETUP.call_once(|| {
+        let _ = setup_(std::ptr::null());
+    });
     let tmout = crate::ported::params::getiparam("TMOUT") as i32; // c:1220
     // Stash the unexpanded templates so reexpandprompt() can re-run
     // expansion later. C zsh saves these in the global raw_lp/raw_rp
@@ -1697,15 +1706,6 @@ pub fn zleread(
     // not the raw `%m%# ` template) and the buffer/cursor are positioned.
     // The previous manual `write_loop(SHTTY, lprompt)` drew the raw,
     // unexpanded template until the first keypress triggered a refresh.
-
-    // C loads the zle module before the first zleread, running `setup_`
-    // (zle_main.c:2246-2288) which assigns `$zle_bracketed_paste`
-    // (c:2276-2280). zshrs links zle statically and never ran the module
-    // boot chain, so the param stayed unset and start_edit() below had
-    // nothing to emit. Run it once on first entry.
-    ZLE_MODULE_SETUP.call_once(|| {
-        let _ = setup_(std::ptr::null());
-    });
 
     // c:1362 — `start_edit()` (termquery.c:737-741 → collate_seq(0, 1)):
     // emits the edit-mode enter sequences, most importantly bracketed
@@ -2886,18 +2886,10 @@ pub fn setup_(m: *const module) -> i32 {
     crate::ported::zle::zle_thingy::init_thingies();
     // c:2256 — `stackhist = stackcs = -1`. These exist as atomics.
     /* detect terminal color and features */
-    // c:2263-2264 — `if (shout) query_terminal();`. NOT CALLED: a pending
-    // version decision, not a missing port. query_terminal and the
-    // probe_terminal reply parser are ported (termquery.rs), so the replies
-    // would no longer reach the editor as keystrokes. But zsh 5.9.2 — the
-    // reference the zpty parity suites run against — sends no queries, and
-    // current C's probe blocks in `settyinfo` (TCSADRAIN) until the other
-    // end reads, then waits TIMEOUT for a device-attributes reply no pty
-    // harness sends. Keys typed during that window are held as type-ahead,
-    // and the pty harnesses that type early (zle_editing_parity /
-    // zle_buffer_state_parity `^K ^Y`) stall; a current-C zsh build stalls
-    // the same way under them. Enabling this waits on that decision.
-    // crate::ported::zle::termquery::query_terminal();
+    // c:2271-2272 — `if (shout) query_terminal();`
+    if *crate::ported::init::shout.lock().unwrap() != 0 {
+        crate::ported::zle::termquery::query_terminal();
+    }
     // c:2275-2279 — set `$zle_bracketed_paste` to the bracketed-paste
     // mode toggle escapes.
     let bpaste = vec![

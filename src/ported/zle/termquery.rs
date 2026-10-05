@@ -733,7 +733,24 @@ pub fn handle_query(
 pub fn query_terminal() {
     // c:505
     let mut tquery = String::new(); // c:506-507
-    let flist = crate::ported::params::getaparam(EXTVAR).unwrap_or_default(); // c:509
+    let flist = crate::ported::params::getaparam(EXTVAR).unwrap_or_default(); // c:510
+    let envid = crate::ported::params::getsparam("TERM_PROGRAM"); // c:511
+    let mut badapple = false; // c:512
+
+    /* If TERM_PROGRAM is set in the environment, use that and
+     * skip the XTVERSION query */
+    if let Some(id) = envid.as_deref() {
+        // c:517-530
+        handle_query(4, &[], 0, id.as_bytes(), id.len() as i32, &mut None);
+        if let Some(ver) = crate::ported::params::getsparam("TERM_PROGRAM_VERSION") {
+            handle_query(5, &[], 0, ver.as_bytes(), ver.len() as i32, &mut None);
+            /* Older macOS terminal doesn't consume RGB queries,
+             * nor does it support truecolor. Given that it's widely
+             * used, we handle it explicitly. */
+            badapple = id == "Apple_Terminal"
+                && crate::ported::utils::zstrtol(&ver, 10).0 < 470; // c:527-528
+        }
+    }
 
     // c:512-514
     if flist.iter().any(|f| f == "-query") {
@@ -769,9 +786,9 @@ pub fn query_terminal() {
             && (crate::ported::init::tccolours.load(Ordering::SeqCst) == 1 << 24
                 || matches!(cterm.as_deref(), Some("truecolor") | Some("24bit")))
         {
-            handle_query(3, &[], 0, &[], 0, &mut None); // c:534-538
-        } else {
-            tquery.push_str(QUERIES[i]); /* collate escape sequences */ // c:539-541
+            handle_query(3, &[], 0, &[], 0, &mut None); // c:553-557
+        } else if (i != 4 || !badapple) && (i != 5 || envid.is_none()) {
+            tquery.push_str(QUERIES[i]); /* collate escape sequences */ // c:558-560
         }
     }
 
