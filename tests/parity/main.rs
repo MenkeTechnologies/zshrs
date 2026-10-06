@@ -133,6 +133,7 @@ mod numeric_sort_parity;
 mod omz_repo_corpus_parity;
 mod omz_snippet_corpus_parity;
 mod options_parity;
+mod paramsubst_sweep_parity;
 mod parity_harness;
 mod parity_survey_fc;
 mod parse_error_parity;

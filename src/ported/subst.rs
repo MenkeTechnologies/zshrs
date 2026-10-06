@@ -18859,18 +18859,13 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                // Re-attach the anchor prefix so the downstream
-                // `replace_one` logic that dispatches on
-                // `pat.strip_prefix('#')`/`pat.strip_prefix('%')`/
-                // `pat.strip_prefix("#%")` continues to work without
-                // duplication. The patcompile validity check above
-                // already ran against the anchor-free body.
-                let pat = match pat_anchor {
-                    '#' => format!("#{}", pat_body),
-                    '%' => format!("%{}", pat_body),
-                    'B' => format!("#%{}", pat_body),
-                    _ => pat_body,
-                };
+                // c:3120-3134 — the anchors are SUB_START/SUB_END flags decided
+                // on the source text after the `/`; `pat` is the anchor-free
+                // body and every dispatch below reads `pat_anchor`. Re-reading
+                // a leading `#`/`%` from the body would take an escaped one
+                // (`${y/\%b/P}`, `${y/#\%/P}`) for an anchor, since
+                // pat_operand drops the `\` before a non-glob `%`.
+                let pat = pat_body;
                 if std::env::var("ZSHRS_TRACE_REPL2").is_ok() {
                     eprintln!(
                         "[TRACE_REPL2] rep={:?} raw_pat={:?} pat={:?} raw_repl={:?}",
@@ -18898,10 +18893,7 @@ pub fn paramsubst(
                 // re-singsub the raw replacement string before using
                 // it.
                 let pat_has_m_one = {
-                    let pat_after_anchor = pat
-                        .strip_prefix('#')
-                        .or(pat.strip_prefix('%'))
-                        .unwrap_or(&pat);
+                    let pat_after_anchor = &pat;
                     pat_after_anchor.contains("(#m)") || pat_after_anchor.contains("(#b)")
                 };
                 let repl = if pat_has_m_one {
@@ -18938,11 +18930,7 @@ pub fn paramsubst(
                 // covers `(#b)` too, since `$match[]` needs it), but the
                 // match-ref VARIABLES are `(#m)`-only.
                 let pat_has_matchref_one = {
-                    let body = pat
-                        .strip_prefix("#%")
-                        .or(pat.strip_prefix('#'))
-                        .or(pat.strip_prefix('%'))
-                        .unwrap_or(&pat);
+                    let body = &pat;
                     patcompile(
                         &{
                             let mut t = body.to_string();
@@ -19006,7 +18994,7 @@ pub fn paramsubst(
                 // match the entire string). zsh only recognizes
                 // the `#` before `%` ordering. Bug #355 in
                 // docs/BUGS.md.
-                let both_anchor_pat: Option<&str> = pat.strip_prefix("#%");
+                let both_anchor_pat: Option<&str> = (pat_anchor == 'B').then_some(pat.as_str());
                 // Single-replace helper. Variants: both-anchored
                 // (`#%`/`%#`), anchor-prefix (pat starts with `#`),
                 // anchor-suffix (`%`), or unanchored. Returns the
@@ -19137,7 +19125,7 @@ pub fn paramsubst(
                         }
                         return val.to_string();
                     }
-                    if let Some(anchor_pat) = pat.strip_prefix('#') {
+                    if let Some(anchor_pat) = (pat_anchor == '#').then_some(pat.as_str()) {
                         let cv: Vec<char> = val.chars().collect();
                         // Start-anchored (`${s/#pat/repl}`): the match must
                         // begin at position 0. Use the engine so a top-level
@@ -19153,7 +19141,7 @@ pub fn paramsubst(
                             return format!("{}{}", dyn_repl, cv[end..].iter().collect::<String>());
                         }
                         val.to_string()
-                    } else if let Some(anchor_pat) = pat.strip_prefix('%') {
+                    } else if let Some(anchor_pat) = (pat_anchor == '%').then_some(pat.as_str()) {
                         let cv: Vec<char> = val.chars().collect();
                         let nn = cv.len();
                         for start in 0..=nn {
