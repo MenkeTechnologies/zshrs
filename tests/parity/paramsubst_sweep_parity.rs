@@ -141,3 +141,14 @@ fn q_plus_and_width_use_the_unicode9_printable_table() {
     );
 }
 
+// c:Src/subst.c:3054 / c:3783-3818 — an unbraced reference applies the
+// history modifiers that follow its subscript.
+#[test]
+fn unbraced_subscript_takes_modifiers() {
+    check(
+        r#"a=(/x/one /y/two); print -r -- $a[-1]:u $a[1]:h "$a[2]:t:r" $a[1]:s/o/0/ $a[1]: $a[1]:x"#,
+        "/Y/TWO /x two /x/0ne /x/one: /x/one:x\n",
+        "",
+        0,
+    );
+}

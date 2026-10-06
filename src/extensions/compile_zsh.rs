@@ -19126,7 +19126,11 @@ fn bare_subscript_with_suffix(s: &str) -> Option<(&str, &str, &str)> {
     if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
         return None;
     }
-    if suffix.contains('$')
+    // c:Src/subst.c:3783-3818 — a `:` straight after the subscript may
+    // start a history modifier (`$a[-1]:u`), which the unbraced reference
+    // applies (`colf`, c:3054); that is paramsubst's job, not a literal suffix.
+    if suffix.starts_with(':')
+        || suffix.contains('$')
         || suffix.contains('[')
         || suffix.contains(']')
         || suffix.contains('`')
