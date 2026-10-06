@@ -271,6 +271,10 @@ pub struct globdata {
     pub gf_listtypes: i32,                  // c:186 gd_gf_listtypes
     pub gf_pre_words: Option<Vec<String>>,  // c:190 gd_gf_pre_words
     pub gf_post_words: Option<Vec<String>>, // c:190 gd_gf_post_words
+    /// The pattern's path text starts with a literal `./`, so every match
+    /// path is the pathbuf text verbatim (c:424 `dyncat(pathbuf, news)`) and
+    /// carries no scanner-added `./` for `glob_emit_path` to strip.
+    pub dot_prefix_verbatim: bool,
 }
 
 // c:197 — `static struct globdata curglobdata;`
@@ -293,6 +297,7 @@ pub static CURGLOBDATA: std::sync::Mutex<globdata> = std::sync::Mutex::new(globd
     gf_listtypes: 0,
     gf_pre_words: None,
     gf_post_words: None,
+    dot_prefix_verbatim: false,
 });
 
 /// Port of `int badcshglob` from `Src/glob.c:103`. Tracks csh-glob
@@ -994,6 +999,7 @@ impl globdata {
             gf_listtypes: 0,
             gf_pre_words: None,
             gf_post_words: None,
+            dot_prefix_verbatim: false,
         }
     }
 }
@@ -4444,6 +4450,11 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         // c:817-818 — relative to pwd.
         pat_tok.clone()
     };
+    // c:424 — C's match name is the pathbuf text plus the entry name, so a
+    // typed `./` / `.//` / `././` prefix survives verbatim. The scanner only
+    // adds a `./` of its own when the pathbuf is EMPTY at depth 0, which a
+    // pattern starting with `./` never has.
+    state.dot_prefix_verbatim = parse_src.starts_with("./");
     let complist = if globflags_bad {
         None // c:806 — parsepat returned NULL before parsecomplist ran
     } else {
@@ -4506,11 +4517,13 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // paths (split off above). A match is dropped if its emitted path
     // matches ANY exclusion pattern (`*` matches `/` here, matching zsh's
     // flat-string exclusion semantics).
+    let verbatim = state.dot_prefix_verbatim;
     if !glob_exclusions.is_empty() {
         let eg = glob_isset(EXTENDEDGLOB);
         let cg = glob_isset(CASEGLOB);
         state.matches.retain(|m| {
-            let p = glob_emit_path(&m.path);
+            // c:424 — verbatim pathbuf text when the pattern starts with `./`.
+            let p = if verbatim { m.path.to_string_lossy().into_owned() } else { glob_emit_path(&m.path) };
             !glob_exclusions.iter().any(|ex| matchpat(ex, &p, eg, cg))
         });
     }
@@ -4527,7 +4540,8 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         .unwrap_or_default();
     if !sort_codes.is_empty() {
         for m in state.matches.iter_mut() {
-            let name = glob_emit_path(&m.path);
+            // c:424 — verbatim pathbuf text when the pattern starts with `./`.
+            let name = if verbatim { m.path.to_string_lossy().into_owned() } else { glob_emit_path(&m.path) };
             for code in &sort_codes {
                 crate::ported::params::setsparam("REPLY", &name);
                 // c:1936 — `execode(prog, 1, 0, "globsort");`: the sort code
@@ -4641,8 +4655,10 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         .iter()
         .filter(|m| !trailing_slash || fs::metadata(&m.path).map(|md| md.is_dir()).unwrap_or(false))
         .map(|m| {
-            let mut s = glob_emit_path(&m.path);
-            if !leading_dot_prefix.is_empty()
+            // c:424 — verbatim pathbuf text when the pattern starts with `./`.
+            let mut s = if verbatim { m.path.to_string_lossy().into_owned() } else { glob_emit_path(&m.path) };
+            if !verbatim
+                && !leading_dot_prefix.is_empty()
                 && !s.starts_with(leading_dot_prefix)
                 && !s.starts_with('/')
             {
@@ -6320,7 +6336,8 @@ fn check_qualifiers(state: &globdata, path: &Path, stat_out: &mut Option<fs::Met
     // A broken symlink keeps its lstat, so `*(-@)` still sees it.
     let mut st2: Option<libc::stat> = None;
     // qualsheval / qualnonemptydir need the name (REPLY / opendir).
-    let name = glob_emit_path(path);
+    // c:424 — verbatim pathbuf text when the pattern starts with `./`.
+    let name = if state.dot_prefix_verbatim { path.to_string_lossy().into_owned() } else { glob_emit_path(path) };
 
     // c:387-419 — insert()'s qual-walk over the `struct qual` arena: AND
     // via `next`, OR (alternatives) via `or`, per-node `sense`. `qo` is

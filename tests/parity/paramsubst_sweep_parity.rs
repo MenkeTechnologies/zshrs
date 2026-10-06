@@ -101,3 +101,17 @@ fn flag_parse_errors_report_the_c_position() {
         );
     }
 }
+
+// c:Src/glob.c:424 — a match's name is the pathbuf text plus the entry, so a
+// typed `./`, `.//` or `././` prefix is kept, including in $REPLY for (e).
+#[test]
+fn glob_keeps_a_typed_dot_slash_prefix_verbatim() {
+    check(
+        "d=$(mktemp -d) && cd $d && : > a.txt && print -r -- .//*.txt ././*.txt .///*.txt \
+         ./*.txt(e:'REPLY=R$REPLY':) .//*.txt(:h); cd / && rm -r -- $d",
+        ".//a.txt ././a.txt .///a.txt R./a.txt .\n",
+        "",
+        0,
+    );
+}
+
