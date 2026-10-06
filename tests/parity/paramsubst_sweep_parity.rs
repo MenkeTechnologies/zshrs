@@ -115,3 +115,15 @@ fn glob_keeps_a_typed_dot_slash_prefix_verbatim() {
     );
 }
 
+// c:Src/subst.c:4744-4747 — modify() leaves a `:` with no modifier letter
+// after it unparsed, and c:3797-3800 reports it; `imeta(s[1])` (the NUL after
+// a trailing `:`, or a lexer token) selects the message without a character.
+#[test]
+fn braced_trailing_colon_is_an_unrecognized_modifier() {
+    for expr in ["${x:h:}", "${x:u:}", "${x:s/a/b/:}", "${x:gh:}", "${x:h:=}", "${x:h:*}", "${x:h:-q}"] {
+        check(&format!("x=/a/b; print -r -- {expr}"), "", "unrecognized modifier", 1);
+    }
+    check("x=/a/b; print -r -- ${x:h:Z}", "", "unrecognized modifier `Z'", 1);
+    check("x=/a/b; print -r -- $x:h: $x:t::", "/a: b::\n", "", 0);
+}
+

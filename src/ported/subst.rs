@@ -3734,10 +3734,16 @@ pub fn paramsubst(
             return result;
         }
         let mut r = rest.chars();
-        // c:3797 — `if (*s == ':' && !imeta(s[1]))`
+        // c:3797 — `if (*s == ':' && !imeta(s[1]))`. imeta covers the NUL
+        // after a trailing `:` and every lexer token (c:Src/utils.c:4140-4148
+        // inittyptab: Pound..Nularg, Marker); `rest` has the tokens back
+        // except `=`, which the lexer makes Equals in a brace word
+        // (c:Src/lex.c:1212-1258), so it counts as a token here too.
         match (r.next(), r.next()) {
-            (Some(':'), Some(c)) => zerr(&format!("unrecognized modifier `{}'", c)), // c:3798
-            _ => zerr("unrecognized modifier"),                                      // c:3800
+            (Some(':'), Some(c)) if !(crate::token_char::is_token_char(c) || c == '=') => {
+                zerr(&format!("unrecognized modifier `{}'", c)) // c:3798
+            }
+            _ => zerr("unrecognized modifier"), // c:3800
         }
         errflag_set_error();
         String::new() // c:3801 `return NULL;`
@@ -28266,14 +28272,12 @@ pub fn modify(s: &str, modifiers: &str) -> (String, String) {
                 // with no letter. Previously this branch silently
                 // exited the modify loop, so `${a:W}` returned the
                 // value unchanged with rc=0.
-                if any_flag_consumed {
-                    // c:4726-4728 — flag chars but no modifier letter:
-                    // `if (!c) { *ptr = lptr; return; }`; the caller reports
-                    // the first char after the `:` (c:3798 `s[1]`).
-                    let _ = first_after_colon;
-                    return (result, lptr);
-                }
-                break;
+                // c:4744-4747 — `(*ptr)++; if (!c) { *ptr = lptr; return; }`:
+                // whether or not `g`/`w`/`W`/`f`/`F` were consumed, a `:` with
+                // no modifier letter after it is left unparsed for the caller
+                // (`${x:h:}` -> "unrecognized modifier", c:3797-3800).
+                let _ = (first_after_colon, any_flag_consumed);
+                return (result, lptr);
             }
         }; // c:4531
 
