@@ -576,3 +576,25 @@ mod quest_expansion_exits_in_place {
         assert_parity(r#"trap 'echo b' EXIT; y=$(echo ${x?boom}); echo after $?"#);
     }
 }
+
+/// c:Src/builtin.c:7382-7388 (upstream a3547fd4c1, 54013) — a trap body
+/// with no signal after it is an error: `signal expected`, or `undefined
+/// signal: ARG` when the lone word looks like a signal.
+mod trap_body_without_signal {
+    use super::*;
+
+    #[test]
+    fn dash_l_is_a_body() {
+        assert_parity(r#"trap -l; echo rc=$?"#);
+    }
+
+    #[test]
+    fn plain_body() {
+        assert_parity(r#"trap 'echo x'; echo rc=$?"#);
+    }
+
+    #[test]
+    fn numeric_word() {
+        assert_parity(r#"trap 99; echo rc=$?"#);
+    }
+}

@@ -17249,8 +17249,8 @@ pub fn bin_trap(
 
     // ZSHRS-ONLY. `trap -l` is bash's spelling of `kill -l` and lists the
     // signals; the Korn and Bourne shells REJECT it ("trap: -l: unknown
-    // option", exit 2) and zsh silently accepts it as a no-op with exit 0
-    // (verified: `zsh -c 'trap -l'` prints nothing, rc 0). zshrs matched
+    // option", exit 2) and zsh treats `-l` as a trap body with no signal
+    // (c:Src/builtin.c:7382-7388: `signal expected`, rc 1). zshrs matched
     // zsh in every mode, so `--bash` printed nothing where bash prints
     // the signal table, and the POSIX drop-ins succeeded where they
     // should fail.
@@ -17282,7 +17282,7 @@ pub fn bin_trap(
                 zwarnnam(name, "Illegal option -l");
                 return 2;
             }
-            // zsh and csh keep zsh's silent no-op.
+            // zsh and csh fall through to C's `signal expected`.
             _ => {}
         }
     }
@@ -17566,18 +17566,18 @@ pub fn bin_trap(
         }
     }
     if argv.is_empty() {
-        // c:7411 — when only one arg AND it looks like a signal
-        // (SIG-prefix or numeric) but didn't resolve to a real
-        // signal, emit "undefined signal". For an arbitrary string
-        // body with no following signal, zsh silently accepts and
-        // installs nothing (no diagnostic). Mirror zsh's behavior:
-        // skip "signal expected" for non-signal-shaped strings.
+        // c:7382-7388 (upstream a3547fd4c1, 54013) — a body with no
+        // signal after it is an error: `undefined signal: ARG` when
+        // the lone arg looks like a signal (numeric or SIG-prefixed),
+        // `signal expected` otherwise. zsh 5.9.2 accepted the bare
+        // body silently; master rejects it (`trap -l`, `trap -p` and
+        // `trap cmd` all take this branch).
         if arg.starts_with("SIG") || arg.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            zwarnnam(name, &format!("undefined signal: {}", arg)); // c:7413
-            return 1; // c:7417
+            zwarnnam(name, &format!("undefined signal: {}", arg)); // c:7384
+        } else {
+            zwarnnam(name, "signal expected"); // c:7386
         }
-        // Bare string body with no signal — zsh accepts silently.
-        return 0;
+        return 1; // c:7387
     }
 
     // c:7421-7448 — install trap on each named signal.
