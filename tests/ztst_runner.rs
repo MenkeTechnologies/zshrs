@@ -737,6 +737,10 @@ struct PersistentShell {
     ztst_terr: PathBuf,
     qout: PathBuf,
     qerr: PathBuf,
+    /// The pty slave, held open for the shell's lifetime: on macOS the
+    /// session loses its controlling terminal at the last close of the
+    /// slave, and the shell closes its own copy before exec.
+    _pty_slave: std::os::fd::OwnedFd,
 }
 
 impl PersistentShell {
@@ -955,32 +959,78 @@ done
         let driver_path = sandbox.join("driver.zsh");
         fs::write(&driver_path, driver)?;
 
+        // Upstream's harness runs from `make check` in a terminal: every
+        // shell a chunk starts has a controlling tty, which is where an
+        // interactive one writes its prompts (c:Src/init.c:683-686 opens
+        // /dev/tty for SHTTY; c:748 `shout = fdopen(SHTTY)`), so they never
+        // land in the stderr a chunk compares. Give the harness shell a
+        // session of its own on a pty slave as its controlling terminal.
+        // Its fds 0-2 stay as below; the master is only drained.
+        // The pty fds are opened without close-on-exec. Hold one lock from
+        // openpty until both carry FD_CLOEXEC and this shell is spawned, so
+        // no shell another test thread forks meanwhile inherits them (an
+        // inherited fd turns V14system's `sysread -i 9` from EBADF into a
+        // read).
+        static PTY_SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let pty_guard = PTY_SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+        let pty = nix::pty::openpty(None, None).map_err(std::io::Error::from)?;
+        let (pty_master, pty_slave) = (pty.master, pty.slave);
+        let (master_fd, slave_fd) = {
+            use std::os::fd::AsRawFd;
+            (pty_master.as_raw_fd(), pty_slave.as_raw_fd())
+        };
+        for fd in [master_fd, slave_fd] {
+            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        }
+
         let mut cmd = Command::new(zshrs);
         cmd.arg("--zsh")
             .arg("-f")
             .arg(&driver_path)
             .current_dir(&testdir)
+            // A minimal environment: the parameter table, and so every
+            // order a chunk prints from it (`typeset -p -m`, X06termquery),
+            // must not depend on what the invoking shell exported.
             // ztst.zsh:29-30 — unset LC_*, export LANG=C only.
+            .env_clear()
+            .env("PATH", env::var_os("PATH").unwrap_or_default())
             .env("LANG", "C")
             .env("HOME", &home)
             .env("TMPDIR", &tmp)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        for (k, _) in env::vars() {
-            if k.starts_with("LC_") {
-                cmd.env_remove(&k);
-            }
+        // `make check` inherits the invoking terminal's type; without it
+        // the termcap/terminfo chunks (D01prompt, V15nearcolor) skip.
+        if let Some(term) = env::var_os("TERM") {
+            cmd.env("TERM", term);
         }
         unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
+            cmd.pre_exec(move || {
+                // setsid also makes the shell its own process group
+                // leader, which kill() below relies on.
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                libc::close(slave_fd);
+                libc::close(master_fd);
                 Ok(())
             });
         }
 
         let mut child = cmd.spawn()?;
+        drop(pty_guard);
         let pgid = child.id() as i32;
+        // Whatever the shells write to the terminal is discarded, but it
+        // must be read or a full pty buffer would block the writer.
+        thread::spawn(move || {
+            let mut sink = [0u8; 4096];
+            let mut master = fs::File::from(pty_master);
+            while matches!(master.read(&mut sink), Ok(n) if n > 0) {}
+        });
 
         // Marker channel — the child's fd 1, i.e. what ZTST_fd dups
         // (ztst.zsh:198). Byte-wise read with lossy conversion so a
@@ -1026,6 +1076,7 @@ done
             ztst_terr,
             qout,
             qerr,
+            _pty_slave: pty_slave,
         };
 
         // Startup handshake — proves the preamble ran (driver exits 1 at
