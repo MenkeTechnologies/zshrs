@@ -9205,11 +9205,16 @@ fn test_trap_undefined_signal_errors() {
 
 #[test]
 fn test_trap_l_silent() {
-    // zsh: `trap -l` lists current traps (empty in -f mode), no
-    // bash-style numbered SIGNAL list. zshrs previously emitted the
-    // bash-flavoured table that didn't match zsh exactly.
-    let (status, output, _) = run_zshrs("trap -l");
-    assert_eq!(status, 0);
+    // zsh: `trap -l` is no bash-style numbered SIGNAL list. zsh master
+    // (c:Src/builtin.c:7382-7388, upstream a3547fd4c1 / 54013) reads `-l`
+    // as a trap body with no signal after it:
+    //     $ zsh -fc 'trap -l'; echo $?
+    //     zsh:trap:1: signal expected
+    //     1
+    // (zsh 5.9.2 predates 54013 and returned 0 silently.)
+    let (status, output, stderr) = run_zshrs("trap -l");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("signal expected"), "stderr: {stderr}");
     assert!(
         !output.contains("SIGHUP") && !output.contains("SIGTERM"),
         "got: {output}"
