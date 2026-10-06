@@ -64,3 +64,40 @@ fn replace_escaped_percent_is_not_an_end_anchor() {
     check(r"x='%a%'; print -r -- ${x/\%%/V} ${x/%\%/Z}", "%a% %aZ\n", "", 0);
     check(r#"y='a%b%'; print -r -- "${y/\%/P}""#, "aPb%\n", "", 0);
 }
+
+// c:Src/subst.c:2504-2528 flagerr — every flag-parse failure reports the
+// 1-based offset of `s` from the `$`. These paths either printed a bare
+// "error in flags" / "bad substitution", accepted the flags, or counted the
+// position from the wrong delimiter.
+#[test]
+fn flag_parse_errors_report_the_c_position() {
+    for (expr, pos) in [
+        ("${(qq-)v}", 5),          // c:2242 q- after q
+        ("${(q-q)v}", 6),          // c:2250 q after q-
+        ("${(qqqqq)v}", 8),        // c:2238 q after QT_DOLLARS
+        ("${(bq)v}", 5),           // c:2238 q after b
+        ("${(qb)v}", 5),           // c:2256 b after q
+        ("${(bb)v}", 5),           // c:2256 b after b
+        ("${(!k)v}", 5),           // c:2391 k after !
+        ("${(k!)v}", 5),           // c:2387 ! after k
+        ("${(v!)v}", 5),           // c:2387 ! after v
+        ("${(!v)v}", 5),           // c:2395 v after !
+        ("${(g:z:)v}", 6),         // c:2429 unknown (g) sub-flag
+        ("${(g:e)v}", 5),          // c:2414 (g) delimiter never closed
+        ("${(g)v}", 5),            // c:2436 (g) without an argument
+        ("${(Z:c)v}", 5),          // c:2445 (Z) delimiter never closed
+        ("${(}", 4),               // c:2504 flag block runs into the `}`
+        ("${(Q}", 5),              //   ... after a valid flag
+        ("${(l:3::\\::)v}", 11),   // c:2361 (l) STR2 opened, never closed
+        ("${(l:3::xyz::abc)v}", 13),
+        ("${(lj:3:)v}", 5),        // c:1436 get_intarg: no second `j`
+        ("${(I:12)v}", 5),         // c:1436 (I) delimiter never closed
+    ] {
+        check(
+            &format!("v=a; print -r -- {expr}"),
+            "",
+            &format!("error in flags near position {pos} in '{expr}'"),
+            1,
+        );
+    }
+}

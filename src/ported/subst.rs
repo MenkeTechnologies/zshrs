@@ -5019,6 +5019,17 @@ pub fn paramsubst(
             return (String::new(), new_pos, vec![]);
         }
         let body_chars: Vec<char> = body.chars().collect();
+        // c:2504-2528 flagerr — `zerr("error in flags near position %z in
+        // '$%s'", s - *str + 1, *str + 1)`, the offset 1-based from the `$`,
+        // so body index 0 (just after `${`) is position 3. C's `*str` runs on
+        // to the end of the WORD (`${(x)v}tail`); a compiled word reaches
+        // paramsubst as the bare `${…}` (its literals are glued on by the
+        // caller, see PARAMSUBST_AFFIXES_DEFERRED), so only that is printed.
+        let flagerr_word: String = format!("{{{}}}", crate::ported::lex::untokenize(&body));
+        let flagerr = |body_idx: usize| {
+            zerr(&format!("error in flags near position {} in '${}'", body_idx + 3, flagerr_word));
+            errflag_set_error();
+        };
         let mut idx = 0_usize;
         // ${(flags)var…} — paren-flag block. Port of subst.c:2147+
         // flag-loop. Each flag char sets a state bit; applied as
@@ -5268,6 +5279,10 @@ pub fn paramsubst(
 
         // c:1828 — `int hkeys = 0;` (k) flag SCANPM_WANTKEYS bits.
         let mut hkeys: u32 = 0; // c:1828
+        // hkeys' SCANPM_NONAMEREF bit (c:2389). The port keeps `(!)` out of
+        // `hkeys` itself (consumers test `hkeys != 0` for key mode) and
+        // records it here for the c:2387/2391/2395 flag-conflict tests.
+        let mut flag_nonameref = false;
 
         // c:1835 — `int hvals = 0;` (v) flag SCANPM_WANTVALS bits.
         let mut hvals: u32 = 0; // c:1835
@@ -5492,16 +5507,6 @@ pub fn paramsubst(
             let mut tok_arg = false; // c:2145
             let mut d = 1_i32; // c:2147
             idx = 1; // c:2147
-                     // No closing paren on flag block → "bad substitution".
-                     // Direct port of zsh's flagerr label which calls zerr
-                     // and aborts the substitution. Emit and bail rather than
-                     // silently treating the entire body as flag chars.
-            if !body_chars.iter().skip(1).any(|c| *c == ')' || *c == Outpar) {
-                // c:2147
-                zerr("bad substitution"); // c:2147
-                errflag_set_error(); // c:2147
-                return (String::new(), new_pos, vec![]); // c:2147
-            } // c:2147
             while idx < body_chars.len() && d > 0 {
                 // c:2147
                 let fc = body_chars[idx]; // c:2153
@@ -5542,8 +5547,7 @@ pub fn paramsubst(
                         // `(b)` sets QT_BACKSLASH_PATTERN. Either case
                         // followed by another `q` is invalid per C.
                         if quotetype == QT_DOLLARS || quotetype == QT_BACKSLASH_PATTERN {
-                            zerr("error in flags");
-                            errflag_set_error();
+                            flagerr(idx); // c:2238 / c:2242 / c:2250 goto flagerr
                             return (String::new(), new_pos, vec![]);
                         }
                         let next = body_chars.get(idx + 1).copied(); // c:2240 IS_DASH(s[1]) || s[1]=='+'
@@ -5561,8 +5565,7 @@ pub fn paramsubst(
                             // q- / q+ are independent flag-block entries
                             // and can't be combined with another q-mod.
                             if quotemod != 0 {
-                                zerr("error in flags");
-                                errflag_set_error();
+                                flagerr(idx); // c:2238 / c:2242 / c:2250 goto flagerr
                                 return (String::new(), new_pos, vec![]);
                             }
                             idx += 1; // c:2243 s++
@@ -5581,8 +5584,7 @@ pub fn paramsubst(
                             // Once q- has set QT_SINGLE_OPTIONAL,
                             // additional plain `q`s are invalid.
                             if quotetype == QT_SINGLE_OPTIONAL {
-                                zerr("error in flags");
-                                errflag_set_error();
+                                flagerr(idx); // c:2238 / c:2242 / c:2250 goto flagerr
                                 return (String::new(), new_pos, vec![]);
                             }
                             quotemod += 1; // c:2252 quotemod++
@@ -5603,6 +5605,14 @@ pub fn paramsubst(
                         wantt = true;
                     } // c:2807
                     '!' => {
+                        // c:2386-2389 — `if ((hkeys|hvals) & ~SCANPM_NONAMEREF)
+                        // goto flagerr; hkeys = SCANPM_NONAMEREF;`: `!` cannot
+                        // be combined with `k` or `v`.
+                        if ((hkeys | hvals) & !SCANPM_NONAMEREF) != 0 {
+                            flagerr(idx);
+                            return (String::new(), new_pos, vec![]);
+                        }
+                        flag_nonameref = true;
                         // c:2232-2235 — SCANPM_NONAMEREF: the lookup
                         // skips resolve_nameref (getnode2 path); the
                         // ref itself is the subject. Guard lives until
@@ -5610,23 +5620,23 @@ pub fn paramsubst(
                         nonameref_guard = Some(crate::ported::params::NamerefSuppressGuard::new());
                     }
                     'k' => {
-                        // c:2390-2393
-                        if (hkeys & !SCANPM_WANTKEYS) != 0 {
-                            zerr("bad substitution");
-                            errflag_set_error();
+                        // c:2390-2393 — `if (hkeys & ~SCANPM_WANTKEYS) goto
+                        // flagerr;`, where a prior `!` left SCANPM_NONAMEREF
+                        // in hkeys.
+                        if (hkeys & !SCANPM_WANTKEYS) != 0 || flag_nonameref {
+                            flagerr(idx);
                             return (String::new(), new_pos, vec![]);
                         }
                         hkeys = SCANPM_WANTKEYS;
-                    } // c:2247
+                    } // c:2393
                     'v' => {
-                        // c:2395-2398
-                        if (hvals & !SCANPM_WANTVALS) != 0 {
-                            zerr("bad substitution");
-                            errflag_set_error();
+                        // c:2394-2397 — the test is on HKEYS, as for `k`.
+                        if (hkeys & !SCANPM_WANTKEYS) != 0 || flag_nonameref {
+                            flagerr(idx);
                             return (String::new(), new_pos, vec![]);
                         }
                         hvals = SCANPM_WANTVALS;
-                    } // c:2256
+                    } // c:2397
                     c if c == '#' || c == Pound => {
                         evalchar = true;
                     } // c:2480-2483 (# / Pound)
@@ -5721,11 +5731,11 @@ pub fn paramsubst(
                         if idx >= body_chars.len() || body_chars[idx] != close_del {
                             // Position in 1-based terms for error parity
                             // with zsh's "near position N" diagnostic.
-                            let pos_1based = idx + 1;
+                            let pos_1based = n_start + 2; // c:1436 get_strarg fails with s at the opening delimiter
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 pos_1based,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -5818,11 +5828,11 @@ pub fn paramsubst(
                         // C `Src/subst.c:2334` get_intarg -1 path,
                         // mirroring bug #162's WIDTH fix.
                         if idx >= body_chars.len() || body_chars[idx] != close_del {
-                            let pos_1based = idx + 1;
+                            let pos_1based = s1_start + 2; // c:2341 flagerr with s at the opening delimiter
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 pos_1based,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -5875,11 +5885,11 @@ pub fn paramsubst(
                         }
                         // Same close-paren guard for STR2. Bug #191.
                         if idx >= body_chars.len() || body_chars[idx] != close_del {
-                            let pos_1based = idx + 1;
+                            let pos_1based = s2_start + 2; // c:2361 flagerr with s at the opening delimiter
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 pos_1based,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -5939,9 +5949,9 @@ pub fn paramsubst(
                                   // char after `_` is the error position.
                         if idx >= body_chars.len() || body_chars[idx] == ')' {
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 idx + 1 + 2,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -5956,9 +5966,9 @@ pub fn paramsubst(
                         // the first inner char (`${(_:x:)a}` → the `x`).
                         if inner_start < idx || idx >= body_chars.len() {
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 inner_start + 1 + 2,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -5989,11 +5999,11 @@ pub fn paramsubst(
                         // near position N" diagnostic.
                         idx += 1; // c:2190 (s++)
                         if idx >= body_chars.len() {
-                            let pos_1based = idx + 1;
+                            let pos_1based = idx + 3;
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 pos_1based,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -6043,11 +6053,11 @@ pub fn paramsubst(
                         // c:1436-1437 get_strarg returns -1 if `!*t`
                         // (no close delim found before end of input).
                         if idx >= body_chars.len() || body_chars[idx] != close_del {
-                            let pos_1based = idx + 1;
+                            let pos_1based = n_start + 2; // c:1436 get_strarg fails with s at the opening delimiter
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 pos_1based,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -6063,9 +6073,9 @@ pub fn paramsubst(
                                     zerr(&msg);
                                     let pos_1based = idx + 1;
                                     zerr(&format!(
-                                        "error in flags near position {} in '${{{}}}'",
+                                        "error in flags near position {} in '${}'",
                                         pos_1based,
-                                        crate::ported::lex::untokenize(&body) // c:2289
+                                        flagerr_word // c:2519-2528
                                     ));
                                     errflag_set_error();
                                     return (String::new(), new_pos, vec![]);
@@ -6115,8 +6125,11 @@ pub fn paramsubst(
                     'b' => {
                         // c:2255
                         // c:2256-2257 — `if (quotemod || quotetype !=
-                        // QT_NONE) goto flagerr;` (flagerr not yet
-                        // ported; skipped).
+                        // QT_NONE) goto flagerr;`
+                        if quotemod != 0 || quotetype != QT_NONE {
+                            flagerr(idx);
+                            return (String::new(), new_pos, vec![]);
+                        }
                         quotemod = 1; // c:2258
                         quotetype = QT_BACKSLASH_PATTERN; // c:2259
                     } // c:2260
@@ -6168,9 +6181,9 @@ pub fn paramsubst(
                         if idx >= body_chars.len() || body_chars[idx] == ')' {
                             let pos_1based = idx + 1 + 2;
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 pos_1based,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -6191,6 +6204,12 @@ pub fn paramsubst(
                             Inbrack => Outbrack, // c:1388-1390
                             _ => del,            // c:1391
                         };
+                        // c:2445 `if (*t)` — no closing delimiter: flagerr
+                        // with `s` on the opening one.
+                        if !body_chars[idx + 1..].contains(&close_del) {
+                            flagerr(idx);
+                            return (String::new(), new_pos, vec![]);
+                        }
                         idx += 1; // c:2448 while (*++s)
                         let mut found_close = false;
                         while idx < body_chars.len()                     // c:2448
@@ -6208,9 +6227,9 @@ pub fn paramsubst(
                                 // c:2465-2467 default: flagerr.
                                 let pos_1based = idx + 1 + 2;
                                 zerr(&format!(
-                                    "error in flags near position {} in '${{{}}}'",
+                                    "error in flags near position {} in '${}'",
                                     pos_1based,
-                                    crate::ported::lex::untokenize(&body) // c:2289
+                                    flagerr_word // c:2519-2528
                                 ));
                                 errflag_set_error();
                                 return (String::new(), new_pos, vec![]);
@@ -6224,9 +6243,9 @@ pub fn paramsubst(
                         if !found_close {
                             let pos_1based = idx + 1 + 2;
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 pos_1based,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -6271,6 +6290,12 @@ pub fn paramsubst(
                                 Inbrack => Outbrack, // c:1388-1390
                                 _ => del,            // c:1391
                             };
+                            // c:2414 `if (*t)` — get_strarg found no closing
+                            // delimiter: flagerr with `s` on the opening one.
+                            if !body_chars[idx + 1..].contains(&close_del) {
+                                flagerr(idx);
+                                return (String::new(), new_pos, vec![]);
+                            }
                             idx += 1; // c:2416 while (*++s)
                             while idx < body_chars.len()                     // c:2416
                                 && body_chars[idx] != close_del
@@ -6282,10 +6307,8 @@ pub fn paramsubst(
                                     'o' => getkeys |= GETKEY_OCTAL_ESC as i32, // c:2421-2422
                                     'c' => getkeys |= GETKEY_CTRL as i32,  // c:2424-2425
                                     _ => {
-                                        // c:2428 default
-                                        // c:2430 goto flagerr — emit bad-subst.
-                                        zerr("bad substitution");
-                                        errflag_set_error();
+                                        // c:2429-2431 default: goto flagerr
+                                        flagerr(idx);
                                         return (String::new(), new_pos, vec![]);
                                     } // c:2431
                                 } // c:2432
@@ -6295,6 +6318,10 @@ pub fn paramsubst(
                                 // c:2410 skip closing del
                                 idx += 1;
                             }
+                        } else {
+                            // c:2436-2437 `} else goto flagerr;`
+                            flagerr(idx);
+                            return (String::new(), new_pos, vec![]);
                         } // c:2413
                         continue; // c:2410
                     } // c:2409 (g)
@@ -6336,9 +6363,9 @@ pub fn paramsubst(
                             // substitution". Position is `s` after `++s`, i.e.
                             // the char right after the `j`/`s` flag.
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 idx + 1 + 2,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -6373,9 +6400,9 @@ pub fn paramsubst(
                             // get_strarg fails), so `${(j:x)a}` errors at the
                             // `:`, not at the end.
                             zerr(&format!(
-                                "error in flags near position {} in '${{{}}}'",
+                                "error in flags near position {} in '${}'",
                                 del_idx + 1 + 2,
-                                crate::ported::lex::untokenize(&body) // c:2289
+                                flagerr_word // c:2519-2528
                             ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -6404,15 +6431,21 @@ pub fn paramsubst(
                         // the printed message. Bug #546.
                         let pos_1based = idx + 1 + 2;
                         zerr(&format!(
-                            "error in flags near position {} in '${{{}}}'",
+                            "error in flags near position {} in '${}'",
                             pos_1based,
-                            crate::ported::lex::untokenize(&body) // c:2289
+                            flagerr_word // c:2519-2528
                         ));
                         errflag_set_error();
                         return (String::new(), new_pos, vec![]);
                     }
                 }
                 idx += 1;
+            }
+            // No closing paren: C's loop reaches the word's closing
+            // Outbrace, which is no flag (c:2504 `default: flagerr`).
+            if d > 0 {
+                flagerr(idx);
+                return (String::new(), new_pos, vec![]);
             }
             // hkeys / hvals already carry SCANPM_WANTKEYS /
             // SCANPM_WANTVALS bits from c:2393 / c:2398; consumers
