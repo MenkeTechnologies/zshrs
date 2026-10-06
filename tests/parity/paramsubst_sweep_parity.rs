@@ -165,3 +165,21 @@ fn glob_depth_sort_compares_match_names() {
         0,
     );
 }
+
+// c:Src/builtin.c:3896-3916 — `unset 'a[sub]'` resolves the subscript with
+// getindex (KSHARRAYS, arithmetic, ranges, search flags) and replaces the
+// slice with one empty element; `arrlen_gt`'s unsigned bound
+// (Src/utils.c:2384) makes -1 the only negative start that applies.
+#[test]
+fn unset_array_element_uses_getindex() {
+    check(
+        "a=(x y z w); i=2; unset 'a[i]'; print -r -- ${(q)a}; \
+         a=(x y z w); unset 'a[2,-1]'; print -r -- ${(q)a}; \
+         a=(x y z); unset 'a[-2]'; unset 'a[(r)z]'; print -r -- ${(q)a}; \
+         a=(x y z); unset 'a[0]'; print -r -- $? ${(q)a}; \
+         setopt ksharrays; a=(x y z); unset 'a[0]'; print -r -- ${(q)a[@]}",
+        "x '' z w\nx ''\nx y ''\n1 x y z\n'' y z\n",
+        "a: assignment to invalid subscript range",
+        0,
+    );
+}

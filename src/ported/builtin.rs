@@ -10310,6 +10310,120 @@ pub fn bin_unset(
                     // N to empty; `arr[N,M]` clears the inclusive
                     // range. The previous Rust port only handled the
                     // single-index form; `unset arr[2,3]` was a no-op.
+                    if !crate::dash_mode::bash_mode() {
+                        // c:3896-3916 — `vbuf.scanflags = SCANPM_ARRONLY; vbuf.start
+                        // = 0; vbuf.end = -1; … if (getindex(&ss, &vbuf,
+                        // SCANPM_ASSIGNING) == 0 && vbuf.pm && !(PM_UNSET))`: the
+                        // subscript goes through getindex, so KSHARRAYS /
+                        // KSHZEROSUBSCRIPT, arithmetic (`a[i]`, `a[1+1]`), ranges
+                        // with negative ends and the (i)/(r) flags all resolve as
+                        // in an assignment. The selected slice is then replaced
+                        // by one empty element (setarrvalue, Src/params.c:2933-2990).
+                        let pm = paramtab().read().ok().and_then(|t| t.get(nm).cloned());
+                        let mut vbuf = crate::ported::zsh_h::value {
+                            pm,
+                            arr: Vec::new(),
+                            scanflags: crate::ported::zsh_h::SCANPM_ARRONLY as i32, // c:3898
+                            valflags: 0, // c:3900
+                            start: 0,    // c:3901
+                            end: -1,     // c:3902
+                        };
+                        // c:1736-1760 — on an array, getarg's (r)/(R) (and
+                        // (k)/(K), c:1401/1406) return the matched INDEX, exactly
+                        // what (i)/(I) return; this port's getindex hands the
+                        // matched element back in `v->arr` instead, so ask for
+                        // the index form.
+                        let search_as_index = key
+                            .strip_prefix('(')
+                            .and_then(|r| r.split_once(')'))
+                            .is_some_and(|(f, _)| f.contains(['r', 'R', 'k', 'K']) && !f.contains(['i', 'I']));
+                        let key: std::borrow::Cow<str> = match key.strip_prefix('(').and_then(|r| r.split_once(')')) {
+                            Some((flags, rest)) if !flags.contains(['i', 'I']) => format!(
+                                "({}){}",
+                                flags.replace(['r', 'k'], "i").replace(['R', 'K'], "I"),
+                                rest
+                            )
+                            .into(),
+                            _ => key.into(),
+                        };
+                        let bracketed = format!("[{}]", key); // c:3904 `*ss = '['`
+                        let mut sp: &str = &bracketed;
+                        if crate::ported::params::getindex(
+                            &mut sp,
+                            &mut vbuf,
+                            crate::ported::zsh_h::SCANPM_ASSIGNING as i32,
+                        ) == 0
+                            && vbuf
+                                .pm
+                                .as_ref()
+                                .is_some_and(|p| (p.node.flags as u32 & PM_UNSET) == 0)
+                        {
+                            if search_as_index && vbuf.start == 0 && (vbuf.valflags & crate::ported::zsh_h::VALFLAG_INV) != 0 {
+                                // c:1758-1760 — a reverse (R) search that misses
+                                // returns index 0. Without `ind` that reaches
+                                // getindex's range tail as `start == end == 0`
+                                // (c:2126-2150), not the (I) inverse arm.
+                                vbuf.valflags &= !crate::ported::zsh_h::VALFLAG_INV;
+                                if isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                                    vbuf.end = 1; // c:2140 `end = startnextlen`
+                                } else {
+                                    vbuf.valflags |= crate::ported::zsh_h::VALFLAG_EMPTY; // c:2147
+                                    vbuf.start = -1; // c:2148
+                                    vbuf.end = 0;
+                                }
+                            }
+                            let inv = (vbuf.valflags & crate::ported::zsh_h::VALFLAG_INV) != 0;
+                            // c:3912-3914 — "start is after the element for
+                            // reverse index"; only an existing element is unset.
+                            let start = vbuf.start - inv as i32;
+                            // `arrlen_gt(arr, start)` takes the bound UNSIGNED and
+                            // tests `arrlen >= 1 + bound` (Src/utils.c:2384-2387),
+                            // so -1 wraps to 0 (true: `unset 'a[-1]'` clears the
+                            // last element) while every other negative start is
+                            // a huge bound (false: `unset 'a[-2]'` is a no-op).
+                            let in_range = start == -1 || (start >= 0 && arr.len() > start as usize);
+                            if in_range && (vbuf.valflags & crate::ported::zsh_h::VALFLAG_EMPTY) != 0 {
+                                // c:2913-2917 (setarrvalue) — the strict zero
+                                // subscript (getindex c:2141-2150). zerr is a
+                                // no-op once an error is already flagged
+                                // (`a[1/0]` reported its own).
+                                if (errflag.load(Relaxed) & ERRFLAG_ERROR) == 0 {
+                                    zerr(&format!("{}: assignment to invalid subscript range", nm));
+                                }
+                            } else if in_range {
+                                // c:2938-2955 (setarrvalue) — bounds normalisation.
+                                let oldlen = arr.len() as i32;
+                                let (mut s, mut e) = (vbuf.start, vbuf.end);
+                                if inv && !isset(crate::ported::zsh_h::KSHARRAYS) {
+                                    if s > 0 {
+                                        s -= 1;
+                                    }
+                                    e -= 1;
+                                }
+                                if s < 0 {
+                                    s = (s + oldlen).max(0);
+                                }
+                                if e < 0 {
+                                    e = (e + oldlen + 1).max(0);
+                                }
+                                if e < s || s > oldlen {
+                                    e = s;
+                                } else if e > oldlen {
+                                    e = oldlen;
+                                }
+                                // c:2957-2990 — splice `("")` over [s, e).
+                                arr.splice(s as usize..e as usize, [String::new()]);
+                                crate::ported::exec::set_array(nm, arr);
+                            }
+                        }
+                        // c:3917-3918 — `returnval = errflag; errflag &=
+                        // ~ERRFLAG_ERROR;`
+                        if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
+                            returnval = 1;
+                        }
+                        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
+                    } else {
+                    // !!! BASH-MODE GATE !!! bash's own index rules, unchanged.
                     let len_i = arr.len() as i32;
                     let resolve = |raw: i32| -> Option<usize> {
                         let pos = if raw < 0 { len_i + raw + 1 } else { raw };
@@ -10384,6 +10498,7 @@ pub fn bin_unset(
                             }
                         }
                         // Other negative values: no-op (zsh behavior).
+                    }
                     }
                     // c:Src/params.c:2922 — a subscript unset of a tied
                     // colon-array (`unset path[2]`) re-derives the scalar
