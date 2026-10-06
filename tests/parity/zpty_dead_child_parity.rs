@@ -198,6 +198,10 @@ fn assert_matrix_parity(case: &str, spawn: &str) {
 /// Child exited 0 before the write. Every step must report the
 /// command finished: listing `(finished)`, `-t` 1, `-w` 2, `-r` 2.
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "reference zsh hangs on macOS: upstream 54927 poll() never reports the dead child"
+)]
 fn zpty_write_to_child_that_exited_cleanly() {
     assert_matrix_parity("clean", "true");
 }
@@ -205,12 +209,20 @@ fn zpty_write_to_child_that_exited_cleanly() {
 /// Same, for a child that exited non-zero — zpty exposes no exit
 /// status, so this must be indistinguishable from the clean exit.
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "reference zsh hangs on macOS: upstream 54927 poll() never reports the dead child"
+)]
 fn zpty_write_to_child_that_exited_nonzero() {
     assert_matrix_parity("nonzero", "false");
 }
 
 /// Same, for a child killed by a signal.
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "reference zsh hangs on macOS: upstream 54927 poll() never reports the dead child"
+)]
 fn zpty_write_to_child_killed_by_signal() {
     assert_matrix_parity("signal", r#""sh -c 'kill -9 \$\$'""#);
 }
