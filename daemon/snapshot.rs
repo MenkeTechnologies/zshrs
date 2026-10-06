@@ -123,7 +123,7 @@ pub async fn op_snapshot_save(state: &Arc<DaemonState>, args: Value) -> OpResult
 
     let total_rows: i64 = SUBSYSTEMS
         .iter()
-        .map(|s| state.canonical.rows_for(s).len() as i64)
+        .map(|s| state.canonical.rows_for_all_shells(s).len() as i64)
         .sum();
 
     Ok(json!({

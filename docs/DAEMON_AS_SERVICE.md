@@ -135,38 +135,39 @@ socket. From bash:
 
 ```bash
 # Persistent KV
-zd cache put build-config "$(cat config.json)"
-zd cache get build-config
+zd cache put build config "$(cat config.json)"
+zd cache get build config
 
-# Job submission
-job_id=$(zd job submit "long-running-task.sh")
-zd job poll "$job_id"
+# Job submission (responses are JSON)
+job_id=$(zd job submit -- ./long-running-task.sh | jq -r .job_id)
+zd job wait "$job_id"
 
-# Cross-process lock around critical section
-zd lock acquire deploy-mutex --timeout 30s
-trap 'zd lock release deploy-mutex' EXIT
+# Cross-process lock around critical section. The lock belongs to this
+# script (zd records its parent PID) and is force-released if it dies.
+token=$(zd lock acquire deploy-mutex --timeout 30 | jq -r .token)
+trap 'zd lock release deploy-mutex "$token"' EXIT
 # ... critical section ...
 
-# fsnotify-driven trigger
-zd watch subscribe ~/src/myproject/**/*.rs |
+# fsnotify-driven trigger (SSE stream)
+zd watch ~/src/myproject --recursive |
     while read changed; do cargo check; done
 
 # Cross-shell pub/sub
-zd event publish build-complete '{"target":"prod"}'
+zd publish build-complete '{"target":"prod"}'
 
 # Build artifact cache (sccache-equivalent for arbitrary tools)
 hash=$(sha256sum input.c | cut -d' ' -f1)
 if ! zd artifact get "compile-$hash" -o output.o; then
     gcc -c input.c -o output.o
-    zd artifact put "compile-$hash" output.o
+    zd artifact put "compile-$hash" --file output.o
 fi
 ```
 
 Same operations from fish:
 
 ```fish
-zd cache put env-snapshot (env)
-set job_id (zd job submit "deploy.sh")
+zd cache put snapshots env (env | string collect)
+set job_id (zd job submit -- ./deploy.sh | jq -r .job_id)
 ```
 
 Same from Python:
@@ -376,7 +377,7 @@ add a reverse proxy for browser pages).
 | CACHE | ✅ | sqlite-backed, TTL-aware, namespaced |
 | ARTIFACT | ✅ | sha256 dedup, base64 wire encoding, GC by age + size cap |
 | JOB | ✅ | tokio supervisor, per-job stdout/stderr files, terminal states `exited`/`failed`/`killed`/`cancelled` |
-| SCHEDULE | ✅ | cron 6-field format, sqlite-persisted, 1Hz tick, fires `job_submit` with `tags:["scheduled"]` |
+| SCHEDULE | ✅ | cron 6-field format (5-field crontab lines accepted, second 0), sqlite-persisted, 1Hz tick, fires `job_submit` with `tags:["scheduled"]` |
 | WATCH | ✅ | refcounted per-path subscription via `watch_subscribe` (IPC) or `/stream/watch` (HTTP); same path subscribed N times stays armed until the Nth unsubscribe; SSE TCP-close auto-releases |
 | EVENT | ✅ | scope.topic patterns, `publish` requires session (HTTP `handler_op` registers per request) |
 | LOCK | ✅ | named mutex, u128 token, PID liveness probe |
@@ -528,13 +529,14 @@ export PATH=$HOME/.cargo/bin:$PATH      # zd installed via cargo
 export RUSTC_WRAPPER=zd-rustc-wrapper
 
 # Replace cron + anacron for personal jobs
-zd schedule add "0 */1 * * *" "backup-photos.sh"
-zd schedule add "0 3 * * *" "git-pull-all-repos.sh"
+zd schedule add "0 */1 * * *" -- backup-photos.sh
+zd schedule add "0 3 * * *" -- git-pull-all-repos.sh
 
 # Replace per-script flock for deploy mutex
 deploy() {
-    zd lock acquire prod-deploy --timeout 60s || return 1
-    trap 'zd lock release prod-deploy' EXIT
+    local token
+    token=$(zd lock acquire prod-deploy --timeout 60 | jq -r .token) || return 1
+    trap "zd lock release prod-deploy $token" EXIT
     # ... actual deploy ...
 }
 

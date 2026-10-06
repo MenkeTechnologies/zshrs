@@ -472,8 +472,28 @@ impl CanonicalEngine {
         inserted
     }
 
-    /// Read every row in a subsystem, ordered by key.
+    /// Read zshrs's own rows in a subsystem (`shell_id` None / "zshrs",
+    /// the bare-key slot), ordered by key. Rows other shells federated in
+    /// (`definitions_emit`, `zshrs-recorder --shell-id`) are left out:
+    /// exporting, pulling or completing from them would apply another
+    /// shell's definitions in zshrs. Federation readers use
+    /// [`Self::rows_for_all_shells`].
     pub fn rows_for(&self, subsystem: &str) -> Vec<CanonicalRow> {
+        let g = self.inner.read();
+        g.rows
+            .get(subsystem)
+            .map(|m| {
+                m.iter()
+                    .filter(|(k, _)| !k.contains(SHELL_ID_SEP))
+                    .map(|(_, r)| r.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Read every row in a subsystem across all recording shells, ordered
+    /// by storage key.
+    pub fn rows_for_all_shells(&self, subsystem: &str) -> Vec<CanonicalRow> {
         let g = self.inner.read();
         g.rows
             .get(subsystem)
@@ -750,5 +770,20 @@ mod tests {
             alias_rows(&engine),
             vec![("gst".into(), "git status -sb".into(), Some("/home/u/.zshrc".into()), Some(1))]
         );
+    }
+
+    // A bash `ll` federated in through definitions_emit must not shadow
+    // zshrs's own `ll` in anything zshrs exports, pulls or completes from.
+    #[test]
+    fn rows_for_is_the_zshrs_view_of_a_federated_subsystem() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let engine = CanonicalEngine::new(CachePaths::with_root(tmp.path()));
+        engine.upsert_tagged("alias", "ll", &json_string("ls -la"), None, Some("zshrs".into()));
+        engine.upsert_tagged("alias", "ll", &json_string("ls -l"), None, Some("bash".into()));
+        engine.upsert("alias", "gst", &json_string("git status"), None);
+
+        let zshrs: Vec<_> = engine.rows_for("alias").into_iter().map(|r| unjson(&r.value)).collect();
+        assert_eq!(zshrs, ["git status", "ls -la"]);
+        assert_eq!(engine.rows_for_all_shells("alias").len(), 3);
     }
 }

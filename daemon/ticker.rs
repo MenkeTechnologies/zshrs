@@ -52,6 +52,18 @@ pub fn spawn(state: Arc<DaemonState>) {
                 tracing::info!("ticker: daemon dropped, exiting");
                 break;
             };
+            // Socket gone (its $ZSHRS_HOME deleted, e.g. a test tempdir):
+            // no client can reach this daemon over IPC, and its pidlock no
+            // longer guards anything, yet it would keep holding the HTTP
+            // port and answer `zd` with stale state. Shut down.
+            if !state.paths.socket.exists() {
+                tracing::warn!(
+                    socket = %state.paths.socket.display(),
+                    "ticker: socket removed, shutting down"
+                );
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::this(), nix::sys::signal::Signal::SIGTERM);
+                break;
+            }
 
             sweep_tmp(&state);
             rotate_logs_if_needed(&state);

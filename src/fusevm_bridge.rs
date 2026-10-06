@@ -1107,6 +1107,20 @@ pub(crate) fn builtin_prefix_finds(name: &str) -> bool {
         || is_registered_builtin(name)
 }
 
+/// Run a daemon `z*` builtin (zcache, zd, zjob, …) by name. They are
+/// dispatched by name instead of living in builtintab, so each resolver that
+/// can land on a builtin name — literal head, `$var` head, `builtin NAME` —
+/// routes them through here. `None` when `name` is not one of them.
+fn run_daemon_builtin(name: &str, rest: &[String]) -> Option<i32> {
+    if !crate::daemon::builtins::is_zshrs_builtin(name) {
+        return None;
+    }
+    let argv: Vec<String> = std::iter::once(name.to_string())
+        .chain(rest.iter().cloned())
+        .collect();
+    Some(crate::daemon::builtins::try_dispatch(name, &argv).unwrap_or(1))
+}
+
 /// Dispatch a zshrs-ORIGINAL builtin by NAME, argv-style. These are
 /// registered as fusevm opcodes in [`register_builtins`] (async, doctor,
 /// peach, …), so a *literal* name compiles to `CallBuiltin` and runs. But
@@ -2952,11 +2966,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // in builtintab — but they ARE builtins, so the `builtin`
         // precommand must reach them (`builtin zd ping` errored
         // "no such builtin: zd" while bare `zd ping` worked).
-        if crate::daemon::builtins::is_zshrs_builtin(name) {
-            let argv: Vec<String> = std::iter::once(name.to_string())
-                .chain(rest.iter().cloned())
-                .collect();
-            return Value::Status(crate::daemon::builtins::try_dispatch(name, &argv).unwrap_or(1));
+        if let Some(status) = run_daemon_builtin(name, rest) {
+            return Value::Status(status);
         }
         // c:Src/exec.c:3435-3436 — `builtin NAME` with NAME not in
         // builtintab emits `zwarn("no such builtin: %s", cmdarg)`
@@ -13335,12 +13346,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(result) = intercepted {
             return Value::Status(result.unwrap_or(127));
         }
-        // zshrs-original opcode builtins (async, doctor, peach, …) reached
-        // via a run-time-resolved head (`$var`): they are absent from the
-        // static BUILTINS port table / builtintab, so execcmd_exec below would
-        // treat the head as external and report "command not found" — even
-        // though `whence` calls it a builtin and a literal head runs it via
-        // CallBuiltin. Dispatch by name here, but ONLY when the head is neither
+        // zshrs-original builtins (async, doctor, peach, …, and the daemon
+        // z* family) reached via a run-time-resolved head (`$var`): they
+        // are absent from the static BUILTINS port table / builtintab, so
+        // execcmd_exec below would treat the head as external and report
+        // "command not found" — even though `whence` calls it a builtin and
+        // a literal head runs it via CallBuiltin. Dispatch by name here, but
+        // ONLY when the head is neither
         // a user function nor a ported builtin, so the shell's
         // function -> builtin -> external order is preserved.
         if let Some(head) = args.first() {
@@ -13348,7 +13360,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let is_ported =
                 crate::ported::builtin::createbuiltintable().contains_key(head.as_str());
             if !is_fn && !is_ported {
-                if let Some(status) = try_run_registered_builtin(head, &args[1..]) {
+                let status = run_daemon_builtin(head, &args[1..])
+                    .or_else(|| try_run_registered_builtin(head, &args[1..]));
+                if let Some(status) = status {
                     crate::ported::builtin::LASTVAL
                         .store(status, std::sync::atomic::Ordering::Relaxed);
                     return Value::Status(status);
@@ -21221,8 +21235,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // (zshrs_daemon::builtins::ZSHRS_BUILTIN_NAMES); routing through
             // try_dispatch keeps this site zero-touch as new z* builtins land.
             n if !has_user_fn && crate::daemon::builtins::is_zshrs_builtin(n) => {
-                let argv: Vec<String> = std::iter::once(name.to_string()).chain(args).collect();
-                return Some(crate::daemon::builtins::try_dispatch(n, &argv).unwrap_or(1));
+                return run_daemon_builtin(n, &args);
             }
             _ => {}
         }

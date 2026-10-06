@@ -58,7 +58,7 @@ pub async fn op_definitions_kinds(state: &Arc<DaemonState>, _args: Value) -> OpR
     let mut populated: Vec<&str> = KNOWN_KINDS
         .iter()
         .copied()
-        .filter(|k| !state.canonical.rows_for(k).is_empty())
+        .filter(|k| !state.canonical.rows_for_all_shells(k).is_empty())
         .collect();
     populated.sort();
     let count = populated.len();
@@ -100,7 +100,7 @@ pub async fn op_definitions_query(state: &Arc<DaemonState>, args: Value) -> OpRe
 
     let mut records: Vec<Value> = Vec::new();
     'outer: for kind in &kinds_to_scan {
-        for row in state.canonical.rows_for(kind) {
+        for row in state.canonical.rows_for_all_shells(kind) {
             if let Some(want) = name_arg {
                 if row.key != want {
                     continue;
@@ -265,7 +265,7 @@ pub async fn op_definitions_diff(state: &Arc<DaemonState>, args: Value) -> OpRes
     for kind in &kinds {
         let mut a_rows = std::collections::HashMap::<String, String>::new();
         let mut b_rows = std::collections::HashMap::<String, String>::new();
-        for row in state.canonical.rows_for(kind) {
+        for row in state.canonical.rows_for_all_shells(kind) {
             let row_shell = row.shell_id.as_deref().unwrap_or("zshrs");
             if row_shell == shell_a {
                 a_rows.insert(row.key.clone(), unjson_str(&row.value));

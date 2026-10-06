@@ -247,6 +247,12 @@ pub trait Transport {
     /// SSE streams. Implementations that can't stream (in-process
     /// builtin) return an error pointing the user at the binary form.
     fn sse(&mut self, path: &str) -> Result<String, String>;
+    /// PID that holds a `zd lock` until it exits. In-process (the shell
+    /// builtin) that is this process; the standalone binary overrides it
+    /// with its parent, since `zd` itself exits right after the call.
+    fn lock_holder_pid(&self) -> u32 {
+        std::process::id()
+    }
 }
 
 /// Answer the arg shapes that need no daemon transport: empty args
@@ -510,7 +516,7 @@ fn cmd_lock(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
     let sub = rest
         .first()
         .ok_or("usage: zd lock <acquire|try|release|list> ...")?;
-    let pid = std::process::id();
+    let pid = t.lock_holder_pid();
     match sub.as_str() {
         "acquire" => {
             let name = rest

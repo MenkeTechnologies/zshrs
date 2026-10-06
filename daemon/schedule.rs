@@ -32,9 +32,10 @@
 //! | `schedule_remove`   | `{id}`                                | `{ok, removed: bool}`       |
 //! | `schedule_list`     | `{enabled_only?}`                     | `{ok, schedules: [...]}`    |
 //!
-//! Cron format is the standard 6-field "sec min hr dom mon dow"
-//! (the `cron` crate uses 6 fields including seconds — different from
-//! traditional 5-field crontab. Examples:
+//! Cron format is the `cron` crate's 6-field "sec min hr dom mon dow".
+//! A traditional 5-field crontab line ("min hr dom mon dow") is accepted
+//! too and fires at second 0 (`normalize_cron`). Examples:
+//!   `0 * * * *`          every hour on the hour (crontab form)
 //!   `0 0 * * * *`        every hour on the hour
 //!   `0 */15 * * * *`     every 15 minutes
 //!   `0 0 3 * * *`        daily at 03:00:00
@@ -109,13 +110,24 @@ fn argv_arg(args: &Value) -> std::result::Result<Vec<String>, ErrPayload> {
     }
     Ok(v)
 }
+/// Accept a 5-field crontab line by pinning the seconds field to 0; the
+/// `cron` crate only parses its 6/7-field form, which already carries
+/// seconds and passes through unchanged.
+fn normalize_cron(expr: &str) -> String {
+    if expr.split_whitespace().count() == 5 {
+        format!("0 {}", expr.trim())
+    } else {
+        expr.to_string()
+    }
+}
+
 /// `op_schedule_add` — see implementation.
 pub async fn op_schedule_add(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let cron_expr = args
         .get("cron_expr")
         .and_then(Value::as_str)
-        .ok_or_else(|| ErrPayload::new("bad_args", "missing `cron_expr`"))?
-        .to_string();
+        .map(normalize_cron)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `cron_expr`"))?;
     // Validate the cron expression at add-time so the user gets immediate
     // feedback instead of a silent no-fire later.
     cron::Schedule::from_str(&cron_expr)
@@ -363,4 +375,27 @@ fn row_due(
         return next_ns <= now_ns;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn next_fire(expr: &str) -> chrono::DateTime<chrono::Utc> {
+        let after = chrono::DateTime::from_timestamp(0, 0).unwrap();
+        let sched = cron::Schedule::from_str(&normalize_cron(expr)).unwrap();
+        sched.after(&after).next().unwrap()
+    }
+
+    #[test]
+    fn crontab_lines_fire_like_their_seconds_form() {
+        assert_eq!(next_fire("0 3 * * *"), next_fire("0 0 3 * * *"));
+        assert_eq!(next_fire("*/15 * * * *"), next_fire("0 */15 * * * *"));
+    }
+
+    #[test]
+    fn six_and_seven_field_expressions_pass_through() {
+        assert_eq!(normalize_cron("30 0 3 * * *"), "30 0 3 * * *");
+        assert_eq!(normalize_cron("0 0 3 * * * 2030"), "0 0 3 * * * 2030");
+    }
 }

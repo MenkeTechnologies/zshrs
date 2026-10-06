@@ -304,6 +304,15 @@ pub fn shell_alive(pid: i32, start: Option<u64>) -> bool {
     }
 }
 
+/// The SQLite databases the daemon holds open, for [`DaemonState::swap_db_file`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DbFile {
+    /// `catalog.db`.
+    Catalog,
+    /// `history.db`.
+    History,
+}
+
 /// Shared handle — clone freely; every clone holds the same Arc<Mutex<...>> + paths.
 pub struct DaemonState {
     /// `inner` field.
@@ -417,6 +426,53 @@ impl DaemonState {
         let conn = self.catalog.lock();
         f(&conn)
     }
+
+    /// Fold both databases' WAL into their main files so a byte copy of
+    /// `catalog.db` / `history.db` holds every committed row.
+    pub fn checkpoint_dbs(&self) {
+        for conn in [&self.catalog, &self.history_db] {
+            if let Err(e) = conn.lock().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
+                tracing::warn!(?e, "wal checkpoint failed");
+            }
+        }
+    }
+
+    /// Replace a database file on disk (restore, import, clean) without
+    /// leaving the daemon's connection on the old inode. Holding the
+    /// connection lock: checkpoint, close, run `swap`, drop the old file's
+    /// `-wal`/`-shm` sidecars (they would replay into the new file), then
+    /// reopen — also when `swap` fails, so the daemon never runs without
+    /// a connection.
+    pub fn swap_db_file<T, E>(
+        &self,
+        db: DbFile,
+        swap: impl FnOnce() -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<super::DaemonError>,
+    {
+        let (slot, path) = match db {
+            DbFile::Catalog => (&self.catalog, &self.paths.catalog_db),
+            DbFile::History => (&self.history_db, &self.paths.history_db),
+        };
+        let mut conn = slot.lock();
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+        let placeholder = Connection::open_in_memory().map_err(super::DaemonError::from)?;
+        drop(std::mem::replace(&mut *conn, placeholder));
+
+        let swapped = swap();
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.clone().into_os_string();
+            sidecar.push(suffix);
+            let _ = std::fs::remove_file(sidecar);
+        }
+        *conn = match db {
+            DbFile::Catalog => catalog::open(&self.paths),
+            DbFile::History => history::open(&self.paths),
+        }?;
+        swapped
+    }
+
     /// `uptime_ms` — see implementation.
     pub fn uptime_ms(&self) -> u64 {
         self.started_at.elapsed().as_millis() as u64
@@ -1500,5 +1556,72 @@ mod tests {
         assert_eq!(d["originators_notified"].as_u64(), Some(2));
         assert_eq!(cancels(&mut rx_call), 0);
         assert_eq!(cancels(&mut rx_wait), 2);
+    }
+
+    fn stat_names(path: &std::path::Path) -> Vec<String> {
+        let conn = catalog::open_at(path).unwrap();
+        let mut stmt = conn.prepare("SELECT fq_name FROM entry_stats ORDER BY fq_name").unwrap();
+        let names = stmt.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>();
+        names.unwrap()
+    }
+
+    fn add_stat(conn: &Connection, name: &str) -> rusqlite::Result<()> {
+        conn.execute("INSERT INTO entry_stats (fq_name, call_count) VALUES (?, 1)", [name])
+            .map(drop)
+    }
+
+    // A restore renames catalog.db away and copies the backup in. The
+    // daemon must write to the restored file afterwards, not to the
+    // renamed inode its old connection still holds.
+    #[test]
+    fn swap_db_file_moves_the_connection_to_the_new_file() {
+        let state = fresh();
+        let catalog_db = state.paths.catalog_db.clone();
+        state.with_catalog(|c| add_stat(c, "before_swap")).unwrap();
+
+        let incoming = catalog_db.with_file_name("incoming.db");
+        add_stat(&catalog::open_at(&incoming).unwrap(), "from_backup").unwrap();
+        let displaced = catalog_db.with_file_name("displaced.db");
+        state
+            .swap_db_file(DbFile::Catalog, || -> Result<()> {
+                std::fs::rename(&catalog_db, &displaced)?;
+                std::fs::copy(&incoming, &catalog_db)?;
+                Ok(())
+            })
+            .unwrap();
+        state.with_catalog(|c| add_stat(c, "after_swap")).unwrap();
+
+        assert_eq!(stat_names(&catalog_db), ["after_swap", "from_backup"]);
+        assert_eq!(stat_names(&displaced), ["before_swap"]);
+    }
+
+    // A failed swap still leaves the daemon a working connection.
+    #[test]
+    fn swap_db_file_reopens_after_a_failed_swap() {
+        let state = fresh();
+        let failed = state.swap_db_file(DbFile::History, || -> Result<()> {
+            Err(super::super::DaemonError::other("copy failed"))
+        });
+        assert!(failed.is_err());
+        assert!(state.history_count().is_ok());
+    }
+
+    // `export_all` copies the database files byte for byte; rows still in
+    // the WAL must be in the main file by then.
+    #[test]
+    fn checkpoint_dbs_leaves_every_row_in_the_main_file() {
+        let state = fresh();
+        state
+            .with_history(|c| {
+                c.execute("INSERT INTO history (line, ts_ns) VALUES ('ls', 1)", [])
+            })
+            .unwrap();
+        state.checkpoint_dbs();
+
+        let copy = state.paths.history_db.with_file_name("copy.db");
+        std::fs::copy(&state.paths.history_db, &copy).unwrap();
+        let conn = Connection::open(&copy).unwrap();
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 1);
     }
 }

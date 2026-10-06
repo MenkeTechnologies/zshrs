@@ -87,19 +87,24 @@ impl DaemonHandle {
     fn spawn() -> Self {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let zshrs_home = tmp.path().to_path_buf();
+        // No `[http]` section: the seeded default listens on
+        // 127.0.0.1:7733, the user's real daemon's port. A test daemon
+        // that outlives a killed test run would keep it. Seeding never
+        // overwrites an existing file.
+        std::fs::write(zshrs_home.join("zshrs-daemon.toml"), "").expect("seed daemon config");
 
         let child = Command::new(zshrs_daemon_binary())
             .env("ZSHRS_HOME", &zshrs_home)
             .env("ZSHRS_QUIET_FIRST_RUN", "1")
             // Point every "where does the user keep shell state" env var
             // at the tempdir too. `ZSHRS_HOME` alone does NOT isolate the
-            // daemon: `ops::legacy_scope_dirs` (daemon/ops.rs) adds
+            // daemon: `ops::legacy_scope` (daemon/ops.rs) adds
             // `dirs::home_dir()` + `$ZDOTDIR` / `$XDG_CACHE_HOME` /
-            // `$ZPWR_LOCAL` / `$ZSH` to the scope that `verify` walks
-            // (depth 4) hunting stale `.zwc` / `.zcompdump`. On a real
-            // developer's account that walk is enormous, so `verify`
-            // outran the client's 5s read timeout and the test failed
-            // with EAGAIN — a pure property of whose $HOME it ran in.
+            // `$ZPWR_LOCAL` / `$ZSH` to the scope that `verify` scans for
+            // stale `.zwc` / `.zcompdump`. `$ZPWR_LOCAL` / `$ZSH` are plugin
+            // trees walked 6 deep, so on a real developer's account `verify`
+            // could outrun the client's 5s read timeout — a pure property of
+            // whose environment the test ran in.
             .env("HOME", &zshrs_home)
             .env("ZDOTDIR", &zshrs_home)
             .env("XDG_CACHE_HOME", &zshrs_home)

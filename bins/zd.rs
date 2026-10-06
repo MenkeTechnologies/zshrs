@@ -84,6 +84,13 @@ impl Transport for HttpTransport {
         }
     }
 
+    /// The lock belongs to the script that ran `zd lock acquire`, not to
+    /// this short-lived process: the daemon force-releases a lock whose
+    /// holder PID is dead, so `zd`'s own PID would free it on exit.
+    fn lock_holder_pid(&self) -> u32 {
+        std::os::unix::process::parent_id()
+    }
+
     /// SSE streams (`/stream/watch`, `/stream/events`) are long-lived
     /// chunked reads. ureq's blocking client works for them but the
     /// ergonomics of pumping bytes to stdout indefinitely + the fact

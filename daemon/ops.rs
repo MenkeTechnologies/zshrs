@@ -119,7 +119,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::ipc::{ErrPayload, Event, Frame};
-use super::state::DaemonState;
+use super::state::{DaemonState, DbFile};
+use super::DaemonError;
 
 /// Result type for op handlers — Ok = json payload merged into the response, Err = ErrPayload.
 pub type OpResult = std::result::Result<Value, ErrPayload>;
@@ -1540,20 +1541,24 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
             if dry_run {
                 would_remove.push(paths.catalog_db.display().to_string());
             } else if paths.catalog_db.exists() {
-                let _ = std::fs::remove_file(&paths.catalog_db);
+                // Swap, not a bare unlink: the daemon's own connection must
+                // follow the fresh file or later writes land in the deleted one.
+                state.swap_db_file(DbFile::Catalog, || -> Result<(), ErrPayload> {
+                    std::fs::remove_file(&paths.catalog_db)?;
+                    Ok(())
+                })?;
                 removed.push(paths.catalog_db.display().to_string());
-                // Reopen + reschema so subsequent ops don't NotConnected.
-                let conn = super::catalog::open(paths)
-                    .map_err(|e| ErrPayload::new("catalog_reopen", e.to_string()))?;
                 if !no_stats && !preserved_stats.is_empty() {
-                    let _ = conn.execute_batch("BEGIN");
-                    for (fq, last, count, total) in &preserved_stats {
-                        let _ = conn.execute(
-                            "INSERT OR REPLACE INTO entry_stats (fq_name, last_called_at, call_count, total_ns) VALUES (?, ?, ?, ?)",
-                            rusqlite::params![fq, last, count, total],
-                        );
-                    }
-                    let _ = conn.execute_batch("COMMIT");
+                    let _ = state.with_catalog(|conn| -> rusqlite::Result<()> {
+                        let tx = conn.unchecked_transaction()?;
+                        for (fq, last, count, total) in &preserved_stats {
+                            tx.execute(
+                                "INSERT OR REPLACE INTO entry_stats (fq_name, last_called_at, call_count, total_ns) VALUES (?, ?, ?, ?)",
+                                rusqlite::params![fq, last, count, total],
+                            )?;
+                        }
+                        tx.commit()
+                    });
                 }
                 tracing::info!(
                     preserved = preserved_stats.len(),
@@ -1578,38 +1583,18 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
                 removed.push(format!("entry_stats ({} rows)", n));
             }
         }
-        // `zcache clean zwc` / `zcompdump` / `legacy` per DAEMON.md:387-396.
-        // Walks only directories the daemon knows about: $HOME, $ZDOTDIR,
-        // $ZPWR_LOCAL, $XDG_CACHE_HOME, plus every dir referenced in the
-        // canonical path/fpath subsystems and every parent of a watched file.
+        // `zcache clean zwc` / `zcompdump` / `legacy` per DAEMON.md:387-417.
+        // Scope is `legacy_scope` — only directories the daemon knows about.
         "zwc" | "zcompdump" | "legacy" => {
-            let scope = legacy_scope_dirs(state);
             let want_zwc = matches!(target.as_str(), "zwc" | "legacy");
             let want_zcompdump = matches!(target.as_str(), "zcompdump" | "legacy");
-            for dir in scope {
-                if !dir.is_dir() {
-                    continue;
-                }
-                let walker = walkdir::WalkDir::new(&dir)
-                    .max_depth(if dir.starts_with(&paths.root) { 2 } else { 6 })
-                    .follow_links(false)
-                    .into_iter()
-                    .filter_map(|r| r.ok());
-                for ent in walker {
-                    if !ent.file_type().is_file() {
-                        continue;
-                    }
-                    let p = ent.path();
-                    let n = match p.file_name().and_then(|n| n.to_str()) {
-                        Some(s) => s,
-                        None => continue,
-                    };
-                    let is_zwc = want_zwc && n.ends_with(".zwc");
-                    let is_zcd = want_zcompdump
-                        && (n.starts_with(".zcompdump") || n.contains(".zcompdump-"));
-                    if is_zwc || is_zcd {
-                        record(p.to_path_buf());
-                    }
+            for (path, kind) in scan_legacy(state).await? {
+                let wanted = match kind {
+                    LegacyKind::Zwc => want_zwc,
+                    LegacyKind::Zcompdump => want_zcompdump,
+                };
+                if wanted {
+                    record(path);
                 }
             }
         }
@@ -1747,53 +1732,105 @@ fn clean_report(
     out
 }
 
-/// Build the directory scope for legacy artifact (`.zwc` / `.zcompdump`)
-/// cleanup. Per DAEMON.md "Out-of-scope dirs are never touched (no recursive
-/// `find ~ -name '*.zwc'`). Daemon walks only the directories it already
-/// knows about."
-fn legacy_scope_dirs(state: &Arc<DaemonState>) -> Vec<std::path::PathBuf> {
-    let mut out: Vec<std::path::PathBuf> = Vec::new();
-    let mut push = |p: std::path::PathBuf| {
-        if !out.iter().any(|q| q == &p) {
-            out.push(p);
+/// A legacy zsh artifact found by [`scan_legacy`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LegacyKind {
+    /// `*.zwc` — zcompile output.
+    Zwc,
+    /// `.zcompdump*` / `*.zcompdump-*` — compinit dump.
+    Zcompdump,
+}
+
+fn legacy_kind(file_name: &str) -> Option<LegacyKind> {
+    if file_name.ends_with(".zwc") {
+        Some(LegacyKind::Zwc)
+    } else if file_name.starts_with(".zcompdump") || file_name.contains(".zcompdump-") {
+        Some(LegacyKind::Zcompdump)
+    } else {
+        None
+    }
+}
+
+/// Directory scope for legacy artifact (`.zwc` / `.zcompdump`) cleanup, as
+/// `(dir, max_depth)`. Per DAEMON.md:417 "Out-of-scope dirs are never
+/// touched (no recursive `find ~ -name '*.zwc'`). Daemon walks only the
+/// directories it already knows about."
+///
+/// `$HOME` and `$ZDOTDIR` are listed, never walked: zsh drops
+/// `.zcompdump-*` and `.zshrc.zwc` at their top level, while a recursive
+/// walk of `$HOME` enters `~/Library/Containers` and similar trees where
+/// `read_dir` can block indefinitely on macOS privacy prompts. The
+/// path/fpath/manpath dirs hold flat files; their parent is listed too
+/// because `zcompile -a dir.zwc` writes `dir.zwc` beside `dir`.
+fn legacy_scope(state: &Arc<DaemonState>) -> Vec<(std::path::PathBuf, usize)> {
+    let mut out: Vec<(std::path::PathBuf, usize)> = Vec::new();
+    let mut push = |p: std::path::PathBuf, depth: usize| {
+        match out.iter_mut().find(|(q, _)| q == &p) {
+            Some(entry) => entry.1 = entry.1.max(depth),
+            None => out.push((p, depth)),
         }
     };
 
-    // Cache root (catches anything inside ~/.zshrs/).
-    push(state.paths.root.clone());
-
-    // HOME + ZDOTDIR + XDG_CACHE_HOME + ZPWR_LOCAL.
+    push(state.paths.root.clone(), 2);
     if let Some(home) = dirs::home_dir() {
-        push(home);
+        push(home, 1);
     }
-    for var in &["ZDOTDIR", "XDG_CACHE_HOME", "ZPWR_LOCAL", "ZSH"] {
-        if let Ok(v) = std::env::var(var) {
-            if !v.is_empty() {
-                push(std::path::PathBuf::from(v));
-            }
+    // Plugin trees (oh-my-zsh, zpwr) are walked; the cache dir holds
+    // `zsh/zcompdump-*` one level down.
+    for (var, depth) in [("ZDOTDIR", 1), ("XDG_CACHE_HOME", 2), ("ZPWR_LOCAL", 6), ("ZSH", 6)] {
+        if let Some(v) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+            push(std::path::PathBuf::from(v), depth);
         }
     }
-
-    // Every directory in the canonical path / fpath subsystems.
     for sub in &["path", "fpath", "manpath"] {
         for row in state.canonical.rows_for(sub) {
-            let val = row.value.trim_matches('"').to_string();
-            let p = std::path::PathBuf::from(val);
+            let p = std::path::PathBuf::from(row.value.trim_matches('"'));
             if p.is_dir() {
-                push(p);
+                if let Some(parent) = p.parent() {
+                    push(parent.to_path_buf(), 1);
+                }
+                push(p, 1);
             }
         }
     }
-
-    // Every parent of a watched fsnotify path (covers .zwc next to any
-    // sourced file).
+    // Parent of every watched file (covers `.zwc` next to a sourced file).
     for wp in state.fs_watcher.registered_paths() {
         if let Some(parent) = wp.path.parent() {
-            push(parent.to_path_buf());
+            push(parent.to_path_buf(), 1);
         }
     }
-
     out
+}
+
+/// Every legacy artifact inside [`legacy_scope`]. The walk runs on the
+/// blocking pool: it is filesystem-bound and must never stall the async
+/// workers that serve every other connection.
+async fn scan_legacy(
+    state: &Arc<DaemonState>,
+) -> Result<Vec<(std::path::PathBuf, LegacyKind)>, ErrPayload> {
+    let scope = legacy_scope(state);
+    tokio::task::spawn_blocking(move || {
+        let mut found = Vec::new();
+        for (dir, depth) in scope {
+            for ent in walkdir::WalkDir::new(&dir)
+                .max_depth(depth)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|r| r.ok())
+                .filter(|e| e.file_type().is_file())
+            {
+                if let Some(kind) = ent.file_name().to_str().and_then(legacy_kind) {
+                    found.push((ent.into_path(), kind));
+                }
+            }
+        }
+        // Roots nest (an fpath dir inside $ZPWR_LOCAL): report each file once.
+        found.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        found.dedup_by(|a, b| a.0 == b.0);
+        found
+    })
+    .await
+    .map_err(|e| ErrPayload::new("legacy_scan", e.to_string()))
 }
 
 async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
@@ -1823,44 +1860,16 @@ async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
     // Per docs/DAEMON.md "zcache verify ... already exists; reports
     // .zwc/.zcompdump presence as a WARN with the cleanup hint, since their
     // existence implies stale legacy artifacts" (line 394-395).
-    let scope = legacy_scope_dirs(state);
     let mut zwc_count = 0usize;
     let mut zcd_count = 0usize;
     let mut sample: Vec<String> = Vec::new();
-    for dir in &scope {
-        if !dir.is_dir() {
-            continue;
+    for (path, kind) in scan_legacy(state).await? {
+        match kind {
+            LegacyKind::Zwc => zwc_count += 1,
+            LegacyKind::Zcompdump => zcd_count += 1,
         }
-        // Bound walk depth; legacy scope is wide so don't hammer subtrees.
-        for ent in walkdir::WalkDir::new(dir)
-            .max_depth(if dir.starts_with(&state.paths.root) {
-                2
-            } else {
-                4
-            })
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|r| r.ok())
-        {
-            if !ent.file_type().is_file() {
-                continue;
-            }
-            let p = ent.path();
-            let n = match p.file_name().and_then(|n| n.to_str()) {
-                Some(s) => s,
-                None => continue,
-            };
-            if n.ends_with(".zwc") {
-                zwc_count += 1;
-                if sample.len() < 8 {
-                    sample.push(p.display().to_string());
-                }
-            } else if n.starts_with(".zcompdump") || n.contains(".zcompdump-") {
-                zcd_count += 1;
-                if sample.len() < 8 {
-                    sample.push(p.display().to_string());
-                }
-            }
+        if sample.len() < 8 {
+            sample.push(path.display().to_string());
         }
     }
     if zwc_count > 0 || zcd_count > 0 {
@@ -3028,17 +3037,20 @@ async fn op_import_catalog(state: &Arc<DaemonState>, args: Value) -> OpResult {
     );
     let backup_path = state.paths.root.join(&backup_name);
 
-    if dest.exists() {
-        std::fs::rename(&dest, &backup_path).map_err(|e| {
-            ErrPayload::new(
-                "rename_failed",
-                format!("could not back up existing catalog: {}", e),
-            )
-        })?;
-    }
-    std::fs::copy(p, &dest)
-        .map_err(|e| ErrPayload::new("copy_failed", format!("{}: {}", path, e)))?;
-    super::paths::ensure_file_600(&dest).ok();
+    state.swap_db_file(DbFile::Catalog, || -> Result<(), ErrPayload> {
+        if dest.exists() {
+            std::fs::rename(&dest, &backup_path).map_err(|e| {
+                ErrPayload::new(
+                    "rename_failed",
+                    format!("could not back up existing catalog: {}", e),
+                )
+            })?;
+        }
+        std::fs::copy(p, &dest)
+            .map_err(|e| ErrPayload::new("copy_failed", format!("{}: {}", path, e)))?;
+        super::paths::ensure_file_600(&dest).ok();
+        Ok(())
+    })?;
 
     tracing::info!(from = %path, backup = %backup_name, integrity_ok, "catalog imported");
 
@@ -3140,6 +3152,9 @@ async fn op_export_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
     for shard in super::shard::list_shards(&state.paths).unwrap_or_default() {
         entries.push(shard);
     }
+    // Both databases run in WAL mode: without a checkpoint the archived
+    // files miss every row still sitting in `-wal`.
+    state.checkpoint_dbs();
     if state.paths.catalog_db.exists() {
         entries.push(state.paths.catalog_db.clone());
     }
@@ -3264,26 +3279,38 @@ async fn op_import_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
             continue;
         }
         let dest = root.join(rel);
-        if dest.exists() {
-            if !force {
-                let backup = dest.with_file_name(format!(
-                    "{}.preimport-{}",
-                    dest.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
-                    backup_suffix
-                ));
-                let _ = std::fs::rename(&dest, &backup);
-            } else {
-                let _ = std::fs::remove_file(&dest);
+        let restore = || -> std::io::Result<()> {
+            if dest.exists() {
+                if !force {
+                    let backup = dest.with_file_name(format!(
+                        "{}.preimport-{}",
+                        dest.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+                        backup_suffix
+                    ));
+                    let _ = std::fs::rename(&dest, &backup);
+                } else {
+                    let _ = std::fs::remove_file(&dest);
+                }
             }
-        }
-        if let Some(parent) = dest.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::write(&dest, content) {
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&dest, content)?;
+            super::paths::ensure_file_600(&dest).ok();
+            Ok(())
+        };
+        // A restored database replaces a file the daemon holds open.
+        let restored = if dest == state.paths.catalog_db {
+            state.swap_db_file(DbFile::Catalog, || restore().map_err(DaemonError::from))
+        } else if dest == state.paths.history_db {
+            state.swap_db_file(DbFile::History, || restore().map_err(DaemonError::from))
+        } else {
+            restore().map_err(DaemonError::from)
+        };
+        if let Err(e) = restored {
             skipped.push(json!({"path": rel, "reason": e.to_string()}));
             continue;
         }
-        super::paths::ensure_file_600(&dest).ok();
         imported.push(rel.clone());
     }
 
@@ -4193,5 +4220,62 @@ mod clean_files_tests {
             assert!(!FILE_CLEAN_TARGETS.contains(&target));
             assert!(clean_files(&paths, target, None, false).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod legacy_scan_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_kind_classifies_zcompile_and_compinit_output() {
+        assert_eq!(legacy_kind("init.zsh.zwc"), Some(LegacyKind::Zwc));
+        assert_eq!(legacy_kind(".zcompdump"), Some(LegacyKind::Zcompdump));
+        assert_eq!(legacy_kind(".zcompdump-host-5.9"), Some(LegacyKind::Zcompdump));
+        assert_eq!(legacy_kind("zshrc.zcompdump-old"), Some(LegacyKind::Zcompdump));
+        assert_eq!(legacy_kind("zcompdump.txt"), None);
+        assert_eq!(legacy_kind("_git"), None);
+    }
+
+    // DAEMON.md:417 — no recursive walk of $HOME. A deep walk enters
+    // ~/Library/Containers, where read_dir blocks on macOS privacy
+    // prompts and wedged the whole daemon.
+    #[test]
+    fn home_is_listed_but_never_walked() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = super::super::paths::CachePaths::with_root(dir.path().join("zshrs"));
+        paths.ensure_dirs().unwrap();
+        let state = DaemonState::new(paths).unwrap();
+        let home = dirs::home_dir().expect("$HOME");
+        let depth = legacy_scope(&state)
+            .into_iter()
+            .find(|(p, _)| p == &home)
+            .map(|(_, d)| d);
+        assert_eq!(depth, Some(1));
+    }
+
+    #[tokio::test]
+    async fn scan_finds_top_level_dumps_and_skips_nested_dirs_of_shallow_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("zshrs");
+        let paths = super::super::paths::CachePaths::with_root(&root);
+        paths.ensure_dirs().unwrap();
+        let state = DaemonState::new(paths).unwrap();
+        // A path dir is a depth-1 root: its files count, its subdirs don't.
+        // Inside the cache root (walked 2 deep) it is reachable twice.
+        let bin = root.join("bin");
+        std::fs::create_dir_all(bin.join("deep")).unwrap();
+        std::fs::write(bin.join("tool.zwc"), b"x").unwrap();
+        std::fs::write(bin.join("deep/hidden.zwc"), b"x").unwrap();
+        std::fs::write(root.join(".zcompdump-host"), b"x").unwrap();
+        let bin_json = json!(bin.display().to_string()).to_string();
+        state.canonical.upsert("path", "0", &bin_json, None);
+
+        let found = scan_legacy(&state).await.unwrap();
+        assert!(found.contains(&(bin.join("tool.zwc"), LegacyKind::Zwc)));
+        assert!(found.contains(&(root.join(".zcompdump-host"), LegacyKind::Zcompdump)));
+        assert!(!found.iter().any(|(p, _)| p == &bin.join("deep/hidden.zwc")));
+        let hits = found.iter().filter(|(p, _)| p == &bin.join("tool.zwc")).count();
+        assert_eq!(hits, 1);
     }
 }

@@ -38,16 +38,42 @@ pub async fn op_export(state: &Arc<DaemonState>, args: Value) -> OpResult {
     op_view_or_export(state, args, true).await
 }
 
-async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bool) -> OpResult {
+/// Targets with no eval-replayable `sh` form. `export` defaults them to
+/// json; `render_sh` refuses them.
+const NON_SH_TARGETS: &[&str] = &[
+    "shard",
+    "index",
+    "catalog",
+    "history",
+    "entry_stats",
+    "subscriptions",
+    "shells",
+    "plugins",
+    "compiled_files",
+    "daemon_state",
+    "theme",
+    "zcompdump",
+    "script",
+    "sourced",
+];
+
+async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, is_export: bool) -> OpResult {
     let target = args
         .get("target")
         .and_then(Value::as_str)
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `target`"))?
         .to_string();
+    let default_format = if !is_export {
+        "text"
+    } else if NON_SH_TARGETS.contains(&target.as_str()) {
+        "json"
+    } else {
+        "sh"
+    };
     let format = args
         .get("format")
         .and_then(Value::as_str)
-        .unwrap_or("sh")
+        .unwrap_or(default_format)
         .to_string();
     let additive = args
         .get("additive")
@@ -747,7 +773,7 @@ fn render_sh(
                 ));
             }
         }
-        "aliases" => {
+        "aliases" | "alias" => {
             if !additive {
                 out.push_str("unalias -m '*' 2>/dev/null || true\n");
             }
@@ -759,7 +785,7 @@ fn render_sh(
                 ));
             }
         }
-        "galiases" => {
+        "galiases" | "galias" => {
             if !additive {
                 out.push_str(
                     "# wipe global aliases by re-listing as no-op (zsh has no -gm wipe)\n",
@@ -773,7 +799,7 @@ fn render_sh(
                 ));
             }
         }
-        "saliases" => {
+        "saliases" | "salias" => {
             if !additive {
                 out.push_str("# wipe suffix aliases\n");
             }
@@ -957,9 +983,7 @@ fn render_sh(
         // assoc-array hashes _comps / _services / _patcomps /
         // _postpatcomps / _describe_handlers were here pre-eval-output;
         // they're handled above now.)
-        "shard" | "index" | "catalog" | "history" | "entry_stats" | "subscriptions" | "shells"
-        | "plugins" | "compiled_files" | "daemon_state" | "theme" | "zcompdump" | "script"
-        | "sourced" => {
+        t if NON_SH_TARGETS.contains(&t) => {
             return Err(ErrPayload::new(
                 "format_unsupported_for_target",
                 format!(
@@ -2047,5 +2071,38 @@ mod tests {
             .unwrap();
         let body = r["body"].as_str().unwrap();
         assert!(!body.starts_with("unalias -m '*'"));
+    }
+
+    // export.rs header: `view` defaults to text, `export` to sh, and a
+    // target with no sh form (history, catalog, …) exports as json.
+    #[tokio::test]
+    async fn default_formats_follow_the_target() {
+        let (_tmp, state) = fresh();
+        push(&state, "alias", json!({ "ll": "ls -la" })).await;
+
+        let view = op_view(&state, json!({ "target": "history" })).await.unwrap();
+        assert_eq!(view["format"], "text");
+        let export = op_export(&state, json!({ "target": "history" })).await.unwrap();
+        assert_eq!(export["format"], "json");
+        let export = op_export(&state, json!({ "target": "alias" })).await.unwrap();
+        assert_eq!(export["format"], "sh");
+        assert!(export["body"].as_str().unwrap().contains("alias ll="));
+    }
+
+    #[tokio::test]
+    async fn export_leaves_out_other_shells_definitions() {
+        let (_tmp, state) = fresh();
+        push(&state, "alias", json!({ "ll": "ls -la" })).await;
+        super::super::definitions::op_definitions_emit(
+            &state,
+            json!({ "shell_id": "bash", "kind": "alias", "name": "ll", "value": "ls -l" }),
+        )
+        .await
+        .unwrap();
+
+        let r = op_export(&state, json!({ "target": "aliases", "format": "sh" })).await.unwrap();
+        let body = r["body"].as_str().unwrap();
+        assert!(body.contains("alias ll='ls -la'"), "{body}");
+        assert!(!body.contains("alias ll='ls -l'\n"), "{body}");
     }
 }

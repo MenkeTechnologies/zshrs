@@ -1405,14 +1405,14 @@ fn zlock(args: &[String]) -> i32 {
                 Some(n) => n.clone(),
                 None => return err_exit("zlock", "usage: zlock try NAME"),
             };
-            client.call("lock_try_acquire", json!({"name": name, "caller_pid": pid}))
+            client.call("lock_try_acquire", json!({"name": name, "pid": pid}))
         }
         "acquire" => {
             let name = match args.get(2) {
                 Some(n) => n.clone(),
                 None => return err_exit("zlock", "usage: zlock acquire NAME [--timeout S]"),
             };
-            let mut body = json!({"name": name, "caller_pid": pid});
+            let mut body = json!({"name": name, "pid": pid});
             if let Some(idx) = args.iter().position(|a| a == "--timeout") {
                 let secs = args
                     .get(idx + 1)

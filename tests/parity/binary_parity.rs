@@ -56,6 +56,11 @@ impl DaemonHandle {
     fn spawn() -> Self {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let zshrs_home = tmp.path().to_path_buf();
+        // No `[http]` section: the seeded default listens on
+        // 127.0.0.1:7733, the user's real daemon's port. A test daemon
+        // that outlives a killed test run would keep it. Seeding never
+        // overwrites an existing file.
+        std::fs::write(zshrs_home.join("zshrs-daemon.toml"), "").expect("seed daemon config");
 
         let child = std::process::Command::new(zshrs_daemon_binary())
             .env("ZSHRS_HOME", &zshrs_home)
