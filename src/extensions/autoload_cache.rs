@@ -12,7 +12,7 @@
 //!   }
 //!
 //! Inner `chunk_blob` is bincode-encoded `fusevm::Chunk` (same constraint as
-//! [`script_cache`](crate::script_cache) module — `fusevm::Chunk` is upstream and only derives serde).
+//! [`crate::script_cache`] module — `fusevm::Chunk` is upstream and only derives serde).
 //!
 //! # What identifies an entry
 //!

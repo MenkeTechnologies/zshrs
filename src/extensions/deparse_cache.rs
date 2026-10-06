@@ -10,7 +10,7 @@
 //! command-position `<TAB>`) does not re-parse every function it has.
 //!
 //! Single-file shard at `$ZSHRS_HOME/deparse.rkyv`, same discipline as
-//! [`autoload_cache`](crate::autoload_cache): versioned header, exact
+//! [`crate::autoload_cache`]: versioned header, exact
 //! producing-binary identity, atomic-rename writes, a `pending` buffer
 //! flushed once per prompt and at exit.
 //!

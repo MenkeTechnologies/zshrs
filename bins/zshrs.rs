@@ -3785,9 +3785,9 @@ fn source_emulation_startup_files(
 }
 
 /// The path the kernel executed this process from, as given to `execve`
-/// — before symlink resolution and independent of argv[0], which `ARGV0`
+/// — before symlink resolution and independent of `argv[0]`, which `ARGV0`
 /// or `exec -a` can set to anything. `None` when the platform cannot say;
-/// the caller falls back to argv[0].
+/// the caller falls back to `argv[0]`.
 /// !!! RUST-ONLY — no C counterpart. C's `-c` prefix is the literal
 /// "zsh" (Src/init.c:497); zshrs names itself after the file it runs as.
 fn executed_path() -> Option<String> {
