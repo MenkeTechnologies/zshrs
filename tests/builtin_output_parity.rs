@@ -96,6 +96,30 @@ fn find_shell(candidates: &[&str]) -> Option<String> {
     None
 }
 
+/// The binary that defines a leg's output. The zsh leg follows the same
+/// reference the parity suite uses (`tests/parity/oracle.rs`): the zsh
+/// development tree the port tracks, via `$ZSHRS_ORACLE_ZSH` or the build
+/// `scripts/build_zsh_oracle.sh` installs, and only then a released zsh.
+/// Rows where the tree and 5.9.2 differ (`set -o` no longer lists
+/// `restricted`, upstream 54181; `trap -l` is an error, upstream 54013)
+/// would otherwise compare against the wrong shell.
+fn reference_shell(leg: &Leg) -> Option<String> {
+    if leg.name == "zsh" {
+        if let Ok(p) = std::env::var("ZSHRS_ORACLE_ZSH") {
+            if Path::new(&p).exists() {
+                return Some(p);
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            let built = Path::new(&home).join(".cache/zshrs/zsh-oracle/bin/zsh");
+            if built.exists() {
+                return Some(built.to_string_lossy().into_owned());
+            }
+        }
+    }
+    find_shell(leg.candidates)
+}
+
 /// Run one script with a cleared environment. `-f` is NOT used: in the
 /// Bourne-family drop-ins it means `noglob`, which shows up in `set -o`.
 fn run(bin: &str, pre: &[&str], script: &str) -> String {
@@ -140,7 +164,7 @@ fn compare(what: &str, script: &str, mask: bool, sort_lines: bool) {
     let mut missing = Vec::new();
 
     for leg in LEGS {
-        let Some(refbin) = find_shell(leg.candidates) else {
+        let Some(refbin) = reference_shell(leg) else {
             if !leg.optional {
                 missing.push(leg.name);
             }
@@ -243,8 +267,9 @@ fn set_plus_o_listing_matches_each_shell() {
 }
 
 /// `trap -l` is bash's spelling of `kill -l`. The Korn and Bourne shells
-/// REJECT it — ksh93u+m exits 2, mksh 1, dash 2 — and zsh accepts it as a
-/// silent no-op with status 0. Only stdout and the status are compared;
+/// REJECT it — ksh93u+m exits 2, mksh 1, dash 2 — and zsh reads `-l` as a
+/// trap body with no signal after it (`signal expected`, status 1;
+/// c:Src/builtin.c:7382-7388, upstream 54013). Only stdout and the status are compared;
 /// the diagnostic wording is stderr, which this suite does not police.
 ///
 /// The call is wrapped in a SUBSHELL on purpose: `trap` is a POSIX
