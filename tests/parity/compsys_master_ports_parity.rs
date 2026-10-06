@@ -12,7 +12,7 @@
 //! what the ztst corpus does — so these cases are the only ones that put
 //! the ports themselves against master.
 
-use crate::zpty_probe::{assert_same_dump, sq, OPEN_PUMPED};
+use crate::zpty_probe::{assert_same_dump, sq, CLOSE_PUMPED, OPEN_PUMPED};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -113,4 +113,69 @@ if [[ $all == *'tags in context :completion::complete:print::'*$'\\n'*'  (_'* ]]
 "
     );
     crate::zpty_probe::assert_same_verdict(&driver, "H", "^Xh printed aligned tag lines");
+}
+
+/// Complete `mytest ` with `setup` loaded against the master tree, and
+/// report `KEY=yes` when the drained transcript contains `want`.
+fn master_transcript_driver(dir: &std::path::Path, setup: &str, key: &str, want: &str) -> String {
+    let fp = sq(&format!("fpath=({})", dir.display()));
+    let setup = sq(setup);
+    let want = sq(want);
+    format!(
+        "{OPEN_PUMPED}
+zpty -w w {fp}; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w w {setup}; pump
+zpty -w -n w 'mytest '; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w $'\\C-u'; pump
+{CLOSE_PUMPED}
+if [[ $all == *{want}* ]]; then print \"{key}=yes\"; else print \"{key}=no\"; fi
+"
+    )
+}
+
+/// Master `_message` formats with `zformat -Fq` (Completion/Base/Core/_message:44),
+/// so `%` in the message text reaches the screen literally. The port used
+/// `-F`, and the listing's prompt expansion turned `%foo %BAR` into `oo`
+/// and a bold `AR`.
+#[test]
+fn message_shows_percent_literally() {
+    let Some(dir) = stock_dir() else {
+        eprintln!("skip: no zsh source tree for the master completion functions");
+        return;
+    };
+    crate::zpty_probe::assert_same_verdict(
+        &master_transcript_driver(
+            dir,
+            r#"zstyle ":completion:*:messages" format "<M>%d</M>"; _mytest(){ _message "%foo %BAR" }; compdef _mytest mytest"#,
+            "P",
+            "<M>%foo %BAR</M>",
+        ),
+        "P",
+        "_message printed `%foo %BAR` literally",
+    );
+}
+
+/// Master `_message` parses its options with
+/// `zparseopts -A opth -D -F - … e r` (Completion/Base/Core/_message:7-10),
+/// so `-e` may be followed by a `-` terminator: `_message -e - tag abc`
+/// shows the `abc` description. The 5.9.2-shaped port only recognised `-e`
+/// as the very first word and took `-` for the tag.
+#[test]
+fn message_dash_e_accepts_an_option_terminator() {
+    let Some(dir) = stock_dir() else {
+        eprintln!("skip: no zsh source tree for the master completion functions");
+        return;
+    };
+    crate::zpty_probe::assert_same_verdict(
+        &master_transcript_driver(
+            dir,
+            r#"zstyle ":completion:*:descriptions" format "<D>%d</D>"; _mytest(){ _message -e - tag abc }; compdef _mytest mytest"#,
+            "E",
+            "<D>abc</D>",
+        ),
+        "E",
+        "_message -e - tag abc showed its description",
+    );
 }
