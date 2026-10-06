@@ -419,6 +419,22 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
         return None;
     }
     match name {
+        // Under the Korn emulation `pipestatus` is an ordinary parameter, not
+        // the special (zsh `emulate ksh` leaves it unset after a pipeline), so
+        // the pdksh line reads the C globals the pipeline wrote — what
+        // pipestatgetfn walks (c:Src/params.c:5269-5276).
+        "PIPESTATUS" if !bash_mode() => {
+            use crate::ported::jobs::{NUMPIPESTATS, PIPESTATS};
+            let n = NUMPIPESTATS
+                .get()
+                .and_then(|m| m.lock().ok().map(|g| *g))
+                .unwrap_or(0);
+            let stats = PIPESTATS
+                .get()
+                .and_then(|m| m.lock().ok().map(|p| p[..n].to_vec()))
+                .unwrap_or_default();
+            Some(stats.iter().map(|s| s.to_string()).collect())
+        }
         // bash PIPESTATUS ≈ zsh pipestatus (per-stage exit codes, 0-indexed).
         "PIPESTATUS" => Some(crate::ported::exec::array("pipestatus").unwrap_or_default()),
         // bash FUNCNAME ≈ zsh funcstack — call stack, innermost (current) first.

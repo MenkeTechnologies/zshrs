@@ -4577,6 +4577,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `PIPESTATUS` "for portability" — but that's a real divergence
         // from zsh: a script doing `[[ -z $PIPESTATUS ]]` to detect
         // zsh-vs-bash would mis-classify. Bug #64 in docs/BUGS.md.
+        // c:Src/jobs.c:438-441 (storepipestats) — the per-stage statuses go
+        // into the C globals `pipestats[]` / `numpipestats` whatever the
+        // emulation. Under sh/ksh `pipestatus` is not a special parameter
+        // (no PM_SPECIAL, so the paramtab mirror below is skipped), but the
+        // globals still carry the pipeline — `--mksh`'s `$PIPESTATUS` and
+        // doshfunc's funcsave snapshot (c:Src/exec.c:5864) read them.
+        {
+            use crate::ported::jobs::{NUMPIPESTATS, PIPESTATS};
+            use std::sync::Mutex;
+            let count = pipestatus.len().min(crate::ported::zsh_h::MAX_PIPESTATS);
+            let p = PIPESTATS.get_or_init(|| Mutex::new([0; crate::ported::zsh_h::MAX_PIPESTATS]));
+            if let Ok(mut pguard) = p.lock() {
+                pguard[..count].copy_from_slice(&pipestatus[..count]); // c:438 memcpy
+            }
+            let n = NUMPIPESTATS.get_or_init(|| Mutex::new(0));
+            if let Ok(mut nguard) = n.lock() {
+                *nguard = count; // c:441
+            }
+        }
         with_executor(|exec| {
             // c:Src/jobs.c:83 `int pipestats[MAX_PIPESTATS]` — the values
             // live in that C GLOBAL, reached through `pipestatus`'s GSU
