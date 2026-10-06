@@ -4194,8 +4194,22 @@ impl ShellExecutor {
     /// string compiled as an exiting list (see CMDARG_EXITING).
     pub fn execute_cmdarg(&mut self, script: &str) -> Result<i32, String> {
         CMDARG_EXITING.with(|c| c.set(true));
-        let result = self.execute_script(script);
+        let chunk = self.compile_script_isolated(script);
         CMDARG_EXITING.with(|c| c.set(false));
+        let status = self.run_chunk(chunk?, "cmdarg")?;
+        // c:Src/init.c:1572 — `zexit(lastval, ZEXIT_NORMAL)` follows the
+        // `-c` string, and c:Src/builtin.c:6012-6015 clears the error state
+        // before the EXIT trap (`errflag = intrap = 0; if
+        // (sigtrapped[SIGEXIT]) dotrap(SIGEXIT);`): dotrapargs refuses to
+        // run anything while errflag is set (c:Src/signals.c:1101), so a
+        // script that ended on an error abort (`ro=2` on a readonly, `${x?}`,
+        // `$((1/0))`) would otherwise skip its EXIT trap. The flag is put
+        // back afterwards because the caller still reads it to pick the
+        // exit status of the dash-family drop-ins.
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed); // c:6012
+        let result = self.fire_script_exit_hooks(status);
+        errflag.fetch_or(saved_errflag, Ordering::Relaxed);
         result
     }
 

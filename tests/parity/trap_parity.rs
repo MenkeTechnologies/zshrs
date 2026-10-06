@@ -494,3 +494,36 @@ mod zerr_donetrap_gate {
         assert_parity(r#"setopt errexit errreturn; trap 'echo z' ZERR; f() { false; echo in }; f; echo after"#);
     }
 }
+
+/// c:Src/init.c:1572 + c:Src/builtin.c:6012-6015 — the `-c` string ends in
+/// `zexit`, which clears errflag before `dotrap(SIGEXIT)`. dotrapargs skips
+/// every trap while errflag is set (c:Src/signals.c:1101), so without the
+/// clear a script that ended on an error abort lost its EXIT trap.
+mod exit_trap_after_error_abort {
+    use super::*;
+
+    #[test]
+    fn readonly_assignment_abort() {
+        assert_parity(r#"trap 'echo b' EXIT; typeset -r ro=1; ro=2; echo after"#);
+    }
+
+    #[test]
+    fn math_error_abort() {
+        assert_parity(r#"trap 'echo b' EXIT; echo $(( 1/0 )); echo after"#);
+    }
+
+    #[test]
+    fn readonly_abort_inside_function_unwinds_first() {
+        assert_parity(r#"trap 'echo b' EXIT; f() { typeset -r ro=1; ro=2 }; f; echo after"#);
+    }
+
+    #[test]
+    fn readonly_abort_inside_always_block() {
+        assert_parity(r#"trap 'echo b' EXIT; { typeset -r ro=1; ro=2 } always { echo al }"#);
+    }
+
+    #[test]
+    fn exit_trap_sees_status_one() {
+        assert_parity(r#"trap 'echo st=$?' EXIT; typeset -r ro=1; ro=2"#);
+    }
+}
