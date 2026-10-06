@@ -224,7 +224,7 @@
         <li><code>printf</code> format-string repetition (POSIX: re-applies format while args remain)</li>
       </ul>
       <p style="margin-top: 0.7rem; font-size: 12px; color: var(--text-muted);">
-      Out-of-scope (separate Phase work): zsh modules (zsh/curses, zsh/net/socket, zsh/zftp, zsh/zselect, zsh/sched), interactive ZLE widget firing on Tab + bindkey'd user widgets, async <code>compinit</code> fpath pre-warm, full setopt option matrix (~200 options × 2 toggles), some long-tail glob qualifiers (<code>L+N</code> size, <code>mh-N</code> mtime, <code>om[1,N]</code> "newest N"), and the dogfood gate (zpwr load + .zshrc as login shell for 14 days). The <code>tests/ztst_runner.rs</code> wrapper has been removed from CI — it was a fake-pass per-block runner; replacement is the PTY harness designed in <code>docs/ZTST_PTY_HARNESS.md</code>, not yet built.</p>
+      Out-of-scope (separate Phase work): zsh modules (zsh/curses, zsh/net/socket, zsh/zftp, zsh/zselect, zsh/sched), interactive ZLE widget firing on Tab + bindkey'd user widgets, async <code>compinit</code> fpath pre-warm, full setopt option matrix (~200 options × 2 toggles), some long-tail glob qualifiers (<code>L+N</code> size, <code>mh-N</code> mtime, <code>om[1,N]</code> "newest N"), and the dogfood gate (zpwr load + .zshrc as login shell for 14 days). zsh's own <code>Test/*.ztst</code> suite runs against a real zsh oracle through <code>scripts/ztst_compsys.py --core</code>: zshrs passes every assertion zsh 5.9.1 passes except 2 (<code>A05execution</code> #33 and #34, <code>wait</code> on an unknown job ID).</p>
     </section>
 
     <section class="tutorial-section">

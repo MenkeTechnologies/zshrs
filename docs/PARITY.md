@@ -69,9 +69,13 @@ together (see the Compatibility measurement section in `README.md`):
 
 - **Differential fuzz** (`bins/parity-fuzz.rs`) — 22,200 generated cases
   against real zsh, 27 divergences across 71-of-74 clean modes.
-- **Upstream ztst corpus** (`tests/ztst_runner.rs`) — 70 passing, 0
-  failing, 1,292 cases pinned `#[ignore]` with per-case gap reasons.
+- **zsh's own test suite** (`scripts/ztst_compsys.py --core`, oracle zsh
+  5.9.1 from the `zsh-5.9.1` tag) — zshrs passes every ztst assertion zsh
+  passes except 2, `A05execution` #33 and #34 (`wait` on an unknown job ID;
+  zsh gives every running pipeline a job slot, zshrs only forked ones). Detail
+  in `docs/parity_report.html`.
+- **In-tree ztst corpus** (`tests/ztst_runner.rs`, no oracle) — 2,625 of
+  2,796 chunks pass at `17bf07d5ed`; see `README.md` for what the failures are.
 
-The ztst pins are the largest honest measure of remaining debt; this
-suite's 5 and the fuzzer's 27 are both much smaller because each samples
-a narrower slice of the language.
+The oracle-backed ztst figure is the largest measure of remaining debt; this
+suite's 5 and the fuzzer's 27 sample narrower slices of the language.
