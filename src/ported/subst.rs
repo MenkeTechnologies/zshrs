@@ -5460,9 +5460,9 @@ pub fn paramsubst(
         // path where raw tokenized text reaches paramsubst without an
         // intermediate untokenize pass.
         // c:2120-2122 — `if ((c = *s) == '!' && s[1] != Outbrace &&
-        // EMULATION(EMULATE_KSH)) { hkeys = SCANPM_WANTKEYS|SCANPM_NONAMEREF; s++; }`:
-        // ksh's `${!name}` is `${(k)name}` (for namerefs, the name at the end of
-        // the chain rather than the value). The body here excludes the closing
+        // EMULATION(EMULATE_KSH)) { hkeys = SCANPM_WANTKEYS; s++; }`: ksh's
+        // `${!name}` is `${(k)name}`; since 55047 a reference is dereferenced
+        // like any other parameter (SCANPM_NONAMEREF is gone). The body here excludes the closing
         // brace, so `s[1] != Outbrace` is "something follows the `!`".
         // !!! RUST-ONLY GATE: the posix-faithful `--ksh` drop-in and `--bash`
         // take their own real-shell `${!…}` arms below, so skip C's arm there.
@@ -5473,7 +5473,6 @@ pub fn paramsubst(
             && !crate::dash_mode::bash_mode()
         {
             hkeys = SCANPM_WANTKEYS; // c:2121
-            nonameref_guard = Some(crate::ported::params::NamerefSuppressGuard::new()); // c:2121 SCANPM_NONAMEREF
             idx = 1; // c:2122 `s++`
         } else if matches!(body_chars.first(), Some(&'(') | Some(&Inpar)) {
             // c:2147
