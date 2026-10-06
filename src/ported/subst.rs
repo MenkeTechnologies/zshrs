@@ -17497,11 +17497,17 @@ pub fn paramsubst(
                         } else if pid == 0 || pid == unsafe { libc::getpid() } as i64 {
 
                             crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:3374
-                            crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL); // c:3375
+                            // !!! DASH-FAMILY GATE (dash_mode::fatal_error_status):
+                            // dash's exraise leaves 2 where zsh exits 1. !!!
+                            crate::ported::builtin::zexit(
+                                crate::extensions::dash_mode::fatal_error_status().unwrap_or(1),
+                                crate::ported::zsh_h::ZEXIT_NORMAL,
+                            ); // c:3375
                         } else {
                             use std::io::Write as _;
                             let _ = std::io::stdout().flush();
-                            unsafe { libc::_exit(1) }; // c:3377
+                            let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+                            unsafe { libc::_exit(st) }; // c:3377
                         }
                     }
                 }
@@ -17539,11 +17545,17 @@ pub fn paramsubst(
                         } else if pid == 0 || pid == unsafe { libc::getpid() } as i64 {
 
                             crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:3374
-                            crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL); // c:3375
+                            // !!! DASH-FAMILY GATE (dash_mode::fatal_error_status):
+                            // dash's exraise leaves 2 where zsh exits 1. !!!
+                            crate::ported::builtin::zexit(
+                                crate::extensions::dash_mode::fatal_error_status().unwrap_or(1),
+                                crate::ported::zsh_h::ZEXIT_NORMAL,
+                            ); // c:3375
                         } else {
                             use std::io::Write as _;
                             let _ = std::io::stdout().flush();
-                            unsafe { libc::_exit(1) }; // c:3377
+                            let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+                            unsafe { libc::_exit(st) }; // c:3377
                         }
                     }
                 }
