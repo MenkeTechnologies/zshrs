@@ -127,3 +127,17 @@ fn braced_trailing_colon_is_an_unrecognized_modifier() {
     check("x=/a/b; print -r -- $x:h: $x:t::", "/a: b::\n", "", 0);
 }
 
+// c:Src/utils.c:722 / c:5721 — `WC_ISPRINT` and `WCWIDTH` are the wcwidth9
+// tables (Src/ztype.h:77, Src/zsh.h:3302): format characters, a BOM and an
+// unassigned code point are not printable, so `(q+)` writes them `$'\u…'`
+// and `(m)` gives them no width.
+#[test]
+fn q_plus_and_width_use_the_unicode9_printable_table() {
+    check(
+        r"for c in $'­' $'​' $'﻿' $'͸'; do print -r -- ${(q+)c} ${(m)#c}; done",
+        "$'\\M--' 0\n$'\\u200b' 0\n$'\\ufeff' 0\n$'\\u0378' 0\n",
+        "",
+        0,
+    );
+}
+

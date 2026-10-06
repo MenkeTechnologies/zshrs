@@ -500,6 +500,12 @@ pub fn output64(val: i64) -> String {
 /// `unicode-width` crate which tracks the latest UCD.
 pub fn u9_wcwidth(ucs: char) -> i32 {
     // ucs:760
+    // c:762 `wcwidth9(ucs)` is -1 for exactly the nonprint and not_assigned
+    // tables (Src/wcwidth9.h:1294-1304), i.e. wherever u9_iswprint is false:
+    // `unicode-width` gives an unassigned U+0378 or U+FFFF one column.
+    if !u9_iswprint(ucs) {
+        return -1;
+    }
     unicode_width::UnicodeWidthChar::width(ucs)
         .map(|w| w as i32)
         .unwrap_or(if ucs.is_control() { -1 } else { 1 })

@@ -854,7 +854,11 @@ pub fn wcs_nicechar(c: char, widthp: Option<&mut usize>, swidep: Option<&mut usi
 pub fn is_wcs_nicechar(c: char) -> bool {
     // c:720
     let cv = c as u32;
-    let printable = !c.is_control() && cv >= 0x20;
+    // c:722 `WC_ISPRINT(c)` — u9_iswprint in a --enable-unicode9 build
+    // (Src/ztype.h:77), as wcs_nicechar_sel uses. Rust's is_control() is
+    // only Cc, so U+200B / U+00AD / U+FEFF read as printable and
+    // `${(q+)v}` left them bare where zsh writes $'\u200b'.
+    let printable = crate::ported::compat::u9_iswprint(c);
     let print_eight = isset(PRINTEIGHTBIT); // c:722
     if !printable && (cv < 0x80 || !print_eight) {
         if cv == 0x7f || c == '\n' || c == '\t' || cv < 0x20 {
@@ -8622,11 +8626,11 @@ pub fn mb_metastrlenend(ptr: &str, width: i32, eptr: usize) -> usize {
                 num += 1;
             } else if width != 0 {
                 // c:5715-5726 — WCWIDTH(wc); C turns "not printable" (-1)
-                // into 0 and adds nothing.
-                let wcw = char::from_u32(wc as u32)
-                    .and_then(unicode_width::UnicodeWidthChar::width)
-                    .unwrap_or(0);
+                // into 0 and adds nothing. WCWIDTH is u9_wcwidth in a
+                // --enable-unicode9 build (Src/zsh.h:3302).
+                let wcw = char::from_u32(wc as u32).map_or(-1, crate::ported::compat::u9_wcwidth);
                 if wcw > 0 {
+                    let wcw = wcw as usize;
                     // c:5722-5725 — `width == 1` adds the glyph's COLUMNS,
                     // any larger value adds ONE per printable character.
                     // C takes `width` as an `int` straight from the `(m)`
