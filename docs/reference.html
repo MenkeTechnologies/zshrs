@@ -139,7 +139,7 @@
           <span class="sep">/</span>
           <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
-        <p class="docs-build-line">zshrs v0.13.8 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 578 regression tests (396 corpus · 174 dispatch · 8 absence) · 22,508 <code>#[test]</code> hooks workspace-wide</p>
+        <p class="docs-build-line">zshrs v0.13.8 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 578 regression tests (396 corpus · 174 dispatch · 8 absence) · 21,394 <code>#[test]</code> hooks workspace-wide</p>
       </div>
       <div class="tutorial-toolbar">
         <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -160,7 +160,7 @@
 
   <main class="tutorial-main">
     <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SHELL REFERENCE</h2>
-    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. <strong>Coverage gate:</strong> 396 construct-corpus tests in <code>tests/zsh_construct_corpus.rs</code> exercise every category below; <strong>22,508 <code>#[test]</code> hooks</strong> (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>, 2026-10-01) span tracked Rust sources. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
+    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. <strong>Coverage gate:</strong> 396 construct-corpus tests in <code>tests/zsh_construct_corpus.rs</code> exercise every category below; <strong>21,394 <code>#[test]</code> hooks</strong> (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>, 2026-10-01) span tracked Rust sources. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
 
     <section class="tutorial-section">
       <h2>Pipeline Architecture</h2>
@@ -5354,13 +5354,6 @@ echo done
         <p>If set, regular expression matching with the <code>=~</code> operator will use Perl-Compatible Regular Expressions from the PCRE library. (The <code>zsh/pcre</code> module must be available.) If not set, regular expressions will use the extended regexp syntax provided by the system libraries.</p>
       </article>
 
-      <article class="doc-entry" id="doc-lsp-option-restricted">
-
-        <h3><code>restricted</code> <a class="doc-anchor" href="#doc-lsp-option-restricted">¶</a></h3>
-        <p>Restricted-shell mode (equivalent to invoking zsh as <code>rzsh</code> or with <code>-r</code>).</p>
-        <p>Disables: <code>cd</code>, modifying <code>$PATH</code> / <code>$ENV</code> / <code>$SHELL</code>, <code>&gt;</code> / <code>&gt;&gt;</code> redirects,creating functions with the <code>function</code> keyword, <code>exec</code>-ing commands containing <code>/</code>,<code>kill</code>-ing by pid, and several <code>setopt</code> toggles. Designed for sandboxed login shellswhere the user must stay inside a curated command set. Once set, cannot be clearedwithin the running shell.</p>
-      </article>
-
       <article class="doc-entry" id="doc-lsp-option-rmstarsilent">
 
         <h3><code>rmstarsilent</code> <a class="doc-anchor" href="#doc-lsp-option-rmstarsilent">¶</a></h3>
@@ -9860,7 +9853,7 @@ echo done
 <!-- END CANONICAL-GRAMMAR -->
 
     <p style="font-size: 11px; color: var(--text-muted); text-align: center; margin: 3rem 0 1rem; font-family: 'Share Tech Mono', monospace;">
-      // generated against fusevm 0.26.7 dispatch · zshrs v0.13.8 · 15 chapters · 22,508 #[test] hooks · MenkeTechnologies
+      // generated against fusevm 0.26.7 dispatch · zshrs v0.13.8 · 15 chapters · 21,394 #[test] hooks · MenkeTechnologies
     </p>
   </main>
   </div>
