@@ -127,6 +127,7 @@ mod noclobber_parity;
 mod non_utf8_script_parity;
 mod nested_length_glued_parity;
 mod nounset_length_slot_parity;
+mod nounset_subscript_slot_parity;
 mod numeric_format_gaps_parity;
 mod numeric_sort_parity;
 mod omz_repo_corpus_parity;

@@ -15761,6 +15761,25 @@ fn assoc_key_value(v: Option<String>) -> Value {
     }
 }
 
+/// `assoc_key_value` for a key read that answered from the plain hash
+/// store. c:Src/params.c:1597-1606 hands back no node for a missing key, so
+/// c:Src/subst.c:2804-2807 sets `vunset`, and with NO_UNSET the reference
+/// is an error (c:3608-3613): `zerr("%s: parameter not set", idbeg)`. The
+/// fast paths below answer before paramsubst runs, so they owe that check.
+/// The alias views (getpmalias, c:Src/Modules/parameter.c) return an
+/// unset-flagged node that zsh does not report, so `direct_assoc_key_get`'s
+/// alias arms keep plain `assoc_key_value`.
+fn hash_key_value(name: &str, idx: &str, v: Option<String>) -> Value {
+    if v.is_none() && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+        crate::ported::utils::zerr(&format!("{}[{}]: parameter not set", name, idx)); // c:3612
+        crate::ported::utils::errflag
+            .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+        with_executor(|exec| exec.set_last_status(1));
+        return Value::str(String::new());
+    }
+    assoc_key_value(v)
+}
+
 fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
     if idx_is_simple {
@@ -15774,7 +15793,7 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
         // broken syntax there ("failed to compile regex: repetition
         // quantifier…" + a `}` appended per keystroke).
         if let Some((_, v)) = crate::vm_helper::assoc_key_hit(name, idx) {
-            return assoc_key_value(v);
+            return hash_key_value(name, idx, v);
         }
     }
     // c:Src/params.c:1449-1450 getindex — a leading `(e)`/`(E)` flag
@@ -15794,7 +15813,7 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
             if !grp.is_empty() && grp.chars().all(|ch| ch == 'e' || ch == 'E') {
                 let key = &rest[close + 1..];
                 if let Some(hit) = direct_assoc_key_get(name, key) {
-                    return assoc_key_value(hit);
+                    return if is_alias_view(name) { assoc_key_value(hit) } else { hash_key_value(name, idx, hit) };
                 }
             }
         }
@@ -15804,7 +15823,7 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     // return empty — the textual fallback cannot represent the key.
     if (idx.contains(']') || idx.contains('}')) && !idx.starts_with('(') {
         if let Some(hit) = direct_assoc_key_get(name, idx) {
-            return assoc_key_value(hit);
+            return if is_alias_view(name) { assoc_key_value(hit) } else { hash_key_value(name, idx, hit) };
         }
     }
     let body = format!("${{{}[{}]}}", name, expanded_subscript_text(idx));
@@ -15828,6 +15847,14 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     // carrier armed for the next, unrelated subscript.
     crate::ported::subst::SUBSCRIPT_PREEXPANDED.with(|c| c.set(false));
     v
+}
+
+/// The `zsh/parameter` alias views `direct_assoc_key_get` serves itself.
+fn is_alias_view(name: &str) -> bool {
+    matches!(
+        name,
+        "aliases" | "galiases" | "saliases" | "dis_aliases" | "dis_galiases" | "dis_saliases"
+    )
 }
 
 /// Exact-key read against an assoc-like target WITHOUT the textual

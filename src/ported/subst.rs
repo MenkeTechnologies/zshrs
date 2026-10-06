@@ -25938,6 +25938,11 @@ pub fn paramsubst(
         // processed during outer expansion; the `[` -only check
         // dropped through to scalar lookup, then `[a]` glob'd.
         let mut subscript_str: Option<String> = None; // c:1625
+        // c:Src/subst.c:2649 — `idbeg`, the reference text up to the closing
+        // `]` as written; the NO_UNSET diagnostic names it.
+        let mut idbeg_c2649: Option<String> = None;
+        // c:Src/subst.c:2805 — `vunset` for the subscripted slot.
+        let mut slot_unset_c2805 = false;
         // c:Src/params.c:2047-2054 — the unbraced `$name[...]` reference reaches
         // the SAME getindex, which decides the whole-parameter splat on the RAW
         // bracket text before getarg's parsestr/singsub (c:1567-1592) touches it.
@@ -26030,6 +26035,7 @@ pub fn paramsubst(
             } else if depth == 0 {
                 // c:1625
                 let raw_sub: String = chars[pos + 1..q].iter().collect(); // c:1625
+                idbeg_c2649 = Some(format!("{}[{}]", var_name, crate::lex::untokenize(&raw_sub)));
                 // c:Src/params.c:1537-1550 — getarg turns every quote marker in
                 // the subscript back into its character (`*t = ztokens[*t -
                 // Pound]`), except one guarding a bracket or a `"`; for a hash
@@ -26355,6 +26361,7 @@ pub fn paramsubst(
                 // an N-entry hash ran O(N²): `for k in ${(k)h}; do : $h[$k];`
                 // over 3000 keys took 8.7s against zsh's 0.003s, and the same
                 // idiom over the 51k-entry `$_comps` never finished.
+                slot_unset_c2805 = hit.is_none(); // c:Src/params.c:1597-1606
                 hit.unwrap_or_default() // c:1625
             } else if !sub.trim_start().starts_with('(')
                 && !is_splat_txt!(sub)
@@ -26405,6 +26412,7 @@ pub fn paramsubst(
                     }
                     v.to_str().to_string()
                 } else {
+                    slot_unset_c2805 = !map.contains_key(sub); // c:Src/params.c:1597-1606
                     map.get(sub).cloned().unwrap_or_default() // c:1625
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
@@ -26528,7 +26536,8 @@ pub fn paramsubst(
                         // c:1625
                         arr[i as usize].clone() // c:1625
                     } else {
-                        // c:1625
+                        // c:Src/subst.c:2949-2954 — no element at that index.
+                        slot_unset_c2805 = true;
                         String::new() // c:1625
                     } // c:1625
                 } else {
@@ -26647,6 +26656,10 @@ pub fn paramsubst(
                 magic_val
             } else {
                 // c:1625
+                // c:Src/subst.c:2804 — fetchvalue found no parameter at all.
+                slot_unset_c2805 = var_name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    && vars_get(&var_name).is_none()
+                    && !paramtab().read().is_ok_and(|t| t.contains_key(&var_name));
                 let s = vars_get(&var_name).unwrap_or_default(); // c:1625
                 // c:Src/params.c:1634-1663 — a scalar subscript walks the value
                 // with `t += MB_METACHARLEN(t)`, so the unit is a METAFIED
@@ -26786,6 +26799,18 @@ pub fn paramsubst(
                 exec_getsparam(&var_name).unwrap_or_default()
             } // c:1625
         }; // c:1625
+
+        // c:Src/subst.c:2804-2807 + 2944-2954 — fetchvalue/getindex leave
+        // `vunset` set when the subscript names no slot: a missing hash key,
+        // an array index outside the elements, or a parameter that does not
+        // exist. Under NO_UNSET that is c:3608-3613's
+        // `zerr("%s: parameter not set", idbeg)`, idbeg being the reference
+        // as written (`h[$k]`, not the expanded key).
+        if slot_unset_c2805 && !isset(crate::ported::zsh_h::UNSET) {
+            zerr(&format!("{}: parameter not set", idbeg_c2649.as_deref().unwrap_or(&var_name))); // c:3612
+            errflag_set_error();
+            return (String::new(), pos, vec![]);
+        }
 
         // c:Src/subst.c:1820 — bare `$NAME:MOD` and `$NAME[SUB]:MOD`
         // history-style modifier chain. Bugs #579, #580, #581.
