@@ -17474,6 +17474,36 @@ pub fn paramsubst(
                         crate::ported::zsh_h::ERRFLAG_HARD,
                         std::sync::atomic::Ordering::Relaxed,
                     );
+                    // c:Src/subst.c:3368-3380 — a non-interactive shell exits
+                    // from inside the expansion:
+                    //     if (!interact) {
+                    //         if (mypid == getpid()) {
+                    //             stopmsg = 1;
+                    //             zexit(1, ZEXIT_NORMAL);
+                    //         } else
+                    //             _exit(1);
+                    //     }
+                    // Exiting HERE is what decides which EXIT trap runs: inside a
+                    // function `starttrapscope` (c:Src/signals.c:862-868) has
+                    // stashed the global EXIT trap, so only one the function set
+                    // itself fires, and an enclosing `always` block never runs.
+                    // Unwinding to the top level on ERRFLAG_HARD ran both.
+                    if !crate::ported::zsh_h::interact() {
+                        let pid = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed);
+                        if crate::ported::builtin::SUBSHELL_DEPTH.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                            // An in-process `( … )` stands in for C's forked child, whose
+                            // c:3377 `_exit(1)` ends only the subshell; ERRFLAG_HARD above
+                            // already unwinds it to subshell_end with status 1.
+                        } else if pid == 0 || pid == unsafe { libc::getpid() } as i64 {
+
+                            crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:3374
+                            crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL); // c:3375
+                        } else {
+                            use std::io::Write as _;
+                            let _ = std::io::stdout().flush();
+                            unsafe { libc::_exit(1) }; // c:3377
+                        }
+                    }
                 }
             } else if let Some(msg) = r.strip_prefix('?') {
                 // c:3193 (?msg — not-set only)
@@ -17498,6 +17528,24 @@ pub fn paramsubst(
                         crate::ported::zsh_h::ERRFLAG_HARD,
                         std::sync::atomic::Ordering::Relaxed,
                     );
+                    // c:Src/subst.c:3368-3380 — same immediate exit as the `:?`
+                    // arm above (one C arm serves both spellings).
+                    if !crate::ported::zsh_h::interact() {
+                        let pid = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed);
+                        if crate::ported::builtin::SUBSHELL_DEPTH.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                            // An in-process `( … )` stands in for C's forked child, whose
+                            // c:3377 `_exit(1)` ends only the subshell; ERRFLAG_HARD above
+                            // already unwinds it to subshell_end with status 1.
+                        } else if pid == 0 || pid == unsafe { libc::getpid() } as i64 {
+
+                            crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:3374
+                            crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL); // c:3375
+                        } else {
+                            use std::io::Write as _;
+                            let _ = std::io::stdout().flush();
+                            unsafe { libc::_exit(1) }; // c:3377
+                        }
+                    }
                 }
             } else if let Some(rep) = r.strip_prefix(":/") {
                 // c:3870 (whole-element replace)

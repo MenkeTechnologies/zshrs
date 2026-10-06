@@ -527,3 +527,52 @@ mod exit_trap_after_error_abort {
         assert_parity(r#"trap 'echo st=$?' EXIT; typeset -r ro=1; ro=2"#);
     }
 }
+
+/// c:Src/subst.c:3368-3380 — `${x?}` / `${x:?}` in a non-interactive shell
+/// calls `zexit` from inside the expansion. At top level the global EXIT
+/// trap runs; inside a function `starttrapscope` (c:Src/signals.c:862-868)
+/// has stashed it, so only a trap the function set fires; an enclosing
+/// `always` block never runs.
+mod quest_expansion_exits_in_place {
+    use super::*;
+
+    #[test]
+    fn toplevel_runs_global_exit_trap() {
+        assert_parity(r#"trap 'echo b' EXIT; echo ${x?boom}; echo after"#);
+    }
+
+    #[test]
+    fn inside_function_skips_global_exit_trap() {
+        assert_parity(r#"trap 'echo b' EXIT; f() { echo ${x?boom} }; f; echo after"#);
+    }
+
+    #[test]
+    fn colon_form_inside_nested_function() {
+        assert_parity(r#"trap 'echo b' EXIT; f() { g }; g() { echo ${x:?boom} }; f"#);
+    }
+
+    #[test]
+    fn function_local_exit_trap_runs() {
+        assert_parity(r#"f() { trap 'echo fb' EXIT; echo ${x?boom} }; f; echo after"#);
+    }
+
+    #[test]
+    fn trapexit_function_hidden_inside_function() {
+        assert_parity(r#"TRAPEXIT() { echo te }; f() { echo ${x?boom} }; f"#);
+    }
+
+    #[test]
+    fn always_block_does_not_run() {
+        assert_parity(r#"trap 'echo b' EXIT; { echo ${x?boom} } always { echo al }"#);
+    }
+
+    #[test]
+    fn subshell_exits_alone() {
+        assert_parity(r#"trap 'echo b' EXIT; (echo ${x?boom}); echo after $?"#);
+    }
+
+    #[test]
+    fn command_substitution_exits_alone() {
+        assert_parity(r#"trap 'echo b' EXIT; y=$(echo ${x?boom}); echo after $?"#);
+    }
+}
