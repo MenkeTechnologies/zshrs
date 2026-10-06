@@ -1209,8 +1209,11 @@ pub fn gmatchcmp(
             // each (excluding its final char) still contain a `/`, i.e.
             // is this path deeper past the divergence point. `r = slasha
             // - slashb`; ascending puts the deeper path first.
-            let an = a.path.to_string_lossy();
-            let bn = b.path.to_string_lossy();
+            // c:947 compares `a->name`, the match name WITHOUT the scanner's
+            // depth-0 `./` (c:424) — `uname`, as for GS_NAME. The raw path
+            // gave every top-level match a `/` and sorted `**/*(od)` as flat.
+            let an = &a.uname;
+            let bn = &b.uname;
             let ab = an.as_bytes();
             let bb = bn.as_bytes();
             // c:951 — `while (*aptr && *aptr == *bptr) aptr++,bptr++;`
