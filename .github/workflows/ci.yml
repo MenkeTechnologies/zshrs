@@ -539,6 +539,10 @@ jobs:
       - name: Fuzz — mapfile
         run: ./target/debug/parity-fuzz --mode mapfile --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/mapfile.txt --out target/parity-fuzz/ci-mapfile.txt
       - name: Fuzz — pcre
+        # pcre_match -a gives an unmatched optional capture an empty element
+        # upstream (52405, 52502); 5.9.2 drops it.
+        env:
+          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode pcre --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/pcre.txt --out target/parity-fuzz/ci-pcre.txt
       - name: Fuzz — zwc
         run: ./target/debug/parity-fuzz --mode zwc --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zwc.txt --out target/parity-fuzz/ci-zwc.txt
