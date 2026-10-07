@@ -121,6 +121,10 @@ pub static SIGS: &[(&str, i32)] = &[
     ("PIPE", libc::SIGPIPE),
     ("ALRM", libc::SIGALRM),
     ("TERM", libc::SIGTERM),
+    // c:signames.c — Linux <signal.h> defines SIGSTKFLT (16) and
+    // SIGPWR (30); signames2.awk emits every SIG macro it finds.
+    #[cfg(target_os = "linux")]
+    ("STKFLT", libc::SIGSTKFLT),
     ("CHLD", libc::SIGCHLD),
     ("CONT", libc::SIGCONT),
     ("STOP", libc::SIGSTOP),
@@ -133,7 +137,15 @@ pub static SIGS: &[(&str, i32)] = &[
     ("VTALRM", libc::SIGVTALRM),
     ("PROF", libc::SIGPROF),
     ("WINCH", libc::SIGWINCH),
+    // c:signames2.awk:17 — `if (signam == "POLL" && sig[signum] == "IO")
+    // sig[signum] = ""`: where SIGPOLL == SIGIO (Linux) the slot is
+    // named POLL, and IO survives only as an alt_sigs alias.
+    #[cfg(not(target_os = "linux"))]
     ("IO", libc::SIGIO),
+    #[cfg(target_os = "linux")]
+    ("POLL", libc::SIGPOLL),
+    #[cfg(target_os = "linux")]
+    ("PWR", libc::SIGPWR),
     // c:signames.c — INFO is BSD-only (macOS, *BSD). signames2.awk
     // emits it iff <signal.h> defines SIGINFO; libc-rs only exposes
     // the constant on BSD-family targets.
@@ -165,6 +177,10 @@ pub static ALT_SIGS: &[(&str, i32)] = &[
         target_os = "illumos",
     ))]
     ("CLD", libc::SIGCHLD),
+    // c:2771-2775 — `#if SIGPOLL == SIGIO { "IO", SIGIO }`. Only Linux
+    // among the supported hosts defines SIGPOLL equal to SIGIO.
+    #[cfg(target_os = "linux")]
+    ("IO", libc::SIGIO),
     ("IOT", libc::SIGABRT), // c:2776-2780
     ("ERR", SIGZERR),       // c:2781-2787
 ];
@@ -214,7 +230,11 @@ pub static SIG_MSG: &[(i32, &str)] = &[
     (libc::SIGVTALRM, "virtual time alarm"),
     (libc::SIGPROF, "profile signal"),
     (libc::SIGWINCH, "window size changed"),
+    #[cfg(not(target_os = "linux"))]
     (libc::SIGIO, "i/o ready"),
+    // signames2.awk: the POLL rename also replaces the message.
+    #[cfg(target_os = "linux")]
+    (libc::SIGPOLL, "pollable event occurred"),
     #[cfg(any(
         target_os = "macos",
         target_os = "freebsd",

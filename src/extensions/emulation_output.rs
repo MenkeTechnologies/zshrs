@@ -42,8 +42,8 @@ pub fn times_field(ticks: i64, clktck: i64) -> String {
             let ms = (ticks * 1000 / clktck) % 1000;
             format!("{mins}m{secs}.{ms:03}s")
         }
-        // dash: six decimals (microseconds).
-        Personality::Dash => {
+        // dash (POSIX sh on Debian): six decimals (microseconds).
+        Personality::Dash | Personality::Sh => {
             let us = (ticks * 1_000_000 / clktck) % 1_000_000;
             format!("{mins}m{secs}.{us:06}s")
         }
@@ -69,6 +69,23 @@ pub fn times_field(ticks: i64, clktck: i64) -> String {
     }
 }
 
+/// The signals bare `kill -l` lists, as `(number, name)`: zsh's
+/// `sigs[1..SIGCOUNT]` followed, where SIGRTMIN/SIGRTMAX exist, by
+/// `rtsigname(sig, 0)` for every real-time signal
+/// (c:Src/jobs.c:2896-2902). bin_kill and bash's `trap -l` both list it.
+pub fn kill_l_signals() -> Vec<(i32, String)> {
+    use crate::ported::signals_h::{sigs_name, SIGCOUNT};
+    #[allow(unused_mut)]
+    let mut sigs: Vec<(i32, String)> = (1..=SIGCOUNT)
+        .filter_map(|s| sigs_name(s).map(|n| (s, n.to_string())))
+        .collect();
+    #[cfg(target_os = "linux")]
+    for s in libc::SIGRTMIN()..=libc::SIGRTMAX() {
+        sigs.push((s, crate::ported::signals::rtsigname(s))); // c:2900-2901
+    }
+    sigs
+}
+
 /// `kill -l`, rendered the way this personality's shell renders it.
 ///
 /// Returns `None` for native zsh, whose own single-line listing stays in
@@ -80,12 +97,25 @@ pub fn times_field(ticks: i64, clktck: i64) -> String {
 /// | shell | shape |
 /// |-------|-------|
 /// | bash 5.3 | `%2d) SIG%s`, five per row, tab-separated |
-/// | ksh93u+m | one bare name per line |
-/// | dash | signal `0` first, then one bare name per line |
+/// | ksh93u+m | every slot 1..NSIG-1, one bare name per line, `SIG<n>` where unnamed |
+/// | dash | every slot 0..NSIG-1, one per line, the number where unnamed |
 /// | mksh | two columns of `%2d %6s %s` with the strsignal text |
 pub fn kill_list(sigs: &[(i32, String)]) -> Option<String> {
+    let p = personality();
+    // zsh and ksh93u+m name Linux's signal 29 `POLL` (signames2.awk lets
+    // POLL replace IO); bash's and dash's mksignames write IO after POLL,
+    // so IO wins there.
+    let sigs: Vec<(i32, &str)> = sigs
+        .iter()
+        .map(|(num, name)| {
+            let io = name == "POLL" && p != Personality::Ksh93;
+            (*num, if io { "IO" } else { name.as_str() })
+        })
+        .collect();
+    // NSIG: one past the highest signal listed (RTMAX on Linux).
+    let nsig = sigs.last().map_or(1, |(num, _)| num + 1);
     let mut out = String::new();
-    match personality() {
+    match p {
         Personality::Zsh => return None,
         // bash: `%2d) SIG%s` five to a row, tab after every entry
         // including the last on a row, so the final row ends in a tab.
@@ -102,26 +132,38 @@ pub fn kill_list(sigs: &[(i32, String)]) -> Option<String> {
                 out.push('\n');
             }
         }
-        // dash lists signal 0 as well, before the real signals.
-        Personality::Dash => {
+        // dash (POSIX sh on Debian): every slot from 0 to NSIG-1, one per
+        // line, a slot its mksignames.c has no name for printed as the
+        // number. That table knows no STKFLT, and glibc keeps signals 32
+        // and 33 for itself, so Linux shows `16`, `32` and `33`.
+        Personality::Dash | Personality::Sh => {
             out.push_str("0\n");
-            for (_, name) in sigs {
-                out.push_str(name);
+            for slot in 1..nsig {
+                match sigs.iter().find(|(num, name)| *num == slot && *name != "STKFLT") {
+                    Some((_, name)) => out.push_str(name),
+                    None => out.push_str(&slot.to_string()),
+                }
                 out.push('\n');
             }
         }
-        // ksh93u+m: one bare name per line, no number and no `SIG`. It
-        // also keeps the historical `IOT` spelling for signal 6, where
-        // every other shell here says `ABRT` — the only name that differs
-        // across the whole list.
-        Personality::Ksh93 | Personality::Sh | Personality::Csh => {
-            let ksh = personality() == Personality::Ksh93;
-            for (num, name) in sigs {
-                if ksh && *num == 6 {
-                    out.push_str("IOT");
-                } else {
-                    out.push_str(name);
+        // ksh93u+m: every slot from 1 to NSIG-1, one bare name per line,
+        // no number and no `SIG` — except an unnamed slot, which prints as
+        // `SIG<n>` (glibc's reserved 32 and 33). It also keeps the
+        // historical `IOT` spelling for signal 6, where every other shell
+        // here says `ABRT`.
+        Personality::Ksh93 => {
+            for slot in 1..nsig {
+                match sigs.iter().find(|(num, _)| *num == slot) {
+                    Some(_) if slot == 6 => out.push_str("IOT"),
+                    Some((_, name)) => out.push_str(name),
+                    None => out.push_str(&format!("SIG{slot}")),
                 }
+                out.push('\n');
+            }
+        }
+        Personality::Csh => {
+            for (_, name) in &sigs {
+                out.push_str(name);
                 out.push('\n');
             }
         }
@@ -197,8 +239,9 @@ pub fn hash_header() -> Option<&'static str> {
 pub fn hash_entry(name: &str, path: &str) -> Option<String> {
     match personality() {
         Personality::Bash => Some(format!("{:>4}\t{path}", 0)),
-        // dash prints the resolved path alone, no name and no `=`.
-        Personality::Dash => Some(path.to_string()),
+        // dash (POSIX sh on Debian) prints the resolved path alone, no
+        // name and no `=`.
+        Personality::Dash | Personality::Sh => Some(path.to_string()),
         _ => {
             let _ = name;
             None
@@ -261,6 +304,11 @@ const DASH_SET_O: &[SetOpt] = &[
     o("allexport", "allexport"),
     o("notify", "notify"),
     o("nounset", "nounset"),
+    // Debian's dash (the `/bin/sh` of Debian and Ubuntu) carries a
+    // privileged-mode patch that lists `privileged` here; upstream dash
+    // and the dash macOS ships as `/bin/dash` have no such option.
+    #[cfg(target_os = "linux")]
+    o("privileged", "privileged"),
     o("nolog", "nolog"),
     fixed("debug", false),
 ];

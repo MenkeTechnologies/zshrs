@@ -17373,11 +17373,7 @@ pub fn bin_trap(
         use crate::extensions::emulation_startup::{personality, Personality};
         match personality() {
             Personality::Bash => {
-                let sigs: Vec<(i32, String)> = (1..=crate::ported::signals_h::SIGCOUNT)
-                    .filter_map(|sg| {
-                        crate::ported::signals_h::sigs_name(sg).map(|n| (sg, n.to_string()))
-                    })
-                    .collect();
+                let sigs = crate::extensions::emulation_output::kill_l_signals();
                 if let Some(rendered) = crate::extensions::emulation_output::kill_list(&sigs) {
                     print!("{rendered}");
                 }
