@@ -705,7 +705,7 @@ mod tests {
         // `setup_` clears compqstack — which would wipe the stack set below.
         // A live shell has the module loaded before any completion function
         // runs, so load it first here too.
-        let _ = crate::ported::module::resolvebuiltin("compquote");
+        let _ = crate::ported::exec::resolvebuiltin("compquote");
         let saved = INCOMPFUNC.load(Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
 

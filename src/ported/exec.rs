@@ -1073,52 +1073,86 @@ pub fn getfpfunc(
     None
 }
 
-/// Port of `resolvebuiltin()` from `Src/exec.c:2703` — C decl `resolvebuiltin(const char *cmdarg, HashNode hn)`.
-/// Ensures that an autoload-stub builtin has its
-/// module loaded before the caller invokes its `handlerfunc`. If the
-/// stub has no handler, `ensurefeature` is asked to load the module
-/// and re-lookup the builtin node. C body (abridged):
+/// Port of `resolvebuiltin()` from `Src/exec.c:2703`. — C decl `resolvebuiltin(const char *cmdarg, HashNode hn)`.
+/// the autoloaded-builtin stub firing.
+///
+/// C body:
 /// ```c
 /// if (!((Builtin) hn)->handlerfunc) {
 ///     char *modname = dupstring(((Builtin) hn)->optstr);
-///     (void)ensurefeature(modname, "b:", ...);
+///     (void)ensurefeature(modname, "b:",
+///                         (hn->flags & BINF_AUTOALL) ? NULL : hn->nam);
 ///     hn = builtintab->getnode(builtintab, cmdarg);
-///     if (!hn) { lastval=1; zerr(...); return NULL; }
+///     if (!hn) {
+///         lastval = 1;
+///         zerr("autoloading module %s failed to define builtin: %s",
+///              modname, cmdarg);
+///         return NULL;
+///     }
 /// }
 /// return hn;
 /// ```
 ///
-/// WARNING: zshrs's builtin table is the static `BUILTINS` array in
-/// `src/ported/builtin.rs`. Module autoload routes through
-/// `module::ensurefeature(MODULESTAB, modname, "b:", Some(cmdarg))`;
-/// after the module loads the handler should be wired into BUILTINS.
-pub fn resolvebuiltin<'a>(
-    cmdarg: &str, // c:2703 (Src/exec.c)
-    hn: &'a builtin,
-) -> Option<&'a builtin> {
-    // c:2705 — `if (!((Builtin) hn)->handlerfunc)`.
-    if hn.handlerfunc.is_none() {
-        // c:2706 — `modname = dupstring(((Builtin)hn)->optstr)`.
-        let modname = hn.optstr.clone().unwrap_or_default();
-        // c:2712 — `ensurefeature(modname, "b:", cmdarg)`.
-        let _ = {
-            let mut t = crate::ported::module::MODULESTAB.lock().unwrap();
-            crate::ported::module::ensurefeature(&mut t, &modname, "b:", Some(cmdarg))
-        };
-        // c:2715-2716 — re-lookup the now-(hopefully)-resolved builtin.
-        if let Some(re) = BUILTINS.iter().find(|b| b.node.nam == cmdarg) {
-            if re.handlerfunc.is_some() {
-                return Some(re); // c:2723
-            }
-        }
-        // c:2717-2721 — `lastval = 1; zerr(...)` + return NULL.
-        zerr(&format!(
-            "autoloading module {} failed to define builtin: {}",
-            modname, cmdarg
-        ));
-        return None; // c:2720
+/// zshrs split: the C autoload stub (builtintab node with NULL
+/// handlerfunc, installed by `add_autobin` c:426) lives in the
+/// `autoload_builtins` ledger (name → module). This fn is the
+/// dispatch-time consult:
+///   - `None` — name has no autoload stub; caller continues its
+///     normal lookup chain.
+///   - `Some(0)` — module loaded; caller re-dispatches the (now
+///     registered) builtin.
+///   - `Some(1)` — load failed or the loaded module didn't define
+///     the feature; diagnostics already printed (load_module's
+///     `failed to load module` zwarn, or the c:2718 zerr here).
+///     Caller returns status 1.
+///
+/// Ledger upkeep: the entry is removed in every fired path —
+///   - success: C's addbuiltin (module.c:411-415) replaces the stub
+///     with the real node, so the stub is gone;
+///   - load failure: C's execbuiltin head (Src/builtin.c:264-267)
+///     hits the still-NULL handlerfunc and `deletebuiltin`s the
+///     stub — a second call reports `command not found` / 127
+///     (probed: zsh 5.9 `zmodload -ab zsh/bogus mybltn; mybltn;
+///     mybltn` → rc1=1, rc2=127).
+///
+/// AUTOALL note: the ledger doesn't carry BINF_AUTOALL, so the
+/// ensurefeature arg is always `Some(name)` (the non-AUTOALL form).
+/// The AUTOALL path is unreachable for builtins via `zmodload -a MOD`
+/// (both shells error "`/' is invalid in a builtin"); revisit if the
+/// ledger grows flags.
+pub fn resolvebuiltin(name: &str) -> Option<i32> {
+    // c:2700
+    let mut tab = crate::ported::module::MODULESTAB.lock().ok()?;
+    // c:2705 — `if (!((Builtin) hn)->handlerfunc)`: ledger hit IS the
+    // "no handlerfunc" stub in zshrs.
+    let module = tab.autoload_builtins.get(name)?.clone();
+    // c:2706 — `modname = dupstring(hn->optstr)` (done: `module`).
+    // Stub fires exactly once per registration (see ledger upkeep
+    // in the doc above).
+    tab.autoload_builtins.remove(name);
+    // c:2711-2713 — ensurefeature(modname, "b:", hn->nam).
+    let _ = crate::ported::module::ensurefeature(&mut tab, &module, "b:", Some(name));
+    // c:2714 — `hn = builtintab->getnode(builtintab, cmdarg);`
+    // zshrs analog: the module booted (is_loaded) AND the name is in
+    // the static builtintab (createbuiltintable pre-registers every
+    // module bintab entry).
+    let defined =
+        tab.is_loaded(&module) && crate::ported::builtin::createbuiltintable().contains_key(name);
+    if defined {
+        return Some(0); // c:2723 `return hn;`
     }
-    Some(hn) // c:2723
+    if tab.is_loaded(&module) {
+        // c:2716-2720 — module loaded but feature missing.
+        crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed); // c:2717 lastval = 1
+        crate::ported::utils::zerr(&format!(
+            "autoloading module {} failed to define builtin: {}",
+            module, name
+        )); // c:2718
+    }
+    // Load failure: load_module already printed `failed to load
+    // module \`...'`; C's execbuiltin head returns 1 silently
+    // (Src/builtin.c:264-267).
+    Some(1)
 }
 
 /// Port of `static struct builtin commandbn` from `Src/exec.c:276`.

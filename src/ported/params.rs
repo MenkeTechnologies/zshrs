@@ -412,7 +412,7 @@ pub fn loadparamnode(
 
     // c:549 — `(void)ensurefeature(mn, "p:", (pm->node.flags & PM_AUTOALL)
     // ? NULL : nam);` fires the module loader (same shape as
-    // module::resolvebuiltin's c:2711 call). A feature the module lacks
+    // exec::resolvebuiltin's c:2711 call). A feature the module lacks
     // reports "autoload cancelled" there and drops the stub.
     let autoall = pm
         .as_ref()

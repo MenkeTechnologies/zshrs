@@ -1720,7 +1720,7 @@ pub fn bin_compdescribe(
     // completion ran. Re-apply it at the entry of each builtin. Cheap
     // after the first call: `resolvebuiltin` drops the name from the
     // autoload ledger, and a miss is one hashmap lookup.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:850
         zwarnnam(nam, "can only be called from completion function");
@@ -5037,7 +5037,7 @@ pub fn bin_comparguments(
 ) -> i32 {
     // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
     // `bin_compdescribe` for why this has to happen here.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:2590
         zwarnnam(nam, "can only be called from completion function");
@@ -6545,7 +6545,7 @@ pub fn bin_compvalues(
 ) -> i32 {
     // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
     // `bin_compdescribe` for why this has to happen here.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3479
         zwarnnam(nam, "can only be called from completion function");
@@ -6867,7 +6867,7 @@ pub fn bin_compquote(
 ) -> i32 {
     // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
     // `bin_compdescribe` for why this has to happen here.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3685
         zwarnnam(nam, "can only be called from completion function");
@@ -7071,7 +7071,7 @@ pub fn bin_comptags(
 ) -> i32 {
     // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
     // `bin_compdescribe` for why this has to happen here.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3835
         zwarnnam(nam, "can only be called from completion function");
@@ -7300,7 +7300,7 @@ pub fn bin_comptry(
 ) -> i32 {
     // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
     // `bin_compdescribe` for why this has to happen here.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3963
         zwarnnam(nam, "can only be called from completion function");
@@ -8614,7 +8614,7 @@ pub fn bin_compfiles(
 ) -> i32 {
     // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
     // `bin_compdescribe` for why this has to happen here.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:4972
         zwarnnam(nam, "can only be called from completion function");
@@ -8794,7 +8794,7 @@ pub fn bin_compgroups(
 ) -> i32 {
     // c:Src/exec.c:2711 — autoloaded-builtin resolve; see the note in
     // `bin_compdescribe` for why this has to happen here.
-    let _ = crate::ported::module::resolvebuiltin(nam); // c:2711
+    let _ = crate::ported::exec::resolvebuiltin(nam); // c:2711
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:5078
         zwarnnam(nam, "can only be called from completion function");

@@ -1357,7 +1357,7 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // zsh/zselect zselect; zselect` previously died there with
     // `command not found` because the gate only checked is_loaded,
     // never the autoload ledger.
-    if let Some(rc) = crate::ported::module::resolvebuiltin(name) {
+    if let Some(rc) = crate::ported::exec::resolvebuiltin(name) {
         if rc != 0 {
             // Load failed or feature undefined — diagnostics already
             // printed (load_module zwarn / resolvebuiltin zerr).

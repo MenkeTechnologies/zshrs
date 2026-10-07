@@ -6287,7 +6287,7 @@ impl ShellExecutor {
         // C autoload-fire entirely (PATH miss → 127 instead of the
         // load_module diagnostic → 1).
         if !cmd.contains('/') {
-            if let Some(rc) = crate::ported::module::resolvebuiltin(cmd) {
+            if let Some(rc) = crate::ported::exec::resolvebuiltin(cmd) {
                 if rc != 0 {
                     return Ok(1);
                 }
