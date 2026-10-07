@@ -8431,6 +8431,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             None => return Value::Status(1),
         };
 
+        // c:Src/exec.c:1760 — `thisjob = newjob = initjob()` comes BEFORE the
+        // old coproc's fds are closed (c:1768-1772), so that coproc, which
+        // only starts exiting once they close, still holds its job slot and
+        // the new one gets the next number: `coproc cat; …; coproc cat; jobs`
+        // lists `[2]`. Taking the slot after the fork raced the reaper.
+        let newjob = {
+            let table = crate::ported::jobs::JOBTAB
+                .get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            crate::ported::jobs::initjob(&mut tab)
+        };
+        // A coproc that never starts gives the slot back.
+        let release_newjob = || {
+            if let Some(table) = crate::ported::jobs::JOBTAB.get() {
+                let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                tab[newjob].stat = 0;
+            }
+        };
         // c:Src/exec.c:1710-1712 — starting a new coproc closes the
         // previous one's fds FIRST:
         //     if (coprocin >= 0) { zclose(coprocin); zclose(coprocout); }
@@ -8460,6 +8478,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut p2c = [0i32; 2]; // parent writes, child reads
         let mut c2p = [0i32; 2]; // child writes, parent reads
         if unsafe { libc::pipe(p2c.as_mut_ptr()) } < 0 {
+            release_newjob();
             return Value::Status(1);
         }
         if unsafe { libc::pipe(c2p.as_mut_ptr()) } < 0 {
@@ -8467,6 +8486,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 libc::close(p2c[0]);
                 libc::close(p2c[1]);
             }
+            release_newjob();
             return Value::Status(1);
         }
         // c:Src/exec.c:5160 mpipe — both pipes' fds are moved above
@@ -8490,6 +8510,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     libc::close(c2p[0]);
                     libc::close(c2p[1]);
                 }
+                release_newjob();
                 Value::Status(1)
             }
             0 => {
@@ -8571,7 +8592,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let table = jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
                     let idx = {
                         let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
-                        let idx = jobs::initjob(&mut tab); // c:exec.c:1700
+                        let idx = newjob; // c:exec.c:1760, reserved above
                         jobs::addproc(
                             &mut tab[idx],
                             pid,
