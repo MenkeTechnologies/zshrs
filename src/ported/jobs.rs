@@ -3918,8 +3918,20 @@ pub fn bin_kill(
                         // c:2883 — `if (1 <= sig && sig <= SIGCOUNT)`: slot 0
                         // (EXIT) and the pseudo-signal slots print as numbers.
                         let in_range = (1..=crate::ported::signals_h::SIGCOUNT).contains(&s);
+                        let rt_name = || {
+                            // c:2884-2886 — `else if ((signame = rtsigname(sig, 0)))`.
+                            #[cfg(target_os = "linux")]
+                            {
+                                let nm = crate::ported::signals::rtsigname(s);
+                                (!nm.is_empty()).then_some(nm)
+                            }
+                            #[cfg(not(target_os = "linux"))]
+                            None::<String>
+                        };
                         if let Some(name) = sigs_name(s).filter(|_| in_range) {
                             // c:2856-2858
+                            println!("{}", name);
+                        } else if let Some(name) = rt_name() {
                             println!("{}", name);
                         } else {
                             println!("{}", n); // c:2862
@@ -3947,7 +3959,10 @@ pub fn bin_kill(
                         } else {
                             let upper = token.to_ascii_uppercase();
                             let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-                            if let Some(n) = sigs_number(bare) {
+                            // c:2865-2867 — a real-time name prints its number.
+                            let found = sigs_number(bare)
+                                .or_else(|| crate::ported::signals::rtsigno(bare));
+                            if let Some(n) = found {
                                 // c:2828
                                 println!("{}", n); // c:2842
                             } else {
@@ -4467,59 +4482,31 @@ pub fn getsigname(sig: i32) -> String {
     if sig == crate::ported::signals_h::SIGDEBUG {
         return "DEBUG".to_string();
     }
-    match sig {
-        0 => "EXIT".to_string(),
-        libc::SIGHUP => "HUP".to_string(),
-        libc::SIGINT => "INT".to_string(),
-        libc::SIGQUIT => "QUIT".to_string(),
-        libc::SIGILL => "ILL".to_string(),
-        libc::SIGTRAP => "TRAP".to_string(),
-        libc::SIGABRT => "ABRT".to_string(),
-        libc::SIGBUS => "BUS".to_string(),
-        libc::SIGFPE => "FPE".to_string(),
-        libc::SIGKILL => "KILL".to_string(),
-        libc::SIGUSR1 => "USR1".to_string(),
-        libc::SIGSEGV => "SEGV".to_string(),
-        libc::SIGUSR2 => "USR2".to_string(),
-        libc::SIGPIPE => "PIPE".to_string(),
-        libc::SIGALRM => "ALRM".to_string(),
-        libc::SIGTERM => "TERM".to_string(),
-        libc::SIGCHLD => "CHLD".to_string(),
-        libc::SIGCONT => "CONT".to_string(),
-        libc::SIGSTOP => "STOP".to_string(),
-        libc::SIGTSTP => "TSTP".to_string(),
-        libc::SIGTTIN => "TTIN".to_string(),
-        libc::SIGTTOU => "TTOU".to_string(),
-        libc::SIGURG => "URG".to_string(),
-        libc::SIGXCPU => "XCPU".to_string(),
-        libc::SIGXFSZ => "XFSZ".to_string(),
-        libc::SIGVTALRM => "VTALRM".to_string(),
-        libc::SIGPROF => "PROF".to_string(),
-        libc::SIGWINCH => "WINCH".to_string(),
-        libc::SIGIO => "IO".to_string(),
-        libc::SIGSYS => "SYS".to_string(),
-        _ => {
-            // c:3099-3101 — `if (sig >= VSIGCOUNT) return rtsigname(SIGNUM(sig), 0);`
-            // RT-signal range (Linux SIGRTMIN..SIGRTMAX) maps to
-            // "RTMIN+N"/"RTMAX-N" via the canonical rtsigname helper.
-            // The previous Rust port emitted `SIG{sig}` for every
-            // unknown signal — losing the RT-signal naming entirely.
-            #[cfg(target_os = "linux")]
-            {
-                // glibc `SIGRTMIN()`/`SIGRTMAX()` are safe extern ported.
-                let sigrtmin = libc::SIGRTMIN();
-                let sigrtmax = libc::SIGRTMAX();
-                if sig >= sigrtmin && sig <= sigrtmax {
-                    // c:3100
-                    let nm = crate::ported::signals::rtsigname(sig); // c:3101 rtsigname(SIGNUM(sig), 0)
-                    if !nm.is_empty() {
-                        return nm;
-                    }
-                }
+    // c:3103 — `return sigs[sig];` (slot 0 is "EXIT"). The table is the
+    // generated one, so platform names (EMT, INFO, STKFLT, POLL, PWR)
+    // come out as zsh prints them.
+    if let Some(name) = sigs_name(sig) {
+        return name.to_string();
+    }
+    // c:3099-3101 — `if (sig >= VSIGCOUNT) return rtsigname(SIGNUM(sig), 0);`
+    // RT-signal range (Linux SIGRTMIN..SIGRTMAX) maps to
+    // "RTMIN+N"/"RTMAX-N" via the canonical rtsigname helper.
+    // The previous Rust port emitted `SIG{sig}` for every
+    // unknown signal — losing the RT-signal naming entirely.
+    #[cfg(target_os = "linux")]
+    {
+        // glibc `SIGRTMIN()`/`SIGRTMAX()` are safe extern ported.
+        let sigrtmin = libc::SIGRTMIN();
+        let sigrtmax = libc::SIGRTMAX();
+        if sig >= sigrtmin && sig <= sigrtmax {
+            // c:3100
+            let nm = crate::ported::signals::rtsigname(sig); // c:3101 rtsigname(SIGNUM(sig), 0)
+            if !nm.is_empty() {
+                return nm;
             }
-            format!("SIG{}", sig)
         }
     }
+    format!("SIG{}", sig)
 }
 
 /// Port of `gettrapnode(int sig, int ignoredisable)` from `Src/jobs.c:3115`.

@@ -3819,6 +3819,11 @@ impl ShellExecutor {
             let mut signals_arr: Vec<String> = Vec::with_capacity(by_num.len() + 3);
             signals_arr.push("EXIT".to_string()); // c:sigs[0]
             signals_arr.extend(by_num.iter().map(|(n, _)| n.to_string()));
+            // c:Src/params.c:1018-1021 — the real-time names follow.
+            #[cfg(target_os = "linux")]
+            signals_arr.extend(
+                (libc::SIGRTMIN()..=libc::SIGRTMAX()).map(crate::ported::signals::rtsigname),
+            );
             signals_arr.push("ZERR".to_string()); // c:sigs tail
             signals_arr.push("DEBUG".to_string()); // c:sigs tail
             crate::ported::params::setaparam("signals", signals_arr); // c:974

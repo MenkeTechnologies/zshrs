@@ -28,13 +28,15 @@ use std::sync::atomic::{AtomicI32, Ordering};
 // Pseudo-signal indexes (c:34-46).
 // ---------------------------------------------------------------------------
 
-/// Port of the platform's `SIGCOUNT` value (computed by autoconf
-/// from `<signal.h>`). Equal to `NSIG - 1` on every supported host
-/// — the highest valid signal number for the standard signal table.
-/// libc-rs doesn't expose `NSIG` on Linux/macOS so we hardcode the
-/// value `<signal.h>` would emit.
+/// Port of the platform's `SIGCOUNT` (`#define SIGCOUNT` in the
+/// signames.c that Src/signames2.awk generates from `<signal.h>`): the
+/// highest NAMED signal below 60, real-time signals excluded
+/// (signames2.awk `signam !~ /RTM(IN|AX)/ ... if (0 + max < 0 + signum &&
+/// signum < 60) max = signum`). On Linux that is SIGSYS (31): SIGRTMIN..
+/// SIGRTMAX sit past it, at trap-table slots VSIGCOUNT.. (signals.h
+/// SIGIDX), and are named by `rtsigname`.
 #[cfg(target_os = "linux")]
-pub const SIGCOUNT: i32 = 64; // Linux NSIG = 65
+pub const SIGCOUNT: i32 = 31; // SIGSYS
 /// `SIGCOUNT` constant.
 #[cfg(target_os = "macos")]
 pub const SIGCOUNT: i32 = 31; // macOS NSIG = 32
