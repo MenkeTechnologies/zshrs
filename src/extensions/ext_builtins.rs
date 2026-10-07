@@ -717,6 +717,19 @@ impl ShellExecutor {
         }
         println!();
 
+        // --- Recorded state (authoritative) ---
+        // The recorder shard is what startup replays, so ITS counts are the
+        // shell's real state. The SQLite files below are daemon-maintained
+        // copies; with no daemon running they stay empty or stale.
+        let recorded = recorded_state_counts();
+        if let Some((shard_name, counts)) = &recorded {
+            println!("{}", bold("Recorded state (authoritative)"));
+            println!("  {}", dim(shard_name));
+            for (label, n) in counts {
+                println!("  {:<17}{}", format!("{}:", label), n);
+            }
+            println!();
+        }
         // --- SQLite (read-only mirrors) ---
         // Same directory, different job: daemon-maintained copies you
         // can query with SQL or `dbview`. They are NOT the bytecode
@@ -729,7 +742,11 @@ impl ShellExecutor {
         );
         if let Some(cache) = self.compsys_cache() {
             let count = crate::compsys::cache_entry_count(cache);
-            println!("  compsys:     {} completions  {}", count, dim("mirror"));
+            println!(
+                "  compsys:     {} completions  {}",
+                count,
+                dim("mirror")
+            );
         } else {
             println!("  compsys:     {}", yellow("no mirror"));
         }
@@ -10855,6 +10872,54 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
         }
     }
     status
+}
+
+/// Counts of what the newest recorder shard holds — the state startup
+/// replays — as `(shard file name, [(label, count)])`. `None` when there is
+/// no shard or it cannot be read.
+/// zshrs-original — no C counterpart.
+#[cfg(feature = "daemon")]
+pub fn recorded_state_counts() -> Option<(String, Vec<(&'static str, usize)>)> {
+    use crate::daemon::shard::{list_shards, read_canonical_shard};
+    let paths = crate::daemon::paths::CachePaths::resolve().ok()?;
+    let path = list_shards(&paths)
+        .ok()?
+        .into_iter()
+        .filter(|p| p.to_str().is_some_and(|s| s.ends_with("-recorder.rkyv")))
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())?;
+    let shard = read_canonical_shard(&path).ok()?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    // Several subsystems are stored twice or only in `extras` (keyed by
+    // subsystem) while the typed field stays empty: count distinct names
+    // across both rather than adding them.
+    let distinct = |typed: Vec<&String>, key: &str| -> usize {
+        let mut names: std::collections::HashSet<&String> = typed.into_iter().collect();
+        if let Some(m) = shard.extras.get(key) {
+            names.extend(m.keys());
+        }
+        names.len()
+    };
+    let zstyle_patterns: Vec<&String> = shard.zstyle.iter().map(|(k, _)| k).collect();
+    Some((
+        name,
+        vec![
+            ("aliases", shard.aliases.len()),
+            ("functions", shard.functions.len()),
+            ("autoload bodies", shard.autoload_functions.len()),
+            ("completions", distinct(shard.compdef.keys().collect(), "completion")),
+            ("zstyles", distinct(zstyle_patterns, "zstyles_end")),
+            ("bindkeys", distinct(shard.bindkeys.keys().collect(), "bindkeys_end")),
+            ("widgets", distinct(Vec::new(), "widgets_end")),
+            ("modules", distinct(shard.zmodload.iter().collect(), "modules_end")),
+            ("params", distinct(shard.params.keys().collect(), "params_end")),
+            ("sourced files", shard.sourced_files.len()),
+        ],
+    ))
+}
+
+#[cfg(not(feature = "daemon"))]
+pub fn recorded_state_counts() -> Option<(String, Vec<(&'static str, usize)>)> {
+    None
 }
 
 /// zcalc — basic non-interactive calculator. zsh's autoloaded

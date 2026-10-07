@@ -133,7 +133,7 @@ impl HistoryEngine {
     /// (different schema, daemon-only writer); shells append to it via
     /// `history_append` IPC. This shell-side db is the fallback path
     /// used when the daemon is absent.
-    fn db_path() -> PathBuf {
+    pub fn db_path() -> PathBuf {
         Self::root().join("zshrs_history.db")
     }
 

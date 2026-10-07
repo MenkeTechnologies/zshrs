@@ -3456,6 +3456,19 @@ fn run_doctor() {
     }
     println!();
 
+    // --- Recorded state (authoritative) ---
+    // The recorder shard is what startup replays, so ITS counts are the
+    // shell's real state. The SQLite files below are daemon-maintained
+    // copies; with no daemon running they stay empty or stale.
+    let recorded = zsh::ext_builtins::recorded_state_counts();
+    if let Some((shard_name, counts)) = &recorded {
+        println!("{}", bold("Recorded state (authoritative)"));
+        println!("  {}", dim(shard_name));
+        for (label, n) in counts {
+            println!("  {:<17}{}", format!("{}:", label), n);
+        }
+        println!();
+    }
     // --- SQLite (read-only mirrors) ---
     // Same directory, different job: daemon-maintained copies you can
     // query with SQL or `dbview`. They are NOT the bytecode cache and
@@ -3530,9 +3543,7 @@ fn run_doctor() {
     // History is a durable command record, not a cache. Reported in
     // its own section to make that distinction visible.
     println!("{}", bold("History"));
-    let hist_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("zshrs/history.db");
+    let hist_path = zsh::history::HistoryEngine::db_path();
     if hist_path.exists() {
         let size = std::fs::metadata(&hist_path).map(|m| m.len()).unwrap_or(0);
         let count = zsh::history::HistoryEngine::new()
@@ -3540,13 +3551,14 @@ fn run_doctor() {
             .and_then(|e| e.count().ok())
             .unwrap_or(0);
         println!(
-            "  history.db:  {} entries, {}  {}",
+            "  {}  {} entries, {}  {}",
+            hist_path.display(),
             count,
             format_bytes(size),
             green("OK"),
         );
     } else {
-        println!("  history.db:  {}", yellow("not found"));
+        println!("  {}  {}", hist_path.display(), yellow("not found"));
     }
     println!();
 
