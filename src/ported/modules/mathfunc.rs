@@ -41,7 +41,6 @@ extern "C" {
     fn copysign(x: f64, y: f64) -> f64;
     fn expm1(x: f64) -> f64;
     fn log1p(x: f64) -> f64;
-    fn cbrt(x: f64) -> f64;
 }
 
 /// Port of `math_string(UNUSED(char *name), char *arg, int id)` from `Src/Modules/mathfunc.c:439`. The
@@ -508,7 +507,7 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
             };
         }
         MF_ATANH => retd = argd.atanh(),         // c:233
-        MF_CBRT => retd = unsafe { cbrt(argd) }, // c:237
+        MF_CBRT => retd = crate::system_libm::cbrt(argd), // c:237 (the C library's cbrt)
         MF_CEIL => retd = argd.ceil(),           // c:241
         MF_COPYSIGN => retd = unsafe { copysign(argd, argd2) }, // c:245
         MF_COS => retd = argd.cos(),             // c:249

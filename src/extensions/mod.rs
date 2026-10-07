@@ -61,6 +61,7 @@ pub use crate::provenance;
 pub use crate::regex_mod;
 pub use crate::script_cache;
 pub use crate::stringsort;
+pub use crate::system_libm;
 pub use crate::terminfo_caps;
 pub use crate::terminfo_db;
 pub use crate::tparm;

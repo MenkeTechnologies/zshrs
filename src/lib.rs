@@ -132,6 +132,10 @@ pub mod bundled_functions;
 /// answer on every platform; re-exported by `ported::utils`.
 #[path = "extensions/c_locale.rs"]
 pub mod c_locale;
+/// `system_libm` submodule — the C library's `cbrt` for zsh/mathfunc (Rust's
+/// compiler_builtins shadows it on Linux).
+#[path = "extensions/system_libm.rs"]
+pub mod system_libm;
 /// `bash_complete` submodule.
 #[path = "extensions/bash_complete.rs"]
 pub mod bash_complete;
