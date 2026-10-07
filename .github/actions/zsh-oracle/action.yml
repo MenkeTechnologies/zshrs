@@ -22,7 +22,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.cache/zshrs/zsh-oracle
-        key: zsh-oracle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.commit }}-${{ hashFiles('scripts/build_zsh_oracle.sh') }}
+        key: zsh-oracle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.commit }}-${{ hashFiles('scripts/build_zsh_oracle.sh', '.github/actions/zsh-oracle/action.yml') }}
     - name: Install build dependencies (ubuntu)
       if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
       shell: bash
@@ -39,7 +39,12 @@ runs:
         # A full clone: $ZSH_PATCHLEVEL comes from `git describe` and needs the tags.
         git clone -q https://github.com/zsh-users/zsh.git "$src"
         git -C "$src" checkout -q -B oracle "${{ inputs.commit }}"
-        sh scripts/build_zsh_oracle.sh "$src"
+        # Debian/Ubuntu's zsh reads /etc/zsh/zshenv (--enable-etcdir=/etc/zsh),
+        # and so does zshrs there (src/extensions/global_rc.rs); upstream's
+        # default /etc is the macOS layout.
+        etc=
+        if [ "$RUNNER_OS" = Linux ]; then etc=--enable-etcdir=/etc/zsh; fi
+        sh scripts/build_zsh_oracle.sh "$src" $etc
     - id: export
       shell: bash
       run: |
