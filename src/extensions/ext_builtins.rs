@@ -10912,9 +10912,25 @@ pub fn recorded_state_counts() -> Option<(String, Vec<(&'static str, usize)>)> {
             ("widgets", distinct(Vec::new(), "widgets_end")),
             ("modules", distinct(shard.zmodload.iter().collect(), "modules_end")),
             ("params", distinct(shard.params.keys().collect(), "params_end")),
+            ("plugins", recorded_plugins(&shard).len()),
             ("sourced files", shard.sourced_files.len()),
         ],
     ))
+}
+
+/// Plugins in a recorder shard: the ones the recorder stored, plus any its
+/// sourced files and fpath place in a known framework layout (shards written
+/// before the recorder detected plugins carry none).
+/// zshrs-original — no C counterpart.
+#[cfg(feature = "daemon")]
+pub fn recorded_plugins(shard: &crate::daemon::shard::CanonicalShard) -> Vec<(String, String)> {
+    let mut all = shard.plugins.clone();
+    for found in crate::daemon::recorder_shard::detect_plugins(&shard.sourced_files, &shard.fpath) {
+        if !all.contains(&found) {
+            all.push(found);
+        }
+    }
+    all
 }
 
 #[cfg(not(feature = "daemon"))]

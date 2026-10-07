@@ -488,6 +488,112 @@ pub fn fold_bundle(bundle: &Bundle) -> Folded {
     f
 }
 
+/// Plugins the recording loaded, as `(manager, name)` in first-seen order.
+///
+/// The recorder is plugin-framework-agnostic: it records state mutations and
+/// does not know what a "plugin" is. A plugin is therefore recovered from WHERE
+/// its files live — each framework installs into a layout of its own — so the
+/// sourced files and the fpath directories are matched against those layouts.
+/// A `*.plugin.zsh` outside every known layout is reported as `manual`.
+pub fn detect_plugins(sourced: &[String], fpath: &[String]) -> Vec<(String, String)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for path in sourced.iter().chain(fpath) {
+        if let Some(found) = plugin_from_path(path) {
+            if seen.insert(found.clone()) {
+                out.push(found);
+            }
+        }
+    }
+    out
+}
+
+/// The `(manager, name)` a path belongs to, or `None`.
+fn plugin_from_path(path: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    // The segment(s) after the first occurrence of `marker`, when `marker`
+    // is a single path component.
+    let after = |marker: &str, n: usize| -> Option<Vec<&str>> {
+        let i = parts.iter().position(|p| *p == marker)?;
+        let rest = parts.get(i + 1..i + 1 + n)?;
+        Some(rest.to_vec())
+    };
+    let has = |component: &str| parts.iter().any(|p| *p == component);
+    let owner_repo = |a: &str, b: &str| format!("{a}/{b}");
+
+    // zinit / zplugin: plugins/<owner>---<repo>; `_local---<name>` is a local
+    // plugin dir. A snippet is named by its directory (`OMZP::git`).
+    if has(".zinit") || has("zinit") || has(".zplugin") || has("zplugin") {
+        if let Some(r) = after("plugins", 1) {
+            return Some(("zinit".into(), r[0].replacen("---", "/", 1)));
+        }
+        if let Some(r) = after("snippets", 1) {
+            return Some(("zinit-snippet".into(), r[0].to_string()));
+        }
+    }
+    // zplug: repos/<owner>/<repo>
+    if has(".zplug") {
+        if let Some(r) = after("repos", 2) {
+            return Some(("zplug".into(), owner_repo(r[0], r[1])));
+        }
+    }
+    // antigen: bundles/<owner>/<repo>
+    if has(".antigen") || has("antigen") {
+        if let Some(r) = after("bundles", 2) {
+            return Some(("antigen".into(), owner_repo(r[0], r[1])));
+        }
+    }
+    // antibody: one directory per URL, `/` encoded as `-SLASH-`.
+    if has("antibody") {
+        if let Some(dir) = parts.iter().find(|p| p.contains("-SLASH-")) {
+            let name = dir.rsplit("-SLASH-").take(2).collect::<Vec<_>>();
+            if let [repo, owner] = name[..] {
+                return Some(("antibody".into(), owner_repo(owner, repo)));
+            }
+        }
+    }
+    // sheldon: repos/<host>/<owner>/<repo>
+    if has("sheldon") {
+        if let Some(r) = after("repos", 3) {
+            return Some(("sheldon".into(), owner_repo(r[1], r[2])));
+        }
+    }
+    // zgenom: sources/<owner>/<repo>/...; zgen: <owner>/<repo>-<branch>
+    if has(".zgenom") {
+        if let Some(r) = after("sources", 2) {
+            return Some(("zgenom".into(), owner_repo(r[0], r[1])));
+        }
+    }
+    if has(".zgen") {
+        let i = parts.iter().position(|p| *p == ".zgen")?;
+        if let (Some(owner), Some(repo)) = (parts.get(i + 1), parts.get(i + 2)) {
+            let repo = repo.rsplit_once('-').map_or(*repo, |(r, _)| r);
+            return Some(("zgen".into(), owner_repo(owner, repo)));
+        }
+    }
+    // prezto / zim: modules/<name>
+    if has(".zprezto") {
+        if let Some(r) = after("modules", 1) {
+            return Some(("prezto".into(), r[0].to_string()));
+        }
+    }
+    if has(".zim") {
+        if let Some(r) = after("modules", 1) {
+            return Some(("zim".into(), r[0].to_string()));
+        }
+    }
+    // oh-my-zsh: plugins/<name> under the install or under custom/. Checked
+    // after the managers that bundle oh-my-zsh inside their own tree (antigen).
+    if has(".oh-my-zsh") || has("ohmyzsh") || has("oh-my-zsh") {
+        if let Some(r) = after("plugins", 1) {
+            return Some(("oh-my-zsh".into(), r[0].to_string()));
+        }
+    }
+    // Any other `<name>.plugin.zsh`.
+    let file = parts.last()?;
+    file.strip_suffix(".plugin.zsh").map(|n| ("manual".into(), n.to_string()))
+}
+
 /// Build the canonical shard from a folded bundle. The shard keeps
 /// values only; file/line attribution lives in the daemon's canonical
 /// rows.
@@ -550,7 +656,7 @@ pub fn build_shard(bundle: &Bundle, f: &Folded) -> CanonicalShard {
         path: keys(&f.path),
         fpath: keys(&f.fpath),
         manpath: Vec::new(),
-        plugins: Vec::new(),
+        plugins: detect_plugins(&keys(&f.sourced), &keys(&f.fpath)),
         sourced_files: keys(&f.sourced),
         extras,
     };
@@ -639,4 +745,67 @@ fn apply_end_state(shard: &mut CanonicalShard, end: &EndState) {
 pub fn write_bundle_shard(paths: &CachePaths, bundle: &Bundle) -> Result<PathBuf> {
     let folded = fold_bundle(bundle);
     write_canonical_shard(paths, &build_shard(bundle, &folded))
+}
+
+#[cfg(test)]
+mod plugin_detection_tests {
+    use super::*;
+
+    fn one(path: &str) -> Option<(String, String)> {
+        plugin_from_path(path)
+    }
+
+    fn pair(m: &str, n: &str) -> Option<(String, String)> {
+        Some((m.to_string(), n.to_string()))
+    }
+
+    #[test]
+    fn each_framework_layout_names_its_plugin() {
+        let cases = [
+            ("/h/.zinit/plugins/hlissner---zsh-autopair/autopair.zsh", pair("zinit", "hlissner/zsh-autopair")),
+            ("/h/.zinit/plugins/_local---zinit/zinit.zsh", pair("zinit", "_local/zinit")),
+            ("/h/.local/share/zinit/plugins/a---b/b.plugin.zsh", pair("zinit", "a/b")),
+            ("/h/.zinit/snippets/OMZP::git/git.plugin.zsh", pair("zinit-snippet", "OMZP::git")),
+            ("/h/.oh-my-zsh/plugins/git/git.plugin.zsh", pair("oh-my-zsh", "git")),
+            ("/h/.oh-my-zsh/custom/plugins/zsh-z/zsh-z.plugin.zsh", pair("oh-my-zsh", "zsh-z")),
+            ("/h/.zplug/repos/zsh-users/zsh-autosuggestions/x.zsh", pair("zplug", "zsh-users/zsh-autosuggestions")),
+            ("/h/.antigen/bundles/robbyrussell/oh-my-zsh/plugins/git/x.zsh", pair("antigen", "robbyrussell/oh-my-zsh")),
+            ("/h/.cache/antibody/https-COLON--SLASH--SLASH-github.com-SLASH-zsh-users-SLASH-zsh-syntax-highlighting/z.zsh", pair("antibody", "zsh-users/zsh-syntax-highlighting")),
+            ("/h/.local/share/sheldon/repos/github.com/zsh-users/zsh-completions/c.zsh", pair("sheldon", "zsh-users/zsh-completions")),
+            ("/h/.zgenom/sources/zsh-users/zsh-history-substring-search/___/x.zsh", pair("zgenom", "zsh-users/zsh-history-substring-search")),
+            ("/h/.zgen/zsh-users/zsh-syntax-highlighting-master/x.zsh", pair("zgen", "zsh-users/zsh-syntax-highlighting")),
+            ("/h/.zprezto/modules/git/init.zsh", pair("prezto", "git")),
+            ("/h/.zim/modules/fzf/init.zsh", pair("zim", "fzf")),
+            ("/opt/stuff/fzf-tab.plugin.zsh", pair("manual", "fzf-tab")),
+        ];
+        for (path, want) in cases {
+            assert_eq!(one(path), want, "{path}");
+        }
+    }
+
+    #[test]
+    fn ordinary_files_are_not_plugins() {
+        for path in ["/h/.zshrc", "/h/.zshenv", "/etc/zshrc", "/h/dotfiles/aliases.zsh", "/h/.zinit/bin/zinit.zsh"] {
+            assert_eq!(one(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn detect_plugins_dedups_in_first_seen_order() {
+        let sourced = vec![
+            "/h/.zinit/plugins/a---b/one.zsh".to_string(),
+            "/h/.zshrc".to_string(),
+            "/h/.zinit/plugins/c---d/two.zsh".to_string(),
+            "/h/.zinit/plugins/a---b/three.zsh".to_string(),
+        ];
+        let fpath = vec!["/h/.zinit/plugins/c---d".to_string(), "/h/.oh-my-zsh/plugins/git".to_string()];
+        assert_eq!(
+            detect_plugins(&sourced, &fpath),
+            vec![
+                ("zinit".to_string(), "a/b".to_string()),
+                ("zinit".to_string(), "c/d".to_string()),
+                ("oh-my-zsh".to_string(), "git".to_string()),
+            ]
+        );
+    }
 }

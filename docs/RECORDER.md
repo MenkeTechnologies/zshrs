@@ -1473,6 +1473,29 @@ category.
 
 The recorder fills the union of all the above into one queryable index.
 
+## Plugin detection
+
+The recorder itself is plugin-framework-agnostic: it records state mutations,
+not "plugins". The shard's `plugins` list (`(manager, name)` pairs) is
+recovered at shard-build time from where the sourced files and `fpath`
+entries live, since each framework installs into a layout of its own
+(`daemon/recorder_shard.rs::detect_plugins`):
+
+| Manager | Layout |
+|---|---|
+| zinit / zplugin | `plugins/<owner>---<repo>`; snippets by directory (`OMZP::git`) |
+| oh-my-zsh | `plugins/<name>` (install or `custom/`) |
+| zplug | `repos/<owner>/<repo>` |
+| antigen | `bundles/<owner>/<repo>` |
+| antibody | `<host>-SLASH-<owner>-SLASH-<repo>` cache directory |
+| sheldon | `repos/<host>/<owner>/<repo>` |
+| zgen / zgenom | `<owner>/<repo>-<branch>` / `sources/<owner>/<repo>` |
+| prezto / zim | `modules/<name>` |
+| other | any `<name>.plugin.zsh` is reported as `manual` |
+
+`zshrs --doctor` applies the same detection to shards recorded before it
+existed, so an old recording reports its plugins without a re-record.
+
 ## Failure modes
 
 | Failure mode | Mitigation                                                                                                                                                                        |
