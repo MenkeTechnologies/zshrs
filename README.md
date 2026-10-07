@@ -785,9 +785,9 @@ resolving to its builtin, whereas inventing one shadows a real command.
 | `export -p` / `readonly -p` | `declare -x NAME="v"` / `declare -r` | `export NAME=v` | `export NAME=v` | `export NAME='v'` | zsh's own |
 | `times` fraction | milliseconds | milliseconds, seconds zero-padded | centiseconds, seconds zero-padded | microseconds | centiseconds |
 | `times` seconds field | `% 60` | `% 60` | `% 60` | `% 60` | `% clock-tick` (zsh's own arithmetic) |
-| `kill -l` | `%2d) SIG%s`, five per row | one bare name per line (`IOT` for 6) | two columns with the `strsignal` text | signal `0`, then one name per line | one space-separated line |
+| `kill -l` | `%2d) SIG%s`, five per row | every slot to NSIG-1, one bare name per line (`IOT` for 6, `SIG<n>` where unnamed) | two columns with the `strsignal` text | every slot from `0` to NSIG-1, one per line (the number where unnamed) | one space-separated line, then the real-time signals on Linux |
 | `hash` | `hits`/`command` table | `name=path` | `name=path` (reached via its own `hash` alias → `alias -t`) | the bare path | `name=path` |
-| `set -o` | 27 names, `name<TAB>state` | 38 names under "Current option settings", POSITIVE sense (`clobber on`) | 35 names in four column-major columns | 17 names under "Current option settings" | zsh's ~180 |
+| `set -o` | 27 names, `name<TAB>state` | 38 names under "Current option settings", POSITIVE sense (`clobber on`) | 35 names in four column-major columns | 17 names under "Current option settings" (18 on Linux, where Debian's dash adds `privileged`) | zsh's ~180 |
 | `set +o` | `set -o NAME` per line | one line: `set --default` + the non-default ON options | one line: `set -o .reset -o NAME …` | `set -o NAME` per line | zsh's form |
 | `trap -l` | the `kill -l` table | rejected, exit 2 | rejected, exit 1 | rejected, exit 2 | silent no-op, exit 0 |
 | error in a special builtin | continues (exit 2 from the builtin) | aborts the script | aborts | aborts | continues |
