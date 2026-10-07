@@ -3405,6 +3405,14 @@ pub fn casemodify(s: &str, how: i32) -> String {
         };
         one_or_self(c, mapped.into_iter())
     };
+    // c:2226 `iswupper` / c:2233 `iswlower` — glibc derives both classes from
+    // the simple case mappings (`iswupper(c)` = `towlower(c) != c`,
+    // `iswlower(c)` = `towupper(c) != c`), so a titlecase letter (U+01C5 `ǅ`)
+    // is BOTH and folds either way. Rust's `is_uppercase`/`is_lowercase` are
+    // the Unicode Lu/Ll properties and exclude Lt. Verified against the
+    // oracle: `typeset -l v; v=ǅ; print $v` → `ǆ`, `${(U)v}` → `Ǆ`.
+    let is_up = |c: char| c.is_uppercase() || tow(c, false) != c;
+    let is_low = |c: char| c.is_lowercase() || tow(c, true) != c;
     // c:2202-2203 — `#ifdef MULTIBYTE_SUPPORT / if (isset(MULTIBYTE))`. C
     // forks the WHOLE function here: the wide-char loop below is only the
     // `if` arm. The port had no `else` arm at all, so `unsetopt multibyte`
@@ -3519,7 +3527,7 @@ pub fn casemodify(s: &str, how: i32) -> String {
         let modified = match how {
             x if x == CASMOD_LOWER => {                                       // c:2225
                 // c:2226-2229 — `if (iswupper(wc)) wc = towlower(wc);`.
-                if c.is_uppercase() {
+                if is_up(c) {
                     tow(c, false).to_string()
                 } else {
                     c.to_string()
@@ -3527,7 +3535,7 @@ pub fn casemodify(s: &str, how: i32) -> String {
             }
             x if x == CASMOD_UPPER => {                                       // c:2232
                 // c:2233-2236 — `if (iswlower(wc)) wc = towupper(wc);`.
-                if c.is_lowercase() {
+                if is_low(c) {
                     tow(c, true).to_string()
                 } else {
                     c.to_string()
@@ -3541,12 +3549,12 @@ pub fn casemodify(s: &str, how: i32) -> String {
                     c.to_string()
                 } else if nextupper {                                         // c:2245-2250
                     nextupper = false;
-                    if c.is_lowercase() {                                     // c:2246
+                    if is_low(c) {                                     // c:2246
                         tow(c, true).to_string()
                     } else {
                         c.to_string()
                     }
-                } else if c.is_uppercase() {                                  // c:2251-2253
+                } else if is_up(c) {                                  // c:2251-2253
                     tow(c, false).to_string()
                 } else {
                     c.to_string()
@@ -8164,6 +8172,14 @@ mod subst_modifier_tests {
     /// guard: combining mark passes through, b stays lowercase
     /// (still inside the word). Without the guard: the combiner
     /// resets nextupper, so `b` would be uppercased.
+    /// glibc `iswupper`/`iswlower` are both true for a titlecase letter, so
+    /// `ǅ` (U+01C5) folds in either direction (fuzz seeds 7/97/102/242/244).
+    #[test]
+    fn casemodify_folds_titlecase_both_ways() {
+        assert_eq!(casemodify("\u{1c5}", CASMOD_UPPER), "\u{1c4}");
+        assert_eq!(casemodify("\u{1c5}", CASMOD_LOWER), "\u{1c6}");
+    }
+
     #[test]
     fn casemodify_caps_skips_combining_chars() {
         let _g = crate::test_util::global_state_lock();
