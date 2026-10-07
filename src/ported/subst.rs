@@ -17533,6 +17533,10 @@ pub fn paramsubst(
                             // An in-process `( … )` stands in for C's forked child, whose
                             // c:3377 `_exit(1)` ends only the subshell; ERRFLAG_HARD above
                             // already unwinds it to subshell_end with status 1.
+                        } else if crate::fusevm_bridge::prefix_assign_defer_exit() {
+                            // The prefix assignments of `X=… cmd`, whose process is not
+                            // known until the command word resolves (c:Src/exec.c:3719
+                            // forks an external before c:4358 runs them).
                         } else if pid == 0 || pid == unsafe { libc::getpid() } as i64 {
 
                             crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:3374
@@ -17581,6 +17585,10 @@ pub fn paramsubst(
                             // An in-process `( … )` stands in for C's forked child, whose
                             // c:3377 `_exit(1)` ends only the subshell; ERRFLAG_HARD above
                             // already unwinds it to subshell_end with status 1.
+                        } else if crate::fusevm_bridge::prefix_assign_defer_exit() {
+                            // The prefix assignments of `X=… cmd`, whose process is not
+                            // known until the command word resolves (c:Src/exec.c:3719
+                            // forks an external before c:4358 runs them).
                         } else if pid == 0 || pid == unsafe { libc::getpid() } as i64 {
 
                             crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:3374

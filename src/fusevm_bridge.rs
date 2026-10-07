@@ -568,6 +568,21 @@ thread_local! {
     /// VM ops, and errflag alone cannot tell this skip from an error raised
     /// by the command words, which C handles at c:3760 instead.
     static PREFIX_ASSIGN_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The command word of the `X=… cmd` whose prefix assignments are
+    /// expanding right now: Some between BUILTIN_PREFIX_ASSIGNS_START and
+    /// BUILTIN_SEAL_INLINE_ENV, "" when the word is an expansion that only
+    /// BUILTIN_EXEC_DYNAMIC resolves.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C decides whether to fork
+    /// (c:Src/exec.c:3719-3730) before addvars runs, so a `${name?msg}` in
+    /// the assignments already knows which process it is in
+    /// (c:Src/subst.c:3371 `mypid == getpid()`). zshrs expands them in the
+    /// shell before the dispatch op resolves the command.
+    static PREFIX_ASSIGN_CMD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// A `${name?msg}` in those assignments owes c:Src/subst.c:3375's
+    /// `zexit(1)` unless the command turns out to be forked; see
+    /// `prefix_assign_defer_exit`.
+    static PREFIX_ASSIGN_EXIT_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set by BUILTIN_EXEC_DYNAMIC_REDIRS, taken by the next
     /// BUILTIN_EXEC_DYNAMIC: that command had redirections.
     static EXEC_DYNAMIC_REDIRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -947,6 +962,44 @@ fn redir_target_expansion_failed(exec: &mut ShellExecutor) -> bool {
         exec.redirect_failed = true;
     }
     clean_at_open
+}
+
+/// Asked by paramsubst's `${name?msg}` arms before they take
+/// c:Src/subst.c:3375's `zexit(1)`: true when the expansion belongs to the
+/// prefix assignments of `X=… cmd`, whose process is not known yet. The exit
+/// is then owed (PREFIX_ASSIGN_EXIT_PENDING) and `settle_prefix_assign_exit`
+/// pays it once the command word resolves.
+pub(crate) fn prefix_assign_defer_exit() -> bool {
+    let assigning = PREFIX_ASSIGN_CMD.with(|c| c.borrow().is_some());
+    if assigning {
+        PREFIX_ASSIGN_EXIT_PENDING.with(|c| c.set(true));
+    }
+    assigning
+}
+
+/// Pays a deferred `${name?msg}` exit once `name` (the expanded command word,
+/// "" for none) is known. c:Src/exec.c:3719-3730 forks an external command
+/// before c:4358 runs its prefix assignments, so the error ends only that
+/// child (c:3377 `_exit(1)`, c:4359 `if (errflag) _exit(1)`): the shell sees
+/// status 1, which the dispatch's PREFIX_ASSIGN_FAILED arm reports. A shell
+/// function, a builtin or no command at all runs the assignments in the
+/// shell (c:4157), which exits there (c:3375).
+fn settle_prefix_assign_exit(name: &str) {
+    if !PREFIX_ASSIGN_EXIT_PENDING.with(|c| c.replace(false)) {
+        return;
+    }
+    let forked = !name.is_empty()
+        && !with_executor(|exec| exec.function_exists(name))
+        && !crate::ported::builtin::createbuiltintable().contains_key(name);
+    if !forked {
+        crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:3374
+        // !!! DASH-FAMILY GATE (dash_mode::fatal_error_status): same as the
+        // paramsubst arms. !!!
+        crate::ported::builtin::zexit(
+            crate::extensions::dash_mode::fatal_error_status().unwrap_or(1),
+            crate::ported::zsh_h::ZEXIT_NORMAL,
+        ); // c:3375
+    }
 }
 
 /// c:Src/exec.c:3719 + 3755-3763 — an external command is forked
@@ -10295,10 +10348,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
         PREFIX_ASSIGN_FAILED.with(|c| c.set(failed));
+        // The command word is known now unless it is an expansion, which
+        // BUILTIN_EXEC_DYNAMIC settles.
+        if let Some(name) = PREFIX_ASSIGN_CMD.with(|c| c.borrow_mut().take()) {
+            if !name.is_empty() {
+                settle_prefix_assign_exit(&name);
+            }
+        }
+        Value::Status(0)
+    });
+    // See BUILTIN_PREFIX_ASSIGNS_START.
+    vm.register_builtin(BUILTIN_PREFIX_ASSIGNS_START, |vm, argc| {
+        let name = if argc >= 1 { vm.pop().to_str() } else { String::new() };
+        PREFIX_ASSIGN_CMD.with(|c| *c.borrow_mut() = Some(name));
+        PREFIX_ASSIGN_EXIT_PENDING.with(|c| c.set(false));
         Value::Status(0)
     });
     vm.register_builtin(BUILTIN_END_INLINE_ENV, |_vm, _argc| {
         PREFIX_ASSIGN_FAILED.with(|c| c.set(false));
+        // No dispatch resolved the command: the assignments ran in the shell.
+        if PREFIX_ASSIGN_EXIT_PENDING.with(|c| c.get()) {
+            settle_prefix_assign_exit("");
+        }
         with_executor(|exec| {
             if let Some(frame) = exec.inline_env_stack.pop() {
                 frame.restore(); // c:Src/exec.c:4519 restore_params
@@ -13281,6 +13352,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
         {
+            if PREFIX_ASSIGN_EXIT_PENDING.with(|c| c.get()) {
+                settle_prefix_assign_exit(args.first().map(String::as_str).unwrap_or(""));
+            }
             // c:Src/exec.c:4343-4350 — when the error came from the prefix
             // assignments and the expanded name is an external command, they
             // ran in the forked child (`addvars(…); if (errflag) _exit(1);`):
@@ -18276,6 +18350,10 @@ pub const BUILTIN_EXEC_DYNAMIC_REDIRS: u16 = 761;
 /// (c:Src/exec.c:3674-3682) marks the pipeline's job STAT_CURSH, plus
 /// STAT_NOPRINT while it has no processes. No args; pushes Int(0).
 pub const BUILTIN_MARK_CURSH: u16 = 762;
+/// Opens the window in which the prefix assignments of `X=… cmd` expand.
+/// argc=1: the command word ("" when it is an expansion). Closed by
+/// BUILTIN_SEAL_INLINE_ENV. See PREFIX_ASSIGN_CMD.
+pub const BUILTIN_PREFIX_ASSIGNS_START: u16 = 763;
 /// `.` (dot) — alias of source/bin_dot but dispatches with the
 /// literal name "." so the diagnostic prefix matches zsh's
 /// (`zsh:.:1: …` vs source's `zsh:source:1: …`).

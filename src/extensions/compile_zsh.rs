@@ -3262,6 +3262,9 @@ impl ZshCompiler {
             // landed in the orphaned still-`recording` frame and got
             // zputenv'd into the process env.
             if has_inline_env_scope {
+                // The command word is an expansion: BUILTIN_EXEC_DYNAMIC
+                // resolves it.
+                self.emit_prefix_assigns_start("");
                 for assign in &simple.assigns {
                     self.last_assign_had_cmd_subst = false;
                     self.compile_assign(assign);
@@ -4327,6 +4330,14 @@ impl ZshCompiler {
         // unset when args resolved) and the assigned `a=1` lands only
         // in the child env.
         if has_inline_env_scope {
+            // c:Src/exec.c:3720-3721 — `exec` (do_exec) never forks, so its
+            // prefix assignments always run in the shell.
+            let forks_name = if dispatch.cflags & crate::ported::zsh_h::BINF_EXEC != 0 {
+                "exec"
+            } else {
+                first_clean.as_str()
+            };
+            self.emit_prefix_assigns_start(forks_name);
             for assign in &simple.assigns {
                 self.last_assign_had_cmd_subst = false;
                 self.compile_assign(assign);
@@ -4703,6 +4714,19 @@ impl ZshCompiler {
     fn emit_seal_inline_env(&mut self) {
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_SEAL_INLINE_ENV, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
+    /// Open the window in which the prefix assignments of `X=… cmd`
+    /// expand, naming the command word they belong to ("" when only the
+    /// runtime expansion knows it). See BUILTIN_PREFIX_ASSIGNS_START.
+    fn emit_prefix_assigns_start(&mut self, cmd_name: &str) {
+        let name_const = self.builder.add_constant(Value::str(cmd_name));
+        self.builder.emit(Op::LoadConst(name_const), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_PREFIX_ASSIGNS_START, 1),
             0,
         );
         self.builder.emit(Op::Pop, 0);
