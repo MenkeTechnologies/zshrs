@@ -557,6 +557,8 @@ jobs:
       - name: Fuzz — fd
         run: ./target/debug/parity-fuzz --mode fd --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/fd.txt --out target/parity-fuzz/ci-fd.txt
       - name: Fuzz — special
+        env:
+          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode special --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/special.txt --out target/parity-fuzz/ci-special.txt
       - name: Fuzz — tied
         run: ./target/debug/parity-fuzz --mode tied --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/tied.txt --out target/parity-fuzz/ci-tied.txt
@@ -600,6 +602,8 @@ jobs:
       # ONE known gap (ERR firing from inside a trap body — see trap.txt);
       # anything else is a regression.
       - name: Fuzz — trap
+        env:
+          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode trap --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/trap.txt --out target/parity-fuzz/ci-trap.txt
       # shinstdin is the only mode fed on STDIN rather than via `-c`. That is
       # not a stylistic choice: `-c` leaves C's SHINSTDIN OFF (c:Src/init.c),
@@ -619,10 +623,14 @@ jobs:
       # pattern matching, array+assoc subscripting and flags, and zsh/zutil
       # (zstyle/zparseopts/zregexparse).
       - name: Fuzz — func
+        env:
+          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode func --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/func.txt --out target/parity-fuzz/ci-func.txt
       - name: Fuzz — pattern
         run: ./target/debug/parity-fuzz --mode pattern --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/pattern.txt --out target/parity-fuzz/ci-pattern.txt
       - name: Fuzz — subscript
+        env:
+          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode subscript --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/subscript.txt --out target/parity-fuzz/ci-subscript.txt
       - name: Fuzz — zutil
         run: ./target/debug/parity-fuzz --mode zutil --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/zutil.txt --out target/parity-fuzz/ci-zutil.txt
@@ -820,6 +828,8 @@ jobs:
       # harness discards it. See the baseline file for the exact trigger and why
       # the harness must NOT export COLUMNS to dodge it.
       - name: Fuzz — prompt
+        env:
+          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode prompt --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/prompt.txt --out target/parity-fuzz/ci-prompt.txt
       # Informational. Every divergence this mode still reports is under
       # `unsetopt multibyte` -- measured, not assumed: 30/30 at --count 400
@@ -908,6 +918,8 @@ jobs:
       # at ~1.5 cases/s. The generator space is only 3 setups x 20 probes,
       # so 200 already covers it several times over. Bug #1048.
       - name: Fuzz — jobs
+        env:
+          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode jobs --count 200 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/jobs.txt --out target/parity-fuzz/ci-jobs.txt
       # EXTENDEDGLOB operators (`#`/`##`/`^`) next to a parameter expansion,
       # with the option turned on by a `setopt` INSIDE the script. Passing

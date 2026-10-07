@@ -848,7 +848,9 @@ once per run: `$ZSHRS_ORACLE_ZSH`, then `~/.cache/zshrs/zsh-oracle/bin/zsh`
 system zsh, so a machine without the build still runs the suite against a
 released zsh. CI builds the same tree at a pinned commit
 (`.github/actions/zsh-oracle`, cached per runner) for the Test and Emulation
-parity jobs and the loop and pcre fuzz modes. The current build reports `ZSH_VERSION=5.9.999.3-test`,
+parity jobs and the fuzz modes whose
+divergences from 5.9.2 are upstream changes (loop, pcre, special, trap, func,
+subscript, prompt, jobs). The current build reports `ZSH_VERSION=5.9.999.3-test`,
 `ZSH_PATCHLEVEL=zsh-5.9.0.3-test-476-g8cc5ead`.
 
 **Differential parity suite** — [`tests/parity/`](tests/parity) is the largest
