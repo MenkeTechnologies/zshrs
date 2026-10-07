@@ -672,6 +672,26 @@ fn find_shell(candidates: &[&str]) -> Option<String> {
     None
 }
 
+/// The zsh the port tracks, resolved as `tests/parity/oracle.rs` does:
+/// `$ZSHRS_ORACLE_ZSH`, then the `scripts/build_zsh_oracle.sh` install, and
+/// only then a released zsh from `ZSH`. Probes whose answer moved on upstream
+/// master after 5.9.2 (`setopt` no longer lists `restricted`, upstream 54181)
+/// must compare against the tree, not the release.
+fn master_oracle_zsh() -> Option<String> {
+    if let Ok(p) = std::env::var("ZSHRS_ORACLE_ZSH") {
+        if Path::new(&p).exists() {
+            return Some(p);
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let built = Path::new(&home).join(".cache/zshrs/zsh-oracle/bin/zsh");
+        if built.exists() {
+            return Some(built.to_string_lossy().into_owned());
+        }
+    }
+    find_shell(ZSH)
+}
+
 /// (stdout, success). stderr is intentionally dropped — its text
 /// legitimately differs across shells; only stdout + exit-sign are compared.
 fn run(bin: &str, args: &[&str], script: &str) -> (String, bool) {
@@ -2365,7 +2385,9 @@ fn zsh_style_legs_install_a_non_fully_emulation() {
     //     c:Src/options.c:424) because the emulation had already switched the
     //     letter table, where zsh resolves it against `zshletters` (`-f` ↔
     //     NO_RCS, c:Src/options.c:346) — the leg ran with globbing off.
-    let Some(zsh) = find_shell(ZSH) else {
+    // The reference is the master oracle: the `setopt` listing follows the
+    // option table, which lost `restricted` upstream (54181).
+    let Some(zsh) = master_oracle_zsh() else {
         eprintln!("skip: no zsh reference");
         return;
     };
