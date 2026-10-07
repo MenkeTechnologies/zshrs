@@ -52,6 +52,34 @@ fn run_zshrs(script: &str) -> (i32, String, String) {
     )
 }
 
+/// `run_zshrs`, but the script travels in a file (`zshrs --zsh FILE`)
+/// instead of a `-c` argument. Linux caps one argv string at
+/// MAX_ARG_STRLEN (32 pages, 128 KiB), so a larger script fails to spawn
+/// with E2BIG before zshrs ever runs.
+fn run_zshrs_file(script: &str) -> (i32, String, String) {
+    let bin = match zshrs_bin() {
+        Some(b) => b,
+        None => {
+            eprintln!("skip: zshrs binary not built");
+            return (0, String::new(), String::new());
+        }
+    };
+    let file = tempfile::NamedTempFile::new().expect("script tempfile");
+    std::fs::write(file.path(), script).expect("write script");
+    let out = Command::new(&bin)
+        .arg("--zsh")
+        .arg(file.path())
+        .env_remove("ZSHRS_CACHE")
+        .env_remove("ZDOTDIR")
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {bin:?}: {e}"));
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
 // ════════════════════════════════════════════════════════════════════
 // BUGS.md #5 — print -P %j %T %D{…} escape dispatch
 // Fix: src/ported/prompt.rs::putpromptchar
@@ -1160,7 +1188,7 @@ fn bug644_large_case_body_parses_in_linear_time() {
         return;
     }
     let start = std::time::Instant::now();
-    let (ec, out, err) = run_zshrs(&script);
+    let (ec, out, err) = run_zshrs_file(&script);
     let elapsed = start.elapsed();
     assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
     // The rendered body is non-trivial (thousands of bytes).
