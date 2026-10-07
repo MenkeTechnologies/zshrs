@@ -250,7 +250,9 @@ const INSERT_WIDGETS: &[&str] = &[
 /// zsh-history-substring-search behavior the user's fingers know ("{1..5}"
 /// typed mid-command must match entries CONTAINING it, not starting with
 /// it). Only the explicitly prefix-named widgets keep prefix semantics.
-/// An empty line still falls through to the plain history walk.
+/// An empty line starts a search with an empty needle (fish up-or-search runs
+/// history-search-backward on the top line regardless), so repeated ups keep
+/// walking the whole history.
 fn up_search_mode(widget: &str) -> Option<SearchMode> {
     match widget {
         "up-line-or-search" | "history-beginning-search-backward" => Some(SearchMode::Prefix),
@@ -379,11 +381,6 @@ pub fn on_pre_widget(widget: &str) -> bool {
     if search_active() {
         if let Some(mode) = up_search_mode(widget) {
             let line = current_line();
-            // Stock up-arrow on an empty line: plain history walk, not a search
-            // (fish up-or-search does exactly this).
-            if line.is_empty() && matches!(widget, "up-line-or-history" | "up-history") {
-                return false;
-            }
             // fish up-or-search.fish: a search already running continues;
             // otherwise only the TOP line of a multi-line command starts one,
             // and any other line is a plain move up (`commandline -L` != 1 →
