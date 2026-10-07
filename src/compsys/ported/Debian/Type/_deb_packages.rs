@@ -420,9 +420,16 @@ pub fn _deb_packages(args: &[String]) -> i32 {
         _ => String::new(),
     };
 
-    // sh:123  typeset -gH $cachevar — the array is already a global
-    //   param in this store; `-H` (hide from `typeset`/history listing)
-    //   has no observable effect here, so this is a documented no-op.
+    // sh:123  typeset -gH $cachevar — PM_HIDEVAL: a `typeset`/`private`
+    //   listing names the cache array without printing its tens of
+    //   thousands of package names (c:Src/params.c printparamnode).
+    {
+        use crate::ported::builtin::{bin_typeset, BIN_TYPESET};
+        let mut ops = make_ops();
+        ops.ind[b'g' as usize] = 1;
+        ops.ind[b'H' as usize] = 1;
+        let _ = bin_typeset("typeset", &[cachevar.clone()], &ops, BIN_TYPESET);
+    }
 
     // sh:125  _tags packages && compadd "$expl[@]" -a - $cachevar
     let tags_ret = _tags(&["packages".to_string()]);
