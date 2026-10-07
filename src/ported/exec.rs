@@ -4722,7 +4722,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     let pid = zfork(Some(&mut bgtime)); // c:5077
     if pid != 0 {
         // c:5077 — parent path.
-        let pnam = format!("/dev/fd/{}", pipes[(1 - out) as usize]); // c:5078
+        let pnam = format!("{}/{}", crate::ported::config_h::PATH_DEV_FD, pipes[(1 - out) as usize]); // c:5144
         let _ = zclose(pipes[out as usize]); // c:5079
         if pid == -1 {
             // c:5080

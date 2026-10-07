@@ -20136,7 +20136,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 crate::fusevm_bridge::note_psub_child(child_pid);
             }
         }
-        let path = format!("/dev/fd/{}", read_end);
+        let path = format!("{}/{}", crate::ported::config_h::PATH_DEV_FD, read_end); // c:Src/exec.c:5144
         if crate::provenance::active() {
             crate::provenance::on_process_subst(&prov_chunk_label(sub), &path);
         }
@@ -20251,7 +20251,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
                 let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
                 PSUB_PENDING_FDS.with(|v| v.borrow_mut().push((depth, write_end)));
-                let path = format!("/dev/fd/{}", write_end);
+                let path = format!("{}/{}", crate::ported::config_h::PATH_DEV_FD, write_end); // c:Src/exec.c:5144
                 if crate::provenance::active() {
                     crate::provenance::on_process_subst(&prov_chunk_label(sub), &path);
                 }
