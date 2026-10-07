@@ -196,9 +196,13 @@ fn is_stock_functions_dir(dir: &str) -> bool {
     // 99-call `--fn-sweep`. The three `comp_utils` overrides the user curates
     // (`_files`, `_parameters`, `_command_names`, at fpath position 20) are
     // preserved automatically by the `i < stock_pos` arbitration below.
-    if crate::bundled_functions::functions_dir()
-        .is_some_and(|d| std::path::Path::new(dir) == d)
-    {
+    //
+    // Recognised by its bundle stamp, not by comparing against
+    // `functions_dir()`: that path follows the live `$HOME`, so after
+    // `export HOME=…` the bundle startup put on `$fpath` stopped matching,
+    // every ported `_NAME` it carries read as a user override, and the ports
+    // stood down for the rest of the session.
+    if crate::bundled_functions::is_bundle_dir(std::path::Path::new(dir)) {
         return true;
     }
     dir.contains("/share/zsh/")

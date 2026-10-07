@@ -55,6 +55,17 @@ pub fn functions_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".zshrs").join("functions"))
 }
 
+/// True when `dir` is a materialised bundle -- it carries [`STAMP`].
+///
+/// Identity by content, not by path: [`functions_dir`] is derived from the
+/// LIVE `$HOME`, so after `export HOME=…` it names a directory that is not
+/// the one startup put on `$fpath`. zsh's own stock tree is a configure-time
+/// constant that no assignment moves, and the router's stock-tree test has
+/// to be just as stable.
+pub fn is_bundle_dir(dir: &Path) -> bool {
+    dir.join(STAMP).is_file()
+}
+
 /// True when the directory is absent or holds a different bundle.
 fn needs_write(dir: &Path) -> bool {
     match std::fs::read_to_string(dir.join(STAMP)) {
