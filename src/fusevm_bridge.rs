@@ -17774,7 +17774,7 @@ fn fg_child_times_add(utime: u64, stime: u64) {
 /// nothing to claim, and the caller must be allowed to report the error
 /// rather than spin.
 #[cfg(unix)]
-fn take_reaped_status(pid: i32) -> Option<(i32, u64, u64)> {
+pub(crate) fn take_reaped_status(pid: i32) -> Option<(i32, u64, u64)> {
     const TRIES: u32 = 200; // 200 x 100us = 20ms
     for _ in 0..TRIES {
         if let Some(rec) = crate::reaped_status::take_rusage(pid) {

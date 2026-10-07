@@ -833,6 +833,20 @@ pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
             }
         }
         update_job(&mut jn[ji]);
+        // c:Src/jobs.c:550-555 — `if (jn->stat & STAT_CURSH) inforeground = 1;
+        // else if (job == thisjob) { lastval = val; … }`. update_job cannot
+        // see the index, so the half that needs it runs here, where `ji` and
+        // `thisjob` are both in hand; `val` is what it just stored in
+        // lastval2 (c:545). Without it a foreground job reaped by the SIGCHLD
+        // handler, which then deletes the done job (printjob_delete_tail
+        // below), left its status nowhere: `cmd=/bin/false; $cmd; echo $?`
+        // printed 0 on Linux in a few runs per hundred.
+        if (jn[ji].stat & stat::DONE) != 0
+            && (jn[ji].stat & stat::CURSH) == 0
+            && ji as i32 == thisjob
+        {
+            crate::ported::builtin::LASTVAL.store(LASTVAL2.load(Ordering::SeqCst), Ordering::Relaxed);
+        }
         // c:Src/jobs.c:651-652 — `if (sigtrapped[SIGCHLD] && job != thisjob)
         // dotrap(SIGCHLD);` — owed once the table is unlocked; see
         // CHLD_TRAP_PENDING.
@@ -1980,8 +1994,39 @@ pub fn waitjobs(jobtab: &mut [job], thisjob: usize) {
                 let pid = unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED) };
                 if pid > 0 {
                     update_bg_job(jobtab, pid, status);
-                } else {
-                    break;
+                    continue;
+                }
+                // !!! WARNING: RUST-ONLY !!! C waits in zwaitjob's
+                // signal_suspend and its own SIGCHLD handler files the status
+                // into the proc. zshrs is multi-threaded: SIGCHLD can land on
+                // another thread whose reaper takes the child first, so this
+                // waitpid sees EINTR (the handler ran here) or ECHILD (it ran
+                // elsewhere). Breaking out on either left the proc at
+                // SP_RUNNING (-1), whose exit status reads as 255:
+                // `cmd=/bin/true; $cmd; echo $?` printed 255 on Linux about
+                // one run in four. Retry an interrupted wait; on ECHILD
+                // claim what the reaper published for each unfinished proc.
+                match std::io::Error::last_os_error().raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    Some(libc::ECHILD) => {
+                        let running: Vec<i32> = jobtab[thisjob]
+                            .procs
+                            .iter()
+                            .filter(|p| p.is_running())
+                            .map(|p| p.pid)
+                            .collect();
+                        let mut claimed = false;
+                        for pid in running {
+                            if let Some((raw, _, _)) = crate::fusevm_bridge::take_reaped_status(pid) {
+                                update_bg_job(jobtab, pid, raw);
+                                claimed = true;
+                            }
+                        }
+                        if !claimed {
+                            break;
+                        }
+                    }
+                    _ => break,
                 }
             }
             #[cfg(not(unix))]
