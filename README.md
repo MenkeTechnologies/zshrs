@@ -845,8 +845,10 @@ development tree the port follows (upstream master, the C source its `c:`
 citations point at), not a released zsh. `tests/parity/oracle.rs` resolves it
 once per run: `$ZSHRS_ORACLE_ZSH`, then `~/.cache/zshrs/zsh-oracle/bin/zsh`
 (built from `~/forkedRepos/zsh` by `scripts/build_zsh_oracle.sh`), then the
-system zsh, so a machine without the build (CI) still runs the suite against a
-released zsh. The current build reports `ZSH_VERSION=5.9.999.3-test`,
+system zsh, so a machine without the build still runs the suite against a
+released zsh. CI builds the same tree at a pinned commit
+(`.github/actions/zsh-oracle`, cached per runner) for the Test, Emulation
+parity and loop-mode fuzz jobs. The current build reports `ZSH_VERSION=5.9.999.3-test`,
 `ZSH_PATCHLEVEL=zsh-5.9.0.3-test-476-g8cc5ead`.
 
 **Differential parity suite** — [`tests/parity/`](tests/parity) is the largest
