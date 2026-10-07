@@ -1854,23 +1854,28 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         stradd(bv, &arr[idx as usize]);
                     }
                 }
-                // c:828-830 — `%E` (clear-to-end-of-line ANSI escape).
-                // C: `tsetcap(TCCLEAREOL, TSC_PROMPT);` — emit the
-                // terminal's `el` capability. Use the canonical ANSI
-                // `ESC [ K` which works on every modern terminal;
-                // matches what `tput el` would emit. Bracketed by
-                // Inpar/Outpar so the width-counter ignores it.
+                // c:826-828 — `%E`: `tsetcap(TCCLEAREOL, TSC_PROMPT);`, the
+                // terminal's `ce` capability bracketed by Inpar/Outpar so
+                // the width counter skips it. Nothing at all without the
+                // capability or a usable terminal (c:1085 guard): under an
+                // unset or unknown $TERM `[%E]` is `[]`.
                 b'E' => {
-                    let esc = "\x1b[K";
-                    addbufspc(bv, 1);
-                    bv.buf[bv.bp] = Inpar as u8;
-                    bv.bp += 1;
-                    for &b in esc.as_bytes() {
-                        pputc(bv, b);
+                    let cap = crate::ported::zsh_h::TCCLEAREOL as usize;
+                    let can = crate::ported::init::tclen.lock().unwrap()[cap] != 0;
+                    let termflags = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst);
+                    if can && termflags & (TERM_NOUP | TERM_BAD | TERM_UNKNOWN) == 0 {
+                        let seq = crate::ported::init::tcstr.lock().unwrap()[cap].clone();
+                        let esc = crate::shout::tputs(&seq);
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in esc.iter() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
                     }
-                    addbufspc(bv, 1);
-                    bv.buf[bv.bp] = Outpar as u8;
-                    bv.bp += 1;
                 }
                 // c:894-896 — `%%` (literal percent)
                 b'%' => pputc(bv, b'%'),
@@ -3628,11 +3633,17 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
             colour = n as i32;
         }
     }
-    // c:2014-2018 — out-of-range termcap-colour check + pack.
-    //               tccolours / tccan(tc) — when the terminal advertises
-    //               N colours and we asked for >=N, error. Without live
-    //               termcap query, skip the bounds check (existing
-    //               behaviour) and trust the caller's clamp.
+    // c:2014-2016 — "Out of range of termcap colours and basic ANSI set."
+    //   `if (tccan(tc) && colour > 7 && colour >= tccolours) return TXT_ERROR;`
+    let tc = if is_fg {
+        crate::ported::zsh_h::TCFGCOLOUR // c:1964
+    } else {
+        crate::ported::zsh_h::TCBGCOLOUR // c:1968
+    };
+    let tccan = crate::ported::init::tclen.lock().unwrap()[tc as usize] != 0;
+    if tccan && colour > 7 && colour >= crate::ported::init::tccolours.load(Ordering::SeqCst) {
+        return TXT_ERROR; // c:2016
+    }
     on | ((colour as zattr) << shft) // c:2018
 }
 
@@ -4232,14 +4243,38 @@ pub fn set_colour_attribute(atr: zattr, fg_bg: i32, flags: i32) -> String {
     // terminal's own colour capability render it. C emits
     // `tgoto(tcstr[tc], colour, colour)`; `output_colour` is that
     // capability's expansion on a modern 256-colour terminfo.
-    let body = if !def && !use_truecolor && is_default_zle_highlight {
-        if colour > 255 {
-            // c:2509-2510 — past 255 no escape can express it.
-            String::new()
+    //
+    // c:2484 — "We can if it's available, and either we couldn't get the
+    // maximum number of colours, or the colour is in range."
+    let termcap_seq = if !def && !use_truecolor && is_default_zle_highlight {
+        let tc = if is_fg {
+            crate::ported::zsh_h::TCFGCOLOUR // c:2449
         } else {
-            output_colour(colour as u8, is_fg) // c:2492
-        }
+            crate::ported::zsh_h::TCBGCOLOUR // c:2454
+        };
+        let cap = {
+            let tclen = crate::ported::init::tclen.lock().unwrap();
+            (tclen[tc as usize] != 0)
+                .then(|| crate::ported::init::tcstr.lock().unwrap()[tc as usize].clone())
+        };
+        let colours = crate::ported::init::tccolours.load(Ordering::SeqCst);
+        cap.filter(|_| colours < 0 || colour < colours).map(|cap| {
+            // c:2492 / c:2499 — `tputs(tgoto(tcstr[tc], colour, colour), …)`.
+            let seq = crate::tparm::tgoto(cap.as_bytes(), colour as i64, colour as i64);
+            String::from_utf8_lossy(&crate::shout::tputs(&String::from_utf8_lossy(&seq)))
+                .into_owned()
+        })
     } else {
+        None
+    };
+    let body = if let Some(seq) = termcap_seq {
+        seq
+    } else if !def && !use_truecolor && is_default_zle_highlight && colour > 255 {
+        // c:2509-2510 — past 255 no escape can express it.
+        String::new()
+    } else {
+        // c:2505-2507 — otherwise 0-7 is taken to be standard ANSI and
+        // 8-255 the usual 256-colour form, composed from the sequences.
         // c:2513-2516 — the composition buffer doubles as the "have the
         // $zle_highlight overrides been loaded yet?" latch. C allocates
         // it here when a standalone call finds it NULL (its comment: "can
