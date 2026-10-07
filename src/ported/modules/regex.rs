@@ -114,10 +114,12 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         rhre.to_string()
     };
 
-    // c:Src/Modules/regex.c regcomp — POSIX ERE rejects an empty
+    // c:Src/Modules/regex.c regcomp — BSD libc's ERE rejects an empty
     // pattern with REG_EMPTY (`empty (sub)expression`). Rust's
-    // regex crate ACCEPTS an empty pattern as "matches everywhere"
-    // (POSIX-style). To match zsh, reject empty patterns explicitly.
+    // regex crate ACCEPTS an empty pattern as "matches everywhere", which
+    // is what glibc's regcomp does too (`[[ hello =~ "" ]]` is 0 there),
+    // so the rejection is BSD-only.
+    #[cfg(not(target_env = "gnu"))]
     if rhre.is_empty() {
         crate::ported::utils::zwarn("failed to compile regex: empty (sub)expression");
         return 0;
@@ -178,37 +180,73 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // operator escapes are lifted back out of that literal rule first —
     // see `gnu_ere_escape`.
     let pat_for_compile = crate::ported::modules::regex::posix_ere_bracket_escape(&pat_for_compile);
-    // zsh's regex treats `.` as matching newline (regcomp without REG_NEWLINE);
-    // the regex crate defaults `.` to exclude it. Bug #557.
-    let re = match regex::RegexBuilder::new(&pat_for_compile)
-        .dot_matches_new_line(true)
-        .build()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            // c:79-81 zregex_regerrwarn — `failed to compile regex: <msg>` via
-            // zwarn (the `zsh:1:` prefix comes from zwarn's default path).
-            let raw = e.to_string();
-            let detail = raw
-                .lines()
-                .rev()
-                .find_map(|l| l.trim().strip_prefix("error: "))
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| raw.replace('\n', " "));
-            crate::ported::utils::zwarn(&format!("failed to compile regex: {}", detail));
-            return 0; // c:81 break;
-        }
+    // c:79-81 zregex_regerrwarn — `failed to compile regex: <msg>` via zwarn
+    // (the `zsh:1:` prefix comes from zwarn's default path).
+    let compile_failed = |raw: String| {
+        let detail = raw
+            .lines()
+            .rev()
+            .find_map(|l| l.trim().strip_prefix("error: "))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| raw.replace('\n', " "));
+        crate::ported::utils::zwarn(&format!("failed to compile regex: {}", detail));
     };
-
-    // c:92 — regexec.
-    let captures = match re.captures(lhstr) {
-        Some(c) => c,
+    // c:78 regcomp + c:92 regexec, as the byte range of each group (`[0]` is
+    // the whole match, None for a group that did not participate) plus
+    // re.re_nsub. zsh's regex treats `.` as matching newline (regcomp without
+    // REG_NEWLINE); the regex crate defaults `.` to exclude it. Bug #557.
+    //
+    // glibc's ERE has backreferences (see posix_ere_bracket_escape), which
+    // RE2 cannot express: a pattern that uses one goes to fancy_regex.
+    #[cfg(target_env = "gnu")]
+    let has_backref = {
+        let mut it = pat_for_compile.chars();
+        let mut found = false;
+        while let Some(c) = it.next() {
+            if c == '\\' && matches!(it.next(), Some('1'..='9')) {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+    #[cfg(not(target_env = "gnu"))]
+    let has_backref = false;
+    type Groups = Vec<Option<(usize, usize)>>;
+    let matched: Option<(Groups, usize)> = if has_backref {
+        let re = match fancy_regex::Regex::new(&format!("(?s){}", pat_for_compile)) {
+            Ok(r) => r,
+            Err(e) => {
+                compile_failed(e.to_string());
+                return 0; // c:81 break;
+            }
+        };
+        let nsub = re.captures_len() - 1;
+        re.captures(lhstr).ok().flatten().map(|c| {
+            ((0..=nsub).map(|n| c.get(n).map(|m| (m.start(), m.end()))).collect(), nsub)
+        })
+    } else {
+        let re = match regex::RegexBuilder::new(&pat_for_compile)
+            .dot_matches_new_line(true)
+            .build()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                compile_failed(e.to_string());
+                return 0; // c:81 break;
+            }
+        };
+        let nsub = re.captures_len() - 1;
+        re.captures(lhstr).map(|c| {
+            ((0..=nsub).map(|n| c.get(n).map(|m| (m.start(), m.end()))).collect(), nsub)
+        })
+    };
+    let (groups, nsub) = match matched {
+        Some(m) => m,
         None => return 0, // c:93-94 REG_NOMATCH
     };
     // Group N's byte range, or None when it did not participate.
-    let group =
-        |n: usize| -> Option<(usize, usize)> { captures.get(n).map(|m| (m.start(), m.end())) };
-    let nsub = re.captures_len() - 1; // c:90 re.re_nsub — declared paren groups
+    let group = |n: usize| -> Option<(usize, usize)> { groups.get(n).copied().flatten() };
 
     return_value = 1; // c:96
     let bashre = isset(BASHREMATCH);
@@ -1397,6 +1435,9 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
     // 'bar\>' ]]`. Emit them bare so RE2 sees a literal too. (On glibc these
     // two never reach here — `gnu_ere_escape` claims them first.)
     const RE2_SYNTAX_PUNCT: &[char] = &['<', '>'];
+    // glibc ERE backreferences, re-emitted for fancy_regex (see below).
+    #[cfg(target_env = "gnu")]
+    const BACKREFS: [&str; 9] = [r"\1", r"\2", r"\3", r"\4", r"\5", r"\6", r"\7", r"\8", r"\9"];
     while i < chars.len() {
         let c = chars[i];
         if c == '\\' {
@@ -1457,9 +1498,9 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
                 //     literal `d` on glibc exactly as on BSD.
                 //   * `\1`..`\9` ARE backreferences on glibc
                 //     (`RE_SYNTAX_POSIX_EXTENDED` omits `RE_NO_BK_REFS`, so
-                //     `regcomp.c:1836-1842` makes them `OP_BACK_REF`). RE2 has
-                //     no backreferences at all, so they keep the BSD
-                //     literal-digit reading — known, unexpressible residual.
+                //     `regcomp.c:1836-1842` makes them `OP_BACK_REF`). They are
+                //     kept as `\N`, and zcond_regex_match hands a pattern that
+                //     has one to fancy_regex (RE2 has no backreferences).
                 #[cfg(target_env = "gnu")]
                 let gnu_op: Option<&'static str> = match n {
                     'w' => Some("[[:alnum:]_]"),
@@ -1472,6 +1513,7 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
                     '>' => Some(r"(?-u:\b{end})"),
                     '`' => Some(r"\A"),
                     '\'' => Some(r"\z"),
+                    d @ '1'..='9' => Some(BACKREFS[(d as u8 - b'1') as usize]),
                     _ => None,
                 };
                 // BSD libc (macOS, the `target_env = ""` Apple targets) runs
