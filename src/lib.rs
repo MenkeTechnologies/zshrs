@@ -73,6 +73,8 @@ pub mod script_bytes;
 pub mod token_char;
 /// `zlong_cast` submodule (Rust-only): C's `(zlong) double` with the host CPU's out-of-range answer.
 pub mod zlong_cast;
+/// `host_libc` submodule (Rust-only): host-libc behaviours C zsh inherits by calling libc.
+pub mod host_libc;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
 /// `test_util` submodule.

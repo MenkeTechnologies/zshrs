@@ -20799,6 +20799,7 @@ fn printf_format(
                         ch_str.push(char::from(byte ^ 32));
                     }
                     let (left_align, zero_pad, width, _) = parse_flags_width_prec(&spec);
+                    let zero_pad = zero_pad && crate::host_libc::printf_zero_flag_pads_strings();
                     let pad = width.saturating_sub(1);
                     if left_align {
                         out.push_str(&ch_str);
@@ -20983,6 +20984,7 @@ fn format_spec_str(spec: &str, s: &str, honor_zero: bool) -> String {
     // (Src/builtin.c:5375 `fprintf(fout, "%*c", …, ' ')` → `%04s ab` = "  ab"),
     // so they pass honor_zero=false.
     let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
+    let honor_zero = honor_zero && crate::host_libc::printf_zero_flag_pads_strings();
     if !honor_zero {
         // c:Src/builtin.c:5335-5372 — the inline `%s`/`%b` arm counts the
         // argument's characters with `mbrlen` over its raw bytes (an invalid
