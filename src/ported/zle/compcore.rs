@@ -957,7 +957,14 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             let pre = if in_math {
                 s.to_string()
             } else {
-                crate::comp_word_tok::multiquoted(word_tok.as_deref())
+                // The twin is usable only when it IS `s` tokenized. The
+                // completeinword arm below gets that check from `span`; this
+                // arm took the twin unchecked, so a twin left by an earlier
+                // completion published that completion's word as `$PREFIX`.
+                let whole = word_tok
+                    .as_deref()
+                    .filter(|t| crate::ported::lex::untokenize(t) == s);
+                crate::comp_word_tok::multiquoted(whole)
                     .unwrap_or_else(|| s.to_string())
             };
             (pre, String::new())
