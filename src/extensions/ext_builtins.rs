@@ -8444,9 +8444,15 @@ impl ShellExecutor {
         // before `status()` could, so `status()` failed with ECHILD and every
         // `env CMD` returned 127. Hold signals across the wait exactly as the
         // external-command spawn does (vm_helper.rs, ForegroundWaitGuard).
+        // The guard only blocks SIGCHLD in THIS thread; the kernel hands it
+        // to any other thread of the process, whose reaper still takes the
+        // child, so `Command::status()` kept failing with ECHILD (`env CMD`
+        // returned 127 at random on Linux). Wait through wait_pid_status,
+        // which claims the reaper's record on ECHILD like every external.
         let status_result = {
             let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
-            cmd.status()
+            cmd.spawn()
+                .and_then(|child| crate::fusevm_bridge::wait_pid_status(child.id() as libc::pid_t))
         };
         match status_result {
             Ok(status) => status.code().unwrap_or(127),
