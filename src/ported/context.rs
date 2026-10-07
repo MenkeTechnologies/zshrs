@@ -129,7 +129,31 @@ pub fn zcontext_restore() {
 }
 
 /// Port of `static struct context_stack *cstack` from Src/context.c:52.
-static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None); // c:52
+///
+/// !!! WARNING: RUST-ONLY ADAPTATION — C HAS ONE THREAD, ONE STACK !!!
+/// The lexer/parser state a frame saves lives in thread_locals, so the stack
+/// holding those frames is per-thread too. As a process-global, a worker-pool
+/// parse (async hooks, autoload backfill) interleaved its save/restore with
+/// the main thread's: the main thread's restore popped a worker's frame, whose
+/// hist snapshot held `histactive == 0`, and the command line being typed lost
+/// its history record (executed, but never entered in the ring or the store).
+/// `lock()` keeps the old `Mutex` call shape for every caller.
+#[allow(non_camel_case_types)]
+struct PerThreadCstack;
+static cstack: PerThreadCstack = PerThreadCstack; // c:52
+
+impl PerThreadCstack {
+    fn lock(
+        &self,
+    ) -> std::sync::LockResult<std::sync::MutexGuard<'static, Option<Box<context_stack>>>> {
+        thread_local! {
+            // One leaked slot per thread: threads are few and long-lived.
+            static SLOT: &'static Mutex<Option<Box<context_stack>>> =
+                Box::leak(Box::new(Mutex::new(None)));
+        }
+        SLOT.with(|slot| *slot).lock()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -138,6 +162,32 @@ mod tests {
 
     fn reset_cstack() {
         *cstack.lock().unwrap() = None;
+    }
+
+    /// A save/restore pair on another thread must not touch this thread's
+    /// stack: with one process-global stack, a worker-pool parse popped the
+    /// main thread's frame and zeroed `histactive` for the line being typed.
+    #[test]
+    fn context_stack_is_per_thread() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        assert!(cstack.lock().unwrap().is_some());
+        std::thread::spawn(|| {
+            assert!(cstack.lock().unwrap().is_none(), "new thread starts empty");
+            zcontext_save();
+            zcontext_restore();
+            assert!(cstack.lock().unwrap().is_none());
+        })
+        .join()
+        .unwrap();
+        assert!(
+            cstack.lock().unwrap().is_some(),
+            "the other thread's save/restore left this thread's frame alone"
+        );
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none());
     }
 
     #[test]
