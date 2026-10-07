@@ -78,7 +78,7 @@ pub const SHARD_MAGIC: u32 = 0x5A52414C;
 /// chunks hold the old U+0084..=U+00A2 tokens.
 /// v5: an entry can carry its [`ResolvedLoad`], so a load is served by name
 /// with no `$fpath` search.
-pub const SHARD_FORMAT_VERSION: u32 = 5;
+pub const SHARD_FORMAT_VERSION: u32 = 6;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]

@@ -731,26 +731,26 @@ fn stringsubst(
         } // c:237
         let c = chars[pos]; // c:237
 
-        // Lexer-emitted single-bslashquote marker (`\u{e09d}`, parse/src/tokens.rs
+        // Lexer-emitted single-bslashquote marker (`\u{e19d}`, parse/src/tokens.rs
         // Snull) encloses literal `'…'` regions. Inside, no parameter /
         // command substitution / glob fires — content is verbatim.
         // Strip both markers and leave the body intact. Without this, a
         // `${var/pat/'~'$match[1]}` replacement yielded
-        // `\u{e09d}~\u{e09d}<match-1>` (SNULLs leaked through, broke the
+        // `\u{e19d}~\u{e19d}<match-1>` (SNULLs leaked through, broke the
         // string).
-        if c == '\u{e09d}' {
+        if c == '\u{e19d}' {
             // c:282-331 — C's stringsubst has no plain-Snull arm: the quoted
             // span is passed over untouched and prefork's remnulargs (c:170)
             // strips the markers. Deleting them here lost them when an `(e)`
             // NULL stops prefork before c:170: `a='$('; v=''${(e)a}` is `''`.
             let mut end = pos + 1; // c:237
-            while end < chars.len() && chars[end] != '\u{e09d}' {
+            while end < chars.len() && chars[end] != '\u{e19d}' {
                 end += 1;
             }
             pos = (end + 1).min(chars.len());
             continue;
         } // c:237
-          // Lexer-emitted double-quote marker (`\u{e09e}`, Dnull). C does NOT
+          // Lexer-emitted double-quote marker (`\u{e19e}`, Dnull). C does NOT
           // remove inull markers here: they must survive stringsubst so
           // prefork's empty-node test (c:100 `if (*(char *)getdata(node))
           // … else if (!keep) uremnode`) still sees a NON-empty node for a
@@ -762,14 +762,14 @@ fn stringsubst(
           // the lexer keeps the markers — collapse to NOTHING: zsh passes
           // one empty argument, zshrs passed none. Skip over the marker
           // instead of deleting it.
-        if c == '\u{e09e}' {
+        if c == '\u{e19e}' {
             pos += 1; // c:237 (marker retained for remnulargs)
             continue; // c:237
         } // c:237
-          // Lexer Bnull (`\u{e09f}`) escapes the next char as literal.
+          // Lexer Bnull (`\u{e19f}`) escapes the next char as literal.
           // Drop the marker, keep the next char verbatim, and skip past
           // it without further processing this iteration.
-        if c == '\u{e09f}' && pos + 1 < chars.len() {
+        if c == '\u{e19f}' && pos + 1 < chars.len() {
             // c:282-331 — C's stringsubst has no Bnull arm: the marker and the
             // char it escapes are passed over, and prefork's remnulargs (c:170)
             // strips the marker later. Deleting it here lost it when an `(e)`
@@ -1303,7 +1303,7 @@ fn stringsubst(
                                      // c:Src/subst.c — walk body looking for closing
                                      // backtick. Skip past escape markers: `\\` (raw
                                      // backslash-escape from a non-tokenized source) AND
-                                     // Bnull (`\u{e09f}`, the lexer's escape sentinel that
+                                     // Bnull (`\u{e19f}`, the lexer's escape sentinel that
                                      // dquote_parse emits for `\\``/`\\\\`/`\\$`). Bug
                                      // #46 in docs/BUGS.md: nested `` `cmd \`inner\` cmd` ``
                                      // had the inner backslash-escaped backticks tokenized
@@ -1316,7 +1316,7 @@ fn stringsubst(
                 && chars[end] != Qtick
                 && chars[end] != '`'
             {
-                if (chars[end] == '\\' || chars[end] == '\u{e09f}') && end + 1 < chars.len() {
+                if (chars[end] == '\\' || chars[end] == '\u{e19f}') && end + 1 < chars.len() {
                     end += 1;
                 } // c:237
                 end += 1; // c:237
@@ -1327,7 +1327,7 @@ fn stringsubst(
                                                                               // c:Src/subst.c — strip one level of escape from the
                                                                               // backtick body before re-parsing. The lexer's
                                                                               // `dquote_parse` LX2_BQUOTE arm emits `Bnull + X`
-                                                                              // (\u{e09f}+X) for each `\X` it saw inside the
+                                                                              // (\u{e19f}+X) for each `\X` it saw inside the
                                                                               // backquotes (X ∈ {`` ` ``, `\`, `$`}). For the
                                                                               // re-parse to see the right shape, drop the Bnull
                                                                               // and keep the literal char. The result is what the
@@ -1342,7 +1342,7 @@ fn stringsubst(
                     let mut out = String::with_capacity(cmd_raw.len());
                     let mut i = 0;
                     while i < cv.len() {
-                        if cv[i] == '\u{e09f}' && i + 1 < cv.len() {
+                        if cv[i] == '\u{e19f}' && i + 1 < cv.len() {
                             out.push(cv[i + 1]);
                             i += 2;
                         } else {
@@ -1948,14 +1948,14 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
     // array; else single scalar (or empty).
     let l = list.len(); // c:633
-                        // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{e0a1}`)
+                        // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{e1a1}`)
                         //   sentinel and other INULL bytes (Snull/Dnull/Bnull) that
                         //   paramsubst's splat block emits for empty array elements to
                         //   prevent prefork's empty-node-delete pass from dropping them.
                         //   Downstream consumers (cond builtin `-z`/`-n`, command args,
                         //   etc.) see the post-remnulargs strings, NOT the sentinel.
                         //   Bug #185 in docs/BUGS.md: `[[ -z "${b[@]}" ]]` for b=("")
-                        //   returned false because the leftover `\u{e0a1}` had StringLen=1.
+                        //   returned false because the leftover `\u{e1a1}` had StringLen=1.
     let strip_nul = |s: String| -> String {
         let mut s = s;
         if !prefork_stopped {
@@ -2096,7 +2096,7 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
     // Walk `:`-separated path components, reapply filesubstr on each
     // suffix that starts with the Tilde or Equals TOKEN.
     //
-    // TOKEN forms only (Tilde \u{e098} / Equals \u{e08d}), exactly as
+    // TOKEN forms only (Tilde \u{e198} / Equals \u{e18d}), exactly as
     // C tests at subst.c:694 — `str[0] == Tilde || str[0] == Equals`.
     // The lexer emits those tokens for a tilde/equals that is SYNTAX;
     // an ASCII `~`/`=` that survives to here is DATA, either quoted by
@@ -2142,15 +2142,15 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
         let mut found: Option<usize> = None;
         for (i, c) in slice.char_indices() {
             match c {
-                '{' | '\u{e08f}' /* Inbrace */ if prev_dollar => depth += 1,
-                '}' | '\u{e090}' /* Outbrace */ if depth > 0 => depth -= 1,
+                '{' | '\u{e18f}' /* Inbrace */ if prev_dollar => depth += 1,
+                '}' | '\u{e190}' /* Outbrace */ if depth > 0 => depth -= 1,
                 ':' if depth == 0 => {
                     found = Some(i);
                     break;
                 }
                 _ => {}
             }
-            prev_dollar = c == '$' || c == '\u{e085}' /* String */;
+            prev_dollar = c == '$' || c == '\u{e185}' /* String */;
         }
         let colon_rel = match found {
             // c:690
@@ -2212,8 +2212,8 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     // c:715
     // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
     // name. isend2(c) = !c || c==Inpar || (assign && c==':').
-    // The previous Rust port had a DUPLICATE `c != '\u{e085}'` line
-    // mis-labeled as "Inpar token" — `\u{e085}` is Stringg, not Inpar.
+    // The previous Rust port had a DUPLICATE `c != '\u{e185}'` line
+    // mis-labeled as "Inpar token" — `\u{e185}` is Stringg, not Inpar.
     // Removed; `c != Inpar` (the canonical const) is the only correct check.
     let end = s // c:719
         .chars() // c:719
@@ -2291,7 +2291,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     // preserved by the EXPAND_TEXT emit's untokenize loop
     // (compile_zsh.rs:3048+) so this strict check still fires for
     // legitimate tilde expansions.
-    if first == '\u{e098}'
+    if first == '\u{e198}'
     /* Tilde token */
     {
         // c:741
@@ -2302,12 +2302,12 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         }
         // c:Src/subst.c:743+ — the byte AFTER `~` selects the
         // expansion form (`/`/`+`/`-`/digit/identifier/`=`). The
-        // Rust lexer emits Dash TOKEN (\u{e09b}) for `-` and ASCII
+        // Rust lexer emits Dash TOKEN (\u{e19b}) for `-` and ASCII
         // for the others, but the discriminator predicates here
         // are written against ASCII. Normalise Dash → `-` so the
         // `~-` (OLDPWD) and `~-N` (dirstack) arms below match.
         let raw_nx = chars[1];
-        let nx = if raw_nx == '\u{e09b}' { '-' } else { raw_nx };
+        let nx = if raw_nx == '\u{e19b}' { '-' } else { raw_nx };
         if nx == '=' {
             return None;
         } // c:741 — leave for =arm
@@ -2315,9 +2315,9 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // C `isend(c)`: !c || c=='/' || c==Inpar || (assign && c==':')
         // c:725 macro.
         //
-        // The previous Rust port used `\u{e085}` for "Inpar", which is
+        // The previous Rust port used `\u{e185}` for "Inpar", which is
         // ACTUALLY the Stringg token byte (Src/zsh.h:160 `String=0x85`).
-        // The canonical Inpar value is `\u{e088}` (Src/zsh.h:163 `Inpar=0x88`).
+        // The canonical Inpar value is `\u{e188}` (Src/zsh.h:163 `Inpar=0x88`).
         // Effect: `~(xxx` (legitimate Inpar after tilde) wouldn't isend,
         // while `~$xxx` (Stringg, which should NOT isend) would.
         let isend =
@@ -2415,14 +2415,14 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // Walk digit suffix; ptr ends at first non-digit.
         if (nx == '+' || nx == '-' || nx.is_ascii_digit()) && !nx.is_whitespace() {
             // Parse signed integer from chars[1..]. Normalize Dash TOKEN
-            // (\u{e09b}) to ASCII `-` for the sign check — the lexer emits
+            // (\u{e19b}) to ASCII `-` for the sign check — the lexer emits
             // Dash for `-` and the existing `nx` predicate already maps
             // it, but the per-char sign test below must do the same or
             // `~-N` walks past the sign as if `N` was just a digit.
             // Bug #358.
             let ch_at = |i: usize| -> char {
                 let c = chars[i];
-                if c == '\u{e09b}' {
+                if c == '\u{e19b}' {
                     '-'
                 } else {
                     c
@@ -2489,14 +2489,14 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // so `hash -d t-t=/foo; print ~t-t` left `~t-t` unexpanded
         // (read only `~t`, looked up the missing dir "t").
         // c:Src/utils.c:4191 — `typtab[Dash] = IUSER`: the Dash TOKEN
-        // (`\u{e09b}`, the lexer's encoding of `-` in word context) is
+        // (`\u{e19b}`, the lexer's encoding of `-` in word context) is
         // also IUSER, so accept it alongside the literal `-`.
         let mut p = 1_usize;
         while p < chars.len()
             && (chars[p].is_ascii_alphanumeric()
                 || chars[p] == '_'
                 || chars[p] == '-'
-                || chars[p] == '\u{e09b}' /* Dash token */
+                || chars[p] == '\u{e19b}' /* Dash token */
                 || chars[p] == '.')
         {
             p += 1;
@@ -2508,12 +2508,12 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // identifier walk consumed every char and the final isend
         // check ran against an out-of-bounds index.
         if p > 1 && (p == chars.len() || isend(chars[p])) {
-            // Untokenize the Dash token (`\u{e09b}` → `-`) so the name
+            // Untokenize the Dash token (`\u{e19b}` → `-`) so the name
             // matches the literal key stored in nameddirtab / passed to
             // getpwnam (`hash -d t-t=…` registers the literal "t-t").
             let user: String = chars[1..p]
                 .iter()
-                .map(|&c| if c == '\u{e09b}' { '-' } else { c })
+                .map(|&c| if c == '\u{e19b}' { '-' } else { c })
                 .collect();
             let suffix: String = chars[p..].iter().collect();
             // c:791 — `if (!(hom = getnameddir(untok)))`: the named-directory
@@ -2542,7 +2542,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
 
     // `=cmd` — PATH lookup via equalsubstr. C:
     // `if (*str == Equals && isset(EQUALS) && str[1] && str[1] != Inpar)`.
-    // The check is on the TOKENIZED Equals marker (\u{e08d}), NOT
+    // The check is on the TOKENIZED Equals marker (\u{e18d}), NOT
     // literal `=`. The Equals marker is only set by the lexer for
     // a source-level literal `=` at the start of a word; results
     // of param expansion / cmd substitution that happen to start
@@ -3246,11 +3246,11 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> {
         let mut qt = false; // c:1470
                             // The previous Rust port had FAKE token-byte values in the
                             // comment block here: STRING=\u{81}, Qstring=\u{82}, Tick=\u{83},
-                            // Qtick=\u{e084}, Dnull=\u{e097}. NONE of these match `Src/zsh.h:159-194`.
+                            // Qtick=\u{e184}, Dnull=\u{e197}. NONE of these match `Src/zsh.h:159-194`.
                             // Canonical values:
-                            //   Stringg = \u{e085} (c:160), Qstring = \u{e08c} (c:167),
-                            //   Tick    = \u{e093} (c:174), Qtick   = \u{e099} (c:180),
-                            //   Dnull   = \u{e09e} (c:194).
+                            //   Stringg = \u{e185} (c:160), Qstring = \u{e18c} (c:167),
+                            //   Tick    = \u{e193} (c:174), Qtick   = \u{e199} (c:180),
+                            //   Dnull   = \u{e19e} (c:194).
                             // With the wrong literals, this Qstring/Qtick→String/Tick
                             // rewrite + Dnull-toggle loop NEVER fired on real input —
                             // every `$'...'` and `` $`...` `` expansion produced wrong
@@ -3462,7 +3462,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
     // c:1549 — `if (tok_arg) shtokenize(dst);`. The `(~)` flag makes the
     // flag argument a pattern: the join separator becomes the Bar / Quest
     // TOKEN rather than a literal `|` / `?`. Measured for `${(~j.?.)x}`:
-    // this returns the Quest token (U+E097, `ZTOKENS` index 19 + `Pound`),
+    // this returns the Quest token (U+e197, `ZTOKENS` index 19 + `Pound`),
     // and `prefork(PREFORK_SINGLE)` hands that token back intact as
     // `[61, c2, 97, 62]`.
     //
@@ -3529,8 +3529,8 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
     let mut end: Option<usize> = None; // c:1579
     for (i, &c) in chars.iter().enumerate() {
         // c:1579
-        // Previous Rust port had `\u{e085}` labeled Inpar and `\u{e086}`
-        // labeled Outpar — both wrong. `\u{e085}` is Stringg ($), `\u{e086}`
+        // Previous Rust port had `\u{e185}` labeled Inpar and `\u{e186}`
+        // labeled Outpar — both wrong. `\u{e185}` is Stringg ($), `\u{e186}`
         // is Hat (^). Canonical Inpar/Outpar are 0x88/0x8a per
         // `Src/zsh.h:163,165`. Use the canonical consts.
         match c {
@@ -4666,7 +4666,7 @@ pub fn paramsubst(
         let mut depth = 1_i32; // c:utils.c:2411
         let mut end = pos; // c:utils.c:2416
                            // c:Src/utils.c:2409 skipparens — counts ONLY Inbrace
-                           // (`\u{e08f}`) / Outbrace (`\u{e090}`) tokens. Every `${`-form
+                           // (`\u{e18f}`) / Outbrace (`\u{e190}`) tokens. Every `${`-form
                            // brace pair is tokenized by Src/lex.c:1546 (`add(Qstring);
                            // c = Inbrace; cmdpush(CS_BRACEPAR); bct++;`) and matched by
                            // c:1565-1577 (`c = Outbrace; bct--;`) BEFORE paramsubst
@@ -5476,7 +5476,7 @@ pub fn paramsubst(
             }};
         }
         // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
-        // and Inpar TOKEN (\u{e088}) — the lexer emits Inpar TOKEN for
+        // and Inpar TOKEN (\u{e188}) — the lexer emits Inpar TOKEN for
         // `${(flag)name}` in DQ context and in the new bridge passthru
         // path where raw tokenized text reaches paramsubst without an
         // intermediate untokenize pass.
@@ -5559,7 +5559,7 @@ pub fn paramsubst(
                         let next = body_chars.get(idx + 1).copied(); // c:2240 IS_DASH(s[1]) || s[1]=='+'
                                                                      // c:Src/zsh.h:242 — `IS_DASH(x)` is `((x) ==
                                                                      // '-' || (x) == Dash)`. The lexer tokenizes the
-                                                                     // `-` inside `(q-)` to the Dash token (\u{e09b})
+                                                                     // `-` inside `(q-)` to the Dash token (\u{e19b})
                                                                      // when an operator (`:-`, `::=`, …) follows, so
                                                                      // a literal-`'-'`-only test misses it and falls
                                                                      // to the plain-`q` arm → QT_BACKSLASH. Match
@@ -5752,7 +5752,7 @@ pub fn paramsubst(
                         //
                         // Untokenize first: in scalar-assignment context
                         // (EXPAND_TEXT mode 5 → singsub) the body arrives
-                        // TOKENIZED — `-` is Dash (\u{e090}-family), `*` is
+                        // TOKENIZED — `-` is Dash (\u{e190}-family), `*` is
                         // Star — and mathevali rejects the token chars
                         // ("illegal character"), collapsing the pad width
                         // to 0. Argument context (multsub) delivered ASCII
@@ -6588,7 +6588,7 @@ pub fn paramsubst(
             };
             if c == '^' || c == Hat {
                 // c:Src/subst.c:2587 — `case '^'` plan9-toggle. Accept
-                // both ASCII `^` and Hat TOKEN (\u{e086}). The bridge
+                // both ASCII `^` and Hat TOKEN (\u{e186}). The bridge
                 // passthru path delivers `^`/`^^` as Hat TOKEN since
                 // the lexer tokenizes `^` inside `${…}` to Hat.
                 let nxt = body_chars.get(idx + 1).copied();
@@ -6604,7 +6604,7 @@ pub fn paramsubst(
             }
             if c == '=' || c == Equals {
                 // c:Src/subst.c:2592 — `case '='` split toggle. Accept
-                // both ASCII `=` and Equals TOKEN (\u{e08d}).
+                // both ASCII `=` and Equals TOKEN (\u{e18d}).
                 let nxt = body_chars.get(idx + 1).copied();
                 if matches!(nxt, Some('=') | Some(Equals)) {
                     suppress_split = true;
@@ -6619,14 +6619,14 @@ pub fn paramsubst(
             }
             if c == '#' || c == Pound {
                 // c:2570-2588 — `${}` ⇒ `inbrace`; `(inbrace || !POSIXIDENTIFIERS)` is satisfied.
-                // Accept both ASCII `#` and Pound TOKEN (\u{e084}) — the
+                // Accept both ASCII `#` and Pound TOKEN (\u{e184}) — the
                 // bridge passthru path delivers `${#…}` length-op as
                 // Pound TOKEN since `#` is lexed inside `${…}` as a
                 // significant char.
                 let next = body_chars.get(idx + 1).copied();
                 let after_next = body_chars.get(idx + 2).copied();
                 // c:Src/subst.c:2570-2588 — `${#…}` length-op
-                // discrimination. Accept Dash TOKEN (\u{e09b}) as
+                // discrimination. Accept Dash TOKEN (\u{e19b}) as
                 // equivalent to ASCII `-` in the `:-` peek so
                 // `${#:-foo}` (length of "foo" since `#` is unset)
                 // resolves correctly through the bridge passthru
@@ -6643,14 +6643,14 @@ pub fn paramsubst(
                     // param and the stray `!` fails the operator gate).
                     Some(ch) if matches!(ch, '_' | '@' | '*' | '?' | '$' | '-' | '0') => true,
                     // Tokenized single-char specials: the lexer rewrites
-                    // unquoted `*`→Star(\u{e087}), `?`→Quest(\u{e097}),
-                    // `-`→Dash(\u{e09b}) inside `${…}`. Accept them as
+                    // unquoted `*`→Star(\u{e187}), `?`→Quest(\u{e197}),
+                    // `-`→Dash(\u{e19b}) inside `${…}`. Accept them as
                     // name-starts so `${#*}` / `${#?}` / `${#-}` take the
                     // length-op arm identically to their quoted
-                    // (untokenized) forms. `!`→Bang(\u{e09c}) is excluded to
+                    // (untokenized) forms. `!`→Bang(\u{e19c}) is excluded to
                     // match zsh's rejection of `${#!}`.
-                    Some('\u{e087}') | Some('\u{e097}') | Some('\u{e09b}') => true,
-                    Some(':') if matches!(after_next, Some('-') | Some('\u{e09b}')) => true,
+                    Some('\u{e187}') | Some('\u{e197}') | Some('\u{e19b}') => true,
+                    Some(':') if matches!(after_next, Some('-') | Some('\u{e19b}')) => true,
                     Some(ch) if ch == STRING || ch == Qstring || ch == Stringg => {
                         // `${#${...}}` — Stringg/Qstring + `{`/`(` is a
                         // nested-subexp length form. Length-op applies.
@@ -6689,9 +6689,9 @@ pub fn paramsubst(
             }
             if c == '~' || c == Tilde {
                 // c:Src/subst.c:2596-2602 — accept both ASCII `~` AND
-                // the Tilde TOKEN (\u{e098}) the lexer emits for
+                // the Tilde TOKEN (\u{e198}) the lexer emits for
                 // unquoted forms (`${~$(...)}`). Without the TOKEN
-                // arm, `${~$(echo pat)}` parsed `\u{e098}` as an
+                // arm, `${~$(echo pat)}` parsed `\u{e198}` as an
                 // unrecognized flag → "bad substitution". Bug #330
                 // in docs/BUGS.md.
                 let doubled = body_chars
@@ -6830,11 +6830,11 @@ pub fn paramsubst(
             } // c:2649
         } // c:2649
           // c:2649 — `isstring(*s)` matches both `$` (`Stringg`) and the
-          // DQ-context `\u{e08c}` (`Qstring`) per Src/zsh.h:167. Mirror
+          // DQ-context `\u{e18c}` (`Qstring`) per Src/zsh.h:167. Mirror
           // here so nested ${${x}} inside DQ — where the inner `$` is
           // Qstring-tokenized — still detects the subexp. Bridge
           // passthru: unquoted nested `${…}` also reaches paramsubst
-          // as `Stringg` (\u{e085}) since the lexer emits Stringg for
+          // as `Stringg` (\u{e185}) since the lexer emits Stringg for
           // `$` inside braces; accept it too.
           // c:Src/subst.c:2655 — nested `${…}` / `$(…)` / `$NAME` body.
           // BUT a bare `$` followed directly by `}` / `)` / Outbrace /
@@ -6869,12 +6869,12 @@ pub fn paramsubst(
                 // c:Src/subst.c:2655 — nested `${…}` or `$(…)` body
                 // boundary scan. Match both ASCII and TOKEN brace
                 // forms: the lexer emits Inbrace/Outbrace TOKEN
-                // (\u{e08f}/\u{e090}) for `${…}` in DQ context (see
+                // (\u{e18f}/\u{e190}) for `${…}` in DQ context (see
                 // `${#${(z)X}}` — outer `${ }` braces tokenize).
                 // Without the TOKEN arm here, the depth scan
                 // falls through to the identifier-walk path and
                 // truncates the inner expansion to just the
-                // leading `$\u{e08f}`, which then fails paramsubst
+                // leading `$\u{e18f}`, which then fails paramsubst
                 // with "closing brace missing".
                 let (open, close): (char, char) = match nx {
                     '{' => ('{', '}'),
@@ -6887,7 +6887,7 @@ pub fn paramsubst(
                     //   tokens at lex.c:565+). Without these arms,
                     //   the subexp scan fell through to the bare
                     //   $name identifier-walk path and truncated the
-                    //   inner expansion to just `$\u{e089}` (2 chars),
+                    //   inner expansion to just `$\u{e189}` (2 chars),
                     //   so `${$((expr))}` returned empty. Bug #165
                     //   in docs/BUGS.md.
                     Inparmath => (Inparmath, Outparmath),
@@ -6943,7 +6943,7 @@ pub fn paramsubst(
             // brace-expansion `Comma` token. zshrs slices the inner text out of
             // the OUTER lex, where the comma already went through the
             // `bct > in_brace_param` arm, so the token came along for the ride:
-            // `${(s:,:)${x:-a,b,c}}` compared a `Comma` (\u{e09a}) against the
+            // `${(s:,:)${x:-a,b,c}}` compared a `Comma` (\u{e19a}) against the
             // flag's ASCII `,` — `findsep` (c:Src/utils.c:3839) is a byte
             // compare — and split nothing, where zsh prints `a b c`.
             //
@@ -6989,35 +6989,35 @@ pub fn paramsubst(
                                                                        // lookup on the referenced param (see subexp_passoc_name).
             {
                 // inner is the tokenized nested expansion, e.g.
-                // `${(P)n}` → [Inbrace \u{e08f}, Inpar \u{e088}, 'P',
-                // Outpar \u{e08a}, 'n', Outbrace \u{e090}]. Parse char-based
+                // `${(P)n}` → [Inbrace \u{e18f}, Inpar \u{e188}, 'P',
+                // Outpar \u{e18a}, 'n', Outbrace \u{e190}]. Parse char-based
                 // (the paren/brace tokens are multi-byte). Require the
                 // flag block right after the opening brace so we only
                 // match the `${(flags)name}` shape.
                 let ic: Vec<char> = inner.trim().chars().collect();
                 // Anchor the flag-block `(` to immediately follow the
-                // opening brace (`\u{e08f}` Inbrace / literal `{`). A fixed
+                // opening brace (`\u{e18f}` Inbrace / literal `{`). A fixed
                 // `inpar <= 1` index check broke the double-quoted form:
-                // there the `$` arrives as the Qstring token `\u{e08c}`
+                // there the `$` arrives as the Qstring token `\u{e18c}`
                 // (not Unicode-whitespace, so `trim()` keeps it) and the
                 // parens are literal ASCII, pushing `(` to index 2 —
                 // `${(P)n}` inside `"…"` then missed the (P) detection,
                 // so `"${(t)${(P)n}}"` reported the value, not the type.
                 let inpar = ic
                     .iter()
-                    .position(|&c| c == '\u{e08f}' || c == '{')
+                    .position(|&c| c == '\u{e18f}' || c == '{')
                     .map(|b| b + 1)
-                    .filter(|&i| ic.get(i).is_some_and(|&c| c == '\u{e088}' || c == '('));
+                    .filter(|&i| ic.get(i).is_some_and(|&c| c == '\u{e188}' || c == '('));
                 if let Some(inpar) = inpar {
                     if let Some(rel) = ic[inpar + 1..]
                         .iter()
-                        .position(|&c| c == '\u{e08a}' || c == ')')
+                        .position(|&c| c == '\u{e18a}' || c == ')')
                     {
                         let outpar = inpar + 1 + rel;
                         let flags: String = ic[inpar + 1..outpar].iter().collect();
                         let nm: String = ic[outpar + 1..]
                             .iter()
-                            .take_while(|&&c| c != '\u{e090}' && c != '}')
+                            .take_while(|&&c| c != '\u{e190}' && c != '}')
                             .collect();
                         if flags.contains('P')
                             && !nm.is_empty()
@@ -7348,7 +7348,7 @@ pub fn paramsubst(
                 // the joined SCALAR is stripped — the array elements keep their
                 // sentinels (C never touches `aval` here), which is what makes
                 // `${#${(@)q}[1]}` 1 for `q=("" 1)`.
-                let joined = match joined.strip_prefix('\u{e0a1}') {
+                let joined = match joined.strip_prefix('\u{e1a1}') {
                     Some(rest) => rest.to_string(), // c:2691
                     None => joined,
                 };
@@ -7464,12 +7464,12 @@ pub fn paramsubst(
                             || bc == '_'
                             || is_mb_ident(bc)
                             || bc == '@'
-                            || bc == '*' || bc == '\u{e087}' /* Star */
+                            || bc == '*' || bc == '\u{e187}' /* Star */
                             || bc == '#' || bc == Pound
-                            || bc == '?' || bc == '\u{e097}' /* Quest, c:Src/zsh.h:178 */
-                            || bc == '!' || bc == '\u{e09c}' /* Bang, c:Src/zsh.h:183 */
+                            || bc == '?' || bc == '\u{e197}' /* Quest, c:Src/zsh.h:178 */
+                            || bc == '!' || bc == '\u{e19c}' /* Bang, c:Src/zsh.h:183 */
                             || bc == '0'
-                            || bc == '-' || bc == '\u{e09b}' /* Dash */
+                            || bc == '-' || bc == '\u{e19b}' /* Dash */
                             || bc == '$' || bc == Stringg
                     } else if body_chars[name_start].is_ascii_digit() {
                         // c:Src/params.c:2210-2212 — `if (idigit(c = *s)) ppar =
@@ -7487,10 +7487,10 @@ pub fn paramsubst(
                     if idx == name_start + 1
                         && (matches!(first, '@' | '*' | '#' | '?' | '0' | '!' | '-' | '$')
                             || first == Pound
-                            || first == '\u{e087}' /* Star */
-                            || first == '\u{e097}' /* Quest, c:Src/zsh.h:178 */
-                            || first == '\u{e09c}' /* Bang, c:Src/zsh.h:183 */
-                            || first == '\u{e09b}' /* Dash */
+                            || first == '\u{e187}' /* Star */
+                            || first == '\u{e197}' /* Quest, c:Src/zsh.h:178 */
+                            || first == '\u{e19c}' /* Bang, c:Src/zsh.h:183 */
+                            || first == '\u{e19b}' /* Dash */
                             || first == Stringg)
                     {
                         break;
@@ -7507,7 +7507,7 @@ pub fn paramsubst(
             let raw: String = body_chars[name_start..idx].iter().collect();
             if raw.chars().any(|c| {
                 let cu = c as u32;
-                (0xe084..=0xe0a1).contains(&cu)
+                (0xe184..=0xe1a1).contains(&cu)
             }) {
                 crate::lex::untokenize(&raw)
             } else {
@@ -7575,7 +7575,7 @@ pub fn paramsubst(
                 return (String::new(), new_pos, Vec::new());
             }
         }
-        if (var_name == "!" || var_name == "\u{e09c}") && idx < body_chars.len() {
+        if (var_name == "!" || var_name == "\u{e19c}") && idx < body_chars.len() {
             let nx = body_chars[idx];
             // !!! BASH-MODE GATE (no C counterpart) !!! bash's `${!name}` forms:
             //   * `${!ident}`      — indirect: expand the var NAMED by $ident.
@@ -7667,7 +7667,7 @@ pub fn paramsubst(
                     bash_handled = true;
                 } else if bang_bash
                     && after.len() == 1
-                    && matches!(after[0], '@' | '*' | '\u{e087}' /* Star */)
+                    && matches!(after[0], '@' | '*' | '\u{e187}' /* Star */)
                 {
                     // `${!prefix@}` / `${!prefix*}` (BASH only; mksh/pdksh lack
                     // it) → the NAMES of all set
@@ -7706,7 +7706,7 @@ pub fn paramsubst(
                     arrays_insert(temp.clone(), names);
                     subexp_temp_guard.track(temp.clone());
                     subexp_array_temp = Some(temp);
-                    bang_prefix_subscript = Some(if after[0] == '*' || after[0] == '\u{e087}' {
+                    bang_prefix_subscript = Some(if after[0] == '*' || after[0] == '\u{e187}' {
                         "*".to_string()
                     } else {
                         "@".to_string()
@@ -7720,9 +7720,9 @@ pub fn paramsubst(
                     || nx == '_'
                     || nx == '@'
                     || nx == '*'
-                    || nx == '\u{e087}'
+                    || nx == '\u{e187}'
                     || nx == '!'
-                    || nx == '\u{e09c}')
+                    || nx == '\u{e19c}')
             /* Bang, c:Src/zsh.h:183 */
             {
                 zerr("bad substitution");
@@ -7798,7 +7798,7 @@ pub fn paramsubst(
         // ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
         // Parse `[…]` after the var name, with brace-depth tracking
         // for nested `${arr[$other[1]]}`. Accept both ASCII `[` and
-        // Inbrack TOKEN (\u{e091}) — the bridge passthru path delivers
+        // Inbrack TOKEN (\u{e191}) — the bridge passthru path delivers
         // the subscript opener as Inbrack TOKEN since the lexer
         // tokenizes `[`/`]` inside `${…}` to Inbrack/Outbrack.
         let mut subscript: Option<String> = None; // c:2867
@@ -8580,8 +8580,8 @@ pub fn paramsubst(
         // `r.strip_prefix(":-")`, etc.) are ASCII-only, but the bridge
         // synthesizer (compile_zsh.rs codegen → fusevm_bridge.rs
         // paramsubst_to_value) hands us TOKEN-form bytes for chars
-        // that lex tokenized at parse time (Pound \u{e084} for `#`,
-        // Equals \u{e086}, Inbrack \u{e091}, etc.). To match C's
+        // that lex tokenized at parse time (Pound \u{e184} for `#`,
+        // Equals \u{e186}, Inbrack \u{e191}, etc.). To match C's
         // invariant — operators-ASCII-but-braces-token — walk the body:
         // token bytes become the characters they spell (the ztokens[]
         // map of c:Src/exec.c:2134 `untokenize`), except that Inbrace/
@@ -8833,7 +8833,7 @@ pub fn paramsubst(
                 if chucked || matches!(frames.last(), Some(RestFrame::Dquote)) {
                     if c == Dnull {
                         frames.pop();
-                    } else if chucked && c != '/' && !(0xe084..=0xe0a1).contains(&(c as u32)) {
+                    } else if chucked && c != '/' && !(0xe184..=0xe1a1).contains(&(c as u32)) {
                         // The span lost its quotes (`dnull_chucked`): its
                         // characters reach the re-lex as unquoted text.
                         // Except that the anchors were already decided
@@ -8850,7 +8850,7 @@ pub fn paramsubst(
                         out.push(c);
                         out.push(raw[i + 1]);
                         i += 1;
-                    } else if (0xe084..=0xe0a1).contains(&(c as u32)) {
+                    } else if (0xe184..=0xe1a1).contains(&(c as u32)) {
                         out.extend(fold(c));
                     } else if c == '/' {
                         // c:3154-3160 — the `/` separator scan skips a whole
@@ -11120,7 +11120,7 @@ pub fn paramsubst(
                         // their META markers (Inpar/Outpar/Inbrack/
                         // Outbrack/Star/Dash/Quest). mathevali's
                         // tokenizer expects ASCII operators, so the
-                        // tokenized subscript `\u{e088}1+0\u{e08a}` was
+                        // tokenized subscript `\u{e188}1+0\u{e18a}` was
                         // unparseable and the unquoted scalar-assign
                         // form `v=${arr[(1+0)]}` returned empty. The
                         // DQ-quoted form `v="${arr[(1+0)]}"` worked
@@ -11146,7 +11146,7 @@ pub fn paramsubst(
                         } else {
                             let untoked = if sub.chars().any(|c| {
                                 let cu = c as u32;
-                                (0xe084..=0xe0a1).contains(&cu)
+                                (0xe184..=0xe1a1).contains(&cu)
                             }) {
                                 crate::lex::untokenize(sub)
                             } else {
@@ -12993,8 +12993,8 @@ pub fn paramsubst(
             for (step, s2) in chained_subscripts.iter().enumerate() {
             cur = {
             // c:Src/lex.c — in an UNQUOTED subscript the lexer tokenizes `-`
-            // to the Dash token (\u{e09b}); quoted keeps a literal `-`. So
-            // `${a[1][-1]}` / `${a[1,3][-1]}` arrive with `\u{e09b}` in place of
+            // to the Dash token (\u{e19b}); quoted keeps a literal `-`. So
+            // `${a[1][-1]}` / `${a[1,3][-1]}` arrive with `\u{e19b}` in place of
             // `-`. Normalize once here so BOTH the array-slice path and the
             // char-index path below parse negative indices correctly (else a
             // negative index silently reads as its numeric-parse default).
@@ -13003,7 +13003,7 @@ pub fn paramsubst(
             // tokens (c:Src/zsh.h:163/165) depends on the context the word was
             // compiled in: an inline `${a[1,3][(r)pat]}` reaches here already
             // untokenized, while a scalar-assignment RHS (`v=${a[1,3][(r)pat]}`)
-            // arrives with `\u{e088}r\u{e08a}`. Untokenized, the test failed, the
+            // arrives with `\u{e188}r\u{e18a}`. Untokenized, the test failed, the
             // flag subscript fell through to the NUMERIC parse, and `parse_idx`
             // defaulted to index 1 — so `v=${w[1,CURRENT][(r)-*P*]}` returned
             // the slice's FIRST ELEMENT instead of the no-match empty. `_print`
@@ -13013,7 +13013,7 @@ pub fn paramsubst(
             // c:Src/lex.c:1129 — `,` lexes to the `Comma` token (c:Src/zsh.h:181)
             // in every context where brace expansion could still apply, which
             // includes the body of an UNQUOTED nested expansion: the inner
-            // `${a[2][3,4]}` of `r=${${a[2][3,4]}}` reaches here as `3\u{e09a}4`
+            // `${a[2][3,4]}` of `r=${${a[2][3,4]}}` reaches here as `3\u{e19a}4`
             // while the same text inside `"…"` (or at top level) arrives with a
             // literal `,`. `split_once(',')` therefore missed the range, the
             // arm fell through to the single-index parse, that parse failed and
@@ -13021,7 +13021,7 @@ pub fn paramsubst(
             // FIRST CHARACTER instead of characters 3..4. Normalize alongside
             // the Dash/Inpar/Outpar tokens above.
             let s2_norm = s2
-                .replace('\u{e09b}', "-")
+                .replace('\u{e19b}', "-")
                 .replace(crate::ported::zsh_h::Inpar, "(")
                 .replace(crate::ported::zsh_h::Outpar, ")")
                 .replace(crate::ported::zsh_h::Comma, ",");
@@ -13096,7 +13096,7 @@ pub fn paramsubst(
             } else if let (Some(s1_raw), Some(full)) = (first_slice, arrays_get(&var_name)) {
                 // s1 (the first subscript) can carry the Dash and Comma tokens too.
                 let s1 = s1_raw
-                    .replace('\u{e09b}', "-")
+                    .replace('\u{e19b}', "-")
                     .replace(crate::ported::zsh_h::Comma, ",");
                 // c:Src/params.c:2058/2133 — BOTH range bounds go through
                 // `getarg`, so either may be a pattern SEARCH rather than
@@ -14380,7 +14380,7 @@ pub fn paramsubst(
             // strip a literal `'` pair from the (qq) quoting above; the Snull wrap
             // keeps it (same as `wrap_snull` on the main quote path).
             if quotemod > 0 && n_str.contains('\'') {
-                n_str = format!("\u{e09d}{}\u{e09d}", n_str);
+                n_str = format!("\u{e19d}{}\u{e19d}", n_str);
             }
             let full = format!("{}{}{}", prefix, n_str, suffix);
             let new_pos_in_full = prefix.chars().count() + n_str.chars().count();
@@ -16038,7 +16038,7 @@ pub fn paramsubst(
         }
         let eglob_restore = EglobRestore(
             (sub_flags_bits & SUB_EGLOB != 0
-                && [":#", ":/", "/", "#", "%", "\u{e084}"].iter().any(|op| rest.starts_with(op)))
+                && [":#", ":/", "/", "#", "%", "\u{e184}"].iter().any(|op| rest.starts_with(op)))
             .then(|| {
                 let eglob = isset(crate::ported::zsh_h::EXTENDEDGLOB);
                 opt_state_set("extendedglob", true);
@@ -17767,7 +17767,7 @@ pub fn paramsubst(
                     let mut i = 0;
                     while i < cv.len() {
                         let c = cv[i];
-                        // c:Src/subst.c — the Bnull marker (`\u{e09f}`)
+                        // c:Src/subst.c — the Bnull marker (`\u{e19f}`)
                         // wraps the next char as user-literal; re-emit as
                         // `\X` so patcompile sees an escape pair. A RAW
                         // NUL (`\x00`) is DATA, not a marker: it comes
@@ -17777,7 +17777,7 @@ pub fn paramsubst(
                         // Treating it as an escape consumed the following
                         // `/` separator, corrupting `${a//$'\0'/|}`'s
                         // pattern to `\/\|` so the NUL never matched.
-                        if c == '\u{e09f}' && i + 1 < cv.len() {
+                        if c == '\u{e19f}' && i + 1 < cv.len() {
                             pat_buf.push('\\');
                             pat_buf.push(cv[i + 1]);
                             i += 2;
@@ -18751,10 +18751,10 @@ pub fn paramsubst(
                     let mut i = 0;
                     while i < cv.len() {
                         let c = cv[i];
-                        // Bnull (`\u{e09f}`) / backslash escape the next
+                        // Bnull (`\u{e19f}`) / backslash escape the next
                         // char. A RAW NUL (`\x00`) is `$'\0'` DATA, not a
                         // marker — match it literally (see the `//` arm).
-                        if (c == '\u{e09f}' || c == '\\') && i + 1 < cv.len() {
+                        if (c == '\u{e19f}' || c == '\\') && i + 1 < cv.len() {
                             if cv[i + 1] == '/' {
                                 pat_buf.push('/');
                                 i += 2;
@@ -21463,11 +21463,11 @@ pub fn paramsubst(
                     // Parity bug: \`${a[@]:t}\` left the array
                     // unchanged because the scalar path was taken
                     // indiscriminately for any subscript.
-                    // Accept tokenized Star (\u{e087}) as the `*`
+                    // Accept tokenized Star (\u{e187}) as the `*`
                     // subscript — the lexer pre-tokenizes `*` in
                     // some unquoted contexts.
                     let is_at = splat_sub!() == Some("@");
-                    let is_star = matches!(splat_sub!(), Some("*") | Some("\u{e087}"));
+                    let is_star = matches!(splat_sub!(), Some("*") | Some("\u{e187}"));
                     let is_range = subscript.as_deref().map_or(false, |s| {
                         crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
                             .is_some()
@@ -22213,7 +22213,7 @@ pub fn paramsubst(
                 // c:Src/subst.c:2993-3003 — after var-name parsing,
                 // the accepted operator start chars are
                 // `:`/`-`/`+`/`=`/`?`/`#`/`%`/`/` (plus their token
-                // variants `\u{e09b}` Dash and `\u{e084}` Pound). Operator
+                // variants `\u{e19b}` Dash and `\u{e184}` Pound). Operator
                 // suffixes `(`/`[` are consumed before this rest
                 // parse (subscript, modifier flags). Anything else is
                 // a bad substitution per C zsh's flagerr-style reject.
@@ -22243,9 +22243,9 @@ pub fn paramsubst(
                     let is_op_start = matches!(
                         first,
                         ':' | '-' | '+' | '=' | '?' | '#' | '%' | '/'
-                            | '\u{e09b}' // Dash, c:Src/zsh.h:182
-                            | '\u{e084}' // Pound, c:Src/zsh.h:159
-                            | '\u{e097}' // Quest, c:Src/zsh.h:178
+                            | '\u{e19b}' // Dash, c:Src/zsh.h:182
+                            | '\u{e184}' // Pound, c:Src/zsh.h:159
+                            | '\u{e197}' // Quest, c:Src/zsh.h:178
                     );
                     !is_op_start
                 }
@@ -23832,7 +23832,7 @@ pub fn paramsubst(
         // and strips the surrounding quotes — fine when the lexer
         // produced raw `'` from source code, BUT wrong for `'…'`
         // characters emitted BY paramsubst (e.g. `(qq)` quoting).
-        // Wrap quote_one's output in Snull (\u{e09d}) markers so the
+        // Wrap quote_one's output in Snull (\u{e19d}) markers so the
         // Snull handler at subst.rs:641 strips THE WRAPPERS and
         // keeps the inner body (including literal `'` chars) verbatim.
         // First node was sometimes fine because the prefix context
@@ -23840,7 +23840,7 @@ pub fn paramsubst(
         // re-process; the second + nodes always lost their quotes.
         let wrap_snull = |s: String| -> String {
             if s.contains('\'') {
-                format!("\u{e09d}{}\u{e09d}", s)
+                format!("\u{e19d}{}\u{e19d}", s)
             } else {
                 s
             }
@@ -25377,7 +25377,7 @@ pub fn paramsubst(
             // nodes are bare elements.
             //
             // c:Src/subst.c:36 `nulstring[] = {Nularg, '\0'};` — zsh
-            // emits the Nularg sentinel (single `\u{e0a1}` byte) for
+            // emits the Nularg sentinel (single `\u{e1a1}` byte) for
             // empty array elements so the prefork's empty-node-delete
             // pass at subst.c:184-187 (`else if (!keep) uremnode`)
             // doesn't drop them. The subsequent `remnulargs` (called
@@ -25386,7 +25386,7 @@ pub fn paramsubst(
             // consumers see the value. Without this, `${(@s./.)X}`
             // with leading empty in DQ context lost the leading
             // element. Parity bug.
-            let nul_str = "\u{e0a1}";
+            let nul_str = "\u{e1a1}";
             // c:Src/subst.c:36 — `nulstring[] = {Nularg, '\0'}`. Empty
             // array elements get the Nularg sentinel ONLY in qt (DQ)
             // context where prefork's `else if (!keep) uremnode` at
@@ -25394,7 +25394,7 @@ pub fn paramsubst(
             // word-splits and DROPS empty elements (e.g. `a=(x y z);
             // echo ${a%x*}` → `y z`, not ` y z`). Bug #578: zshrs
             // emitted Nularg unconditionally, so unquoted splats with
-            // empty elements leaked `\u{e0a1}` into argv. Mirror C by
+            // empty elements leaked `\u{e1a1}` into argv. Mirror C by
             // gating on qt.
             // c:Src/subst.c:2653 + c:283 — the nested `${(flags)${…}}` inner.
             // C hands multsub the inner expansion text STARTING AT the `$`
@@ -25583,7 +25583,7 @@ pub fn paramsubst(
                 && !suffix_already_expanded
                 && suffix
                     .chars()
-                    .any(|c| matches!(c, '$' | '`' | '\u{e085}' | '\u{e08c}' | '\u{e093}' | '\u{e099}'))
+                    .any(|c| matches!(c, '$' | '`' | '\u{e185}' | '\u{e18c}' | '\u{e193}' | '\u{e199}'))
             {
                 let mut tl = LinkList::default(); // c:4318 local_list1(tl)
                 tl.push_back(suffix.clone()); // c:4321 init_list1(tl, fstr)
@@ -25749,7 +25749,7 @@ pub fn paramsubst(
                                                              // markers in this block are a stale mis-citation predating this
                                                              // fix; the real scalar-return code lives at c:4444+, not 1885.)
                                                              // A QUOTED expansion whose whole assembled result is empty must
-                                                             // emit the Nularg sentinel (`\u{e0a1}`) so prefork's empty-node
+                                                             // emit the Nularg sentinel (`\u{e1a1}`) so prefork's empty-node
                                                              // deletion (c:100 `else if (!(flags & PREFORK_SINGLE) && !keep)
                                                              // uremnode`, ported at subst.rs:388-396) does NOT elide it;
                                                              // remnulargs (c:170, subst.rs:327) converts the sentinel back to
@@ -25975,7 +25975,7 @@ pub fn paramsubst(
 
         // Optional `[subscript]`. Per zsh, only valid for declared
         // arrays/assocs — for scalars the `[` stays literal.
-        // Accept both literal `[` and tokenized Inbrack (\u{e091}) —
+        // Accept both literal `[` and tokenized Inbrack (\u{e191}) —
         // the lexer-pre-tokenized form arrives via the bridge for
         // `${name[sub]}` inside DQ, while bare-form input from
         // direct calls (e.g. BUILTIN_ARRAY_INDEX) keeps ASCII `[`.
@@ -26220,15 +26220,15 @@ pub fn paramsubst(
                 // c:Src/params.c::getarg:1571 — `singsub(&s)` runs on
                 // the subscript text after the needtok scan. The post-
                 // singsub form still carries lexer TOKEN bytes for
-                // non-substitution chars (Dash `\u{e09b}` from `col-$k`,
-                // Equals `\u{e08d}`, etc.) — singsub only resolves
+                // non-substitution chars (Dash `\u{e19b}` from `col-$k`,
+                // Equals `\u{e18d}`, etc.) — singsub only resolves
                 // `$`/`` ` `` substitutions, not token-byte normalisation.
                 // C zsh's getindex at c:1584 calls `untokenize(s)` BEFORE
                 // the hash/array lookup so the key matches the stored
                 // ASCII form. zshrs's bare-form `$NAME[KEY]` arm
                 // previously fed the token-bearing key straight into
                 // `map.get(sub)` at line ~10748 — for `H[col-$k]` with
-                // $k="foo" the lookup searched for `col\u{e09b}foo` but
+                // $k="foo" the lookup searched for `col\u{e19b}foo` but
                 // the stored key was `col-foo`, so the lookup missed
                 // and the bare `[[ -z $H[col-$k] ]]` cond test saw
                 // empty. Mirror C's getindex untokenize step.
@@ -27207,7 +27207,7 @@ pub fn paramsubst(
                 .unwrap_or_else(|| "0".to_string()); // c:1625
                                                      // c:Src/subst.c:1820 — `$?:MOD` modifier chain. Bug #582
                                                      // extends the bare-form modifier walker to `?` and `$`.
-                                                     // Accept Quest token (`\u{e097}`) alongside ASCII `?` for
+                                                     // Accept Quest token (`\u{e197}`) alongside ASCII `?` for
                                                      // unquoted contexts where the lexer tokenizes `?`.
                                                      // c:3761 — scalar special (`isarr` is 0 here), so only the
                                                      // `modify(&val, &s, inbrace)` leg applies; no element list.
@@ -27226,7 +27226,7 @@ pub fn paramsubst(
             // c:1625
             let value = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed).to_string(); // c:1625
                                                         // c:Src/subst.c:1820 — `$$:MOD` modifier chain. Accept
-                                                        // Stringg token (`\u{e085}`) alongside ASCII `$` since the
+                                                        // Stringg token (`\u{e185}`) alongside ASCII `$` since the
                                                         // lexer tokenizes the second `$` of `$$` as Stringg in
                                                         // unquoted contexts.
                                                         // c:3761 — scalar special (`isarr` is 0 here), so only the
@@ -27258,7 +27258,7 @@ pub fn paramsubst(
             // forms (Pound=#, Quest=?, Bang=!, Dash=-, Star=*, Stringg=$).
             // The lexer tokenizes these inside double-quotes / param
             // expansion contexts, so `$#?` arrives here with `next`
-            // being Quest (\u{e097}) not ASCII '?'.
+            // being Quest (\u{e197}) not ASCII '?'.
             // c:Src/subst.c:2571-2572 — `(c == '#' || c == Pound) &&
             // (inbrace || !isset(POSIXIDENTIFIERS)) && …`. This arm is the
             // unbraced form, so under POSIX_IDENTIFIERS (set by `emulate sh`)
@@ -27373,7 +27373,7 @@ pub fn paramsubst(
         // c:Src/subst.c:1885 — the paramsubst gate that decides whether the
         // char after `$` starts a parameter at all spells the star leg as
         // `c != '*' && c != Star`, i.e. C accepts BOTH the ASCII `*` and the
-        // Star TOKEN (`\u{e087}`) that Src/lex.c produces for every unquoted
+        // Star TOKEN (`\u{e187}`) that Src/lex.c produces for every unquoted
         // `*` — including the one directly after `$`. `@` has no token form,
         // hence the single spelling there (same line). Without Star in this
         // arm a tokenized `$*` fell through to the literal-`$` arm below and
@@ -27386,8 +27386,8 @@ pub fn paramsubst(
                                                                   // the bracket subscript inline. Walk a depth-tracked `[...]`
                                                                   // after the `@`/`*` and apply via getarrvalue when present.
             let mut after_pos = pos + 1;
-            // Accept literal `[` AND tokenized Inbrack (\u{e086}) /
-            // Outbrack (\u{e08b}). When paramsubst runs on input that
+            // Accept literal `[` AND tokenized Inbrack (\u{e186}) /
+            // Outbrack (\u{e18b}). When paramsubst runs on input that
             // came through the lexer (DQ context), `[`/`]` are stored
             // as Inbrack/Outbrack tokens; bare-form input (direct call
             // from BUILTIN_ARRAY_INDEX) keeps them as ASCII brackets.
@@ -27644,7 +27644,7 @@ pub fn paramsubst(
         // c:Src/subst.c — `$-:MOD`, `$!:MOD`. Routes through
         // exec_getsparam which dispatches to lookup_special_var
         // (params.rs:10727). Bug #582 — handle both ASCII and tokenized
-        // (Dash \u{e09b}, Bang \u{e09c}) forms.
+        // (Dash \u{e19b}, Bang \u{e19c}) forms.
         c if c == '-' || c == Dash || c == '!' || c == Bang => {
             let name = if c == Dash {
                 "-".to_string()
@@ -27671,7 +27671,7 @@ pub fn paramsubst(
             // c:1625
             // Just a literal $ — if the dispatch char (which lives
             // at `chars[start_pos]`) is the tokenized DQ-form
-            // (Qstring `\u{e08c}`) or the bare Stringg (`\u{e085}`),
+            // (Qstring `\u{e18c}`) or the bare Stringg (`\u{e185}`),
             // emit it as a literal ASCII `$` so callers don't see
             // the metafied byte leak through. Parity bug: bare
             // `"$"` (a `$` with nothing valid following it inside
@@ -27714,8 +27714,8 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // port of zsh's `prefork()` Bnull-aware `$#` arm — Src/subst.c
     // around line 1860 dispatches via the param-name lookahead before
     // the math evaluator sees the expression.
-    // The `$#NAME` rewrite below can only fire at a `$` / Stringg (\u{e085}) /
-    // Qstring (\u{e08c}) char, so an expression containing none of them is
+    // The `$#NAME` rewrite below can only fire at a `$` / Stringg (\u{e185}) /
+    // Qstring (\u{e18c}) char, so an expression containing none of them is
     // copied through the loop verbatim (`out.push(bytes[i])` for every
     // index). Skipping the loop in that case is byte-identical and drops a
     // `Vec<char>` allocation plus a full UTF-8 decode+re-encode of the
@@ -27732,7 +27732,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
             let mut out = String::with_capacity(expr.len());
             let mut i = 0;
             while i < bytes.len() {
-                // Accept literal `$` AND Stringg (\u{e085}) / Qstring (\u{e08c})
+                // Accept literal `$` AND Stringg (\u{e185}) / Qstring (\u{e18c})
                 // — the lexer emits Stringg for `$X` at top level, Qstring
                 // for `$X` inside double quotes. arithsubst sees the
                 // tokenized form whenever the `$(( ))` body was lexed
@@ -28764,13 +28764,13 @@ const OUTANGPROC: char = OutangProc; // c:zsh.h:177
 /// Null string constant from `Src/subst.c:36`: `char nulstring[] = {Nularg, '\0'};`
 ///
 /// C value: `{0xa1, 0x00}` — the Nularg sentinel byte followed by
-/// terminator. The previous Rust port had `"\u{e08f}"` which is NOT
+/// terminator. The previous Rust port had `"\u{e18f}"` which is NOT
 /// the canonical value (Nularg = 0xa1, not 0x8F = 0x8f). Same
 /// drift-bug family as the TERM_UNKNOWN / HIST_* fixes.
 ///
 /// Routes through the canonical `Nularg` const at zsh_h.rs:163.
-/// Constructed as a const &str via the UTF-8 encoding of U+E0A1.
-pub const NULSTRING: &str = "\u{e0a1}"; // c:36 (Nularg sentinel)
+/// Constructed as a const &str via the UTF-8 encoding of U+e1A1.
+pub const NULSTRING: &str = "\u{e1a1}"; // c:36 (Nularg sentinel)
 
 /// Returns true if the global `errflag` (Src/utils.c) is set.
 /// Matches the C idiom `if (errflag) …` that subst.c sprinkles
@@ -29951,7 +29951,7 @@ mod tests {
     /// Pin `NULSTRING` to the canonical Nularg sentinel value.
     /// C: `char nulstring[] = {Nularg, '\\0'};` at Src/subst.c:36
     /// where Nularg = 0xa1 (Src/zsh.h:206). The previous Rust port
-    /// had `"\\u{e08f}"` which is NOT the Nularg byte — same drift-bug
+    /// had `"\\u{e18f}"` which is NOT the Nularg byte — same drift-bug
     /// family as TERM_UNKNOWN / HIST_* fixes.
     #[test]
     fn nulstring_matches_canonical_nularg_byte() {
@@ -29959,7 +29959,7 @@ mod tests {
         assert_eq!(crate::token_char::token_byte(Nularg), Some(0xa1), "Src/zsh.h:206 — Nularg must be 0xa1");
         // NULSTRING is the str form of just the Nularg char.
         assert_eq!(
-            NULSTRING, "\u{e0a1}",
+            NULSTRING, "\u{e1a1}",
             "Src/subst.c:36 — NULSTRING must be the single Nularg sentinel char"
         );
         let chars: Vec<char> = NULSTRING.chars().collect();
@@ -30452,14 +30452,14 @@ mod tests {
 
     /// c:737 — `~` with no following path or user-name resolves to
     /// $HOME directly. filesubstr requires the Tilde TOKEN
-    /// (Src/zsh.h:189, `\u{e098}`) per `*str == Tilde` at c:741. ASCII
+    /// (Src/zsh.h:189, `\u{e198}`) per `*str == Tilde` at c:741. ASCII
     /// `~` is rejected — substitution results and DQ-quoted source
     /// carry ASCII `~` and zsh does not tilde-expand those.
     #[test]
     fn filesubstr_bare_tilde_resolves_to_home() {
         let _g = crate::test_util::global_state_lock();
         if let Ok(home) = std::env::var("HOME") {
-            let r = filesubstr("\u{e098}", false);
+            let r = filesubstr("\u{e198}", false);
             assert_eq!(
                 r.as_deref(),
                 Some(home.as_str()),
@@ -30488,8 +30488,8 @@ mod tests {
         let Ok(home) = std::env::var("HOME") else {
             return;
         };
-        let eq = crate::ported::zsh_h::Equals; // \u{e08d}
-        let ti = crate::ported::zsh_h::Tilde; // \u{e098}
+        let eq = crate::ported::zsh_h::Equals; // \u{e18d}
+        let ti = crate::ported::zsh_h::Tilde; // \u{e198}
 
         // c:678-683 — Equals TOKEN, then a Tilde TOKEN right after it.
         assert_eq!(
@@ -30693,7 +30693,7 @@ mod tests {
 
         // Cross-pinning: confirm the WRONG mappings the previous port
         // had can NEVER match the canonical const. (If a future
-        // regression revives `\u{e085}` as Inpar, this would fail.)
+        // regression revives `\u{e185}` as Inpar, this would fail.)
         assert_ne!(
             Inpar as u32, 0x85,
             "Inpar must NOT equal 0x85 (that's Stringg)"
@@ -33512,10 +33512,10 @@ pub fn sub_flags_get() -> i32 {
 
 // Local `Dnull` / `Bnullkeep` constants — DELETED per user
 // directive. Both were WRONG values masquerading as canonical
-// tokens: local `Dnull = '\u{e097}'` is actually `Quest` (zsh.h:178);
-// local `Bnullkeep = '\u{e095}'` is actually `Outang` (zsh.h:176).
-// Canonical values from `Src/zsh.h:194,200` are `Dnull = '\u{e09e}'`
-// and `Bnullkeep = '\u{e0a0}'`. Both already imported from
+// tokens: local `Dnull = '\u{e197}'` is actually `Quest` (zsh.h:178);
+// local `Bnullkeep = '\u{e195}'` is actually `Outang` (zsh.h:176).
+// Canonical values from `Src/zsh.h:194,200` are `Dnull = '\u{e19e}'`
+// and `Bnullkeep = '\u{e1a0}'`. Both already imported from
 // `crate::ported::zsh_h` at the top of this file (Dnull) and
 // available there (Bnullkeep). Bringing Bnullkeep into scope.
 

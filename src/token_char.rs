@@ -14,14 +14,18 @@
 //! one was read as a token by every untokenize / quote / pattern path
 //! (`${(qq)v}` on an NBSP printed `'\'`). The tokens therefore live in the
 //! Private Use Area at [`TOKEN_BASE`] + the C byte: the low byte still IS
-//! the C token byte, their order is C's, and no real text collides.
+//! the C token byte, their order is C's, and no real text collides. The base is
+//! U+E100, not U+E000: the Powerline glyphs U+E0A0..U+E0A2 (git branch, line
+//! number, padlock) sit at U+E000 + Bnullkeep/Nularg/Marker and were eaten as
+//! tokens in every prompt that used them. U+E184..U+E1A2 is unassigned in the
+//! Nerd Font and Powerline PUA blocks.
 //!
 //! The helpers below are for the code that crosses between the two forms:
 //! byte buffers (wordcode, `.zwc`, metafied strings) carry the C byte; a
 //! `char` string carries the PUA scalar.
 
 /// The Private Use Area offset added to a C token byte.
-pub const TOKEN_BASE: u32 = 0xe000;
+pub const TOKEN_BASE: u32 = 0xe100;
 
 /// First and last C token bytes (`Pound`, `Marker`; c:Src/zsh.h:159, :224).
 pub const FIRST_TOKEN_BYTE: u8 = 0x84;
@@ -69,7 +73,7 @@ pub fn untokenize_bytes(b: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if let [0xee, 0x82, t, ..] = b[i..] {
+        if let [0xee, 0x86, t, ..] = b[i..] {
             if crate::ported::ztype_h::itok(t) {
                 if t != nularg {
                     out.push(ztokens[(t - FIRST_TOKEN_BYTE) as usize]);
@@ -95,7 +99,7 @@ mod tests {
             assert!(is_token_char(c));
             assert_eq!(token_byte(c), Some(b));
         }
-        for c in ['\u{a0}', '\u{a1}', '\u{a2}', '\u{85}', 'a', '$', '\u{e083}', '\u{e0a3}'] {
+        for c in ['\u{a0}', '\u{a1}', '\u{a2}', '\u{85}', 'a', '$', '\u{e083}', '\u{e0a0}', '\u{e0a1}', '\u{e0a2}', '\u{e183}', '\u{e1a3}'] {
             assert!(!is_token_char(c), "{c:?}");
         }
         assert_eq!(token_char_from_byte(0x83), None);

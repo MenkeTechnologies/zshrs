@@ -778,8 +778,8 @@ fn cmd_or_math_sub() -> i32 {
                 if c2 == Some(')') {
                     // c:559-562 — confirmed math: rewrite Inpar →
                     // Inparmath at lexpos, append closing `)`. Inpar
-                    // and Inparmath are both 3-byte UTF-8 (`\u{e088}` /
-                    // `\u{e089}`); set_char_at swaps in place.
+                    // and Inparmath are both 3-byte UTF-8 (`\u{e188}` /
+                    // `\u{e189}`); set_char_at swaps in place.
                     LEX_LEXBUF.with_borrow_mut(|b| b.set_char_at(lexpos, Inparmath));
                     add(')');
                     return CMD_OR_MATH_MATH;
@@ -1054,7 +1054,7 @@ impl lexbufstate {
     /// caller must guarantee the new char's UTF-8 byte width
     /// matches the current char's width at that offset — used
     /// only for swapping equally-sized markers (e.g. Inpar
-    /// `\u{e088}` → Inparmath `\u{e089}`, both 2 UTF-8 bytes).
+    /// `\u{e188}` → Inparmath `\u{e189}`, both 2 UTF-8 bytes).
     pub(crate) fn set_char_at(&mut self, byte_idx: usize, c: char) {
         let Some(buf) = self.ptr.as_mut() else { return };
         if byte_idx >= buf.len() {
@@ -2149,7 +2149,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // c:1049-1057 — `${...}` parameter expansion.
                         // C does `add(c)` where `c` was already
                         // mapped by `lextok2[c]` at switch entry from
-                        // `$` (0x24) to Stringg (`\u{e085}`). Rust's
+                        // `$` (0x24) to Stringg (`\u{e185}`). Rust's
                         // switch dispatches on the LX2_* class but
                         // doesn't pre-map `c`, so `add(c)` here would
                         // store the raw `$` byte. Use the marker
@@ -2217,7 +2217,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // == String)`, i.e. by looking back for the
                         // Stringg marker the top-level `$` handler
                         // emitted. So the marker here MUST be
-                        // Stringg (`\u{e085}`), not Qstring (`\u{e08c}`,
+                        // Stringg (`\u{e185}`), not Qstring (`\u{e18c}`,
                         // which is `$` inside double quotes). Using
                         // Qstring made getkeystring's $'...' detect
                         // fail and the strs section diverge from C.
@@ -2278,8 +2278,8 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // $"..." localized string. Same shape as a
                         // plain "..." but flagged via Stringg+Dnull
                         // (NOT Qstring) so the dollar prefix marker
-                        // sits in the strs section as `\u{e085}\u{e09e}…`.
-                        // Qstring (`\u{e08c}`) is reserved for $X
+                        // sits in the strs section as `\u{e185}\u{e19e}…`.
+                        // Qstring (`\u{e18c}`) is reserved for $X
                         // sequences encountered INSIDE double quotes
                         // (c:1524, 1546, 1551 inside dquote_parse);
                         // top-level `$"…"` uses Stringg per
@@ -4380,11 +4380,11 @@ pub fn exalias() -> bool {
                 continue;
             }
             let cu = c as u32;
-            if (0xe084..=0xe0a1).contains(&cu) {
+            if (0xe184..=0xe1a1).contains(&cu) {
                 // c:1979 — `ztokens[*t - Pound]`. `Nularg` (0xa1) indexes
                 // the table's terminating NUL, which ends C's copy string;
                 // stop here for the same effect.
-                match zt.get((cu - 0xe084) as usize) {
+                match zt.get((cu - 0xe184) as usize) {
                     Some(&b) => copy.push(b as char),
                     None => break,
                 }
@@ -5708,7 +5708,7 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {
         let cu = c as u32;
-        if (0xe084..=0xe0a1).contains(&cu) {
+        if (0xe184..=0xe1a1).contains(&cu) {
             // c:52 (Src/ztype.h) ITOK range
             match c {
                 c if c == Pound => result.push('#'),
@@ -5843,7 +5843,7 @@ pub fn untokenize(s: &str) -> String {
         // Marker (0xa2) is intentionally NOT in the range — C's untokenize
         // never strips it (it's IMETA-only per Src/utils.c:4197).
         let cu = c as u32;
-        if (0xe084..=0xe0a1).contains(&cu) {
+        if (0xe184..=0xe1a1).contains(&cu) {
             // `Qstring Snull` opens a `$'...'` ANSI-C-quoted region.
             // Per Src/subst.c:301-304, when `stringsubst()` hits an
             // `Snull` it calls `stringsubstquote()` (line 206) which
@@ -5855,8 +5855,8 @@ pub fn untokenize(s: &str) -> String {
             // region is replaced by its decoded content with no
             // `$`/`'`/marker remnants.
             // c:Src/lex.c top-level `$'...'` lexer emits `Stringg`
-            // (`\u{e085}`) before the opening `Snull`, while DQ-context
-            // `$'...'` would emit Qstring (`\u{e08c}`). Accept both so
+            // (`\u{e185}`) before the opening `Snull`, while DQ-context
+            // `$'...'` would emit Qstring (`\u{e18c}`). Accept both so
             // untokenize handles top-level and DQ-context ANSI-C
             // strings the same way.
             if (c == Qstring || c == Stringg) && i + 1 < chars.len() && chars[i + 1] == Snull {
@@ -6284,20 +6284,20 @@ mod tests {
     }
 
     /// `Src/exec.c:2079-2106` — `untokenize(s)` walks the string and
-    /// replaces ITOK bytes (Pound=\u{e084} through Nularg=\u{e0a1} per
+    /// replaces ITOK bytes (Pound=\u{e184} through Nularg=\u{e1a1} per
     /// `Src/zsh.h:159-191`) using the `ztokens` table; Nularg is
     /// dropped entirely (no replacement char).
     ///
     /// The previous Rust port called Pound "Marker" in this test —
-    /// incorrect. Marker is `\u{e0a2}` (Src/zsh.h:224) and is OUTSIDE
+    /// incorrect. Marker is `\u{e1a2}` (Src/zsh.h:224) and is OUTSIDE
     /// the ITOK range — C's untokenize doesn't touch it. Pound
-    /// (`\u{e084}`) IS ITOK and gets replaced. Pin the canonical
+    /// (`\u{e184}`) IS ITOK and gets replaced. Pin the canonical
     /// contract: Pound replaced (or stripped), but text not in
     /// the ITOK range passes through verbatim.
     #[test]
     fn untokenize_strips_marker_sentinels() {
         let _g = crate::test_util::global_state_lock();
-        // Pound = \u{e084} per zsh.h:159. ITOK byte; untokenize should
+        // Pound = \u{e184} per zsh.h:159. ITOK byte; untokenize should
         // strip or replace it (the literal byte must NOT survive).
         let with_pound = format!("a{}b", Pound);
         let cleaned = untokenize(&with_pound);
@@ -6305,7 +6305,7 @@ mod tests {
             !cleaned.contains(Pound),
             "Pound (\\u{{84}}) sentinel must be replaced (got {cleaned:?})"
         );
-        // Marker = \u{e0a2} per zsh.h:224. NOT in ITOK range. C's
+        // Marker = \u{e1a2} per zsh.h:224. NOT in ITOK range. C's
         // untokenize doesn't touch it — passes through verbatim.
         let with_marker = format!("x{}y", Marker);
         let cleaned = untokenize(&with_marker);
@@ -6316,7 +6316,7 @@ mod tests {
     }
 
     /// `Src/utils.c:4198-4201` — ITOK range is Pound..Nularg
-    /// = `\u{e084}..=\u{e0a1}`. The previous Rust port's untokenize used
+    /// = `\u{e184}..=\u{e1a1}`. The previous Rust port's untokenize used
     /// `(0x83..=0x9f)` — too inclusive on the low end (META=0x83 is
     /// IMETA-only, never ITOK) and too narrow on the high end
     /// (excluded Bnullkeep=0xa0 and Nularg=0xa1, both ITOK).
@@ -6338,7 +6338,7 @@ mod tests {
             cleaned.contains('\u{83}'),
             "c:4197 — META (\\u{{83}}) is IMETA-only, never ITOK"
         );
-        // Nularg (\u{e0a1}) IS ITOK. C's untokenize SKIPS it (no
+        // Nularg (\u{e1a1}) IS ITOK. C's untokenize SKIPS it (no
         // replacement char per c:2089 `if (c != Nularg)`).
         let with_nularg = format!("a{}b", Nularg);
         let cleaned = untokenize(&with_nularg);
@@ -6486,7 +6486,7 @@ mod tests {
 
     /// `Src/lex.c:1802` — `parse_subst_string` returns 0 (success,
     /// no work) on empty input OR on the `nulstring` sentinel
-    /// (`{Nularg, 0}` = `"\u{e0a1}"`). Previous Rust port only checked
+    /// (`{Nularg, 0}` = `"\u{e1a1}"`). Previous Rust port only checked
     /// the empty case; a Nularg-only input would try to re-lex,
     /// surfacing a spurious parse error from the dquote_parse layer.
     #[test]
@@ -7287,7 +7287,7 @@ mod tests {
         for cp in [0x2192u32, 0x2026, 0x2570, 0x00e9, 0x21e3, 0x1f600, 0x0086, 0x0092] {
             let c = char::from_u32(cp).expect("valid scalar");
             let s = c.to_string();
-            let in_range = (0xe084..=0xe0a1).contains(&cp);
+            let in_range = (0xe184..=0xe1a1).contains(&cp);
             assert_eq!(
                 has_token(&s),
                 in_range && crate::ported::ztype_h::itok(cp as u8),
@@ -7303,10 +7303,10 @@ mod tests {
     #[test]
     fn has_token_still_detects_real_token_chars() {
         let _g = crate::test_util::global_state_lock();
-        assert!(has_token("x\u{e084}y"), "U+E084 is a token char");
-        assert!(has_token("\u{e09c}"), "U+E09C is a token char");
+        assert!(has_token("x\u{e184}y"), "U+e184 is a token char");
+        assert!(has_token("\u{e19c}"), "U+e19C is a token char");
         assert!(
-            has_token("plain\u{e084}"),
+            has_token("plain\u{e184}"),
             "a token char anywhere in the word counts"
         );
     }
@@ -7314,7 +7314,7 @@ mod tests {
     /// c:4317 — `has_token` is pure (deterministic across calls).
     #[test]
     fn has_token_is_pure() {
-        for s in ["", "abc", "abc def", "x\u{e084}y", "\u{e09c}"] {
+        for s in ["", "abc", "abc def", "x\u{e184}y", "\u{e19c}"] {
             let first = has_token(s);
             for _ in 0..3 {
                 assert_eq!(has_token(s), first, "has_token({:?}) must be pure", s);
@@ -7539,10 +7539,10 @@ pub fn untokenize_ztokens(s: &str) -> String {
         }
         let cu = c as u32;
         // c:Src/ztype.h:52 ITOK — Pound (0x84) ..= Nularg (0xa1).
-        if (0xe084..=0xe0a1).contains(&cu) {
+        if (0xe184..=0xe1a1).contains(&cu) {
             // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
             if c != crate::ported::zsh_h::Nularg {
-                let idx = (cu - 0xe084) as usize;
+                let idx = (cu - 0xe184) as usize;
                 result.push(crate::ported::lex::ztokens.chars().nth(idx).unwrap_or(c));
             }
         } else {

@@ -60,7 +60,7 @@ pub const SHARD_MAGIC: u32 = 0x5A525343;
 /// v2 added `ScriptEntry::binary_len_at_cache`; a v1 shard has no length to
 /// compare against, so it is rejected wholesale rather than half-validated.
 /// v3: token chars moved to the Private Use Area (crate::token_char).
-pub const SHARD_FORMAT_VERSION: u32 = 3;
+pub const SHARD_FORMAT_VERSION: u32 = 4;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]

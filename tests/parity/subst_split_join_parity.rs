@@ -70,7 +70,7 @@ mod split {
     use super::*;
 
     /// `${(s./.)PATH}` split on /. Fixed: paramsubst's split + auto-
-    /// splat now emits a Nularg sentinel (`\u{e0a1}`) for empty
+    /// splat now emits a Nularg sentinel (`\u{e1a1}`) for empty
     /// elements per c:Src/subst.c:36 `nulstring[]`, and prefork's
     /// remnulargs at c:Src/subst.c:170 strips it back to empty AFTER
     /// the empty-delete branch has already passed. Without that

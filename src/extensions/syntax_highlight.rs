@@ -917,7 +917,7 @@ fn fsh_expand_for_path(tokenized: &str) -> Option<String> {
             Tilde => out.push('~'),
             Comma => out.push(','),
             Dash => out.push('-'),
-            c if ('\u{e084}'..='\u{e0a1}').contains(&c) => return None,
+            c if ('\u{e184}'..='\u{e1a1}').contains(&c) => return None,
             c => out.push(c),
         }
     }
@@ -1040,7 +1040,7 @@ pub fn fsh_is_precommand(word: &str) -> bool {
 /// fish:301-308 — `has_expand_reserved`: does the string still carry expansion
 /// markers? zsh spelling: any lexer token char left in the ITOK range.
 fn has_expand_reserved(s: &str) -> bool {
-    s.chars().any(|wc| ('\u{e084}'..='\u{e0a1}').contains(&wc))
+    s.chars().any(|wc| ('\u{e184}'..='\u{e1a1}').contains(&wc))
 }
 
 /// fish:310-341 — Parse a command line. Return the first command, and the first

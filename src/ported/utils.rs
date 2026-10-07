@@ -3293,7 +3293,7 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> {
 /// Stringg, Hat, Star, ..., Bnull, Nularg). Earlier impl checked
 /// only 0x83 (Meta) which missed Dash/Equals/Inbrack/Inbrace/etc.,
 /// so any string containing those (e.g. `dart-lang/dart` →
-/// `dart\u{e09b}lang/dart`) got encoded with the no-token bit set,
+/// `dart\u{e19b}lang/dart`) got encoded with the no-token bit set,
 /// breaking byte parity with C's wordcode-emitter output.
 /// ```c
 /// while (*s)
@@ -9793,7 +9793,7 @@ pub(crate) fn quotedzputs(s: &str) -> String {
                         // UTF-8, so the faithful transposition walks CHARS (a byte
                         // walk Latin-1-casts every multibyte char: em-dash E2 80 94
                         // became "â" + a token byte that downstream passes ate).
-                        // Token chars (Dash U+E09B, Meta U+0083) are codepoints here.
+                        // Token chars (Dash U+e19B, Meta U+0083) are codepoints here.
         let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
         while i < chars_v.len() {
@@ -12078,7 +12078,7 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
     while let Some(c) = chars.next() {
         apply_pending_mask(&mut result, &mut pending_mask);
         flush_tbuf(&mut result, &mut tbuf_mark, &mut ignoring);
-        if !(0xe084..=0xe0a1).contains(&(c as u32))
+        if !(0xe184..=0xe1a1).contains(&(c as u32))
             && !(c == '\\' && matches!(chars.peek(), Some('u') | Some('U')))
         {
             tbuf_mark = Some(result.len());
@@ -14379,7 +14379,7 @@ mod tests {
         }
         // Still true for a genuine token char, so the fix isn't a blanket
         // "non-ASCII is never a token".
-        assert!(has_token("plain\u{e09c}"), "c:2285 — Bang (U+E09C) is a token");
+        assert!(has_token("plain\u{e19c}"), "c:2285 — Bang (U+e19C) is a token");
     }
 
     /// `Src/utils.c:5271` — `else if (itok(*s)) { s++; continue; }`. C may
@@ -14408,8 +14408,8 @@ mod tests {
         // Meta pair still decodes to the escaped byte (c:5269-5270), so
         // the fix is not a blanket "pass everything through".
         let mut out: Vec<u8> = Vec::new();
-        let _ = zputs("a\u{e09c}b", &mut out);
-        assert_eq!(out, b"ab", "c:5271 — Bang (U+E09C) is a token, skipped");
+        let _ = zputs("a\u{e19c}b", &mut out);
+        assert_eq!(out, b"ab", "c:5271 — Bang (U+e19C) is a token, skipped");
         let mut out: Vec<u8> = Vec::new();
         let _ = zputs("a\u{83}\u{c1}b", &mut out);
         assert_eq!(

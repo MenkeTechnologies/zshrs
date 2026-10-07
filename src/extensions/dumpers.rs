@@ -170,7 +170,7 @@ pub fn dump_tokens(src: &str) -> String {
         }
         let raw = lex::tokstr().unwrap_or_default();
         // For DISPLAY purposes (matching `Src/zsh dumptokens`
-        // output byte-for-byte), `Qstring` (U+E08C — the DQ-context
+        // output byte-for-byte), `Qstring` (U+e18C — the DQ-context
         // `$` marker per Src/zsh.h:167) must render as `$`.
         // `untokenize_preserve_quotes` deliberately leaves Qstring
         // raw so `stringsubst` at Src/subst.c:283 can branch on

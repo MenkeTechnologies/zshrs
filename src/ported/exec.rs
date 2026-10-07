@@ -13160,7 +13160,7 @@ pub fn stripkshdef(
 
     // c:6383-6388 — name match, tolerating Dash-tokenised hyphens
     // on either side. C walks bytes, and there the Dash token is ONE
-    // byte; the port's String holds it as the char U+E09B (three UTF-8
+    // byte; the port's String holds it as the char U+e19B (three UTF-8
     // bytes), so the walk must be per char. Walking `as_bytes()` put the
     // two sides out of step at the first hyphen, so a ksh-style
     // `foo-bar() { … }` autoload file was never recognised as its own

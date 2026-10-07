@@ -505,7 +505,7 @@ fn test_nested_subscript_on_array_slice_indexes_subarray() {
 fn test_nested_char_subscript_negative_index() {
     // c:Src/params.c:1656+ — `${a[N][M]}` walks into element N's characters
     // with subscript M. In an UNQUOTED subscript the lexer tokenizes `-` to
-    // the Dash token (\u{e09b}), so a negative M (`${a[1][-1]}`) must be
+    // the Dash token (\u{e19b}), so a negative M (`${a[1][-1]}`) must be
     // normalized before the numeric parse; previously it silently read as
     // the parse default (+1) and returned the FIRST char instead of the last.
     let out = |code: &str| run_zshrs(code).1.trim().to_string();
@@ -5636,7 +5636,7 @@ fn test_exit_trap_with_explicit_exit_in_trap_body() {
 #[test]
 fn test_function_name_with_hyphen_dispatches_correctly() {
     // `foo-bar()` registered cleanly but the call site looked up
-    // `foo\u{e09b}bar` (the lexer's META encoding of `-`) and missed
+    // `foo\u{e19b}bar` (the lexer's META encoding of `-`) and missed
     // the registered function. Untokenize before add_name in the
     // CallFunction emit path.
     let (_, output, _) = run_zshrs(r#"foo-bar() { echo F; }; foo-bar"#);
@@ -8061,7 +8061,7 @@ fn test_special_param_concat_after_literal() {
     // `echo X$?` should expand $? — was returning literal `X$?`.
     // Same root cause for `X$$`, `X$#`, `X$*`, `X$!`. Fix: extend
     // find_expansion_end's special-single-char matcher to recognise
-    // the META-coded forms (`\u{e097}` for `?`, `\u{e085}` for `$`, etc.)
+    // the META-coded forms (`\u{e197}` for `?`, `\u{e185}` for `$`, etc.)
     // so the expansion-segment splitter doesn't truncate.
     let (_, output, _) = run_zshrs("true; echo X$?");
     assert_eq!(output.trim(), "X0");

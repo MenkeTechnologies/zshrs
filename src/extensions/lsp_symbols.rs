@@ -455,7 +455,7 @@ impl<'a> OccurrenceFinder<'a> {
                 };
                 if let Some(name) = callee {
                     // Untokenize so `daemon-ping` matches the parser's
-                    // `daemon\u{e09b}ping` storage form.
+                    // `daemon\u{e19b}ping` storage form.
                     let nu = crate::ported::lex::untokenize(name);
                     if nu == self.target {
                         self.out.push(line);
@@ -615,7 +615,7 @@ impl Builder {
     }
 
     fn record_ref(&mut self, name: &str, line: u32) {
-        // Compare untokenized form so a parser-stored `daemon\u{e09b}ping`
+        // Compare untokenized form so a parser-stored `daemon\u{e19b}ping`
         // call-site word resolves against the func_index's printable
         // key `daemon-ping`.
         let name = crate::ported::lex::untokenize(name);
@@ -866,13 +866,13 @@ impl Builder {
     /// the same `$name` shape we care about.
     ///
     /// The parser stores word strings with zsh's internal token bytes
-    /// (e.g. `$` ↔ `\u{e085}` aka `Stringg`). `untokenize` reverts those
+    /// (e.g. `$` ↔ `\u{e185}` aka `Stringg`). `untokenize` reverts those
     /// back to the printable form so we can match the literal `$`.
     fn scan_dollar_refs(&mut self, word: &str, line: u32) {
         // Route through the char-level canonical port (`ported::lex::
         // untokenize`, port of `Src/exec.c:2077`). The byte-level
         // `zwc::untokenize` is for raw-byte .zwc-file paths; a Rust
-        // `String` encodes each token char (`\u{e085}` Stringg, `\u{e08c}`
+        // `String` encodes each token char (`\u{e185}` Stringg, `\u{e18c}`
         // Qstring, etc.) as a 3-byte UTF-8 sequence, which byte-level
         // processing splits — Qstring would be silently dropped, hiding
         // `$VAR` refs inside double-quoted words from this scanner.

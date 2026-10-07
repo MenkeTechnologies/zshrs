@@ -690,7 +690,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     out.push_str(&String::from_utf8_lossy(&run));
                     run.clear();
                 }
-                // The token CHAR, not `b as char`: Inpar is U+E088 (token_char.rs), and
+                // The token CHAR, not `b as char`: Inpar is U+e188 (token_char.rs), and
                 // U+0088 made countprompt count `%{…%}`/colour escapes as visible text.
                 out.push(crate::token_char::token_char_from_byte(b).unwrap_or(b as char)); // c:1179-1184
                 i += 1;
@@ -2430,7 +2430,7 @@ pub fn prompttrunc(
                     out.push_str(&String::from_utf8_lossy(&run));
                     run.clear();
                 }
-                // The token CHAR, not `b as char`: Inpar is U+E088 (token_char.rs), and
+                // The token CHAR, not `b as char`: Inpar is U+e188 (token_char.rs), and
                 // U+0088 made countprompt count `%{…%}`/colour escapes as visible text.
                 out.push(crate::token_char::token_char_from_byte(b).unwrap_or(b as char)); // c:1179-1184
                 i += 1;

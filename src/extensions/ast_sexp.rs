@@ -461,8 +461,8 @@ fn emit_str(s: &str, out: &mut String) {
     // Route through the canonical char-level port (`ported::lex::untokenize`,
     // port of `Src/exec.c:2077 untokenize`). The byte-level `zwc::untokenize`
     // is for raw-byte .zwc-file paths where tokens encode as single bytes;
-    // `tokstr` is a Rust `String` where each token char (`\u{e08c}` Qstring,
-    // `\u{e09b}` Dash, etc.) is stored as a 3-byte UTF-8 sequence (`0xee
+    // `tokstr` is a Rust `String` where each token char (`\u{e18c}` Qstring,
+    // `\u{e19b}` Dash, etc.) is stored as a 3-byte UTF-8 sequence (`0xee
     // 0x82 0x8c`, etc.). Byte-level processing of that splits the multi-byte
     // sequence — the 0xee 0x82 prefix falls into the byte-level catch-all and
     // the token byte that follows is processed independently. Char-level
@@ -547,7 +547,7 @@ mod tests {
 
     // Regression pins for the Qstring-stripping bug (2026-05-23):
     // `emit_str` used to call the byte-level `zwc::untokenize` on
-    // `s.as_bytes()`. UTF-8 token chars (`\u{e08c}` Qstring etc.) encode
+    // `s.as_bytes()`. UTF-8 token chars (`\u{e18c}` Qstring etc.) encode
     // as 2-byte sequences; byte-level processing split them and the
     // Qstring arm was missing from `zwc::untokenize` anyway, so every
     // `$VAR` inside `"..."` lost its `$` in the AST. Fixed by routing
@@ -591,7 +591,7 @@ mod tests {
     fn dollar_outside_quotes_still_emitted() {
         let _g = crate::test_util::global_state_lock();
         // Sanity: outside-quote path uses the Stringg arm
-        // (`\u{e085}` → `$`), not Qstring; verify the fix didn't
+        // (`\u{e185}` → `$`), not Qstring; verify the fix didn't
         // break the existing-correct path.
         let s = parse_to_sexp(r#"echo $1 ${VAR}"#);
         assert!(

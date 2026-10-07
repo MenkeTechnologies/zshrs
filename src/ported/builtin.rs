@@ -11847,12 +11847,12 @@ pub fn bin_hash(
                 // docs/BUGS.md: `hash -d zh=~` stored `'~'` instead
                 // of $HOME. Apply tilde expansion locally by routing
                 // the value through filesubstr — re-tokenize a
-                // leading `~` to the Tilde TOKEN (\u{e098}) which
+                // leading `~` to the Tilde TOKEN (\u{e198}) which
                 // filesubstr keys on per its strict-token
                 // contract (subst.rs:1761).
                 let expanded_v: String = if v.starts_with('~') {
                     let rest = &v[1..];
-                    let tokenized = format!("\u{e098}{}", rest);
+                    let tokenized = format!("\u{e198}{}", rest);
                     crate::ported::subst::filesubstr(&tokenized, false)
                         .unwrap_or_else(|| v.to_string())
                 } else {
@@ -16199,7 +16199,7 @@ pub fn bin_read(
                     // Mark a backslash-escaped byte literal so IFS splitting
                     // skips it (see the default-line loop above for the rule).
                     if was_escaped {
-                        buf_bytes.extend_from_slice("\u{e099}".as_bytes());
+                        buf_bytes.extend_from_slice("\u{e199}".as_bytes());
                     }
                     buf_bytes.extend_from_slice(&unit); // c:7021-7027
                 }
@@ -16264,10 +16264,10 @@ pub fn bin_read(
                                 // A backslash-escaped char is literal and must
                                 // NOT act as an IFS separator: dash/ksh/bash/zsh
                                 // all read `a\ b` as the single field `a b`.
-                                // Prefix it with the Bnull mark (\u{e099}, UTF-8
+                                // Prefix it with the Bnull mark (\u{e199}, UTF-8
                                 // C2 99) so the IFS split below skips it; the
                                 // mark is stripped before assignment.
-                                buf_bytes.extend_from_slice("\u{e099}".as_bytes());
+                                buf_bytes.extend_from_slice("\u{e199}".as_bytes());
                                 buf_bytes.push(nx);
                                 continue;
                             }
@@ -16327,14 +16327,14 @@ pub fn bin_read(
         return eof;
     }
 
-    // Backslash-escaped chars were tagged with the Bnull mark (\u{e099}) by
+    // Backslash-escaped chars were tagged with the Bnull mark (\u{e199}) by
     // the read loop so the IFS splitting below treats them as literal.
     // `rmark` is that tag; `unmark` strips it (keeping the escaped char),
     // applied to every field/value just before assignment. Both are no-ops
     // on the common markerless line (fast `contains` guard). No C
     // counterpart — C's read splits inline during the char loop, so it
     // never needs a post-hoc mark; the port splits in a second pass.
-    let rmark = '\u{e099}';
+    let rmark = '\u{e199}';
     let unmark = |s: &str| -> String {
         if !s.contains(rmark) {
             return s.to_string();

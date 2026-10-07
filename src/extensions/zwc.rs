@@ -137,7 +137,7 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
 
     while i < bytes.len() {
         let b = bytes[i];
-        // Token constants in zsh_h are `char` (Unicode \u{e084}..\u{e0a1}).
+        // Token constants in zsh_h are `char` (Unicode \u{e184}..\u{e1a1}).
         // Tokenized strings encode them as the same byte value, so widen
         // the byte to char for the match.
         let c = b as char;
@@ -165,8 +165,8 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
             Snull | Dnull | Bnull | Nularg => {
                 // Skip null markers
             }
-            '\u{e089}' => result.push_str("(("), // Inparmath
-            '\u{e08b}' => result.push_str("))"), // Outparmath
+            '\u{e189}' => result.push_str("(("), // Inparmath
+            '\u{e18b}' => result.push_str("))"), // Outparmath
             _ if b >= 0x80 => {
                 // Unknown token, skip or try to represent
             }

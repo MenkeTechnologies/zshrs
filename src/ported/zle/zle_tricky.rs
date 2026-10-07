@@ -1788,7 +1788,7 @@ pub fn dupbrinfo(
 ///
 /// The input is a LEXED word, not raw user text: every character the
 /// parser found special has already been rewritten to its `Ztoken`
-/// marker (`Star` = U+E087 for a glob `*`, `Stringg` = U+E085 for a
+/// marker (`Star` = U+e187 for a glob `*`, `Stringg` = U+e185 for a
 /// live `$`, …), and a character that was quoted keeps its literal
 /// form. So the test C makes is on the token BYTE, never on the
 /// printable character:
@@ -2349,7 +2349,7 @@ pub fn get_comp_string() -> Option<String> {
                         // Snull/Dash are multi-byte chars in the Rust meta
                         // string, so step by chars — byte-stepping and slicing
                         // (`ttv[idx..]`) inside a token panics on the char
-                        // boundary (e.g. `\u{e09b}` Dash spans 2 bytes).
+                        // boundary (e.g. `\u{e19b}` Dash spans 2 bytes).
                         for (idx, ch) in ttv.char_indices() {
                             if ch == snull {
                                 // c:1376

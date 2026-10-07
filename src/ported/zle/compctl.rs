@@ -4790,12 +4790,12 @@ static INSUBSCR: Mutex<i32> = Mutex::new(0);
 /// the lexer uses to mark suppressed quoted-region boundaries
 /// (Snull = single-quote, Dnull = double-quote, Bnull = backslash,
 /// String/Qstring = `$`/`'$'` markers).
-pub const Snull: char = '\u{e09d}'; // Single-quote null
-pub const Dnull: char = '\u{e09e}'; // Double-quote null
-pub const Bnull: char = '\u{e09f}'; // Backslash null
-pub const Stringg: char = '\u{e085}'; // META-$
+pub const Snull: char = '\u{e19d}'; // Single-quote null
+pub const Dnull: char = '\u{e19e}'; // Double-quote null
+pub const Bnull: char = '\u{e19f}'; // Backslash null
+pub const Stringg: char = '\u{e185}'; // META-$
 /// `QSTRING_TOK` constant.
-pub const QSTRING_TOK: char = '\u{e084}'; // Qstring (for $'...')
+pub const QSTRING_TOK: char = '\u{e184}'; // Qstring (for $'...')
 
 // =================================================================
 // Module boot/cleanup hooks — port of compctl.c:4000+

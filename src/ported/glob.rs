@@ -1796,7 +1796,7 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
     // c:2042 — every `return 1` in the C walk sits inside the Outbrace
     // arm, which is only reachable after an Inbrace has raised `depth`.
     // No Inbrace in the string means the answer is 0, so skip the
-    // `Vec<char>` build. Inbrace is U+E08F, whose UTF-8 encoding always
+    // `Vec<char>` build. Inbrace is U+e18F, whose UTF-8 encoding always
     // contains the byte 0x8F; testing for that byte can only
     // FALSE-POSITIVE (0x8F is also a continuation byte of other
     // characters), which just falls through to the real walk.
@@ -1813,29 +1813,29 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
         // c:Src/lex.c:3587-3600 — backslash escape converts the next
         // char into a tokenized literal (Bnull/Bnullkeep). xpandbraces
         // sees the tokenized form so `\{` never enters the brace
-        // walk. Accept both the canonical Bnull (`\u{e09f}`,
+        // walk. Accept both the canonical Bnull (`\u{e19f}`,
         // Src/zsh.h:195) and ASCII `\` so direct callers (tests,
         // utility paths) and pipeline callers (bridge → multsub →
         // xpandbraces with Bnull markers from gettokstr) both behave
         // the same: skip the escape marker plus the next char.
-        if (chars[i] == '\\' || chars[i] == '\u{e09f}') && i + 1 < len {
+        if (chars[i] == '\\' || chars[i] == '\u{e19f}') && i + 1 < len {
             i += 2; // c:3591 — skip Bnull/Bnullkeep + escaped char
             continue;
         }
         match chars[i] {
             // c:Src/glob.c:hasbraces — Inbrace/Outbrace/Comma TOKEN
-            // strictly (\u{e08f} / \u{e090} / \u{e09a}). The lexer emits
+            // strictly (\u{e18f} / \u{e190} / \u{e19a}). The lexer emits
             // TOKEN form for unescaped `{`/`,`/`}`; `\X` produces
             // Bnull + ASCII X. After remnulargs strips Bnull, the
             // ASCII X doesn't match the TOKEN check so escaped
             // braces correctly bypass expansion.
-            '\u{e08f}' => {
+            '\u{e18f}' => {
                 if depth == 0 {
                     brace_open = Some(i);
                 }
                 depth += 1;
             }
-            '\u{e090}' if depth > 0 => {
+            '\u{e190}' if depth > 0 => {
                 depth -= 1;
                 if depth == 0 {
                     // c:2050-2061 — a comma group always expands.
@@ -1856,7 +1856,7 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                         // handles the inner range.
                         let content: String =
                             chars[brace_open.unwrap_or(0) + 1..i].iter().collect();
-                        let nested = content.contains('\u{e08f}');
+                        let nested = content.contains('\u{e18f}');
                         // c:2074-2096 — structural walk: optional `-`,
                         // digits (0+), `..`, optional `-`, digits (0+),
                         // then MUST end at the brace (Outbrace), or take a
@@ -1866,11 +1866,11 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                         // forbids is trailing non-range chars (`{0..5%2}`,
                         // `{1.2..3}`). Closes with c:2085 `idigit(lbr[1])
                         // || idigit(str[-1])` — a digit adjacent to `..`.
-                        // Dash TOKEN (\u{e09b}) reads as ASCII `-`.
+                        // Dash TOKEN (\u{e19b}) reads as ASCII `-`.
                         let numeric_ok = {
                             let norm: String = content
                                 .chars()
-                                .map(|c| if c == '\u{e09b}' { '-' } else { c })
+                                .map(|c| if c == '\u{e19b}' { '-' } else { c })
                                 .collect();
                             let b = norm.as_bytes();
                             let n = b.len();
@@ -1932,7 +1932,7 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
             // returned false and the outer xpandbraces never ran,
             // leaving `{{1,2}}` literal instead of expanding to
             // `{1} {2}` per zsh's nested-brace pass.
-            '\u{e09a}' if depth > 0 => has_comma = true,
+            '\u{e19a}' if depth > 0 => has_comma = true,
             '.' if depth > 0 && i + 1 < len && chars[i + 1] == '.' => has_dotdot = true,
             _ => {}
         }
@@ -2065,7 +2065,7 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
         // c:Src/glob.c:xpandbraces — Inbrace TOKEN strict.
-        let start = match chars[from..].iter().position(|&c| c == '\u{e08f}') {
+        let start = match chars[from..].iter().position(|&c| c == '\u{e18f}') {
             Some(p) => from + p,
             None => return (None, None),
         };
@@ -2074,8 +2074,8 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
         let mut dotdot_pos = None;
         for i in (start + 1)..len {
             match chars[i] {
-                '\u{e08f}' => depth += 1,
-                '\u{e090}' => {
+                '\u{e18f}' => depth += 1,
+                '\u{e190}' => {
                     depth -= 1;
                     if depth == 0 {
                         let next_from = i + 1;
@@ -2154,7 +2154,7 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                         // but content may contain nested braces (e.g.
                         // `{{1,2}}` → `{1} {2}` — outer braces become
                         // literal, inner expands).
-                        if content.contains('\u{e08f}') {
+                        if content.contains('\u{e18f}') {
                             let inner_expanded = xpandbraces(&content, brace_ccl);
                             let mut out: Vec<String> = Vec::with_capacity(inner_expanded.len());
                             for piece in inner_expanded {
@@ -2167,7 +2167,7 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                         return (None, Some(next_from));
                     }
                 }
-                '\u{e09a}' if depth == 1 => comma_positions.push(i - start - 1),
+                '\u{e19a}' if depth == 1 => comma_positions.push(i - start - 1),
                 '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' && dotdot_pos.is_none() => {
                     dotdot_pos = Some(i - start - 1);
                 }
@@ -4200,7 +4200,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // nothing. `~` inside one component still works the same (main globs,
     // the post-filter applies the exclusion).
     let (pat, glob_exclusions): (String, Vec<String>) =
-        if glob_isset(EXTENDEDGLOB) && (pat.contains('~') || pat.contains('\u{e098}')) {
+        if glob_isset(EXTENDEDGLOB) && (pat.contains('~') || pat.contains('\u{e198}')) {
             // In a TOKENIZED word (see the `pat_tok` note below) only the
             // Tilde token is the operator (c:Src/pattern.c:800 compares
             // against `zpc_special[ZPC_TILDE]`, the token); a plain `~` was
@@ -4248,17 +4248,17 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
                         }
                         cur.push(c);
                     }
-                    '(' | '\u{e088}' => {
+                    '(' | '\u{e188}' => {
                         pd += 1;
                         cur.push(c);
                     }
-                    ')' | '\u{e08a}' => {
+                    ')' | '\u{e18a}' => {
                         if pd > 0 {
                             pd -= 1;
                         }
                         cur.push(c);
                     }
-                    '~' | '\u{e098}' if bd == 0 && pd == 0 && (c == '\u{e098}' || raw_tilde_is_op) => {
+                    '~' | '\u{e198}' if bd == 0 && pd == 0 && (c == '\u{e198}' || raw_tilde_is_op) => {
                         parts.push(std::mem::take(&mut cur));
                     }
                     _ => cur.push(c),
@@ -4503,7 +4503,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         // sb_niceformat maps a token byte back through `ztokens`
         // (c:Src/utils.c niceztrlen: `if (itok(c)) c = ztokens[c - Pound]`).
         // Formatting `pattern` with Rust's `{}` skipped that step, so
-        // `echo [[` reported `bad pattern: \u{e091}\u{e091}` (printed as two
+        // `echo [[` reported `bad pattern: \u{e191}\u{e191}` (printed as two
         // invisible C1 bytes) where zsh prints `bad pattern: [[`.
         zerr(&format!(
             "bad pattern: {}",
@@ -5755,8 +5755,8 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 // and reports the source character. The port printed
                 // the raw token instead, so `echo *(#q.)` without
                 // EXTENDEDGLOB — where the lexer has already turned `#`
-                // into Pound (U+E084) — said `unknown file attribute:
-                // \u{e084}` where zsh says `unknown file attribute: #`.
+                // into Pound (U+e184) — said `unknown file attribute:
+                // \u{e184}` where zsh says `unknown file attribute: #`.
                 // `unmeta_one` is a no-op here: zshrs holds characters,
                 // not metafied bytes.
                 let attr = crate::ported::lex::untokenize_ztokens(&ch.to_string()); // c:1758
@@ -6668,7 +6668,7 @@ fn expand_range(
     suffix: &str,
 ) -> Option<Vec<String>> {
     // c:Src/glob.c::xpandbraces parses brace-range endpoints via
-    // zstrtol, which is TOKEN-aware and treats Dash TOKEN (\u{e09b})
+    // zstrtol, which is TOKEN-aware and treats Dash TOKEN (\u{e19b})
     // as ASCII `-`. Rust's i64::parse only accepts ASCII, so
     // untokenize the content here before splitting/parsing — matches
     // C semantics without weakening the strict-TOKEN gates above.
@@ -6691,10 +6691,10 @@ fn expand_range(
                 continue;
             }
             let cu = cs[i] as u32;
-            if (0xe084..=0xe0a1).contains(&cu)
-                && cs[i] != '\u{e08f}'
-                && cs[i] != '\u{e090}'
-                && cs[i] != '\u{e09a}'
+            if (0xe184..=0xe1a1).contains(&cu)
+                && cs[i] != '\u{e18f}'
+                && cs[i] != '\u{e190}'
+                && cs[i] != '\u{e19a}'
             {
                 found = true;
                 break;
@@ -6855,7 +6855,7 @@ fn expand_range(
     // c:2311 — `if (bracechardots(str, &cstart, &cend))` decides the
     // CHARACTER range. The endpoints are METAFIED text, decoded through
     // MB_METACHARLENCONV (c:2236/2257), so a metafied 8-bit byte
-    // (`$'\x80'` → `Meta` `\u{e0a0}`) and a real multibyte character both
+    // (`$'\x80'` → `Meta` `\u{e1a0}`) and a real multibyte character both
     // resolve to their scalar. The old byte-length test (`left.len() ==
     // 1`) accepted only ASCII and left `{é..ê}` / `{$'\x80'..$'\x81'}`
     // unexpanded.
@@ -6911,8 +6911,8 @@ fn expand_comma(
     // positions are CHAR indices into `content` (per the xpandbraces
     // walker above that builds them from `chars: Vec<char>`). Slice
     // by char-index, not byte-index — `&content[last..pos]` would
-    // panic on multi-byte token chars like Comma TOKEN (`\u{e09a}`,
-    // 2 UTF-8 bytes) and Inbrace (`\u{e08f}`, 2 bytes).
+    // panic on multi-byte token chars like Comma TOKEN (`\u{e19a}`,
+    // 2 UTF-8 bytes) and Inbrace (`\u{e18f}`, 2 bytes).
     let chars: Vec<char> = content.chars().collect();
     let mut results = Vec::new();
     let mut last: usize = 0;
@@ -7173,8 +7173,8 @@ mod tests {
 
     /// Convert ASCII brace-expansion source to the lexer-tokenized
     /// form `hasbraces` / `xpandbraces` consume per c:Src/glob.c —
-    /// ASCII `{` → Inbrace (\u{e08f}), `}` → Outbrace (\u{e090}), `,` →
-    /// Comma (\u{e09a}). Backslash-escaped variants (`\{`, `\}`, `\,`)
+    /// ASCII `{` → Inbrace (\u{e18f}), `}` → Outbrace (\u{e190}), `,` →
+    /// Comma (\u{e19a}). Backslash-escaped variants (`\{`, `\}`, `\,`)
     /// emit Bnull + literal so the canonical "escape via Bnull"
     /// distinction reaches the brace walker. Used by every test in
     /// this module that wants to drive the canonical TOKEN-strict
@@ -7186,14 +7186,14 @@ mod tests {
             match c {
                 '\\' => match chars.peek() {
                     Some('{') | Some('}') | Some(',') => {
-                        out.push('\u{e09f}');
+                        out.push('\u{e19f}');
                         out.push(chars.next().unwrap());
                     }
                     _ => out.push(c),
                 },
-                '{' => out.push('\u{e08f}'),
-                '}' => out.push('\u{e090}'),
-                ',' => out.push('\u{e09a}'),
+                '{' => out.push('\u{e18f}'),
+                '}' => out.push('\u{e190}'),
+                ',' => out.push('\u{e19a}'),
                 _ => out.push(c),
             }
         }
@@ -8827,8 +8827,8 @@ mod tests {
 
     /// `Test/D09brace.ztst:116-118` — unmatched closing brace after
     /// matched braces stays literal: `{1..10}{..` → `1{.. 2{.. ...`.
-    /// `xpandbraces` itself preserves TOKEN form (Inbrace=`\u{e08f}`,
-    /// Outbrace=`\u{e090}`) per the convention pinned by
+    /// `xpandbraces` itself preserves TOKEN form (Inbrace=`\u{e18f}`,
+    /// Outbrace=`\u{e190}`) per the convention pinned by
     /// `xpandbraces_alpha_step_unsupported_anchored_to_zsh` — the
     /// later untokenize pass in the user-output pipeline turns
     /// surviving brace tokens into literal `{` / `}`. This test
@@ -8836,7 +8836,7 @@ mod tests {
     #[test]
     fn zsh_corpus_brace_unmatched_after_matched_left_literal() {
         let _g = crate::test_util::global_state_lock();
-        let tokb = '\u{e08f}'; // Inbrace
+        let tokb = '\u{e18f}'; // Inbrace
         let expected: Vec<String> = (1..=10).map(|n| format!("{}{}..", n, tokb)).collect();
         assert_eq!(
             xpandbraces(&tok("{1..10}{.."), false),
@@ -9419,7 +9419,7 @@ mod tests {
 
     /// `remnulargs` strips Snull (single-quote scope marker).
     /// C glob.c:3656 — inull predicate includes Snull (0x84).
-    /// Input `"a\u{e084}b"` → `"ab"` (strip the Snull byte).
+    /// Input `"a\u{e184}b"` → `"ab"` (strip the Snull byte).
     #[test]
     fn remnulargs_strips_snull_marker() {
         let _g = crate::test_util::global_state_lock();
@@ -9603,9 +9603,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let tokenized = format!(
             "{}a{}b{}",
-            '\u{e08f}', // Inbrace token
-            '\u{e09a}', // Comma token
-            '\u{e090}'  // Outbrace token
+            '\u{e18f}', // Inbrace token
+            '\u{e19a}', // Comma token
+            '\u{e190}'  // Outbrace token
         );
         assert!(
             hasbraces(&tokenized, false),

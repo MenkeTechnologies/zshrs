@@ -9033,7 +9033,7 @@ impl ShellExecutor {
         // arrives here in LEXER-TOKENIZED form (c:1221 `ostr =
         // getdata(np)`), so the literal fallback MUST untokenize or the
         // raw token bytes reach stdout: `unsetopt nomatch; echo
-        // /tmp/nope_*.txt` printed `/tmp/nope_\u{e087}.txt`.
+        // /tmp/nope_*.txt` printed `/tmp/nope_\u{e187}.txt`.
         vec![crate::ported::lex::untokenize(pattern)]
     }
     /// True iff the literal `pattern` actually contains a glob metachar
