@@ -104,10 +104,15 @@ pub fn prewarm_fpath(dirs: &[PathBuf]) -> PrewarmStats {
             let sha = crate::autoload_cache::source_digest(&source);
             let dir_key = dir.to_string_lossy().to_string();
             // Record what a load would resolve, so the loader can skip the
-            // `$fpath` search. Only when no `.zwc` could win over the plain
-            // file (c:Src/parse.c:3725 try_dump_file runs first).
+            // `$fpath` search. Only when no `.zwc` wins over the plain file:
+            // getfpfunc tries the directory digest and the per-function dump
+            // first (c:Src/exec.c:6238 try_dump_file), and a missing, older or
+            // unreadable dump falls through to the file
+            // (c:Src/parse.c:3771-3788). The stamps cover every candidate,
+            // so a dump written later makes the entry stale.
             let stamps = crate::autoload_cache::stamp_candidates(&dir_key, &name);
-            if stamps.iter().skip(1).all(|s| !s.exists) {
+            let file = path.to_string_lossy();
+            if crate::ported::parse::try_dump_file(&dir_key, &name, &file, true).is_none() {
                 crate::autoload_cache::note_resolved(
                     &name,
                     crate::autoload_cache::ResolvedLoad {
