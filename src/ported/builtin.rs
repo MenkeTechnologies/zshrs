@@ -13973,59 +13973,32 @@ pub fn bin_break(
         nump = 1; // c:5817
     }
 
-    // c:5812-5814 — positive-num requirement for BIN_CONTINUE / BIN_BREAK.
-    // C uses `zerrnam` (NOT zwarnnam) — it sets errflag so the whole
-    // script/function aborts, matching zsh's `continue 0` behavior
-    // (prints the error ONCE and stops the loop, rather than warning and
-    // continuing to iterate).
-    if nump > 0 && (func == BIN_CONTINUE || func == BIN_BREAK) && num <= 0 {
-        // c:5812
-        zerrnam(name, &format!("argument is not positive: {}", num)); // c:5813
-        return 1; // c:5814
-    }
-
     let loops = LOOPS.load(Relaxed);
     match func {
-        // c:5831-5842 — BIN_CONTINUE: must be in a loop, set contflag,
-        // then fall through to BIN_BREAK's break-count assign.
-        x if x == BIN_CONTINUE => {
-            // c:5831
-            if loops == 0 {
-                // c:5832
-                // c:Src/builtin.c:5828 — `zerrnam`, NOT `zwarnnam`.
-                // `zerrnam` sets `errflag` which causes the calling
-                // shell function (or script) to terminate after the
-                // current command — `zwarnnam` just prints. Without
-                // this, `foo() { break; echo "after"; }; foo` printed
-                // "after" instead of aborting at the break. Bug #616.
-                zerrnam(name, "not in while, until, select, or repeat loop"); // c:5828
-                return 1; // c:5834
+        // c:5793-5808 (55061) — BIN_CONTINUE / BIN_BREAK share one arm.
+        // Both errors are `zerrnam`, which sets errflag so the calling
+        // function or script stops after the command (Bug #616).
+        x if x == BIN_CONTINUE || x == BIN_BREAK => {
+            let num = if nump != 0 { num } else { 1 }; // c:5795
+            if num <= 0 {
+                // c:5796
+                zerrnam(name, &format!("argument is not positive: {}", num)); // c:5797
+                return 1; // c:5798
             }
-            CONTFLAG.store(1, Relaxed); // c:5836 FALLTHROUGH
-                                        // c:5837 — fallthrough to BIN_BREAK's loops==0 guard
-                                        // (impossible here since we already returned above) +
-                                        // break-count assign. Inlined directly. The previous
-                                        // Rust port had a redundant `if loops == 0 { return 1 }`
-                                        // dead-coded after the first guard.
-            BREAKS.store(
-                if nump != 0 { num.min(loops) } else { 1 }, // c:5842
-                Relaxed,
-            );
-        }
-        // c:5832-5838 — BIN_BREAK.
-        x if x == BIN_BREAK => {
-            // c:5832
             if loops == 0 {
-                // c:5833
-                // c:Src/builtin.c:5834 — `zerrnam` sets errflag.
-                // Same fix as the BIN_CONTINUE arm above. Bug #616.
-                zerrnam(name, "not in while, until, select, or repeat loop"); // c:5834
-                return 1; // c:5835
+                // c:5800 — break/continue only permitted in loops
+                zerrnam(
+                    name,
+                    if ANCESTOR_LOOPS.load(Relaxed) != 0 {
+                        "not in same subshell as first enclosing loop" // c:5802
+                    } else {
+                        "not in for, while, until, select, or repeat loop" // c:5803
+                    },
+                );
+                return 1; // c:5804
             }
-            BREAKS.store(
-                if nump != 0 { num.min(loops) } else { 1 }, // c:5837
-                Relaxed,
-            );
+            CONTFLAG.store((func == BIN_CONTINUE) as i32, Relaxed); // c:5806
+            BREAKS.store(num.min(loops), Relaxed); // c:5807
         }
         // c:5839-5860 — BIN_RETURN.
         x if x == BIN_RETURN => {
@@ -20090,7 +20063,13 @@ pub static INEVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 // `loops` / `breaks` / `contflag` / `retflag` / `locallevel` / `sourcelevel`
 // globals from Src/loop.c + Src/init.c — control-flow state consulted by
 // the bin_break dispatcher.
-/// `LOOPS` static.
+/// Port of `int ancestor_loops;` from `Src/loop.c:36` (55061) — the
+/// number of nested loops started in ANCESTOR subshells; `entersubsh`
+/// moves `loops` here (c:Src/exec.c:1263-1264) so `break`/`continue`
+/// can tell "not in a loop" from "loop is in a parent process".
+pub static ANCESTOR_LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `LOOPS` static — `int loops;` (`Src/loop.c:41`), loops started in the
+/// current subshell.
 pub static LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 /// `BREAKS` static.
 pub static BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
