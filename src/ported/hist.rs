@@ -5704,8 +5704,13 @@ pub static hist_ring: Mutex<Vec<histent>> = Mutex::new(Vec::new()); // c:103
 /// linkcurline() and removed by unlinkcurline().
 pub static curline: Mutex<Option<histent>> = Mutex::new(None); // c:91
 
-/// Port of `zlong histsiz` from Src/hist.c:108.
-pub static histsiz: AtomicI64 = AtomicI64::new(0); // c:108
+/// Port of `zlong histsiz` from Src/hist.c:108. Starts at
+/// DEFAULT_HISTSIZE, the value setupvals assigns before anything reads it
+/// (c:Src/init.c:1113 `histsiz = DEFAULT_HISTSIZE;`), and agrees with the
+/// $HISTSIZE the params layer reports (params.rs histsiz_lock). At 0, the
+/// first `fc -R` of a shell that never assigned HISTSIZE kept no entry.
+pub static histsiz: AtomicI64 =
+    AtomicI64::new(crate::ported::config_h::DEFAULT_HISTSIZE as i64); // c:108
 
 /// Port of `zlong savehistsiz` from Src/hist.c:113.
 pub static savehistsiz: AtomicI64 = AtomicI64::new(0); // c:113
