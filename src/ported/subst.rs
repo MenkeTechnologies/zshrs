@@ -27930,7 +27930,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     } else {
         // c:4496-4498
         let l = if (v.type_ == MN_FLOAT) {
-            v.d as i64
+            crate::zlong_cast::zlong_from_double(v.d)
         } else {
             v.l
         };

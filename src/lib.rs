@@ -71,6 +71,8 @@ pub mod pattern_data_escape;
 pub mod script_bytes;
 /// `token_char` submodule (Rust-only): where token chars live in a `char` string.
 pub mod token_char;
+/// `zlong_cast` submodule (Rust-only): C's `(zlong) double` with the host CPU's out-of-range answer.
+pub mod zlong_cast;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
 /// `test_util` submodule.

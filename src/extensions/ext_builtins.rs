@@ -10887,16 +10887,15 @@ fn zcalc_show_value(result: &str) -> String {
     if !result.contains('.') {
         // zcalc:110 `printf "%d\n" $1` — a CONVERSION, not an echo. It matters
         // for the non-finite values, which carry no dot and so land here:
-        // `zcalc -e -f '1/0'` is Inf, and printf %d renders that as ZLONG_MAX
-        // (9223372036854775807), while NaN renders as 0. Returning the text
-        // verbatim printed "Inf"/"NaN", which zsh never shows. Rust's float→int
-        // cast saturates (Inf → i64::MAX) and maps NaN → 0, matching the C
-        // cast's observed behaviour.
+        // `zcalc -e -f '1/0'` is Inf, which printf %d converts with `(zlong) d`.
+        // Returning the text verbatim printed "Inf"/"NaN", which zsh never
+        // shows. The cast is the host CPU's (see zlong_cast): x86 answers
+        // i64::MIN for Inf and NaN, aarch64 saturates and maps NaN to 0.
         if result.parse::<i64>().is_ok() {
             return result.to_string();
         }
         if let Ok(f) = result.parse::<f64>() {
-            return (f as i64).to_string();
+            return crate::zlong_cast::zlong_from_double(f).to_string();
         }
         return result.to_string();
     }

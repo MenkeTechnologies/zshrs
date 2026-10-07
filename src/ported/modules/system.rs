@@ -948,7 +948,7 @@ pub fn bin_zsystem_flock(
                         zwarnnam(nam, &format!("flock: invalid interval value: '{}'", optarg));
                         return 1; // c:645
                     }
-                    timeout_interval = tp.d as i64; // c:647
+                    timeout_interval = crate::zlong_cast::zlong_from_double(tp.d); // c:647
                     break;
                 }
                 'u' => unlock = true, // c:650-652

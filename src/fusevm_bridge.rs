@@ -5793,7 +5793,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
             // c:Src/loop.c — `select` increments LOOPS for the body so
             // `break` / `continue` inside the body see loops > 0 and
-            // don't emit `not in for, while, until, select, or repeat loop`.
+            // don't emit `not in while, until, select, or repeat loop`.
             // Mirrors execwhile/execrepeat's `LOOPS.fetch_add` pattern.
             // The decrement happens after the body call so a body that
             // explicitly returns / errors still leaves the counter

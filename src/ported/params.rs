@@ -6067,7 +6067,7 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
         let n = if (val.type_ & MN_INTEGER) != 0 {
             val.l
         } else {
-            val.d as i64
+            crate::zlong_cast::zlong_from_double(val.d)
         };
         // c:2874 dispatches the param's OWN integer set-function. Most
         // integer params carry `varinteger_gsu`, whose setfn is the plain
@@ -10948,7 +10948,7 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 // below adds the side effects only the special names have.
                 PM_INTEGER => {
                     pm.u_val = if val.type_ == MN_FLOAT {
-                        val.d as i64
+                        crate::zlong_cast::zlong_from_double(val.d)
                     } else {
                         val.l
                     }

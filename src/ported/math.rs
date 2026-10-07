@@ -396,7 +396,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             let idx_val = match matheval(idx_str) {
                 Ok(n) => {
                     if n.type_ == MN_FLOAT {
-                        n.d as i64
+                        crate::zlong_cast::zlong_from_double(n.d)
                     } else {
                         n.l
                     }
@@ -3072,7 +3072,7 @@ pub(crate) fn setmathvar(name: &str, val: mnumber, pval: bool) -> mnumber {
             // C mathevall's xyy* save/restore pattern (math.c:367).
             let saved = save_state();
             let idx_val = matheval(body)
-                .map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })
+                .map(|n| if n.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(n.d) } else { n.l })
                 .unwrap_or(0);
             restore_state(saved);
             format!("{}[{}]", base, idx_val)
@@ -3104,7 +3104,7 @@ pub(crate) fn setmathvar(name: &str, val: mnumber, pval: bool) -> mnumber {
         let flags = pm.node.flags as u32;
         if flags & PM_INTEGER != 0 {
             let l = if val.type_ == MN_FLOAT {
-                val.d as i64
+                crate::zlong_cast::zlong_from_double(val.d)
             } else {
                 val.l
             };
@@ -3516,7 +3516,7 @@ pub(crate) fn op(what: i32) {
         // mirrors `setmathvar` (math.rs) and C `mathevall`'s xyy* pattern
         // (c:367).
         let saved = save_state();
-        let idx = matheval(body).map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l });
+        let idx = matheval(body).map(|n| if n.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(n.d) } else { n.l });
         restore_state(saved);
         match idx {
             Ok(i) => Some(format!("{}[{}]", base, i)),
@@ -3575,12 +3575,12 @@ pub(crate) fn op(what: i32) {
             // Must be integers
             (
                 mnumber {
-                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }),
+                    l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
                 mnumber {
-                    l: (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    l: (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
@@ -3627,20 +3627,20 @@ pub(crate) fn op(what: i32) {
             let is_float = (a.type_ == MN_FLOAT);
             match what {
                 AND | ANDEQ => mnumber {
-                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                        & (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                        & (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
                 XOR | XOREQ => mnumber {
-                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                        ^ (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                        ^ (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
                 OR | OREQ => mnumber {
-                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                        | (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                        | (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
@@ -3655,8 +3655,8 @@ pub(crate) fn op(what: i32) {
                         }
                     } else {
                         mnumber {
-                            l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                                .wrapping_mul((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })),
+                            l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                                .wrapping_mul((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l })),
                             d: 0.0,
                             type_: MN_INTEGER,
                         }
@@ -3682,17 +3682,17 @@ pub(crate) fn op(what: i32) {
                             m_error_set("division by zero".to_string());
                             return;
                         }
-                        let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
+                        let bi = (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l });
                         if bi == -1 {
                             mnumber {
-                                l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                                l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
                                     .wrapping_neg(),
                                 d: 0.0,
                                 type_: MN_INTEGER,
                             }
                         } else {
                             mnumber {
-                                l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) / bi,
+                                l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }) / bi,
                                 d: 0.0,
                                 type_: MN_INTEGER,
                             }
@@ -3715,7 +3715,7 @@ pub(crate) fn op(what: i32) {
                         m_error_set("division by zero".to_string());
                         return;
                     } else {
-                        let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
+                        let bi = (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l });
                         if bi == -1 {
                             mnumber {
                                 l: 0,
@@ -3724,7 +3724,7 @@ pub(crate) fn op(what: i32) {
                             }
                         } else {
                             mnumber {
-                                l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) % bi,
+                                l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }) % bi,
                                 d: 0.0,
                                 type_: MN_INTEGER,
                             }
@@ -3742,8 +3742,8 @@ pub(crate) fn op(what: i32) {
                         }
                     } else {
                         mnumber {
-                            l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                                .wrapping_add((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })),
+                            l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                                .wrapping_add((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l })),
                             d: 0.0,
                             type_: MN_INTEGER,
                         }
@@ -3760,8 +3760,8 @@ pub(crate) fn op(what: i32) {
                         }
                     } else {
                         mnumber {
-                            l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                                .wrapping_sub((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })),
+                            l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                                .wrapping_sub((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l })),
                             d: 0.0,
                             type_: MN_INTEGER,
                         }
@@ -3769,14 +3769,14 @@ pub(crate) fn op(what: i32) {
                 }
 
                 SHLEFT | SHLEFTEQ => mnumber {
-                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                        << ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63),
+                    l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                        << ((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) as u32 & 63),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
                 SHRIGHT | SHRIGHTEQ => mnumber {
-                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                        >> ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63),
+                    l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                        >> ((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) as u32 & 63),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
@@ -3787,8 +3787,8 @@ pub(crate) fn op(what: i32) {
                             < (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
                     } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                            < (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                        ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                            < (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }))
                             as i64
                     },
                     d: 0.0,
@@ -3800,8 +3800,8 @@ pub(crate) fn op(what: i32) {
                             <= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
                     } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                            <= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                        ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                            <= (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }))
                             as i64
                     },
                     d: 0.0,
@@ -3813,8 +3813,8 @@ pub(crate) fn op(what: i32) {
                             > (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
                     } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                            > (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                        ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                            > (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }))
                             as i64
                     },
                     d: 0.0,
@@ -3826,8 +3826,8 @@ pub(crate) fn op(what: i32) {
                             >= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
                     } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                            >= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                        ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                            >= (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }))
                             as i64
                     },
                     d: 0.0,
@@ -3839,8 +3839,8 @@ pub(crate) fn op(what: i32) {
                             == (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
                     } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                            == (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                        ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                            == (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }))
                             as i64
                     },
                     d: 0.0,
@@ -3852,8 +3852,8 @@ pub(crate) fn op(what: i32) {
                             != (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
                     } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
-                            != (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                        ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
+                            != (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }))
                             as i64
                     },
                     d: 0.0,
@@ -3861,22 +3861,22 @@ pub(crate) fn op(what: i32) {
                 },
 
                 DAND | DANDEQ => mnumber {
-                    l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0
-                        && (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0)
+                    l: ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }) != 0
+                        && (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) != 0)
                         as i64,
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
                 DOR | DOREQ => mnumber {
-                    l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0
-                        || (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0)
+                    l: ((if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }) != 0
+                        || (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) != 0)
                         as i64,
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
                 DXOR | DXOREQ => {
-                    let ai = (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0;
-                    let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0;
+                    let ai = (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }) != 0;
+                    let bi = (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) != 0;
                     mnumber {
                         l: (ai != bi) as i64,
                         d: 0.0,
@@ -4054,7 +4054,7 @@ pub(crate) fn op(what: i32) {
         COMP => {
             let result = mnumber {
                 l: !(if val.type_ == MN_FLOAT {
-                    val.d as i64
+                    crate::zlong_cast::zlong_from_double(val.d)
                 } else {
                     val.l
                 }),
@@ -4084,7 +4084,7 @@ pub(crate) fn op(what: i32) {
                 // Rust's plain unary `-` panics in debug builds on
                 // i64::MIN, so use wrapping_neg.
                 let v = if val.type_ == MN_FLOAT {
-                    val.d as i64
+                    crate::zlong_cast::zlong_from_double(val.d)
                 } else {
                     val.l
                 };
@@ -4119,7 +4119,7 @@ pub(crate) fn op(what: i32) {
             } else {
                 mnumber {
                     l: (if val.type_ == MN_FLOAT {
-                        val.d as i64
+                        crate::zlong_cast::zlong_from_double(val.d)
                     } else {
                         val.l
                     }) + 1,
@@ -4149,7 +4149,7 @@ pub(crate) fn op(what: i32) {
             } else {
                 mnumber {
                     l: (if val.type_ == MN_FLOAT {
-                        val.d as i64
+                        crate::zlong_cast::zlong_from_double(val.d)
                     } else {
                         val.l
                     }) - 1,
@@ -4179,7 +4179,7 @@ pub(crate) fn op(what: i32) {
             } else {
                 mnumber {
                     l: (if val.type_ == MN_FLOAT {
-                        val.d as i64
+                        crate::zlong_cast::zlong_from_double(val.d)
                     } else {
                         val.l
                     }) + 1,
@@ -4209,7 +4209,7 @@ pub(crate) fn op(what: i32) {
             } else {
                 mnumber {
                     l: (if val.type_ == MN_FLOAT {
-                        val.d as i64
+                        crate::zlong_cast::zlong_from_double(val.d)
                     } else {
                         val.l
                     }) - 1,
@@ -4287,7 +4287,7 @@ pub(crate) fn bop(tk: i32) {
     // (zsh evaluates the RHS and yields 1). A bare-literal RHS masked the
     // bug because its value survives noeval.
     let tst = if val.type_ & MN_FLOAT != 0 {
-        (val.d as i64) != 0
+        (crate::zlong_cast::zlong_from_double(val.d)) != 0
     } else {
         val.l != 0
     };
@@ -4440,7 +4440,7 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
 pub fn mathevali(s: &str) -> Result<i64, String> {
     // c:1505
     matheval(s).map(|n|                                                      // c:1506
-        if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l }) // c:1508
+        if (n.type_ & MN_FLOAT) != 0 { crate::zlong_cast::zlong_from_double(n.d) } else { n.l }) // c:1508
 }
 
 /// Variant of `mathevali` that runs in NOEVAL mode — parses and
@@ -4486,7 +4486,7 @@ pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
     M_MTOK.with(|c| c.set(xmtok));
     result.map(|n| {
         if (n.type_ & MN_FLOAT) != 0 {
-            n.d as i64
+            crate::zlong_cast::zlong_from_double(n.d)
         } else {
             n.l
         }
@@ -4565,7 +4565,7 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {
         // composite type bitfields (e.g. MN_FLOAT|MN_UNSET).
         Ok(n) => {
             if (n.type_ & MN_FLOAT) != 0 {
-                n.d as i64
+                crate::zlong_cast::zlong_from_double(n.d)
             } else {
                 n.l
             }
@@ -5760,7 +5760,7 @@ mod tests {
         let nularg_plus: String = "\u{e1a1}1 + 2".to_string();
         let r =
             matheval(&nularg_plus).expect("Nularg prefix must be skipped and expression evaluated");
-        let v = if r.type_ == MN_FLOAT { r.d as i64 } else { r.l };
+        let v = if r.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(r.d) } else { r.l };
         assert_eq!(v, 3, "c:1490 — Nularg skipped, then `1 + 2` evaluates to 3");
     }
 
@@ -5905,7 +5905,7 @@ mod tests {
             ({
                 let __m = mathevall(prec_type::MPREC_TOP).unwrap();
                 if __m.type_ == MN_FLOAT {
-                    __m.d as i64
+                    crate::zlong_cast::zlong_from_double(__m.d)
                 } else {
                     __m.l
                 }
@@ -5923,7 +5923,7 @@ mod tests {
             ({
                 let __m = m_variables_get("x").unwrap();
                 if __m.type_ == MN_FLOAT {
-                    __m.d as i64
+                    crate::zlong_cast::zlong_from_double(__m.d)
                 } else {
                     __m.l
                 }
@@ -5935,7 +5935,7 @@ mod tests {
         let result = mathevall(prec_type::MPREC_TOP).unwrap();
         assert_eq!(
             (if result.type_ == MN_FLOAT {
-                result.d as i64
+                crate::zlong_cast::zlong_from_double(result.d)
             } else {
                 result.l
             }),
@@ -5962,7 +5962,7 @@ mod tests {
             ({
                 let __m = mathevall(prec_type::MPREC_TOP).unwrap();
                 if __m.type_ == MN_FLOAT {
-                    __m.d as i64
+                    crate::zlong_cast::zlong_from_double(__m.d)
                 } else {
                     __m.l
                 }
@@ -5973,7 +5973,7 @@ mod tests {
             ({
                 let __m = m_variables_get("x").unwrap();
                 if __m.type_ == MN_FLOAT {
-                    __m.d as i64
+                    crate::zlong_cast::zlong_from_double(__m.d)
                 } else {
                     __m.l
                 }
@@ -5987,7 +5987,7 @@ mod tests {
             ({
                 let __m = mathevall(prec_type::MPREC_TOP).unwrap();
                 if __m.type_ == MN_FLOAT {
-                    __m.d as i64
+                    crate::zlong_cast::zlong_from_double(__m.d)
                 } else {
                     __m.l
                 }
@@ -5998,7 +5998,7 @@ mod tests {
             ({
                 let __m = m_variables_get("x").unwrap();
                 if __m.type_ == MN_FLOAT {
-                    __m.d as i64
+                    crate::zlong_cast::zlong_from_double(__m.d)
                 } else {
                     __m.l
                 }
