@@ -80,7 +80,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.13.15"
+version = "0.13.16"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
@@ -289,11 +289,11 @@ members = [".", "daemon", "znative", "runtime"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-zshrs-daemon = { path = "daemon", version = "0.13.15" }
+zshrs-daemon = { path = "daemon", version = "0.13.16" }
 # The root package, so the `runtime/` member can depend on it to bundle its
 # objects into libzsh.a. bp.sh rewrites every version literal in this block.
-zshrs = { path = ".", version = "0.13.15" }
-znative = { path = "znative", version = "0.13.15" }
+zshrs = { path = ".", version = "0.13.16" }
+znative = { path = "znative", version = "0.13.16" }
 
 # `cargo install zshrs` always builds with `[profile.release]`, so this profile
 # is what every crates.io user's machine has to survive — not what CI's release
