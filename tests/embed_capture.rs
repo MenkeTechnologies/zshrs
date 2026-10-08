@@ -171,3 +171,24 @@ fn a_foreign_threads_fd1_write_lands_inside_the_capture() {
          and its docs need to change with it: {out:?}"
     );
 }
+
+/// A host-registered native command (the fat binary's in-process `git`) sits
+/// in the builtin slot, so `intercept before git { … }` has to fire for it
+/// exactly as it does for a function or an external.
+#[test]
+fn advice_fires_for_a_host_registered_native_command() {
+    if !isolated("advice_fires_for_a_host_registered_native_command") {
+        return;
+    }
+    zsh::register_native_command("zshrs_test_intercepted_native", |argv| {
+        println!("native {}", argv[1..].join(" "));
+        0
+    });
+    let mut sh = ShellExecutor::new();
+    let (status, out) = sh.execute_script_captured(
+        "intercept before zshrs_test_intercepted_native { print \"advice[$INTERCEPT_ARGS]\" }\n\
+         zshrs_test_intercepted_native a b",
+    );
+    assert_eq!(status, 0);
+    assert_eq!(out, "advice[a b]\nnative a b"); // the capture trims the final newline
+}

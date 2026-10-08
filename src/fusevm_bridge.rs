@@ -1963,7 +1963,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
             return words_errflag_status();
         }
     }
-    if let Some(status) = try_user_fn_override(name, &args) {
+    if let Some(status) = user_fn_override_unadvised(name, &args) {
         // c:Src/jobs.c:1748 waitonejob — canonical single-command
         // pipestats update via the no-procs else-branch.
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
@@ -18058,7 +18058,48 @@ fn exec_in_process_subshell() -> bool {
         || crate::ported::exec::SUBSH_STATE_DEPTH.load(std::sync::atomic::Ordering::SeqCst) > 0
 }
 
+/// Advice for an in-process command, run with the executor borrowed. `None`
+/// means no intercept took over the call, so it proceeds normally (a `before`
+/// advice has already run); `Some(status)` is the status an `around` / `after`
+/// advice produced for the call.
+fn run_command_intercepts(name: &str, args: &[String]) -> Option<i32> {
+    with_executor(|exec| {
+        if exec.intercepts.is_empty() {
+            return None;
+        }
+        let full_cmd = std::iter::once(name)
+            .chain(args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        exec.run_intercepts(name, &full_cmd, args)
+    })
+    .map(|result| result.unwrap_or(127))
+}
+
+/// [`run_command_intercepts`] for a command word that is not an external: a
+/// shell function, a ported or opcode builtin, a native command. Anonymous
+/// functions are internal plumbing and never intercepted.
+fn intercept_in_process_command(name: &str, args: &[String]) -> Option<i32> {
+    if name.starts_with("_zshrs_anon_") || with_executor(|exec| exec.intercepts.is_empty()) {
+        return None;
+    }
+    if !(with_executor(|exec| exec.function_exists(name)) || builtin_prefix_finds(name)) {
+        return None;
+    }
+    run_command_intercepts(name, args)
+}
+
+/// The opcode builtins (`echo`, `cd`, …) enter here before they run, so this is
+/// where their advice runs; [`dispatch_builtin`] reaches the unadvised variant,
+/// or the advice would fire twice for one command.
 fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
+    if let Some(status) = run_command_intercepts(name, args) {
+        return Some(status);
+    }
+    user_fn_override_unadvised(name, args)
+}
+
+fn user_fn_override_unadvised(name: &str, args: &[String]) -> Option<i32> {
     let has_fn = with_executor(|exec| {
         exec.functions_compiled.contains_key(name) || exec.function_exists(name)
     });
@@ -21398,6 +21439,13 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        // AOP intercepts (zshrs extension, no C counterpart). An external is
+        // intercepted where it spawns; every other command word lands here, so
+        // a shell function, a ported builtin or a host-registered native command
+        // (the fat binary's `git`) gets its advice from this one gate.
+        if let Some(status) = intercept_in_process_command(name, &args) {
+            return Some(status);
+        }
         // c:Src/exec.c — when the command word is empty (e.g. `""`
         // or `"$nonexistent"`), zsh attempts the exec(2) which
         // returns EACCES ("permission denied") and exits 126. The
@@ -21664,27 +21712,6 @@ impl fusevm::ShellHost for ZshrsHost {
             // c:3546 — zunderscore is the only store; the paramtab write
             // that used to accompany this cleared PM_UNSET (see pop_args).
             crate::ported::params::set_zunderscore(std::slice::from_ref(&dollar_underscore));
-        }
-
-        // AOP intercepts (zshrs extension, no C counterpart): a shell function
-        // is a command like any other, so `intercept before git { … }` fires when
-        // `git` is a function too, not only when it spawns an external. The advice
-        // runs in place; an around/after advice that handled the call returns its
-        // status. Anonymous functions are internal plumbing and never intercepted.
-        if !anon_fn {
-            let intercepted = with_executor(|exec| {
-                if exec.intercepts.is_empty() || !exec.function_exists(&fn_name) {
-                    return None; // externals are intercepted at the spawn, not here
-                }
-                let full_cmd = std::iter::once(fn_name.as_str())
-                    .chain(args.iter().map(String::as_str))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                exec.run_intercepts(&fn_name, &full_cmd, &args)
-            });
-            if let Some(result) = intercepted {
-                return Some(result.unwrap_or(127));
-            }
         }
 
         // Delegate the actual function dispatch to the canonical

@@ -336,3 +336,30 @@ fn advice_that_runs_its_own_command_does_not_recurse() {
     assert_eq!(rc, 0);
     assert_eq!(out, "advice\nbody\nbody\n");
 }
+
+#[test]
+fn advice_fires_for_builtins() {
+    // `echo`, `cd` and `typeset` take three different dispatch routes
+    // (opcode builtin, ported builtin table); all of them honour advice.
+    for (advice_on, cmd, own_output) in [("echo", "echo hi", "hi\n"), ("cd", "cd /", ""), ("typeset", "typeset zz=1", "")] {
+        let (out, _, rc) = run(&format!(
+            "intercept before {advice_on} {{ print -r \"advice({advice_on})\" }}\n{cmd}\nprint end"
+        ));
+        assert_eq!(rc, 0, "{advice_on}");
+        assert_eq!(out, format!("advice({advice_on})\n{own_output}end\n"), "{advice_on}");
+    }
+}
+
+#[test]
+fn advice_that_calls_a_builtin_does_not_recurse() {
+    let (out, _, rc) = run("intercept before echo { echo inner }\necho outer");
+    assert_eq!(rc, 0);
+    assert_eq!(out, "inner\nouter\n");
+}
+
+#[test]
+fn around_advice_wraps_a_builtin() {
+    let (out, _, rc) = run("intercept around echo { print pre; intercept_proceed; print post }\necho mid");
+    assert_eq!(rc, 0);
+    assert_eq!(out, "pre\nmid\npost\n");
+}
