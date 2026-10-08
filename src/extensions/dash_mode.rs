@@ -450,6 +450,18 @@ pub fn strip_replacement_backslashes(s: &str) -> String {
     out
 }
 
+/// True when the shell is executing a script file or stdin rather than a
+/// `-c` string: only then does bash add the outermost `main` frame to
+/// `FUNCNAME` / `BASH_SOURCE` / `BASH_LINENO`.
+fn bash_running_script() -> bool {
+    crate::ported::params::getsparam("ZSH_EXECUTION_STRING").map_or(true, |c| c.is_empty())
+}
+
+/// The name bash reports for the top-level script (`$0` at top level).
+fn bash_script_name() -> String {
+    crate::ported::params::getsparam("ZSH_ARGZERO").unwrap_or_default()
+}
+
 /// Resolve a bash special ARRAY name (`PIPESTATUS`, `FUNCNAME`,
 /// `BASH_VERSINFO`) to its value in `--bash` mode by aliasing the zsh-native
 /// special or synthesizing it. Returns `None` for any other name (or outside
@@ -485,10 +497,43 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
         // bash PIPESTATUS ≈ zsh pipestatus (per-stage exit codes, 0-indexed).
         "PIPESTATUS" => Some(crate::ported::exec::array("pipestatus").unwrap_or_default()),
         // bash FUNCNAME ≈ zsh funcstack — call stack, innermost (current) first.
-        "FUNCNAME" => crate::ported::modules::parameter::FUNCSTACK
-            .lock()
-            .ok()
-            .map(|f| f.iter().rev().map(|fs| fs.name.clone()).collect()),
+        // ...plus `main` as the outermost frame when running a script (not `-c`).
+        "FUNCNAME" => crate::ported::modules::parameter::FUNCSTACK.lock().ok().map(|f| {
+            // FUNCNAME exists only while a function runs; a sourced file is a "source" frame.
+            if !f.iter().any(|fs| fs.tp == crate::ported::zsh_h::FS_FUNC) {
+                return Vec::new();
+            }
+            let mut names: Vec<String> = f
+                .iter()
+                .rev()
+                .map(|fs| if fs.tp == crate::ported::zsh_h::FS_SOURCE { "source".to_string() } else { fs.name.clone() })
+                .collect();
+            if bash_running_script() {
+                names.push("main".to_string());
+            }
+            names
+        }),
+        // bash BASH_SOURCE: the file each frame was defined in, then the script itself.
+        "BASH_SOURCE" => crate::ported::modules::parameter::FUNCSTACK.lock().ok().map(|f| {
+            let script = bash_script_name();
+            let mut files: Vec<String> = f
+                .iter()
+                .rev()
+                .map(|fs| fs.filename.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| script.clone()))
+                .collect();
+            if bash_running_script() {
+                files.push(script);
+            }
+            files
+        }),
+        // bash BASH_LINENO: the line each frame was called from, then 0 for the script.
+        "BASH_LINENO" => crate::ported::modules::parameter::FUNCSTACK.lock().ok().map(|f| {
+            let mut lines: Vec<String> = f.iter().rev().map(|fs| fs.lineno.to_string()).collect();
+            if bash_running_script() {
+                lines.push("0".to_string());
+            }
+            lines
+        }),
         "BASH_VERSINFO" => Some(bash_versinfo()),
         _ => None,
     }
@@ -813,6 +858,70 @@ pub fn bash_set_o(bash_name: &str, on: bool) -> Option<i32> {
     // `ignorebraces` slot untouched and the change would not take effect.
     crate::ported::options::opt_state_set_via_alias(zname, on);
     Some(0)
+}
+
+/// The bash `set` option letter -> `set -o` name, for the letters zsh either
+/// lacks or reads differently (`set -h`, `-B`, `-E`, `-H`, `-P`, `-T`, `-k`, `-t`).
+const BASH_SET_LETTERS: &[(char, &str)] = &[
+    ('h', "hashall"),
+    ('B', "braceexpand"),
+    ('E', "errtrace"),
+    ('H', "histexpand"),
+    ('P', "physical"),
+    ('T', "functrace"),
+    ('k', "keyword"),
+    ('t', "onecmd"),
+];
+
+/// `set -L` / `set +L` for a bash-only letter. Returns false when `letter` is
+/// not one of them (the caller then takes zsh's letter table).
+pub fn bash_set_letter(letter: char, on: bool) -> bool {
+    bash_mode()
+        && BASH_SET_LETTERS
+            .iter()
+            .find(|(l, _)| *l == letter)
+            .is_some_and(|(_, name)| bash_set_o(name, on).is_some())
+}
+
+/// `$-` in `--bash` mode: bash's flag letters, lowercase alphabetical (with
+/// `i`), then the uppercase ones, then `c` / `s` for the invocation kind.
+/// `bash -c 'echo $-'` is `hBc`.
+pub fn bash_dollar_dash() -> String {
+    const ORDER: &[(char, &str)] = &[
+        ('a', "allexport"),
+        ('b', "notify"),
+        ('e', "errexit"),
+        ('f', "noglob"),
+        ('h', "hashall"),
+        ('i', ""),
+        ('k', "keyword"),
+        ('m', "monitor"),
+        ('n', "noexec"),
+        ('p', "privileged"),
+        ('t', "onecmd"),
+        ('u', "nounset"),
+        ('v', "verbose"),
+        ('x', "xtrace"),
+        ('B', "braceexpand"),
+        ('C', "noclobber"),
+        ('E', "errtrace"),
+        ('H', "histexpand"),
+        ('P', "physical"),
+        ('T', "functrace"),
+    ];
+    use crate::ported::zsh_h::{isset, INTERACTIVE, SHINSTDIN};
+    let mut out: String = ORDER
+        .iter()
+        .filter(|(l, name)| if *l == 'i' { isset(INTERACTIVE) } else { bash_set_o_get(name) })
+        .map(|(l, _)| *l)
+        .collect();
+    if crate::ported::params::getsparam("ZSH_EXECUTION_STRING").is_some_and(|c| !c.is_empty()) {
+        out.push('c');
+    }
+    if isset(SHINSTDIN) {
+        out.push('s');
+    }
+    out
 }
 
 /// `$SHELLOPTS` in `--bash` mode: the colon-joined, alphabetically-ordered
@@ -1251,26 +1360,365 @@ pub fn bash_function_listing(name: &str, body_src: Option<&str>) -> String {
 /// ```
 ///
 /// `body_lines` is zsh's own rendering of the body (one statement per line,
-/// one leading TAB per nesting level), which agrees with bash's line split for
-/// a flat list of simple commands — the shape `type` is asked about in
-/// practice. It does NOT agree for COMPOUND commands: bash keeps `if true;
-/// then` on one line where zsh's deparse splits `if true` / `then`, so those
-/// bodies still differ in layout. That gap is pinned by an ignored parity test
-/// rather than papered over here; closing it needs a bash-flavoured deparser,
-/// which is separate work.
+/// one leading TAB per nesting level, keywords on their own lines).
+/// `BashDeparse` re-lays `if`/`for`/`while`/`until`/`select`/`case`, `( )`,
+/// `{ }` and nested function definitions in bash's layout; a body with a
+/// shape it does not model (here-documents) falls back to the flat
+/// one-line-per-statement layout.
 pub fn bash_function_body(name: &str, body_lines: &str) -> String {
     let mut out = format!("{} () \n{{ \n", name);
-    let lines: Vec<&str> = body_lines.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        let depth = line.chars().take_while(|c| *c == '\t').count();
-        let text = line.trim_start_matches('\t');
-        let last = i + 1 == lines.len();
-        out.push_str(&" ".repeat(4 * (depth + 1)));
-        out.push_str(text);
-        out.push_str(if last { "\n" } else { ";\n" });
+    match BashDeparse::parse(body_lines) {
+        Some(nodes) => out.push_str(&BashDeparse::render(&nodes, 1, true)),
+        None => {
+            let lines: Vec<&str> = body_lines.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let depth = line.chars().take_while(|c| *c == '\t').count();
+                let text = line.trim_start_matches('\t');
+                let last = i + 1 == lines.len();
+                out.push_str(&" ".repeat(4 * (depth + 1)));
+                out.push_str(text);
+                out.push_str(if last { "\n" } else { ";\n" });
+            }
+        }
     }
     out.push_str("}\n");
     out
+}
+
+/// bash expands braces BEFORE parameters (`x=; echo $x{,a}` -> `$x $xa`, both
+/// empty and dropped), zsh after (`a`). For a tokenized command word that
+/// carries both a brace list and an expansion, run `xpandbraces` on the source
+/// text with every opaque span (`$name`, `${..}`, `$(..)`, `` `..` ``, quotes)
+/// masked by a placeholder, then restore the spans in each alternative.
+/// Returns the alternatives (empty unquoted ones dropped), or `None` when the
+/// word needs no pre-splitting.
+pub fn bash_presplit_braces(word: &str) -> Option<Vec<String>> {
+    use crate::ported::zsh_h::{
+        Bnull, Comma, Dnull, Inbrace, Inpar, Inparmath, Outbrace, Outpar, Outparmath, Qstring,
+        Qtick, Snull, Stringg, Tick,
+    };
+    if !bash_mode()
+        || !word.contains(Inbrace)
+        || !word.contains(Comma)
+        || !word.chars().any(|c| matches!(c, Stringg | Qstring | Tick | Qtick))
+    {
+        return None;
+    }
+    let ch: Vec<char> = word.chars().collect();
+    let mut holes: Vec<String> = Vec::new();
+    let mut masked = String::new();
+    let mut hole = |text: String, masked: &mut String| {
+        masked.push(char::from_u32(0xF0000 + holes.len() as u32).unwrap_or('\u{f0000}'));
+        holes.push(text);
+    };
+    let mut i = 0;
+    while i < ch.len() {
+        let c = ch[i];
+        // End (exclusive) of the span an opener at `i` opens.
+        let end = match c {
+            Snull | Dnull | Tick | Qtick => {
+                (i + 1..ch.len()).find(|&j| ch[j] == c).map_or(ch.len(), |j| j + 1)
+            }
+            Bnull => (i + 2).min(ch.len()),
+            Stringg | Qstring => match ch.get(i + 1) {
+                Some(&Inbrace) | Some(&Inpar) | Some(&Inparmath) => {
+                    let mut depth = 0i32;
+                    let mut j = i + 1;
+                    while j < ch.len() {
+                        match ch[j] {
+                            Inbrace | Inpar => depth += 1,
+                            Inparmath => depth += 2,
+                            Outbrace | Outpar => depth -= 1,
+                            Outparmath => depth -= 2,
+                            _ => {}
+                        }
+                        j += 1;
+                        if depth <= 0 {
+                            break;
+                        }
+                    }
+                    j
+                }
+                Some(n) if n.is_ascii_alphanumeric() || *n == '_' => {
+                    let mut j = i + 1;
+                    while j < ch.len() && (ch[j].is_ascii_alphanumeric() || ch[j] == '_') {
+                        j += 1;
+                    }
+                    j
+                }
+                Some(_) => i + 2,
+                None => i + 1,
+            },
+            _ => i,
+        };
+        if end > i {
+            hole(ch[i..end].iter().collect(), &mut masked);
+            i = end;
+        } else {
+            masked.push(c);
+            i += 1;
+        }
+    }
+    let parts = crate::ported::glob::xpandbraces(&masked, false);
+    if parts.len() == 1 && parts[0] == masked {
+        return None;
+    }
+    Some(
+        parts
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .map(|p| {
+                p.chars()
+                    .map(|c| match (c as u32).checked_sub(0xF0000) {
+                        Some(k) if (k as usize) < holes.len() => holes[k as usize].clone(),
+                        _ => c.to_string(),
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// One command of a function body, as bash's `print_cmd.c` lays it out.
+enum BashNode {
+    Simple(String),
+    If { cond: String, then: Vec<BashNode>, els: Option<Vec<BashNode>>, closer: String },
+    Loop { kw: &'static str, cond: String, body: Vec<BashNode>, closer: String },
+    For { head: String, body: Vec<BashNode>, closer: String },
+    Case { subject: String, arms: Vec<(String, Vec<BashNode>, String)>, closer: String },
+    Subshell { body: Vec<BashNode>, closer: String },
+    Group { body: Vec<BashNode>, closer: String },
+    Function { name: String, body: Vec<BashNode> },
+}
+
+/// Re-lays zsh's deparsed function body (one command per line, keywords on
+/// their own lines) in bash's layout: `if C; then` on one line, `for`/`do`
+/// split, `case` arms with `;;` on its own line, `( a; b )` subshells.
+/// Parses the keyword structure of the zsh text; any shape it does not
+/// recognise yields `None` and the caller falls back to the flat layout.
+struct BashDeparse {
+    lines: Vec<String>,
+    pos: usize,
+}
+
+const ARM_END: char = '\u{1}';
+
+impl BashDeparse {
+    fn parse(body_lines: &str) -> Option<Vec<BashNode>> {
+        let mut lines: Vec<String> = Vec::new();
+        for raw in body_lines.lines() {
+            let t = raw.trim();
+            if t.contains("<<") || (t.ends_with('{') && t != "{" && !t.ends_with(" () {")) {
+                return None;
+            }
+            match [" ;;&", " ;&", " ;;"].iter().find(|e| t.ends_with(**e)) {
+                Some(e) => {
+                    lines.push(t[..t.len() - e.len()].to_string());
+                    lines.push(format!("{ARM_END}{}", e.trim()));
+                }
+                None => lines.push(t.to_string()),
+            }
+        }
+        let mut p = BashDeparse { lines, pos: 0 };
+        let nodes = p.block()?;
+        (p.pos == p.lines.len()).then_some(nodes)
+    }
+
+    fn peek(&self) -> Option<&str> {
+        self.lines.get(self.pos).map(String::as_str)
+    }
+
+    fn first_word(line: &str) -> &str {
+        line.split_whitespace().next().unwrap_or("")
+    }
+
+    fn is_stop(line: &str) -> bool {
+        line.starts_with(ARM_END)
+            || line.starts_with('}')
+            || line.starts_with(')')
+            || matches!(Self::first_word(line), "fi" | "done" | "esac" | "else" | "elif" | "then" | "do")
+    }
+
+    /// Statements up to (not including) the next stop line.
+    fn block(&mut self) -> Option<Vec<BashNode>> {
+        let mut out = Vec::new();
+        while let Some(line) = self.peek() {
+            if Self::is_stop(line) {
+                break;
+            }
+            out.push(self.node()?);
+        }
+        Some(out)
+    }
+
+    fn expect_word(&mut self, w: &str) -> Option<()> {
+        (self.peek()? == w).then(|| self.pos += 1)
+    }
+
+    /// A closer line (`fi`, `done > f`, `}`, `)`): returns its trailing redirections.
+    fn closer(&mut self, word: &str) -> Option<String> {
+        let line = self.peek()?.to_string();
+        let rest = line.strip_prefix(word)?;
+        if !rest.is_empty() && !rest.starts_with(' ') {
+            return None;
+        }
+        self.pos += 1;
+        Some(rest.to_string())
+    }
+
+    fn node(&mut self) -> Option<BashNode> {
+        let line = self.peek()?.to_string();
+        self.pos += 1;
+        if let Some(cond) = line.strip_prefix("if ") {
+            return self.if_rest(cond.to_string());
+        }
+        for kw in ["while", "until"] {
+            if let Some(cond) = line.strip_prefix(&format!("{kw} ")) {
+                self.expect_word("do")?;
+                let body = self.block()?;
+                let closer = self.closer("done")?;
+                return Some(BashNode::Loop {
+                    kw: if kw == "while" { "while" } else { "until" },
+                    cond: cond.to_string(),
+                    body,
+                    closer,
+                });
+            }
+        }
+        if line.starts_with("for ((") && line.ends_with(" do") {
+            let body = self.block()?;
+            let closer = self.closer("done")?;
+            return Some(BashNode::For { head: line[..line.len() - 3].to_string(), body, closer });
+        }
+        if line.starts_with("for ") || line.starts_with("select ") {
+            self.expect_word("do")?;
+            let body = self.block()?;
+            let closer = self.closer("done")?;
+            return Some(BashNode::For { head: line, body, closer });
+        }
+        if let Some(rest) = line.strip_prefix("case ") {
+            let subject = rest.strip_suffix(" in")?.to_string();
+            let mut arms = Vec::new();
+            while self.peek()?.starts_with('(') {
+                let arm = self.peek()?.to_string();
+                let close = arm.find(") ").or_else(|| arm.ends_with(')').then(|| arm.len() - 1))?;
+                let pat = arm[1..close].to_string();
+                let first = arm[close + 1..].trim().to_string();
+                if first.is_empty() {
+                    self.pos += 1;
+                } else {
+                    self.lines[self.pos] = first;
+                }
+                let body = self.block()?;
+                let term = self.peek()?.strip_prefix(ARM_END)?.to_string();
+                self.pos += 1;
+                arms.push((pat, body, term));
+            }
+            let closer = self.closer("esac")?;
+            return Some(BashNode::Case { subject, arms, closer });
+        }
+        if let Some(name) = line.strip_suffix(" () {") {
+            let body = self.block()?;
+            self.closer("}")?;
+            return Some(BashNode::Function { name: name.to_string(), body });
+        }
+        if line == "(" || line == "{" {
+            let body = self.block()?;
+            let closer = self.closer(if line == "(" { ")" } else { "}" })?;
+            return Some(if line == "(" {
+                BashNode::Subshell { body, closer }
+            } else {
+                BashNode::Group { body, closer }
+            });
+        }
+        Some(BashNode::Simple(line))
+    }
+
+    fn if_rest(&mut self, cond: String) -> Option<BashNode> {
+        self.expect_word("then")?;
+        let then = self.block()?;
+        let mut els = None;
+        match self.peek() {
+            Some(l) if l.starts_with("elif ") => {
+                // bash prints `elif` as `else` plus a nested `if`.
+                let nested = l["elif ".len()..].to_string();
+                self.pos += 1;
+                els = Some(vec![self.if_rest(nested)?]);
+                return Some(BashNode::If { cond, then, els, closer: String::new() });
+            }
+            Some("else") => {
+                self.pos += 1;
+                els = Some(self.block()?);
+            }
+            _ => {}
+        }
+        let closer = self.closer("fi")?;
+        Some(BashNode::If { cond, then, els, closer })
+    }
+
+    /// Lay `nodes` out at `indent` levels; `bare_last` drops the `;` after
+    /// the final command (function, `{ }`, subshell and case-arm bodies).
+    fn render(nodes: &[BashNode], indent: usize, bare_last: bool) -> String {
+        let mut out = String::new();
+        for (i, n) in nodes.iter().enumerate() {
+            let term = if bare_last && i + 1 == nodes.len() { "" } else { ";" };
+            out.push_str(&Self::render_one(n, indent, term));
+        }
+        out
+    }
+
+    fn render_one(n: &BashNode, indent: usize, term: &str) -> String {
+        let ind = "    ".repeat(indent);
+        match n {
+            BashNode::Simple(s) => {
+                let term = if s.ends_with('&') { "" } else { term };
+                format!("{ind}{s}{term}\n")
+            }
+            BashNode::If { cond, then, els, closer } => {
+                let mut o = format!("{ind}if {cond}; then\n{}", Self::render(then, indent + 1, false));
+                if let Some(e) = els {
+                    o.push_str(&format!("{ind}else\n{}", Self::render(e, indent + 1, false)));
+                }
+                o.push_str(&format!("{ind}fi{closer}{term}\n"));
+                o
+            }
+            BashNode::Loop { kw, cond, body, closer } => format!(
+                "{ind}{kw} {cond}; do\n{}{ind}done{closer}{term}\n",
+                Self::render(body, indent + 1, false)
+            ),
+            BashNode::For { head, body, closer } => {
+                let semi = if head.starts_with("for ((") { "" } else { ";" };
+                format!(
+                    "{ind}{head}{semi}\n{ind}do\n{}{ind}done{closer}{term}\n",
+                    Self::render(body, indent + 1, false)
+                )
+            }
+            BashNode::Case { subject, arms, closer } => {
+                let mut o = format!("{ind}case {subject} in \n");
+                for (pat, body, t) in arms {
+                    o.push_str(&format!(
+                        "{ind}    {pat})\n{}{ind}    {t}\n",
+                        Self::render(body, indent + 2, true)
+                    ));
+                }
+                o.push_str(&format!("{ind}esac{closer}{term}\n"));
+                o
+            }
+            BashNode::Subshell { body, closer } => {
+                let inner = Self::render(body, indent, true);
+                let inner = inner.trim_end_matches('\n');
+                let inner = inner.strip_prefix(ind.as_str()).unwrap_or(inner);
+                format!("{ind}( {inner} ){closer}{term}\n")
+            }
+            BashNode::Function { name, body } => format!(
+                "{ind}function {name} () \n{ind}{{ \n{}{ind}}}{term}\n",
+                Self::render(body, indent + 1, true)
+            ),
+            BashNode::Group { body, closer } => {
+                format!("{ind}{{ \n{}{ind}}}{closer}{term}\n", Self::render(body, indent + 1, true))
+            }
+        }
+    }
 }
 
 /// True when replacing the positional parameters (`set -- …`) must also

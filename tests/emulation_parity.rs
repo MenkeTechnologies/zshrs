@@ -710,6 +710,48 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     "true & wait; [ -n \"$!\" ] && echo set",
     // Nested functions: LINENO is the absolute line.
     "g() {\necho $LINENO\nh() { echo $LINENO; }\nh\n}\ng",
+    // `trap … RETURN` fires when the function that installed it returns; a
+    // caller's RETURN trap is not inherited by the functions it calls.
+    "f() { trap 'echo ret' RETURN; echo in; }; f; echo after",
+    "g() { echo g; }; f() { trap 'echo ret-f' RETURN; echo in; }; f; g; f; trap 'echo top' RETURN; g; h() { g; echo hh; }; h; trap -p RETURN",
+    // `hash`: empty notice, hits column, -p / -t / -d / -r / -l.
+    "hash",
+    "hash -p /bin/ls foo; hash -t foo; hash",
+    "ls / >/dev/null; ls / >/dev/null; hash; hash -l",
+    "hash ls; hash -r ls; hash",
+    "hash -p /bin/ls foo; hash -d foo; hash",
+    "hash nosuch_cmd_x 2>/dev/null; echo rc=$?",
+    // `enable -n` disables a builtin (lookup falls through to PATH) and the
+    // listings use `enable [-n] NAME`.
+    "enable -n echo; type -t echo; enable -n; enable echo; type -t echo",
+    "enable -n echo; enable -a | grep -n 'enable -n'",
+    "enable -s | head -3; enable | wc -l",
+    "enable -n nosuch_builtin 2>/dev/null; echo rc=$?",
+    // `declare -f` lays compound commands out the way bash's print_cmd does.
+    "f() { if true; then echo a; elif false; then echo b; else echo c; fi; }; declare -f f",
+    "f() { for i in 1 2; do echo $i; done; while false; do :; done; until true; do :; done; }; declare -f f",
+    "f() { case $1 in a|b) echo y; echo z;; *) echo n;; esac; (echo s; echo t); { echo g; echo h; } > /dev/null; echo end; }; declare -f f",
+    "f() { for ((i=0;i<2;i++)); do echo $i; done; g() { echo inner; }; }; declare -f f",
+    // Brace expansion precedes parameter expansion in bash.
+    "x=b; echo $x{,a}",
+    "x=; echo $x{,a}",
+    "x=; printf '[%s]' \"$x\"{,a} \"\"{,a} $x\"\"{,a} a$x{,b}; printf '\\n'",
+    "x='1 2'; echo {a,b}$x; for i in {1,2}$x; do echo \"[$i]\"; done",
+    "x=q; echo {a,b}${x:-z,y}$((1+2)){c,d}`echo e`",
+    // A quoted-empty part keeps an otherwise-empty expansion as one empty word.
+    "x=; printf '[%s]' $x\"\" a ''$x \"$x\"$x; printf '\\n'",
+    // `wait -n` returns the status of whichever child finishes first (127 with none).
+    "(sleep 0.1; exit 4) & (sleep 0.3; exit 5) & wait -n; echo $?; wait -n; echo $?; wait -n; echo $?",
+    "wait -n; echo $?",
+    // `mapfile -d ''` splits on NUL; `-O` starts at an origin and keeps the array.
+    "printf 'a\\0b\\0' | { mapfile -t -d '' arr; echo ${#arr[@]} ${arr[1]}; }",
+    "printf 'a\\nb\\nc\\n' | { mapfile -s 1 -O 3 arr; echo ${!arr[@]} ${arr[3]}; }",
+    "arr=(x y); printf 'a\\nb\\n' | { mapfile -t -O 1 arr; echo ${arr[@]}; }",
+    // bash-only `set` letters.
+    "set -B; echo rc=$?; set +B; echo rc=$?; set +h; set -h; echo rc=$?; set -E -H -P -T; set -o | grep -E 'braceexpand|errtrace|histexpand|physical|functrace'",
+    // `caller` reads BASH_LINENO / FUNCNAME / BASH_SOURCE; FUNCNAME is unset outside functions.
+    "f() { caller; echo rc=$?; caller 0; echo rc=$?; caller 1; echo rc=$?; }; f; caller; echo top rc=$?",
+    "f() { echo \"${FUNCNAME[@]}\"; g; }; g() { echo \"${FUNCNAME[@]}\"; }; f; echo \"[${FUNCNAME[@]}]\"",
 ];
 
 
@@ -2393,10 +2435,15 @@ fn caller_outside_a_subroutine_fails() {
     };
     assert_eq!(run("caller").1, false, "top-level `caller` must fail");
     assert_eq!(run("caller").0, "", "top-level `caller` prints nothing");
-    // Inside a function it still reports the frame and succeeds.
+    // Inside a function it reports the call line and succeeds. Measured on
+    // bash 5.3: `bash -c 'f() { caller; }; f'` prints `1 NULL` (no source file
+    // under -c); the frame's function name only appears for `caller N`.
     let (out, ok) = run("f() { caller; }; f");
     assert!(ok, "`caller` in a function must succeed");
-    assert!(out.contains('f'), "frame names the function: {out:?}");
+    assert_eq!(out, "1 NULL\n");
+    let (out, ok) = run("g() { f; }; f() { caller 0; }; g");
+    assert!(ok, "`caller 0` two frames deep must succeed");
+    assert!(out.starts_with("1 g "), "frame names the caller function: {out:?}");
 }
 
 #[test]

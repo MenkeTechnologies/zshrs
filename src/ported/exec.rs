@@ -7014,6 +7014,7 @@ pub fn doshfunc(
     // c:5898 — `starttrapscope();` — canonical port at signals.rs:1135
     // tags SIGEXIT for deferred restoration at scope end.
     crate::ported::signals::starttrapscope();
+    crate::extensions::emulation_output::bash_return_trap_enter();
     // c:5899 — `startpatternscope();`
     crate::ported::pattern::startpatternscope();
 
@@ -7513,6 +7514,7 @@ pub fn doshfunc(
     crate::ported::params::set_zunderscore(std::slice::from_ref(&saved_zunderscore));
     crate::ported::lex::set_lineno(saved_lineno);
     LASTVAL.store(body_status, Ordering::Relaxed);
+    crate::extensions::emulation_output::bash_return_trap_exit();
 
     // c:6043 — `doneshfunc:` label. The C `runshfunc` happy-path
     // falls through here from c:6042.

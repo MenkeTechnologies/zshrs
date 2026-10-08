@@ -1071,6 +1071,9 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
 /// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn dashgetfn() -> String {
+    if crate::dash_mode::bash_mode() {
+        return crate::dash_mode::bash_dollar_dash();
+    }
     // c:289-290 — `#define FIRST_OPT '0'` / `#define LAST_OPT 'y'`.
     // The previous Rust port iterated `(b'A'..=b'z')` (A=0x41..z=0x7a),
     // skipping the 17 char positions C walks BEFORE 'A' (digits + most

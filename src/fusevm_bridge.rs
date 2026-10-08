@@ -6804,6 +6804,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if argc & 2 != 0 && plan9_active() {
             return v;
         }
+        // c:Src/subst.c:36 — a quoted-empty literal (`""`, `''`) leaves a
+        // nulstring in the word, so a SCALAR that expands to nothing around it
+        // (`$x""`, `""$x`, `$x"$x"`) is still one empty word, not zero.
+        if argc & 2 != 0 {
+            let nothing = match &v {
+                Value::Str(e) => e.is_empty(),
+                Value::Array(items) => items.is_empty(),
+                _ => false,
+            };
+            if nothing {
+                return Value::array(vec![Value::str("")]);
+            }
+        }
         if !elidable {
             return v;
         }

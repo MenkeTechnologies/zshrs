@@ -460,6 +460,29 @@ impl ShellExecutor {
     /// Reads from the existing $funcstack array we now maintain
     /// (vm_helper:7828-7835).
     pub(crate) fn builtin_caller(&self, args: &[String]) -> i32 {
+        // bash: `caller [N]` reads the BASH_LINENO / FUNCNAME / BASH_SOURCE frames.
+        if crate::dash_mode::bash_mode() {
+            let frames = |name: &str| crate::dash_mode::bash_special_array(name).unwrap_or_default();
+            let (lines, funcs, files) = (frames("BASH_LINENO"), frames("FUNCNAME"), frames("BASH_SOURCE"));
+            let file_at = |i: usize| files.get(i).cloned().unwrap_or_else(|| "NULL".to_string());
+            return match args.first().map(|a| a.parse::<usize>()) {
+                None => match lines.first() {
+                    Some(line) => {
+                        println!("{line} {}", file_at(1));
+                        0
+                    }
+                    None => 1,
+                },
+                Some(Ok(n)) => match (lines.get(n), funcs.get(n + 1)) {
+                    (Some(line), Some(func)) => {
+                        println!("{line} {func} {}", file_at(n + 1));
+                        0
+                    }
+                    _ => 1,
+                },
+                Some(Err(_)) => 1,
+            };
+        }
         let depth: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
         let stack = self.array("funcstack").unwrap_or_default();
         // funcstack[0] is the current (innermost) frame — caller 0
@@ -9163,14 +9186,16 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
     let mut callback: Option<String> = None;
     let mut callback_quantum = 0usize;
     let mut fd: i32 = 0;
+    let mut origin: Option<usize> = None;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-d" => {
                 i += 1;
-                if i < args.len() && !args[i].is_empty() {
-                    delimiter = args[i].as_bytes()[0];
+                // bash: `-d ''` delimits on NUL.
+                if i < args.len() {
+                    delimiter = args[i].as_bytes().first().copied().unwrap_or(0);
                 }
             }
             "-n" => {
@@ -9181,7 +9206,10 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
             }
             "-O" => {
                 i += 1;
-                // Origin - start index (ignored, we always start at 0)
+                // Origin: first index assigned; the array is not cleared.
+                if i < args.len() {
+                    origin = args[i].parse().ok();
+                }
             }
             "-s" => {
                 i += 1;
@@ -9259,7 +9287,8 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
         }
         let mut line = String::from_utf8_lossy(chunk).to_string();
         let had_delim = idx + 1 < n_chunks; // this chunk was followed by delim
-        if !strip_trailing && had_delim {
+        // A NUL delimiter cannot live in a shell string; bash drops it.
+        if !strip_trailing && had_delim && delimiter != 0 {
             line.push(delim_char);
         }
         lines.push(line);
@@ -9268,7 +9297,29 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
         }
     }
 
-    crate::ported::params::setaparam(&array_name, lines);
+    match origin {
+        Some(o) => {
+            // `-O origin`: keep what is there, pad up to `origin` (bash holes), overwrite from it.
+            let mut cur = crate::ported::params::getaparam(&array_name).unwrap_or_default();
+            let old_len = cur.len();
+            if cur.len() < o {
+                cur.resize(o, String::new());
+            }
+            for (k, l) in lines.into_iter().enumerate() {
+                match cur.get_mut(o + k) {
+                    Some(slot) => *slot = l,
+                    None => cur.push(l),
+                }
+            }
+            crate::ported::params::setaparam(&array_name, cur);
+            if o > old_len {
+                crate::bash_arrays::note_subscript_set(&array_name, old_len, o);
+            }
+        }
+        None => {
+            crate::ported::params::setaparam(&array_name, lines);
+        }
+    }
     let _ = (callback, callback_quantum);
     0
 }

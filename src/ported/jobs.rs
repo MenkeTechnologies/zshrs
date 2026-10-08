@@ -3199,6 +3199,32 @@ pub fn bin_fg(
     // c:2467 — `queue_signals();`
     queue_signals();
     let table = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    // !!! BASH-MODE (no C counterpart) !!! `wait -n`: wait for ANY one child and
+    // return its status (127 when there is none).
+    #[cfg(unix)]
+    if func == BIN_WAIT && crate::dash_mode::bash_mode() && argv.first().is_some_and(|a| a == "-n") {
+        let mut status: libc::c_int = 0;
+        let pid = loop {
+            let pid = unsafe { libc::waitpid(-1, &mut status, 0) };
+            if pid < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            break pid;
+        };
+        unqueue_signals();
+        if pid < 0 {
+            return 127;
+        }
+        if let Ok(mut tab) = table.lock() {
+            update_bg_job(&mut tab, pid, status);
+            scanjobs(&mut tab);
+        }
+        return if libc::WIFEXITED(status) {
+            libc::WEXITSTATUS(status)
+        } else {
+            128 + libc::WTERMSIG(status)
+        };
+    }
     // c:2474 — `wait_for_processes();` reap any newly-finished children
     // so the table reflects the current state before we list/dispatch.
     // C's wait_for_processes (Src/signals.c:249) routes each reaped

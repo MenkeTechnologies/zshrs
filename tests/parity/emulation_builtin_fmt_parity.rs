@@ -432,15 +432,12 @@ fn function_type_unchanged_under_zsh_mode() {
     assert_zsh_unchanged(TYPE_SCRIPTS);
 }
 
-/// PINNED GAP — bash re-prints a function body from its own AST
-/// (`make_command_string`), which keeps `if true; then` on one line where
-/// zsh's deparse splits it into `if true` / `then`. zshrs re-lays zsh's
-/// rendering into bash's frame (`dash_mode::bash_function_body`), which is
-/// exact for a flat list of simple commands and still differs in layout for
-/// compound commands. Closing it needs a bash-flavoured deparser.
+/// bash re-prints a function body from its own AST (`make_command_string`),
+/// keeping `if true; then` on one line where zsh's deparse splits it.
+/// `dash_mode::bash_function_body` re-lays the compound commands in bash's
+/// layout; this pins that for `type`.
 #[test]
-#[ignore = "documented gap: compound function bodies use zsh's line split, not bash's"]
-fn bash_compound_function_body_layout_is_a_known_gap() {
+fn bash_compound_function_body_layout_matches_bash() {
     let Some(bashbin) = bash() else {
         panic!("bash is not installed — the comparison never ran");
     };

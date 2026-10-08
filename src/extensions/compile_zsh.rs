@@ -2751,6 +2751,17 @@ impl ZshCompiler {
     }
 
     fn compile_simple(&mut self, simple: &ZshSimple) {
+        // !!! BASH-MODE (no C counterpart) !!! brace expansion precedes parameter
+        // expansion in bash: split such words on their source text first.
+        if simple.words.iter().any(|w| crate::dash_mode::bash_presplit_braces(w).is_some()) {
+            let mut pre = simple.clone();
+            pre.words = simple
+                .words
+                .iter()
+                .flat_map(|w| crate::dash_mode::bash_presplit_braces(w).unwrap_or_else(|| vec![w.clone()]))
+                .collect();
+            return self.compile_simple(&pre);
+        }
         let outer_gates = std::mem::take(&mut self.noexec_gates);
         self.compile_simple_arms(simple);
         let gates = std::mem::replace(&mut self.noexec_gates, outer_gates);
@@ -11190,6 +11201,17 @@ impl ZshCompiler {
     }
 
     fn compile_for_words(&mut self, var: &str, words: &[String], body: &crate::parse::ZshProgram) {
+        // !!! BASH-MODE (no C counterpart) !!! brace expansion precedes parameter expansion.
+        let presplit: Vec<String>;
+        let words = if words.iter().any(|w| crate::dash_mode::bash_presplit_braces(w).is_some()) {
+            presplit = words
+                .iter()
+                .flat_map(|w| crate::dash_mode::bash_presplit_braces(w).unwrap_or_else(|| vec![w.clone()]))
+                .collect();
+            &presplit[..]
+        } else {
+            words
+        };
         let i_slot = self.next_slot;
         self.next_slot += 1;
         let len_slot = self.next_slot;

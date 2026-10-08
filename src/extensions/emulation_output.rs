@@ -10,6 +10,16 @@
 //! environment, and is re-checked against it by the parity harness.
 
 use crate::extensions::emulation_startup::{personality, Personality};
+use crate::ported::builtin::{bin_enable, bin_trap, traps_table, BUILTINS_DISABLED};
+use crate::ported::exec::hashcmd;
+use crate::ported::hashtable::{cmdnamtab_lock, emptycmdnamtable};
+use crate::ported::hashtable_h::BIN_DISABLE;
+use crate::ported::params::getsparam;
+use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::{cmdnam, hashnode, options, HASHED, MAX_OPS, OPT_ISSET};
+use crate::ported::builtin::LASTVAL;
+use std::sync::atomic::Ordering;
+
 
 /// How a shell renders one `times` field.
 ///
@@ -229,24 +239,290 @@ pub fn hash_header() -> Option<&'static str> {
     }
 }
 
+/// bash's per-command `hash` hit counters, keyed by command name.
+///
+/// bash bumps the count each time it runs the hashed path; zsh keeps none.
+/// Only meaningful under `--bash`; entries die with the table (`hash -r`).
+static BASH_HASH_HITS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, u32>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Count one execution of the hashed command `name` (bash's `hits` column).
+pub fn bash_hash_hit(name: &str) {
+    if personality() == Personality::Bash {
+        if let Ok(mut m) = BASH_HASH_HITS.lock() {
+            *m.entry(name.to_string()).or_insert(0) += 1;
+        }
+    }
+}
+
+/// Forget the hit counter of `name` (`hash -d`), or of every command (`hash -r`).
+pub fn bash_hash_forget(name: Option<&str>) {
+    if let Ok(mut m) = BASH_HASH_HITS.lock() {
+        match name {
+            Some(n) => {
+                m.remove(n);
+            }
+            None => m.clear(),
+        }
+    }
+}
+
+fn bash_hash_hits(name: &str) -> u32 {
+    BASH_HASH_HITS
+        .lock()
+        .ok()
+        .and_then(|m| m.get(name).copied())
+        .unwrap_or(0)
+}
+
 /// One `hash` listing row, or `None` to use zsh's `name=path` form.
 ///
-/// bash's first column is a per-command hit counter. zshrs keeps no such
-/// counter, so it reports 0 — correct for a freshly hashed entry (which
-/// is what `hash NAME; hash` shows) and low by however many times the
-/// command has since run. The alternative, omitting the column, would
-/// break the format for every script that reads it.
+/// bash's first column is the per-command hit counter (`bash_hash_hit`).
 pub fn hash_entry(name: &str, path: &str) -> Option<String> {
     match personality() {
-        Personality::Bash => Some(format!("{:>4}\t{path}", 0)),
+        Personality::Bash => Some(format!("{:>4}\t{path}", bash_hash_hits(name))),
         // dash (POSIX sh on Debian) prints the resolved path alone, no
         // name and no `=`.
         Personality::Dash | Personality::Sh => Some(path.to_string()),
-        _ => {
-            let _ = name;
-            None
+        _ => None,
+    }
+}
+
+/// bash 5.2's builtin table in `enable` listing order, with whether each is
+/// a POSIX special builtin (`enable -s`).
+pub const BASH_BUILTINS: &[(&str, bool)] = &[
+    (".", true), (":", true), ("[", false), ("alias", false), ("bg", false),
+    ("bind", false), ("break", true), ("builtin", false), ("caller", false),
+    ("cd", false), ("command", false), ("compgen", false), ("complete", false),
+    ("compopt", false), ("continue", true), ("declare", false), ("dirs", false),
+    ("disown", false), ("echo", false), ("enable", false), ("eval", true),
+    ("exec", true), ("exit", true), ("export", true), ("false", false),
+    ("fc", false), ("fg", false), ("getopts", false), ("hash", false),
+    ("help", false), ("history", false), ("jobs", false), ("kill", false),
+    ("let", false), ("local", false), ("logout", false), ("mapfile", false),
+    ("popd", false), ("printf", false), ("pushd", false), ("pwd", false),
+    ("read", false), ("readarray", false), ("readonly", true), ("return", true),
+    ("set", true), ("shift", true), ("shopt", false), ("source", true),
+    ("suspend", false), ("test", false), ("times", true), ("trap", true),
+    ("true", false), ("type", false), ("typeset", false), ("ulimit", false),
+    ("umask", false), ("unalias", false), ("unset", true), ("wait", false),
+];
+
+/// !!! EMULATION-ONLY (no C counterpart) !!! bash's `hash`:
+/// `hash [-lr] [-p path] [-dt] [name ...]` over the command table, with the
+/// `hits<TAB>command` listing and bash's "hash table empty" notice.
+pub fn bash_hash(argv: &[String], ops: &options) -> i32 {
+    use crate::extensions::emulation_output as eo;
+    let path_dirs = || -> Vec<String> {
+        getsparam("PATH").unwrap_or_default().split(':').map(String::from).collect()
+    };
+    let lookup = |n: &str| -> Option<String> {
+        cmdnamtab_lock()
+            .read()
+            .ok()
+            .and_then(|t| t.get_full_path(n))
+            .map(|p| p.display().to_string())
+    };
+    if OPT_ISSET(ops, b'r') {
+        emptycmdnamtable();
+        eo::bash_hash_forget(None);
+        if argv.is_empty() {
+            return 0;
         }
     }
+    if OPT_ISSET(ops, b'p') {
+        // `hash -p PATH NAME`
+        let (Some(path), Some(n)) = (argv.first(), argv.get(1)) else {
+            zwarnnam("hash", "-p: option requires an argument");
+            return 1;
+        };
+        if let Ok(mut t) = cmdnamtab_lock().write() {
+            t.add(cmdnam {
+                node: hashnode { next: None, nam: n.clone(), flags: HASHED as i32 },
+                name: None,
+                cmd: Some(path.clone()),
+            });
+        }
+        eo::bash_hash_forget(Some(n));
+        return 0;
+    }
+    if OPT_ISSET(ops, b'd') {
+        let mut rc = 0;
+        for n in argv {
+            let gone = cmdnamtab_lock().write().ok().map_or(false, |mut t| t.remove(n).is_some());
+            if gone {
+                eo::bash_hash_forget(Some(n));
+            } else {
+                zwarnnam("hash", &format!("{n}: not found"));
+                rc = 1;
+            }
+        }
+        return rc;
+    }
+    if OPT_ISSET(ops, b't') {
+        let mut rc = 0;
+        for n in argv {
+            match lookup(n) {
+                Some(p) => {
+                    eo::bash_hash_hit(n);
+                    if argv.len() > 1 {
+                        println!("{n}\t{p}");
+                    } else {
+                        println!("{p}");
+                    }
+                }
+                None => {
+                    zwarnnam("hash", &format!("{n}: not found"));
+                    rc = 1;
+                }
+            }
+        }
+        return rc;
+    }
+    if argv.is_empty() {
+        let mut entries: Vec<(String, String)> = cmdnamtab_lock()
+            .read()
+            .map(|t| t.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|n| lookup(&n).map(|p| (n, p)))
+            .collect();
+        entries.sort();
+        if entries.is_empty() {
+            if !OPT_ISSET(ops, b'l') {
+                println!("hash: hash table empty");
+            }
+            return 0;
+        }
+        if OPT_ISSET(ops, b'l') {
+            for (n, p) in entries {
+                println!("builtin hash -p {p} {n}");
+            }
+        } else {
+            println!("hits\tcommand");
+            for (n, p) in entries {
+                if let Some(row) = eo::hash_entry(&n, &p) {
+                    println!("{row}");
+                }
+            }
+        }
+        return 0;
+    }
+    // `hash NAME ...`: resolve through $PATH and remember.
+    let mut rc = 0;
+    for n in argv {
+        if n.contains('/') {
+            continue;
+        }
+        if hashcmd(n, &path_dirs()).is_none() {
+            zwarnnam("hash", &format!("{n}: not found"));
+            rc = 1;
+        }
+    }
+    rc
+}
+
+/// !!! EMULATION-ONLY (no C counterpart) !!! bash's `enable`:
+/// `enable [-a] [-nps] [name ...]` over bash's own builtin table. With
+/// names, `-n` disables and a bare name enables; without, it lists.
+pub fn bash_enable(argv: &[String], ops: &options, func: i32) -> i32 {
+    let disabled = |n: &str| BUILTINS_DISABLED.lock().map_or(false, |s| s.contains(n));
+    if argv.is_empty() {
+        let (all, only_off, special) = (OPT_ISSET(ops, b'a'), OPT_ISSET(ops, b'n'), OPT_ISSET(ops, b's'));
+        for (n, is_special) in crate::extensions::emulation_output::BASH_BUILTINS {
+            if (special && !is_special) || (!all && only_off != disabled(n)) {
+                continue;
+            }
+            println!("enable {}{n}", if disabled(n) { "-n " } else { "" });
+        }
+        return 0;
+    }
+    let mut plain = ops.clone();
+    for f in [b'n', b'a', b'p', b's'] {
+        plain.ind[f as usize] = 0;
+    }
+    let func = if OPT_ISSET(ops, b'n') { BIN_DISABLE } else { func };
+    let rc = bin_enable("enable", argv, &plain, func);
+    if rc != 0 {
+        // bash words the failure for a name that is not a builtin.
+        for n in argv {
+            eprintln!("enable: {n}: not a shell builtin");
+        }
+    }
+    rc
+}
+
+/// RETURN traps of the callers of the running function (bash).
+static BASH_RETURN_SAVED: std::sync::Mutex<Vec<Option<String>>> = std::sync::Mutex::new(Vec::new());
+
+/// !!! EMULATION-ONLY (no C counterpart) !!! bash function entry: a `RETURN`
+/// trap set by a caller is not inherited (no `functrace`), so the callee
+/// starts without one; the caller's is put back at exit unless the callee
+/// installed its own.
+pub fn bash_return_trap_enter() {
+    if !crate::dash_mode::bash_mode() {
+        return;
+    }
+    let outer = traps_table().lock().ok().and_then(|mut t| t.remove("RETURN"));
+    if let Ok(mut st) = BASH_RETURN_SAVED.lock() {
+        st.push(outer);
+    }
+}
+
+/// !!! EMULATION-ONLY (no C counterpart) !!! bash function exit: run the
+/// `RETURN` trap the function installed (`$?` is preserved), or restore the
+/// caller's.
+pub fn bash_return_trap_exit() {
+    if !crate::dash_mode::bash_mode() {
+        return;
+    }
+    let outer = BASH_RETURN_SAVED.lock().ok().and_then(|mut st| st.pop()).flatten();
+    let own = traps_table().lock().ok().and_then(|t| t.get("RETURN").cloned());
+    match own {
+        Some(body) if !body.is_empty() => {
+            // Hide the trap while it runs so a function it calls does not re-enter it.
+            if let Ok(mut t) = traps_table().lock() {
+                t.remove("RETURN");
+            }
+            let olastval = LASTVAL.load(Ordering::SeqCst);
+            let _ = crate::ported::exec::execute_script(&body);
+            LASTVAL.store(olastval, Ordering::SeqCst);
+            if let Ok(mut t) = traps_table().lock() {
+                t.insert("RETURN".to_string(), body);
+            }
+        }
+        Some(_) => {}
+        None => {
+            if let (Some(body), Ok(mut t)) = (outer, traps_table().lock()) {
+                t.insert("RETURN".to_string(), body);
+            }
+        }
+    }
+}
+
+/// !!! EMULATION-ONLY (no C counterpart) !!! `trap BODY ... RETURN ...` and
+/// `trap - RETURN`: RETURN is a bash pseudo-signal with no zsh slot, so it
+/// is kept in `traps_table` only. Returns `None` when RETURN is not named.
+pub fn bash_trap_return(argv: &[String]) -> Option<i32> {
+    let args: Vec<&String> = argv.iter().skip_while(|a| *a == "--").collect();
+    if args.len() < 2 || args[0] == "-p" || !args[1..].iter().any(|a| *a == "RETURN") {
+        return None;
+    }
+    let body = args[0].clone();
+    let others: Vec<String> = args[1..].iter().filter(|a| **a != "RETURN").map(|a| a.to_string()).collect();
+    if let Ok(mut t) = traps_table().lock() {
+        if body == "-" {
+            t.remove("RETURN");
+        } else {
+            t.insert("RETURN".to_string(), body.clone());
+        }
+    }
+    if others.is_empty() {
+        return Some(0);
+    }
+    let mut rest = vec![body];
+    rest.extend(others);
+    Some(bin_trap("trap", &rest, &options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0))
 }
 
 /// One row of a shell's `set -o` listing.

@@ -6357,6 +6357,9 @@ impl ShellExecutor {
                 have = crate::ported::exec::hashcmd(cmd, &dirs);
             }
             if have.is_some() {
+                crate::extensions::emulation_output::bash_hash_hit(cmd);
+            }
+            if have.is_some() {
                 // c:834 / c:861 — `cn->u.cmd` for a HASHED node, else
                 // `"<*cn->u.name>/<arg0>"`. `get_full_path` is that arm.
                 hashed_prog = crate::ported::hashtable::cmdnamtab_lock()

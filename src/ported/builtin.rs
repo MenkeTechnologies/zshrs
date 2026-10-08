@@ -405,6 +405,14 @@ pub fn execbuiltin(
         if crate::dash_mode::dash_strict() && name == "echo" {
             optstr_bytes = b"n".to_vec();
         }
+        // !!! BASH-ONLY (no C counterpart) !!! bash's own option letters.
+        if crate::dash_mode::bash_mode() {
+            match name.as_str() {
+                "hash" => optstr_bytes = b"rdplt".to_vec(),
+                "enable" => optstr_bytes = b"anprs".to_vec(),
+                _ => {}
+            }
+        }
         // !!! KSH93-ONLY (no C counterpart) !!! ksh93 `print -e` is accepted (escapes
         // are already on; `-r` turns them off).
         if crate::dash_mode::ksh93_mode() && name == "print" {
@@ -919,6 +927,11 @@ pub fn bin_enable(
         Alias,
         SufAlias,
     }
+    if crate::dash_mode::bash_mode()
+        && (argv.is_empty() || [b'n', b'a', b'p', b's'].iter().any(|f| OPT_ISSET(ops, *f)))
+    {
+        return crate::extensions::emulation_output::bash_enable(argv, ops, func);
+    }
     let mut returnval = 0i32; // c:524
     let mut match_count = 0i32; // c:524
                                 // c:527-538 — `-p` early-out + table selection.
@@ -1423,7 +1436,12 @@ pub fn bin_set(
                 // builtin's name into the error tag ("zsh:set:1:" vs
                 // bare "zsh:1:"). Use zerrnam to match zsh's exact
                 // error format for `set -X 2>&1`.
-                let optno = crate::ported::options::optlookupc(c); // c:663
+                let optno = if crate::dash_mode::bash_set_letter(c, action) {
+                    ci += 1;
+                    continue;
+                } else {
+                    crate::ported::options::optlookupc(c) // c:663
+                };
                 if optno == 0 {
                     // c:663
                     zerrnam(nam, &format!("bad option: -{}", c)); // c:663
@@ -11718,6 +11736,9 @@ pub fn bin_hash(
     ops: &options,
     _func: i32,
 ) -> i32 {
+    if crate::dash_mode::bash_mode() {
+        return crate::extensions::emulation_output::bash_hash(argv, ops);
+    }
     let mut returnval = 0i32; // c:4239
     let mut printflags = 0i32; // c:4240
     let dir_mode = OPT_ISSET(ops, b'd'); // c:4242
@@ -17510,6 +17531,12 @@ pub fn bin_trap(
         }
     }
 
+    if crate::dash_mode::bash_mode() {
+        if let Some(rc) = crate::extensions::emulation_output::bash_trap_return(argv) {
+            return rc;
+        }
+    }
+
     // !!! PDKSH-FAMILY-ONLY (no C counterpart) !!! mksh's `trap` takes no options
     // at all (`--` excepted), and `trap` is a POSIX special builtin, so a usage
     // error aborts a non-interactive shell:
@@ -17590,7 +17617,12 @@ pub fn bin_trap(
             crate::extensions::emulation_startup::personality(),
             crate::extensions::emulation_startup::Personality::Bash
         ))
-    .then(|| argv[1..].iter().map(|s| getsigidx(s)).collect());
+    .then(|| {
+        argv[1..]
+            .iter()
+            .map(|s| if s == "RETURN" { i32::MAX } else { getsigidx(s) })
+            .collect()
+    });
     let argv: &[String] = if list_via_p || p_filter.is_some() {
         &[]
     } else {
