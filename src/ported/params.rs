@@ -15671,7 +15671,9 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             let m = crate::ported::exec::assoc(&nm).unwrap_or_default();
             let body: String = m
                 .iter()
-                .map(|(k, v)| format!("[{}]=\"{}\" ", esc(k), esc(v)))
+                .map(|(k, v)| {
+                    format!("[{}]={} ", esc(k), crate::dash_mode::bash_quote_element(v))
+                })
                 .collect();
             println!("declare {} {}=({})", flag_disp, nm, body);
         } else if fl & PM_ARRAY != 0 {
@@ -15682,13 +15684,16 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 .unwrap_or_default();
             let body: String = crate::bash_arrays::live_indices(&nm, a.len())
                 .iter()
-                .filter_map(|&i| a.get(i).map(|v| format!("[{}]=\"{}\"", i, esc(v))))
+                .filter_map(|&i| {
+                    a.get(i)
+                        .map(|v| format!("[{}]={}", i, crate::dash_mode::bash_quote_element(v)))
+                })
                 .collect::<Vec<_>>()
                 .join(" ");
             println!("declare {} {}=({})", flag_disp, nm, body);
         } else {
             let v = getsparam(&nm).unwrap_or_default();
-            println!("declare {} {}=\"{}\"", flag_disp, nm, esc(&v));
+            println!("declare {} {}={}", flag_disp, nm, crate::dash_mode::bash_quote_element(&v));
         }
         return;
     }

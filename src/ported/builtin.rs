@@ -410,6 +410,7 @@ pub fn execbuiltin(
             match name.as_str() {
                 "hash" => optstr_bytes = b"rdplt".to_vec(),
                 "enable" => optstr_bytes = b"anprs".to_vec(),
+                "type" => optstr_bytes.push(b'P'),
                 _ => {}
             }
         }
@@ -4452,6 +4453,17 @@ pub fn bin_typeset(
             //      */
             //     exclude = (PM_ARRAY|PM_HASHED) & ~(on|roff);
             exclude = (PM_ARRAY | PM_HASHED) & !((on as u32) | (roff as u32)); // c:2792
+        }
+        // !!! BASH-MODE (no C counterpart) !!! bash lists a bare attribute query
+        // (`declare -x`, `export`, `readonly`, `declare -i|-a|-A|-r`) in the
+        // reusable `declare -x NAME="value"` form that `-p` selects here.
+        if crate::dash_mode::bash_mode()
+            && !OPT_ISSET(&ops, b'p')
+            && !OPT_ISSET(&ops, b'm')
+            && roff == 0
+            && ((on as u32) != 0 || func == BIN_EXPORT || func == BIN_READONLY)
+        {
+            printflags |= PRINT_TYPESET;
         }
         // c:2792 — `scanhashtable(paramtab, 1, on|roff, 0, paramtab->printnode,
         //               printflags|(roff ? PRINT_NAMEONLY : 0));`
@@ -11055,6 +11067,19 @@ pub fn bin_whence(
         return rc;
     }
 
+    // !!! BASH-MODE GATE (no C counterpart) !!! `type -P NAME` forces a $PATH
+    // search and prints the file, whatever else NAME is.
+    if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'P') {
+        let mut rc = 0;
+        for name in argv {
+            match crate::ported::exec::findcmd(name, 0, 0) {
+                Some(path) => println!("{}", path),
+                None => rc = 1,
+            }
+        }
+        return rc;
+    }
+
     // c:4004-4012 — printflags from -w/-c/-v/(default simple)/-f.
     if OPT_ISSET(ops, b'w') {
         printflags |= PRINT_WHENCE_WORD;
@@ -11643,7 +11668,12 @@ pub fn bin_whence(
             if informed == 0 && (wd || v || csh) {
                 // c:4166
                 // dash: `NAME: not found` (see the end-of-function status note).
+                if crate::dash_mode::bash_mode() && !wd {
+                    // bash reports a missing name on stderr: `type: NAME: not found`.
+                    zwarnnam(nam, &format!("{arg}: not found"));
+                } else {
                 println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4168-4169
+                }
                 returnval = 1; // c:4170
             }
             continue;
@@ -11723,7 +11753,11 @@ pub fn bin_whence(
         // c:4201-4205 — not found at all.
         if v || csh || wd {
             // c:4202
+            if crate::dash_mode::bash_mode() && !wd {
+                zwarnnam(nam, &format!("{arg}: not found"));
+            } else {
             println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4203
+            }
         }
         returnval = 1; // c:4204
     }
@@ -21107,6 +21141,11 @@ fn printf_format(
                     let quoted = match args.get(arg_i) {
                         Some(a) => if crate::dash_mode::ksh93_mode() {
                             crate::dash_mode::ksh93_printf_q(a)
+                        } else if crate::dash_mode::bash_mode()
+                            && crate::dash_mode::bash_ansic_shouldquote(a)
+                        {
+                            // bash: a value with control characters prints as one `$'…'`.
+                            crate::dash_mode::bash_ansic_quote(a)
                         } else {
                             crate::ported::utils::quotestring(
                                 a,

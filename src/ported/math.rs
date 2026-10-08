@@ -3929,6 +3929,12 @@ pub(crate) fn op(what: i32) {
                                            // to float MUST happen before the zero check below: notzero
                                            // never faults on a float zero, so the all-integer
                                            // `0 ** -n` becomes pow(0.0,-n)=Inf rather than an error.
+                    // !!! BASH-MODE (no C counterpart) !!! bash arithmetic is integer-only:
+                    // a negative exponent is an error, not a real result.
+                    if !cf && b.l < 0 && crate::dash_mode::bash_mode() {
+                        m_error_set("exponent less than 0".to_string());
+                        return;
+                    }
                     if !cf && b.l < 0 {
                         a = mnumber {
                             l: 0,

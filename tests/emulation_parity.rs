@@ -769,6 +769,17 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // `caller` reads BASH_LINENO / FUNCNAME / BASH_SOURCE; FUNCNAME is unset outside functions.
     "f() { caller; echo rc=$?; caller 0; echo rc=$?; caller 1; echo rc=$?; }; f; caller; echo top rc=$?",
     "f() { echo \"${FUNCNAME[@]}\"; g; }; g() { echo \"${FUNCNAME[@]}\"; }; f; echo \"[${FUNCNAME[@]}]\"",
+    // `type` reports a missing name on stderr; `type -P` forces a $PATH search.
+    "type nosuch_cmd_x 2>/dev/null; echo rc=$?; type -P ls; type -P nosuch_cmd_x; echo rc=$?",
+    // A bare attribute query lists in the reusable `declare -X NAME=\"v\"` form.
+    "declare -x BX=1; declare -x | grep '^declare -x BX='; export | grep '^declare -x BX='",
+    "declare -r BR=1; declare -r | grep '^declare -r BR='; readonly | grep '^declare -r BR='",
+    "declare -i BI=1; declare -i | grep BI=; declare -A BM=([a]=1); declare -A | grep BM=",
+    // Arithmetic is integer-only: a negative exponent is an error.
+    "echo $((2**-1)); echo rc=$?; echo $((2**3))",
+    // Values with control characters print as one `$'…'` (printf %q, declare -p).
+    "printf '%q|' $'a\\nb' 'a b' ''; echo",
+    "x=$'a\\nb'; declare -p x; a=(x $'y\\nz' 'q r'); declare -p a",
     // bash turns extglob on while parsing `[[ ]]`, so the ksh groups work in the
     // pattern with the `extglob` shopt off.
     "[[ abc == @(a|x)bc ]] && echo y; echo done",
