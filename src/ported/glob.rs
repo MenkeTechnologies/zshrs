@@ -6820,7 +6820,9 @@ fn expand_range(
         // Suppress pad ONLY when LEFT is exactly the single-char "0"
         // (no sign, no extra digits). "-0" or "00" both pad.
         let left_is_bare_zero = left == "0";
-        let pad = !left_is_bare_zero
+        // ksh93 never zero-pads a numeric range (`{01..03}` -> `1 2 3`).
+        let pad = !crate::dash_mode::ksh93_mode()
+            && !left_is_bare_zero
             && (is_padded_field(lstrip)
                 || is_padded_field(rstrip)
                 || (!step_text.is_empty() && is_padded_field(sstrip)));

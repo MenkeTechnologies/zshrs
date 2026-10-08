@@ -3332,6 +3332,15 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // which reports "autoloading module %s failed to define math
     // function" itself when the load does not define the name — the
     // zerr below is then swallowed by errflag (c:Src/utils.c:175).
+    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 ships its math functions
+    // (`sqrt`, `abs`, `int`, `sin`, …) built in; zsh needs `zmodload
+    // zsh/mathfunc`. Load it on first use under a bare `--ksh`.
+    if crate::dash_mode::ksh93_mode() {
+        if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+            let _ =
+                crate::ported::module::require_module(&mut tab, "zsh/mathfunc", None, 1, false);
+        }
+    }
     let registered = crate::ported::module::MATHFUNCS
         .lock()
         .map(|tab| tab.iter().any(|p| p.name == name && p.module.is_none()))

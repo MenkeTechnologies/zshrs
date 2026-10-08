@@ -10310,7 +10310,7 @@ pub fn bin_unset(
                     // N to empty; `arr[N,M]` clears the inclusive
                     // range. The previous Rust port only handled the
                     // single-index form; `unset arr[2,3]` was a no-op.
-                    if !crate::dash_mode::bash_mode() {
+                    if !crate::dash_mode::sparse_arrays() {
                         // c:3896-3916 — `vbuf.scanflags = SCANPM_ARRONLY; vbuf.start
                         // = 0; vbuf.end = -1; … if (getindex(&ss, &vbuf,
                         // SCANPM_ASSIGNING) == 0 && vbuf.pm && !(PM_UNSET))`: the
@@ -10456,7 +10456,7 @@ pub fn bin_unset(
                                 }
                             }
                         }
-                    } else if crate::dash_mode::bash_mode() {
+                    } else if crate::dash_mode::sparse_arrays() {
                         // bash sparse arrays: subscripts are 0-based and
                         // `unset a[i]` leaves a HOLE (index gap) rather than
                         // shifting or clearing to a dense empty. Negative
@@ -13972,6 +13972,12 @@ pub fn bin_break(
         }; // c:5816
         nump = 1; // c:5817
     }
+    // !!! EMULATION-ONLY (no C counterpart) !!! bash and the pdksh line keep a
+    // function's status in 8 bits (`f() { return 300; }; f; echo $?` -> 44,
+    // `return -1` -> 255); zsh and ksh93 hand back the full value.
+    if func == BIN_RETURN && (crate::dash_mode::bash_mode() || crate::dash_mode::pdksh_family()) {
+        num &= 0xff;
+    }
 
     let loops = LOOPS.load(Relaxed);
     match func {
@@ -15706,8 +15712,11 @@ pub fn bin_read(
     // the delimiter. zsh's optstr treats both as boolean no-ops, so the count N
     // is left as the first positional; pull it out and route through the
     // char-read path (also skips the tty requirement).
-    let bash_n = crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'n');
-    let bash_bign = crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'N');
+    // ksh93 spells the same two reads `-n N` / `-N N` (ksh93u+m `read -n 2 a <<< abcd`
+    // -> `ab`), so the gate covers it too.
+    let read_counts = crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode();
+    let bash_n = read_counts && OPT_ISSET(ops, b'n');
+    let bash_bign = read_counts && OPT_ISSET(ops, b'N');
     let bash_stop_at_nl = bash_n && !bash_bign; // -N ignores the delimiter
     let bash_nchars = (bash_n || bash_bign)
         && args
@@ -15739,7 +15748,7 @@ pub fn bin_read(
     // array read only in bash mode so `read -a arr <<< "x y z"` works like
     // /bin/bash (in other modes `-a` parses but is inert, matching nothing).
     let want_array =
-        OPT_ISSET(ops, b'A') || (crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'a'));
+        OPT_ISSET(ops, b'A') || (read_counts && OPT_ISSET(ops, b'a'));
     let reply = if argi < args.len() {
         let mut r = args[argi].clone();
         argi += 1;
@@ -17398,6 +17407,41 @@ pub fn bin_trap(
         }
     }
 
+    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 and bash spell the trap
+    // listing `trap -p`; zsh has no such option (it reaches the bare-body path
+    // below). Measured: `ksh -c 'trap "print a" INT; trap -p'` lists the trap.
+    // mksh has no listing option at all: `mksh -c 'trap -p'` -> "trap: -p: unknown option", 1.
+    if argv.len() == 1
+        && argv[0] == "-p"
+        && matches!(
+            crate::extensions::emulation_startup::personality(),
+            crate::extensions::emulation_startup::Personality::Mksh
+                | crate::extensions::emulation_startup::Personality::Pdksh
+        )
+    {
+        zwarnnam(name, "-p: unknown option");
+        return 1;
+    }
+    let list_via_p = argv.len() == 1
+        && argv[0] == "-p"
+        && matches!(
+            crate::extensions::emulation_startup::personality(),
+            crate::extensions::emulation_startup::Personality::Ksh93
+                | crate::extensions::emulation_startup::Personality::Bash
+        );
+    // bash `trap -p SIG...` lists only the named signals' traps.
+    let p_filter: Option<Vec<i32>> = (argv.len() > 1
+        && argv[0] == "-p"
+        && matches!(
+            crate::extensions::emulation_startup::personality(),
+            crate::extensions::emulation_startup::Personality::Bash
+        ))
+    .then(|| argv[1..].iter().map(|s| getsigidx(s)).collect());
+    let argv: &[String] = if list_via_p || p_filter.is_some() {
+        &[]
+    } else {
+        argv
+    };
     let mut argv = argv.to_vec();
     // c:7353 — `if (*argv && !strcmp(*argv, "--")) argv++;`
     if !argv.is_empty() && argv[0] == "--" {
@@ -17500,6 +17544,9 @@ pub fn bin_trap(
                 // c:7360-7361 — no siglists[sig] body → empty-body entry.
                 combined.push((idx, TrapEntry::Str(name, String::new())));
             }
+        }
+        if let Some(f) = &p_filter {
+            combined.retain(|(i, _)| f.contains(i));
         }
         combined.sort_by_key(|(idx, _)| *idx);
         // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 walks the trap
@@ -20552,8 +20599,9 @@ fn printf_format(
                 // `strftime` builtin), so it is gated to bash / ksh emulation;
                 // under --zsh it stays an "invalid directive" like real zsh.
                 Some('(') => {
-                    let allow = crate::dash_mode::bash_mode()
-                        || crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH);
+                    // korn_mode() (a bare --ksh/--mksh/--pdksh), not EMULATION(KSH): zsh itself
+                    // rejects the directive under `emulate ksh` (5.9.2: "%(: invalid directive").
+                    let allow = crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode();
                     // Collect the strftime format up to the matching ')'.
                     let mut tfmt = String::new();
                     let mut closed = false;
@@ -20836,10 +20884,14 @@ fn printf_format(
                     // `printf '%q'` prints nothing — not `''`. A PRESENT arg,
                     // even an empty string, IS quoted (→ `''`).
                     let quoted = match args.get(arg_i) {
-                        Some(a) => crate::ported::utils::quotestring(
-                            a,
-                            crate::ported::zsh_h::QT_BACKSLASH_SHOWNULL,
-                        ),
+                        Some(a) => if crate::dash_mode::ksh93_mode() {
+                            crate::dash_mode::ksh93_printf_q(a)
+                        } else {
+                            crate::ported::utils::quotestring(
+                                a,
+                                crate::ported::zsh_h::QT_BACKSLASH_SHOWNULL,
+                            )
+                        },
                         None => String::new(),
                     };
                     // c:Src/builtin.c:5405-5407 — `%q` sets `*d = 's'`

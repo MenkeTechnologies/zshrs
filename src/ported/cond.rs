@@ -426,6 +426,15 @@ pub fn evalcond(
                         }
                     };
                     let mtime_cmp = |l: &str, r: &str, f: fn(i64, i64) -> bool| -> i32 {
+                        // !!! EMULATION-ONLY (no C counterpart) !!! bash, ksh93 and
+                        // mksh treat a MISSING file as infinitely old: `[[ a -nt
+                        // missing ]]` and `[[ missing -ot a ]]` are true, two missing
+                        // files compare false either way. zsh (c:Src/cond.c) fails
+                        // the test whenever either stat fails.
+                        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+                            let t = |p: &str| getstat(p).map_or(i64::MIN, |m| m.mtime());
+                            return b2i(f(t(l), t(r)));
+                        }
                         let lm = match getstat(l) {
                             Some(m) => m,
                             None => return 1,

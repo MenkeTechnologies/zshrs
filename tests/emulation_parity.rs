@@ -3260,3 +3260,106 @@ fn korn_funsub_and_valsub_run_in_the_current_shell() {
         );
     }
 }
+
+/// Run `probes` through zshrs (`zflags` + `-f`) and the reference binary
+/// `refbin` (prefixed with `ref_prefix`, e.g. `emulate ksh\n`) and collect
+/// every stdout / exit-sign mismatch.
+fn probe_mismatches(
+    zflags: &[&str],
+    refbin: &str,
+    ref_args: &[&str],
+    ref_prefix: &str,
+    probes: &[&str],
+) -> Vec<String> {
+    let mut zargs: Vec<&str> = zflags.to_vec();
+    zargs.push("-f");
+    probes
+        .iter()
+        .filter_map(|p| {
+            let z = run(&zshrs_bin(), &zargs, p);
+            let r = run(refbin, ref_args, &format!("{ref_prefix}{p}"));
+            (z != r).then(|| format!("  {p:?}\n    ref: {r:?}\n    zrs: {z:?}"))
+        })
+        .collect()
+}
+
+/// ksh93-only behaviors that bash and zsh do not share, so they cannot sit in
+/// the cross-shell corpus: float formatting (`%g`), built-in math functions,
+/// ksh's `printf %q` and `typeset -p` spellings, `read -a/-n/-N`, unpadded
+/// brace ranges, sparse `unset a[i]`, and `-nt`/`-ot` with a missing file.
+#[test]
+fn ksh93_specifics_match_ksh93() {
+    let Some(ksh) = find_shell(&["ksh", "/bin/ksh", "/usr/bin/ksh"]) else {
+        eprintln!("skip: ksh not found");
+        return;
+    };
+    let probes = [
+        "float f=1.5; print $f",
+        "typeset -E f=0.3333333333333; print $f",
+        "typeset -E2 f=1; print $f",
+        "print $((7.0/2)) $((5.0)) $((2**0.5)) $((1.0/3)) $((1e20))",
+        "print $((sqrt(16))) $((abs(-3))) $((int(3.7)))",
+        "printf '%q|' 'a b' \"it's\" 'a;b' abc '' a=b '=x' 'a\"b'; print",
+        "printf '%q\\n' \"$(printf 'a\\tb')\"",
+        "x='a b'; typeset -p x",
+        "x=1; typeset -p x",
+        "typeset -xi a=5; typeset -p a",
+        "typeset -rx a=5; typeset -p a",
+        "typeset -a a=('a b' c); typeset -p a",
+        "typeset -i16 a=255; typeset -p a",
+        "typeset -F2 a=1; typeset -p a",
+        "typeset -E2 a=1; typeset -p a",
+        "typeset -Z3 a=7; typeset -p a",
+        "typeset -L3 a=7; typeset -p a",
+        "typeset -u a=x; typeset -p a",
+        "read -a arr <<< 'a b c'; print ${arr[1]}",
+        "read -n 2 a <<< abcd; print $a",
+        "read -N 2 a <<< abcd; print $a",
+        "echo {01..03} {1..03} {1..3}",
+        "a=(x y z); unset a[1]; print ${#a[@]} ${!a[@]}",
+        "[[ /etc/passwd -nt /nonexistent ]] && print nt",
+        "[[ /nonexistent -ot /etc/passwd ]] && print ot",
+        "[[ /nonexistent -nt /nonexistent2 ]] || print n",
+        "trap 'print a' INT; trap -p",
+    ];
+    let bad = probe_mismatches(&["--ksh"], &ksh, &[], "", &probes);
+    assert!(bad.is_empty(), "--ksh diverged from ksh93:\n{}", bad.join("\n"));
+}
+
+/// The pdksh line (`--mksh` / `--pdksh`): last pipeline stage in a subshell,
+/// 8-bit `return`, sparse `unset a[i]`, missing-file `-nt`/`-ot`, and `trap -p`
+/// rejected. mksh stands in for pdksh (no pdksh binary is installed).
+#[test]
+fn pdksh_line_specifics_match_mksh() {
+    let Some(mksh) = find_shell(&["mksh", "/bin/mksh", "/usr/bin/mksh"]) else {
+        eprintln!("skip: mksh not found");
+        return;
+    };
+    let probes = [
+        "echo x | read v; print \"[$v]\"",
+        "f() { return 300; }; f; print $?",
+        "h() { return -1; }; h; print $?",
+        "a=(x y z); unset a[1]; print ${#a[@]} ${!a[@]}",
+        "[[ /etc/passwd -nt /nonexistent ]] && print nt",
+        "[[ /nonexistent -ot /etc/passwd ]] && print ot",
+        "trap 'print a' INT; trap -p",
+    ];
+    for flags in [&["--mksh"][..], &["--pdksh"][..]] {
+        let bad = probe_mismatches(flags, &mksh, &[], "", &probes);
+        assert!(bad.is_empty(), "{flags:?} diverged from mksh:\n{}", bad.join("\n"));
+    }
+}
+
+/// zsh-style `--ksh --zsh` must reject what zsh rejects under `emulate ksh`:
+/// the `printf '%(FMT)T'` directive is ksh93/bash-only and zsh 5.9.2 answers
+/// "invalid directive" even in ksh emulation.
+#[test]
+fn ksh_zsh_style_rejects_printf_time_directive_like_zsh() {
+    let Some(zsh) = find_shell(ZSH) else {
+        eprintln!("skip: zsh not found");
+        return;
+    };
+    let probes = ["printf '%(%Y)T\\n' 0; print $?"];
+    let bad = probe_mismatches(&["--ksh", "--zsh"], &zsh, &["-f"], "emulate ksh\n", &probes);
+    assert!(bad.is_empty(), "--ksh --zsh diverged from zsh:\n{}", bad.join("\n"));
+}

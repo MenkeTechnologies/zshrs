@@ -4471,7 +4471,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // so `emulate sh -c 'echo x | read v; echo $v'` prints an empty
         // line. ksh emulation keeps the in-shell last stage.
         let mut last_proc: Option<crate::ported::zsh_h::process> = None;
+        // The pdksh line (mksh / pdksh) forks the last stage too: `mksh -c 'echo x |
+        // read v; echo $v'` prints an empty line. ksh93 keeps it in the shell.
         let last_stage_status = if crate::dash_mode::bash_mode()
+            || crate::dash_mode::pdksh_family()
             || crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
         {
             let last_chunk = stages_vec.into_iter().last().unwrap();
@@ -11552,6 +11555,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let tb = fs::metadata(&b).and_then(|m| m.modified()).ok();
         let result = match (ta, tb) {
             (Some(ta), Some(tb)) => ta > tb,
+            // bash, ksh93 and mksh: a missing right operand is infinitely old.
+            (Some(_), None) => crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode(),
             _ => false,
         };
         Value::Bool(result)
@@ -11565,6 +11570,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let tb = fs::metadata(&b).and_then(|m| m.modified()).ok();
         let result = match (ta, tb) {
             (Some(ta), Some(tb)) => ta < tb,
+            // bash, ksh93 and mksh: a missing left operand is infinitely old.
+            (None, Some(_)) => crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode(),
             _ => false,
         };
         Value::Bool(result)

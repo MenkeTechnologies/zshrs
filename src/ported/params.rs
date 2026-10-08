@@ -14578,8 +14578,15 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
         // c:5744
         return "NaN".to_string();
     }
-    // Pick fmt char + adjust digits per the C cascade at 5705-5727.
-    let (fmt_char, digits) = if (pm_flags & PM_EFLOAT) != 0 {
+    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 prints through `%g`:
+    // `-E[n]` is `%.{n}g` (default 10), plain float arithmetic is `%.15g`, and
+    // neither appends zsh's trailing dot. Measured against ksh93u+m:
+    // `typeset -E f=1.5; print $f` -> `1.5`, `print $((2**0.5))` ->
+    // `1.4142135623731`, `print $((5.0))` -> `5`.
+    let ksh93 = crate::dash_mode::ksh93_mode();
+    let (fmt_char, digits) = if ksh93 && (pm_flags & PM_EFLOAT) != 0 {
+        ('g', if digits <= 0 { 10 } else { digits })
+    } else if (pm_flags & PM_EFLOAT) != 0 {
         // c:5715
         let d = if digits <= 0 { 10 } else { digits }; // c:5718
         ('e', (d - 1).max(0)) // c:5725
@@ -14588,7 +14595,7 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
         let d = if digits <= 0 { 10 } else { digits }; // c:5718
         ('f', d)
     } else {
-        let d = if digits == 0 { 17 } else { digits }; // c:5713
+        let d = if digits == 0 { if ksh93 { 15 } else { 17 } } else { digits }; // c:5713
         ('g', d)
     };
     // Mirror zsh's snprintf path (Src/params.c:5751) — the C source
@@ -14623,7 +14630,7 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
     // append `.` when the output has no `e` and no `.`, so integer-
     // valued floats like `5` render as `5.`. PM_EFLOAT/PM_FFLOAT skip
     // this rule (the format spec already pins shape).
-    if fmt_char == 'g' && !s.contains('e') && !s.contains('.') {
+    if !ksh93 && fmt_char == 'g' && !s.contains('e') && !s.contains('.') {
         s.push('.');
     }
     s
@@ -15660,6 +15667,100 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         } else {
             let v = getsparam(&nm).unwrap_or_default();
             println!("declare {} {}=\"{}\"", flag_disp, nm, esc(&v));
+        }
+        return;
+    }
+    // !!! KSH93-MODE GATE (no C counterpart) !!! ksh93's `typeset -p` listing:
+    // a plain scalar prints as bare `name=value`; otherwise `typeset` plus one
+    // `-X` per attribute (`-x`, `-r`, `-t` first, then the type flags; a width
+    // or base follows its flag as a separate word, `-Z 3` also lists `-R 3`),
+    // and array / associative bodies are `(v1 v2)` / `([k]=v …)` with no inner
+    // padding. Measured against ksh93u+m 1.0.10. Unset, special and autoload
+    // entries keep the zsh path.
+    if crate::dash_mode::ksh93_mode()
+        && (printflags & PRINT_TYPESET) != 0
+        && (printflags & (PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY)) == 0
+        && (hn.node.flags as u32 & (PM_UNSET | PM_AUTOLOAD | PM_RO_BY_DESIGN | PM_SPECIAL)) == 0
+        && !hn.node.nam.starts_with('.')
+    {
+        let fl = hn.node.flags as u32;
+        let nm = hn.node.nam.clone();
+        let q = crate::dash_mode::ksh93_printf_q;
+        let mut attrs: Vec<String> = Vec::new();
+        for (flag, letter) in [(PM_EXPORTED, "x"), (PM_READONLY, "r"), (PM_TAGGED, "t")] {
+            if fl & flag != 0 {
+                attrs.push(format!("-{letter}"));
+            }
+        }
+        if fl & PM_HASHED != 0 {
+            attrs.push("-A".to_string());
+        } else if fl & PM_ARRAY != 0 {
+            attrs.push("-a".to_string());
+        }
+        let with_num = |letter: &str, n: i32| -> String {
+            if n != 0 {
+                format!("-{letter} {n}")
+            } else {
+                format!("-{letter}")
+            }
+        };
+        if fl & PM_INTEGER != 0 {
+            attrs.push(with_num("i", hn.base));
+        }
+        if fl & PM_FFLOAT != 0 {
+            attrs.push(with_num("F", hn.base));
+        }
+        if fl & PM_EFLOAT != 0 {
+            attrs.push(with_num("E", hn.base));
+        }
+        if fl & PM_LOWER != 0 {
+            attrs.push("-l".to_string());
+        }
+        if fl & PM_UPPER != 0 {
+            attrs.push("-u".to_string());
+        }
+        if fl & PM_LEFT != 0 {
+            attrs.push(with_num("L", hn.width));
+        }
+        if fl & PM_RIGHT_Z != 0 {
+            attrs.push(with_num("Z", hn.width));
+            attrs.push(with_num("R", hn.width));
+        }
+        if fl & PM_RIGHT_B != 0 {
+            attrs.push(with_num("R", hn.width));
+        }
+        let head = if attrs.is_empty() {
+            String::new()
+        } else {
+            format!("typeset {} ", attrs.join(" "))
+        };
+        if fl & PM_HASHED != 0 {
+            let mut m: Vec<(String, String)> = crate::ported::exec::assoc(&nm)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            m.sort();
+            let body: Vec<String> = m.iter().map(|(k, v)| format!("[{k}]={}", q(v))).collect();
+            println!("{head}{nm}=({})", body.join(" "));
+        } else if fl & PM_ARRAY != 0 {
+            let a = hn
+                .u_arr
+                .clone()
+                .or_else(|| crate::ported::exec::array(&nm))
+                .unwrap_or_default();
+            let body: Vec<String> = a.iter().map(|v| q(v)).collect();
+            println!("{head}{nm}=({})", body.join(" "));
+        } else {
+            let v = getsparam(&nm).unwrap_or_default();
+            let shown = if fl & PM_INTEGER != 0 && hn.base > 1 && hn.base != 10 {
+                match v.parse::<i64>() {
+                    Ok(n) => convbase(n, hn.base as u32).to_lowercase(),
+                    Err(_) => v,
+                }
+            } else {
+                q(&v)
+            };
+            println!("{head}{nm}={shown}");
         }
         return;
     }

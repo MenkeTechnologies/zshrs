@@ -278,6 +278,13 @@ pub fn korn_mode() -> bool {
     posix_faithful() && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH)
 }
 
+/// True for a bare `zshrs --ksh` (the ksh93 line), false for the pdksh line
+/// (`--mksh` / `--pdksh`) and for every non-Korn mode.
+#[inline]
+pub fn ksh93_mode() -> bool {
+    korn_mode() && !pdksh_family()
+}
+
 /// True when the shell being emulated has SPARSE indexed arrays — bash and
 /// the whole Korn family.
 ///
@@ -1689,4 +1696,39 @@ pub fn bash_param_flags(name: &str) -> u32 {
         .ok()
         .and_then(|t| t.get(name).map(|p| p.node.flags as u32))
         .unwrap_or(0)
+}
+
+/// ksh93's `printf %q` quoting of one argument.
+///
+/// !!! EMULATION-ONLY (no C counterpart) !!! zsh backslash-escapes
+/// (`a\ b`); ksh93u+m wraps in single quotes (`'a b'`), switches to the
+/// ANSI-C `$'…'` form when the argument holds a control character or an
+/// apostrophe, and leaves `a=b`, `a!b`, `a,b`, `a%b`, `a+b`, `a@b`, `a^b`
+/// and non-ASCII text bare. Measured against ksh93u+m 1.0.10 with every
+/// ASCII punctuation character between two letters, plus leading `=`.
+pub fn ksh93_printf_q(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
+    if arg.chars().any(|c| c.is_control()) || arg.contains('\'') {
+        let mut out = String::from("$'");
+        for c in arg.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '\'' => out.push_str("\\'"),
+                '\t' => out.push_str("\\t"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('\'');
+        return out;
+    }
+    const SPECIAL: &str = " \"#$&()*;<>?[\\]`{|}~";
+    if arg.starts_with('=') || arg.chars().any(|c| SPECIAL.contains(c)) {
+        return format!("'{arg}'");
+    }
+    arg.to_string()
 }
