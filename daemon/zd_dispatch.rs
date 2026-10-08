@@ -58,6 +58,7 @@ pub const USAGE: &str = concat!(
     "    info                          // daemon snapshot\n",
     "    ping [ECHO_ARGS...]           // round-trip latency\n",
     "    metrics                       // Prometheus-shaped metrics (JSON)\n",
+    "    daemon [VERB]                 // status|start|stop|restart (local)\n",
     "    call OP [JSON_BODY]           // generic op caller for anything not below\n",
     "\n",
     "  ── CACHE ──────────────────────────────────────────────\n",
@@ -293,12 +294,160 @@ pub fn handle_no_transport(args: &[String]) -> Option<i32> {
                 println!("zd {}", env!("CARGO_PKG_VERSION"));
                 return Some(0);
             }
+            // Lifecycle verbs run over the local socket, never a Transport.
+            "daemon" => return Some(cmd_daemon(&args[i + 1..])),
             // A real command — needs a transport, so hand back to dispatch.
             _ => return None,
         }
     }
     // Consumed only global flags, never reached a command.
     Some(usage_err("missing command"))
+}
+
+// ── daemon lifecycle ────────────────────────────────────────────────
+//
+// `zd daemon status|start|stop|restart` controls the LOCAL daemon at
+// `$ZSHRS_HOME`. It needs no `Transport`: `start` must work while the
+// daemon is down, and `stop` / `restart` must outlive the connection
+// they close, so all of it goes over the local Unix socket directly
+// (`--url` does not redirect it).
+
+/// How long `start` / `stop` wait for the socket to appear / vanish.
+const LIFECYCLE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+const LIFECYCLE_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+fn print_json(v: &Value) {
+    println!("{}", serde_json::to_string(v).unwrap_or_default());
+}
+
+/// `zd daemon <status|start|stop|restart>`. Exit 0 on success, 1 when the
+/// daemon is not running (`status`) or the transition did not complete.
+fn cmd_daemon(rest: &[String]) -> i32 {
+    let verb = rest.first().map(String::as_str).unwrap_or("status");
+    if !matches!(verb, "status" | "start" | "stop" | "restart") {
+        return usage_err(&format!("daemon: unknown verb `{verb}` (status|start|stop|restart)"));
+    }
+    let paths = match crate::paths::CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return fail(&format!("cannot resolve $ZSHRS_HOME: {e}")),
+    };
+    match daemon_lifecycle(&paths, verb, &daemon_binary()) {
+        Ok(v) => {
+            print_json(&v);
+            // A stopped daemon is a failed `status`, a successful `stop`.
+            i32::from(verb == "status" && v["running"] == json!(false))
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+/// Run one lifecycle `verb` against the daemon rooted at `paths`, spawning
+/// `exe` when it has to be started. The JSON result names the end state.
+pub fn daemon_lifecycle(
+    paths: &crate::paths::CachePaths,
+    verb: &str,
+    exe: &std::path::Path,
+) -> Result<Value, String> {
+    match verb {
+        "status" => daemon_status(paths),
+        "start" => daemon_start(paths, exe),
+        "stop" => daemon_stop(paths),
+        "restart" => daemon_stop(paths).and_then(|_| daemon_start(paths, exe)),
+        other => Err(format!("unknown verb `{other}`")),
+    }
+}
+
+fn fail(msg: &str) -> i32 {
+    eprintln!("zd: daemon: {msg}");
+    1
+}
+
+fn daemon_alive(paths: &crate::paths::CachePaths) -> bool {
+    crate::client::Client::is_daemon_alive(paths)
+}
+
+/// Poll `cond` until it holds or [`LIFECYCLE_WAIT`] passes.
+fn wait_until(cond: impl Fn() -> bool) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < LIFECYCLE_WAIT {
+        if cond() {
+            return true;
+        }
+        std::thread::sleep(LIFECYCLE_POLL);
+    }
+    cond()
+}
+
+fn daemon_call(paths: &crate::paths::CachePaths, verb: &str) -> Result<Value, String> {
+    crate::client::Client::connect_existing(paths)
+        .and_then(|mut c| c.call("daemon", json!({ "verb": verb })))
+        .map_err(|e| e.to_string())
+}
+
+fn daemon_status(paths: &crate::paths::CachePaths) -> Result<Value, String> {
+    if !daemon_alive(paths) {
+        return Ok(json!({ "running": false }));
+    }
+    let mut v = daemon_call(paths, "status")?;
+    v["running"] = json!(true);
+    Ok(v)
+}
+
+/// Stop is idempotent and synchronous: it returns once the socket is gone,
+/// so `zd daemon stop && zd daemon start` cannot race the shutdown.
+fn daemon_stop(paths: &crate::paths::CachePaths) -> Result<Value, String> {
+    if !daemon_alive(paths) {
+        return Ok(json!({ "running": false }));
+    }
+    daemon_call(paths, "stop")?;
+    if !wait_until(|| !daemon_alive(paths)) {
+        return Err(format!("still running after {}s", LIFECYCLE_WAIT.as_secs()));
+    }
+    Ok(json!({ "running": false, "stopped": true }))
+}
+
+/// The `zshrs-daemon` binary: `$ZSHRS_DAEMON_BIN`, else beside this
+/// executable, else on `$PATH`.
+fn daemon_binary() -> std::path::PathBuf {
+    if let Some(p) = std::env::var_os("ZSHRS_DAEMON_BIN") {
+        return p.into();
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|me| me.parent().map(|d| d.join("zshrs-daemon")))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| "zshrs-daemon".into())
+}
+
+/// Start is idempotent: a daemon already listening is reported, not respawned.
+fn daemon_start(paths: &crate::paths::CachePaths, exe: &std::path::Path) -> Result<Value, String> {
+    if daemon_alive(paths) {
+        let mut v = daemon_status(paths)?;
+        v["already_running"] = json!(true);
+        return Ok(v);
+    }
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(exe);
+    cmd.env("ZSHRS_HOME", &paths.root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    // New session: the daemon must outlive the shell or script that started it.
+    // SAFETY: setsid is async-signal-safe and touches no Rust state.
+    unsafe {
+        cmd.pre_exec(|| {
+            let _ = nix::unistd::setsid();
+            Ok(())
+        });
+    }
+    cmd.spawn().map_err(|e| format!("spawn {}: {e}", exe.display()))?;
+    if !wait_until(|| daemon_alive(paths)) {
+        return Err(format!(
+            "{} did not open {} within {}s (see the daemon log)",
+            exe.display(),
+            paths.socket.display(),
+            LIFECYCLE_WAIT.as_secs()
+        ));
+    }
+    daemon_status(paths)
 }
 
 /// Top-level dispatcher. Parses global flags, routes to the right

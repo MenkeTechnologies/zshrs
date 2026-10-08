@@ -773,3 +773,35 @@ fn subscriptions_cleared_on_disconnect() {
         .expect("publish");
     assert_eq!(r["delivered_to"].as_u64(), Some(0));
 }
+
+/// `zd daemon` drives a real daemon through down → up → down → up, and each
+/// verb is idempotent. `stop` must return only once the socket is gone, or
+/// `stop && start` would find the dying daemon still "running".
+#[test]
+fn zd_daemon_lifecycle_verbs() {
+    use zsh::daemon::zd_dispatch::daemon_lifecycle;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let paths = CachePaths::with_root(tmp.path());
+    paths.ensure_dirs().unwrap();
+    let exe = zshrs_daemon_binary();
+    let run = |verb: &str| daemon_lifecycle(&paths, verb, &exe).unwrap_or_else(|e| panic!("{verb}: {e}"));
+
+    assert_eq!(run("status")["running"], json!(false));
+    assert_eq!(run("stop")["running"], json!(false), "stop on a down daemon is a no-op");
+
+    let first = run("start");
+    assert_eq!(first["running"], json!(true));
+    let first_pid = first["pid"].as_u64().expect("status carries the pid");
+    assert_eq!(run("start")["already_running"], json!(true), "start is idempotent");
+
+    assert_eq!(run("stop")["stopped"], json!(true));
+    assert!(!Client::is_daemon_alive(&paths), "stop returns after the socket is gone");
+
+    let second = run("restart");
+    assert_eq!(second["running"], json!(true));
+    assert_ne!(second["pid"].as_u64(), Some(first_pid), "restart is a new process");
+
+    run("stop");
+    assert!(daemon_lifecycle(&paths, "bogus", &exe).is_err());
+}

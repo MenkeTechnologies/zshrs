@@ -183,6 +183,19 @@ zshrs --prewarm-autoloads DIR ...    # just these
 zd prewarm [DIR ...]                 # same, via the daemon
 ```
 
+The local daemon's lifecycle is controlled from `zd`, with no daemon running required:
+
+```zsh
+zd daemon status      # JSON; exit 1 when not running
+zd daemon start       # spawn zshrs-daemon detached, wait for the socket; idempotent
+zd daemon stop        # returns once the socket is gone; idempotent
+zd daemon restart     # stop, then start (new pid)
+```
+
+These act on `$ZSHRS_HOME` over the local Unix socket (`--url` does not redirect
+them). `start` finds the binary via `$ZSHRS_DAEMON_BIN`, then beside the running
+executable, then `$PATH`.
+
 `zshrs-recorder` runs the pass at the end of every recording (skip it
 with `--no-prewarm`), which is where it belongs: the parser walks
 process-global lexer state, so this must never run beside a live ZLE.
