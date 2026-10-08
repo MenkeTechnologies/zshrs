@@ -3506,17 +3506,33 @@ fn probe_mismatches(
 /// the cross-shell corpus: float formatting (`%g`), built-in math functions,
 /// ksh's `printf %q` and `typeset -p` spellings, `read -a/-n/-N`, unpadded
 /// brace ranges, sparse `unset a[i]`, and `-nt`/`-ot` with a missing file.
+/// `(major, minor, patch)` of a ksh93u+m (`93u+m/1.0.10 2024-08-01`), or `None`
+/// for any other ksh.
+fn ksh_version(ksh: &str) -> Option<(u32, u32, u32)> {
+    let out = std::process::Command::new(ksh).arg("--version").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
+    let rest = text.split("93u+m/").nth(1)?;
+    let mut it = rest.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty());
+    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+}
+
 #[test]
 fn ksh93_specifics_match_ksh93() {
     let Some(ksh) = find_shell(&["ksh", "/bin/ksh", "/usr/bin/ksh"]) else {
         eprintln!("skip: ksh not found");
         return;
     };
+    // Float arithmetic output changed between ksh93u+m releases: 1.0.8 (Ubuntu
+    // 24.04's package) prints 17 significant digits (`1.41421356237309515`),
+    // 1.0.10 prints 15 (`1.4142135623731`), which is what `--ksh` matches. The
+    // digits-sensitive probe only means something against 1.0.10 or newer.
+    let float_digits_probe = "print $((7.0/2)) $((5.0)) $((2**0.5)) $((1.0/3)) $((1e20))";
+    let new_float_format = ksh_version(&ksh).is_some_and(|v| v >= (1, 0, 10));
     let probes = [
         "float f=1.5; print $f",
         "typeset -E f=0.3333333333333; print $f",
         "typeset -E2 f=1; print $f",
-        "print $((7.0/2)) $((5.0)) $((2**0.5)) $((1.0/3)) $((1e20))",
+        if new_float_format { float_digits_probe } else { "print $((7.0/2)) $((5.0)) $((1e20))" },
         "print $((sqrt(16))) $((abs(-3))) $((int(3.7)))",
         "printf '%q|' 'a b' \"it's\" 'a;b' abc '' a=b '=x' 'a\"b'; print",
         "printf '%q\\n' \"$(printf 'a\\tb')\"",
