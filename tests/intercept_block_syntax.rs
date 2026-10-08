@@ -434,3 +434,82 @@ fn advice_fires_for_an_alias_of_a_function() {
     assert_eq!(rc, 0);
     assert_eq!(out, "B[two]\nbody one two\n");
 }
+
+/// One row per behaviour: (name, script, expected stdout+stderr). Each runs in
+/// its own `zshrs -f -c`, so rows cannot see each other's intercepts.
+const AOP_MATRIX: &[(&str, &str, &str)] = &[
+    // ── registration and management
+    ("usage", "intercept", "Usage: intercept <before|after|around> <pattern> { code }\n       intercept list | remove <id> | clear\n"),
+    ("list empty", "intercept list", "no intercepts registered\n"),
+    ("remove", "intercept before a { : }; intercept remove 1", "removed intercept 1\n"),
+    ("remove unknown id", "intercept remove 9; print rc=$?", "rc=1\nzshrs:intercept:1: no intercept with ID 9\n"),
+    ("remove without id", "intercept remove; print rc=$?", "rc=1\nintercept remove: requires ID\n"),
+    ("remove bad id", "intercept remove abc; print rc=$?", "rc=1\nintercept remove: invalid ID\n"),
+    ("clear counts", "intercept before a { : }; intercept after b { : }; intercept clear", "cleared 2 intercepts\n"),
+    ("clear disarms", "intercept before /bin/echo { print adv }; intercept clear >/dev/null; /bin/echo plain", "plain\n"),
+    ("unknown subcommand", "intercept bogus; print rc=$?", "rc=1\nintercept: unknown subcommand 'bogus'. Use before|after|around|list|remove|clear\n"),
+    ("missing code", "intercept before; print rc=$?", "rc=1\nintercept before: requires <pattern> { code }\n"),
+    ("ids keep increasing", "intercept before a { : }; intercept before b { : }; intercept remove 1; intercept before c { : }; intercept remove 3", "removed intercept 1\nremoved intercept 3\n"),
+    // ── command kinds
+    ("function", "f() { print body $1 }; intercept before f { print adv }; f 1", "adv\nbody 1\n"),
+    ("opcode builtin :", "intercept before : { print adv }; :", "adv\n"),
+    ("opcode builtin test", "intercept before test { print adv }; test 1 -eq 1; print $?", "adv\n0\n"),
+    ("opcode builtin [", "intercept before [ { print adv }; [ 1 -eq 1 ]; print $?", "adv\n0\n"),
+    ("opcode builtin eval", "intercept before eval { print adv }; eval 'print inner'", "adv\ninner\n"),
+    ("opcode builtin true", "intercept before true { print adv }; true; print $?", "adv\n0\n"),
+    ("dynamic head", "intercept before /bin/echo { print adv }; c=/bin/echo; $c x", "adv\nx\n"),
+    ("command prefix bypasses advice", "intercept before /bin/echo { print adv }; command /bin/echo x", "x\n"),
+    ("builtin prefix bypasses advice", "intercept before echo { print adv }; builtin echo x", "x\n"),
+    // ── patterns
+    ("glob", "intercept before '/bin/e*' { print adv }; /bin/echo x", "adv\nx\n"),
+    ("question mark", "intercept before '/bin/ech?' { print adv }; /bin/echo x", "adv\nx\n"),
+    ("all", "intercept before all { print adv }; /bin/echo x", "adv\nx\n"),
+    ("star reaches functions", "f() { print b }; intercept before '*' { print adv }; f", "adv\nadv\nb\n"),
+    ("full command glob", "intercept before '/bin/echo x*' { print adv }; /bin/echo x y", "adv\nx y\n"),
+    ("full command glob miss", "intercept before '/bin/echo x*' { print adv }; /bin/echo z y", "z y\n"),
+    ("no match", "intercept before nope { print adv }; /bin/echo x", "x\n"),
+    ("invalid pattern matches nothing", "intercept before '[invalid' { print adv }; /bin/echo x", "x\n"),
+    ("underscore glob", "_f() { print b }; intercept before '_*' { print adv }; _f", "adv\nb\n"),
+    // ── variables
+    ("name args cmd", "intercept before /bin/echo { print \"[$INTERCEPT_NAME|$INTERCEPT_ARGS|$INTERCEPT_CMD]\" }; /bin/echo a b", "[/bin/echo|a b|/bin/echo a b]\na b\n"),
+    ("variables do not outlive a before-only advice", "intercept before /bin/echo { : }; /bin/echo >/dev/null; print \"[$INTERCEPT_NAME][$INTERCEPT_ARGS][$INTERCEPT_CMD]\"", "[][][]\n"),
+    ("variables do not outlive an after advice", "intercept after /bin/echo { : }; /bin/echo >/dev/null; print \"[$INTERCEPT_NAME][$INTERCEPT_STATUS]\"", "[][]\n"),
+    ("timing is numeric", "intercept after /bin/echo { print \"${INTERCEPT_MS%%.*}|${INTERCEPT_US}\" | grep -Ec '^[0-9]+\\|[0-9]+$' }; /bin/echo", "\n1\n"),
+    ("status of a failing function", "f() { return 3 }; intercept after f { print st=$INTERCEPT_STATUS }; f", "st=3\n"),
+    // ── ordering and control
+    ("befores run in registration order", "intercept before /bin/echo { print 1 }; intercept before /bin/echo { print 2 }; /bin/echo x", "1\n2\nx\n"),
+    ("before then after", "intercept before /bin/echo { print B }; intercept after /bin/echo { print A }; /bin/echo x", "B\nx\nA\n"),
+    ("afters run in registration order", "intercept after /bin/echo { print 1 }; intercept after /bin/echo { print 2 }; /bin/echo x", "x\n1\n2\n"),
+    ("around without proceed suppresses", "intercept around /bin/echo { print around }; /bin/echo hidden", "around\n"),
+    ("around with proceed", "intercept around /bin/echo { print pre; intercept_proceed; print post }; /bin/echo x", "pre\nx\npost\n"),
+    ("first around wins", "intercept around /bin/echo { print A1; intercept_proceed }; intercept around /bin/echo { print A2; intercept_proceed }; /bin/echo x", "A1\nx\n"),
+    ("proceed status", "f() { return 3 }; intercept around f { intercept_proceed; print post=$? }; f", "post=3\n"),
+    ("after keeps the command's status", "f() { return 3 }; intercept after f { : }; f; print rc=$?", "rc=3\n"),
+    ("before keeps the command's status", "intercept before /bin/echo { false }; /bin/echo x >/dev/null; print rc=$?", "rc=0\n"),
+    ("failing advice does not stop the command", "intercept before /bin/echo { false; nonexistent_cmd_zz 2>/dev/null }; /bin/echo x", "x\n"),
+    ("empty body", "intercept before /bin/echo { }; /bin/echo x", "x\n"),
+    ("advice does not recurse into itself", "intercept before /bin/echo { /bin/echo adv }; /bin/echo x", "adv\nx\n"),
+    ("exit keeps its status", "intercept before exit { print bye }; false; exit", "bye\n"),
+    // ── contexts
+    ("pipeline", "intercept before /bin/echo { print adv }; /bin/echo x | tr x X", "adv\nX\n"),
+    ("subshell", "intercept before /bin/echo { print adv }; ( /bin/echo x )", "adv\nx\n"),
+    ("command substitution", "intercept before /bin/echo { print adv }; print got:$(/bin/echo x)", "got:adv x\n"),
+    ("background", "intercept before /bin/echo { print adv }; /bin/echo x & wait", "adv\nx\n"),
+    ("and-list", "intercept before /bin/echo { print adv }; /bin/echo x && print y", "adv\nx\ny\n"),
+    ("loop fires every iteration", "intercept before /bin/echo { print a }; for i in 1 2; do /bin/echo x; done", "a\nx\na\nx\n"),
+    ("inside a function", "g() { /bin/echo x }; intercept before /bin/echo { print adv }; g", "adv\nx\n"),
+    ("command not found is advised first", "intercept before nonexistent_zz { print adv }; nonexistent_zz 2>&1 | head -1", "adv\n"),
+];
+
+#[test]
+fn aop_matrix() {
+    let mut failures = Vec::new();
+    for (name, script, want) in AOP_MATRIX {
+        let (out, err, _) = run(script);
+        let got = format!("{out}{err}");
+        if got != *want {
+            failures.push(format!("{name}\n  script: {script}\n  want:   {want:?}\n  got:    {got:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{} AOP rows failed:\n{}", failures.len(), failures.join("\n"));
+}

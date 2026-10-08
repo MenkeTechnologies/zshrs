@@ -2743,12 +2743,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_EXIT, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension). A bare `exit` reads the status of
+        // the previous command, which the advice must not disturb.
+        if let Some(done) = advise_keeping_status(vm, "exit", &args) {
+            return done;
+        }
         let status = dispatch_builtin("exit", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_RETURN, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension). A bare `return` reads the status of
+        // the previous command, which the advice must not disturb.
+        if let Some(done) = advise_keeping_status(vm, "return", &args) {
+            return done;
+        }
         // zsh: bare `return` (no arg) returns with the status of
         // the most recently executed command — `false; return`
         // returns 1, not 0. Direct port of zsh's bin_break/RETURN.
@@ -2810,6 +2820,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     vm.register_builtin(BUILTIN_COLON, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts(":", &args) {
+            return Value::Status(status);
+        }
         // Direct set; see BUILTIN_TRUE above for rationale.
         if args.is_empty() {
             crate::ported::params::set_zunderscore(&[":".to_string()]);
@@ -2824,10 +2839,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // BUILTIN_TEST_BRACKET.
     vm.register_builtin(BUILTIN_TEST_BRACKET, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("[", &args) {
+            return Value::Status(status);
+        }
         Value::Status(dispatch_builtin("[", args))
     });
     vm.register_builtin(BUILTIN_TEST, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("test", &args) {
+            return Value::Status(status);
+        }
         // c:Src/builtin.c:7231 `bin_test` with funcid BIN_TEST. The `[`
         // spelling compiles to BUILTIN_TEST_BRACKET, so this slot is only ever
         // `test`. It used to guess the spelling from a trailing `]`, which ran
@@ -2862,6 +2887,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // non-zsh mode can wire in a real impl).
     vm.register_builtin(fusevm::shell_builtins::BUILTIN_MAPFILE, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("mapfile", &args) {
+            return Value::Status(status);
+        }
         // The fusevm name→id map collapses both `mapfile` and
         // `readarray` to the same opcode; pick the right diagnostic
         // by sniffing the user's actual invocation. The xtrace ARGS
@@ -2893,6 +2923,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // free-fn) because it must run through the bytecode VM's
         // current executor — the same VM that's mid-dispatch.
         let mut args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("eval", &args) {
+            return Value::Status(status);
+        }
         // c:Src/builtin.c:407-411 — generic `--` end-of-options
         // strip applied by `execbuiltin` for builtins that have
         // NULL optstr AND no BINF_HANDLES_OPTS. `eval` qualifies
@@ -3324,6 +3359,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // upstream by compile_zsh and never reaches this handler.
     vm.register_builtin(BUILTIN_EXEC, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension). A bare `exec` reads the status of
+        // the previous command, which the advice must not disturb.
+        if let Some(done) = advise_keeping_status(vm, "exec", &args) {
+            return done;
+        }
         // c:Src/exec.c:3029-3278 — the precommand walk, `exec` included:
         // its options (c:3178-3274, `-a`/`-c`/`-l` and the "exec requires
         // a command to execute" / "unknown exec flag" errors), then any
@@ -3681,6 +3721,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SHOPT, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("shopt", &args) {
+            return Value::Status(status);
+        }
         // `shopt` is a BASH builtin; no shell in the zsh family has it
         // (c:Src/builtin.c:40-137 `builtins[]` has no `shopt` row), so
         // outside bash drop-in mode the name must resolve through PATH
@@ -3751,6 +3796,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_passthru!(vm, BUILTIN_UNHASH, "unhash");
     vm.register_builtin(BUILTIN_UNALIAS, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("unalias", &args) {
+            return Value::Status(status);
+        }
         Value::Status(dispatch_builtin("unalias", args))
     });
     vm.register_builtin(BUILTIN_UNFUNCTION, |vm, argc| {
@@ -4018,6 +4068,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_COMPDEF, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("compdef", &args) {
+            return Value::Status(status);
+        }
         // ACTUALLY A ZSH FUNCTION: compdef is defined by `compinit`, it is
         // never a builtin. Without the completion system set up it is
         // command-not-found (127) in every mode — `zsh -f; compdef` prints
@@ -4052,6 +4107,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_COMPINIT, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("compinit", &args) {
+            return Value::Status(status);
+        }
         // ACTUALLY A ZSH FUNCTION: compinit is a contrib FUNCTION (autoloaded
         // from $fpath), never a builtin. Without `autoload -Uz compinit` it is
         // command-not-found
@@ -4092,6 +4152,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_CALLER, |vm, argc| {
         let args = pop_args(vm, argc);
+        // AOP intercepts (zshrs extension): this opcode builtin has no
+        // user-function probe, so its advice runs here.
+        if let Some(status) = run_command_intercepts("caller", &args) {
+            return Value::Status(status);
+        }
         // c:Bug #475 — `caller` is a bash-only builtin. In `--zsh`
         // mode emit the canonical "command not found" diagnostic
         // and rc=127 matching zsh's external-command-lookup miss.
@@ -18210,6 +18275,20 @@ fn intercept_in_process_command(name: &str, args: &[String]) -> Option<i32> {
 /// The opcode builtins (`echo`, `cd`, …) enter here before they run, so this is
 /// where their advice runs; [`dispatch_builtin`] reaches the unadvised variant,
 /// or the advice would fire twice for one command.
+/// [`run_command_intercepts`] for builtins whose bare form reads $? afterwards
+/// (`exit`, `return`, `exec`): the advice runs, then the status the command will
+/// read is put back. `Some` is the value an `around` / `after` advice produced.
+fn advise_keeping_status(vm: &mut fusevm::VM, name: &str, args: &[String]) -> Option<Value> {
+    let live = vm.last_status;
+    if let Some(status) = run_command_intercepts(name, args) {
+        return Some(Value::Status(status));
+    }
+    vm.last_status = live;
+    with_executor(|exec| exec.set_last_status(live));
+    crate::ported::builtin::LASTVAL.store(live, std::sync::atomic::Ordering::Relaxed);
+    None
+}
+
 fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
     if let Some(status) = intercept_alias_origin(name, args) {
         return Some(status);

@@ -495,6 +495,22 @@ pub(crate) fn alias_origin(hasalias: Option<String>) -> Option<(String, usize)> 
 
 // BEGIN moved-from-exec-rs
 impl crate::ported::vm_helper::ShellExecutor {
+    /// Unset every `$INTERCEPT_*` parameter the advice machinery bound, so none
+    /// outlives the command it was bound for.
+    fn clear_advice_vars(&mut self) {
+        for name in [
+            "INTERCEPT_NAME",
+            "INTERCEPT_ARGS",
+            "INTERCEPT_CMD",
+            "INTERCEPT_MS",
+            "INTERCEPT_US",
+            "INTERCEPT_STATUS",
+            "__intercept_proceed",
+        ] {
+            self.unset_scalar(name);
+        }
+    }
+
     /// Check intercepts for a command. Returns Some(result) if an around
     /// advice fully handled the command, None to proceed normally.
     pub(crate) fn run_intercepts(
@@ -580,6 +596,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             let has_after = matching.iter().any(|i| matches!(i.kind, AdviceKind::After));
             if !has_after {
                 // Only before advice, no after — let normal dispatch continue
+                self.clear_advice_vars();
                 return None;
             }
 
@@ -615,13 +632,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         }
 
         // Clean up
-        self.unset_scalar("INTERCEPT_NAME");
-        self.unset_scalar("INTERCEPT_ARGS");
-        self.unset_scalar("INTERCEPT_CMD");
-        self.unset_scalar("INTERCEPT_MS");
-        self.unset_scalar("INTERCEPT_US");
-        self.unset_scalar("INTERCEPT_STATUS");
-        self.unset_scalar("__intercept_proceed");
+        self.clear_advice_vars();
 
         Some(result)
     }
