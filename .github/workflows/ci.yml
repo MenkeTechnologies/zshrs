@@ -73,6 +73,16 @@ jobs:
       # resolve through $ZSHRS_ORACLE_ZSH (upstream 54181 / 54013 / 55061
       # changed answers the released zsh still gives).
       - uses: ./.github/actions/zsh-oracle
+      # tests/port_purity.rs maps every src/ported/ file and fn onto the C it
+      # ports, read from src/zsh/Src (gitignored locally). Check out the C at
+      # the commit the oracle is built from, taken from the action's default
+      # so the two cannot drift.
+      - name: Upstream zsh C source for port_purity
+        run: |
+          sha=$(perl -ne 'print $1 if /default:\s*([0-9a-f]{40})/' .github/actions/zsh-oracle/action.yml)
+          git init -q src/zsh
+          git -C src/zsh fetch -q --depth 1 https://github.com/zsh-users/zsh.git "$sha"
+          git -C src/zsh checkout -q FETCH_HEAD
       - name: Test (all targets)
         if: runner.os == 'Linux'
         run: cargo test --locked --no-fail-fast
