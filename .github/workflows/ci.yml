@@ -464,7 +464,9 @@ jobs:
   parity-fuzz:
     name: Parity fuzz
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 70 modes: ~3 min build + ~30 min of fuzzing (run 37766178879 reached
+    # mode 67 at the 30-min mark with every mode at 0 new divergences).
+    timeout-minutes: 45
     env:
       RUST_BACKTRACE: 1
     steps:
