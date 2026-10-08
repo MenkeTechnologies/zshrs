@@ -15894,9 +15894,70 @@ fn hash_key_value(name: &str, idx: &str, v: Option<String>) -> Value {
     assoc_key_value(v)
 }
 
+/// One element of a plain indexed array by integer subscript, without the
+/// textual `${name[idx]}` rebuild — which clones the WHOLE array on every
+/// read, making a loop over an N-element array quadratic (8000 elements:
+/// 2.7s against zsh's 0.017s; zpwr's zshRegenSearchableEnv.zsh indexes
+/// `$lines[i]` over every autoload file and never finished).
+///
+/// `Some(elem)` only for the unambiguous case — a non-special `PM_ARRAY` in
+/// the live paramtab, a nonzero integer subscript (a literal, or a bare
+/// parameter holding one), KSH_ARRAYS off, and a non-empty element. Anything
+/// else (flags, ranges, magic arrays, namerefs, empty elements whose word
+/// elision depends on quoting) returns `None` and keeps the general path.
+/// zshrs-original — no C counterpart (c:Src/params.c:getarg is O(1)).
+fn array_elem_fast(name: &str, idx: &str) -> Option<String> {
+    use crate::ported::zsh_h::{PM_ARRAY, PM_SPECIAL};
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+        return None;
+    }
+    let n: i64 = match idx.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            // A bare identifier holding an integer (`$a[i]`).
+            let bare = idx
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && idx.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !bare {
+                return None;
+            }
+            crate::ported::params::getsparam(idx)?.trim().parse().ok()?
+        }
+    };
+    if n == 0 || name.is_empty() || matches!(name, "argv" | "@" | "*") {
+        return None;
+    }
+    if crate::ported::params::is_nameref(name) {
+        return None;
+    }
+    let tab = crate::ported::params::paramtab().read().ok()?;
+    let pm = tab.get(name)?;
+    let visible = crate::ported::modules::param_private::getprivatenode(&**pm as *const _);
+    if visible.is_null() || !std::ptr::eq(visible, &**pm as *const _) {
+        return None;
+    }
+    let flags = pm.node.flags as u32;
+    if crate::ported::zsh_h::PM_TYPE(flags) != PM_ARRAY || flags & PM_SPECIAL != 0 {
+        return None;
+    }
+    let arr = pm.u_arr.as_ref()?;
+    let at = if n > 0 {
+        usize::try_from(n - 1).ok()?
+    } else {
+        arr.len().checked_sub(usize::try_from(-n).ok()?)?
+    };
+    let elem = arr.get(at)?;
+    (!elem.is_empty()).then(|| elem.clone())
+}
+
 fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
     if idx_is_simple {
+        if let Some(elem) = array_elem_fast(name, idx) {
+            return Value::str(elem);
+        }
         // assoc_key_hit: single-lock O(1) probe — exec.assoc() clones
         // the WHOLE map per lookup (O(n), quadratic in shell loops).
         // When `name` IS an assoc, exact-key semantics apply to EVERY
