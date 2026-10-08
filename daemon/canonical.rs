@@ -191,6 +191,7 @@ impl CanonicalEngine {
         // shards both carry.
         changed.sort_by_key(|(_, mtime)| *mtime);
         let mut applied = 0;
+        let mut newest_plugins = None;
         for (path, mtime) in changed {
             let shard = match read_canonical_shard(&path) {
                 Ok(s) => s,
@@ -219,9 +220,18 @@ impl CanonicalEngine {
                     "values only"
                 }
             };
+            newest_plugins = Some(super::recorder_shard::shard_plugins(&shard));
             self.inner.write().recorder_shard_mtimes.insert(path.clone(), mtime);
             applied += 1;
             tracing::info!(path = %path.display(), rows, "recorder shard applied to canonical catalog");
+        }
+        if let Some(plugins) = newest_plugins {
+            // SQLite is the inspection mirror: a failure leaves the rkyv shard authoritative.
+            let mirrored = super::catalog::open(&self.paths)
+                .and_then(|conn| super::catalog::hydrate_plugins(&conn, &plugins));
+            if let Err(e) = mirrored {
+                tracing::warn!(?e, "catalog.db plugins mirror not hydrated (rkyv is authoritative)");
+            }
         }
         applied
     }
@@ -798,6 +808,30 @@ mod tests {
             alias_rows(&engine),
             vec![("gst".into(), "git status -sb".into(), Some("/home/u/.zshrc".into()), Some(1))]
         );
+    }
+
+    /// The recording's plugins reach `catalog.db`'s `plugins` mirror when the
+    /// shard is applied. Before, nothing wrote it and the doctor reported 0.
+    #[test]
+    fn recorder_shard_hydrates_the_plugins_mirror() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let paths = CachePaths::with_root(tmp.path());
+        paths.ensure_dirs().unwrap();
+        let bundle: Bundle = serde_json::from_value(json!({
+            "started_at_ns": 1,
+            "finished_at_ns": 2,
+            "cmdline": null,
+            "zdotdir": "/home/u",
+            "home": "/home/u",
+            "events": [
+                {"order_idx": 0, "ts_ns": 1, "kind": "source", "name": "/home/u/.zinit/plugins/a---b/b.plugin.zsh", "value": null, "file": null, "line": null, "fn_chain": null},
+                {"order_idx": 1, "ts_ns": 2, "kind": "source", "name": "/home/u/.oh-my-zsh/plugins/git/git.plugin.zsh", "value": null, "file": null, "line": null, "fn_chain": null},
+            ],
+        }))
+        .unwrap();
+        write_bundle_shard(&paths, &bundle).unwrap();
+        CanonicalEngine::new(paths.clone()).load_from_disk().unwrap();
+        assert_eq!(crate::catalog::mirrored_plugin_count(&paths.catalog_db), Some(2));
     }
 
     // A bash `ll` federated in through definitions_emit must not shadow

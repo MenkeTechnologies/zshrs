@@ -773,16 +773,15 @@ impl ShellExecutor {
         } else {
             println!("  compsys:     {}", yellow("no mirror"));
         }
-        if let Some(ref cache) = self.plugin_cache {
-            let (plugins, functions) = cache.stats();
-            println!(
-                "  plugins:     {} plugins, {} functions  {}",
-                plugins,
-                functions,
-                dim("mirror")
-            );
-        } else {
-            println!("  plugins:     {}", yellow("no mirror"));
+        #[cfg(feature = "daemon")]
+        let mirrored_plugins = crate::daemon::paths::CachePaths::resolve()
+            .ok()
+            .and_then(|p| crate::daemon::catalog::mirrored_plugin_count(&p.catalog_db));
+        #[cfg(not(feature = "daemon"))]
+        let mirrored_plugins: Option<i64> = None;
+        match mirrored_plugins {
+            Some(n) => println!("  plugins:     {} plugins  {}", n, dim("mirror")),
+            None => println!("  plugins:     {}", yellow("no mirror")),
         }
         println!();
 
@@ -10975,13 +10974,7 @@ pub fn recorded_state_counts() -> Option<(String, Vec<(&'static str, usize)>)> {
 /// zshrs-original — no C counterpart.
 #[cfg(feature = "daemon")]
 pub fn recorded_plugins(shard: &crate::daemon::shard::CanonicalShard) -> Vec<(String, String)> {
-    let mut all = shard.plugins.clone();
-    for found in crate::daemon::recorder_shard::detect_plugins(&shard.sourced_files, &shard.fpath) {
-        if !all.contains(&found) {
-            all.push(found);
-        }
-    }
-    all
+    crate::daemon::recorder_shard::shard_plugins(shard)
 }
 
 #[cfg(not(feature = "daemon"))]

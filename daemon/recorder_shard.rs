@@ -793,6 +793,19 @@ pub fn build_shard(bundle: &Bundle, f: &Folded) -> CanonicalShard {
     shard
 }
 
+/// Plugins a recorder shard names: the ones the recorder stored, plus any
+/// its sourced files and fpath place in a known framework layout (shards
+/// written before the recorder detected plugins carry none).
+pub fn shard_plugins(shard: &CanonicalShard) -> Vec<(String, String)> {
+    let mut all = shard.plugins.clone();
+    for found in detect_plugins(&shard.sourced_files, &shard.fpath) {
+        if !all.contains(&found) {
+            all.push(found);
+        }
+    }
+    all
+}
+
 /// Replace the event-folded alias, function, parameter and option
 /// buckets with the end-of-run snapshot. The scalar `params` and
 /// `env_exports` views stay filled for readers that predate the typed

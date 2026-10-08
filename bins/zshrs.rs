@@ -3503,39 +3503,16 @@ fn run_doctor() {
     }
 
     let plugin_path = zsh::plugin_cache::default_cache_path();
-    if plugin_path.exists() {
-        let size = std::fs::metadata(&plugin_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let (plugins, functions) = zsh::plugin_cache::PluginCache::open(&plugin_path)
-            .map(|c| c.stats())
-            .unwrap_or((0, 0));
-        println!(
-            "  plugins.db:  {} plugins, {} functions, {}  {}",
-            plugins,
-            functions,
-            format_bytes(size),
-            dim("mirror"),
-        );
 
-        // Stale plugin diagnostic — file mtime no longer matches the
-        // mirror's stored mtime. Indicates the rkyv shard may be out
-        // of date and needs daemon rehydration.
-        if let Ok(cache) = zsh::plugin_cache::PluginCache::open(&plugin_path) {
-            let stale = count_stale_plugins(&cache);
-            if stale > 0 {
-                println!(
-                    "               {} {} plugin(s) stale in mirror — rkyv shard may need rehydration",
-                    yellow("!"),
-                    stale
-                );
-            }
+    #[cfg(feature = "daemon")]
+    {
+        let catalog = zshrs_daemon::paths::CachePaths::resolve()
+            .ok()
+            .map(|p| p.catalog_db);
+        match catalog.and_then(|p| zshrs_daemon::catalog::mirrored_plugin_count(&p)) {
+            Some(n) => println!("  plugins:     {} plugins  {}", n, dim("mirror")),
+            None => println!("  plugins:     {}", yellow("no mirror — start the daemon to hydrate it")),
         }
-    } else {
-        println!(
-            "  plugins.db:  {}",
-            yellow("not found — source a file to create the mirror")
-        );
     }
     println!();
 
@@ -3730,10 +3707,6 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     }
-}
-
-fn count_stale_plugins(cache: &zsh::plugin_cache::PluginCache) -> usize {
-    cache.count_stale()
 }
 
 fn is_script_cached(plugin_db_path: &std::path::Path, script_path: &str) -> bool {

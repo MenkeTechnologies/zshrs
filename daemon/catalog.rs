@@ -275,6 +275,31 @@ pub fn summary(conn: &Connection, db_path: &Path) -> Result<CatalogSummary> {
     })
 }
 
+/// Replace the `plugins` mirror with `plugins` as `(manager, name)` pairs.
+/// A name two managers both provide keeps its first row.
+pub fn hydrate_plugins(conn: &Connection, plugins: &[(String, String)]) -> Result<usize> {
+    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM plugins", [])?;
+    let mut written = 0;
+    for (manager, name) in plugins {
+        written += tx.execute(
+            "INSERT OR IGNORE INTO plugins (name, source, installed_at, enabled) VALUES (?, ?, ?, 1)",
+            rusqlite::params![name, manager, now],
+        )?;
+    }
+    tx.commit()?;
+    Ok(written)
+}
+
+/// Row count of the `plugins` mirror in `catalog.db`, opened read-only so a
+/// reader never creates or migrates the file. `None` when the file is absent
+/// or has no `plugins` table.
+pub fn mirrored_plugin_count(path: &Path) -> Option<i64> {
+    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    conn.query_row("SELECT COUNT(*) FROM plugins", [], |r| r.get(0)).ok()
+}
+
 /// PRAGMA integrity_check — used by `zcache verify`.
 pub fn integrity_check(conn: &Connection) -> Result<bool> {
     let result: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))?;
@@ -373,6 +398,21 @@ mod tests {
 
         let s = summary(&conn, &paths.catalog_db).unwrap();
         assert_eq!(s.entries_count, 1);
+    }
+
+    #[test]
+    fn hydrate_plugins_replaces_rows_and_reads_back_read_only() {
+        let (_tmp, paths) = fresh_paths();
+        let conn = open(&paths).unwrap();
+        let pair = |m: &str, n: &str| (m.to_string(), n.to_string());
+
+        let first = [pair("zinit", "a/b"), pair("oh-my-zsh", "git"), pair("manual", "git")];
+        assert_eq!(hydrate_plugins(&conn, &first).unwrap(), 2, "duplicate name keeps its first row");
+        assert_eq!(mirrored_plugin_count(&paths.catalog_db), Some(2));
+
+        hydrate_plugins(&conn, &[pair("zinit", "c/d")]).unwrap();
+        assert_eq!(mirrored_plugin_count(&paths.catalog_db), Some(1), "a rehydrate replaces, not appends");
+        assert_eq!(mirrored_plugin_count(&paths.catalog_db.with_extension("missing")), None);
     }
 
     #[test]

@@ -208,6 +208,9 @@ Atomic-rename per shard with strict ordering — shard rename FIRST, then `index
 
 ```sql
 plugins         (name, version, source, installed_at, enabled)
+                (hydrated from the newest recorder shard's plugins — stored ones plus
+                 those detected from its sourced files and fpath — whenever the
+                 canonical engine applies a changed shard; `source` = manager)
 plugin_deps     (plugin, dep, constraint)
 entries         (fq_name, plugin_id, kind, image_path, byte_offset, source_loc, bytecode BLOB)
 hooks           (kind, name, fq_name)
