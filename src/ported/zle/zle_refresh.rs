@@ -7338,6 +7338,7 @@ mod tests {
     fn region_highlight_round_trip_normalises_like_zsh() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
+        let _tc = crate::test_util::truecolor_terminal();
         let input: Vec<String> = [
             "foo",
             "3 bar",
@@ -7502,6 +7503,7 @@ mod tests {
         use crate::ported::zsh_h::{TXTFGCOLOUR, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT};
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
+        let _tc = crate::test_util::truecolor_terminal();
         *ZLELINE.lock().unwrap() = "ab".chars().collect();
         ZLELL.store(2, Ordering::SeqCst);
         set_region_highlight(Some(&["0 2 fg=#040810".to_string()]));

@@ -5100,6 +5100,7 @@ mod tests {
     #[test]
     fn match_colour_truecolor_six_digit() {
         let _g = crate::test_util::global_state_lock();
+        let _tc = crate::test_util::truecolor_terminal();
         let mut cur = 0usize;
         let attr = match_colour(Some(&mut cur), "#ff8040", true, 0);
         assert_ne!(attr, TXT_ERROR);
@@ -5115,6 +5116,7 @@ mod tests {
     #[test]
     fn match_colour_truecolor_three_digit_expands() {
         let _g = crate::test_util::global_state_lock();
+        let _tc = crate::test_util::truecolor_terminal();
         let mut cur = 0usize;
         let attr = match_colour(Some(&mut cur), "#f8a", true, 0);
         assert_ne!(attr, TXT_ERROR);
@@ -6777,6 +6779,7 @@ mod tests {
     #[test]
     fn promptexpand_colour_prefix_parse_and_short_hex() {
         let _g = crate::test_util::global_state_lock();
+        let _tc = crate::test_util::truecolor_terminal();
         let (junk, _, _) = promptexpand("%F{003junk}x", 0, None);
         assert_eq!(strip_np_markers(&junk), "\x1b[33mx");
         let (short_hex, _, _) = promptexpand("%F{#f00}x", 0, None);
