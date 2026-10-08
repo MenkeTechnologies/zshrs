@@ -8181,12 +8181,26 @@ mod subst_modifier_tests {
     /// guard: combining mark passes through, b stays lowercase
     /// (still inside the word). Without the guard: the combiner
     /// resets nextupper, so `b` would be uppercased.
-    /// glibc `iswupper`/`iswlower` are both true for a titlecase letter, so
-    /// `ǅ` (U+01C5) folds in either direction (fuzz seeds 7/97/102/242/244).
+    /// A titlecase letter folds as the platform libc says, like zsh: glibc
+    /// under a UTF-8 codeset has `iswupper`/`iswlower` both true for `ǅ`
+    /// (U+01C5), so it folds in either direction (fuzz seeds 7/97/102/242/244);
+    /// macOS libc, and any C/ASCII codeset, leave it unchanged.
     #[test]
     fn casemodify_folds_titlecase_both_ways() {
-        assert_eq!(casemodify("\u{1c5}", CASMOD_UPPER), "\u{1c4}");
-        assert_eq!(casemodify("\u{1c5}", CASMOD_LOWER), "\u{1c6}");
+        let _ = *crate::ported::utils::MB_LOCALE_READY;
+        // SAFETY: nl_langinfo returns a pointer to a static NUL-terminated string.
+        let codeset = unsafe { std::ffi::CStr::from_ptr(libc::nl_langinfo(libc::CODESET)) }
+            .to_string_lossy()
+            .to_ascii_uppercase();
+        let glibc_utf8 =
+            cfg!(all(target_os = "linux", target_env = "gnu")) && codeset.replace('-', "") == "UTF8";
+        let (upper, lower) = if glibc_utf8 {
+            ("\u{1c4}", "\u{1c6}")
+        } else {
+            ("\u{1c5}", "\u{1c5}")
+        };
+        assert_eq!(casemodify("\u{1c5}", CASMOD_UPPER), upper);
+        assert_eq!(casemodify("\u{1c5}", CASMOD_LOWER), lower);
     }
 
     #[test]
