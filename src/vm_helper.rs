@@ -2419,6 +2419,13 @@ impl ShellExecutor {
                     &special_params[crate::ported::params::SPECIAL_PARAMS_ZSH_START..] // c:845-847
                 };
                 for entry in head.iter().chain(tail.iter()) {
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no
+                    // $RANDOM / $SECONDS: they are ordinary variables there.
+                    if crate::dash_mode::dash_faithful()
+                        && matches!(entry.name, "RANDOM" | "SECONDS")
+                    {
+                        continue;
+                    }
                     // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
                     // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
                     //

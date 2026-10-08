@@ -1710,6 +1710,11 @@ pub fn createparamtable() {
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
     let add_special = |ip: &special_paramdef, tab: &mut hashtable_nodes<Param>| {
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no $RANDOM /
+        // $SECONDS: they are ordinary variables there.
+        if crate::dash_mode::dash_faithful() && matches!(ip.name, "RANDOM" | "SECONDS") {
+            return;
+        }
         // c:840 — `paramdef->gsu` selects which gsu_scalar vtable the
         // new param gets. C uses the per-IPDEF macro's BR(...) field;
         // since the Rust special_paramdef doesn't carry a gsu slot
@@ -15619,6 +15624,18 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if (f & want) == 0 {
             return;
         }
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash lists a declared
+        // but unset name bare (`export NAME`) and escapes a quote inside the
+        // value as `'"'"'` (var.c `single_quote`), not the alias form `'\''`.
+        if crate::dash_mode::dash_faithful() {
+            if (f & PM_UNSET) != 0 {
+                println!("{kw} {}", hn.node.nam);
+            } else {
+                let val = hn.u_str.clone().unwrap_or_default();
+                println!("{kw} {}='{}'", hn.node.nam, val.replace('\'', "'\"'\"'"));
+            }
+            return;
+        }
         let val = hn.u_str.clone().unwrap_or_default();
         println!(
             "{kw} {}={}",
@@ -17270,7 +17287,10 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     if matches!(
         name,
         "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO" | "_"
-    ) && (is_unset_special(name) || {
+    ) && (is_unset_special(name)
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no $RANDOM or
+        // $SECONDS: they are ordinary (unset) variables there.
+        || (crate::dash_mode::dash_faithful() && matches!(name, "RANDOM" | "SECONDS")) || {
         // c:Src/params.c — paramtab PM_UNSET check. ERRNO carries
         // this flag from IPDEF1 initialization (params.c:298); reads
         // route through getsparam → paramtab pm.flags check at

@@ -4546,8 +4546,21 @@ pub fn exalias() -> bool {
         // do/done/{/}/…) stays intact. The `]]`/`!`-in-cond branches below are
         // gated on LEX_INCOND, which never rises now. Found by the per-mode
         // dash-strictness sweep.
-        let rw_tok = if crate::dash_mode::dash_strict()
-            && matches!(rw_tok, Some(DINBRACK) | Some(FUNC) | Some(COPROC))
+        // The bare drop-in also loses `foreach` / `repeat` / `select` /
+        // `nocorrect` / `end` and the typeset family (`typeset declare integer
+        // float`): dash keeps only `export` / `local` / `readonly` as commands.
+        let rw_tok = if (crate::dash_mode::dash_strict()
+            && matches!(rw_tok, Some(DINBRACK) | Some(FUNC) | Some(COPROC)))
+            || (crate::dash_mode::dash_faithful()
+                && (matches!(
+                    rw_tok,
+                    Some(crate::ported::zsh_h::FOREACH)
+                        | Some(crate::ported::zsh_h::REPEAT)
+                        | Some(crate::ported::zsh_h::SELECT)
+                        | Some(NOCORRECT)
+                        | Some(crate::ported::zsh_h::ZEND)
+                ) || (rw_tok == Some(crate::ported::zsh_h::TYPESET)
+                    && !matches!(lextext.as_str(), "export" | "local" | "readonly"))))
         {
             None
         } else {

@@ -1737,6 +1737,9 @@ pub fn zshrs_main() {
     );
     let zsh_style_requested = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
     zsh::extensions::dash_mode::set_posix_faithful(posix_family && !zsh_style_requested);
+    if zsh::extensions::dash_mode::dash_faithful() {
+        zsh::extensions::dash_mode::dash_hide_foreign_builtins();
+    }
 
     // `--mksh` / `--pdksh` install the same `emulate ksh` preset as `--ksh`
     // and are otherwise indistinguishable at run time, but the pdksh line

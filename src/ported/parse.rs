@@ -1265,7 +1265,9 @@ fn par_sublist() -> Option<ZshSublist> {
     let next = match tok() {
         DAMPER => {
             zshlex();
-            skip_separators();
+            if !crate::dash_mode::dash_skip_operator_separators() {
+                return None;
+            }
             // c:Src/parse.c:par_sublist — and-or operators (`&&`,
             // `||`) require a sublist on each side. After consuming
             // `&&`/`||`, another and-or operator OR a pipe-operator
@@ -1287,7 +1289,9 @@ fn par_sublist() -> Option<ZshSublist> {
         }
         DBAR => {
             zshlex();
-            skip_separators();
+            if !crate::dash_mode::dash_skip_operator_separators() {
+                return None;
+            }
             if matches!(tok(), DAMPER | DBAR | BAR_TOK | BARAMP) {
                 let name = match tok() {
                     DAMPER => "&&",
@@ -1345,7 +1349,9 @@ fn par_pline() -> Option<ZshPipe> {
         BAR_TOK | BARAMP => {
             merge_stderr = tok() == BARAMP;
             zshlex();
-            skip_separators();
+            if !crate::dash_mode::dash_skip_operator_separators() {
+                return None;
+            }
             // c:Src/parse.c:par_pline — pipe-operators require a
             // command on each side. After consuming `|`/`|&`,
             // C zsh's recursive par_pline call returns -1 (parse
@@ -9175,6 +9181,17 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
     loop {
         // Skip separators
         while tok() == SEPER || tok() == NEWLIN {
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's grammar
+            // takes one `;` after a command and none before it: a leading or
+            // doubled `;` is `Syntax error: ";" unexpected`. Newlines may repeat.
+            if tok() == SEPER
+                && crate::dash_mode::dash_faithful()
+                && crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) == 0
+            {
+                zerr("Syntax error: \";\" unexpected");
+                set_tok(LEXERR);
+                break;
+            }
             zshlex();
         }
 

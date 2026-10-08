@@ -466,6 +466,12 @@ pub fn execbuiltin(
                 // c:308
                 break;
             }
+            // !!! DASH-STRICT GATE (no C counterpart) !!! dash's `echo` takes ONE
+            // option word and only if it is exactly `-n` (`echo -nn` and
+            // `echo -n -n a` print the later words as text).
+            if crate::dash_mode::dash_strict() && name == "echo" && (argv > 0 || arg_str != "-n") {
+                break;
+            }
             // !!! BASH/KSH-MODE (no C counterpart) !!! bash/ksh `echo` has no lone-`-`
             // option arg: `echo -` prints `-` (zsh's c:337-341 swallows it).
             if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
@@ -712,6 +718,12 @@ pub fn execbuiltin(
     let ef = errflag.load(Relaxed);
     if (ef & ERRFLAG_ERROR) != 0 {
         return 1; // c:428
+    }
+
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `unset` with no
+    // names is a successful no-op.
+    if argc == 0 && name == "unset" && crate::dash_mode::dash_faithful() {
+        return 0;
     }
 
     // c:432-436 — argc bounds check.
@@ -17534,6 +17546,11 @@ pub fn bin_test(
     _ops: &options,
     func: i32,
 ) -> i32 {
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash runs its own
+    // `testcmd` grammar (src/bltin/test.c), not zsh's par_cond.
+    if crate::dash_mode::dash_faithful() {
+        return crate::dash_mode::dash_test(name, argv);
+    }
     let mut argv = argv.to_vec();
     let mut sense = 0i32; // c:7236
 
@@ -17762,6 +17779,28 @@ pub fn bin_trap(
         {
             zerrnam(name, &format!("-{}: unknown option", bad.chars().nth(1).unwrap_or('-')));
             return 1;
+        }
+    }
+
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's trap takes no
+    // options (`trap -p`/`-x` -> "Illegal option", status 2) and a lone `-` is
+    // an action with no signal ("bad trap", status 1).
+    if crate::dash_mode::dash_faithful() {
+        match argv.first().map(String::as_str) {
+            Some("-") if argv.len() == 1 => {
+                zwarnnam(name, "-: bad trap");
+                return 1;
+            }
+            Some(a) if a.len() >= 2 && a.starts_with('-') && a != "--" => {
+                zwarnnam(name, &format!("Illegal option {}", &a[..2]));
+                // `trap` is a POSIX special builtin: the error ends a script.
+                if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+                    EXIT_VAL.store(2, std::sync::atomic::Ordering::Relaxed);
+                    EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return 2;
+            }
+            _ => {}
         }
     }
 
@@ -20666,6 +20705,14 @@ fn printf_format(
     // truncation marker. Route through `_with(GETKEYS_PRINTF_FMT)`
     // to match C exactly. `_with` takes a u32 `how` mask; the
     // canonical i32 const lives in `zsh_h` (Src/zsh.h:3180-3181).
+    // !!! DASH-STRICT GATE (no C counterpart) !!! dash's printf format has no
+    // `\c` escape: the two characters are printed as written.
+    let fmt = if crate::dash_mode::dash_strict() {
+        crate::dash_mode::dash_printf_keep_backslash_c(fmt)
+    } else {
+        fmt.to_string()
+    };
+    let fmt = fmt.as_str();
     let (fmt, _) = getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32, None); // c:builtin.c:4711
                                                                                                   // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
                                                                                                   // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
@@ -20968,7 +21015,7 @@ fn printf_format(
             // format_spec_* helpers. Only one modifier char is skipped,
             // matching C (so `%lld` then errors on the second `l`).
             if let Some(&m) = iter.peek() {
-                if matches!(m, 'l' | 'L' | 'h') {
+                if matches!(m, 'l' | 'L' | 'h') && !crate::dash_mode::dash_strict() {
                     raw.push(m); // c:5290 — `c++` past the modifier; `start` still covers it
                     iter.next();
                 }

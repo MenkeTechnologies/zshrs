@@ -1261,6 +1261,11 @@ pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops: &options, _func: i
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(name, argv, ops, func)
 pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
     // c:731 — locals
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has its own resource
+    // table and option letters.
+    if crate::dash_mode::dash_faithful() {
+        return crate::dash_mode::dash_ulimit(argv);
+    }
     let mut res: i32;
     let mut resmask: u64 = 0;
     let mut hard: bool = false;

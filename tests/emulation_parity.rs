@@ -3779,6 +3779,44 @@ fn dash_specifics_match_dash() {
         "type if; type :; type echo",
         "x=5; f() { local x; echo \"[$x]\"; }; f",
         "set +f; set -eu; echo $-",
+        // builtins and specials dash does not have
+        "let 1+1",
+        "echo \"[$RANDOM][$SECONDS]\"; RANDOM=5; echo $RANDOM",
+        "typeset x=1; echo $x",
+        // $LINENO inside a function counts from the definition line as 1
+        "f(){ echo $LINENO; echo $LINENO; }; f",
+        // option and directive rejections
+        "command -x ls",
+        "ulimit -z",
+        "ulimit -u",
+        "printf '%ld\\n' 3",
+        "printf 'a\\cb\\n'",
+        "echo -n -n a",
+        "echo -nn a",
+        "trap -x; echo no",
+        "trap -; echo $?",
+        "unset; echo $?",
+        // grammar: one `;` after a command, none before it or after an operator
+        "echo hi; ;",
+        "echo hi && ; echo",
+        "echo a | ; echo",
+        "echo a &&",
+        "; echo a",
+        // export -p / readonly -p listings
+        "export ZZA; export -p | grep ZZA",
+        "readonly ZZC; readonly -p | grep ZZC",
+        "export ZZA=\"it's\"; export -p | grep ZZA",
+        // dash's own test grammar
+        "[ \\( \\) ]; echo $?",
+        "[ -v HOME ]; echo $?",
+        "[ -t a ]; echo $?",
+        "[ /bin/sh -nt /nonexistent ]; echo $?",
+        "[ /nonexistent -ot /bin/sh ]; echo $?",
+        "test ! -a x; echo $?",
+        "test -f -a -f; echo $?",
+        "[ 99999999999999999999 -gt 1 ]; echo $?",
+        "[ ! ! 1 = 1 ]; echo $?",
+        "[ a = a -o b = c -a c = d ]; echo $?",
     ];
     if type_rejects_options {
         probes.push("type -a echo");

@@ -3162,6 +3162,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             break;
         }
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `command` knows only
+        // -p -v -V; any other `-x` word is "Illegal option" (status 2), not a
+        // command name.
+        if crate::dash_mode::dash_faithful() {
+            if let Some(bad) = post[lead..]
+                .first()
+                .filter(|s| s.len() >= 2 && s.starts_with('-') && *s != "--")
+                .and_then(|s| s[1..].chars().find(|c| !matches!(c, 'p' | 'v' | 'V')))
+            {
+                crate::ported::utils::zwarnnam("command", &format!("Illegal option -{bad}"));
+                return Value::Status(2);
+            }
+        }
         let mut post: Vec<String> = {
             let mut v = kept_flags;
             v.extend(post[lead..].iter().cloned());
@@ -23335,6 +23348,20 @@ pub(crate) fn arith_pow(
 /// `BUILTIN_STMT_PROLOGUE_FAST` can perform the same write without a
 /// second indirect call. c:Src/exec.c:1355/1451/2056 `lineno = code - 1`.
 pub(crate) fn set_lineno_impl(n: i64) -> fusevm::Value {
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash numbers a function body
+    // from the line of its definition as 1; zsh (c:Src/exec.c:1355 `lineno =
+    // code - 1`, function-relative) leaves that line at 0.
+    let n = if crate::dash_mode::dash_faithful()
+        && crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last()
+            .is_some_and(|f| f.tp == crate::ported::zsh_h::FS_FUNC)
+    {
+        n + 1
+    } else {
+        n
+    };
         // c:Src/exec.c:1355 — `/* In evaluated traps, don't modify the
         // line number. */  if (!IN_EVAL_TRAP() && !ineval && code)
         // lineno = code - 1;` (same gate at c:1451 and c:2056).

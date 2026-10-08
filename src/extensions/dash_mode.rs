@@ -360,6 +360,33 @@ pub fn dash_special_builtin(name: &str) -> bool {
     DASH_SPECIAL_BUILTINS.contains(&name)
 }
 
+/// Every builtin dash itself provides (`command -v NAME` prints the bare name).
+/// Anything else zshrs registers (`let`, `print`, `typeset`, `setopt`, ...) is
+/// "not found" in dash.
+const DASH_BUILTINS: &[&str] = &[
+    ":", ".", "[", "alias", "bg", "break", "cd", "chdir", "command", "continue",
+    "echo", "eval", "exec", "exit", "export", "false", "fc", "fg", "getopts",
+    "hash", "jobs", "kill", "local", "printf", "pwd", "read", "readonly",
+    "return", "set", "shift", "test", "times", "trap", "true", "type", "ulimit",
+    "umask", "unalias", "unset", "wait",
+];
+
+/// Mark every zshrs builtin dash does not have as DISABLED, so the name falls
+/// through to PATH lookup (`let 1+1` -> "not found", 127) exactly as in dash.
+/// Called once at startup of the bare `--dash`/`--ash` drop-in.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_hide_foreign_builtins() {
+    let Ok(mut disabled) = crate::ported::builtin::BUILTINS_DISABLED.lock() else {
+        return;
+    };
+    for name in crate::ported::builtin::createbuiltintable().keys() {
+        if !DASH_BUILTINS.contains(&name.as_str()) {
+            disabled.insert(name.clone());
+        }
+    }
+}
+
 /// dash's `number()`: an optional `+` and decimal digits that fit an int.
 /// Anything else (`abc`, `-1`, `1+1`, `0x10`, empty) is "Illegal number".
 ///
@@ -2744,4 +2771,592 @@ pub fn ksh_version_string() -> &'static str {
     } else {
         "Version AJM 93u+m/1.0.10 2024-08-01"
     }
+}
+
+/// dash's `ulimit` (miscbltin.c `ulimitcmd`): `[-HSa] [-tfdscmlpnv] [limit]`,
+/// its own fixed resource table, `%-20s ` listing for `-a`, and "Illegal
+/// option" (status 2) for every other letter. zsh's table (`-u`, `-T`, ...)
+/// differs, so the bare drop-in does not go through `bin_ulimit`.
+///
+/// Platform-specific extras dash adds on Linux (`-w -i -q -e -r`) are not
+/// carried: only the ten resources common to dash on every host are.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[cfg(unix)]
+pub fn dash_ulimit(argv: &[String]) -> i32 {
+    // (name, resource, factor, option letter) — dash's `limits[]` order.
+    let limits: [(&str, libc::c_int, libc::rlim_t, char); 10] = [
+        ("time(seconds)", libc::RLIMIT_CPU as _, 1, 't'),
+        ("file(blocks)", libc::RLIMIT_FSIZE as _, 512, 'f'),
+        ("data(kbytes)", libc::RLIMIT_DATA as _, 1024, 'd'),
+        ("stack(kbytes)", libc::RLIMIT_STACK as _, 1024, 's'),
+        ("coredump(blocks)", libc::RLIMIT_CORE as _, 512, 'c'),
+        ("memory(kbytes)", libc::RLIMIT_RSS as _, 1024, 'm'),
+        ("locked memory(kbytes)", libc::RLIMIT_MEMLOCK as _, 1024, 'l'),
+        ("process", libc::RLIMIT_NPROC as _, 1, 'p'),
+        ("nofiles", libc::RLIMIT_NOFILE as _, 1, 'n'),
+        ("vmemory(kbytes)", libc::RLIMIT_AS as _, 1024, 'v'),
+    ];
+    let (mut soft, mut hard, mut all) = (true, true, false);
+    let mut what = 'f';
+    let mut i = 0;
+    while let Some(arg) = argv.get(i) {
+        if arg == "--" {
+            i += 1;
+            break;
+        }
+        if !arg.starts_with('-') || arg.len() == 1 {
+            break;
+        }
+        for c in arg[1..].chars() {
+            match c {
+                'H' => (soft, hard) = (false, true),
+                'S' => (soft, hard) = (true, false),
+                'a' => all = true,
+                c if limits.iter().any(|l| l.3 == c) => what = c,
+                c => {
+                    crate::ported::utils::zwarnnam("ulimit", &format!("Illegal option -{c}"));
+                    return 2;
+                }
+            }
+        }
+        i += 1;
+    }
+    let value = argv.get(i);
+    let get = |res: libc::c_int| -> libc::rlimit {
+        let mut r = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        // SAFETY: `r` is a valid out-pointer for the duration of the call.
+        unsafe { libc::getrlimit(res as _, &mut r) };
+        r
+    };
+    let show = |r: &libc::rlimit, factor: libc::rlim_t| -> String {
+        let v = if soft { r.rlim_cur } else { r.rlim_max };
+        if v == libc::RLIM_INFINITY {
+            "unlimited".to_string()
+        } else {
+            (v / factor).to_string()
+        }
+    };
+    if let Some(v) = value {
+        if all || argv.get(i + 1).is_some() {
+            crate::ported::utils::zwarnnam("ulimit", "too many arguments");
+            return 2;
+        }
+        let (_, res, factor, _) = limits.iter().find(|l| l.3 == what).copied().unwrap();
+        let new = if v == "unlimited" {
+            libc::RLIM_INFINITY
+        } else if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) {
+            match v.parse::<libc::rlim_t>().ok().and_then(|n| n.checked_mul(factor)) {
+                Some(n) => n,
+                None => {
+                    crate::ported::utils::zwarnnam("ulimit", "bad number");
+                    return 2;
+                }
+            }
+        } else {
+            crate::ported::utils::zwarnnam("ulimit", "bad number");
+            return 2;
+        };
+        let mut r = get(res);
+        if soft {
+            r.rlim_cur = new;
+        }
+        if hard {
+            r.rlim_max = new;
+        }
+        // SAFETY: `r` is a valid rlimit for the duration of the call.
+        if unsafe { libc::setrlimit(res as _, &r) } < 0 {
+            crate::ported::utils::zwarnnam(
+                "ulimit",
+                &format!("error setting limit ({})", std::io::Error::last_os_error()),
+            );
+            return 2;
+        }
+        return 0;
+    }
+    if all {
+        for (name, res, factor, _) in &limits {
+            println!("{:<20} {}", name, show(&get(*res), *factor));
+        }
+    } else {
+        let (_, res, factor, _) = limits.iter().find(|l| l.3 == what).copied().unwrap();
+        println!("{}", show(&get(res), factor));
+    }
+    0
+}
+
+/// Double the backslash of every `\c` in a printf format so zsh's
+/// `getkeystring` (which reads `\c` as "stop output") emits `\c` literally,
+/// as dash's printf does. An already-escaped `\\` pair is passed through.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_printf_keep_backslash_c(fmt: &str) -> String {
+    let mut out = String::with_capacity(fmt.len() + 2);
+    let mut chars = fmt.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('c') => out.push_str("\\\\c"),
+            Some(n) => {
+                out.push('\\');
+                out.push(n);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Skip the separators that may follow a `&&` / `||` / `|` / `|&` operator.
+///
+/// dash allows only newlines there: a `;` or the end of input is
+/// `Syntax error: ";" unexpected` / `end of file unexpected`. Returns false
+/// after reporting that error; every other mode skips any separator, as zsh
+/// does.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_skip_operator_separators() -> bool {
+    use crate::ported::lex::{set_tok, tok, zshlex, LEX_ISNEWLIN};
+    use crate::ported::zsh_h::{ENDINPUT, LEXERR, NEWLIN, SEPER};
+    let faithful = dash_faithful();
+    while tok() == NEWLIN
+        || (tok() == SEPER && (!faithful || LEX_ISNEWLIN.with(|c| c.get()) != 0))
+    {
+        zshlex();
+    }
+    if !faithful {
+        return true;
+    }
+    match tok() {
+        SEPER => crate::ported::utils::zerr("Syntax error: \";\" unexpected"),
+        ENDINPUT => crate::ported::utils::zerr("Syntax error: end of file unexpected"),
+        _ => return true,
+    }
+    set_tok(LEXERR);
+    false
+}
+
+// ---------------------------------------------------------------------------
+// dash `test` / `[` — a port of dash's src/bltin/test.c (`testcmd`, `oexpr`,
+// `aexpr`, `nexpr`, `primary`, `binop`, `filstat`, `t_lex`, `isoperand`).
+// zsh's `bin_test` grammar (Src/builtin.c:7231, Src/parse.c par_cond) is a
+// different parser with different corner cases (`-a`/`-o`/`( )` with odd
+// operand counts, `-v`, unsigned-looking numbers, missing-file `-nt`/`-ot`),
+// so the bare drop-in runs dash's own algorithm.
+// ---------------------------------------------------------------------------
+
+/// dash `test` operator numbers (test.c `enum token`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DashTok {
+    Eoi,
+    Operand,
+    FilRd,
+    FilWr,
+    FilEx,
+    FilExist,
+    FilReg,
+    FilDir,
+    FilCdev,
+    FilBdev,
+    FilFifo,
+    FilSuid,
+    FilSgid,
+    FilStck,
+    FilGz,
+    FilTt,
+    StrEz,
+    StrNz,
+    FilSym,
+    FilUid,
+    FilGid,
+    FilSock,
+    StrEq,
+    StrNe,
+    StrLt,
+    StrGt,
+    IntEq,
+    IntNe,
+    IntGe,
+    IntGt,
+    IntLe,
+    IntLt,
+    FilNt,
+    FilOt,
+    FilEq,
+    Not,
+    And,
+    Or,
+    LParen,
+    RParen,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DashOpType {
+    Unop,
+    Binop,
+    BUnop,
+    BBinop,
+    Paren,
+}
+
+/// test.c `ops[]`.
+const DASH_TEST_OPS: &[(&str, DashTok, DashOpType)] = &[
+    ("-r", DashTok::FilRd, DashOpType::Unop),
+    ("-w", DashTok::FilWr, DashOpType::Unop),
+    ("-x", DashTok::FilEx, DashOpType::Unop),
+    ("-e", DashTok::FilExist, DashOpType::Unop),
+    ("-f", DashTok::FilReg, DashOpType::Unop),
+    ("-d", DashTok::FilDir, DashOpType::Unop),
+    ("-c", DashTok::FilCdev, DashOpType::Unop),
+    ("-b", DashTok::FilBdev, DashOpType::Unop),
+    ("-p", DashTok::FilFifo, DashOpType::Unop),
+    ("-u", DashTok::FilSuid, DashOpType::Unop),
+    ("-g", DashTok::FilSgid, DashOpType::Unop),
+    ("-k", DashTok::FilStck, DashOpType::Unop),
+    ("-s", DashTok::FilGz, DashOpType::Unop),
+    ("-t", DashTok::FilTt, DashOpType::Unop),
+    ("-z", DashTok::StrEz, DashOpType::Unop),
+    ("-n", DashTok::StrNz, DashOpType::Unop),
+    ("-h", DashTok::FilSym, DashOpType::Unop),
+    ("-O", DashTok::FilUid, DashOpType::Unop),
+    ("-G", DashTok::FilGid, DashOpType::Unop),
+    ("-L", DashTok::FilSym, DashOpType::Unop),
+    ("-S", DashTok::FilSock, DashOpType::Unop),
+    ("=", DashTok::StrEq, DashOpType::Binop),
+    ("!=", DashTok::StrNe, DashOpType::Binop),
+    ("<", DashTok::StrLt, DashOpType::Binop),
+    (">", DashTok::StrGt, DashOpType::Binop),
+    ("-eq", DashTok::IntEq, DashOpType::Binop),
+    ("-ne", DashTok::IntNe, DashOpType::Binop),
+    ("-ge", DashTok::IntGe, DashOpType::Binop),
+    ("-gt", DashTok::IntGt, DashOpType::Binop),
+    ("-le", DashTok::IntLe, DashOpType::Binop),
+    ("-lt", DashTok::IntLt, DashOpType::Binop),
+    ("-nt", DashTok::FilNt, DashOpType::Binop),
+    ("-ot", DashTok::FilOt, DashOpType::Binop),
+    ("-ef", DashTok::FilEq, DashOpType::Binop),
+    ("!", DashTok::Not, DashOpType::BUnop),
+    ("-a", DashTok::And, DashOpType::BBinop),
+    ("-o", DashTok::Or, DashOpType::BBinop),
+    ("(", DashTok::LParen, DashOpType::Paren),
+    (")", DashTok::RParen, DashOpType::Paren),
+];
+
+type DashOp = (&'static str, DashTok, DashOpType);
+
+fn dash_getop(s: &str) -> Option<&'static DashOp> {
+    DASH_TEST_OPS.iter().find(|o| o.0 == s)
+}
+
+/// dash `atomax10`: optional blanks, sign and decimal digits filling the whole
+/// string (overflow saturates, as strtoimax does); anything else is
+/// "Illegal number".
+fn dash_getn(s: &str) -> Result<i64, String> {
+    let t = s.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let (neg, digits) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("Illegal number: {s}"));
+    }
+    let mag = digits.bytes().try_fold(0i64, |a, b| a.checked_mul(10)?.checked_add((b - b'0') as i64));
+    Ok(match (mag, neg) {
+        (Some(m), false) => m,
+        (Some(m), true) => -m,
+        (None, false) => i64::MAX,
+        (None, true) => i64::MIN,
+    })
+}
+
+struct DashTest {
+    argv: Vec<String>,
+    wp: usize,
+    wp_op: Option<&'static DashOp>,
+}
+
+impl DashTest {
+    fn at(&self, i: usize) -> Option<&str> {
+        self.argv.get(i).map(String::as_str)
+    }
+
+    /// test.c `isoperand`.
+    fn isoperand(&self, tp: usize) -> bool {
+        let Some(s) = self.at(tp + 1) else { return true };
+        if self.at(tp + 2).is_none() {
+            return false;
+        }
+        dash_getop(s).is_some_and(|o| o.2 == DashOpType::Binop)
+    }
+
+    /// test.c `t_lex`.
+    fn t_lex(&mut self, tp: usize) -> DashTok {
+        let Some(s) = self.at(tp) else {
+            self.wp_op = None;
+            return DashTok::Eoi;
+        };
+        if let Some(op) = dash_getop(s) {
+            if !(op.2 == DashOpType::Unop && self.isoperand(tp))
+                && !(op.1 == DashTok::LParen && self.at(tp + 1).is_none())
+            {
+                self.wp_op = Some(op);
+                return op.1;
+            }
+        }
+        self.wp_op = None;
+        DashTok::Operand
+    }
+
+    fn oexpr(&mut self, mut n: DashTok) -> Result<bool, String> {
+        let mut res = false;
+        loop {
+            res |= self.aexpr(n)?;
+            if self.at(self.wp).is_none() {
+                break;
+            }
+            n = self.t_lex(self.wp + 1);
+            if n != DashTok::Or {
+                break;
+            }
+            self.wp += 2;
+            n = self.t_lex(self.wp);
+        }
+        Ok(res)
+    }
+
+    fn aexpr(&mut self, mut n: DashTok) -> Result<bool, String> {
+        let mut res = true;
+        loop {
+            if !self.nexpr(n)? {
+                res = false;
+            }
+            if self.at(self.wp).is_none() {
+                break;
+            }
+            n = self.t_lex(self.wp + 1);
+            if n != DashTok::And {
+                break;
+            }
+            self.wp += 2;
+            n = self.t_lex(self.wp);
+        }
+        Ok(res)
+    }
+
+    fn nexpr(&mut self, n: DashTok) -> Result<bool, String> {
+        if n != DashTok::Not {
+            return self.primary(n);
+        }
+        let n = self.t_lex(self.wp + 1);
+        if n != DashTok::Eoi {
+            self.wp += 1;
+        }
+        Ok(!self.nexpr(n)?)
+    }
+
+    fn primary(&mut self, n: DashTok) -> Result<bool, String> {
+        if n == DashTok::Eoi {
+            return Ok(false);
+        }
+        if n == DashTok::LParen {
+            self.wp += 1;
+            let nn = self.t_lex(self.wp);
+            if nn == DashTok::RParen {
+                return Ok(false);
+            }
+            let res = self.oexpr(nn)?;
+            self.wp += 1;
+            if self.t_lex(self.wp) != DashTok::RParen {
+                return Err("closing paren expected".to_string());
+            }
+            return Ok(res);
+        }
+        if let Some(op) = self.wp_op.filter(|o| o.2 == DashOpType::Unop) {
+            self.wp += 1;
+            let Some(arg) = self.at(self.wp).map(str::to_owned) else {
+                return Err(format!("{}: argument expected", op.0));
+            };
+            return Ok(match n {
+                DashTok::StrEz => arg.is_empty(),
+                DashTok::StrNz => !arg.is_empty(),
+                // SAFETY: isatty takes any int; a bad fd just reports 0.
+                DashTok::FilTt => unsafe { libc::isatty(dash_getn(&arg)? as libc::c_int) != 0 },
+                DashTok::FilRd => dash_access(&arg, libc::R_OK),
+                DashTok::FilWr => dash_access(&arg, libc::W_OK),
+                DashTok::FilEx => dash_access(&arg, libc::X_OK),
+                _ => dash_filstat(&arg, n),
+            });
+        }
+        self.t_lex(self.wp + 1);
+        if self.wp_op.is_some_and(|o| o.2 == DashOpType::Binop) {
+            return self.binop();
+        }
+        Ok(self.at(self.wp).is_some_and(|s| !s.is_empty()))
+    }
+
+    fn binop(&mut self) -> Result<bool, String> {
+        let a = self.at(self.wp).unwrap_or("").to_owned();
+        self.wp += 1;
+        self.t_lex(self.wp);
+        let Some(op) = self.wp_op else { return Ok(false) };
+        self.wp += 1;
+        let Some(b) = self.at(self.wp).map(str::to_owned) else {
+            return Err(format!("{}: argument expected", op.0));
+        };
+        Ok(match op.1 {
+            DashTok::StrEq => a == b,
+            DashTok::StrNe => a != b,
+            DashTok::StrLt => dash_strcoll(&a, &b) < 0,
+            DashTok::StrGt => dash_strcoll(&a, &b) > 0,
+            DashTok::IntEq => dash_getn(&a)? == dash_getn(&b)?,
+            DashTok::IntNe => dash_getn(&a)? != dash_getn(&b)?,
+            DashTok::IntGe => dash_getn(&a)? >= dash_getn(&b)?,
+            DashTok::IntGt => dash_getn(&a)? > dash_getn(&b)?,
+            DashTok::IntLe => dash_getn(&a)? <= dash_getn(&b)?,
+            DashTok::IntLt => dash_getn(&a)? < dash_getn(&b)?,
+            DashTok::FilNt => dash_newerf(&a, &b),
+            DashTok::FilOt => dash_olderf(&a, &b),
+            DashTok::FilEq => dash_equalf(&a, &b),
+            _ => false,
+        })
+    }
+}
+
+fn dash_strcoll(a: &str, b: &str) -> i32 {
+    let (Ok(a), Ok(b)) = (std::ffi::CString::new(a), std::ffi::CString::new(b)) else {
+        return 0;
+    };
+    // SAFETY: both pointers are valid NUL-terminated strings.
+    unsafe { libc::strcoll(a.as_ptr(), b.as_ptr()) }
+}
+
+/// `faccessat(AT_FDCWD, path, mode, AT_EACCESS)`.
+fn dash_access(path: &str, mode: libc::c_int) -> bool {
+    let Ok(p) = std::ffi::CString::new(path) else { return false };
+    // SAFETY: `p` is a valid NUL-terminated string.
+    unsafe { libc::faccessat(libc::AT_FDCWD, p.as_ptr(), mode, libc::AT_EACCESS) == 0 }
+}
+
+/// test.c `filstat`.
+fn dash_filstat(path: &str, mode: DashTok) -> bool {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let md = if mode == DashTok::FilSym {
+        std::fs::symlink_metadata(path)
+    } else {
+        std::fs::metadata(path)
+    };
+    let Ok(md) = md else { return false };
+    let ft = md.file_type();
+    let m = md.mode();
+    match mode {
+        DashTok::FilExist => true,
+        DashTok::FilReg => ft.is_file(),
+        DashTok::FilDir => ft.is_dir(),
+        DashTok::FilCdev => ft.is_char_device(),
+        DashTok::FilBdev => ft.is_block_device(),
+        DashTok::FilFifo => ft.is_fifo(),
+        DashTok::FilSock => ft.is_socket(),
+        DashTok::FilSym => ft.is_symlink(),
+        DashTok::FilSuid => m & libc::S_ISUID as u32 != 0,
+        DashTok::FilSgid => m & libc::S_ISGID as u32 != 0,
+        DashTok::FilStck => m & libc::S_ISVTX as u32 != 0,
+        DashTok::FilGz => md.size() != 0,
+        // SAFETY: geteuid/getegid have no preconditions.
+        DashTok::FilUid => md.uid() == unsafe { libc::geteuid() },
+        DashTok::FilGid => md.gid() == unsafe { libc::getegid() },
+        _ => true,
+    }
+}
+
+fn dash_mtime(path: &str) -> Option<(i64, i64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| (m.mtime(), m.mtime_nsec()))
+}
+
+/// test.c `newerf`: a missing FIRST file is never newer, a missing second is.
+fn dash_newerf(f1: &str, f2: &str) -> bool {
+    let Some(a) = dash_mtime(f1) else { return false };
+    dash_mtime(f2).map_or(true, |b| a > b)
+}
+
+/// test.c `olderf`: a missing SECOND file is never newer, a missing first is.
+fn dash_olderf(f1: &str, f2: &str) -> bool {
+    let Some(b) = dash_mtime(f2) else { return false };
+    dash_mtime(f1).map_or(true, |a| a < b)
+}
+
+/// test.c `equalf`: same device and inode.
+fn dash_equalf(f1: &str, f2: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(f1), std::fs::metadata(f2)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// dash `testcmd` (test.c): `name` is `test` or `[`; `args` exclude the name.
+/// Returns the exit status: 0 true, 1 false, 2 for a diagnosed error.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_test(name: &str, args: &[String]) -> i32 {
+    let mut v: Vec<String> = Vec::with_capacity(args.len() + 1);
+    v.push(name.to_string());
+    v.extend(args.iter().cloned());
+    let mut argc = v.len();
+    if name.starts_with('[') {
+        argc -= 1;
+        if v[argc] != "]" {
+            crate::ported::utils::zwarnnam(name, "missing ]");
+            return 2;
+        }
+        v.truncate(argc);
+    }
+    let mut t = DashTest { argv: v, wp: 0, wp_op: None };
+    let mut res = true; // C: `int res = 1`, flipped by `res ^= oexpr()`.
+    let mut base = 0usize;
+    let n;
+    loop {
+        base += 1;
+        argc -= 1;
+        if argc < 1 {
+            return i32::from(res);
+        }
+        if argc == 3
+            && t.at(base + 1).and_then(dash_getop).is_some_and(|o| o.2 == DashOpType::Binop)
+        {
+            n = DashTok::Operand;
+            break;
+        }
+        if argc == 3 || argc == 4 {
+            if t.at(base) == Some("(") && t.at(base + argc - 1) == Some(")") {
+                t.argv.truncate(base + argc - 1);
+                base += 1;
+                argc -= 1;
+            } else if t.at(base) == Some("!") {
+                res = false;
+                continue;
+            }
+        }
+        n = t.t_lex(base);
+        break;
+    }
+    t.wp = base;
+    let r = match t.oexpr(n) {
+        Ok(r) => r,
+        Err(msg) => {
+            crate::ported::utils::zwarnnam(name, &msg);
+            return 2;
+        }
+    };
+    // C: `res ^= oexpr(n)` with `res` starting at 1 (false) or flipped to 0 by `!`.
+    let status = res ^ r;
+    if t.at(t.wp).is_some() && t.at(t.wp + 1).is_some() {
+        crate::ported::utils::zwarnnam(name, &format!("{}: unexpected operator", t.argv[t.wp]));
+        return 2;
+    }
+    i32::from(status)
 }
