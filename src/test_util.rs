@@ -112,6 +112,8 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
         tab.enable("repeat");
     }
     load_test_terminal();
+    detach_test_terminal();
+    restore_test_locale();
     g
 }
 
@@ -151,6 +153,72 @@ fn load_test_terminal() {
             }
         }
     });
+}
+
+/// Detach the test binary from any controlling terminal and point its stdin
+/// at `/dev/null`, once per process.
+///
+/// Unit tests that drive the shell's input layer (`inputline` → `shingetline`
+/// → `read(SHIN)`, `SHIN` = 0) read the process's real fd 0. Under a terminal
+/// that is the tty, and a test binary in a background process group (a CI
+/// runner's job, or `cargo test &`) gets SIGTTIN on that read: the WHOLE
+/// process stops, libtest included, and the run goes silent until the job
+/// timeout. Reproduced on macOS by running the lib tests in a background group
+/// under a pty: stopped after ~130 s with
+/// `ported::input::tests::inputline_deterministic_on_idle_state` in `read`
+/// (`input.rs:250`). With no tty (the ubuntu runner) the same read sees EOF.
+/// Redirecting fd 0 is not enough on its own: other tests reach the terminal
+/// through `/dev/tty` (`SHTTY`) and `tcsetattr`, which raise SIGTTOU the same
+/// way (the same reproduction then stopped at ~200 s instead). So the harness
+/// gives up the controlling terminal — `TIOCNOTTY` from a process that is not
+/// the session leader only drops the association — after which no job-control
+/// stop can reach the process, `/dev/tty` cannot be opened, and the binary runs
+/// in the environment the ubuntu runner already provides. Input and the
+/// terminal are facts about the environment, so the harness states them, as
+/// `load_test_terminal` does for `TERM`; tests that need a terminal open their
+/// own pty, and tests that need data on fd 0 dup a pipe onto it and restore it.
+fn detach_test_terminal() {
+    static DONE: OnceLock<()> = OnceLock::new();
+    DONE.get_or_init(|| unsafe {
+        let fd = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
+        if fd > 0 {
+            libc::dup2(fd, 0);
+            libc::close(fd);
+        }
+        let tty = libc::open(c"/dev/tty".as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+        if tty >= 0 {
+            if libc::getsid(0) != libc::getpid() {
+                libc::ioctl(tty, libc::TIOCNOTTY as _);
+            }
+            libc::close(tty);
+        }
+    });
+}
+
+/// Put the process locale back to the one the environment selects, before
+/// every stateful test.
+///
+/// The locale is process-wide C library state, and tests that pin `LC_ALL=C`
+/// behaviour (`params.rs`, `computil.rs`, `compcore.rs`, `zle_params.rs`)
+/// call `setlocale` and do not all put it back — a test that panics before its
+/// restore never does. The next test then runs in `C`: under it a UTF-8 value
+/// is sliced and case-mapped per byte, e.g.
+/// `paramsubst_zsh_corpus_multibyte_slice_first_three` got
+/// `"t\u{83}ã\u{83}\u{89}"` for `${ZMSL[1,3]}` of `ténébreux`, failing on CI and
+/// locally in a full run while passing alone. zsh selects its locale once at
+/// startup (c:Src/init.c:1208 `setlocale(LC_ALL, "")`); the harness does the
+/// same once and restores that choice per test, like the option reset above.
+fn restore_test_locale() {
+    static STARTUP: OnceLock<std::ffi::CString> = OnceLock::new();
+    let name = STARTUP.get_or_init(|| unsafe {
+        let p = libc::setlocale(libc::LC_ALL, c"".as_ptr());
+        if p.is_null() {
+            c"C".to_owned()
+        } else {
+            std::ffi::CStr::from_ptr(p).to_owned()
+        }
+    });
+    unsafe { libc::setlocale(libc::LC_ALL, name.as_ptr()) };
 }
 
 /// Reset the completion-machinery globals a `compadd`-driven completion
