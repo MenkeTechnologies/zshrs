@@ -32,6 +32,8 @@ fn main() {
     println!("cargo:rerun-if-changed=vendor/zsh");
     println!("cargo:rerun-if-changed=functions");
     println!("cargo:rerun-if-changed=completions");
+    println!("cargo:rerun-if-changed=../arb/completions");
+    println!("cargo:rerun-if-changed=../strykelang/completions");
     bundle_zsh_functions();
     bundle_zsh_docs();
     println!("cargo:rerun-if-changed=src/zsh/Config/version.mk");
@@ -661,7 +663,23 @@ fn bundle_zsh_functions() {
     // stops contributing is the failure mode that shipped a 26-file
     // ~/.zshrs/functions, and a single total hides it.
     let mut per_root: Vec<String> = Vec::new();
-    for root in ["functions", "completions", "vendor/zsh/functions"] {
+    // Completions of runtimes that are linked INTO the shell as builtins when
+    // zshrs is vendored under `zshrs-native/vendor/` (`arb`, `stryke`/`st`/`s`
+    // keep their `_arb` / `_stryke` in their own repos, siblings of this one).
+    // Without them `arb <TAB>` completes nothing in the native shell although
+    // `arb` is one of its builtins. They are OPTIONAL: a standalone checkout or
+    // the published crate has no such siblings, and this root is then skipped
+    // rather than a build error. Walked last, so a same-named file above wins.
+    const OPTIONAL_ROOTS: &[&str] = &["../arb/completions", "../strykelang/completions"];
+    for root in ["functions", "completions", "vendor/zsh/functions"]
+        .iter()
+        .chain(OPTIONAL_ROOTS)
+        .copied()
+    {
+        let optional = OPTIONAL_ROOTS.contains(&root);
+        if optional && !PathBuf::from(root).is_dir() {
+            continue;
+        }
         let before = files.len();
         let mut stack = vec![PathBuf::from(root)];
         while let Some(dir) = stack.pop() {
@@ -710,7 +728,7 @@ fn bundle_zsh_functions() {
         // stayed green, and a 26-file `~/.zshrs/functions` shipped with
         // no compinit, no _git, no is-at-least.
         per_root.push(format!("{root} {}", files.len() - before));
-        if files.len() == before {
+        if files.len() == before && !optional {
             panic!(
                 "{root} contributed no functions -- the tree must be present \
                  and non-empty for the bundle to be built."
