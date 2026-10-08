@@ -1903,30 +1903,14 @@ fn zunsubscribe(args: &[String]) -> i32 {
 ///   zwhere --shell-id ID …        # restrict to one shell_id
 ///   zwhere --limit N …            # cap (default 1000 for tty output)
 ///
-/// Output format: one row per line, `kind\tname\tvalue\tshell_id\tfile:line`.
+/// Output format: one row per DEFINITION, oldest first, `kind\tname\tvalue\tshell_id\tfile:line\tstate\tvia`
+/// where `state` is `shadowed` (a later definition replaced it) or `active`, and
+/// `via` is the call chain it ran under. With no daemon running it reads the
+/// newest recorder shard directly.
 /// Wide-column layout via padding is left to the caller piping through
 /// `column -t` if they want it; `zwhere` stays narrow so scripts can
 /// `awk` cleanly.
 fn zwhere(args: &[String]) -> i32 {
-    // zwhere is a daemon-only feature — there's no source-of-truth
-    // fallback for "where was this defined" without the recorder
-    // having captured it and the daemon serving the catalog.
-    // Pre-flight with a cheap socket check + clear error message
-    // instead of the generic `connect_or_err` "transport: …" line.
-    {
-        let paths = match CachePaths::resolve() {
-            Ok(p) => p,
-            Err(e) => return err_exit("zwhere", &format!("cannot resolve $ZSHRS_HOME: {e}")),
-        };
-        if !Client::is_daemon_alive(&paths) {
-            // zwhere reads only the daemon's catalog; there is no fallback.
-            return err_exit(
-                "zwhere",
-                &format!("daemon is not running (no socket at {})", paths.socket.display()),
-            );
-        }
-    }
-
     let mut kind: Option<String> = None;
     let mut name: Option<String> = None;
     let mut prefix: Option<String> = None;
@@ -1976,6 +1960,27 @@ fn zwhere(args: &[String]) -> i32 {
         i += 1;
     }
 
+    if !positional.is_empty() {
+        kind = Some(positional[0].to_string());
+    }
+    if positional.len() >= 2 {
+        name = Some(positional[1].to_string());
+    }
+
+    // No daemon: the recorder wrote its catalog into the shard on disk
+    // (definition sites and override chains included), so answer from
+    // that. The daemon is only needed for rows federated from other shells.
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit("zwhere", &format!("cannot resolve $ZSHRS_HOME: {e}")),
+    };
+    if !Client::is_daemon_alive(&paths) {
+        return zwhere_from_shard(
+            &paths,
+            &ZwhereQuery { list_kinds, kind, name, prefix, shell_id, limit },
+        );
+    }
+
     let mut client = match connect_or_err() {
         Ok(c) => c,
         Err(()) => return 1,
@@ -1995,13 +2000,6 @@ fn zwhere(args: &[String]) -> i32 {
             }
             Err(e) => err_exit("zwhere", &e.to_string()),
         };
-    }
-
-    if !positional.is_empty() {
-        kind = Some(positional[0].to_string());
-    }
-    if positional.len() >= 2 {
-        name = Some(positional[1].to_string());
     }
 
     let mut body = json!({ "limit": limit });
@@ -2037,14 +2035,164 @@ fn zwhere(args: &[String]) -> i32 {
         let name = r.get("name").and_then(Value::as_str).unwrap_or("");
         let value = r.get("value").and_then(Value::as_str).unwrap_or("");
         let shell = r.get("shell_id").and_then(Value::as_str).unwrap_or("");
-        let file = r.get("file").and_then(Value::as_str).unwrap_or("");
-        let line = r.get("line").and_then(Value::as_u64);
-        let loc = match (file, line) {
-            ("", _) => String::new(),
-            (f, Some(l)) => format!("{f}:{l}"),
-            (f, None) => f.to_string(),
-        };
-        println!("{kind}\t{name}\t{value}\t{shell}\t{loc}");
+        let file = r.get("file").and_then(Value::as_str).map(str::to_string);
+        let line = r.get("line").and_then(Value::as_u64).map(|l| l as u32);
+        let history: Vec<super::recorder_shard::Definition> = r
+            .get("history")
+            .and_then(Value::as_array)
+            .map(|h| {
+                h.iter()
+                    .map(|d| {
+                        (
+                            d.get("value").and_then(Value::as_str).unwrap_or("").to_string(),
+                            d.get("file").and_then(Value::as_str).map(str::to_string),
+                            d.get("line").and_then(Value::as_u64).map(|l| l as u32),
+                            d.get("fn_chain").and_then(Value::as_str).map(str::to_string),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        print_definitions(kind, name, shell, (value, file.as_deref(), line), &history);
+    }
+    0
+}
+
+/// What `zwhere` was asked, after argument parsing.
+struct ZwhereQuery {
+    list_kinds: bool,
+    kind: Option<String>,
+    name: Option<String>,
+    prefix: Option<String>,
+    shell_id: Option<String>,
+    limit: u64,
+}
+
+/// `file:line`, `file`, or empty.
+fn definition_site(file: Option<&str>, line: Option<u32>) -> String {
+    match (file, line) {
+        (None | Some(""), _) => String::new(),
+        (Some(f), Some(l)) => format!("{f}:{l}"),
+        (Some(f), None) => f.to_string(),
+    }
+}
+
+/// Print one name: a row per DEFINITION, oldest first, each with its
+/// `file:line`; `shadowed` for a definition a later one replaced and `active`
+/// for the one in force; the last column is the call chain it ran under
+/// (`outer ← inner`). `history` holds every definition (the last is the
+/// active one); a recording that predates it falls back to the catalog row
+/// itself, `active`.
+fn print_definitions(
+    kind: &str,
+    name: &str,
+    shell: &str,
+    active: (&str, Option<&str>, Option<u32>),
+    history: &[super::recorder_shard::Definition],
+) {
+    let (value, file, line) = active;
+    if history.is_empty() {
+        println!("{kind}\t{name}\t{value}\t{shell}\t{}\tactive\t", definition_site(file, line));
+        return;
+    }
+    let last = history.len() - 1;
+    for (i, (v, f, l, chain)) in history.iter().enumerate() {
+        let state = if i == last { "active" } else { "shadowed" };
+        println!(
+            "{kind}\t{name}\t{}\t{shell}\t{}\t{state}\t{}",
+            unjson(v),
+            definition_site(f.as_deref(), *l),
+            chain.as_deref().unwrap_or("")
+        );
+    }
+}
+
+/// A JSON string literal's contents, or the text unchanged.
+fn unjson(s: &str) -> String {
+    match serde_json::from_str::<Value>(s) {
+        Ok(Value::String(plain)) => plain,
+        _ => s.to_string(),
+    }
+}
+
+/// `zwhere` with no daemon: read the newest recorder shard's catalog
+/// (`recorder_shard::CATALOG_EXTRA` rows plus the `CATALOG_HISTORY_EXTRA`
+/// override chains) and answer the same query from it.
+fn zwhere_from_shard(paths: &CachePaths, q: &ZwhereQuery) -> i32 {
+    use super::definitions::KNOWN_KINDS as KNOWN_KINDS_FOR_SHARD;
+    use super::recorder_shard::{decode_catalog, decode_catalog_history};
+    use super::shard::{list_shards, read_canonical_shard};
+
+    let newest = list_shards(paths)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|p| p.to_str().is_some_and(|s| s.ends_with("-recorder.rkyv")))
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    let Some(path) = newest else {
+        return err_exit(
+            "zwhere",
+            &format!("no recording: run zshrs-recorder (looked in {})", paths.images.display()),
+        );
+    };
+    let shard = match read_canonical_shard(&path) {
+        Ok(s) => s,
+        Err(e) => return err_exit("zwhere", &format!("{}: {e}", path.display())),
+    };
+    let Some((subs, shard_shell)) = decode_catalog(&shard.extras) else {
+        return err_exit(
+            "zwhere",
+            "this recording has no definition sites (made before they were kept): re-run zshrs-recorder",
+        );
+    };
+    let shell = shard_shell.unwrap_or_else(|| "zshrs".to_string());
+    let histories = decode_catalog_history(&shard.extras);
+
+    let mut subs: Vec<_> = subs
+        .into_iter()
+        .filter(|(sub, rows)| KNOWN_KINDS_FOR_SHARD.contains(&sub.as_str()) && !rows.is_empty())
+        .collect();
+    subs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if q.list_kinds {
+        for (sub, _) in &subs {
+            println!("{sub}");
+        }
+        return 0;
+    }
+    if let Some(want) = &q.shell_id {
+        if *want != shell {
+            return 0;
+        }
+    }
+    if let Some(k) = &q.kind {
+        if !KNOWN_KINDS_FOR_SHARD.contains(&k.as_str()) {
+            return err_exit(
+                "zwhere",
+                &format!("kind `{k}` is not a known recorder definition kind (known: {})", KNOWN_KINDS_FOR_SHARD.join(", ")),
+            );
+        }
+    }
+    let mut printed = 0u64;
+    for (sub, mut rows) in subs {
+        if q.kind.as_deref().is_some_and(|k| k != sub) {
+            continue;
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, value, file, line) in rows {
+            if q.name.as_deref().is_some_and(|n| n != name) {
+                continue;
+            }
+            if q.prefix.as_deref().is_some_and(|p| !name.starts_with(p)) {
+                continue;
+            }
+            let history = histories.get(&(sub.clone(), name.clone())).cloned().unwrap_or_default();
+            print_definitions(&sub, &name, &shell, (&unjson(&value), file.as_deref(), line), &history);
+            printed += 1;
+            if printed >= q.limit {
+                return 0;
+            }
+        }
     }
     0
 }

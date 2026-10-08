@@ -25,7 +25,7 @@ use super::state::DaemonState;
 /// recorder DefKind. Source of truth for `definitions_kinds` + the
 /// "kind not found" error in `definitions_query`. Keep in sync with
 /// the recorder's DefKind enum + the daemon's recorder_ingest op.
-const KNOWN_KINDS: &[&str] = &[
+pub(crate) const KNOWN_KINDS: &[&str] = &[
     "alias",
     "galias",
     "salias",
@@ -129,6 +129,16 @@ pub async fn op_definitions_query(state: &Arc<DaemonState>, args: Value) -> OpRe
                 "shell_id": row.shell_id.clone().unwrap_or_else(|| "zshrs".to_string()),
                 "file": row.file,
                 "line": row.line,
+                "history": row
+                    .history
+                    .iter()
+                    .map(|(v, file, line, chain)| json!({
+                        "value": unjson_str(v),
+                        "file": file,
+                        "line": line,
+                        "fn_chain": chain,
+                    }))
+                    .collect::<Vec<_>>(),
             }));
             if records.len() >= limit {
                 break 'outer;

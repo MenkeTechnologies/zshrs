@@ -86,6 +86,12 @@ pub struct CanonicalRow {
     /// Source line for `file`. Same nullable semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    /// Every definition of this key in capture order — JSON value, file,
+    /// line, call chain; the last entry is the one `value`/`file`/`line`
+    /// describe. Empty for rows from a recording that predates the chain.
+    /// Powers `zwhere`'s override chain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<super::recorder_shard::Definition>,
 }
 
 /// In-memory canonical state, keyed first by subsystem, then by key. Values
@@ -198,6 +204,9 @@ impl CanonicalEngine {
                     for (sub, rows) in subs {
                         self.replace_subsystem_with_attrs(&sub, rows, None, shell_id.clone());
                     }
+                    for ((sub, name), defs) in super::recorder_shard::decode_catalog_history(&shard.extras) {
+                        self.set_history(&sub, &name, shell_id.as_deref(), defs);
+                    }
                     "catalog"
                 }
                 None => {
@@ -233,6 +242,7 @@ impl CanonicalEngine {
                     value: v,
                     set_at_ns: now,
                     set_by_shell: None,
+                    history: Vec::new(),
                     // Reload from disk: shell_id is None — the shard's
                     // header doesn't carry a per-row shell_id today.
                     // Future: persist shell_id alongside rkyv shard
@@ -382,6 +392,7 @@ impl CanonicalEngine {
                 shell_id,
                 file,
                 line,
+                history: Vec::new(),
             },
         );
         1
@@ -425,6 +436,22 @@ impl CanonicalEngine {
         )
     }
 
+    /// Attach the override chain of one already-ingested key: every
+    /// definition in capture order (see [`CanonicalRow::history`]).
+    pub fn set_history(
+        &self,
+        subsystem: &str,
+        key: &str,
+        shell_id: Option<&str>,
+        history: Vec<super::recorder_shard::Definition>,
+    ) {
+        let ckey = composite_storage_key(key, shell_id);
+        let mut g = self.inner.write();
+        if let Some(row) = g.rows.get_mut(subsystem).and_then(|m| m.get_mut(&ckey)) {
+            row.history = history;
+        }
+    }
+
     /// `replace_subsystem_tagged` + per-row file/line attribution.
     /// Iterator yields `(key, value, file, line)` 4-tuples. Used by
     /// `recorder_ingest` so every captured definition retains its
@@ -465,6 +492,7 @@ impl CanonicalEngine {
                 shell_id: shell_id.clone(),
                 file,
                 line,
+                history: Vec::new(),
             };
             map.insert(ckey, r);
             inserted += 1;

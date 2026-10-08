@@ -404,6 +404,127 @@ pub fn decode_catalog(
     Some((by_sub.into_iter().collect(), shell_id))
 }
 
+/// `extras` key holding every DEFINITION of a keyed name, in capture order:
+/// the override chain behind the single row [`CATALOG_EXTRA`] keeps. Keys are
+/// `subsystem` [`ARGV_SEP`] `name`; the value is the definitions joined by
+/// [`DEFINITION_SEP`], each `json value` [`ARGV_SEP`] `file` [`ARGV_SEP`]
+/// `line` [`ARGV_SEP`] `fn_chain` (empty for a missing field).
+pub const CATALOG_HISTORY_EXTRA: &str = "catalog_history";
+
+/// Separates the definitions inside one [`CATALOG_HISTORY_EXTRA`] value. A
+/// JSON-encoded value cannot contain this raw control character.
+pub const DEFINITION_SEP: char = '\u{1e}';
+
+/// One definition of a name: JSON-encoded value, file, line, and the
+/// `funcstack` chain it ran under (`outer ← inner`).
+pub type Definition = (String, Option<String>, Option<u32>, Option<String>);
+
+/// The subsystem a keyed event kind lands in (the names [`catalog_rows`] uses).
+fn keyed_subsystem(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "alias" => "alias",
+        "alias -g" | "galias" => "galias",
+        "alias -s" | "salias" => "salias",
+        "function" => "function",
+        "export" => "env",
+        "assign" | "typeset" => "params",
+        "bindkey" => "bindkey",
+        "compdef" => "compdef",
+        "hash -d" | "hash_d" => "named_dir",
+        "trap" => "trap",
+        "sched" => "sched",
+        "zle" => "zle",
+        "completion" => "completion",
+        _ => return None,
+    })
+}
+
+/// Every definition of every keyed name, in capture order — the chain
+/// `zwhere` lists with its file:line sites and call chains. A name defined
+/// once has a chain of one.
+pub fn catalog_history(bundle: &Bundle) -> Vec<(String, String, Vec<Definition>)> {
+    let mut chains: Vec<((&'static str, String), Vec<Definition>)> = Vec::new();
+    let mut index: HashMap<(&'static str, String), usize> = HashMap::new();
+    for ev in &bundle.events {
+        let Some(sub) = keyed_subsystem(&ev.kind) else {
+            continue;
+        };
+        let key = (sub, ev.name.clone());
+        let def = (
+            json_string(&ev.value.clone().unwrap_or_default()),
+            ev.file.clone(),
+            ev.line,
+            ev.fn_chain.clone(),
+        );
+        match index.get(&key) {
+            Some(&i) => chains[i].1.push(def),
+            None => {
+                index.insert(key.clone(), chains.len());
+                chains.push((key, vec![def]));
+            }
+        }
+    }
+    chains
+        .into_iter()
+        .map(|((sub, name), defs)| (sub.to_string(), name, defs))
+        .collect()
+}
+
+/// [`catalog_history`] encoded as the [`CATALOG_HISTORY_EXTRA`] bucket.
+fn encode_catalog_history(bundle: &Bundle) -> HashMap<String, String> {
+    let sep = ARGV_SEP.to_string();
+    catalog_history(bundle)
+        .into_iter()
+        .map(|(sub, name, defs)| {
+            let value = defs
+                .iter()
+                .map(|(v, file, line, chain)| {
+                    let line = line.map(|l| l.to_string()).unwrap_or_default();
+                    [
+                        v.as_str(),
+                        file.as_deref().unwrap_or(""),
+                        line.as_str(),
+                        chain.as_deref().unwrap_or(""),
+                    ]
+                    .join(&sep)
+                })
+                .collect::<Vec<_>>()
+                .join(&DEFINITION_SEP.to_string());
+            ([sub.as_str(), name.as_str()].join(&sep), value)
+        })
+        .collect()
+}
+
+/// Decode the [`CATALOG_HISTORY_EXTRA`] bucket: `(subsystem, name)` → the
+/// definitions of that name in capture order. Empty for a shard recorded
+/// before the bucket existed.
+pub fn decode_catalog_history(
+    extras: &HashMap<String, HashMap<String, String>>,
+) -> HashMap<(String, String), Vec<Definition>> {
+    let mut out = HashMap::new();
+    let Some(bucket) = extras.get(CATALOG_HISTORY_EXTRA) else {
+        return out;
+    };
+    for (k, v) in bucket {
+        let Some((sub, name)) = k.split_once(ARGV_SEP) else {
+            continue;
+        };
+        let defs = v
+            .split(DEFINITION_SEP)
+            .map(|d| {
+                let mut f = d.split(ARGV_SEP);
+                let value = f.next().unwrap_or("").to_string();
+                let file = f.next().filter(|s| !s.is_empty()).map(str::to_string);
+                let line = f.next().and_then(|s| s.parse().ok());
+                let chain = f.next().filter(|s| !s.is_empty()).map(str::to_string);
+                (value, file, line, chain)
+            })
+            .collect();
+        out.insert((sub.to_string(), name.to_string()), defs);
+    }
+    out
+}
+
 /// A JSON string literal for `s`, the encoding canonical rows store.
 fn json_string(s: &str) -> String {
     serde_json::Value::String(s.to_string()).to_string()
@@ -665,6 +786,10 @@ pub fn build_shard(bundle: &Bundle, f: &Folded) -> CanonicalShard {
     }
     let shell_id = bundle.shell_id.as_deref().unwrap_or("zshrs");
     shard.extras.insert(CATALOG_EXTRA.to_string(), encode_catalog(f, shell_id));
+    let history = encode_catalog_history(bundle);
+    if !history.is_empty() {
+        shard.extras.insert(CATALOG_HISTORY_EXTRA.to_string(), history);
+    }
     shard
 }
 
@@ -807,5 +932,64 @@ mod plugin_detection_tests {
                 ("oh-my-zsh".to_string(), "git".to_string()),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod catalog_history_tests {
+    use super::*;
+
+    fn ev(kind: &str, name: &str, value: &str, file: &str, line: u32) -> BundleEvent {
+        BundleEvent {
+            order_idx: 0,
+            ts_ns: 0,
+            kind: kind.to_string(),
+            name: name.to_string(),
+            value: Some(value.to_string()),
+            file: Some(file.to_string()),
+            line: Some(line),
+            fn_chain: Some("load ← init".to_string()),
+            attrs: 0,
+            value_array: None,
+            value_assoc: None,
+        }
+    }
+
+    fn bundle(events: Vec<BundleEvent>) -> Bundle {
+        Bundle {
+            started_at_ns: 0,
+            finished_at_ns: 1,
+            cmdline: None,
+            zdotdir: None,
+            home: None,
+            events,
+            shell_id: None,
+            end_state: None,
+        }
+    }
+
+    #[test]
+    fn every_definition_of_a_redefined_name_survives_with_its_site() {
+        let b = bundle(vec![
+            ev("alias", "gst", "git status", "/h/a.zsh", 3),
+            ev("alias", "gco", "git checkout", "/h/a.zsh", 4),
+            ev("alias", "gst", "git status -sb", "/h/b.zsh", 1),
+            ev("function", "gst", "echo hi", "/h/c.zsh", 9),
+            ev("alias", "gst", "git status --short", "/h/main.zsh", 3),
+        ]);
+        let shard = build_shard(&b, &fold_bundle(&b));
+        let hist = decode_catalog_history(&shard.extras);
+        let alias_chain = &hist[&("alias".to_string(), "gst".to_string())];
+        let sites: Vec<_> = alias_chain.iter().map(|(_, f, l, _)| (f.clone().unwrap(), l.unwrap())).collect();
+        assert_eq!(
+            sites,
+            vec![("/h/a.zsh".into(), 3), ("/h/b.zsh".into(), 1), ("/h/main.zsh".into(), 3)]
+        );
+        assert_eq!(alias_chain[1].0, "\"git status -sb\"");
+        assert_eq!(alias_chain[1].3.as_deref(), Some("load ← init"));
+        // A name defined once has a chain of one, and the same name in another
+        // subsystem is its own chain.
+        assert_eq!(hist[&("alias".to_string(), "gco".to_string())].len(), 1);
+        assert_eq!(hist[&("function".to_string(), "gst".to_string())].len(), 1);
     }
 }

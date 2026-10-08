@@ -20,10 +20,25 @@ the records into a canonical rkyv shard,
 daemon is involved. Every later `zshrs` start replays that shard
 instead of sourcing the startup files (see *Startup replay* below).
 
-The result: `zwhere alias gst` answers
-`~/.zpwr/env/.shell_aliases_functions.sh:1742 (zpwrLoadAliases ← _zpwr_init)`
+The result: `zwhere alias gst` lists EVERY definition of `gst`, oldest
+first, each with its `file:line`, whether a later definition replaced it
+(`shadowed`) or it is the one in force (`active`), and the function call
+chain it ran under:
+
+```
+alias  gst  git status      zshrs  ~/.zinit/snippets/OMZP::git/git.plugin.zsh:99  shadowed  _omz_git_alias
+alias  gst  git status -sb  zshrs  ~/.zshrc:312                                    active
+```
+
 instantly, regardless of how `gst` was loaded — zinit, oh-my-zsh,
-antigen, raw `source`, or inline in `.zshrc`.
+antigen, raw `source`, or inline in `.zshrc`. `zwhere` reads the newest
+recorder shard directly when no daemon is running. Line numbers inside a
+function are file lines: `$LINENO` counts from the function body, so the
+recorder anchors it at the function's definition site
+(`$funcsourcetrace[1]`). Every definition of a keyed name (alias, function,
+parameter, bindkey, …) is kept in the shard's `catalog_history` extra; a
+recording made before that extra existed has only the last definition, so
+re-run `zshrs-recorder`.
 
 ### The granularity gap: per-plugin diff vs per-definition record
 

@@ -1164,6 +1164,8 @@ pub fn capture_end_state() {
 pub fn recorder_ctx_global() -> RecordCtx {
     let line = crate::ported::params::getsparam("LINENO").and_then(|s| s.parse::<u32>().ok());
     let file = crate::ported::utils::scriptfilename_get();
+    let defined_at = crate::ported::params::getaparam("funcsourcetrace").and_then(|t| t.into_iter().next());
+    let (file, line) = absolute_site(file, line, defined_at.as_deref());
     let fn_chain = crate::ported::params::getaparam("funcstack").and_then(|s| {
         if s.is_empty() {
             None
@@ -1179,6 +1181,30 @@ pub fn recorder_ctx_global() -> RecordCtx {
         fn_chain,
     }
 }
+/// The source position of a mutation as a FILE line. Inside a function
+/// `$LINENO` counts from the function body's first line (zsh prints `1` for
+/// the statement right after `name() {`), so on its own it names the wrong
+/// line of the file. The function's definition site (`$funcsourcetrace[1]`,
+/// `file:line` of the `name() {` line) anchors it: file line = definition
+/// line + `$LINENO`. At top level, or when the definition site is unknown,
+/// the position is returned unchanged.
+pub fn absolute_site(
+    file: Option<String>,
+    lineno: Option<u32>,
+    defined_at: Option<&str>,
+) -> (Option<String>, Option<u32>) {
+    let anchored = defined_at.and_then(|d| {
+        let (f, l) = d.rsplit_once(':')?;
+        Some((f.to_string(), l.parse::<u32>().ok()?))
+    });
+    match (anchored, lineno) {
+        (Some((def_file, def_line)), Some(n)) if !def_file.is_empty() => {
+            (Some(def_file), Some(def_line + n))
+        }
+        _ => (file, lineno),
+    }
+}
+
 /// Skip the end-of-run shard write (`--dry-run`).
 #[inline]
 pub fn set_no_write(v: bool) {

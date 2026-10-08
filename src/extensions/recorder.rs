@@ -71,6 +71,8 @@ impl crate::ported::vm_helper::ShellExecutor {
         // `source()` sets per file and PS4's `%x` reports. `$ZSH_SCRIPT` /
         // `$0` named the recorder binary for every event.
         let file = crate::ported::utils::scriptfilename_get();
+        let defined_at = self.array("funcsourcetrace").and_then(|t| t.into_iter().next());
+        let (file, line) = crate::recorder::absolute_site(file, line, defined_at.as_deref());
         crate::recorder::RecordCtx {
             file,
             line,
