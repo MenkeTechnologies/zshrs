@@ -622,6 +622,60 @@ fn scanner(state: &mut globdata, q: Option<&complist>, shortcircuit: i32, in_clo
                   // c:674-684 — descend into each collected subdir.
         if !subdirs.is_empty() {
             let oppos = state.pathpos;
+            // RUST-ONLY — fan the sibling subdirs of a `**` closure level out
+            // over the rayon pool instead of the serial `for` below, appending
+            // each sibling's matches in `subdirs` order so the result equals the
+            // serial descent (including `oN` unsorted globs). Each worker runs
+            // `scanner` on its own `globdata`; nested levels fan out again
+            // through the same pool. Stays serial when `[glob] recursive_parallel
+            // = false`, with fewer than two siblings, or with an `(e:…:)` /
+            // `(+…)` qualifier (`qualsheval` runs shell code and publishes
+            // `$reply` through the process-global `INSERTS`).
+            if closure != 0
+                && shortcircuit == 0
+                && subdirs.len() >= 2
+                && crate::extensions::config::current().glob.recursive_parallel
+                && !state.quals.as_ref().is_some_and(|arena| {
+                    arena
+                        .nodes
+                        .iter()
+                        .any(|n| n.func.is_some_and(|f| f as usize == qualsheval as usize))
+                })
+            {
+                use rayon::prelude::*;
+                // Workers are pool threads with their own TLS; hand each the
+                // option snapshot this glob started with.
+                let snap = GLOB_OPTS_TLS.with_borrow(|g| *g);
+                let shared: &globdata = state;
+                let results: Vec<(Vec<gmatch>, i32)> = subdirs
+                    .par_iter()
+                    .map(|name| {
+                        let mut child = globdata::new();
+                        child.qualifiers = shared.qualifiers.clone();
+                        child.quals = shared.quals.clone();
+                        child.gf_nullglob = shared.gf_nullglob;
+                        child.gf_markdirs = shared.gf_markdirs;
+                        child.gf_noglobdots = shared.gf_noglobdots;
+                        child.gf_listtypes = shared.gf_listtypes;
+                        child.gf_pre_words = shared.gf_pre_words.clone();
+                        child.gf_post_words = shared.gf_post_words.clone();
+                        child.dot_prefix_verbatim = shared.dot_prefix_verbatim;
+                        child.pathbuf = shared.pathbuf.clone();
+                        child.pathbufcwd = shared.pathbufcwd;
+                        addpath(&mut child.pathbuf, name);
+                        child.pathpos = child.pathbuf.len();
+                        let prev = GLOB_OPTS_TLS.with_borrow_mut(|g| std::mem::replace(g, snap));
+                        scanner(&mut child, Some(q), 0, true); // c:681
+                        GLOB_OPTS_TLS.with_borrow_mut(|g| *g = prev);
+                        (child.matches, child.matchct)
+                    })
+                    .collect();
+                for (matches, matchct) in results {
+                    state.matches.extend(matches);
+                    state.matchct += matchct;
+                }
+                subdirs.clear();
+            }
             for name in subdirs {
                 addpath(&mut state.pathbuf, &name);
                 state.pathpos = state.pathbuf.len();
@@ -7240,6 +7294,39 @@ mod tests {
     #[test]
     fn test_pattern_match() {
         let _g = crate::test_util::global_state_lock();
+    /// `**/` fans sibling subdirs out over the rayon pool; the merged result
+    /// must be the same set a plain recursive walk finds, with dot dirs and
+    /// non-matching files excluded.
+    #[test]
+    fn recursive_glob_parallel_matches_plain_walk() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = TempDir::new().unwrap();
+        let base = dir.path();
+        let mut expected: Vec<String> = Vec::new();
+        for a in 0..6 {
+            for b in 0..4 {
+                let d = base.join(format!("d{a}/s{b}/leaf"));
+                fs::create_dir_all(&d).unwrap();
+                for (parent, tag) in [(d.parent().unwrap().to_path_buf(), "s"), (d.clone(), "l")] {
+                    let hit = parent.join(format!("{tag}.zsh"));
+                    File::create(&hit).unwrap();
+                    File::create(parent.join(format!("{tag}.txt"))).unwrap();
+                    expected.push(hit.to_string_lossy().into_owned());
+                }
+            }
+        }
+        fs::create_dir_all(base.join(".hid/x")).unwrap();
+        File::create(base.join(".hid/x/h.zsh")).unwrap();
+        expected.sort();
+
+        let mut pattern = format!("{}/**/*.zsh", base.display());
+        zshtokenize(&mut pattern, ZSHTOK_SUBST);
+        let mut state = globdata::new();
+        let mut got = globdata_glob(&mut state, &pattern);
+        got.sort();
+        assert_eq!(got, expected);
+    }
+
         assert!(matchpat("*.txt", "file.txt", false, true));
         assert!(matchpat("file?.txt", "file1.txt", false, true));
         assert!(!matchpat("*.txt", "file.rs", false, true));

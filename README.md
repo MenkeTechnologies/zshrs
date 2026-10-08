@@ -121,7 +121,7 @@ Every operation that zsh forks for runs in-process. **Zero forks for builtins.**
 | `pmap`/`pgrep`/`peach` | fork N times | **VM execution** — zero fork |
 | `git` (via [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native)) | fork + exec /usr/bin/git | **Builtin** — zvcs linked in, zero fork |
 | `fzf` (via [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native)) | fork + exec the fzf binary | **Builtin** — arb's finder linked in, zero fork |
-| `**/*.rs` | Single-threaded `opendir` | Parallel `walkdir` per-subdir on pool |
+| `**/*.rs` | Single-threaded `opendir` | Parallel per-subdir descent on the rayon pool (`[glob] recursive_parallel`, default on) |
 | `*(.x)` qualifiers | N serial `stat` calls | One parallel metadata prefetch |
 | `rehash` | Serial `readdir` per PATH dir | Parallel scan across pool |
 | `compinit` | Synchronous fpath scan | Background fpath scan on the worker pool |
