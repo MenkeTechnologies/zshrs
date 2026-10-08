@@ -226,14 +226,40 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
             ((0..=nsub).map(|n| c.get(n).map(|m| (m.start(), m.end()))).collect(), nsub)
         })
     } else {
-        let re = match regex::RegexBuilder::new(&pat_for_compile)
-            .dot_matches_new_line(true)
-            .build()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                compile_failed(e.to_string());
-                return 0; // c:81 break;
+        // !!! WARNING: RUST-ONLY COMPILE CACHE — NO C COUNTERPART !!!
+        // regcomp(3) is cheap, so C compiles on every `=~`. Building a
+        // `regex::Regex` is not: a loop of `[[ $x =~ pat ]]` over a
+        // 47k-function table (zpwr's zshRegenSearchableEnv.zsh) spent 91% of
+        // its time compiling the same few patterns and never finished.
+        // Compiled regexes are kept per thread, keyed by the translated
+        // pattern; `Regex` clones share one compiled program.
+        thread_local! {
+            static COMPILED: std::cell::RefCell<std::collections::HashMap<String, regex::Regex>> =
+                std::cell::RefCell::new(std::collections::HashMap::new());
+        }
+        const COMPILED_CAP: usize = 512;
+        let cached = COMPILED.with(|c| c.borrow().get(&pat_for_compile).cloned());
+        let re = match cached {
+            Some(r) => r,
+            None => {
+                let r = match regex::RegexBuilder::new(&pat_for_compile)
+                    .dot_matches_new_line(true)
+                    .build()
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        compile_failed(e.to_string());
+                        return 0; // c:81 break;
+                    }
+                };
+                COMPILED.with(|c| {
+                    let mut c = c.borrow_mut();
+                    if c.len() >= COMPILED_CAP {
+                        c.clear();
+                    }
+                    c.insert(pat_for_compile.clone(), r.clone());
+                });
+                r
             }
         };
         let nsub = re.captures_len() - 1;
