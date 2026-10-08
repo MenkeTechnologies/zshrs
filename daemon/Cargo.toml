@@ -22,7 +22,6 @@ name = "zshrs-daemon-bench"
 path = "bins/zshrs-daemon-bench.rs"
 
 [dependencies]
-atty = "0.2"
 byteorder = "1"
 chrono = "0.4"
 dirs = "5"

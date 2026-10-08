@@ -231,10 +231,11 @@ fn connect_existing(paths: &CachePaths) -> Result<UnixStream> {
 }
 
 fn tty_name() -> Option<String> {
+    use std::io::IsTerminal;
     use std::os::unix::io::AsRawFd;
     let stdin = std::io::stdin();
     let fd = stdin.as_raw_fd();
-    if !atty::is(atty::Stream::Stdin) {
+    if !stdin.is_terminal() {
         return None;
     }
     // SAFETY: `ttyname_r` is POSIX-standard.

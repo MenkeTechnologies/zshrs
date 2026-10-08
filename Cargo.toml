@@ -150,7 +150,6 @@ path = "tests/parity/main.rs"
 
 [dependencies]
 ctrlc = "3"
-atty = "0.2"
 zshrs-daemon = { workspace = true, optional = true }
 # Native (Rust) plugin host: `zmodload -R <dylib>` dlopen's third-party
 # cdylibs through the stable C ABI in the `znative` crate. libloading
