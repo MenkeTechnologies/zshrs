@@ -17126,3 +17126,18 @@ fn m_left_padding_without_multibyte_skips_by_width() {
     );
     assert_eq!(out, vec![0x82, 0xb9, 0xe3, 0x83, 0x88]);
 }
+
+/// c:Src/math.c:872 — `inf`/`nan` in any case is the IEEE constant in an
+/// arithmetic expression, also inside the `(( ))` command, whose compiled path
+/// loaded every identifier as a variable: `INF=999999; (( v == INF ))` was
+/// true. `$INF` is still the parameter, and sh emulation makes the name a
+/// variable. Master oracle 8cc5ead prints ne / eq2 / sh42.
+#[test]
+fn arith_command_treats_inf_as_the_constant() {
+    let (_s, out, _e) = run_zshrs_parity(
+        r#"INF=999999; v=999999; (( v == INF )) && print eq || print ne
+(( v == $INF )) && print eq2 || print ne2
+emulate sh -c 'inf=42; (( inf == 42 )) && echo sh42'"#,
+    );
+    assert_eq!(out, "ne\neq2\nsh42\n");
+}

@@ -1310,6 +1310,29 @@ pub fn arith_uncompilable_reason(expr: &str) -> Option<&'static str> {
             _ => {}
         }
     }
+    // c:Src/math.c:872 — a bare 3-letter identifier spelled `inf` or `nan` in
+    // any case is the Inf/NaN constant, not a parameter (except under sh
+    // emulation). The compiled path loads every identifier as a variable, so
+    // `INF=999999; (( v == INF ))` succeeded where zsh compares against
+    // infinity and fails (examples/demos/267_floyd_warshall.zsh printed ∞ for
+    // every finite 999999). `$INF` / `${INF}` stay parameter references.
+    let mut i = 0;
+    while i < b.len() {
+        if b[i].is_ascii_alphabetic() || b[i] == b'_' {
+            let start = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                i += 1;
+            }
+            let after_ref = start > 0 && matches!(b[start - 1], b'$' | b'{');
+            if !after_ref
+                && (expr[start..i].eq_ignore_ascii_case("inf") || expr[start..i].eq_ignore_ascii_case("nan"))
+            {
+                return Some("Inf/NaN constant");
+            }
+        } else {
+            i += 1;
+        }
+    }
     // Base-tagged literals — see `#` above; these are the 0x/0b spellings.
     let lower = expr.to_ascii_lowercase();
     if lower.contains("0x") || lower.contains("0b") {
