@@ -17816,6 +17816,23 @@ pub fn bin_trap(
         zwarnnam(name, "-p: unknown option");
         return 1;
     }
+    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 `trap -p SIG...` prints just the
+    // ACTION text of each named signal's trap, one per line (nothing for an unset one):
+    //   ksh -c 'trap "print a" INT; trap -p INT'  ->  print a
+    if argv.len() > 1
+        && argv[0] == "-p"
+        && crate::extensions::emulation_startup::personality()
+            == crate::extensions::emulation_startup::Personality::Ksh93
+    {
+        let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
+        for sig in &argv[1..] {
+            let idx = getsigidx(sig);
+            if let Some((_, body)) = traps.iter().find(|(k, _)| getsigidx(k) == idx) {
+                println!("{body}");
+            }
+        }
+        return 0;
+    }
     let list_via_p = argv.len() == 1
         && argv[0] == "-p"
         && matches!(
@@ -17931,23 +17948,6 @@ pub fn bin_trap(
                 let idx = sig as i32;
                 // Already covered by a function-form or a stored body.
                 if combined.iter().any(|(i, _)| *i == idx) {
-    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 `trap -p SIG...` prints just the
-    // ACTION text of each named signal's trap, one per line (nothing for an unset one):
-    //   ksh -c 'trap "print a" INT; trap -p INT'  ->  print a
-    if argv.len() > 1
-        && argv[0] == "-p"
-        && crate::extensions::emulation_startup::personality()
-            == crate::extensions::emulation_startup::Personality::Ksh93
-    {
-        let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
-        for sig in &argv[1..] {
-            let idx = getsigidx(sig);
-            if let Some((_, body)) = traps.iter().find(|(k, _)| getsigidx(k) == idx) {
-                println!("{body}");
-            }
-        }
-        return 0;
-    }
                     continue;
                 }
                 let name = crate::ported::jobs::getsigname(idx); // c:7359
@@ -22022,6 +22022,7 @@ pub(crate) fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
         return if n < 0.0 { "-inf" } else { "inf" }.to_string(); // c:5498-5499
     }
     let (left_align, zero_pad, width, prec) = parse_flags_width_prec(spec);
+    let n = crate::dash_mode::ksh93_round_ties_away(n, conv, prec);
     let body = match conv {
         'f' | 'F' => {
             let p = prec.unwrap_or(6);
@@ -22137,7 +22138,6 @@ pub(crate) fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
         // optional sign and digits. `printf "%05.2f" 1.5` → "01.50",
         // `printf "%05.2f" -1.5` → "-1.50" (no extra pad since sign +
         // body already fills width). Previously the helper discarded
-    let n = crate::dash_mode::ksh93_round_ties_away(n, conv, prec);
         // zero_pad via parse_width_prec and always space-padded.
         if let Some(rest) = body.strip_prefix('-') {
             format!("-{}{}", "0".repeat(pad), rest)

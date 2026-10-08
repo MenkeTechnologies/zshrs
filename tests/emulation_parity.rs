@@ -3635,7 +3635,12 @@ fn pdksh_line_specifics_match_mksh() {
         eprintln!("skip: mksh not found");
         return;
     };
-    let probes = [
+    // mksh releases disagree on an unset readonly: older ones list `typeset -r k=''`,
+    // newer ones `typeset -r k`. zshrs mirrors the former, so the probe runs only
+    // against a mksh that prints it.
+    let unset_readonly_lists_empty_value =
+        run_code(&mksh, &[], "typeset -r k; typeset -p k").0 == "typeset -r k=''\n";
+    let mut probes = vec![
         "echo x | read v; print \"[$v]\"",
         "f() { return 300; }; f; print $?",
         "h() { return -1; }; h; print $?",
@@ -3655,11 +3660,13 @@ fn pdksh_line_specifics_match_mksh() {
         "typeset -Z3 q=1; typeset -p q; typeset -R3 q2=1; typeset -p q2; typeset -L3 lj=abcdef; typeset -p lj",
         "typeset -r -x -i k=1; typeset -p k; typeset -rux a=ab; typeset -p a",
         "typeset -i16 h=255; typeset -p h; typeset -i2 g=5; typeset -p g",
-        "typeset -r k; typeset -p k; typeset x1; typeset -p x1",
         "for v in 'a:b' 'a=b' 'a#b' 'a*b' 'a\\b' \"a'b\"; do x=$v; typeset -p x; done",
         "set -A arr -- 'a b' c; typeset -p arr; typeset -a q; q[2]=a; typeset -p q",
         "x=$(printf 'a\\tb\\nc'); typeset -p x",
     ];
+    if unset_readonly_lists_empty_value {
+        probes.push("typeset -r k; typeset -p k; typeset x1; typeset -p x1");
+    }
     for flags in [&["--mksh"][..], &["--pdksh"][..]] {
         let bad = probe_mismatches(flags, &mksh, &[], "", &probes);
         assert!(bad.is_empty(), "{flags:?} diverged from mksh:\n{}", bad.join("\n"));
@@ -3737,7 +3744,11 @@ fn dash_specifics_match_dash() {
         eprintln!("skip: dash not found");
         return;
     };
-    let probes = [
+    // dash releases disagree on `type -a`: older ones take `-a` for a command name
+    // (`-a: not found`, 127), newer ones reject it as an illegal option (2), which is
+    // what zshrs mirrors. The probe runs only against a dash that rejects it.
+    let type_rejects_options = run_code(&dash, &[], "type -a echo").1 == 2;
+    let mut probes = vec![
         "echo (",
         "echo a; if; echo b",
         "echo a; eval 'if'; echo after",
@@ -3746,7 +3757,6 @@ fn dash_specifics_match_dash() {
         "kill -l 9",
         "echo ~+ ~-",
         "echo '\\101\\0101\\060'",
-        "type -a echo",
         "local",
         "f() { local; echo in; }; f",
         "getopts; echo $?",
@@ -3770,6 +3780,9 @@ fn dash_specifics_match_dash() {
         "x=5; f() { local x; echo \"[$x]\"; }; f",
         "set +f; set -eu; echo $-",
     ];
+    if type_rejects_options {
+        probes.push("type -a echo");
+    }
     for flag in ["--dash", "--ash"] {
         let bad: Vec<String> = probes
             .iter()
