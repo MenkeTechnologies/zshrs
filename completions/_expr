@@ -1,0 +1,30 @@
+#compdef expr
+
+# zshrs builtin (coreutils expr). Handles `length STRING`, `substr STRING
+# POS LEN`, `index STRING CHARS`, and the binary operators below.
+
+local -a ops
+ops=(
+    'length:length of a string'
+    'substr:substring: substr STRING POSITION LENGTH'
+    'index:position of the first of CHARS in STRING'
+    '+:addition'
+    '-:subtraction'
+    '*:multiplication'
+    '/:division'
+    '%:remainder'
+    '<:less than'
+    '<=:less than or equal'
+    '=:equal'
+    '==:equal'
+    '!=:not equal'
+    '>=:greater than or equal'
+    '>:greater than'
+    '\::match STRING against a regular expression anchored at the start'
+)
+
+if (( CURRENT == 2 )); then
+    _describe -t keywords 'expr keyword' ops && return 0
+    return 1
+fi
+_describe -t operators 'expr operator' ops

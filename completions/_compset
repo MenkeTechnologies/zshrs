@@ -1,0 +1,26 @@
+#compdef compset
+
+# compset: modify PREFIX/SUFFIX/IPREFIX/ISUFFIX/words/CURRENT inside a
+# completion function. Its return status reports whether the change applied.
+
+local -a modes
+modes=(
+    '-p:move NUMBER characters of PREFIX to IPREFIX'
+    '-P:move the part of PREFIX matching PATTERN to IPREFIX'
+    '-s:move NUMBER characters of SUFFIX to ISUFFIX'
+    '-S:move the part of SUFFIX matching PATTERN to ISUFFIX'
+    '-n:remove words before BEGIN (and after END) from words'
+    '-N:remove words up to one matching BEG-PAT (and from END-PAT)'
+    '-q:split the current word on spaces into separate words'
+)
+if (( CURRENT == 2 )); then
+    _describe -t options 'compset option' modes
+    return
+fi
+case $words[2] in
+    -p|-s) _message -e numbers 'number of characters' ;;
+    -P|-S) _message -e patterns 'optional NUMBER, then PATTERN' ;;
+    -n) _message -e numbers 'BEGIN [END] word position' ;;
+    -N) _message -e patterns 'BEG-PAT [END-PAT]' ;;
+    *) return 1 ;;
+esac

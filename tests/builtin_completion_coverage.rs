@@ -89,3 +89,54 @@ fn zwhere_completion_does_not_need_the_daemon_and_keeps_empty_args() {
     );
     assert!(src.contains("zwhere \"${query[@]}\""));
 }
+
+/// Names a `#compdef` line (first line of a completion file) binds.
+fn compdef_names(dir: &std::path::Path) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in rd.flatten() {
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        if let Some(first) = text.lines().next().and_then(|l| l.strip_prefix("#compdef ")) {
+            // `#compdef -p PATTERN` / `-P` / `-k` / `-K` / `-n` / `-N` define patterns or
+            // widgets, not names. Anything else is a name list — including a bare `-`
+            // (the precommand modifier) and `-math-`-style contexts.
+            if matches!(first.split_whitespace().next(), Some("-p" | "-P" | "-k" | "-K" | "-n" | "-N")) {
+                continue;
+            }
+            out.extend(first.split_whitespace().map(str::to_string));
+        }
+    }
+    out
+}
+
+/// EVERY builtin the shell reports in `$builtins` — zsh's own and the ones
+/// zshrs adds — must have a completion, either bundled in `completions/` or
+/// from zsh's stock set in `vendor/zsh/functions`. The registry test above
+/// only sees the daemon builtins; this one asks the running shell, so a
+/// builtin added anywhere cannot ship without one.
+#[test]
+fn every_reported_builtin_has_a_completion() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_zshrs"))
+        .args(["-f", "-c", "print -l ${(ko)builtins}"])
+        .env_remove("ZSHRS_HIDE_EXT_BUILTINS")
+        .output()
+        .expect("run zshrs");
+    assert!(out.status.success(), "zshrs -c failed: {:?}", out.status);
+    let reported = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut covered = compdef_names(&repo_root().join("completions"));
+    covered.extend(compdef_names(&repo_root().join("vendor/zsh/functions")));
+    // Names the shell uses internally (not typed by a person).
+    const INTERNAL: &[&str] = &["__rust_compile"];
+    let missing: Vec<&str> = reported
+        .lines()
+        .filter(|b| !b.is_empty() && !INTERNAL.contains(b) && !covered.contains(*b))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "builtins with no completion (add completions/_NAME with `#compdef NAME`): {missing:?}"
+    );
+}

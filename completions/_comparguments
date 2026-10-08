@@ -1,0 +1,23 @@
+#compdef comparguments
+
+# comparguments: argument parsing used by _arguments. The first argument
+# selects the operation (the set accepted by bin_comparguments in
+# Src/Zle/computil.c).
+
+local -a ops
+ops=(
+    '-i:parse the command line against the specs and initialize the state'
+    '-D:return the descriptions, actions and sub-contexts for the current word'
+    '-O:return the option descriptions, in a form usable by _describe'
+    '-L:test whether the current word begins an option name (--pre=/<TAB>)'
+    '-s:test whether single-letter options are being completed'
+    '-M:return the match specs for the spec set in use'
+    '-a:test whether there are normal arguments to complete'
+    '-W:return the current word without handled option prefixes'
+    '-n:return the index of the word where normal arguments began'
+)
+if (( CURRENT == 2 )); then
+    _describe -t options 'comparguments operation' ops
+    return
+fi
+_default

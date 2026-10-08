@@ -1,0 +1,5 @@
+#compdef :
+
+# `:` expands its arguments and does nothing; complete them as ordinary words.
+
+_default

@@ -1,0 +1,5 @@
+#compdef umask
+
+_arguments -s \
+    '-S[print the mask in symbolic form]' \
+    '1:file creation mask (octal or symbolic): '

@@ -1,0 +1,8 @@
+#compdef yes
+
+# zshrs builtin (coreutils yes): repeatedly output STRING (default `y`).
+
+_arguments -s \
+    '(- *)--help[display help and exit]' \
+    '(- *)--version[output version information and exit]' \
+    '*:string to repeat: '

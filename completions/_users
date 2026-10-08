@@ -1,0 +1,7 @@
+#compdef users
+
+# zshrs builtin (coreutils users): print the login names of users currently
+# logged in, from FILE (default the system utmp database).
+
+_arguments \
+    '1:utmp file:_files'

@@ -1,0 +1,62 @@
+#compdef compctl
+
+# compctl: the old-style programmable completion command (see zshcompctl).
+# Only the option letters are completed; the flag arguments are free text
+# except where noted.
+
+_arguments -s -S \
+    '(-C -D -T)-C[complete the command word itself]' \
+    '(-C -D -T)-D[default completion for commands with no compctl]' \
+    '(-C -D -T)-T[flags to use before any other processing]' \
+    '-L[list the existing definitions in a form suitable for a start-up script]' \
+    '+[extend the completion with further flags]' \
+    '-f[filenames and file system paths]' \
+    '-/[file system paths only]' \
+    '-c[command names, including aliases, functions, builtins and reserved words]' \
+    '-F[function names]' \
+    '-B[builtin command names]' \
+    '-m[external command names]' \
+    '-w[reserved words]' \
+    '-a[alias names]' \
+    '-R[regular (non-global) alias names]' \
+    '-G[global alias names]' \
+    '-d[with -F -B -w -a -R -G: disabled ones]' \
+    '-e[with -d: enabled ones as well]' \
+    '-o[shell option names]' \
+    '-v[variable names]' \
+    '-N[scalar parameter names]' \
+    '-A[array names]' \
+    '-I[integer variable names]' \
+    '-O[read-only variable names]' \
+    '-p[parameters used by the shell, including special ones]' \
+    '-Z[shell special parameter names]' \
+    '-E[environment variable names]' \
+    '-n[named directories]' \
+    '-b[key binding names]' \
+    '-j[job names]' \
+    '-r[running job names]' \
+    '-z[suspended job names]' \
+    '-u[user names]' \
+    '-k+[take completions from this array or word list]:array or (words): ' \
+    '-g+[expand this glob pattern]:glob pattern: ' \
+    '-s+[take completions from the expansion of this string]:string: ' \
+    '-K+[call a function to generate the completions]:function:_functions' \
+    '-H+[complete from the history]:number and pattern: ' \
+    '-Q[do not quote the generated completions]' \
+    '-P+[insert this prefix before each match]:prefix: ' \
+    '-S+[append this suffix to each match]:suffix: ' \
+    '-W+[search for file names relative to this directory]:file prefix:_files -/' \
+    '-q[remove the suffix if a following character is typed]' \
+    '-l+[complete the first argument as the named command]:command:_command_names' \
+    '-h+[complete from this command and its history as for -l]:command:_command_names' \
+    '-U[use the completion even if the word does not match]' \
+    '-y+[display the matches using this function or variable]:function or variable: ' \
+    '-X+[print an explanation when completing]:explanation: ' \
+    '-Y+[print an explanation with the matches]:explanation: ' \
+    '-t+[continue with another compctl when the flags yield nothing]:continuation: ' \
+    '-J+[group the matches under this name]:group name: ' \
+    '-V+[group the matches under this name, unsorted]:group name: ' \
+    '-1[remove duplicates within each group]' \
+    '-2[remove consecutive duplicates only]' \
+    '-M+[use this match specification]:match specification: ' \
+    '*:command:_command_names'

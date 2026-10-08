@@ -1,0 +1,8 @@
+#compdef link
+
+# zshrs builtin (coreutils link): create a hard link. Takes exactly two
+# operands and no options.
+
+_arguments \
+    '1:existing file:_files' \
+    '2:new link name:_files'

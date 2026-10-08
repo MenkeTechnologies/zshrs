@@ -1,0 +1,7 @@
+#compdef unlink
+
+# zshrs builtin (coreutils unlink): remove one file with unlink(2). Takes
+# exactly one operand and no options.
+
+_arguments \
+    '1:file to remove:_files'

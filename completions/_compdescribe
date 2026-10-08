@@ -1,0 +1,21 @@
+#compdef compdescribe
+
+# compdescribe: builds the match displays for _describe. First call with -i
+# (no descriptions) or -I SEPARATOR (with descriptions), then repeatedly with
+# -g and four parameter names.
+
+local -a ops
+ops=(
+    '-i:initialize, displaying matches without descriptions'
+    '-I:initialize, displaying descriptions (separator follows)'
+    '-g:step to the next set of matches and store its parts in four parameters'
+)
+if (( CURRENT == 2 )); then
+    _describe -t options 'compdescribe operation' ops
+    return
+fi
+if [[ $words[2] == -g ]]; then
+    _parameters
+    return
+fi
+_default

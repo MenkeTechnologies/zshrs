@@ -1,0 +1,7 @@
+#compdef nproc
+
+# zshrs builtin (coreutils nproc): print the number of processing units.
+
+_arguments -s \
+    '--all[count all installed processors, not only those available]' \
+    '--ignore=[exclude this many processing units]:count to exclude: '

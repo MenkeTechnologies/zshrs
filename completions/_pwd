@@ -1,0 +1,6 @@
+#compdef pwd
+
+_arguments -s \
+    '(-L -P -r)-r[print the physical directory, without symbolic links]' \
+    '(-L -P -r)-P[print the physical directory, without symbolic links]' \
+    '(-L -P -r)-L[print the logical directory, keeping symbolic links]'

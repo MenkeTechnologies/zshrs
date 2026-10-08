@@ -1,0 +1,7 @@
+#compdef arch
+
+# zshrs builtin (coreutils arch): print the machine hardware name, as
+# `uname -m`. It accepts no options and no operands.
+
+_message -e arguments 'arch takes no arguments'
+return 1

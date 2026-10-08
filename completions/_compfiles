@@ -1,0 +1,16 @@
+#compdef compfiles
+
+# compfiles: filename generation helper used by _path_files.
+
+local -a ops
+ops=(
+    '-p:build the glob patterns, including the paths already handled'
+    '-P:build the glob patterns, for a prefix'
+    '-i:do the directory tests for the ignore-parents style'
+    '-r:remove matches when a component equals the string on the line'
+)
+if (( CURRENT == 2 )); then
+    _describe -t options 'compfiles operation' ops
+    return
+fi
+_default

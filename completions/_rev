@@ -1,0 +1,7 @@
+#compdef rev
+
+# zshrs builtin (util-linux rev): reverse each line character by character.
+# Reads stdin when no FILE is given, or for `-`.
+
+_arguments \
+    '*:file:_files'

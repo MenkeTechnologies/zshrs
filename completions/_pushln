@@ -1,0 +1,6 @@
+#compdef pushln
+
+# pushln [ARG ...]: push the arguments onto the editing buffer stack;
+# equivalent to `print -nz`.
+
+_default

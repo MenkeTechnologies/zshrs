@@ -1,0 +1,6 @@
+#compdef compvalues
+
+# compvalues: value parsing used by _values, like comparguments for
+# comma-separated option values.
+
+_default

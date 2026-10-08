@@ -1,0 +1,7 @@
+#compdef zregexparse
+
+# zregexparse [-c] ...: internals of _regex_arguments; not meant to be typed.
+
+_arguments -s \
+    '-c[match in the completion context]' \
+    '*:argument: '

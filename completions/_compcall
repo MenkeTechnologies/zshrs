@@ -1,0 +1,7 @@
+#compdef compcall
+
+# compcall [-TD]: call the old compctl completion from a widget.
+
+_arguments -s \
+    '-T[use the compctl -T (always-run) definitions]' \
+    '-D[use the compctl -D (default) definition]'

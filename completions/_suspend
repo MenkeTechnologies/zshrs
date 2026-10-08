@@ -1,0 +1,4 @@
+#compdef suspend
+
+_arguments -s \
+    '-f[suspend even if the shell is a login shell]'

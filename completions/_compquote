@@ -1,0 +1,8 @@
+#compdef compquote
+
+# compquote [-p] NAME ...: quote the values of the named parameters for the
+# innermost completion quoting level.
+
+_arguments -s \
+    '-p[quote as if a prefix preceded the values (a leading = is not quoted)]' \
+    '*:parameter name:_parameters'

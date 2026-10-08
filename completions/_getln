@@ -1,0 +1,13 @@
+#compdef getln
+
+# getln [-AclneE] NAME ...: read the top value from the buffer stack into the
+# parameter NAME; equivalent to `read -zr`.
+
+_arguments -s \
+    '-A[assign the words to an array]' \
+    '-c[the command was invoked from a compctl function]' \
+    '-l[with -c, read the entire line]' \
+    '-n[with -c, read the number of the word]' \
+    '(-E)-e[echo the input to standard output]' \
+    '(-e)-E[echo the input and also assign it to the parameter]' \
+    '*:parameter name:_parameters'

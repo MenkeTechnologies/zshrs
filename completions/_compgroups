@@ -1,0 +1,6 @@
+#compdef compgroups
+
+# compgroups NAME ...: create completion groups; used by _tags for the
+# group-order style.
+
+_default

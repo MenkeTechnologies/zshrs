@@ -1,0 +1,8 @@
+#compdef dirname
+
+# zshrs builtin (coreutils dirname): strip the last component from each
+# PATH.
+
+_arguments -s -S \
+    '(-z --zero)'{-z,--zero}'[end each output line with NUL, not newline]' \
+    '*:path:_files'

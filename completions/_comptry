@@ -1,0 +1,5 @@
+#compdef comptry
+
+# comptry: tag-set iteration for _tags; not meant to be typed interactively.
+
+_default

@@ -1,0 +1,7 @@
+#compdef break continue
+
+# break / continue [N]: leave / resume the Nth enclosing for, while, until,
+# select or repeat loop.
+
+_arguments \
+    '1:number of enclosing loops: '

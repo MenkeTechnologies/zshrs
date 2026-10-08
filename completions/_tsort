@@ -1,0 +1,7 @@
+#compdef tsort
+
+# zshrs builtin (coreutils tsort): topological sort of whitespace-separated
+# pairs read from FILE, or stdin.
+
+_arguments \
+    '1:file:_files'

@@ -1,0 +1,12 @@
+#compdef realpath
+
+# zshrs builtin: print the resolved absolute path of each operand.
+
+_arguments -s -S \
+    '(-q --quiet)'{-q,--quiet}'[suppress error messages]' \
+    '(-e --canonicalize-existing -m --canonicalize-missing)'{-e,--canonicalize-existing}'[every path component must exist]' \
+    '(-e --canonicalize-existing -m --canonicalize-missing)'{-m,--canonicalize-missing}'[path components need not exist]' \
+    '(-s --strip --no-symlinks -L --logical -P --physical)'{-s,--strip,--no-symlinks}'[do not expand symlinks]' \
+    '(-s --strip --no-symlinks -L --logical -P --physical)'{-L,--logical}'[resolve .. components before symlinks]' \
+    '(-s --strip --no-symlinks -L --logical -P --physical)'{-P,--physical}'[resolve symlinks as encountered]' \
+    '*:path:_files'

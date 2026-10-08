@@ -1,0 +1,7 @@
+#compdef exit bye logout return
+
+# exit [N], bye [N], logout [N], return [N]: leave the shell, or return from
+# the function or sourced script, with exit status N.
+
+_arguments \
+    '1:exit status (0-255): '

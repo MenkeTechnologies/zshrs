@@ -1,0 +1,6 @@
+#compdef factor
+
+# zshrs builtin (coreutils factor): print the prime factors of each positive
+# integer, as `N: p1 p2 ...`. With no operands it reads numbers from stdin.
+
+_message -e numbers 'positive integer'

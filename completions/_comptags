@@ -1,0 +1,6 @@
+#compdef comptags
+
+# comptags: tag bookkeeping for _tags/_requested/_next_label; not meant to be
+# typed interactively.
+
+_default
