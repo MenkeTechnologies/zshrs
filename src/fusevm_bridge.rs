@@ -5851,15 +5851,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         });
                         let _ = writeln!(std::io::stderr());
                         let _ = std::io::stderr().flush();
-                        break 'select;
-                    }
-                    Ok(_) => {}
                         // !!! KORN-MODE (no C counterpart) !!! ksh93 and mksh end a
                         // `select` that hit EOF with status 1, whatever the body
                         // last returned (zsh keeps the last body status).
                         if crate::extensions::dash_mode::korn_mode() {
                             last_status = 1;
                         }
+                        break 'select;
+                    }
+                    Ok(_) => {}
                     Err(_) => break 'select,
                 }
                 let t = line.trim_end_matches(['\n', '\r'][..].as_ref()).to_string();
@@ -10727,6 +10727,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // loaded, when `getconddef` has only the module-less stub.
         let (min, max): (usize, usize) = match cd.as_ref() {
             Some(c) if c.max >= 0 => (c.min.max(0) as usize, c.max as usize), // c:152
+            // !!! KORN-MODE EXTENSION (no C counterpart) !!! ksh93 `[[ -R NAME ]]`
+            // is true when NAME is a nameref.
+            _ if name == "R" && args.len() == 1 && crate::extensions::dash_mode::ksh93_mode() => {
+                return Value::Bool(crate::ported::params::is_nameref(&args[0]));
+            }
             _ => match name.as_str() {
                 "prefix" | "suffix" => (1, 2), // c:1700-1701
                 "after" => (1, 1),             // c:1698
@@ -10738,11 +10743,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // "module not found, error" exit). Status 2 — not 1 — is
                     // what `evalcond` hands back, and c:Src/exec.c:5216-5221
                     // turns a 2 into a shell error. Arm the same carrier
-            // !!! KORN-MODE EXTENSION (no C counterpart) !!! ksh93 `[[ -R NAME ]]`
-            // is true when NAME is a nameref.
-            _ if name == "R" && args.len() == 1 && crate::extensions::dash_mode::ksh93_mode() => {
-                return Value::Bool(crate::ported::params::is_nameref(&args[0]));
-            }
                     // BUILTIN_COND_UNKNOWN uses so the shared
                     // BUILTIN_COND_STATUS_FROM_BOOL tail emits 2 and aborts;
                     // returning a bare Bool(false) collapsed it to 1, so
@@ -17351,6 +17351,10 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// SIGEXIT (sig 0) is cleared.
 pub(crate) fn entersubsh_reset_traps() {
     let posixtraps = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXTRAPS);
+    // ksh93 and mksh reset EVERY trap in a subshell, ERR and DEBUG included (zsh keeps
+    // the pseudo-signals): `trap "print e" ERR; (false)` prints one ERR, from
+    // the parent, and `(false; true)` / `$(false)` print none.
+    let korn = crate::extensions::dash_mode::korn_mode();
     if let Ok(mut tbl) = crate::ported::builtin::traps_table().lock() {
         tbl.retain(|name, body| {
             // Above SIGCOUNT — outside c:1088's loop entirely.
@@ -17382,10 +17386,6 @@ pub(crate) fn entersubsh_reset_traps() {
 // ---------------------------------------------------------------------------
 // In-process subshell: signal delivery belongs to the PARENT.
 // ---------------------------------------------------------------------------
-    // ksh93 and mksh reset EVERY trap in a subshell, ERR and DEBUG included (zsh keeps
-    // the pseudo-signals): `trap "print e" ERR; (false)` prints one ERR, from
-    // the parent, and `(false; true)` / `$(false)` print none.
-    let korn = crate::extensions::dash_mode::korn_mode();
 
 /// Depth of nested in-process `( … )` subshells, for the signal
 /// bookkeeping below.
@@ -20300,6 +20300,9 @@ impl fusevm::ShellHost for ZshrsHost {
 
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
         let pattern: &str = &pattern_filesub(pattern);
+        if let Some(m) = crate::pattern_data_escape::ksh93_flagged_match(s, pattern) {
+            return m;
+        }
         // bash `shopt -s nocasematch` — bash(1): "bash matches patterns in a
         // case-insensitive fashion when performing matching while executing
         // CASE or [[ conditional commands". This host method is the `case`
@@ -20331,9 +20334,6 @@ impl fusevm::ShellHost for ZshrsHost {
         let pat_eff = if crate::pattern_data_escape::dropin_source_pattern_parens_literal() {
             crate::pattern_data_escape::escape_shglob_parens(
                 pattern,
-        if let Some(m) = crate::pattern_data_escape::ksh93_flagged_match(s, pattern) {
-            return m;
-        }
                 crate::pattern_data_escape::dropin_keeps_ksh_groups(),
             )
         } else {
