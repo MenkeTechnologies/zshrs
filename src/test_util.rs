@@ -268,3 +268,43 @@ pub fn set_test_zstyle(context: &str, style: &str, value: &str) {
         0,
     );
 }
+
+/// Put the shell on a truecolor terminal for the duration of a test, with
+/// zsh/nearcolor unloaded; restores `$.term.extensions` on drop.
+///
+/// `match_colour` (c:Src/prompt.c:1988-1996) emits a `#RRGGBB` colour as
+/// 24-bit only when no `get_color_attr` hook answers. zsh/nearcolor is that
+/// hook, and with `$.term.extensions` not listing `truecolor` the C code loads
+/// it on the spot (c:1990-1992), so the colour is quantized to the 256-colour
+/// palette. Both are process-wide state another test may have left behind.
+/// Measured with the master oracle:
+///     zsh -fc 'print -rP "%F{#f00}x"'                         → \e[38;5;196m
+///     zsh -fc '.term.extensions=(truecolor); print -rP …'      → \e[38;2;255;0;0m
+///     zsh -fc 'zmodload zsh/nearcolor; .term.extensions=(truecolor); …' → \e[38;5;196m
+/// A test pinning the 24-bit branch states both preconditions with this.
+pub struct TruecolorTerminal {
+    saved: Option<Vec<String>>,
+}
+
+pub fn truecolor_terminal() -> TruecolorTerminal {
+    let saved = crate::ported::params::getaparam(".term.extensions");
+    let _ = crate::ported::params::setaparam(".term.extensions", vec!["truecolor".to_string()]);
+    let mut tab = crate::ported::module::MODULESTAB.lock().unwrap();
+    if crate::ported::module::module_loaded(&tab, "zsh/nearcolor") != 0 {
+        crate::ported::module::unload_named_module(&mut tab, "zsh/nearcolor", "zmodload", 1);
+    }
+    TruecolorTerminal { saved }
+}
+
+impl Drop for TruecolorTerminal {
+    fn drop(&mut self) {
+        match self.saved.take() {
+            Some(v) => {
+                let _ = crate::ported::params::setaparam(".term.extensions", v);
+            }
+            None => {
+                crate::ported::params::unsetparam(".term.extensions");
+            }
+        }
+    }
+}
