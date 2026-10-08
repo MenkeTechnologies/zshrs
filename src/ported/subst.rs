@@ -23520,16 +23520,29 @@ pub fn paramsubst(
                 let (expanded, _, _) = promptexpand(&untok, 0, None);
                 expanded
             };
-            if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> = parts.iter().map(|s| prompt_one(s)).collect();
-                value = new_parts.join(" ");
-                split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| prompt_one(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+            // c:3999-4021 — `if (isarr) { per element } else { val }`. The walk
+            // is gated on C's `isarr`, NOT on "an array of this name exists":
+            // a subscript that picked one element (`${(%)a[1]}`) or a join
+            // (`(j:,:)`, a double-quoted collapse) already left a SCALAR, and
+            // re-reading the whole array from paramtab discarded that choice.
+            if isarr != 0 {
+                if let Some(parts) = split_parts.clone() {
+                    let new_parts: Vec<String> = parts.iter().map(|s| prompt_one(s)).collect();
+                    value = new_parts.join(" ");
+                    split_parts = Some(new_parts);
+                } else if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| prompt_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = prompt_one(&value); // c:4013
+                }
             } else {
-                value = prompt_one(&value); // c:3977
+                // c:4010-4015 — the scalar half. Publish the result as the value
+                // list too: this port re-derives the list from paramtab further
+                // down, and would otherwise splat the ORIGINAL elements.
+                value = prompt_one(&value);
+                split_parts = Some(vec![value.clone()]);
             }
             // c:4020-4021 — `txtpendingattrs = txtcurrentattrs = savecurrent;
             //               txtunknownattrs = saveunknown;`
@@ -25965,8 +25978,21 @@ pub fn paramsubst(
             if !qt && prefix.is_empty() && suffix.is_empty() && paramsubst_rescans(&nodes) {
                 return (first, 0, nodes);
             }
-            let new_pos_in_full = prefix.chars().count()
-                + first.chars().count().saturating_sub(prefix.chars().count());
+            // A single node is `prefix + element + suffix` (the `parts.len() == 1`
+            // arm of the emit loop), and stringsubst resumes scanning at the
+            // returned offset (c:339). It must point at the START of the
+            // suffix: a forced split (SH_WORD_SPLIT) that yields one field
+            // lands here, and returning the node's whole length skipped the
+            // suffix's own expansions — `setopt shwordsplit; x=ab; b=(q r);
+            // print ${x}$b[2]` left `$b[2]` literal where zsh prints `abr`.
+            // A suffix expanded above (plan9) or a node whose empties were
+            // dropped has no such boundary, so those keep the whole node.
+            let new_pos_in_full = match parts.as_slice() {
+                [only] if !plan9_pre_subst && nodes.len() == pre_retain_len => {
+                    prefix.chars().count() + emit_part(only).chars().count()
+                }
+                _ => first.chars().count(),
+            };
             return (first, new_pos_in_full, nodes);
         }
 

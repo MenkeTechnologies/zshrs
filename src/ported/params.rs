@@ -5711,7 +5711,14 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 // value before storing. Without this, `PATH+=":/foo"`
                 // would replace PATH instead of appending.
                 let final_str = if (flags & ASSPM_AUGMENT) != 0 {
-                    let prev = pm.u_str.clone().unwrap_or_default();
+                    // c:2742-2746 — the old text comes from `gsu.s->getfn`, not
+                    // from the raw slot: a tied scalar (`typeset -T FOO foo`)
+                    // keeps its value in the partner array, so `FOO+=:d` read
+                    // an empty `u_str` and dropped the existing elements.
+                    let prev = match pm.gsu_s.as_ref().map(|g| g.getfn) {
+                        Some(getfn) => getfn(pm),
+                        None => pm.u_str.clone().unwrap_or_default(),
+                    };
                     format!("{}{}", prev, v_str)
                 } else {
                     v_str
@@ -9342,7 +9349,11 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         _ => None,
     };
     if let (Some(alt_name), true) = (alt, assigned_tied) {
-        let parts: Vec<String> = val.split(':').map(String::from).collect();
+        // c:Src/params.c colonarrsetfn splits the value the scalar now HOLDS;
+        // under `+=` that is old + appended, not the appended text alone
+        // (`PATH+=:/y` left `path=(/y)`).
+        let stored = cloned.as_ref().and_then(|p| p.u_str.as_deref()).unwrap_or(val);
+        let parts: Vec<String> = stored.split(':').map(String::from).collect();
         if let Ok(mut tab) = paramtab().write() {
             // c:Src/hashtable.c:157 — `ht->addnode(ht, ztrdup(nam), pm)`
             // only when the name isn't already a node; an existing node

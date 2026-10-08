@@ -1219,7 +1219,7 @@ pub fn bin_zstyle(
             let oc = fb[1];
             if matches!(
                 oc,
-                b'L' | b'l'
+                b'L'
                     | b'e'
                     | b'd'
                     | b's'
@@ -1230,8 +1230,6 @@ pub fn bin_zstyle(
                     | b'm'
                     | b'q'
                     | b'g'
-                    | b'n'
-                    | b'H'
             ) {
                 ops_local.ind[oc as usize] = 1;
                 positional_start = 1;
@@ -1273,7 +1271,7 @@ pub fn bin_zstyle(
     } else if OPT_ISSET(ops, b'g') {
         1
     } else {
-        0 // L/l/e/n/H or no flag — no min check at this layer
+        0 // L/e or no flag — no min check at this layer
     };
     if args.len() < min_args {
         crate::ported::utils::zwarnnam(nam, "not enough arguments");
@@ -1314,7 +1312,6 @@ pub fn bin_zstyle(
     if args.is_empty()
         && positional_start == 0
         && !OPT_ISSET(ops, b'L')
-        && !OPT_ISSET(ops, b'l')
         && !OPT_ISSET(ops, b'e')
     {
         // c:491-492 + c:580-581 — bare `zstyle` invocation:
@@ -1342,7 +1339,7 @@ pub fn bin_zstyle(
         }
         return 0; // c:585
     }
-    if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {
+    if OPT_ISSET(ops, b'L') {
         // c:544-583 — `zstyle -L [context [stylename]]`: list = ZSLIST_SYNTAX,
         // optionally filtered by a context pattern and/or an exact style name.
         //   args[0] = context (glob matched against each stored pattern),

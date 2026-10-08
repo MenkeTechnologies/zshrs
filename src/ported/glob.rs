@@ -630,17 +630,21 @@ fn scanner(state: &mut globdata, q: Option<&complist>, shortcircuit: i32, in_clo
             // through the same pool. Stays serial when `[glob] recursive_parallel
             // = false`, with fewer than two siblings, or with an `(e:…:)` /
             // `(+…)` qualifier (`qualsheval` runs shell code and publishes
-            // `$reply` through the process-global `INSERTS`).
+            // `$reply` through the process-global `INSERTS`). The qualifier
+            // arena `insert` walks is `state.qualifiers.quals` (check_qualifiers);
+            // the guard only looked at `state.quals`, so `**/*(e:…:)` fanned out
+            // anyway and the workers raced on `$REPLY` / `INSERTS`. The test is
+            // structural: `sdata` is set only by the eval qualifier.
             if closure != 0
                 && shortcircuit == 0
                 && subdirs.len() >= 2
                 && crate::extensions::config::current().glob.recursive_parallel
-                && !state.quals.as_ref().is_some_and(|arena| {
-                    arena
-                        .nodes
-                        .iter()
-                        .any(|n| n.func.is_some_and(|f| f as usize == qualsheval as usize))
-                })
+                && !state
+                    .quals
+                    .as_ref()
+                    .into_iter()
+                    .chain(state.qualifiers.as_ref().map(|q| &q.quals))
+                    .any(|arena| arena.nodes.iter().any(|n| n.sdata.is_some()))
             {
                 use rayon::prelude::*;
                 // Workers are pool threads with their own TLS; hand each the

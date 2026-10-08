@@ -767,6 +767,17 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
     "zmodload zsh/zpty 2>/dev/null; zpty nonesuch 2>&1; echo rc=$?",
     // `zstyle -L [context [style]]` takes at most two arguments.
     "zstyle ':a:b' x 1; zstyle -L ':a:b' x y 2>&1; echo rc=$?",
+    // A single forced-split field returns the offset of the word's SUFFIX, so
+    // the suffix's own expansions (`$b[2]`) are still scanned.
+    "setopt shwordsplit; b=(q r); x=ab; print ${x}$b[2] ${b[1]}$b[1] ${x}${x}$b[2]",
+    // `(%)` follows C's `isarr`: a subscript pick or a (j) join leaves a scalar.
+    "a=('%%1' '%%2'); print -r -- ${(%)a[2]} ${(%)a[2,2]} ${(%j:,:)a} ${(%)a}",
+    // zstyle takes only -L -e -d -s -b -a -t -T -m -q -g; anything else fails.
+    "zstyle -n :x foo 2>/dev/null; print $?; zstyle -l 2>/dev/null; print $?",
+    // `**/` with an `(e:…:)` qualifier must stay serial: workers raced on $REPLY.
+    "d=$(mktemp -d); mkdir -p $d/a/b $d/c; : > $d/a/b/y; : > $d/c/z; : > $d/a/x; cd $d; print -l **/*(.e:'[[ $REPLY == *y ]]':); cd /; command rm -rf $d",
+    // `+=` on a scalar reads the old text through the param's getfn.
+    "typeset -T FOO foo; foo=(a b); FOO+=:d; print $foo; PATH=/a:/b; PATH+=:/c; print -l $path",
 ];
 
 /// bash-only corpus — constructs where bash differs from the Korn shells and
