@@ -183,9 +183,18 @@ mod tests {
         // test parks a word in `$PREFIX` that makes every later candidate fail
         // to match — so this returned 0 in a full run and 1 on its own.
         crate::test_util::reset_completion_state();
+        // sh:24-29 — the candidates are the executables in the first existing
+        // init-script directory. Linux runners ship `/etc/init.d` with scripts
+        // in it, so compadd has words and the function succeeds; macOS has
+        // none of the three directories and it returns 1. Expect whichever
+        // the host's directories call for (chkconfig is absent on both).
+        let dir = ["/etc/init.d", "/etc/rc.d", "/etc/rc.d/init.d"]
+            .into_iter()
+            .find(|d| std::path::Path::new(d).is_dir());
+        let want = if dir.is_some_and(|d| !exec_basenames(d).is_empty()) { 0 } else { 1 };
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = _services(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, want);
     }
 }

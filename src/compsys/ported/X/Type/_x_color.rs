@@ -249,30 +249,28 @@ mod tests {
         assert!(!got);
     }
 
-    /// `commands` is a zsh SPECIAL parameter — the `cmdnamtab` view, a
-    /// `PM_HASHED` row of `Src/Modules/parameter.c:2238` (`params.rs:7482`,
-    /// `params.rs:9033`). `has_command` reads it back with `getaparam`
-    /// (`_x_color.rs:57`), and `getaparam` returns `None` for anything whose
-    /// `PM_TYPE` is not `PM_ARRAY` (`params.rs:6290`). So once an earlier
-    /// test in this binary materialises the special, `setaparam` can no
-    /// longer re-type the node, `has_command` reads nothing back, and this
-    /// assertion inverts purely on test ORDER — it passed alone and failed
-    /// inside a full run. `unsetparam` does not undo it either: a
-    /// materialised special KEEPS its node (`params.rs:8988-8990`,
-    /// c:3851-3852). Drop the node outright first, the same shape
-    /// `params.rs`' own tests use to reset a special before re-typing it
-    /// (`params.rs:16900`).
+    /// The hit side of `has_command_false_when_commands_array_empty`: make
+    /// `showrgb` REALLY hashed rather than writing a paramtab array named
+    /// `commands`, which the `cmdnamtab` view (`plus_commands`) never reads.
+    /// The old form passed only on hosts that ship `showrgb` (XQuartz puts it
+    /// in `/opt/X11/bin`) and failed on both CI runners. An executable
+    /// `showrgb` in a fresh `PATH` directory is what `getpmcommand`'s
+    /// HASHLISTALL filltable finds; PATH is restored afterwards.
     #[test]
     fn has_command_true_when_present_in_commands_array() {
+        use std::os::unix::fs::PermissionsExt;
         let _g = crate::test_util::global_state_lock();
-        let _ = crate::ported::params::paramtab()
-            .write()
-            .map(|mut t| t.remove("commands"));
-        crate::ported::params::setaparam(
-            "commands",
-            vec!["showrgb".to_string(), "/usr/bin/showrgb".to_string()],
-        );
-        assert!(has_command("showrgb"));
+        let saved_path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("showrgb");
+        std::fs::write(&exe, "#!/bin/sh\n").expect("write showrgb");
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        crate::ported::hashtable::emptycmdnamtable();
+        let _ = crate::ported::params::setsparam("PATH", dir.path().to_str().unwrap_or(""));
+        let got = has_command("showrgb");
+        let _ = crate::ported::params::setsparam("PATH", &saved_path);
+        crate::ported::hashtable::emptycmdnamtable();
+        assert!(got);
     }
 
     #[test]
