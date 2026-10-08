@@ -17112,3 +17112,17 @@ setopt promptsubst; print -rP -- 'p \'"#,
     );
     assert_eq!(out, "[ab \\]\n[\\]\np \\\n");
 }
+
+/// c:Src/subst.c:1114-1139 + c:848-866 — left-pad truncation skips
+/// `ls - prenum` (bytes when MULTIBYTE is off, c:5662-5663) charging each
+/// unit `wcpadwidth`, which is the raw `WCWIDTH`: a C1 byte is -1 → 0 cells,
+/// not `zwcwidth`'s 1. The port kept the rightmost `prenum` cells and charged
+/// every byte one cell. Master oracle 8cc5ead (UTF-8 locale) keeps the last
+/// five bytes of 日本語テキスト.
+#[test]
+fn m_left_padding_without_multibyte_skips_by_width() {
+    let (_s, out) = run_zshrs_parity_bytes(
+        "LC_ALL=en_US.UTF-8; j=日本語テキスト; unsetopt multibyte; print -rn -- \"${(ml:12::.:)j}\"",
+    );
+    assert_eq!(out, vec![0x82, 0xb9, 0xe3, 0x83, 0x88]);
+}
