@@ -2908,7 +2908,7 @@ pub fn zshrs_main() {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5);
-            std::thread::spawn(move || {
+            zsh::signal_thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(threshold_secs));
                 if !completed_c.load(std::sync::atomic::Ordering::SeqCst) {
                     let _ = zsh::daemon::client::call_once_no_spawn(
@@ -3929,7 +3929,7 @@ fn source_startup_files(
     let handles: Vec<std::thread::JoinHandle<(PathBuf, Option<String>)>> = candidates
         .into_iter()
         .map(|path| {
-            std::thread::spawn(move || {
+            zsh::signal_thread::spawn(move || {
                 let contents = if path.exists() {
                     std::fs::read_to_string(&path).ok()
                 } else {

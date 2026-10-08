@@ -323,7 +323,7 @@ fn run_tool_budget(
     };
     let mut stdout = child.stdout.take()?;
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    crate::signal_thread::spawn(move || {
         let mut out = Vec::new();
         use std::io::Read;
         let _ = stdout.read_to_end(&mut out);

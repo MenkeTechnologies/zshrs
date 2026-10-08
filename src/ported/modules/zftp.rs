@@ -4917,12 +4917,13 @@ impl zftp_session {
         // DNS on background thread
         let (tx, rx) = std::sync::mpsc::channel();
         let dns = addr_str.clone();
-        std::thread::Builder::new()
-            .name("zftp-dns".to_string())
-            .spawn(move || {
+        crate::signal_thread::spawn_with(
+            std::thread::Builder::new().name("zftp-dns".to_string()),
+            move || {
                 let _ = tx.send(dns.to_socket_addrs().map(|a| a.collect::<Vec<_>>()));
-            })
-            .map_err(io::Error::other)?;
+            },
+        )
+        .map_err(io::Error::other)?;
 
         let addrs = rx
             .recv_timeout(dns_timeout)

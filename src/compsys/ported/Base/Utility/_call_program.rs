@@ -566,7 +566,7 @@ fn run_with_deadline(mut cmd: Command, deadline: std::time::Instant) -> Option<O
     cmd.stdin(Stdio::null());
     let mut child = cmd.spawn().ok()?;
     let stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
+    let reader = crate::signal_thread::spawn(move || {
         let mut buf = Vec::new();
         let mut stdout = stdout;
         let _ = stdout.read_to_end(&mut buf);

@@ -144,9 +144,8 @@ impl WorkerPool {
             let queued = Arc::clone(&queued);
             let completed = Arc::clone(&completed);
 
-            let handle = thread::Builder::new()
-                .name(format!("zshrs-worker-{}", id))
-                .spawn(move || {
+            let builder = thread::Builder::new().name(format!("zshrs-worker-{}", id));
+            let handle = crate::signal_thread::spawn_with(builder, move || {
                     // Rust-only: mark this thread as pool-owned so the
                     // input layer never reads the user's tty from it.
                     IN_WORKER.with(|f| f.set(true));
