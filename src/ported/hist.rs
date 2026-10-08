@@ -3373,55 +3373,18 @@ pub fn remlpaths(s: &str, count: i32) -> String {
 }
 
 /// Port of `casemodify()` from `Src/hist.c:2196`. — C decl `casemodify(char *str, int how)`.
-/// Rust idiom replacement: `chars()` + `tow_lower`/`tow_upper` covers
-/// the C `iswupper`/`towlower` wide-char loop; the CASMOD_CAPS branch
-/// tracks word-boundary via the `nextupper` flag.
+///
+/// Both arms call the C library's classification and mapping functions,
+/// as C does: the wide-character `iswupper`/`iswlower`/`iswalnum`/
+/// `towupper`/`towlower` with MULTIBYTE set, the single-byte
+/// `isupper`/`islower`/`toupper`/`tolower` without it. Which letters fold,
+/// and to what, is locale state (`LC_CTYPE`), not a property of Unicode the
+/// port could re-derive: titlecase U+01C5 `ǅ` folds both ways under glibc
+/// and not at all under macOS libc, matching each platform's zsh.
 pub fn casemodify(s: &str, how: i32) -> String {
     // c:2196
     // c:2200 — `int nextupper = 1;`. Start expecting a leading uppercase.
-    let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
-    // c:2227 `towlower(wc)` / c:2234 `towupper(wc)` — wide-char mappings:
-    // exactly one scalar in, one scalar out. Rust's `char::to_lowercase` /
-    // `to_uppercase` are the FULL Unicode mappings and can WIDEN (`ß` →
-    // "SS", `ﬁ` → "FI", `İ` → `i` + U+0307). Where the mapping widens,
-    // `towupper`/`towlower` have no single scalar to return and leave the
-    // character alone, so these decline it too. Verified against the oracle:
-    //     zsh -fc 'v=straße; print -r -- ${(U)v}'   → STRAßE
-    //     zsh -fc 'print -r -- ${(U)$(print -n ﬁ)}' → ﬁ
-    // The one residual difference is U+0130, where the platform `towlower`
-    // answers `i` and this answers `İ`; recorded in docs/BUGS.md.
-    let one_or_self = |c: char, mut it: std::vec::IntoIter<char>| -> char {
-        match (it.next(), it.next()) {
-            (Some(one), None) => one,
-            _ => c,
-        }
-    };
-    let tow = |c: char, upper: bool| -> char {
-        let mapped: Vec<char> = if upper {
-            c.to_uppercase().collect()
-        } else {
-            c.to_lowercase().collect()
-        };
-        one_or_self(c, mapped.into_iter())
-    };
-    // c:2226 `iswupper` / c:2233 `iswlower` — glibc derives both classes from
-    // the simple case mappings (`iswupper(c)` = `towlower(c) != c`,
-    // `iswlower(c)` = `towupper(c) != c`), so a titlecase letter (U+01C5 `ǅ`)
-    // is BOTH and folds either way. Rust's `is_uppercase`/`is_lowercase` are
-    // the Unicode Lu/Ll properties and exclude Lt. Verified against the
-    // oracle: `typeset -l v; v=ǅ; print $v` → `ǆ`, `${(U)v}` → `Ǆ`.
-    let is_up = |c: char| c.is_uppercase() || tow(c, false) != c;
-    let is_low = |c: char| c.is_lowercase() || tow(c, true) != c;
-    // c:2202-2203 — `#ifdef MULTIBYTE_SUPPORT / if (isset(MULTIBYTE))`. C
-    // forks the WHOLE function here: the wide-char loop below is only the
-    // `if` arm. The port had no `else` arm at all, so `unsetopt multibyte`
-    // still folded Unicode scalars where zsh folds single BYTES through the
-    // locale's one-byte ctype table.
-    //
-    // The option is read from the live slot with its declared default (on,
-    // c:Src/options.c:197); `isset()` maps a never-written slot to false and
-    // would invert that default wherever init's `emulate()` is skipped.
     if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) {
         // c:2276-2320 — the byte loop. C calls the C library's single-byte
         // `isupper`/`tolower`/`islower`/`toupper` directly, so this calls the
@@ -3510,62 +3473,108 @@ pub fn casemodify(s: &str, how: i32) -> String {
             }
         };
     }
-    for c in s.chars() {
-        // c:2209 `while (*str)`
-        // c:2241 — `if (IS_COMBINING(wc)) break;` — combining chars
-        // (those with WCWIDTH==0) don't affect nextupper state and
-        // don't get case-folded. Macro at `Src/zsh.h:3343`:
-        // `#define IS_COMBINING(wc) (wc != 0 && WCWIDTH(wc) == 0)`.
-        // Previous Rust port omitted this check entirely — combining
-        // acute (U+0301) etc. would (a) get pushed through
-        // to_uppercase/to_lowercase (no-op for combinatior class but
-        // semantically wrong intent) and (b) for CAPS, would reset
-        // nextupper via the `!is_alphanumeric` branch, breaking
-        // word-boundary detection on accented words.
-        let is_combining =
-            (c as u32) != 0 && unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 0;
-        let modified = match how {
-            x if x == CASMOD_LOWER => {                                       // c:2225
-                // c:2226-2229 — `if (iswupper(wc)) wc = towlower(wc);`.
-                if is_up(c) {
-                    tow(c, false).to_string()
-                } else {
-                    c.to_string()
-                }
-            }
-            x if x == CASMOD_UPPER => {                                       // c:2232
-                // c:2233-2236 — `if (iswlower(wc)) wc = towupper(wc);`.
-                if is_low(c) {
-                    tow(c, true).to_string()
-                } else {
-                    c.to_string()
-                }
-            }
-            x if x == CASMOD_CAPS => {                                        // c:2239
-                if is_combining {                                             // c:2241-2242
-                    c.to_string()
-                } else if !c.is_alphanumeric() {                              // c:2243-2244
-                    nextupper = true;
-                    c.to_string()
-                } else if nextupper {                                         // c:2245-2250
-                    nextupper = false;
-                    if is_low(c) {                                     // c:2246
-                        tow(c, true).to_string()
-                    } else {
-                        c.to_string()
-                    }
-                } else if is_up(c) {                                  // c:2251-2253
-                    tow(c, false).to_string()
-                } else {
-                    c.to_string()
-                }
-            }
-            _ /* CASMOD_NONE */ => c.to_string(),
+    // c:2204-2275 — the wide-character loop.
+    let bytes = crate::ported::utils::unmetafy_str(s);
+    let mut out: Vec<u8> = Vec::with_capacity(2 * bytes.len());
+    let mut pos = 0;
+    while pos < bytes.len() {
+        // c:2212 — `int len = mb_metacharlenconv(str, &wc), mod = 0, len2;`
+        let (len, wc, _) = crate::ported::utils::mb_metacharlenconv(&bytes[pos..]);
+        let len = len.max(1);
+        let unit = &bytes[pos..pos + len];
+        pos += len;
+        // c:2218-2224 — `if (wc == WEOF)`: copy the bytes, not alphanumeric.
+        let Some(c) = wc else {
+            out.extend_from_slice(unit);
+            nextupper = true;
+            continue;
         };
-        let _ = CASMOD_NONE; // silence unused
-        result.push_str(&modified);
+        let mut w = c as u32 as WintT;
+        let mut modified = false; // c:2212 `mod = 0`
+        // SAFETY: the wide-character class/mapping functions take any
+        // `wint_t` and only read the current locale.
+        unsafe {
+            match how {
+                x if x == CASMOD_LOWER => {
+                    // c:2226-2229 — `if (iswupper(wc)) { wc = towlower(wc); mod = 1; }`
+                    if iswupper(w) != 0 {
+                        w = towlower(w);
+                        modified = true;
+                    }
+                }
+                x if x == CASMOD_UPPER => {
+                    // c:2232-2236 — `if (iswlower(wc)) { wc = towupper(wc); mod = 1; }`
+                    if iswlower(w) != 0 {
+                        w = towupper(w);
+                        modified = true;
+                    }
+                }
+                x if x == CASMOD_CAPS => {
+                    // c:2241-2242 — `if (IS_COMBINING(wc)) break;`
+                    // (`wc != 0 && WCWIDTH(wc) == 0`, Src/zsh.h:3343).
+                    let combining = (c as u32) != 0
+                        && unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 0;
+                    if combining {
+                    } else if iswalnum(w) == 0 {
+                        // c:2243-2244
+                        nextupper = true;
+                    } else if nextupper {
+                        // c:2245-2250
+                        if iswlower(w) != 0 {
+                            w = towupper(w);
+                            modified = true;
+                        }
+                        nextupper = false;
+                    } else if iswupper(w) != 0 {
+                        // c:2251-2254
+                        w = towlower(w);
+                        modified = true;
+                    }
+                }
+                _ /* CASMOD_NONE */ => {}
+            }
+        }
+        // c:2258-2272 — `if (mod && (len2 = wcrtomb(mbstr, wc, &ps)) > 0)`
+        // emits the mapped character's bytes; otherwise the original bytes.
+        let mut mb = [0 as libc::c_char; 16];
+        let mut ps = crate::ported::utils::MBSTATE_ZERO;
+        let len2 = if modified {
+            unsafe {
+                crate::ported::utils::wcrtomb(
+                    mb.as_mut_ptr(),
+                    w as libc::wchar_t,
+                    &mut ps as *mut _ as *mut libc::c_void,
+                )
+            }
+        } else {
+            0
+        };
+        if modified && len2 > 0 && len2 != usize::MAX {
+            out.extend(mb[..len2].iter().map(|&b| b as u8));
+        } else {
+            out.extend_from_slice(unit);
+        }
     }
-    result
+    // c:2321-2322 — `*ptr2 = '\0'; return str2;`. Valid text stays text; a
+    // byte that decodes as nothing (a WEOF unit copied through) goes back to
+    // its `Meta` + `byte ^ 32` form, which `unmetafy_str` reverses.
+    crate::script_bytes::decode_script_bytes(&out)
+}
+
+
+/// libc `wint_t`: `unsigned int` on glibc/musl, `__int32_t` on Darwin.
+#[cfg(target_vendor = "apple")]
+type WintT = libc::c_int;
+#[cfg(not(target_vendor = "apple"))]
+type WintT = libc::c_uint;
+
+extern "C" {
+    // <wctype.h> — the libc crate does not bind these on unix targets.
+    fn iswupper(wc: WintT) -> libc::c_int;
+    fn iswlower(wc: WintT) -> libc::c_int;
+    fn iswalnum(wc: WintT) -> libc::c_int;
+    fn towupper(wc: WintT) -> WintT;
+    fn towlower(wc: WintT) -> WintT;
 }
 
 /*
