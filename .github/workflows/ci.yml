@@ -73,7 +73,22 @@ jobs:
       # resolve through $ZSHRS_ORACLE_ZSH (upstream 54181 / 54013 / 55061
       # changed answers the released zsh still gives).
       - uses: ./.github/actions/zsh-oracle
-      - run: cargo test --locked --no-fail-fast
+      - name: Test (all targets)
+        if: runner.os == 'Linux'
+        run: cargo test --locked --no-fail-fast
+      # The 49k-test `parity` binary spawns a reference zsh and zshrs per
+      # case; the macOS runner got through ~7,200 of them in an hour (run
+      # 37766178879) while ubuntu runs all of them in ~35 min, so on macOS
+      # the job could never finish inside its timeout. macOS runs every other
+      # target; full parity runs on ubuntu.
+      - name: Test (all targets except parity)
+        if: runner.os == 'macOS'
+        run: |
+          targets=(--lib --bins)
+          for f in tests/*.rs; do
+            t=${f#tests/}; targets+=(--test "${t%.rs}")
+          done
+          cargo test --locked --no-fail-fast "${targets[@]}"
 
   doc:
     name: Doc
