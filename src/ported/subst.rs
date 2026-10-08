@@ -16378,11 +16378,45 @@ pub fn paramsubst(
                 // (a slice, a splat, an assoc enumeration), else the parameter's
                 // own array; an assoc has no `arrays_get` row, so its map is the
                 // fallback before the scalar test.
+                // !!! WARNING: RUST-ONLY EMPTINESS PROBE — NO C COUNTERPART !!!
+                // C reads `aval` already in hand. Here `arrays_get` clones the
+                // whole array and `assoc_get` rebuilds the whole assoc in zsh's
+                // bucket order, just to answer "is it empty?" — so every
+                // `${h[key]:-d}` / `${a[i]:-d}` cost O(size), and a loop of them
+                // over a 47k-entry table (zpwr's zshRegenSearchableEnv.zsh)
+                // was quadratic and never finished. A plain array or assoc in
+                // the live tables answers from its length; the magic and
+                // nameref cases keep the full reads.
+                let cheap_is_empty: Option<bool> = if crate::ported::params::is_nameref(&var_name) {
+                    None
+                } else {
+                    paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .and_then(|s| s.get(var_name.as_str()).map(|m| m.is_empty()))
+                        .or_else(|| {
+                            crate::ported::params::paramtab().read().ok().and_then(|t| {
+                                let pm = t.get(var_name.as_str())?;
+                                let plain_array = crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
+                                    == crate::ported::zsh_h::PM_ARRAY
+                                    && pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL == 0
+                                    && !matches!(var_name.as_str(), "argv" | "@" | "*");
+                                if plain_array {
+                                    pm.u_arr.as_ref().map(|a| a.is_empty())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                };
                 let array_is_empty = match split_parts.as_ref() {
                     Some(p) => p.is_empty(),
-                    None => arrays_get(&var_name)
-                        .map(|a| a.is_empty())
-                        .or_else(|| assoc_get(&var_name).map(|m| m.is_empty()))
+                    None => cheap_is_empty
+                        .or_else(|| {
+                            arrays_get(&var_name)
+                                .map(|a| a.is_empty())
+                                .or_else(|| assoc_get(&var_name).map(|m| m.is_empty()))
+                        })
                         .unwrap_or_else(|| raw_value.is_empty()),
                 };
                 // c:Src/params.c:2175-2179 — a SINGLE-index subscript clears

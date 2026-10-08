@@ -2105,3 +2105,49 @@ fn filter_with_a_large_alternation_compiles_the_pattern_once() {
     let out = child.wait_with_output().expect("zshrs output");
     assert_eq!(String::from_utf8_lossy(&out.stdout), z.stdout);
 }
+
+/// `${h[k]:-d}` / `${a[i]:-d}` / `$a[i]` agree with zsh on set, empty, unset,
+/// negative and out-of-range subscripts.
+#[test]
+fn subscript_default_and_index_reads_match_zsh() {
+    assert_parity(
+        r#"typeset -A h; h=(a 1 e ""); typeset -A em; a=(x "" z); b=()
+print -r -- "[${h[a]:-D}][${h[e]:-D}][${h[no]:-D}][${em[q]:-D}][${a[1]:-D}][${a[2]:-D}][${a[9]:-D}][${b:-D}][${h:-D}][${em:-D}]"
+print -r -- "[${h[a]:+P}][${h[e]:+P}][${a[2]:+P}][${a[1]:+P}][${em:+P}][${b:+P}]"
+i=2; print -r -- "[$a[1]][$a[3]][$a[-1]][$a[-2]][$a[9]][$a[0]][$a[i]][$a[i+1]]"
+setopt ksharrays; print -r -- "[$a[1]]"; unsetopt ksharrays
+f(){ local -a la; la=(p ""); print -r -- "$la[1] [$la[2]] ${la[2]:-D}" }; f"#,
+    );
+}
+
+/// A loop of subscript reads over a large array / assoc must be linear. Each
+/// read used to clone or rebuild the WHOLE table (zpwr's
+/// zshRegenSearchableEnv.zsh over 47k autoload functions never finished).
+#[test]
+fn subscript_reads_over_a_large_table_are_linear() {
+    let script = r#"local -a a; a=( {1..20000} ); local -A h; integer i n=0
+for i in {1..20000}; do h[k$i]=v; done
+for i in {1..20000}; do [[ $a[i] == 7 ]] && (( n++ )); done
+for i in {1..4000}; do [[ -n ${h[k$i]:-} ]] && (( n++ )); done
+print $n"#;
+    let mut child = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", script])
+        .env_remove("ZSHRS_CACHE")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("invoke zshrs");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        if child.try_wait().expect("try_wait").is_some() {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("subscript reads over a 20000-entry array/assoc took longer than 8 s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let out = child.wait_with_output().expect("zshrs output");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "4001\n");
+}
