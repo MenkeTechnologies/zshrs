@@ -204,18 +204,27 @@ fn ping_roundtrip() {
     assert!(resp["daemon_uptime_ms"].as_u64().is_some());
 }
 
+/// Registers this test process as a shell (a Hello carries `shell_pid`). The
+/// identity is process-wide, so every connection a test opens belongs to the
+/// one shell record keyed by this pid.
+fn become_shell() {
+    zsh::daemon::client::set_shell_identity(std::process::id() as i32);
+}
+
 #[test]
 fn list_shells_returns_self() {
+    become_shell();
     let d = DaemonHandle::spawn();
     let mut c = d.connect();
     let resp = c.call("list_shells", json!({})).expect("list_shells");
     let shells = resp["shells"].as_array().unwrap();
     assert_eq!(shells.len(), 1);
-    assert_eq!(shells[0]["client_id"].as_u64(), Some(1));
+    assert_eq!(shells[0]["pid"].as_i64(), Some(std::process::id() as i64));
 }
 
 #[test]
 fn tag_then_untag_roundtrip() {
+    become_shell();
     let d = DaemonHandle::spawn();
     let mut c = d.connect();
 
@@ -239,26 +248,26 @@ fn tag_then_untag_roundtrip() {
 
 #[test]
 fn list_shells_with_tag_filter() {
+    become_shell();
     let d = DaemonHandle::spawn();
 
+    // Two connections of one shell share one record, so their tags merge.
     let mut c1 = d.connect();
     c1.call("tag", json!({ "tags": ["dev"] })).unwrap();
-
     let mut c2 = d.connect();
-    c2.call("tag", json!({ "tags": ["prod"] })).unwrap();
+    c2.call("tag", json!({ "tags": ["canary"] })).unwrap();
 
-    // Either client can drive the filter — they share the daemon registry.
     let mut probe = d.connect();
-    let r = probe
-        .call("list_shells", json!({ "tag": "dev" }))
-        .expect("list_shells dev");
-    let shells = r["shells"].as_array().unwrap();
-    assert_eq!(shells.len(), 1);
-
+    for tag in ["dev", "canary"] {
+        let r = probe
+            .call("list_shells", json!({ "tag": tag }))
+            .expect("list_shells");
+        assert_eq!(r["shells"].as_array().unwrap().len(), 1, "tag {tag}");
+    }
     let r = probe
         .call("list_shells", json!({ "tag": "prod" }))
         .expect("list_shells prod");
-    assert_eq!(r["shells"].as_array().unwrap().len(), 1);
+    assert!(r["shells"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -284,8 +293,10 @@ fn send_to_specific_shell() {
 
 #[test]
 fn send_broadcast_excludes_self() {
+    become_shell();
     let d = DaemonHandle::spawn();
     let mut a = d.connect();
+    // Every connection of this process is the one shell, i.e. the sender.
     let _b = d.connect();
     let _c = d.connect();
 
@@ -299,8 +310,8 @@ fn send_broadcast_excludes_self() {
         )
         .expect("send --all");
 
-    // Two other clients (b, c) — sender excluded.
-    assert_eq!(r["delivered_count"].as_u64(), Some(2));
+    // Targets are shells, and the only shell is the sender: excluded.
+    assert_eq!(r["delivered_count"].as_u64(), Some(0));
 }
 
 #[test]
@@ -657,14 +668,13 @@ fn export_aliases_sh_format() {
 
 #[test]
 fn ask_take_pop_critical_first() {
+    become_shell();
     let d = DaemonHandle::spawn();
     let mut asker = d.connect();
-    let target = d.connect();
-    drop(target);
-
-    // Need the target connected for ask_ask to accept; reconnect after.
     let mut target = d.connect();
-    let target_id = target.welcome.client_id;
+    let target_id = target.call("list_shells", json!({})).unwrap()["shells"][0]["shell_id"]
+        .as_u64()
+        .expect("this process is a registered shell");
 
     asker
         .call(

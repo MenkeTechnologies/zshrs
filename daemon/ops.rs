@@ -1442,6 +1442,13 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         }
     };
 
+    // The shard just written is what `sync_recorder_shards` would mirror; do it
+    // now so the plugins table is not empty until the next catalog read.
+    let plugins = super::recorder_shard::shard_plugins(&shard);
+    if let Err(e) = state.with_catalog(|conn| super::catalog::hydrate_plugins(conn, &plugins)) {
+        tracing::warn!(?e, "recorder_ingest: plugins mirror not hydrated (rkyv authoritative)");
+    }
+
     // Hydrate SQLite mirror so `zcache view ...` is fresh.
     let hydrated = match canon.hydrate_sqlite_view(state) {
         Ok(n) => n,
@@ -2346,6 +2353,7 @@ async fn op_subscribe_shard(state: &Arc<DaemonState>, client_id: u64, args: Valu
 
 async fn op_export_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult {
     super::zsync::ensure_schema(state)?;
+    let explicit_path = args.get("path").and_then(Value::as_str).is_some();
     let out_path: std::path::PathBuf = args
         .get("path")
         .and_then(Value::as_str)
@@ -2372,6 +2380,14 @@ async fn op_export_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
     } else {
         synthesize_zcompdump(state)
     };
+    // The default target is the user's live ~/.zcompdump: an empty synthesis would
+    // replace a real compinit dump with a stub that has no completions.
+    if !explicit_path && !raw_present_check(state) && state.canonical.rows_for("compdef").is_empty() {
+        return Err(ErrPayload::new(
+            "nothing_to_export",
+            "no compdef rows or imported zcompdump; refusing to overwrite the default ~/.zcompdump",
+        ));
+    }
     let bytes_written = body.len();
     std::fs::write(&out_path, body)?;
     super::paths::ensure_file_600(&out_path)?;
@@ -2469,6 +2485,10 @@ async fn op_export_catalog(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .and_then(Value::as_str)
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| state.paths.root.join("catalog.export.db"));
+    // VACUUM INTO refuses an existing file; a re-export replaces the previous one.
+    if out_path.exists() {
+        std::fs::remove_file(&out_path)?;
+    }
     // Use sqlite's online backup API via VACUUM INTO (atomic, safe under WAL).
     let target = out_path.display().to_string();
     state.with_catalog(|conn| {

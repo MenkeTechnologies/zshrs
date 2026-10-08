@@ -266,3 +266,13 @@ fn zstyle_canonical_roundtrip() {
     assert!(body.contains("zstyle ':completion:*:*:git:*' list-colors 'red'"));
     assert!(body.contains("zstyle ':completion:*:*:ls:*' menu yes"));
 }
+
+/// With no compdef rows and no imported dump, the default-path export must
+/// refuse rather than replace the user's live ~/.zcompdump with an empty stub.
+#[test]
+fn export_zcompdump_default_path_refuses_to_write_an_empty_dump() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    let err = c.call("export_zcompdump", json!({})).expect_err("must refuse");
+    assert!(format!("{err:?}").contains("nothing_to_export"), "got {err:?}");
+}
