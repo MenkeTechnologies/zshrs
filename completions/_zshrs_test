@@ -1,0 +1,25 @@
+#compdef test [
+
+# `test EXPR` / `[ EXPR ]`: evaluate a conditional expression. bintab
+# "test" / "[" (Src/builtin.c) is bin_test with BINF_HANDLES_OPTS — every
+# word is an operand, so the unary file and string tests are offered as
+# words, and files as their operands. `[` takes a closing `]`.
+#
+# zshrs builtin (zsh core). Bundled into ~/.zshrs/functions by build.rs.
+
+local -a ops
+ops=(
+    '-a:file exists' '-e:file exists' '-f:regular file' '-d:directory'
+    '-b:block special file' '-c:character special file' '-p:FIFO'
+    '-h:symbolic link' '-L:symbolic link' '-S:socket' '-s:non-empty file'
+    '-r:readable' '-w:writable' '-x:executable' '-O:owned by the EUID'
+    '-G:owned by the EGID' '-N:modified since last read' '-u:setuid'
+    '-g:setgid' '-k:sticky' '-t:file descriptor is a terminal'
+    '-z:empty string' '-n:non-empty string'
+    '-eq:integers equal' '-ne:integers differ' '-lt:integer less than'
+    '-le:integer at most' '-gt:integer greater than' '-ge:integer at least'
+    '-nt:newer than' '-ot:older than' '-ef:same file'
+    '=:strings equal' '!=:strings differ' '!:negate'
+)
+[[ $service == '[' ]] && ops+=( ']:end of the expression' )
+_alternative 'operators:operator:_describe -t operators operator ops' 'files:file:_files'

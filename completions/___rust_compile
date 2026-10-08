@@ -1,0 +1,9 @@
+#compdef __rust_compile
+
+# `__rust_compile BODY [LINE]`: compile an inline `rust { ... }` block. The
+# parser emits it with the base64-encoded body and the source line
+# (src/rust_ffi.rs); it is not typed by hand.
+#
+# zshrs builtin. Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments ':base64-encoded rust body:' ':source line number:'

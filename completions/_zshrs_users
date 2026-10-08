@@ -1,0 +1,9 @@
+#compdef users
+
+# `users [FILE]`: print the logged-in user names from utmp, or from FILE
+# (builtin_users in src/extensions/ext_builtins.rs). Named _zshrs_users so
+# it does not shadow zsh's own _users (the user-name type function).
+#
+# zshrs builtin. Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments '1:utmp file:_files'
