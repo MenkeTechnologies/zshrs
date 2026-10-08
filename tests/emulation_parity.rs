@@ -3673,58 +3673,6 @@ fn ksh93_specifics_match_ksh93() {
         "trap 'print a' INT TERM; trap -p INT TERM HUP",
         "print ${KSH_VERSION+set}",
         "cd /usr; cd /bin; OLDPWD=/etc; cd - >/dev/null; pwd",
-    ];
-    let bad = probe_mismatches(&["--ksh"], &ksh, &[], "", &probes);
-    assert!(bad.is_empty(), "--ksh diverged from ksh93:\n{}", bad.join("\n"));
-}
-
-/// The pdksh line (`--mksh` / `--pdksh`): last pipeline stage in a subshell,
-/// 8-bit `return`, sparse `unset a[i]`, missing-file `-nt`/`-ot`, and `trap -p`
-/// rejected. mksh stands in for pdksh (no pdksh binary is installed).
-#[test]
-fn pdksh_line_specifics_match_mksh() {
-    let Some(mksh) = find_shell(&["mksh", "/bin/mksh", "/usr/bin/mksh"]) else {
-        eprintln!("skip: mksh not found");
-        return;
-    };
-    // mksh releases disagree on an unset readonly: older ones list `typeset -r k=''`,
-    // newer ones `typeset -r k`. zshrs mirrors the former, so the probe runs only
-    // against a mksh that prints it.
-    let unset_readonly_lists_empty_value =
-        run_code(&mksh, &[], "typeset -r k; typeset -p k").0 == "typeset -r k=''\n";
-    let mut probes = vec![
-        "echo x | read v; print \"[$v]\"",
-        "f() { return 300; }; f; print $?",
-        "h() { return -1; }; h; print $?",
-        "a=(x y z); unset a[1]; print ${#a[@]} ${!a[@]}",
-        "[[ /etc/passwd -nt /nonexistent ]] && print nt",
-        "[[ /nonexistent -ot /etc/passwd ]] && print ot",
-        "trap 'print a' INT; trap -p",
-        "trap -x; print after",
-        "trap -l; print after",
-        "trap -ZZ INT; print after",
-        "trap -- 'print a' INT; trap 'print b' NOSUCH; print after",
-        "x=\"a b\"; echo ${x@Q}; x=abc; echo ${x@Q}; x=; echo ${x@Q}; x=\"it's\"; echo ${x@Q}",
-        "x='a*'; echo ${x@Q}",
-        "print ${KSH_VERSION+set}",
-        "x=\"a b\"; typeset -p x; typeset -r y=1; typeset -p y; typeset -i z=3; typeset -p z",
-        "typeset -x w=1; typeset -p w; typeset -u u=ab; typeset -p u; typeset -l lo=AB; typeset -p lo",
-        "typeset -Z3 q=1; typeset -p q; typeset -R3 q2=1; typeset -p q2; typeset -L3 lj=abcdef; typeset -p lj",
-        "typeset -r -x -i k=1; typeset -p k; typeset -rux a=ab; typeset -p a",
-        "typeset -i16 h=255; typeset -p h; typeset -i2 g=5; typeset -p g",
-        "for v in 'a:b' 'a=b' 'a#b' 'a*b' 'a\\b' \"a'b\"; do x=$v; typeset -p x; done",
-        "set -A arr -- 'a b' c; typeset -p arr; typeset -a q; q[2]=a; typeset -p q",
-        "x=$(printf 'a\\tb\\nc'); typeset -p x",
-    ];
-    if unset_readonly_lists_empty_value {
-        probes.push("typeset -r k; typeset -p k; typeset x1; typeset -p x1");
-    }
-    for flags in [&["--mksh"][..], &["--pdksh"][..]] {
-        let bad = probe_mismatches(flags, &mksh, &[], "", &probes);
-        assert!(bad.is_empty(), "{flags:?} diverged from mksh:\n{}", bad.join("\n"));
-    }
-}
-
         // ERR: a failing command AND a function call that returns non-zero each
         // fire it (`return N` itself does not); a subshell starts with no traps.
         "trap 'print ERR' ERR; f() { false; }; f; print end",
@@ -3776,6 +3724,84 @@ fn pdksh_line_specifics_match_mksh() {
         "alias a=\"it's\"; type a",
         "alias a=\"it's\"; alias a",
         "alias a='x=y' b='p*q' c='~'; alias a b c",
+    ];
+    let bad = probe_mismatches(&["--ksh"], &ksh, &[], "", &probes);
+    assert!(bad.is_empty(), "--ksh diverged from ksh93:\n{}", bad.join("\n"));
+}
+
+/// The pdksh line (`--mksh` / `--pdksh`): last pipeline stage in a subshell,
+/// 8-bit `return`, sparse `unset a[i]`, missing-file `-nt`/`-ot`, and `trap -p`
+/// rejected. mksh stands in for pdksh (no pdksh binary is installed).
+#[test]
+fn pdksh_line_specifics_match_mksh() {
+    let Some(mksh) = find_shell(&["mksh", "/bin/mksh", "/usr/bin/mksh"]) else {
+        eprintln!("skip: mksh not found");
+        return;
+    };
+    // mksh releases disagree on an unset readonly: older ones list `typeset -r k=''`,
+    // newer ones `typeset -r k`. zshrs mirrors the former, so the probe runs only
+    // against a mksh that prints it.
+    let unset_readonly_lists_empty_value =
+        run_code(&mksh, &[], "typeset -r k; typeset -p k").0 == "typeset -r k=''\n";
+    let mut probes = vec![
+        "echo x | read v; print \"[$v]\"",
+        "f() { return 300; }; f; print $?",
+        "h() { return -1; }; h; print $?",
+        "a=(x y z); unset a[1]; print ${#a[@]} ${!a[@]}",
+        "[[ /etc/passwd -nt /nonexistent ]] && print nt",
+        "[[ /nonexistent -ot /etc/passwd ]] && print ot",
+        "trap 'print a' INT; trap -p",
+        "trap -x; print after",
+        "trap -l; print after",
+        "trap -ZZ INT; print after",
+        "trap -- 'print a' INT; trap 'print b' NOSUCH; print after",
+        "x=\"a b\"; echo ${x@Q}; x=abc; echo ${x@Q}; x=; echo ${x@Q}; x=\"it's\"; echo ${x@Q}",
+        "x='a*'; echo ${x@Q}",
+        "print ${KSH_VERSION+set}",
+        "x=\"a b\"; typeset -p x; typeset -r y=1; typeset -p y; typeset -i z=3; typeset -p z",
+        "typeset -x w=1; typeset -p w; typeset -u u=ab; typeset -p u; typeset -l lo=AB; typeset -p lo",
+        "typeset -Z3 q=1; typeset -p q; typeset -R3 q2=1; typeset -p q2; typeset -L3 lj=abcdef; typeset -p lj",
+        "typeset -r -x -i k=1; typeset -p k; typeset -rux a=ab; typeset -p a",
+        "typeset -i16 h=255; typeset -p h; typeset -i2 g=5; typeset -p g",
+        "for v in 'a:b' 'a=b' 'a#b' 'a*b' 'a\\b' \"a'b\"; do x=$v; typeset -p x; done",
+        "set -A arr -- 'a b' c; typeset -p arr; typeset -a q; q[2]=a; typeset -p q",
+        "x=$(printf 'a\\tb\\nc'); typeset -p x",
+        // `typeset -p` of an unset name is silent and succeeds; `-U` is listed
+        // last among the attribute words.
+        "typeset -p nosuch; print $?",
+        "typeset -U x=1; typeset -p x",
+        "typeset -iU x=1; typeset -p x",
+        "typeset -xU x=1; typeset -p x",
+        "typeset -rU x=1; typeset -p x",
+        "typeset -lU x=A; typeset -p x",
+        "typeset -Z3 -U x=1; typeset -p x",
+        // A `-c` string ignores `set -n` / `set -o noexec` and reports LINENO 0.
+        "echo hi; set -n; echo no",
+        "set -o noexec; echo hi",
+        "echo $LINENO\necho $LINENO",
+        "f() { echo $LINENO; }; f",
+        "x=abc; echo ${x::2} ${x:1:1}",
+        "a=(x y); i=1; print ${!a[i]} ${!a[0]}",
+        // ERR: one fire per failing command; a function call adds none; a
+        // subshell starts with no traps.
+        "trap 'print ERR' ERR; f() { false; }; f; print end",
+        "trap 'print ERR' ERR; f() { g; print in; }; g() { false; }; f; print end",
+        "trap 'print ERR' ERR; f() { return 3; }; f; print end",
+        "trap 'print ERR' ERR; (false); print end",
+        "trap 'print ERR' ERR; echo $(false); print end",
+        "select x in a b; do print $x; false; done <<< 1; print rc=$?",
+        "alias ll='ls -l'; type ll; whence -v ll",
+        "alias a=\"it's\"; type a",
+    ];
+    if unset_readonly_lists_empty_value {
+        probes.push("typeset -r k; typeset -p k; typeset x1; typeset -p x1");
+    }
+    for flags in [&["--mksh"][..], &["--pdksh"][..]] {
+        let bad = probe_mismatches(flags, &mksh, &[], "", &probes);
+        assert!(bad.is_empty(), "{flags:?} diverged from mksh:\n{}", bad.join("\n"));
+    }
+}
+
 /// zsh-style `--ksh --zsh` must reject what zsh rejects under `emulate ksh`:
 /// the `printf '%(FMT)T'` directive is ksh93/bash-only and zsh 5.9.2 answers
 /// "invalid directive" even in ksh emulation.
@@ -3814,32 +3840,6 @@ fn cd_dash_oldpwd_source_follows_the_emulated_shell() {
     }
     for flags in [&["--bash"][..], &["--ksh"][..], &["--mksh"][..]] {
         assert_eq!(run_zshrs(flags, tilde_minus).0, "/etc\n", "{flags:?}: ~-");
-        // `typeset -p` of an unset name is silent and succeeds; `-U` is listed
-        // last among the attribute words.
-        "typeset -p nosuch; print $?",
-        "typeset -U x=1; typeset -p x",
-        "typeset -iU x=1; typeset -p x",
-        "typeset -xU x=1; typeset -p x",
-        "typeset -rU x=1; typeset -p x",
-        "typeset -lU x=A; typeset -p x",
-        "typeset -Z3 -U x=1; typeset -p x",
-        // A `-c` string ignores `set -n` / `set -o noexec` and reports LINENO 0.
-        "echo hi; set -n; echo no",
-        "set -o noexec; echo hi",
-        "echo $LINENO\necho $LINENO",
-        "f() { echo $LINENO; }; f",
-        "x=abc; echo ${x::2} ${x:1:1}",
-        "a=(x y); i=1; print ${!a[i]} ${!a[0]}",
-        // ERR: one fire per failing command; a function call adds none; a
-        // subshell starts with no traps.
-        "trap 'print ERR' ERR; f() { false; }; f; print end",
-        "trap 'print ERR' ERR; f() { g; print in; }; g() { false; }; f; print end",
-        "trap 'print ERR' ERR; f() { return 3; }; f; print end",
-        "trap 'print ERR' ERR; (false); print end",
-        "trap 'print ERR' ERR; echo $(false); print end",
-        "select x in a b; do print $x; false; done <<< 1; print rc=$?",
-        "alias ll='ls -l'; type ll; whence -v ll",
-        "alias a=\"it's\"; type a",
     }
     // The assignment is not required to be the only way OLDPWD changes:
     // a later cd re-seats the internal value in zsh.

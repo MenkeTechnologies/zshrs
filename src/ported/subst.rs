@@ -22027,6 +22027,14 @@ pub fn paramsubst(
                         errflag_set_error();
                         return (String::new(), 0, Vec::new()); // c:3802
                     }
+                    // !!! KORN-MODE GATE (no C counterpart) !!! ksh93 rejects
+                    // an empty offset: `${x::2}` is "bad substitution" (zsh reads it
+                    // as offset 0). mksh accepts it.
+                    if crate::extensions::dash_mode::ksh93_mode() && parts[0].is_empty() {
+                        zerr("bad substitution");
+                        errflag_set_error();
+                        return (String::new(), 0, Vec::new());
+                    }
                     // c:3618-3623 — the offset is evaluated and a math failure
                     // ABORTS the substitution:
                     //     zlong offset = mathevali(check_offset);
@@ -22043,14 +22051,6 @@ pub fn paramsubst(
                         Ok(n) => n,
                         Err(e) => {
                             // c:Src/math.c:819 / :1147 and friends — mathevali's
-                    // !!! KORN-MODE GATE (no C counterpart) !!! ksh93 rejects
-                    // an empty offset: `${x::2}` is "bad substitution" (zsh reads it
-                    // as offset 0). mksh accepts it.
-                    if crate::extensions::dash_mode::ksh93_mode() && parts[0].is_empty() {
-                        zerr("bad substitution");
-                        errflag_set_error();
-                        return (String::new(), 0, Vec::new());
-                    }
                             // message is C's own `zerr` text, prefixed only where
                             // C prefixes it (`bad output format specification`,
                             // `division by zero` carry none). Report it verbatim.
