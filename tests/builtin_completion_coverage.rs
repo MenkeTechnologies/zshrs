@@ -73,3 +73,19 @@ fn bundled_completions_declare_their_command() {
         );
     }
 }
+
+/// `zwhere` answers without a daemon (it reads the recorder shard), so its
+/// completion must not wait for `daemon.sock`, and must pass its query as a
+/// quoted array: unquoted, `--prefix ""` (nothing typed yet) loses its empty
+/// argument and `zwhere function <TAB>` queries the wrong thing.
+#[test]
+fn zwhere_completion_does_not_need_the_daemon_and_keeps_empty_args() {
+    let src = std::fs::read_to_string(repo_root().join("completions/_zwhere"))
+        .expect("read completions/_zwhere");
+    assert!(!src.contains("daemon.sock"), "_zwhere must not gate on the daemon socket");
+    assert!(
+        !src.contains("zwhere $query"),
+        "_zwhere must pass the query as \"${{query[@]}}\" so an empty --prefix survives"
+    );
+    assert!(src.contains("zwhere \"${query[@]}\""));
+}

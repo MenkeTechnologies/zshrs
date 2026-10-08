@@ -1,8 +1,9 @@
 #compdef zwhere
 
-# Query the zshrs daemon's definitions catalog: which shell defined an
-# alias, function, parameter, ... and where. Prints
-# kind<TAB>name<TAB>value<TAB>shell_id<TAB>file:line rows.
+# Query the definitions catalog: which shell defined an alias, function,
+# parameter, ... and where. Prints one row per definition,
+# kind<TAB>name<TAB>value<TAB>shell_id<TAB>file:line<TAB>state<TAB>via,
+# from the daemon when it runs and from the newest recorder shard when not.
 #
 # zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
 # (daemon/builtins.rs); flags mirror zwhere() in daemon/builtins.rs,
@@ -40,35 +41,32 @@ _arguments -C \
     '(- *)--kinds[list every kind that has rows]' \
     '--prefix[only names starting with STR]:name prefix:->names' \
     '--shell-id[only rows recorded by this shell id]:shell id:->shellids' \
-    '--limit[maximum rows to print (default 1000)]:row limit: ' \
+    '--limit[maximum rows to print (default 1000)]:row limit (a number): ' \
     '1:kind:->kinds' \
     '2:name:->names' && return 0
 
 case $state in
     kinds) _describe -t kinds 'kind' kinds && return 0 ;;
     names|shellids)
-        # Live values come from zwhere itself; it needs the daemon, so stay
-        # silent when the socket is missing. Rows are tab-separated:
-        # kind name value shell_id file:line.
-        local zhome=${ZSHRS_HOME:-$HOME/.zshrs} row expl kind=$line[1]
+        # Live values come from zwhere itself, which answers with or without
+        # the daemon. A name has one row per definition, so de-duplicate.
+        # Rows are tab-separated: kind name value shell_id file:line state via.
+        local row expl kind=$line[1]
         local -a values query
-        if [[ -S $zhome/daemon.sock ]]; then
-            if [[ $state == names ]]; then
-                if [[ -n $kind ]]; then
-                    query=( $kind --prefix "$PREFIX" --limit 1000 )
-                    for row in ${(f)"$(zwhere $query 2>/dev/null)"}; do
-                        values+=( "${${(@ps:\t:)row}[2]}" )
-                    done
-                fi
-            else
-                query=( --limit 10000 )
-                [[ -n $kind ]] && query=( $kind $query )
-                for row in ${(f)"$(zwhere $query 2>/dev/null)"}; do
-                    values+=( "${${(@ps:\t:)row}[4]}" )
-                done
-            fi
-            values=( ${(u)values} )
+        if [[ $state == names ]]; then
+            # With no kind yet (`zwhere --prefix <TAB>`) every kind is searched.
+            query=( ${kind:+$kind} --prefix "$PREFIX" --limit 100000 )
+            for row in ${(f)"$(zwhere "${query[@]}" 2>/dev/null)"}; do
+                values+=( "${${(@ps:\t:)row}[2]}" )
+            done
+        else
+            query=( --limit 100000 )
+            [[ -n $kind ]] && query=( $kind $query )
+            for row in ${(f)"$(zwhere "${query[@]}" 2>/dev/null)"}; do
+                values+=( "${${(@ps:\t:)row}[4]}" )
+            done
         fi
+        values=( ${(u)values} )
         if [[ $state == names ]]; then
             _wanted names expl "${kind:-definition} name" compadd -a values && return 0
         else
