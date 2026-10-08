@@ -21666,6 +21666,27 @@ impl fusevm::ShellHost for ZshrsHost {
             crate::ported::params::set_zunderscore(std::slice::from_ref(&dollar_underscore));
         }
 
+        // AOP intercepts (zshrs extension, no C counterpart): a shell function
+        // is a command like any other, so `intercept before git { … }` fires when
+        // `git` is a function too, not only when it spawns an external. The advice
+        // runs in place; an around/after advice that handled the call returns its
+        // status. Anonymous functions are internal plumbing and never intercepted.
+        if !anon_fn {
+            let intercepted = with_executor(|exec| {
+                if exec.intercepts.is_empty() || !exec.function_exists(&fn_name) {
+                    return None; // externals are intercepted at the spawn, not here
+                }
+                let full_cmd = std::iter::once(fn_name.as_str())
+                    .chain(args.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                exec.run_intercepts(&fn_name, &full_cmd, &args)
+            });
+            if let Some(result) = intercepted {
+                return Some(result.unwrap_or(127));
+            }
+        }
+
         // Delegate the actual function dispatch to the canonical
         // `dispatch_function_call` (which itself wraps the canonical
         // `doshfunc` port from `Src/exec.c:5823`). Single doshfunc

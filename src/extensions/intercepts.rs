@@ -431,6 +431,27 @@ pub(crate) fn intercept_matches(pattern: &str, cmd_name: &str, full_cmd: &str) -
 // Phase: drift
 // ===========================================================
 
+thread_local! {
+    /// True while advice code runs. Intercepts are not consulted then, so advice
+    /// that calls the command it advises (`intercept before git { git rev-parse … }`)
+    /// does not re-trigger itself forever.
+    static IN_ADVICE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with the in-advice flag set to `value`, restoring the previous value.
+fn with_advice_flag<T>(value: bool, f: impl FnOnce() -> T) -> T {
+    let prev = IN_ADVICE.with(|c| c.replace(value));
+    let out = f();
+    IN_ADVICE.with(|c| c.set(prev));
+    out
+}
+
+/// Run `f` as the ORIGINAL command of an around advice: commands it runs are
+/// ordinary again and see their own intercepts.
+pub(crate) fn outside_advice<T>(f: impl FnOnce() -> T) -> T {
+    with_advice_flag(false, f)
+}
+
 // BEGIN moved-from-exec-rs
 impl crate::ported::vm_helper::ShellExecutor {
     /// Check intercepts for a command. Returns Some(result) if an around
@@ -441,6 +462,9 @@ impl crate::ported::vm_helper::ShellExecutor {
         full_cmd: &str,
         args: &[String],
     ) -> Option<Result<i32, String>> {
+        if IN_ADVICE.with(|c| c.get()) {
+            return None;
+        }
         // Collect matching intercepts (clone to avoid borrow issues)
         let matching: Vec<Intercept> = self
             .intercepts
@@ -558,7 +582,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             }
             // No stryke handler (thin binary) — fall through to shell
         }
-        self.execute_script(code)
+        with_advice_flag(true, || self.execute_script(code))
     }
     pub(crate) fn run_original_command(
         &mut self,

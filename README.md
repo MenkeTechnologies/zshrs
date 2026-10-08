@@ -321,6 +321,8 @@ Bound while advice runs: `$INTERCEPT_NAME`, `$INTERCEPT_ARGS`,
 `$INTERCEPT_CMD`, plus `$INTERCEPT_MS`, `$INTERCEPT_US` and
 `$INTERCEPT_STATUS` for `after`.
 
+Advice fires for an external command and for a shell function of that name. It does not fire for a builtin (`echo`, `cd`, …). Intercepts are not consulted while advice itself runs, so advice may call the command it advises without recursing; the original command that `intercept_proceed` runs is an ordinary command again.
+
 ---
 
 ## [0x06] WORKER THREAD POOL

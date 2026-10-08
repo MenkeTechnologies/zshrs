@@ -298,3 +298,41 @@ fn unterminated_body_is_a_parse_error_not_a_registration() {
         "must not report a registration, got: {out:?}"
     );
 }
+
+#[test]
+fn advice_fires_when_the_command_is_a_shell_function() {
+    // `intercept before git` used to fire only when `git` spawned an
+    // external; a user function named `git` (a wrapper, a plugin's override)
+    // bypassed it, so the log file was never created.
+    let (out, _, rc) = run(
+        "wrap() { print body \"$@\"; }\n\
+         intercept before wrap { print \"advice[$INTERCEPT_ARGS]\" }\n\
+         wrap 1 2",
+    );
+    assert_eq!(rc, 0);
+    assert_eq!(out, "advice[1 2]\nbody 1 2\n");
+}
+
+#[test]
+fn after_advice_on_a_function_sees_its_status() {
+    let (out, _, rc) = run(
+        "wrap() { print body; return 3; }\n\
+         intercept after wrap { print \"st=$INTERCEPT_STATUS\" }\n\
+         wrap; print rc=$?",
+    );
+    assert_eq!(rc, 0);
+    assert_eq!(out, "body\nst=3\nrc=3\n");
+}
+
+#[test]
+fn advice_that_runs_its_own_command_does_not_recurse() {
+    // The advice calls the very function it advises; intercepts are off
+    // while advice runs, so this terminates with one advice per outer call.
+    let (out, _, rc) = run(
+        "wrap() { print body; }\n\
+         intercept before wrap { print advice; wrap }\n\
+         wrap",
+    );
+    assert_eq!(rc, 0);
+    assert_eq!(out, "advice\nbody\nbody\n");
+}

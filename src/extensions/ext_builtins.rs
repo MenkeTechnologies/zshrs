@@ -1717,7 +1717,7 @@ impl ShellExecutor {
         } else {
             args_str.split_whitespace().map(|s| s.to_string()).collect()
         };
-        match self.run_original_command(&cmd_name, &args) {
+        match crate::intercepts::outside_advice(|| self.run_original_command(&cmd_name, &args)) {
             Ok(status) => status,
             Err(e) => {
                 eprintln!("zshrs:intercept_proceed:1: {}", e);
