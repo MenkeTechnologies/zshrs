@@ -3673,6 +3673,57 @@ fn pdksh_line_specifics_match_mksh() {
     }
 }
 
+        // ERR: a failing command AND a function call that returns non-zero each
+        // fire it (`return N` itself does not); a subshell starts with no traps.
+        "trap 'print ERR' ERR; f() { false; }; f; print end",
+        "trap 'print ERR' ERR; f() { return 3; }; f; print end",
+        "trap 'print ERR' ERR; f() { g; }; g() { false; }; f; print end",
+        "trap 'print ERR' ERR; f() { g; }; g() { return 2; }; f; print end",
+        "trap 'print ERR' ERR; f() { (exit 4); }; f; print end",
+        "trap 'print ERR' ERR; f() { false; print a; false; }; f; print end",
+        "trap 'print ERR' ERR; f() { { false; }; }; f; print end",
+        "trap 'print ERR' ERR; f() { false; }; f && print x; print end",
+        "trap 'print ERR' ERR; f() { false; }; (f); print end",
+        "trap 'print ERR' ERR; (false); print end",
+        "trap 'print ERR' ERR; ( false; true ); print end",
+        "trap 'print ERR' ERR; echo $(false); print end",
+        // `typeset -p` of an unset name is silent and succeeds.
+        "typeset -p nosuch; print $?",
+        "x=1; [[ -R x ]] && print ref; typeset -n r=x; [[ -R r ]] && print ref",
+        // `${!name[sub]}` names the element, with an indexed sub evaluated.
+        "a=(x y); i=1; print ${!a[i]} ${!a[0]} ${!a[@]} ${!a[*]}",
+        "typeset -A h; h[k]=v; print ${!h[k]} ${!h[@]}",
+        // An empty substring offset is not accepted.
+        "x=abc; print ${x::2}; print rc=$?",
+        "x=abc; print ${x:1:1} ${x:1} ${x: -1}",
+        // `~(options)` pattern prefixes.
+        "[[ ab == ~(i)AB ]] && print y; print $?",
+        "[[ ab == ~(i:AB) ]] && print y",
+        "[[ aBc == a~(i)b* ]] && print y",
+        "[[ aBC == a~(i)b~(-i)c ]] && print y; print n",
+        "[[ abc == ~(i:AB)c ]] && print y",
+        "[[ ABC == ~(i)[a-c]* ]] && print y",
+        "[[ ABC == ~(i)@(abc|x) ]] && print y",
+        "[[ abc != ~(i)ABC ]] && print y; print n",
+        "[[ abc == ~(E)b ]] && print y",
+        "[[ abc == ~(E)^abc$ ]] && print y",
+        "[[ abc == ~(E)^ab$ ]] && print y; print n",
+        "[[ ABC == ~(iE)a.c ]] && print y",
+        "[[ abc == ~(F)b ]] && print y",
+        "[[ abc == ~(F)a.c ]] && print y; print n",
+        "[[ ABC == ~(Fi)abc ]] && print y",
+        "[[ abc == ~(G)a\\(b\\)c ]] && print y",
+        "[[ ab == ~(K)a* ]] && print y",
+        "case ABC in ~(i)abc|x) print y;; esac",
+        "p=abc; [[ ABC == ~(i)$p ]] && print y",
+        // `select` that hits EOF ends with status 1; `type`/`whence -v` word an alias like the `alias` listing.
+        "select x in a b; do print $x; false; done <<< 1; print rc=$?",
+        "select x in a b; do print $x; done <<< 9; print rc=$?",
+        "alias ll='ls -l'; type ll; whence -v ll",
+        "alias a=b; type a",
+        "alias a=\"it's\"; type a",
+        "alias a=\"it's\"; alias a",
+        "alias a='x=y' b='p*q' c='~'; alias a b c",
 /// zsh-style `--ksh --zsh` must reject what zsh rejects under `emulate ksh`:
 /// the `printf '%(FMT)T'` directive is ksh93/bash-only and zsh 5.9.2 answers
 /// "invalid directive" even in ksh emulation.
@@ -3711,6 +3762,32 @@ fn cd_dash_oldpwd_source_follows_the_emulated_shell() {
     }
     for flags in [&["--bash"][..], &["--ksh"][..], &["--mksh"][..]] {
         assert_eq!(run_zshrs(flags, tilde_minus).0, "/etc\n", "{flags:?}: ~-");
+        // `typeset -p` of an unset name is silent and succeeds; `-U` is listed
+        // last among the attribute words.
+        "typeset -p nosuch; print $?",
+        "typeset -U x=1; typeset -p x",
+        "typeset -iU x=1; typeset -p x",
+        "typeset -xU x=1; typeset -p x",
+        "typeset -rU x=1; typeset -p x",
+        "typeset -lU x=A; typeset -p x",
+        "typeset -Z3 -U x=1; typeset -p x",
+        // A `-c` string ignores `set -n` / `set -o noexec` and reports LINENO 0.
+        "echo hi; set -n; echo no",
+        "set -o noexec; echo hi",
+        "echo $LINENO\necho $LINENO",
+        "f() { echo $LINENO; }; f",
+        "x=abc; echo ${x::2} ${x:1:1}",
+        "a=(x y); i=1; print ${!a[i]} ${!a[0]}",
+        // ERR: one fire per failing command; a function call adds none; a
+        // subshell starts with no traps.
+        "trap 'print ERR' ERR; f() { false; }; f; print end",
+        "trap 'print ERR' ERR; f() { g; print in; }; g() { false; }; f; print end",
+        "trap 'print ERR' ERR; f() { return 3; }; f; print end",
+        "trap 'print ERR' ERR; (false); print end",
+        "trap 'print ERR' ERR; echo $(false); print end",
+        "select x in a b; do print $x; false; done <<< 1; print rc=$?",
+        "alias ll='ls -l'; type ll; whence -v ll",
+        "alias a=\"it's\"; type a",
     }
     // The assignment is not required to be the only way OLDPWD changes:
     // a later cd re-seats the internal value in zsh.

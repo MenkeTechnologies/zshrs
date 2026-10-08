@@ -5894,6 +5894,9 @@ pub fn bin_typeset(
             let pm_info = paramtab()
                 .read()
                 .ok()
+            } else if crate::extensions::dash_mode::korn_mode() {
+                // ksh93 and mksh both list nothing for an unset name and exit 0
+                // (`typeset -p nosuch; print $?` -> 0, nothing on stderr).
                 .and_then(|t| t.get(arg_name).map(|p| (p.node.flags as u32, p.level)));
             if let Some((pmf, pm_level)) = pm_info {
                 let chflags = ((off as u32 & pmf) | (on as u32 & !pmf))

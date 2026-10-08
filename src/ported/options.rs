@@ -848,6 +848,17 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     }
     // c:743-755 — locked-option enforcement (force=0 path).
     if force == 0 {
+        // !!! PDKSH-MODE GATE (no C counterpart) !!! mksh ignores `set -n` /
+        // `set -o noexec` inside a `-c` string ('mksh -c "echo a; set -n; echo b"'
+        // prints both lines) while a script file honors it.
+        if idx == EXECOPT
+            && value == 0
+            && crate::extensions::dash_mode::pdksh_family()
+            && crate::extensions::dash_mode::korn_mode()
+            && crate::extensions::dash_mode::dash_c_string()
+        {
+            return 0;
+        }
         // c:743 — interactive + EXECOPT off is forbidden.
         if idx == EXECOPT && value == 0 && interact() {
             return -1;

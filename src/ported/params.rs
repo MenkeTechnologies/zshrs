@@ -15821,7 +15821,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         // mksh lists nothing for a plain unset name, and `NAME=''` for an unset
         // one that carries attributes (`typeset -r k` -> `typeset -r k=''`).
         let attr_mask = PM_INTEGER | PM_EXPORTED | PM_READONLY | PM_TAGGED | PM_LEFT | PM_RIGHT_B
-            | PM_RIGHT_Z | PM_LOWER | PM_UPPER;
+            | PM_RIGHT_Z | PM_LOWER | PM_UPPER | PM_UNIQUE;
         if fl & PM_UNSET != 0 && fl & attr_mask == 0 {
             return;
         }

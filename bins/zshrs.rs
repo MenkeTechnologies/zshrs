@@ -2819,6 +2819,7 @@ pub fn zshrs_main() {
         // follows the command string; otherwise it stays argv[0] (c:282).
         // `$0` reads it under POSIX_ARGZERO (argzerogetfn, params.c:4908).
         zsh::ported::utils::set_posixzero(Some(zero.clone()));
+        zsh::extensions::dash_mode::set_dash_c_string(true);
 
         // Per Src/init.c:479 — `-c` mode hardcodes
         //   `scriptname = scriptfilename = ztrdup("zsh")`

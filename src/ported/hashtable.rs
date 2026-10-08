@@ -3027,7 +3027,18 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
             print!("n"); // c:1303
         }
         print!(" alias for "); // c:1304
-        let _ = nicezputs(&hn.text, &mut so); // c:1305
+        if crate::dash_mode::korn_mode() {
+            // !!! KORN-MODE (no C counterpart) !!! ksh93 and mksh word the text the
+            // way their `alias` listing does: `a is an alias for 'ls -l'`.
+            let quoted = if crate::dash_mode::ksh93_mode() {
+                crate::dash_mode::ksh93_printf_q(&hn.text)
+            } else {
+                quotedzputs(&hn.text)
+            };
+            let _ = io::Write::write_all(&mut so, &unmetafy_str(&quoted));
+        } else {
+            let _ = nicezputs(&hn.text, &mut so); // c:1305
+        }
         println!(); // c:1306
         return; // c:1307
     }
@@ -3092,7 +3103,13 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     // c:1332-1336 — common tail: quotedzputs(nam) '=' quotedzputs(text) '\n'.
     let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam))); // c:1332
     print!("="); // c:1333
-    let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.text))); // c:1334
+    // ksh93 words the value the way its `printf %q` does (`$'it\'s'`).
+    let value = if crate::dash_mode::ksh93_mode() {
+        crate::dash_mode::ksh93_printf_q(&hn.text)
+    } else {
+        quotedzputs(&hn.text)
+    };
+    let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&value)); // c:1334
     println!(); // c:1336
 }
 

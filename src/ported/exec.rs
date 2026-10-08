@@ -7568,6 +7568,15 @@ pub fn doshfunc(
         BREAKS.store(funcsave_breaks, Ordering::SeqCst); // c:6052
     }
 
+    // ksh93 fires the ERR trap for a function CALL that returns non-zero in
+    // addition to the failing command inside it (`f() { false; }; f` -> two
+    // ERR, `f() { return 3; }; f` -> one, from the call). zsh's process-global
+    // `donetrap` (c:1598) would spare the call site, so a Korn shell re-arms
+    // it as the function returns. Verified against ksh93u+m 1.0.10.
+    if crate::extensions::dash_mode::ksh93_mode() {
+        DONETRAP.store(0, Ordering::SeqCst);
+    }
+
     // c:6054-6058 — pparams + argv0 restore.
     if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
         *pp = pptab; // c:6059 pparams = pptab

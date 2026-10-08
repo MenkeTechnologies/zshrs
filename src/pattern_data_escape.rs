@@ -417,3 +417,235 @@ pub fn note_default_word_bars(word: &str, value: &str) -> bool {
     }
     found
 }
+
+/// Engine selected by the options of a ksh93 `~(options)` / `~(options:pat)`
+/// pattern prefix.
+#[derive(Clone, Copy, PartialEq)]
+enum Ksh93PatEngine {
+    /// ksh glob (`K`, the default; `X`/`N` read the same here).
+    Glob,
+    /// `F`: fixed string, found anywhere in the subject.
+    Fixed,
+    /// `E` / `P`: extended regular expression, searched anywhere in the subject.
+    Ere,
+    /// `G`: basic regular expression, searched anywhere in the subject.
+    Bre,
+}
+
+/// Options parsed from `~(…)`: `(case-insensitive, engine)`, or `None` for a
+/// letter this port does not model. `-` turns the letters after it off, `+`
+/// on again.
+fn ksh93_pat_options(flags: &[char]) -> Option<(bool, Ksh93PatEngine)> {
+    let (mut icase, mut engine, mut off) = (false, Ksh93PatEngine::Glob, false);
+    for &c in flags {
+        match c {
+            '-' => off = true,
+            '+' => off = false,
+            'i' => icase = !off,
+            'F' if !off => engine = Ksh93PatEngine::Fixed,
+            'E' | 'P' if !off => engine = Ksh93PatEngine::Ere,
+            'G' if !off => engine = Ksh93PatEngine::Bre,
+            'K' | 'X' | 'N' | 'F' | 'E' | 'P' | 'G' => {}
+            _ => return None,
+        }
+    }
+    Some((icase, engine))
+}
+
+/// Index just past the `)` closing the group whose `(` is at `open`.
+fn ksh93_pat_group_end(cs: &[char], open: usize) -> Option<usize> {
+    let mut depth = 0;
+    let mut i = open;
+    while i < cs.len() {
+        match cs[i] {
+            '\\' => i += 1,
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `ab`-style swap: the other-case twin of an ASCII letter.
+fn ksh93_pat_swapcase(c: char) -> char {
+    if c.is_ascii_lowercase() { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() }
+}
+
+/// Rewrite the glob `cs` (normalized) / `orig` (as given) so that its letters
+/// match either case: `a` -> `[aA]`, `[a-c]` -> `[a-cA-C]`.
+fn ksh93_pat_fold_case(orig: &[char], cs: &[char], out: &mut String) {
+    let mut i = 0;
+    while i < cs.len() {
+        match cs[i] {
+            '\\' => {
+                out.push(orig[i]);
+                if let Some(&n) = orig.get(i + 1) {
+                    out.push(n);
+                }
+                i += 2;
+            }
+            '[' => {
+                // A class runs to the first `]` after at least one member.
+                let start = i + 1 + usize::from(matches!(cs.get(i + 1), Some('!' | '^')));
+                match cs[(start + 1).min(cs.len())..].iter().position(|&c| c == ']') {
+                    Some(rel) => {
+                        let close = start + 1 + rel;
+                        out.extend(&orig[i..close]);
+                        out.extend(cs[start..close].iter().filter(|c| c.is_ascii_alphabetic()).map(|&c| ksh93_pat_swapcase(c)));
+                        out.push(orig[close]);
+                        i = close + 1;
+                    }
+                    None => {
+                        out.push(orig[i]);
+                        i += 1;
+                    }
+                }
+            }
+            c if c.is_ascii_alphabetic() => {
+                out.extend(['[', c, ksh93_pat_swapcase(c), ']']);
+                i += 1;
+            }
+            _ => {
+                out.push(orig[i]);
+                i += 1;
+            }
+        }
+    }
+}
+
+/// Translate a POSIX basic regular expression to the ERE the `regex` crate
+/// reads: `\( \) \{ \} \| \+ \?` become operators, their bare forms literals.
+fn ksh93_bre_to_ere(bre: &[char]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < bre.len() {
+        match (bre[i], bre.get(i + 1)) {
+            ('\\', Some(&n)) if "(){}|+?".contains(n) => {
+                out.push(n);
+                i += 2;
+            }
+            ('\\', Some(&n)) => {
+                out.extend(['\\', n]);
+                i += 2;
+            }
+            (c, _) if "(){}|+?".contains(c) => {
+                out.extend(['\\', c]);
+                i += 1;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// ksh93 pattern options: `[[ ab == ~(i)AB ]]`, `~(i:AB)c`, `a~(i)B*`,
+/// `~(E)b+`, `~(F)a.c`, `~(G)a\(b\)c`. `Some(verdict)` when `pat` carries a
+/// `~(options)` prefix this port models, `None` to let the ordinary matcher
+/// run. Verified against ksh93u+m 1.0.10:
+///
+///   * `i` makes the pattern text after it case-insensitive until `~(-i)`; the
+///     scoped `~(i:pat)` form covers only `pat`.
+///   * `F`, `E`/`P` and `G` replace the glob with a fixed string / ERE / BRE
+///     that is SEARCHED for anywhere in the subject (`[[ abc == ~(E)b ]]` is
+///     true), unlike a glob, which must cover it.
+///   * `K`, `X`, `N` read as the default ksh glob.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart; --ksh only (mksh has no
+/// `~(…)` pattern options). In zsh `~(…)` is extended-glob negation. !!!
+pub fn ksh93_flagged_match(s: &str, pat: &str) -> Option<bool> {
+    use crate::ported::zsh_h::{Inpar, Outpar, Tilde};
+    if !crate::dash_mode::ksh93_mode() {
+        return None;
+    }
+    let orig: Vec<char> = pat.chars().collect();
+    let cs: Vec<char> = orig
+        .iter()
+        .map(|&c| match c {
+            Tilde => '~',
+            Inpar => '(',
+            Outpar => ')',
+            c => c,
+        })
+        .collect();
+    let first = (0..cs.len().saturating_sub(1)).find(|&i| {
+        cs[i] == '~' && cs[i + 1] == '(' && (i == 0 || cs[i - 1] != '\\')
+    })?;
+    let (icase, engine) = {
+        let end = cs[first + 2..].iter().position(|&c| !(c.is_ascii_alphabetic() || c == '-' || c == '+'))? + first + 2;
+        ksh93_pat_options(&cs[first + 2..end])?
+    };
+    if engine != Ksh93PatEngine::Glob {
+        // The regex / fixed-string engines take the whole pattern: no text
+        // around the `~(options)` group is modelled.
+        let end = cs[first + 2..].iter().position(|&c| !(c.is_ascii_alphabetic() || c == '-' || c == '+'))? + first + 2;
+        let body: Vec<char> = match cs[end] {
+            ')' if first == 0 => cs[end + 1..].to_vec(),
+            ':' if first == 0 && ksh93_pat_group_end(&cs, 1) == Some(cs.len()) => cs[end + 1..cs.len() - 1].to_vec(),
+            _ => return None,
+        };
+        let text: String = body.iter().collect();
+        return match engine {
+            Ksh93PatEngine::Fixed if icase => Some(s.to_lowercase().contains(&text.to_lowercase())),
+            Ksh93PatEngine::Fixed => Some(s.contains(&text)),
+            _ => {
+                let re = if engine == Ksh93PatEngine::Bre { ksh93_bre_to_ere(&body) } else { text };
+                regex::RegexBuilder::new(&re).case_insensitive(icase).build().ok().map(|r| r.is_match(s))
+            }
+        };
+    }
+    // Glob engine: walk the pattern once, tracking the case-fold state.
+    let mut out = String::new();
+    let mut fold = false;
+    let mut i = 0;
+    let mut lit_from = 0;
+    while i < cs.len() {
+        if cs[i] == '\\' {
+            i += 2;
+            continue;
+        }
+        if cs[i] == '~' && cs.get(i + 1) == Some(&'(') {
+            let Some(rel) = cs[i + 2..].iter().position(|&c| !(c.is_ascii_alphabetic() || c == '-' || c == '+')) else { break };
+            let end = i + 2 + rel;
+            let Some((ic, eng)) = ksh93_pat_options(&cs[i + 2..end]) else { return None };
+            if eng != Ksh93PatEngine::Glob || !matches!(cs[end], ')' | ':') {
+                return None;
+            }
+            flush_range(&mut out, &orig, &cs, lit_from, i, fold);
+            // `~(-i)` clears the fold; `~(i)` sets it; other letters leave it.
+            let off = cs[i + 2..end].contains(&'-');
+            let new_fold = if cs[i + 2..end].contains(&'i') { !off && ic } else { fold };
+            if cs[end] == ')' {
+                fold = new_fold;
+                i = end + 1;
+            } else {
+                let close = ksh93_pat_group_end(&cs, i + 1)?;
+                flush_range(&mut out, &orig, &cs, end + 1, close - 1, new_fold);
+                i = close;
+            }
+            lit_from = i;
+            continue;
+        }
+        i += 1;
+    }
+    flush_range(&mut out, &orig, &cs, lit_from, cs.len(), fold);
+    Some(crate::vm_helper::glob_match_static(s, &out))
+}
+
+/// [`ksh93_pat_fold_case`] over `orig[from..to]` when `fold`, else a copy.
+fn flush_range(out: &mut String, orig: &[char], cs: &[char], from: usize, to: usize, fold: bool) {
+    if fold {
+        ksh93_pat_fold_case(&orig[from..to], &cs[from..to], out);
+    } else {
+        out.extend(&orig[from..to]);
+    }
+}

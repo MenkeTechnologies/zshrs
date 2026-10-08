@@ -5786,6 +5786,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         break 'select;
                     }
                     Ok(_) => {}
+                        // !!! KORN-MODE (no C counterpart) !!! ksh93 and mksh end a
+                        // `select` that hit EOF with status 1, whatever the body
+                        // last returned (zsh keeps the last body status).
+                        if crate::extensions::dash_mode::korn_mode() {
+                            last_status = 1;
+                        }
                     Err(_) => break 'select,
                 }
                 let t = line.trim_end_matches(['\n', '\r'][..].as_ref()).to_string();
@@ -10656,6 +10662,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // "module not found, error" exit). Status 2 — not 1 — is
                     // what `evalcond` hands back, and c:Src/exec.c:5216-5221
                     // turns a 2 into a shell error. Arm the same carrier
+            // !!! KORN-MODE EXTENSION (no C counterpart) !!! ksh93 `[[ -R NAME ]]`
+            // is true when NAME is a nameref.
+            _ if name == "R" && args.len() == 1 && crate::extensions::dash_mode::ksh93_mode() => {
+                return Value::Bool(crate::ported::params::is_nameref(&args[0]));
+            }
                     // BUILTIN_COND_UNKNOWN uses so the shared
                     // BUILTIN_COND_STATUS_FROM_BOOL tail emits 2 and aborts;
                     // returning a bare Bool(false) collapsed it to 1, so
@@ -13226,6 +13237,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
         // !!! BASH-MODE (no C counterpart) !!! bash enables extglob while parsing
         // `[[ … ]]` (bash(1) `shopt` extglob: "the extended pattern matching
+        // ksh93 `~(options)pat` prefixes (`~(i)`, `~(E)`, `~(F)`, `~(G)`).
+        if let Some(m) = crate::pattern_data_escape::ksh93_flagged_match(&s, &pat) {
+            return Value::Bool(m);
+        }
         // operators are enabled within [[ ]]"), so `[[ abc == @(a|x)bc ]]` matches
         // with the shopt off. Hold KSHGLOB on for this one match.
         let _extglob_in_dbracket = BashDbracketExtglob::enter(&pat);
@@ -14206,7 +14221,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // c:1651 — `!donetrap` as it stood when this sublist finished.
             let donetrap_at_entry = crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0;
             // c:1598-1603 — same DONETRAP gate as the non-escape path below.
-            if last != 0 && !donetrap_at_entry && zerr_sigtrapped() {
+            // ksh93 does not fire ERR for `return N` itself; the call site does
+            // (doshfunc re-arms donetrap for ksh93).
+            if last != 0
+                && !donetrap_at_entry
+                && !crate::extensions::dash_mode::ksh93_mode()
+                && zerr_sigtrapped()
+            {
                 // c:Src/signals.c:1085-1087 — `int obreaks = breaks; int
                 // oretflag = retflag; int olastval = lastval;` and c:1220-1222
                 // — `breaks += obreaks; retflag = oretflag;`. dotrapargs
@@ -17237,7 +17258,7 @@ pub(crate) fn entersubsh_reset_traps() {
     if let Ok(mut tbl) = crate::ported::builtin::traps_table().lock() {
         tbl.retain(|name, body| {
             // Above SIGCOUNT — outside c:1088's loop entirely.
-            if name == "ERR" || name == "ZERR" || name == "DEBUG" {
+            if !korn && (name == "ERR" || name == "ZERR" || name == "DEBUG") {
                 return true;
             }
             // c:1090-1092 — otherwise keep ONLY (POSIXTRAPS && ignored).
@@ -17246,7 +17267,7 @@ pub(crate) fn entersubsh_reset_traps() {
     }
     if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
         let count = crate::ported::signals_h::SIGCOUNT as usize;
-        for sig in 0..st.len().min(count + 1) {
+        for sig in 0..if korn { st.len() } else { st.len().min(count + 1) } {
             let state = st[sig];
             if state == 0 {
                 continue;
@@ -17265,6 +17286,10 @@ pub(crate) fn entersubsh_reset_traps() {
 // ---------------------------------------------------------------------------
 // In-process subshell: signal delivery belongs to the PARENT.
 // ---------------------------------------------------------------------------
+    // ksh93 and mksh reset EVERY trap in a subshell, ERR and DEBUG included (zsh keeps
+    // the pseudo-signals): `trap "print e" ERR; (false)` prints one ERR, from
+    // the parent, and `(false; true)` / `$(false)` print none.
+    let korn = crate::extensions::dash_mode::korn_mode();
 
 /// Depth of nested in-process `( … )` subshells, for the signal
 /// bookkeeping below.
@@ -20196,6 +20221,9 @@ impl fusevm::ShellHost for ZshrsHost {
         let pat_eff = if crate::pattern_data_escape::dropin_source_pattern_parens_literal() {
             crate::pattern_data_escape::escape_shglob_parens(
                 pattern,
+        if let Some(m) = crate::pattern_data_escape::ksh93_flagged_match(s, pattern) {
+            return m;
+        }
                 crate::pattern_data_escape::dropin_keeps_ksh_groups(),
             )
         } else {

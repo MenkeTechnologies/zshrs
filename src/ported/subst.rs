@@ -7709,6 +7709,27 @@ pub fn paramsubst(
                     && after.len() == 1
                     && matches!(after[0], '@' | '*' | '\u{e187}' /* Star */)
                 {
+                } else if bang_ksh
+                    && after.len() > 2
+                    && (after[0] == '[' || after[0] == Inbrack)
+                    && (after[after.len() - 1] == ']' || after[after.len() - 1] == Outbrack)
+                {
+                    // `${!NAME[SUB]}` (ksh93/mksh): the NAME of that element,
+                    // `NAME[SUB]`, with an indexed array's SUB evaluated
+                    // arithmetically (`i=1; ${!a[i]}` -> `a[1]`) and an
+                    // associative array's SUB kept as the literal key.
+                    let sub: String = crate::ported::lex::untokenize(
+                        &after[1..after.len() - 1].iter().collect::<String>(),
+                    );
+                    let shown = if assoc_get(&target).is_some() {
+                        sub
+                    } else {
+                        crate::ported::math::mathevali(&sub)
+                            .map_or(sub, |n| n.to_string())
+                    };
+                    subexp_value = Some(format!("{target}[{shown}]"));
+                    idx = body_chars.len();
+                    bash_handled = true;
                     // `${!prefix@}` / `${!prefix*}` (BASH only; mksh/pdksh lack
                     // it) → the NAMES of all set
                     // parameters whose name begins with `prefix`, sorted (bash
@@ -22006,6 +22027,14 @@ pub fn paramsubst(
                         Ok(n) => n,
                         Err(e) => {
                             // c:Src/math.c:819 / :1147 and friends — mathevali's
+                    // !!! KORN-MODE GATE (no C counterpart) !!! ksh93 rejects
+                    // an empty offset: `${x::2}` is "bad substitution" (zsh reads it
+                    // as offset 0). mksh accepts it.
+                    if crate::extensions::dash_mode::ksh93_mode() && parts[0].is_empty() {
+                        zerr("bad substitution");
+                        errflag_set_error();
+                        return (String::new(), 0, Vec::new());
+                    }
                             // message is C's own `zerr` text, prefixed only where
                             // C prefixes it (`bad output format specification`,
                             // `division by zero` carry none). Report it verbatim.

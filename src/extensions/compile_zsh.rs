@@ -1240,6 +1240,10 @@ impl ZshCompiler {
     /// per-pipeline update in [`Self::compile_sublist`] (c:Src/exec.c:2056)
     /// computes the identical value.
     fn rel_lineno(&self, raw_line: u64) -> i64 {
+        // mksh reports 0 for every `$LINENO` inside a `-c` string.
+        if crate::dash_mode::korn_mode() && crate::dash_mode::pdksh_family() && crate::dash_mode::dash_c_string() {
+            return 0;
+        }
         // Function body: offset = max(1, lineno_offset) so inline
         // `f() { body }` (lineno_offset=0) maps body line 1 → 0 (zsh's
         // def-line subtraction). Inside a command substitution the shift

@@ -93,6 +93,23 @@ static NOCASEMATCH: AtomicBool = AtomicBool::new(false);
 /// while ksh93 prints `[]`.
 static PDKSH_FAMILY: AtomicBool = AtomicBool::new(false);
 
+/// True while the shell runs a `-c` command string (set by the binary before
+/// the string is compiled). mksh treats such a string differently from a
+/// script file: `$LINENO` is always 0 and `set -n` is ignored.
+static DASH_C_STRING: AtomicBool = AtomicBool::new(false);
+
+/// See [`DASH_C_STRING`].
+#[inline]
+pub fn dash_c_string() -> bool {
+    DASH_C_STRING.load(Ordering::Relaxed)
+}
+
+/// Record that a `-c` string is being run. See [`DASH_C_STRING`].
+#[inline]
+pub fn set_dash_c_string(on: bool) {
+    DASH_C_STRING.store(on, Ordering::Relaxed);
+}
+
 /// True for a bare `zshrs --mksh` / `--pdksh`. See [`PDKSH_FAMILY`].
 #[inline]
 pub fn pdksh_family() -> bool {
@@ -2699,7 +2716,7 @@ pub fn mksh_quote(v: &str) -> String {
 }
 
 /// Lines of mksh's `typeset -p NAME` for a SET scalar or indexed array.
-/// Attribute words come in mksh's fixed order `-i -x -r -t -L|-R -Z -l|-u`
+/// Attribute words come in mksh's fixed order `-i -x -r -t -L|-R -Z -l|-u -U`
 /// (width/base glued to `-L`/`-R`; a base-N integer shows its value as
 /// `N#digits` under a bare `-i`). Arrays print `set -A NAME` followed by one
 /// `typeset NAME[i]=v` per live element, holes skipped.
@@ -2714,7 +2731,7 @@ pub fn pdksh_typeset_p(
 ) -> Vec<String> {
     use crate::ported::zsh_h::{
         PM_EXPORTED, PM_INTEGER, PM_LEFT, PM_LOWER, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED,
-        PM_UPPER,
+        PM_UNIQUE, PM_UPPER,
     };
     if let Some(elems) = elems {
         let mut lines = vec![format!("set -A {name}")];
@@ -2736,7 +2753,7 @@ pub fn pdksh_typeset_p(
     if flags & PM_RIGHT_Z != 0 {
         attrs.push("-Z".to_string());
     }
-    for (flag, word) in [(PM_LOWER, "-l"), (PM_UPPER, "-u")] {
+    for (flag, word) in [(PM_LOWER, "-l"), (PM_UPPER, "-u"), (PM_UNIQUE, "-U")] {
         if flags & flag != 0 {
             attrs.push(word.to_string());
         }
