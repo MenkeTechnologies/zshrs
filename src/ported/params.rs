@@ -11264,6 +11264,13 @@ pub fn unsetparam(name: &str) -> i32 {
             .any(|ip| ip.name == name && (ip.pm_flags & PM_READONLY) != 0),
     };
     if is_readonly_special {
+        // !!! BASH-MODE (no C counterpart) !!! bash: `unset: NAME: cannot unset:
+        // readonly variable`, status 1, script continues (zsh zerr aborts the line).
+        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+            crate::ported::utils::zwarnnam("unset", &format!("{name}: cannot unset: readonly variable"));
+            unqueue_signals();
+            return 1;
+        }
         zerr(&format!("read-only variable: {}", name));
         unqueue_signals();
         return 1; // c:3854 — unsetparam_pm's readonly rejection status
@@ -11479,6 +11486,16 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         } else {
             "variable"
         };
+        // !!! BASH/KSH-MODE (no C counterpart) !!! bash reports `unset: NAME:
+        // cannot unset: readonly variable` and carries on (status 1); zsh's
+        // zerr aborts the rest of the command line.
+        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+            crate::ported::utils::zwarnnam(
+                "unset",
+                &format!("{}: cannot unset: readonly {}", pm.node.nam, kind),
+            );
+            return 1;
+        }
         zerr(&format!("read-only {}: {}", kind, pm.node.nam));
         return 1; // c:3854
     }

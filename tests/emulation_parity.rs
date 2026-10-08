@@ -674,6 +674,23 @@ const EXTENDED_CORPUS: &[&str] = &[
     "printf '[%s]' a{,b}c {a,}; printf '\\n'",             // trailing / embedded empty
     "for i in {,a,}; do printf '[%s]\\n' \"$i\"; done",    // for-list drops empties
     "true & printf '[%s]\\n' \"${!:+set}\"",               // $! set after a background job
+    // A QUOTED substitution in a `case` pattern is literal even when GLOB_SUBST
+    // is on (sh/ksh/bash emulation): C never shtokenizes a quoted expansion
+    // (Src/subst.c:822/830), only an unquoted one.
+    "x='a*'; case abc in \"$x\") echo lit;; *) echo nolit;; esac",   // quoted → literal
+    "x='b*'; case abc in a\"$x\") echo lit;; *) echo nolit;; esac",  // quoted tail → literal
+    "x='a*'; case abc in \"$x\"*) echo m;; *) echo n;; esac",        // quoted prefix + glob
+    "x='a*'; case 'a*' in \"$x\") echo m;; *) echo n;; esac",        // literal still matches itself
+    // `read -a` / `-N` are bash letters: zsh rejects them (Src/builtin.c:109).
+    "printf 'a b c\\n' | { read -a arr; echo ${#arr[@]}; }",          // -a: bash/ksh array, zsh error
+    "printf 'abc\\n' | { read -N 2 v; echo \"[$v]\"; }",              // -N: bash/ksh count, zsh error
+    // `export NAME` of a never-assigned parameter does not enter the
+    // environment until the first assignment (Src/builtin.c:2299-2301).
+    "export Z; env | grep -c '^Z='",
+    "typeset -x Y; env | grep -c '^Y='",
+    "export Z; Z=1; env | grep -c '^Z='",
+    "export A B=2; sh -c 'echo ${A-unset} $B'",
+    "Z=1; export Z; env | grep -c '^Z='",
 ];
 
 /// bash-only corpus — constructs where bash differs from the Korn shells and
@@ -752,8 +769,49 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // `caller` reads BASH_LINENO / FUNCNAME / BASH_SOURCE; FUNCNAME is unset outside functions.
     "f() { caller; echo rc=$?; caller 0; echo rc=$?; caller 1; echo rc=$?; }; f; caller; echo top rc=$?",
     "f() { echo \"${FUNCNAME[@]}\"; g; }; g() { echo \"${FUNCNAME[@]}\"; }; f; echo \"[${FUNCNAME[@]}]\"",
+    // bash turns extglob on while parsing `[[ ]]`, so the ksh groups work in the
+    // pattern with the `extglob` shopt off.
+    "[[ abc == @(a|x)bc ]] && echo y; echo done",
+    "[[ abc == +(a|b)c ]] && echo y; echo done",
+    "[[ abc != @(a|x)bc ]] && echo y; echo done",
+    "[[ abc == !(x)bc ]] && echo y; echo done",
+    "[[ abc == a?(x)bc ]] && echo y; echo done",
+    // Without `inherit_errexit` a command substitution runs with -e cleared.
+    "set -e; echo $(false; echo hi)",
+    "set -e; x=$(false; echo hi); echo \"[$x]\"",
+    "shopt -s inherit_errexit; set -e; x=$(false; echo hi); echo \"[$x]\"; echo no",
+    // `printf %b` reads a bare `\NNN` (1-3 octal digits) as well as `\0NNN`.
+    "printf '%b\\n' '\\x41\\101\\0101'",
+    "printf '%b|' '\\101' '\\1' '\\18' '\\0101'; echo",
 ];
 
+/// bash + ksh corpus — constructs the two share but zsh does not, so they run
+/// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
+const BASH_KSH_CORPUS: &[&str] = &[
+    // A lone `-` is an ordinary `echo` argument (zsh's option parser eats it).
+    "echo -",
+    "echo - a",
+    "echo -n -; echo",
+    // `$"..."` is the plain string when no translation applies (zsh keeps the `$`).
+    "echo $\"hello\"",
+    "x=1; echo $\"a $x\" b",
+    // `test -a FILE` / `test -o OPTION` as two-argument unary operators.
+    "[ -a / ]; echo $?",
+    "[ -a /nonexistent_zz ]; echo $?",
+    "[ -o errexit ]; echo $?",
+    "set -o errexit; [ -o errexit ]; echo $?",
+    "test -o nosuchoption_zz; echo $?",
+    // `unset` of a readonly variable reports and continues with status 1.
+    "readonly R=1; unset R; echo $?",
+    "readonly R=1; f() { unset R; echo in; }; f",
+];
+
+/// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
+/// `bad option` with status 1 (Src/builtin.c:123 / :109).
+const ZSH_BAD_OPTION_CORPUS: &[&str] = &[
+    "type -t echo; echo rc=$?",
+    "type -t nonexistent_zz; echo rc=$?",
+];
 
 fn find_shell(candidates: &[&str]) -> Option<String> {
     for c in candidates {
@@ -2262,7 +2320,9 @@ fn emulation_parity_matrix() {
             PORTABLE_CORPUS
                 .iter()
                 .chain(if case.extended { EXTENDED_CORPUS } else { &[] })
-                .chain(if case.name == "bash" { BASH_ONLY_CORPUS } else { &[] });
+                .chain(if case.name == "bash" { BASH_ONLY_CORPUS } else { &[] })
+                .chain(if case.name == "zsh" { ZSH_BAD_OPTION_CORPUS } else { &[] })
+                .chain(if matches!(case.name, "bash" | "ksh") { BASH_KSH_CORPUS } else { &[] });
         for script in corpus {
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {

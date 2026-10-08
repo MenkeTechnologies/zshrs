@@ -2288,7 +2288,12 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // (c:1524, 1546, 1551 inside dquote_parse);
                         // top-level `$"…"` uses Stringg per
                         // C lex.c's $-dispatch.
-                        add(Stringg);
+                        // !!! BASH/KSH-MODE (no C counterpart) !!! bash/ksh locale translation
+                        // `$"..."` is the plain string when no catalog applies; zsh keeps
+                        // the `$` literal.
+                        if !(crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode()) {
+                            add(Stringg);
+                        }
                         add(Dnull);
                         if dquote_parse('"', sub).is_err() {
                             peek = LEXERR;

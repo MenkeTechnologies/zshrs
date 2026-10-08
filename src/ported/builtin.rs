@@ -450,6 +450,13 @@ pub fn execbuiltin(
                 // c:308
                 break;
             }
+            // !!! BASH/KSH-MODE (no C counterpart) !!! bash/ksh `echo` has no lone-`-`
+            // option arg: `echo -` prints `-` (zsh's c:337-341 swallows it).
+            if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+                && name == "echo"
+                && arg_bytes.len() == 1 {
+                break;
+            }
             // c:310-317 — `--` end-of-options if BINF_DASHDASHVALID.
             if (flags & BINF_DASHDASHVALID as i32) != 0 && arg_str == "--" {
                 // c:310
@@ -8612,7 +8619,10 @@ pub fn bin_typeset(
                         || crate::ported::exec::array(arg).is_some()
                         || crate::ported::exec::assoc(arg).is_some();
                     if !is_array_or_hashed {
-                        if let Some(val) = saved_val.as_deref().or(Some("")) {
+                        // c:Src/builtin.c:2299-2301 — a bare `export NAME` of a parameter that
+                        // was never assigned (PM_UNSET) does not `addenv`; the environment
+                        // entry appears with the first assignment.
+                        if let Some(val) = saved_val.as_deref().or((!was_fresh).then_some("")) {
                             // c:Src/builtin.c typeset_single -> export_param
                             // (c:Src/params.c:2670) -> zputenv (c:5325), which
                             // hands the value to `setenv` as a NUL-TERMINATED C
@@ -17352,6 +17362,19 @@ pub fn bin_test(
     if argv.is_empty() {
         // c:7249
         return 1; // c:7250
+    }
+
+    // !!! BASH/KSH-MODE (no C counterpart) !!! bash/ksh two-argument `test -a FILE`
+    // (exists, same as `-e`) and `test -o OPTION` (option is on). In zsh's
+    // grammar (c:7276+) both `-a` and `-o` are the binary AND / OR, so a lone
+    // operand is "too many arguments".
+    if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode()) && argv.len() == 2 {
+        if argv[0] == "-a" {
+            argv[0] = "-e".to_string();
+        } else if argv[0] == "-o" {
+            let r = crate::ported::cond::optison(Some(name), &argv[1]);
+            return if r == 0 { 0 } else { 1 };
+        }
     }
 
     // c:7257-7274 — XSI 3/4-arg parens + 4-arg `!` extension.

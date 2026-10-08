@@ -6961,6 +6961,8 @@ impl ShellExecutor {
         } else {
             Some(crate::fusevm_bridge::CmdSubstSubshellBump::enter())
         };
+        // A funsub/valsub shares the shell, so only a real substitution drops -e.
+        let _bash_errexit = (!shared_state).then(crate::dash_mode::BashCmdsubstErrexit::enter);
 
         // c:Src/exec.c:1208-1209 — the same forked child clears
         // `opts[USEZLE]` and `zleactive`. Without it a substitution run
