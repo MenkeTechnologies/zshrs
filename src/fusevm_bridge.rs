@@ -6433,7 +6433,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Captured before the assign; applied after (on the array path).
         let sparse_track: Option<(String, usize, usize)> =
             if crate::dash_mode::sparse_arrays() && !key.contains(',') {
-                key.trim().parse::<usize>().ok().and_then(|i| {
+                crate::dash_mode::sparse_subscript_index(&key).and_then(|i| {
                     with_executor(|exec| {
                         if !exec.has_assoc(&name) {
                             let old_len = exec.array(&name).map(|a| a.len()).unwrap_or(0);
@@ -10920,7 +10920,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // under ksharrays). Captured before the assign; applied after.
         let sparse_track: Option<(String, usize, usize)> =
             if crate::dash_mode::sparse_arrays() && !append && !key.contains(',') {
-                key.trim().parse::<usize>().ok().map(|i| {
+                crate::dash_mode::sparse_subscript_index(&key)
+                    .filter(|_| !with_executor(|exec| exec.has_assoc(&name)))
+                    .map(|i| {
                     let old_len =
                         with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));
                     (name.clone(), old_len, i)

@@ -9016,6 +9016,11 @@ pub fn paramsubst(
                 "@K" => bash_at_kv = true,
                 "@k" => bash_at_kwords = true,
                 // `${v@P}` — expand `v` as a PROMPT string. bash(1)
+        // mksh supports only the scalar `${v@Q}` of the bash transform set.
+        let mksh_at_q = crate::dash_mode::korn_mode() && crate::dash_mode::pdksh_family() && rest == "@Q";
+        if mksh_at_q {
+            rest = String::new();
+        }
                 // Parameter Expansion: "the expansion is a string that is
                 // the result of expanding the value of parameter as if it
                 // were a prompt string". It is how a bash user inspects
@@ -22664,6 +22669,9 @@ pub fn paramsubst(
         if bash_at_a {
             // The letter set and its order live in ONE place —
             // `dash_mode::bash_attr_letters` — because `${v@A}` below needs
+        if mksh_at_q {
+            value = crate::dash_mode::mksh_at_q(&value);
+        }
             // the identical string after `declare -`.
             let attrs = crate::dash_mode::bash_attr_letters(crate::dash_mode::bash_param_flags(&var_name));
             // bash repeats the attribute string once PER ELEMENT of an array

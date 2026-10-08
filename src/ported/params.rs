@@ -15791,6 +15791,40 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         }
         return;
     }
+    // !!! PDKSH-MODE GATE (no C counterpart) !!! mksh's `typeset -p` listing
+    // (see `pdksh_typeset_p`); special, autoload and associative entries keep the zsh path.
+    if crate::dash_mode::pdksh_family()
+        && crate::dash_mode::korn_mode()
+        && (printflags & PRINT_TYPESET) != 0
+        && (printflags & (PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY)) == 0
+        && (hn.node.flags as u32 & (PM_AUTOLOAD | PM_RO_BY_DESIGN | PM_SPECIAL | PM_HASHED)) == 0
+        && !hn.node.nam.starts_with('.')
+    {
+        let fl = hn.node.flags as u32;
+        // mksh lists nothing for a plain unset name, and `NAME=''` for an unset
+        // one that carries attributes (`typeset -r k` -> `typeset -r k=''`).
+        let attr_mask = PM_INTEGER | PM_EXPORTED | PM_READONLY | PM_TAGGED | PM_LEFT | PM_RIGHT_B
+            | PM_RIGHT_Z | PM_LOWER | PM_UPPER;
+        if fl & PM_UNSET != 0 && fl & attr_mask == 0 {
+            return;
+        }
+        let nm = hn.node.nam.clone();
+        let elems = (fl & PM_ARRAY != 0).then(|| {
+            let a = hn.u_arr.clone().or_else(|| crate::ported::exec::array(&nm)).unwrap_or_default();
+            let live = crate::bash_arrays::live_indices(&nm, a.len());
+            live.into_iter().filter_map(|i| a.get(i).map(|v| (i, v.clone()))).collect()
+        });
+        let mut v = getsparam(&nm).unwrap_or_default();
+        if fl & PM_INTEGER != 0 && hn.base > 1 && hn.base != 10 {
+            if let Ok(n) = v.parse::<i64>() {
+                v = convbase(n, hn.base as u32).to_lowercase();
+            }
+        }
+        for line in crate::dash_mode::pdksh_typeset_p(&nm, fl, hn.width, &v, elems) {
+            println!("{line}");
+        }
+        return;
+    }
     let f = hn.node.flags as u32;
     if (f & PM_HASHELEM) == 0
         && (printflags & PRINT_WITH_NAMESPACE) == 0
@@ -17129,6 +17163,11 @@ fn is_unset_special(name: &str) -> bool {
 /// path. Mirrors the `Param.gsu->getfn` dispatch C zsh does
 /// inside `getsparam` / `getstrvalue` (Src/params.c:3076 / 2335).
 pub fn lookup_special_var(name: &str) -> Option<String> {
+    // ksh93 / mksh `$KSH_VERSION` under --ksh / --mksh / --pdksh (the strings the
+    // reference shells report; scripts probe it with `${KSH_VERSION+set}`).
+    if name == "KSH_VERSION" && crate::dash_mode::korn_mode() {
+        return Some(crate::dash_mode::ksh_version_string().to_string());
+    }
     // bash special SCALARS under --bash: `$BASH_VERSION` (version string) and
     // the scalar/bare reads of bash's special arrays (bash: `$PIPESTATUS` ==
     // `${PIPESTATUS[0]}`, `$FUNCNAME` == current function, `$BASH_VERSINFO` ==

@@ -726,6 +726,10 @@ pub fn execbuiltin(
                         // c:443 — `fprintf(xtrerr, "%s", name);`
         xtrerr_fputs(&name); // c:443
                              // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
+        // ksh93 `let` with no expression is a usage error, status 2.
+        if argc < bn_ref.minargs && name == "let" && crate::dash_mode::ksh93_mode() {
+            return 2;
+        }
                              // C zsh's parser pre-splits `name=value` args for
                              // BINF_ASSIGN-flagged builtins (export/typeset/declare/local/
                              // readonly/integer/float) into asg{name,value} nodes, which
@@ -4716,6 +4720,9 @@ pub fn bin_typeset(
                                          // separators, then split_whitespace collapsed consecutive empties
                                          // → key/value swap on `typeset -A h=( "" val )`. Bug #93 in
                                          // docs/BUGS.md.
+    } else if crate::dash_mode::in_ksh93_posix_function() && !OPT_ISSET(&ops, b'g') {
+        // ksh93: `name() { typeset x; }` does not localize.
+        ops.ind[b'g' as usize] = 1;
                                          //
                                          // Use `\u{1f}` (ASCII US — unit separator) as the rejoin
                                          // separator. The paren-init branch below splits on `\u{1f}` AND
@@ -11437,7 +11444,7 @@ pub fn bin_whence(
                 } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
                     println!("{}: shell reserved word", arg);
                 } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
-                    println!("{} is a reserved word", arg);
+                    println!("{} is a {}", arg, if crate::dash_mode::ksh93_mode() { "keyword" } else { "reserved word" });
                 } else {
                     println!("{}", arg); // c:4110
                 }
@@ -11679,8 +11686,8 @@ pub fn bin_whence(
             if informed == 0 && (wd || v || csh) {
                 // c:4166
                 // dash: `NAME: not found` (see the end-of-function status note).
-                if crate::dash_mode::bash_mode() && !wd {
-                    // bash reports a missing name on stderr: `type: NAME: not found`.
+                if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode()) && !wd {
+                    // bash and ksh93 report a missing name on stderr: `type: NAME: not found`.
                     zwarnnam(nam, &format!("{arg}: not found"));
                 } else {
                 println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4168-4169
@@ -11764,7 +11771,7 @@ pub fn bin_whence(
         // c:4201-4205 — not found at all.
         if v || csh || wd {
             // c:4202
-            if crate::dash_mode::bash_mode() && !wd {
+            if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode()) && !wd {
                 zwarnnam(nam, &format!("{arg}: not found"));
             } else {
             println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4203
@@ -17786,6 +17793,23 @@ pub fn bin_trap(
                 let idx = sig as i32;
                 // Already covered by a function-form or a stored body.
                 if combined.iter().any(|(i, _)| *i == idx) {
+    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 `trap -p SIG...` prints just the
+    // ACTION text of each named signal's trap, one per line (nothing for an unset one):
+    //   ksh -c 'trap "print a" INT; trap -p INT'  ->  print a
+    if argv.len() > 1
+        && argv[0] == "-p"
+        && crate::extensions::emulation_startup::personality()
+            == crate::extensions::emulation_startup::Personality::Ksh93
+    {
+        let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
+        for sig in &argv[1..] {
+            let idx = getsigidx(sig);
+            if let Some((_, body)) = traps.iter().find(|(k, _)| getsigidx(k) == idx) {
+                println!("{body}");
+            }
+        }
+        return 0;
+    }
                     continue;
                 }
                 let name = crate::ported::jobs::getsigname(idx); // c:7359
@@ -21975,6 +21999,7 @@ pub(crate) fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
         // optional sign and digits. `printf "%05.2f" 1.5` → "01.50",
         // `printf "%05.2f" -1.5` → "-1.50" (no extra pad since sign +
         // body already fills width). Previously the helper discarded
+    let n = crate::dash_mode::ksh93_round_ties_away(n, conv, prec);
         // zero_pad via parse_width_prec and always space-padded.
         if let Some(rest) = body.strip_prefix('-') {
             format!("-{}{}", "0".repeat(pad), rest)

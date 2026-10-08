@@ -1964,7 +1964,11 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                                 && (b.first().is_some_and(|c| c.is_ascii_digit())
                                     || b.last().is_some_and(|c| c.is_ascii_digit()))
                         };
-                        if nested || bracechardots(&content).is_some() || numeric_ok {
+                        if nested
+                            || bracechardots(&content).is_some()
+                            || numeric_ok
+                            || crate::dash_mode::ksh93_char_step_range(&content)
+                        {
                             return true;
                         }
                     }
@@ -2179,7 +2183,7 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                                     right.find("..").map(|p| &right[..p]).unwrap_or(right);
                                 let has_digit = left.chars().any(|c| c.is_ascii_digit())
                                     || strip_end.chars().any(|c| c.is_ascii_digit());
-                                if has_digit {
+                                if has_digit && !crate::dash_mode::ksh93_mode() {
                                     // c:2495-2498 — strip braces.
                                     return (
                                         Some(vec![format!("{}{}{}", prefix, content, suffix)]),
@@ -6796,7 +6800,7 @@ fn expand_range(
     // preserved. Parity bug #15: previously the Rust port silently
     // clamped step to 1 via `.max(1)`, producing `1 2 3 4 5` for
     // `{1..5..0}` instead of zsh's literal `1..5..0`.
-    let (right, incr_abs, incr_sign_negative, step_text) =
+    let (right, incr_abs, incr_sign_negative, step_text, raw_step) =
         if let Some(pos) = content[right_start..].find("..") {
             let r = &content[right_start..right_start + pos];
             let s_text = &content[right_start + pos + 2..];
@@ -6814,9 +6818,9 @@ fn expand_range(
                 // None so xpandbraces falls back to literal.
                 return None;
             }
-            (r, raw.unsigned_abs(), raw < 0, s_text)
+            (r, raw.unsigned_abs(), raw < 0, s_text, Some(raw))
         } else {
-            (&content[right_start..], 1u64, false, "")
+            (&content[right_start..], 1u64, false, "", None)
         };
 
     // Try numeric range
@@ -6828,7 +6832,9 @@ fn expand_range(
         // direction; step is always |step|.
         let step = incr_abs.max(1) as i64;
         let mut vals: Vec<i64> = Vec::new();
-        if start <= end {
+        if crate::dash_mode::ksh93_mode() {
+            vals = crate::dash_mode::ksh93_range_values(start, end, raw_step);
+        } else if start <= end {
             let mut v = start;
             while v <= end {
                 vals.push(v);
@@ -6844,7 +6850,7 @@ fn expand_range(
         // bash takes the direction from the endpoints alone and ignores the
         // step's sign (`{6..1..-2}` → 6 4 2, `{1..6..-2}` → 1 3 5); only zsh
         // reverses the sequence for a negative step.
-        if incr_sign_negative && !crate::dash_mode::bash_mode() {
+        if incr_sign_negative && !crate::dash_mode::bash_mode() && !crate::dash_mode::ksh93_mode() {
             vals.reverse();
         }
 
@@ -6907,7 +6913,9 @@ fn expand_range(
     // literal survives (verified: real zsh emits `{a..e..2}` unchanged).
     // bash ignores the step's SIGN for alpha (`{a..e..-2}` == `{a..e..2}`),
     // so use abs(step) and take direction purely from start vs end.
-    let alpha_step_ok = step_text.is_empty() || crate::dash_mode::bash_mode();
+    let alpha_step_ok = step_text.is_empty()
+        || crate::dash_mode::bash_mode()
+        || crate::dash_mode::ksh93_mode();
     // c:2311 — `if (bracechardots(str, &cstart, &cend))` decides the
     // CHARACTER range. The endpoints are METAFIED text, decoded through
     // MB_METACHARLENCONV (c:2236/2257), so a metafied 8-bit byte
@@ -6932,12 +6940,20 @@ fn expand_range(
 
         let mut results = Vec::new();
         let mut chars: Vec<char> = Vec::new();
-        let mut v = from;
-        while (dir > 0 && v <= to) || (dir < 0 && v >= to) {
-            if let Some(c) = char::from_u32(v as u32) {
-                chars.push(c);
+        if crate::dash_mode::ksh93_mode() {
+            chars.extend(
+                crate::dash_mode::ksh93_range_values(from, to, raw_step)
+                    .into_iter()
+                    .filter_map(|v| char::from_u32(v as u32)),
+            );
+        } else {
+            let mut v = from;
+            while (dir > 0 && v <= to) || (dir < 0 && v >= to) {
+                if let Some(c) = char::from_u32(v as u32) {
+                    chars.push(c);
+                }
+                v += dir;
             }
-            v += dir;
         }
 
         for c in chars {

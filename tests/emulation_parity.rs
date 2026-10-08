@@ -3585,6 +3585,20 @@ fn pdksh_line_specifics_match_mksh() {
         "echo x | read v; print \"[$v]\"",
         "f() { return 300; }; f; print $?",
         "h() { return -1; }; h; print $?",
+        "echo {a..e..2} {e..a..-2} {1..10..3} {10..1..-4} {10..1..4} {1..5..0}",
+        "echo {a..e..a} {5..1..1} {a..e..-1}",
+        "printf '%.0f %.0f %.0f %.0f %.1f %.0e\\n' 0.5 1.5 2.5 3.5 0.25 2.5",
+        "f() { typeset x=1; }; f; print ${x-unset}",
+        "function f { typeset x=1; }; f; print ${x-unset}",
+        "f() { integer x=1; }; f; print ${x-unset}",
+        "a[1+1]=x; print ${!a[@]}",
+        "i=2; a[i]=x; print ${!a[@]}; a[i+1]=y; print ${!a[@]}",
+        "whence -v nosuch; print $?",
+        "whence -v if",
+        "let; print $?",
+        "trap 'print int' INT; trap -p INT",
+        "trap 'print a' INT TERM; trap -p INT TERM HUP",
+        "print ${KSH_VERSION+set}",
         "a=(x y z); unset a[1]; print ${#a[@]} ${!a[@]}",
         "[[ /etc/passwd -nt /nonexistent ]] && print nt",
         "[[ /nonexistent -ot /etc/passwd ]] && print ot",
@@ -3612,6 +3626,18 @@ fn ksh_zsh_style_rejects_printf_time_directive_like_zsh() {
     let probes = ["printf '%(%Y)T\\n' 0; print $?"];
     let bad = probe_mismatches(&["--ksh", "--zsh"], &zsh, &["-f"], "emulate ksh\n", &probes);
     assert!(bad.is_empty(), "--ksh --zsh diverged from zsh:\n{}", bad.join("\n"));
+        "x=\"a b\"; echo ${x@Q}; x=abc; echo ${x@Q}; x=; echo ${x@Q}; x=\"it's\"; echo ${x@Q}",
+        "x='a*'; echo ${x@Q}",
+        "print ${KSH_VERSION+set}",
+        "x=\"a b\"; typeset -p x; typeset -r y=1; typeset -p y; typeset -i z=3; typeset -p z",
+        "typeset -x w=1; typeset -p w; typeset -u u=ab; typeset -p u; typeset -l lo=AB; typeset -p lo",
+        "typeset -Z3 q=1; typeset -p q; typeset -R3 q2=1; typeset -p q2; typeset -L3 lj=abcdef; typeset -p lj",
+        "typeset -r -x -i k=1; typeset -p k; typeset -rux a=ab; typeset -p a",
+        "typeset -i16 h=255; typeset -p h; typeset -i2 g=5; typeset -p g",
+        "typeset -r k; typeset -p k; typeset x1; typeset -p x1",
+        "for v in 'a:b' 'a=b' 'a#b' 'a*b' 'a\\b' \"a'b\"; do x=$v; typeset -p x; done",
+        "set -A arr -- 'a b' c; typeset -p arr; typeset -a q; q[2]=a; typeset -p q",
+        "x=$(printf 'a\\tb\\nc'); typeset -p x",
 }
 
 /// `cd -` and `~-` resolve through the shell's internal `oldpwd` in zsh

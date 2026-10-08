@@ -350,6 +350,23 @@ pub fn set_bash_mode(on: bool) {
     BASH_MODE.store(on, Ordering::Relaxed);
 }
 
+/// Values of a ksh93 brace range `{from..to[..step]}`, verified against
+/// ksh93u+m 1.0.10. Without a step the direction comes from the endpoints.
+/// With a step its SIGN is the direction (`{10..1..-4}` -> 10 6 2, `{e..a..2}`
+/// -> e): the start is always emitted and the walk stops at the first value
+/// past `to` in that direction, so a step pointing away from `to` yields
+/// just the start.
+pub fn ksh93_range_values(from: i64, to: i64, step: Option<i64>) -> Vec<i64> {
+    let step = step.unwrap_or(if from <= to { 1 } else { -1 });
+    let mut vals = vec![from];
+    let mut v = from + step;
+    while (step > 0 && v <= to) || (step < 0 && v >= to) {
+        vals.push(v);
+        v += step;
+    }
+    vals
+}
+
 /// True in zsh drop-in mode (`zshrs --zsh` / `--zsh-compat`). Gates OFF the
 /// zshrs-only syntax extensions so the compat entrypoint parses exactly what
 /// `/bin/zsh` parses. See [`ZSH_DROPIN`].
@@ -2356,9 +2373,23 @@ pub fn note_function_spelling(name: &str, keyword: bool) {
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn in_ksh93_keyword_function() -> bool {
-    if !ksh93_mode() {
-        return false;
-    }
+    ksh93_mode() && innermost_function_is_keyword_spelled() == Some(true)
+}
+
+/// True while the innermost running shell function is a POSIX-spelled
+/// `name() { … }` definition under `--ksh`. ksh93 gives that spelling no
+/// local scope: `f() { typeset x=1; }; f; print $x` prints `1`, so `typeset`
+/// and its aliases act as `typeset -g` there (the `function name { … }`
+/// spelling keeps zsh's local scope).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn in_ksh93_posix_function() -> bool {
+    ksh93_mode() && innermost_function_is_keyword_spelled() == Some(false)
+}
+
+/// `Some(true)` when the innermost running function was defined with the
+/// `function` keyword, `Some(false)` for `name()`, `None` outside a function.
+fn innermost_function_is_keyword_spelled() -> Option<bool> {
     let top = crate::ported::modules::parameter::FUNCSTACK
         .lock()
         .ok()
@@ -2367,7 +2398,7 @@ pub fn in_ksh93_keyword_function() -> bool {
                 .filter(|f| f.tp == crate::ported::zsh_h::FS_FUNC)
                 .map(|f| f.name.clone())
         });
-    top.is_some_and(|name| {
+    top.map(|name| {
         KEYWORD_FUNCS
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -2454,4 +2485,168 @@ pub fn korn_subscript_blank(brct: i32, incmdpos: bool, lexbuf: &str) -> bool {
     name_len > 0
         && !lexbuf.starts_with(|c: char| c.is_ascii_digit())
         && lexbuf[name_len..].starts_with(crate::ported::zsh_h::Inbrack)
+}
+
+/// ksh93 `printf %f/%e/%g` rounds an exactly-representable tie away from zero
+/// (`printf '%.0f' 0.5 2.5` -> `1 3`, `%.1f 0.25` -> `0.3`), where libc and
+/// Rust round the tie to even. Nudge such a tie one ulp away from zero so the
+/// ordinary formatter rounds it up; every non-tie and every other mode is
+/// returned unchanged. `prec` is the directive's precision (`None` = default).
+pub fn ksh93_round_ties_away(n: f64, conv: char, prec: Option<usize>) -> f64 {
+    if !ksh93_mode() || n == 0.0 || !n.is_finite() {
+        return n;
+    }
+    let sci = matches!(conv, 'e' | 'E' | 'g' | 'G');
+    let p = match conv {
+        'g' | 'G' => prec.unwrap_or(6).max(1) - 1,
+        _ => prec.unwrap_or(6),
+    };
+    // Exact decimal expansion with enough extra digits to expose any non-tie.
+    let exact = if sci { format!("{:.*e}", p + 40, n) } else { format!("{:.*}", p + 40, n) };
+    let mantissa = exact.split('e').next().unwrap_or("");
+    let frac = mantissa.split_once('.').map_or("", |(_, f)| f);
+    let is_tie = frac.as_bytes().get(p) == Some(&b'5') && frac[p + 1..].bytes().all(|b| b == b'0');
+    if is_tie { f64::from_bits(n.to_bits() + 1) } else { n }
+}
+
+/// Index of a single-element subscript assignment `a[KEY]=v` for the sparse
+/// side-table: a plain number, or (Korn/bash arithmetic subscript) a
+/// side-effect-free expression such as `1+1` or a variable name. ksh93 and
+/// mksh keep `a[1+1]=x` sparse (`${!a[@]}` -> `2`), same as `a[2]=x`.
+/// Expressions with `++`/`--`/`=`/`,`/`?` or any other operator are not
+/// evaluated here (a second evaluation would repeat the side effect), and a
+/// negative result has no table slot.
+pub fn sparse_subscript_index(key: &str) -> Option<usize> {
+    let key = key.trim();
+    if let Ok(i) = key.parse::<usize>() {
+        return Some(i);
+    }
+    let pure = !key.is_empty()
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || " _+-*/%()".contains(c))
+        && !key.contains("++")
+        && !key.contains("--");
+    if !pure {
+        return None;
+    }
+    let v = crate::ported::math::mathevali(key).ok()?;
+    usize::try_from(v).ok()
+}
+
+/// True for the body of a ksh93 stepped CHARACTER range `{a..e..2}`: two
+/// single-character endpoints and a signed integer step. zsh's `hasbraces`
+/// (Src/glob.c:2042) only accepts a stepped range when the endpoints are
+/// numeric, but ksh93 expands `{a..e..2}` -> `a c e`.
+pub fn ksh93_char_step_range(body: &str) -> bool {
+    if !ksh93_mode() {
+        return false;
+    }
+    let norm: String = body.chars().map(|c| if c == '\u{e19b}' { '-' } else { c }).collect();
+    let parts: Vec<&str> = norm.split("..").collect();
+    parts.len() == 3
+        && parts[..2].iter().all(|p| p.chars().count() == 1)
+        && parts[2].parse::<i64>().is_ok()
+}
+
+/// mksh's quoting for `typeset -p` values: bare when every character is
+/// alphanumeric, non-ASCII or one of `_-./:,+@%^!{}~`; otherwise POSIX
+/// single quotes (`'\''` for an embedded quote); control characters switch to
+/// the `$'..'` form. Measured against mksh R59 over the ASCII punctuation set.
+pub fn mksh_quote(v: &str) -> String {
+    if v.chars().any(|c| c.is_ascii_control()) {
+        let mut out = String::from("$'");
+        for c in v.chars() {
+            match c {
+                '\n' => out.push_str("\\n"),
+                '\t' => out.push_str("\\t"),
+                '\r' => out.push_str("\\r"),
+                '\'' => out.push_str("\\'"),
+                '\\' => out.push_str("\\\\"),
+                c if c.is_ascii_control() => out.push_str(&format!("\\{:03o}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('\'');
+        return out;
+    }
+    let bare = |c: char| !c.is_ascii() || c.is_ascii_alphanumeric() || "_-./:,+@%^!{}~".contains(c);
+    if !v.is_empty() && v.chars().all(bare) {
+        v.to_string()
+    } else {
+        format!("'{}'", v.replace('\'', "'\\''"))
+    }
+}
+
+/// Lines of mksh's `typeset -p NAME` for a SET scalar or indexed array.
+/// Attribute words come in mksh's fixed order `-i -x -r -t -L|-R -Z -l|-u`
+/// (width/base glued to `-L`/`-R`; a base-N integer shows its value as
+/// `N#digits` under a bare `-i`). Arrays print `set -A NAME` followed by one
+/// `typeset NAME[i]=v` per live element, holes skipped.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn pdksh_typeset_p(
+    name: &str,
+    flags: u32,
+    width: i32,
+    value: &str,
+    elems: Option<Vec<(usize, String)>>,
+) -> Vec<String> {
+    use crate::ported::zsh_h::{
+        PM_EXPORTED, PM_INTEGER, PM_LEFT, PM_LOWER, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED,
+        PM_UPPER,
+    };
+    if let Some(elems) = elems {
+        let mut lines = vec![format!("set -A {name}")];
+        lines.extend(elems.into_iter().map(|(i, v)| format!("typeset {name}[{i}]={}", mksh_quote(&v))));
+        return lines;
+    }
+    let mut attrs: Vec<String> = Vec::new();
+    for (flag, word) in [(PM_INTEGER, "-i"), (PM_EXPORTED, "-x"), (PM_READONLY, "-r"), (PM_TAGGED, "-t")] {
+        if flags & flag != 0 {
+            attrs.push(word.to_string());
+        }
+    }
+    if flags & PM_LEFT != 0 {
+        attrs.push(format!("-L{width}"));
+    }
+    if flags & (PM_RIGHT_B | PM_RIGHT_Z) != 0 {
+        attrs.push(format!("-R{width}"));
+    }
+    if flags & PM_RIGHT_Z != 0 {
+        attrs.push("-Z".to_string());
+    }
+    for (flag, word) in [(PM_LOWER, "-l"), (PM_UPPER, "-u")] {
+        if flags & flag != 0 {
+            attrs.push(word.to_string());
+        }
+    }
+    let head = if attrs.is_empty() { "typeset".to_string() } else { format!("typeset {}", attrs.join(" ")) };
+    let int_text = |s: &str| {
+        let (base, digits) = s.split_once('#').unwrap_or(("", s));
+        let digits_ok = |d: &str| !d.is_empty() && d.trim_start_matches('-').bytes().all(|b| b.is_ascii_alphanumeric());
+        digits_ok(digits) && (base.is_empty() || base.trim_start_matches('-').bytes().all(|b| b.is_ascii_digit()))
+    };
+    let shown = if flags & PM_INTEGER != 0 && int_text(value) { value.to_string() } else { mksh_quote(value) };
+    vec![format!("{head} {name}={shown}")]
+}
+
+/// mksh `${v@Q}`: the `typeset -p` quoting, except a value holding control
+/// characters is wrapped in `$'..'` with its bytes left RAW (mksh R59 does not
+/// escape them there: a tab stays a tab, a newline stays a newline).
+pub fn mksh_at_q(v: &str) -> String {
+    if v.chars().any(|c| c.is_ascii_control()) {
+        format!("$'{}'", v.replace('\'', "\\'"))
+    } else {
+        mksh_quote(v)
+    }
+}
+
+/// `$KSH_VERSION` of the emulated Korn shell: ksh93u+m 1.0.10 for `--ksh`,
+/// mksh R59 for the pdksh line (the reference binaries this mode is measured
+/// against).
+pub fn ksh_version_string() -> &'static str {
+    if pdksh_family() {
+        "@(#)MIRBSD KSH R59 2020/10/31"
+    } else {
+        "Version AJM 93u+m/1.0.10 2024-08-01"
+    }
 }
