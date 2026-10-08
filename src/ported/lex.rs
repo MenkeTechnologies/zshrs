@@ -1593,8 +1593,10 @@ fn gettok() -> lextok {
                     }
                     DSEMI
                 }
-                Some('&') => SEMIAMP,
-                Some('|') => SEMIBAR,
+                // !!! DASH-STRICT GATE (no C counterpart) !!! `;&` / `;|` are zsh/ksh/bash
+                // case terminators; dash lexes `;` then a stray `&` / `|` (syntax error).
+                Some('&') if !crate::dash_mode::dash_strict() => SEMIAMP,
+                Some('|') if !crate::dash_mode::dash_strict() => SEMIBAR,
                 _ => {
                     if let Some(d) = d {
                         hungetc(d);

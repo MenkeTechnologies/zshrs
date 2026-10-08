@@ -877,7 +877,15 @@ static GETOPTS_INTERNAL: AtomicI32 = AtomicI32::new(-1);
 /// next call. Outside the drop-in modes it returns `zoptind` untouched and
 /// records nothing.
 pub fn getopts_optind_report(zoptind: i32, optcind: i32, lenstr: i32) -> i32 {
-    if !posix_faithful() || optcind == 0 {
+    if !posix_faithful() {
+        return zoptind;
+    }
+    if optcind == 0 {
+        // Argument boundary: the value shown IS the internal index. Record the
+        // identity pair so a stale mid-cluster pair (`-abval`: a -> 2 from 1)
+        // cannot alias this value back onto the earlier index on the next call.
+        GETOPTS_REPORTED.store(zoptind, Ordering::Relaxed);
+        GETOPTS_INTERNAL.store(zoptind, Ordering::Relaxed);
         return zoptind;
     }
     let eager = dash_strict() || pdksh_family();

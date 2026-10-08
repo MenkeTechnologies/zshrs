@@ -5003,7 +5003,12 @@ pub fn fetchvalue<'a>(
                 // c:2290
                 return Some(v); // c:2292
             }
-        } else if (scanflags & SCANPM_ASSIGNING as i32) == 0 && v.scanflags != 0 && isset(KSHARRAYS)
+        } else if (scanflags & SCANPM_ASSIGNING as i32) == 0
+            && v.scanflags != 0
+            // c:2288 `itype_end(t, INAMESPC, 1) != t` — the clamp needs an identifier
+            // name; `$@` / `$*` are not one, so `"${*:-x}"` keeps every word.
+            && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+            && isset(KSHARRAYS)
         {
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;

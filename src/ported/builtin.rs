@@ -400,6 +400,11 @@ pub fn execbuiltin(
         // c:296
         let optstr_local = os.clone();
         let mut optstr_bytes: Vec<u8> = optstr_local.into_bytes();
+        // !!! DASH-STRICT GATE (no C counterpart) !!! dash's `echo` recognises only
+        // `-n`; `-e` / `-E` (and clusters like `-ne`) are printed as text.
+        if crate::dash_mode::dash_strict() && name == "echo" {
+            optstr_bytes = b"n".to_vec();
+        }
         let mut skipinvalid = (flags & BINF_SKIPINVALID as i32) != 0;
         // c:297 — `char *arg = *argv;`
         loop {
@@ -1877,7 +1882,8 @@ pub fn bin_cd(
         Some(p) => p,
         None => {
             unqueue_signals();
-            return 1;
+            // !!! DASH-FAMILY GATE !!! dash's failed `cd` is a `sh_error`: status 2.
+            return crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
         }
     };
 
@@ -11544,7 +11550,8 @@ pub fn bin_whence(
             // when informed != 0 (inverted). Fix: explicit `informed == 0`.
             if informed == 0 && (wd || v || csh) {
                 // c:4166
-                println!("{}{}", arg, if wd { ": none" } else { " not found" }); // c:4168-4169
+                // dash: `NAME: not found` (see the end-of-function status note).
+                println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4168-4169
                 returnval = 1; // c:4170
             }
             continue;
@@ -11624,12 +11631,15 @@ pub fn bin_whence(
         // c:4201-4205 — not found at all.
         if v || csh || wd {
             // c:4202
-            println!("{}{}", arg, if wd { ": none" } else { " not found" }); // c:4203
+            println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4203
         }
         returnval = 1; // c:4204
     }
     unqueue_signals();
-    returnval | (informed == 0) as i32 // c:4209
+    let status = returnval | (informed == 0) as i32; // c:4209
+    // !!! DASH-STRICT GATE (no C counterpart) !!! dash's `type` / `command -v`
+    // / `command -V` answer 127 (not zsh's 1) when a name is not found.
+    if crate::dash_mode::dash_strict() && status != 0 { 127 } else { status }
 }
 
 /// Port of `bin_hash()` from `Src/builtin.c:4234`.
@@ -17772,6 +17782,18 @@ pub fn bin_trap(
             // canonical sigs[] name (C flags it ZSIG_ALIAS). The only
             // unconditional alt_sigs entry is `{ "ERR", SIGZERR }`, so
             // `trap … ERR; trap` must print `… ERR`, not `… ZERR`. The
+        // !!! DASH-STRICT GATE (no C counterpart) !!! dash's trap table is the
+        // real signals plus EXIT/0: the zsh pseudo-signals ERR/ZERR/DEBUG and the
+        // `SIG`-prefixed spellings are "bad trap" (status 1, rest of the list skipped).
+        if crate::dash_mode::dash_strict()
+            && (sig == crate::ported::signals_h::SIGZERR
+                || sig == crate::ported::signals_h::SIGDEBUG
+                || sigarg.to_ascii_uppercase().starts_with("SIG"))
+        {
+            zwarnnam(name, &format!("{}: bad trap", sigarg));
+            trap_install_error = 1;
+            break;
+        }
             // Rust port stores traps by name string; preserve the alias
             // the user typed as the key. The dotrap dispatch already
             // resolves SIGZERR through both "ZERR" and "ERR"

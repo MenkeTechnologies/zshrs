@@ -9426,6 +9426,10 @@ pub fn paramsubst(
                 && !was_at_star_splat
                 && !subexp_not_fetched_c2764 // c:2764 — fetchvalue never ran
         };
+                    // c:2288 `itype_end(t, INAMESPC, 1) != t` — `$@` / `$*` are not
+                    // identifier names, so the clamp never applies to them.
+                    && var_name != "@"
+                    && var_name != "*"
         let arrays_get = |name: &str| -> Option<Vec<String>> {
             let clamp = ksh_bare_ref_c2286(name);
             match crate::ported::subst::arrays_get(name) {
@@ -13972,6 +13976,11 @@ pub fn paramsubst(
             // otherwise. Its pairs are served by PARTAB (`magic_keys`), which
             // the test above excludes.
             let ksh_special_hash_len = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                // `$@`/`$*` take fetchvalue's positional arm (SCANPM_ISVAR_AT)
+                // before the c:2286 KSHARRAYS clamp that scalarizes named
+                // arrays: `${#@}` stays the argument count.
+                && var_name != "@"
+                && var_name != "*"
                 && !wantt
                 && subscript.is_none()
                 && !flagged_array_subscript
@@ -13994,7 +14003,17 @@ pub fn paramsubst(
             // The scalar length branch counts `raw_value_for_len`, which for a
             // bare array name is the space-joined array; under KSHARRAYS the
             // length source is element 1 alone, so override it.
-            let raw_value_for_len: String = if ksh_scalar_array && !ksh_special_hash_len {
+            // dash: `${#@}` / `${#*}` is the STRING LENGTH of the space-joined
+            // arguments (`set -- a b c; ${#@}` -> 5), not the argument count.
+            let dash_at_len = crate::dash_mode::dash_strict()
+                && (var_name == "@" || var_name == "*")
+                && subscript.is_none()
+                && !wantt
+                && !flagged_array_subscript;
+            let ksh_scalar_array = ksh_scalar_array || dash_at_len;
+            let raw_value_for_len: String = if dash_at_len {
+                arrays_get("@").unwrap_or_default().join(" ")
+            } else if ksh_scalar_array && !ksh_special_hash_len {
                 arrays_get(&var_name)
                     .and_then(|a| a.into_iter().next())
                     .unwrap_or_default()

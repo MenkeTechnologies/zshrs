@@ -453,6 +453,15 @@ const PORTABLE_CORPUS: &[&str] = &[
     "v='x y z'; w='y z'; printf '[%s]' \"${v%$w}\"",            // spaced suffix pattern → [x ]
     "v='hello world'; w='hello world'; printf '[%s]' \"${v#$w}\"", // whole-value pattern → []
     "p='/a b/c'; printf '[%s]' \"${p##*/}\"",                   // spaced path basename → [c]
+    // getopts: an option with an argument glued onto a cluster (`-abval`) must
+    // advance past the whole word (dash-family OPTIND bias looped forever).
+    "set -- -abval x; while getopts ab: o; do printf '%s:%s\\n' \"$o\" \"$OPTARG\"; done", // cluster + glued optarg
+    "set -- -ab -c; while getopts abc o; do printf '%s' \"$o\"; done; echo",              // cluster then separate flag
+    // Quoted "${*:-w}" joins the positionals on IFS[0]; under KSH_ARRAYS (sh/ksh/bash
+    // emulation) the bare-array clamp must not apply to `$*` (c:Src/params.c:2288).
+    "set -- a b; printf '[%s]' \"${*:-x}\"; echo",                // → [a b]
+    "set -- a b; printf '[%s]' \"${*:+x}\" \"${*-y}\"; echo",     // → [x][a b]
+    "set --; printf '[%s]' \"${*:-x}\"; echo",                    // → [x]
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,

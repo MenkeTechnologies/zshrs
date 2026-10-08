@@ -2367,7 +2367,10 @@ pub(crate) fn zzlex() -> i32 {
 
         match c {
             '+' => {
-                if peek() == Some('+') {
+                // !!! DASH-STRICT GATE (no C counterpart) !!! dash has no `++` / `--`
+                // operators: `$((x++))` errors ("expecting primary") and `$((++x))`
+                // is `+(+x)`, so the two signs lex separately.
+                if peek() == Some('+') && !crate::dash_mode::dash_strict() {
                     advance();
                     return if m_unary() { PREPLUS } else { POSTPLUS };
                 }
@@ -2379,7 +2382,7 @@ pub(crate) fn zzlex() -> i32 {
             }
 
             '-' => {
-                if peek() == Some('-') {
+                if peek() == Some('-') && !crate::dash_mode::dash_strict() {
                     advance();
                     return if m_unary() { PREMINUS } else { POSTMINUS };
                 }

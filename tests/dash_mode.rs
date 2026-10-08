@@ -509,3 +509,46 @@ fn dash_mode_help_lists_flag() {
         "--help missing --dash:\n{stdout}"
     );
 }
+
+/// dash-specific POSIX behaviours that the portable corpus cannot hold
+/// (bash/zsh/ksh differ). Expected values were measured on the real dash;
+/// `(stdout, exit_ok)`.
+#[test]
+fn dash_specific_posix_behaviours() {
+    let cases: &[(&str, &str, bool)] = &[
+        // `$@` splits on the default IFS after `unset IFS`.
+        ("unset IFS; set -- 'a b' c; printf '[%s]' $@; echo", "[a][b][c]\n", true),
+        // `${#@}` is the string length of the joined arguments, not their count.
+        ("set -- a b c; echo ${#@}", "5\n", true),
+        // `++` / `--` are not operators: postfix is a syntax error, prefix is unary.
+        ("x=5; echo $((x++))", "", false),
+        ("x=5; echo $((--x))", "5\n", true),
+        // A failed redirection (or `cd`) is a `sh_error`: status 2.
+        ("echo x > /nonexistent/f 2>/dev/null; echo rc=$?", "rc=2\n", true),
+        ("cat < /nonexistent 2>/dev/null; echo rc=$?", "rc=2\n", true),
+        ("cd /nonexistent 2>/dev/null; echo rc=$?", "rc=2\n", true),
+        // ERR is not a trap name; the failed `trap` does not run it.
+        ("trap 'echo ERR' ERR; false; echo after", "after\n", true),
+        // Not-found lookups answer 127 and `NAME: not found` on stdout.
+        ("command -v nx_zz_cmd; echo rc=$?", "rc=127\n", true),
+        ("type nx_zz_cmd; echo rc=$?", "nx_zz_cmd: not found\nrc=127\n", true),
+        // `;&` is not a case terminator.
+        ("case a in a) echo 1;& b) echo 2;; esac", "", false),
+        // echo recognises only `-n`; `-e` is text, escapes always interpret.
+        ("echo -e 'x\\ty'", "-e x\ty\n", true),
+        // getopts: option argument glued to a cluster.
+        (
+            "set -- -abval x; while getopts ab: o; do echo \"$o:$OPTARG\"; done; echo $OPTIND",
+            "a:\nb:val\n2\n",
+            true,
+        ),
+    ];
+    for (script, want_out, want_ok) in cases {
+        let out = Command::new(zshrs_bin())
+            .args(["--dash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), *want_out, "{script}");
+        assert_eq!(out.status.success(), *want_ok, "{script} exit");
+    }
+}

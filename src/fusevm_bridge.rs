@@ -1834,8 +1834,10 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         // the Redirect op and this call (BUILTIN_XTRACE_ARGS) copies the VM's
         // stale status back over LASTVAL, and the errflag abort that follows
         // exits with LASTVAL: `print hi <&""` exited 0 where zsh exits 1.
-        crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
-        return 1;
+        // !!! DASH-FAMILY GATE !!! dash reports a redirection failure as 2.
+        let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+        crate::ported::builtin::LASTVAL.store(st, std::sync::atomic::Ordering::Relaxed);
+        return st;
     }
     // c:Src/glob.c:1876-1880 NOMATCH path — when expand_glob() failed
     // on a no-match glob, zsh aborts the simple command after zerr()
@@ -2572,9 +2574,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // A NOMATCH / NULL_GLOB failure in the redirect target's
                     // filename generation belongs to the same child.
                     let _ = external_glob_failure_status();
-                    crate::ported::builtin::LASTVAL
-                        .store(1, std::sync::atomic::Ordering::Relaxed);
-                    return Value::Status(1);
+                    // dash: a failed redirection is status 2 (dash_mode::fatal_error_status).
+                    let st = if prefix_failed {
+                        1
+                    } else {
+                        crate::extensions::dash_mode::fatal_error_status().unwrap_or(1)
+                    };
+                    crate::ported::builtin::LASTVAL.store(st, std::sync::atomic::Ordering::Relaxed);
+                    return Value::Status(st);
                 }
                 // A failed argument glob fails in that forked child too.
                 if let Some(status) = external_glob_failure_status() {
@@ -8726,11 +8733,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // but `force_split` at c:3913 is `!ssub && (spbreak || spsep)`,
             // all clear, so neither branch runs).
             if !force_dq && crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
-                let ifs = crate::ported::params::getsparam("IFS").unwrap_or_default(); // c:1817
-                if !ifs.is_empty() {
-                    // c:3909 `sepjoin(aval, sep, 1)` with sep NULL → $IFS[1].
-                    let sep0: String = ifs.chars().next().map(String::from).unwrap_or_default();
-                    let joined = pp.join(&sep0);
+                // c:1817 — carry the Option: an UNSET `$IFS` (`!ifs`) joins on
+                // " " and splits at c:3919-3925 (`(!ifs && isarr < 0)`), unlike an
+                // EMPTY one. `join_c3914` encodes both arms.
+                let ifs_opt = with_executor(|exec| exec.scalar("IFS"));
+                if let JoinC3914::Joined(joined) = join_c3914(pp.clone(), ifs_opt.as_deref()) {
                     // c:3919 `sepsplit(val, spsep, 0, 1)` with spsep NULL →
                     // spacesplit (c:Src/utils.c:3711), then c:184-187. The
                     // IFS-whitespace edge fields are truly empty and c:186
@@ -12998,8 +13005,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let ef = crate::ported::utils::errflag.load(Ordering::Relaxed);
             return Value::Status(if ef != 0 { ef } else { crate::ported::exec::cmdoutval.load(Ordering::Relaxed) });
         }
-        // c:255 — `redir_err = lastval = 1`.
-        vm.last_status = 1;
+        // c:255 — `redir_err = lastval = 1` (dash: 2, see fatal_error_status).
+        let redir_st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+        vm.last_status = redir_st;
         if isset(crate::ported::zsh_h::POSIXBUILTINS) && !isset(crate::ported::zsh_h::INTERACTIVE) {
             // c:4379-4383 — non-interactive POSIX fatal: exit(1).
             // In-process equivalent: arm EXIT_PENDING/EXIT_VAL so the
@@ -13009,7 +13017,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
             crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
         }
-        Value::Status(1)
+        Value::Status(redir_st)
     });
     // c:Src/exec.c:3722-3724 — see the const's doc block. No args.
     // BUILTIN_XTRERR_COPY — c:Src/exec.c:3765-3773, emitted right before a
@@ -13106,7 +13114,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             f
         });
         if failed {
-            vm.last_status = 1;
+            vm.last_status = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
             Value::Int(1)
         } else {
             Value::Int(0)
@@ -21044,7 +21052,10 @@ impl fusevm::ShellHost for ZshrsHost {
             f
         });
         if failed {
-            with_executor(|exec| exec.set_last_status(1));
+            // !!! DASH-FAMILY GATE (dash_mode::fatal_error_status) !!! dash's
+            // redirection failure is `sh_error` too, so it reports 2, not 1.
+            let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+            with_executor(|exec| exec.set_last_status(st));
         }
     }
 
