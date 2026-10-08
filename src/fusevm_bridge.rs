@@ -604,6 +604,12 @@ thread_local! {
     /// !!! WARNING: RUST-ONLY CARRIER !!! C computes `text` in execcmd_exec,
     /// the function that also forks and waits.
     static JOB_TEXT: std::cell::RefCell<Option<fusevm::Value>> = const { std::cell::RefCell::new(None) };
+    /// zshrs-only: the alias the command about to dispatch was written as, with
+    /// the number of words in its body (BUILTIN_ALIAS_ORIGIN). `call_function`
+    /// takes it, so an `intercept` on the alias name can fire.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! No C counterpart.
+    static ALIAS_ORIGIN: std::cell::RefCell<Option<(String, usize, String)>> = const { std::cell::RefCell::new(None) };
     /// Counts sublists (bumped by BUILTIN_STMT_PROLOGUE_FAST). Together with
     /// REDIR_SCOPE_OPENED it tells a builtin whether the redirect scope on
     /// top of the stack belongs to its own command.
@@ -3848,6 +3854,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::exec_jobs::execpline_slot_close(frame, depth); // c:Src/jobs.c:1754, exec.c:1981
         }
         crate::ported::signals_h::child_unblock(); // c:Src/exec.c:2017
+        Value::Int(0)
+    });
+    // See BUILTIN_ALIAS_ORIGIN.
+    vm.register_builtin(BUILTIN_ALIAS_ORIGIN, |vm, _argc| {
+        let command = vm.pop().to_str();
+        let body_words = vm.pop().to_int().max(0) as usize;
+        let alias = vm.pop().to_str();
+        ALIAS_ORIGIN.with(|a| *a.borrow_mut() = Some((alias, body_words, command)));
         Value::Int(0)
     });
     // See BUILTIN_JOB_TEXT.
@@ -18090,6 +18104,27 @@ fn run_command_intercepts(name: &str, args: &[String]) -> Option<i32> {
     .map(|result| result.unwrap_or(127))
 }
 
+/// Advice for the ALIAS a command was written as. The alias is gone from the text
+/// by dispatch, so the compiler leaves it in [`ALIAS_ORIGIN`] together with the
+/// command it expanded to; a marker for any other command is stale and dropped.
+/// Advice sees only the arguments the user typed (those after the alias body),
+/// while `intercept_proceed` and `after` advice run the expanded command.
+fn intercept_alias_origin(name: &str, args: &[String]) -> Option<i32> {
+    let (alias, body_words, command) = ALIAS_ORIGIN.with(|a| a.borrow_mut().take())?;
+    // `alias ls="ls -G"`: the expanded command is advised under its own name.
+    if command != name || alias == name || with_executor(|exec| exec.intercepts.is_empty()) {
+        return None;
+    }
+    let typed = args.get(body_words.saturating_sub(1)..).unwrap_or(&[]);
+    let full_cmd = std::iter::once(alias.as_str())
+        .chain(typed.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let original = (name.to_string(), args.to_vec());
+    with_executor(|exec| exec.run_intercepts_with(&alias, &full_cmd, typed, Some(original)))
+        .map(|result| result.unwrap_or(127))
+}
+
 /// [`run_command_intercepts`] for a command word that is not an external: a
 /// shell function, a ported or opcode builtin, a native command. Anonymous
 /// functions are internal plumbing and never intercepted.
@@ -18107,6 +18142,9 @@ fn intercept_in_process_command(name: &str, args: &[String]) -> Option<i32> {
 /// where their advice runs; [`dispatch_builtin`] reaches the unadvised variant,
 /// or the advice would fire twice for one command.
 fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
+    if let Some(status) = intercept_alias_origin(name, args) {
+        return Some(status);
+    }
     if let Some(status) = run_command_intercepts(name, args) {
         return Some(status);
     }
@@ -18970,6 +19008,10 @@ pub const BUILTIN_EXEC_FORKED_SIMPLE: u16 = 741;
 /// the JOB_TEXT carrier the foreground wait reads when it reports a job that
 /// died of a signal (exec_jobs::foreground_job_report).
 pub const BUILTIN_JOB_TEXT: u16 = 744;
+/// zshrs-only. Emitted right before the dispatch of a simple command whose
+/// first word was an alias: stack `[alias_name, body_word_count, command_name]`, argc 3. Sets
+/// the ALIAS_ORIGIN carrier that `call_function` takes for `intercept ALIAS`.
+pub const BUILTIN_ALIAS_ORIGIN: u16 = 790;
 /// c:Src/exec.c:3755-3757 `globlist(args, 0)` over the WHOLE argument list,
 /// after prefork has expanded every word (c:3357-3359). Stack: the N
 /// expanded word values in source order, then two Int bitmasks: bit i of the
@@ -21457,6 +21499,10 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        // An alias is gone from the text by now; the compiler left its name behind.
+        if let Some(status) = intercept_alias_origin(name, &args) {
+            return Some(status);
+        }
         // AOP intercepts (zshrs extension, no C counterpart). An external is
         // intercepted where it spawns; every other command word lands here, so
         // a shell function, a ported builtin or a host-registered native command

@@ -452,6 +452,47 @@ pub(crate) fn outside_advice<T>(f: impl FnOnce() -> T) -> T {
     with_advice_flag(false, f)
 }
 
+/// The alias a command word came out of, with the word count of its body, for
+/// `intercept … ALIAS`. `hasalias` is `input_hasalias()` at the command word.
+/// The body is counted by blank-separated spans (no lexer re-entry from the
+/// parser), so a quoted space in an alias body miscounts the user's arguments.
+thread_local! {
+    /// The real command an alias-level advice stands in front of. While it is
+    /// set, `run_original_command` runs this instead of the (alias) name it is
+    /// handed, so `intercept_proceed` and `after` advice run the expanded command.
+    static ORIGINAL_OVERRIDE: std::cell::RefCell<Option<(String, Vec<String>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Installs [`ORIGINAL_OVERRIDE`] for one advice call and restores the previous
+/// value after it, so a command run from inside the advice never sees the outer
+/// alias's override.
+struct OriginalOverrideGuard(Option<(String, Vec<String>)>);
+
+impl OriginalOverrideGuard {
+    fn set(original: Option<(String, Vec<String>)>) -> Self {
+        Self(ORIGINAL_OVERRIDE.with(|slot| slot.replace(original)))
+    }
+}
+
+impl Drop for OriginalOverrideGuard {
+    fn drop(&mut self) {
+        ORIGINAL_OVERRIDE.with(|slot| *slot.borrow_mut() = self.0.take());
+    }
+}
+
+pub(crate) fn alias_origin(hasalias: Option<String>) -> Option<(String, usize)> {
+    let name = hasalias?;
+    let text = crate::ported::hashtable::aliastab_lock()
+        .read()
+        .ok()?
+        .get(name.as_str())?
+        .text
+        .clone();
+    let body_words = crate::ported::hist::histsplitwords(&text, false).len();
+    Some((name, body_words))
+}
+
 // BEGIN moved-from-exec-rs
 impl crate::ported::vm_helper::ShellExecutor {
     /// Check intercepts for a command. Returns Some(result) if an around
@@ -462,6 +503,21 @@ impl crate::ported::vm_helper::ShellExecutor {
         full_cmd: &str,
         args: &[String],
     ) -> Option<Result<i32, String>> {
+        self.run_intercepts_with(cmd_name, full_cmd, args, None)
+    }
+
+    /// [`run_intercepts`](Self::run_intercepts) for a command word that was an
+    /// ALIAS: advice matches the alias `cmd_name` and sees only the arguments the
+    /// user typed, while `original` (the expanded command) is what runs when the
+    /// advice proceeds or an `after` advice needs the command run.
+    pub(crate) fn run_intercepts_with(
+        &mut self,
+        cmd_name: &str,
+        full_cmd: &str,
+        args: &[String],
+        original: Option<(String, Vec<String>)>,
+    ) -> Option<Result<i32, String>> {
+        let _override_guard = OriginalOverrideGuard::set(original);
         if IN_ADVICE.with(|c| c.get()) {
             return None;
         }
@@ -589,6 +645,11 @@ impl crate::ported::vm_helper::ShellExecutor {
         cmd_name: &str,
         args: &[String],
     ) -> Result<i32, String> {
+        let (cmd_name, args) = match ORIGINAL_OVERRIDE.with(|o| o.borrow().clone()) {
+            Some((name, real_args)) => (name, real_args),
+            None => (cmd_name.to_string(), args.to_vec()),
+        };
+        let (cmd_name, args) = (cmd_name.as_str(), args.as_slice());
         // Function dispatch via the compiled pipeline (functions_compiled
         // first, falls back to legacy AST recompile if needed).
         if let Some(status) = self.dispatch_function_call(cmd_name, args) {

@@ -356,6 +356,7 @@ impl<'a> Walker<'a> {
                         words: vec![],
                         redirs: vec![],
                         typeset_reswd: false,
+                        via_alias: None,
                     }),
                     next: None,
                     lineno: 0,
@@ -405,6 +406,7 @@ impl<'a> Walker<'a> {
                         words: vec![],
                         redirs: leading_redirs,
                         typeset_reswd: false,
+                        via_alias: None,
                     });
                 }
             };
@@ -439,6 +441,7 @@ impl<'a> Walker<'a> {
                         words,
                         redirs: leading_redirs,
                         typeset_reswd: false,
+                        via_alias: None,
                     });
                 }
                 x if x == WC_TYPESET => {
@@ -466,6 +469,7 @@ impl<'a> Walker<'a> {
                         words,
                         redirs: leading_redirs,
                         typeset_reswd: true, // c:Src/parse.c:1931-1932 — WC_TYPESET
+                        via_alias: None,
                     });
                 }
                 _ => {
@@ -490,6 +494,7 @@ impl<'a> Walker<'a> {
                     words: vec![],
                     redirs: vec![],
                     typeset_reswd: false,
+                    via_alias: None,
                 });
             }
         };
@@ -518,6 +523,7 @@ impl<'a> Walker<'a> {
                     words: vec![],
                     redirs: vec![],
                     typeset_reswd: false,
+                    via_alias: None,
                 })
             }
             x if x == WC_TRY => ZshCommand::Try(self.decode_try(data)),
@@ -526,6 +532,7 @@ impl<'a> Walker<'a> {
                 words: vec![],
                 redirs: vec![],
                 typeset_reswd: false,
+                via_alias: None,
             }),
         }
     }
@@ -1001,6 +1008,7 @@ fn empty_sublist() -> ZshSublist {
                 words: vec![],
                 redirs: vec![],
                 typeset_reswd: false,
+                via_alias: None,
             }),
             next: None,
             lineno: 0,

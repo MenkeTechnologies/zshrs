@@ -715,6 +715,25 @@ impl ZshCompiler {
         );
         self.builder.emit(Op::JumpIfTrue(0), 0)
     }
+    /// zshrs-only: when the command word of `simple` came out of an alias, leave the
+    /// alias name, its body word count and the command it expanded to in the
+    /// ALIAS_ORIGIN carrier, for `intercept … ALIAS` (taken by `call_function` and
+    /// by the opcode builtins). Emitted right before the dispatch, after the words
+    /// are expanded, so nothing nested runs between the marker and the command.
+    fn emit_alias_origin(&mut self, simple: &ZshSimple, command: &str) {
+        let Some((alias, body_words)) = &simple.via_alias else {
+            return;
+        };
+        let alias_const = self.builder.add_constant(Value::str(alias.clone()));
+        self.builder.emit(Op::LoadConst(alias_const), 0);
+        self.builder.emit(Op::LoadInt(*body_words as i64), 0);
+        let command_const = self.builder.add_constant(Value::str(command.to_string()));
+        self.builder.emit(Op::LoadConst(command_const), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_ALIAS_ORIGIN, 3), 0);
+        self.builder.emit(Op::Pop, 0);
+    }
+
     fn emit_errexit_check(&mut self) {
         if self.errexit_suppress_depth > 0 {
             // Suppressed for errexit/ZERR — but a fatal errflag still ends
@@ -3115,6 +3134,7 @@ impl ZshCompiler {
                             words,
                             redirs: simple.redirs.clone(),
                             typeset_reswd: simple.typeset_reswd,
+                            via_alias: simple.via_alias.clone(),
                         };
                         return self.compile_simple(&hoisted);
                     }
@@ -3132,6 +3152,7 @@ impl ZshCompiler {
                 words: simple.words[1..].to_vec(),
                 redirs: simple.redirs.clone(),
                 typeset_reswd: simple.typeset_reswd,
+                via_alias: simple.via_alias.clone(),
             };
             // Wrap in setopt noglob ... unsetopt noglob via a runtime
             // option toggle. Push "noglob"+true via SET_OPT, recurse to
@@ -3656,6 +3677,7 @@ impl ZshCompiler {
                         words: simple.words[1..].to_vec(),
                         redirs: simple.redirs.clone(),
                         typeset_reswd: simple.typeset_reswd,
+                        via_alias: simple.via_alias.clone(),
                     };
                     self.compile_simple(&inner);
                     return;
@@ -4648,6 +4670,7 @@ impl ZshCompiler {
             self.builder
                 .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_MARK_CURSH, 0), 0);
             self.builder.emit(Op::Pop, 0);
+            self.emit_alias_origin(simple, &first_clean);
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             self.emit_print_exit_value(); // c:Src/exec.c:4308-4316
@@ -4785,6 +4808,7 @@ impl ZshCompiler {
             self.builder
                 .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_JOB_TEXT, 1), 0);
             self.builder.emit(Op::Pop, 0);
+            self.emit_alias_origin(simple, &cleaned_first);
             self.builder.emit(Op::CallFunction(name_idx, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             self.emit_print_exit_value(); // c:Src/exec.c:4308-4316

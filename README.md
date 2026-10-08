@@ -321,7 +321,7 @@ Bound while advice runs: `$INTERCEPT_NAME`, `$INTERCEPT_ARGS`,
 `$INTERCEPT_CMD`, plus `$INTERCEPT_MS`, `$INTERCEPT_US` and
 `$INTERCEPT_STATUS` for `after`.
 
-Advice fires for any command word: an external, a shell function, a builtin (`echo`, `cd`, `typeset`, …) or a native command the host binary registers (such as an in-process `git`). Intercepts are not consulted while advice itself runs, so advice may call the command it advises without recursing; the original command that `intercept_proceed` runs is an ordinary command again.
+Advice fires for any command word: an external, a shell function, a builtin (`echo`, `cd`, `typeset`, …), a native command the host binary registers (such as an in-process `git`) or an alias. An alias is advised under its own name, with `$INTERCEPT_ARGS` holding the arguments typed after it (not the alias body); `intercept_proceed` and `after` advice run the expanded command. An alias named like its expansion (`alias ls='ls -G'`) is advised once, as the expanded command. Intercepts are not consulted while advice itself runs, so advice may call the command it advises without recursing; the original command that `intercept_proceed` runs is an ordinary command again.
 
 ---
 

@@ -145,6 +145,12 @@ pub struct ZshSimple {
     /// every typeset-family command was treated as the reserved word.
     #[serde(default = "typeset_reswd_default")]
     pub typeset_reswd: bool,
+    /// zshrs-only (no C counterpart): the alias this command's FIRST word came out
+    /// of, with the number of words in that alias's body. The alias is gone from
+    /// the text by the time the command runs, so this is how `intercept … NAME`
+    /// advises an alias: the arguments after the body are the ones the user typed.
+    #[serde(default)]
+    pub via_alias: Option<(String, usize)>,
 }
 
 fn typeset_reswd_default() -> bool {
@@ -700,6 +706,7 @@ mod tests {
                 heredoc_idx: None,
             }],
             typeset_reswd: false,
+            via_alias: None,
         };
         let json = serde_json::to_string(&simple).expect("serialize");
         let back: ZshSimple = serde_json::from_str(&json).expect("deserialize");

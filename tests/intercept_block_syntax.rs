@@ -363,3 +363,74 @@ fn around_advice_wraps_a_builtin() {
     assert_eq!(rc, 0);
     assert_eq!(out, "pre\nmid\npost\n");
 }
+
+/// An alias is expanded while the line is LEXED, so by the time the command
+/// runs only its expansion is left. `eval` re-parses the line each time, which
+/// is what makes an alias defined a line earlier take effect inside `-c`.
+const ALIAS_ECHO: &str = "alias ee='/bin/echo X'\n";
+
+#[test]
+fn before_advice_fires_for_an_alias_with_the_typed_arguments() {
+    let (out, _, rc) = run(&format!(
+        "{ALIAS_ECHO}intercept before ee {{ print \"B[$INTERCEPT_NAME|$INTERCEPT_ARGS]\" }}\neval 'ee a b'"
+    ));
+    assert_eq!(rc, 0);
+    // INTERCEPT_ARGS is what the user typed after the alias, not the alias body.
+    assert_eq!(out, "B[ee|a b]\nX a b\n");
+}
+
+#[test]
+fn after_advice_on_an_alias_runs_the_expanded_command_first() {
+    let (out, _, rc) = run(&format!(
+        "{ALIAS_ECHO}intercept after ee {{ print \"A[$INTERCEPT_STATUS]\" }}\neval 'ee a'"
+    ));
+    assert_eq!(rc, 0);
+    assert_eq!(out, "X a\nA[0]\n");
+}
+
+#[test]
+fn around_advice_on_an_alias_proceeds_into_the_expansion() {
+    let (out, _, rc) = run(&format!(
+        "{ALIAS_ECHO}intercept around ee {{ print pre; intercept_proceed; print post }}\neval 'ee a'"
+    ));
+    assert_eq!(rc, 0);
+    assert_eq!(out, "pre\nX a\npost\n");
+}
+
+#[test]
+fn an_alias_named_like_its_command_is_advised_once() {
+    // `alias ls='ls -G'`: the alias and the command it expands to share a name.
+    let (out, _, rc) = run(&format!(
+        "alias {ECHO}='{ECHO} X'\nintercept before {ECHO} {{ print \"B[$INTERCEPT_ARGS]\" }}\neval '{ECHO} a'"
+    ));
+    assert_eq!(rc, 0);
+    assert_eq!(out, "B[X a]\nX a\n");
+}
+
+#[test]
+fn a_plain_command_is_not_mistaken_for_an_alias() {
+    // The alias marker is left by the compiler for one command only.
+    let (out, _, rc) = run(&format!(
+        "{ALIAS_ECHO}intercept before ee {{ print B }}\n{ECHO} plain\neval 'ee a'"
+    ));
+    assert_eq!(rc, 0);
+    assert_eq!(out, "plain\nB\nX a\n");
+}
+
+#[test]
+fn advice_fires_for_an_alias_of_a_builtin() {
+    let (out, _, rc) = run(
+        "alias pp='print -r --'\nintercept before pp { print \"B[$INTERCEPT_ARGS]\" }\neval 'pp hi'",
+    );
+    assert_eq!(rc, 0);
+    assert_eq!(out, "B[hi]\nhi\n");
+}
+
+#[test]
+fn advice_fires_for_an_alias_of_a_function() {
+    let (out, _, rc) = run(
+        "f() { print \"body $*\"; }\nalias ff='f one'\nintercept before ff { print \"B[$INTERCEPT_ARGS]\" }\neval 'ff two'",
+    );
+    assert_eq!(rc, 0);
+    assert_eq!(out, "B[two]\nbody one two\n");
+}
