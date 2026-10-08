@@ -4671,6 +4671,9 @@ pub fn bin_typeset(
     if nm0 == 'l' || OPT_PLUS(&ops, b'g') {
         // c:2799
         on |= PM_LOCAL; // c:2800
+    } else if crate::dash_mode::in_ksh93_posix_function() && !OPT_ISSET(&ops, b'g') {
+        // ksh93: `name() { typeset x; }` does not localize.
+        ops.ind[b'g' as usize] = 1;
     } else if !OPT_ISSET(&ops, b'g') {
         // c:2801
         if OPT_MINUS(&ops, b'x') {
@@ -4720,9 +4723,6 @@ pub fn bin_typeset(
                                          // separators, then split_whitespace collapsed consecutive empties
                                          // → key/value swap on `typeset -A h=( "" val )`. Bug #93 in
                                          // docs/BUGS.md.
-    } else if crate::dash_mode::in_ksh93_posix_function() && !OPT_ISSET(&ops, b'g') {
-        // ksh93: `name() { typeset x; }` does not localize.
-        ops.ind[b'g' as usize] = 1;
                                          //
                                          // Use `\u{1f}` (ASCII US — unit separator) as the rejoin
                                          // separator. The paren-init branch below splits on `\u{1f}` AND
