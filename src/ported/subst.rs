@@ -22713,14 +22713,13 @@ pub fn paramsubst(
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
-                // c:3937 — casemodify (utils.c) is mb-aware
-                // (MB_METACHARLENCONV). zshrs stores `$'\xNN'` escapes
-                // metafied (Meta + byte^32); demetafy to the logical-char
-                // form first so a metafied multibyte char case-maps
-                // correctly (é → É) instead of mangling its bytes.
-                // Identity for non-metafied values.
-                let s: String =
-                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
+                // c:3937 — casemodify takes the value as stored, metafied
+                // pairs included, and decodes it itself (mb_metacharlenconv,
+                // or the byte loop with MULTIBYTE unset). A lossy UTF-8
+                // pre-decode here turned every byte that is not valid UTF-8
+                // into U+FFFD before casemodify saw it: `unsetopt multibyte;
+                // v=$'\x80A'; print ${(L)v}` printed EF BF BD 61 where zsh
+                // prints 80 61.
                 // c:Src/subst.c:3960 — `val = casemodify(val, casmod)`. All
                 // three modes go through the ONE canonical helper (the same
                 // one `:l` / `:u` / `:c` history modifiers use), so the
@@ -22730,7 +22729,7 @@ pub fn paramsubst(
                 // the fold here with `str::to_lowercase` applied Unicode FULL
                 // case mapping, which widens: `${(U)straße}` answered
                 // `STRASSE` where zsh answers `STRAßE`.
-                crate::ported::hist::casemodify(s.as_str(), casmod) // c:3960
+                crate::ported::hist::casemodify(s, casmod) // c:3960
             }; // c:3937
                // c:Src/subst.c:2915 — `v->scanflags ? 1 : 0`. Any non-splat
                // subscript (single-slot `[N]`, range `[N,M]`) collapses the
