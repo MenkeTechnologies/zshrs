@@ -12713,7 +12713,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // libc::write directly on the raw fd (no Rust File ownership
         // so the splitter can close after EOF without racing main).
         let target_fds_for_thread = target_fds.clone();
-        let handle = std::thread::spawn(move || {
+        let handle = crate::signal_thread::spawn(move || {
             let mut r = read_end;
             let mut buf = [0u8; 8192];
             loop {
@@ -19419,7 +19419,7 @@ fn multios_read_concat(exec: &mut ShellExecutor, fd: i32, source_fds: Vec<i32>) 
         libc::fcntl(AsRawFd::as_raw_fd(&write_end), F_SETNOSIGPIPE, 1);
     }
     // Spawn the producer.
-    let handle = std::thread::spawn(move || {
+    let handle = crate::signal_thread::spawn(move || {
         // !!! WARNING: RUST-ONLY !!! C's multio concatenator is a forked
         // child (c:Src/exec.c:2472 `zfork`), so a reader that stops early
         // (`read x`) SIGPIPEs only that child. This producer is a thread of
@@ -22023,7 +22023,7 @@ impl ShellExecutor {
                                 off += w as usize;
                             }
                         };
-                        let handle = std::thread::spawn(move || {
+                        let handle = crate::signal_thread::spawn(move || {
                             let mut rd = read_end;
                             let mut buf = [0u8; 8192];
                             let mut pipe_pending: Vec<u8> = Vec::new();

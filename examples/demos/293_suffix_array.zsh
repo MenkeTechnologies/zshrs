@@ -13,8 +13,9 @@ build_suffix_array() {
     for ((i=1; i<=n; i++)); do
         tagged+=("${s[$i,$n]}|$i")
     done
-    # Sort by suffix (key is before |).
-    sorted_str=$(printf "%s\n" "${tagged[@]}" | sort)
+    # Sort by suffix: the key is the field before `|`, byte-ordered, so neither
+    # the tag nor the locale's collation (which may ignore `|`) decides.
+    sorted_str=$(printf "%s\n" "${tagged[@]}" | LC_ALL=C sort -t"|" -k1,1)
     SA=( ${(f)sorted_str} )
     # Extract indices.
     typeset -ga SA_IDX

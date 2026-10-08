@@ -130,7 +130,7 @@ mod inheritance {
             r#"
 umask 022
 touch /tmp/zshrs_umask_test_$$
-stat -f '%Lp' /tmp/zshrs_umask_test_$$ 2>/dev/null || stat -c '%a' /tmp/zshrs_umask_test_$$
+stat -c '%a' /tmp/zshrs_umask_test_$$ 2>/dev/null || stat -f '%Lp' /tmp/zshrs_umask_test_$$
 rm /tmp/zshrs_umask_test_$$
 "#,
         );
@@ -142,7 +142,7 @@ rm /tmp/zshrs_umask_test_$$
             r#"
 umask 077
 touch /tmp/zshrs_umask_test2_$$
-stat -f '%Lp' /tmp/zshrs_umask_test2_$$ 2>/dev/null || stat -c '%a' /tmp/zshrs_umask_test2_$$
+stat -c '%a' /tmp/zshrs_umask_test2_$$ 2>/dev/null || stat -f '%Lp' /tmp/zshrs_umask_test2_$$
 rm /tmp/zshrs_umask_test2_$$
 "#,
         );

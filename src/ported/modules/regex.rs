@@ -688,16 +688,15 @@ mod tests {
         assert_eq!(zcond_regex_match(&["xabcy", "^abc$"], ZREGEX_EXTENDED), 0,);
     }
 
-    /// POSIX ERE rejects an empty (sub)expression — zsh's regex
-    /// module bubbles the regcomp error and returns false. Verified
-    /// against `zsh -fc 'zmodload zsh/regex; [[ "" =~ "" ]]'` →
-    /// "failed to compile regex: empty (sub)expression" + exit 1.
-    /// Rust's regex crate accepts empty as "matches anywhere"; we
-    /// explicitly reject to match zsh.
+    /// An empty pattern is the host `regcomp(3)`'s call (c:89). Master
+    /// oracle 8cc5ead, `[[ abc =~ "" ]]`: macOS libc rejects it — "failed
+    /// to compile regex: empty (sub)expression", status 1 — while glibc
+    /// compiles it and it matches (status 0, Ubuntu's zsh agrees).
     #[test]
     fn regex_corpus_empty_pattern_rejected() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zcond_regex_match(&["", ""], ZREGEX_EXTENDED), 0);
+        let want = if cfg!(target_os = "linux") { 1 } else { 0 };
+        assert_eq!(zcond_regex_match(&["", ""], ZREGEX_EXTENDED), want);
     }
 
     /// `*` greedy quantifier matches zero+ chars.
@@ -818,11 +817,14 @@ mod tests {
         assert_eq!(zcond_regex_match(&["x"], ZREGEX_EXTENDED), 0);
     }
 
-    /// c:89 — empty pattern is rejected (POSIX REG_EMPTY equivalent).
+    /// c:89 — an empty pattern goes to the host `regcomp(3)`: rejected by
+    /// macOS libc (REG_EMPTY), compiled and matching under glibc. See
+    /// `regex_corpus_empty_pattern_rejected` for the oracle runs.
     #[test]
     fn zcond_regex_match_empty_pattern_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zcond_regex_match(&["hello", ""], ZREGEX_EXTENDED), 0);
+        let want = if cfg!(target_os = "linux") { 1 } else { 0 };
+        assert_eq!(zcond_regex_match(&["hello", ""], ZREGEX_EXTENDED), want);
     }
 
     /// c:68 — `zcond_regex_match` with bad id returns 0 (DPUTS path).

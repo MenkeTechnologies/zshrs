@@ -708,14 +708,19 @@ mod tests {
         assert!(r.is_whole_item_from_history);
     }
 
+    /// The case difference sits in the arguments, not the command word: a
+    /// suggestion is offered only when its command resolves
+    /// (`compute_rejects_invalid_command`), and `Echo` resolves on macOS's
+    /// case-insensitive filesystem but not on Linux, so a capitalised command
+    /// tested the host's filesystem rather than the icase fallback.
     #[test]
     fn compute_falls_back_to_icase() {
         let _g = lock();
         let ctx = OperationContext::empty();
-        let source = src(&["Echo one"]);
-        let r = compute_autosuggestion("echo", 4, &source, &ctx);
-        assert_eq!(r.text, "Echo one");
-        assert_eq!(r.icase_matched_codepoints, Some(4));
+        let source = src(&["echo ONE"]);
+        let r = compute_autosuggestion("echo o", 6, &source, &ctx);
+        assert_eq!(r.text, "echo ONE");
+        assert_eq!(r.icase_matched_codepoints, Some(6));
     }
 
     #[test]

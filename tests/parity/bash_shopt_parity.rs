@@ -23,16 +23,23 @@ fn zshrs_bin() -> PathBuf {
         .join("zshrs")
 }
 
-/// A bash new enough to have `shopt`/`$BASHOPTS` at all (bash 4+). macOS
-/// ships bash 3.2 at /bin/bash, which predates `globstar` and several rows
-/// in the table, so prefer the Homebrew build and fall back to `$PATH`.
+/// The bash `zshrs --bash` emulates: 5.3, whose `shopt` table (59 rows, with
+/// `array_expand_once` and `bash_source_fullpath`, names padded to 20) is the
+/// spec below. macOS ships 3.2 at /bin/bash and Ubuntu 24.04 ships 5.2, whose
+/// table lacks those rows and pads to 15 — comparing against either measures
+/// the version gap, not zshrs. Prefer the Homebrew build and fall back to
+/// `$PATH`; with no 5.3+ bash the parity checks are skipped.
 fn bash_path() -> Option<&'static str> {
     for p in ["/opt/homebrew/bin/bash", "/usr/local/bin/bash", "/bin/bash"] {
         if !Path::new(p).exists() {
             continue;
         }
         let ok = Command::new(p)
-            .args(["-c", "shopt -q globstar; echo ${BASHOPTS+y}"])
+            .args([
+                "-c",
+                "(( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 3) )) || exit; \
+                 shopt -q globstar; echo ${BASHOPTS+y}",
+            ])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "y")
             .unwrap_or(false);

@@ -2654,10 +2654,12 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
 pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {
     // c:848
     // c:848
-    // u9_wcwidth fallback lives in utils.rs (canonical port of
-    // Src/utils.c::zwcwidth). Use the unicode_width-backed
-    // implementation there.
-    let wcw = crate::ported::utils::zwcwidth(wc) as i32;
+    // c:857, c:863 — C reads `WCWIDTH(wc)` here, not `zwcwidth()`: the
+    // latter answers 1 whenever MULTIBYTE is unset and for every
+    // unprintable character (Src/utils.c:738-743), so under
+    // `unsetopt multibyte` each C1 byte of a UTF-8 value was charged a
+    // cell where zsh charges none (WCWIDTH -1 → 0 below).
+    let wcw = crate::ported::zsh_h::WCWIDTH(wc);
     match multi_width {
         // c:854
         // C: `case 0: return 1;`
@@ -2886,23 +2888,27 @@ pub fn dopadding(
         let chars: Vec<String> = units(s); // c:965
 
         if len > prenum {
-            // c:Src/subst.c:912-925 — left-pad truncation keeps the RIGHTMOST
-            // characters whose cumulative CELL width is ≤ prenum. `len`/`prenum`
-            // are CELL counts (under the (m) flag a wide char is 2 cells), so a
-            // char-index `skip = len - prenum` over-truncates: `${(ml:8:)}` on a
-            // 14-cell CJK string dropped all but the last char instead of keeping
-            // the last 8 cells. Walk from the right accumulating cell width.
-            let mut w = 0usize;
-            let mut keep_from = chars.len();
-            for i in (0..chars.len()).rev() {
-                let cw = width_of(&chars[i]);
-                if w + cw > prenum {
-                    break;
-                }
-                w += cw;
-                keep_from = i;
+            // c:Src/subst.c:1114-1139 — truncate on the left: skip `ls - prenum`
+            // charging each unit its WCPADWIDTH, then copy units while the
+            // `prenum` budget is positive. `ls` is MB_METASTRLEN2 — cells under
+            // (m) with MULTIBYTE on, but BYTES with it off (c:5662-5663) while
+            // the charge stays a width — so this is not "keep the rightmost
+            // prenum cells": `unsetopt multibyte; j=日本語テキスト;
+            // ${(ml:12::.:)j}` keeps the last 5 bytes in zsh (oracle 8cc5ead),
+            // where the right-to-left walk kept 12.
+            let mut f = (len - prenum) as isize; // c:1114, c:1122
+            let mut i = 0usize;
+            while f > 0 && i < chars.len() {
+                // c:1124-1130
+                f -= width_of(&chars[i]) as isize;
+                i += 1;
             }
-            result = chars[keep_from..].concat(); // c:912
+            let mut c = prenum as isize; // c:1132
+            while c > 0 && i < chars.len() {
+                result.push_str(&chars[i]); // c:1136-1137
+                c -= width_of(&chars[i]) as isize; // c:1138
+                i += 1;
+            }
         } else {
             // c:893
             // Pad on left
@@ -22713,14 +22719,13 @@ pub fn paramsubst(
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
-                // c:3937 — casemodify (utils.c) is mb-aware
-                // (MB_METACHARLENCONV). zshrs stores `$'\xNN'` escapes
-                // metafied (Meta + byte^32); demetafy to the logical-char
-                // form first so a metafied multibyte char case-maps
-                // correctly (é → É) instead of mangling its bytes.
-                // Identity for non-metafied values.
-                let s: String =
-                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
+                // c:3937 — casemodify takes the value as stored, metafied
+                // pairs included, and decodes it itself (mb_metacharlenconv,
+                // or the byte loop with MULTIBYTE unset). A lossy UTF-8
+                // pre-decode here turned every byte that is not valid UTF-8
+                // into U+FFFD before casemodify saw it: `unsetopt multibyte;
+                // v=$'\x80A'; print ${(L)v}` printed EF BF BD 61 where zsh
+                // prints 80 61.
                 // c:Src/subst.c:3960 — `val = casemodify(val, casmod)`. All
                 // three modes go through the ONE canonical helper (the same
                 // one `:l` / `:u` / `:c` history modifiers use), so the
@@ -22730,7 +22735,7 @@ pub fn paramsubst(
                 // the fold here with `str::to_lowercase` applied Unicode FULL
                 // case mapping, which widens: `${(U)straße}` answered
                 // `STRASSE` where zsh answers `STRAßE`.
-                crate::ported::hist::casemodify(s.as_str(), casmod) // c:3960
+                crate::ported::hist::casemodify(s, casmod) // c:3960
             }; // c:3937
                // c:Src/subst.c:2915 — `v->scanflags ? 1 : 0`. Any non-splat
                // subscript (single-slot `[N]`, range `[N,M]`) collapses the

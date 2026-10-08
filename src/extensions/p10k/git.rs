@@ -187,7 +187,7 @@ fn refresh_porcelain(repo: &Repo, wait: Option<Duration>) -> Option<GitStatus> {
     let work_dir = repo.work_dir.clone();
     let git_dir = repo.git_dir.clone();
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
+    crate::signal_thread::spawn(move || {
         let out = run_porcelain(&work_dir);
         if let Some(out) = out {
             let mut sub = GitStatus::default();

@@ -15761,12 +15761,16 @@ fn emulate_l_lists_the_target_emulations_options_without_applying_them() {
 #[test]
 fn mathfunc_jn_yn_take_an_integer_order() {
     let z = "zmodload zsh/mathfunc; ";
+    // yn() is the host libm's, and the two libms differ in the last bit for
+    // yn(0,1). Master oracle 8cc5ead prints 0.08825696421567697 on macOS and
+    // 0.088256964215676983 under glibc; the other values agree.
+    let yn01 = if cfg!(target_os = "linux") { "0.088256964215676983" } else { "0.08825696421567697" };
 
     for (expr, want) in [
         ("jn(0,0)", "1."),
         ("jn(1,0)", "0."),
         ("jn(2,1)", "0.11490348493190049"),
-        ("yn(0,1)", "0.08825696421567697"),
+        ("yn(0,1)", yn01),
         ("yn(1,1)", "-0.78121282130028868"),
     ] {
         let (_s, out, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( {expr} ))"));
@@ -16641,7 +16645,10 @@ fn savehistfile_buffers_its_writes_instead_of_one_syscall_per_entry() {
     assert_eq!(proc_out.status.code().unwrap_or(-1), 0, "stderr: {err}");
 
     let mut lines = stdout.lines();
-    assert_eq!(lines.next(), Some("ring=40000"), "stderr: {err}");
+    // The ring holds one entry fewer than the file: master oracle 8cc5ead
+    // prints ring=39999 (then written=40000) for this script on macOS and
+    // on Ubuntu, as zshrs does.
+    assert_eq!(lines.next(), Some("ring=39999"), "stderr: {err}");
     assert_eq!(
         lines.next().map(str::trim),
         Some("written=40000"),
@@ -17066,4 +17073,71 @@ print -r -- "[${A[(K)zzqaaa][(i)_C]}][${A[(i)zzq*][2]}][${A[(I)*][-1]}][${(k)A[(
 a=(Alpha beta Gamma delta); print -r -- "[${a[1,(r)Gamma][(I)beta]}][${a[1,(r)Gamma][(i)zz]}][${a[1,(r)Gamma][(I)zz]}]""#,
     );
     assert_eq!(output, "[2][][zzq*][*aaa][B]\n[2][4][0]\n", "got: {output:?}");
+}
+
+/// c:Src/init.c:1606/1644 — a startup file is read through `source()`, which
+/// raises `sourcelevel` around it, so a top-level `return` in it ends the FILE
+/// (bin_break's return arm, c:Src/builtin.c:5840-5841, only exits the shell
+/// when `sourcelevel` is zero). zshrs read startup files without the bump and
+/// exited at the `return` with status 0, before the `-c` command ran: Ubuntu's
+/// /etc/bash.bashrc opens with `[ -z "$PS1" ] && return`, which made
+/// `zshrs --bash -i -c CMD` print nothing at all on Linux. Master oracle
+/// 8cc5ead with this .zshenv prints `a`, `hi`, `rc`.
+#[test]
+fn return_at_top_level_of_a_startup_file_leaves_only_that_file() {
+    let dir = tempdir_for_test();
+    std::fs::write(format!("{dir}/.zshenv"), "echo a\nreturn\necho b\n").unwrap();
+    let out = Command::new(zshrs_bin())
+        .args(["-c", "echo hi; echo rc"])
+        .env("ZDOTDIR", &dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn zshrs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\nhi\nrc\n");
+    assert_eq!(out.status.code(), Some(0));
+}
+
+/// c:Src/lex.c:1510-1512 — in dquote_parse a backslash with nothing after it
+/// is added literally. parsestr's input carries a `\0` sentinel in the port,
+/// which equals endchar and turned the trailing `\` into `Bnull NUL`, so the
+/// backslash came out as a NUL byte everywhere parsestr runs: `${(e)…}`, a
+/// PROMPT_SUBST prompt (`print -P`), bash-mode `${PS1@P}`. Master oracle
+/// 8cc5ead prints each value below with its backslash.
+#[test]
+fn a_trailing_backslash_survives_parsestr() {
+    let (_s, out, _e) = run_zshrs_parity(
+        r#"x='ab \'; print -r -- "[${(e)x}]"; y='\'; print -r -- "[${(e)y}]"
+setopt promptsubst; print -rP -- 'p \'"#,
+    );
+    assert_eq!(out, "[ab \\]\n[\\]\np \\\n");
+}
+
+/// c:Src/subst.c:1114-1139 + c:848-866 — left-pad truncation skips
+/// `ls - prenum` (bytes when MULTIBYTE is off, c:5662-5663) charging each
+/// unit `wcpadwidth`, which is the raw `WCWIDTH`: a C1 byte is -1 → 0 cells,
+/// not `zwcwidth`'s 1. The port kept the rightmost `prenum` cells and charged
+/// every byte one cell. Master oracle 8cc5ead (UTF-8 locale) keeps the last
+/// five bytes of 日本語テキスト.
+#[test]
+fn m_left_padding_without_multibyte_skips_by_width() {
+    let (_s, out) = run_zshrs_parity_bytes(
+        "LC_ALL=en_US.UTF-8; j=日本語テキスト; unsetopt multibyte; print -rn -- \"${(ml:12::.:)j}\"",
+    );
+    assert_eq!(out, vec![0x82, 0xb9, 0xe3, 0x83, 0x88]);
+}
+
+/// c:Src/math.c:872 — `inf`/`nan` in any case is the IEEE constant in an
+/// arithmetic expression, also inside the `(( ))` command, whose compiled path
+/// loaded every identifier as a variable: `INF=999999; (( v == INF ))` was
+/// true. `$INF` is still the parameter, and sh emulation makes the name a
+/// variable. Master oracle 8cc5ead prints ne / eq2 / sh42.
+#[test]
+fn arith_command_treats_inf_as_the_constant() {
+    let (_s, out, _e) = run_zshrs_parity(
+        r#"INF=999999; v=999999; (( v == INF )) && print eq || print ne
+(( v == $INF )) && print eq2 || print ne2
+emulate sh -c 'inf=42; (( inf == 42 )) && echo sh42'"#,
+    );
+    assert_eq!(out, "ne\neq2\nsh42\n");
 }

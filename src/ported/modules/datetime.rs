@@ -678,10 +678,12 @@ mod tests {
 
     /// Src/utils.c:3491-3496 — `%N` is nanoseconds, ALWAYS nine digits
     /// (`sprintf(buf, "%09ld", nsec)`); there is no digit-count variant.
-    /// A `%<n>N` form is therefore not a zsh specifier: the digit falls
-    /// through to the literal copy and only the bare `N` follows, so
-    /// `%3N` renders as `3N` (verified byte-for-byte against zsh 5.9:
-    /// `strftime "[%N][%3N]" 1700000000 42` → `[000000042][3N]`).
+    /// A `%<n>N` form is therefore not a zsh specifier: ztrftime hands it to
+    /// the host `strftime(3)` (c:Src/utils.c:3398-3406), so the result is the
+    /// C library's. Master oracle 8cc5ead,
+    /// `strftime "[%N][%3N][%Q]" 1700000000 42`:
+    ///   macOS libc → `[000000042][3N][Q]`
+    ///   glibc      → `[000000042][%3N][%Q]` (Ubuntu's zsh 5.9 agrees)
     #[test]
     fn test_output_strftime_nanoseconds() {
         let _g = crate::test_util::global_state_lock();
@@ -693,10 +695,12 @@ mod tests {
         let r = output_strftime("strftime", &["%N", "1700000000", "42"], &ops, 0);
         assert_eq!(r, 0);
         assert_eq!(pt_get("OUT").as_deref(), Some("000000042"));
-        // Digit prefix is not part of the specifier — passes through.
+        // Digit prefix is not part of the specifier — the host strftime(3)
+        // renders the unknown conversion.
         let r = output_strftime("strftime", &["%3N", "1700000000", "123456789"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(pt_get("OUT").as_deref(), Some("3N"));
+        let want = if cfg!(target_os = "linux") { "%3N" } else { "3N" };
+        assert_eq!(pt_get("OUT").as_deref(), Some(want));
     }
 
     #[test]

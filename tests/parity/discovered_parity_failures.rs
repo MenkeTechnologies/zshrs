@@ -411,18 +411,23 @@ fn parity_process_subst_diff_different_inputs() {
     assert_parity(r#"diff <(echo a) <(echo b) > /dev/null; echo exit=$?"#);
 }
 
-/// Pin the path scheme: any matching `/dev/fd/N` form is acceptable
-/// (fd numbers vary), but `/tmp/zshrs_psub_*` (the old tempfile)
-/// must NOT appear.
+/// Pin the path scheme: the reference shell's fd directory with any fd
+/// number (numbers vary), never `/tmp/zshrs_psub_*` (the old tempfile).
+/// The directory is the build's PATH_DEV_FD — `/dev/fd` on macOS,
+/// `/proc/self/fd` on Linux (master oracle 8cc5ead prints
+/// `/proc/self/fd/11` there) — so it is read from the oracle, not fixed.
 #[test]
 fn parity_process_subst_path_uses_dev_fd_scheme() {
     if !zsh_available() {
         return;
     }
+    let z = run_zsh("echo <(true)");
+    let scheme = z.stdout.trim_end().trim_end_matches(|c: char| c.is_ascii_digit());
+    assert!(scheme.ends_with("fd/"), "unexpected oracle psub path: {:?}", z.stdout);
     let r = run_zshrs("echo <(true)");
     assert!(
-        r.stdout.starts_with("/dev/fd/"),
-        "expected /dev/fd/<N> path, got: {:?}",
+        r.stdout.starts_with(scheme),
+        "expected {scheme}<N> path, got: {:?}",
         r.stdout
     );
     assert!(

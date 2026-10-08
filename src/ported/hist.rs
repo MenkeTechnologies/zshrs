@@ -3399,6 +3399,10 @@ pub fn casemodify(s: &str, how: i32) -> String {
         // storing the low byte reproduces it rather than papering over it.
         let bytes = crate::ported::utils::unmetafy_str(s);
         let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+        // The result so far: byte runs between bare tokens, in the port's
+        // `String` form (valid text verbatim, other bytes as `Meta` pairs).
+        let mut result = String::with_capacity(bytes.len());
+        let mut pending_meta = false;
         // c:2276 — `while (*str)`. The stream is already demetafied, which is
         // C's c:2279-2281 `if (*str == Meta) { c = str[1] ^ 32; str += 2; }`.
         for &b in &bytes {
@@ -3448,8 +3452,41 @@ pub fn casemodify(s: &str, how: i32) -> String {
             // C stores the int into a `char`, so a mapping that answers wider
             // than a byte keeps only its low byte (`toupper(0xb5)` → 0x39c →
             // 0x9c); the mask reproduces that.
-            let _ = modified; // c:2315 `mod` gates only C's re-metafication
-            out.push((c & 0xff) as u8);
+            //
+            // An UNMODIFIED byte goes out bare (`else *ptr2++ = c`), even when
+            // it is an `imeta` data byte the input carried as `Meta` +
+            // `byte ^ 32`. In C's metafied buffer a bare `itok` byte (0x84..0xa1) IS
+            // a token (`Marker`, 0xa2, is `imeta` but no token and prints as
+            // itself), so `${(L)v}` on a value holding one hands later stages a
+            // token where the input held data (zsh: `unsetopt multibyte;
+            // v=一二三; print ${(L)v}` prints `一\xe4\xba$\xe4\xb8(`: the
+            // String and Outpar tokens untokenize). A bare `Meta` makes the
+            // next stored byte read as escaped. Both are kept so the result
+            // reads as zsh's does.
+            let byte = (c & 0xff) as u8;
+            if pending_meta {
+                // c:Src/utils.c unmetafy — `Meta` + y reads as y ^ 32. A bare
+                // token y is untokenized first (c:Src/exec.c untokenize, via
+                // `ztokens`), so the pair reads as that glyph ^ 32: zsh turns
+                // the data bytes 83 95 into 1e (`>` ^ 32), not b5.
+                pending_meta = false;
+                let glyph = (!modified && crate::ported::ztype_h::itok(byte))
+                    .then(|| crate::ported::glob::ZTOKENS.as_bytes().get((byte - 0x84) as usize))
+                    .flatten();
+                out.push(glyph.copied().unwrap_or(byte) ^ 32);
+            } else if !modified && byte == crate::ported::zsh_h::Meta {
+                pending_meta = true;
+            } else if let Some(tok) =
+                (!modified && crate::ported::ztype_h::itok(byte))
+                    .then(|| crate::token_char::token_char_from_byte(byte))
+                    .flatten()
+            {
+                result.push_str(&crate::script_bytes::decode_script_bytes(&out));
+                out.clear();
+                result.push(tok);
+            } else {
+                out.push(byte);
+            }
         }
         // c:2321-2322 — `*ptr2 = '\0'; return str2;`. Back to the port's
         // `String` form: well-formed text verbatim, anything else escaped as
@@ -3457,21 +3494,8 @@ pub fn casemodify(s: &str, how: i32) -> String {
         // This is a whole-buffer conversion, not a per-unit one, so it cannot
         // come from `mb_metacharlenconv` — C has the same split, building the
         // buffer byte-by-byte in the loop and returning it once here.
-        return match String::from_utf8(out.clone()) {
-            Ok(v) => v,
-            Err(_) => {
-                let mut v = String::with_capacity(2 * out.len());
-                for &b in &out {
-                    if b < 0x80 {
-                        v.push(b as char);
-                    } else {
-                        v.push(char::from(crate::ported::zsh_h::Meta));
-                        v.push(char::from(b ^ 32));
-                    }
-                }
-                v
-            }
-        };
+        result.push_str(&crate::script_bytes::decode_script_bytes(&out));
+        return result;
     }
     // c:2204-2275 — the wide-character loop.
     let bytes = crate::ported::utils::unmetafy_str(s);

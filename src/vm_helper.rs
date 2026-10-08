@@ -6918,7 +6918,7 @@ impl ShellExecutor {
         // in-process analog. It does only raw fd reads (no shell state /
         // thread-locals). EOF arrives once every write end closes — fd 1
         // restored below plus any forked child exiting.
-        let reader_handle = std::thread::spawn(move || {
+        let reader_handle = crate::signal_thread::spawn(move || {
             let mut buf: Vec<u8> = Vec::new();
             let mut chunk = [0u8; 65536];
             loop {

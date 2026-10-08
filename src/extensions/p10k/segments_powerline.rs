@@ -323,7 +323,7 @@ fn run_tool_budget(
     };
     let mut stdout = child.stdout.take()?;
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    crate::signal_thread::spawn(move || {
         let mut out = Vec::new();
         use std::io::Read;
         let _ = stdout.read_to_end(&mut out);
@@ -795,16 +795,24 @@ fn iface_counters() -> Vec<(String, u64, u64)> {
 /// the interface with the most total activity excluding well-known
 /// virtual names by alphabetic prefix (net.py:222-223 — lo/vmnet/sit).
 fn auto_interface(counters: &[(String, u64, u64)]) -> String {
-    // net.py:207-216 — default route: destination field all zeros.
-    if let Ok(routes) = std::fs::read_to_string("/proc/net/route") {
-        for line in routes.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 1 && !parts[1].is_empty() && parts[1].bytes().all(|b| b == b'0') {
-                return parts[0].to_string();
-            }
-        }
-    }
-    // net.py:217-228 — most rx+tx, `eth0` fallback.
+    std::fs::read_to_string("/proc/net/route")
+        .ok()
+        .and_then(|routes| default_route_interface(&routes))
+        .unwrap_or_else(|| most_active_interface(counters))
+}
+
+/// net.py:207-216 — the interface of the default route in `/proc/net/route`
+/// text: the first row whose destination field is all zeros.
+fn default_route_interface(routes: &str) -> Option<String> {
+    routes.lines().find_map(|line| {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        (parts.len() > 1 && !parts[1].is_empty() && parts[1].bytes().all(|b| b == b'0'))
+            .then(|| parts[0].to_string())
+    })
+}
+
+/// net.py:217-228 — the interface with the most rx+tx, `eth0` fallback.
+fn most_active_interface(counters: &[(String, u64, u64)]) -> String {
     let mut best = ("eth0".to_string(), None::<u64>);
     for (name, rx, tx) in counters {
         // net.py:222 — replace_num_pat = [a-zA-Z]+ prefix; no match → skip.
@@ -1156,8 +1164,11 @@ mod tests {
         assert_eq!(counter_delta(u32::MAX as u64 - 10, 20), 31); // 4GiB wrap
     }
 
-    /// net.py:202-228 — most-active fallback skips lo/vmnet/sit and
-    /// non-alphabetic-prefix names; eth0 default when nothing matches.
+    /// net.py:202-228 — the default route wins; without one the most-active
+    /// fallback skips lo/vmnet/sit and non-alphabetic-prefix names, with eth0
+    /// when nothing matches. Tested on its inputs: `auto_interface` itself
+    /// reads the host's `/proc/net/route`, which on a Linux runner names the
+    /// runner's own interface.
     #[test]
     fn auto_interface_selection() {
         let counters = vec![
@@ -1165,8 +1176,13 @@ mod tests {
             ("en0".to_string(), 5_000, 4_000),
             ("utun3".to_string(), 100, 100),
         ];
-        assert_eq!(auto_interface(&counters), "en0");
-        assert_eq!(auto_interface(&[]), "eth0"); // net.py:220 fallback
+        assert_eq!(most_active_interface(&counters), "en0");
+        assert_eq!(most_active_interface(&[]), "eth0"); // net.py:220 fallback
+        let routes = "Iface\tDestination\tGateway\n\
+                      wlan0\t0010A8C0\t00000000\n\
+                      eth1\t00000000\t0100A8C0\n";
+        assert_eq!(default_route_interface(routes).as_deref(), Some("eth1"));
+        assert_eq!(default_route_interface("Iface\tDestination\n"), None);
     }
 
     /// wttr.in response validation — real shapes pass, error pages don't.

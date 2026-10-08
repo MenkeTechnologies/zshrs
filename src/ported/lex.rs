@@ -3350,6 +3350,21 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                 '\\' => {
                     let next = hgetc();
                     match next {
+                        // c:1510-1512 — at end of input C's `hgetc` returns
+                        // `' '` with `lexstop` set, so the escape-list test
+                        // fails and the backslash is added literally; the
+                        // `if (err || lexstop) break;` after the switch then
+                        // stops before `add(c)`. The port ends parsestr's
+                        // input with a `\0` sentinel instead (parsestrnoerr),
+                        // which equals endchar `\0` and took the
+                        // `add(Bnull); add(c)` arm: a trailing `\` became a
+                        // NUL byte (`x='a\'; print ${(e)x}`, a PROMPT_SUBST
+                        // prompt ending in `\`). Add the backslash and hand
+                        // the sentinel back so the loop ends on it.
+                        Some('\0') if endchar == '\0' => {
+                            add('\\');
+                            hungetc('\0');
+                        }
                         Some('\n') => {
                             // c:1515 — `else if (sub || unset(CSHJUNKIEQUOTES)
                             // || endchar != '"') continue;` — under

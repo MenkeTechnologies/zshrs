@@ -345,6 +345,9 @@ pub mod startup_trace;
 /// `lowfd` submodule — keeps the shell's own descriptors out of the user's fd space.
 #[path = "extensions/lowfd.rs"]
 pub mod lowfd;
+/// `signal_thread` submodule — helper threads that never run the shell's signal handlers.
+#[path = "extensions/signal_thread.rs"]
+pub mod signal_thread;
 /// `zsh_ast` submodule.
 #[path = "extensions/zsh_ast.rs"]
 pub mod zsh_ast;
