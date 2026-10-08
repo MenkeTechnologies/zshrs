@@ -844,7 +844,8 @@ Three independent measurements, all re-runnable. The oracle is the zsh
 development tree the port follows (upstream master, the C source its `c:`
 citations point at), not a released zsh. `tests/parity/oracle.rs` resolves it
 once per run: `$ZSHRS_ORACLE_ZSH`, then `~/.cache/zshrs/zsh-oracle/bin/zsh`
-(built from `~/forkedRepos/zsh` by `scripts/build_zsh_oracle.sh`), then the
+(built from `~/forkedRepos/zsh` by `scripts/build_zsh_oracle.sh`, with its
+modules and function library), then the
 system zsh, so a machine without the build still runs the suite against a
 released zsh. CI builds the same tree at a pinned commit
 (`.github/actions/zsh-oracle`, cached per runner) for the Test and Emulation
