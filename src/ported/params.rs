@@ -15826,7 +15826,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             return;
         }
     }
-    if (f & PM_AUTOLOAD) != 0 {
+    if (f & PM_AUTOLOAD) != 0 || crate::vm_helper::module_param_is_autoload_stub(&hn.node.nam) {
         printflags |= PRINT_NAMEONLY;
     }
     // c:Src/params.c — the outer block runs whenever the attribute

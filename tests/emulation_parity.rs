@@ -693,6 +693,43 @@ const EXTENDED_CORPUS: &[&str] = &[
     "Z=1; export Z; env | grep -c '^Z='",
 ];
 
+/// zsh-only corpus — zsh constructs with no equivalent in the other shells, so
+/// they run ONLY against the real zsh (`--zsh` vs zsh). Each probe was a
+/// measured `--zsh` divergence.
+const ZSH_ONLY_CORPUS: &[&str] = &[
+    // The command-name word is globbed in the shell (Src/exec.c:3350-3354,
+    // before any fork), so a NOMATCH / bad pattern there ends the list.
+    "print a; nope* x 2>/dev/null; print after",
+    "print a; [b c 2>/dev/null; print after",
+    "print a; h[b c]=2 foo 2>/dev/null; print after",
+    // CSH_NULL_GLOB drops the name silently; the next word becomes the command.
+    "setopt cshnullglob; nope* nosuchcmd_zz 2>/dev/null; print rc=$?",
+    // A command word starting with `%` is a job spec: `%1` runs `fg %1`.
+    "%1 2>/dev/null; print rc=$?",
+    // `%n` is the passwd name of the real uid (get_username), not $USER.
+    "USER=bogus_zz; LOGNAME=bogus_zz; print -P %n | grep -c bogus_zz",
+    // An unbraced `$name[@]` inside double quotes splices like the braced form.
+    "a=(a b); print -l \"x$a[@]y\"",
+    "a=(a b); print -l \"x$a[@]\" \"$a[@]y\"",
+    // Strict zero subscript: `s[0]` / `a[0,0]` are off the start of the index
+    // range, so the reference is unset (Src/params.c:2146-2171, subst.c:2806).
+    "s=hello; print \"[${s[0]-x}]\" \"[${+s[0]}]\" \"[${s[0,0]-x}]\" \"[${+s[0,0]}]\"",
+    "a=(a b); print \"[${a[0,0]-x}]\" \"[${+a[0,0]}]\" \"[${a[0]-x}]\"",
+    // A forward `(r)` miss on a scalar is a set, empty substring; `(R)` is unset.
+    "s=ab; print \"[${s[(r)z]-x}]\" \"[${+s[(r)z]}]\" \"[${s[(R)z]-x}]\" \"[${+s[(R)z]}]\"",
+    // `typeset NAME` on an assoc quotes the key like `typeset -p` does.
+    "typeset -A h; h=('k 1' 'v 1' k2 v2); typeset h",
+    // A zsh/parameter table nothing has loaded is shown by name only.
+    "typeset aliases; typeset -m 'comm*'",
+    // `-pcre-match` always speaks PCRE (`\\d` is a digit class), whatever
+    // REMATCHPCRE says; that option only picks the engine for `=~`.
+    "zmodload zsh/pcre 2>/dev/null; [[ a1 -pcre-match '\\d' ]]; echo $?; [[ a1 -pcre-match '\\D' ]]; echo $?",
+    // zpty diagnostics go through zwarnnam (`zsh:zpty:N: msg`).
+    "zmodload zsh/zpty 2>/dev/null; zpty nonesuch 2>&1; echo rc=$?",
+    // `zstyle -L [context [style]]` takes at most two arguments.
+    "zstyle ':a:b' x 1; zstyle -L ':a:b' x y 2>&1; echo rc=$?",
+];
+
 /// bash-only corpus — constructs where bash differs from the Korn shells and
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
@@ -2332,6 +2369,7 @@ fn emulation_parity_matrix() {
                 .iter()
                 .chain(if case.extended { EXTENDED_CORPUS } else { &[] })
                 .chain(if case.name == "bash" { BASH_ONLY_CORPUS } else { &[] })
+                .chain(if case.name == "zsh" { ZSH_ONLY_CORPUS } else { &[] })
                 .chain(if case.name == "zsh" { ZSH_BAD_OPTION_CORPUS } else { &[] })
                 .chain(if matches!(case.name, "bash" | "ksh") { BASH_KSH_CORPUS } else { &[] });
         for script in corpus {

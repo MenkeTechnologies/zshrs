@@ -34,7 +34,6 @@ pub(crate) mod prompt_tls {
     thread_local! {
         pub(super) static PWD: RefCell<String> = const { RefCell::new(String::new()) };
         pub(super) static HOME: RefCell<String> = const { RefCell::new(String::new()) };
-        pub(super) static USER: RefCell<String> = const { RefCell::new(String::new()) };
         pub(super) static HOST: RefCell<String> = const { RefCell::new(String::new()) };
         pub(super) static HOST_SHORT: RefCell<String> = const { RefCell::new(String::new()) };
         pub(super) static TTY: RefCell<String> = const { RefCell::new(String::new()) };
@@ -78,11 +77,6 @@ pub(crate) mod prompt_tls {
             })
             .unwrap_or_else(|| "/".to_string());
         let home = getsparam("HOME").unwrap_or_default();
-        let user = getsparam("USER")
-            .or_else(|| getsparam("LOGNAME"))
-            .or_else(|| env::var("USER").ok())
-            .or_else(|| env::var("LOGNAME").ok())
-            .unwrap_or_else(|| "user".to_string());
         let host = getsparam("HOST")
             .or_else(|| {
                 hostname::get()
@@ -97,7 +91,6 @@ pub(crate) mod prompt_tls {
             .unwrap_or(1);
         PWD.with(|c| *c.borrow_mut() = pwd);
         HOME.with(|c| *c.borrow_mut() = home);
-        USER.with(|c| *c.borrow_mut() = user);
         HOST.with(|c| *c.borrow_mut() = host);
         HOST_SHORT.with(|c| *c.borrow_mut() = host_short);
         TTY.with(|c| c.borrow_mut().clear());
@@ -1221,7 +1214,9 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 }
                 // c:540 — `%n` (username)
                 b'n' => {
-                    let u = prompt_tls::USER.with(|c| c.borrow().clone());
+                    // c:700-701 — `stradd(get_username())`: the passwd name of
+                    // the real uid, never $USER/$LOGNAME.
+                    let u = crate::ported::utils::get_username();
                     stradd(bv, &u);
                 }
                 // c:541-560 — `%M` (full hostname)
@@ -5947,29 +5942,15 @@ mod tests {
         assert_eq!(out, "c/d");
     }
 
-    /// `%n` emits the username (c:540).
+    /// `%n` emits `get_username()` (c:700-701), the passwd name of the real uid:
+    /// $USER must not influence it.
     #[test]
-    fn putpromptchar_n_emits_username() {
+    fn putpromptchar_n_emits_passwd_username_not_env() {
         let _g = crate::test_util::global_state_lock();
-        let saved = std::env::var("USER").ok();
-        unsafe {
-            std::env::set_var("USER", "alice");
-        }
-        // sync_from_globals reads USER from paramtab FIRST (prompt.rs:82),
-        // falling through to env only if paramtab is empty. Stamp
-        // paramtab too so the test isn't sensitive to whether a prior
-        // test populated USER.
         crate::ported::params::setsparam("USER", "alice");
         let out = expand_prompt("%n");
-        if let Some(u) = saved {
-            unsafe {
-                std::env::set_var("USER", &u);
-            }
-            crate::ported::params::setsparam("USER", &u);
-        } else {
-            crate::ported::params::unsetparam("USER");
-        }
-        assert_eq!(out, "alice");
+        crate::ported::params::unsetparam("USER");
+        assert_eq!(out, crate::ported::utils::get_username());
     }
 
     /// `%M` emits the full hostname (c:541-548).
@@ -6117,23 +6098,15 @@ mod tests {
         assert_eq!(expand_prompt("%(#.root.user)"), "user");
     }
 
-    /// Plain chars between escapes pass through unchanged.
+    /// Plain chars between escapes pass through unchanged; `%n` is the passwd
+    /// name of the real uid (get_username), whatever $USER says.
     #[test]
     fn putpromptchar_plain_text_between_escapes_preserved() {
         let _g = crate::test_util::global_state_lock();
-        let saved = std::env::var("USER").ok();
-        unsafe {
-            std::env::set_var("USER", "bob");
-        }
         crate::ported::params::setsparam("USER", "bob");
         let out = expand_prompt("user=%n done");
-        if let Some(u) = saved {
-            unsafe {
-                std::env::set_var("USER", &u);
-            }
-            crate::ported::params::setsparam("USER", &u);
-        }
-        assert_eq!(out, "user=bob done");
+        crate::ported::params::unsetparam("USER");
+        assert_eq!(out, format!("user={} done", crate::ported::utils::get_username()));
     }
 
     /// `%%` emits a literal `%` (c:894-896).

@@ -8768,6 +8768,13 @@ pub fn bin_typeset(
                     println!("{}", arg);
                     continue;
                 }
+                // c:Src/params.c:6286-6288 + Src/module.c:1218-1223 — a zsh/parameter
+                // table nothing has loaded yet is a PM_AUTOLOAD stub, which
+                // printparamnode shows by NAME only (`typeset aliases`).
+                if crate::vm_helper::module_param_is_autoload_stub(arg) {
+                    println!("{}", arg);
+                    continue;
+                }
                 // The paramtab entry for assoc/array shapes set via
                 // direct assignment (`a=(1 2 3)` / `h[k]=v`) doesn't
                 // always have PM_ARRAY/PM_HASHED set on flags — the
@@ -8797,7 +8804,11 @@ pub fn bin_typeset(
                             s.push(' ');
                         }
                         first = false;
-                        s.push_str(&format!("[{}]={}", k, crate::ported::utils::quotedzputs(v)));
+                        s.push_str(&format!(
+                            "[{}]={}",
+                            crate::ported::utils::quotedzputs(k), // c:Src/params.c:6301
+                            crate::ported::utils::quotedzputs(v)
+                        ));
                     }
                     s.push_str(" )");
                     println!("{}", s);

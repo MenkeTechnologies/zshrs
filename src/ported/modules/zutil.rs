@@ -1292,6 +1292,10 @@ pub fn bin_zstyle(
         Some(3)
     } else if OPT_ISSET(ops, b'q') {
         Some(2)
+    } else if OPT_ISSET(ops, b'L') {
+        // c:539-555 — `-L [context [style]]`: three or more args is
+        // "too many arguments".
+        Some(2)
     } else {
         None
     };

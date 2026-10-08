@@ -13446,9 +13446,35 @@ pub fn paramsubst(
                     // C's `rev` — k/K set it as well (c:1400/1405). Bug #1050.
                     .map(|flags| flags.contains(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K')))
                     .unwrap_or(false);
+            // c:Src/params.c:2146-2171 — a range whose bounds are BOTH literally 0
+            // is off the start of the index range: strict (no KSH_ZERO_SUBSCRIPT,
+            // no KSH_ARRAYS) it takes the VALFLAG_EMPTY arm, and c:Src/subst.c:2806
+            // then makes the whole reference UNSET (`${a[0,0]-x}` is `x`).
+            let zero_zero_range_c2146 = crate::subscript_escape::subscript_range_bounds(
+                sub,
+                &subscript_split,
+            )
+            .is_some_and(|(lo, hi)| {
+                lo.trim().parse::<i64>() == Ok(0) && hi.trim().parse::<i64>() == Ok(0)
+            }) && !isset(crate::ported::zsh_h::KSHARRAYS)
+                && !isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
+            // c:Src/params.c:1758-1760 — a forward `(r)` search that finds nothing
+            // returns past-the-end, not 0, so on a SCALAR it is a set-but-empty
+            // substring (`${+s[(r)z]}` is 1); `(R)` returns 0 and stays unset.
+            let scalar_forward_search_c1758 = is_flag_form
+                && vars_contains(&var_name)
+                && !arrays_contains(&var_name)
+                && !assoc_contains(&var_name)
+                && sub
+                    .trim_start()
+                    .trim_start_matches('(')
+                    .split(')')
+                    .next()
+                    .is_some_and(|flags| flags.contains('r') && !flags.contains('R'));
             used_subexp
                 || (is_flag_form && !raw_value.is_empty())
                 || is_assoc_search
+                || scalar_forward_search_c1758
                 // Skip the whole-map `assoc_get` for magic assocs
                 // (functions/parameters/commands/aliases/…): materializing
                 // one of those enumerates the ENTIRE backing hash table (and
@@ -13483,7 +13509,7 @@ pub fn paramsubst(
                     .as_ref()
                     .map(|a| {
                         if is_at_or_star || is_slice {
-                            !a.is_empty()
+                            !a.is_empty() && !zero_zero_range_c2146
                         } else {
                             // c:Src/subst.c:2944-2954 — `vunset` is decided from
                             // `v->start`, the index getarg already produced by
@@ -13532,7 +13558,9 @@ pub fn paramsubst(
                 // For `@`/`*` on a scalar var, treat is_set per the
                 // scalar's own existence — `${str[@]:-x}` is legal
                 // and `str` may be the only declared form.
-                || ((is_at_or_star || is_slice) && vars_contains(&var_name))
+                || ((is_at_or_star || is_slice)
+                    && !zero_zero_range_c2146
+                    && vars_contains(&var_name))
                 // A NUMERIC subscript on a scalar indexes its characters, and
                 // the parameter itself is what set-ness refers to: zsh answers
                 // `${+s[N]}` with 1 for ANY N once `s` exists (`s=hello` gives
@@ -13547,6 +13575,10 @@ pub fn paramsubst(
                 // scalar subscript (`s=abc; ${s[i]:-x}`) parses as no integer
                 // but getarg resolved it to a real character index. Bug #1111.
                 || ((sub.parse::<i64>().is_ok() || resolved_sub_index.get().is_some())
+                    // c:Src/params.c:2146-2171 — strict `s[0]` is VALFLAG_EMPTY.
+                    && !(sub.trim().parse::<i64>() == Ok(0)
+                        && !isset(crate::ported::zsh_h::KSHARRAYS)
+                        && !isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT))
                     && vars_contains(&var_name)
                     && !arrays_contains(&var_name)
                     && !assoc_contains(&var_name))

@@ -2808,6 +2808,16 @@ impl ZshCompiler {
     }
 
     fn compile_simple_arms(&mut self, simple: &ZshSimple) {
+        // c:Src/exec.c:3019-3027 — a command word starting with `%` is a job
+        // spec: `pushnode(args, "fg")` so `%1` runs `fg %1`. The `&` (bg) and
+        // `&!` (disown) variants of that rewrite are not applied here. Only a literal token-free word is handled here;
+        // a `%?str` / expansion word reaches the same rewrite at runtime
+        // through execcmd_exec.
+        if simple.words.first().is_some_and(|w| w.starts_with('%') && !crate::ported::utils::has_token(w)) {
+            let mut job = simple.clone();
+            job.words.insert(0, "fg".to_string());
+            return self.compile_simple_arms(&job);
+        }
         // One-shot: only this chunk's top command is the forked one.
         let forked_simple_exec = std::mem::take(&mut self.forked_simple_exec);
         let forked_simple_tail = std::mem::take(&mut self.forked_simple_tail);
@@ -3254,8 +3264,29 @@ impl ZshCompiler {
                 0,
             );
             self.builder.emit(Op::Pop, 0);
-            for w in &simple.words {
+            // c:Src/exec.c:3350-3354 — the command-name word is globbed in the
+            // shell, BEFORE the fork that gives an external its own errflag, so
+            // a failure there ends the list. Mark where it happens.
+            let mut cmd_idx = 0;
+            while cmd_idx + 1 < simple.words.len()
+                && matches!(
+                    crate::lex::untokenize(&simple.words[cmd_idx]).as_str(),
+                    "command" | "builtin" | "nocorrect" | "exec" | "-"
+                )
+            {
+                cmd_idx += 1;
+            }
+            for (i, w) in simple.words.iter().enumerate() {
                 self.compile_word_str(w);
+                if i == cmd_idx {
+                    let more_words = i + 1 < simple.words.len();
+                    self.builder.emit(Op::LoadInt(more_words as i64), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_NAME_GLOB_MARK, 1),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                }
             }
             // c:Src/exec.c:3285-3304 → c:3720 — the pipe fds and then
             // the redirect scope open AFTER the word ops, so an
@@ -13732,10 +13763,13 @@ impl ZshCompiler {
             // `$match[1..N]`. zshrs's PCRE backend is the Rust
             // `regex` crate (RE2 engine) — backreferences and some
             // lookarounds aren't supported, but the common subset
-            // matches. Routes to the same Op::RegexMatch as
-            // `=~`/`-regex-match` because the magic-var population
-            // shape is identical.
-            "-pcre-match" => self.builder.emit(Op::RegexMatch, 0),
+            // matches. Always the PCRE engine, unlike `=~` whose engine
+            // follows REMATCHPCRE (c:Src/cond.c:113-119), so it has its
+            // own builtin rather than Op::RegexMatch.
+            "-pcre-match" => self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_PCRE_MATCH, 2),
+                0,
+            ),
             "<" => self.builder.emit(Op::StrLt, 0),
             ">" => self.builder.emit(Op::StrGt, 0),
             // c:Src/cond.c:415 — `-eq`/`-ne`/`-lt`/`-gt`/`-le`/`-ge`
@@ -15506,7 +15540,18 @@ fn is_splice_expansion(s: &str) -> bool {
             }
         })
         .collect();
-    let pq = normalized;
+    // An UNBRACED `$name[subscript]` is the same reference as `${name[subscript]}`
+    // (c:Src/subst.c:2800-2802 — only KSH_ARRAYS tells them apart), so
+    // `"x$a[@]y"` splices like `"x${a[@]}y"`. Rewrite it to the braced spelling
+    // for the shape tests below.
+    let pq = match normalized.strip_prefix('$') {
+        Some(rest)
+            if is_unbraced_ident_subscript(&normalized) && rest.ends_with(']') =>
+        {
+            format!("${{{rest}}}")
+        }
+        _ => normalized,
+    };
     // `$argv` / `${argv}` are the `*` parameter under another name
     // (c:Src/params.c:428-430, one IPDEF9 storage) — the positional read
     // canonicalises them to `*`, so they splice exactly as `$*` does.

@@ -1215,7 +1215,16 @@ pub fn bin_zpty(
         if status == 0 {
             print!("{}", output);
         } else {
-            eprint!("{}", output);
+            // The error arms above queue `"{nam}: msg\n"`; C emits each with
+            // `zwarnnam(nam, ...)` (c:Src/Modules/zpty.c:790-868), i.e. the
+            // `zsh:zpty:LINE: msg` shape plus the errflag/lineno bookkeeping.
+            let prefix = format!("{}: ", _nam);
+            for line in output.lines() {
+                match line.strip_prefix(prefix.as_str()) {
+                    Some(msg) => crate::ported::utils::zwarnnam(_nam, msg),
+                    None => eprintln!("{}", line),
+                }
+            }
         }
     }
     status

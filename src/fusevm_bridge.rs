@@ -1002,6 +1002,16 @@ fn settle_prefix_assign_exit(name: &str) {
     }
 }
 
+thread_local! {
+    /// Set by BUILTIN_CMD_NAME_GLOB_MARK: the command-name word failed to glob.
+    static CMD_NAME_GLOB_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Consume the command-name-glob-failed mark.
+fn take_cmd_name_glob_failed() -> bool {
+    CMD_NAME_GLOB_FAILED.with(|c| c.replace(false))
+}
+
 /// c:Src/exec.c:3719 + 3755-3763 — an external command is forked
 /// (execcmd_fork) BEFORE `globlist(args, 0)`, so a NOMATCH (or the
 /// CSH_NULL_GLOB `no match`, c:Src/subst.c:505-507) raised while globbing
@@ -1016,6 +1026,12 @@ fn external_glob_failure_status() -> Option<i32> {
         || consume_badcshglob();
     if !failed {
         return None;
+    }
+    if take_cmd_name_glob_failed() {
+        // c:Src/exec.c:3350-3354 + 3757-3760 — the name was globbed in the
+        // shell, so errflag stays set and the list ends.
+        with_executor(|exec| exec.set_last_status(1));
+        return Some(1);
     }
     crate::ported::utils::errflag.fetch_and(
         !crate::ported::zsh_h::ERRFLAG_ERROR,
@@ -3227,6 +3243,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(words_errflag_status());
         }
         GLOB_WORD_ERRFLAG.with(|c| c.set(false));
+        if (glob_failed || expansion_error) && take_cmd_name_glob_failed() {
+            with_executor(|exec| exec.set_last_status(1));
+            return Value::Status(1);
+        }
         if glob_failed || expansion_error {
             crate::ported::utils::errflag.fetch_and(
                 !crate::ported::zsh_h::ERRFLAG_ERROR,
@@ -13387,6 +13407,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // See BUILTIN_COND_PCRE_MATCH.
+    vm.register_builtin(BUILTIN_COND_PCRE_MATCH, |vm, _argc| {
+        let re = crate::lex::untokenize(&vm.pop().to_str());
+        let subject = crate::lex::untokenize(&vm.pop().to_str());
+        let hit = crate::ported::modules::pcre::cond_pcre_match(
+            &[subject, re],
+            crate::ported::modules::pcre::CPCRE_PLAIN,
+        ) != 0;
+        Value::Bool(hit)
+    });
+    // See BUILTIN_CMD_NAME_GLOB_MARK.
+    vm.register_builtin(BUILTIN_CMD_NAME_GLOB_MARK, |vm, _argc| {
+        let more_words = vm.pop().to_int() != 0;
+        // A NOMATCH / bad pattern zerrs (errflag set); a CSH_NULL_GLOB drop is
+        // silent and leaves the word list to carry on.
+        let failed = with_executor(|exec| exec.current_command_glob_failed.get())
+            && crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR
+                != 0;
+        // A CSH_NULL_GLOB drop of the name leaves the other words to the
+        // globlist at c:Src/exec.c:3757, which restarts the badcshglob count
+        // (c:Src/subst.c:498): the dropped name must not later read as
+        // "every glob of this command failed".
+        if !failed && more_words {
+            crate::ported::glob::BADCSHGLOB.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
+        CMD_NAME_GLOB_FAILED.with(|c| c.set(failed));
+        Value::Int(0)
+    });
     // See BUILTIN_MARK_CURSH.
     vm.register_builtin(BUILTIN_MARK_CURSH, |_vm, _argc| {
         crate::exec_jobs::mark_thisjob_cursh(true); // c:Src/exec.c:3674-3682
@@ -18485,6 +18534,16 @@ pub const BUILTIN_MARK_CURSH: u16 = 762;
 /// argc=1: the command word ("" when it is an expansion). Closed by
 /// BUILTIN_SEAL_INLINE_ENV. See PREFIX_ASSIGN_CMD.
 pub const BUILTIN_PREFIX_ASSIGNS_START: u16 = 763;
+/// Emitted right after the command-name word of a dynamic simple command is
+/// expanded. argc=1: Int, nonzero when more words follow. Pushes Int(0). Records whether globbing that word
+/// failed (c:Src/exec.c:3350-3354 zglobs the name in the shell, before the
+/// fork, so its errflag is not cleared like an argument glob failure is).
+/// Read by [`take_cmd_name_glob_failed`].
+pub const BUILTIN_CMD_NAME_GLOB_MARK: u16 = 764;
+/// `[[ s -pcre-match re ]]` (Src/Modules/pcre.c:506 `cond_pcre_match`). Stack:
+/// [lhs, rhs] -> Bool. Always the PCRE engine, whatever REMATCHPCRE says (that
+/// option only picks the engine for `=~`, c:Src/cond.c:113-119).
+pub const BUILTIN_COND_PCRE_MATCH: u16 = 765;
 /// `.` (dot) — alias of source/bin_dot but dispatches with the
 /// literal name "." so the diagnostic prefix matches zsh's
 /// (`zsh:.:1: …` vs source's `zsh:source:1: …`).
@@ -22624,6 +22683,10 @@ impl ShellExecutor {
         consume_tilde_globsubst_carrier();
         if self.current_command_glob_failed.get() {
             self.current_command_glob_failed.set(false);
+            if take_cmd_name_glob_failed() {
+                self.set_last_status(1);
+                return 1;
+            }
             crate::ported::utils::errflag.fetch_and(
                 !crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,
