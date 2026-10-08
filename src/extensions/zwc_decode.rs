@@ -864,6 +864,7 @@ impl<'a> Walker<'a> {
             names,
             body: Box::new(body),
             tracing: tracing_word != 0,
+            keyword_form: false,
             auto_call_args: None,
             body_source: None,
         }

@@ -289,6 +289,11 @@ pub struct ZshFuncDef {
     pub body: Box<ZshProgram>,
     /// `tracing` field.
     pub tracing: bool,
+    /// True for the `function name { … }` keyword spelling, false for the POSIX
+    /// `name() { … }` spelling. ksh93 treats the two differently (function-local
+    /// EXIT traps), so the spelling travels to registration.
+    #[serde(default)]
+    pub keyword_form: bool,
     /// Anonymous-function call args. `() { body } a b` parses as a
     /// FuncDef (auto-named) with `auto_call_args = Some(vec!["a", "b"])`.
     /// compile_funcdef registers the function then emits a Simple call

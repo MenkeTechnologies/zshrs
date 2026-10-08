@@ -3685,6 +3685,7 @@ impl ShellExecutor {
         // `pwd`/`oldpwd` globals (see the c:Src/init.c:1242-1259 block above).
         env::set_var("PWD", &pwd_val);
         env::set_var("OLDPWD", &oldpwd_val);
+        crate::dash_mode::set_oldpwd_global(&oldpwd_val); // c:1255-1259
         crate::ported::builtin::set_pwd_env();
         crate::startup_trace::mark("exec: set_pwd_env");
 

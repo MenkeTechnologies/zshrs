@@ -552,3 +552,57 @@ fn dash_specific_posix_behaviours() {
         assert_eq!(out.status.success(), *want_ok, "{script} exit");
     }
 }
+
+/// dash quirks that zsh's `emulate sh` does not have. Expected values were
+/// measured on the real dash; each case is also diffed against `/bin/dash`
+/// (or `/usr/bin/dash`) when present.
+///
+/// * a special-builtin name (or a non-identifier) is a `Bad function name`
+///   syntax error;
+/// * `exit`/`return` with a non-decimal argument abort the whole list
+///   (status 2) instead of evaluating it as arithmetic;
+/// * a bare `read` is `arg count` — there is no implicit REPLY;
+/// * `.` takes no positional arguments, so the caller's `$1…` stay visible;
+/// * a path with exactly two leading slashes keeps them (`CDPATH=/; cd tmp`).
+#[test]
+fn dash_only_quirks_match_dash() {
+    let sourced = std::env::temp_dir().join(format!("zshrs_dash_dot_{}.sh", std::process::id()));
+    std::fs::write(&sourced, "echo \"in:$1 $#\"\n").expect("write sourced file");
+    let dot = format!(
+        "set -- x y; . {} a b; echo done",
+        sourced.display()
+    );
+    let cases: Vec<(&str, &str, bool)> = vec![
+        ("exit() { :; }; echo ok", "", false),
+        ("foo-bar() { :; }; echo ok", "", false),
+        ("return abc; echo after", "", false),
+        ("f() { return abc; }; f; echo after", "", false),
+        ("exit abc; echo after", "", false),
+        ("exit -1; echo after", "", false),
+        ("exit 1+1; echo after", "", false),
+        ("(exit abc); echo sub $?", "sub 2\n", true),
+        ("echo hi | { read; echo \"[$REPLY]\"; }", "[]\n", true),
+        (&dot, "in:x 2\ndone\n", true),
+        ("CDPATH=/; cd tmp >/dev/null; echo $PWD", "//tmp\n", true),
+        ("cd //tmp; echo $PWD", "//tmp\n", true),
+        ("cd ///tmp; echo $PWD", "/tmp\n", true),
+    ];
+    let dash = ["/bin/dash", "/usr/bin/dash", "/opt/homebrew/bin/dash"]
+        .into_iter()
+        .find(|p| Path::new(p).exists());
+    for (script, want_out, want_ok) in &cases {
+        let (out, code) = run_dash_mode(script);
+        assert_eq!(out, *want_out, "{script}");
+        assert_eq!(code == 0, *want_ok, "{script} exit (got {code})");
+        if let Some(dash) = dash {
+            let d = Command::new(dash).args(["-c", script]).output().expect("dash spawn");
+            assert_eq!(
+                String::from_utf8_lossy(&d.stdout),
+                *want_out,
+                "pinned value no longer matches {dash}: {script}"
+            );
+            assert_eq!(d.status.success(), *want_ok, "{dash} exit: {script}");
+        }
+    }
+    let _ = std::fs::remove_file(&sourced);
+}

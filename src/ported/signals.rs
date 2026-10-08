@@ -1099,7 +1099,10 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
     if sig == SIGEXIT {
         // c:746 — `if (isset(POSIXTRAPS)) ...`. In POSIX mode SIGEXIT
         // is sticky and not tagged with the local-level shift.
-        let posix_traps = isset(optlookup("posixtraps")); // c:746
+        // !!! KSH93-ONLY (no C counterpart) !!! a `function name` keyword body scopes its
+        // own EXIT trap, so POSIX_TRAPS (shell-exit semantics) does not apply.
+        let posix_traps =
+            isset(optlookup("posixtraps")) && !crate::dash_mode::in_ksh93_keyword_function(); // c:746
         EXIT_TRAP_POSIX.store(posix_traps, Ordering::Relaxed);
         if !posix_traps {
             if let Ok(mut g) = sigtrapped.lock() {
@@ -1156,7 +1159,7 @@ pub fn removetrap(sig: i32) -> Option<crate::ported::zsh_h::shfunc> {
     // Note: `!trapped` is LOGICAL NOT (`trapped == 0`), not Rust's
     // bitwise `!i32`.
     let cond_local_or_exit = if sig == SIGEXIT {
-        !isset(POSIXTRAPS) // c:771 sig==SIGEXIT branch
+        !isset(POSIXTRAPS) || crate::dash_mode::in_ksh93_keyword_function() // c:771 sig==SIGEXIT branch
     } else {
         isset(LOCALTRAPS) // c:771 else branch
     };

@@ -3441,3 +3441,34 @@ fn ksh_zsh_style_rejects_printf_time_directive_like_zsh() {
     let bad = probe_mismatches(&["--ksh", "--zsh"], &zsh, &["-f"], "emulate ksh\n", &probes);
     assert!(bad.is_empty(), "--ksh --zsh diverged from zsh:\n{}", bad.join("\n"));
 }
+
+/// `cd -` and `~-` resolve through the shell's internal `oldpwd` in zsh
+/// (c:Src/builtin.c:909 `: oldpwd`, c:Src/subst.c:755), so assigning
+/// `OLDPWD=…` does not redirect them. dash, bash, ksh93 and mksh read the
+/// `$OLDPWD` variable itself, so the same assignment does. Both halves were
+/// measured on the real shells.
+#[test]
+fn cd_dash_oldpwd_source_follows_the_emulated_shell() {
+    let cd_minus = "cd /usr; cd /bin; OLDPWD=/etc; cd - >/dev/null; pwd";
+    let tilde_minus = "cd /usr; cd /bin; OLDPWD=/etc; echo ~-";
+    for flags in [&["--zsh"][..], &[][..]] {
+        assert_eq!(run_zshrs(flags, cd_minus).0, "/usr\n", "{flags:?}: cd -");
+        assert_eq!(run_zshrs(flags, tilde_minus).0, "/usr\n", "{flags:?}: ~-");
+    }
+    for flags in [
+        &["--bash"][..],
+        &["--dash"][..],
+        &["--sh"][..],
+        &["--ksh"][..],
+        &["--mksh"][..],
+    ] {
+        assert_eq!(run_zshrs(flags, cd_minus).0, "/etc\n", "{flags:?}: cd -");
+    }
+    for flags in [&["--bash"][..], &["--ksh"][..], &["--mksh"][..]] {
+        assert_eq!(run_zshrs(flags, tilde_minus).0, "/etc\n", "{flags:?}: ~-");
+    }
+    // The assignment is not required to be the only way OLDPWD changes:
+    // a later cd re-seats the internal value in zsh.
+    let (out, _) = run_zshrs(&["--zsh"], "cd /usr; OLDPWD=/etc; cd /bin; OLDPWD=/var; cd - >/dev/null; pwd");
+    assert_eq!(out, "/usr\n");
+}

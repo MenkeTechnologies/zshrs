@@ -2029,7 +2029,9 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         // (`print -r -- 三` printed nothing). Only ASCII can be blank.
         let inbl = c.is_ascii() && crate::ztype_h::inblank(c as u8);
 
-        if inbl && in_brace_param == 0 && pct == 0 && !sub {
+        if inbl && in_brace_param == 0 && pct == 0 && !sub && !LEX_LEXBUF.with_borrow(|b| {
+                crate::dash_mode::korn_subscript_blank(brct, LEX_OLDPOS.get(), b.ptr.as_deref().unwrap_or(""))
+            }) {
             // Whitespace outside brace param ends token.
             //
             // c:958-959 — C does not break here: it sets `act =
