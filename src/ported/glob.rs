@@ -823,7 +823,9 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
     // `patcompcharsset` overwrites it with `Marker`, and then NEITHER
     // spelling may match — which is what keeps `setopt noextendedglob;
     // (sub/)#end` a literal.
-    let marker_c = crate::ported::zsh_h::Marker;
+    // The slots hold the Marker TRUNCATED to a byte (patcompcharsset stores
+    // `Marker as u8`), so compare against that truncation, not the full char.
+    let marker_c = (crate::ported::zsh_h::Marker as u32 as u8) as char;
     let is_inpar =
         |c: char| c == inpar_c || (c == crate::ported::zsh_h::Inpar && inpar_c != marker_c);
     let is_hash = |c: char| c == hash_c || (c == crate::ported::zsh_h::Pound && hash_c != marker_c);

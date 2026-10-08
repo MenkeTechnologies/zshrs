@@ -1569,6 +1569,34 @@ impl ZshCompiler {
     /// PIPELINE at c:2059-2064, so a `!` or the `a && ` in front of it is
     /// never part of what `jobs` / `$jobtexts` show.
     fn emit_async_pipe(&mut self, pipe: &ZshPipe, disown: bool) {
+        // c:Src/exec.c:3019-3027 — a SIMPLE command whose name starts with `%` is a
+        // job reference: `%1 &` runs `bg %1` and `%1 &!` runs `disown %1` (with
+        // AUTOCONTINUE forced on) synchronously in the shell, `how = Z_SYNC`.
+        // execpline still reports the async list status 0 (c:1818).
+        if pipe.next.is_none() {
+            if let ZshCommand::Simple(s) = &pipe.cmd {
+                if s.words.first().is_some_and(|w| w.starts_with('%') && !crate::ported::utils::has_token(w)) {
+                    let mut job = s.clone();
+                    job.words.insert(0, if disown { "disown" } else { "bg" }.to_string());
+                    let mut sync_pipe = pipe.clone();
+                    sync_pipe.cmd = ZshCommand::Simple(job);
+                    if disown {
+                        self.builder.emit(Op::LoadInt(1), 0);
+                        self.builder.emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_AUTOCONTINUE_FORCE, 1), 0);
+                        self.builder.emit(Op::Pop, 0);
+                    }
+                    self.compile_pipe(&sync_pipe);
+                    if disown {
+                        self.builder.emit(Op::LoadInt(0), 0);
+                        self.builder.emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_AUTOCONTINUE_FORCE, 1), 0);
+                        self.builder.emit(Op::Pop, 0);
+                    }
+                    self.builder.emit(Op::LoadInt(0), 0);
+                    self.builder.emit(Op::SetStatus, 0);
+                    return;
+                }
+            }
+        }
         if pipe.next.is_some() {
             // `pipeline &` — a MULTI-STAGE pipeline in the background.
             //
@@ -2810,7 +2838,7 @@ impl ZshCompiler {
     fn compile_simple_arms(&mut self, simple: &ZshSimple) {
         // c:Src/exec.c:3019-3027 — a command word starting with `%` is a job
         // spec: `pushnode(args, "fg")` so `%1` runs `fg %1`. The `&` (bg) and
-        // `&!` (disown) variants of that rewrite are not applied here. Only a literal token-free word is handled here;
+        // `&!` (disown) variants are rewritten in emit_async_pipe. Only a literal token-free word is handled here;
         // a `%?str` / expansion word reaches the same rewrite at runtime
         // through execcmd_exec.
         if simple.words.first().is_some_and(|w| w.starts_with('%') && !crate::ported::utils::has_token(w)) {
@@ -3658,7 +3686,22 @@ impl ZshCompiler {
                 // filename-generated: `exec -a foo* cmd` passes `foo*`.
                 let mut exec_opts_open = opcode == fusevm::shell_builtins::BUILTIN_EXEC;
                 let mut exec_argv0_next = false;
-                for word in &simple.words[1..] {
+                // c:Src/exec.c:3350-3354 — the command-name word (past the
+                // precommand prefixes and `command`'s own options) is globbed
+                // in the shell, so a failure there ends the list. Mark it.
+                let mut name_idx = 1;
+                while name_idx + 1 < simple.words.len() {
+                    let w = crate::lex::untokenize(&simple.words[name_idx]);
+                    let is_prefix = (opcode == fusevm::shell_builtins::BUILTIN_COMMAND
+                        && w.len() >= 2
+                        && w.starts_with('-')
+                        && w[1..].chars().all(|c| matches!(c, 'p' | 'v' | 'V' | '-')));
+                    if !is_prefix {
+                        break;
+                    }
+                    name_idx += 1;
+                }
+                for (word_idx, word) in simple.words.iter().enumerate().skip(1) {
                     let mut argv0_word = std::mem::take(&mut exec_argv0_next);
                     if exec_opts_open && !argv0_word {
                         let flag = crate::lex::untokenize(word);
@@ -3699,6 +3742,15 @@ impl ZshCompiler {
                         self.emit_asssub_assign_word(word);
                     } else {
                         self.compile_word_str(word);
+                    }
+                    if word_idx == name_idx && opcode != fusevm::shell_builtins::BUILTIN_EXEC {
+                        let more_words = word_idx + 1 < simple.words.len();
+                        self.builder.emit(Op::LoadInt(more_words as i64), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_NAME_GLOB_MARK, 1),
+                            0,
+                        );
+                        self.builder.emit(Op::Pop, 0);
                     }
                 }
                 // c:Src/exec.c:3285-3304 → c:3720 — pipe fds and then
@@ -10104,7 +10156,12 @@ impl ZshCompiler {
         // runtime PENDING flag was never consumed and the default came out
         // as the literal `b|a` where zsh globs it to `b`.
         let has_glob_meta = default_word_may_glob(s);
-        let has_default_op = s.contains('-') || s.contains('+') || s.contains('\u{e19b}');
+        let has_default_op =
+            (s.contains('$') || s.contains(crate::ported::zsh_h::Qstring))
+                && (s.contains('-') || s.contains('+') || s.contains('\u{e19b}'));
+        // A default/alternate operator only exists inside a `${…}`: a literal
+        // `n2-*` must stay in the deferred argv glob (c:Src/exec.c:3755-3757) so
+        // the FIRST failing word is the one named.
         let default_word_glob_bracket = self.word_seg_depth == 0
             && self.dq_context_depth == 0
             && self.scalar_assign_depth == 0 // scalar `v=${x:-*}` RHS doesn't glob

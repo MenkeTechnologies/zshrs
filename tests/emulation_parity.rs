@@ -702,6 +702,45 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
     "print a; nope* x 2>/dev/null; print after",
     "print a; [b c 2>/dev/null; print after",
     "print a; h[b c]=2 foo 2>/dev/null; print after",
+    // The same abort applies behind `command` / `nocorrect` / `builtin`
+    // (the precommand walk, Src/exec.c:3104-3350); a chained prefix pair does not.
+    "print a; command nope* x 2>/dev/null; print after",
+    "print a; command -p nope* x 2>/dev/null; print after",
+    "print a; builtin nope* x 2>/dev/null; print after",
+    "print a; nocorrect nope* x 2>/dev/null; print after",
+    "print a; command [b c 2>/dev/null; print after",
+    "command command nope* x 2>/dev/null; print after",
+    // GLOB_ASSIGN runs the RHS through globlist, which honours the `(N)`
+    // qualifier's per-glob NULL_GLOB (Src/exec.c:2611-2620, glob.c:1567-1569).
+    "setopt globassign; x=nope*(N); print \"[$x]\" $?",
+    // `[0,0]` under KSH_ZERO_SUBSCRIPT is the first element/char
+    // (Src/params.c:2155-2160); strict mode keeps the empty range.
+    "setopt kshzerosubscript; s=hello; a=(a b c); print \"[${s[0,0]}] [${a[0,0]}] [${s[0]}] [${a[0]}]\"",
+    // `typeset NAME` on a zsh/parameter special hash lists its scan
+    // (printparamnode with PRINT_INCLUDEVALUE, Src/params.c:6304-6310).
+    "zmodload zsh/parameter; alias q=w; typeset aliases | grep -c '\\[q\\]=w'",
+    "zmodload zsh/parameter; typeset functions nameddirs",
+    // Without EXTENDEDGLOB the `(dir/)#` repeat is not recognised, so the group
+    // holding a `/` is a bad pattern (Src/glob.c:745-748 tests zpc_special[ZPC_HASH]).
+    "print a/(*/)#f 2>&1; print rc=$?",
+    "print (nosuch_d/)#f 2>&1; print rc=$?",
+    "setopt extendedglob; print (nosuch_d/)#f 2>&1; print rc=$?",
+    // A `-` / `+` in a literal glob word must not hoist its expansion ahead of
+    // earlier words: the FIRST failing glob is the one named (Src/exec.c:3755-3757).
+    "print nosuch_a* nosuch_b-* 2>&1; print rc=$?",
+    "print nosuch_a(.) nosuch_b(m-1) 2>&1; print rc=$?",
+    "print nosuch_a(m0) nosuch_b+(.) 2>&1; print rc=$?",
+    // OCTALZEROES: a variable holding `010` is an octal literal when read in
+    // arithmetic (Src/params.c:2639 matheval(getstrvalue)).
+    "setopt octalzeroes; x=010; print $((x)) $((x + 1)) $((010))",
+    "setopt octalzeroes; x=-010; y=0; print $((x)) $((y + 1))",
+    "x=010; print $((x)) $((x + 1))",
+    // `%1 &` is `bg %1`, `%1 &!` is `disown %1` run in the shell (Src/exec.c:3019-3027);
+    // the diagnostics go to /dev/null because zsh 5.9 words them with a trailing period.
+    "(sleep 1 & %1 & print $?; %1 &!; print done) 2>/dev/null",
+    // Bare `$name[sub]` under KSH emulation inside a larger word is `${name[0]}`
+    // followed by the literal `[sub]` (Src/params.c:2342-2358).
+    "setopt ksharrays; typeset -A h=(a 1); print x$h[a] 2>&1",
     // CSH_NULL_GLOB drops the name silently; the next word becomes the command.
     "setopt cshnullglob; nope* nosuchcmd_zz 2>/dev/null; print rc=$?",
     // A command word starting with `%` is a job spec: `%1` runs `fg %1`.
@@ -2681,6 +2720,7 @@ fn zsh_style_legs_reject_parenthesised_cond_patterns() {
         for script in [
             "[[ hello == (hel*|wor*) ]]; print -r -- $?", // word-initial `(`
             "[[ ab =~ (a)(b) ]]; print -r -- $?",         // adjacent groups
+            "[[ abc =~ (b) ]]; print -r -- $?",           // single capture group
         ] {
             assert_eq!(
                 zshrs(flag, script),
@@ -3741,4 +3781,27 @@ fn dash_specifics_match_dash() {
             .collect();
         assert!(bad.is_empty(), "{flag} diverged from dash:\n{}", bad.join("\n"));
     }
+}
+
+/// Under KSH emulation an unbraced `$assoc[key]` does not subscript: `$assoc`
+/// is `${assoc[0]}` (empty without a key "0") and `[key]` stays literal text
+/// (Src/params.c:2342-2358, Src/subst.c:2800-2802). The segmented-word runtime
+/// path used to read the first bucket value instead (`x$h[a]` printed `x1[a]`),
+/// and a module special hash (`$options[a]`) printed its first scanned value.
+/// An octal-looking variable is octal under OCTALZEROES.
+#[test]
+fn ksh_zsh_style_unbraced_assoc_subscript_and_octal_vars_match_zsh() {
+    let Some(zsh) = find_shell(ZSH) else {
+        eprintln!("skip: zsh not found");
+        return;
+    };
+    let probes = [
+        "typeset -A h=(a 1); echo x$h[a]; echo $h[a]x; echo x\"$h[a]\"; echo x$h\\[a]",
+        "typeset -A h=(a 1); echo $h[a]$h[b]; echo ${h}$h[a]",
+        "typeset -A h=(0 z); echo x$h[a]",
+        "echo $options[a]x$options[b]",
+        "setopt octalzeroes; x=010; echo $((x)) $((x + 1))",
+    ];
+    let bad = probe_mismatches(&["--ksh", "--zsh"], &zsh, &["-f"], "emulate ksh\n", &probes);
+    assert!(bad.is_empty(), "--ksh --zsh diverged from zsh:\n{}", bad.join("\n"));
 }

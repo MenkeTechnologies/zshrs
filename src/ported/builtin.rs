@@ -8854,6 +8854,36 @@ pub fn bin_typeset(
                 // assoc_arrays storage. typeset -A populated via
                 // `typeset -A h=(a 1 b 2)` lives there, not in
                 // paramtab_hashed_storage. Bug #218 in docs/BUGS.md.
+                // c:Src/params.c:6301-6312 — printparamvalue walks a PM_HASHED
+                // parameter through its own scan; a SPECIALPMDEF module hash
+                // (`aliases`, `options`, …) has no stored map, the scanfn IS the
+                // contents. PM_HIDEVAL hides the value only without
+                // PRINT_INCLUDEVALUE, which `typeset NAME` passes.
+                let special_hash = paramtab().read().ok().is_some_and(|t| {
+                    t.get(arg).is_some_and(|pm| {
+                        pm.node.flags as u32 & (PM_SPECIAL | PM_HASHED) == (PM_SPECIAL | PM_HASHED)
+                    })
+                });
+                if special_hash {
+                    if let (Some(keys), Some(vals)) = (
+                        crate::ported::params::gethkparam(arg),
+                        crate::ported::params::gethparam(arg),
+                    ) {
+                        let body: String = keys
+                            .iter()
+                            .zip(vals.iter())
+                            .map(|(k, v)| {
+                                format!(
+                                    "[{}]={} ",
+                                    crate::ported::utils::quotedzputs(k),
+                                    crate::ported::utils::quotedzputs(v)
+                                )
+                            })
+                            .collect();
+                        println!("{}=( {})", arg, body);
+                        continue;
+                    }
+                }
                 let assoc = crate::ported::params::paramtab_hashed_storage()
                     .lock()
                     .ok()

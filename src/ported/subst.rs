@@ -1538,7 +1538,20 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
                           // at glob.c:1214 with alternation + extendedglob pre-passes
                           // inlined). Reads canonical option state directly, no
                           // executor needed.
-        let expanded: Vec<String> = crate::ported::glob::glob_path(&data);
+        // c:1254 + c:1567-1569 — the per-glob `gf_nullglob` bit is raised by the
+        // `(N)` qualifier, so read it from the qualifier state of this glob
+        // rather than from the option alone.
+        let (expanded, gf_nullglob) = {
+            let _glob_scope = crate::ported::glob::enter_glob_scope();
+            crate::ported::glob::CURGLOBDATA
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .matchct = 0; // c:1864
+            let mut gd = crate::ported::glob::globdata::new();
+            let m = crate::ported::glob::globdata_glob(&mut gd, &data);
+            let n = gd.qualifiers.as_ref().is_some_and(|q| q.nullglob);
+            (m, n)
+        };
 
         if expanded.is_empty() {
             // c:Src/glob.c:1872-1888 — `Deal with failures to match
@@ -1570,7 +1583,7 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
                 crate::ported::pattern::haswilds(&data_tok)
             };
             if has_glob_chars {
-                let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
+                let nullglob = gf_nullglob || isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
                 let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
                 if nullglob {
                     // c:1872 — under NULL_GLOB the failed word is dropped.
@@ -11420,6 +11433,17 @@ pub fn paramsubst(
                     } else {
                         (start, end)
                     };
+                    // c:Src/params.c:2155-2160 — `[0,0]` under KSH_ZERO_SUBSCRIPT
+                    // is the FIRST element (`end = startnextlen`); strict mode
+                    // keeps the empty range handled by getarrvalue.
+                    let (start, end) = if start == 0
+                        && end == 0
+                        && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT)
+                    {
+                        (1, 1)
+                    } else {
+                        (start, end)
+                    };
                     // c:Src/params.c:2567-2570 — negative-index resolve.
                     // For negative `start`, raw position = len + start
                     // (0-based). For negative `end`, raw = len + end +
@@ -12909,6 +12933,16 @@ pub fn paramsubst(
                             let new_lo = if lo >= 0 { lo + 1 } else { lo };
                             let new_hi = if hi >= 0 { hi + 1 } else { hi };
                             (new_lo, new_hi)
+                        } else {
+                            (lo, hi)
+                        };
+                        // c:Src/params.c:2155-2160 — `[0,0]` under KSH_ZERO_SUBSCRIPT
+                        // is the first character (`end = startnextlen`).
+                        let (lo, hi) = if lo == 0
+                            && hi == 0
+                            && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT)
+                        {
+                            (1, 1)
                         } else {
                             (lo, hi)
                         };
@@ -26963,13 +26997,32 @@ pub fn paramsubst(
             // an identifier-named array/assoc collapses to the FIRST
             // element (`v->end = 1, v->isarr = 0`), not the joined
             // whole.
-            arrays_get(&var_name)
-                .map(|arr| arr.first().cloned().unwrap_or_default())
-                .or_else(|| {
-                    assoc_get(&var_name).map(|m| m.values().next().cloned().unwrap_or_default())
-                })
-                .or_else(|| exec_getsparam(&var_name))
-                .unwrap_or_default()
+            //
+            // c:Src/params.c:2342-2358 — a bare hash (plain or module special)
+            // under KSH EMULATION is `${hash[0]}`, a KEY-"0" lookup, empty
+            // unless that key exists; every other mode takes the first value.
+            let ksh_emul = crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH);
+            let special_hash = arrays_get(&var_name).is_none()
+                && !assoc_contains(&var_name)
+                && crate::vm_helper::partab_array_get(&var_name).is_none()
+                && crate::vm_helper::partab_scan_keys(&var_name).is_some();
+            if special_hash && ksh_emul {
+                crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default()
+            } else {
+                arrays_get(&var_name)
+                    .map(|arr| arr.first().cloned().unwrap_or_default())
+                    .or_else(|| {
+                        assoc_get(&var_name).map(|m| {
+                            if ksh_emul {
+                                m.get("0").cloned().unwrap_or_default()
+                            } else {
+                                m.values().next().cloned().unwrap_or_default()
+                            }
+                        })
+                    })
+                    .or_else(|| exec_getsparam(&var_name))
+                    .unwrap_or_default()
+            }
         } else {
             // c:1625
             // No subscript. A bare `$assoc` joins its VALUES in zsh

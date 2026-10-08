@@ -13419,6 +13419,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         ) != 0;
         Value::Bool(hit)
     });
+    // See BUILTIN_AUTOCONTINUE_FORCE.
+    vm.register_builtin(BUILTIN_AUTOCONTINUE_FORCE, |vm, _argc| {
+        thread_local! {
+            static SAVED: std::cell::RefCell<Vec<bool>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        if vm.pop().to_int() != 0 {
+            let old = opt_state_get("autocontinue").unwrap_or(false); // c:3021 oautocont
+            SAVED.with(|s| s.borrow_mut().push(old));
+            crate::ported::options::opt_state_set_via_alias("autocontinue", true); // c:3022
+        } else if let Some(old) = SAVED.with(|s| s.borrow_mut().pop()) {
+            crate::ported::options::opt_state_set_via_alias("autocontinue", old);
+        }
+        Value::Int(0)
+    });
     // See BUILTIN_CMD_NAME_GLOB_MARK.
     vm.register_builtin(BUILTIN_CMD_NAME_GLOB_MARK, |vm, _argc| {
         let more_words = vm.pop().to_int() != 0;
@@ -18587,6 +18601,10 @@ pub const BUILTIN_CMD_NAME_GLOB_MARK: u16 = 764;
 /// [lhs, rhs] -> Bool. Always the PCRE engine, whatever REMATCHPCRE says (that
 /// option only picks the engine for `=~`, c:Src/cond.c:113-119).
 pub const BUILTIN_COND_PCRE_MATCH: u16 = 765;
+/// `cmd &!` where `cmd` is a `%job` word (c:Src/exec.c:3020-3023 + the matching
+/// restore after the command): argc=1, Int. Nonzero saves AUTOCONTINUE and
+/// turns it on; zero restores the saved value. Pushes Int(0).
+pub const BUILTIN_AUTOCONTINUE_FORCE: u16 = 766;
 /// `.` (dot) — alias of source/bin_dot but dispatches with the
 /// literal name "." so the diagnostic prefix matches zsh's
 /// (`zsh:.:1: …` vs source's `zsh:source:1: …`).
