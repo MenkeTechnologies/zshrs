@@ -11997,6 +11997,8 @@ pub fn getppid() -> i32 {
 pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (String, usize) {
     // c:utils.c:6915
     let update_off = (how & crate::ported::zsh_h::GETKEY_UPDATE_OFFSET as u32) != 0;
+    let bash_dollar_quote = (how & crate::ported::zsh_h::GETKEY_DOLLAR_QUOTE as u32) != 0
+        && crate::dash_mode::bash_mode();
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     let mut consumed = 0;
@@ -12250,6 +12252,13 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
             // in range" and the escape is not decoded.
             Some(uc @ ('u' | 'U')) => {
                 consumed += 1;
+                // !!! BASH-MODE (no C counterpart) !!! bash keeps `\u` / `\U`
+                // verbatim in `$'...'` when no hex digit follows.
+                if bash_dollar_quote && !chars.peek().is_some_and(|c| c.is_ascii_hexdigit()) {
+                    result.push('\\');
+                    result.push(uc);
+                    continue;
+                }
                 // c:utils.c:7073-7084 — `\U` extra `-4` (c:7073) then the
                 // shared `-6` (c:7077), both gated at offset bs_off+1.
                 if update_off {
@@ -12377,6 +12386,12 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
             // straight into u8 made those an Err and emitted nothing at all.
             Some(d) if d.is_digit(8) || d == 'x' => {
                 consumed += 1;
+                // !!! BASH-MODE (no C counterpart) !!! bash keeps `\x` verbatim
+                // in `$'...'` when no hex digit follows (zsh decodes a NUL).
+                if bash_dollar_quote && d == 'x' && !chars.peek().is_some_and(|c| c.is_ascii_hexdigit()) {
+                    result.push_str("\\x");
+                    continue;
+                }
                 // c:7157-7161 — the pre-checks that run only without
                 // GETKEY_OCTAL_ESC. `\0` is the octal introducer (`s++`);
                 // any other bare digit is not an escape.
@@ -12546,6 +12561,23 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
                 if c == 'c' && (how & GETKEY_BACKSLASH_C) != 0 {
                     GETKEY_TRUNCATED.with(|cell| cell.set(true));
                     break;
+                }
+                // !!! BASH-MODE (no C counterpart) !!! bash `$'\cX'` is the
+                // control character (`\c?` is DEL); any other unknown escape
+                // keeps its backslash (`$'\z'` is `\z`, zsh drops it).
+                if bash_dollar_quote {
+                    if c == 'c' {
+                        if let Some(x) = chars.next() {
+                            consumed += 1;
+                            result.push(if x == '?' { '\u{7f}' } else { ((x.to_ascii_uppercase() as u8) ^ 0x40) as char });
+                            continue;
+                        }
+                    }
+                    if !matches!(c, '\'' | '"' | '?' | '\\') {
+                        result.push('\\');
+                        result.push(c);
+                        continue;
+                    }
                 }
                 if (how & GETKEY_EMACS) == 0 {
                     // c:utils.c:7181-7183 — backslash kept literal (no EMACS),

@@ -1054,13 +1054,18 @@ direction.
 they list correctly in `shopt`/`$BASHOPTS` but toggle nothing: `array_expand_once`,
 `assoc_expand_once`, `bash_source_fullpath`, `cdspell`, `checkhash`, `checkwinsize`, `cmdhist`,
 `compat31`-`compat44`, `complete_fullquote`, `direxpand`, `dirspell`, `execfail`,
-`expand_aliases`, `extdebug`, `extquote`, `force_fignore`, `globasciiranges`, `globskipdots`,
-`gnu_errfmt`, `histreedit`, `hostcomplete`, `huponexit`, `inherit_errexit`, `lastpipe`,
+`extdebug`, `extquote`, `force_fignore`, `globasciiranges`, `globskipdots`,
+`gnu_errfmt`, `histreedit`, `hostcomplete`, `huponexit`, `inherit_errexit`,
 `lithist`, `localvar_inherit`, `localvar_unset`, `no_empty_cmd_completion`,
 `noexpand_translation`, `patsub_replacement`, `progcomp`, `progcomp_alias`, `shift_verbose`,
 `sourcepath`, `varredir_close`. Several are harmless because zshrs's default already matches
-bash's (`expand_aliases`, `execfail`, `gnu_errfmt` probe identically today) — but the TOGGLE is
+bash's (`execfail`, `gnu_errfmt` probe identically today) — but the TOGGLE is
 inert in every one of them, and that is a gap, not a feature.
+
+`expand_aliases` (backed by zsh `aliases`; `type` / `command -v` hide aliases while it is off) and
+`lastpipe` (last pipeline stage stays in the shell) are wired. Still open: a `-c` string is parsed
+whole, so an alias defined earlier in the SAME string is not expanded later in it (bash parses and
+runs line by line).
 
 ---
 

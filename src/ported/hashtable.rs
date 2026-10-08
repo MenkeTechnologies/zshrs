@@ -3018,6 +3018,13 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
         let mut so = io::stdout();
         let _ = nicezputs(&hn.node.nam, &mut so); // c:1296
+        if crate::dash_mode::bash_mode() {
+            // !!! BASH-MODE !!! bash(1) `type`: "NAME is aliased to `TEXT'".
+            print!(" is aliased to `");
+            let _ = nicezputs(&hn.text, &mut so);
+            println!("'");
+            return;
+        }
         print!(" is a"); // c:1297
         if (hn.node.flags & ALIAS_SUFFIX as i32) != 0 {
             print!(" suffix"); // c:1299

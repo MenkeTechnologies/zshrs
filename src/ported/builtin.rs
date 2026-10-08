@@ -426,6 +426,8 @@ pub fn execbuiltin(
                 "hash" => optstr_bytes = b"rdplt".to_vec(),
                 "enable" => optstr_bytes = b"anprs".to_vec(),
                 "type" => optstr_bytes.push(b'P'),
+                // bash `history`: -c clear, -d OFFSET delete, -a/-n/-r/-w/-s/-p.
+                "history" => optstr_bytes = b"acd:nprsw".to_vec(),
                 _ => {}
             }
         }
@@ -2981,6 +2983,35 @@ pub fn bin_fc(
     // to a fn-local `ops` mirror at the top. Mutation of the clone is
     // intra-fn only (`fclist` reads `ops` to format output and never
     // returns it), so behavior matches C.
+    // !!! BASH-MODE (no C counterpart) !!! bash `history -c` empties the list;
+    // `-d OFFSET` drops one entry; the file-sync flags have no store to sync.
+    if nam == "history" && crate::dash_mode::bash_mode() {
+        if OPT_ISSET(ops_in, b'c') {
+            crate::ported::hist::hist_ring.lock().unwrap().clear();
+            return 0;
+        }
+        if let Some(off) = OPT_ARG(ops_in, b'd') {
+            let Ok(n) = off.parse::<i64>() else {
+                zwarnnam(nam, &format!("{off}: history position out of range"));
+                return 1;
+            };
+            let mut ring = crate::ported::hist::hist_ring.lock().unwrap();
+            return match ring.iter().position(|e| e.histnum == n) {
+                Some(i) => {
+                    ring.remove(i);
+                    0
+                }
+                None => {
+                    drop(ring);
+                    zwarnnam(nam, &format!("{off}: history position out of range"));
+                    1
+                }
+            };
+        }
+        if ["a", "n", "r", "w", "s", "p"].iter().any(|o| OPT_ISSET(ops_in, o.as_bytes()[0])) {
+            return 0;
+        }
+    }
     let mut ops = ops_in.clone();
     let ops = &mut ops;
     let mut argv = argv.to_vec();
@@ -3532,6 +3563,10 @@ pub fn fclist(
     // (`fc -l 5` with one event finds event 1, below `last`), which is
     // as much a miss as no event at all.
     let near = if first < last { 1 } else { -1 };
+    // !!! BASH-MODE !!! bash lists an empty history as nothing, status 0.
+    if crate::dash_mode::bash_mode() && is_command == 0 && gethistent(1, 1).is_none() {
+        return 0;
+    }
     let mut ev = match gethistent(first, near) {
         Some(e) if !(if first < last { e > last } else { e < last }) => e,
         _ => {
@@ -4207,6 +4242,22 @@ pub fn bin_typeset(
             .collect();
         if inherited != argv {
             return bin_typeset(name, &inherited, ops, func);
+        }
+    }
+
+    // !!! BASH-MODE (no C counterpart) !!! bash(1) `local -`: "the shell option
+    // settings (set -/+) are restored on function return". zsh gets that from
+    // LOCAL_OPTIONS, whose restore the function-exit path (exec.rs c:6129) runs.
+    if name == "local"
+        && crate::dash_mode::bash_mode()
+        && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > 0
+        && OPT_ISSET(ops, b'-')
+    {
+        // The option parser consumed the lone `-` (c:337-341) and left its
+        // indicator in `ops.ind['-']`.
+        crate::ported::options::opt_state_set("localoptions", true);
+        if argv.is_empty() {
+            return 0;
         }
     }
 
@@ -11152,10 +11203,11 @@ pub fn bin_whence(
     }
     if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b't') {
         let type_of = |name: &str| -> Option<&'static str> {
-            if aliastab_lock()
-                .read()
-                .ok()
-                .map_or(false, |t| t.get(name).is_some())
+            if crate::dash_mode::aliases_visible()
+                && aliastab_lock()
+                    .read()
+                    .ok()
+                    .map_or(false, |t| t.get(name).is_some())
             {
                 return Some("alias");
             }
@@ -11496,6 +11548,7 @@ pub fn bin_whence(
             let alias_text = aliastab_lock()
                 .read()
                 .ok()
+                .filter(|_| crate::dash_mode::aliases_visible())
                 .and_then(|t| t.get(arg).map(|a| a.clone()));
             if let Some(a) = alias_text {
                 printaliasnode(&a, aliasflags); // c:4094

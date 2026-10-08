@@ -7654,7 +7654,11 @@ pub fn paramsubst(
                         // `${!ident}` indirect (BASH): raw_value is fetched from
                         // var_name later (subst.rs ~6030), so re-pointing does
                         // the indirect.
-                        var_name = crate::ported::params::getsparam(&target).unwrap_or_default();
+                        // Routed through the `(P)` machinery (c:Src/subst.c:2730 aspar)
+                        // so a value like `a[1]` / `a[@]` / `m[k]` indirects through
+                        // the subscript too, exactly as `${(P)ident}` does.
+                        var_name = target.clone();
+                        aspar = true;
                         idx = body_chars.len();
                         bash_handled = true;
                     } else if bang_ksh {
@@ -7680,7 +7684,7 @@ pub fn paramsubst(
                     }
                 } else if after.len() == 3
                     && (after[0] == '[' || after[0] == Inbrack)
-                    && (after[1] == '@' || after[1] == '*')
+                    && (after[1] == '@' || after[1] == '*' || after[1] == '\u{e187}')
                     && (after[2] == ']' || after[2] == Outbrack)
                 {
                     // `${!ident[@]}` / `[*]` → the KEYS of an associative
@@ -7705,10 +7709,6 @@ pub fn paramsubst(
                     subexp_array_temp = Some(temp);
                     idx = j; // leave [@]/[*] for the splat loop
                     bash_handled = true;
-                } else if bang_bash
-                    && after.len() == 1
-                    && matches!(after[0], '@' | '*' | '\u{e187}' /* Star */)
-                {
                 } else if bang_ksh
                     && after.len() > 2
                     && (after[0] == '[' || after[0] == Inbrack)
@@ -7730,6 +7730,10 @@ pub fn paramsubst(
                     subexp_value = Some(format!("{target}[{shown}]"));
                     idx = body_chars.len();
                     bash_handled = true;
+                } else if bang_bash
+                    && after.len() == 1
+                    && matches!(after[0], '@' | '*' | '\u{e187}' /* Star */)
+                {
                     // `${!prefix@}` / `${!prefix*}` (BASH only; mksh/pdksh lack
                     // it) → the NAMES of all set
                     // parameters whose name begins with `prefix`, sorted (bash
@@ -8550,6 +8554,18 @@ pub fn paramsubst(
             if idx < body_chars.len() {
                 idx += 1;
             } // skip ]
+        }
+
+        // !!! BASH-MODE (no C counterpart) !!! bash(1) Arrays: "Referencing an
+        // array variable without a subscript is equivalent to referencing the
+        // array with a subscript of 0" — for an associative array that is the
+        // key "0", not the joined values zsh yields.
+        if subscript.is_none()
+            && !wantt
+            && crate::dash_mode::bash_mode()
+            && assoc_contains(&var_name)
+        {
+            subscript = Some("0".to_string());
         }
 
         // c:Src/subst.c:2925 getarg recursion — after the first
@@ -22829,6 +22845,13 @@ pub fn paramsubst(
                 let shape = match kind {
                     1 => BashParamShape::Indexed(&idx_items),
                     2 => BashParamShape::Assoc(&kv_items),
+                    // A bare assoc name reads key "0"; when that key is absent
+                    // bash recreates the declaration with no value.
+                    _ if subscript.as_deref() == Some("0")
+                        && assoc_get(&var_name).is_some_and(|m| !m.contains_key("0")) =>
+                    {
+                        BashParamShape::Unset
+                    }
                     _ => BashParamShape::Scalar(&scalar),
                 };
                 if bash_at_assign {

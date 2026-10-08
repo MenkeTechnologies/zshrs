@@ -4527,9 +4527,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut last_proc: Option<crate::ported::zsh_h::process> = None;
         // The pdksh line (mksh / pdksh) forks the last stage too: `mksh -c 'echo x |
         // read v; echo $v'` prints an empty line. ksh93 keeps it in the shell.
-        let last_stage_status = if crate::dash_mode::bash_mode()
+        // `shopt -s lastpipe` keeps bash's last stage in the current shell too.
+        let last_stage_status = if (crate::dash_mode::bash_mode()
+            && crate::dash_mode::bash_shopt_get("lastpipe") != Some(true))
             || crate::dash_mode::pdksh_family()
-            || crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
+            || (crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
+                && !crate::dash_mode::bash_mode())
         {
             let last_chunk = stages_vec.into_iter().last().unwrap();
             crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
@@ -8629,6 +8632,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 let read_fd = c2p[0];
                 let write_fd = p2c[1];
+                // bash(1) `coproc`: the child's pid is published as NAME_PID.
+                if crate::dash_mode::bash_mode() {
+                    crate::ported::params::setsparam(&format!("{name}_PID"), &pid.to_string());
+                }
                 with_executor(|exec| {
                     exec.unset_scalar(&name);
                     exec.set_array(name, vec![read_fd.to_string(), write_fd.to_string()]);
@@ -9023,7 +9030,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // ksh; typeset -A h=(a 1 b 2); print $h` is empty, whereas
                 // `setopt ksharrays; …; print $h` collapses to the bucket-
                 // first value below.
-                if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+                // bash(1): "Referencing an array variable without a subscript is
+                // equivalent to referencing the array with a subscript of 0".
+                if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH)
+                    || crate::dash_mode::bash_mode()
+                {
                     let v = crate::ported::subst::assoc_get(&name)
                         .and_then(|m| m.get("0").cloned())
                         .unwrap_or_default();
@@ -13930,7 +13941,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Value::Int(0);
             }
             // c:1476 `isset(DEBUGBEFORECMD)` / c:1628 `!isset(DEBUGBEFORECMD)`.
-            if before != isset(crate::ported::zsh_h::DEBUGBEFORECMD) {
+            // !!! BASH-MODE !!! bash fires DEBUG BEFORE each command, never after,
+            // sets $BASH_COMMAND, skips function definitions, and does not
+            // descend into function bodies unless `set -T` (functrace).
+            let bash = crate::extensions::dash_mode::bash_mode();
+            if before != (isset(crate::ported::zsh_h::DEBUGBEFORECMD) || bash) {
+                return Value::Int(0);
+            }
+            if bash
+                && before
+                && (crate::extensions::dash_mode::is_funcdef_text(&cmd_text)
+                    || (crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > 0
+                        && !crate::extensions::dash_mode::bash_set_o_get("functrace")))
+            {
                 return Value::Int(0);
             }
             // c:Src/exec.c:1423 — `if (sigtrapped[SIGDEBUG] &&
@@ -14012,6 +14035,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .store(errflag_save, std::sync::atomic::Ordering::Relaxed);
                 let text = permtext.filter(|t| !t.is_empty()).unwrap_or(cmd_text);
                 crate::ported::params::setsparam("ZSH_DEBUG_CMD", &text);
+                if bash {
+                    crate::ported::params::setsparam("BASH_COMMAND", &text);
+                }
             }
             // c:1488/1636 — `exiting = donetrap;` … c:1493/1641 `donetrap = exiting;`
             let exiting = crate::ported::exec::DONETRAP.load(std::sync::atomic::Ordering::Relaxed);
@@ -14368,6 +14394,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // BUILTIN_DONETRAP_RESET (compile_list emit at
         // compile_zsh.rs).
         let already_done = crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0;
+        // bash `set -E`: the failing function call fires ERR again after the
+        // inner command already did (`f() { false; }; f` runs the trap twice).
+        let already_done = already_done
+            && !(crate::extensions::dash_mode::bash_mode()
+                && crate::extensions::dash_mode::bash_set_o_get("errtrace"));
         // c:Src/exec.c:1652-1653 —
         //     if (sigtrapped[SIGZERR] && lastval &&
         //         !(noerrexit & NOERREXIT_EXIT)) {
@@ -22171,8 +22202,8 @@ impl ShellExecutor {
                                 & crate::ported::zsh_h::FDT_TYPE_MASK;
                             (kind != crate::ported::zsh_h::FDT_UNUSED
                                 && kind != crate::ported::zsh_h::FDT_EXTERNAL)
-                                || src_fd == cin
-                                || src_fd == cout
+                                // bash hands the coproc fds to the script (`>&${COPROC[1]}`).
+                                || (!crate::dash_mode::bash_mode() && (src_fd == cin || src_fd == cout))
                         }
                     };
                     if unsafe { libc::fcntl(src_fd, libc::F_GETFD) } == -1 || shell_owned {
@@ -23527,6 +23558,15 @@ fn errexit_tail(last: i32) -> Value {
 /// `sigtrapped[SIGZERR]` (c:Src/exec.c:1652) read through the port's
 /// mutex-guarded `sigtrapped` table. C indexes the array inline.
 fn zerr_sigtrapped() -> bool {
+    // !!! BASH-MODE (no C counterpart) !!! bash(1) `set -E`: "the ERR trap is
+    // inherited by shell functions, command substitutions, and commands executed
+    // in a subshell environment" — without it the trap is silent inside a function.
+    if crate::extensions::dash_mode::bash_mode()
+        && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > 0
+        && !crate::extensions::dash_mode::bash_set_o_get("errtrace")
+    {
+        return false;
+    }
     crate::ported::signals::sigtrapped
         .lock()
         .ok()

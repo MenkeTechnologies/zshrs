@@ -870,6 +870,58 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // `printf %b` reads a bare `\NNN` (1-3 octal digits) as well as `\0NNN`.
     "printf '%b\\n' '\\x41\\101\\0101'",
     "printf '%b|' '\\101' '\\1' '\\18' '\\0101'; echo",
+    // $BASH_VERSION / $BASH_VERSINFO / $HOSTTYPE / $MACHTYPE track bash 5.x:
+    // `5.N.P(1)-release`, a 6-element array whose tail is the GNU triple.
+    "[[ $BASH_VERSION == 5.*'(1)-release' ]] && echo ver; echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[4]} ${#BASH_VERSINFO[@]}; echo $HOSTTYPE; echo ${MACHTYPE%%-*}; [[ ${BASH_VERSINFO[5]} == $MACHTYPE ]] && echo same",
+    // EPOCHSECONDS / EPOCHREALTIME are always-on specials (no module load);
+    // EPOCHREALTIME has microsecond granularity.
+    "[ \"$EPOCHSECONDS\" -gt 1000000000 ] && echo secs; case $EPOCHREALTIME in *.??????) echo real;; esac; [ -n \"${SRANDOM+x}\" ] && echo sr",
+    // `local -` restores the shell option flags on function return.
+    "f() { local -; set -f; echo $-; }; set +f; f; echo $-",
+    // `wait -f` is accepted and waits for termination.
+    "sleep 0.1 & wait -f $!; echo rc=$?; sleep 0.1 & wait -f; echo rc=$?",
+    // A quoted part of a `=~` pattern is matched as a literal string.
+    "[[ abc =~ \"b+\" ]]; echo $?; [[ 'b+' =~ \"b+\" ]]; echo $?; [[ abc =~ \"a.c\" ]]; echo $?; [[ a.c =~ \"a.c\" ]]; echo $?; [[ abc =~ b+ ]]; echo $?; [[ 'a(b' =~ a\\(b ]]; echo $?",
+    // With `expand_aliases` off (the non-interactive default) `type` and
+    // `command -v` do not see aliases; with it on, `type` says `aliased to`.
+    "alias e='echo hi'; type e 2>/dev/null; echo rc=$?; command -v e; echo rc=$?",
+    "shopt -s expand_aliases; alias e='echo hi'; type e; type -t e; command -v e",
+    // ERR trap: not inherited by functions without `set -E`; with it the
+    // failing call fires the trap again after the inner command did.
+    "trap 'echo ERR' ERR; f() { false; echo in; }; f; false; echo done",
+    "set -E; trap 'echo ERR' ERR; f() { false; }; f; echo done",
+    // DEBUG fires before each command with $BASH_COMMAND set; function
+    // definitions and (without `set -T`) function bodies are skipped.
+    "trap 'echo DBG $BASH_COMMAND' DEBUG; f() { echo in; }; f; echo out",
+    // `declare -f` prints a here-document at column 0 followed by a blank line.
+    "f() { cat <<EOF2\nhello $1\nEOF2\n}; declare -f f",
+    "f() { if true; then cat <<\"Q\"\nbody\nQ\nfi; echo x; }; declare -f f",
+    // `compgen`: `--` ends options, -P/-S/-X, no sort, status 1 on no match,
+    // and the -A action names.
+    "compgen -W 'c a b' -- b; echo rc=$?; compgen -W 'c a b' -- x; echo rc=$?; compgen -W 'c a b'",
+    "compgen -W 'ab ac b' -P p- -S -s a; compgen -W 'ab ac b' -X 'ab' a; compgen -W 'ab ac b' -X '!ab' a",
+    "compgen -A signal -- SIGH; compgen -A keyword -- wh; compgen -A shopt -- ext; compgen -A builtin -- ech; compgen -A setopt -- errt",
+    "a=(1); f() { :; }; compgen -A function; compgen -A arrayvar -- a; compgen -A variable -- BASH_VERSI",
+    // `complete -p [NAME...]` prints specs; a missing one is status 1.
+    "complete -W 'x y' foo; complete -p; complete -p foo; complete -p nope 2>/dev/null; echo rc=$?",
+    // `history -c` clears the list; `fc -l` on an empty list is silent status 0.
+    "history -c; echo rc=$?; history | wc -l | tr -d ' '; fc -l; echo rc=$?",
+    // `declare -p` of a nameref lists the TARGET name with the `n` attribute.
+    "x=1; declare -n r=x; r=5; echo $x; declare -p r; declare -n | head -1",
+    // `${!name}` indirects through a subscripted value; `${!a[*]}` is the index list.
+    "a=(x y z); n=a; echo ${!n}; n='a[1]'; echo ${!n}; n='a[@]'; echo ${!n}; echo ${!a[@]}; echo ${!a[*]}; declare -A m=([k]=v); n='m[k]'; echo ${!n}",
+    // `shopt -s lastpipe` runs the last pipeline stage in the current shell.
+    "shopt -s lastpipe; echo a | read x; echo \"[$x]\"; shopt -u lastpipe; echo b | read y; echo \"[$y]\"",
+    // `coproc`: COPROC=(read-fd write-fd) and COPROC_PID are script-visible.
+    "coproc cat; echo hi >&${COPROC[1]}; read -t 5 -u ${COPROC[0]} x; echo \"got $x\"; [ -n \"$COPROC_PID\" ] && echo pid; kill $COPROC_PID 2>/dev/null",
+    // `$'...'`: `\\cX` is a control char; an unknown escape and a digitless
+    // `\\x` / `\\u` keep their backslash.
+    "printf '%s|' $'\\z' $'\\x' $'\\u' $'\\q'; printf '%s' $'\\cA\\c?' | od -An -c",
+    // A bare associative-array name reads key \"0\".
+    "declare -A m=([k]=v); echo \"[$m]\" \"[${#m}]\" \"[${m:-d}]\"; m[0]=z; echo \"[$m]\" \"[${#m}]\"",
+    "declare -A m=([k]=v); echo ${m@A}; echo \"[${m@K}]\"; m[0]=z; echo ${m@A}",
+    // A syntax error in a `-c` string runs nothing and exits 2.
+    "echo before; x=abc; case $x in +(a|b|c)) echo plus;; esac",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run

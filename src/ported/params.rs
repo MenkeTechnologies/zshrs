@@ -15656,6 +15656,9 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if fl & PM_INTEGER != 0 {
             fstr.push('i');
         }
+        if fl & PM_NAMEREF != 0 {
+            fstr.push('n');
+        }
         if fl & PM_READONLY != 0 {
             fstr.push('r');
         }
@@ -15709,7 +15712,12 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 .join(" ");
             println!("declare {} {}=({})", flag_disp, nm, body);
         } else {
-            let v = getsparam(&nm).unwrap_or_default();
+            // A nameref lists its TARGET NAME, not the value it points at.
+            let v = if fl & PM_NAMEREF != 0 {
+                hn.u_str.clone().unwrap_or_default()
+            } else {
+                getsparam(&nm).unwrap_or_default()
+            };
             println!("declare {} {}={}", flag_disp, nm, crate::dash_mode::bash_quote_element(&v));
         }
         return;
@@ -17194,6 +17202,17 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             "BASH_VERSION" => return Some(crate::dash_mode::bash_version()),
             // bash(1): HOSTNAME is the host name — zsh's HOST.
             "HOSTNAME" => return crate::ported::params::getsparam("HOST"),
+            // bash(1): HOSTTYPE is the machine type, OSTYPE the OS, and
+            // MACHTYPE the GNU `cpu-vendor-os` triple.
+            "HOSTTYPE" => return Some(crate::ported::config_h::MACHTYPE.to_string()),
+            "MACHTYPE" => {
+                return Some(format!(
+                    "{}-{}-{}",
+                    crate::ported::config_h::MACHTYPE,
+                    crate::ported::config_h::VENDOR,
+                    crate::ported::config_h::OSTYPE
+                ))
+            }
             // bash(1) "Shell Variables": SHELLOPTS is the colon-separated
             // list of the `set -o` options currently enabled. Built from the
             // same table `set -o` lists and `set -o NAME` writes.
@@ -17435,10 +17454,13 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // ${EPOCHSECONDS:-x} falls through to "x". Match by gating
             // the getter on the module's loaded state. Bug #31 in
             // docs/BUGS.md.
-            if !crate::ported::module::MODULESTAB
-                .lock()
-                .unwrap()
-                .is_loaded("zsh/datetime")
+            // bash(1) "Shell Variables": EPOCHSECONDS / EPOCHREALTIME are
+            // always-on specials, no module load.
+            if !crate::dash_mode::bash_mode()
+                && !crate::ported::module::MODULESTAB
+                    .lock()
+                    .unwrap()
+                    .is_loaded("zsh/datetime")
             {
                 return None;
             }
@@ -17447,14 +17469,22 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "EPOCHREALTIME" => {
             // c:Src/Modules/datetime.c:212 `getcurrentrealtime`. Same
             // zsh/datetime gate as EPOCHSECONDS above. Bug #31.
-            if !crate::ported::module::MODULESTAB
-                .lock()
-                .unwrap()
-                .is_loaded("zsh/datetime")
+            // bash(1) "Shell Variables": EPOCHSECONDS / EPOCHREALTIME are
+            // always-on specials, no module load.
+            if !crate::dash_mode::bash_mode()
+                && !crate::ported::module::MODULESTAB
+                    .lock()
+                    .unwrap()
+                    .is_loaded("zsh/datetime")
             {
                 return None;
             }
             let v = crate::ported::modules::datetime::getcurrentrealtime();
+            if crate::dash_mode::bash_mode() {
+                // bash(1): "seconds since the Unix epoch as a floating
+                // point value with micro-second granularity" — `%d.%06d`.
+                return Some(format!("{:.6}", v));
+            }
             Some(format!("{:.10}", v))
         }
         "epochtime" => {

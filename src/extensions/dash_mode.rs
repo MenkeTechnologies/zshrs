@@ -533,10 +533,10 @@ pub fn set_posix_faithful(on: bool) {
 /// on `${BASH_VERSINFO[0]}` (e.g. `>= 4` for assoc arrays / `${v^^}`), so a
 /// modern 5.x keeps every feature path live. Not tied to any real build.
 pub const BASH_VERSION_MAJOR: &str = "5";
-pub const BASH_VERSION_MINOR: &str = "2";
-pub const BASH_VERSION_PATCH: &str = "0";
+pub const BASH_VERSION_MINOR: &str = "3";
+pub const BASH_VERSION_PATCH: &str = "20";
 
-/// `$BASH_VERSION` scalar, e.g. `5.2.0(1)-release`.
+/// `$BASH_VERSION` scalar, e.g. `5.3.20(1)-release`.
 pub fn bash_version() -> String {
     format!(
         "{}.{}.{}(1)-release",
@@ -553,7 +553,12 @@ pub fn bash_versinfo() -> Vec<String> {
         BASH_VERSION_PATCH.to_string(),
         "1".to_string(),
         "release".to_string(),
-        std::env::consts::ARCH.to_string(),
+        format!(
+            "{}-{}-{}",
+            crate::ported::config_h::MACHTYPE,
+            crate::ported::config_h::VENDOR,
+            crate::ported::config_h::OSTYPE
+        ),
     ]
 }
 
@@ -616,6 +621,29 @@ fn bash_running_script() -> bool {
 /// The name bash reports for the top-level script (`$0` at top level).
 fn bash_script_name() -> String {
     crate::ported::params::getsparam("ZSH_ARGZERO").unwrap_or_default()
+}
+
+/// True when the DEBUG-trap statement text is a function definition
+/// (`name () { ... }` / `function name ...`), for which bash fires no DEBUG.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn is_funcdef_text(t: &str) -> bool {
+    let t = t.trim_start();
+    if t.starts_with("function ") {
+        return true;
+    }
+    let end = t
+        .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.')))
+        .unwrap_or(t.len());
+    end > 0 && t[end..].trim_start().starts_with("()")
+}
+
+/// bash hides aliases from `type` / `command -v` / `hash` while `expand_aliases`
+/// is off (non-interactive default). True when alias lookups may succeed.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn aliases_visible() -> bool {
+    !bash_mode() || crate::ported::zsh_h::isset(crate::ported::zsh_h::ALIASESOPT)
 }
 
 /// Resolve a bash special ARRAY name (`PIPESTATUS`, `FUNCNAME`,
@@ -742,7 +770,7 @@ pub const BASH_SHOPTS: &[(&str, Option<&str>, bool)] = &[
     ("dirspell", None, false),
     ("dotglob", Some("dotglob"), false),
     ("execfail", None, false),
-    ("expand_aliases", None, false),
+    ("expand_aliases", Some("aliases"), false),
     ("extdebug", None, false),
     ("extglob", Some("kshglob"), false),
     ("extquote", None, true),
@@ -883,7 +911,13 @@ pub fn bash_shopt_apply_defaults() {
         // Inverted rows (`xpg_echo`) live in a zsh option too, so they need
         // the same seeding even though the middle column is `None`.
         if zsh_opt.is_some() || bash_shopt_inverted_zsh_opt(name).is_some() {
-            bash_shopt_set(name, *default_on);
+            // bash(1): expand_aliases is on in an interactive shell, off otherwise.
+            let on = if *name == "expand_aliases" {
+                crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+            } else {
+                *default_on
+            };
+            bash_shopt_set(name, on);
         }
     }
 }
@@ -1647,6 +1681,23 @@ enum BashNode {
     Function { name: String, body: Vec<BashNode> },
 }
 
+impl BashNode {
+    /// True when this statement, or anything nested in it, carries a here-document.
+    fn has_heredoc(&self) -> bool {
+        let any = |v: &[BashNode]| v.iter().any(BashNode::has_heredoc);
+        match self {
+            BashNode::Simple(s) => s.contains(HEREDOC_BODY),
+            BashNode::If { then, els, .. } => any(then) || els.as_deref().is_some_and(any),
+            BashNode::Loop { body, .. }
+            | BashNode::For { body, .. }
+            | BashNode::Subshell { body, .. }
+            | BashNode::Group { body, .. }
+            | BashNode::Function { body, .. } => any(body),
+            BashNode::Case { arms, .. } => arms.iter().any(|(_, b, _)| any(b)),
+        }
+    }
+}
+
 /// Re-lays zsh's deparsed function body (one command per line, keywords on
 /// their own lines) in bash's layout: `if C; then` on one line, `for`/`do`
 /// split, `case` arms with `;;` on its own line, `( a; b )` subshells.
@@ -1658,13 +1709,50 @@ struct BashDeparse {
 }
 
 const ARM_END: char = '\u{1}';
+/// Separates a here-document command from its body inside one deparse line.
+const HEREDOC_BODY: char = '\u{2}';
 
 impl BashDeparse {
     fn parse(body_lines: &str) -> Option<Vec<BashNode>> {
         let mut lines: Vec<String> = Vec::new();
-        for raw in body_lines.lines() {
-            let t = raw.trim();
-            if t.contains("<<") || (t.ends_with('{') && t != "{" && !t.ends_with(" () {")) {
+        let raw_lines: Vec<&str> = body_lines.lines().collect();
+        let mut ri = 0;
+        while ri < raw_lines.len() {
+            let t = raw_lines[ri].trim();
+            ri += 1;
+            // A here-document: fold its body and terminator into the command
+            // line behind HEREDOC_BODY so the layout pass treats it as one
+            // statement (bash prints the body at column 0 after the command).
+            let mut heredocs = t
+                .match_indices("<<")
+                .filter(|(i, _)| !t[*i..].starts_with("<<<") && !t[..*i].ends_with('<'));
+            if let Some((at, _)) = heredocs.next() {
+                if heredocs.next().is_some() {
+                    return None;
+                }
+                let strip_tabs = t[at + 2..].starts_with('-');
+                let after = t[at + 2..].trim_start_matches('-').trim_start();
+                let word = after.split_whitespace().next()?;
+                let delim: String = word.chars().filter(|c| !matches!(c, '"' | '\'' | '\\')).collect();
+                let mut cmd = t.to_string();
+                if word.starts_with('"') {
+                    // bash re-prints a quoted delimiter with single quotes.
+                    cmd = cmd.replacen(word, &format!("'{delim}'"), 1);
+                }
+                let mut body: Vec<String> = Vec::new();
+                loop {
+                    let l = *raw_lines.get(ri)?;
+                    ri += 1;
+                    let l = if strip_tabs { l.trim_start_matches('\t') } else { l };
+                    body.push(l.to_string());
+                    if l.trim_end() == delim {
+                        break;
+                    }
+                }
+                lines.push(format!("{cmd}{HEREDOC_BODY}{}", body.join("\n")));
+                continue;
+            }
+            if t.ends_with('{') && t != "{" && !t.ends_with(" () {") {
                 return None;
             }
             match [" ;;&", " ;&", " ;;"].iter().find(|e| t.ends_with(**e)) {
@@ -1817,7 +1905,9 @@ impl BashDeparse {
     fn render(nodes: &[BashNode], indent: usize, bare_last: bool) -> String {
         let mut out = String::new();
         for (i, n) in nodes.iter().enumerate() {
-            let term = if bare_last && i + 1 == nodes.len() { "" } else { ";" };
+            // bash prints no `;` after a statement that holds a here-document:
+            // the body's own newline ends it.
+            let term = if (bare_last && i + 1 == nodes.len()) || n.has_heredoc() { "" } else { ";" };
             out.push_str(&Self::render_one(n, indent, term));
         }
         out
@@ -1826,6 +1916,11 @@ impl BashDeparse {
     fn render_one(n: &BashNode, indent: usize, term: &str) -> String {
         let ind = "    ".repeat(indent);
         match n {
+            BashNode::Simple(s) if s.contains(HEREDOC_BODY) => {
+                // bash: command, body and terminator at column 0, then a blank line.
+                let (cmd, body) = s.split_once(HEREDOC_BODY).unwrap_or((s, ""));
+                format!("{ind}{cmd}\n{body}\n\n")
+            }
             BashNode::Simple(s) => {
                 let term = if s.ends_with('&') { "" } else { term };
                 format!("{ind}{s}{term}\n")

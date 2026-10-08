@@ -3113,6 +3113,12 @@ pub fn bin_fg(
     func: i32,
 ) -> i32 {
     let _ofunc = func; // c:2424
+    // !!! BASH-MODE (no C counterpart) !!! bash `wait -f`: wait for the job to
+    // terminate rather than merely change state; zshrs always waits for
+    // termination, so the flag is accepted and dropped.
+    if func == BIN_WAIT && crate::dash_mode::bash_mode() && argv.first().is_some_and(|a| a == "-f") {
+        return bin_fg(name, &argv[1..], ops, func);
+    }
     // c:2431 — `int disown_all = (func == BIN_DISOWN && OPT_ISSET(ops, 'a'));`
     let disown_all = func == BIN_DISOWN && OPT_ISSET(ops, b'a');
     if disown_all && !argv.is_empty() {

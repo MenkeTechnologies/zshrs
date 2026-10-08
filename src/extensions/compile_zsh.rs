@@ -13804,6 +13804,39 @@ impl ZshCompiler {
     ///     `dq_context_depth` instead: every consumer spells "in DQ" as
     ///     `dq_context_depth > 0 || word_is_single_dq_span(s)`.
     fn compile_regex_operand(&mut self, w: &str) {
+        // !!! BASH-MODE (no C counterpart) !!! bash(1) `[[ ]]`: "Any part of the
+        // pattern may be quoted to force the quoted portion to be matched as a
+        // string" — a quoted `.`/`+`/`(` is literal. Backslash-escape the regex
+        // metacharacters inside literal quoted spans (an expanded `"$v"` inside
+        // a span is not reached: its value only exists at run time).
+        let escaped;
+        let w = if crate::dash_mode::bash_mode() {
+            let mut out = String::with_capacity(w.len());
+            let mut open: Option<char> = None;
+            let mut it = w.chars().peekable();
+            while let Some(c) = it.next() {
+                match (open, c) {
+                    // A backslash-escaped character outside quotes (`\(`, `\.`) reaches
+                    // the regex engine still escaped; zsh's lexer would drop the `\`.
+                    (None, '\u{e19f}') if it.peek().is_some() => {
+                        out.push('\\');
+                        out.push(it.next().unwrap_or_default());
+                        continue;
+                    }
+                    (None, '\u{e19e}' | '\u{e19d}') => open = Some(c),
+                    (Some(q), c) if c == q => open = None,
+                    (Some(_), '.' | '[' | ']' | '(' | ')' | '{' | '}' | '*' | '+' | '?' | '|' | '^' | '\\' | '$') => {
+                        out.push('\\');
+                    }
+                    _ => {}
+                }
+                out.push(c);
+            }
+            escaped = out;
+            escaped.as_str()
+        } else {
+            w
+        };
         let pure_span = |q: char| -> bool {
             w.starts_with(q) && w.ends_with(q) && w.chars().filter(|&c| c == q).count() == 2
         };

@@ -2147,201 +2147,350 @@ impl ShellExecutor {
 
     /// Generate completion candidates
     pub(crate) fn builtin_compgen(&self, args: &[String]) -> i32 {
-        // The actions generated below, by the names `-A` takes.
-        const COMPGEN_ACTIONS: &[&str] = &[
-            "alias", "builtin", "command", "directory", "export", "file", "job", "keyword", "user",
-            "variable",
-        ];
-        let mut i = 0;
         let mut prefix = String::new();
-        let mut actions = Vec::new();
+        let mut actions: Vec<String> = Vec::new();
         let mut wordlist = None;
         let mut globpat = None;
+        let mut filter = None;
+        let mut pre = String::new();
+        let mut suf = String::new();
 
+        // bash getopt: clustered letters (`-fd`), option arguments either
+        // glued or in the next word, `--` ends options.
+        let mut i = 0;
         while i < args.len() {
-            match args[i].as_str() {
-                "-W" => {
-                    i += 1;
-                    if i < args.len() {
-                        wordlist = Some(args[i].clone());
-                    }
+            let a = args[i].as_str();
+            if a == "--" {
+                if let Some(w) = args.get(i + 1) {
+                    prefix = w.clone();
                 }
-                "-G" => {
-                    i += 1;
-                    if i < args.len() {
-                        globpat = Some(args[i].clone());
-                    }
+                break;
+            }
+            if !a.starts_with('-') || a.len() == 1 {
+                prefix = a.to_string();
+                i += 1;
+                continue;
+            }
+            let letters: Vec<char> = a[1..].chars().collect();
+            let mut k = 0;
+            while k < letters.len() {
+                let c = letters[k];
+                k += 1;
+                let action = match c {
+                    'a' => Some("alias"),
+                    'b' => Some("builtin"),
+                    'c' => Some("command"),
+                    'd' => Some("directory"),
+                    'e' => Some("export"),
+                    'f' => Some("file"),
+                    'g' => Some("group"),
+                    'j' => Some("job"),
+                    'k' => Some("keyword"),
+                    's' => Some("service"),
+                    'u' => Some("user"),
+                    'v' => Some("variable"),
+                    _ => None,
+                };
+                if let Some(action) = action {
+                    actions.push(action.to_string());
+                    continue;
                 }
-                "-a" => actions.push("alias"),
-                "-b" => actions.push("builtin"),
-                "-c" => actions.push("command"),
-                "-d" => actions.push("directory"),
-                "-e" => actions.push("export"),
-                "-f" => actions.push("file"),
-                "-j" => actions.push("job"),
-                "-k" => actions.push("keyword"),
-                "-u" => actions.push("user"),
-                "-v" => actions.push("variable"),
-                // `-A ACTION`: the long name of an action the letter flags
-                // above select. An action this builtin does not generate
-                // is accepted and produces nothing, like `-c` and `-j`.
-                "-A" => {
-                    i += 1;
-                    if let Some(name) = args.get(i) {
-                        if let Some(action) = COMPGEN_ACTIONS.iter().find(|a| **a == name.as_str()) {
-                            actions.push(action);
-                        }
+                if !matches!(c, 'W' | 'G' | 'A' | 'F' | 'C' | 'P' | 'S' | 'X' | 'o') {
+                    if matches!(c, 'r' | 'D' | 'E' | 'I') {
+                        continue;
                     }
+                    eprintln!("zshrs:compgen:1: -{}: invalid option", c);
+                    return 2;
                 }
-                s if !s.starts_with('-') => prefix = s.to_string(),
-                s => {
-                    // bash compgen has many flags. Reject unknown
-                    // ones rather than silently dropping. -F func and
-                    // -C cmd aren't yet wired but they're real flags;
-                    // accept as no-op pending impl.
-                    if matches!(s, "-F" | "-C" | "-S" | "-P" | "-X" | "-o") {
-                        // Take the following arg.
-                        if i + 1 < args.len() {
-                            i += 1;
-                        }
-                    } else if matches!(s, "-r" | "-D" | "-E" | "-I") {
-                        // Multi-letter or single-arg flags accepted as no-op.
-                    } else {
-                        eprintln!("zshrs:compgen:1: bad option: {}", s);
-                        return 1;
-                    }
+                // The option argument: rest of the cluster, else the next word.
+                let optarg: String = if k < letters.len() {
+                    let s: String = letters[k..].iter().collect();
+                    k = letters.len();
+                    s
+                } else {
+                    i += 1;
+                    args.get(i).cloned().unwrap_or_default()
+                };
+                match c {
+                    'W' => wordlist = Some(optarg),
+                    'G' => globpat = Some(optarg),
+                    'A' => actions.push(optarg),
+                    'X' => filter = Some(optarg),
+                    'P' => pre = optarg,
+                    'S' => suf = optarg,
+                    // -F / -C / -o need a completion context; accepted, no-op.
+                    _ => {}
                 }
             }
             i += 1;
         }
 
-        let mut results = Vec::new();
+        let mut results: Vec<String> = Vec::new();
+        let pfx = prefix.as_str();
+        let keep = |n: &str| n.starts_with(pfx);
 
-        // Generate based on actions
-        for action in actions {
-            match action {
+        for action in &actions {
+            match action.as_str() {
                 "alias" => {
-                    let mut names: Vec<String> =
-                        self.alias_entries().into_iter().map(|(k, _)| k).collect();
+                    let mut names: Vec<String> = self.alias_entries().into_iter().map(|(k, _)| k).collect();
                     names.sort();
-                    for name in names {
-                        if name.starts_with(&prefix) {
-                            results.push(name);
-                        }
-                    }
+                    results.extend(names.into_iter().filter(|n| keep(n)));
                 }
-                "builtin" => {
-                    // Use the canonical BUILTIN_NAMES (derived from
-                    // src/ported/builtin.rs:BUILTINS, which is the 1:1
-                    // port of `Src/builtin.c:40-137 builtins[]`) so
-                    // every wired builtin shows up in completion.
-                    let mut names: Vec<&str> = BUILTIN_NAMES.iter().map(|s| s.as_str()).collect();
-                    // zshrs extension builtins dispatch in-process too;
-                    // include them so `compgen -b doc`/`compgen -b peach`
-                    // resolve names the C-port BUILTINS table lacks.
-                    names.extend(crate::ext_builtins::EXT_BUILTIN_NAMES.iter().copied());
+                "arrayvar" => {
+                    let mut names: Vec<String> = crate::ported::params::paramtab()
+                        .read()
+                        .map(|t| t.iter().filter(|(_, pm)| pm.u_arr.is_some()).map(|(k, _)| k.clone()).collect())
+                        .unwrap_or_default();
+                    names.extend(Self::compgen_bash_arrays().iter().map(|s| s.to_string()));
                     names.sort();
                     names.dedup();
-                    for name in names {
-                        if name.starts_with(&prefix) {
-                            results.push(name.to_string());
-                        }
-                    }
+                    results.extend(names.into_iter().filter(|n| keep(n)));
                 }
-                "directory" => {
-                    // Sort dir entries for stable completion order.
-                    if let Ok(entries) = std::fs::read_dir(".") {
-                        let mut names: Vec<String> = entries
-                            .flatten()
-                            .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-                            .map(|e| e.file_name().to_string_lossy().into_owned())
-                            .collect();
-                        names.sort();
-                        for name in names {
-                            if name.starts_with(&prefix) {
-                                results.push(name);
-                            }
-                        }
-                    }
-                }
-                "file" => {
-                    if let Ok(entries) = std::fs::read_dir(".") {
-                        let mut names: Vec<String> = entries
-                            .flatten()
-                            .map(|e| e.file_name().to_string_lossy().into_owned())
-                            .collect();
-                        names.sort();
-                        for name in names {
-                            if name.starts_with(&prefix) {
-                                results.push(name);
-                            }
-                        }
-                    }
-                }
-                "variable" => {
-                    // Sort for deterministic completion-candidate
-                    // order (was HashMap iteration random, so
-                    // \`compgen -v\` listings flickered).
-                    let mut names: Vec<String> =
-                        if let Ok(tab) = crate::ported::params::paramtab().read() {
-                            tab.iter()
-                                .filter(|(_, pm)| pm.u_arr.is_none())
-                                .map(|(k, _)| k.clone())
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
+                "builtin" | "enabled" | "helptopic" => {
+                    // Canonical BUILTIN_NAMES (port of `Src/builtin.c:40-137
+                    // builtins[]`) plus the in-process extension builtins.
+                    let mut names: Vec<&str> = Self::compgen_builtin_names();
                     names.sort();
-                    for name in names {
-                        if name.starts_with(&prefix) {
-                            results.push(name);
-                        }
-                    }
-                    let mut env_names: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
-                    env_names.sort();
-                    for name in env_names {
-                        if name.starts_with(&prefix) && !results.contains(&name) {
-                            results.push(name);
-                        }
-                    }
+                    names.dedup();
+                    let disabled = crate::ported::builtin::BUILTINS_DISABLED
+                        .lock()
+                        .map(|d| d.clone())
+                        .unwrap_or_default();
+                    results.extend(
+                        names
+                            .into_iter()
+                            .filter(|n| keep(n) && (action == "helptopic" || !disabled.contains(*n)))
+                            .map(String::from),
+                    );
                 }
+                "disabled" => {
+                    let mut names: Vec<String> = crate::ported::builtin::BUILTINS_DISABLED
+                        .lock()
+                        .map(|d| d.iter().cloned().collect())
+                        .unwrap_or_default();
+                    names.sort();
+                    results.extend(names.into_iter().filter(|n| keep(n)));
+                }
+                "command" => {
+                    let mut names: Vec<String> = self.alias_entries().into_iter().map(|(k, _)| k).collect();
+                    names.extend(Self::compgen_function_names());
+                    names.extend(Self::compgen_keywords().iter().map(|s| s.to_string()));
+                    names.extend(Self::compgen_builtin_names().into_iter().map(String::from));
+                    let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+                    for dir in path.split(':').filter(|d| !d.is_empty()) {
+                        if let Ok(rd) = std::fs::read_dir(dir) {
+                            names.extend(rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()));
+                        }
+                    }
+                    names.retain(|n| keep(n));
+                    names.sort();
+                    names.dedup();
+                    results.extend(names);
+                }
+                "directory" | "file" => results.extend(Self::compgen_paths(pfx, action == "directory")),
+                "export" => {
+                    let mut names: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
+                    names.sort();
+                    results.extend(names.into_iter().filter(|n| keep(n)));
+                }
+                "function" => {
+                    let mut names = Self::compgen_function_names();
+                    names.sort();
+                    results.extend(names.into_iter().filter(|n| keep(n)));
+                }
+                "group" => results.extend(Self::compgen_passwd_names(true).into_iter().filter(|n| keep(n))),
+                "user" => results.extend(Self::compgen_passwd_names(false).into_iter().filter(|n| keep(n))),
+                "keyword" => results.extend(Self::compgen_keywords().iter().filter(|n| keep(n)).map(|s| s.to_string())),
+                "service" => {
+                    let text = std::fs::read_to_string("/etc/services").unwrap_or_default();
+                    results.extend(
+                        text.lines()
+                            .filter(|l| !l.starts_with('#'))
+                            .filter_map(|l| l.split_whitespace().next())
+                            .filter(|n| keep(n))
+                            .map(String::from),
+                    );
+                }
+                "setopt" => results.extend(
+                    crate::dash_mode::BASH_SET_O.iter().map(|(n, _)| *n).filter(|n| keep(n)).map(String::from),
+                ),
+                "shopt" => results.extend(
+                    crate::dash_mode::BASH_SHOPTS.iter().map(|(n, _, _)| *n).filter(|n| keep(n)).map(String::from),
+                ),
+                "signal" => results.extend(
+                    crate::ported::signals_h::SIGS
+                        .iter()
+                        .map(|(n, _)| format!("SIG{n}"))
+                        .filter(|n| keep(n)),
+                ),
+                "variable" => {
+                    let mut names: Vec<String> = crate::ported::params::paramtab()
+                        .read()
+                        .map(|t| t.keys().cloned().collect())
+                        .unwrap_or_default();
+                    names.extend(std::env::vars().map(|(k, _)| k));
+                    if crate::dash_mode::bash_mode() {
+                        names.extend(Self::compgen_bash_arrays().iter().map(|s| s.to_string()));
+                        names.extend(Self::compgen_bash_scalars().iter().map(|s| s.to_string()));
+                    }
+                    names.sort();
+                    names.dedup();
+                    results.extend(names.into_iter().filter(|n| keep(n)));
+                }
+                // job / running / stopped / hostname / binding: nothing to offer.
                 _ => {}
             }
         }
 
-        // Handle wordlist
         if let Some(words) = wordlist {
-            for word in words.split_whitespace() {
-                if word.starts_with(&prefix) {
-                    results.push(word.to_string());
-                }
+            results.extend(words.split_whitespace().filter(|w| keep(w)).map(String::from));
+        }
+        if let Some(pattern) = globpat {
+            if let Ok(paths) = glob::glob(&pattern) {
+                results.extend(paths.flatten().map(|p| p.to_string_lossy().into_owned()).filter(|n| keep(n)));
             }
         }
 
-        // Handle glob pattern
-        if let Some(_pattern) = globpat {
-            let full_pattern = format!("{}*", prefix);
-            if let Ok(paths) = glob::glob(&full_pattern) {
-                for path in paths.flatten() {
-                    results.push(path.to_string_lossy().to_string());
-                }
+        // -X: a pattern; matching words are removed, or with a leading `!`
+        // only matching words are kept.
+        if let Some(f) = filter {
+            let (negate, pat) = match f.strip_prefix('!') {
+                Some(p) => (true, p.to_string()),
+                None => (false, f),
+            };
+            if let Ok(p) = glob::Pattern::new(&pat) {
+                results.retain(|w| p.matches(w) == negate);
             }
         }
 
-        results.sort();
-        results.dedup();
+        if results.is_empty() {
+            return 1;
+        }
         for r in results {
-            println!("{}", r);
+            println!("{pre}{r}{suf}");
         }
         0
     }
 
+    /// Builtin names visible to `compgen -b`: bash's own table under `--bash`,
+    /// else zshrs's canonical table plus the in-process extension builtins.
+    fn compgen_builtin_names() -> Vec<&'static str> {
+        if crate::dash_mode::bash_mode() {
+            return crate::extensions::emulation_output::BASH_BUILTINS.iter().map(|(n, _)| *n).collect();
+        }
+        let mut names: Vec<&'static str> = BUILTIN_NAMES.iter().map(|s| s.as_str()).collect();
+        names.extend(crate::ext_builtins::EXT_BUILTIN_NAMES.iter().copied());
+        names
+    }
+
+    /// The array-valued variables every bash shell has (`compgen -A arrayvar`).
+    fn compgen_bash_arrays() -> &'static [&'static str] {
+        if !crate::dash_mode::bash_mode() {
+            return &[];
+        }
+        &[
+            "BASH_ALIASES", "BASH_ARGC", "BASH_ARGV", "BASH_CMDS", "BASH_LINENO", "BASH_SOURCE",
+            "BASH_VERSINFO", "DIRSTACK", "GROUPS", "PIPESTATUS",
+        ]
+    }
+
+    /// The scalar specials every bash shell has (`compgen -v`).
+    fn compgen_bash_scalars() -> &'static [&'static str] {
+        &[
+            "BASH", "BASHOPTS", "BASHPID", "BASH_COMMAND", "BASH_SUBSHELL", "BASH_VERSION", "EPOCHREALTIME",
+            "EPOCHSECONDS", "EUID", "FUNCNAME", "HISTCMD", "HOSTNAME", "HOSTTYPE", "LINENO", "MACHTYPE",
+            "OSTYPE", "PPID", "SECONDS", "SHELLOPTS", "SHLVL", "SRANDOM", "UID",
+        ]
+    }
+
+    /// bash reserved words (`compgen -k`).
+    fn compgen_keywords() -> &'static [&'static str] {
+        &[
+            "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do",
+            "done", "in", "function", "time", "{", "}", "!", "[[", "]]", "coproc",
+        ]
+    }
+
+    /// Names of the defined shell functions (hidden internals excluded).
+    fn compgen_function_names() -> Vec<String> {
+        let mut v: Vec<String> = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        v.retain(|n| !n.starts_with("_zshrs_anon_"));
+        v
+    }
+
+    /// `compgen -f` / `-d`: directory entries for the path prefix `pfx`, each
+    /// reported with the directory part exactly as typed, in readdir order.
+    fn compgen_paths(pfx: &str, dirs_only: bool) -> Vec<String> {
+        let (dir_part, base) = match pfx.rfind('/') {
+            Some(i) => (&pfx[..=i], &pfx[i + 1..]),
+            None => ("", pfx),
+        };
+        let read = if dir_part.is_empty() { "." } else { dir_part };
+        let mut out = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(read) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !name.starts_with(base) {
+                    continue;
+                }
+                if dirs_only && !e.path().is_dir() {
+                    continue;
+                }
+                out.push(format!("{dir_part}{name}"));
+            }
+        }
+        out
+    }
+
+    /// User names (`compgen -u`) or group names (`compgen -g`) from the system databases.
+    fn compgen_passwd_names(groups: bool) -> Vec<String> {
+        let mut out = Vec::new();
+        unsafe {
+            if groups {
+                libc::setgrent();
+                loop {
+                    let g = libc::getgrent();
+                    if g.is_null() {
+                        break;
+                    }
+                    out.push(std::ffi::CStr::from_ptr((*g).gr_name).to_string_lossy().into_owned());
+                }
+                libc::endgrent();
+            } else {
+                libc::setpwent();
+                loop {
+                    let p = libc::getpwent();
+                    if p.is_null() {
+                        break;
+                    }
+                    out.push(std::ffi::CStr::from_ptr((*p).pw_name).to_string_lossy().into_owned());
+                }
+                libc::endpwent();
+            }
+        }
+        out
+    }
+
     /// Define completion spec for a command
     pub(crate) fn builtin_complete(&mut self, args: &[String]) -> i32 {
-        if args.is_empty() {
+        // `complete -p [NAME...]`: print the specs (all, or only the named
+        // commands; a name with no spec is an error, status 1).
+        let print_only: Option<&[String]> = (args.first().map(String::as_str) == Some("-p")).then(|| &args[1..]);
+        if args.is_empty() || print_only.is_some() {
             // List all completion specs, sorted by command name so
             // 'complete' (no args) outputs deterministically.
-            let mut cmds: Vec<&String> = self.completions.keys().collect();
+            let wanted = print_only.unwrap_or(&[]);
+            let mut rc = 0;
+            for w in wanted {
+                if !self.completions.contains_key(w) {
+                    eprintln!("zshrs:complete:1: {w}: no completion specification");
+                    rc = 1;
+                }
+            }
+            let mut cmds: Vec<&String> = self.completions.keys().filter(|k| wanted.is_empty() || wanted.contains(*k)).collect();
             cmds.sort();
             for cmd in cmds {
                 let spec = self.completions.get(cmd).unwrap();
@@ -2364,7 +2513,7 @@ impl ShellExecutor {
                 parts.push(cmd.clone());
                 println!("{}", parts.join(" "));
             }
-            return 0;
+            return rc;
         }
 
         let mut spec = CompSpec::default();
