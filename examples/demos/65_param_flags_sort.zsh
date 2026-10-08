@@ -2,6 +2,8 @@
 # Sort + unique parameter flags — (o) (O) (u) (n) (i).
 # Ported from zsh's subst.c paramsubst (sort_flags branch).
 
+# (o)/(O) sort with strcoll, so the order is the locale's collation; pin it.
+export LC_ALL=en_US.UTF-8
 arr=(banana apple cherry banana date apple Banana APPLE)
 
 echo "── (o) ascending sort ──"
@@ -37,7 +39,7 @@ print -l ${(ou)words}
 # === ztest assertions ===
 asc=( ${(o)arr} )
 zassert_eq "${asc[1]}"  "apple"   "(o) first ascending"
-zassert_eq "${asc[3]}"  "APPLE"   "(o) APPLE follows lowercase apples by codepoint"
+zassert_eq "${asc[3]}"  "APPLE"   "(o) APPLE follows lowercase apples (en_US collation)"
 zassert_eq "${asc[-1]}" "date"    "(o) last ascending"
 desc=( ${(O)arr} )
 zassert_eq "${desc[1]}" "date"    "(O) descending starts with date"

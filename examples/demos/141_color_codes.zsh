@@ -2,6 +2,11 @@
 # ANSI color codes — manual + print -P + autoload colors.
 # Ported from Src/prompt.c (color escape handling) + Src/Modules/terminfo.c.
 
+# %B, %U and %F{N} are drawn from the terminal's capabilities, so with no
+# $TERM (a CI runner) they expand to nothing. Name the terminal: assigning
+# TERM loads its terminfo entry.
+TERM=xterm-256color
+
 echo "── manual ANSI escapes ──"
 printf '\033[31m%s\033[0m\n' "red"
 printf '\033[32m%s\033[0m\n' "green"

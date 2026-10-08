@@ -2,7 +2,7 @@
 # Atbash cipher — reverse alphabet substitution; self-inverse.
 
 atbash() {
-    echo "$1" | tr 'A-Za-z' 'Z-Aa-z'
+    echo "$1" | tr 'A-Za-z' 'ZYXWVUTSRQPONMLKJIHGFEDCBAzyxwvutsrqponmlkjihgfedcba'
 }
 
 echo "── encode ──"
@@ -20,12 +20,10 @@ echo "back:  $back"
 [[ "$plain" == "$back" ]] && echo "round-trip OK" || echo "round-trip FAIL"
 
 # === ztest assertions ===
-# NOTE: demo's tr pattern 'Z-Aa-z' has a typo in the LOWERCASE half (should be 'z-a').
-# Lowercase letters all collapse to 'z'. Asserting on the demo's actual behavior, not zsh-divergence.
-zassert_eq "$(atbash 'Hello, World!')"  "ezzzz, tzzzz!"               "atbash (demo's tr-bug output)"
-zassert_eq "$(atbash 'abcdefghijklmnopqrstuvwxyz')" "xyzzzzzzzzzzzzzzzzzzzzzzzz" "atbash lowercase collapse"
-zassert_eq "$enc"  "qzz zzzzz yzzzz zzz" "atbash encoded fox"
-# Round-trip does NOT recover due to lowercase collapse; this is a property of the demo.
-zassert_ne "$plain" "$back" "round-trip fails because of tr-pattern typo"
-zassert_contains "$enc" "z" "encoded contains z (collapse marker)"
+# The reversed alphabets are spelled out: a descending range such as 'Z-A' is
+# not portable (GNU tr rejects it, BSD tr reads it differently).
+zassert_eq "$(atbash 'Hello, World!')"  "Svool, Dliow!"               "atbash mixed case"
+zassert_eq "$(atbash 'abcdefghijklmnopqrstuvwxyz')" "zyxwvutsrqponmlkjihgfedcba" "atbash lowercase alphabet"
+zassert_eq "$enc"  "Gsv jfrxp yildm ulc" "atbash encoded fox"
+zassert_eq "$plain" "$back" "atbash is self-inverse"
 ztest_run
