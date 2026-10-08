@@ -2976,7 +2976,7 @@ pub fn zshrs_main() {
             if e != "__SILENCED__" {
                 eprintln!("zshrs: {}", e);
             }
-            std::process::exit(1);
+            std::process::exit(zsh::extensions::dash_mode::fatal_error_status().unwrap_or(1));
         }
         // !!! DASH-FAMILY GATE — see dash_mode::fatal_error_status !!!
         // The end of a `-c` script is the second place dash's
@@ -3212,7 +3212,7 @@ pub fn zshrs_main() {
                 if e != "__SILENCED__" {
                     eprintln!("zshrs: {}: {}", args[1], e);
                 }
-                std::process::exit(1);
+                std::process::exit(zsh::extensions::dash_mode::fatal_error_status().unwrap_or(1));
             }
             // c:Src/init.c:234 — loop() breaks on errflag in a
             // non-interactive shell and zsh_main exits with the

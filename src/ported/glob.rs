@@ -2694,6 +2694,11 @@ pub fn xpandredir(
                 } else if fn_.typ == REDIR_MERGEIN {
                     // c:2185
                     zerr("file number expected"); // c:2186
+                } else if crate::dash_mode::dash_faithful() {
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no
+                    // `>&file` (both-streams) form: the word after `>&` must be
+                    // a descriptor number or `-`, else "Bad fd number".
+                    zerr(&format!("Bad fd number: {}", s));
                 } else {
                     fn_.typ = REDIR_ERRWRITE; // c:2188
                 }

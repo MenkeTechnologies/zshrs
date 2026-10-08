@@ -5402,7 +5402,13 @@ impl ZshCompiler {
         // filename and wrote a file literally named `10`.
         let name_is_dynamic = name_clean.contains('$') || name_clean.contains('`');
         let mut effective_rtype = redir.rtype;
-        if redir.rtype == REDIR_MERGEOUT && !name_is_fd_like && !name_is_dynamic {
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no `>&file`: the
+        // word stays a dup and the runtime reports "Bad fd number".
+        if redir.rtype == REDIR_MERGEOUT
+            && !name_is_fd_like
+            && !name_is_dynamic
+            && !crate::extensions::dash_mode::dash_faithful()
+        {
             // `>& FILE` → `> FILE 2>&1`. Default fd1 was 1 (set above)
             // which matches WRITE_BOTH semantics.
             effective_rtype = REDIR_ERRWRITE;

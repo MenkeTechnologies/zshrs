@@ -3983,6 +3983,14 @@ pub fn bin_kill(
                 while idx < argv.len() {
                     let token = &argv[idx];
                     idx += 1;
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `kill -l` takes
+                    // signal NUMBERS only; a name is "Illegal number" (status 2).
+                    if crate::extensions::dash_mode::dash_faithful()
+                        && crate::extensions::dash_mode::dash_number(token).is_none()
+                    {
+                        zwarnnam(nam, &format!("Illegal number: {}", token));
+                        return 2;
+                    }
                     if let Ok(n) = token.parse::<i32>() {
                         // c:2821 numeric
                         let s = (n & !0o200) as i32; // c:2882

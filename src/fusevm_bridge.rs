@@ -22375,6 +22375,12 @@ impl ShellExecutor {
                     }
                 } else if let Ok(src_fd) = n.parse::<i32>() {
                     unsafe { libc::dup2(src_fd, fd) };
+                } else if op_byte == r::DUP_WRITE && crate::extensions::dash_mode::dash_faithful() {
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no
+                    // `>&file`; a non-number word is "Bad fd number" (status 2).
+                    crate::ported::utils::zerr(&format!("Bad fd number: {n}"));
+                    self.set_last_status(crate::extensions::dash_mode::fatal_error_status().unwrap_or(2));
+                    self.redirect_failed = true;
                 } else if op_byte == r::DUP_WRITE {
                     // c:Src/glob.c:2184-2187 xpandredir — a MERGEOUT
                     // word that expands to a non-number becomes

@@ -1611,8 +1611,11 @@ fn gettok() -> lextok {
             let d = hgetc();
             match d {
                 Some('&') => DAMPER,
-                Some('!') | Some('|') => AMPERBANG,
-                Some('>') => {
+                Some('!') | Some('|') if !crate::dash_mode::dash_strict() => AMPERBANG,
+                // !!! DASH-STRICT GATE (no C counterpart) !!! dash has no `&>`
+                // (both-streams redirection): it lexes `&` then `>file`, so
+                // `echo a &>f` backgrounds `echo a` and truncates `f`.
+                Some('>') if !crate::dash_mode::dash_strict() => {
                     // c:753 — `tokfd = peekfd;` before the `&>` shape
                     // continues into the LX1_OUTANG-like dispatch.
                     LEX_TOKFD.set(peekfd);
@@ -1655,7 +1658,9 @@ fn gettok() -> lextok {
             let d = hgetc();
             match d {
                 Some('|') if LEX_INCASEPAT.get() <= 0 => DBAR,
-                Some('&') => BARAMP,
+                // !!! DASH-STRICT GATE (no C counterpart) !!! dash has no `|&`
+                // pipe-with-stderr; `|` followed by `&` is a syntax error.
+                Some('&') if !crate::dash_mode::dash_strict() => BARAMP,
                 _ => {
                     if let Some(d) = d {
                         hungetc(d);

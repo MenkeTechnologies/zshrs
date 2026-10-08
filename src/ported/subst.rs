@@ -2349,6 +2349,11 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // in C's char* model) expand to `$PWD`. The previous Rust
         // port required `chars.len() >= 3`, dropping the bare case
         // and printing literal `~+`. Parity bug #26.
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's tilde expansion knows
+        // only `~` and `~user`; `~+` / `~-` stay literal.
+        if (nx == '+' || nx == '-') && crate::dash_mode::dash_faithful() {
+            return None;
+        }
         if nx == '+' && (chars.len() == 2 || isend(chars[2])) {
             // c:752 — `*namptr = dyncat(pwd, str + 2);`
             let pwd = getsparam("PWD").unwrap_or_default();

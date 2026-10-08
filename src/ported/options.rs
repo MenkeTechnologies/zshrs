@@ -1092,7 +1092,15 @@ pub fn dashgetfn() -> String {
         zshletters
     };
     let mut out = String::new();
-    for c in (FIRST_OPT..=LAST_OPT).map(|b| b as char) {
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `$-` walks its
+    // option table BACKWARDS (`optletters` is e f I i m s x v V E C a b u n),
+    // so `set -euf` yields `ufe`; zsh walks ASCII order (`efu`).
+    let order: Vec<char> = if crate::dash_mode::dash_faithful() {
+        "nubaCEVvxsmiIfe".chars().collect()
+    } else {
+        (FIRST_OPT..=LAST_OPT).map(|b| b as char).collect()
+    };
+    for c in order {
         // c:896
         for (ch, name, negated) in letters {
             if *ch == c {

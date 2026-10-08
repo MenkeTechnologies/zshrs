@@ -2826,7 +2826,31 @@ impl ShellExecutor {
            // reshuffling the rest of new(). Bug: `zshrs -x` ignored the
            // user's custom PS4/PROMPT4 unless re-forwarded with
            // `PS4=$PROMPT4 zshrs -x`.
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no `PROMPTn` aliases
+        // (an imported `PROMPT4` is an ordinary variable) and always starts with
+        // `PS1='$ '` (`# ` for root), `PS2='> '`, `PS4='+ '`, interactive or not.
+        let dash_prompts = crate::extensions::dash_mode::dash_faithful();
+        // c:Src/init.c:1212-1213 — `ifs = EMULATION(EMULATE_KSH|EMULATE_SH) ?
+        // ztrdup(DEFAULT_IFS_SH) : ztrdup(DEFAULT_IFS)`: the sh default has no
+        // Meta+space tail. An inherited `IFS` still wins (importenv).
+        if dash_prompts && std::env::var_os("IFS").is_none() {
+            *crate::ported::params::ifs_lock().lock().unwrap() =
+                Some(crate::ported::zsh_h::DEFAULT_IFS_SH.to_string());
+        }
         let seed_prompt = |name: &str, alias: Option<&str>, default: &str| {
+            let alias = if dash_prompts { None } else { alias };
+            let default = match (dash_prompts, name) {
+                (true, "PS1") => {
+                    if crate::ported::utils::privasserted() {
+                        "# "
+                    } else {
+                        "$ "
+                    }
+                }
+                (true, "PS2") => "> ",
+                (true, "PS4") => "+ ",
+                _ => default,
+            };
             let cur = crate::ported::params::getsparam(name);
             let have_param = cur.as_deref().map_or(false, |s| !s.is_empty());
             if have_param {
@@ -2892,6 +2916,9 @@ impl ShellExecutor {
             ("PROMPT3", "PS3"),
             ("PROMPT4", "PS4"),
         ] {
+            if dash_prompts {
+                continue;
+            }
             if crate::ported::params::getsparam(alias).map_or(true, |s| s.is_empty()) {
                 if let Some(v) = crate::ported::params::getsparam(source) {
                     setsparam(alias, &v);
@@ -4180,6 +4207,18 @@ impl ShellExecutor {
             // execute_script wrapper recognizes as "already reported,
             // exit silently". Bug #142 in docs/BUGS.md (double-print
             // half).
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! a dash syntax error is
+            // `sh_error` -> `exraise(EXERROR)`: it ends a non-interactive shell with
+            // status 2, wherever the text came from (`-c`, `eval`, `.`, a script),
+            // instead of zsh's "report, status 1, carry on".
+            if crate::extensions::dash_mode::dash_faithful()
+                && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+            {
+                let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(2);
+                crate::ported::builtin::LASTVAL.store(st, Ordering::Relaxed);
+                crate::ported::builtin::EXIT_VAL.store(st, Ordering::Relaxed);
+                crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+            }
             return Err("__SILENCED__".to_string());
         }
 
@@ -4586,6 +4625,16 @@ impl ShellExecutor {
                         && crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) == 0
                     {
                         crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:173
+                    }
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! a syntax error in a
+                    // sourced file is `exraise(EXERROR)`: status 2 and the shell ends.
+                    if tok_v == LEXERR
+                        && crate::extensions::dash_mode::dash_faithful()
+                        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+                    {
+                        std::process::exit(
+                            crate::extensions::dash_mode::fatal_error_status().unwrap_or(2),
+                        );
                     }
                     break;
                 }

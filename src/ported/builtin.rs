@@ -230,7 +230,14 @@ pub fn printbuiltinnode(
     }
     if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
         // c:188
-        println!("{} is a shell builtin", bn.nam); // c:189
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash words POSIX special
+        // builtins as "a special shell builtin".
+        let kind = if crate::dash_mode::dash_faithful() && crate::dash_mode::dash_special_builtin(&bn.nam) {
+            "special shell builtin"
+        } else {
+            "shell builtin"
+        };
+        println!("{} is a {}", bn.nam, kind); // c:189
         return; // c:190
     }
     // c:193 — `/* default is name only */`
@@ -404,6 +411,14 @@ pub fn execbuiltin(
         // `-n`; `-e` / `-E` (and clusters like `-ne`) are printed as text.
         if crate::dash_mode::dash_strict() && name == "echo" {
             optstr_bytes = b"n".to_vec();
+        }
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's narrower option
+        // sets: `read` knows only `-r` (and `-p`), `local` takes no options, and
+        // `unalias` only `-a`; everything else is "Illegal option".
+        if crate::dash_mode::dash_faithful() {
+            if let Some(o) = crate::dash_mode::dash_builtin_optstr(&name) {
+                optstr_bytes = o.to_vec();
+            }
         }
         // !!! BASH-ONLY (no C counterpart) !!! bash's own option letters.
         if crate::dash_mode::bash_mode() {
@@ -606,6 +621,11 @@ pub fn execbuiltin(
                 {
                     return 2;
                 }
+                // dash's `sh_error("Illegal option")` status is 2 for every
+                // builtin, not zsh's 1.
+                if crate::dash_mode::dash_faithful() {
+                    return 2;
+                }
                 return 1; // c:393
             }
             // c:395 — `arg = *++argv;`
@@ -706,6 +726,14 @@ pub fn execbuiltin(
                 "too many arguments"
             },
         ); // c:434
+        // ksh93 `let` with no expression is a usage error, status 2.
+        if argc < bn_ref.minargs && name == "let" && crate::dash_mode::ksh93_mode() {
+            return 2;
+        }
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash usage errors are status 2.
+        if crate::dash_mode::dash_faithful() {
+            return 2;
+        }
         return 1; // c:435
     }
 
@@ -726,10 +754,6 @@ pub fn execbuiltin(
                         // c:443 — `fprintf(xtrerr, "%s", name);`
         xtrerr_fputs(&name); // c:443
                              // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
-        // ksh93 `let` with no expression is a usage error, status 2.
-        if argc < bn_ref.minargs && name == "let" && crate::dash_mode::ksh93_mode() {
-            return 2;
-        }
                              // C zsh's parser pre-splits `name=value` args for
                              // BINF_ASSIGN-flagged builtins (export/typeset/declare/local/
                              // readonly/integer/float) into asg{name,value} nodes, which
@@ -4149,6 +4173,31 @@ pub fn bin_typeset(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `local` prints nothing
+    // when given no names, and `local x` makes a local that INHERITS the
+    // visible value (`x=5; f() { local x; echo $x; }` prints 5), where zsh's
+    // starts it unset. Re-enter with the inherited value spelled out.
+    if name == "local" && crate::dash_mode::dash_faithful() {
+        // dash: `local` outside a function is a fatal "not in a function" (status 2).
+        if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            zerrnam(name, "not in a function");
+            return crate::dash_mode::fatal_error_status().unwrap_or(2);
+        }
+        if argv.is_empty() {
+            return 0;
+        }
+        let inherited: Vec<String> = argv
+            .iter()
+            .map(|a| match crate::ported::params::getsparam(a) {
+                Some(v) if !a.contains('=') => format!("{a}={v}"),
+                _ => a.clone(),
+            })
+            .collect();
+        if inherited != argv {
+            return bin_typeset(name, &inherited, ops, func);
+        }
+    }
+
     // !!! BASH-MODE (no C counterpart) !!! bash: `local` outside a function is
     // an error, status 1 (zsh accepts it as a plain typeset).
     if name == "local"
@@ -4592,6 +4641,15 @@ pub fn bin_typeset(
                         .ok()
                         .and_then(|l| l.iter().rev().find(|(n, _)| n == *k).map(|(_, fl)| *fl as u32))
                         .unwrap_or(f);
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `readonly` listing
+                    // holds only variables the script made readonly; zsh's read-only
+                    // specials (`$!`, `$#`, `$$`, `LINENO`, `PPID`, ...) are not dash variables.
+                    if func == BIN_READONLY
+                        && (f & PM_SPECIAL) != 0
+                        && crate::dash_mode::dash_faithful()
+                    {
+                        return false;
+                    }
                     if exclude != 0 && (f & exclude) != 0 {
                         return false; // c:394
                     }
@@ -11444,7 +11502,17 @@ pub fn bin_whence(
                 } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
                     println!("{}: shell reserved word", arg);
                 } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
-                    println!("{} is a {}", arg, if crate::dash_mode::ksh93_mode() { "keyword" } else { "reserved word" });
+                    println!(
+                        "{} is a {}",
+                        arg,
+                        if crate::dash_mode::dash_faithful() {
+                            "shell keyword"
+                        } else if crate::dash_mode::ksh93_mode() {
+                            "keyword"
+                        } else {
+                            "reserved word"
+                        }
+                    );
                 } else {
                     println!("{}", arg); // c:4110
                 }
@@ -13039,6 +13107,10 @@ pub fn bin_print(
                 // c:5435 invalid directive / c:5204 argument specifier
                 // out of range — `msg` carries the full zwarnnam text.
                 crate::ported::utils::zwarnnam(name, &msg);
+                // dash's printf reports a bad directive as status 2.
+                if crate::dash_mode::dash_faithful() {
+                    return 2;
+                }
                 return 1; // c:5443
             }
         };
@@ -13261,6 +13333,11 @@ pub fn bin_print(
             GETKEYS_BINDKEY // c:4755
         } else if !echo_mode && !dash_e {
             GETKEYS_PRINT // c:4758
+        } else if crate::dash_mode::dash_faithful() {
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's echo
+            // (conv_escape_str) takes `\NNN` as well as `\0NNN`; zsh's ECHO
+            // set only knows the `\0` introducer.
+            GETKEYS_ECHO | crate::ported::zsh_h::GETKEY_OCTAL_ESC as u32
         } else {
             GETKEYS_ECHO // c:4760
         };
@@ -13279,6 +13356,11 @@ pub fn bin_print(
                 }
                 continue;
             }
+            let a = &if echo_mode && crate::dash_mode::dash_faithful() {
+                crate::dash_mode::dash_echo_octal_normalize(a)
+            } else {
+                a.clone()
+            };
             let (s, _) = getkeystring_with(a, escape_how, None);
             new_args.push(s);
             if crate::ported::utils::getkey_truncated_take() {
@@ -13712,6 +13794,18 @@ pub fn bin_shift(
     queue_signals(); // c:5599
                      // c:5600-5605 — first arg parsed as math expr unless it's an array name.
     if !argv.is_empty() {
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's shift takes only a
+        // plain number (`number()`); anything else is a fatal "Illegal number".
+        if crate::dash_mode::dash_faithful() {
+            match crate::dash_mode::dash_number(&argv[0]) {
+                Some(n) => num = n,
+                None => {
+                    unqueue_signals();
+                    zerrnam(name, &format!("Illegal number: {}", argv[0]));
+                    return crate::dash_mode::fatal_error_status().unwrap_or(2);
+                }
+            }
+        }
         // c:5600
         let first = &argv[0];
         // c:5600 — `if (!getaparam(*argv))` decides whether the arg is
@@ -13837,6 +13931,11 @@ pub fn bin_getopts(
     _func: i32,
 ) -> i32 {
     if argv.len() < 2 {
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash: usage error, status 2.
+        if crate::dash_mode::dash_faithful() {
+            zwarnnam(_name, "Usage: getopts optstring var [arg...]");
+            return 2;
+        }
         return 1;
     }
     // c:5675 — `char *optstr = unmetafy(*argv++, &lenoptstr); char *var = *argv++;`
@@ -14132,11 +14231,7 @@ pub fn bin_break(
     // instead evaluates the argument as arithmetic.
     let mut dash_num: Option<i32> = None;
     if !implicit && crate::dash_mode::dash_faithful() {
-        let a = argv[0].trim_start();
-        let digits = a.strip_prefix('+').unwrap_or(a);
-        if digits.bytes().all(|b| b.is_ascii_digit()) {
-            dash_num = digits.parse::<i32>().ok();
-        }
+        dash_num = crate::dash_mode::dash_number(&argv[0]);
         if dash_num.is_none() {
             zerrnam(name, &format!("Illegal number: {}", argv[0]));
             return crate::dash_mode::fatal_error_status().unwrap_or(2);
@@ -14174,6 +14269,12 @@ pub fn bin_break(
         // function or script stops after the command (Bug #616).
         x if x == BIN_CONTINUE || x == BIN_BREAK => {
             let num = if nump != 0 { num } else { 1 }; // c:5795
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's breakcmd clamps the
+            // count to the loop nest and returns 0: `break` / `continue` outside a
+            // loop (or with count 0) is a silent no-op, not an error.
+            if crate::dash_mode::dash_faithful() && (num == 0 || loops == 0) {
+                return 0;
+            }
             if num <= 0 {
                 // c:5796
                 zerrnam(name, &format!("argument is not positive: {}", num)); // c:5797
@@ -17257,7 +17358,14 @@ impl<'a> TestParse<'a> {
     /// `COND_*` opcode plus the two `COND_MOD`/`COND_MODI` fallbacks; anything
     /// else is a parse error naming the middle argument.
     fn par_cond_triple(&mut self, a: String, b: String, c: String) -> Option<TestCond> {
-        let known = matches!(b.as_str(), "=" | "==" | "!=" | "=~") // c:2663-2691
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `test` has `=` and
+        // `!=` only; `==` and `=~` are "unexpected operator" (status 2).
+        let string_ops_ok = if crate::dash_mode::dash_faithful() {
+            matches!(b.as_str(), "=" | "!=")
+        } else {
+            matches!(b.as_str(), "=" | "==" | "!=" | "=~")
+        };
+        let known = string_ops_ok // c:2663-2691
             || matches!(b.as_str(), "<" | ">") // c:2666-2671 COND_STRLT/STRGTR
             || b.starts_with(crate::ported::zsh_h::IS_DASH)                    // c:2692
             || (a.starts_with(crate::ported::zsh_h::IS_DASH) && a.chars().count() > 1); // c:2703

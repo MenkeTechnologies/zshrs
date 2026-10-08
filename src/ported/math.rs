@@ -622,19 +622,41 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             }
         }
         if let Some(raw) = getsparam(base_name) {
-            if let Ok(n) = raw.parse::<i64>() {
-                return mnumber {
-                    l: n,
-                    d: 0.0,
-                    type_: MN_INTEGER,
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash reads a variable in
+            // arithmetic with strtoimax over the WHOLE value (decimal, `0x` hex or
+            // `0` octal, blanks around it allowed); anything else, `1+2` included,
+            // is a fatal "Illegal number".
+            if crate::dash_mode::dash_faithful() {
+                return match crate::dash_mode::dash_arith_var(&raw) {
+                    Some(n) => mnumber { l: n, d: 0.0, type_: MN_INTEGER },
+                    None => {
+                        m_error_set(format!("Illegal number: {raw}"));
+                        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                    }
                 };
             }
-            if let Ok(f) = raw.parse::<f64>() {
-                return mnumber {
-                    l: 0,
-                    d: f,
-                    type_: MN_FLOAT,
-                };
+            // c:Src/params.c:2639 matheval(getstrvalue(v)) — under OCTALZEROES a
+            // value with a leading zero (`010`) lexes as octal (c:489-512), so the
+            // decimal fast paths below must not claim it; matheval decides.
+            let octal_lead = m_octal_zeroes() && {
+                let t = raw.trim_start().trim_start_matches(['+', '-']);
+                t.len() > 1 && t.starts_with('0')
+            };
+            if !octal_lead {
+                if let Ok(n) = raw.parse::<i64>() {
+                    return mnumber {
+                        l: n,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    };
+                }
+                if let Ok(f) = raw.parse::<f64>() {
+                    return mnumber {
+                        l: 0,
+                        d: f,
+                        type_: MN_FLOAT,
+                    };
+                }
             }
             // c:Src/math.c:337 getmathparam — falls back to recursively
             // evaluating the raw string as an arith expression. zsh: a
@@ -1094,6 +1116,12 @@ pub(crate) fn lexconstant() -> i32 {
                 // c:Src/utils.c:2511 — the warning prints `inp`, the rest of the
                 // expression from the digits on, so hand zstrtol the whole tail
                 // (underscores are its business, c:Src/math.c lexconstant).
+                // !!! DASH-STRICT GATE (no C counterpart) !!! `0x` with no digits is
+                // "expecting EOF" in dash.
+                if crate::dash_mode::dash_strict() && hex_start == m_pos() {
+                    m_error_set("bad math expression: operand expected".to_string());
+                    return EOI;
+                }
                 let val = crate::ported::utils::zstrtol_underscore(&m_input_slice_from(hex_start), 16, true).0;
                 m_lastbase_set(16);
                 m_yyval_set(if m_force_float() {
@@ -4403,6 +4431,11 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
         reset_output_format(); // c:1487
     }
 
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `$(( ))` is an error:
+    // "expecting primary".
+    if crate::dash_mode::dash_faithful() && s.trim().is_empty() {
+        return Err("bad math expression: expression expected".to_string());
+    }
     // c:1491-1495 — empty expression returns MN_INTEGER 0.
     if s.is_empty() {
         // c:1491

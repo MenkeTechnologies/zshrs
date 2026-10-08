@@ -3670,3 +3670,75 @@ fn cd_dash_oldpwd_source_follows_the_emulated_shell() {
     let (out, _) = run_zshrs(&["--zsh"], "cd /usr; OLDPWD=/etc; cd /bin; OLDPWD=/var; cd - >/dev/null; pwd");
     assert_eq!(out, "/usr\n");
 }
+
+/// Run `bin args -c script` with stdin from /dev/null; (stdout, exit code).
+fn run_code(bin: &str, args: &[&str], script: &str) -> (String, i32) {
+    let out = Command::new(bin)
+        .args(args)
+        .args(["-c", script])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {bin}: {e}"));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+/// dash/ash specifics that the cross-shell corpus cannot hold because bash and
+/// zsh disagree with dash: fatal syntax errors (status 2, also in `-c`, `eval`
+/// and dot-sourced files), usage-error statuses, `kill -l NAME`, literal
+/// `~+`/`~-`, `\0NNN` echo escapes and dash's strict arithmetic variables.
+/// Compared on stdout AND exit status against the real dash; `--ash` is the
+/// same shell and must agree.
+#[test]
+fn dash_specifics_match_dash() {
+    let Some(dash) = find_shell(&["/opt/homebrew/bin/dash", "/bin/dash", "dash"]) else {
+        eprintln!("skip: dash not found");
+        return;
+    };
+    let probes = [
+        "echo (",
+        "echo a; if; echo b",
+        "echo a; eval 'if'; echo after",
+        "echo 'echo (' > \"${TMPDIR:-/tmp}/zshrs_dash_probe.sh\"; echo a; . \"${TMPDIR:-/tmp}/zshrs_dash_probe.sh\"; echo after",
+        "kill -l INT",
+        "kill -l 9",
+        "echo ~+ ~-",
+        "echo '\\101\\0101\\060'",
+        "type -a echo",
+        "local",
+        "f() { local; echo in; }; f",
+        "getopts; echo $?",
+        "getopts a; echo $?",
+        "printf '%q\\n' a",
+        "printf '%d\\n' 5; printf '%q\\n' a; echo after",
+        "echo $((0x))",
+        "echo $(( ))",
+        "x=abc; echo $((x+1))",
+        "x=1+2; echo $((x*2))",
+        "x=; echo $((x+1))",
+        "x=' 5 '; echo $((x+1))",
+        "x=0x10; echo $((x+1))",
+        "x=010; echo $((x+1))",
+        "x=-3; echo $((x+1))",
+        "echo $((010)) $((0x1f)) $((1<<3)) $((-8>>1)) $((1?2:3)) $((1&&0)) $((!5)) $((~5)) $((-5%3))",
+        "shift abc; echo after",
+        "break; echo $?",
+        "[ a == a ]; echo $?",
+        "type if; type :; type echo",
+        "x=5; f() { local x; echo \"[$x]\"; }; f",
+        "set +f; set -eu; echo $-",
+    ];
+    for flag in ["--dash", "--ash"] {
+        let bad: Vec<String> = probes
+            .iter()
+            .filter_map(|p| {
+                let z = run_code(&zshrs_bin(), &[flag, "-f"], p);
+                let r = run_code(&dash, &[], p);
+                (z != r).then(|| format!("  {p:?}\n    dash: {r:?}\n    zrs:  {z:?}"))
+            })
+            .collect();
+        assert!(bad.is_empty(), "{flag} diverged from dash:\n{}", bad.join("\n"));
+    }
+}

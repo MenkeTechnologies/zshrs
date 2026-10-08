@@ -274,6 +274,105 @@ pub fn dash_faithful() -> bool {
     posix_faithful() && dash_strict()
 }
 
+/// The option letters dash's builtin `name` accepts, where that is narrower
+/// than zsh's (`None` = keep zsh's set). dash reports any other letter as
+/// "Illegal option" (status 2). Measured on /opt/homebrew/bin/dash 0.5.13.5 and
+/// /bin/dash: `read -n/-s/-d`, `local -r/-a/-x` and `unalias -x` all fail.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_builtin_optstr(name: &str) -> Option<&'static [u8]> {
+    match name {
+        "read" => Some(b"rp"),
+        "local" => Some(b""),
+        "unalias" => Some(b"a"),
+        "type" => Some(b""),
+        _ => None,
+    }
+}
+
+/// Rewrite every dash `echo` `\0` octal escape to the three-digit `\NNN` form
+/// zsh's getkeystring reads. dash's `\0` introducer takes up to THREE digits
+/// after the zero (`\0101` is `A`), while zsh's consumes the zero as one of
+/// the three (`\0101` is `\010` then `1`). Escaped backslashes are skipped.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_echo_octal_normalize(s: &str) -> String {
+    let b: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != '\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
+        } else if b[i + 1] == '0' {
+            let digits: String = b[i + 2..].iter().take(3).take_while(|c| c.is_digit(8)).collect();
+            out.push_str(&format!("\\{:0>3}", digits));
+            i += 2 + digits.len();
+        } else {
+            out.push('\\');
+            out.push(b[i + 1]);
+            i += 2;
+        }
+    }
+    out
+}
+
+/// dash's arithmetic read of a variable's value: empty is 0, otherwise the whole
+/// value must be a `strtoimax(.., 0)` integer (optional sign, `0x` hex, leading-`0`
+/// octal or decimal) with only blanks around it.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_arith_var(raw: &str) -> Option<i64> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Some(0);
+    }
+    let (neg, body) = match t.as_bytes()[0] {
+        b'-' => (true, &t[1..]),
+        b'+' => (false, &t[1..]),
+        _ => (false, t),
+    };
+    let (radix, digits) = if let Some(h) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+        (16, h)
+    } else if body.len() > 1 && body.starts_with('0') {
+        (8, &body[1..])
+    } else {
+        (10, body)
+    };
+    if !digits.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let v = i64::from_str_radix(digits, radix).ok()?;
+    Some(if neg { -v } else { v })
+}
+
+/// dash's POSIX special builtins (parser.c `goodname` rejects them as function
+/// names; `type` words them "a special shell builtin").
+const DASH_SPECIAL_BUILTINS: &[&str] = &[
+    ":", ".", "break", "continue", "eval", "exec", "exit", "export",
+    "readonly", "return", "set", "shift", "times", "trap", "unset",
+];
+
+/// True when `name` is one of dash's POSIX special builtins.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_special_builtin(name: &str) -> bool {
+    DASH_SPECIAL_BUILTINS.contains(&name)
+}
+
+/// dash's `number()`: an optional `+` and decimal digits that fit an int.
+/// Anything else (`abc`, `-1`, `1+1`, `0x10`, empty) is "Illegal number".
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_number(s: &str) -> Option<i32> {
+    let a = s.trim_start();
+    let digits = a.strip_prefix('+').unwrap_or(a);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<i32>().ok()
+}
+
 /// True when dash's parser rejects `name` as a function name
 /// ("Syntax error: Bad function name"): anything that is not
 /// `[A-Za-z_][A-Za-z0-9_]*` (parser.c `goodname`), or that names a POSIX
@@ -282,13 +381,9 @@ pub fn dash_faithful() -> bool {
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn dash_bad_function_name(name: &str) -> bool {
-    const SPECIAL: &[&str] = &[
-        ":", ".", "break", "continue", "eval", "exec", "exit", "export",
-        "readonly", "return", "set", "shift", "times", "trap", "unset",
-    ];
     let mut chars = name.chars();
     let first_ok = matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic());
-    !first_ok || !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) || SPECIAL.contains(&name)
+    !first_ok || !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) || dash_special_builtin(name)
 }
 
 /// True in a bare Korn drop-in — `zshrs --ksh`, `--mksh` or `--pdksh`.
