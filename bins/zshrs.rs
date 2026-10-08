@@ -4143,10 +4143,24 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     // from its body, so the body executed unconditionally — broke
     // /etc/zshrc:25 zkbd test, broke `case ARM) c1='…'; …;;` SQ
     // assignments, broke any function defined across lines.
+    // c:Src/init.c:1606 / c:1644 — `sourcelevel++` around the file, so a
+    // top-level `return` in it leaves the FILE: bin_break's return arm
+    // (c:Src/builtin.c:5840-5841) only falls through to zexit when
+    // `sourcelevel` is zero. Without it Ubuntu's /etc/bash.bashrc
+    // (`[ -z "$PS1" ] && return`, line 1) exited `zshrs --bash -i -c CMD`
+    // with status 0 before CMD ran.
+    use std::sync::atomic::Ordering::Relaxed;
+    zsh::ported::init::sourcelevel.fetch_add(1, Relaxed);
     if let Err(e) = executor.execute_script(contents) {
         if e != "__SILENCED__" {
             eprintln!("zshrs: {}: {}", path.display(), e);
         }
+    }
+    zsh::ported::init::sourcelevel.fetch_sub(1, Relaxed);
+    // c:Src/init.c:1697-1698 — `if (!exit_pending) retflag = 0;`: the
+    // return has been serviced at the file boundary.
+    if zsh::ported::builtin::EXIT_PENDING.load(Relaxed) == 0 {
+        zsh::ported::builtin::RETFLAG.store(0, Relaxed);
     }
 
     // Restore `$0` per Src/builtin.c:6139-6142.

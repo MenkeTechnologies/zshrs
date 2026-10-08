@@ -15761,12 +15761,16 @@ fn emulate_l_lists_the_target_emulations_options_without_applying_them() {
 #[test]
 fn mathfunc_jn_yn_take_an_integer_order() {
     let z = "zmodload zsh/mathfunc; ";
+    // yn() is the host libm's, and the two libms differ in the last bit for
+    // yn(0,1). Master oracle 8cc5ead prints 0.08825696421567697 on macOS and
+    // 0.088256964215676983 under glibc; the other values agree.
+    let yn01 = if cfg!(target_os = "linux") { "0.088256964215676983" } else { "0.08825696421567697" };
 
     for (expr, want) in [
         ("jn(0,0)", "1."),
         ("jn(1,0)", "0."),
         ("jn(2,1)", "0.11490348493190049"),
-        ("yn(0,1)", "0.08825696421567697"),
+        ("yn(0,1)", yn01),
         ("yn(1,1)", "-0.78121282130028868"),
     ] {
         let (_s, out, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( {expr} ))"));
@@ -16641,7 +16645,10 @@ fn savehistfile_buffers_its_writes_instead_of_one_syscall_per_entry() {
     assert_eq!(proc_out.status.code().unwrap_or(-1), 0, "stderr: {err}");
 
     let mut lines = stdout.lines();
-    assert_eq!(lines.next(), Some("ring=40000"), "stderr: {err}");
+    // The ring holds one entry fewer than the file: master oracle 8cc5ead
+    // prints ring=39999 (then written=40000) for this script on macOS and
+    // on Ubuntu, as zshrs does.
+    assert_eq!(lines.next(), Some("ring=39999"), "stderr: {err}");
     assert_eq!(
         lines.next().map(str::trim),
         Some("written=40000"),
@@ -17066,4 +17073,42 @@ print -r -- "[${A[(K)zzqaaa][(i)_C]}][${A[(i)zzq*][2]}][${A[(I)*][-1]}][${(k)A[(
 a=(Alpha beta Gamma delta); print -r -- "[${a[1,(r)Gamma][(I)beta]}][${a[1,(r)Gamma][(i)zz]}][${a[1,(r)Gamma][(I)zz]}]""#,
     );
     assert_eq!(output, "[2][][zzq*][*aaa][B]\n[2][4][0]\n", "got: {output:?}");
+}
+
+/// c:Src/init.c:1606/1644 — a startup file is read through `source()`, which
+/// raises `sourcelevel` around it, so a top-level `return` in it ends the FILE
+/// (bin_break's return arm, c:Src/builtin.c:5840-5841, only exits the shell
+/// when `sourcelevel` is zero). zshrs read startup files without the bump and
+/// exited at the `return` with status 0, before the `-c` command ran: Ubuntu's
+/// /etc/bash.bashrc opens with `[ -z "$PS1" ] && return`, which made
+/// `zshrs --bash -i -c CMD` print nothing at all on Linux. Master oracle
+/// 8cc5ead with this .zshenv prints `a`, `hi`, `rc`.
+#[test]
+fn return_at_top_level_of_a_startup_file_leaves_only_that_file() {
+    let dir = tempdir_for_test();
+    std::fs::write(format!("{dir}/.zshenv"), "echo a\nreturn\necho b\n").unwrap();
+    let out = Command::new(zshrs_bin())
+        .args(["-c", "echo hi; echo rc"])
+        .env("ZDOTDIR", &dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn zshrs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\nhi\nrc\n");
+    assert_eq!(out.status.code(), Some(0));
+}
+
+/// c:Src/lex.c:1510-1512 — in dquote_parse a backslash with nothing after it
+/// is added literally. parsestr's input carries a `\0` sentinel in the port,
+/// which equals endchar and turned the trailing `\` into `Bnull NUL`, so the
+/// backslash came out as a NUL byte everywhere parsestr runs: `${(e)…}`, a
+/// PROMPT_SUBST prompt (`print -P`), bash-mode `${PS1@P}`. Master oracle
+/// 8cc5ead prints each value below with its backslash.
+#[test]
+fn a_trailing_backslash_survives_parsestr() {
+    let (_s, out, _e) = run_zshrs_parity(
+        r#"x='ab \'; print -r -- "[${(e)x}]"; y='\'; print -r -- "[${(e)y}]"
+setopt promptsubst; print -rP -- 'p \'"#,
+    );
+    assert_eq!(out, "[ab \\]\n[\\]\np \\\n");
 }
