@@ -658,7 +658,60 @@ const EXTENDED_CORPUS: &[&str] = &[
     // lives in EXTENDED. Regression for the singsub PREFORK_SINGLE split bug.
     "v='a b c'; w='a b'; printf '[%s]' \"${v/$w/X}\"",     // spaced replace pattern → [X c]
     "v='a b c'; w='b c'; printf '[%s]' \"${v//$w/Y}\"",    // spaced global replace → [a Y]
+    // A function whose body is a bare compound command (no braces): the
+    // `name ()` form takes ANY command as its body, with no SHORTLOOPS gate
+    // (Src/parse.c:2110 `par_cmd`). `( … )` was a parse error in every
+    // Bourne-family mode, where SHORTLOOPS is off.
+    "f() ( printf '%s\\n' sub ); f",                       // subshell function body
+    "f() ( printf '%s\\n' a; printf '%s\\n' b ); f",       // multi-command subshell body
+    // bash and ksh93 number $LINENO inside a function by the absolute script
+    // line; zsh counts from the line the function was defined on.
+    "f() { printf '%s\\n' \"$LINENO\"; }\nf\nf",           // one-line def, called twice
+    "g() {\nprintf '%s\\n' \"$LINENO\"\n}\ng",             // body on its own line
+    // bash/zsh brace expansion keeps/drops an empty alternative the same way
+    // as their reference: an unquoted empty brace word is removed in bash.
+    "printf '[%s]' {,a}; printf '\\n'",                    // leading empty alternative
+    "printf '[%s]' a{,b}c {a,}; printf '\\n'",             // trailing / embedded empty
+    "for i in {,a,}; do printf '[%s]\\n' \"$i\"; done",    // for-list drops empties
+    "true & printf '[%s]\\n' \"${!:+set}\"",               // $! set after a background job
 ];
+
+/// bash-only corpus — constructs where bash differs from the Korn shells and
+/// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
+/// was a measured `--bash` divergence.
+const BASH_ONLY_CORPUS: &[&str] = &[
+    // `${!#}` is indirection through `$#`: the LAST positional.
+    "set -- a b c; printf '[%s]' \"${!#}\"; printf '\\n'",
+    // Integer arithmetic wraps at 64 bits (zsh truncates the literal instead).
+    "echo $((-9223372036854775808)) $((9223372036854775807+1))",
+    // bash 5.2 `patsub_replacement`: `&` is the matched text, `\\&` a literal `&`.
+    "v=abc; printf '%s\\n' \"${v/b/&}\" \"${v/b/\\&}\" \"${v//[ac]/<&>}\" \"${v/b/&&}\" \"${v/b/\\\\&}\"",
+    "v=abc; shopt -u patsub_replacement; printf '%s\\n' \"${v/b/&}\"",
+    // `trap -p SIG...` lists only the named signals.
+    "trap 'echo x' INT USR1; trap -p USR1",
+    "trap 'echo x' INT USR1; trap -p INT USR1",
+    // `local` / `return` outside a function are errors that do not abort.
+    "local x=1 2>/dev/null; echo rc=$?",
+    "return 3 2>/dev/null; echo rc=$?",
+    // Sourcing a missing file returns 1 and the script continues.
+    ". /nonexistent 2>/dev/null; echo rc=$?",
+    // Function listings: `declare -f` layout and the `declare -F` name list.
+    "f() { echo a; echo b; }; declare -f f",
+    "f() { echo a; }; declare -F f; declare -F; declare -F nofunc; echo rc=$?",
+    // `${unset@Q}` is empty; set-but-empty quotes to `''`.
+    "unset u; printf '[%s]' \"${u@Q}\"; u=; printf '[%s]' \"${u@Q}\"; printf '\\n'",
+    // A function body must be a compound command; `$((1.5))` is an error
+    // (integer-only arithmetic); `$HOSTNAME` is set; `$!` is empty until a
+    // background job exists.
+    "f() echo hi; f",
+    "echo $((1.5+1))",
+    "[ -n \"$HOSTNAME\" ] && echo set",
+    "printf '[%s]' \"$!\"; printf '\\n'",
+    "true & wait; [ -n \"$!\" ] && echo set",
+    // Nested functions: LINENO is the absolute line.
+    "g() {\necho $LINENO\nh() { echo $LINENO; }\nh\n}\ng",
+];
+
 
 fn find_shell(candidates: &[&str]) -> Option<String> {
     for c in candidates {
@@ -2166,7 +2219,8 @@ fn emulation_parity_matrix() {
         let corpus =
             PORTABLE_CORPUS
                 .iter()
-                .chain(if case.extended { EXTENDED_CORPUS } else { &[] });
+                .chain(if case.extended { EXTENDED_CORPUS } else { &[] })
+                .chain(if case.name == "bash" { BASH_ONLY_CORPUS } else { &[] });
         for script in corpus {
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {
@@ -3330,6 +3384,17 @@ fn ksh93_specifics_match_ksh93() {
         "[[ /nonexistent -ot /etc/passwd ]] && print ot",
         "[[ /nonexistent -nt /nonexistent2 ]] || print n",
         "trap 'print a' INT; trap -p",
+        r"print -e 'a\tb'",
+        r"print '\0101|\x41|\101|\e|\U00000041|\q|\E[0m|A|\00101'",
+        r"print -r '\0101'",
+        r"print 'a\cb'; print x",
+        r"echo -e '\0101|\E|\x41|\e|\U00000041'",
+        r"printf '%b\n' '\0101|\x41|\E|\e|\U00000041'",
+        "typeset -A h; h[a b]=1; print \"${h[a b]}\"; print ${!h[@]}",
+        "a[ 2 ]=x; print ${!a[@]}",
+        "function f { trap 'print bye' EXIT; print in; }; f; print after",
+        "f() { trap 'print bye' EXIT; print in; }; f; print after",
+        "cd /usr; cd /bin; OLDPWD=/etc; cd - >/dev/null; pwd",
     ];
     let bad = probe_mismatches(&["--ksh"], &ksh, &[], "", &probes);
     assert!(bad.is_empty(), "--ksh diverged from ksh93:\n{}", bad.join("\n"));
@@ -3352,6 +3417,10 @@ fn pdksh_line_specifics_match_mksh() {
         "[[ /etc/passwd -nt /nonexistent ]] && print nt",
         "[[ /nonexistent -ot /etc/passwd ]] && print ot",
         "trap 'print a' INT; trap -p",
+        "trap -x; print after",
+        "trap -l; print after",
+        "trap -ZZ INT; print after",
+        "trap -- 'print a' INT; trap 'print b' NOSUCH; print after",
     ];
     for flags in [&["--mksh"][..], &["--pdksh"][..]] {
         let bad = probe_mismatches(flags, &mksh, &[], "", &probes);

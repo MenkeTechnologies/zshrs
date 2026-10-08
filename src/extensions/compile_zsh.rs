@@ -1226,7 +1226,12 @@ impl ZshCompiler {
         // def-line subtraction). Inside a command substitution the shift
         // keeps its previous `outer - 1` value (saturating).
         let v = if self.is_function_body {
-            let off = self.lineno_offset.max(1);
+            // bash mode keeps the absolute line (lineno_offset is 0 there).
+            let off = if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() {
+                self.lineno_offset
+            } else {
+                self.lineno_offset.max(1)
+            };
             raw_line.saturating_sub(off) + self.nested_lineno_base.unwrap_or(1).saturating_sub(1)
         } else if self.nested_lineno_base.is_some() {
             // c:Src/exec.c:4778 — `parse_string(cmd, 0)` continues the outer
@@ -11622,6 +11627,27 @@ impl ZshCompiler {
         self.emit_cmd_pop();
     }
 
+    /// True when a pattern segment is one double-quoted span (`"$x"`). C never
+    /// shtokenizes a quoted substitution (c:Src/subst.c:822/830 `glbsub` is only
+    /// set for an unquoted expansion), so its value stays literal even with
+    /// GLOB_SUBST on (sh/ksh/bash emulation).
+    fn seg_is_dq_span(text: &str) -> bool {
+        text.starts_with(['"', '\u{e19e}'])
+    }
+
+    /// Emit `BUILTIN_GLOB_SUBST_GUARD`; `force_literal` makes the runtime escape
+    /// the value's metas even when GLOB_SUBST is on (quoted substitution).
+    fn emit_glob_subst_guard(&mut self, force_literal: bool) {
+        if force_literal {
+            self.builder.emit(Op::LoadInt(1), 0);
+        }
+        let argc = if force_literal { 2 } else { 1 };
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, argc),
+            0,
+        );
+    }
+
     /// True when a substitution segment forces GLOB_SUBST for itself — the
     /// `${~name}` / `$~name` flag (c:Src/subst.c — the `~` substitution flag
     /// shtokenizes the spliced value so its metachars stay pattern-active
@@ -11781,10 +11807,7 @@ impl ZshCompiler {
             self.compile_singsub_word_noglob(word);
             self.pattern_word_depth -= 1;
             if !Self::seg_forces_glob_subst(word) {
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
-                    0,
-                );
+                self.emit_glob_subst_guard(Self::seg_is_dq_span(word));
             } else {
                 // `${~spec}` forces the metas ACTIVE, so no guard runs — but
                 // c:Src/subst.c:822/830's `shtokenize` still has to settle the
@@ -11804,10 +11827,7 @@ impl ZshCompiler {
                     self.compile_singsub_word_noglob(text);
                     self.pattern_word_depth -= 1;
                     if !Self::seg_forces_glob_subst(text) {
-                        self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
-                            0,
-                        );
+                        self.emit_glob_subst_guard(Self::seg_is_dq_span(text));
                     } else {
                         // See the single-segment arm above — docs/BUGS.md #1090.
                         self.builder.emit(
@@ -12255,7 +12275,9 @@ impl ZshCompiler {
         // `funcstack->flineno + lineno` (c:5387) computes for a nested def.
         let mut body_compiler = ZshCompiler::new();
         let def_line = (self.current_sublist_line.max(1) as u64).saturating_add(self.lineno_offset);
-        body_compiler.lineno_offset = def_line;
+        // !!! BASH-MODE (no C counterpart) !!! bash and ksh93 number $LINENO inside a
+        // function by the absolute script line; zsh counts from the def line.
+        body_compiler.lineno_offset = if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() { 0 } else { def_line };
         body_compiler.is_function_body = true;
         let lineno_off = body_compiler.lineno_offset;
         let body_chunk = body_compiler.compile(&f.body);
@@ -12374,9 +12396,14 @@ impl ZshCompiler {
             // `function -T name { … }` is parsed into ZshFuncDef.tracing
             // (parse.rs c:1689-1692) but had NO consumer, so a traced
             // definition registered an untraced function (E02xtrace:6,7,8,9).
-            let tracing_const =
-                self.builder
-                    .add_constant(Value::str(if f.tracing { "1" } else { "0" }));
+            // RUST-ONLY: a trailing `k` marks the `function name {` keyword spelling
+            // (see ZshFuncDef::keyword_form); register_compiled_fn splits it back off.
+            let tracing_text = format!(
+                "{}{}",
+                if f.tracing { "1" } else { "0" },
+                if f.keyword_form { "k" } else { "" }
+            );
+            let tracing_const = self.builder.add_constant(Value::str(tracing_text.as_str()));
             self.builder.emit(Op::LoadConst(tracing_const), 0);
             // c:Src/exec.c:5451-5456 — `shf->redir = <redir_prog>`. Empty
             // when the definition carried no trailing redirection, which is

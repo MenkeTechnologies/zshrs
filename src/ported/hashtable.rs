@@ -1871,6 +1871,21 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
         return; // c:943
     }
 
+    // !!! EMULATION-ONLY (no C counterpart) !!! bash's `declare -f` / `typeset
+    // -f` print the `NAME () \n{ \n    body\n}` layout that `type` uses.
+    if hn.body.is_some()
+        && matches!(
+            crate::extensions::emulation_startup::personality(),
+            crate::extensions::emulation_startup::Personality::Bash
+        )
+    {
+        print!(
+            "{}",
+            crate::dash_mode::bash_function_listing(&hn.node.nam, hn.body.as_deref())
+        );
+        return;
+    }
+
     // c:946 — `quotedzputs(nam, stdout);`
     let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&quotedzputs(&hn.node.nam)));
 

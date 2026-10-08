@@ -17114,6 +17114,8 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     if crate::dash_mode::bash_mode() {
         match name {
             "BASH_VERSION" => return Some(crate::dash_mode::bash_version()),
+            // bash(1): HOSTNAME is the host name — zsh's HOST.
+            "HOSTNAME" => return crate::ported::params::getsparam("HOST"),
             // bash(1) "Shell Variables": SHELLOPTS is the colon-separated
             // list of the `set -o` options currently enabled. Built from the
             // same table `set -o` lists and `set -o NAME` writes.
@@ -17509,6 +17511,11 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // canonical store like the C getter does.
             let pid =
                 crate::ported::modules::clone::lastpid.load(std::sync::atomic::Ordering::Relaxed);
+            // bash(1): `$!` is unset until a background job has been started
+            // (expands to ""); zsh's `lastpid` reads 0 there.
+            if pid == 0 && crate::dash_mode::bash_mode() {
+                return Some(String::new());
+            }
             Some(pid.to_string())
         }
         // $* / $@ join positional params via sepjoin's IFS default —

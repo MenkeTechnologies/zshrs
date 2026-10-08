@@ -351,6 +351,8 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 // true empty run the untokenize C runs — `multsub`'s callers in
                 // `fusevm_bridge` and the word-level pass in `paramsubst_to_value_pf`.
                 let mut s = data.to_string();
+                // bash brace null-word removal must not eat a QUOTED empty (`""{,a}`).
+                let had_quote_marker = s.chars().any(|c| matches!(c, Dnull | Snull | Nularg));
                 crate::ported::glob::remnulargs(&mut s);
                 let data = s;
                 list.setdata(node_idx, data.clone()); // c:100
@@ -377,6 +379,14 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                             None => break,
                         };
                         let expanded = xpandbraces(&cur, false); // c:171
+                        // bash: an EMPTY unquoted brace alternative is a null word and
+                        // is removed (`echo {,a}` -> `a`); zsh keeps it (keep = 1).
+                        let expanded: Vec<String> = if crate::dash_mode::bash_mode() && !had_quote_marker && expanded.len() > 1 {
+                            let kept: Vec<String> = expanded.iter().filter(|w| !w.is_empty()).cloned().collect();
+                            if kept.is_empty() { expanded } else { kept }
+                        } else {
+                            expanded
+                        };
                         if expanded.len() <= 1 {
                             break;
                         } // c:170 (!hasbraces)
@@ -2352,7 +2362,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         if nx == '-' && (chars.len() == 2 || isend(chars[2])) {
             // c:755 — `(tmp = oldpwd) ? tmp : pwd`. Read both via
             // paramtab so OLDPWD-not-yet-set falls back to PWD.
-            let oldpwd = getsparam("OLDPWD")
+            let oldpwd = crate::dash_mode::oldpwd_cd_target()
                 .or_else(|| getsparam("PWD"))
                 .unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
@@ -7606,7 +7616,13 @@ pub fn paramsubst(
                 & crate::ported::zsh_h::EMULATE_KSH
                 != 0
                 && crate::dash_mode::posix_faithful();
-            if (bang_bash || bang_ksh) && (nx.is_ascii_alphanumeric() || nx == '_') {
+            if bang_bash && (nx == '#' || nx == Pound) && idx + 1 == body_chars.len() {
+                // `${!#}` (BASH): indirect through `$#` — the LAST positional
+                // (`set -- a b c; ${!#}` → `c`). Re-point at the digit name.
+                var_name = crate::ported::params::getsparam("#").unwrap_or_default();
+                idx = body_chars.len();
+                bash_handled = true;
+            } else if (bang_bash || bang_ksh) && (nx.is_ascii_alphanumeric() || nx == '_') {
                 let mut j = idx;
                 while j < body_chars.len()
                     && (body_chars[j].is_ascii_alphanumeric() || body_chars[j] == '_')
@@ -9412,6 +9428,10 @@ pub fn paramsubst(
                     && subscript.is_none() // c:2280 — no getindex ran
                     && !was_at_star_splat
                     && !subexp_not_fetched_c2764 // c:2764 — fetchvalue never ran
+                    // c:2288 `itype_end(t, INAMESPC, 1) != t` — `$@` / `$*` are not
+                    // identifier names, so the clamp never applies to them.
+                    && var_name != "@"
+                    && var_name != "*"
             };
         }
         let ksh_bare_ref_c2286 = |name: &str| -> bool {
@@ -9426,10 +9446,6 @@ pub fn paramsubst(
                 && !was_at_star_splat
                 && !subexp_not_fetched_c2764 // c:2764 — fetchvalue never ran
         };
-                    // c:2288 `itype_end(t, INAMESPC, 1) != t` — `$@` / `$*` are not
-                    // identifier names, so the clamp never applies to them.
-                    && var_name != "@"
-                    && var_name != "*"
         let arrays_get = |name: &str| -> Option<Vec<String>> {
             let clamp = ksh_bare_ref_c2286(name);
             match crate::ported::subst::arrays_get(name) {
@@ -13962,6 +13978,11 @@ pub fn paramsubst(
                 && !flagged_array_subscript
                 && magic_keys.is_none()
                 && !subexp_not_fetched_c2764 // c:2764 — fetchvalue never ran
+                // `$@`/`$*` take fetchvalue's positional arm (SCANPM_ISVAR_AT)
+                // before the c:2286 KSHARRAYS clamp that scalarizes named
+                // arrays: `${#@}` stays the argument count.
+                && var_name != "@"
+                && var_name != "*"
                 // c:Src/params.c:2270-2276 sets `v->scanflags` for PM_HASHED as
                 // well as PM_ARRAY, so c:2288's clamp scalarizes a bare hash
                 // too: `setopt ksharrays; typeset -A h=(k1 /a/v1.txt k2
@@ -13976,11 +13997,6 @@ pub fn paramsubst(
             // otherwise. Its pairs are served by PARTAB (`magic_keys`), which
             // the test above excludes.
             let ksh_special_hash_len = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                // `$@`/`$*` take fetchvalue's positional arm (SCANPM_ISVAR_AT)
-                // before the c:2286 KSHARRAYS clamp that scalarizes named
-                // arrays: `${#@}` stays the argument count.
-                && var_name != "@"
-                && var_name != "*"
                 && !wantt
                 && subscript.is_none()
                 && !flagged_array_subscript
@@ -18050,7 +18066,7 @@ pub fn paramsubst(
                 let pat_has_matchref = prog_opt.as_ref().map_or(false, |p| {
                     (p.0.globend & crate::ported::zsh_h::GF_MATCHREF as i32) != 0
                 });
-                let eval_repl_for_match = |span_text: &str, span_start_units: i32| -> String {
+                let eval_repl_for_match_inner = |span_text: &str, span_start_units: i32| -> String {
                     if !pat_needs_per_match {
                         return repl.clone();
                     }
@@ -18088,6 +18104,13 @@ pub fn paramsubst(
                     // the precomputed path above; literal backslashes
                     // (`\n`/`\t`/`\&` etc.) are kept verbatim.
                     s
+                };
+                // bash `patsub_replacement`: `&` in the replacement is the matched text.
+                let eval_repl_for_match = |span_text: &str, span_start_units: i32| -> String {
+                    crate::dash_mode::bash_patsub(
+                        eval_repl_for_match_inner(span_text, span_start_units),
+                        span_text,
+                    )
                 };
                 // Per-element replace for arrays — zsh treats each
                 // element as a separate match target, preserving the
@@ -19050,7 +19073,7 @@ pub fn paramsubst(
                         (p.0.globend & crate::ported::zsh_h::GF_MATCHREF as i32) != 0
                     })
                 };
-                let resolve_repl = move |span_text: &str, span_start_units: i32| -> String {
+                let resolve_repl_inner = move |span_text: &str, span_start_units: i32| -> String {
                     if !pat_has_m_one {
                         return repl_default.clone();
                     }
@@ -19094,6 +19117,13 @@ pub fn paramsubst(
                     // (`\"${MATCH//(#b)([\"\`\\])/\\${match[1]}}\"`) emitted
                     // unescaped quotes.
                     singsub_replstr(&raw_repl_clone)
+                };
+                // bash `patsub_replacement`: `&` in the replacement is the matched text.
+                let resolve_repl = |span_text: &str, span_start_units: i32| -> String {
+                    crate::dash_mode::bash_patsub(
+                        resolve_repl_inner(span_text, span_start_units),
+                        span_text,
+                    )
                 };
                 // c:Src/subst.c — `${var/#%pat/repl}` anchors the
                 // match at BOTH start AND end (the pattern must
@@ -22582,6 +22612,14 @@ pub fn paramsubst(
                 let np: Vec<String> = parts.iter().map(|p| q(p)).collect();
                 value = crate::dash_mode::bash_rejoin_elems(&np, dq_collapsed, sep.as_deref());
                 split_parts = Some(np);
+            } else if value.is_empty()
+                && !var_name.is_empty()
+                && var_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && getsparam(&var_name).is_none()
+                && arrays_get(&var_name).is_none()
+                && assoc_get(&var_name).is_none()
+            {
+                // bash: `${unset@Q}` is empty, not `''` (set-but-empty is `''`).
             } else {
                 value = q(&value);
             }

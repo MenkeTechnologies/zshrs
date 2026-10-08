@@ -7427,6 +7427,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut out: Vec<String> = Vec::with_capacity(inputs.len());
         for s in inputs {
             for w in crate::ported::glob::xpandbraces(&s, brace_ccl) {
+                // bash: a brace alternative that comes out EMPTY and unquoted
+                // is a null word and is removed (`echo {,a}` -> `a`); zsh
+                // keeps it.
+                if w.is_empty() && crate::dash_mode::bash_mode() {
+                    continue;
+                }
                 out.push(w);
             }
         }
@@ -7847,9 +7853,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // gate). When GLOB_SUBST is ON, only the data-backslash respelling
     // runs and the metas stay active.
     // See BUILTIN_GLOB_SUBST_GUARD docs below for full rationale.
-    vm.register_builtin(BUILTIN_GLOB_SUBST_GUARD, |vm, _argc| {
+    vm.register_builtin(BUILTIN_GLOB_SUBST_GUARD, |vm, argc| {
+        // argc 2 = a trailing "quoted" flag: the value came from a double-quoted
+        // substitution, which C never shtokenizes (c:Src/subst.c:822/830).
+        let force_literal = argc >= 2 && vm.pop().to_int() != 0;
         let p = vm.pop().to_str();
-        let glob_subst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        let glob_subst =
+            !force_literal && crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         if glob_subst {
             // c:Src/subst.c:822/830 `if (glbsub) shtokenize(dest)` — the
             // value's metas go ACTIVE, but c:Src/glob.c:3651 still leaves a
@@ -13152,6 +13162,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             (s, pat)
         };
+        // !!! BASH-MODE (no C counterpart) !!! bash enables extglob while parsing
+        // `[[ … ]]` (bash(1) `shopt` extglob: "the extended pattern matching
+        // operators are enabled within [[ ]]"), so `[[ abc == @(a|x)bc ]]` matches
+        // with the shopt off. Hold KSHGLOB on for this one match.
+        let _extglob_in_dbracket = BashDbracketExtglob::enter(&pat);
         // A bare POSIX-family drop-in reads a source-level `(` by its own
         // rules, not by zsh's parse-time tokenization — see
         // `dropin_source_pattern_parens_literal`.
@@ -15033,6 +15048,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .flat_map(|w| {
                         if brace_expand && w.contains('\u{e18f}') {
                             crate::ported::glob::xpandbraces(&w, brace_ccl)
+                                .into_iter()
+                                .filter(|x| !(x.is_empty() && crate::dash_mode::bash_mode()))
+                                .collect()
                         } else {
                             vec![w]
                         }
@@ -15535,7 +15553,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
         // c:Src/exec.c:5382 `do_tracing = *state->pc++;` — the `-T` of
         // `function -T name { … }`, carried across from compile_funcdef.
-        let do_tracing = iter.next().map(|s| s == "1").unwrap_or(false); // c:5382
+        let tracing_text = iter.next().unwrap_or_default();
+        let do_tracing = tracing_text.starts_with('1'); // c:5382
+        // RUST-ONLY: a trailing `k` = defined with the `function name {` keyword.
+        crate::extensions::dash_mode::note_function_spelling(&name, tracing_text.ends_with('k'));
                                                                          // c:Src/exec.c:5451-5456 — `shf->redir = <redir_prog>`: the rendered
                                                                          // text of the definition's trailing redirections (empty when there
                                                                          // were none). See `shfunc::redir_text`.
@@ -21262,6 +21283,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // c:Src/exec.c:1161 — forked cmdsub child runs entersubsh()
         // which does `zsh_subshell++`; in-process equivalent.
         let _subshell_bump = CmdSubstSubshellBump::enter();
+        let _bash_errexit = crate::dash_mode::BashCmdsubstErrexit::enter();
 
         crate::fusevm_disasm::maybe_print_stdout("host.cmd_subst", sub);
         let mut vm = fusevm::VM::new(sub.clone());
@@ -23503,5 +23525,35 @@ mod zmv_native_autoload_tests {
         let exec = run("autoload -Uz zmv; disable -f zmv; zmv 2>/dev/null; st=$?");
         assert_eq!(exec.scalar("st").as_deref(), Some("127"));
         run("unfunction zmv 2>/dev/null");
+    }
+}
+
+/// !!! BASH-MODE (no C counterpart) !!! Scope guard that holds `KSHGLOB` on
+/// (bash `extglob`) for one `[[ … == pattern ]]` match. bash turns extglob on
+/// while it parses `[[ ]]`, so `@(…)` / `+(…)` / `*(…)` / `?(…)` / `!(…)`
+/// groups work in the pattern with the shopt off. Restores the prior state on
+/// drop. Inert outside `--bash`, when the option is already on, or when the
+/// pattern has no extended group opener.
+struct BashDbracketExtglob {
+    armed: bool,
+}
+
+impl BashDbracketExtglob {
+    fn enter(pat: &str) -> Self {
+        use crate::ported::zsh_h::{isset, KSHGLOB};
+        let has_group = ["@(", "*(", "+(", "?(", "!("].iter().any(|g| pat.contains(g));
+        let armed = crate::dash_mode::bash_mode() && has_group && !isset(KSHGLOB);
+        if armed {
+            crate::ported::options::dosetopt(KSHGLOB, 1, 1);
+        }
+        Self { armed }
+    }
+}
+
+impl Drop for BashDbracketExtglob {
+    fn drop(&mut self) {
+        if self.armed {
+            crate::ported::options::dosetopt(crate::ported::zsh_h::KSHGLOB, 0, 1);
+        }
     }
 }

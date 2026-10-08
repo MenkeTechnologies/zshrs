@@ -1104,7 +1104,7 @@ pub(crate) fn lexconstant() -> i32 {
                     }
                 } else {
                     mnumber {
-                        l: if is_neg { -val } else { val },
+                        l: if is_neg { val.wrapping_neg() } else { val },
                         d: 0.0,
                         type_: MN_INTEGER,
                     }
@@ -1135,7 +1135,7 @@ pub(crate) fn lexconstant() -> i32 {
                     }
                 } else {
                     mnumber {
-                        l: if is_neg { -val } else { val },
+                        l: if is_neg { val.wrapping_neg() } else { val },
                         d: 0.0,
                         type_: MN_INTEGER,
                     }
@@ -1241,7 +1241,7 @@ pub(crate) fn lexconstant() -> i32 {
                             }
                         } else {
                             mnumber {
-                                l: if is_neg { -val } else { val },
+                                l: if is_neg { val.wrapping_neg() } else { val },
                                 d: 0.0,
                                 type_: MN_INTEGER,
                             }
@@ -1266,6 +1266,16 @@ pub(crate) fn lexconstant() -> i32 {
         }
     }
 
+    // !!! BASH-MODE (no C counterpart) !!! bash arithmetic is integer-only:
+    // a `.` after a number is "invalid arithmetic operator (error token is
+    // ".5+1")", never a float constant.
+    if peek() == Some('.') && crate::dash_mode::bash_mode() {
+        let tok = m_input_slice_from(m_pos());
+        m_error_set(format!(
+            "arithmetic syntax error: invalid arithmetic operator (error token is \"{tok}\")"
+        ));
+        return EOI;
+    }
     // Check for float
     if peek() == Some('.') || peek() == Some('e') || peek() == Some('E') {
         // Float
@@ -1426,7 +1436,7 @@ pub(crate) fn lexconstant() -> i32 {
             }
         } else {
             mnumber {
-                l: if is_neg { -val } else { val },
+                l: if is_neg { val.wrapping_neg() } else { val },
                 d: 0.0,
                 type_: MN_INTEGER,
             }
@@ -1453,6 +1463,19 @@ pub(crate) fn lexconstant() -> i32 {
     // parse_int_arg for #258.
     let val: i64 = match int_str.parse::<i64>() {
         Ok(n) => n,
+        // !!! BASH-MODE (no C counterpart) !!! bash accumulates decimal
+        // literals in intmax_t with wraparound and no warning, so
+        // `$((9223372036854775808))` is INT64_MIN and `$((-9223372036854775808))`
+        // is INT64_MIN too (zsh truncates to 18 digits with a warning).
+        Err(_)
+            if crate::dash_mode::bash_mode()
+                && !int_str.is_empty()
+                && int_str.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            int_str
+                .bytes()
+                .fold(0i64, |a, d| a.wrapping_mul(10).wrapping_add((d - b'0') as i64))
+        }
         Err(_) if !int_str.is_empty() && int_str.chars().all(|c| c.is_ascii_digit()) => {
             // zstrtol emits the "number truncated after N digits" warning itself.
             // c:Src/utils.c:2511 — the warning prints `inp`, the rest of
@@ -1469,7 +1492,7 @@ pub(crate) fn lexconstant() -> i32 {
         }
     } else {
         mnumber {
-            l: if is_neg { -val } else { val },
+            l: if is_neg { val.wrapping_neg() } else { val },
             d: 0.0,
             type_: MN_INTEGER,
         }

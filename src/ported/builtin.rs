@@ -405,6 +405,11 @@ pub fn execbuiltin(
         if crate::dash_mode::dash_strict() && name == "echo" {
             optstr_bytes = b"n".to_vec();
         }
+        // !!! KSH93-ONLY (no C counterpart) !!! ksh93 `print -e` is accepted (escapes
+        // are already on; `-r` turns them off).
+        if crate::dash_mode::ksh93_mode() && name == "print" {
+            optstr_bytes.push(b'e');
+        }
         let mut skipinvalid = (flags & BINF_SKIPINVALID as i32) != 0;
         // c:297 — `char *arg = *argv;`
         loop {
@@ -2165,6 +2170,7 @@ pub fn bin_cd(
         //   Prior port left OLDPWD stale (whatever an earlier cd/pushd
         //   set), diverging on any `$OLDPWD` / `cd -` that followed.
         crate::ported::jobs::setjobpwd(); // c:1241 — before `pwd = new_pwd`
+        crate::dash_mode::set_oldpwd_global(&pre_pwd); // c:1239
         setsparam("OLDPWD", &pre_pwd);
         env::set_var("OLDPWD", &pre_pwd);
         // c:Src/builtin.c:1245-1252 — print dirstack on POPD unless
@@ -2181,6 +2187,7 @@ pub fn bin_cd(
         //          subsequent expansions of $OLDPWD see the new value
         //          (the OS env write below is the export side; the
         //          shell-side read must come from paramtab).
+        crate::dash_mode::set_oldpwd_global(&o); // c:1239 oldpwd = pwd
         setsparam("OLDPWD", &o);
         env::set_var("OLDPWD", &o);
     }
@@ -2349,7 +2356,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
         //   C reads the `oldpwd` global; route through `$OLDPWD`.
         let pushed = if arg == "-" {
             // c:909 — `: oldpwd` — no doprintdir--, so `cd -` prints.
-            getsparam("OLDPWD")
+            crate::dash_mode::oldpwd_cd_target()
         } else {
             // c:909 — `? (doprintdir--, argv[0])`.
             DOPRINTDIR.fetch_sub(1, Relaxed);
@@ -2576,12 +2583,9 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
     let mut buf = if !pfix.is_empty() {
         if pfix.starts_with('/') {
             // c:1123
-            // c:1133 — buf = tricat(pfix, "/", dest)
-            if pfix.ends_with('/') {
-                format!("{}{}", pfix, dest)
-            } else {
-                format!("{}/{}", pfix, dest)
-            }
+            // c:1133 — buf = tricat(pfix, "/", dest); `/` + `tmp` stays `//tmp`
+            // until fixdir (or the dash double-slash rule) decides.
+            format!("{}/{}", pfix, dest)
         } else {
             // c:1135-1146 — pwd + "/" + pfix + "/" + dest
             let pwd_trim = if pwd == "/" { "" } else { pwd.as_str() };
@@ -2600,8 +2604,17 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
 
     // c:1161-1166 — fixdir normalisation, skipped if chasing symlinks.
     let mut dochaselinks = 0; // c:1120
+    // !!! DASH-ONLY (no C counterpart) !!! POSIX lets a path with exactly two
+    // leading slashes keep them; dash does (`CDPATH=/; cd tmp` -> `//tmp`,
+    // `cd //tmp` -> `//tmp`, `cd ///tmp` -> `/tmp`) where fixdir collapses
+    // them to one.
+    let keep_double_slash =
+        crate::dash_mode::dash_faithful() && buf.starts_with("//") && !buf.starts_with("///");
     if CHASINGLINKS.load(Relaxed) == 0 {
         dochaselinks = fixdir(&mut buf); // c:1165
+        if keep_double_slash && !buf.starts_with("//") {
+            buf.insert(0, '/');
+        }
     }
 
     // c:1169-1177 — "We try the full path first.  If that fails, try the
@@ -4106,6 +4119,51 @@ pub fn bin_typeset(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // !!! BASH-MODE (no C counterpart) !!! bash: `local` outside a function is
+    // an error, status 1 (zsh accepts it as a plain typeset).
+    if name == "local"
+        && crate::dash_mode::bash_mode()
+        && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == 0
+    {
+        zwarnnam(name, "can only be used in a function");
+        return 1;
+    }
+
+    // !!! BASH-MODE (no C counterpart) !!! bash's `declare -F` / `typeset -F`
+    // is the function-NAME listing (zsh's -F is fixed-point float): bare
+    // `declare -F` prints `declare -f NAME` per function; `declare -F NAME`
+    // prints NAME and returns 1 when it is not a function.
+    if (name == "declare" || name == "typeset")
+        && crate::dash_mode::bash_mode()
+        && OPT_ISSET(ops, b'F')
+        && !OPT_ISSET(ops, b'f')
+    {
+        let names: Vec<String> = {
+            let mut v: Vec<String> = shfunctab_lock()
+                .read()
+                .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
+                .unwrap_or_default();
+            v.retain(|n| !n.starts_with("_zshrs_anon_"));
+            v.sort();
+            v
+        };
+        let mut rc = 0;
+        let queries: Vec<&String> = argv.iter().filter(|a| !a.starts_with('-')).collect();
+        if queries.is_empty() {
+            for n in &names {
+                println!("declare -f {}", n);
+            }
+        }
+        for q in queries {
+            if names.contains(q) {
+                println!("{}", q);
+            } else {
+                rc = 1;
+            }
+        }
+        return rc;
+    }
+
     // PFA-SMR aspect: bin_typeset is the C dispatch site for
     // typeset/declare/integer/float/local/export/readonly/private —
     // every one of those state-mutating builtins lands here with a
@@ -10925,6 +10983,12 @@ pub fn bin_whence(
     // `type` has no `-t`, so this is gated to --bash. Precedence matches bash:
     // alias, keyword, function, builtin, file. Uses a closure (not a free fn)
     // to satisfy the port-purity build gate on src/ported/.
+    // Outside bash/ksh93 the registered `-t` is not zsh's: `type`'s optstr is
+    // "ampfsSw" (c:Src/builtin.c:123), so zsh answers `bad option: -t`, status 1.
+    if !crate::dash_mode::bash_mode() && !crate::dash_mode::ksh93_mode() && OPT_ISSET(ops, b't') {
+        zwarnnam(nam, "bad option: -t");
+        return 1;
+    }
     if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b't') {
         let type_of = |name: &str| -> Option<&'static str> {
             if aliastab_lock()
@@ -13121,6 +13185,17 @@ pub fn bin_print(
         let _ = crate::ported::utils::getkey_truncated_take();
         let mut new_args: Vec<String> = Vec::with_capacity(processed_args.len());
         for a in processed_args.iter() {
+            // !!! KSH93-ONLY (no C counterpart) !!! ksh93 has its own, narrower
+            // escape set (dash_mode::ksh93_print_escapes); `-b` keeps bindkey escapes.
+            if crate::dash_mode::ksh93_mode() && !OPT_ISSET(ops, b'b') {
+                let (s, truncated) = crate::dash_mode::ksh93_print_escapes(a);
+                new_args.push(s);
+                if truncated {
+                    backslash_c_truncated = true;
+                    break;
+                }
+                continue;
+            }
             let (s, _) = getkeystring_with(a, escape_how, None);
             new_args.push(s);
             if crate::ported::utils::getkey_truncated_take() {
@@ -13967,8 +14042,28 @@ pub fn bin_break(
     let mut num: i32 = LASTVAL.load(Relaxed); // c:5811
     let mut nump = 0i32; // c:5811
     let implicit = argv.is_empty(); // c:5814
-                                    // c:5815-5818 — first arg parsed as math expr.
-    if !implicit {
+    // !!! DASH-ONLY (no C counterpart) !!! dash's `number()` takes a plain
+    // `[+]digits` that fits an int; anything else (`abc`, `-1`, `1+1`, `0x10`,
+    // empty) is `sh_error("Illegal number: %s")`, which unwinds the whole
+    // command list with status 2 (see dash_mode::fatal_error_status). zsh
+    // instead evaluates the argument as arithmetic.
+    let mut dash_num: Option<i32> = None;
+    if !implicit && crate::dash_mode::dash_faithful() {
+        let a = argv[0].trim_start();
+        let digits = a.strip_prefix('+').unwrap_or(a);
+        if digits.bytes().all(|b| b.is_ascii_digit()) {
+            dash_num = digits.parse::<i32>().ok();
+        }
+        if dash_num.is_none() {
+            zerrnam(name, &format!("Illegal number: {}", argv[0]));
+            return crate::dash_mode::fatal_error_status().unwrap_or(2);
+        }
+    }
+    // c:5815-5818 — first arg parsed as math expr.
+    if let Some(n) = dash_num {
+        num = n;
+        nump = 1;
+    } else if !implicit {
         // c:5815
         // c:5816 — mathevali reports a bad expression itself (zerr, which
         // sets errflag), so the `argument is not positive` zerrnam below is
@@ -14049,6 +14144,12 @@ pub fn bin_break(
                     // c:5853
                 }
                 return num; // c:5855
+            }
+            // !!! BASH-MODE (no C counterpart) !!! bash refuses `return` outside
+            // a function / sourced script (status 2) and keeps running.
+            if crate::dash_mode::bash_mode() {
+                zwarnnam(name, "can only `return\u{27} from a function or sourced script");
+                return 2;
             }
             // c:5858 — fallthrough: treat as logout/exit.
             zexit(num, ZEXIT_NORMAL); // c:5858
@@ -14517,7 +14618,9 @@ pub fn bin_dot(
         crate::recorder::emit_source(&argv[0], ctx);
     }
     // c:6071-6074 — save pparams, install argv[1..] as new pparams.
-    let saved_pparams: Option<Vec<String>> = if argv.len() > 1 {
+    // !!! DASH-ONLY (no C counterpart) !!! dash's `.` takes no positional
+    // arguments: `. file a b` runs file with the CALLER's $1.. intact.
+    let saved_pparams: Option<Vec<String>> = if argv.len() > 1 && !crate::dash_mode::dash_faithful() {
         // c:6072
         let mut pp = PPARAMS.lock().unwrap_or_else(|e| {
             PPARAMS.clear_poison();
@@ -14662,6 +14765,13 @@ pub fn bin_dot(
             // `.`); zwarnnam does NOT touch errflag, so without
             // POSIX_BUILTINS the script continues.
             let msg = format!("{}: {}", "no such file or directory", arg0); // c:6135
+            // !!! BASH-MODE (no C counterpart) !!! non-posix bash reports the
+            // missing file, returns 1 and keeps running (only `set -o posix`
+            // makes it fatal); zsh's POSIX_BUILTINS aborts and returns 127.
+            if crate::dash_mode::bash_mode() {
+                zwarnnam(name, &msg);
+                return 1;
+            }
             if isset(crate::ported::zsh_h::POSIXBUILTINS) {
                 crate::ported::utils::zerrnam(name, &msg); // c:6133
             } else {
@@ -15699,6 +15809,14 @@ pub fn bin_read(
     ops: &options,
     _func: i32,
 ) -> i32 {
+    // !!! DASH-ONLY (no C counterpart) !!! dash has no implicit REPLY: a
+    // `read` naming no variable is `sh_error("arg count")` (status 2, input
+    // not consumed, REPLY untouched). zsh reads into $REPLY. `read` is a
+    // regular builtin in dash, so the error does not abort the script.
+    if args.is_empty() && crate::dash_mode::dash_faithful() {
+        zwarnnam(name, "arg count");
+        return 2;
+    }
     let mut args = args.to_vec();
     let mut nchars: i32 = 1; // c:6415
     let mut partial_eof = false;
@@ -15725,6 +15843,17 @@ pub fn bin_read(
     // ksh93 spells the same two reads `-n N` / `-N N` (ksh93u+m `read -n 2 a <<< abcd`
     // -> `ab`), so the gate covers it too.
     let read_counts = crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode();
+    // !!! SHARED-OPTSTR GUARD (no C counterpart) !!! the registered optstr
+    // carries bash's `-a` / `-N`; zsh's own is "cd:ek:%lnpqrst:%zu:AE"
+    // (c:Src/builtin.c:109), where both are `bad option` (status 1).
+    if !read_counts {
+        for (flag, c) in [(b'a', 'a'), (b'N', 'N')] {
+            if OPT_ISSET(ops, flag) {
+                zwarnnam(name, &format!("bad option: -{c}"));
+                return 1;
+            }
+        }
+    }
     let bash_n = read_counts && OPT_ISSET(ops, b'n');
     let bash_bign = read_counts && OPT_ISSET(ops, b'N');
     let bash_stop_at_nl = bash_n && !bash_bign; // -N ignores the delimiter
@@ -17381,6 +17510,21 @@ pub fn bin_trap(
         }
     }
 
+    // !!! PDKSH-FAMILY-ONLY (no C counterpart) !!! mksh's `trap` takes no options
+    // at all (`--` excepted), and `trap` is a POSIX special builtin, so a usage
+    // error aborts a non-interactive shell:
+    //   mksh -c 'trap -x; echo after'  -> "trap: -x: unknown option", rc 1, no `after`
+    // (also `-l`, `-p`, clusters like `-ZZ`, which report the first letter).
+    if crate::dash_mode::posix_faithful() && crate::dash_mode::pdksh_family() {
+        if let Some(bad) = argv
+            .first()
+            .filter(|a| a.len() > 1 && a.starts_with('-') && *a != "--")
+        {
+            zerrnam(name, &format!("-{}: unknown option", bad.chars().nth(1).unwrap_or('-')));
+            return 1;
+        }
+    }
+
     // ZSHRS-ONLY. `trap -l` is bash's spelling of `kill -l` and lists the
     // signals; the Korn and Bourne shells REJECT it ("trap: -l: unknown
     // option", exit 2) and zsh treats `-l` as a trap body with no signal
@@ -17759,6 +17903,18 @@ pub fn bin_trap(
             trap_install_error = 1; // c:7445 *argv non-NULL on break
             break; // c:7428
         }
+        // !!! DASH-STRICT GATE (no C counterpart) !!! dash's trap table is the
+        // real signals plus EXIT/0: the zsh pseudo-signals ERR/ZERR/DEBUG and the
+        // `SIG`-prefixed spellings are "bad trap" (status 1, rest of the list skipped).
+        if crate::dash_mode::dash_strict()
+            && (sig == crate::ported::signals_h::SIGZERR
+                || sig == crate::ported::signals_h::SIGDEBUG
+                || sigarg.to_ascii_uppercase().starts_with("SIG"))
+        {
+            zwarnnam(name, &format!("{}: bad trap", sigarg));
+            trap_install_error = 1;
+            break;
+        }
         // c:Src/signals.c — C zsh stores traps in a fixed array
         // indexed by signal number. Aliases (`0`, `EXIT`, `SIGEXIT`)
         // all resolve to index 0 and share the same slot. The Rust
@@ -17782,18 +17938,6 @@ pub fn bin_trap(
             // canonical sigs[] name (C flags it ZSIG_ALIAS). The only
             // unconditional alt_sigs entry is `{ "ERR", SIGZERR }`, so
             // `trap … ERR; trap` must print `… ERR`, not `… ZERR`. The
-        // !!! DASH-STRICT GATE (no C counterpart) !!! dash's trap table is the
-        // real signals plus EXIT/0: the zsh pseudo-signals ERR/ZERR/DEBUG and the
-        // `SIG`-prefixed spellings are "bad trap" (status 1, rest of the list skipped).
-        if crate::dash_mode::dash_strict()
-            && (sig == crate::ported::signals_h::SIGZERR
-                || sig == crate::ported::signals_h::SIGDEBUG
-                || sigarg.to_ascii_uppercase().starts_with("SIG"))
-        {
-            zwarnnam(name, &format!("{}: bad trap", sigarg));
-            trap_install_error = 1;
-            break;
-        }
             // Rust port stores traps by name string; preserve the alias
             // the user typed as the key. The dotrap dispatch already
             // resolves SIGZERR through both "ZERR" and "ERR"
@@ -20937,16 +21081,54 @@ fn printf_format(
                 // so `\141` was octal-eval'd to `a` — diverged.
                 Some('b') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let (s, _) = getkeystring_with(
-                        &a,
-                        crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
-                        None,
-                    );
+                    // !!! BASH-MODE (no C counterpart) !!! bash `%b` also reads a
+                    // bare `\NNN` (up to 3 digits) as octal: `printf %b '\101'` -> A,
+                    // '\1' -> ^A. Respell each as zsh's `\0NNN` introducer form (which
+                    // GETKEYS_PRINTF_ARG already decodes) so `\0101`, `\x41` and
+                    // `\\` keep their getkeystring meaning.
+                    let a = if crate::dash_mode::bash_mode() {
+                        const BS: char = '\u{5c}';
+                        let cs: Vec<char> = a.chars().collect();
+                        let mut o = String::with_capacity(a.len());
+                        let mut i = 0;
+                        while i < cs.len() {
+                            if cs[i] != BS || i + 1 >= cs.len() {
+                                o.push(cs[i]);
+                                i += 1;
+                            } else if cs[i + 1] == '0' || !cs[i + 1].is_digit(8) {
+                                // `\0NNN`, `\\`, `\x..`, `\n` ...: pass the pair through.
+                                o.push(BS);
+                                o.push(cs[i + 1]);
+                                i += 2;
+                            } else {
+                                let digits: String =
+                                    cs[i + 1..].iter().take(3).take_while(|c| c.is_digit(8)).collect();
+                                o.push(BS);
+                                o.push('0');
+                                o.push_str(&digits);
+                                i += 1 + digits.len();
+                            }
+                        }
+                        o
+                    } else {
+                        a
+                    };
+                    // !!! KSH93-ONLY (no C counterpart) !!! ksh93 `%b` decodes the same
+                    // narrower escape set as its `print` (dash_mode::ksh93_print_escapes).
+                    let (s, arg_truncated) = if crate::dash_mode::ksh93_mode() {
+                        crate::dash_mode::ksh93_print_escapes(&a)
+                    } else {
+                        let (s, _) = getkeystring_with(
+                            &a,
+                            crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
+                            None,
+                        );
+                        (s, crate::ported::utils::getkey_truncated_take())
+                    };
                     // c:5380-5383 — a `\c` inside the `%b` arg truncates:
                     // emit the expansion up to `\c`, then stop the whole
                     // printf (no rest-of-format, no reuse). getkeystring_with
                     // already cut `s` at the `\c` and set the TLS flag.
-                    let arg_truncated = crate::ported::utils::getkey_truncated_take();
                     // c:5307-5360 — `%b` shares the `%s` width+precision
                     // handling (`%5b`→"   ab", `%3.1b`→"  a"), applied to the
                     // escape-expanded string. The previous port pushed the

@@ -2861,6 +2861,7 @@ fn par_funcdef() -> Option<ZshCommand> {
                 names: vec![name],
                 body: Box::new(body),
                 tracing,
+                keyword_form: true,
                 auto_call_args: Some(args),
                 body_source,
             }));
@@ -2870,6 +2871,7 @@ fn par_funcdef() -> Option<ZshCommand> {
             names,
             body: Box::new(body),
             tracing,
+            keyword_form: true,
             auto_call_args: None,
             body_source,
         }))
@@ -2920,6 +2922,7 @@ fn par_funcdef() -> Option<ZshCommand> {
                 names,
                 body: Box::new(ZshProgram { lists: vec![list] }),
                 tracing,
+                keyword_form: true,
                 auto_call_args: None,
                 body_source,
             })
@@ -9307,6 +9310,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                                 lists: vec![body_list],
                             }),
                             tracing: false,
+                            keyword_form: false,
                             auto_call_args: None,
                             body_source: None,
                         });
@@ -9386,6 +9390,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                             names,
                             body: Box::new(body),
                             tracing: false,
+                            keyword_form: false,
                             auto_call_args: None,
                             body_source,
                         });
@@ -9428,6 +9433,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                                     lists: vec![body_list],
                                 }),
                                 tracing: false,
+                                keyword_form: false,
                                 auto_call_args: None,
                                 body_source: None,
                             });
@@ -10167,11 +10173,8 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // is a parse error in zsh ("parse error near `()'"), which par_cmd()
     // produces naturally when the next token can't start a command (`}`, EOF).
     let (body, body_source) = if tok() != INBRACE_TOK {
-        if unset(SHORTLOOPS) {
-            // c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV`.
-            set_tok(LEXERR); // c:1746 YYERRORV(oecused)
-            return None;
-        }
+        // c:2110 — no SHORTLOOPS gate on the `name ()` / `()` body (see
+        // parse_inline_funcdef).
         // c:2114 — `par_cmd(&c, argc == 0)`: for an anonymous function
         // zsh_construct is set, so a `( … )` / `{ … }` body leaves the NEXT
         // word out of command position (c:1632, c:2118-2128) and
@@ -10265,6 +10268,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         names: vec![name],
         body: Box::new(body),
         tracing: false,
+        keyword_form: false,
         auto_call_args: Some(args),
         body_source,
     });
@@ -10370,6 +10374,16 @@ fn parse_cursh(zsh_construct: bool) -> Option<ZshCommand> {
 /// C source: handled inline in par_simple's INOUTPAR-after-name
 /// arm (parse.c:1836-2228).
 fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
+    // !!! DASH-STRICT GATE (no C counterpart) !!! dash's parser refuses a
+    // function named after a special builtin or a non-identifier
+    // ("Syntax error: Bad function name"); zsh accepts both.
+    if crate::dash_mode::dash_strict()
+        && names.iter().any(|n| crate::dash_mode::dash_bad_function_name(n))
+    {
+        zerr("Syntax error: Bad function name");
+        set_tok(LEXERR);
+        return None;
+    }
     // par_simple's STRING loop left `incmdpos = 0`; the funcdef body
     // `{ ... }` requires `incmdpos = 1` so the lexer recognises `{`
     // as INBRACE_TOK (current-shell block opener) instead of a
@@ -10452,18 +10466,23 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
             names,
             body: Box::new(body),
             tracing: false,
+            keyword_form: false,
             auto_call_args: None,
             body_source,
         }))
-    } else if unset(SHORTLOOPS) {
-        // c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV(oecused);` —
-        // funcdef short body (`name() cmd` without `{...}`) only
-        // accepted when SHORTLOOPS is set. parse_init seeds
-        // SHORTLOOPS=on so this fires only when a script
-        // explicitly disabled the option.
-        set_tok(LEXERR); // c:1746 YYERRORV(oecused)
-        None
     } else {
+        // c:Src/parse.c:2110 — the `name ()` form (par_simple) takes ANY
+        // command as body via `par_cmd(&c, argc == 0)` with NO SHORTLOOPS
+        // gate (the gate at c:1742 belongs to the `function` keyword path,
+        // par_funcdef). `f() ( echo x )` is valid under `emulate sh`/`ksh`.
+        // verified: zsh -fc 'emulate sh; f() ( echo sub ); f' -> sub
+        //
+        // !!! BASH-MODE (no C counterpart) !!! bash's grammar requires a
+        // COMPOUND command body: `f() echo hi` is a syntax error there.
+        if crate::dash_mode::bash_mode() && tok() == STRING_LEX {
+            set_tok(LEXERR);
+            return None;
+        }
         // Slice the raw short-body text (unbraced_body_start was captured
         // before the body token was lexed, above) so `functions`/`typeset -f`
         // can list it (fusevm shfuncs render from this raw `body`, not
@@ -10511,6 +10530,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                     names,
                     body: Box::new(ZshProgram { lists: vec![list] }),
                     tracing: false,
+                    keyword_form: false,
                     auto_call_args: None,
                     body_source,
                 }))

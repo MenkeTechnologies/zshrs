@@ -264,6 +264,33 @@ pub fn fatal_error_status() -> Option<i32> {
     }
 }
 
+/// True for the bare `zshrs --dash` drop-in (not the zsh-style
+/// `--dash --zsh` leg). Gate for dash behaviors that deviate from zsh's
+/// own sh emulation.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn dash_faithful() -> bool {
+    posix_faithful() && dash_strict()
+}
+
+/// True when dash's parser rejects `name` as a function name
+/// ("Syntax error: Bad function name"): anything that is not
+/// `[A-Za-z_][A-Za-z0-9_]*` (parser.c `goodname`), or that names a POSIX
+/// special builtin (`: . break continue eval exec exit export readonly
+/// return set shift times trap unset`). Measured on /opt/homebrew/bin/dash.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_bad_function_name(name: &str) -> bool {
+    const SPECIAL: &[&str] = &[
+        ":", ".", "break", "continue", "eval", "exec", "exit", "export",
+        "readonly", "return", "set", "shift", "times", "trap", "unset",
+    ];
+    let mut chars = name.chars();
+    let first_ok = matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic());
+    !first_ok || !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) || SPECIAL.contains(&name)
+}
+
 /// True in a bare Korn drop-in — `zshrs --ksh`, `--mksh` or `--pdksh`.
 ///
 /// Composed rather than stored: [`posix_faithful`] is raised only by a
@@ -383,7 +410,7 @@ pub fn bash_versinfo() -> Vec<String> {
 /// spliced values aren't present yet — so touching only raw `\` is exactly the
 /// bash rule. A trailing lone `\` is kept.
 pub fn strip_replacement_backslashes(s: &str) -> String {
-    if !s.contains('\\') {
+    if !s.contains('\\') && !s.contains('\u{e19f}') {
         return s.to_string();
     }
     let mut out = String::with_capacity(s.len());
@@ -393,6 +420,14 @@ pub fn strip_replacement_backslashes(s: &str) -> String {
             // Bnull marker: the following char is an ALREADY-cooked literal (a
             // `\\`/`\$`/`` \` `` the DQ lexer defanged). Keep both bytes so it
             // survives — bash does not re-strip an already-processed backslash.
+            // bash patsub_replacement: a lexer-cooked `\&` is a literal `&`.
+            if chars.clone().next() == Some('&')
+                && bash_shopt_get("patsub_replacement") == Some(true)
+            {
+                chars.next();
+                out.push(PATSUB_LITERAL_AMP);
+                continue;
+            }
             out.push(c);
             if let Some(next) = chars.next() {
                 out.push(next);
@@ -400,6 +435,11 @@ pub fn strip_replacement_backslashes(s: &str) -> String {
         } else if c == '\\' {
             // Raw source-literal backslash: strip it, the next char is literal.
             match chars.next() {
+                // bash patsub_replacement: `\&` is a literal `&` that the later
+                // `&` -> matched-text pass (`bash_patsub`) must leave alone.
+                Some('&') if bash_shopt_get("patsub_replacement") == Some(true) => {
+                    out.push(PATSUB_LITERAL_AMP)
+                }
                 Some(next) => out.push(next),
                 None => out.push('\\'),
             }
@@ -1156,6 +1196,43 @@ pub fn function_whence_prints_body() -> bool {
     posix_faithful() && !korn_mode() && !dash_strict()
 }
 
+/// Private-use stand-in for a backslash-escaped `&` between
+/// `strip_replacement_backslashes` and [`bash_patsub`].
+const PATSUB_LITERAL_AMP: char = '\u{F8FE}';
+
+/// bash 5.2 `${v/pat/rep}` with `shopt patsub_replacement` (default on): an
+/// unescaped `&` in the replacement stands for the matched text and `\&` is a
+/// literal `&`. Identity outside `--bash` or with the shopt off.
+pub fn bash_patsub(repl: String, matched: &str) -> String {
+    if !bash_mode() || bash_shopt_get("patsub_replacement") != Some(true) {
+        return repl;
+    }
+    if !repl.contains('&') && !repl.contains(PATSUB_LITERAL_AMP) {
+        return repl;
+    }
+    let mut out = String::with_capacity(repl.len() + matched.len());
+    for c in repl.chars() {
+        match c {
+            '&' => out.push_str(matched),
+            PATSUB_LITERAL_AMP => out.push('&'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Render a stored function body as bash lists it (`declare -f` / `type`).
+pub fn bash_function_listing(name: &str, body_src: Option<&str>) -> String {
+    // Stored source re-parsed and deparsed, one statement per line (the same
+    // rendering bin_trap uses for a trap body).
+    let rendered = body_src
+        .filter(|b| !b.is_empty())
+        .and_then(|b| crate::ported::exec::parse_string(b, 1))
+        .map(|prog| crate::ported::text::getpermtext(Box::new(prog), None, 0))
+        .unwrap_or_default();
+    bash_function_body(name, &rendered)
+}
+
 /// Re-lay a deparsed function body in bash's `type` format.
 ///
 /// bash re-prints the parsed function from its own AST (`make_command_string`):
@@ -1739,4 +1816,194 @@ pub fn ksh93_printf_q(arg: &str) -> String {
         return format!("'{arg}'");
     }
     arg.to_string()
+}
+
+/// ksh93 `print` / `echo -e` backslash escapes, as measured on
+/// /opt/homebrew/bin/ksh (93u+m). The set is narrower than zsh's
+/// GETKEYS_PRINT/ECHO: `\a \b \E \f \n \r \t \v \\`, `\0` plus up to three
+/// octal digits, and `\u` plus exactly four hex digits. `\c` ends the output
+/// (the returned flag is true: drop the rest and the newline). Everything
+/// else — `\e`, `\x41`, `\101`, `\1`, `\U…`, `\"`, `\q`, a trailing `\` —
+/// keeps its backslash. Bytes >= 0x80 are metafied like getkeystring's.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn ksh93_print_escapes(s: &str) -> (String, bool) {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c != '\\' || i + 1 >= chars.len() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let simple = match chars[i + 1] {
+            'a' => Some('\x07'),
+            'b' => Some('\x08'),
+            'E' => Some('\x1b'),
+            'f' => Some('\x0c'),
+            'n' => Some('\n'),
+            'r' => Some('\r'),
+            't' => Some('\t'),
+            'v' => Some('\x0b'),
+            '\\' => Some('\\'),
+            _ => None,
+        };
+        if let Some(ch) = simple {
+            out.push(ch);
+            i += 2;
+        } else if chars[i + 1] == 'c' {
+            return (out, true);
+        } else if chars[i + 1] == '0' {
+            let digits: Vec<u32> = chars[i + 2..]
+                .iter()
+                .take(3)
+                .map_while(|d| d.to_digit(8))
+                .collect();
+            let byte = (digits.iter().fold(0, |acc, d| acc * 8 + d) & 0xff) as u8;
+            if byte < 0x80 {
+                out.push(byte as char);
+            } else {
+                out.push('\u{83}'); // Meta
+                out.push(char::from(byte ^ 32));
+            }
+            i += 2 + digits.len();
+        } else if chars[i + 1] == 'u'
+            && chars.len() >= i + 6
+            && chars[i + 2..i + 6].iter().all(|d| d.is_ascii_hexdigit())
+        {
+            let hex: String = chars[i + 2..i + 6].iter().collect();
+            out.push(char::from_u32(u32::from_str_radix(&hex, 16).unwrap_or(0xfffd)).unwrap_or('\u{fffd}'));
+            i += 6;
+        } else {
+            out.push('\\');
+            i += 1;
+        }
+    }
+    (out, false)
+}
+
+/// Names currently defined with the ksh `function name { … }` keyword (as
+/// opposed to the POSIX `name() { … }` spelling). Written at definition time
+/// by [`note_function_spelling`].
+static KEYWORD_FUNCS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Record which spelling defined `name`; a redefinition replaces the old entry.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn note_function_spelling(name: &str, keyword: bool) {
+    let mut names = KEYWORD_FUNCS.lock().unwrap_or_else(|e| e.into_inner());
+    names.retain(|n| n != name);
+    if keyword {
+        names.push(name.to_string());
+    }
+}
+
+/// True while the innermost running shell function is a ksh93 `function name
+/// { … }` definition. ksh93 gives only that spelling its own EXIT-trap scope
+/// (the trap fires when the function returns); a `name() { … }` function's
+/// EXIT trap is the shell's and fires at shell exit — which is zsh's
+/// POSIX_TRAPS behavior, so the keyword spelling is the one to special-case.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn in_ksh93_keyword_function() -> bool {
+    if !ksh93_mode() {
+        return false;
+    }
+    let top = crate::ported::modules::parameter::FUNCSTACK
+        .lock()
+        .ok()
+        .and_then(|stk| {
+            stk.last()
+                .filter(|f| f.tp == crate::ported::zsh_h::FS_FUNC)
+                .map(|f| f.name.clone())
+        });
+    top.is_some_and(|name| {
+        KEYWORD_FUNCS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&name)
+    })
+}
+
+/// Scope guard for a bash command substitution body.
+///
+/// bash(1) `set -e`: "Subshells spawned to execute command substitutions
+/// inherit the value of the -e option from the parent shell. When not in
+/// posix mode, bash clears the -e option in such subshells" — unless
+/// `shopt -s inherit_errexit`. So `set -e; echo $(false; echo hi)` prints
+/// `hi`. zsh (and ksh) keep ERREXIT inside the substitution. Restores the
+/// option on drop.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub struct BashCmdsubstErrexit {
+    armed: bool,
+}
+
+impl BashCmdsubstErrexit {
+    pub fn enter() -> Self {
+        use crate::ported::zsh_h::{isset, ERREXIT};
+        let armed = bash_mode()
+            && isset(ERREXIT)
+            && !bash_shopt_get("inherit_errexit").unwrap_or(false);
+        if armed {
+            crate::ported::options::dosetopt(ERREXIT, 0, 1);
+        }
+        Self { armed }
+    }
+}
+
+impl Drop for BashCmdsubstErrexit {
+    fn drop(&mut self) {
+        if self.armed {
+            crate::ported::options::dosetopt(crate::ported::zsh_h::ERREXIT, 1, 1);
+        }
+    }
+}
+
+/// C `oldpwd` global (Src/params.c:75). `cd -` and `~-` read THIS, not the
+/// `$OLDPWD` parameter: assigning `OLDPWD=x` leaves it alone (Src/builtin.c:909
+/// `: oldpwd`, Src/subst.c:755). `None` until startup or the first `cd` sets it.
+static OLDPWD_GLOBAL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// `oldpwd = <val>` (c:Src/builtin.c:1238-1239, c:Src/init.c:1255-1259).
+pub fn set_oldpwd_global(val: &str) {
+    *OLDPWD_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()) = Some(val.to_string());
+}
+
+/// What `cd -` / `~-` resolve to. zsh reads the `oldpwd` global; the real
+/// POSIX-family shells (dash, ksh93, bash) read `$OLDPWD` itself, so an
+/// assignment to it redirects `cd -` there.
+///
+/// !!! RUST-ONLY ADAPTER — the posix_faithful branch has no zsh C counterpart !!!
+pub fn oldpwd_cd_target() -> Option<String> {
+    let param = || crate::ported::params::getsparam("OLDPWD");
+    if posix_faithful() {
+        return param();
+    }
+    OLDPWD_GLOBAL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .or_else(param)
+}
+
+/// True when a blank at bracket depth `brct` must NOT end the token: the word
+/// so far (`lexbuf`) is `NAME[` in command position (`incmdpos`) and the shell
+/// is bash or a Korn drop-in, whose assignments take a blank-bearing subscript
+/// (`h[a b]=1`, `a[1 + 1]=x`). zsh itself splits the word at the blank, so
+/// every other personality keeps Src/lex.c:958.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn korn_subscript_blank(brct: i32, incmdpos: bool, lexbuf: &str) -> bool {
+    if brct <= 0 || !incmdpos || !(bash_mode() || korn_mode()) {
+        return false;
+    }
+    let name_len = lexbuf
+        .find(|c: char| !(c == '_' || c.is_ascii_alphanumeric()))
+        .unwrap_or(lexbuf.len());
+    name_len > 0
+        && !lexbuf.starts_with(|c: char| c.is_ascii_digit())
+        && lexbuf[name_len..].starts_with(crate::ported::zsh_h::Inbrack)
 }
