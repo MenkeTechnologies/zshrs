@@ -541,10 +541,9 @@ pub fn histsubchar(c_in: i32) -> i32 {
     let mut ev: i64; // c:598
     let mut buf: String; // c:601 char *buf, *ptr
     let mut sline: String; // c:602
-                           // c:603 lexraw_mark — Rust port's lexer doesn't expose `zshlex_raw_mark`
-                           // hook yet; mirror the C `lexraw_mark` / `zshlex_raw_back_to_mark` calls
-                           // as a no-op `i32` carry.
-    let lexraw_mark: i32 = 0; // c:603,615
+    // c:615 — if accumulating raw input for use in command substitution, mark
+    // the history text (including the character being substituted) for removal.
+    let lexraw_mark: i64 = crate::ported::lex::zshlex_raw_mark(-1); // c:603,615
 
     // c:618 — `^foo^bar` shortcut: only valid on first column of input.
     let hat = hatchar.load(SeqCst);
@@ -1090,11 +1089,16 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 }
                 b'Q' => {
                     // c:916
-                    // c:918-924 — `noerrs` flag stack is no-op in Rust port;
-                    // see params.rs:1310. Tokenize-strip via parse_subst_string,
-                    // then remnulargs + untokenize.
+                    // c:918-923 — `int one = noerrs, oef = errflag; noerrs = 1;
+                    // parse_subst_string(sline); noerrs = one;
+                    // errflag = oef | (errflag & ERRFLAG_INT);`
+                    let one = *crate::ported::utils::noerrs_lock().lock().unwrap();
                     let oef = errflag.load(SeqCst);
-                    let _ = parse_subst_string(&sline); // c:921
+                    *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
+                    if let Ok(t) = parse_subst_string(&sline) {
+                        sline = t; // c:921 (in-place in C)
+                    }
+                    *crate::ported::utils::noerrs_lock().lock().unwrap() = one;
                     errflag.store(oef | (errflag.load(SeqCst) & ERRFLAG_INT), SeqCst); // c:923
                     let mut s = sline.clone();
                     remnulargs(&mut s); // c:924
@@ -1156,9 +1160,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
         }
     }
 
-    // c:963 — zshlex_raw_back_to_mark(lexraw_mark): no-op until lex hook
-    // exposes the raw-input mark/restore pair.
-    let _ = lexraw_mark; // c:963
+    crate::ported::lex::zshlex_raw_back_to_mark(lexraw_mark); // c:963
 
     // c:970-976 — push the expanded value onto the input stack as INP_HIST.
     lexstop.store(false, SeqCst); // c:970
@@ -5513,8 +5515,8 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {
 /// `pophiststack`, which restores the saved state. Returns the new
 /// stack depth (`histsave_stack_pos`).
 ///
-/// `inithist`'s C role (`createhisttable`, c:3890) is a no-op in the
-/// Vec-based ring model. C's `hist_ring == &curline` test is
+/// `inithist`'s C role (`createhisttable`, c:3890) is met by moving `histtab`
+/// into the saved frame, which leaves a fresh empty table. C's `hist_ring == &curline` test is
 /// `HA_ACTIVE && !HA_NOINC` here: `hbegin` links the current line only
 /// when it does not set `HA_NOINC` (c:1163-1169), and the Vec ring never
 /// holds the sentinel itself.
@@ -5540,6 +5542,7 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
     let snap = histsave {
         lasthist: lasthist.lock().unwrap().clone(), // c:3861 h->lasthist = lasthist
         histfile: old_histfile,                     // c:3862-3868 OLD HISTFILE
+        histtab: std::mem::take(&mut *crate::ported::hashtable::histtab_lock().write().unwrap()), // c:3869 h->histtab = histtab (inithist then starts an empty one)
         hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()), // c:3870 h->hist_ring = hist_ring
         curhist: curhist.load(SeqCst),                              // c:3871 h->curhist = curhist
         histlinect: histlinect.load(SeqCst),                        // c:3872
@@ -5659,6 +5662,7 @@ pub fn pophiststack() -> i32 {
                 .remove("HISTFILE"); // c:3923 unsetparam
         }
     }
+    *crate::ported::hashtable::histtab_lock().write().unwrap() = snap.histtab; // c:3924 histtab = h->histtab (the pushed table was dropped, c:3912)
     *hist_ring.lock().unwrap() = snap.hist_ring; // c:3925
     curhist.store(snap.curhist, SeqCst); // c:3926
     // c:3927 — `if (zleactive) zleentry(ZLE_CMD_SET_HIST_LINE, curhist);`
@@ -5730,22 +5734,27 @@ pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {
         }
     }
     // c:3954-3956 — walk back while the entry at pop_through-2 was
-    // saved at a deeper locallevel than the current scope. The
-    // Rust port doesn't yet model histsave_stack[i].locallevel
-    // (the per-frame locallevel snapshot); approximate by skipping
-    // this loop — matches the "pop everything we have" intent for
-    // current callers.
+    // saved at a deeper locallevel than the current scope.
+    let cur_level = crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
+    while pop_through > 1
+        && histsave_stack
+            .lock()
+            .unwrap()
+            .get((pop_through - 2) as usize)
+            .is_some_and(|h| h.locallevel > cur_level)
+    {
+        pop_through -= 1; // c:3956
+    }
     if stack_pos < pop_through {
         // c:3957
         return 0;
     }
-    // c:3959-3962 — loop pop until we reach pop_through. The
-    // `nohistsave` C global isn't ported as a Rust global; default
-    // to 0 (allow saves), which is the common case. A future port
-    // can wire the global at the canonical home.
+    // c:3959-3962 — loop pop until we reach pop_through.
     loop {
         // c:3960-3961 — `if (!nohistsave) savehistfile(NULL, 1, writeflags);`.
-        savehistfile(None, writeflags);
+        if crate::ported::exec::nohistsave.load(SeqCst) == 0 {
+            savehistfile(None, writeflags);
+        }
         pophiststack(); // c:3962
         if histsave_stack_pos.load(SeqCst) < pop_through {
             // c:3963
@@ -5762,7 +5771,7 @@ pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {
 // (stophist is in zsh.h as an extern; we own it here.)
 
 /// Port of `HashTable histtab` from Src/hist.c:101.
-/// Lookup table for histent by name (placeholder until hashtable port lands). // c:101
+/// Unused name-keeper: the live `histtab` is `hashtable::histtab_lock()`. // c:101
 pub static histtab: Mutex<Vec<usize>> = Mutex::new(Vec::new()); // c:101
 
 /// Port of `mod_export Histent hist_ring` from Src/hist.c:103.
@@ -5877,6 +5886,7 @@ pub struct histsave {
     // c:228
     pub lasthist: histfile_stats, // c:229
     pub histfile: Option<String>, // c:230
+    pub histtab: std::collections::HashMap<String, i32>, // c:231
     pub hist_ring: Vec<histent>,  // c:232
     pub curhist: i64,             // c:233 zlong
     pub histlinect: i64,          // c:234
@@ -9141,5 +9151,36 @@ mod subst_modifier_tests {
         histsiz.store(saved.0, SeqCst);
         histlinect.store(saved.1, SeqCst);
         curhist.store(saved.2, SeqCst);
+    }
+
+    /// c:3869/c:3890/c:3924 — a pushed history stack starts with an empty
+    /// `histtab` and the pop gives back the saved one. `saveandpophiststack`
+    /// (c:3960) must not save the history file while `nohistsave` is set.
+    #[test]
+    fn histstack_push_pop_swaps_histtab() {
+        use crate::ported::hashtable::{addhistnode, histtab_lock};
+        let _g = crate::test_util::global_state_lock();
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let saved_ring = std::mem::take(&mut *hist_ring.lock().unwrap());
+        let saved_tab = std::mem::take(&mut *histtab_lock().write().unwrap());
+        let saved_active = histactive.swap(0, SeqCst);
+
+        addhistnode("keep", 7);
+        pushhiststack(None, 10, 10, 0);
+        assert!(histtab_lock().read().unwrap().is_empty(), "pushed stack must start empty");
+        addhistnode("scratch", 8);
+
+        crate::ported::exec::nohistsave.store(1, SeqCst);
+        assert_eq!(saveandpophiststack(1, 0), 1);
+        crate::ported::exec::nohistsave.store(0, SeqCst);
+
+        let tab = histtab_lock().read().unwrap();
+        assert_eq!(tab.get("keep"), Some(&7), "pop must restore the saved table");
+        assert!(tab.get("scratch").is_none(), "pop must drop the pushed table");
+        drop(tab);
+
+        histactive.store(saved_active, SeqCst);
+        *hist_ring.lock().unwrap() = saved_ring;
+        *histtab_lock().write().unwrap() = saved_tab;
     }
 }

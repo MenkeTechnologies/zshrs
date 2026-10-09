@@ -1753,16 +1753,15 @@ pub(crate) fn setlimits(_nam: &str) -> i32 {
 }
 
 // =====================================================================
-// External ported from Src/module.c. Stubbed locally with C-faithful
-// signatures pending the module.c port from `&Module`/`&Features`
-// (CamelCase Rust-native) to `*const module`/`&Mutex<features>`.
+// Src/module.c entry points, adapted to this module: the name-keyed
+// variants in `crate::ported::module` take the feature-name list that
+// `featuresarray` returns, so each wrapper below passes it through.
 // =====================================================================
 
 // `featuresarray` lives in `Src/module.c:3279`. C signature:
 //   char **featuresarray(Module m, Features f);
 // Returns a NUL-terminated array of feature descriptors like "b:limit".
-// Stub builds the descriptor list inline since the existing
-// `crate::ported::module::featuresarray` takes wrong-typed args.
+// The descriptor list is built inline: this module has no `Features` tables.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:limit".to_string(),
@@ -1782,21 +1781,22 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
     crate::ported::module::handlefeatures("zsh/rlimits", &featuresarray(m, f), enables)
 }
 
-// `getfeatureenables` lives in `Src/module.c:3314`. Stub returns
-// the bn_size + cd_size + mf_size + pd_size + n_abstract zero-vector
-// since no feature is enabled in the static-link path.
-fn getfeatureenables(_m: *const module, f: &Mutex<features>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
-    vec![0; total as usize]
+// `getfeatureenables` lives in `Src/module.c:3314`: the live per-feature
+// enable bits, read through the name-keyed `handlefeatures` (NULL `*enables`).
+fn getfeatureenables(m: *const module, f: &Mutex<features>) -> Vec<i32> {
+    let mut enables = None;
+    handlefeatures(m, f, &mut enables);
+    enables.unwrap_or_default()
 }
 
-// `setfeatureenables` lives in `Src/module.c:3350`. C disables every
-// registered feature via `*_addbuiltin/_addparamdef/etc` reverse calls.
-// Stub: no-op since static-link path doesn't register through the
-// runtime module loader.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&Vec<i32>>) -> i32 {
-    0
+// `setfeatureenables` lives in `Src/module.c:3350`: enables or disables each
+// registered feature per `e` (all of them when `e` is NULL).
+fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&Vec<i32>>) -> i32 {
+    crate::ported::module::setfeatureenables(
+        "zsh/rlimits",
+        &featuresarray(m, f),
+        e.map(|v| v.as_slice()),
+    )
 }
 
 // Bridge ported

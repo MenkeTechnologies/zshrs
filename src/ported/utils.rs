@@ -1897,11 +1897,10 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
 
 // do pre-prompt stuff                                                      // c:1530
 /// Run pre-prompt machinery: precmd, periodic, prepromptfns.
-/// Port of `preprompt()` from Src/utils.c:1530. Rust port skips
-/// the `PROMPT_SP` heuristic + mailcheck (those need terminal +
-/// MAIL state plumbing not yet present); fires the `precmd` hook
-/// + `precmd_functions` array, the `periodic` hook on its
-/// PERIOD-second cadence, and walks the prepromptfns registry.
+/// Port of `preprompt()` from Src/utils.c:1530: the `PROMPT_SP` heuristic, the
+/// pending-job scan, the `precmd` hook + `precmd_functions` array, the
+/// `periodic` hook on its PERIOD-second cadence, the mail check and the
+/// prepromptfns registry.
 pub fn preprompt() {
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Stamp duration + exit status onto the SQLite history row hend()
@@ -7251,11 +7250,13 @@ pub fn spdist(s: &str, t: &str, thresh: usize) -> usize {
 #[cfg(unix)]
 /// Port of `setcbreak` from `Src/utils.c:4756`.
 pub fn setcbreak() -> bool {
-    if let Some(mut ti) = gettyinfo() {
-        ti.c_lflag &= !(libc::ICANON | libc::ECHO);
-        ti.c_cc[libc::VMIN] = 1;
-        ti.c_cc[libc::VTIME] = 0;
-        settyinfo(&ti)
+    // c:4760 — `ti = shttyinfo;`
+    let saved = SHTTYINFO.lock().ok().and_then(|g| *g);
+    if let Some(mut ti) = saved {
+        ti.c_lflag &= !libc::ICANON; // c:4762
+        ti.c_cc[libc::VMIN] = 1; // c:4763
+        ti.c_cc[libc::VTIME] = 0; // c:4764
+        settyinfo(&ti) // c:4768
     } else {
         false
     }
@@ -9776,7 +9777,8 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         }
         result
     } else if quote_type == QT_BACKTICK {
-        // Backtick quoting (minimal - just escape backticks)
+        // c:6199 — C's DPUTS rejects QT_BACKTICK as a `quotestring` mode; the
+        // only caller that asks for it wants the backticks escaped.
         s.replace('`', "\\`")
     } else {
         // Unknown quote_type — treat as no-op to match C's `default:` arm.

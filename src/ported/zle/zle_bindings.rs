@@ -847,14 +847,10 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         // Below: widget names that map to C ported with non-1:1 names
         // (per iwidgets.list). C uses the same fn for multiple
         // widget names — dispatch by bindk->nam inside the body.
-        // clear-screen / redisplay / yank — existing `pub fn`s
-        // live inside inner scopes in zle_refresh.rs / zle_misc.rs
-        // (legacy nested impl/mod blocks). Inline minimal bodies
-        // here matching the C source (zle_refresh.c:2366/2377,
-        // zle_misc.c:533). Will redirect to canonical ported once
-        // the inner-scope wrapping is unwound.
-        // Dispatch to the canonical ported widgets. The previous inline
-        // stubs wrote `\x1b[H\x1b[2J` directly and set ZLE_RESET_NEEDED — but
+        // clear-screen / redisplay / yank dispatch to the canonical ported
+        // widgets (zle_refresh.c:2366/2377, zle_misc.c:533). Inline bodies
+        // that wrote `\x1b[H\x1b[2J` directly and set ZLE_RESET_NEEDED
+        // were wrong —
         // zrefresh consumes the refresh-owned RESETNEEDED, not that
         // CCRIGHT-aliased flag, so the loop's post-widget zrefresh saw no
         // reset frame and never redrew the prompt+line: Ctrl-L cleared the

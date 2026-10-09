@@ -1863,18 +1863,10 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             } else {
                 set_next(last_tail, starter as usize);
             }
-            // patcompnot's tail is the trailing P_NOTHING — we need
-            // to find it. The chain ends where excend / excl converge
-            // (both `pattail(excend, n)` and `pattail(excl, n)`). For
-            // chaining we use `starter` since the next piece's chain
-            // is appended via patcomppiece's tail_out mechanism — but
-            // patcompnot doesn't expose a tail. Approximate: scan
-            // forward from starter to find the last P_NOTHING in the
-            // emitted block. Cheap: walk patout from starter looking
-            // for the highest-offset P_NOTHING in this compile pass.
-            // Simpler: bake the convention that the trailing
-            // P_NOTHING is the last node — set last_tail to current
-            // emit position (= start of next node).
+            // patcompnot (c:1759-1784) ends by emitting the shared trailing
+            // P_NOTHING (the `excend`/`excl` convergence point), so the
+            // chain tail is the last node emitted: the current emit position
+            // is the start of the next node.
             let cur_emit = patout.lock().unwrap().len();
             last_tail = cur_emit.saturating_sub(I_BODY);
             continue;
@@ -6307,7 +6299,7 @@ pub fn patmatch(
                     // it. The class/`?` arms already delete on a FAILED match
                     // (e.g. c:5046); this is the same edit at the pattern end.
                     let max_errs = (glob_flags & 0xff) as i32;
-                    if state.errsfound < max_errs {
+                    if (state.errsfound < max_errs && { let fe = forceerrs.load(Ordering::Relaxed); fe == -1 || state.errsfound < fe })/* c:3473-3474 */ {
                         // c:3475 `CHARINC(patinput, patinend)` + continue
                         // (retry P_END). CHARINC is option-gated, and
                         // `s_off` can sit mid-character when GF_MULTIBYTE
@@ -6388,13 +6380,10 @@ pub fn patmatch(
                 // through `glob_flags` since rpat went bucket-1.
                 let max_errs = (glob_flags & 0xff) as i32;
                 if max_errs > 0 {
-                    // Approximate match: try edit operations
-                    // (substitute/insert/delete) at each mismatch up to
-                    // the budget. Per c:3055/3109/3193 the C source
-                    // tracks `errsfound` across recursive patmatch
-                    // calls; the Rust port does the same via `state.
-                    // errsfound`. Skips transposition (Damerau extension
-                    // — rare; faithful follow-on).
+                    // c:3473-3579 — approximate match: omit input char,
+                    // transpose, omit both, omit pattern char (see
+                    // approx_match_exactly); `errsfound` is tracked on
+                    // `state` across the recursive patmatch calls.
                     if let Some(new_off) = approx_match_exactly(
                         code, next, string, s_off, str_bytes, state, glob_flags, max_errs,
                     ) {
@@ -6511,7 +6500,7 @@ pub fn patmatch(
                     // then retry the same scan). For P_ANYOF that means
                     // `[b][b]` against "bob" can match by omitting the
                     // middle "o" with 1 edit — the `(#a1)[b][b]` pin.
-                    if state.errsfound < max_errs && s_off < input_bytes.len() {
+                    if (state.errsfound < max_errs && { let fe = forceerrs.load(Ordering::Relaxed); fe == -1 || state.errsfound < fe })/* c:3473-3474 */ && s_off < input_bytes.len() {
                         state.errsfound += 1;
                         // Retry same scan with one input byte consumed.
                         return patmatch(code, scan, string, s_off + 1, state, glob_flags);
@@ -6534,7 +6523,7 @@ pub fn patmatch(
                 };
                 let has_match = s_off < input_bytes.len() && !in_set;
                 if !has_match {
-                    if state.errsfound < max_errs && s_off < input_bytes.len() {
+                    if (state.errsfound < max_errs && { let fe = forceerrs.load(Ordering::Relaxed); fe == -1 || state.errsfound < fe })/* c:3473-3474 */ && s_off < input_bytes.len() {
                         // c:3463 — omit-input approx path (same as P_ANYOF).
                         state.errsfound += 1;
                         return patmatch(code, scan, string, s_off + 1, state, glob_flags);
@@ -6672,7 +6661,7 @@ pub fn patmatch(
                 let operand_off_extra = if op == P_WBRANCH { 8 } else { 0 };
                 // c:3056 — if `next` is P_EXCLUDE/P_EXCLUDP, this BRANCH
                 // is the asserted half of a `^pat` / `!(pat)` exclusion.
-                // Minimal port of c:3056-3201: try the asserted operand
+                // Port of c:3056-3201: try the asserted operand
                 // (the `*`-based branch body), then for each EXCLUDE in
                 // the next-chain run the exclude operand against the
                 // same input range; if any exclude matches with the
@@ -10048,7 +10037,7 @@ mod tests {
     // Ported from pattern.c:1278-1350 (KSH dispatch in patcomppiece) and
     // pattern.c:1615-1746 (kshchar-driven quantifier emission), plus
     // patcompnot pattern.c:1759-1784 for the !(pat) negation form and a
-    // minimal P_EXCLUDE matcher arm (pattern.c:3056-3201).
+    // P_EXCLUDE matcher arm (pattern.c:3056-3201).
     // ═══════════════════════════════════════════════════════════════════
 
     fn ksh_glob_match(pat: &str, s: &str) -> bool {

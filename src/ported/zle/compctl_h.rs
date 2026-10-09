@@ -233,7 +233,10 @@ pub enum CompcondData {
     S { p: Vec<i32>, s: Vec<String> },
     /// Port of `struct { char **a, **b; } l` (c:68-71) — used by
     /// `CCT_RANGESTR`, `CCT_RANGEPAT`.
-    L { a: Vec<String>, b: Vec<String> },
+    L {
+        a: Vec<String>,
+        b: Vec<Option<String>>, // c:70 — `None` is C's NULL (`r[a]`), `Some("")` is `r[a,]`
+    },
     /// Empty (CCT_UNUSED).
     #[default]
     Unused,
@@ -415,7 +418,7 @@ mod tests {
         assert!(matches!(s, CompcondData::S { .. }));
         let l = CompcondData::L {
             a: vec!["lo".into()],
-            b: vec!["hi".into()],
+            b: vec![Some("hi".into())],
         };
         assert!(matches!(l, CompcondData::L { .. }));
     }

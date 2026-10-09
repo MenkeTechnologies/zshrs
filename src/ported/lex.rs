@@ -155,8 +155,7 @@ pub fn zshlex() {
     // lex.c:270-276 — `do { ... } while (tok != ENDINPUT && exalias())`.
     // The do-while re-runs gettok when exalias re-injects alias text;
     // exalias also performs reswdtab keyword promotion (`{` → INBRACE,
-    // `if` → IF, etc.) and spell-correction. Wired one-pass for now —
-    // alias re-injection loop is a follow-up.
+    // `if` → IF, etc.) and spell-correction.
     loop {
         // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
         // detection.
@@ -203,7 +202,7 @@ pub fn zshlex() {
             let doc: Option<String>;
             let mut munged_term: String;
 
-            // c:283 — `hwbegin(0);` (history-build cursor — zshrs no-op)
+            crate::ported::hist::ihwbegin(0); // c:283 hwbegin(0)
             // c:284 — `cmdpush(hdocs->type == REDIR_HEREDOC ? CS_HEREDOC : CS_HEREDOCD);`
             cmdpush(if node.typ == crate::ported::zsh_h::REDIR_HEREDOC {
                 CS_HEREDOC as u8
@@ -212,12 +211,15 @@ pub fn zshlex() {
             });
             // c:285 — `munged_term = dupstring(hdocs->str);`
             munged_term = crate::ported::mem::dupstring(node.str.as_deref().unwrap_or(""));
-            // c:286 — `STOPHIST` (history-disable scope — zshrs no-op)
+            crate::ported::hist::stophist
+                .fetch_add(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst); // c:286 STOPHIST
             // c:287 — `doc = gethere(&munged_term, hdocs->type);`
             doc = crate::ported::exec::gethere(&mut munged_term, node.typ);
-            // c:288 — `ALLOWHIST`
+            crate::ported::hist::stophist
+                .fetch_sub(crate::ported::zsh_h::STOPHIST_DELTA, Ordering::SeqCst); // c:288 ALLOWHIST
             // c:289 — `cmdpop();`
             cmdpop();
+            crate::ported::hist::ihwend(); // c:290 hwend()
             // c:290 — `hwend();`
 
             // c:291 — `if (!doc)`
@@ -2806,8 +2808,8 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             Some('\n') if !sub && isset(CSHJUNKIEQUOTES) => {
                                 // CSHJUNKIEQUOTES: bare \n terminates.
                                 // If preceded by `\`, the backslash is
-                                // stripped (we approximate by peeking
-                                // back at the buffer).
+                                // stripped (c:1308-1314: `lexbuf.ptr[-1] == '\\'`
+                                // → `ptr--, len--`).
                                 let last_was_bslash =
                                     LEX_LEXBUF.with_borrow(|b| b.as_str().ends_with('\\'));
                                 if last_was_bslash {

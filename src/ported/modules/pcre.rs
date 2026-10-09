@@ -303,12 +303,16 @@ pub fn pcre_callout(
 ///     return 0;
 /// }
 /// ```
+/// !!! WARNING: the pcre2 handles (`pat`, `mdata`) are the `fancy_regex`
+/// `Regex` / `Captures` pair, and `bytewise` is Rust-only: it is set by the
+/// `-pcre-match` path when `zpcre_utf8_enabled()` is false, where the subject
+/// was decoded byte-for-char, so extracted text is mapped back to bytes.
 #[allow(non_snake_case, clippy::too_many_arguments)]
 pub fn zpcre_get_substrings(
     // c:157
-    pat: *mut std::ffi::c_void,
+    pat: &Regex,
     arg: &str,
-    mdata: *mut std::ffi::c_void,
+    mdata: &fancy_regex::Captures,
     captured_count: i32,
     matchvar: Option<&str>,
     substravar: Option<&str>,
@@ -316,184 +320,106 @@ pub fn zpcre_get_substrings(
     want_offset_pair: i32,
     matchedinarr: i32,
     want_begin_end: i32,
+    bytewise: bool,
 ) -> i32 {
     let mut capture_start: i32 = 1; // c:164
     if matchedinarr != 0 {
         // c:169
         capture_start = 0; // c:171 bash-style ovec[0]
     }
-
-    // c:175 — `ovec = pcre2_get_ovector_pointer(mdata);`
-    // pcre2 isn't currently wired through zshrs (the regex crate is the
-    // matcher backend instead). The `mdata` pointer is opaque from
-    // Rust; the canonical access path materializes here once pcre2-rs
-    // bindings land. Sentinel: empty ovec → skip the populated branch.
-    let ovec: Vec<(usize, usize)> = Vec::new(); // c:175
-    let _ = mdata; // c:175
-
-    if !ovec.is_empty() {
-        // c:176
-        let nelem = captured_count - 1; // c:177
-
-        if want_offset_pair != 0 {
-            // c:179
-            let offset_all = format!("{} {}", ovec[0].0, ovec[0].1); // c:180
-            setsparam("ZPCRE_OP", &offset_all); // c:181
+    // Matched text handed back to the shell (c:189/c:209 `metafy(arg + ovec[..])`).
+    let text = |s: &str| -> String {
+        if bytewise {
+            String::from_utf8_lossy(&s.chars().map(|c| c as u32 as u8).collect::<Vec<u8>>())
+                .into_owned()
+        } else {
+            s.to_string()
         }
+    };
+    // c:175 — `ovec = pcre2_get_ovector_pointer(mdata);` each pair is
+    // `None` when the group did not participate (PCRE2_UNSET).
+    let ovec: Vec<Option<(usize, usize)>> = (0..mdata.len())
+        .map(|i| mdata.get(i).map(|m| (m.start(), m.end())))
+        .collect();
+    let Some(Some((m0s, m0e))) = ovec.first().copied() else {
+        return 0; // c:176 `if (ovec)`
+    };
+    let nelem = captured_count - 1; // c:177
+    let chars_before = |upto: usize| arg[..upto].chars().count() as i64;
+    let ksharrays = isset(KSHARRAYS) as i64;
 
-        if let Some(mv) = matchvar {
-            // c:188
-            let (s, e) = ovec[0]; // c:189 arg + ovec[0]..ovec[1]
-            let slice = arg.get(s..e).unwrap_or("");
-            let match_all = metafy(slice); // c:189
-            setsparam(mv, &match_all); // c:190
+    if want_offset_pair != 0 {
+        // c:179
+        setsparam("ZPCRE_OP", &format!("{} {}", m0s, m0e)); // c:180-181
+    }
+
+    if let Some(mv) = matchvar {
+        // c:188
+        setsparam(mv, &text(&arg[m0s..m0e])); // c:189-190
+    }
+
+    // c:202-213 — substravar: the captures array
+    if let Some(sv) = substravar {
+        if want_begin_end == 0 || nelem != 0 {
+            // c:203
+            let mut matches: Vec<String> =
+                Vec::with_capacity((captured_count + 1 - capture_start) as usize); // c:206
+            for i in capture_start..captured_count {
+                // c:207-210 — an unset group yields a zero-length slice.
+                let slice = ovec
+                    .get(i as usize)
+                    .copied()
+                    .flatten()
+                    .map_or("", |(s, e)| &arg[s..e]);
+                matches.push(text(slice)); // c:209
+            }
+            setaparam(sv, matches); // c:212
         }
+    }
 
-        // c:202-213 — substravar: build the captures array
-        if let Some(sv) = substravar {
-            // c:202
-            if want_begin_end == 0 || nelem != 0 {
-                // c:203
-                let mut matches: Vec<String> = Vec::with_capacity(
-                    // c:206
-                    (captured_count + 1 - capture_start) as usize,
-                );
-                let mut i = capture_start; // c:207
-                while i < captured_count {
-                    let vec_off = (2 * i) as usize; // c:208
-                    if let Some(&(s, e)) = ovec.get(vec_off / 2) {
-                        let slice = arg.get(s..e).unwrap_or("");
-                        matches.push(metafy(slice)); // c:209
-                    } else {
-                        matches.push(String::new());
-                    }
-                    i += 1;
-                }
-                // c:212 — `setaparam(substravar, matches);`
-                setaparam(sv, matches); // c:212
+    // c:215-231 — namedassoc: gated on the pattern declaring names (`&& ncount`).
+    if let Some(na) = namedassoc {
+        let mut hash: Vec<String> = Vec::new(); // c:222
+        for (idx, name_opt) in pat.capture_names().enumerate() {
+            if let Some(nm) = name_opt {
+                let slice = ovec
+                    .get(idx)
+                    .copied()
+                    .flatten()
+                    .map_or("", |(s, e)| &arg[s..e]);
+                hash.push(nm.to_string()); // c:226 key (PCRE limits name characters)
+                hash.push(metafy(&text(slice))); // c:227-228
             }
         }
-
-        // c:215-231 — namedassoc: build the named-captures hash
-        if let Some(na) = namedassoc {
-            // c:215
-            // pcre2_pattern_info(pat, PCRE2_INFO_NAMECOUNT/...) gates this
-            // path; without pcre2 bindings we treat ncount=0 and skip.
-            let _ = pat; // c:216
-            let ncount: u32 = 0; // c:216
-            if ncount != 0 {
-                // c:216
-                // c:222-230 — build hash[] interleaved (name, value) pairs.
-                let hash: Vec<String> = Vec::with_capacity(
-                    // c:222
-                    ((ncount + 1) * 2) as usize,
-                );
-                // For each named entry: push ztrdup(name), push metafy(value).
-                // (Skipped — ncount == 0 in the stub backend.)
-                sethparam(na, hash); // c:230
-            }
+        if !hash.is_empty() {
+            sethparam(na, hash); // c:230
         }
+    }
 
-        if want_begin_end != 0 {
-            // c:233
-            // c:239 — `char *ptr = arg; zlong offs = 0;`
-            let mut ptr_pos: usize = 0;
-            let mut offs: i64 = 0; // c:240
-                                   // c:245-251 — count chars from start of `arg` to `ovec[0]`.
-            let mut leftlen = ovec[0].0 as i32; // c:245
-            while leftlen > 0 {
-                // c:246
-                offs += 1; // c:247
-                let clen = {
-                    let slice = arg
-                        .as_bytes()
-                        .get(ptr_pos..ptr_pos + leftlen as usize)
-                        .unwrap_or(&[]);
-                    MB_CHARLEN(slice, slice.len()) // c:248 MB_CHARLEN
+    if want_begin_end != 0 {
+        // c:233 — MBEGIN/MEND: character offsets of the whole match.
+        let offs = chars_before(m0s);
+        setiparam("MBEGIN", offs + 1 - ksharrays); // c:252
+        setiparam("MEND", offs + arg[m0s..m0e].chars().count() as i64 - ksharrays); // c:261
+
+        if nelem != 0 {
+            // c:262-302 — per-capture mbegin/mend arrays.
+            let mut mbegin: Vec<String> = Vec::with_capacity(nelem as usize); // c:267
+            let mut mend: Vec<String> = Vec::with_capacity(nelem as usize); // c:268
+            for i in 1..=nelem as usize {
+                // A group that did not take part has both slots PCRE2_UNSET:
+                // c:279 `leftlen = ipair[0]` truncates to -1, the c:280 walk
+                // never runs and offs stays 0, so mbegin is `!isset(KSHARRAYS)`
+                // (c:286) and mend one less (c:296).
+                let (b, l) = match ovec.get(i).copied().flatten() {
+                    Some((s, e)) => (chars_before(s), arg[s..e].chars().count() as i64),
+                    None => (0, 0),
                 };
-                ptr_pos += clen; // c:249
-                leftlen -= clen as i32; // c:250
+                mbegin.push((b + 1 - ksharrays).to_string()); // c:286-287
+                mend.push((b + l - ksharrays).to_string()); // c:296-297
             }
-            // c:252 — `setiparam("MBEGIN", offs + !isset(KSHARRAYS));`
-            let ksharrays = isset(KSHARRAYS) as i64;
-            setiparam("MBEGIN", offs + 1 - ksharrays); // c:252
-
-            // c:254-260 — add char count over the match itself.
-            let mut leftlen = (ovec[0].1 - ovec[0].0) as i32; // c:254
-            while leftlen > 0 {
-                // c:255
-                offs += 1; // c:256
-                let clen = {
-                    let slice = arg
-                        .as_bytes()
-                        .get(ptr_pos..ptr_pos + leftlen as usize)
-                        .unwrap_or(&[]);
-                    MB_CHARLEN(slice, slice.len()) // c:257 MB_CHARLEN
-                };
-                ptr_pos += clen; // c:258
-                leftlen -= clen as i32; // c:259
-            }
-            setiparam(
-                // c:261 MEND
-                "MEND",
-                offs - ksharrays,
-            );
-
-            if nelem != 0 {
-                // c:262
-                // c:267-298 — per-capture mbegin/mend arrays.
-                let mut mbegin: Vec<String> = Vec::with_capacity(nelem as usize); // c:267
-                let mut mend: Vec<String> = Vec::with_capacity(nelem as usize); // c:268
-
-                for i in 0..nelem as usize {
-                    // c:270-272
-                    let pair_idx = i + 1;
-                    let pair = match ovec.get(pair_idx) {
-                        Some(&p) => p,
-                        None => continue,
-                    };
-                    // c:275 — `ptr = arg; offs = 0;`
-                    let mut ptr_pos: usize = 0;
-                    let mut offs: i64 = 0; // c:276
-                    let mut leftlen = pair.0 as i32; // c:279
-                    while leftlen > 0 {
-                        // c:280
-                        offs += 1; // c:281
-                        let clen = {
-                            let slice = arg
-                                .as_bytes()
-                                .get(ptr_pos..ptr_pos + leftlen as usize)
-                                .unwrap_or(&[]);
-                            MB_CHARLEN(slice, slice.len())
-                            // c:282
-                        };
-                        ptr_pos += clen; // c:283
-                        leftlen -= clen as i32; // c:284
-                    }
-                    let buf = format!("{}", offs + 1 - ksharrays); // c:286 convbase
-                    mbegin.push(buf); // c:287
-
-                    let mut leftlen = (pair.1 - pair.0) as i32; // c:289
-                    while leftlen > 0 {
-                        // c:290
-                        offs += 1; // c:291
-                        let clen = {
-                            let slice = arg
-                                .as_bytes()
-                                .get(ptr_pos..ptr_pos + leftlen as usize)
-                                .unwrap_or(&[]);
-                            MB_CHARLEN(slice, slice.len())
-                            // c:292
-                        };
-                        ptr_pos += clen; // c:293
-                        leftlen -= clen as i32; // c:294
-                    }
-                    let buf = format!("{}", offs - ksharrays); // c:296
-                    mend.push(buf); // c:297
-                }
-                setaparam("mbegin", mbegin); // c:301
-                setaparam("mend", mend); // c:302
-            }
+            setaparam("mbegin", mbegin); // c:301
+            setaparam("mend", mend); // c:302
         }
     }
 
@@ -651,6 +577,43 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
         ); // c:408
         return 1; // c:417 return_value stays 1
     }
+    if use_dfa == 0 {
+        // c:377-378 — `if (offset_start > 0 && offset_start >= subject_len)
+        //                  ret = PCRE2_ERROR_NOMATCH;`
+        if offset_start > 0 && (offset_start as usize) >= plaintext.len() {
+            return return_value;
+        }
+        // c:381-382 — `pcre2_match(pat, subject, subject_len, offset_start, ...)`: the
+        // offset is handed to the MATCHER against the whole subject (`^` stays
+        // anchored to the true start), and the offsets come back absolute.
+        // A fancy_regex runtime failure is reported like PCRE2's negative
+        // returns (c:409): no variables set.
+        let found = PCRE_PATTERN.with(|r| {
+            let re = r.borrow().as_ref()?.clone();
+            let caps = re.captures_from_pos(&plaintext, search_base_offset).ok().flatten()?;
+            Some((re, caps))
+        });
+        let Some((re, caps)) = found else {
+            return return_value; // c:398 NOMATCH leaves $MATCH / $match alone
+        };
+        // c:393 — `ret = pcre2_get_ovector_count(pcre_mdata)`, then c:402:
+        // `zpcre_get_substrings(pcre_pattern, *args, pcre_mdata, ret, matched_portion,
+        //                       receptacle, named, want_offset_pair, use_dfa, 0)`.
+        zpcre_get_substrings(
+            &re,
+            &plaintext,
+            &caps,
+            caps.len() as i32,
+            matched_portion,
+            Some(receptacle),
+            named,
+            want_offset_pair,
+            0,
+            0,
+            false,
+        );
+        return 0; // c:403
+    }
     let (full_match, full_range, captures, named_pairs) = PCRE_PATTERN.with(
         |r| -> (
             Option<String>,
@@ -736,63 +699,8 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
                     Vec::new(),
                 );
             }
-            let caps = match re.captures_from_pos(&plaintext, search_base_offset) {
-                Ok(Some(c)) => c,
-                Ok(None) | Err(_) => return (None, None, Vec::new(), Vec::new()),
-            };
-            let full_m = caps.get(0); // c:401 matched_portion
-            let full = full_m.map(|m| m.as_str().to_string());
-            // c:180-181 — `sprintf(offset_all, "%ld %ld", ovec[0], ovec[1])`.
-            // ovec is RELATIVE TO THE WHOLE SUBJECT, so add back the -n
-            // offset the regex was started from (search_base_offset).
-            let range = full_m.map(|m| (m.start(), m.end()));
-            // c:393 — `ret = pcre2_get_ovector_count(pcre_mdata)`, then
-            // c:206-207 — `zalloc(... captured_count+1-capture_start)` /
-            //             `for (i = capture_start; i < captured_count; i++)`.
-            //
-            // pcre2_get_ovector_count() on match data created from the
-            // pattern (c:384) is the pattern's group count plus one, so EVERY
-            // declared group is reported; one that did not participate has
-            // both slots PCRE2_UNSET and c:209 yields an empty string
-            // (`x(y)?z` on "xz" -> one empty capture). zsh 5.9.x used
-            // pcre_exec's return (highest participating group + 1) and
-            // dropped trailing unset groups; master does not.
-            let captured_count = caps.len(); // c:393
-            let mut subs = Vec::new();
-            for i in 1..captured_count {
-                // c:207-209 ovector capture loop
-                subs.push(caps.get(i).map(|m| m.as_str().to_string()));
-            }
-            // c:215-229 — named-capture table walk:
-            //
-            //     if (namedassoc
-            //             && !pcre2_pattern_info(pat, PCRE2_INFO_NAMECOUNT, &ncount) && ncount
-            //             && ...NAMEENTRYSIZE... && ...NAMETABLE...)
-            //     {
-            //         hashptr = hash = (char **)zshcalloc((ncount+1)*2*sizeof(char *));
-            //         for (nidx = 0; nidx < ncount; nidx++) {
-            //             vec_off = (ntable[nsize * nidx] << 9) + 2 * ntable[nsize * nidx + 1];
-            //             /* would metafy the key but pcre limits characters in the name */
-            //             *hashptr++ = ztrdup((char *) ntable + nsize * nidx + 2);
-            //             *hashptr++ = metafy(arg + ovec[vec_off],
-            //                     ovec[vec_off+1]-ovec[vec_off], META_DUP);
-            //         }
-            //         sethparam(namedassoc, hash);
-            //     }
-            //
-            // The regex crate exposes the same name table via
-            // capture_names(): index-aligned Option<&str>. Keys stay
-            // raw (PCRE limits name chars, per the C comment); values
-            // metafy like every capture.
-            let mut named_kv: Vec<String> = Vec::new();
-            for (idx, name_opt) in re.capture_names().enumerate() {
-                if let Some(nm) = name_opt {
-                    let val = caps.get(idx).map(|m| m.as_str()).unwrap_or("");
-                    named_kv.push(nm.to_string()); // c:226 key
-                    named_kv.push(crate::ported::utils::metafy(val)); // c:227-228 value
-                }
-            }
-            (full, range, subs, named_kv)
+            // Non-DFA matches never reach here (handled before the closure).
+            (None, None, Vec::new(), Vec::new())
         },
     );
 
@@ -913,17 +821,6 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
             rhs_buf.iter().map(|&b| b as char).collect::<String>(),
         )
     };
-    // Matched text goes back to the shell as the subject's own bytes
-    // (c:209 metafy of the ovector slice); in non-UTF mode undo the
-    // byte-for-char decode above.
-    let subject_text = |t: &str| -> String {
-        if utf {
-            t.to_string()
-        } else {
-            String::from_utf8_lossy(&t.chars().map(|c| c as u32 as u8).collect::<Vec<u8>>())
-                .into_owned()
-        }
-    };
 
     // c:433-436 — compile-time PCRE option bits:
     //   if (zpcre_utf8_enabled())                 pcre_opts |= PCRE2_UTF;
@@ -998,92 +895,29 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                     // a trailing group that did not participate is still
                     // reported, empty (V07pcre.ztst "Empty string for optional
                     // captures that don't match").
-                    let captured_count = caps.len(); // c:477
-                    let nelem = captured_count - 1; // c:177
-                    if bashre {
-                        // c:445-447 + matchedinarr=1: BASH_REMATCH array,
-                        // [0]=full match, [1..n]=captures; no scalar.
-                        let mut arr: Vec<String> = Vec::with_capacity(captured_count);
-                        for i in 0..captured_count {
-                            arr.push(
-                                caps.get(i)
-                                    .map(|m| subject_text(m.as_str()))
-                                    .unwrap_or_default(),
-                            );
-                        }
-                        crate::ported::params::setaparam("BASH_REMATCH", arr); // c:212
+                    // c:445-451 — BASHREMATCH: svar = NULL, avar = "BASH_REMATCH";
+                    // else svar = "MATCH", avar = "match".
+                    let (svar, avar) = if bashre {
+                        (None, "BASH_REMATCH")
                     } else {
-                        // c:188-190 — `MATCH` scalar.
-                        let ksharr = isset(KSHARRAYS) as i64;
-                        if let Some(m0) = caps.get(0) {
-                            crate::ported::params::setsparam("MATCH", &subject_text(m0.as_str())); // c:190
-                                                                                    // c:243-261 — char-offset MBEGIN/MEND over the
-                                                                                    // unmetafied subject (MB_CHARLEN walk ⟺
-                                                                                    // chars().count() on the UTF-8 String).
-                            let beg_chars = lhs_plain[..m0.start()].chars().count() as i64;
-                            let len_chars = lhs_plain[m0.start()..m0.end()].chars().count() as i64;
-                            crate::ported::params::setiparam("MBEGIN", beg_chars + 1 - ksharr); // c:252
-                            crate::ported::params::setiparam(
-                                "MEND",
-                                beg_chars + len_chars - ksharr,
-                            ); // c:261
-                        }
-                        if nelem > 0 {
-                            // c:202-213 — `match` only when parenthesised
-                            // captures exist; c:262-298 — mbegin/mend
-                            // per-capture offset arrays alongside.
-                            let mut subs: Vec<String> = Vec::with_capacity(nelem);
-                            let mut mbegin_arr: Vec<String> = Vec::with_capacity(nelem);
-                            let mut mend_arr: Vec<String> = Vec::with_capacity(nelem);
-                            for i in 1..captured_count {
-                                match caps.get(i) {
-                                    Some(m) => {
-                                        subs.push(subject_text(m.as_str())); // c:209
-                                        let b = lhs_plain[..m.start()].chars().count() as i64;
-                                        let l =
-                                            lhs_plain[m.start()..m.end()].chars().count() as i64;
-                                        mbegin_arr.push((b + 1 - ksharr).to_string()); // c:286
-                                        mend_arr.push((b + l - ksharr).to_string());
-                                        // c:296
-                                    }
-                                    None => {
-                                        // A group that did not take part has
-                                        // both ovector slots at PCRE2_UNSET:
-                                        // c:209 metafies a zero-length slice
-                                        // (empty text); c:279 `leftlen =
-                                        // ipair[0]` truncates to -1, so the
-                                        // c:280 `while (leftlen > 0)` walk never
-                                        // runs and offs stays 0, and c:289's
-                                        // length is 0. mbegin is therefore
-                                        // `!isset(KSHARRAYS)` (c:286) and mend
-                                        // one less (c:296) — zsh prints 1 and 0,
-                                        // not regex.c's -1 convention.
-                                        subs.push(String::new()); // c:209
-                                        mbegin_arr.push((1 - ksharr).to_string()); // c:286
-                                        mend_arr.push((1 - ksharr - 1).to_string()); // c:296
-                                    }
-                                }
-                            }
-                            crate::ported::params::setaparam("match", subs); // c:212
-                            crate::ported::params::setaparam("mbegin", mbegin_arr); // c:300
-                            crate::ported::params::setaparam("mend", mend_arr); // c:301
-                        }
-                    }
-                    // c:486 — namedassoc ".pcre.match" fires from the cond
-                    // path too, gated on the pattern declaring names
-                    // (c:216 `&& ncount`).
-                    let mut named_kv: Vec<String> = Vec::new();
-                    for (idx, name_opt) in re.capture_names().enumerate() {
-                        if let Some(nm) = name_opt {
-                            let val = caps.get(idx).map(|m| subject_text(m.as_str())).unwrap_or_default();
-                            named_kv.push(nm.to_string()); // c:226
-                            named_kv.push(crate::ported::utils::metafy(&val)); // c:227
-                        }
-                    }
-                    if !named_kv.is_empty() {
-                        crate::ported::params::sethparam(".pcre.match", named_kv);
-                        // c:230
-                    }
+                        (Some("MATCH"), "match")
+                    };
+                    // c:476-487 — `zpcre_get_substrings(pcre_pat, lhstr_plain, pcre_mdata,
+                    //         ovec_count, svar, avar, ".pcre.match", 0,
+                    //         isset(BASHREMATCH), !isset(BASHREMATCH));`
+                    zpcre_get_substrings(
+                        &re,
+                        &lhs_plain,
+                        &caps,
+                        caps.len() as i32, // c:477 pcre2_get_ovector_count
+                        svar,
+                        Some(avar),
+                        Some(".pcre.match"),
+                        0,
+                        i32::from(bashre),
+                        i32::from(!bashre),
+                        !utf,
+                    );
                     1 // c:487 return_value = 1
                 }
                 None => {

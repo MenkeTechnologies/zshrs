@@ -1876,13 +1876,9 @@ pub fn has_real_token(s: &str) -> bool {
 /// LIVE line), and c:1931–2218 (the brace-expansion tail) under
 /// `isset(IGNOREBRACES)`.
 ///
-/// STILL UNPORTED in this function: c:1774–1776, the BANGHIST `\!`
-/// re-quote inside the quote-form block (flagged again at its site).
-///
 /// PRECONDITION: the caller must have populated compcore's
 /// `ZLEMETALINE`/`ZLEMETACS`/`ZLEMETALL` (C does this via
-/// `metafy_line()` in `docomplete` before calling). There are no
-/// callers wired yet.
+/// `metafy_line()` in `docomplete` before calling); `docomplete` is the caller.
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
 pub fn get_comp_string() -> Option<String> {
     // c:1087
@@ -3157,17 +3153,6 @@ pub fn get_comp_string() -> Option<String> {
         // that branch on `$QIPREFIX` (Completion/Unix/Type/_remote_files,
         // Completion/Zsh/Type/_vars) took the unquoted path.
         //
-        // NOT ported from this hunk: c:1774-1776 (the BANGHIST `\!`
-        // sanitize, which rewrites a `\` before a `!` inside double quotes
-        // as `Bnull`). The rationale that used to sit here — "that walk only
-        // changes bytes the untokenize at the return already drops" — no
-        // longer holds now that c:1787-1926 is ported below: that loop chucks
-        // a `Bnull` out of `s` while LEAVING the `\` on the line, so the two
-        // are not equivalent. `echo "\!x<TAB>` is byte-identical to zsh
-        // either way today, and porting it needs the history front-end's
-        // `\!` handling checked first, so it stays flagged rather than
-        // guessed at.
-        //
         // c:1709-1726 IS now ported, immediately above. A previous revision
         // of this comment claimed it "only rewrites when the word is a
         // parameter expansion (whose first char is `String` + `Inbrace`)";
@@ -3231,6 +3216,21 @@ pub fn get_comp_string() -> Option<String> {
                 // c:1767 — `autoq = ztrdup(q);`
                 if let Ok(mut g) = AUTOQ.get_or_init(|| Mutex::new(String::new())).lock() {
                     *g = q.to_string();
+                }
+                // c:1769-1775 — `\!` in double quotes is extracted by the history
+                // code before normal parsing, so sanitize it here, too.
+                if INSTRING.load(Ordering::SeqCst) == QT_DOUBLE
+                    && isset(crate::ported::zsh_h::BANGHIST)
+                    && crate::ported::hist::bangchar.load(Ordering::SeqCst) != 0
+                {
+                    let bang = crate::ported::hist::bangchar.load(Ordering::SeqCst) as u8 as char;
+                    let mut chars: Vec<char> = s.chars().collect();
+                    for i in 0..chars.len().saturating_sub(1) {
+                        if chars[i] == '\\' && chars[i + 1] == bang {
+                            chars[i] = crate::ported::zsh_h::Bnull; // c:1773 `*q = Bnull`
+                        }
+                    }
+                    s = chars.into_iter().collect();
                 }
                 tracing::debug!(
                     target: "compsys_args",
@@ -4755,15 +4755,10 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
 /// width is taken from `adjustcolumns()` (with C's 80-column fallback
 /// at c:1820).
 ///
-/// **Scope note:** the C body's ZLE terminal-control machinery
-/// (`trashzle`, the `LISTMAX`/`getzlequery` "do you wish to see all…"
-/// prompt at c:2708-2738, and the `clearflag` cursor-restore at
-/// c:2783-2790) is not ported here — this entry prints the columnar
-/// list to the shell-out fd and terminates with a single newline
-/// (mirroring the non-`clearflag` `putc('\n')` at c:2790). The sort
-/// (c:2617) and the `LISTPACKED`/`LISTROWSFIRST` column-packing
-/// (c:2628-2696) plus the width-aware output loops (c:2741-2782)
-/// are ported faithfully.
+/// The sort (c:2617), `LISTPACKED`/`LISTROWSFIRST` column packing
+/// (c:2628-2696), the `LISTMAX`/`getzlequery` prompt (c:2709-2738), the
+/// output loops (c:2741-2782) and the `clearflag` cursor restore
+/// (c:2783-2791) follow C.
 ///
 /// WARNING: param names don't match C — Rust=(items, cols) vs C=(l)
 pub fn listlist(items: &[String], cols: usize) -> i32 {
@@ -4948,14 +4943,87 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
         }
     }
 
-    // c:2703 — trashzle(): the ZLE terminal-restore machinery is out of
-    // scope here (see fn doc); we go straight to emitting the list.
+    // c:2704 — `trashzle();` Set the cursor below the prompt.
+    crate::ported::zle::zle_main::trashzle();
+
+    // c:2706-2707 — `tolast = ((zmult == 1) == !!isset(ALWAYSLASTPROMPT));
+    //                clearflag = (isset(USEZLE) && !termflags && tolast);`
+    let zmult = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
+    let tolast = (zmult == 1) == isset(crate::ported::zsh_h::ALWAYSLASTPROMPT);
+    let mut clearflag = isset(crate::ported::zsh_h::USEZLE)
+        && crate::ported::params::TERMFLAGS.load(Ordering::Relaxed) == 0
+        && tolast;
+    crate::ported::zle::zle_refresh::CLEARFLAG.store(i32::from(clearflag), Ordering::Relaxed);
+
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::Relaxed);
+    let zterm_lines = crate::ported::utils::adjustlines() as i32;
+
+    // c:2709-2740 — `max = getiparam("LISTMAX"); if ((max && num > max) ||
+    //                (!max && nlines > zterm_lines)) { ... }`.
+    let max = crate::ported::params::getiparam("LISTMAX") as i32;
+    if (max != 0 && num_i > max) || (max == 0 && nlines > zterm_lines) {
+        let _ = crate::ported::zle::zle_main::zsetterm(); // c:2712
+        let prompt = if num_i > 0 {
+            format!(
+                "zsh: do you wish to see all {} possibilities ({} lines)? ",
+                num_i, nlines
+            )
+        } else {
+            format!("zsh: do you wish to see all {} lines? ", nlines)
+        };
+        let l = prompt.len() as i32; // c:2713-2717 — fprintf's return value
+        let _ = write_loop(out_fd, prompt.as_bytes());
+        let qup = ((l + zterm_columns - 1) / zterm_columns) - 1; // c:2718
+        // c:2720 — `if (!getzlequery())`.
+        let said_yes = crate::ported::zle::zle_utils::getzlequery() != 0;
+        // c:2721-2727 / c:2731-2737 — erase the question.
+        let erase_question = || {
+            if clearflag {
+                let _ = write_loop(out_fd, b"\r"); // c:2722
+                crate::ported::zle::zle_refresh::tcmultout(
+                    crate::ported::zsh_h::TCUP,
+                    crate::ported::zsh_h::TCMULTUP,
+                    qup,
+                ); // c:2723
+                let can_cleareod = crate::ported::init::tclen
+                    .lock()
+                    .map(|t| t[crate::ported::zsh_h::TCCLEAREOD as usize] != 0)
+                    .unwrap_or(false);
+                if can_cleareod {
+                    crate::ported::zle::zle_refresh::tcout(crate::ported::zsh_h::TCCLEAREOD); // c:2725
+                }
+            } else {
+                let _ = write_loop(out_fd, b"\n"); // c:2728
+            }
+        };
+        erase_question();
+        if !said_yes {
+            if clearflag {
+                // c:2726 — rewind over the prompt lines too.
+                crate::ported::zle::zle_refresh::tcmultout(
+                    crate::ported::zsh_h::TCUP,
+                    crate::ported::zsh_h::TCMULTUP,
+                    nlnct,
+                );
+            }
+            return 1; // c:2729
+        }
+        // c:2738 — `settyinfo(&shttyinfo);`
+        if let Ok(ti) = crate::ported::utils::SHTTYINFO.lock() {
+            if let Some(ref t) = *ti {
+                crate::ported::utils::settyinfo(t);
+            }
+        }
+    }
+    // c:2740 — `lastlistlen = (clearflag ? nlines : 0);`
+    crate::ported::zle::zle_refresh::LASTLISTLEN
+        .store(if clearflag { nlines } else { 0 }, Ordering::Relaxed);
 
     // Emit the columnar list to the shell-out fd. C routes each entry
     // through nicezputs(*p, shout); we accumulate the nice-formatted
     // bytes + padding into a buffer and write it in one shot.
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
     let mut buf: Vec<u8> = Vec::new();
 
     if ncols != 0 {
@@ -5031,9 +5099,33 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
         }
     }
 
-    // c:2790 — non-clearflag path terminates the list with a newline.
-    buf.push(b'\n');
-    let _ = write_loop(out_fd, &buf);
+    // c:2783-2791 — tail: with clearflag, move back up over the list when it
+    // fits on the screen, otherwise terminate with a newline.
+    if clearflag {
+        let _ = write_loop(out_fd, &buf);
+        let total = nlines + nlnct - 1; // c:2784 `nlines += nlnct - 1`
+        if total < zterm_lines {
+            crate::ported::zle::zle_refresh::tcmultout(
+                crate::ported::zsh_h::TCUP,
+                crate::ported::zsh_h::TCMULTUP,
+                total,
+            ); // c:2785
+            crate::ported::zle::zle_refresh::SHOWINGLIST.store(-1, Ordering::Relaxed); // c:2786
+        } else {
+            clearflag = false; // c:2788
+            crate::ported::zle::zle_refresh::CLEARFLAG.store(0, Ordering::Relaxed);
+            let _ = write_loop(out_fd, b"\n");
+        }
+    } else {
+        buf.push(b'\n'); // c:2790
+        let _ = write_loop(out_fd, &buf);
+    }
+    let _ = clearflag;
+
+    // c:2792-2793 — `if (listshown) showagain = 1;`
+    if crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed) != 0 {
+        SHOWAGAIN.store(1, Ordering::Relaxed);
+    }
 
     // c:2795 — return !num (num > 0 here, so 0).
     0

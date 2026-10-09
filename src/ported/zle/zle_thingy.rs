@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use super::zle_h::{
     widget, WidgetImpl, TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, ZLE_ISCOMP,
-    ZLE_KEEPSUFFIX, ZLE_MENUCMP,
+    ZLE_KEEPSUFFIX, ZLE_KILL, ZLE_MENUCMP, ZLE_YANKAFTER, ZLE_YANKBEFORE,
 };
 use crate::ported::utils::quotedzputs;
 use crate::ported::utils::zwarnnam;
@@ -1363,6 +1363,13 @@ pub fn zle_usable() -> i32 {
     }
 }
 
+/// C: `w->flags` of the user widget being executed (`bindk->widget`, zle_thingy.c:662).
+/// `Thingy.widget` is `Arc<widget>`, immutable and shared between every thingy
+/// naming the widget, so `zle -f` bits accumulate here and `execzlefunc`
+/// (zle_main.rs, user-widget arm) folds them into `lastcmd` (zle_main.c:1541)
+/// and resets them (`w->flags = 0`, c:1547) once the widget returns.
+pub static USER_WIDGET_FLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `bin_zle_flags(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:650`.
 /// ```c
 /// static int
@@ -1381,9 +1388,7 @@ pub fn zle_usable() -> i32 {
 /// ```
 /// `zle -f flag...` — set widget-execution flags (yank/yankbefore/
 /// kill) on the currently-running widget.
-/// Rust idiom replacement: `Arc<widget>` is immutable in zshrs, so
-/// the C `w->flags |= ZLE_*` mutation lives on the widget-execution
-/// path itself; this entry validates args + returns success.
+/// `w->flags |= ZLE_*` accumulates in [`USER_WIDGET_FLAGS`] (Arc<widget> is immutable).
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:651
@@ -1405,19 +1410,13 @@ pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -
             // c:664
             match flag.as_str() {
                 "yank" => {
-                    // c:665 — `w->flags |= ZLE_YANKAFTER;`. !!! WARNING:
-                    // PARTIAL PORT — current Thingy.widget shape is
-                    // `Option<Arc<widget>>` (immutable through Arc),
-                    // so flag bits are validated but the mutation
-                    // back into widget.flags is dropped. Faithful
-                    // port needs Arc<Mutex<widget>> across the tree.
-                    // For now this matches "validation only".
+                    USER_WIDGET_FLAGS.fetch_or(ZLE_YANKAFTER, Ordering::SeqCst); // c:665
                 }
                 "yankbefore" => {
-                    // c:667 — `w->flags |= ZLE_YANKBEFORE;`. Same gap.
+                    USER_WIDGET_FLAGS.fetch_or(ZLE_YANKBEFORE, Ordering::SeqCst); // c:667
                 }
                 "kill" => {
-                    // c:669 — `w->flags |= ZLE_KILL;`. Same gap.
+                    USER_WIDGET_FLAGS.fetch_or(ZLE_KILL, Ordering::SeqCst); // c:669
                 }
                 // c:672-680 — menucmp/linemove/keepsuffix branches are
                 // commented out in C ("These won't do anything yet,
@@ -1991,9 +1990,9 @@ pub fn init_thingies() -> i32 {
         // c:zle_bindings.c:72 — every `thingies[]` entry generated from
         // iwidgets.list binds a real `widgets[]` struct, so every
         // thingy is enabled and appears in `$widgets` as "builtin".
-        // Names whose C body has no Rust port yet still get an
-        // Internal widget here (undefined-key body as placeholder)
-        // so enumeration matches; the real body is a later port.
+        // The one iwidgets.list row with a NULL function (`accept-search`,
+        // handled inside isearch) gets the undefined-key body, matching
+        // execzlefunc c:1487 `if (!w->u.fn) handlefeep(zlenoargs)`.
         let f = fn_ptr.unwrap_or(|_| crate::ported::zle::zle_misc::undefinedkey());
         let w = Some(Arc::new(widget {
             flags: WIDGET_INT | extra_flags,

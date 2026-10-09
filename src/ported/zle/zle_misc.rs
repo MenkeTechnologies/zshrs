@@ -2585,28 +2585,21 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
         // c:1818-1827 — SUFFLAGS_SPACE: add a space and advance over it (the
         // `-r`/`-R` spec asked for a trailing space).
         if sflags & SUFFLAGS_SPACE != 0 {
-            // !!! Rust-only: C calls `spaceinline(1)` (c:1821) and then assigns
-            // into `zlemetaline[zlemetacs++]` / `zleline[zlecs++]` (c:1822-1826).
-            // This port's `spaceinline` implements only C's NON-metafied arm
-            // (c:815-844; the c:789-814 metafied arm is unported), so the
-            // metafied case opens its own slot instead of calling it. Same
-            // effect, one buffer each way.
+            spaceinline(1); // c:1821
             use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
             let metafied = ZLEMETALL.load(SeqCst) > 0 && ZLEMETALINE.get().is_some();
             if metafied {
+                // c:1823 — `zlemetaline[zlemetacs++] = ' ';`
                 if let Some(m) = ZLEMETALINE.get() {
                     if let Ok(mut g) = m.lock() {
-                        let cs = ZLEMETACS.load(SeqCst).max(0) as usize;
-                        let pos = cs.min(g.len());
-                        if g.is_char_boundary(pos) {
-                            g.insert(pos, ' '); // c:1823
-                            ZLEMETALL.store(g.len() as i32, SeqCst);
-                            ZLEMETACS.store((pos + 1) as i32, SeqCst);
+                        let pos = (ZLEMETACS.load(SeqCst).max(0) as usize).min(g.len());
+                        if g.is_char_boundary(pos) && pos < g.len() {
+                            g.replace_range(pos..pos + 1, " ");
                         }
+                        ZLEMETACS.store((pos + 1) as i32, SeqCst);
                     }
                 }
             } else {
-                spaceinline(1); // c:1821
                 let cs2 = ZLECS.load(SeqCst);
                 if let Ok(mut g) = ZLELINE.lock() {
                     let pos = cs2.min(g.len());

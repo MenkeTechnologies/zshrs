@@ -2049,6 +2049,9 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         // fd 0. zsh deliberately parks fd 0 on /dev/null for the duration of
         // a widget so a command inside it can never eat the keyboard input
         // ZLE is about to read.
+        // zle -f bits belong to THIS widget invocation; stash an outer widget's.
+        let outer_widget_flags =
+            crate::ported::zle::zle_thingy::USER_WIDGET_FLAGS.swap(0, Ordering::SeqCst);
         let osi = crate::ported::utils::movefd(0);
         if osi > 0 {
             unsafe {
@@ -2133,6 +2136,16 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         crate::zle_param_sync::clear_snapshot();
         // c:1540 — `endparamscope();`.
         crate::ported::params::endparamscope(); // c:1540
+        // c:1541 — `lastcmd = w->flags & ~(WIDGET_INUSE|WIDGET_FREE);` then
+        // c:1547 `w->flags = 0` (the widget is not in use by an outer call).
+        let uflags = crate::ported::zle::zle_thingy::USER_WIDGET_FLAGS
+            .swap(outer_widget_flags, Ordering::SeqCst);
+        let wf = widget_opt.as_ref().map_or(0, |w| w.flags);
+        LASTCMD.store(
+            ((wf | uflags) & !(crate::ported::zle::zle_h::WIDGET_INUSE
+                | crate::ported::zle::zle_h::WIDGET_FREE)) as u32,
+            SeqCst,
+        );
                                                 // c:1530 — capture LASTVAL after the call.
         LASTVAL.store(rc, Ordering::Relaxed);
         set_lastbindk(true); // c:1556 r = 1; c:1560-1567
@@ -4235,7 +4248,10 @@ fn execute_widget(widget: &widget) -> i32 {
 
     // Update lastcmd for yank-pop / next-widget chains, unless the
     // widget is NOTCOMMAND (digit-arg, prefix, etc.) — zle_main.c:1497.
-    if (widget.flags & ZLE_NOTCOMMAND) == 0 {
+    if (widget.flags & ZLE_NOTCOMMAND) == 0
+        // user widgets set lastcmd themselves from `w->flags` (c:1541).
+        && !matches!(widget.u, crate::ported::zle::zle_h::WidgetImpl::UserFunc(_))
+    {
         LASTCMD.store(widget.flags as u32, SeqCst);
     }
 
@@ -4277,27 +4293,20 @@ fn do_self_insert(c: char) {
 /// matching the C `locerror` path at zle_main.c:1992.
 pub fn recursive_edit() -> i32 {
     ZLE_RECURSIVE.fetch_add(1, SeqCst);
-    let old_done = DONE.load(SeqCst) != 0;
-    let old_eofsent = EOFSENT.load(SeqCst);
-
     // Mirror zle_main.c:1984-1986 — refresh before entering the
     // sub-loop so the user sees current state on enter.
     redrawhook();
     zrefresh();
-
-    DONE.store(0, SeqCst);
-    EOFSENT.store(0, SeqCst);
     zlecore();
 
-    // C source resets errflag/done/eofsent on exit (zle_main.c:1993)
-    // so the outer loop continues. We don't have an errflag global,
-    // so the local-error signal collapses to "did the inner exit
-    // via abort_line?" — approximated by checking eofsent.
-    let locerror = EOFSENT.load(SeqCst);
-
-    DONE.store(if old_done { 1 } else { 0 }, SeqCst);
-    EOFSENT.store(old_eofsent, SeqCst);
+    // c:1990 — `--zle_recursive;`
     ZLE_RECURSIVE.fetch_sub(1, SeqCst);
+
+    // c:1992-1993 — `locerror = errflag ? 1 : 0; errflag = done = eofsent = 0;`
+    let locerror = i32::from(crate::ported::utils::errflag.load(Ordering::Relaxed) != 0);
+    crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+    DONE.store(0, SeqCst);
+    EOFSENT.store(0, SeqCst);
 
     locerror
 }

@@ -1576,9 +1576,14 @@ pub fn find_word_start(style: WordStyle) -> usize {
             }
         }
         WordStyle::Shell => {
-            // No live callers; zle_vi.rs only invokes WordStyle::Vi /
-            // BlankDelimited. Left as a no-op until a real shell-style
-            // consumer surfaces.
+            // c:zle_word.c backwardword — skip non-word chars, then word
+            // chars, where "word" is `ZC_iword` (WORDCHARS-aware).
+            while pos > 0 && !zc_iword(ZLELINE.lock().unwrap()[pos - 1]) {
+                pos -= 1;
+            }
+            while pos > 0 && zc_iword(ZLELINE.lock().unwrap()[pos - 1]) {
+                pos -= 1;
+            }
         }
         WordStyle::BlankDelimited => {
             while pos > 0 && ZLELINE.lock().unwrap()[pos - 1].is_whitespace() {
@@ -1629,8 +1634,15 @@ pub fn find_word_end(style: WordStyle) -> usize {
             }
         }
         WordStyle::Shell => {
-            // See WordStyle::Shell note in find_word_start — no live
-            // callers; leave pos unchanged.
+            // c:zle_word.c forwardword — skip non-word chars, then word
+            // chars, where "word" is `ZC_iword` (WORDCHARS-aware).
+            let ll = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+            while pos < ll && !zc_iword(ZLELINE.lock().unwrap()[pos]) {
+                pos += 1;
+            }
+            while pos < ll && zc_iword(ZLELINE.lock().unwrap()[pos]) {
+                pos += 1;
+            }
         }
         WordStyle::BlankDelimited => {
             while pos < ZLELL.load(std::sync::atomic::Ordering::SeqCst)
@@ -1660,6 +1672,19 @@ mod tests {
             std::sync::atomic::Ordering::SeqCst,
         );
         ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// `WordStyle::Shell` skips non-word chars then word chars (ZC_iword), in
+    /// both directions, so `foo  bar` from the end lands on `bar` and from 0
+    /// ends after `foo`.
+    #[test]
+    fn shell_word_style_walks_iword_runs() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        line("foo  bar");
+        assert_eq!(find_word_end(WordStyle::Shell), 3);
+        ZLECS.store(8, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(find_word_start(WordStyle::Shell), 5);
     }
 
     /// Verifies `wordclass` per c:74-78 dispatch table.

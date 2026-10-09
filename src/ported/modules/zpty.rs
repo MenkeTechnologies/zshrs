@@ -246,15 +246,12 @@ pub fn get_pty() -> io::Result<(RawFd, RawFd)> {
 /// C signature: `static int newptycmd(char *nam, char *pname,
 ///                                     char **args, int echo, int nblock)`.
 ///
-/// **Approximation:** the full pty-allocation path uses
-/// `posix_openpt`/`grantpt`/`unlockpt`/`ptsname` (zpty.c:191-309)
-/// and forks via `zfork()` with an extensive child-side reset
-/// sequence. zshrs's port wires through `std::process::Command`
-/// + a libc pty-spawn helper which doesn't preserve the full C
-/// child-init contract. Returns 0 on success, 1 on failure.
+/// `get_pty` opens both ends in the parent (C opens the slave in the child
+/// after `setsid`); the child's `TIOCSCTTY` below makes the slave the
+/// controlling terminal either way. Returns 0 on success, 1 on failure.
 pub fn newptycmd(
     cmds: &mut HashMap<String, ptycmd>,
-    _nam: &str,
+    nam: &str,
     pname: &str, // c:310
     args: &[String],
     echo: bool,
@@ -265,38 +262,109 @@ pub fn newptycmd(
         return 1;
     }
 
-    // c:302 — `prog = parse_string(zjoin(args, ' ', 1), 0);`
-    //
-    // The command words are ONE shell command line, not an argv: C
-    // joins them with a space and parses the result in the PARENT so a
-    // syntax error is reported by the builtin instead of by an orphaned
-    // child. This port keeps the join here and defers the parse to
-    // `execstring` in the child (c:434), so a bad command line is
-    // diagnosed there instead.
+    // c:295-300 — `ineval = !isset(EVALLINENO); if (!ineval) scriptname = "(zpty)";`
+    use crate::ported::builtin::ineval;
+    use std::sync::atomic::Ordering as AO;
+    let oineval = ineval.load(AO::Relaxed); // c:287 oineval = ineval
+    let oscriptname = crate::ported::utils::scriptname_get(); // c:288 oscriptname = scriptname
+    ineval.store(i32::from(!crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO)), AO::Relaxed);
+    if ineval.load(AO::Relaxed) == 0 {
+        crate::ported::utils::set_scriptname(Some("(zpty)".to_string()));
+    }
+    // c:302-308 — restores `scriptname`/`ineval` on every return path.
+    let finish = |ret: i32| -> i32 {
+        crate::ported::utils::set_scriptname(oscriptname.clone());
+        ineval.store(oineval, AO::Relaxed);
+        ret
+    };
+
+    // c:302 — `prog = parse_string(zjoin(args, ' ', 1), 0);` — the command
+    // words are ONE shell command line, parsed in the PARENT so a syntax
+    // error is reported by the builtin instead of by an orphaned child.
+    // The child runs the line through `execstring` (exec.rs), because
+    // `execode` here takes a `ZshProgram`, not the `eprog` parse_string
+    // returns; the parent parse is the syntax check.
     let zjoined = crate::ported::utils::zjoin(args, ' ');
+    if crate::ported::exec::parse_string(&zjoined, 0).is_none() {
+        // c:303-307
+        let ef = crate::ported::utils::errflag.load(AO::Relaxed);
+        crate::ported::utils::errflag.store(ef & !crate::ported::zsh_h::ERRFLAG_ERROR, AO::Relaxed);
+        return finish(1);
+    }
 
     // c:438 — `get_pty(1, &master, &slave)` — allocate master/slave fds.
     #[cfg(unix)]
     {
         let (master, slave) = match get_pty() {
             Ok(p) => p,
-            Err(_) => return 1, // c:438-440
+            Err(e) => {
+                // c:309-313
+                crate::ported::utils::zwarnnam(
+                    nam,
+                    &format!(
+                        "can't open pseudo terminal: {}",
+                        crate::ported::utils::zsh_errno_msg(e.raw_os_error().unwrap_or(0))
+                    ),
+                );
+                return finish(1);
+            }
         };
         let pid = unsafe { libc::fork() };
         match pid {
             -1 => {
-                // c:441-446 — `if (pid == -1) { close(...); return 1; }`
+                // c:314-318 — can't fork.
+                let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                crate::ported::utils::zwarnnam(
+                    nam,
+                    &format!(
+                        "can't create pty command {}: {}",
+                        pname,
+                        crate::ported::utils::zsh_errno_msg(eno)
+                    ),
+                );
                 unsafe {
                     libc::close(master);
                     libc::close(slave);
                 }
-                1
+                finish(1)
             }
             0 => {
-                // c:380-411 — child-side reset.
+                // c:344 — `deletehookfunc("exit", ptyhook);`
+                crate::ported::module::deletehookfunc("exit", ptyhook);
+                // c:345 — `clearjobtab(0);`
+                let mut dummy = crate::exec_jobs::JobTable::new();
+                crate::ported::jobs::clearjobtab(&mut dummy, 0);
+                // c:346-347 — `ppid = getppid(); mypid = getpid();`
+                let mypid_now = unsafe { libc::getpid() };
+                crate::ported::params::ppid.store(unsafe { libc::getppid() } as i64, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::params::mypid.store(mypid_now as i64, std::sync::atomic::Ordering::Relaxed);
                 unsafe {
                     libc::close(master);
-                    libc::setsid();
+                }
+                // c:348-358 — `if (setsid() != mypid) zwarnnam(nam, "failed to create new session: %e")`.
+                if unsafe { libc::setsid() } != mypid_now {
+                    crate::ported::utils::zwarnnam(
+                        nam,
+                        &format!(
+                            "failed to create new session: {}",
+                            crate::ported::utils::zsh_errno_msg(
+                                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                            )
+                        ),
+                    );
+                }
+                // c:362-363 — `SHTTY = slave; attachtty(mypid);`
+                crate::ported::init::SHTTY.store(slave, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::utils::attachtty(mypid_now);
+                // c:364-374 — set the window size before associating with the
+                // terminal so we are not hit with a SIGWINCH.
+                if crate::ported::zsh_h::interact() {
+                    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+                    if unsafe { libc::ioctl(slave, libc::TIOCGWINSZ as _, &mut ws) } == 0 {
+                        ws.ws_row = crate::ported::utils::adjustlines() as u16;
+                        ws.ws_col = crate::ported::utils::adjustcolumns() as u16;
+                        unsafe { libc::ioctl(slave, libc::TIOCSWINSZ as _, &ws) };
+                    }
                 }
                 // c:381-396 — `if (!echo) { struct ttyinfo info; if (!ptygettyinfo(slave,
                 //              &info)) { info.tio.c_lflag &= ~ECHO; ptysettyinfo(slave, &info); } }`
@@ -365,6 +433,15 @@ pub fn newptycmd(
                     libc::close(crate::ported::modules::clone::coprocin.load(Ordering::Relaxed));
                     libc::close(crate::ported::modules::clone::coprocout.load(Ordering::Relaxed));
                 }
+                // c:415-417 — `init_io(NULL); setsparam("TTY", ztrdup(ttystrname));`
+                crate::ported::init::init_io(None);
+                let tty_name = crate::ported::modules::clone::ttystrname.lock().unwrap().clone();
+                crate::ported::params::setsparam("TTY", &tty_name);
+                // c:419 — `opts[INTERACTIVE] = 0;` — the pty child is a script-mode
+                // shell no matter what the parent was. `dosetopt(.., force=1)` is
+                // this port's direct `opts[]` store (options.rs rejects an unforced
+                // INTERACTIVE change).
+                let _ = crate::ported::options::dosetopt(crate::ported::zsh_h::INTERACTIVE, 0, 1);
                 // c:420-431 — child-side sync handshake. Write a single
                 // NUL byte to fd 1 (now the slave) so the parent, which
                 // blocks on read(master) at c:472-482, can confirm the
@@ -388,12 +465,6 @@ pub fn newptycmd(
                         break;
                     }
                 }
-                // c:419 — `opts[INTERACTIVE] = 0;` — the pty child is a
-                // script-mode shell no matter what the parent was.
-                // `dosetopt(..., force=1)` is this port's spelling of a
-                // direct `opts[]` store; options.rs:851 rejects an
-                // unforced INTERACTIVE change.
-                let _ = crate::ported::options::dosetopt(crate::ported::zsh_h::INTERACTIVE, 0, 1);
                 // c:434 — `execode(prog, 1, 0, "zpty");`
                 //
                 // The prior port called `execvp(args[0], args)` here,
@@ -440,16 +511,25 @@ pub fn newptycmd(
                 //   2. Left the fd unregistered in fdtable, so closem
                 //      (FDT_UNUSED, 0) could close it from another
                 //      builtin's child fork.
+                let orig_master = master;
                 let master = crate::ported::utils::movefd(master);
                 if master == -1 {
                     // c:441 — `zerrnam(nam, "cannot duplicate fd %d: ...", master, errno);`
                     crate::ported::utils::zerrnam(
-                        _nam,
-                        &format!("cannot duplicate fd: {}", std::io::Error::last_os_error()),
+                        nam,
+                        &format!(
+                            "cannot duplicate fd {}: {}",
+                            orig_master,
+                            crate::ported::utils::zsh_errno_msg(
+                                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                            )
+                        ),
                     );
-                    return 1; // c:444
+                    return finish(1); // c:444
                 }
                 // c:466-467 — `if (nblock) ptynonblock(master);`
+                // c:454 — `addmodulefd(master, FDT_MODULE);`
+                crate::ported::utils::addmodulefd(master, crate::ported::zsh_h::FDT_MODULE);
                 if nblock {
                     let _ = ptynonblock(master);
                 }
@@ -480,7 +560,7 @@ pub fn newptycmd(
                 //              p->echo = echo; p->nblock = nblock;`
                 let new = ptycmd::new(pname, args.to_vec(), master, pid, echo, nblock);
                 cmds.insert(new.name.clone(), new); // c:474 list-insert
-                0
+                finish(0)
             }
         }
     }

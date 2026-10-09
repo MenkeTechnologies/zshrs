@@ -2,7 +2,7 @@
 //!
 //! Port of Src/init.c
 
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::ported::builtin::{realexit, LASTVAL, RETFLAG, STOPMSG};
@@ -229,6 +229,32 @@ const tccapnams: [&str; 39] = [
     "sc", "rc", "bc", "AF", "AB", "vi", "ve",
 ];
 
+/// Bookkeeping for C's `2` option value (Src/init.c:365-372): INTERACTIVE,
+/// MONITOR and HASHDIRS start at 2, "on by default", so that `opts[X] &= 1`
+/// and `if (opts[X] == 2)` can tell a default from an explicit `-i`/`-m`.
+/// Option storage here is boolean; a set bit means the option still holds its
+/// default-on sentinel. Bit 0 INTERACTIVE, bit 1 MONITOR, bit 2 HASHDIRS.
+static OPT_DEFAULT_ON: AtomicU32 = AtomicU32::new(0);
+
+/// Clears the default-on sentinel of INTERACTIVE/MONITOR/HASHDIRS once
+/// `parseopts` sets the option explicitly (C stores 0 or 1 over the 2).
+macro_rules! note_explicit_opt {
+    ($optno:expr) => {
+        match ($optno as i32).abs() {
+            crate::ported::zsh_h::INTERACTIVE => {
+                OPT_DEFAULT_ON.fetch_and(!1, Ordering::SeqCst);
+            }
+            crate::ported::zsh_h::MONITOR => {
+                OPT_DEFAULT_ON.fetch_and(!2, Ordering::SeqCst);
+            }
+            crate::ported::zsh_h::HASHDIRS => {
+                OPT_DEFAULT_ON.fetch_and(!4, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+    };
+}
+
 /// Port of `static void parseargs(...)` from Src/init.c:263.
 fn parseargs(
     zsh_name: &str,
@@ -300,12 +326,11 @@ fn parseargs(
                 // c:301 — `*runscript = *argv;`
                 *runscript = Some(argv[idx].clone());
             }
-            // c:302 — `opts[INTERACTIVE] &= 1;`. A script source makes
-            // the shell non-interactive unless `-i` forced it on. zshrs
-            // collapsed INTERACTIVE to a bool (no 2-sentinel), so a
-            // non-tty default-on can't be distinguished from explicit
-            // -i; reading from a file is non-interactive, so clear it.
-            crate::ported::options::opt_state_set("interactive", false);
+            // c:302 — `opts[INTERACTIVE] &= 1;`. A script source makes the
+            // shell non-interactive unless `-i` forced it on.
+            if OPT_DEFAULT_ON.fetch_and(!1, Ordering::SeqCst) & 1 != 0 {
+                crate::ported::options::opt_state_set("interactive", false);
+            }
             idx += 1;
         }
         // c:305-306 — remaining args become positional parameters.
@@ -319,15 +344,21 @@ fn parseargs(
         crate::ported::options::opt_state_set("shinstdin", true);
     }
     // c:309-310 — `if (isset(SINGLECOMMAND)) opts[INTERACTIVE] &= 1;`
-    if isset(SINGLECOMMAND) {
+    if isset(SINGLECOMMAND) && OPT_DEFAULT_ON.fetch_and(!1, Ordering::SeqCst) & 1 != 0 {
         crate::ported::options::opt_state_set("interactive", false);
     }
     // c:311 — `opts[INTERACTIVE] = !!opts[INTERACTIVE];` is a no-op for
     // the bool port.
-    // c:312-315 — `MONITOR`/`HASHDIRS` default (2) → INTERACTIVE.
+    // c:312-315 — `if (opts[MONITOR] == 2) opts[MONITOR] = opts[INTERACTIVE];`
+    // and the same for HASHDIRS: only a still-default value follows INTERACTIVE.
     let interactive = isset(INTERACTIVE);
-    crate::ported::options::opt_state_set("monitor", interactive);
-    crate::ported::options::opt_state_set("hashdirs", interactive);
+    let still_default = OPT_DEFAULT_ON.load(Ordering::SeqCst);
+    if still_default & 2 != 0 {
+        crate::ported::options::opt_state_set("monitor", interactive);
+    }
+    if still_default & 4 != 0 {
+        crate::ported::options::opt_state_set("hashdirs", interactive);
+    }
     // c:316 — `pparams = paramlist;`
     if !paramlist.is_empty() {
         if let Ok(mut p) = crate::ported::builtin::PPARAMS.lock() {
@@ -403,6 +434,11 @@ pub fn parseopts(
             }
             *idx += 1;
             *cmdp = argv.get(*idx).cloned(); // c:476
+            // c:495 — `new_opts[INTERACTIVE] &= 1;`: a default-on INTERACTIVE is
+            // cleared by `-c`, an explicit `-i` is kept.
+            if OPT_DEFAULT_ON.fetch_and(!1, Ordering::SeqCst) & 1 != 0 {
+                crate::ported::options::opt_state_set("interactive", false);
+            }
             *idx += 1;
             continue;
         }
@@ -422,6 +458,7 @@ pub fn parseopts(
                 if optno != crate::ported::zsh_h::OPT_INVALID {
                     // c:501 — dosetopt(optno, action, toplevel, new_opts)
                     crate::ported::options::dosetopt(optno, action as i32, toplevel as i32);
+                    note_explicit_opt!(optno);
                 }
             }
             *idx += 1;
@@ -462,6 +499,7 @@ pub fn parseopts(
                 // spelling and dosetopt inverts on that, which is what
                 // the `-o` arm above already relies on.
                 crate::ported::options::dosetopt(optno, 1, toplevel as i32);
+                note_explicit_opt!(optno);
             }
             // A zshrs-only long flag. Those that take a following word
             // must consume it too, or the word is mistaken for the
@@ -490,6 +528,7 @@ pub fn parseopts(
             if optno != crate::ported::zsh_h::OPT_INVALID {
                 // c:526 — dosetopt(optno, action, toplevel, new_opts)
                 crate::ported::options::dosetopt(optno, action as i32, toplevel as i32);
+                note_explicit_opt!(optno);
             }
         }
         *idx += 1;
@@ -714,7 +753,10 @@ pub fn init_shout() {
     // c:747-752 — `shout = fdopen(SHTTY, "w")` + setvbuf; the buffering
     // lives in `crate::shout`.
     *shout.lock().unwrap() = fd as usize + 1; // c:748
-    let _ = crate::ported::utils::gettyinfo(); // c:754 gettyinfo(&shttyinfo)
+    if let Some(ti) = crate::ported::utils::gettyinfo() {
+        // c:754 gettyinfo(&shttyinfo)
+        *crate::ported::utils::SHTTYINFO.lock().unwrap() = Some(ti);
+    }
 }
 
 /// Port of `mod_export char *tccap_get_name(int cap)` from Src/init.c:756.
@@ -1399,7 +1441,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
                                             // sfcontext = SFC_NONE; trap_return = 0;                                // c:1295-1296
                                             // trap_state = TRAP_STATE_INACTIVE;                                     // c:1297
                                             // noerrexit = NOERREXIT_EXIT|RETURN|SIGNAL;                             // c:1298
-                                            // nohistsave = 1;                                                       // c:1299
+                                            crate::ported::exec::nohistsave.store(1, Ordering::SeqCst); // c:1332
                                             // dirstack = znewlinklist(); bufstack = znewlinklist();                 // c:1300-1301
                                             // hsubl = hsubr = NULL; lastpid = 0;                                    // c:1302-1303
 
@@ -1513,9 +1555,9 @@ pub fn init_signals() {
         }
     }
 
-    // c:1407 — `sigchld_mask = signal_mask(SIGCHLD);`. Cached SIGCHLD
-    // mask global not yet modeled — the few callers that need it
-    // (job-reap path) re-derive on demand.
+    // c:1407 — `sigchld_mask = signal_mask(SIGCHLD);`. The mask is a pure
+    // function of SIGCHLD, so `child_block`/`child_unblock` (signals_h.rs)
+    // derive it with `signal_mask` at each use instead of reading a cached copy.
 
     intr(); // c:1409
 
@@ -1602,8 +1644,12 @@ pub fn run_init_scripts() {
     // c:1445
 
     // c:1447 — noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;
-    //          (noerrexit global not surfaced; the C bits are
-    //          consulted by the script-source path internally.)
+    crate::ported::exec::noerrexit.store(
+        crate::ported::zsh_h::NOERREXIT_EXIT
+            | crate::ported::zsh_h::NOERREXIT_RETURN
+            | crate::ported::zsh_h::NOERREXIT_SIGNAL,
+        Ordering::SeqCst,
+    );
 
     // c:1449 — if (EMULATION(EMULATE_KSH|EMULATE_SH)) { ... }
     let emul = emulation.load(Ordering::SeqCst);
@@ -1624,6 +1670,8 @@ pub fn run_init_scripts() {
     // faithful branches below.
     if crate::extensions::emulation_startup::overrides_zsh_startup() {
         crate::extensions::emulation_startup::run_init_scripts();
+        crate::ported::exec::noerrexit.store(0, Ordering::SeqCst); // c:1549
+        crate::ported::exec::nohistsave.store(0, Ordering::SeqCst); // c:1550
         return;
     }
 
@@ -1661,6 +1709,8 @@ pub fn run_init_scripts() {
             && !crate::extensions::emulation_startup::emulating()
             && crate::canonical_apply::replay_startup()
         {
+            crate::ported::exec::noerrexit.store(0, Ordering::SeqCst); // c:1549
+            crate::ported::exec::nohistsave.store(0, Ordering::SeqCst); // c:1550
             return;
         }
         // c:1473 — source(GLOBAL_ZSHENV);
@@ -1707,7 +1757,8 @@ pub fn run_init_scripts() {
             }
         }
     }
-    // c:1516-1517 — noerrexit = 0; nohistsave = 0; (not surfaced)
+    crate::ported::exec::noerrexit.store(0, Ordering::SeqCst); // c:1549
+    crate::ported::exec::nohistsave.store(0, Ordering::SeqCst); // c:1550
 }
 
 /// Port of `void init_misc(char *cmd, char *zsh_name)` from Src/init.c:1524.
@@ -2693,6 +2744,8 @@ fn parseopts_setemulate(nam: &str, flags: i32) {
     // is a no-op once we collapse to bool.
     let interactive_default = unsafe { libc::isatty(0) != 0 };
     crate::ported::options::opt_state_set("interactive", interactive_default);
+    // MONITOR and HASHDIRS start at 2 as well (c:366-367).
+    OPT_DEFAULT_ON.store(i32::from(interactive_default) as u32 | 2 | 4, Ordering::SeqCst);
 
     // c:366-368 — `opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;`
     crate::ported::options::opt_state_set("monitor", true);

@@ -1062,7 +1062,7 @@ pub(crate) fn get_xcompctl(name: &str, av: &mut Vec<String>, cc: &mut Compctl, i
             let mut sp: Vec<i32> = Vec::new();
             let mut ss: Vec<String> = Vec::new();
             let mut la: Vec<String> = Vec::new();
-            let mut lb: Vec<String> = Vec::new();
+            let mut lb: Vec<Option<String>> = Vec::new();
 
             // c:1028 — now loop over the actual arguments
             let mut l: i32 = 0;
@@ -1137,9 +1137,9 @@ pub(crate) fn get_xcompctl(name: &str, av: &mut Vec<String>, cc: &mut Compctl, i
                             zwarnnam(name, "error in condition");
                             return 1;
                         }
-                        lb.push(tb[tt..t].iter().collect());
+                        lb.push(Some(tb[tt..t].iter().collect())); // c:1098
                     } else {
-                        lb.push(String::new()); // C: NULL
+                        lb.push(None); // c:1101
                     }
                 } else {
                     // remaining patterns are number followed by string
@@ -1604,7 +1604,7 @@ pub(crate) fn printcompctl(s: Option<&str>, cc: &Compctl, printflags: i32, ispat
                             {
                                 printqt(&a[i]);
                                 out!(",");
-                                printqt(&b[i]);
+                                printqt(b[i].as_deref().unwrap_or("")); // c:1492
                             }
                             (CompcondData::S { p, s }, _) => {
                                 out!("{},", p[i]);
@@ -3634,7 +3634,7 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                             let is_pat = x == CCT_RANGEPAT;
                             if let CompcondData::L { a, b } = &cc.u {
                                 let astr = a.get(iu).cloned().unwrap_or_default();
-                                let bstr = b.get(iu).cloned().unwrap_or_default();
+                                let bstr: Option<String> = b.get(iu).cloned().flatten();
                                 let words = CLWORDS.lock().unwrap().clone();
                                 // c:2744 — for RANGEPAT tokenize a[i] once.
                                 let sc_a = if is_pat {
@@ -3664,7 +3664,8 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
                                     j -= 1;
                                 }
                                 // c:2761 — if matched and there's an upper bound.
-                                if t != 0 && !bstr.is_empty() {
+                                if let (true, Some(bstr)) = (t != 0, bstr) {
+                                    // c:2761 — `t && cc->u.l.b[i]`: an explicit empty `r[a,]` is non-NULL.
                                     let sc_b = if is_pat {
                                         let mut z = bstr.clone();
                                         tokenize(&mut z);
@@ -8121,7 +8122,18 @@ mod tests {
         let rr = s.and.as_deref().unwrap();
         assert_eq!((rr.typ, rr.n), (CCT_RANGESTR, 2));
         assert!(matches!(&rr.u,
-            CompcondData::L { a, b } if a == &sv(&["x", "z"]) && b == &sv(&["y", ""])));
+            CompcondData::L { a, b } if a == &sv(&["x", "z"]) && b == &vec![Some("y".to_string()), None]));
+    }
+
+    /// c:1098-1101 — `r[a,]` stores an empty (non-NULL) upper bound; `r[a]` stores NULL.
+    #[test]
+    fn get_xcompctl_range_empty_upper_bound_is_not_null() {
+        let (r, cc, _) = parse_spec(&["-x", "r[a,][b]", "-f", "--", "cmd"]);
+        assert_eq!(r, 0);
+        let n = cc.ext.clone().unwrap();
+        let s = n.cond.as_deref().unwrap();
+        assert!(matches!(&s.u,
+            CompcondData::L { b, .. } if b == &vec![Some(String::new()), None]));
     }
 
     #[test]

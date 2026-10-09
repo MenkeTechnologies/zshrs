@@ -1805,9 +1805,26 @@ pub fn bin_dirs(
 /// place when the inherited $PWD failed ispwd().
 pub fn set_pwd_env() {
     // c:800
-    // c:805-816 — PM_READONLY clear + unsetparam_pm for non-scalar
-    //             PWD/OLDPWD retypes isn't ported; setsparam below
-    //             overwrites the scalar value and flags directly.
+    // c:805-816 — a PWD/OLDPWD that is not a scalar loses PM_READONLY and
+    // is unset so the assignments below recreate it as a scalar.
+    for nm in ["PWD", "OLDPWD"] {
+        let non_scalar = crate::ported::params::paramtab()
+            .write()
+            .ok()
+            .and_then(|mut tab| {
+                tab.get_mut(nm).map(|pm| {
+                    let ns = PM_TYPE(pm.node.flags as u32) != PM_SCALAR;
+                    if ns {
+                        pm.node.flags &= !(PM_READONLY as i32); // c:807
+                    }
+                    ns
+                })
+            })
+            .unwrap_or(false);
+        if non_scalar {
+            crate::ported::params::unsetparam(nm); // c:808 unsetparam_pm(pm, 0, 1)
+        }
+    }
     // c:818 — `assignsparam("PWD", ztrdup(pwd), 0);`
     let pwd = env::var("PWD").unwrap_or_else(|_| {
         env::current_dir()
@@ -9982,8 +9999,6 @@ pub fn bin_functions(
                         .map(|t| t.iter().map(|(k, _)| k.clone()).collect())
                         .unwrap_or_default();
                     for nm in &names {
-                        // pattry approximated by string equality / glob
-                        // here; full pat engine is in src/ported/pattern.rs.
                         if !pattry(&prog, nm) {
                             // c:3690
                             continue;
@@ -10021,13 +10036,8 @@ pub fn bin_functions(
     for fname in argv {
         // c:3712
         // c:3713-3714 — `returnval = dump_autoload(name, *argv, on, ops, func);`
-        // This was a stub that just `continue`d, so `autoload -w FILE.zwc`
-        // silently did nothing: a missing dump produced no diagnostic where zsh
-        // reports `can't open zwc file: …` (the warning lives in
-        // `load_dump_header`, parse.rs), and a VALID dump never registered its
-        // functions for autoload at all. `dump_autoload` itself was already
-        // ported with a matching signature (parse.rs) — only this call was
-        // missing, so the whole `-w` feature was unreachable.
+        // A missing dump is diagnosed by `load_dump_header` (parse.rs); a valid
+        // one registers its functions for autoload.
         if OPT_ISSET(ops, b'w') {
             // c:3713
             returnval = crate::ported::parse::dump_autoload(name, fname, on as i32, ops, _func); // c:3714
@@ -12910,20 +12920,10 @@ pub fn bin_print(
     }
     let nonewline = OPT_ISSET(ops, b'n'); // c:4595
     let raw = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R'); // c:4596
-                                                            // c:4597 — `-l` puts one arg per line. `-c` is "columns" but
-                                                            // degrades to one-per-line when stdout isn't a tty (terminal-
-                                                            // width-aware tabular print isn't ported); accept -c here as
-                                                            // a synonym for -l so `print -c a b c` byte-matches zsh's
-                                                            // non-tty fallback.
-    let one_per_line = OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c');
+                                                            // c:5126 — `-l` puts one arg per line; `-c`/`-C` columns are
+                                                            // handled by the `columnate` block below.
+    let one_per_line = OPT_ISSET(ops, b'l');
     let nul_sep = OPT_ISSET(ops, b'N'); // c:5114/5127/5132 — NUL separator
-                                        // c:Src/builtin.c — `-D` runs each arg through `dirify()`: if
-                                        // it matches a named dir or $HOME-prefix, abbreviate with
-                                        // `~`. zsh has the dircache + named-dir table behind it; for
-                                        // -c mode (non-interactive) the table mostly contains $HOME
-                                        // → "~". Apply that single rewrite for parity with the common
-                                        // case. The richer named-dir lookup belongs in a deeper
-                                        // dirify port.
     let dirify_d = OPT_ISSET(ops, b'D');
     let _printf_mode = func == BIN_PRINTF || OPT_HASARG(ops, b'f'); // c:4604
     let echo_mode = func == BIN_ECHO;
@@ -14817,16 +14817,16 @@ pub fn zexit(val: i32, from_where: i32) {
     // matching C).
     if isset(RCS) && interact() {
         // c:6013
-        // c:6014-6020 — `if (!nohistsave) { ... }`. `nohistsave` isn't
-        // ported as a Rust global (same approximation as
-        // hist.rs::saveandpophiststack); default 0 = allow saves.
-        let mut writeflags = HFILE_USE_OPTIONS as i32; // c:6015
-        if from_where == ZEXIT_SIGNAL {
-            // c:6016
-            writeflags |= HFILE_NO_REWRITE as i32; // c:6017
+        // c:6014-6020 — `if (!nohistsave) { ... }`.
+        if crate::ported::exec::nohistsave.load(Relaxed) == 0 {
+            let mut writeflags = HFILE_USE_OPTIONS as i32; // c:6015
+            if from_where == ZEXIT_SIGNAL {
+                // c:6016
+                writeflags |= HFILE_NO_REWRITE as i32; // c:6017
+            }
+            saveandpophiststack(1, writeflags); // c:6018
+            savehistfile(None, writeflags); // c:6019
         }
-        saveandpophiststack(1, writeflags); // c:6018
-        savehistfile(None, writeflags); // c:6019
                                         // c:6021-6027 — `if (islogin && !subsh) { sourcehome(".zlogout");
                                         // ... source(GLOBAL_ZLOGOUT); }`. The C `subsh` check is covered
                                         // by the RUST-ONLY SUBSHELL_DEPTH gate above (in-process
@@ -15741,10 +15741,6 @@ pub fn bin_emulate(
     // applying ANY of the trailing options, so extendedglob stayed off
     // and `${msg//(#b)…/…}` errored with `bad pattern: …`.
     //
-    // The `-c command` (cmd-eval) and sticky-emulation paths at c:6329+
-    // remain unported (no zshrs caller exercises them yet) — the
-    // structural opt-application below is enough for the common
-    // `emulate -LR zsh -o NAME …` form.
     let _ = opt_r;
     // c:6303 — `memcpy(saveopts, opts, sizeof(opts));` + c:6326
     // `saveemulation = emulation;` — snapshot the live option table
@@ -15761,6 +15757,12 @@ pub fn bin_emulate(
     let saveopts = crate::ported::options::opt_state_snapshot(); // c:6303
     let saveemulation = emulation.load(Relaxed); // c:6326
     let saveemulation_live = crate::ported::options::EMULATION.load(Relaxed); // c:6326 (port keeps 2 cells)
+    let savehackchar = *crate::ported::params::keyboardhack_lock().lock().unwrap(); // c:6305
+    // c:6381-6382 `restore:` — `keyboardhackchar = savehackchar; inittyptab();`
+    let restore_hackchar = || {
+        *crate::ported::params::keyboardhack_lock().lock().unwrap() = savehackchar; // c:6381
+        crate::ported::utils::inittyptab(); // c:6382 restore banghist
+    };
                                                                               // c:6306 — `emulate(shname, opt_R, &new_emulation, new_opts);` —
                                                                               // apply emulation defaults to the live opts table.
     crate::ported::options::emulate(shname.as_str(), opt_r);
@@ -15810,6 +15812,7 @@ pub fn bin_emulate(
         emulation.store(saveemulation, Relaxed);
         crate::ported::options::EMULATION.store(saveemulation_live, Relaxed);
         crate::ported::options::opt_state_restore(saveopts.clone());
+        restore_hackchar();
         1
     };
     // !!! RUST-ONLY ADAPTER !!! — C's `optletters` (c:Src/options.c:287)
@@ -15877,7 +15880,7 @@ pub fn bin_emulate(
                 } else {
                     if i + 1 >= argv.len() {
                         zwarnnam(nam, "string expected after -c");
-                        return 1;
+                        return parse_fail();
                     }
                     consumed_next_arg = true;
                     argv[i + 1].clone()
@@ -15962,6 +15965,7 @@ pub fn bin_emulate(
             emulation.store(saveemulation, Relaxed);
             crate::ported::options::EMULATION.store(saveemulation_live, Relaxed);
             crate::ported::options::opt_state_restore(saveopts);
+            restore_hackchar();
             return 1;
         }
         // c:6319 — `savepatterns = savepatterndisables();`
@@ -16027,9 +16031,7 @@ pub fn bin_emulate(
         crate::ported::options::EMULATION.store(saveemulation_live, Relaxed); // c:6377
         crate::ported::options::opt_state_restore(saveopts); // c:6378
         crate::ported::pattern::restorepatterndisables(savepatterns); // c:6379
-                                                                      // c:6381-6382 restore: — keyboardhackchar + inittyptab()
-                                                                      // (keyboard hack char isn't ported; typtab rebuild is a
-                                                                      // no-op in the Rust lexer).
+        restore_hackchar(); // c:6381-6382 restore:
         return r;
     }
 
@@ -16045,6 +16047,7 @@ pub fn bin_emulate(
         emulation.store(saveemulation, Relaxed);
         crate::ported::options::EMULATION.store(saveemulation_live, Relaxed);
         crate::ported::options::opt_state_restore(saveopts);
+        restore_hackchar();
         return 1;
     }
 
@@ -16223,22 +16226,69 @@ pub fn bin_read(
         return 1;
     }
 
-    // c:Src/builtin.c:6457-6477 — `read -k`/`-q` requires a
-    // controlling tty (unless `-u FD` or `-p` redirects input).
-    // If neither stdin nor stderr is a tty, zsh emits the canonical
-    // error and returns 1. Mirror here (the SHTTY substrate isn't
-    // ported yet; the libc::isatty check approximates).
+    // c:6408-6413 — `haso` (true if /dev/tty has been opened specially),
+    // `oshout`, `keys`, `resettty`, `saveti`, `readchar`, `izle`.
+    let mut haso = false;
+    let mut oshout: usize = 0;
+    let mut keys = false;
+    let mut resettty = false;
+    let mut saveti: Option<libc::termios> = None;
+    let readchar = std::cell::Cell::new(-1i32);
+    let mut izle = crate::ported::builtins::sched::zleactive.load(Relaxed) != 0;
+    let isem = getsparam("TERM").as_deref() == Some("emacs"); // c:6407
+    let mut tty_readfd: Option<i32> = None; // C's `readfd = SHTTY`
     if (OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q'))
         && !bash_nchars
-        && !OPT_HASARG(ops, b'u')
+        && !OPT_ISSET(ops, b'u')
         && !OPT_ISSET(ops, b'p')
     {
-        let stdin_tty = unsafe { libc::isatty(0) } != 0;
-        let stderr_tty = unsafe { libc::isatty(2) } != 0;
-        if !stdin_tty && !stderr_tty {
-            eprintln!("not interactive and can't open terminal");
-            return 1;
+        // c:6457
+        if !izle {
+            // c:6458
+            let shtty = crate::ported::init::SHTTY.load(Relaxed);
+            if shtty == -1 {
+                // c:6459 — need to open /dev/tty specially.
+                let fd = unsafe {
+                    libc::open(
+                        c"/dev/tty".as_ptr(),
+                        libc::O_RDWR | libc::O_NOCTTY,
+                    )
+                }; // c:6460
+                crate::ported::init::SHTTY.store(fd, Relaxed);
+                if fd != -1 {
+                    haso = true; // c:6461
+                    oshout = *crate::ported::init::shout.lock().unwrap(); // c:6462
+                    crate::ported::init::init_shout(); // c:6463
+                }
+            } else if *crate::ported::init::shout.lock().unwrap() == 0 {
+                // c:6465 — we need an output FILE* on the tty.
+                crate::ported::init::init_shout(); // c:6467
+            }
+            // c:6469 — we should have a SHTTY opened by now.
+            if crate::ported::init::SHTTY.load(Relaxed) == -1 {
+                // c:6470 — unfortunately, we didn't.
+                eprintln!("not interactive and can't open terminal"); // c:6471
+                return 1; // c:6473
+            }
+            if crate::ported::zsh_h::unset(INTERACTIVE) {
+                // c:6475
+                if let Some(ti) = crate::ported::utils::gettyinfo() {
+                    // c:6476 gettyinfo(&shttyinfo)
+                    *crate::ported::utils::SHTTYINFO.lock().unwrap() = Some(ti);
+                }
+            }
+            // c:6478 — attach to the tty.
+            crate::ported::utils::attachtty(
+                crate::ported::modules::clone::mypgrp.load(Relaxed),
+            );
+            if !isem {
+                crate::ported::utils::setcbreak(); // c:6480
+            }
+            tty_readfd = Some(crate::ported::init::SHTTY.load(Relaxed)); // c:6481
         }
+        keys = true; // c:6483
+    } else {
+        izle = false; // c:6507/c:6514/c:6515 `izle = 0` for -u, -p, or neither
     }
 
     // c:Src/builtin.c:6510-6515 — `else if (OPT_ISSET(ops,'p')) {
@@ -16348,12 +16398,33 @@ pub fn bin_read(
     } else {
         0
     };
+    let ufd = tty_readfd.unwrap_or(ufd); // c:6481 `readfd = SHTTY`
+    readfd.store(ufd, Relaxed);
+
+    // c:6511-6522 — `-s`: turn echo off on a tty input fd.
+    if OPT_ISSET(ops, b's') && unsafe { libc::isatty(ufd) } != 0 {
+        if let Ok(ti) = crate::ported::utils::fdgettyinfo(ufd) {
+            saveti = Some(ti); // c:6516
+            resettty = true;
+            let mut ti = ti;
+            ti.c_lflag &= !libc::ECHO; // c:6519
+            let _ = crate::ported::utils::fdsettyinfo(ufd, &ti); // c:6523
+        }
+    }
+
     // c:Src/builtin.c:6418 — single-byte reader bound to `ufd`.
     // libc::read with len=1 keeps the file position advancing across
     // successive calls (matches zsh's per-byte read loop). Returns
     // Some(byte) on success, None on EOF, error sentinel on syscall
     // failure (caller maps to return 2).
+    let izle_timeout_cell = std::cell::Cell::new(0i64); // c:6416 izle_timeout
     let read_byte = |fd: i32| -> io::Result<Option<u8>> {
+        // c:6638-6660 — ZLE input and the byte `read_poll` already consumed.
+        if izle || readchar.get() >= 0 {
+            let mut rc = readchar.replace(-1);
+            let c = zread(izle as i32, &mut rc, izle_timeout_cell.get());
+            return Ok(if c < 0 { None } else { Some(c as u8) });
+        }
         let mut b = [0u8; 1];
         loop {
             let n = unsafe { libc::read(fd, b.as_mut_ptr() as *mut libc::c_void, 1) };
@@ -16378,37 +16449,86 @@ pub fn bin_read(
         }
     };
 
-    // c:6488-6515 — `-t TIMEOUT` poll(2) wait.
-    if OPT_HASARG(ops, b't') {
-        let arg = OPT_ARG(ops, b't').unwrap_or("");
-        let tmout: f64 = arg.parse().unwrap_or(0.0);
-        let mut pfd = libc::pollfd {
-            fd: 0,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let r = unsafe { libc::poll(&mut pfd, 1, (tmout * 1000.0) as i32) };
-        if r == 0 {
-            return 4;
-        } // timeout
-        if r < 0 {
-            return 2;
-        } // error
+    // c:6534-6543 — `read "?prompt"`: the prompt is written only when the
+    // input is a tty (`keys || isatty(0)`), to `shout` when it is open.
+    if let Some(ref p) = prompt {
+        if keys || unsafe { libc::isatty(0) } != 0 {
+            let shout_fd = *crate::ported::init::shout.lock().unwrap();
+            if shout_fd > 0 {
+                let bytes = p.as_bytes();
+                unsafe {
+                    libc::write(
+                        shout_fd as i32 - 1,
+                        bytes.as_ptr() as *const libc::c_void,
+                        bytes.len(),
+                    )
+                };
+            } else {
+                eprint!("{}", p);
+                let _ = Write::flush(&mut io::stderr());
+            }
+        }
     }
 
-    // c:Src/builtin.c:6499-6510 — `read "?prompt"` writes the prompt
-    // ONLY when input is interactive (stdin is a terminal). C zsh
-    // gates the write via `isatty(0)` inside the prompt-emit block;
-    // when stdin is redirected from a pipe or file, the prompt is
-    // suppressed entirely so the captured output isn't polluted. Bug
-    // #248 in docs/BUGS.md — previously zshrs printed the prompt to
-    // stderr unconditionally, so non-interactive callers saw the
-    // prompt fragment leak into stderr.
-    if let Some(ref p) = prompt {
-        let stdin_is_tty = unsafe { libc::isatty(0) } != 0;
-        if stdin_is_tty {
-            eprint!("{}", p);
-            let _ = Write::flush(&mut io::stderr());
+    // c:6560-6577 — `-d DELIM` on a tty: leave canonical mode so the
+    // delimiter can end the read.
+    if OPT_HASARG(ops, b'd') && unsafe { libc::isatty(ufd) } != 0 {
+        if let Ok(ti) = crate::ported::utils::fdgettyinfo(ufd) {
+            if !resettty {
+                saveti = Some(ti); // c:6566
+                resettty = true;
+            }
+            let mut ti = ti;
+            ti.c_lflag &= !libc::ICANON; // c:6572
+            ti.c_cc[libc::VMIN] = 1;
+            ti.c_cc[libc::VTIME] = 0;
+            let _ = crate::ported::utils::fdsettyinfo(ufd, &ti); // c:6577
+        }
+    }
+
+    // c:6579-6617 — `-t TIMEOUT`.
+    if OPT_ISSET(ops, b't') {
+        let mut timeout: i64 = 0; // c:6580
+        if OPT_HASARG(ops, b't') {
+            // c:6581
+            let mn = match crate::ported::math::matheval(OPT_ARG(ops, b't').unwrap_or("")) {
+                Ok(mn) => mn,
+                Err(_) => return 1, // c:6584 `if (errflag) return 1;`
+            };
+            if errflag.load(Relaxed) != 0 {
+                return 1;
+            }
+            if (mn.type_ & crate::ported::zsh_h::MN_FLOAT) != 0 {
+                timeout = (mn.d * 1e6) as i64; // c:6587-6588
+            } else {
+                timeout = mn.l * 1_000_000; // c:6590
+            }
+        }
+        if izle {
+            // c:6593 — timeout is in 100ths of a second rather than us.
+            izle_timeout_cell.set(-(timeout / 10000 + 1)); // c:6598
+        } else {
+            let mut rc = readchar.get();
+            let polled = ufd != -1
+                && crate::ported::utils::read_poll(ufd, &mut rc, keys && !izle, timeout);
+            readchar.set(rc);
+            if !polled {
+                // c:6606
+                if keys && !izle && !isem {
+                    if let Some(ti) = *crate::ported::utils::SHTTYINFO.lock().unwrap() {
+                        crate::ported::utils::settyinfo(&ti); // c:6608
+                    }
+                } else if resettty {
+                    if let (Some(ti), true) = (saveti.as_ref(), ufd >= 0) {
+                        let _ = crate::ported::utils::fdsettyinfo(ufd, ti); // c:6610
+                    }
+                }
+                if haso {
+                    *crate::ported::init::shout.lock().unwrap() = oshout; // c:6614
+                    crate::ported::init::SHTTY.store(-1, Relaxed); // c:6615
+                }
+                return if OPT_ISSET(ops, b'q') { 2 } else { 1 }; // c:6617
+            }
         }
     }
 
@@ -16437,13 +16557,13 @@ pub fn bin_read(
                 Some(stack.remove(0))
             }
         };
-        let zbuf = popped.clone().unwrap_or_default();
+        let zbuf_text = popped.clone().unwrap_or_default();
         let raw_mode = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R');
         if OPT_HASARG(ops, b'd') {
             let arg = OPT_ARG(ops, b'd').unwrap_or("");
             let delim = arg.as_bytes().first().copied().unwrap_or(b'\0');
             let mut out = Vec::<u8>::new();
-            for &b in zbuf.as_bytes() {
+            for &b in zbuf_text.as_bytes() {
                 if b == delim {
                     break;
                 }
@@ -16452,7 +16572,7 @@ pub fn bin_read(
             buf = crate::script_bytes::decode_script_bytes(&out);
         } else {
             let mut out = Vec::<u8>::new();
-            let bytes = zbuf.as_bytes();
+            let bytes = zbuf_text.as_bytes();
             let mut i = 0;
             while i < bytes.len() {
                 let b = bytes[i];
@@ -16770,10 +16890,47 @@ pub fn bin_read(
         }
     }
 
+    // c:6718-6730 — dispose of the tty state the `-k`/`-q` read set up.
+    if (OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q'))
+        && !izle
+        && !OPT_ISSET(ops, b'u')
+        && !OPT_ISSET(ops, b'p')
+    {
+        if isem {
+            // c:6720 — `while (val > 0 && read(SHTTY, &d, 1) == 1 && d != '\n');`
+            let mut d = 0u8;
+            while !partial_eof
+                && unsafe {
+                    libc::read(
+                        crate::ported::init::SHTTY.load(Relaxed),
+                        &mut d as *mut u8 as *mut libc::c_void,
+                        1,
+                    )
+                } == 1
+                && d != b'\n'
+            {}
+        } else if resettty {
+            if let Some(ti) = saveti.as_ref() {
+                let _ = crate::ported::utils::fdsettyinfo(ufd, ti); // c:6722
+            }
+            resettty = false; // c:6723
+        }
+        if haso {
+            // c:6725
+            *crate::ported::init::shout.lock().unwrap() = oshout; // c:6727
+            crate::ported::init::SHTTY.store(-1, Relaxed); // c:6728
+        }
+    }
+    // c:6751/c:6962/c:7091 — `if (resettty) fdsettyinfo(readfd, &saveti);`
+    if resettty {
+        if let Some(ti) = saveti.as_ref() {
+            let _ = crate::ported::utils::fdsettyinfo(ufd, ti);
+        }
+    }
+
     // c:Src/builtin.c:6730-6742 — `-q` (read yes/no): the single char
     // read above is "yes" iff it is exactly 'y' or 'Y'; the reply var is
-    // set to "y"/"n" and the exit status is 0 (yes) / 1 (no). (A timeout
-    // would be status 2; not modeled here.) This must run BEFORE the
+    // set to "y"/"n" and the exit status is 0 (yes) / 1 (no). (A timeout is status 2, returned by the `-t` poll above.) This must run BEFORE the
     // IFS/array assignment dispatch — `-q` never does line splitting.
     if OPT_ISSET(ops, b'q') {
         // c:6737-6740 — "Keep eof as status but status is now whether we read
@@ -17095,46 +17252,91 @@ pub fn bin_read(
     errflag.load(Relaxed)
 }
 
+/// Port of `static char *zbuf;` from `Src/builtin.c:6397` — the buffer
+/// `read -z` takes its input from (`None` is C's NULL). Unmetafied bytes
+/// are not stored: the buffer keeps C's metafied text, and `zread` decodes
+/// the `Meta` escapes as C does.
+pub static zbuf: Mutex<Option<(Vec<u8>, usize)>> = Mutex::new(None); // c:6397
+
+/// Port of `static int readfd;` from `Src/builtin.c:6398` — the descriptor
+/// `zread` reads from.
+pub static readfd: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:6398
+
 /// Port of `zread()` from `Src/builtin.c:7134`.
 /// C decl: `zread(int izle, int *readchar, long izle_timeout)`
 /// C: `static int zread(int izle, int *readchar, long izle_timeout)` —
-///   read one byte from stdin (or via ZLE), respecting timeout.
+///   read one byte from ZLE, `zbuf` or `readfd`, honouring a pushed-back
+///   `readchar`. Returns `EOF` (-1) at end of input.
 pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
     // c:7134
+    let mut retry = false; // c:7136 `int retry = 0;`
+
     if izle != 0 {
-        // c:7140
-        // c:7141-7144 — zleentry(ZLE_CMD_GET_KEY, izle_timeout, NULL, &c);
-        // Static-link path: ZLE bridge lives in src/ported/zle/*; until
-        // wired, fall through to plain stdin.
-        let _ = izle_timeout;
+        // c:7141
+        let mut c: i32 = 0; // c:7142
+        let mut timeout_unused: i32 = 0; // c:7143 NULL
+        crate::ported::zle::zle_main::zle_main_entry(
+            crate::ported::zsh_h::ZLE_CMD_GET_KEY,
+            &mut crate::ported::zle::zle_main::zle_main_entry_args::GetKey {
+                do_keytmout: izle_timeout,
+                timeout: &mut timeout_unused,
+                chrp: &mut c,
+            },
+        ); // c:7143
+        return if c < 0 { -1 } else { c }; // c:7145
+    }
+    // c:7147 — use zbuf if possible.
+    if let Some((buf, pos)) = zbuf.lock().unwrap().as_mut() {
+        // c:7151-7154 — `*zbuf == Meta` → next byte ^ 32.
+        if buf.get(*pos).copied() == Some(Meta as u8) {
+            *pos += 1;
+            let b = buf.get(*pos).copied().unwrap_or(0) ^ 32;
+            *pos += 1;
+            return b as i32; // c:7152
+        }
+        return match buf.get(*pos).copied() {
+            Some(b) if b != 0 => {
+                *pos += 1;
+                b as i32 // c:7154
+            }
+            _ => -1, // c:7154 EOF
+        };
     }
     if *readchar >= 0 {
-        // c:7150
-        let cc = *readchar as u8;
-        *readchar = -1; // c:7152
-        return cc as i32;
+        // c:7156
+        let cc = *readchar as u8; // c:7157
+        *readchar = -1; // c:7158
+        return cc as i32; // c:7159
     }
-    // c:7160 — `read(SHTTY, &cc, 1)` with EINTR retry. Read from the
-    //          controlling tty (SHTTY) when available; stdin fallback
-    //          for non-interactive paths where SHTTY isn't set up.
-    let mut buf = [0u8; 1];
-    let fd = {
-        use std::sync::atomic::Ordering;
-        let s = crate::ported::init::SHTTY.load(Relaxed);
-        if s >= 0 {
-            s
-        } else {
-            0
-        } // c:7167 SHTTY fallback
-    };
     loop {
-        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, 1) };
-        match n {
-            1 => return buf[0] as i32, // c:7169
-            0 => return -1,            // EOF
-            -1 if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => continue,
-            _ => return -1,
+        // c:7161 — read a character from readfd.
+        let fd = readfd.load(Relaxed);
+        let mut cc = [0u8; 1];
+        let ret = unsafe { libc::read(fd, cc.as_mut_ptr() as *mut libc::c_void, 1) }; // c:7163
+        match ret {
+            1 => return cc[0] as i32, // c:7166
+            -1 => {
+                let e = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if !retry
+                    && fd == 0
+                    && (e == libc::EAGAIN || e == libc::EWOULDBLOCK)
+                    && crate::ported::utils::setblock_stdin() != 0
+                {
+                    // c:7170-7181
+                    retry = true;
+                    continue;
+                } else if e == libc::EINTR
+                    && !(errflag.load(Relaxed) != 0
+                        || RETFLAG.load(Relaxed) != 0
+                        || BREAKS.load(Relaxed) != 0
+                        || CONTFLAG.load(Relaxed) != 0)
+                {
+                    continue; // c:7183
+                }
+            }
+            _ => {}
         }
+        return -1; // c:7187 EOF
     }
 }
 
@@ -20298,11 +20500,9 @@ fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
     BUILTIN(name, flags | BINF_PREFIX, None, 0, 0, 0, None, None)
 }
 
-/// Inline printf-style format helper used by bin_print's -f/printf mode.
-/// Replaces `%s` / `%d` / `%i` / `%c` / `%%` with positional args.
-/// Full C printf-spec engine (Src/builtin.c:4691-5500) is much more
-/// elaborate (width/precision/flag chars/%b/%q/etc.); this is the
-/// minimal subset that covers the common script patterns.
+/// Printf format engine used by bin_print's -f/printf mode: the spec walk of
+/// Src/builtin.c:4691-5500 (flags, width, precision, `*`, `%n$` positional
+/// specifiers, `%b`, `%q`, `%n`, `\c` truncation and format reuse).
 ///
 /// Returns `Ok(output)` on success, or `Err((output_so_far, bad_char))`
 /// when an unknown `%X` directive is hit. The C source emits

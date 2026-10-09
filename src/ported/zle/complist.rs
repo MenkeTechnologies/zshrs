@@ -7099,8 +7099,7 @@ pub fn boot_() -> i32 {
     //  colored/columned listing: without it `runhookdef` falls back to the
     //  plain `ilistmatches` default and every `list-colors`/`group-colors`
     //  style is dropped. `complistmatches` carries the C `(Hookdef, Chdata)`
-    //  signature so it registers directly as a `Hookfn`. `menu_start`/
-    //  domenuselect stays a direct compcore dispatch for now (not a Hookfn).
+    //  signature so it registers directly as a `Hookfn`.
     crate::ported::module::addhookfunc("comp_list_matches", complistmatches);
     // c:3596 — `addhookfunc("menu_start", domenuselect)`. Without this the
     // `menu_start` hookdef (registered at ZLE boot) has no func, so

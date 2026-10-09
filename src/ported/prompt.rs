@@ -938,11 +938,9 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             test = 1;
                         }
                     }
-                    // c:498-499 — `!`: privasserted (root-ish).
-                    // Approximate via euid == 0.
+                    // c:498-499 — `!`: `test = privasserted();`.
                     b'!' => {
-                        let euid = unsafe { libc::geteuid() };
-                        if euid == 0 {
+                        if crate::ported::utils::privasserted() {
                             test = 1;
                         }
                     }

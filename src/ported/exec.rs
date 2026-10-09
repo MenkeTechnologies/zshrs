@@ -193,8 +193,10 @@ pub static LIST_PIPE_TEXT: std::sync::Mutex<String> = std::sync::Mutex::new(Stri
 // The storage is `crate::ported::utils::noerrs_lock()`; read/write it directly.
 
 /// Port of `int nohistsave;` from `Src/exec.c:122`. When non-zero,
-/// `addhistnode` no-ops so trap firings / `eval` invocations don't
-/// pollute `$HISTCMD`. Tracked alongside `noerrs` in the trap path.
+/// the history file is not saved on `exec` (c:4324/c:4340), on shell exit
+/// (builtin.c:6014) or by `saveandpophiststack` (hist.c:3960). Set to 1 by
+/// `setupvals` (init.c:1332) and cleared once the startup files have run
+/// (init.c:1550).
 pub static nohistsave: std::sync::atomic::AtomicI32 = // c:122 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
@@ -1206,6 +1208,11 @@ pub struct execcmd_dispatch {
     /// BINF_NOGLOB` bits encountered during the precommand-modifier
     /// walk (c:3062 `cflags |= hn->flags`).
     pub cflags: u32,
+    /// `orig_cflags` accumulator from `Src/exec.c:2915` — the `cflags` in
+    /// force before each `cflags |= hn->flags` step (c:3115), i.e. every
+    /// modifier flag the walk consumed, `BINF_COMMAND` included (c:4123,
+    /// c:4424 test it).
+    pub orig_cflags: u32,
     /// `command -p` requested: use the default `$PATH` for lookup
     /// (`Src/exec.c:3160 use_defpath = 1`). Consumed by the fusevm
     /// compiler (`fusevm_bridge.rs`) when it emits the exec call.
@@ -1285,7 +1292,6 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
     let mut use_defpath = false; // c:2913
     let mut cflags: u32 = 0; // c:2915
     let mut orig_cflags: u32 = 0; // c:2915
-    let _ = orig_cflags;
     // c:3263 — `char *exec_argv0 = NULL;` (declared inside the
     // BINF_EXEC arm; hoisted here so the dispatch struct can carry it
     // out after the loop terminates).
@@ -1595,6 +1601,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
                         is_builtin,
                         is_shfunc,
                         cflags,
+                        orig_cflags,
                         use_defpath,
                         has_command_vv,
                         exec_argv0,
@@ -1659,6 +1666,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
         is_builtin,
         is_shfunc,
         cflags,
+        orig_cflags,
         use_defpath,
         has_command_vv,
         exec_argv0,
@@ -10591,26 +10599,13 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                 }
                 // c:1875 — printjob(jn, !!isset(LONGLISTJOBS), 1).
                 {
-                    let g = jt.lock().unwrap();
-                    let cur = *CURJOB
-                        .get_or_init(|| std::sync::Mutex::new(-1))
-                        .lock()
-                        .unwrap();
-                    let prev = *PREVJOB
-                        .get_or_init(|| std::sync::Mutex::new(-1))
-                        .lock()
-                        .unwrap();
-                    let s = printjob(
-                        &g[jn_idx],
+                    let mut g = jt.lock().unwrap();
+                    crate::exec_jobs::printjob_synch(
+                        &mut g,
                         jn_idx,
                         i32::from(isset(LONGLISTJOBS)),
-                        if cur >= 0 { Some(cur as usize) } else { None },
-                        if prev >= 0 { Some(prev as usize) } else { None },
-                        false,
+                        1,
                     );
-                    if !s.is_empty() {
-                        eprintln!("{}", s);
-                    }
                 }
             } else if newjob as i32 != list_pipe_job.load(Ordering::Relaxed) {
                 let mut g = jt.lock().unwrap();
@@ -11259,11 +11254,8 @@ pub fn execcmd_exec(
             use_defpath = 1;
         }
         exec_argv0 = dispatch.exec_argv0;
-        // c:3061 — `orig_cflags |= cflags;` accumulator path; for
-        // BINF_PREFIX walks orig_cflags tracks each step's pre-mask
-        // bits. execcmd_compile_head doesn't surface orig_cflags
-        // separately, so approximate as the post-strip cflags.
-        orig_cflags = cflags;
+        // c:3115 — `orig_cflags |= cflags;` accumulated by the head walk.
+        orig_cflags = dispatch.orig_cflags;
         // c:3030-3086 — strip the precmd-modifier prefix from args.
         // In C, the walk pulls one arg at a time from `args` into
         // `preargs` via execcmd_getargs, then uremnodes each
@@ -12681,11 +12673,26 @@ pub fn execcmd_exec(
 
         if typ == WC_FUNCDEF as i32 {
             // c:4013
-            // c:4014-4036 — `redir_prog` setup from wordcode if no
-            // redirs+WC_REDIR follows. Wire only when fusevm WC_REDIR
-            // peek is in scope; for the tree-walker entry point we
-            // approximate by passing None.
-            let redir_prog: Option<crate::ported::zsh_h::Eprog> = None;
+            // c:4069-4091 — redirections stored with the new function when
+            // none were taken from the parsed environment.
+            let redir_prog: Option<crate::ported::zsh_h::Eprog> = if redir.is_none()
+                && wc_code(state.prog.prog[eparams.beg]) == WC_REDIR
+            {
+                let mut s = estate {
+                    prog: state.prog.clone(), // c:4079
+                    pc: eparams.beg,          // c:4080
+                    strs: state.prog.strs.clone(), // c:4081
+                    strs_offset: 0,
+                };
+                // The copy uses the wordcode parsing area, so save and
+                // restore state.
+                crate::ported::context::zcontext_save(); // c:4087
+                let rp = crate::ported::parse::eccopyredirs(&mut s); // c:4088
+                crate::ported::context::zcontext_restore(); // c:4089
+                rp.map(Box::new)
+            } else {
+                None // c:4091
+            };
             // c:4039 — `lastval = execfuncdef(state, redir_prog);`
             let lv = execfuncdef(state, redir_prog);
             LASTVAL.store(lv, Ordering::Relaxed);
@@ -14851,5 +14858,18 @@ mod exec_accessor_tests {
     fn unregister_function_empty_name_returns_bool() {
         let _g = crate::test_util::global_state_lock();
         let _: bool = unregister_function("");
+    }
+
+    /// c:3115 — `orig_cflags |= cflags` records the modifier flags consumed
+    /// by the head walk: `builtin print` leaves `BINF_BUILTIN` in it, while a
+    /// plain command accumulates nothing.
+    #[test]
+    fn execcmd_compile_head_accumulates_orig_cflags() {
+        let _g = crate::test_util::global_state_lock();
+        let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let d = execcmd_compile_head(&words(&["builtin", "print", "x"]), WC_SIMPLE as u32);
+        assert_ne!(d.orig_cflags & BINF_BUILTIN as u32, 0);
+        let d = execcmd_compile_head(&words(&["print", "x"]), WC_SIMPLE as u32);
+        assert_eq!(d.orig_cflags, 0);
     }
 }

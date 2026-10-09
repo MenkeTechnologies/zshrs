@@ -158,6 +158,26 @@ macro_rules! YYERRORV {
     }};
 }
 
+/// Port of `#define COND_ERROR(X,Y)` from `Src/parse.c:89-96`:
+/// `zwarn(X,Y); herrflush(); if (noerrs != 2) errflag |= ERRFLAG_ERROR;
+/// YYERROR(ecused)`. The `%s` conversion is `nicezputs` (c:Src/utils.c:311),
+/// which untokenizes through `ztokens`; Rust pre-formats the message, so the
+/// macro applies that step to the argument (`nicedupstring`).
+macro_rules! COND_ERROR {
+    ($fmt:literal, $arg:expr) => {{
+        crate::ported::utils::zwarn(&format!(
+            $fmt,
+            crate::ported::utils::nicedupstring($arg)
+        ));
+        crate::ported::hist::herrflush();
+        if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+            crate::ported::utils::errflag
+                .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
+        }
+        YYERROR!(ECUSED.get());
+    }};
+}
+
 /// Port of `parse_context_save()` from `Src/parse.c:295` — C signature `parse_context_save(struct parse_stack *ps, int toplevel)`.
 /// Snapshots the lexer-side file-statics plus the pending heredoc list,
 /// plus the wordcode-buffer state (`ecbuf`, `ecstrs`, `ecused`, ...).
@@ -3780,28 +3800,8 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {
     // `\u{e19b}z` (2 bytes). Walk by chars.
     let ac: Vec<char> = a.chars().collect();
     if ac.is_empty() || !IS_DASH(ac[0]) || ac.len() < 2 {
-        // c:Src/parse.c:2629 COND_ERROR macro expansion:
-        //   zwarn(...); herrflush(); errflag |= ERRFLAG_ERROR;
-        //   YYERROR(ecused) /* sets tok = LEXERR */
-        // The YYERROR portion is critical — without it the outer
-        // parser keeps walking the wordcode and execution proceeds
-        // (e.g. `[[ "" -a "x" ]] && echo m || echo n` runs the
-        // `|| echo n` branch). Setting LEXERR aborts the upper
-        // parse so the whole line is rejected, matching zsh's
-        // observable behavior of stdout="" on parse error.
-        // c:2629 `COND_ERROR("parse error: condition expected: %s", a)` — the
-        // `%s` conversion is `nicezputs` (c:Src/utils.c:311), which untokenizes
-        // through `ztokens` first, so zsh prints the operand WITH its source
-        // quoting: `[[ "$glob" = … ]]` reports `"$glob"`, not a bare `glob`
-        // wrapped in invisible Dnull/Qstring bytes. Rust pre-formats the
-        // message, so the `%s` step has to happen on the argument here.
-        zerr(&format!(
-            "parse error: condition expected: {}",
-            crate::ported::utils::nicedupstring(a)
-        ));
-        errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
-        set_tok(LEXERR);
-        return 1;
+        // c:2629 `COND_ERROR("parse error: condition expected: %s", a)`.
+        COND_ERROR!("parse error: condition expected: {}", a);
     }
     // c:2630 — `else if (!a[2] && strspn(a+1, "abcd...zhLONGS") == 1)`
     let unary_set = "abcdefgknoprstuvwxzhLONGS";
@@ -3971,13 +3971,8 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
         ecstr(c);
         return 1;
     }
-    // c:2709 `COND_ERROR("condition expected: %s", b)` — `%s` is nicezputs,
-    // which untokenizes through `ztokens`; see par_cond_double.
-    zerr(&format!(
-        "condition expected: {}",
-        crate::ported::utils::nicedupstring(b)
-    ));
-    1
+    // c:2709
+    COND_ERROR!("condition expected: {}", b);
 }
 
 /// Port of `par_cond_multi()` from `Src/parse.c:2716` — C signature `par_cond_multi(char *a, LinkList l)`.
@@ -3988,13 +3983,8 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
     // single code point.
     let ac: Vec<char> = a.chars().collect();
     if ac.is_empty() || !IS_DASH(ac[0]) || ac.len() < 2 {
-        // c:2719 `COND_ERROR("condition expected: %s", a)` — `%s` is nicezputs,
-        // which untokenizes through `ztokens`; see par_cond_double.
-        zerr(&format!(
-            "condition expected: {}",
-            crate::ported::utils::nicedupstring(a)
-        ));
-        return 1;
+        // c:2719
+        COND_ERROR!("condition expected: {}", a);
     }
     ecadd(WCB_COND(COND_MOD as u32, l.len() as u32));
     ecstr(a);
@@ -11711,6 +11701,44 @@ esac"#;
         // bare dash
         let _ = par_cond_double("-", "b");
         // All three must NOT crash + return 1 (error path).
+    }
+
+    /// c:89-96 `COND_ERROR` — `YYERROR(ecused)` is `tok = LEXERR; return 0`,
+    /// so every cond-term error path returns 0 and leaves the lexer in
+    /// LEXERR, with `ERRFLAG_ERROR` raised unless `noerrs == 2`.
+    #[test]
+    fn par_cond_errors_return_zero_and_set_lexerr() {
+        let _g = crate::test_util::global_state_lock();
+        let reset = || {
+            crate::ported::utils::errflag.store(0, Ordering::SeqCst);
+            set_tok(crate::ported::zsh_h::NULLTOK);
+        };
+        let errored = || {
+            tok() == LEXERR
+                && crate::ported::utils::errflag.load(Ordering::SeqCst) & ERRFLAG_ERROR != 0
+        };
+
+        reset();
+        assert_eq!(par_cond_double("foo", "b"), 0); // c:2629
+        assert!(errored());
+
+        reset();
+        assert_eq!(par_cond_triple("a", "foo", "c"), 0); // c:2709
+        assert!(errored());
+
+        reset();
+        assert_eq!(par_cond_multi("a", &["b".to_string()]), 0); // c:2719
+        assert!(errored());
+
+        // c:92 — `if (noerrs != 2) errflag |= ERRFLAG_ERROR;`
+        reset();
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = 2;
+        let r = par_cond_triple("a", "foo", "c");
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = 0;
+        assert_eq!(r, 0);
+        assert_eq!(tok(), LEXERR);
+        assert_eq!(crate::ported::utils::errflag.load(Ordering::SeqCst), 0);
+        reset();
     }
 
     /// c:2647 CONDSTRS table — exhaustive iteration: every entry's

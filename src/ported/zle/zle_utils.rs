@@ -70,10 +70,10 @@ pub fn zleaddtoline(chr: i32) {
     // c:102
     // c:104 — `spaceinline(1);` on the META arm (c:782-815, `if
     // (zlemetaline)`): open one byte-slot at `zlemetacs`, `zlemetall += 1`,
-    // and `if (mark > zlemetacs) mark += 1`. `spaceinline` above carries only
-    // the non-meta arm, so the meta arm is spelled out here — this function
-    // "always operates on the metafied multibyte version of the line"
-    // (c:97-100). Region highlights keep character offsets only (no
+    // and `if (mark > zlemetacs) mark += 1`. this function "always operates
+    // on the metafied multibyte version of the line" (c:97-100), including
+    // when `ZLEMETALL` is still 0 (the `spaceinline` predicate), so the meta
+    // arm is spelled out here. Region highlights keep character offsets only (no
     // `start_meta`/`end_meta` pair), so there is nothing to shift for them.
     //
     // `chr` arrives as a whole scalar (zshrs's `ingetc` yields chars where
@@ -641,15 +641,33 @@ pub fn zle_free_positions() {
 }
 
 /// Port of `spaceinline(int ct)` from Src/Zle/zle_utils.c:777.
-/// WARNING: signature divergence — handles only the non-meta arm
-/// (c:817-844). The C meta arm (c:782-815, `if (zlemetaline)`) is
-/// inlined by callers that operate on ZLEMETALINE because
-/// ZLEMETALINE is a `OnceLock<Mutex<String>>` in the Rust port
-/// that stays initialized across tests, so there is no clean
-/// "meta active" check available from inside this fn.
+/// `zlemetaline != NULL` is spelled `ZLEMETALL > 0 && ZLEMETALINE.get().is_some()`
+/// (ZLEMETALINE is a `OnceLock` that stays populated after `unmetafy_line`; see
+/// `backdel`). `RegionHighlight` carries character offsets only (no
+/// `start_meta`/`end_meta` pair), so the c:796-812 shift has nothing to act on.
 pub fn spaceinline(ct: i32) {
     // c:777
     if ct <= 0 {
+        return;
+    }
+    // c:782-815 — `if (zlemetaline) { ... }`
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 && ZLEMETALINE.get().is_some() {
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(mut g) = m.lock() {
+                let cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize).min(g.len());
+                if g.is_char_boundary(cs) {
+                    g.insert_str(cs, &"\0".repeat(ct as usize)); // c:783-788 sizeline + shift
+                    ZLEMETALL.store(g.len() as i32, Ordering::SeqCst); // c:790 zlemetall += ct
+                }
+            }
+        }
+        // c:793-794 — `if (mark > zlemetacs) mark += ct;`
+        let mark_cur = MARK.load(Ordering::SeqCst) as i32;
+        if mark_cur > ZLEMETACS.load(Ordering::SeqCst) {
+            MARK.store((mark_cur + ct) as usize, Ordering::SeqCst);
+        }
+        // c:844 — `region_active = 0;`
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(0, Ordering::SeqCst);
         return;
     }
     let ct_u = ct as usize;
