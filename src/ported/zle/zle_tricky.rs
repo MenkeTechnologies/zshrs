@@ -5056,6 +5056,14 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
 /// and back after the final `unmetafy_line`.
 pub fn doexpandhist() -> i32 {
     // c:2802
+    // !!! RUST-ONLY !!! An in-editor (LSP) dispatch runs docomplete on the
+    // compsys shell thread with no ZLE line behind it: there is nothing to
+    // history-expand, and the expansion below drives process-global lexer
+    // state (noerrs, noaliases, expanding, the lexer context) that other
+    // threads of the process are using.
+    if crate::compsys::in_editor::exec_policy().is_some() {
+        return 0;
+    }
     use crate::ported::hist::{excs, exlast, expanding, lexstop, strinbeg, strinend};
     use crate::ported::lex::{
         ctxtlex, hgetc, noaliases, set_noaliases, tok, LEX_INPUT, LEX_LEXSTOP, LEX_POS,

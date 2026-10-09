@@ -2047,6 +2047,9 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
 // makecomplist — `Src/Zle/compcore.c:946`.
 // =====================================================================
 
+/// Guards the first-use hook attachment in `makecomplist` (see there).
+static COMPCTL_HOOKS: std::sync::Once = std::sync::Once::new();
+
 /// Direct port of `int makecomplist(char *s, int incmd, int lst)` from
 /// compcore.c:946. Top-level dispatch into the completion subsystem:
 /// either the new compsys path (`callcompfunc`) or the legacy compctl
@@ -2248,6 +2251,31 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         callcompfunc(&dup_s, &cf_name); // c:991
         endcmgroup(None); // c:992
 
+        // !!! RUST-ONLY — the comphooks hookdefs (complete.c:1712 `comphooks`) and
+        // compctl.c:4049 `boot_` (which addhookfunc()s ccmakehookfn /
+        // cccleanuphookfn on them) are never reached by zshrs's static module
+        // registration outside a running ZLE, so attach both on first use.
+        COMPCTL_HOOKS.call_once(|| {
+            // Only the two compctl hookdefs (complete.c:1712-1716): registering
+            // the whole zle_main::boot_ set would also define "complete", and a
+            // defined-but-empty "complete" hook stops docompletion from falling
+            // back to do_completion.
+            for name in ["compctl_make", "compctl_cleanup"] {
+                if gethookdef(name).is_null() {
+                    let h = Box::into_raw(Box::new(crate::ported::zsh_h::hookdef {
+                        next: std::ptr::null_mut(),
+                        name: name.to_string(),
+                        def: None,
+                        flags: 0,
+                        funcs: std::ptr::null_mut(),
+                    }));
+                    if crate::ported::module::addhookdef(h) != 0 {
+                        unsafe { drop(Box::from_raw(h)) };
+                    }
+                }
+            }
+            crate::ported::zle::compctl::boot_();
+        });
         // c:995 — runhookdef(COMPCTLCLEANUPHOOK, NULL).
         // c:995 — `runhookdef(COMPCTLCLEANUPHOOK, NULL)`; COMPCTLCLEANUPHOOK is
         // `comphooks + 3` (comp.h:450) = the "compctl_cleanup" hookdef.
@@ -2349,11 +2377,29 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
             incmd,                      // c:1043
             lst,                        // c:1044
         };
-        // !!! RUST-ONLY — compctl.c:4049 `boot_` (which addhookfunc()s
-        // ccmakehookfn/cccleanuphookfn on these hooks) is never reached by
-        // zshrs's static module registration, so attach them on first use.
-        static COMPCTL_HOOKS: std::sync::Once = std::sync::Once::new();
+        // !!! RUST-ONLY — the comphooks hookdefs (complete.c:1712 `comphooks`) and
+        // compctl.c:4049 `boot_` (which addhookfunc()s ccmakehookfn /
+        // cccleanuphookfn on them) are never reached by zshrs's static module
+        // registration outside a running ZLE, so attach both on first use.
         COMPCTL_HOOKS.call_once(|| {
+            // Only the two compctl hookdefs (complete.c:1712-1716): registering
+            // the whole zle_main::boot_ set would also define "complete", and a
+            // defined-but-empty "complete" hook stops docompletion from falling
+            // back to do_completion.
+            for name in ["compctl_make", "compctl_cleanup"] {
+                if gethookdef(name).is_null() {
+                    let h = Box::into_raw(Box::new(crate::ported::zsh_h::hookdef {
+                        next: std::ptr::null_mut(),
+                        name: name.to_string(),
+                        def: None,
+                        flags: 0,
+                        funcs: std::ptr::null_mut(),
+                    }));
+                    if crate::ported::module::addhookdef(h) != 0 {
+                        unsafe { drop(Box::from_raw(h)) };
+                    }
+                }
+            }
             crate::ported::zle::compctl::boot_();
         });
         // c:1046 — `runhookdef(COMPCTLMAKEHOOK, (void *) &dat)`; COMPCTLMAKEHOOK is

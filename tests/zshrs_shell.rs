@@ -16972,11 +16972,15 @@ setopt extendedglob; [[ abc = (#b)a(b)c ]]; print match=${.sh.match}
 zmodload -u zsh/hlgroup zsh/ksh93 && print ${+.zle.esc} ${+.sh.version}",
     );
     assert_eq!(code, 0, "{err}");
+    // `.zle.esc` / `.zle.sgr` render through applytextattributes, which emits
+    // only what a loaded terminfo capability provides; a non-interactive shell
+    // loads none, so `bold` renders as `''` and SGR `0` (the fork build
+    // does the same under any TERM).
     // Last line: zsh/hlgroup is `load=yes` (config.modules:39), so unloading
     // it re-registers the `.zle.esc` autoload stub and `${+.zle.esc}` is 1 again;
     // zsh/ksh93 lists `.sh.version` only in its emulation autofeatures, so it
     // stays 0. The fork build prints `1 0`.
-    assert_eq!(output, "$'\\033'\\[1m 1 foo\nver\nsub=1\nmatch=b\n1 0\n");
+    assert_eq!(output, "'' 0 foo\nver\nsub=1\nmatch=b\n1 0\n");
 }
 
 /// config.modules (fork 5.9.0.3-test) marks `zsh/hlgroup` and `zsh/ksh93`

@@ -3524,7 +3524,15 @@ mod findbol_findeol_tests {
     fn zleaddtoline_nul_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
         zleaddtoline(0);
+        // c:105 — the NUL lands in the metafied line, advancing zlemetacs/zlemetall.
+        assert_eq!(ZLEMETALL.load(Ordering::SeqCst), 1);
+        assert_eq!(ZLEMETACS.load(Ordering::SeqCst), 1);
+        // Leave meta mode inactive: other tests branch on `zlemetall > 0`.
+        ZLEMETALINE.get().unwrap().lock().unwrap().clear();
+        ZLEMETALL.store(0, Ordering::SeqCst);
+        ZLEMETACS.store(0, Ordering::SeqCst);
     }
 
     // ═══════════════════════════════════════════════════════════════════
