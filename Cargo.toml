@@ -192,6 +192,7 @@ metrics-exporter-prometheus = { version = "0.16", optional = true, default-featu
 walkdir = "2.5"
 crossbeam-channel = "0.5"
 rayon = "1.10"
+stacker = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1"

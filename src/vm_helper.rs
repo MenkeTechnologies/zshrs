@@ -5396,7 +5396,22 @@ impl ShellExecutor {
         Some(status)
     }
 
+    /// Run a shell function, growing the stack first when little is left.
+    ///
+    /// Each nested shell-function call costs thousands of bytes of native stack,
+    /// and Linux gives the main thread the 8 MB `ulimit -s` (macOS honours the
+    /// larger `-stack_size` link flag, see build.rs). FUNCNEST allows 500 levels,
+    /// so a runaway or merely deep recursion overflowed the stack before the
+    /// FUNCNEST guard could report it. `maybe_grow` continues on a fresh segment
+    /// when fewer than 256 KiB remain, on the same thread, so signals, job control
+    /// and traps behave exactly as before.
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        stacker::maybe_grow(256 * 1024, 32 * 1024 * 1024, || {
+            self.dispatch_function_call_on_stack(name, args)
+        })
+    }
+
+    fn dispatch_function_call_on_stack(&mut self, name: &str, args: &[String]) -> Option<i32> {
         // Held for the WHOLE call, not just the load: an autoloaded function is
         // registered TWICE — once when its file's text defines it, and again
         // (unchanged) when its chunk is compiled at call time — and the second
