@@ -6628,31 +6628,27 @@ pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
 // inner-list walk since fusevm bytecode handles the forking via
 // Op::Subshell at a higher layer.
 
-/// Port of `execcond()` from `Src/exec.c:5204` — C decl `execcond(Estate state, UNUSED(int do_exec))`.
+/// Port of `execcond()` from `Src/exec.c:5260` — C decl `execcond(Estate state, UNUSED(int do_exec))`.
 /// Run a `[[ ... ]]` cond expression.
 pub fn execcond(state: &mut estate, _do_exec: i32) -> i32 {
-    state.pc -= 1; // c:5208 — `state->pc--;`
-                   // c:5209-5213 — XTRACE prelude.
+    state.pc -= 1; // c:5265 — `state->pc--;`
     if isset(XTRACE) {
         printprompt4();
-        eprint!("[[");
-        // c:5212 — `tracingcond++;` not modeled in zshrs.
+        eprint!("[["); // `fprintf(xtrerr, "[[");`
+        crate::ported::cond::tracingcond.fetch_add(1, Ordering::Relaxed); // `tracingcond++;`
     }
-    cmdpush(CS_COND as u8); // c:5214
-                            // c:5215 — `stat = evalcond(state, NULL);` — NOT PORTED:
-                            // the wordcode evalcond (Src/cond.c:70) has no Rust
-                            // counterpart; cond.rs::evalcond is the argv-form
-                            // driver. `stat` is therefore always 0 here.
-    let stat: i32 = 0;
-    // c:5219-5221 — `if (stat == 2) errflag |= ERRFLAG_ERROR;`
+    cmdpush(CS_COND as u8);
+    let stat: i32 = crate::ported::cond::wordcode::evalcond(state, None); // `stat = evalcond(state, NULL);`
+                                                                          // 2 indicates a syntax error.  For compatibility, turn this into a shell error.
     if stat == 2 {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
     }
-    cmdpop(); // c:5222
+    cmdpop();
     if isset(XTRACE) {
-        eprintln!(" ]]");
+        eprintln!(" ]]"); // `fprintf(xtrerr, " ]]\n");`
+        crate::ported::cond::tracingcond.fetch_sub(1, Ordering::Relaxed); // `tracingcond--;`
     }
-    stat // c:5230 — `return stat;`
+    stat // `return stat;`
 }
 
 /// Port of `execarith()` from `Src/exec.c:5235` — C decl `execarith(Estate state, UNUSED(int do_exec))`.
@@ -10342,16 +10338,16 @@ pub fn execpline2(
 ///     FS_SOURCE re-entry (init.rs::source) and FS_EVAL re-entry
 ///     (builtin.rs eval).
 ///   * `errbrk_saved` / `prev_errflag` / `prev_breaks` (jobs.c:128
-///     globals) are only *read* here; their setter lives in the
-///     not-yet-ported jobs.c reaping path, so they stay 0 and the
-///     `if (errbrk_saved)` restore (c:1998-2003) is a faithful no-op.
+///     globals) are the jobs.rs statics; `update_job` sets them and the
+///     `if (errbrk_saved)` restore (c:1998-2003) reads them here.
 pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> i32 {
     use crate::ported::builtin::{BREAKS, LOOPS, RETFLAG};
     use crate::ported::init::zleentry;
     use crate::ported::jobs::stat as jst;
     use crate::ported::jobs::{
         addproc, clearoldjobtab, deletejob, hasprocs, initjob, makerunning, pipecleanfilelist,
-        printjob, spawnjob, waitjobs, CURJOB, LASTVAL2, PREVJOB,
+        printjob, spawnjob, waitjobs, CURJOB, ERRBRK_SAVED, LASTVAL2, PREVJOB, PREV_BREAKS,
+        PREV_ERRFLAG,
     };
     use crate::ported::modules::clone::{coprocin, coprocout};
     use crate::ported::signals::killjb;
@@ -10372,11 +10368,8 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
     // the addproc bgtime for the re-forked super-job leader (c:1841).
     static LIST_PIPE_START: std::sync::Mutex<Option<std::time::Instant>> =
         std::sync::Mutex::new(None);
-    // c:128 (jobs.c) — `int prev_errflag, prev_breaks, errbrk_saved;`. The
-    // setter is in the not-yet-ported reaping path, so these stay 0 here.
-    static ERRBRK_SAVED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-    static PREV_ERRFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-    static PREV_BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    // c:128 (jobs.c) — `int prev_errflag, prev_breaks, errbrk_saved;` are the
+    // jobs.rs statics `update_job` sets (c:598-600).
 
     let jt = JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     // Read/write the shared thisjob slot.

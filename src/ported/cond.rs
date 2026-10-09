@@ -10,14 +10,13 @@
 //! `cond_str` (c:525), `cond_val` (c:539), `cond_match` (c:552),
 //! `tracemodcond` (c:563) are direct ports with C-named signatures.
 //!
-//! NOT C-faithful: the C `evalcond()` at cond.c:70 walks pre-compiled
-//! wordcode bytecode (`Estate state`, opcodes via `WC_COND_TYPE`,
-//! operand strings via `ecgetstr`). The argv-driven Rust entry point
-//! here parses + evaluates inline because the wordcode + Estate
-//! plumbing isn't fully wired through this call site yet. When that
-//! lands, this file becomes a thin wrapper around the wordcode
-//! walker that mirrors cond.c:70 line-by-line. (The earlier `CondExpr`
-//! / `CondParser` intermediate scaffold types have been deleted.)
+//! The C `evalcond()` at cond.c:70 walks pre-compiled wordcode (`Estate state`,
+//! opcodes via `WC_COND_TYPE`, operand strings via `ecgetstr`). That walker is
+//! `cond::wordcode::evalcond`, called from `execcond` (exec.rs) for `WC_COND`
+//! programs. The top-level `evalcond` here is the argv-driven form used by
+//! `test` / `[` and the `[[ ]]` fusevm bridge, which parses and evaluates the
+//! operand stream inline. (The earlier `CondExpr` / `CondParser` scaffold types
+//! have been deleted.)
 
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
@@ -29,8 +28,10 @@ use crate::ported::lex::untokenize;
 use crate::ported::math::mathevali;
 use crate::ported::options::{optlookup, optlookupc};
 use crate::ported::params::setaparam;
-use crate::ported::subst::singsub;
-use crate::ported::utils::{has_token, privasserted, unmeta, zwarn, zwarnnam};
+use crate::ported::glob::{checkglobqual, zglob};
+use crate::ported::linklist::hlinklist2array;
+use crate::ported::subst::{prefork, singsub};
+use crate::ported::utils::{has_token, privasserted, sepjoin, unmeta, zwarn, zwarnnam};
 use crate::ported::zsh_h::{
     isset, unset, CASEGLOB, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT,
     COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
@@ -57,6 +58,451 @@ use std::os::unix::io::FromRawFd;
 // the C signature `int evalcond(Estate, char *fromtest)` and walk
 // `WC_COND_*` opcodes directly. Until then, the streaming evaluator
 // here gives equivalent runtime behaviour without an AST type.
+
+/// Port of `int tracingcond` from `Src/cond.c:33` — "updated by
+/// execcond() in exec.c": non-zero while `set -x` is tracing a `[[ ]]`.
+#[allow(non_upper_case_globals)]
+pub static tracingcond: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:33
+
+/// Port of `static char *condstr[COND_MOD]` from `Src/cond.c:35-38`.
+#[allow(non_upper_case_globals)]
+const condstr: [&str; 18] = [
+    "!", "&&", "||", "=", "==", "!=", "<", ">", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-gt",
+    "-le", "-ge", "=~",
+]; // c:35
+
+/// Port of `cond_subst(char **strp, int glob_ok)` from `Src/cond.c:41`.
+/// Substitute (and, when `glob_ok` and the word ends in a glob
+/// qualifier, glob) one `[[ ]]` operand in place.
+pub fn cond_subst(strp: &mut String, glob_ok: i32) {
+    // c:41
+    let chars: Vec<char> = strp.chars().collect();
+    let mut sp: Option<usize> = None;
+    if glob_ok != 0 && checkglobqual(&chars, chars.len() as i32, 1, &mut sp) != 0 {
+        // c:43-44
+        let mut args = crate::ported::subst::LinkList::default();
+        args.push_back(strp.clone());
+        let mut ret_flags = 0i32;
+        prefork(&mut args, 0, &mut ret_flags);
+        let mut v: Vec<String> = hlinklist2array(&args);
+        while crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) == 0
+            && !v.is_empty()
+            && has_token(&v[0])
+        {
+            // c:48-50
+            zglob(&mut v, 0, 0);
+        }
+        *strp = sepjoin(&v, None);
+    } else {
+        *strp = singsub(strp);
+    }
+}
+
+/// The `Estate`/wordcode form of `evalcond` (`Src/cond.c:70`). The argv-form
+/// driver used by `test` / `[` already owns the name `evalcond` at this
+/// module's top level, so the wordcode walker lives in its own module under
+/// the same C name.
+pub mod wordcode {
+    use super::{cond_subst, condstr, doaccess, dolstat, dostat, getstat, optison, tracemodcond, tracingcond};
+    use crate::ported::exec::quote_tokenized_output;
+    use crate::ported::lex::untokenize;
+    use crate::ported::math::{mathevali, matheval};
+    use crate::ported::module::{ensurefeature, getconddef, MODULESTAB};
+    use crate::ported::params::issetvar;
+    use crate::ported::parse::{ecgetarr, ecgetstr, ecrawstr};
+    use crate::ported::pattern::{patcompile, pattry};
+    use crate::ported::signals_h::{queue_signals, unqueue_signals};
+    use crate::ported::string::dupstring;
+    use crate::ported::subst::singsub;
+    use crate::ported::utils::{privasserted, quotedzputs, zerr, zerrnam, zstrtol, zwarn, zwarnnam};
+    use crate::ported::zsh_h::{
+        conddef, estate, isset, mnumber, IS_DASH, WC_COND_SKIP, WC_COND_TYPE, COND_AND, COND_EF,
+        COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_MOD, COND_MODI, COND_NE, COND_NOT,
+        COND_NT, COND_OR, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT,
+        COND_STRNEQ, EC_DUP, EC_DUPTOK, EC_NODUP, MN_FLOAT, MN_INTEGER, PAT_STATIC, REMATCHPCRE,
+    };
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::atomic::Ordering;
+
+    /// Port of `evalcond(Estate state, char *fromtest)` from
+    /// `Src/cond.c:70`. Walks the `WC_COND` wordcode tree at `state.pc`.
+    /// `fromtest` is `Some(name)` when called from `test` / `[`.
+    ///
+    /// Return status is the final shell status, i.e. 0 for true, 1 for
+    /// false, 2 for syntax error, 3 for "option in tested in -o does not
+    /// exist".
+    pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
+        // c:70
+        // zwarnnam(fromtest, ...) with fromtest == NULL prints no command name.
+        let warnnam = |msg: &str| match fromtest {
+            Some(n) => zwarnnam(n, msg),
+            None => zwarn(msg),
+        };
+        // rec: (c:77)
+        loop {
+            let mut overridename: Option<String> = None;
+            let pcode = state.pc;
+            state.pc += 1;
+            let code = state.prog.prog[pcode];
+            let mut ctype = WC_COND_TYPE(code) as i32;
+            let mut htok: i32 = 0;
+
+            match ctype {
+                COND_NOT => {
+                    // c:86
+                    if tracingcond.load(Ordering::Relaxed) != 0 {
+                        eprint!(" {}", condstr[ctype as usize]);
+                    }
+                    let ret = evalcond(state, fromtest);
+                    if ret == 0 || ret == 1 {
+                        return (ret == 0) as i32;
+                    }
+                    return ret;
+                }
+                COND_AND => {
+                    // c:94
+                    let ret = evalcond(state, fromtest);
+                    if ret == 0 {
+                        if tracingcond.load(Ordering::Relaxed) != 0 {
+                            eprint!(" {}", condstr[ctype as usize]);
+                        }
+                        continue;
+                    }
+                    state.pc = pcode + (WC_COND_SKIP(code) as usize + 1);
+                    return ret;
+                }
+                COND_OR => {
+                    // c:103
+                    let ret = evalcond(state, fromtest);
+                    if ret == 1 || ret == 3 {
+                        if tracingcond.load(Ordering::Relaxed) != 0 {
+                            eprint!(" {}", condstr[ctype as usize]);
+                        }
+                        continue;
+                    }
+                    state.pc = pcode + (WC_COND_SKIP(code) as usize + 1);
+                    return ret;
+                }
+                _ => {}
+            }
+
+            if ctype == COND_REGEX {
+                // c:113
+                let modname = if isset(REMATCHPCRE) {
+                    "zsh/pcre"
+                } else {
+                    "zsh/regex"
+                };
+                let on = format!("-{}-match", &modname[4..]);
+                if let Ok(mut tab) = MODULESTAB.try_lock() {
+                    let _ = ensurefeature(&mut tab, modname, "C:", Some(&on[1..]));
+                }
+                overridename = Some(on);
+                ctype = COND_MODI;
+            }
+            if ctype == COND_MOD || ctype == COND_MODI {
+                // c:121-194
+                let mut l = WC_COND_SKIP(code) as usize;
+                let mut name: String = match overridename.clone() {
+                    Some(n) => n,
+                    None => ecgetstr(state, EC_NODUP, None),
+                };
+                let mut strs: Vec<String>;
+                if ctype == COND_MOD {
+                    strs = ecgetarr(state, l, EC_DUP, None);
+                } else {
+                    let s0 = ecgetstr(state, EC_NODUP, None);
+                    let s1 = ecgetstr(state, EC_NODUP, None);
+                    strs = vec![s0, s1];
+                    l = 2;
+                }
+                let errname: String = if name.chars().next().map_or(false, IS_DASH) {
+                    untokenize(&name)
+                } else if strs
+                    .first()
+                    .and_then(|s| s.chars().next())
+                    .map_or(false, IS_DASH)
+                {
+                    untokenize(&strs[0])
+                } else {
+                    "<null>".to_string()
+                };
+                // getconddef() may load a module, which re-enters MODULESTAB;
+                // the lock is released before any handler runs.
+                let lookup = |inf: i32, nm: &str| -> Option<conddef> {
+                    match MODULESTAB.try_lock() {
+                        Ok(mut tab) => getconddef(inf, nm, 1, &mut tab),
+                        Err(_) => None,
+                    }
+                };
+                if name.chars().next().map_or(false, IS_DASH) {
+                    let rest: String = name.chars().skip(1).collect(); // name + 1
+                    if let Some(cd) = lookup((ctype == COND_MODI) as i32, &rest) {
+                                                if ctype == COND_MOD
+                            && ((l as i64) < cd.min as i64
+                                || (cd.max >= 0 && (l as i64) > cd.max as i64))
+                        {
+                            warnnam(&format!("unknown condition: {}", name));
+                            return 2;
+                        }
+                        if tracingcond.load(Ordering::Relaxed) != 0 {
+                            tracemodcond(&name, &strs, ctype == COND_MODI);
+                        }
+                        let r = cd.handler.map_or(0, |h| h(&strs, cd.condid));
+                        return (r == 0) as i32;
+                    }
+                }
+
+                let s: Option<String> = strs.first().cloned();
+                if let Some(ov) = overridename {
+                    // standard regex function not available: hard error.
+                    let msg = format!("{} not available for regex", ov);
+                    match fromtest {
+                        Some(n) => zerrnam(n, &msg),
+                        None => zerr(&msg),
+                    }
+                    return 2;
+                }
+                if !strs.is_empty() {
+                    strs[0] = dupstring(&name);
+                }
+                let first_dash = s.as_deref().and_then(|x| x.chars().next());
+                if let Some(c0) = first_dash {
+                    if IS_DASH(c0) {
+
+                        name = s.clone().unwrap_or_default();
+                        let rest: String = name.chars().skip(1).collect();
+                        if let Some(cd) = lookup(0, &rest) {
+                            if (l as i64) < cd.min as i64
+                                || (cd.max >= 0 && (l as i64) > cd.max as i64)
+                            {
+                                warnnam(&format!("unknown condition: {}", errname));
+                                return 2;
+                            }
+                            if tracingcond.load(Ordering::Relaxed) != 0 {
+                                tracemodcond(&name, &strs, ctype == COND_MODI);
+                            }
+                            let r = cd.handler.map_or(0, |h| h(&strs, cd.condid));
+                            return (r == 0) as i32;
+                        }
+                    }
+                }
+                warnnam(&format!("unknown condition: {}", errname));
+                return 2;
+            }
+
+            // c:196
+            let mut left = ecgetstr(state, EC_DUPTOK, Some(&mut htok));
+            if htok != 0 {
+                cond_subst(&mut left, fromtest.is_none() as i32);
+                left = untokenize(&left);
+            }
+            let mut right = String::new();
+            if ctype <= COND_GE && ctype != COND_STREQ && ctype != COND_STRDEQ && ctype != COND_STRNEQ
+            {
+
+                right = ecgetstr(state, EC_DUPTOK, Some(&mut htok));
+                if htok != 0 {
+                    cond_subst(&mut right, fromtest.is_none() as i32);
+                    right = untokenize(&right);
+                }
+            }
+            if tracingcond.load(Ordering::Relaxed) != 0 {
+                // c:209
+                if ctype < COND_MOD {
+                    eprint!(" {} {} ", quotedzputs(&left), condstr[ctype as usize]);
+                    if ctype == COND_STREQ || ctype == COND_STRDEQ || ctype == COND_STRNEQ {
+                        let mut rt = ecrawstr(&state.prog, state.pc, None);
+                        cond_subst(&mut rt, fromtest.is_none() as i32);
+                        let _ = quote_tokenized_output(&rt, &mut std::io::stderr());
+                    } else {
+                        eprint!("{}", quotedzputs(&right));
+                    }
+                } else {
+                    eprint!(" -{} {}", ctype as u8 as char, quotedzputs(&left));
+                }
+            }
+
+            if ctype >= COND_EQ && ctype <= COND_GE {
+                // c:228
+                let mut mn1: mnumber;
+                let mut mn2: mnumber;
+                if fromtest.is_some() {
+
+                    let (l1, eptr) = zstrtol(&left, 10);
+                    let mut err: &str = &left;
+                    let mut l2: i64 = 0;
+                    let mut bad = !eptr.is_empty();
+                    if !bad {
+                        let (v2, e2) = zstrtol(&right, 10);
+                        l2 = v2;
+                        err = &right;
+                        bad = !e2.is_empty();
+                    }
+                    if bad {
+
+                        warnnam(&format!("integer expression expected: {}", err));
+                        return 2;
+                    }
+                    mn1 = mnumber { l: l1, d: 0.0, type_: MN_INTEGER };
+                    mn2 = mnumber { l: l2, d: 0.0, type_: MN_INTEGER };
+                } else {
+                    let zero = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
+                    mn1 = matheval(&left).unwrap_or(zero);
+                    mn2 = matheval(&right).unwrap_or(zero);
+                }
+                if ((mn1.type_ | mn2.type_) & (MN_INTEGER | MN_FLOAT)) == (MN_INTEGER | MN_FLOAT) {
+
+                    if mn1.type_ & MN_INTEGER != 0 {
+                        mn1.type_ = MN_FLOAT;
+                        mn1.d = mn1.l as f64;
+                    }
+                    if mn2.type_ & MN_INTEGER != 0 {
+                        mn2.type_ = MN_FLOAT;
+                        mn2.d = mn2.l as f64;
+                    }
+                }
+                let fl = mn1.type_ & MN_FLOAT != 0;
+                let t = match ctype {
+                    COND_EQ => {
+                        if fl { mn1.d == mn2.d } else { mn1.l == mn2.l }
+                    }
+                    COND_NE => {
+                        if fl { mn1.d != mn2.d } else { mn1.l != mn2.l }
+                    }
+                    COND_LT => {
+                        if fl { mn1.d < mn2.d } else { mn1.l < mn2.l }
+                    }
+                    COND_GT => {
+                        if fl { mn1.d > mn2.d } else { mn1.l > mn2.l }
+                    }
+                    COND_LE => {
+                        if fl { mn1.d <= mn2.d } else { mn1.l <= mn2.l }
+                    }
+                    _ => {
+                        if fl { mn1.d >= mn2.d } else { mn1.l >= mn2.l } // COND_GE
+                    }
+                };
+                return (!t) as i32;
+            }
+
+            // `!x` over a C truth value: 0 when true, 1 when false.
+            let nz = |t: bool| -> i32 { (!t) as i32 };
+            let fmt = libc::S_IFMT as u32;
+            return match ctype {
+                COND_STREQ | COND_STRDEQ | COND_STRNEQ => {
+                    // c:293-327
+                    queue_signals();
+                    // c:302-318 — every pattern slot is a dummy_patprog here (the Rust
+                    // `pats` slots hold no compiled pattern), so take the dummy-pattern
+                    // compile path: substitute the raw pattern, then compile it.
+                    let opat = ecrawstr(&state.prog, state.pc, Some(&mut htok));
+                    right = dupstring(&opat);
+                    right = singsub(&right);
+                    let pprog = patcompile(&right, PAT_STATIC, None);
+                    let ret = match pprog {
+                        None => {
+                            warnnam(&format!("bad pattern: {}", right));
+                            unqueue_signals();
+                            return 2;
+                        }
+                        Some(p) => {
+                            state.pc += 2;
+                            let test = pattry(&p, &left);
+                            let test = if ctype == COND_STRNEQ { !test } else { test };
+                            nz(test)
+                        }
+                    };
+                    unqueue_signals();
+                    ret
+                }
+                // c:328
+                COND_STRLT => nz(left.as_bytes() < right.as_bytes()),
+                // c:330
+                COND_STRGTR => nz(left.as_bytes() > right.as_bytes()),
+                // c:332-428 — the single-letter and file-comparison cases
+                _ => match ctype as u8 as char {
+                    'e' | 'a' => nz(doaccess(&left, libc::F_OK) != 0),
+                    'b' => nz((dostat(&left) & fmt) == libc::S_IFBLK as u32),
+                    'c' => nz((dostat(&left) & fmt) == libc::S_IFCHR as u32),
+                    'd' => nz((dostat(&left) & fmt) == libc::S_IFDIR as u32),
+                    'f' => nz((dostat(&left) & fmt) == libc::S_IFREG as u32),
+                    'g' => nz((dostat(&left) & (libc::S_ISGID as u32)) != 0),
+                    'k' => nz((dostat(&left) & (libc::S_ISVTX as u32)) != 0),
+                    'n' => nz(!left.is_empty()),
+                    'o' => optison(fromtest, &left),
+                    'p' => nz((dostat(&left) & fmt) == libc::S_IFIFO as u32),
+                    'r' => nz(doaccess(&left, libc::R_OK) != 0),
+                    's' => nz(getstat(&left).map_or(false, |m| m.size() != 0)),
+                    'S' => nz((dostat(&left) & fmt) == libc::S_IFSOCK as u32),
+                    'u' => nz((dostat(&left) & (libc::S_ISUID as u32)) != 0),
+                    'v' => nz(issetvar(&left) != 0),
+                    'w' => nz(doaccess(&left, libc::W_OK) != 0),
+                    'x' => {
+                        // c:365
+                        if privasserted() {
+                            let mode = dostat(&left);
+                            nz(((mode & 0o111) != 0) || ((mode & fmt) == libc::S_IFDIR as u32))
+                        } else {
+                            nz(doaccess(&left, libc::X_OK) != 0)
+                        }
+                    }
+                    'z' => (!left.is_empty()) as i32,
+                    'h' | 'L' => nz((dolstat(&left) & fmt) == libc::S_IFLNK as u32),
+                    'O' => nz(getstat(&left).map_or(false, |m| m.uid() == unsafe { libc::geteuid() })),
+                    'G' => nz(getstat(&left).map_or(false, |m| m.gid() == unsafe { libc::getegid() })),
+                    'N' => match getstat(&left) {
+                        // c:380
+                        None => 1,
+                        Some(m) => {
+                            if m.atime() == m.mtime() {
+                                (m.atime_nsec() > m.mtime_nsec()) as i32
+                            } else {
+                                (m.atime() > m.mtime()) as i32
+                            }
+                        }
+                    },
+                    't' => nz(unsafe { libc::isatty(mathevali(&left).unwrap_or(0) as i32) } != 0),
+                    _ if ctype == COND_NT || ctype == COND_OT => {
+                        // c:400
+                        let (a, nsecs) = match getstat(&left) {
+                            None => return 1,
+                            Some(m) => (m.mtime(), m.mtime_nsec()),
+                        };
+                        let m2 = match getstat(&right) {
+                            None => return 1,
+                            Some(m) => m,
+                        };
+                        if a == m2.mtime() {
+                            // c:419
+                            nz(if ctype == COND_NT {
+                                nsecs > m2.mtime_nsec()
+                            } else {
+                                nsecs < m2.mtime_nsec()
+                            })
+                        } else {
+                            nz(if ctype == COND_NT { a > m2.mtime() } else { a < m2.mtime() })
+                        }
+                    }
+                    _ if ctype == COND_EF => {
+                        // c:426
+                        let (d, i) = match getstat(&left) {
+                            None => return 1,
+                            Some(m) => (m.dev(), m.ino()),
+                        };
+                        match getstat(&right) {
+                            None => 1,
+                            Some(m) => nz(d == m.dev() && i == m.ino()),
+                        }
+                    }
+                    _ => {                        warnnam("bad cond code");
+                        2
+                    }
+                },
+            };
+        }
+    }
+}
 
 /// Argv-form `[[ … ]]` / `test … ]` driver. C signature differs:
 /// `int evalcond(Estate state, char *fromtest)` at cond.c:70 walks
@@ -962,6 +1408,8 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
 /// option is enabled and a third-party module supplies a cond.
 pub fn tracemodcond(name: &str, args: &[String], inf: bool) {
     // c:563
+    // c:566-570 — `args = arrdup(args); for (aptr = args; *aptr; aptr++) untokenize(*aptr);`
+    let args: Vec<String> = args.iter().map(|a| untokenize(a)).collect();
     let stderr = std::io::stderr();
     let mut out = stderr.lock();
     if inf {
@@ -2305,5 +2753,182 @@ mod tests {
         let _ = cond_match(&args, 0, "");
         args.shrink_to_fit();
         assert_eq!(args, before, "args must remain unchanged");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Wordcode form of evalcond (Src/cond.c:70) — hand-assembled WC_COND
+    // programs in the layout par_cond_* emits (parse.c:2422-2723).
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Append one string operand as `ecstr` would: empty -> 6, up to three
+    /// bytes inline (bit 1), otherwise an offset into the string pool.
+    fn wc_str(code: &mut Vec<u32>, pool: &mut String, s: &str) {
+        let b = s.as_bytes();
+        if b.is_empty() {
+            code.push(6);
+        } else if b.len() <= 3 {
+            let g = |i: usize| *b.get(i).unwrap_or(&0) as u32;
+            code.push(2 | (g(0) << 3) | (g(1) << 11) | (g(2) << 19));
+        } else {
+            code.push((pool.len() as u32) << 2);
+            pool.push_str(s);
+            pool.push('\0');
+        }
+    }
+
+    /// Wrap an assembled program in the `estate` `execcond` would hand over.
+    fn wc_state(code: Vec<u32>, pool: String) -> crate::ported::zsh_h::estate {
+        let p = crate::ported::zsh_h::eprog {
+            flags: 0,
+            len: code.len() as i32,
+            npats: 0,
+            nref: 0,
+            pats: Vec::new(),
+            prog: code,
+            strs: Some(pool.clone()),
+            shf: None,
+            dump: None,
+            strs_metafied: false,
+        };
+        crate::ported::zsh_h::estate {
+            prog: Box::new(p),
+            pc: 0,
+            strs: Some(pool),
+            strs_offset: 0,
+        }
+    }
+
+    /// Unary `-X arg` node: `WCB_COND(X, 0)` then the operand.
+    fn wc_unary(op: char, arg: &str) -> (Vec<u32>, String) {
+        let (mut code, mut pool) = (vec![crate::ported::zsh_h::WCB_COND(op as u32, 0)], String::new());
+        wc_str(&mut code, &mut pool, arg);
+        (code, pool)
+    }
+
+    /// Binary node: `WCB_COND(ty, 0)`, both operands, plus the pattern slot
+    /// word the string-compare types carry (parse.c:2664-2681).
+    fn wc_binary(ty: i32, l: &str, r: &str) -> (Vec<u32>, String) {
+        let (mut code, mut pool) = (vec![crate::ported::zsh_h::WCB_COND(ty as u32, 0)], String::new());
+        wc_str(&mut code, &mut pool, l);
+        wc_str(&mut code, &mut pool, r);
+        if ty == COND_STREQ || ty == COND_STRDEQ || ty == COND_STRNEQ {
+            code.push(0);
+        }
+        (code, pool)
+    }
+
+    /// Run one program through the wordcode evalcond; returns (status, pc, len).
+    fn wc_run(code: Vec<u32>, pool: String, fromtest: Option<&str>) -> (i32, usize, usize) {
+        let len = code.len();
+        let mut st = wc_state(code, pool);
+        let r = wordcode::evalcond(&mut st, fromtest);
+        (r, st.pc, len)
+    }
+
+    /// Concatenate `head` and sub-programs; operands here are all inline
+    /// strings, so the string pools stay empty and need no rebasing.
+    fn wc_join(head: u32, parts: &[(Vec<u32>, String)]) -> (Vec<u32>, String) {
+        let mut code = vec![head];
+        for (c, p) in parts {
+            assert!(p.is_empty(), "wc_join only handles inline operands");
+            code.extend_from_slice(c);
+        }
+        (code, String::new())
+    }
+
+    #[test]
+    fn wordcode_unary_string_tests() {
+        let _g = crate::test_util::global_state_lock();
+        let (c, p) = wc_unary('n', "abc");
+        let (r, pc, len) = wc_run(c, p, None);
+        assert_eq!((r, pc), (0, len), "-n abc: true, operand consumed");
+        let (c, p) = wc_unary('z', "abc");
+        assert_eq!(wc_run(c, p, None).0, 1, "-z abc: false");
+        let (c, p) = wc_unary('z', "");
+        assert_eq!(wc_run(c, p, None).0, 0, "-z '': true");
+        let (c, p) = wc_unary('n', "");
+        assert_eq!(wc_run(c, p, None).0, 1, "-n '': false");
+    }
+
+    #[test]
+    fn wordcode_file_tests_use_stat_and_access() {
+        let _g = crate::test_util::global_state_lock();
+        let (c, p) = wc_unary('d', "/");
+        assert_eq!(wc_run(c, p, None).0, 0, "-d /");
+        let (c, p) = wc_unary('f', "/");
+        assert_eq!(wc_run(c, p, None).0, 1, "-f /");
+        let (c, p) = wc_unary('e', "/nonexistent/zshrs/probe");
+        assert_eq!(wc_run(c, p, None).0, 1, "-e missing");
+        let (c, p) = wc_binary(COND_EF, "/", "/");
+        assert_eq!(wc_run(c, p, None).0, 0, "/ -ef /");
+        let (c, p) = wc_binary(COND_NT, "/", "/");
+        assert_eq!(wc_run(c, p, None).0, 1, "/ -nt / is false (equal mtimes)");
+        let (c, p) = wc_binary(COND_NT, "/nonexistent/zshrs/probe", "/");
+        assert_eq!(wc_run(c, p, None).0, 1, "missing left operand -> 1");
+    }
+
+    #[test]
+    fn wordcode_string_equality_consumes_pattern_slot() {
+        let _g = crate::test_util::global_state_lock();
+        let (c, p) = wc_binary(COND_STREQ, "abcd", "abcd");
+        let (r, pc, len) = wc_run(c, p, None);
+        assert_eq!((r, pc), (0, len), "c:325 `state->pc += 2` leaves pc at program end");
+        let (c, p) = wc_binary(COND_STRDEQ, "abc", "abd");
+        assert_eq!(wc_run(c, p, None).0, 1, "abc == abd");
+        let (c, p) = wc_binary(COND_STRNEQ, "abc", "abd");
+        assert_eq!(wc_run(c, p, None).0, 0, "abc != abd");
+    }
+
+    #[test]
+    fn wordcode_numeric_compare_math_vs_fromtest() {
+        let _g = crate::test_util::global_state_lock();
+        let (c, p) = wc_binary(COND_LT, "1", "2");
+        assert_eq!(wc_run(c, p, None).0, 0, "1 -lt 2");
+        let (c, p) = wc_binary(COND_EQ, "2", "10");
+        assert_eq!(wc_run(c, p, None).0, 1, "2 -eq 10 compares numbers, not strings");
+        let (c, p) = wc_binary(COND_EQ, "1+2", "3");
+        assert_eq!(wc_run(c, p, None).0, 0, "[[ ]] evaluates operands as math (c:257)");
+        let (c, p) = wc_binary(COND_LT, "1.5", "2");
+        assert_eq!(wc_run(c, p, None).0, 0, "mixed float/int promotes to float (c:261)");
+        let (c, p) = wc_binary(COND_EQ, "1+2", "3");
+        assert_eq!(wc_run(c, p, Some("test")).0, 2, "test/[ require base-10 integers (c:232)");
+    }
+
+    #[test]
+    fn wordcode_not_and_or_short_circuit_and_skip() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::{WCB_COND, COND_AND, COND_MOD, COND_NOT, COND_OR};
+        let t = || wc_unary('n', "x");
+        let f = || wc_unary('z', "x");
+        // NOT
+        let (code, pool) = wc_join(WCB_COND(COND_NOT as u32, 0), &[f()]);
+        assert_eq!(wc_run(code, pool, None).0, 0, "! false");
+        // AND: skip = words after the AND word (parse.c:2447).
+        for (l, r, want) in [(t(), t(), 0), (t(), f(), 1), (f(), t(), 1), (f(), f(), 1)] {
+            let skip = (l.0.len() + r.0.len()) as u32;
+            let (code, pool) = wc_join(WCB_COND(COND_AND as u32, skip), &[l, r]);
+            let (res, pc, len) = wc_run(code, pool, None);
+            assert_eq!(res, want, "AND result");
+            assert_eq!(pc, len, "short-circuit must still land pc past the AND node (c:100)");
+        }
+        // OR
+        for (l, r, want) in [(t(), t(), 0), (t(), f(), 0), (f(), t(), 0), (f(), f(), 1)] {
+            let skip = (l.0.len() + r.0.len()) as u32;
+            let (code, pool) = wc_join(WCB_COND(COND_OR as u32, skip), &[l, r]);
+            let (res, pc, len) = wc_run(code, pool, None);
+            assert_eq!(res, want, "OR result");
+            assert_eq!(pc, len, "short-circuit must still land pc past the OR node (c:110)");
+        }
+    }
+
+    #[test]
+    fn wordcode_unknown_condition_is_status_2() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::{WCB_COND, COND_AND, COND_MOD, COND_NOT, COND_OR};
+        // COND_MOD with one operand and an operator no module defines.
+        let (mut code, mut pool) = (vec![WCB_COND(COND_MOD as u32, 1)], String::new());
+        wc_str(&mut code, &mut pool, "-zq");
+        wc_str(&mut code, &mut pool, "arg");
+        assert_eq!(wc_run(code, pool, None).0, 2, "c:190-194");
     }
 }

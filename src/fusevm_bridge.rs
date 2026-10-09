@@ -1973,8 +1973,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         // c:Src/jobs.c:1748 waitonejob — canonical single-command
         // pipestats update via the no-procs else-branch.
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         return status;
     }
     // c:Src/builtin.c:587 + Src/exec.c:3056 — a builtin disabled via
@@ -2006,8 +2005,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     if disabled {
         let status = with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         return status;
     }
     // c:Src/Modules/files.c:806-814 — `mkdir`, `rm`, `mv`, `ln`, `chmod`,
@@ -2030,8 +2028,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         let status =
             with_executor(|exec| exec.execute_external(path_name, &args, &[])).unwrap_or(127);
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         return status;
     }
     // c:Src/exec.c:3997 `int q = queue_signal_level();`
@@ -2119,8 +2116,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     crate::ported::signals_h::restore_queue_signals(q); // c:4243
                                                         // c:Src/jobs.c:1748 waitonejob — canonical single-command pipestats update.
     crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-    let mut synth = crate::ported::zsh_h::job::default();
-    crate::ported::jobs::waitonejob(&mut synth);
+    crate::ported::jobs::waitonejob(-1);
     // c:Src/exec.c:4367-4386 — done: tail. A PSPECIAL builtin that
     // raised errflag under POSIX_BUILTINS exits the non-interactive
     // shell with status 1 ("hard error in POSIX" — e.g. bin_dot's
@@ -5442,8 +5438,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // specific: `false|true; x=(1 2); echo $pipestatus` → `0` in
         // zsh while `x=1` preserves `1 0`. Bug #373.
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         Value::Status(status)
     });
     // `arr+=(d e f)` — array append. Same calling conventions as SET_ARRAY.
@@ -5627,8 +5622,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `[lastval]` exactly like `arr=(...)` above. Bug #373.
         let status = if blocked { 1 } else { 0 };
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         Value::Status(status)
     });
     // `name[@]=(...)` / `name[*]=(...)` — whole-array SET with the assoc
@@ -12350,8 +12344,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // pipeline, i.e. exactly the case where C's job carries no
         // procs, so drive the canonical port with a procs-less job the
         // same way the single-command sites do.
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         Value::Status(0)
     });
 
@@ -13818,8 +13811,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .unwrap_or_else(|e| e.into_inner()) = pj;
         }
         let status = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         Value::Status(status)
     });
     // c:Src/exec.c:3386-3419 — `< file` / `> file` with no command
@@ -21545,12 +21537,11 @@ impl fusevm::ShellHost for ZshrsHost {
         // exec model routes external commands through host_exec_external
         // (which already waitpid'd in-line); the canonical waitonejob
         // expects a Job to derive lastval, but here we already know
-        // it. Synthesize a procs-less job so waitonejob's no-procs
-        // branch fires the `pipestats[0]=lastval; numpipestats=1;`
-        // update via the canonical port.
+        // it. A job index of -1 (no job-table entry) takes waitonejob's
+        // no-procs branch, which fires the `pipestats[0]=lastval;
+        // numpipestats=1;` update via the canonical port.
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-        let mut synth = crate::ported::zsh_h::job::default();
-        crate::ported::jobs::waitonejob(&mut synth);
+        crate::ported::jobs::waitonejob(-1);
         status
     }
 
@@ -23662,6 +23653,22 @@ pub(crate) fn donetrap_reset_impl() -> fusevm::Value {
         // statement prologue (c:Src/exec.c:1451-1455).
         for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
             crate::ported::signals::dotrap(libc::SIGCHLD);
+        }
+        // c:Src/jobs.c:658-678 — the trapped SIGINT/SIGQUIT pseudo-delivery
+        // update_job parked in PSEUDO_SIG_TRAP_PENDING (a trap body cannot
+        // run under the JOBTAB guard update_job holds).
+        let pseudo = crate::ported::jobs::PSEUDO_SIG_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst);
+        if pseudo != 0 {
+            crate::ported::signals::dotrap(pseudo); // c:663
+            if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                crate::ported::builtin::BREAKS.store(
+                    crate::ported::builtin::LOOPS.load(std::sync::atomic::Ordering::Relaxed),
+                    std::sync::atomic::Ordering::Relaxed,
+                ); // c:671-672
+            }
+            if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
+                crate::ported::jobs::check_cursh_sig(&tab.lock().unwrap_or_else(|e| e.into_inner()), pseudo); // c:677
+            }
         }
         // c:Src/exec.c:1455 — `donetrap = 0;` at sublist start.
         // Reset before each top-level statement so the next

@@ -639,8 +639,10 @@ pub fn check_cursh_sig(jobtab: &[job], sig: i32) {
 ///
 /// Returns `(pipestats, pipefail)` — the decoded array and the
 /// last non-zero entry (0 if all succeeded).
-/// WARNING: param names don't match C — Rust=(job) vs C=(jn, inforeground, fixlastval)
-pub fn storepipestats(job: &job) -> (Vec<i32>, i32) {
+/// With `inforeground` the statuses are published as `pipestats[]` /
+/// `numpipestats` (c:439-444); with `fixlastval` `lastval` takes the
+/// PIPEFAIL status (c:446-457).
+pub fn storepipestats(job: &job, inforeground: i32, fixlastval: i32) -> (Vec<i32>, i32) {
     let mut stats = Vec::with_capacity(job.procs.len().min(MAX_PIPESTATS));
     let mut pipefail = 0;
     for p in job.procs.iter().take(MAX_PIPESTATS) {
@@ -663,125 +665,401 @@ pub fn storepipestats(job: &job) -> (Vec<i32>, i32) {
             pipefail = entry;
         }
     }
+    if inforeground != 0 {
+        // c:439-444 — memcpy(pipestats, jpipestats, ..); numpipestats = i;
+        let mut n = stats.len();
+        let mut ps = PIPESTATS
+            .get_or_init(|| Mutex::new([0; MAX_PIPESTATS]))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        ps[..n].copy_from_slice(&stats);
+        if (job.stat & stat::CURSH) != 0 && n < MAX_PIPESTATS {
+            ps[n] = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+            n += 1;
+        }
+        drop(ps);
+        *NUMPIPESTATS
+            .get_or_init(|| Mutex::new(0))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = n;
+    }
+    if fixlastval != 0 {
+        // c:446-457
+        let lastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+        if (job.stat & stat::CURSH) != 0 {
+            if lastval == 0 && isset(crate::ported::zsh_h::PIPEFAIL) {
+                if inforeground != 0 {
+                    crate::ported::exec::this_noerrexit.store(0, Ordering::Relaxed);
+                }
+                crate::ported::builtin::LASTVAL.store(pipefail, Ordering::Relaxed);
+            }
+        } else if isset(crate::ported::zsh_h::PIPEFAIL) {
+            if inforeground != 0 {
+                crate::ported::exec::this_noerrexit.store(0, Ordering::Relaxed);
+            }
+            crate::ported::builtin::LASTVAL.store(pipefail, Ordering::Relaxed);
+        }
+    }
     (stats, pipefail)
 }
 
 // Update status of job, possibly printing it                               // c:460
-/// Update job status after process change (from jobs.c update_job)
-/// Returns true if the job is now done or stopped (status committed),
-/// false if any proc is still running (no update needed).
-pub fn update_job(job: &mut job) -> bool {
-    // c:460
-    // c:467-474 — `for (pn = jn->auxprocs; pn; pn = pn->next) {
+/// Port of `update_job(Job jn)` from `Src/jobs.c:463-683`.
+///
+/// `jobtab` is the global job table, already locked by the caller (the
+/// SIGCHLD path via `update_bg_job`, `bin_wait`); `jn` is C's
+/// `jn - jobtab`, the job's index in it. Because the caller holds the
+/// JOBTAB guard, nothing here re-locks JOBTAB or runs a trap body: the
+/// `dotrap(SIGCHLD)` (c:651-652) is counted in `CHLD_TRAP_PENDING` by
+/// `update_bg_job`, and the trapped-SIGINT/SIGQUIT `dotrap` (c:658-663) in
+/// `PSEUDO_SIG_TRAP_PENDING`, for the main thread to run once the table is
+/// unlocked.
+///
+/// Returns false when a process is still running (c:473 / c:483 early
+/// returns, nothing updated), true otherwise.
+pub fn update_job(jobtab: &mut [job], jn: usize) -> bool {
+    // c:463
+    let mut val: i32 = 0; // c:466
+    let mut status: i32 = 0;
+    let mut somestopped = false; // c:467
+    let mut inforeground: i32 = 0;
+    let mut signalled = false;
+
+    // c:470-476 — `for (pn = jn->auxprocs; pn; pn = pn->next) {
     //                 if (WIFCONTINUED(pn->status)) pn->status = SP_RUNNING;
     //                 if (pn->status == SP_RUNNING) return; }`
-    for proc in job.auxprocs.iter_mut() {
-        #[cfg(unix)]
-        if proc.status > 0
-            && !libc::WIFEXITED(proc.status)
-            && !libc::WIFSIGNALED(proc.status)
-            && !libc::WIFSTOPPED(proc.status)
+    for pn in jobtab[jn].auxprocs.iter_mut() {
+        if pn.status > 0
+            && !libc::WIFEXITED(pn.status)
+            && !libc::WIFSIGNALED(pn.status)
+            && !libc::WIFSTOPPED(pn.status)
         {
-            // WIFCONTINUED not exposed as a libc::W* fn on every target;
-            // it's the "neither exited nor signaled nor stopped" case
-            // that means SIGCONT was just delivered. Mark SP_RUNNING.
-            proc.status = SP_RUNNING;
+            // WIFCONTINUED: not exposed as a libc::W* fn on every target;
+            // it's the "neither exited nor signaled nor stopped" case.
+            pn.status = SP_RUNNING;
         }
-        if proc.is_running() {
-            return false;
+        if pn.is_running() {
+            return false; // c:476
         }
     }
 
-    // c:476-498 — walk main procs, look for SP_RUNNING (bail), track
-    //              somestopped, capture last-proc status (signal/stop/exit),
-    //              set the signalled flag.
-    let mut some_stopped = false;
-    let mut signalled = false;
-    let mut val: i32 = 0;
-    let proc_count = job.procs.len();
-    for (i, proc) in job.procs.iter_mut().enumerate() {
-        #[cfg(unix)]
-        if proc.status > 0
-            && !libc::WIFEXITED(proc.status)
-            && !libc::WIFSIGNALED(proc.status)
-            && !libc::WIFSTOPPED(proc.status)
-        {
-            // WIFCONTINUED main path: clear STAT_STOPPED + SP_RUNNING.
-            job.stat &= !stat::STOPPED;
-            proc.status = SP_RUNNING;
-        }
-        if proc.is_running() {
-            return false;
-        }
-        if proc.is_stopped() {
-            some_stopped = true;
-        }
-        // c:487-495 — last proc determines exit val.
-        if i + 1 == proc_count {
-            #[cfg(unix)]
+    // c:479-501 — walk the main procs.
+    {
+        let j = &mut jobtab[jn];
+        let gleader = j.gleader;
+        let nprocs = j.procs.len();
+        for (i, pn) in j.procs.iter_mut().enumerate() {
+            if pn.status > 0
+                && !libc::WIFEXITED(pn.status)
+                && !libc::WIFSIGNALED(pn.status)
+                && !libc::WIFSTOPPED(pn.status)
             {
-                if libc::WIFSIGNALED(proc.status) {
-                    val = 0o200 | libc::WTERMSIG(proc.status);
-                    signalled = true;
-                } else if libc::WIFSTOPPED(proc.status) {
-                    val = 0o200 | libc::WSTOPSIG(proc.status);
+                // WIFCONTINUED
+                j.stat &= !stat::STOPPED; // c:482
+                pn.status = SP_RUNNING; // c:483
+            }
+            if pn.is_running() {
+                return false; // c:487
+            }
+            if libc::WIFSTOPPED(pn.status) {
+                somestopped = true; // c:489
+            }
+            if i + 1 == nprocs {
+                // c:490-498 — last job in pipeline determines exit status.
+                val = if libc::WIFSIGNALED(pn.status) {
+                    0o200 | libc::WTERMSIG(pn.status)
+                } else if libc::WIFSTOPPED(pn.status) {
+                    0o200 | libc::WSTOPSIG(pn.status)
                 } else {
-                    val = libc::WEXITSTATUS(proc.status);
+                    libc::WEXITSTATUS(pn.status)
+                };
+                signalled = libc::WIFSIGNALED(pn.status); // c:498
+            }
+            if pn.pid == gleader {
+                status = pn.status; // c:500-502
+            }
+        }
+    }
+
+    let job_no = jn as i32; // c:503 `job = jn - jobtab;`
+    let thisjob = *THISJOB
+        .get_or_init(|| Mutex::new(-1))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mypgrp = crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed);
+
+    if somestopped {
+        // c:506-509
+        if jobtab[jn].stty_in_env != 0 && jobtab[jn].ty.is_none() {
+            if let Some(tio) = crate::ported::utils::gettyinfo() {
+                let mut winsize: libc::winsize = unsafe { std::mem::zeroed() };
+                unsafe {
+                    libc::ioctl(
+                        crate::ported::init::SHTTY.load(Ordering::Relaxed),
+                        libc::TIOCGWINSZ,
+                        &mut winsize,
+                    );
+                }
+                jobtab[jn].ty = Some(Box::new(crate::ported::zsh_h::ttyinfo { tio, winsize }));
+            }
+        }
+        if (jobtab[jn].stat & stat::SUBJOB) != 0 {
+            // c:510-546 — if we have `cat foo|while read a; grep $a bar;done'
+            // and have hit ^Z, the sub-job is stopped, but the super-job may
+            // still be running, so we have to send it a SIGTSTP.
+            jobtab[jn].stat |= stat::CHANGED | stat::STOPPED; // c:517
+            if let Some(i) = super_job(jobtab, jn) {
+                // c:518
+                unsafe { libc::killpg(jobtab[i].gleader, libc::SIGTSTP) }; // c:520
+                // c:521-527 — mark the superjob stopped immediately so it
+                // (and the subjob) get a SIGCONT when needed.
+                jobtab[i].stat |= stat::CHANGED | stat::STOPPED; // c:528
+                if (jobtab[i].stat & stat::DONE) == 0 {
+                    // c:529
+                    let mut cj = CURJOB
+                        .get_or_init(|| Mutex::new(-1))
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let mut pj = PREVJOB
+                        .get_or_init(|| Mutex::new(-1))
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    *pj = *cj; // c:530
+                    *cj = i as i32; // c:531
+                }
+                if isset(crate::ported::zsh_h::NOTIFY)
+                    && (jobtab[i].stat & stat::LOCKED) != 0
+                    && (jobtab[i].stat & stat::NOPRINT) == 0
+                {
+                    // c:532-543 — print the user-visible superjob's state.
+                    if crate::exec_jobs::printjob_async(jobtab, i, thisjob)
+                        && zleactive.load(Ordering::Relaxed) != 0
+                    {
+                        crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH);
+                    }
+                    crate::exec_jobs::printjob_delete_tail(jobtab, i);
                 }
             }
-            #[cfg(not(unix))]
-            {
-                val = proc.status;
+            return true; // c:545
+        }
+        if (jobtab[jn].stat & stat::STOPPED) != 0 {
+            return true; // c:549
+        }
+    }
+    {
+        // c:551-562 — job is done or stopped, remember return value.
+        LASTVAL2.store(val, Ordering::SeqCst);
+        // If last process was run in the current shell, keep old status and
+        // let it handle its own traps, but always allow the test for the pgrp.
+        if (jobtab[jn].stat & stat::CURSH) != 0 {
+            inforeground = 1;
+        } else if job_no == thisjob {
+            crate::ported::builtin::LASTVAL.store(val, Ordering::Relaxed);
+            inforeground = 2;
+        }
+    }
+
+    // c:564-568 — `if (shout && shout != stderr && !ttyfrozen && ...)
+    //               gettyinfo(&shttyinfo);` (init.rs: 0 is NULL, 3 is stderr)
+    let shout_v = *crate::ported::init::shout
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let ttyfrozen_v = *TTYFROZEN
+        .get_or_init(|| Mutex::new(0))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if shout_v != 0
+        && shout_v != 3
+        && ttyfrozen_v == 0
+        && jobtab[jn].stty_in_env == 0
+        && zleactive.load(Ordering::Relaxed) == 0
+        && job_no == thisjob
+        && !somestopped
+        && (jobtab[jn].stat & stat::NOSTTY) == 0
+    {
+        if let Some(tio) = crate::ported::utils::gettyinfo() {
+            *crate::ported::utils::SHTTYINFO
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(tio);
+        }
+    }
+
+    if isset(MONITOR) {
+        // c:570
+        let pgrp = crate::ported::utils::gettygrp(); // c:571 get process group of tty
+        let deadpgrp = mypgrp != pgrp
+            && inforeground != 0
+            && pgrp > 1
+            && unsafe { libc::kill(-pgrp, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH); // c:572-573
+
+        // c:575 — is this job in the foreground of an interactive shell?
+        if mypgrp != pgrp
+            && inforeground != 0
+            && ((jobtab[jn].gleader == pgrp && signalled) || deadpgrp)
+        {
+            if crate::ported::exec::list_pipe.load(Ordering::Relaxed) != 0 {
+                // c:578
+                if somestopped || deadpgrp {
+                    crate::ported::utils::attachtty(mypgrp); // c:580
+                    crate::ported::utils::adjustwinsize(0); // c:582
+                } else {
+                    // c:583-590 — right in the middle of shell jobs on the
+                    // righthand side of a pipeline: attachtty() is called when
+                    // the job is finally deleted.
+                    jobtab[jn].stat |= stat::ATTACH; // c:591
+                }
+                // c:592-593 — `foo|while true; (( x++ )); done` and ^C: stop
+                // the loop, too.
+                if signalled
+                    && inforeground == 1
+                    && ((val & !0o200) == libc::SIGINT || (val & !0o200) == libc::SIGQUIT)
+                {
+                    if ERRBRK_SAVED.load(Ordering::Relaxed) == 0 {
+                        ERRBRK_SAVED.store(1, Ordering::Relaxed); // c:598
+                        PREV_BREAKS.store(
+                            crate::ported::builtin::BREAKS.load(Ordering::Relaxed),
+                            Ordering::Relaxed,
+                        ); // c:599
+                        PREV_ERRFLAG.store(
+                            crate::ported::utils::errflag.load(Ordering::Relaxed),
+                            Ordering::Relaxed,
+                        ); // c:600
+                    }
+                    crate::ported::builtin::BREAKS.store(
+                        crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    ); // c:602
+                    crate::ported::utils::errflag
+                        .fetch_or(crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed); // c:603
+                    crate::ported::input::inerrflush(); // c:604
+                }
+            } else {
+                crate::ported::utils::attachtty(mypgrp); // c:607
+                crate::ported::utils::adjustwinsize(0); // c:609
+            }
+        }
+    } else if crate::ported::exec::list_pipe.load(Ordering::Relaxed) != 0
+        && signalled
+        && inforeground == 1
+        && ((val & !0o200) == libc::SIGINT || (val & !0o200) == libc::SIGQUIT)
+    {
+        // c:612-622
+        if ERRBRK_SAVED.load(Ordering::Relaxed) == 0 {
+            ERRBRK_SAVED.store(1, Ordering::Relaxed);
+            PREV_BREAKS.store(
+                crate::ported::builtin::BREAKS.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            PREV_ERRFLAG.store(
+                crate::ported::utils::errflag.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+        }
+        crate::ported::builtin::BREAKS.store(
+            crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        crate::ported::utils::errflag
+            .fetch_or(crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed);
+        crate::ported::input::inerrflush();
+    }
+    if somestopped && (jobtab[jn].stat & stat::SUPERJOB) != 0 {
+        return true; // c:624
+    }
+    jobtab[jn].stat |= if somestopped {
+        stat::CHANGED | stat::STOPPED
+    } else {
+        stat::CHANGED | stat::DONE
+    }; // c:625-626
+    if (jobtab[jn].stat & (stat::DONE | stat::STOPPED)) != 0 {
+        // c:628-633 — may be redundant with printjob(), but inforeground is
+        // true here for STAT_CURSH jobs even when job != thisjob. If lastval
+        // were reset here it would break printjob().
+        storepipestats(&jobtab[jn], inforeground, 0);
+    }
+    if inforeground == 0
+        && (jobtab[jn].stat & (stat::SUBJOB | stat::DONE)) == (stat::SUBJOB | stat::DONE)
+    {
+        // c:636-640
+        if let Some(su) = super_job(jobtab, jn) {
+            handle_sub(jobtab, su, false);
+        }
+    }
+    if (jobtab[jn].stat & (stat::DONE | stat::STOPPED)) == stat::STOPPED {
+        // c:641-644
+        let mut cj = CURJOB
+            .get_or_init(|| Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut pj = PREVJOB
+            .get_or_init(|| Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *pj = *cj; // c:643
+        *cj = job_no; // c:644
+    }
+    if (isset(crate::ported::zsh_h::NOTIFY) || job_no == thisjob)
+        && (jobtab[jn].stat & stat::LOCKED) != 0
+    {
+        // c:645-652 — `a & job started earlier in the SAME list is left in
+        // the table until STAT_LOCKED` (docs/BUGS.md #1094).
+        if crate::exec_jobs::printjob_async(jobtab, jn, thisjob)
+            && zleactive.load(Ordering::Relaxed) != 0
+        {
+            crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH);
+        }
+        crate::exec_jobs::printjob_delete_tail(jobtab, jn); // c:Src/jobs.c:1350-1363
+    }
+
+    // c:654-678 — When MONITOR is set, the foreground process runs in a
+    // different process group from the shell, so the shell will not receive
+    // terminal signals, therefore we pretend that the shell got the signal too.
+    if inforeground == 2 && isset(MONITOR) && libc::WIFSIGNALED(status) {
+        let sig = libc::WTERMSIG(status); // c:659
+        if sig == libc::SIGINT || sig == libc::SIGQUIT {
+            let trapped = crate::ported::signals::sigtrapped
+                .lock()
+                .ok()
+                .and_then(|t| t.get(sig as usize).copied())
+                .unwrap_or(0);
+            if trapped != 0 {
+                // c:663-673 — dotrap(sig) and the errflag/breaks fixup run
+                // from PSEUDO_SIG_TRAP_PENDING's drain: a trap body cannot
+                // run under the JOBTAB guard the caller holds. check_cursh_sig
+                // follows the trap there too (c:677).
+                PSEUDO_SIG_TRAP_PENDING.store(sig, Ordering::SeqCst);
+            } else {
+                crate::ported::builtin::BREAKS.store(
+                    crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                ); // c:674
+                crate::ported::utils::errflag
+                    .fetch_or(crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed); // c:675
+                check_cursh_sig(jobtab, sig); // c:677
             }
         }
     }
-
-    // c:502-543 — somestopped: mark STAT_CHANGED|STOPPED; cascade SIGTSTP
-    //              to the super-job if this is a subjob (c:507-540).
-    if some_stopped {
-        if (job.stat & stat::SUBJOB) != 0 {
-            job.stat |= stat::CHANGED | stat::STOPPED; // c:514
-                                                       // c:515-538 — find the super-job; killpg(super.gleader, SIGTSTP);
-                                                       //              mark super CHANGED|STOPPED. Without a job-index-
-                                                       //              from-job reverse lookup wired here (we'd need
-                                                       //              the JOBTAB position, but Rust callers usually
-                                                       //              hold the &mut job by &mut [job][i]).
-                                                       // NOT PORTED: update_job() receives a bare `&mut job`, so
-                                                       // the super_job() lookup and the killpg(SIGTSTP) hop are
-                                                       // not performed.
-            return true;
-        }
-        if (job.stat & stat::STOPPED) != 0 {
-            return true; // c:541-542
-        }
-        job.stat |= stat::STOPPED;
-        job.stat &= !stat::DONE;
-        job.stat |= stat::CHANGED;
-        return true;
-    }
-
-    // c:544-556 — job is fully done. Set DONE, write lastval2/lastval.
-    job.stat |= stat::DONE | stat::CHANGED;
-    job.stat &= !stat::STOPPED;
-    // c:545 — lastval2 = val;
-    LASTVAL2.store(val, Ordering::SeqCst);
-
-    // c:550-555 — `if (jn->stat & STAT_CURSH) inforeground = 1;
-    //               else if (job == thisjob) { lastval = val; inforeground = 2; }`
-    //              Drives the c:565 "deadpgrp" path and the MONITOR foreground
-    //              cascade. NOT PORTED: the c:557-620 MONITOR block (tty
-    //              pgrp attach, errbrk_saved) and the c:660-690 SIGINT/SIGQUIT
-    //              pseudo-delivery; update_job() has no jobtab index or thisjob.
-    let _inforeground: i32 = if (job.stat & stat::CURSH) != 0 {
-        1
-    } else {
-        // We don't know `thisjob == job_idx` from `&mut job` alone;
-        // the caller (wait-loop) knows the index and handles lastval.
-        0
-    };
-    let _ = signalled;
     true
 }
+
+/// `errbrk_saved`, `prev_breaks`, `prev_errflag` — `Src/jobs.c:128`.
+/// Set by `update_job` (c:598-600) when a SIGINT/SIGQUIT-killed job in a
+/// list pipe forces `breaks = loops`; `execpline` restores them
+/// (`Src/exec.c:1998-2003`).
+pub static ERRBRK_SAVED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static PREV_ERRFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static PREV_BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// !!! WARNING: RUST-ONLY STATIC — C RUNS THE TRAP INLINE !!!
+/// c:665-675 — the trapped-SIGINT/SIGQUIT arm of update_job's pseudo-delivery
+/// runs `dotrap(sig)`. update_job runs under the JOBTAB guard, and a trap body
+/// can take that lock, so the signal number is parked here (0 = none) and the
+/// main thread, with the table unlocked, runs `dotrap`,
+/// `if (errflag) breaks = loops;` and `check_cursh_sig(sig)` from the same
+/// drain points as `CHLD_TRAP_PENDING`.
+pub static PSEUDO_SIG_TRAP_PENDING: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// c:Src/jobs.c:651-652 — `if (sigtrapped[SIGCHLD] && job != thisjob)
 /// dotrap(SIGCHLD);` at the end of update_job.
@@ -833,51 +1111,14 @@ pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
                 addbgstatus(pid, 0o200 | libc::WTERMSIG(status)); // c:697
             }
         }
-        update_job(&mut jn[ji]);
-        // c:Src/jobs.c:550-555 — `if (jn->stat & STAT_CURSH) inforeground = 1;
-        // else if (job == thisjob) { lastval = val; … }`. update_job cannot
-        // see the index, so the half that needs it runs here, where `ji` and
-        // `thisjob` are both in hand; `val` is what it just stored in
-        // lastval2 (c:545). Without it a foreground job reaped by the SIGCHLD
-        // handler, which then deletes the done job (printjob_delete_tail
-        // below), left its status nowhere: `cmd=/bin/false; $cmd; echo $?`
-        // printed 0 on Linux in a few runs per hundred.
-        if (jn[ji].stat & stat::DONE) != 0
-            && (jn[ji].stat & stat::CURSH) == 0
-            && ji as i32 == thisjob
-        {
-            crate::ported::builtin::LASTVAL.store(LASTVAL2.load(Ordering::SeqCst), Ordering::Relaxed);
-        }
+        // c:Src/jobs.c:463-683 — update_job owns the lastval store, the
+        // `[N]  done` report and the done-job delete for the job at `ji`.
+        update_job(jn, ji);
         // c:Src/jobs.c:651-652 — `if (sigtrapped[SIGCHLD] && job != thisjob)
         // dotrap(SIGCHLD);` — owed once the table is unlocked; see
         // CHLD_TRAP_PENDING.
         if ji as i32 != thisjob {
             CHLD_TRAP_PENDING.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
-        // c:Src/jobs.c:639-643 — update_job's report tail:
-        //     if ((isset(NOTIFY) || job == thisjob) && (jn->stat & STAT_LOCKED)) {
-        //         if (printjob(jn, !!isset(LONGLISTJOBS), 0) && zleactive)
-        //             zleentry(ZLE_CMD_REFRESH);
-        //     }
-        // The ported `update_job` is a pure state transition (the Rust purity
-        // refactor split printjob's side effects out), so the tail lands here,
-        // where the table and the job index are both in hand.
-        //
-        // `STAT_LOCKED` is the whole point of the gate: a job is locked only
-        // once its command list has been submitted, so a `&` job started
-        // earlier in the SAME list is deliberately left in the table. That is
-        // what makes `/bin/echo bg & disown` rc=0 in zsh on every run — the
-        // job is still there for `disown` to find. Sweeping unconditionally
-        // (the old `scanjobs()` at the head of `bin_fg`) deleted it whenever
-        // the child happened to exit first: 4/100 against zsh's 0/100.
-        // docs/BUGS.md #1094.
-        let notify = crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY);
-        if (notify || ji as i32 == thisjob) && (jn[ji].stat & stat::LOCKED) != 0 {
-            // c:647 — `if (printjob(jn, !!isset(LONGLISTJOBS), 0) && zleactive)`
-            if crate::exec_jobs::printjob_async(jn, ji, thisjob) && zleactive.load(Ordering::Relaxed) != 0 {
-                crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH); // c:649
-            }
-            crate::exec_jobs::printjob_delete_tail(jn, ji); // c:1350-1363
         }
         return true;
     }
@@ -1882,122 +2123,221 @@ pub fn waitforpid(pid: i32) -> Option<i32> {
     }
 }
 
-/// Port of `zwaitjob(int job, int wait_cmd)` from `Src/jobs.c:1673`.
+/// Port of `zwaitjob(int job, int wait_cmd)` from `Src/jobs.c:1682-1758`.
+///
+/// `job` is the job's index in the global `JOBTAB`, as in C. The table is
+/// locked only around each access: the loop sleeps in `signal_suspend`, and
+/// the SIGCHLD handler (`signals.rs::zhandler` -> `update_bg_job`) takes the
+/// same lock to file the reaped status, so no guard is ever held across it
+/// (the deadlock class pinned by `sigchld_during_cmdsubst_option_restore_does_not_hang`).
 ///
 /// `wait_cmd` is the "from interactive `wait` builtin" flag. Threads
 /// through `queue_traps(wait_cmd)` so signal-trap firing is allowed
 /// inside the wait, and through `signal_suspend(SIGCHLD, wait_cmd)`
 /// so trapped non-CHLD signals can interrupt the suspend (returning
 /// `128 + last_signal` so the wait builtin propagates the interrupt).
-///
-/// Body uses the canonical SIGCHLD-driven async pattern: signal_suspend
-/// blocks until the SIGCHLD handler (signals.rs::zhandler) reaps via
-/// wait_for_processes + routes through update_bg_job, which sets
-/// STAT_DONE / STAT_STOPPED on the job. The loop checks job.stat
-/// after each wake. Mirrors `Src/jobs.c:1673-1750`.
-pub fn zwaitjob(job: &mut job, wait_cmd: i32) -> Option<i32> {
-    // c:1673
-    if job.procs.is_empty() && job.auxprocs.is_empty() {
-        // c:1736-1740 — `} else { deletejob(jn, 0); pipestats[0] =
-        // lastval; numpipestats = 1; }`. The previous body returned
-        // without the deletejob, so a fork-less job (the control job a
-        // subshell's clearjobtab grabs, c:1774) stayed in the table:
-        // `(wait %1; wait %1)` answered 0 twice where zsh answers 0
-        // then 127 "no such job". waitonejob's no-procs arm (c:1753-1755)
-        // is these same three statements, so it is reused here.
-        waitonejob(job);
-        return Some(0); // c:1747
+pub fn zwaitjob(job: usize, wait_cmd: i32) -> Option<i32> {
+    // c:1682
+    use crate::ported::utils::errflag;
+    use crate::ported::zsh_h::{ERRFLAG_ERROR, ZSIG_TRAPPED};
+    let table = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+
+    // c:1735-1740 — `} else { deletejob(jn, 0); pipestats[0] = lastval;
+    // numpipestats = 1; }`: waitonejob's no-procs arm is these same
+    // statements, so it is reused. A fork-less job (the control job a
+    // subshell's clearjobtab grabs, c:1774) is deleted, so
+    // `(wait %1; wait %1)` answers 0 then 127 "no such job".
+    let forked = table
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(job)
+        .map(|jn| !jn.procs.is_empty() || !jn.auxprocs.is_empty())
+        .unwrap_or(false);
+    if !forked {
+        waitonejob(job as i32);
+        return Some(0); // c:1757
     }
 
-    use crate::ported::utils::errflag;
-    use crate::ported::zsh_h::{ERRFLAG_ERROR, INTERACTIVE, STAT_DONE, STAT_STOPPED, ZSIG_TRAPPED};
-
-    // c:1675 — `int q = queue_signal_level();`
+    // c:1684 — `int q = queue_signal_level();`
     let q = crate::ported::signals_h::queue_signal_level();
-    // c:1678 — `child_block();`
+    // c:1686 — `child_block();`
     crate::ported::signals_h::child_block();
-    // c:1679 — `queue_traps(wait_cmd);`
+    // c:1687 — `queue_traps(wait_cmd);`
     crate::ported::signals::queue_traps(wait_cmd);
-    // c:1680 — `dont_queue_signals();`
+    // c:1688 — `dont_queue_signals();`
     crate::ported::signals_h::dont_queue_signals();
 
-    // c:1682 — `jn->stat |= STAT_LOCKED;`
-    job.stat |= crate::ported::zsh_h::STAT_LOCKED;
-    // c:1683-1684 — `if (jn->stat & STAT_CHANGED) printjob(jn, !!isset(LONGLISTJOBS), 1);`
-    // NOT PORTED: Rust printjob() needs the job's table index for the
-    // `[N]` column, and this fn receives a bare `&mut job` (waitonejob
-    // callers pass jobs that are not in JOBTAB), so there is no index.
-    // c:1685-1697 — pipecleanfilelist for proc-subst fds.
-    if !job.filelist.is_empty() {
-        crate::ported::jobs::pipecleanfilelist(job, false);
+    // c:1689-1690 — `if (jn->procs || jn->auxprocs) { jn->stat |= STAT_LOCKED;`
+    let changed = {
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        match tab.get_mut(job) {
+            Some(jn) => {
+                jn.stat |= stat::LOCKED;
+                (jn.stat & stat::CHANGED) != 0
+            }
+            None => false,
+        }
+    };
+    if changed {
+        // c:1691-1692 — `if (jn->stat & STAT_CHANGED)
+        //                    printjob(jn, !!isset(LONGLISTJOBS), 1);`
+        // (synch 1: Src/jobs.c:1147-1365). Table access stays under one
+        // guard; nothing in here re-enters JOBTAB except through the
+        // already-locked slice.
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        let thisjob = *THISJOB
+            .get_or_init(|| Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let cur = *CURJOB
+            .get_or_init(|| Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = *PREVJOB
+            .get_or_init(|| Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let is_thisjob = job as i32 == thisjob;
+        if let Some(jn) = tab.get(job) {
+            // c:1163-1164, c:1190-1221 — does any finished process force a report?
+            let skip_print = (jn.stat & stat::NOPRINT) != 0;
+            let mut sflag = false;
+            for pn in jn.procs.iter() {
+                if pn.status == SP_RUNNING {
+                    continue;
+                }
+                if libc::WIFSIGNALED(pn.status) {
+                    let sig = libc::WTERMSIG(pn.status);
+                    if sig != libc::SIGINT && sig != libc::SIGPIPE {
+                        sflag = true;
+                    }
+                } else if !libc::WIFSTOPPED(pn.status)
+                    && isset(crate::ported::zsh_h::PRINTEXITVALUE)
+                    && isset(crate::ported::zsh_h::SHINSTDIN)
+                    && libc::WEXITSTATUS(pn.status) != 0
+                {
+                    sflag = true;
+                }
+            }
+            // c:1248-1250 — `synch == 2 || ((interact || synch) && jobbing &&
+            //                 ((jn->stat & STAT_STOPPED) || sflag || job != thisjob))`
+            if !skip_print
+                && crate::ported::zsh_h::jobbing()
+                && ((jn.stat & stat::STOPPED) != 0 || sflag || !is_thisjob)
+            {
+                let s = printjob(
+                    jn,
+                    job,
+                    i32::from(isset(LONGLISTJOBS)),
+                    (cur >= 0).then_some(cur as usize),
+                    (prev >= 0).then_some(prev as usize),
+                    is_thisjob, // c:1255 — `thisfmt = job == thisjob && synch != 2`
+                );
+                let tty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+                let fd = if tty >= 0 { tty } else { libc::STDERR_FILENO };
+                let _ = crate::ported::utils::write_loop(fd, format!("{}\n", s).as_bytes());
+            }
+        }
+        // c:1350-1365 — delete job if done.
+        if tab.get(job).is_some_and(|jn| (jn.stat & stat::DONE) != 0) {
+            storepipestats(&tab[job], i32::from(is_thisjob), i32::from(is_thisjob)); // c:1352
+            crate::exec_jobs::printjob_delete_tail(&mut tab, job); // c:1356-1362
+        } else if let Some(jn) = tab.get_mut(job) {
+            jn.stat &= !stat::CHANGED; // c:1364
+        }
+    }
+    {
+        // c:1693-1704 — the main shell is finished with any file descriptors
+        // used for process substitution associated with this job: close them
+        // to indicate to listeners there's no more input.
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(jn) = tab.get_mut(job) {
+            if !jn.filelist.is_empty() {
+                pipecleanfilelist(jn, false); // c:1704
+            }
+        }
     }
 
-    // c:1698-1735 — main wait loop.
+    // c:1706-1710 — main wait loop.
     let interact = isset(INTERACTIVE);
     loop {
-        // c:1698 — `while (!(errflag & ERRFLAG_ERROR) && jn->stat &&
+        let jstat = table
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(job)
+            .map(|jn| jn.stat)
+            .unwrap_or(0);
+        // c:1706 — `while (!(errflag & ERRFLAG_ERROR) && jn->stat &&
         //            !(jn->stat & STAT_DONE) &&
         //            !(interact && (jn->stat & STAT_STOPPED)))`
-        if (errflag.load(std::sync::atomic::Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
-            break;
-        }
-        if job.stat == 0 {
-            break;
-        }
-        if (job.stat & STAT_DONE) != 0 {
-            break;
-        }
-        if interact && (job.stat & STAT_STOPPED) != 0 {
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0
+            || jstat == 0
+            || (jstat & stat::DONE) != 0
+            || (interact && (jstat & stat::STOPPED) != 0)
+        {
             break;
         }
 
-        // c:1701 — `signal_suspend(SIGCHLD, wait_cmd);` — block until
-        // SIGCHLD; handler routes through update_bg_job which sets
-        // STAT_DONE/STOPPED on `job`.
+        // c:1711 — `signal_suspend(SIGCHLD, wait_cmd);` — block until
+        // SIGCHLD; the handler routes through update_bg_job which sets
+        // STAT_DONE/STOPPED on the job.
         let _ = crate::ported::signals::signal_suspend(libc::SIGCHLD, wait_cmd != 0);
 
-        // c:1702-1708 — `if (last_signal != SIGCHLD && wait_cmd &&
-        //                  last_signal >= 0 && sigtrapped[ls] & ZSIG_TRAPPED)
-        //                  { return 128 + last_signal; }`
-        let ls = crate::ported::signals::last_signal.load(std::sync::atomic::Ordering::Relaxed);
+        // The SIGINT/SIGQUIT trap update_job parked while it held the table
+        // (c:663-673); run it now that JOBTAB is unlocked.
+        let pseudo = PSEUDO_SIG_TRAP_PENDING.swap(0, Ordering::SeqCst);
+        if pseudo != 0 {
+            crate::ported::signals::dotrap(pseudo); // c:663
+            if errflag.load(Ordering::Relaxed) != 0 {
+                crate::ported::builtin::BREAKS.store(
+                    crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                ); // c:671-672
+            }
+            check_cursh_sig(&table.lock().unwrap_or_else(|e| e.into_inner()), pseudo); // c:677
+        }
+
+        // c:1712-1717 — `if (last_signal != SIGCHLD && wait_cmd &&
+        //                  last_signal >= 0 && (sigtrapped[last_signal] & ZSIG_TRAPPED))
+        //                  { restore_queue_signals(q); return 128 + last_signal; }`
+        let ls = crate::ported::signals::last_signal.load(Ordering::Relaxed);
         if ls != libc::SIGCHLD && wait_cmd != 0 && ls >= 0 {
             let trapped_flag = {
                 let guard = crate::ported::signals::sigtrapped.lock().unwrap();
                 guard.get(ls as usize).copied().unwrap_or(0)
             };
             if (trapped_flag & ZSIG_TRAPPED) != 0 {
-                // c:1705-1707 — builtin wait interrupted by trapped signal.
+                // builtin wait interrupted by trapped signal
                 crate::ported::signals_h::restore_queue_signals(q);
                 crate::ported::signals::unqueue_traps();
                 crate::ported::signals_h::child_unblock();
-                return Some(128 + ls); // c:1707
+                return Some(128 + ls);
             }
         }
-        // c:1729-1730 — `if (subsh) killjb(jn, SIGCONT);` — keep stopped
-        // grandchildren running when we ourselves are a subshell.
-        if crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            // killjb wants &mut [job]; we have &mut job here. Inline the
-            // SIGCONT via killpg on the job's gleader if set.
-            if job.gleader != 0 {
-                unsafe {
-                    libc::killpg(job.gleader, libc::SIGCONT);
-                }
-            }
+        // c:1750-1751 — `if (subsh) killjb(jn, SIGCONT);` — keep stopped
+        // grandchildren running when we ourselves are a subshell. killjb
+        // locks JOBTAB itself.
+        if crate::ported::exec::subsh.load(Ordering::Relaxed) != 0 {
+            killjb(job, libc::SIGCONT);
         }
-        // c:1731-1733 — `if (jn->stat & STAT_SUPERJOB) if (handle_sub(jn - jobtab, 1)) break;`
-        // NOT PORTED: handle_sub() is keyed by jobtab index and this fn
-        // receives a bare `&mut job` with no index (see c:1683 above).
-        // Re-block before next suspend so SIGCHLD pump isn't lost.
-        crate::ported::signals_h::child_block();
+        // c:1752-1754 — `if (jn->stat & STAT_SUPERJOB)
+        //                    if (handle_sub(jn - jobtab, 1)) break;`
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        if tab.get(job).is_some_and(|jn| (jn.stat & stat::SUPERJOB) != 0)
+            && handle_sub(&mut tab, job, true) != 0
+        {
+            break;
+        }
+        drop(tab);
+        // Re-block before the next suspend so the SIGCHLD pump isn't lost.
+        crate::ported::signals_h::child_block(); // c:1755
     }
 
-    // c:1741-1744 — restore + return 0.
+    // c:1756-1758 — restore + return 0.
     crate::ported::signals_h::restore_queue_signals(q);
     crate::ported::signals::unqueue_traps();
     crate::ported::signals_h::child_unblock();
-    // last_status read for the legacy caller — derive from procs.
-    let last_status = job.procs.last().map(|p| p.exit_status()).unwrap_or(0);
-    Some(last_status) // c:1745
+    Some(0)
 }
 
 // wait for running job to finish                                           // c:1763
@@ -2940,64 +3280,87 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
     -1 // c:2145-2147
 }
 
-/// Port of `static int hackspace;` from `Src/jobs.c:2073` (zsh-5.9.1):
-/// length of the writable argv/envp span `jobs -Z` may overwrite.
+/// Port of `static char *hackzero;` from `Src/jobs.c:2162` (`#ifndef
+/// HAVE_SETPROCTITLE`): the start of the process's own argv strings, the
+/// safely writable space `jobs -Z` overwrites. Null when the platform
+/// offers no way to find it.
+#[allow(non_upper_case_globals)]
+pub static hackzero: std::sync::atomic::AtomicPtr<libc::c_char> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Port of `static int hackspace;` from `Src/jobs.c:2163`: the length of
+/// the writable argv span at `hackzero`, excluding a final NUL terminator
+/// that is always left.
 #[allow(non_upper_case_globals)]
 pub static hackspace: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Port of `init_jobs(char **argv, char **envp)` from `Src/jobs.c:2164`.
+/// Port of `init_jobs(char **argv, char **envp)` from `Src/jobs.c:2164-2214`.
 ///
 /// C body allocates the `jobtab[]` array sized to `MAXJOBS_ALLOC`,
-/// `memset`s to zero, and seeds the `setproctitle`/argv-rewriting
-/// state used by `jobs -Z`. Rust port pre-allocates the table to
-/// `MAXJOBS_ALLOC` empty `job` slots so `expandjobtab` doesn't
-/// need to grow until index 50+ is reached.
+/// `memset`s to zero, and (no `HAVE_SETPROCTITLE`, config_h.rs) finds how
+/// many argv strings are contiguous: `hackzero = *argv;
+/// p = strchr(hackzero, 0); while (*++argv) { q = *argv; if (q != p+1)
+/// goto done; p = strchr(q, 0); } done: hackspace = p - hackzero;`
+/// (the envp walk is compiled out where `putenv` exists).
 ///
-/// The `-Z` hackspace scan (c:2185-2210) is performed below and stored
-/// in `hackspace`; `bin_fg -Z` renames the process via prctl /
-/// pthread_setname_np instead of overwriting argv.
-/// C body (c:2168-2210): allocates the `jobtab[]` array sized to
-/// MAXJOBS_ALLOC entries via `zalloc`, zero-fills via `memset`,
-/// then (non-HAVE_SETPROCTITLE) walks argv + envp to compute the
-/// `hackspace` byte count for the `jobs -Z` rename trick.
-///
-/// ```c
-/// jobtab = (struct job *)zalloc(MAXJOBS_ALLOC*sizeof(struct job));
-/// if (!jobtab) { zerr(...); exit(1); }
-/// jobtabsize = MAXJOBS_ALLOC;
-/// memset(jobtab, 0, MAXJOBS_ALLOC*sizeof(struct job));
-/// /* -Z hackspace scan */
-/// hackzero = *argv;
-/// p = strchr(hackzero, 0);
-/// while (*++argv) { q = *argv; if (q != p+1) goto done;
-///                   p = strchr(q, 0); }
-/// for (; *envp; envp++) { ... }
-/// done: hackspace = p - hackzero;
-/// ```
+/// Rust cannot recover the process's real argv pointers from the `String`
+/// vectors, so the raw argv comes from the OS: macOS `_NSGetArgv`, which the
+/// C scan runs over unchanged; Linux `/proc/self/stat` `arg_start`/`arg_end`
+/// (fields 48/49), which delimit that same contiguous argv string block.
+/// The job table itself is the `JOBTAB` global, which starts empty here.
 pub fn init_jobs(argv: &[String], envp: &[String]) -> JobTable {
     // c:2164
+    let _ = (argv, envp);
     let table = JobTable::new(); // c:2164 zalloc
-                                 // c:2185-2210 — `-Z` hackspace scan: sum of the argv+envp
-                                 // string bytes, stored in `hackspace`. The bin_fg -Z arm
-                                 // renames via prctl / pthread_setname_np and does not
-                                 // consume it.
-    if !argv.is_empty() {
-        // c:2187 hackzero = *argv
-        let zero = argv[0].as_str();
-        let mut space = zero.len(); // c:2208 p - hackzero
-                                        // Walk argv tail then envp; each element must be contiguous
-                                        // (the C check is `q != p+1` after the previous's NUL).
-        for entry in argv.iter().skip(1).chain(envp.iter()) {
-            // c:2191/2197 walks
-            // Without raw argv pointers we can't verify contiguity from
-            // Rust's String wrappers — accumulate length conservatively.
-            space += 1 + entry.len(); // c:2207-style p+1
+
+    #[cfg(target_os = "macos")]
+    unsafe {
+        extern "C" {
+            fn _NSGetArgv() -> *mut *mut *mut libc::c_char;
         }
-        // c:2123 — `hackspace = p - hackzero;` stores into the file-static
-        // (c:2073), NOT the environment: an env entry was inherited by
-        // every external command the shell ran.
-        hackspace.store(space, std::sync::atomic::Ordering::Relaxed);
+        let mut av = *_NSGetArgv(); // c:2187 argv
+        if !av.is_null() && !(*av).is_null() {
+            let zero = *av;
+            hackzero.store(zero, std::sync::atomic::Ordering::Relaxed); // c:2187 hackzero = *argv;
+            let mut p = zero.add(libc::strlen(zero)); // c:2188 p = strchr(hackzero, 0);
+            av = av.add(1);
+            while !(*av).is_null() {
+                // c:2189 while(*++argv)
+                let q = *av; // c:2190
+                if q != p.add(1) {
+                    break; // c:2191-2192 goto done
+                }
+                p = q.add(libc::strlen(q)); // c:2193
+                av = av.add(1);
+            }
+            hackspace.store(
+                p.offset_from(zero) as usize, // c:2208 hackspace = p - hackzero;
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
     }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Fields after the parenthesised comm start at field 3 (state), so
+        // arg_start / arg_end (fields 48 / 49) are indices 45 / 46 there.
+        if let Ok(stat_line) = std::fs::read_to_string("/proc/self/stat") {
+            if let Some(rest) = stat_line.rfind(')').map(|i| &stat_line[i + 1..]) {
+                let fields: Vec<&str> = rest.split_whitespace().collect();
+                let arg_start = fields.get(45).and_then(|f| f.parse::<usize>().ok());
+                let arg_end = fields.get(46).and_then(|f| f.parse::<usize>().ok());
+                if let (Some(start), Some(end)) = (arg_start, arg_end) {
+                    if start != 0 && end > start {
+                        hackzero.store(start as *mut libc::c_char, std::sync::atomic::Ordering::Relaxed);
+                        // The block ends in the last string's NUL, which is
+                        // always left (c:2160-2161).
+                        hackspace.store(end - start - 1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    }
+
     table // c:2210 done
 }
 
@@ -3151,34 +3514,27 @@ pub fn bin_fg(
         }
         queue_signals(); // c:2433
         let title = &argv[0];
-        // c:2436 — `setproctitle("%s", *argv);` if available.
-        // c:2438-2444 — fallback: memcpy into hackzero (the argv[0]
-        // buffer reserved by the loader). Not portable from Rust,
-        // so the prctl path covers Linux directly.
+        // c:2436-2444 — no HAVE_SETPROCTITLE (config_h.rs): overwrite the
+        // argv strings init_jobs located, so `ps` shows the new title.
+        //     if(len > hackspace) len = hackspace;
+        //     memcpy(hackzero, *argv, len);
+        //     memset(hackzero + len, 0, hackspace - len);
+        let hz = hackzero.load(Ordering::Relaxed);
+        if !hz.is_null() {
+            let hs = hackspace.load(Ordering::Relaxed);
+            let bytes = title.as_bytes();
+            let len = bytes.len().min(hs);
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), hz as *mut u8, len); // c:2443
+                std::ptr::write_bytes((hz as *mut u8).add(len), 0, hs - len); // c:2444
+            }
+        }
+        // c:2446-2452 — HAVE_PRCTL: change /proc/$$/comm, which is used when
+        // checking with "ps -e".
         #[cfg(target_os = "linux")]
         unsafe {
             let cs = std::ffi::CString::new(title.as_str()).unwrap_or_default();
-            // PR_SET_NAME = 15; libc may not expose it — pass the
-            // raw constant per `linux/prctl.h`.
-            libc::prctl(
-                15, /*PR_SET_NAME*/
-                cs.as_ptr() as libc::c_ulong,
-                0,
-                0,
-                0,
-            ); // c:2447
-        }
-        #[cfg(target_os = "macos")]
-        unsafe {
-            extern "C" {
-                fn pthread_setname_np(name: *const libc::c_char) -> libc::c_int;
-            }
-            let cs = std::ffi::CString::new(title.as_str()).unwrap_or_default();
-            pthread_setname_np(cs.as_ptr());
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            let _ = title;
+            libc::prctl(libc::PR_SET_NAME, cs.as_ptr() as libc::c_ulong, 0, 0, 0); // c:2451
         }
         unqueue_signals(); // c:2449
         return 0; // c:2450
@@ -3270,6 +3626,19 @@ pub fn bin_fg(
     // child that is not `thisjob`, run now that JOBTAB is unlocked.
     for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
         crate::ported::signals::dotrap(libc::SIGCHLD);
+    }
+    // c:Src/jobs.c:658-678 — the trapped SIGINT/SIGQUIT pseudo-delivery
+    // update_job parked in PSEUDO_SIG_TRAP_PENDING.
+    let pseudo = PSEUDO_SIG_TRAP_PENDING.swap(0, Ordering::SeqCst);
+    if pseudo != 0 {
+        crate::ported::signals::dotrap(pseudo); // c:663
+        if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+            crate::ported::builtin::BREAKS.store(
+                crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            ); // c:671-672
+        }
+        check_cursh_sig(&table.lock().expect("jobtab poisoned"), pseudo); // c:677
     }
 
     // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();`. (The routing
@@ -3746,11 +4115,11 @@ pub fn bin_fg(
             // false) never suspends: zwaitjob takes its `else` arm and
             // deletes the entry, so call it directly under the lock.
             {
-                let mut tab = table.lock().expect("jobtab poisoned");
-                if let Some(j) = tab.get_mut(p as usize) {
+                let tab = table.lock().expect("jobtab poisoned");
+                if let Some(j) = tab.get(p as usize) {
                     if j.procs.is_empty() && j.auxprocs.is_empty() {
-                        zwaitjob(j, 1); // c:2655 — returns 0 for this arm
-                        drop(tab);
+                        drop(tab); // zwaitjob takes JOBTAB itself
+                        zwaitjob(p as usize, 1); // c:2655 — returns 0 for this arm
                         returnval = LASTVAL2.load(Ordering::SeqCst); // c:2656-2657
                         continue;
                     }
@@ -3833,13 +4202,17 @@ pub fn bin_fg(
                 } else {
                     // Gone, and nothing on record for it; mark via
                     // update_job so the loop terminates.
+                    let mut marked = false;
                     if let Some(j) = tab.get_mut(p as usize) {
                         for pr in j.procs.iter_mut().chain(j.auxprocs.iter_mut()) {
                             if pr.pid == pid && pr.status == SP_RUNNING {
                                 pr.status = 0;
                             }
                         }
-                        update_job(j);
+                        marked = true;
+                    }
+                    if marked {
+                        update_job(&mut tab, p as usize);
                     }
                 }
             }
@@ -3847,6 +4220,19 @@ pub fn bin_fg(
             // child that is not `thisjob`, run now that JOBTAB is unlocked.
             for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
                 crate::ported::signals::dotrap(libc::SIGCHLD);
+            }
+            // c:Src/jobs.c:658-678 — the trapped SIGINT/SIGQUIT pseudo-delivery
+            // update_job parked in PSEUDO_SIG_TRAP_PENDING.
+            let pseudo = PSEUDO_SIG_TRAP_PENDING.swap(0, Ordering::SeqCst);
+            if pseudo != 0 {
+                crate::ported::signals::dotrap(pseudo); // c:663
+                if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+                    crate::ported::builtin::BREAKS.store(
+                        crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    ); // c:671-672
+                }
+                check_cursh_sig(&table.lock().expect("jobtab poisoned"), pseudo); // c:677
             }
             crate::ported::signals_h::restore_queue_signals(q); // c:1715 / c:1744
             if let Some(st) = interrupted {
@@ -5012,16 +5398,47 @@ pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
 ///     }
 /// }
 /// ```
-pub fn waitonejob(jn: &mut job) {
+///
+/// `jn` is C's `jn - jobtab`: the job's index in the global `JOBTAB`. `-1`
+/// names a command that finished without building a job-table entry (a
+/// builtin or shell function run in the current shell); it takes the
+/// no-procs arm, which publishes `pipestats[0] = lastval` and has no slot
+/// to delete.
+pub fn waitonejob(jn: i32) {
+    // c:1748
+    let table = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    let idx = usize::try_from(jn).ok();
     // c:1750 — `if (jn->procs || jn->auxprocs)`
-    if !jn.procs.is_empty() || !jn.auxprocs.is_empty() {
-        // c:1751 — `zwaitjob(jn - jobtab, 0);` — pass job by reference
-        // (Rust port takes &mut job vs C's jobtab-relative index since
-        // jobs.rs's JOBTAB lookup-by-pointer-arithmetic isn't ported).
-        zwaitjob(jn, 0);
+    let forked = idx
+        .and_then(|i| {
+            table
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(i)
+                .map(|j| !j.procs.is_empty() || !j.auxprocs.is_empty())
+        })
+        .unwrap_or(false);
+    if forked {
+        // c:1751 — `zwaitjob(jn - jobtab, 0);`
+        zwaitjob(jn as usize, 0);
     } else {
-        // c:1753 — `deletejob(jn, 0);`
-        deletejob(jn, false);
+        // c:1753 — `deletejob(jn, 0);` The slot is taken out of the table
+        // for the call: deletejob locks JOBTAB itself (STAT_SUPERJOB arm),
+        // so it must not run under a guard. A `jn` outside the table (-1:
+        // a command that never built a job) has nothing to delete.
+        if let Some(i) = idx {
+            let taken = table
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(i)
+                .map(std::mem::take);
+            if let Some(mut slot) = taken {
+                deletejob(&mut slot, false);
+                if let Some(dst) = table.lock().unwrap_or_else(|e| e.into_inner()).get_mut(i) {
+                    *dst = slot;
+                }
+            }
+        }
         // c:1754 — `pipestats[0] = lastval;`
         let lastval = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
         let p = PIPESTATS.get_or_init(|| Mutex::new([0; MAX_PIPESTATS]));
@@ -5343,7 +5760,7 @@ mod tests {
         p2.status = 7 << 8; // exited 7 (last proc, sets val)
         job.procs.push(p1);
         job.procs.push(p2);
-        let committed = update_job(&mut job);
+        let committed = update_job(std::slice::from_mut(&mut job), 0);
         assert!(committed, "update_job should commit when all done");
         assert!(job.stat & stat::DONE != 0);
         assert!(job.stat & stat::CHANGED != 0);
@@ -5363,7 +5780,7 @@ mod tests {
         let mut p = process::new(2001);
         p.status = SP_RUNNING;
         job.procs.push(p);
-        assert!(!update_job(&mut job));
+        assert!(!update_job(std::slice::from_mut(&mut job), 0));
         // No flag flips when not committed.
         assert_eq!(job.stat & stat::DONE, 0);
     }
@@ -5388,7 +5805,7 @@ mod tests {
         aux.status = SP_RUNNING;
         job.auxprocs.push(aux);
 
-        let committed = update_job(&mut job);
+        let committed = update_job(std::slice::from_mut(&mut job), 0);
         assert!(
             !committed,
             "c:472-473 — running auxproc must short-circuit even when main procs are done"
@@ -5419,7 +5836,7 @@ mod tests {
         let mut p = process::new(3001);
         p.status = 0x117f; // WIFSTOPPED-shaped (lower bits = 0x7f, upper = sig)
         job.procs.push(p);
-        let committed = update_job(&mut job);
+        let committed = update_job(std::slice::from_mut(&mut job), 0);
         assert!(committed);
         assert!(job.stat & stat::STOPPED != 0);
         assert!(job.stat & stat::CHANGED != 0);
@@ -5605,7 +6022,7 @@ mod tests {
         p.status = 0x117f; // WIFSTOPPED-shaped (low byte = 0x7F)
         job.procs.push(p);
 
-        assert!(update_job(&mut job));
+        assert!(update_job(std::slice::from_mut(&mut job), 0));
         assert!(
             job.stat & stat::CHANGED != 0,
             "c:514 — SUBJOB stop must set CHANGED so the jobs scanner picks it up"
@@ -5638,7 +6055,7 @@ mod tests {
         // First call: STOPPED already set, this is the re-entry case.
         // C: c:541-542 early-return → no CHANGED set.
         let stat_before = job.stat;
-        let committed = update_job(&mut job);
+        let committed = update_job(std::slice::from_mut(&mut job), 0);
         assert!(committed, "early-return path still reports 'commit'");
         assert_eq!(
             job.stat, stat_before,
@@ -5670,7 +6087,7 @@ mod tests {
         job.procs.push(p1);
         job.procs.push(p2);
 
-        assert!(update_job(&mut job));
+        assert!(update_job(std::slice::from_mut(&mut job), 0));
         let lv2 = LASTVAL2.load(Ordering::SeqCst);
         assert_eq!(
             lv2 & 0o200,
@@ -5682,6 +6099,94 @@ mod tests {
             15,
             "c:490 — low 7 bits must hold WTERMSIG (SIGTERM=15)"
         );
+    }
+
+    /// `update_job` c:510-545: a stopped SUBJOB sends SIGTSTP to its
+    /// super-job's group, marks the super-job CHANGED|STOPPED at once and
+    /// makes it the current job (prevjob takes the old curjob). Needs the
+    /// job-table index: the bare-`&mut job` port could not find the super-job.
+    #[test]
+    fn update_job_subjob_stop_marks_superjob_and_curjob() {
+        let _g = crate::test_util::global_state_lock();
+        let mut tab = vec![job::default(); 3];
+        tab[1].stat = stat::INUSE | stat::SUBJOB;
+        let mut p = process::new(7101);
+        p.status = 0x117f; // WIFSTOPPED
+        tab[1].procs.push(p);
+        tab[2].stat = stat::INUSE | stat::SUPERJOB;
+        tab[2].other = 1;
+        tab[2].gleader = 0x7fff_fff0; // no such group: killpg -> ESRCH
+        let old_cur = std::mem::replace(
+            &mut *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap(),
+            5,
+        );
+        let old_prev = std::mem::replace(
+            &mut *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap(),
+            -1,
+        );
+
+        assert!(update_job(&mut tab, 1));
+
+        assert_eq!(tab[1].stat & (stat::CHANGED | stat::STOPPED), stat::CHANGED | stat::STOPPED);
+        assert_eq!(
+            tab[2].stat & (stat::CHANGED | stat::STOPPED),
+            stat::CHANGED | stat::STOPPED,
+            "c:528 — the super-job is marked stopped immediately"
+        );
+        assert_eq!(*CURJOB.get().unwrap().lock().unwrap(), 2, "c:531 curjob = i");
+        assert_eq!(*PREVJOB.get().unwrap().lock().unwrap(), 5, "c:530 prevjob = old curjob");
+        *CURJOB.get().unwrap().lock().unwrap() = old_cur;
+        *PREVJOB.get().unwrap().lock().unwrap() = old_prev;
+    }
+
+    /// `update_job` c:556-561 + c:627-634: the job that is `thisjob` hands
+    /// its last process's status to `lastval` and publishes every process
+    /// status as `pipestats`.
+    #[test]
+    fn update_job_thisjob_sets_lastval_and_pipestats() {
+        let _g = crate::test_util::global_state_lock();
+        let mut tab = vec![job::default(); 2];
+        tab[1].stat = stat::INUSE;
+        let mut p1 = process::new(7201);
+        p1.status = 0;
+        let mut p2 = process::new(7202);
+        p2.status = 3 << 8;
+        tab[1].procs = vec![p1, p2];
+        let old_this = std::mem::replace(
+            &mut *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap(),
+            1,
+        );
+        crate::ported::builtin::LASTVAL.store(-1, Ordering::Relaxed);
+
+        assert!(update_job(&mut tab, 1));
+
+        assert_eq!(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed), 3);
+        assert_eq!(*NUMPIPESTATS.get().unwrap().lock().unwrap(), 2);
+        assert_eq!(PIPESTATS.get().unwrap().lock().unwrap()[..2], [0, 3]);
+        *THISJOB.get().unwrap().lock().unwrap() = old_this;
+    }
+
+    /// `waitonejob` c:1748-1757 on a procs-less job in the table: the slot
+    /// is deleted (STAT_INUSE gone) and `pipestats[0] = lastval`. An index
+    /// outside the table leaves the table alone and still publishes.
+    #[test]
+    fn waitonejob_procsless_slot_is_deleted_and_pipestats_set() {
+        let _g = crate::test_util::global_state_lock();
+        let mut tab = vec![job::default(); 2];
+        tab[1].stat = stat::INUSE | stat::DONE;
+        *JOBTAB.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap() = tab;
+        crate::ported::builtin::LASTVAL.store(9, Ordering::Relaxed);
+
+        waitonejob(1);
+
+        assert_eq!(JOBTAB.get().unwrap().lock().unwrap()[1].stat, 0);
+        assert_eq!(*NUMPIPESTATS.get().unwrap().lock().unwrap(), 1);
+        assert_eq!(PIPESTATS.get().unwrap().lock().unwrap()[0], 9);
+
+        crate::ported::builtin::LASTVAL.store(4, Ordering::Relaxed);
+        waitonejob(-1);
+        assert_eq!(PIPESTATS.get().unwrap().lock().unwrap()[0], 4);
+        *JOBTAB.get().unwrap().lock().unwrap() = Vec::new();
     }
 
     #[test]
@@ -5793,7 +6298,7 @@ mod tests {
         let mut p3 = process::new(102);
         p3.status = 0x09;
         job.procs = vec![p1, p2, p3];
-        let (stats, pipefail) = storepipestats(&job);
+        let (stats, pipefail) = storepipestats(&job, 0, 0);
         assert_eq!(stats.len(), 3);
         assert_eq!(stats[0], 0); // exit 0
         assert_eq!(stats[1], 1); // exit 1
