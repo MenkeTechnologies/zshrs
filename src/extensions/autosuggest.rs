@@ -20,9 +20,9 @@
 //!
 //! fish strategies vs zsh-autosuggestions strategies: fish searches history then
 //! falls back to completions (reader.rs:5462-5495). zsh-autosuggestions names these
-//! `history`, `completion`, and adds `match_prev_cmd`. `history` and
-//! `match_prev_cmd` are implemented; `completion` falls back to `history` until the
-//! native completion engine exposes an autosuggest-grade entry point.
+//! `history`, `completion`, and adds `match_prev_cmd`. All three are implemented;
+//! `completion` runs after history finds nothing, through the in-editor compsys
+//! entry point (`compsys::in_editor::complete_at`, no subprocess, short deadline).
 
 #![allow(non_snake_case)]
 
@@ -133,6 +133,7 @@ pub enum AutosuggestionPortion {
 pub enum Strategy {
     History,
     MatchPrevCmd,
+    Completion,
 }
 
 /// !!! WARNING: RUST-ONLY ADAPTER — NO DIRECT FISH COUNTERPART SHAPE !!!
@@ -277,7 +278,8 @@ pub fn configured_strategies() -> Vec<Strategy> {
     let mut out: Vec<Strategy> = raw
         .split_whitespace()
         .filter_map(|s| match s {
-            "history" | "completion" => Some(Strategy::History),
+            "history" => Some(Strategy::History),
+            "completion" => Some(Strategy::Completion),
             "match_prev_cmd" => Some(Strategy::MatchPrevCmd),
             _ => None,
         })
@@ -433,10 +435,71 @@ pub fn compute_autosuggestion(
         }
     }
 
-    // fish:5443-5495 — completion-based suggestions: not yet wired (see module
-    // header). cursor_pos is unused until then.
-    let _ = cursor_pos;
+    // fish:5443-5495 — completion-based suggestions (zsh-autosuggestions
+    // `completion` strategy).
+    if strategies.contains(&Strategy::Completion) {
+        if let Some(result) = completion_autosuggestion(command_line, cursor_pos, ctx) {
+            return result;
+        }
+    }
     nothing
+}
+
+/// Budget for the in-editor completion probe behind the `completion`
+/// strategy. The probe runs synchronously per keystroke, so it is short; a cold
+/// shell thread answers "incomplete" immediately and the next keystroke retries.
+const COMPLETION_SUGGEST_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// fish:reader.rs:5443-5507 — the "Try normal completions" half of
+/// `get_autosuggestion_performer`. Returns the first completion that extends the
+/// word under the cursor, applied append-only (fish `append_only = true`).
+fn completion_autosuggestion(
+    command_line: &str,
+    cursor_pos: usize,
+    ctx: &OperationContext,
+) -> Option<AutosuggestionResult> {
+    // fish:5445-5448 — an empty line has nothing to complete.
+    let last_char = command_line.chars().next_back()?;
+    // fish:5450-5458 — a line ending in whitespace with the cursor elsewhere
+    // would spam the right of the line while editing; a trailing quote at the
+    // end must not get stuff dumped after it.
+    let cursor_at_end = cursor_pos >= command_line.chars().count();
+    if !cursor_at_end && last_char.is_whitespace() {
+        return None;
+    }
+    if cursor_at_end && matches!(last_char, '\'' | '"') {
+        return None;
+    }
+    if ctx.check_cancel() {
+        return None;
+    }
+
+    // fish `CompletionRequestOptions::autosuggest()`: no command execution.
+    let mut req = crate::compsys::in_editor::CompsysRequest::new_with_budget(
+        command_line,
+        command_line.len(),
+        COMPLETION_SUGGEST_BUDGET,
+    );
+    req.allow_exec = false;
+    let response = crate::compsys::in_editor::complete_at(req);
+
+    // fish:5476-5480 — first completion; here the first one that strictly
+    // extends the text it replaces (append-only application).
+    let (prefix, completion) = response.matches.iter().find_map(|m| {
+        let typed = command_line.get(m.replace_start..)?;
+        (m.completion.starts_with(typed) && m.completion.len() > typed.len())
+            .then(|| (&command_line[..m.replace_start], m.completion.as_str()))
+    })?;
+    // fish:5481-5494 — `line_at_cursor`: a single-line ghost.
+    let completion = completion.split('\n').next().unwrap_or(completion);
+    let line_len = command_line.chars().count();
+    Some(AutosuggestionResult::new(
+        command_line.to_owned(),
+        0..line_len,
+        format!("{prefix}{completion}"),
+        None,
+        false,
+    ))
 }
 
 /// fish:reader.rs:5519-5531 — `can_autosuggest`.

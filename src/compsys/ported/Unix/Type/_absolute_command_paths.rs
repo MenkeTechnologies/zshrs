@@ -121,8 +121,9 @@ pub fn _hashed_absolute_command_paths(args: &[String]) -> i32 {
 
 /// sh:19-28 — inner helper.
 ///
-/// sh:22/24 call `_path_files` WITHOUT `"$@"` (the TODO at sh:20 says the
-/// caller's description and tag are ignored). Forwarding the `-J`/`-X`
+/// sh:22/24 call `_path_files` WITHOUT `"$@"` (the upstream comment at sh:20
+/// records that the caller's description and tag are ignored by
+/// `_path_files`; the call shape is the behaviour). Forwarding the `-J`/`-X`
 /// options `_alternative` passes made `_path_files` skip its own
 /// `_description files expl file` (its sh:115 `$mopts[(I)-[JVX]]` gate), so
 /// `_lastdescr` lacked the trailing `file` zsh records.

@@ -445,6 +445,40 @@ async fn op_cmd_result(state: &Arc<DaemonState>, args: Value) -> OpResult {
     }))
 }
 
+/// Owning (real) UID of process `pid`, or `None` if it is gone or the
+/// platform cannot say. macOS: `proc_pidinfo(PROC_PIDTBSDINFO)`; Linux: the
+/// owner of `/proc/<pid>`.
+#[cfg(target_os = "macos")]
+fn process_uid(pid: i32) -> Option<u32> {
+    // SAFETY: proc_pidinfo writes at most `size` bytes into `info`, a plain
+    // C struct for which all-zero bytes are a valid value.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    (n == size).then_some(info.pbi_ruid)
+}
+
+/// See the macOS variant.
+#[cfg(target_os = "linux")]
+fn process_uid(pid: i32) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(format!("/proc/{pid}")).ok().map(|m| m.uid())
+}
+
+/// See the macOS variant.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn process_uid(_pid: i32) -> Option<u32> {
+    None
+}
+
 /// Resolve `target` (any of {shell_id, tag, user, all}) into the list of shell ids
 /// the frame was actually queued to. Used by `op_send` and `op_notify` so they
 /// share a single routing implementation.
@@ -489,21 +523,45 @@ fn resolve_target(
         return Ok(Vec::new());
     }
     if let Some(user) = target.get("user").and_then(Value::as_str) {
-        // V1 user routing: same-user only. The daemon listens on a UNIX socket
-        // it owns; every client necessarily shares the daemon's UID. Until
-        // SO_PEERCRED + privilege drop is wired, cross-user is refused with a
-        // clear error rather than silently delivering to local-user sessions.
-        let daemon_user = std::env::var("USER").unwrap_or_default();
-        if user == daemon_user || daemon_user.is_empty() {
-            return Ok(to_every_other_shell(frame));
+        // Peer credentials are verified at accept (`server::handle_connection`):
+        // a non-root daemon only ever serves its own UID, a root daemon serves
+        // any UID. A shell's owner is the UID of its pid, so `user` routing
+        // delivers to shells whose process belongs to that user.
+        let uid = match nix::unistd::User::from_name(user) {
+            Ok(Some(u)) => u.uid.as_raw(),
+            Ok(None) => {
+                return Err(ErrPayload::new(
+                    "no_user",
+                    format!("user `{user}` does not exist"),
+                ));
+            }
+            Err(e) => {
+                return Err(ErrPayload::new(
+                    "no_user",
+                    format!("user lookup for `{user}` failed: {e}"),
+                ));
+            }
+        };
+        let our_uid = nix::unistd::Uid::current().as_raw();
+        if uid != our_uid && our_uid != 0 {
+            return Err(ErrPayload::new(
+                "user_mismatch",
+                format!(
+                    "cross-user dispatch to `{user}` (uid {uid}) needs a root daemon; \
+                     this daemon (uid {our_uid}) accepts only its own uid"
+                ),
+            ));
         }
-        return Err(ErrPayload::new(
-            "user_mismatch",
-            format!(
-                "cross-user dispatch (`{}` vs daemon `{}`) requires root + SO_PEERCRED, not yet wired",
-                user, daemon_user
-            ),
-        ));
+        return Ok(state
+            .snapshot_shells()
+            .into_iter()
+            .filter(|sh| {
+                sh.shell_id != from
+                    && process_uid(sh.pid) == Some(uid)
+                    && state.send_to_shell(sh.shell_id, frame.clone()) > 0
+            })
+            .map(|sh| sh.shell_id)
+            .collect());
     }
     Err(ErrPayload::new(
         "bad_args",

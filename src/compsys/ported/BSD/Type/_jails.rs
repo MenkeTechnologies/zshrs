@@ -5,11 +5,10 @@
 //!   -o param  jail parameter to complete instead of jid -
 //!                e.g. name, path, ip4.addr, host.hostname
 //!
-//! Upstream is 70 lines (identical in 5.9.2 and master); the transcript below
-//! is abridged. NOT YET PORTED: upstream grew `-c` (complete configured but
-//! not-running jails, reading `jail.conf`) and `-f` (config file) at sh:13 and
-//! the whole sh:18-50 `if [[ -n $configured ]]` branch. This port implements
-//! only the running-jails path, so it accepts neither flag.
+//! Upstream is 70 lines; the transcript below is abridged. The head comment
+//! additionally documents `-c` (complete configured jails that are not
+//! running) and `-f file` (override the config file, default
+//! `sysrc -n jail_conf`), implemented by [`configured_jails`] (sh:23-50).
 //! ```text
 //! sh: 1  #autoload
 //! sh:11  local addhost host param desc=1 configured
@@ -17,6 +16,7 @@
 //! sh:13  zparseopts -D -K -E 0=addhost c=configured f:=fopt o:=param
 //! sh:14  param=${param[2]:-name}
 //! sh:16  jails=( ${${(f)"$(_call_program jails jls $param name)"}/ /:} )
+//! sh:18  if [[ -n $configured ]]; then  # ... sh:50 fi
 //! sh:52  case $param in
 //! sh:53    jid) host=0 ;;
 //! sh:54    name)
@@ -42,37 +42,191 @@ use crate::compsys::ported::_describe::_describe;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam, unsetparam};
 
-/// sh:11 — bridge for `zparseopts -D -K -E 0=addhost o:=param`. `-E`
+/// sh:13 — bridge for `zparseopts -D -K -E 0=addhost c=configured f:=fopt o:=param`. `-E`
 /// means the whole argv is scanned (not just a leading option run);
 /// `-D` removes matched flags/values, leaving everything else as the
 /// passthrough `rest` (the `"$@"` later handed to `_describe`/`_wanted`).
-fn zparse_0_o(args: &[String]) -> (bool, Option<String>, Vec<String>) {
-    let mut addhost = false;
-    let mut param = None;
-    let mut rest = Vec::new();
+struct JailOpts {
+    addhost: bool,
+    configured: bool,
+    fopt: Option<String>,
+    param: Option<String>,
+    rest: Vec<String>,
+}
+
+fn zparse_0_o(args: &[String]) -> JailOpts {
+    let mut o = JailOpts {
+        addhost: false,
+        configured: false,
+        fopt: None,
+        param: None,
+        rest: Vec::new(),
+    };
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let a = args[i].as_str();
+        match a {
             "-0" => {
-                addhost = true; // sh:11 0=addhost
+                o.addhost = true; // sh:13 0=addhost
                 i += 1;
             }
-            "-o" => {
-                // sh:11 o:=param — value-taking.
+            "-c" => {
+                o.configured = true; // sh:13 c=configured
+                i += 1;
+            }
+            "-f" | "-o" => {
+                // sh:13 f:=fopt / o:=param — value-taking, value in the next word.
                 if i + 1 < args.len() {
-                    param = Some(args[i + 1].clone());
+                    let v = Some(args[i + 1].clone());
+                    if a == "-f" {
+                        o.fopt = v;
+                    } else {
+                        o.param = v;
+                    }
                     i += 2;
                 } else {
                     i += 1;
                 }
             }
+            _ if a.starts_with("-f") || a.starts_with("-o") => {
+                // `-fFILE` / `-oPARAM`: value attached to the option word.
+                let v = Some(a[2..].to_string());
+                if a.starts_with("-f") {
+                    o.fopt = v;
+                } else {
+                    o.param = v;
+                }
+                i += 1;
+            }
             _ => {
-                rest.push(args[i].clone());
+                o.rest.push(args[i].clone());
                 i += 1;
             }
         }
     }
-    (addhost, param, rest)
+    o
+}
+
+/// sh:21,32 — the `.include "path"` directive: `include_pat` is
+/// `(#b)[[:space:]]#.include[[:space:]]##["']([^"']##)["']*`, matched
+/// against the whole line. Returns `match[1]`.
+fn include_path(line: &str) -> Option<&str> {
+    let rest = line.trim_start().strip_prefix(".include")?;
+    let after_ws = rest.trim_start();
+    if after_ws.len() == rest.len() {
+        return None; // `[[:space:]]##` needs at least one space
+    }
+    let after_quote = after_ws.strip_prefix(['"', '\''])?;
+    let end = after_quote.find(['"', '\''])?;
+    (end > 0).then(|| &after_quote[..end])
+}
+
+/// sh:42 — `${content//$'\n'[[:space:]]#\{/' {'}`: a newline followed by
+/// optional whitespace and `{` collapses to ` {`.
+fn collapse_brace_lines(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(nl) = rest.find('\n') {
+        out.push_str(&rest[..nl]);
+        let tail = &rest[nl + 1..];
+        match tail.trim_start().strip_prefix('{') {
+            Some(after_brace) => {
+                out.push_str(" {");
+                rest = after_brace;
+            }
+            None => {
+                out.push('\n');
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// sh:43-44 — for one line, `[[ $line = [[:space:]]#[^#[:space:]]##[[:space:]]#\{* ]]`
+/// then `${${line##[[:space:]]#}%%[[:space:]]#\{*}`: the jail name of a
+/// `name {` block header, `None` when the line is not one.
+fn block_name(line: &str) -> Option<&str> {
+    let body = line.trim_start();
+    let word_len = body
+        .find(|c: char| c == '#' || c.is_whitespace())
+        .unwrap_or(body.len());
+    if word_len == 0 {
+        return None;
+    }
+    // `[^#[:space:]]##` may itself contain `{`; otherwise `{` follows
+    // optional whitespace after the word.
+    let first_len = body.chars().next()?.len_utf8();
+    if !body[first_len..word_len].contains('{') && !body[word_len..].trim_start().starts_with('{')
+    {
+        return None;
+    }
+    // `%%[[:space:]]#\{*`: cut from the whitespace run preceding the first `{`.
+    let first_brace = body.find('{')?;
+    Some(body[..first_brace].trim_end())
+}
+
+/// sh:18-50 — `if [[ -n $configured ]]`: names of the jails configured in
+/// `jail.conf` (following `.include` directives) that are not running.
+/// `running` is `running_names` (sh:48).
+fn configured_jails(fopt: Option<&str>, running: &[String]) -> Vec<String> {
+    // sh:23-27
+    let jail_conf = match fopt {
+        Some(f) => f.to_string(),
+        None => {
+            let (out, _) = call_program_capture(&[
+                "paths".to_string(),
+                "sysrc".to_string(),
+                "-n".to_string(),
+                "jail_conf".to_string(),
+            ]);
+            out.trim_end_matches('\n').to_string()
+        }
+    };
+
+    // sh:29-35 — follow .include directives, then the main file.
+    let mut conf_files: Vec<String> = Vec::new();
+    if let Ok(text) = std::fs::read_to_string(&jail_conf) {
+        // `while IFS= read -r line` drops an unterminated final line.
+        let terminated = match text.rfind('\n') {
+            Some(p) => &text[..p],
+            None => "",
+        };
+        for line in terminated.split('\n') {
+            if let Some(pat) = include_path(line) {
+                // `${~match[1]}(N)` — pattern-expanded, nullglob.
+                if let Ok(paths) = glob::glob(pat) {
+                    conf_files.extend(paths.flatten().map(|p| p.to_string_lossy().into_owned()));
+                }
+            }
+        }
+        conf_files.push(jail_conf.clone());
+    }
+
+    // sh:37-45 — `for f in ${(u)conf_files}`
+    let mut seen: Vec<&String> = Vec::new();
+    let mut cjails: Vec<String> = Vec::new();
+    for f in &conf_files {
+        if seen.contains(&f) {
+            continue;
+        }
+        seen.push(f);
+        let Ok(raw) = std::fs::read_to_string(f) else {
+            continue; // sh:40 `[[ -r $f ]] || continue`
+        };
+        let content = collapse_brace_lines(raw.trim_end_matches('\n')); // sh:41-42
+        cjails.extend(content.split('\n').filter_map(block_name).map(String::from));
+    }
+
+    // sh:49 — `${(u)${cjails:#\*}:|running_names}`
+    let mut jails: Vec<String> = Vec::new();
+    for j in cjails {
+        if j != "*" && !running.contains(&j) && !jails.contains(&j) {
+            jails.push(j);
+        }
+    }
+    jails
 }
 
 /// sh:14 — `${line/ /:}`: replace only the *first* space in a line
@@ -113,8 +267,14 @@ pub fn _jails(args: &[String]) -> i32 {
         &["jails", "expl"],
         crate::compsys::ported::shared::PM_ARRAY,
     );
-    // sh:11
-    let (addhost, param_opt, rest) = zparse_0_o(args);
+    // sh:13
+    let JailOpts {
+        addhost,
+        configured,
+        fopt,
+        param: param_opt,
+        rest,
+    } = zparse_0_o(args);
     // sh:14 — ${param[2]:-name}: default when unset OR empty.
     let param = param_opt
         .filter(|s| !s.is_empty())
@@ -133,6 +293,12 @@ pub fn _jails(args: &[String]) -> i32 {
         .map(first_space_to_colon)
         .collect();
 
+    // sh:18-50
+    if configured {
+        let running: Vec<String> = jails.iter().map(|s| strip_after_last_colon(s)).collect(); // sh:48
+        jails = configured_jails(fopt.as_deref(), &running);
+    }
+
     // sh:52-63
     let mut host: Option<String> = None;
     let mut desc = true;
@@ -145,10 +311,10 @@ pub fn _jails(args: &[String]) -> i32 {
         }
         "path" => {
             host = Some("/".to_string()); // sh:59
-            extra_args = vec!["-M".to_string(), "r:|/=* r:|=*".to_string()]; // sh:23
+            extra_args = vec!["-M".to_string(), "r:|/=* r:|=*".to_string()]; // sh:60
         }
         "ip4.addr" => {
-            extra_args = vec!["-M".to_string(), "r:|.=* r:|=*".to_string()]; // sh:25
+            extra_args = vec!["-M".to_string(), "r:|.=* r:|=*".to_string()]; // sh:62
         }
         _ => {}
     }
@@ -201,24 +367,47 @@ mod tests {
 
     #[test]
     fn zparse_pulls_0_and_o_leaving_rest() {
-        let (addhost, param, rest) = zparse_0_o(&[
+        let o = zparse_0_o(&[
             "-0".to_string(),
             "-J".to_string(),
             "grp".to_string(),
             "-o".to_string(),
             "path".to_string(),
+            "-c".to_string(),
+            "-f".to_string(),
+            "/etc/j.conf".to_string(),
         ]);
-        assert!(addhost);
-        assert_eq!(param.as_deref(), Some("path"));
-        assert_eq!(rest, vec!["-J".to_string(), "grp".to_string()]);
+        assert!(o.addhost && o.configured);
+        assert_eq!(o.fopt.as_deref(), Some("/etc/j.conf"));
+        assert_eq!(o.param.as_deref(), Some("path"));
+        assert_eq!(o.rest, vec!["-J".to_string(), "grp".to_string()]);
     }
 
     #[test]
     fn zparse_defaults_when_absent() {
-        let (addhost, param, rest) = zparse_0_o(&["foo".to_string()]);
-        assert!(!addhost);
-        assert_eq!(param, None);
-        assert_eq!(rest, vec!["foo".to_string()]);
+        let o = zparse_0_o(&["foo".to_string()]);
+        assert!(!o.addhost && !o.configured);
+        assert_eq!(o.fopt, None);
+        assert_eq!(o.param, None);
+        assert_eq!(o.rest, vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn include_path_requires_space_and_quotes() {
+        assert_eq!(
+            include_path("  .include \"/etc/jail.d/*.conf\" ;"),
+            Some("/etc/jail.d/*.conf")
+        );
+        assert_eq!(include_path(".include '/a/b'"), Some("/a/b"));
+        assert_eq!(include_path(".include\"/a\""), None);
+        assert_eq!(include_path("# .include \"/a\""), None);
+    }
+
+    #[test]
+    fn block_names_cover_both_brace_styles() {
+        let c = collapse_brace_lines("web {\n  x = 1;\n}\n  db\n  {\n}\n# c {\n* {\n");
+        let names: Vec<&str> = c.split('\n').filter_map(block_name).collect();
+        assert_eq!(names, vec!["web", "db", "*"]);
     }
 
     #[test]

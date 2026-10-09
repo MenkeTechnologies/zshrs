@@ -26,12 +26,9 @@
 //! sh:156  else curcontext="$oldcontext"; return 1
 //! ```
 //!
-//! Approximations (see inline comments): `compadd -D array` array
-//! pruning (sh:42) is reproduced in Rust because the `computil`
-//! port does not yet write the `dpar` array back; the multi-group
-//! `_describe … -- … -- …` call (sh:60) is passed verbatim to the
-//! `_describe` port, which currently reads the group array names and
-//! ignores the per-group `-S`/`-qS`/`-r` flags.
+//! The multi-group `_describe … -- … -- …` call (sh:60-63) is passed verbatim
+//! to the `_describe` port, which hands each group's `-S`/`-r`/`-M` options to
+//! its per-group `compadd` pre-pass and `compdescribe`.
 
 use crate::compsys::ported::_all_labels::_all_labels;
 use crate::compsys::ported::_describe::_describe;
@@ -355,16 +352,9 @@ fn values_impl(args: &[String]) -> i32 {
                 ];
                 cadd.extend(names);
                 bin_compadd("compadd", &cadd, &make_ops(), 0);
-                // APPROXIMATION: the `computil`/`compcore` port collects
-                // `-D` targets (`dpar`) but does not yet write the pruned
-                // array back. Reproduce `compadd -D`'s documented pruning
-                // (drop entries whose name does not match the typed word)
-                // so the `$#args -ne 1` disambiguation below works.
-                let pruned: Vec<String> = combined
-                    .into_iter()
-                    .filter(|e| before_first(e, ":").starts_with(&name))
-                    .collect();
-                let _ = setaparam("args", pruned.clone());
+                // `compadd -D` (compcore addmatches, c:2189-2207) wrote the
+                // pruned `args` back; read the survivors for sh:44.
+                let pruned: Vec<String> = getaparam("args").unwrap_or_default();
                 // sh:44 — need exactly one surviving value to proceed.
                 if pruned.len() != 1 {
                     return 1;
@@ -407,22 +397,21 @@ fn values_impl(args: &[String]) -> i32 {
                 "args".to_string(),
                 "-S".to_string(),
                 argsep.clone(),
+                "-r".to_string(),
+                format!("{}{}", argsep, sep2), // sh:62
                 "-M".to_string(),
                 "r:|[_-]=* r:|=*".to_string(),
                 "--".to_string(),
             ]);
             dargv.extend([
                 "opts".to_string(),
-                "-qS".to_string(),
+                "-S".to_string(), // sh:63
                 argsep.clone(),
                 "-r".to_string(),
                 format!("{}{} \\t\\n\\-", argsep, sep2),
                 "-M".to_string(),
                 "r:|[_-]=* r:|=*".to_string(),
             ]);
-            // NOTE: the `_describe` port reads the group array names but
-            // ignores the per-group `-S`/`-qS`/`-r`/`--` flags; the value
-            // names are still emitted (behavioral approximation).
             // sh:60-63 — reached BY NAME, not as a direct Rust call. Upstream
             // writes `_describe "$descr" …` as a bare command word, so (a) a
             // user's own `_describe` earlier in `$fpath` autoloads instead of

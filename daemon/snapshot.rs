@@ -10,8 +10,8 @@
 //! naming: `~/.zshrs/snapshots/<tag>.rkyv`. Tag is any
 //! shell-safe string (matched against `[A-Za-z0-9._-]+` at op time).
 //!
-//! Op surface (v1 — publish/sign/verify deferred to a follow-up
-//! round once the registry transport ships):
+//! Op surface (no publish/sign/verify ops: the daemon has no registry
+//! transport and no signing-key store to implement them against):
 //!
 //! | Op                | Args              | Returns                                    |
 //! |-------------------|-------------------|--------------------------------------------|

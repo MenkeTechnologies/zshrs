@@ -49,6 +49,11 @@ use crate::ported::zsh_h::{
     WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_TYPESET, WC_WHILE,
     WC_WHILE_UNTIL, WC_WHILE_WHILE,
 };
+use crate::ported::zsh_h::{
+    COND_AND, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_MOD, COND_MODI, COND_NE,
+    COND_NOT, COND_NT, COND_OR, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR,
+    COND_STRLT, COND_STRNEQ,
+};
 // Z_END / Z_SIMPLE in zsh_h are i32 (matching C `int` for these flag bits).
 // Rebind to u32 for bitwise ops against `wordcode` data.
 const Z_END: u32 = crate::ported::zsh_h::Z_END as u32;
@@ -639,7 +644,11 @@ pub enum DecodedOp {
         else_body: Option<Vec<DecodedOp>>,
     },
     /// `Cond` variant.
-    Cond { cond_type: u32, args: Vec<String> },
+    Cond {
+        cond_type: u32,
+        args: Vec<String>,
+        operands: Vec<DecodedOp>,
+    },
     /// `Arith` variant.
     Arith { expr: String },
     /// `AutoFn` variant.
@@ -1144,27 +1153,52 @@ impl<'a> WordcodeDecoder<'a> {
         }
     }
 
+    /// Decode one `WC_COND` op using the layout `par_cond*` emits
+    /// (c:Src/parse.c:2409-2760): `COND_NOT` is followed by its operand op,
+    /// `COND_AND`/`COND_OR` by the left then right operand op, string
+    /// comparisons (`COND_STREQ`..`COND_STRGTR`) carry two strings plus the
+    /// `ecnpats` slot, `COND_NT`..`COND_REGEX` two strings, `COND_MODI` the
+    /// operator and two operands, `COND_MOD` `skip + 1` strings, and any
+    /// other type is a unary test whose type IS the option character.
     fn decode_cond(&mut self, data: u32) -> DecodedOp {
         let cond_type = data & 127;
-        let _skip = data >> 7;
+        let skip = data >> 7;
+        let mut operands = Vec::new();
+        let mut args = Vec::new();
 
-        // Decode based on condition type
-        let args = match cond_type {
-            // COND_NOT = 1
-            1 => vec![],
-            // COND_AND = 2, COND_OR = 3
-            2 | 3 => vec![],
-            // Binary operators have 2 args
-            _ if cond_type >= 7 => {
-                vec![self.read_string(), self.read_string()]
+        match cond_type as i32 {
+            COND_NOT => operands.extend(self.decode_next_op()),
+            COND_AND | COND_OR => {
+                operands.extend(self.decode_next_op());
+                operands.extend(self.decode_next_op());
             }
-            // Unary operators have 1 arg
-            _ => {
-                vec![self.read_string()]
+            COND_STREQ..=COND_STRGTR => {
+                args.push(self.read_string());
+                args.push(self.read_string());
+                let _npats = self.next();
             }
-        };
+            COND_NT..=COND_REGEX => {
+                args.push(self.read_string());
+                args.push(self.read_string());
+            }
+            COND_MOD => {
+                for _ in 0..=skip {
+                    args.push(self.read_string());
+                }
+            }
+            COND_MODI => {
+                for _ in 0..3 {
+                    args.push(self.read_string());
+                }
+            }
+            _ => args.push(self.read_string()),
+        }
 
-        DecodedOp::Cond { cond_type, args }
+        DecodedOp::Cond {
+            cond_type,
+            args,
+            operands,
+        }
     }
 
     fn decode_arith(&mut self) -> DecodedOp {
@@ -1290,6 +1324,77 @@ pub fn dump_zwc_function<P: AsRef<Path>>(path: P, func_name: &str) -> io::Result
 
 /// Convert decoded ZWC ops to our shell AST for execution
 impl DecodedOp {
+    /// Append the `[[ ... ]]` words for a decoded `Cond` op (infix form,
+    /// children of `&&` / `||` parenthesised so precedence survives).
+    fn cond_words(&self, out: &mut Vec<ShellWord>) {
+        let DecodedOp::Cond {
+            cond_type,
+            args,
+            operands,
+        } = self
+        else {
+            return;
+        };
+        let lit = |s: &str| ShellWord::Literal(s.to_string());
+        let infix: Option<&str> = match *cond_type as i32 {
+            COND_STREQ => Some("="),
+            COND_STRDEQ => Some("=="),
+            COND_STRNEQ => Some("!="),
+            COND_STRLT => Some("<"),
+            COND_STRGTR => Some(">"),
+            COND_NT => Some("-nt"),
+            COND_OT => Some("-ot"),
+            COND_EF => Some("-ef"),
+            COND_EQ => Some("-eq"),
+            COND_NE => Some("-ne"),
+            COND_LT => Some("-lt"),
+            COND_GT => Some("-gt"),
+            COND_LE => Some("-le"),
+            COND_GE => Some("-ge"),
+            COND_REGEX => Some("=~"),
+            _ => None,
+        };
+        match *cond_type as i32 {
+            COND_NOT => {
+                out.push(lit("!"));
+                for op in operands {
+                    op.cond_words(out);
+                }
+            }
+            COND_AND | COND_OR => {
+                let sep = if *cond_type as i32 == COND_AND { "&&" } else { "||" };
+                for (i, op) in operands.iter().enumerate() {
+                    if i > 0 {
+                        out.push(lit(sep));
+                    }
+                    out.push(lit("("));
+                    op.cond_words(out);
+                    out.push(lit(")"));
+                }
+            }
+            // c:Src/parse.c par_cond_triple — operator, then both operands.
+            COND_MODI => {
+                if let [op, a, b] = args.as_slice() {
+                    out.extend([lit(a), lit(op), lit(b)]);
+                }
+            }
+            // par_cond_double / _triple / _multi — `-op arg...`.
+            COND_MOD => out.extend(args.iter().map(|a| lit(a))),
+            _ => match infix {
+                Some(op) => {
+                    if let [a, b] = args.as_slice() {
+                        out.extend([lit(a), lit(op), lit(b)]);
+                    }
+                }
+                // Unary test: the type IS the option character.
+                None => {
+                    out.push(lit(&format!("-{}", char::from(*cond_type as u8))));
+                    out.extend(args.iter().map(|a| lit(a)));
+                }
+            },
+        }
+    }
+
     /// `to_shell_command` — see implementation.
     pub fn to_shell_command(&self) -> Option<ShellCommand> {
         match self {
@@ -1558,27 +1663,57 @@ impl DecodedOp {
                 }))
             }
 
-            DecodedOp::Select { .. } => {
-                // CompoundCommand::Select needs a var and word list; the
-                // current DecodedOp::Select carries fields the decoder
-                // hasn't surfaced yet (see zwc.rs:1054-1086 for the parts
-                // we do decode). Leave unmapped until the decoder grows
-                // those fields rather than guess at them here.
-                None
+            DecodedOp::Select { var, list, body } => {
+                // WC_SELECT_PPARAM carries no word list: iterate "$@".
+                let words = if list.is_empty() {
+                    None
+                } else {
+                    Some(list.iter().map(|s| ShellWord::Literal(s.clone())).collect())
+                };
+                let body_cmds: Vec<ShellCommand> =
+                    body.iter().filter_map(|op| op.to_shell_command()).collect();
+                Some(ShellCommand::Compound(CompoundCommand::Select {
+                    var: var.clone(),
+                    words,
+                    body: body_cmds,
+                }))
             }
 
             DecodedOp::Cond { .. } => {
-                // [[ ... ]] conditional. CompoundCommand has no Cond variant —
-                // the parser-level ZshCond shape lives only in the parse
-                // crate. Bridging that requires a converter on the parse
-                // side; deferred to a follow-up port.
-                None
+                // ShellCommand has no conditional variant, so `[[ ... ]]` is
+                // carried as the `[[` command word list in source order.
+                let mut words = vec![ShellWord::Literal("[[".to_string())];
+                self.cond_words(&mut words);
+                words.push(ShellWord::Literal("]]".to_string()));
+                Some(ShellCommand::Simple(SimpleCommand {
+                    assignments: vec![],
+                    words,
+                    redirects: vec![],
+                }))
             }
 
-            DecodedOp::Timed { .. } => {
-                // `time cmd` — needs ZshCommand::Time-style wrapping which
-                // CompoundCommand doesn't model. Deferred.
-                None
+            DecodedOp::Timed { cmd } => {
+                // ShellCommand has no timing wrapper: `time` is carried as a
+                // leading command word on the (first) simple command timed.
+                let time = ShellWord::Literal("time".to_string());
+                match cmd.as_deref().and_then(|op| op.to_shell_command()) {
+                    None => Some(ShellCommand::Simple(SimpleCommand {
+                        assignments: vec![],
+                        words: vec![time],
+                        redirects: vec![],
+                    })),
+                    Some(ShellCommand::Simple(mut sc)) => {
+                        sc.words.insert(0, time);
+                        Some(ShellCommand::Simple(sc))
+                    }
+                    Some(ShellCommand::Pipeline(mut cmds, neg)) => {
+                        if let Some(ShellCommand::Simple(sc)) = cmds.first_mut() {
+                            sc.words.insert(0, time);
+                        }
+                        Some(ShellCommand::Pipeline(cmds, neg))
+                    }
+                    Some(other) => Some(other),
+                }
             }
 
             DecodedOp::Unknown { .. } => None,

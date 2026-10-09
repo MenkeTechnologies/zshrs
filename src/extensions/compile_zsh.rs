@@ -5506,13 +5506,14 @@ impl ZshCompiler {
             REDIR_ERRWRITENOW => fusevm::op::redirect_op::WRITE_BOTH,
             REDIR_ERRAPP => fusevm::op::redirect_op::APPEND_BOTH,
             REDIR_ERRAPPNOW => fusevm::op::redirect_op::APPEND_BOTH,
-            REDIR_INPIPE | REDIR_OUTPIPE => {
-                // Process substitution attached to a redirect target —
-                // unusual; the parser models `< <(cmd)` differently.
-                // Defer.
-                tracing::debug!(?redir.rtype, "compile_zsh: pipe-style redirect TODO");
-                return;
-            }
+            // c:Src/parse.c:2303-2320 — `< <(cmd)` / `> >(cmd)` / `<> <(cmd)`
+            // carry REDIR_INPIPE / REDIR_OUTPIPE only when the redir comes from
+            // decoded wordcode (.zwc); the AST parser keeps READ / WRITE. The
+            // target word is the `<(…)` / `>(…)` process substitution, which
+            // compile_word_str lowers to ProcessSubIn/Out yielding the
+            // /dev/fd path — the same open the READ / WRITE arms perform.
+            REDIR_INPIPE => fusevm::op::redirect_op::READ,
+            REDIR_OUTPIPE => fusevm::op::redirect_op::WRITE,
             // Already handled above.
             REDIR_HEREDOC | REDIR_HEREDOCDASH | REDIR_HERESTR => return,
             _ => {
@@ -10077,15 +10078,12 @@ impl ZshCompiler {
             }
         }
 
-        // TODO Phase 1 step 3 — `$((expr))` native lowering. Reverted
-        // because fusevm's Op::Div is float-only; `$((10/3))` produces
-        // 3.333... instead of zsh's integer-truncating 3. Need an
-        // integer-aware division op (or a sniff in ArithCompiler that
-        // picks IntDiv when both operands are Int) before this can ship.
-        // The compound `(( ))` form has the same bug — pre-existing —
-        // but currently dodges the test because $((..)) was bridged.
-
-        // Phase 1 step 3b: `$((expr))` arithmetic substitution. Push
+        // `$((expr))` is NOT lowered to native arithmetic ops: fusevm's
+        // Op::Div is float-only, so `$((10/3))` would yield 3.333 instead of
+        // zsh's integer-truncating 3. It goes through BUILTIN_ARITH_EVAL
+        // (MathEval) below, which is integer-aware.
+        //
+        // `$((expr))` arithmetic substitution. Push
         // the expression text and call BUILTIN_ARITH_EVAL which routes
         // through the executor's MathEval (integer-aware, zsh-compat).
         // Avoids the float-only Op::Div in ArithCompiler.

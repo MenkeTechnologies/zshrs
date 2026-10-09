@@ -9,11 +9,11 @@
 //                              zselect, zsocket, zftp, zpty, zed, zcalc,
 //                              zregexparse, zutil, zmodload, zle.
 //   zshrs-owned: zcache, zls, zid, zping, ztag, zuntag, zsend, znotify,
-//                zsubscribe, zunsubscribe, zjob (planned), zlog, zsync, zask.
+//                zsubscribe, zunsubscribe, zjob, zlog, zsync, zask, zhistory, zsource,
+//                zcomplete, zsuggest, zcmd-result, zwhere, zd, zlock, zpublish.
 //
-// Foundation v1 implements: zcache (info / daemon status / daemon stop), zls, zid,
-// zping, ztag, zuntag, zsend, znotify, zlog (path/level shortcut). Everything else
-// returns "not yet implemented" via the daemon's stub responses.
+// Every name in `ZSHRS_BUILTIN_NAMES` is dispatched by `dispatch` below; each
+// connects to the daemon, sends one op, and prints the response.
 
 use serde_json::{json, Value};
 
@@ -2266,15 +2266,11 @@ fn zd(args: &[String]) -> i32 {
             // path to the equivalent op.
             match path {
                 "/health" => self.post("ping", json!({})),
-                "/ops" => self
-                    .post(
-                        "call",
-                        // No-op call so the response includes the op list
-                        // via the daemon's existing introspection. Cleaner
-                        // path: a dedicated "ops" op. For now reuse info.
-                        json!({}),
-                    )
-                    .or_else(|_| self.post("info", json!({}))),
+                "/ops" => serde_json::to_string(&json!({
+                    "ok": true,
+                    "ops": super::ops::OP_NAMES,
+                }))
+                .map_err(|e| format!("response serialize: {e}")),
                 "/metrics" => self.post("metrics", json!({})),
                 other => Err(format!("zd builtin: GET {other} not supported over socket")),
             }
@@ -2291,7 +2287,7 @@ fn zd(args: &[String]) -> i32 {
     dispatch(rest, &mut transport)
 }
 
-// Used by callers that want a no-op suppress for unused-import warnings.
+// Keeps the `DaemonError` import used when no builtin names it directly.
 fn _unused(_: DaemonError) {}
 
 #[cfg(test)]

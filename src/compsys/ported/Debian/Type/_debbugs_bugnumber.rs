@@ -3,7 +3,8 @@
 //! Full upstream body (11 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2  # TODO: use _describe with some basic metadata (e.g., bug title/package/version)
+//! sh: 2  # (upstream comment: a wish for bug-title metadata in the listing; the
+//!        #  function body is the compadd of bare bug numbers below)
 //! sh: 4  local expl
 //! sh: 6  [[ $PREFIX$SUFFIX == [0-9]# ]] || return 1
 //! sh:10  local -a cachedirs=( ~/.devscripts_cache/bts ~/.cache/devscripts/bts )

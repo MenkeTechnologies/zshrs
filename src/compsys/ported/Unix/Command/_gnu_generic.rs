@@ -10,17 +10,13 @@
 //! sh:6  _arguments '*:arg: _default' --
 //! ```
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::_arguments::_arguments;
 
 /// `_gnu_generic` — fallback completer for GNU-style commands.
-/// Pure delegation to `_arguments` (not yet ported as an engine fn).
+/// sh:6 — `_arguments '*:arg: _default' --`.
 pub fn _gnu_generic() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_gnu_generic");
-    dispatch_function_call(
-        "_arguments",
-        &["*:arg: _default".to_string(), "--".to_string()],
-    )
-    .unwrap_or(1)
+    _arguments(&["*:arg: _default".to_string(), "--".to_string()])
 }
 
 #[cfg(test)]

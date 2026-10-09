@@ -11,15 +11,12 @@
 //! sh: 7      compadd "$@" - "${(@)${_mac_apps[@]:t}%.app}"
 //! ```
 //!
-//! `_retrieve_mac_apps` (`Completion/Darwin/Type/_retrieve_mac_apps`) is not
-//! yet ported to Rust — it is invoked via the shell-fallback
-//! `dispatch_function_call`, matching the pattern used for predicate/filter
-//! callbacks in sibling ports (e.g. `_baudrates::_baudrates`'s `-f`
-//! handling). It populates the global `_mac_apps` array param with
-//! application bundle paths.
+//! `_retrieve_mac_apps` (`Completion/Darwin/Type/_retrieve_mac_apps`) is the
+//! sibling port in `_retrieve_mac_apps.rs`; it populates the global
+//! `_mac_apps` array param with application bundle paths.
 
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::_retrieve_mac_apps::_retrieve_mac_apps;
 use crate::ported::params::getaparam;
 
 /// sh:7 — `${(@)${_mac_apps[@]:t}%.app}`: basename (`:t`) each element of
@@ -51,9 +48,8 @@ pub fn _mac_applications(args: &[String]) -> i32 {
     //   zsh  : [][]
     //   zshrs: [array][-J|-default-]
     crate::compsys::ported::shared::declare_locals(&["expl"], 0);
-    // sh:3  _retrieve_mac_apps (shell fallback: not yet ported to Rust;
-    //   populates the `_mac_apps` global array param).
-    let _ = dispatch_function_call("_retrieve_mac_apps", &[]);
+    // sh:3  _retrieve_mac_apps (populates the `_mac_apps` global array param).
+    let _ = _retrieve_mac_apps(&[]);
 
     // sh:5-7  local expl; _wanted commands expl 'macOS application' \
     //   compadd "$@" - "${(@)${_mac_apps[@]:t}%.app}"

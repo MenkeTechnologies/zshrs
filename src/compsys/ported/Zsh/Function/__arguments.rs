@@ -98,7 +98,8 @@ pub fn __arguments(_args: &[String]) -> i32 {
     let specs = if dashdash_before_current(&words, current) {
         help_branch_specs() // sh:23
     } else {
-        // sh:28  (TODO upstream: no support for multiple argument sets)
+        // sh:28-43  (upstream's own comment at sh:43: this spec list does not
+        // describe "Specifying Multiple Sets of Arguments")
         flag_branch_specs()
     };
     _arguments(&specs)

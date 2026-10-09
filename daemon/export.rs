@@ -103,8 +103,8 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, is_export: boo
     }
 
     // `functions <name>` — single named function, in the requested format.
-    // sh: emit `function <name> { <body> }`; disasm: stub until the bytecode
-    // emitter lands. Per docs/DAEMON.md "functions [<name>] All function
+    // sh: emit `function <name> { <body> }`; disasm: the fusevm op listing of
+    // the definition (see `disasm_source`). Per docs/DAEMON.md "functions [<name>] All function
     // bytecode, or one named function (+ disassembly with --format disasm)".
     if let (Some(n), "functions") = (name.as_deref(), target.as_str()) {
         // Unified function namespace per zsh semantics: inline-defined
@@ -121,10 +121,9 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, is_export: boo
         let out_str = match format.as_str() {
             "sh" | "" => format!("function {} {{\n{}\n}}\n", n, body),
             "disasm" => format!(
-                "# function {} — bytecode disassembly\n# (not yet wired: \
-                 daemon stores source bytes in v1; bytecode emitter arrives \
-                 with the parser-in-daemon work)\n# source:\n{}\n",
-                n, body
+                "# function {} — bytecode disassembly\n{}",
+                n,
+                disasm_source(&format!("function {} {{\n{}\n}}\n", n, body))?
             ),
             "json" => json!({ "name": n, "body": body }).to_string(),
             "text" => format!("# function: {}\n{}\n", n, body),
@@ -167,12 +166,27 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, is_export: boo
         let body = match row {
             Some(v) => match format.as_str() {
                 "json" | "sh" | "text" | "" => serde_json::to_string_pretty(&v).unwrap_or_default(),
-                "disasm" => format!(
-                    "# {} {} — bytecode disassembly\n# (not yet wired: v1 \
-                     stores source bytes; bytecode emitter arrives with the \
-                     parser-in-daemon work)\n",
-                    target, path
-                ),
+                "disasm" => {
+                    let show_sensitive = args
+                        .get("show_sensitive")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if v["sensitive"].as_bool().unwrap_or(false) && !show_sensitive {
+                        return Err(ErrPayload::new(
+                            "sensitive",
+                            format!(
+                                "`{}` is flagged sensitive; pass --show-sensitive to print contents",
+                                path
+                            ),
+                        ));
+                    }
+                    format!(
+                        "# {} {} — bytecode disassembly\n{}",
+                        target,
+                        path,
+                        disasm_file(path)?
+                    )
+                }
                 other => {
                     return Err(ErrPayload::new(
                         "bad_format",
@@ -1604,10 +1618,53 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-/// Disassembled-bytecode renderer for function/script/shard targets.
-/// Bytecode emitter waits for the parser-in-daemon work; emit a
-/// stable stub now so callers can wire a `--format disasm` flag without
-/// it breaking.
+/// Locate the `zshrs` binary that owns the compile path: `$ZSHRS_BIN`, else
+/// beside this executable, else on `$PATH`. The daemon crate carries no
+/// parser or compiler; the shell binary is the single compile path.
+fn zshrs_binary() -> std::path::PathBuf {
+    if let Some(p) = std::env::var_os("ZSHRS_BIN") {
+        return p.into();
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|me| me.parent().map(|d| d.join("zshrs")))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| "zshrs".into())
+}
+
+/// Compile `src` with the shell's own compile path and return the fusevm op
+/// listing. `zshrs --disasm -n -c` parses and compiles every unit and prints
+/// its ops without executing anything (`-n` is NO_EXEC).
+fn disasm_source(src: &str) -> std::result::Result<String, ErrPayload> {
+    let out = std::process::Command::new(zshrs_binary())
+        .args(["-f", "--disasm", "-n", "-c", src])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| {
+            ErrPayload::new(
+                "disasm_unavailable",
+                format!("cannot run zshrs to compile for disassembly: {e}"),
+            )
+        })?;
+    if !out.status.success() {
+        return Err(ErrPayload::new(
+            "disasm_compile_failed",
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Disassemble the source file at `path`.
+fn disasm_file(path: &str) -> std::result::Result<String, ErrPayload> {
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| ErrPayload::new("disasm_read", format!("{path}: {e}")))?;
+    disasm_source(&src)
+}
+
+/// Disassembled-bytecode renderer for function/script/sourced targets. The
+/// daemon stores source, so each unit is compiled by the shell's compile
+/// path (`disasm_source`) and its fusevm ops are listed.
 fn render_disasm(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
     match target {
         "function" | "functions" => {
@@ -1615,26 +1672,59 @@ fn render_disasm(state: &DaemonState, target: &str) -> std::result::Result<Strin
             let mut out = String::new();
             for r in &rows {
                 let body = unjson(&r.value);
-                out.push_str(&format!(
-                    "; --- function: {} ---\n; (bytecode disassembly not yet wired; v1 \
-                     stores source bytes — emitter arrives with the parser-in-daemon work)\n; source:\n",
-                    r.key
-                ));
-                for line in body.lines() {
-                    out.push_str(&format!(";   {}\n", line));
+                out.push_str(&format!("; --- function: {} ---\n", r.key));
+                out.push_str(&disasm_source(&format!(
+                    "function {} {{\n{}\n}}\n",
+                    r.key, body
+                ))?);
+                out.push('\n');
+            }
+            Ok(out)
+        }
+        "script" | "sourced" => {
+            let kinds: &[&str] = if target == "script" {
+                &["script", "zshrc"]
+            } else {
+                &["source", "zshrc", "plugin_init", "autoload"]
+            };
+            let paths: Vec<String> = state
+                .with_catalog(|conn| -> rusqlite::Result<Vec<String>> {
+                    let mut stmt = conn.prepare(
+                        "SELECT path, kind FROM compiled_files WHERE sensitive = 0 \
+                         ORDER BY path LIMIT 10000",
+                    )?;
+                    let rows = stmt
+                        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(rows
+                        .into_iter()
+                        .filter(|(_, k)| kinds.contains(&k.as_str()))
+                        .map(|(p, _)| p)
+                        .collect())
+                })
+                .map_err(ErrPayload::from)?;
+            let mut out = String::new();
+            for p in &paths {
+                out.push_str(&format!("; --- {} {} ---\n", target, p));
+                // A file deleted since it was cached is reported, not fatal.
+                match disasm_file(p) {
+                    Ok(d) => out.push_str(&d),
+                    Err(e) => out.push_str(&format!("; {}\n", e.msg)),
                 }
                 out.push('\n');
             }
             Ok(out)
         }
-        "script" | "sourced" | "shard" => Ok(format!(
-            "; --- {} disasm ---\n; (bytecode disassembly not yet wired; v1 stores source bytes\n; — emitter arrives with the parser-in-daemon work)\n",
-            target
+        "shard" => Err(ErrPayload::new(
+            "format_unsupported_for_target",
+            "disasm on `shard`: shard entries are serialized fusevm chunks and the daemon \
+             crate links no fusevm decoder; disassemble the source targets instead \
+             (function|script|sourced)",
         )),
         other => Err(ErrPayload::new(
             "format_unsupported_for_target",
             format!(
-                "disasm format on `{}` not applicable (try function|functions|script|sourced|shard)",
+                "disasm format on `{}` not applicable (try function|functions|script|sourced)",
                 other
             ),
         )),

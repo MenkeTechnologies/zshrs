@@ -499,17 +499,30 @@ impl ShellExecutor {
             // branch and a stack-trace loop never terminated.
             return 1;
         }
+        // `$functrace[N]` is "caller:LINE" and `$funcfiletrace[N]` is
+        // "FILE:LINE" for the call site of frame N (modules/parameter).
+        let after_colon = |v: Vec<String>| -> Vec<(String, String)> {
+            v.into_iter()
+                .map(|e| match e.rsplit_once(':') {
+                    Some((a, b)) => (a.to_string(), b.to_string()),
+                    None => (e.clone(), "0".to_string()),
+                })
+                .collect()
+        };
+        let trace = after_colon(self.array("functrace").unwrap_or_default());
+        let filetrace = after_colon(self.array("funcfiletrace").unwrap_or_default());
+        let line_at = |n: usize| trace.get(n).map(|t| t.1.clone()).unwrap_or_else(|| "0".to_string());
         if depth == 0 {
             let func = stack.first().cloned().unwrap_or_else(|| "main".to_string());
-            println!("0 {}", func);
+            println!("{} {}", line_at(0), func);
             0
         } else if depth < stack.len() {
             let func = stack[depth].clone();
-            // `find_function_file` was deleted with the old exec.c
-            // stubs (it always returned None). Until the canonical
-            // `functions_source` map is wired, fall back to "main".
-            let file = "main".to_string();
-            println!("0 {} {}", func, file);
+            let file = filetrace
+                .get(depth)
+                .map(|t| t.0.clone())
+                .unwrap_or_else(|| "main".to_string());
+            println!("{} {} {}", line_at(depth), func, file);
             0
         } else {
             // Bash returns 1 (no frame at that depth) silently.
@@ -2154,6 +2167,10 @@ impl ShellExecutor {
         let mut filter = None;
         let mut pre = String::new();
         let mut suf = String::new();
+        // -F FUNC, -C COMMAND, -o OPTION (see the post-processing below).
+        let mut func: Option<String> = None;
+        let mut command: Option<String> = None;
+        let mut copts: Vec<String> = Vec::new();
 
         // bash getopt: clustered letters (`-fd`), option arguments either
         // glued or in the next word, `--` ends options.
@@ -2218,7 +2235,18 @@ impl ShellExecutor {
                     'X' => filter = Some(optarg),
                     'P' => pre = optarg,
                     'S' => suf = optarg,
-                    // -F / -C / -o need a completion context; accepted, no-op.
+                    'F' => func = Some(optarg),
+                    'C' => command = Some(optarg),
+                    'o' => {
+                        if !matches!(
+                            optarg.as_str(),
+                            "bashdefault" | "default" | "dirnames" | "filenames" | "noquote" | "nosort" | "nospace" | "plusdirs"
+                        ) {
+                            eprintln!("zshrs:compgen:1: {}: invalid option name", optarg);
+                            return 2;
+                        }
+                        copts.push(optarg);
+                    }
                     _ => {}
                 }
             }
@@ -2348,6 +2376,53 @@ impl ShellExecutor {
         if let Some(pattern) = globpat {
             if let Ok(paths) = glob::glob(&pattern) {
                 results.extend(paths.flatten().map(|p| p.to_string_lossy().into_owned()).filter(|n| keep(n)));
+            }
+        }
+
+        // -F FUNC: call FUNC with ($1 = "compgen", $2 = the word, $3 = "")
+        // and take the candidates it leaves in COMPREPLY.
+        if let Some(f) = func {
+            crate::ported::params::setaparam("COMPREPLY", Vec::new());
+            let fargs = vec!["compgen".to_string(), prefix.clone(), String::new()];
+            if crate::ported::exec::dispatch_function_call(&f, &fargs).is_none() {
+                eprintln!("zshrs:compgen:1: {}: function not found", f);
+                return 1;
+            }
+            results.extend(crate::ported::params::getaparam("COMPREPLY").unwrap_or_default());
+        }
+        // -C COMMAND: run it under sh with COMP_LINE/COMP_POINT set;
+        // each output line is a candidate.
+        if let Some(c) = command {
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&c)
+                .env("COMP_LINE", &prefix)
+                .env("COMP_POINT", prefix.len().to_string())
+                .stderr(std::process::Stdio::inherit())
+                .output();
+            match out {
+                Ok(o) => results.extend(
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .map(String::from),
+                ),
+                Err(e) => {
+                    eprintln!("zshrs:compgen:1: {}: {}", c, e);
+                    return 1;
+                }
+            }
+        }
+        // -o plusdirs adds directory matches; -o dirnames / default /
+        // bashdefault fall back to file-name matches when nothing else
+        // matched. The remaining options only shape readline insertion.
+        if copts.iter().any(|o| o == "plusdirs") {
+            results.extend(Self::compgen_paths(pfx, true));
+        }
+        if results.is_empty() {
+            if copts.iter().any(|o| o == "dirnames") {
+                results.extend(Self::compgen_paths(pfx, true));
+            } else if copts.iter().any(|o| o == "default" || o == "bashdefault") {
+                results.extend(Self::compgen_paths(pfx, false));
             }
         }
 
@@ -2657,10 +2732,14 @@ impl ShellExecutor {
     ///
     /// Failures are logged, not printed. Upstream's own failure mode is
     /// compdump sh:24 returning 1 into a caller (sh:550) that ignores it.
-    fn compdump_explicit(&mut self, dump_file: Option<&str>, no_dump: bool) {
+    fn compdump_explicit(&mut self, dump_file: Option<&str>, no_dump: bool, why: bool) {
         // sh:549 `[[ $_i_autodump = 1 ]]` — `-D` sets it to 0 (sh:90-92).
         if no_dump {
             return;
+        }
+        // sh:533 — `-w` reports the regeneration.
+        if why {
+            eprintln!("Regenerating dump file");
         }
         let Some(path) = dump_file.filter(|f| !f.is_empty()) else {
             return;
@@ -2742,6 +2821,8 @@ impl ShellExecutor {
         let mut use_cache = false;
         let mut ignore_insecure = false;
         let mut use_insecure = false;
+        // -w: report why the dump file is (not) used (sh:89, sh:467-533).
+        let mut why = false;
 
         let mut i = 0;
         while i < args.len() {
@@ -2757,11 +2838,7 @@ impl ShellExecutor {
                 }
                 "-u" => use_insecure = true,
                 "-i" => ignore_insecure = true,
-                // -f: force re-dump even when dumpfile is current.
-                // -w: warn about old / suspicious files (man compinit).
-                // Both are real zsh flags; previously rejected by the
-                // unknown-flag arm because they weren't enumerated.
-                "-f" | "-w" => {} // accepted; semantic wiring is no-op
+                "-w" => why = true,
                 s if s.starts_with('-') && s.len() > 1 => {
                     // compinit -X errors in zsh ("bad option") rather
                     // than silently no-op'ing. Without this, typos
@@ -2789,6 +2866,35 @@ impl ShellExecutor {
         // `zsh/parameter` parameter loads that module, so a real zsh lists
         // it in `zmodload -L` after any compinit.
         crate::compsys::ported::compinit::touch_funcstack_param();
+
+        // sh:467-505 — `-w` explains the dump-file decision on stderr.
+        // The fpath file-count reason (sh:482) is not reported: the count
+        // upstream compares against is a fresh `$fpath` scan that zshrs
+        // performs later, on the worker pool.
+        if why {
+            let dump = crate::ported::params::getsparam("_comp_dumpfile").unwrap_or_default();
+            eprintln!("Using dump file: {}", dump);
+            match std::fs::read_to_string(&dump) {
+                Err(_) => eprintln!("No existing dump file found"),
+                Ok(text) if !use_cache => {
+                    let header: Vec<&str> =
+                        text.lines().next().unwrap_or("").split_whitespace().collect();
+                    let current = crate::ported::params::getsparam("ZSH_VERSION")
+                        .unwrap_or_else(|| crate::ported::patchlevel::ZSH_VERSION.to_string());
+                    let mut reasons: Vec<String> = Vec::new();
+                    if no_dump {
+                        reasons.push("-D flag given".to_string());
+                    }
+                    if let Some(old) = header.get(3).filter(|v| **v != current) {
+                        reasons.push(format!("zsh version changed from {} to {}", old, current));
+                    }
+                    if !reasons.is_empty() {
+                        eprintln!("Loading dump file skipped because: {}", reasons.join(", "));
+                    }
+                }
+                Ok(_) => {}
+            }
+        }
 
         // compinit sh:455 `autoload -RUz compaudit` and sh:481
         // `autoload -RUz compdump compinstall` ("Make sure compdump is
@@ -3141,7 +3247,7 @@ impl ShellExecutor {
                         // `-C` found no dump to source, i.e. `_i_done` is
                         // empty and sh:521-545 scanned `$fpath` — so it
                         // dumps here.
-                        self.compdump_explicit(dump_file.as_deref(), no_dump);
+                        self.compdump_explicit(dump_file.as_deref(), no_dump, why);
                         return 0;
                     }
                 }
@@ -3396,7 +3502,7 @@ impl ShellExecutor {
                 // dumps after. Last statement of the scan branch, matching
                 // upstream's position: every completer is registered and
                 // autoloaded by now, which is what compdump sh:108 reads.
-                self.compdump_explicit(dump_file.as_deref(), no_dump);
+                self.compdump_explicit(dump_file.as_deref(), no_dump, why);
                 0
             }
             Err(_) => {
@@ -3856,6 +3962,9 @@ impl ShellExecutor {
         let mut start_byte: Option<usize> = None;
         let mut force_quiet = false;
         let mut force_verbose = false;
+        // -f / --follow: after the initial output, keep emitting data
+        // appended to the last named file (polled; handles truncation).
+        let mut follow = false;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
@@ -3921,9 +4030,7 @@ impl ShellExecutor {
                 }
                 break;
             } else if arg == "-f" || arg == "--follow" {
-                // -f (follow): not yet wired through; accept as no-op
-                // for compat. coreutils-style \`tail -f\` would need a
-                // separate streaming loop.
+                follow = true;
             } else {
                 eprintln!("tail: unrecognized option: '{}'", arg);
                 return 1;
@@ -4012,7 +4119,59 @@ impl ShellExecutor {
                 println!("{}", line);
             }
         }
+        if follow {
+            if let Some(path) = files.iter().rev().find(|f| **f != "-") {
+                return Self::tail_follow(path);
+            }
+        }
         0
+    }
+
+    /// `tail -f` loop: poll `path` for growth and copy new bytes to
+    /// stdout. A shrinking file is treated as truncated and re-read from
+    /// the start. Runs until the process is signalled.
+    fn tail_follow(path: &str) -> i32 {
+        use std::io::{Seek, SeekFrom};
+        let mut pos = match std::fs::metadata(path) {
+            Ok(m) => m.len(),
+            Err(e) => {
+                eprintln!(
+                    "tail: {}: {}",
+                    path,
+                    crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                );
+                return 1;
+            }
+        };
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let len = match std::fs::metadata(path) {
+                Ok(m) => m.len(),
+                Err(_) => continue,
+            };
+            if len < pos {
+                pos = 0;
+            }
+            if len == pos {
+                continue;
+            }
+            let Ok(mut f) = std::fs::File::open(path) else {
+                continue;
+            };
+            if f.seek(SeekFrom::Start(pos)).is_err() {
+                continue;
+            }
+            let mut buf = Vec::new();
+            if f.read_to_end(&mut buf).is_err() {
+                continue;
+            }
+            pos += buf.len() as u64;
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            if out.write_all(&buf).and_then(|_| out.flush()).is_err() {
+                return 1;
+            }
+        }
     }
 
     pub(crate) fn builtin_wc(&self, args: &[String]) -> i32 {
@@ -6368,10 +6527,9 @@ impl ShellExecutor {
     }
 
     /// users — print logged-in usernames. Coreutils users(1) /
-    /// POSIX. Fallback minimal impl: prints \$USER (or current
-    /// effective user via getpwuid) since fully reading utmp is
-    /// platform-specific. Multi-user output not yet implemented;
-    /// shell scripts that just check `[[ $(users) ]]` still work.
+    /// POSIX. Walks utmpx via getutxent(3) and lists every
+    /// USER_PROCESS entry (sorted, one per login); falls back to the
+    /// effective user when utmpx has no entries.
     pub(crate) fn builtin_users(&self, args: &[String]) -> i32 {
         for arg in args {
             if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
@@ -6379,11 +6537,10 @@ impl ShellExecutor {
                 return 1;
             }
             // POSIX `users [file]` accepts one positional arg — an
-            // alternate utmp file. Honored via `utmpxname(3)` on
-            // platforms that have it; silently no-op'd on those
-            // that don't (macOS doesn't ship utmpxname).
+            // alternate utmp file, honored via `utmpxname(3)` (glibc and
+            // macOS libc both export it).
             if !arg.starts_with('-') {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
                     let cpath = std::ffi::CString::new(arg.as_bytes()).ok();
                     if let Some(c) = cpath {
@@ -6454,38 +6611,38 @@ impl ShellExecutor {
         0
     }
 
-    /// tput — terminfo capability query (minimal subset).
-    /// Common subset of ncurses tput(1):
-    ///   tput cols / lines      → terminal width / height
-    ///   tput colors            → terminal color count
-    ///   tput clear / cl        → clear screen
-    ///   tput cup R C           → cursor to (row, col) (0-based)
-    ///   tput sgr0 / op         → reset attributes / colors
-    ///   tput bold / smso / rmso / smul / rmul / rev / blink
-    ///                          → text attributes
-    ///   tput setaf N / setab N → fg/bg color (8/16 colors)
-    /// Many other terminfo capabilities aren't yet wired; unknown
-    /// capabilities fall through to echotc's two-letter mapping or
-    /// silently exit 1 (tput's standard error code).
+    /// tput [-T TERM] [-x] [-S] CAPNAME [PARAMS...] — terminfo capability
+    /// query/emit. The capability is looked up in the terminfo entry for
+    /// `-T TERM` (default `$TERM`) by terminfo name, then by termcap code:
+    /// numbers print, booleans set the exit status (0 true, 1 false),
+    /// strings are expanded with the parameters and written raw. `cols`
+    /// and `lines` report the live terminal size; `init` / `reset` emit
+    /// the `is1..is3` / `rs1..rs3` sequences; `clear` also emits `E3`
+    /// (scrollback) unless `-x` is given. Unknown capability exits 4,
+    /// unknown terminal 3, no terminal 2.
     pub(crate) fn builtin_tput(&self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            eprintln!("tput: missing capname");
-            return 2;
-        }
         let mut iter = args.iter().peekable();
         let mut stdin_mode = false;
+        let mut keep_scrollback = false;
+        let mut term: Option<String> = None;
         while let Some(arg) = iter.peek() {
             match arg.as_str() {
                 "-T" => {
                     iter.next();
-                    // The TERM override is consumed; the handlers
-                    // below read TERM via `$TERM` env var anyway,
-                    // so applying this would require temporarily
-                    // setenv-ing TERM for the cap evaluation. Honest
-                    // gap noted; most real scripts don't pass -T.
-                    iter.next();
+                    match iter.next() {
+                        Some(t) => term = Some(t.clone()),
+                        None => {
+                            eprintln!("tput: option requires an argument -- T");
+                            return 2;
+                        }
+                    }
                 }
                 s if s.starts_with("-T") && s.len() > 2 => {
+                    term = Some(s[2..].to_string());
+                    iter.next();
+                }
+                "-x" => {
+                    keep_scrollback = true;
                     iter.next();
                 }
                 "-S" => {
@@ -6497,12 +6654,27 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-h" | "--help" => {
-                    println!("Usage: tput [-T TERM] [-S] CAPNAME [PARAMS...]");
+                    println!("Usage: tput [-T TERM] [-x] [-S] CAPNAME [PARAMS...]");
                     return 0;
                 }
                 _ => break,
             }
         }
+
+        let term_name = term
+            .or_else(|| std::env::var("TERM").ok())
+            .unwrap_or_default();
+        if term_name.is_empty() {
+            eprintln!("tput: No value for $TERM and no -T specified");
+            return 2;
+        }
+        let entry = match crate::terminfo_db::load_entry(&term_name) {
+            Ok(e) => e,
+            Err(_) => {
+                eprintln!("tput: unknown terminal \"{}\"", term_name);
+                return 3;
+            }
+        };
 
         // -S stdin mode: each line is `capname [params...]`. Process
         // every line through the same cap handler used below. Blank
@@ -6517,17 +6689,12 @@ impl ShellExecutor {
                     Ok(l) => l,
                     Err(_) => break,
                 };
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
+                let mut parts = line.split_whitespace();
+                let Some(cap) = parts.next() else {
                     continue;
-                }
-                let mut parts = trimmed.split_whitespace();
-                let cap = match parts.next() {
-                    Some(c) => c,
-                    None => continue,
                 };
                 let rest: Vec<&str> = parts.collect();
-                let s = tput_emit_cap(cap, &rest);
+                let s = tput_emit_cap(&entry, cap, &rest, keep_scrollback);
                 if s != 0 {
                     status = s;
                 }
@@ -6535,122 +6702,127 @@ impl ShellExecutor {
             return status;
         }
 
-        let cap = match iter.next() {
-            Some(c) => c.as_str(),
-            None => {
-                eprintln!("tput: missing capname");
-                return 2;
-            }
+        let Some(cap) = iter.next() else {
+            eprintln!("tput: missing capname");
+            return 2;
         };
         let rest: Vec<&str> = iter.map(|s| s.as_str()).collect();
-        tput_emit_cap(cap, &rest)
+        tput_emit_cap(&entry, cap, &rest, keep_scrollback)
     }
 }
 
-/// Emit the terminal-control sequence for one capability name. Used
-/// by both the direct `tput CAP` path and the `-S` stdin loop. Mirrors
-/// the cap set zsh's prompt-theme + zinit + p10k routines invoke; not
-/// the full terminfo database (that would require linking ncurses).
-/// Returns coreutils-tput exit status: 0=ok, 1=unknown bool-cap,
-/// 2=unknown string-cap. We collapse both unknowns to 1.
-fn tput_emit_cap(cap: &str, rest: &[&str]) -> i32 {
-    match cap {
-        "cols" | "co" => {
-            let cols: i32 = std::env::var("COLUMNS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(80);
-            println!("{}", cols);
-            0
-        }
-        "lines" | "li" => {
-            let lines: i32 = std::env::var("LINES")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(24);
-            println!("{}", lines);
-            0
-        }
-        "colors" | "Co" => {
-            // Most modern terminals are 256 or truecolor; default
-            // to 256 since that's what TERM=xterm-256color reports.
-            let term = std::env::var("TERM").unwrap_or_default();
-            let n = if term.contains("256") || term.contains("direct") || term.contains("truecolor")
-            {
-                256
-            } else {
-                8
-            };
-            println!("{}", n);
-            0
-        }
-        "clear" | "cl" => {
-            print!("\x1b[H\x1b[2J");
-            0
-        }
-        "cup" => {
-            if rest.len() < 2 {
-                return 2;
+/// Current terminal size as `(lines, cols)`: TIOCGWINSZ on the first
+/// standard descriptor that is a tty, then `$LINES` / `$COLUMNS`, then the
+/// entry's `lines` / `cols`, then 24x80 (ncurses `_nc_get_screensize`).
+fn tput_screen_size(entry: &crate::terminfo_db::TermEntry) -> (i32, i32) {
+    let mut lines = entry.num("lines");
+    let mut cols = entry.num("cols");
+    for fd in [libc::STDOUT_FILENO, libc::STDERR_FILENO, libc::STDIN_FILENO] {
+        let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+        if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } == 0 {
+            if ws.ws_row > 0 {
+                lines = i32::from(ws.ws_row);
             }
-            if let (Ok(r), Ok(c)) = (rest[0].parse::<u32>(), rest[1].parse::<u32>()) {
-                print!("\x1b[{};{}H", r + 1, c + 1);
+            if ws.ws_col > 0 {
+                cols = i32::from(ws.ws_col);
             }
-            0
-        }
-        "sgr0" | "me" | "op" => {
-            print!("\x1b[0m");
-            0
-        }
-        "bold" | "md" => {
-            print!("\x1b[1m");
-            0
-        }
-        "smso" | "so" | "rev" | "mr" => {
-            print!("\x1b[7m");
-            0
-        }
-        "rmso" | "se" => {
-            print!("\x1b[27m");
-            0
-        }
-        "smul" | "us" => {
-            print!("\x1b[4m");
-            0
-        }
-        "rmul" | "ue" => {
-            print!("\x1b[24m");
-            0
-        }
-        "blink" | "mb" => {
-            print!("\x1b[5m");
-            0
-        }
-        "setaf" | "AF" => {
-            if let Some(n) = rest.first().and_then(|s| s.parse::<i32>().ok()) {
-                print!("\x1b[{}m", 30 + n);
-            }
-            0
-        }
-        "setab" | "AB" => {
-            if let Some(n) = rest.first().and_then(|s| s.parse::<i32>().ok()) {
-                print!("\x1b[{}m", 40 + n);
-            }
-            0
-        }
-        "civis" | "vi" => {
-            print!("\x1b[?25l");
-            0
-        }
-        "cnorm" | "ve" => {
-            print!("\x1b[?25h");
-            0
-        }
-        _ => {
-            // Unknown capability — exit 1 silently per tput
-            // convention. Don't emit error for boolean-cap probes.
-            1
+            break;
         }
     }
+    let env_num = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<i32>().ok()).filter(|n| *n > 0);
+    if let Some(n) = env_num("LINES") {
+        lines = n;
+    }
+    if let Some(n) = env_num("COLUMNS") {
+        cols = n;
+    }
+    (if lines > 0 { lines } else { 24 }, if cols > 0 { cols } else { 80 })
+}
+
+/// Write the raw capability bytes to stdout with padding specs stripped.
+fn tput_write(bytes: &[u8]) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(&crate::tparm::tputs_strip_padding(bytes));
+    let _ = out.flush();
+}
+
+/// Evaluate and emit one capability for the `tput` builtin; shared by the
+/// direct `tput CAP` path and the `-S` stdin loop. Exit status: 0 ok,
+/// 1 false boolean, 4 unknown capability.
+fn tput_emit_cap(
+    entry: &crate::terminfo_db::TermEntry,
+    cap: &str,
+    rest: &[&str],
+    keep_scrollback: bool,
+) -> i32 {
+    match cap {
+        "cols" | "lines" => {
+            let (lines, cols) = tput_screen_size(entry);
+            println!("{}", if cap == "cols" { cols } else { lines });
+            return 0;
+        }
+        "init" | "reset" => {
+            let names: [&str; 3] = if cap == "init" {
+                ["is1", "is2", "is3"]
+            } else {
+                ["rs1", "rs2", "rs3"]
+            };
+            for n in names {
+                if let Some(s) = entry.string(n) {
+                    tput_write(s);
+                }
+            }
+            return 0;
+        }
+        _ => {}
+    }
+
+    // Numeric: terminfo name (an absent value prints -1), then termcap code.
+    let n = entry.num(cap);
+    if n != -2 {
+        println!("{}", n);
+        return 0;
+    }
+    if crate::extensions::terminfo_caps::NUM_CODES.contains(&cap) {
+        println!("{}", entry.tc_num(cap));
+        return 0;
+    }
+    // Boolean: the exit status carries the answer.
+    match entry.flag(cap) {
+        -1 => {}
+        0 => return 1,
+        _ => return 0,
+    }
+    if crate::extensions::terminfo_caps::BOOL_CODES.contains(&cap) {
+        return if entry.tc_flag(cap) == 1 { 0 } else { 1 };
+    }
+    // String: expand with up to 9 parameters (ints, except the string-arg
+    // capabilities pfkey/pfloc/pfx/pln/pfxl whose later arguments are text).
+    let Some(raw) = entry.string(cap).or_else(|| entry.tc_string(cap)) else {
+        if entry.str_is_wrong_type(cap) && !crate::extensions::terminfo_caps::STR_CODES.contains(&cap) {
+            eprintln!("tput: unknown terminfo capability '{}'", cap);
+            return 4;
+        }
+        // Known string capability the entry does not define.
+        return 1;
+    };
+    let strarg = matches!(cap, "pfkey" | "pfloc" | "pfx" | "pln" | "pfxl");
+    let mut pars: Vec<crate::tparm::V> = vec![crate::tparm::V::Int(0); 9];
+    for (i, a) in rest.iter().enumerate().take(9) {
+        pars[i] = if strarg && i > 0 {
+            crate::tparm::V::Str((*a).to_string())
+        } else {
+            crate::tparm::V::Int(a.parse::<i64>().unwrap_or(0))
+        };
+    }
+    tput_write(&crate::tparm::tparm_params(raw, &pars));
+    if cap == "clear" && !keep_scrollback {
+        if let Some(e3) = entry.string("E3") {
+            tput_write(e3);
+        }
+    }
+    0
 }
 
 impl ShellExecutor {
@@ -7523,22 +7695,33 @@ impl ShellExecutor {
         0
     }
 
-    /// tac [FILE...] — concatenate files, reverse line order.
-    /// coreutils tac(1).
+    /// tac [-b] [-r] [-s SEP] [FILE...] — concatenate files, reverse
+    /// record order, one file at a time. coreutils tac(1): records end
+    /// with SEP (default newline); `-b` attaches SEP to the start of the
+    /// following record instead; `-r` treats SEP as a regular expression.
     pub(crate) fn builtin_tac(&self, args: &[String]) -> i32 {
-        // tac in coreutils accepts -b (before) / -r (regex separator)
-        // / -s (separator). Most usage is positional-only. Validate
-        // unknown flags rather than silent-drop.
         let mut files: Vec<&str> = Vec::new();
+        let mut before = false;
+        let mut regex_sep = false;
+        let mut separator: Vec<u8> = b"\n".to_vec();
         let mut iter = args.iter();
         while let Some(a) = iter.next() {
             let s: &str = a.as_str();
             match s {
                 "-" => files.push("-"),
-                "-b" | "--before" | "-r" | "--regex" => {} // accepted, no-op
-                "-s" | "--separator" => {
-                    iter.next(); // consume the separator arg
+                "-b" | "--before" => before = true,
+                "-r" | "--regex" => regex_sep = true,
+                "-s" | "--separator" => match iter.next() {
+                    Some(sep) => separator = sep.as_bytes().to_vec(),
+                    None => {
+                        eprintln!("tac: option requires an argument -- 's'");
+                        return 1;
+                    }
+                },
+                _ if s.starts_with("--separator=") => {
+                    separator = s["--separator=".len()..].as_bytes().to_vec();
                 }
+                _ if s.starts_with("-s") && s.len() > 2 => separator = s.as_bytes()[2..].to_vec(),
                 "--" => {
                     for rest in iter.by_ref() {
                         files.push(rest);
@@ -7552,35 +7735,83 @@ impl ShellExecutor {
                 }
             }
         }
+        if separator.is_empty() {
+            eprintln!("tac: separator cannot be empty");
+            return 1;
+        }
+        let re = if regex_sep {
+            match regex::bytes::Regex::new(&String::from_utf8_lossy(&separator)) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    eprintln!("tac: invalid regular expression: {}", e);
+                    return 1;
+                }
+            }
+        } else {
+            None
+        };
         let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
-        let mut all: Vec<String> = Vec::new();
+        let mut status = 0;
         for file in targets {
-            let reader: Box<dyn BufRead> = if file == "-" {
-                Box::new(BufReader::new(std::io::stdin()))
+            let mut data: Vec<u8> = Vec::new();
+            let read = if file == "-" {
+                std::io::stdin().lock().read_to_end(&mut data)
             } else {
-                match std::fs::File::open(file) {
-                    Ok(f) => Box::new(BufReader::new(f)),
-                    Err(e) => {
-                        eprintln!("tac: {}: {}", file, e);
-                        return 1;
+                std::fs::File::open(file).and_then(|mut f| f.read_to_end(&mut data))
+            };
+            if let Err(e) = read {
+                eprintln!("tac: {}: {}", file, e);
+                status = 1;
+                continue;
+            }
+            // (start, end) of every separator occurrence.
+            let spans: Vec<(usize, usize)> = match &re {
+                Some(r) => r
+                    .find_iter(&data)
+                    .filter(|m| m.end() > m.start())
+                    .map(|m| (m.start(), m.end()))
+                    .collect(),
+                None => {
+                    let mut v = Vec::new();
+                    let mut pos = 0;
+                    while pos + separator.len() <= data.len() {
+                        if data[pos..pos + separator.len()] == separator[..] {
+                            v.push((pos, pos + separator.len()));
+                            pos += separator.len();
+                        } else {
+                            pos += 1;
+                        }
                     }
+                    v
                 }
             };
-            for line in reader.lines().map_while(Result::ok) {
-                all.push(line);
+            // Record boundaries: after each separator, or before it with -b.
+            let mut cuts: Vec<usize> = vec![0];
+            for (s, e) in spans {
+                let cut = if before { s } else { e };
+                if cut > *cuts.last().unwrap_or(&0) && cut < data.len() {
+                    cuts.push(cut);
+                }
+            }
+            cuts.push(data.len());
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            for w in cuts.windows(2).rev() {
+                if out.write_all(&data[w[0]..w[1]]).is_err() {
+                    return 1;
+                }
             }
         }
-        for line in all.iter().rev() {
-            println!("{}", line);
-        }
-        0
+        status
     }
 
-    /// expand [-t TAB] [FILE...] — convert tabs to spaces.
-    /// coreutils expand(1).
+    /// expand [-i] [-t TAB] [FILE...] — convert tabs to spaces.
+    /// coreutils expand(1); `-i` converts only leading tabs.
     pub(crate) fn builtin_expand(&self, args: &[String]) -> i32 {
         // Default tab stop 8.
         let mut tabs: Vec<usize> = vec![8];
+        // -i: convert only the tabs before the first non-blank character.
+        let mut initial_only = false;
         let mut files: Vec<&str> = Vec::new();
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -7602,7 +7833,7 @@ impl ShellExecutor {
                         tabs = vec![8];
                     }
                 }
-                "-i" | "--initial" => {} // accepted: only-leading-tabs
+                "-i" | "--initial" => initial_only = true,
                 "-" => files.push("-"),
                 "--" => {
                     for rest in iter.by_ref() {
@@ -7647,14 +7878,23 @@ impl ShellExecutor {
             for line in reader.lines().map_while(Result::ok) {
                 let mut col = 0usize;
                 let mut out = String::with_capacity(line.len());
+                let mut seen_nonblank = false;
                 for c in line.chars() {
                     if c == '\t' {
                         let target = stop_for(col);
+                        if initial_only && seen_nonblank {
+                            out.push('\t');
+                            col = target;
+                            continue;
+                        }
                         while col < target {
                             out.push(' ');
                             col += 1;
                         }
                     } else {
+                        if c != ' ' {
+                            seen_nonblank = true;
+                        }
                         out.push(c);
                         col += 1;
                     }
@@ -7769,15 +8009,17 @@ impl ShellExecutor {
     /// when no FILE / '-'). coreutils-style 'HEX  PATH' output.
     pub(crate) fn builtin_sha256sum(&self, args: &[String]) -> i32 {
         // Validate flags: silent-drop accepted any unknown -X. coreutils
-        // sha256sum specifically supports -b/-t/--binary/--text (we
-        // accept them as no-ops since output format is identical), -
-        // (stdin), and `--`. Anything else errors.
+        // sha256sum specifically supports -b/-t/--binary/--text (binary
+        // mode marks the name with `*`, GNU style), - (stdin), and `--`.
+        // Anything else errors.
+        let mut binary = false;
         let mut files: Vec<&str> = Vec::new();
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "-" => files.push("-"),
-                "-b" | "-t" | "--binary" | "--text" => {} // accept, no-op
+                "-b" | "--binary" => binary = true,
+                "-t" | "--text" => binary = false,
                 "--" => {
                     for rest in iter.by_ref() {
                         files.push(rest);
@@ -7822,11 +8064,8 @@ impl ShellExecutor {
             match result {
                 Ok(()) => {
                     let hex = format!("{:x}", hasher.finalize());
-                    if f == "-" {
-                        println!("{}  -", hex);
-                    } else {
-                        println!("{}  {}", hex, f);
-                    }
+                    let sep = if binary { " *" } else { "  " };
+                    println!("{}{}{}", hex, sep, f);
                 }
                 Err(e) => {
                     eprintln!("sha256sum: {}: {}", f, e);
@@ -7974,16 +8213,20 @@ impl ShellExecutor {
         // unknown flags rather than the previous silent accept.
         let mut want_all = false;
         let mut ignore: i64 = 0;
-        for arg in args {
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "--all" => want_all = true,
                 s if s.starts_with("--ignore=") => {
                     ignore = s[9..].parse().unwrap_or(0);
                 }
-                "--ignore" => {
-                    // separate-arg form not common; coreutils accepts
-                    // --ignore=N. Skip if standalone, treat as no-op.
-                }
+                "--ignore" => match iter.next() {
+                    Some(n) => ignore = n.parse().unwrap_or(0),
+                    None => {
+                        eprintln!("nproc: option '--ignore' requires an argument");
+                        return 1;
+                    }
+                },
                 "--" => {}
                 s if s.starts_with('-') && s.len() > 1 => {
                     eprintln!("nproc: invalid option: '{}'", s);
@@ -8857,11 +9100,11 @@ impl ShellExecutor {
         // -d / --domain: domain part only (everything after first '.')
         // -f / --fqdn / --long: full hostname (default behaviour)
         // -i / --ip-address: numeric IP for the hostname
-        // bare arg: in some platforms sets the hostname (root only); we
-        //           accept it as a query-only no-op for safety.
+        // bare arg: sets the hostname via sethostname(2) (root only)
         let mut short = false;
         let mut domain_only = false;
         let mut ip = false;
+        let mut new_name: Option<&str> = None;
         for arg in args {
             match arg.as_str() {
                 "-s" | "--short" => short = true,
@@ -8876,8 +9119,20 @@ impl ShellExecutor {
                     eprintln!("hostname: invalid option: '{}'", s);
                     return 1;
                 }
-                _ => {} // bare arg: would set hostname (root); we accept silently
+                name => new_name = Some(name),
             }
+        }
+
+        if let Some(name) = new_name {
+            let rc = unsafe { libc::sethostname(name.as_ptr() as *const libc::c_char, name.len() as _) };
+            if rc != 0 {
+                eprintln!(
+                    "hostname: cannot set hostname: {}",
+                    std::io::Error::last_os_error()
+                );
+                return 1;
+            }
+            return 0;
         }
 
         let mut buf = [0u8; 256];
@@ -9024,14 +9279,165 @@ impl ShellExecutor {
         0
     }
 
+    /// Parse a `date -d` string into a Unix timestamp. Supports `@SECS`,
+    /// absolute dates/times (ISO-8601 forms, `YYYY/MM/DD`, ctime-style,
+    /// bare `HH:MM[:SS]`), the words now/today/yesterday/tomorrow, and
+    /// relative offsets (`[+-]N unit[s]`, `next|last unit`, `... ago`)
+    /// with units second/minute/hour/day/week/month/year. A trailing
+    /// `Z`/`UTC`/`GMT` token (or `utc` being set) selects UTC.
+    fn parse_date_string(input: &str, mut utc: bool, now: i64) -> Option<i64> {
+        let input = input.trim();
+        if let Some(secs) = input.strip_prefix('@') {
+            return secs.trim().parse::<i64>().ok();
+        }
+        // (field, amount): 0 sec, 1 min, 2 hour, 3 mday, 4 mon, 5 year
+        let mut rel: Vec<(u8, i64)> = Vec::new();
+        let mut abs_parts: Vec<String> = Vec::new();
+        let toks: Vec<&str> = input.split_whitespace().collect();
+        let unit_field = |u: &str| -> Option<(u8, i64)> {
+            let u = u.trim_end_matches('s');
+            Some(match u {
+                "sec" | "second" => (0, 1),
+                "min" | "minute" => (1, 1),
+                "hour" => (2, 1),
+                "day" => (3, 1),
+                "week" => (3, 7),
+                "fortnight" => (3, 14),
+                "month" => (4, 1),
+                "year" => (5, 1),
+                _ => return None,
+            })
+        };
+        let mut i = 0;
+        while i < toks.len() {
+            let t = toks[i].to_ascii_lowercase();
+            match t.as_str() {
+                "now" | "today" => {}
+                "yesterday" => rel.push((3, -1)),
+                "tomorrow" => rel.push((3, 1)),
+                "utc" | "gmt" | "z" => utc = true,
+                "ago" => {
+                    if let Some(last) = rel.last_mut() {
+                        last.1 = -last.1;
+                    } else {
+                        return None;
+                    }
+                }
+                "next" | "last" => {
+                    let (f, m) = unit_field(toks.get(i + 1)?.to_ascii_lowercase().as_str())?;
+                    rel.push((f, if t == "next" { m } else { -m }));
+                    i += 1;
+                }
+                _ => {
+                    let signed = t.strip_prefix('+').unwrap_or(&t);
+                    if let Ok(n) = signed.parse::<i64>() {
+                        if let Some((f, m)) = toks
+                            .get(i + 1)
+                            .and_then(|u| unit_field(&u.to_ascii_lowercase()))
+                        {
+                            rel.push((f, n * m));
+                            i += 1;
+                            i += 1;
+                            continue;
+                        }
+                    }
+                    abs_parts.push(toks[i].to_string());
+                }
+            }
+            i += 1;
+        }
+        let mut abs = abs_parts.join(" ");
+        if let Some(stripped) = abs.strip_suffix('Z') {
+            utc = true;
+            abs = stripped.to_string();
+        }
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        let t_now = now as libc::time_t;
+        unsafe {
+            if utc {
+                libc::gmtime_r(&t_now, &mut tm);
+            } else {
+                libc::localtime_r(&t_now, &mut tm);
+            }
+        }
+        if !abs.is_empty() {
+            let formats: [(&str, bool, bool); 11] = [
+                // (format, sets the date, sets the time)
+                ("%Y-%m-%d %H:%M:%S", true, true),
+                ("%Y-%m-%dT%H:%M:%S", true, true),
+                ("%Y-%m-%d %H:%M", true, true),
+                ("%Y-%m-%dT%H:%M", true, true),
+                ("%Y-%m-%d", true, false),
+                ("%Y/%m/%d %H:%M:%S", true, true),
+                ("%Y/%m/%d", true, false),
+                ("%a %b %e %H:%M:%S %Y", true, true),
+                ("%b %e %Y", true, false),
+                ("%H:%M:%S", false, true),
+                ("%H:%M", false, true),
+            ];
+            let c_abs = std::ffi::CString::new(abs.as_str()).ok()?;
+            let mut matched = false;
+            for (fmt, sets_date, sets_time) in formats {
+                let c_fmt = std::ffi::CString::new(fmt).ok()?;
+                let mut parsed: libc::tm = unsafe { std::mem::zeroed() };
+                let end = unsafe { libc::strptime(c_abs.as_ptr(), c_fmt.as_ptr(), &mut parsed) };
+                if end.is_null() || unsafe { *end } != 0 {
+                    continue;
+                }
+                if sets_date {
+                    tm.tm_year = parsed.tm_year;
+                    tm.tm_mon = parsed.tm_mon;
+                    tm.tm_mday = parsed.tm_mday;
+                }
+                if sets_time {
+                    tm.tm_hour = parsed.tm_hour;
+                    tm.tm_min = parsed.tm_min;
+                    tm.tm_sec = parsed.tm_sec;
+                } else {
+                    tm.tm_hour = 0;
+                    tm.tm_min = 0;
+                    tm.tm_sec = 0;
+                }
+                matched = true;
+                break;
+            }
+            if !matched {
+                return None;
+            }
+        }
+        for (field, n) in rel {
+            let n = n as libc::c_int;
+            match field {
+                0 => tm.tm_sec += n,
+                1 => tm.tm_min += n,
+                2 => tm.tm_hour += n,
+                3 => tm.tm_mday += n,
+                4 => tm.tm_mon += n,
+                _ => tm.tm_year += n,
+            }
+        }
+        tm.tm_isdst = -1;
+        let ts = unsafe {
+            if utc {
+                libc::timegm(&mut tm)
+            } else {
+                libc::mktime(&mut tm)
+            }
+        };
+        if ts == -1 && tm.tm_year != 69 {
+            return None;
+        }
+        Some(ts as i64)
+    }
+
     pub(crate) fn builtin_date(&self, args: &[String]) -> i32 {
         // coreutils date(1) port: adds -u (UTC), -r FILE (mtime of
-        // FILE), -R / --rfc-2822, -I / --iso-8601. -d (parse arbitrary
-        // date string) is partially handled — only +<seconds> /
-        // @<seconds> Unix-time forms; full date-string parser not yet.
+        // FILE), -R / --rfc-2822, -I / --iso-8601, -d STRING (see
+        // parse_date_string).
 
         let mut utc = false;
         let mut format: Option<String> = None;
+        let mut date_str: Option<String> = None;
         let mut reference: Option<String> = None;
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -9062,15 +9468,15 @@ impl ShellExecutor {
                     .to_string(),
                 );
             } else if arg == "-d" || arg == "--date" {
-                // -d STRING / --date=STRING — date-string parsing
-                // not yet implemented. Consume the next arg so it
-                // doesn't slip through to the unknown-flag path.
-                if iter.next().is_none() {
-                    eprintln!("zshrs:date:1: argument expected: -d");
-                    return 1;
+                match iter.next() {
+                    Some(d) => date_str = Some(d.clone()),
+                    None => {
+                        eprintln!("zshrs:date:1: argument expected: -d");
+                        return 1;
+                    }
                 }
-            } else if arg.starts_with("--date=") {
-                // ignore — parser not yet impl
+            } else if let Some(d) = arg.strip_prefix("--date=") {
+                date_str = Some(d.to_string());
             } else if arg == "--" {
                 // end of options
             } else if arg.starts_with('-') && arg.len() > 1 {
@@ -9096,10 +9502,20 @@ impl ShellExecutor {
                 }
             }
         } else {
-            SystemTime::now()
+            let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs() as i64
+                .as_secs() as i64;
+            match date_str {
+                Some(d) => match Self::parse_date_string(&d, utc, now) {
+                    Some(t) => t,
+                    None => {
+                        eprintln!("zshrs:date:1: invalid date '{}'", d);
+                        return 1;
+                    }
+                },
+                None => now,
+            }
         };
 
         let tm = unsafe {
@@ -9131,6 +9547,8 @@ impl ShellExecutor {
 
         let mut dir = false;
         let mut want_tmpdir_flag = false;
+        let mut quiet = false;
+        let mut dry_run = false;
         let mut explicit_tmpdir: Option<String> = None;
         let mut template: Option<&str> = None;
         let mut iter = args.iter();
@@ -9149,8 +9567,8 @@ impl ShellExecutor {
                         explicit_tmpdir = Some(d.clone());
                     }
                 }
-                "-q" | "--quiet" => {} // accepted: don't emit errors (we still do; minimal port)
-                "-u" | "--dry-run" => {} // accepted: print name without creating
+                "-q" | "--quiet" => quiet = true, // suppress file-creation errors
+                "-u" | "--dry-run" => dry_run = true, // print a name without creating it
                 "--" => {}             // end of options
                 a if !a.starts_with('-') => template = Some(a),
                 a => {
@@ -9223,6 +9641,13 @@ impl ShellExecutor {
         // Up to 100 collision retries (real mktemp tries TMP_MAX).
         for _ in 0..100 {
             let path = try_path(make_name(base));
+            if dry_run {
+                if path.exists() {
+                    continue;
+                }
+                println!("{}", path.display());
+                return 0;
+            }
             if dir {
                 let result = std::fs::DirBuilder::new().mode(0o700).create(&path);
                 match result {
@@ -9232,7 +9657,9 @@ impl ShellExecutor {
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(e) => {
-                        eprintln!("mktemp: {}: {}", path.display(), e);
+                        if !quiet {
+                            eprintln!("mktemp: {}: {}", path.display(), e);
+                        }
                         return 1;
                     }
                 }
@@ -9256,13 +9683,17 @@ impl ShellExecutor {
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(e) => {
-                        eprintln!("mktemp: {}: {}", path.display(), e);
+                        if !quiet {
+                            eprintln!("mktemp: {}: {}", path.display(), e);
+                        }
                         return 1;
                     }
                 }
             }
         }
-        eprintln!("mktemp: too many collisions");
+        if !quiet {
+            eprintln!("mktemp: too many collisions");
+        }
         1
     }
 
@@ -9747,15 +10178,12 @@ enum FindPredicate {
     Path(String),    // -path PATTERN — glob against full path
     Regex(String),   // -regex RE — Rust regex against full path
     Type(char),      // -type {f,d,l,p,s,b,c}
-    MaxDepth(usize), // -maxdepth N
-    MinDepth(usize), // -mindepth N
     /// (cmp, days, kind) — cmp is `+`/`-`/`=`; kind is m/a/c (mtime/atime/ctime)
     Time(char, i64, char), // -mtime / -atime / -ctime / -mmin / -amin / -cmin
     /// (cmp, bytes) — cmp is `+`/`-`/`=`
     Size(char, u64), // -size N[ckMG]
     Empty,           // -empty — zero-len file OR empty dir
     Newer(String),   // -newer FILE — newer than FILE's mtime
-    Prune,           // -prune — terminal, never descend
 }
 
 #[derive(Debug, Clone)]
@@ -9849,10 +10277,6 @@ fn predicate_matches(
             'c' => (meta.mode() & libc::S_IFMT as u32) == libc::S_IFCHR as u32,
             _ => false,
         },
-        FindPredicate::MaxDepth(_) | FindPredicate::MinDepth(_) | FindPredicate::Prune => {
-            // Handled by the walker, not per-entry.
-            true
-        }
         FindPredicate::Time(cmp, days, kind) => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -9902,24 +10326,140 @@ fn predicate_matches(
     .into()
 }
 
-/// Walks the tree, evaluates predicates as an AND-conjunction, fires
-/// the action on every match. Honors -prune (predicate prunes a dir
-/// from descent rather than filtering output), -maxdepth, -mindepth.
-fn find_walk(
-    start: &std::path::Path,
-    preds: &[FindPredicate],
-    action: &FindAction,
-    cur_depth: usize,
-    visited_devs: &mut std::collections::HashSet<u64>,
+/// A parsed `find` expression. Primaries combine with `-a`/`-and`
+/// (implicit between adjacent primaries), `-o`/`-or`, `!`/`-not` and
+/// `( … )`, with the usual precedence `!` > `-a` > `-o` and
+/// short-circuit evaluation.
+#[derive(Debug, Clone)]
+enum FindExpr {
+    Pred(FindPredicate),
+    Action(FindAction),
+    /// `-prune`: true, and the entry's directory is not descended into.
+    Prune,
+    /// Global options (`-maxdepth`, `-xdev`, …) evaluate to true.
+    True,
+    Not(Box<FindExpr>),
+    And(Box<FindExpr>, Box<FindExpr>),
+    Or(Box<FindExpr>, Box<FindExpr>),
+}
+
+impl FindExpr {
+    fn has_action(&self) -> bool {
+        match self {
+            FindExpr::Action(_) => true,
+            FindExpr::Not(e) => e.has_action(),
+            FindExpr::And(a, b) | FindExpr::Or(a, b) => a.has_action() || b.has_action(),
+            _ => false,
+        }
+    }
+}
+
+/// Per-walk state shared by every entry: global options and the
+/// -newer reference times.
+struct FindWalkOpts {
+    max_depth: Option<usize>,
+    min_depth: Option<usize>,
     xdev: bool,
     follow: bool,
-    newer_thresholds: &std::collections::HashMap<String, std::time::SystemTime>,
+    newer_thresholds: std::collections::HashMap<String, std::time::SystemTime>,
+}
+
+/// Run one action on an entry. The result is the action's truth value
+/// (`-exec` is true on exit 0, `-delete` on success, `-print*` always).
+fn find_run_action(
+    action: &FindAction,
+    start: &std::path::Path,
+    meta: &std::fs::Metadata,
+    exit_status: &mut i32,
+) -> bool {
+    match action {
+        FindAction::Print => {
+            println!("{}", start.display());
+            true
+        }
+        FindAction::Print0 => {
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(start.display().to_string().as_bytes());
+            let _ = std::io::stdout().write_all(&[0u8]);
+            true
+        }
+        FindAction::Delete => {
+            let r = if meta.is_dir() {
+                std::fs::remove_dir(start)
+            } else {
+                std::fs::remove_file(start)
+            };
+            if let Err(e) = r {
+                eprintln!("find: cannot delete '{}': {}", start.display(), e);
+                *exit_status = 1;
+                return false;
+            }
+            true
+        }
+        FindAction::Exec(template, _plus) => {
+            let argv: Vec<String> = template
+                .iter()
+                .map(|t| t.replace("{}", &start.display().to_string()))
+                .collect();
+            match argv.split_first() {
+                Some((cmd, rest)) => match std::process::Command::new(cmd).args(rest).status() {
+                    Ok(s) => s.success(),
+                    Err(_) => {
+                        *exit_status = 1;
+                        false
+                    }
+                },
+                None => false,
+            }
+        }
+    }
+}
+
+/// Evaluate `expr` for one entry, short-circuiting `-a` / `-o`.
+fn find_eval(
+    expr: &FindExpr,
+    start: &std::path::Path,
+    meta: &std::fs::Metadata,
+    depth: usize,
+    opts: &FindWalkOpts,
+    pruned: &mut bool,
+    exit_status: &mut i32,
+) -> bool {
+    match expr {
+        FindExpr::Pred(p) => predicate_matches(p, start, meta, depth, &opts.newer_thresholds),
+        FindExpr::Action(a) => find_run_action(a, start, meta, exit_status),
+        FindExpr::Prune => {
+            *pruned = true;
+            true
+        }
+        FindExpr::True => true,
+        FindExpr::Not(e) => !find_eval(e, start, meta, depth, opts, pruned, exit_status),
+        FindExpr::And(a, b) => {
+            find_eval(a, start, meta, depth, opts, pruned, exit_status)
+                && find_eval(b, start, meta, depth, opts, pruned, exit_status)
+        }
+        FindExpr::Or(a, b) => {
+            find_eval(a, start, meta, depth, opts, pruned, exit_status)
+                || find_eval(b, start, meta, depth, opts, pruned, exit_status)
+        }
+    }
+}
+
+/// Walks the tree, evaluating `expr` on every entry. Honors -prune (a
+/// directory whose evaluation reached `-prune` is not descended into),
+/// -maxdepth, -mindepth, -xdev and -L.
+fn find_walk(
+    start: &std::path::Path,
+    expr: &FindExpr,
+    opts: &FindWalkOpts,
+    cur_depth: usize,
+    visited_devs: &mut std::collections::HashSet<u64>,
     exit_status: &mut i32,
 ) {
     use std::os::unix::fs::MetadataExt;
 
     // Get metadata using follow vs symlink-aware lookup.
-    let meta_res = if follow {
+    let meta_res = if opts.follow {
         std::fs::metadata(start)
     } else {
         std::fs::symlink_metadata(start)
@@ -9932,7 +10472,7 @@ fn find_walk(
     // -xdev check: only descend into dirs on the same fs as the
     // starting path. The starting path's dev is recorded on first
     // call; subsequent entries with a different dev are skipped.
-    if xdev {
+    if opts.xdev {
         let dev = meta.dev();
         if visited_devs.is_empty() {
             visited_devs.insert(dev);
@@ -9941,61 +10481,15 @@ fn find_walk(
         }
     }
 
-    let max_depth = preds.iter().find_map(|p| match p {
-        FindPredicate::MaxDepth(n) => Some(*n),
-        _ => None,
-    });
-    let min_depth = preds.iter().find_map(|p| match p {
-        FindPredicate::MinDepth(n) => Some(*n),
-        _ => None,
-    });
-    let has_prune = preds.iter().any(|p| matches!(p, FindPredicate::Prune));
-
-    // Apply predicates.
-    let depth_ok = min_depth.map(|n| cur_depth >= n).unwrap_or(true);
-    let preds_match = preds
-        .iter()
-        .all(|p| predicate_matches(p, start, &meta, cur_depth, newer_thresholds));
-
-    if depth_ok && preds_match {
-        match action {
-            FindAction::Print => println!("{}", start.display()),
-            FindAction::Print0 => {
-                use std::io::Write;
-                let _ = std::io::stdout().write_all(start.display().to_string().as_bytes());
-                let _ = std::io::stdout().write_all(&[0u8]);
-            }
-            FindAction::Delete => {
-                let r = if meta.is_dir() {
-                    std::fs::remove_dir(start)
-                } else {
-                    std::fs::remove_file(start)
-                };
-                if let Err(e) = r {
-                    eprintln!("find: cannot delete '{}': {}", start.display(), e);
-                    *exit_status = 1;
-                }
-            }
-            FindAction::Exec(template, _plus) => {
-                let argv: Vec<String> = template
-                    .iter()
-                    .map(|t| t.replace("{}", &start.display().to_string()))
-                    .collect();
-                if let Some((cmd, rest)) = argv.split_first() {
-                    let st = std::process::Command::new(cmd).args(rest).status();
-                    match st {
-                        Ok(s) if !s.success() => *exit_status = 1,
-                        Err(_) => *exit_status = 1,
-                        _ => {}
-                    }
-                }
-            }
-        }
+    // Entries shallower than -mindepth are neither tested nor acted on.
+    let mut pruned = false;
+    if opts.min_depth.map(|n| cur_depth >= n).unwrap_or(true) {
+        find_eval(expr, start, &meta, cur_depth, opts, &mut pruned, exit_status);
     }
 
     // Descend into dirs unless pruned or depth-capped.
-    if meta.is_dir() && !(has_prune && preds_match) {
-        if let Some(md) = max_depth {
+    if meta.is_dir() && !pruned {
+        if let Some(md) = opts.max_depth {
             if cur_depth >= md {
                 return;
             }
@@ -10006,13 +10500,10 @@ fn find_walk(
             for entry in children {
                 find_walk(
                     &entry.path(),
-                    preds,
-                    action,
+                    expr,
+                    opts,
                     cur_depth + 1,
                     visited_devs,
-                    xdev,
-                    follow,
-                    newer_thresholds,
                     exit_status,
                 );
             }
@@ -10020,14 +10511,212 @@ fn find_walk(
     }
 }
 
+/// Recursive-descent parser for the `find` expression grammar:
+/// `or := and { (-o|-or) and }`, `and := not { [-a|-and] not }`,
+/// `not := (!|-not) not | primary`, `primary := ( or ) | test | action`.
+/// Errors are reported on stderr; `Err(status)` is the exit status.
+struct FindParser<'a> {
+    args: &'a [String],
+    i: usize,
+    opts: FindWalkOpts,
+}
+
+impl FindParser<'_> {
+    fn peek(&self) -> Option<&str> {
+        self.args.get(self.i).map(String::as_str)
+    }
+
+    fn parse_or(&mut self) -> Result<FindExpr, i32> {
+        let mut lhs = self.parse_and()?;
+        while matches!(self.peek(), Some("-o" | "-or")) {
+            self.i += 1;
+            let rhs = self.parse_and()?;
+            lhs = FindExpr::Or(Box::new(lhs), Box::new(rhs));
+        }
+        Ok(lhs)
+    }
+
+    fn parse_and(&mut self) -> Result<FindExpr, i32> {
+        let mut lhs = self.parse_not()?;
+        loop {
+            match self.peek() {
+                None | Some("-o" | "-or" | ")") => return Ok(lhs),
+                Some("-a" | "-and") => self.i += 1,
+                Some(_) => {}
+            }
+            let rhs = self.parse_not()?;
+            lhs = FindExpr::And(Box::new(lhs), Box::new(rhs));
+        }
+    }
+
+    fn parse_not(&mut self) -> Result<FindExpr, i32> {
+        if matches!(self.peek(), Some("!" | "-not")) {
+            self.i += 1;
+            return Ok(FindExpr::Not(Box::new(self.parse_not()?)));
+        }
+        self.parse_primary()
+    }
+
+    fn parse_primary(&mut self) -> Result<FindExpr, i32> {
+        let args = self.args;
+        let i = self.i;
+        let Some(a) = args.get(i).map(String::as_str) else {
+            eprintln!("find: invalid expression; expected an expression after the last operator");
+            return Err(1);
+        };
+        let operand = args.get(i + 1);
+        match (a, operand) {
+            ("(", _) => {
+                self.i += 1;
+                let inner = self.parse_or()?;
+                if self.peek() != Some(")") {
+                    eprintln!("find: invalid expression; expected ')'");
+                    return Err(1);
+                }
+                self.i += 1;
+                Ok(inner)
+            }
+            (")" | "-o" | "-or" | "-a" | "-and", _) => {
+                eprintln!("find: invalid expression; unexpected '{}'", a);
+                Err(1)
+            }
+            ("-name", Some(v)) => self.pred(2, FindPredicate::Name(v.clone())),
+            ("-iname", Some(v)) => self.pred(2, FindPredicate::IName(v.clone())),
+            ("-path" | "-wholename", Some(v)) => self.pred(2, FindPredicate::Path(v.clone())),
+            ("-regex", Some(v)) => self.pred(2, FindPredicate::Regex(v.clone())),
+            ("-type", Some(v)) => {
+                let c = v.chars().next().unwrap_or('?');
+                self.pred(2, FindPredicate::Type(c))
+            }
+            ("-maxdepth", Some(v)) => {
+                self.opts.max_depth.get_or_insert(v.parse().unwrap_or(0));
+                self.i += 2;
+                Ok(FindExpr::True)
+            }
+            ("-mindepth", Some(v)) => {
+                self.opts.min_depth.get_or_insert(v.parse().unwrap_or(0));
+                self.i += 2;
+                Ok(FindExpr::True)
+            }
+            ("-mtime" | "-atime" | "-ctime", Some(v)) => {
+                let kind = a.chars().nth(1).unwrap_or('m');
+                match parse_cmp_i64(v) {
+                    Some((cmp, n)) => self.pred(2, FindPredicate::Time(cmp, n, kind)),
+                    None => {
+                        eprintln!("find: invalid argument for {}: '{}'", a, v);
+                        Err(1)
+                    }
+                }
+            }
+            ("-mmin" | "-amin" | "-cmin", Some(v)) => {
+                // Convert minutes → days fraction by dividing; coarse but
+                // matches the same `(now - entry) / 86400` reduction.
+                let kind = a.chars().nth(1).unwrap_or('m');
+                match parse_cmp_i64(v) {
+                    Some((cmp, n)) => self.pred(2, FindPredicate::Time(cmp, n / (24 * 60), kind)),
+                    None => {
+                        eprintln!("find: invalid argument for {}: '{}'", a, v);
+                        Err(1)
+                    }
+                }
+            }
+            ("-size", Some(s)) => {
+                let (cmp, rest) = match s.chars().next() {
+                    Some('+') => ('+', &s[1..]),
+                    Some('-') => ('-', &s[1..]),
+                    _ => ('=', s.as_str()),
+                };
+                match parse_size_suffix(rest) {
+                    Some((n, mult)) => self.pred(2, FindPredicate::Size(cmp, n * mult)),
+                    None => {
+                        eprintln!("find: invalid argument for -size: '{}'", s);
+                        Err(1)
+                    }
+                }
+            }
+            ("-empty", _) => self.pred(1, FindPredicate::Empty),
+            ("-newer", Some(ref_path)) => {
+                match std::fs::metadata(ref_path).and_then(|m| m.modified()) {
+                    Ok(m) => {
+                        self.opts.newer_thresholds.insert(ref_path.clone(), m);
+                        self.pred(2, FindPredicate::Newer(ref_path.clone()))
+                    }
+                    Err(_) => {
+                        eprintln!("find: '{}': No such file or directory", ref_path);
+                        Err(1)
+                    }
+                }
+            }
+            ("-prune", _) => {
+                self.i += 1;
+                Ok(FindExpr::Prune)
+            }
+            ("-xdev" | "-mount", _) => {
+                self.opts.xdev = true;
+                self.i += 1;
+                Ok(FindExpr::True)
+            }
+            ("-follow", _) => {
+                self.opts.follow = true;
+                self.i += 1;
+                Ok(FindExpr::True)
+            }
+            ("-print", _) => {
+                self.i += 1;
+                Ok(FindExpr::Action(FindAction::Print))
+            }
+            ("-print0", _) => {
+                self.i += 1;
+                Ok(FindExpr::Action(FindAction::Print0))
+            }
+            ("-delete", _) => {
+                self.i += 1;
+                Ok(FindExpr::Action(FindAction::Delete))
+            }
+            ("-exec", _) => {
+                // Slurp args up to `;` or `+`.
+                let mut tmpl = Vec::new();
+                let mut plus = false;
+                self.i += 1;
+                while self.i < args.len() {
+                    if args[self.i] == ";" {
+                        self.i += 1;
+                        break;
+                    }
+                    if args[self.i] == "+" {
+                        plus = true;
+                        self.i += 1;
+                        break;
+                    }
+                    tmpl.push(args[self.i].clone());
+                    self.i += 1;
+                }
+                if tmpl.is_empty() {
+                    eprintln!("find: missing argument for -exec");
+                    return Err(1);
+                }
+                Ok(FindExpr::Action(FindAction::Exec(tmpl, plus)))
+            }
+            // Unknown predicate — REJECT loudly. Previously this
+            // arm silently swallowed unknown flags and adjacent
+            // `+N` / `-N` args got pushed as paths.
+            _ => {
+                eprintln!("find: unknown predicate '{}'", a);
+                Err(1)
+            }
+        }
+    }
+
+    /// Consume `n` args and yield the test primary `p`.
+    fn pred(&mut self, n: usize, p: FindPredicate) -> Result<FindExpr, i32> {
+        self.i += n;
+        Ok(FindExpr::Pred(p))
+    }
+}
+
 pub(crate) fn find_impl(args: &[String]) -> i32 {
     let mut paths: Vec<&str> = Vec::new();
-    let mut preds: Vec<FindPredicate> = Vec::new();
-    let mut action = FindAction::Print;
-    let mut xdev = false;
     let mut follow = false;
-    let mut newer_thresholds: std::collections::HashMap<String, std::time::SystemTime> =
-        std::collections::HashMap::new();
     let mut exit_status: i32 = 0;
     let mut i = 0;
 
@@ -10059,167 +10748,37 @@ pub(crate) fn find_impl(args: &[String]) -> i32 {
         i += 1;
     }
 
-    while i < args.len() {
-        let a = args[i].as_str();
-        match a {
-            "-name" if i + 1 < args.len() => {
-                preds.push(FindPredicate::Name(args[i + 1].clone()));
-                i += 2;
-            }
-            "-iname" if i + 1 < args.len() => {
-                preds.push(FindPredicate::IName(args[i + 1].clone()));
-                i += 2;
-            }
-            "-path" | "-wholename" if i + 1 < args.len() => {
-                preds.push(FindPredicate::Path(args[i + 1].clone()));
-                i += 2;
-            }
-            "-regex" if i + 1 < args.len() => {
-                preds.push(FindPredicate::Regex(args[i + 1].clone()));
-                i += 2;
-            }
-            "-type" if i + 1 < args.len() => {
-                let c = args[i + 1].chars().next().unwrap_or('?');
-                preds.push(FindPredicate::Type(c));
-                i += 2;
-            }
-            "-maxdepth" if i + 1 < args.len() => {
-                let n: usize = args[i + 1].parse().unwrap_or(0);
-                preds.push(FindPredicate::MaxDepth(n));
-                i += 2;
-            }
-            "-mindepth" if i + 1 < args.len() => {
-                let n: usize = args[i + 1].parse().unwrap_or(0);
-                preds.push(FindPredicate::MinDepth(n));
-                i += 2;
-            }
-            "-mtime" | "-atime" | "-ctime" if i + 1 < args.len() => {
-                let kind = a.chars().nth(1).unwrap_or('m');
-                match parse_cmp_i64(&args[i + 1]) {
-                    Some((cmp, n)) => preds.push(FindPredicate::Time(cmp, n, kind)),
-                    None => {
-                        eprintln!("find: invalid argument for {}: '{}'", a, args[i + 1]);
-                        return 1;
-                    }
-                }
-                i += 2;
-            }
-            "-mmin" | "-amin" | "-cmin" if i + 1 < args.len() => {
-                // Convert minutes → days fraction by dividing; coarse but
-                // matches the same `(now - entry) / 86400` reduction.
-                let kind = a.chars().nth(1).unwrap_or('m');
-                match parse_cmp_i64(&args[i + 1]) {
-                    Some((cmp, n)) => {
-                        // Treat as already-days for simplicity; full minute
-                        // resolution would need refactoring Time to seconds.
-                        preds.push(FindPredicate::Time(cmp, n / (24 * 60), kind));
-                    }
-                    None => {
-                        eprintln!("find: invalid argument for {}: '{}'", a, args[i + 1]);
-                        return 1;
-                    }
-                }
-                i += 2;
-            }
-            "-size" if i + 1 < args.len() => {
-                let s = &args[i + 1];
-                let (cmp, rest) = match s.chars().next() {
-                    Some('+') => ('+', &s[1..]),
-                    Some('-') => ('-', &s[1..]),
-                    _ => ('=', s.as_str()),
-                };
-                match parse_size_suffix(rest) {
-                    Some((n, mult)) => preds.push(FindPredicate::Size(cmp, n * mult)),
-                    None => {
-                        eprintln!("find: invalid argument for -size: '{}'", s);
-                        return 1;
-                    }
-                }
-                i += 2;
-            }
-            "-empty" => {
-                preds.push(FindPredicate::Empty);
-                i += 1;
-            }
-            "-newer" if i + 1 < args.len() => {
-                let ref_path = args[i + 1].clone();
-                if let Ok(m) = std::fs::metadata(&ref_path).and_then(|m| m.modified()) {
-                    newer_thresholds.insert(ref_path.clone(), m);
-                    preds.push(FindPredicate::Newer(ref_path));
-                } else {
-                    eprintln!("find: '{}': No such file or directory", ref_path);
-                    return 1;
-                }
-                i += 2;
-            }
-            "-prune" => {
-                preds.push(FindPredicate::Prune);
-                i += 1;
-            }
-            "-xdev" | "-mount" => {
-                xdev = true;
-                i += 1;
-            }
-            "-follow" => {
-                follow = true;
-                i += 1;
-            }
-            "-print" => {
-                action = FindAction::Print;
-                i += 1;
-            }
-            "-print0" => {
-                action = FindAction::Print0;
-                i += 1;
-            }
-            "-delete" => {
-                action = FindAction::Delete;
-                i += 1;
-            }
-            "-exec" => {
-                // Slurp args up to `;` or `+`.
-                let mut tmpl = Vec::new();
-                let mut plus = false;
-                i += 1;
-                while i < args.len() {
-                    if args[i] == ";" {
-                        i += 1;
-                        break;
-                    }
-                    if args[i] == "+" {
-                        plus = true;
-                        i += 1;
-                        break;
-                    }
-                    tmpl.push(args[i].clone());
-                    i += 1;
-                }
-                if tmpl.is_empty() {
-                    eprintln!("find: missing argument for -exec");
-                    return 1;
-                }
-                action = FindAction::Exec(tmpl, plus);
-            }
-            "-o" | "-or" | "-a" | "-and" | "!" | "-not" | "(" | ")" => {
-                // Boolean operators not yet implemented — predicates
-                // are AND-conjuncted by default. Reject loudly so
-                // scripts using these get a clear diagnostic
-                // instead of silent divergence.
-                eprintln!(
-                    "find: boolean operator '{}' not yet supported; predicates default to AND",
-                    a
-                );
-                return 1;
-            }
-            // Unknown predicate — REJECT loudly. Previously this
-            // arm silently swallowed unknown flags and adjacent
-            // `+N` / `-N` args got pushed as paths.
-            _ => {
-                eprintln!("find: unknown predicate '{}'", a);
-                return 1;
-            }
+    let mut parser = FindParser {
+        args,
+        i,
+        opts: FindWalkOpts {
+            max_depth: None,
+            min_depth: None,
+            xdev: false,
+            follow,
+            newer_thresholds: std::collections::HashMap::new(),
+        },
+    };
+    let parsed = if parser.i < args.len() {
+        match parser.parse_or() {
+            Ok(e) => Some(e),
+            Err(rc) => return rc,
         }
+    } else {
+        None
+    };
+    if let Some(stray) = parser.peek() {
+        eprintln!("find: invalid expression; unexpected '{}'", stray);
+        return 1;
     }
+    // GNU find: an expression with no action gets `( expr ) -print`.
+    let print = FindExpr::Action(FindAction::Print);
+    let expr = match parsed {
+        None => print,
+        Some(e) if e.has_action() => e,
+        Some(e) => FindExpr::And(Box::new(e), Box::new(print)),
+    };
+    let opts = parser.opts;
 
     let mut visited_devs = std::collections::HashSet::new();
     for p in &paths {
@@ -10229,17 +10788,7 @@ pub(crate) fn find_impl(args: &[String]) -> i32 {
             exit_status = 1;
             continue;
         }
-        find_walk(
-            path,
-            &preds,
-            &action,
-            0,
-            &mut visited_devs,
-            xdev,
-            follow,
-            &newer_thresholds,
-            &mut exit_status,
-        );
+        find_walk(path, &expr, &opts, 0, &mut visited_devs, &mut exit_status);
     }
     exit_status
 }

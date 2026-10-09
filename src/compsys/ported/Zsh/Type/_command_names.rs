@@ -46,16 +46,57 @@
 //! ```
 //!
 //! Calls real `testforstyle`/`lookupstyle`; dispatches `_description`
-//! + `_alternative` via `exec accessors`. The cmdpath PATH-shadow dance
-//! at sh:62-71 left as TODO (only fires under `_comp_priv_prefix`
-//! ≠ empty, rare).
+//! + `_alternative` via `exec accessors`. The `command-path` / sbin
+//! shadowing at sh:53-72 is [`CmdPathScope`]: a local `path` and an empty
+//! local `commands` table for the duration of the `_alternative` call.
 
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::shared::zstyle_t;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
-use crate::ported::params::{getaparam, getsparam, setaparam};
+use crate::ported::hashtable::{cmdnam_table, cmdnamtab_lock, emptycmdnamtable, pathchecked};
+use crate::ported::hist::chrealpath;
+use crate::ported::params::{getaparam, getsparam, setaparam, simple_arrayuniq};
 use crate::ported::utils::quotedzputs;
+
+/// sh:68-72 — `local -a +h path; local -A +h commands; path=( … )`.
+///
+/// `path` (tied to `$PATH`) is replaced and the command hash table is
+/// emptied, so lookups made by the completers below resolve against the
+/// `command-path` directories; `Drop` is the function-scope unwind that puts
+/// the caller's `path`, `$PATH` and `commands` back.
+struct CmdPathScope {
+    path: Vec<String>,
+    commands: cmdnam_table,
+    checked: usize,
+}
+
+impl CmdPathScope {
+    fn enter(new_path: Vec<String>) -> Self {
+        let scope = CmdPathScope {
+            path: getaparam("path").unwrap_or_default(),
+            commands: cmdnamtab_lock()
+                .read()
+                .expect("cmdnamtab poisoned")
+                .snapshot(),
+            checked: pathchecked.load(std::sync::atomic::Ordering::SeqCst),
+        };
+        emptycmdnamtable(); // the fresh local `commands`
+        setaparam("path", new_path);
+        scope
+    }
+}
+
+impl Drop for CmdPathScope {
+    fn drop(&mut self) {
+        setaparam("path", std::mem::take(&mut self.path));
+        cmdnamtab_lock()
+            .write()
+            .expect("cmdnamtab poisoned")
+            .restore(self.commands.snapshot());
+        pathchecked.store(self.checked, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// Which zsh's alias listing command-name completion follows.
 ///
@@ -163,8 +204,11 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
 
     // sh:9 — `zstyle -t … rehash && rehash`, a VALUE test; see
-    //   [`zstyle_t`]. (TODO: dispatch the `rehash` builtin.)
-    let _ = zstyle_t(&format!(":completion:{}:commands", curcontext), "rehash");
+    //   [`zstyle_t`]. `rehash` is `hash -r`, i.e. `emptycmdnamtable()`
+    //   (builtin.c bin_hash `-r` arm).
+    if zstyle_t(&format!(":completion:{}:commands", curcontext), "rehash") == 0 {
+        crate::ported::hashtable::emptycmdnamtable();
+    }
 
     // sh:11 — `zstyle -t … prefix-needed`, a VALUE test; see [`zstyle_t`].
     let style_ctx = format!(":completion:{}:functions", curcontext);
@@ -263,8 +307,42 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
     // sh:50  args=( "$@" )
     setaparam("args", argv);
 
-    // sh:52-53
-    let _ = lookupstyle(&format!(":completion:{}", curcontext), "command-path");
+    // sh:53-55 — `local -a cmdpath; zstyle -a … command-path cmdpath`
+    let mut cmdpath = lookupstyle(&format!(":completion:{}", curcontext), "command-path");
+
+    // sh:63-66 — no style and a privilege prefix: PATH plus its sbin
+    // variants, de-duplicated, keeping directories only (`(/-N)`:
+    // directory after following symlinks, nullglob).
+    let priv_prefix = getaparam("_comp_priv_prefix").unwrap_or_default();
+    if cmdpath.is_empty() && !priv_prefix.is_empty() {
+        // sh:64 — `( $path ${path/%\/bin//sbin} )`, unquoted so empty words drop.
+        let sbin = path.iter().map(|p| match p.strip_suffix("/bin") {
+            Some(head) => format!("{head}/sbin"),
+            None => p.clone(),
+        });
+        let all: Vec<String> = path
+            .iter()
+            .cloned()
+            .chain(sbin)
+            .filter(|p| !p.is_empty())
+            .collect();
+        // sh:65
+        cmdpath = simple_arrayuniq(all)
+            .into_iter()
+            .filter(|d| std::path::Path::new(d).is_dir())
+            .collect();
+    }
+
+    // sh:68-72 — `local -a +h path; local -A +h commands; path=( $cmdpath:A )`
+    let _cmdpath_scope = (!cmdpath.is_empty()).then(|| {
+        // `:A` is `chrealpath(…, 'A')` (hist.c:856); a word it cannot
+        // resolve stays as written.
+        let resolved = cmdpath
+            .iter()
+            .map(|d| chrealpath(d, b'A', false).unwrap_or_else(|| d.clone()))
+            .collect();
+        CmdPathScope::enter(resolved)
+    });
 
     // sh:73
     let mut alt_argv: Vec<String> = vec!["-O".to_string(), "args".to_string()];

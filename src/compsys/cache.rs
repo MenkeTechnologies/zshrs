@@ -609,13 +609,9 @@ impl CompsysCache {
         let mut buf = vec![0u8; size as usize];
         file.read_exact(&mut buf).ok()?;
 
-        // ZWC stores tokenized strings - need to untokenize
-        // For now, just try to interpret as UTF-8 (works for most cases)
-        // TODO: proper untokenization like zwc.rs does
-        match String::from_utf8(buf) {
-            Ok(s) => Some(s),
-            Err(e) => Some(String::from_utf8_lossy(e.as_bytes()).into_owned()),
-        }
+        // ZWC stores tokenized strings: map the token bytes back to shell
+        // syntax with the same routine the .zwc reader uses.
+        Some(crate::zwc::untokenize(&buf))
     }
 
     /// Count autoloads
