@@ -6912,6 +6912,7 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
     // served as the EMPTY array (`&nullarray`, c:4006), not as "no array".
     // Tracked so the PARTAB dispatch below still gets its chance first.
     let mut declared_empty_array = false;
+    let mut custom_array_get: Option<(fn(&param) -> Vec<String>, param)> = None;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             // c:Src/Modules/param_private.c:678 — the getnode hook
@@ -6934,21 +6935,37 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
                 if matches!(name, "argv" | "@" | "*") {
                     return Some(PPARAMS.lock().map(|p| p.clone()).unwrap_or_default());
                 }
-                if let Some(arr) = pm.u_arr.as_ref() {
-                    // c:3109 — gsu.a == stdarray_gsu → arrgetfn (c:4054).
-                    return Some(arr.clone());
+                // c:3107 — `v->pm->gsu.a->getfn(v->pm)`. A gsu.a whose getfn
+                // is not the stdarray one (`arrgetfn`) owns the value, so run
+                // it. Deferred until the read guard is dropped: the getfn may
+                // consult paramtab itself.
+                if let Some(g) = pm.gsu_a.as_ref() {
+                    if g.getfn as usize != arrgetfn as usize {
+                        custom_array_get = Some((g.getfn, pm.clone()));
+                    }
+                }
+                if custom_array_get.is_none() {
+                    if let Some(arr) = pm.u_arr.as_ref() {
+                        // c:3109 — gsu.a == stdarray_gsu → arrgetfn (c:4054).
+                        return Some(arr.clone());
+                    }
                 }
                 // c:3107 — non-stdarray gsu.a: the value lives behind
                 // the module getfn. Dispatch AFTER dropping the read
                 // guard: `partab_array_get` re-locks `paramtab` for the
                 // shadow check, and the getfns themselves read the
                 // shell's tables.
-                needs_partab_dispatch = crate::ported::modules::parameter::PARTAB_ARRAY
-                    .iter()
-                    .any(|e| e.name == name);
-                declared_empty_array = !needs_partab_dispatch;
+                if custom_array_get.is_none() {
+                    needs_partab_dispatch = crate::ported::modules::parameter::PARTAB_ARRAY
+                        .iter()
+                        .any(|e| e.name == name);
+                    declared_empty_array = !needs_partab_dispatch;
+                }
             }
         }
+    }
+    if let Some((getfn, pm)) = custom_array_get {
+        return Some(getfn(&pm)); // c:3107
     }
     if needs_partab_dispatch {
         return crate::vm_helper::partab_array_get(name); // c:3107
@@ -10466,9 +10483,18 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // paramtab lock. We're holding the WRITE lock here — that would
     // deadlock the RWLock. Inline the storage write under the held
     // lock and defer arrfixenv to AFTER drop(tab). Bug #600.
-    pm.u_arr = Some(val_final.clone());
-    pm.u_str = None;
-    pm.u_hash = None;
+    //
+    // A gsu.a whose setfn is not the stdarray one (`arrsetfn`) owns the
+    // storage (c:3434 `pm->gsu.a->setfn`), so run it instead of writing
+    // `u_arr`. It runs under the held write lock and must not touch paramtab.
+    match setfn_ptr {
+        Some(sf) if sf as usize != arrsetfn as usize => sf(pm, val_final.clone()),
+        _ => {
+            pm.u_arr = Some(val_final.clone());
+            pm.u_str = None;
+            pm.u_hash = None;
+        }
+    }
     // c:3374 `v->pm->node.flags &= ~PM_DEFAULTED;` — a declared-but-unset
     // (TYPESET_TO_UNSET) array becomes set on its first assignment.
     // PM_DEFAULTED is `PM_DECLARED|PM_UNSET` (c:Src/zsh.h:1933), hence
@@ -18243,6 +18269,47 @@ mod tests {
     use super::*;
     use crate::ported::zsh_h::Pound;
     use crate::zsh_h::hashnode;
+
+    static GSU_A_BACKING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    fn gsu_a_test_get(_pm: &param) -> Vec<String> {
+        GSU_A_BACKING.lock().unwrap().clone()
+    }
+
+    fn gsu_a_test_set(_pm: &mut param, val: Vec<String>) {
+        *GSU_A_BACKING.lock().unwrap() = val;
+    }
+
+    /// An array whose `gsu_a` carries a non-standard getfn/setfn is served
+    /// from and written to that backing store (c:3107 / c:3434), never
+    /// from `u_arr`; a plain array still goes through `u_arr`.
+    #[test]
+    fn array_gsu_getfn_and_setfn_own_the_value() {
+        let _g = crate::test_util::global_state_lock();
+        setaparam("gsu_arr_t", vec!["plain".to_string()]);
+        assert_eq!(getaparam("gsu_arr_t"), Some(vec!["plain".to_string()]));
+
+        *GSU_A_BACKING.lock().unwrap() = vec!["live".to_string()];
+        if let Some(pm) = paramtab().write().unwrap().get_mut("gsu_arr_t") {
+            pm.gsu_a = Some(Box::new(gsu_array {
+                getfn: gsu_a_test_get,
+                setfn: gsu_a_test_set,
+                unsetfn: stdunsetfn,
+            }));
+        }
+        assert_eq!(getaparam("gsu_arr_t"), Some(vec!["live".to_string()]));
+
+        setaparam("gsu_arr_t", vec!["x".to_string(), "y".to_string()]);
+        assert_eq!(
+            *GSU_A_BACKING.lock().unwrap(),
+            vec!["x".to_string(), "y".to_string()]
+        );
+        assert_eq!(
+            getaparam("gsu_arr_t"),
+            Some(vec!["x".to_string(), "y".to_string()])
+        );
+        paramtab().write().unwrap().remove("gsu_arr_t");
+    }
 
     /// `environ_image` hands back exactly the environment it took: an
     /// added variable goes, a removed one returns AT ITS OLD POSITION
