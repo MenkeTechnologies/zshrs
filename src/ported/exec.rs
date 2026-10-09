@@ -102,6 +102,9 @@ use crate::zsh_h::XTRACE;
 ///                                later (implicit local scope), so
 ///                                suppress `ASSPM_WARN`.
 pub const ADDVAR_EXPORT: i32 = 1 << 0; // c:37 (Src/exec.c)
+/// `ADDVAR_RESTRICT` constant — prefix assignments of `VAR=val cmd` are
+/// checked against PM_RESTRICTED parameters under RESTRICTED.
+pub const ADDVAR_RESTRICT: i32 = 1 << 1; // c:38 (Src/exec.c)
 /// `ADDVAR_RESTORE` constant.
 pub const ADDVAR_RESTORE: i32 = 1 << 2; // c:39 (Src/exec.c)
 
@@ -4229,6 +4232,12 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     } else {
         args[0].clone()
     }; // c:737
+    // c:693-696 (5.9.2) — `if (isset(RESTRICTED) && (strchr(arg0, '/') ||
+    // defpath)) { zerr("%s: restricted", arg0); _exit(1); }`
+    if isset(crate::ported::zsh_h::RESTRICTED) && (arg0.contains('/') || defpath != 0) {
+        crate::ported::utils::zerr(&format!("{}: restricted", arg0));
+        unsafe { libc::_exit(1) };
+    }
        // c:733-748 — STTY pre-exec handling.
     {
         let mut stty = STTYval.lock().unwrap();
@@ -6507,6 +6516,24 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
                 // c:2580
                 eprint!("{}", quotedzputs(&val)); // c:2581
                 eprint!(" "); // c:2582 `fputc(' ', xtrerr);`
+            }
+            // c:2578-2586 — `if ((addflags & ADDVAR_EXPORT) && !strchr(name, '['))
+            // { if ((addflags & ADDVAR_RESTRICT) && isset(RESTRICTED) && (pm =
+            // removenode(name)) && (pm->flags & PM_RESTRICTED)) { zerr("%s:
+            // restricted", pm->node.nam); state->pc = opc; return; }`
+            if (addflags & ADDVAR_EXPORT) != 0
+                && !name.contains('[')
+                && (addflags & ADDVAR_RESTRICT) != 0
+                && isset(crate::ported::zsh_h::RESTRICTED)
+                && crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(name.as_str()).map(|p| p.node.flags as u32))
+                    .is_some_and(|f| f & crate::ported::zsh_h::PM_RESTRICTED != 0)
+            {
+                zerr(&format!("{}: restricted", name)); // c:2582
+                state.pc = opc; // c:2584
+                return; // c:2585
             }
             // c:2584 `if ((addflags & ADDVAR_EXPORT) && !strchr(name, '['))`
             let pm = if (addflags & ADDVAR_EXPORT) != 0 && !name.contains('[') {
@@ -13101,7 +13128,7 @@ pub fn execcmd_exec(
                 // c:4288
                 if varspc.is_some() {
                     // c:4289
-                    let mut addflags: i32 = ADDVAR_EXPORT; // c:4290
+                    let mut addflags: i32 = ADDVAR_EXPORT | ADDVAR_RESTRICT; // c:4257/c:4290
                     if forked != 0 {
                         addflags |= ADDVAR_RESTORE; // c:4292
                     }

@@ -455,7 +455,10 @@ pub fn parseopts(
             *idx += 1;
             if let Some(name) = argv.get(*idx).cloned() {
                 let optno = crate::ported::options::optlookup(&name); // c:493
-                if optno != crate::ported::zsh_h::OPT_INVALID {
+                if optno == crate::ported::zsh_h::RESTRICTED && toplevel {
+                    // c:489-490 — `restricted = action;`
+                    restricted.store(action, Ordering::SeqCst);
+                } else if optno != crate::ported::zsh_h::OPT_INVALID {
                     // c:501 — dosetopt(optno, action, toplevel, new_opts)
                     crate::ported::options::dosetopt(optno, action as i32, toplevel as i32);
                     note_explicit_opt!(optno);
@@ -525,7 +528,10 @@ pub fn parseopts(
         let action = arg.starts_with('-'); // c:420
         for c in arg[1..].chars() {
             let optno = crate::ported::options::optlookupc(c); // c:520
-            if optno != crate::ported::zsh_h::OPT_INVALID {
+            if optno == crate::ported::zsh_h::RESTRICTED && toplevel {
+                // c:525-526 — `restricted = action;`
+                restricted.store(action, Ordering::SeqCst);
+            } else if optno != crate::ported::zsh_h::OPT_INVALID {
                 // c:526 — dosetopt(optno, action, toplevel, new_opts)
                 crate::ported::options::dosetopt(optno, action as i32, toplevel as i32);
                 note_explicit_opt!(optno);
@@ -1761,16 +1767,17 @@ pub fn run_init_scripts() {
     crate::ported::exec::nohistsave.store(0, Ordering::SeqCst); // c:1550
 }
 
+/// Port of `int restricted;` from Src/init.c — set by `-r` / `-o restricted`
+/// at top level and applied by `init_misc` after the startup files ran.
+pub static restricted: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Port of `void init_misc(char *cmd, char *zsh_name)` from Src/init.c:1524.
 pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
+    let _ = zsh_name;
     // c:1524
-    if zsh_name.starts_with('r') {
-        // c:1524
-        crate::ported::utils::zerrnam(
-            zsh_name, // c:1527
-            "no support for restricted mode",
-        );
-        std::process::exit(1); // c:1528
+    // c:1381-1386 — `if (restricted) dosetopt(RESTRICTED, 1, 0, opts);`
+    if restricted.load(Ordering::SeqCst) {
+        crate::ported::options::dosetopt(crate::ported::zsh_h::RESTRICTED, 1, 0);
     }
     if let Some(cmdstr) = cmd {
         // c:1530

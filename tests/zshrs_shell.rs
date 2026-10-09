@@ -17155,3 +17155,40 @@ emulate sh -c 'inf=42; (( inf == 42 )) && echo sh42'"#,
     );
     assert_eq!(out, "ne\neq2\nsh42\n");
 }
+
+#[test]
+fn restricted_option_blocks_the_operations_zsh_5_9_2_blocks() {
+    // zsh 5.9.2 Src/builtin.c:844, exec.c:693/3373/3726, params.c:2539 and
+    // options.c:763 — E01options "RESTRICTED option". Each probe runs in its
+    // own subshell so one refusal does not abort the next.
+    let (_, out, err) = run_zshrs_parity(
+        "(setopt restricted; cd /)
+         (setopt restricted; PATH=/bin:/usr/bin)
+         (setopt restricted; IFS=x)
+         (setopt restricted; /bin/ls)
+         (setopt restricted; hash ls=/bin/ls)
+         (setopt restricted; print ha >restricted_probe_out)
+         (setopt restricted; exec ls)
+         (setopt restricted; unsetopt restricted)
+         (setopt restricted; unset PATH)
+         (setopt restricted; unset -m 'PA*'; print unset-m-ok)",
+    );
+    for want in [
+        "cd:1: restricted",
+        "PATH: restricted",
+        "IFS: restricted",
+        "/bin/ls: restricted",
+        "restricted: /bin/ls",
+        "writing redirection not allowed in restricted mode",
+        "ls: restricted",
+        "can't change option: restricted",
+        "unset:9: PATH: restricted",
+    ] {
+        assert!(err.contains(want), "missing {want:?} in stderr: {err}");
+    }
+    assert_eq!(out, "unset-m-ok\n");
+    assert!(
+        !std::path::Path::new("restricted_probe_out").exists(),
+        "the restricted redirection created its file"
+    );
+}

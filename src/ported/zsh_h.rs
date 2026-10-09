@@ -4012,7 +4012,10 @@ pub const USEZLE: i32 = 183;
 /// `DVORAK` constant.
 pub const DVORAK: i32 = 184;
 /// `OPT_SIZE` constant.
-pub const OPT_SIZE: i32 = 185;
+/// `RESTRICTED` constant (c:Src/zsh.h:2509). Numbered after the zshrs
+/// extension options so no existing option number moves.
+pub const RESTRICTED: i32 = 185;
+pub const OPT_SIZE: i32 = 186;
 /// `OptIndex` type alias.
 pub type OptIndex = u8; // c:2556
 
@@ -4241,6 +4244,7 @@ pub fn opt_name(opt: i32) -> &'static str {
                 x if x == RCS => "rcs",
                 x if x == RECEXACT => "recexact",
                 x if x == REMATCHPCRE => "rematchpcre",
+                x if x == RESTRICTED => "restricted",
                 x if x == RMSTARSILENT => "rmstarsilent",
                 x if x == RMSTARWAIT => "rmstarwait",
                 x if x == SHAREHISTORY => "sharehistory",

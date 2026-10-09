@@ -1891,6 +1891,12 @@ pub fn bin_cd(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // c:844-847 — `if (isset(RESTRICTED)) { zwarnnam(nam, "restricted");
+    // return 1; }`
+    if isset(crate::ported::zsh_h::RESTRICTED) {
+        zwarnnam(nam, "restricted"); // c:845
+        return 1; // c:846
+    }
     // c:844 — `doprintdir = (doprintdir == -1);`
     let prev = DOPRINTDIR.load(Relaxed);
     DOPRINTDIR.store(if prev == -1 { 1 } else { 0 }, Relaxed); // c:844
@@ -6117,6 +6123,22 @@ pub fn bin_typeset(
             .ok()
             .and_then(|t| t.get(arg_name).map(|pm| pm.level))
             .unwrap_or(-1);
+        // c:2209-2212 (5.9.2) — `if ((pm->node.flags & PM_RESTRICTED) &&
+        // isset(RESTRICTED)) { zerrnam(cname, "%s: restricted", pname);
+        // return pm; }`. Reached after the print-only exit (no flags, no
+        // value), so a bare `typeset PATH` still prints.
+        if isset(crate::ported::zsh_h::RESTRICTED)
+            && (arg.contains('=') || on != 0 || off != 0)
+            && paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg_name).map(|pm| pm.node.flags as u32))
+                .is_some_and(|f| f & crate::ported::zsh_h::PM_RESTRICTED != 0)
+        {
+            zerrnam(name, &format!("{}: restricted", arg_name));
+            returnval = 1;
+            continue;
+        }
         // c:2212-2222 (55030) — `-h` on a special or autoloadable parameter
         // that is reused at this level (not localized: c:2075-2088 drops
         // usepm then) is an error, where it used to be a silent no-op.
@@ -10296,6 +10318,16 @@ pub fn bin_unset(
                     tab.keys().cloned().collect()
                 };
                 for nm in &names {
+                    // c:3715-3716 — `if ((!(pm->node.flags & PM_RESTRICTED) ||
+                    // unset(RESTRICTED)) && pattry(pprog, pm->node.nam))`.
+                    let restricted_pm = paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(nm.as_str()).map(|p| p.node.flags as u32))
+                        .is_some_and(|f| f & crate::ported::zsh_h::PM_RESTRICTED != 0);
+                    if restricted_pm && isset(crate::ported::zsh_h::RESTRICTED) {
+                        continue;
+                    }
                     if pattry(&prog, nm) {
                         // c:3842
                         // c:3846 — `unsetparam_pm(pm, 0, 1)` runs on the
@@ -10385,6 +10417,20 @@ pub fn bin_unset(
             zerrnam(name, &format!("{}: invalid parameter name", crate::ported::utils::nicedupstring(&s))); // c:3876 — `%s` is nicezputs (c:Src/utils.c:316)
             returnval = 1; // c:3877
             continue; // c:3878
+        }
+        // c:3766-3770 (5.9.2) — `else if ((pm->node.flags & PM_RESTRICTED) &&
+        // isset(RESTRICTED)) { zerrnam(name, "%s: restricted", pm->node.nam);
+        // returnval = 1; }`
+        if isset(crate::ported::zsh_h::RESTRICTED)
+            && paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(nm).map(|pm| pm.node.flags as u32))
+                .is_some_and(|f| f & crate::ported::zsh_h::PM_RESTRICTED != 0)
+        {
+            zerrnam(name, &format!("{}: restricted", nm));
+            returnval = 1;
+            continue;
         }
         // c:3886-3905 — `if (!pm) continue;` then unset.
         // C `unsetparam_pm` dispatches on `pm->gsu` (the gsu_*
@@ -12148,6 +12194,13 @@ pub fn bin_hash(
             None => (arg.as_str(), None),
         };
         if let Some(v) = val {
+            // c:4301-4303 — `if (isset(RESTRICTED)) { zwarnnam(name,
+            // "restricted: %s", asg->value.scalar); returnval = 1; }`
+            if isset(crate::ported::zsh_h::RESTRICTED) {
+                zwarnnam(name, &format!("restricted: {}", v)); // c:4153
+                returnval = 1; // c:4154
+                continue;
+            }
             // c:4302
             // Define entry.
             if dir_mode {

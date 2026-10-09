@@ -526,19 +526,19 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "GID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
         name: "EGID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
         name: "HISTSIZE",
         pm_type: PM_INTEGER,
-        pm_flags: 0,
+        pm_flags: crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -550,7 +550,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "SAVEHIST",
         pm_type: PM_INTEGER,
-        pm_flags: 0,
+        pm_flags: crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -562,13 +562,13 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "UID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
         name: "EUID",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -581,7 +581,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "USERNAME",
         pm_type: PM_SCALAR,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -629,7 +629,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "IFS",
         pm_type: PM_SCALAR,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: None,
     },
     special_paramdef {
@@ -882,7 +882,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "PATH",
         pm_type: PM_SCALAR,
-        pm_flags: PM_TIED,
+        pm_flags: PM_TIED | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: Some("path"),
     },
     special_paramdef {
@@ -900,7 +900,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "MODULE_PATH",
         pm_type: PM_SCALAR,
-        pm_flags: PM_DONTIMPORT | PM_TIED,
+        pm_flags: PM_DONTIMPORT | PM_TIED | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: Some("module_path"),
     },
     special_paramdef {
@@ -1058,13 +1058,13 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "module_path",
         pm_type: PM_ARRAY,
-        pm_flags: PM_TIED,
+        pm_flags: PM_TIED | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: Some("MODULE_PATH"),
     },
     special_paramdef {
         name: "path",
         pm_type: PM_ARRAY,
-        pm_flags: PM_TIED,
+        pm_flags: PM_TIED | crate::ported::zsh_h::PM_RESTRICTED,
         tied_name: Some("PATH"),
     },
     // pipestatus array
@@ -2487,6 +2487,12 @@ pub fn createparam(
             zerr(&format!("read-only variable: {}", name)); // c:1132
             return None; // c:1133
         }
+        // c:1010-1013 — `if ((oldpm->node.flags & PM_RESTRICTED) &&
+        // isset(RESTRICTED)) { zerr("%s: restricted", name); return NULL; }`
+        if (opf & crate::ported::zsh_h::PM_RESTRICTED) != 0 && isset(crate::ported::zsh_h::RESTRICTED) {
+            zerr(&format!("{}: restricted", name));
+            return None;
+        }
         if (opf & PM_UNSET) == 0
             || (opf & PM_SPECIAL) != 0
             || (isset(crate::ported::zsh_h::POSIXBUILTINS) && (opf & PM_EXPORTED) != 0)
@@ -2494,7 +2500,9 @@ pub fn createparam(
             // c:1135-1138
             if (opf & PM_RO_BY_DESIGN) != 0 {
                 // c:1139
-                zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140-1141
+                // 5.9.2 params.c:1019 — "can't change parameter attribute" (the
+                // dev tree rewords it "can't modify read-only parameter").
+                zerr(&format!("{}: can't change parameter attribute", name)); // c:1019-1020
                 return None; // c:1142
             }
             if let Ok(mut tab) = paramtab().write() {
@@ -5674,6 +5682,12 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
         zerr(&format!("read-only variable: {}", pm.node.nam)); // c:2701
         return;
     }
+    // c:2539-2543 — `if ((v->pm->node.flags & PM_RESTRICTED) &&
+    // isset(RESTRICTED)) { zerr("%s: restricted", ...); return; }`
+    if (pm.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0 && isset(crate::ported::zsh_h::RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam));
+        return;
+    }
     if (pm.node.flags as u32 & PM_HASHED) != 0
         && (v.scanflags as u32 & (SCANPM_MATCHMANY | SCANPM_ARRONLY)) != 0
     {
@@ -6064,6 +6078,11 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
         zerr(&format!("read-only variable: {}", pm.node.nam)); // c:2862
         return;
     }
+    // c:2706-2709 — restricted parameters cannot be set under RESTRICTED.
+    if (pm.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0 && isset(crate::ported::zsh_h::RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam));
+        return;
+    }
     let t = PM_TYPE(pm.node.flags as u32);
     if t == PM_SCALAR || t == PM_NAMEREF || t == PM_ARRAY {
         // c:2862-2872 — convbase_underscore for integers (honors
@@ -6161,6 +6180,11 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     // c:2899-2904 — PM_READONLY rejection.
     if pm.node.flags & PM_READONLY as i32 != 0 {
         zerr(&format!("read-only variable: {}", pm.node.nam));
+        return;
+    }
+    // c:2747-2751 — restricted parameters cannot be set under RESTRICTED.
+    if (pm.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0 && isset(crate::ported::zsh_h::RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam));
         return;
     }
     // c:2905-2911 — type guard.
@@ -7425,6 +7449,20 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             Ordering::Relaxed,
         );
         return None; // c:3207
+    }
+    // c:1010-1013 / c:2539-2543 — under RESTRICTED a PM_RESTRICTED parameter
+    // (PATH, SHELL, IFS, UID, ...) cannot be assigned: `zerr("%s: restricted")`.
+    if isset(crate::ported::zsh_h::RESTRICTED)
+        && paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(s.split('[').next().unwrap_or(s)).map(|p| p.node.flags as u32)
+            })
+            .is_some_and(|f| f & crate::ported::zsh_h::PM_RESTRICTED != 0)
+    {
+        zerr(&format!("{}: restricted", s));
+        return None;
     }
     // !!! RUST-ONLY: provenance tap. Records the scalar write against
     // the lineage ledger when `s` is a tracked name. Placed at the
@@ -9032,7 +9070,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 // getvalue then finds the revived node.
                 if (f & PM_RO_BY_DESIGN) != 0 {
                     drop(tab); // zerr redraws ZLE, which reads paramtab
-                    zerr(&format!("{}: can't modify read-only parameter", name)); // c:1140
+                    // 5.9.2 params.c:1019 wording (see createparam above).
+                    zerr(&format!("{}: can't change parameter attribute", name)); // c:1019
                     unqueue_signals(); // c:3241
                     return None; // c:3242
                 }
@@ -9645,6 +9684,20 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     if !isident(name) {
         zerr(&format!("not an identifier: {}", name));
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+        return None;
+    }
+    // c:1010-1013 / c:2539-2543 — under RESTRICTED a PM_RESTRICTED parameter
+    // (PATH, SHELL, IFS, UID, ...) cannot be assigned: `zerr("%s: restricted")`.
+    if isset(crate::ported::zsh_h::RESTRICTED)
+        && paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(name.split('[').next().unwrap_or(name)).map(|p| p.node.flags as u32)
+            })
+            .is_some_and(|f| f & crate::ported::zsh_h::PM_RESTRICTED != 0)
+    {
+        zerr(&format!("{}: restricted", name));
         return None;
     }
     // !!! RUST-ONLY: provenance tap (see assignsparam). An array write
@@ -10701,6 +10754,20 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
         );
         return None; // c:3670
     }
+    // c:1010-1013 / c:2539-2543 — under RESTRICTED a PM_RESTRICTED parameter
+    // (PATH, SHELL, IFS, UID, ...) cannot be assigned: `zerr("%s: restricted")`.
+    if isset(crate::ported::zsh_h::RESTRICTED)
+        && paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(s.split('[').next().unwrap_or(s)).map(|p| p.node.flags as u32)
+            })
+            .is_some_and(|f| f & crate::ported::zsh_h::PM_RESTRICTED != 0)
+    {
+        zerr(&format!("{}: restricted", s));
+        return None;
+    }
     if unset(EXECOPT) {
         return None;
     }
@@ -11507,6 +11574,12 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         }
         zerr(&format!("read-only {}: {}", kind, pm.node.nam));
         return 1; // c:3854
+    }
+    // c:3635-3638 — `if ((pm->node.flags & PM_RESTRICTED) && isset(RESTRICTED))
+    // { zerr("%s: restricted", pm->node.nam); return 1; }`
+    if (pm.node.flags as u32 & crate::ported::zsh_h::PM_RESTRICTED) != 0 && isset(crate::ported::zsh_h::RESTRICTED) {
+        zerr(&format!("{}: restricted", pm.node.nam));
+        return 1;
     }
     // c:3793-3796 — `if (pm->ename && !altflag) altremove = ztrdup(pm->ename);
     // else altremove = NULL;`. Captured before the unsetfn, which clears a

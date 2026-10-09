@@ -578,6 +578,12 @@ pub fn scanpmparameters(
 #[allow(non_snake_case)]
 pub fn setpmcommand(pm: Param, value: String) {
     // c:151
+    // c:147-150 — `if (isset(RESTRICTED)) { zwarn("restricted: %s", value);
+    // zsfree(value); }`
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED) {
+        crate::ported::utils::zwarn(&format!("restricted: {}", value));
+        return;
+    }
     // c:151-158 — `cn = zshcalloc(...); cn->node.flags = HASHED;
     //   cn->u.cmd = ztrdup(value); cmdnamtab->addnode(...)`. The
     //   helper bundles the hashnode literal so the call-site stays

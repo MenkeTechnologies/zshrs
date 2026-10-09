@@ -109,6 +109,7 @@ pub static zshletters: &[(char, &str, bool)] = &[
     ('m', "monitor", false),
     ('n', "exec", true),
     ('p', "privileged", false),
+    ('r', "restricted", false),
     ('s', "shinstdin", false),
     ('t', "singlecommand", false),
     ('u', "unset", true),
@@ -820,6 +821,17 @@ pub fn optlookupc(c: char) -> i32 {
     0
 }
 
+/// `static char *rparams[]` from `Src/options.c:744` — restricted
+/// parameters which are not otherwise special.
+const RPARAMS: [&str; 6] = [
+    "SHELL",
+    "HISTFILE",
+    "LD_LIBRARY_PATH",
+    "LD_AOUT_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "LD_AOUT_PRELOAD",
+];
+
 /// Direct port of `dosetopt(int optno, int value, int force, char *new_opts)` from Src/options.c:735. C body:
 /// negate value when optno < 0 (the "no" prefix marker); look up
 /// option name by optno; reject emulation-locked options; write
@@ -845,6 +857,52 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         // c:739
         idx = -idx;
         value = if value != 0 { 0 } else { 1 }; // c:741
+    }
+    // c:763-770 — RESTRICTED once set cannot be unset; turning it on
+    // restricts the non-special rparams first, then falls through to the
+    // ordinary store below.
+    if idx == crate::ported::zsh_h::RESTRICTED {
+        if isset(crate::ported::zsh_h::RESTRICTED) {
+            return if value != 0 { 0 } else { -1 }; // c:764-765
+        }
+        if value != 0 {
+            // !!! DEVIATION — zshrs seeds the special parameters through more
+            // than one table (params.rs `special_params`, vm_helper's
+            // `init_partab_params`/setupvals), and not all of them carry the
+            // PM_RESTRICTED bit C's IPDEF rows (params.c:299-318, 399-457) put
+            // on these. Stamp it here, at the moment RESTRICTED turns on, so
+            // every seeding path ends in the same state.
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                for nam in [
+                    "GID", "EGID", "HISTSIZE", "SAVEHIST", "UID", "EUID", "USERNAME", "IFS",
+                    "PATH", "MODULE_PATH", "path", "module_path",
+                ] {
+                    if let Some(pm) = tab.get_mut(nam) {
+                        pm.node.flags |= crate::ported::zsh_h::PM_RESTRICTED as i32;
+                    }
+                }
+            }
+            for nam in RPARAMS {
+                // c:732-741 restrictparam(nam), inlined: `pm = getnode(nam);
+                // if (pm) { pm->node.flags |= PM_SPECIAL | PM_RESTRICTED;
+                // return; } createparam(nam, PM_SCALAR | PM_UNSET |
+                // PM_SPECIAL | PM_RESTRICTED);`
+                use crate::ported::zsh_h::{PM_RESTRICTED, PM_SCALAR, PM_SPECIAL, PM_UNSET};
+                let mut existed = false;
+                if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                    if let Some(pm) = tab.get_mut(nam) {
+                        pm.node.flags |= (PM_SPECIAL | PM_RESTRICTED) as i32;
+                        existed = true;
+                    }
+                }
+                if !existed {
+                    crate::ported::params::createparam(
+                        nam,
+                        (PM_SCALAR | PM_UNSET | PM_SPECIAL | PM_RESTRICTED) as i32,
+                    );
+                }
+            }
+        }
     }
     // c:743-755 — locked-option enforcement (force=0 path).
     if force == 0 {
@@ -1390,6 +1448,7 @@ pub static KSH_LETTERS: &[(char, &str, bool)] = &[
     ('m', "monitor", false),
     ('n', "exec", true),
     ('p', "privileged", false),
+    ('r', "restricted", false),
     ('s', "shinstdin", false),
     ('t', "singlecommand", false),
     ('u', "unset", true),
@@ -1587,6 +1646,7 @@ pub static OPTNS: &[&str] = &[
     "rcs",
     "recexact",
     "rematchpcre",
+    "restricted",
     "rmstarsilent",
     "rmstarwait",
     "sharehistory",
@@ -2138,6 +2198,7 @@ fn optns_flags(name: &str) -> u16 {
         "rcs" => OPT_ALL as u16,       // c:231
         "recexact" => 0,               // c:232
         "rematchpcre" => 0,            // c:233
+        "restricted" => OPT_SPECIAL as u16, // c:243
         "rmstarsilent" => OPT_BOURNE as u16, // c:243
         "rmstarwait" => 0,             // c:236
         "sharehistory" => OPT_KSH as u16, // c:245

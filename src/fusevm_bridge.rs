@@ -3395,6 +3395,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         let args: Vec<String> = walk.preargs[walk.precmd_skip..].to_vec();
         let cmd = args[0].clone();
+        // c:Src/exec.c:3373-3379 — `else if (isset(RESTRICTED) && (cflags &
+        // BINF_EXEC) && do_exec) { zerrnam("exec", "%s: restricted", ...);
+        // lastval = 1; return; }`
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED) {
+            crate::ported::utils::zerrnam("exec", &format!("{}: restricted", cmd));
+            vm.last_status = 1;
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(1);
+        }
         if (walk.cflags & crate::ported::zsh_h::BINF_BUILTIN) != 0 && !walk.is_builtin {
             // c:3490-3492 — `zwarn("no such builtin: %s", cmdarg); lastval = 1;`
             crate::ported::utils::zwarn(&format!("no such builtin: {}", cmd));
@@ -9464,6 +9473,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::utils::zerr(&format!("read-only variable: {}", name));
                 return;
             }
+            // c:Src/params.c:2539-2543 — a PM_RESTRICTED parameter (PATH, IFS,
+            // UID, ...) cannot be assigned under RESTRICTED.
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED)
+                && (exec.param_flags(name.split('[').next().unwrap_or(&name)) as u32
+                    & crate::ported::zsh_h::PM_RESTRICTED)
+                    != 0
+            {
+                crate::ported::utils::zerr(&format!("{}: restricted", name));
+                return;
+            }
             // Inline-assignment frame tracking (`X=foo cmd` reverts on
             // command return). Only the PREFIX assignments belong in
             // the frame: c:Src/exec.c:4410 save_params snapshots the
@@ -9754,6 +9773,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             if exec.is_readonly_param(&name) {
                 crate::ported::utils::zerr(&format!("read-only variable: {}", name));
+                return;
+            }
+            // c:Src/params.c:2539-2543 — a PM_RESTRICTED parameter (PATH, IFS,
+            // UID, ...) cannot be assigned under RESTRICTED.
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED)
+                && (exec.param_flags(name.split('[').next().unwrap_or(&name)) as u32
+                    & crate::ported::zsh_h::PM_RESTRICTED)
+                    != 0
+            {
+                crate::ported::utils::zerr(&format!("{}: restricted", name));
                 return;
             }
             crate::ported::params::setsparam(&name, &value);
@@ -22194,6 +22223,16 @@ impl ShellExecutor {
     /// `host_apply_redirect` — see implementation.
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
         if redir_target_expansion_failed(self) {
+            return;
+        }
+        // c:Src/exec.c:3726-3729 — `if (isset(RESTRICTED) &&
+        // IS_WRITE_FILE(fn->type)) { zwarn("writing redirection not allowed
+        // in restricted mode"); execerr(); }`
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED)
+            && redir_is_write_file(op_byte)
+        {
+            crate::ported::utils::zwarn("writing redirection not allowed in restricted mode");
+            self.redirect_failed = true;
             return;
         }
         // c:Src/exec.c:3775-3777 — in a pipeline stage whose input is the

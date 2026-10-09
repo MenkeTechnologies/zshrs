@@ -6241,6 +6241,15 @@ impl ShellExecutor {
         defpath: i32, // c:729
     ) -> Result<i32, String> {
         tracing::trace!(cmd, bg = background, "exec external");
+        // c:Src/exec.c:693-696 (5.9.2) — `if (isset(RESTRICTED) &&
+        // (strchr(arg0, '/') || defpath)) { zerr("%s: restricted", arg0);
+        // _exit(1); }`
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::RESTRICTED)
+            && (cmd.contains('/') || defpath != 0)
+        {
+            crate::ported::utils::zerr(&format!("{}: restricted", cmd));
+            return Ok(1);
+        }
         // c:Src/exec.c:3545-3547 — `setunderscore((args && nonempty(args)) ?
         // ((char *) getdata(lastnode(args))) : "")`. execcmd_exec sets `$_`
         // to the last word of the command it is about to run, in the PARENT,

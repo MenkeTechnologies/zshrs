@@ -492,8 +492,8 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
             if handletrap(libc::SIGINT) == 0 {
                 // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
                 // noerrexit window: immediate exit.
-                let privileged = isset(PRIVILEGED);
-                let interactive = isset(INTERACTIVE);
+                let privileged =
+                    isset(PRIVILEGED) || isset(crate::ported::zsh_h::RESTRICTED); // c:465
                 // c:455 — `(noerrexit & NOERREXIT_SIGNAL)`. The third
                 // conjunct was dropped here, which made EVERY interrupt of a
                 // privileged interactive shell an immediate `zexit` instead
@@ -505,6 +505,7 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
                     .load(Ordering::Relaxed)
                     & crate::ported::zsh_h::NOERREXIT_SIGNAL)
                     != 0;
+                let interactive = isset(INTERACTIVE);
                 if privileged && interactive && in_signal_window {
                     zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }
