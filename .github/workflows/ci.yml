@@ -11,9 +11,15 @@ permissions:
   contents: read
   actions: write
 
+# A push to main must not cancel the run already going: the long jobs take most of an
+# hour and commits land more often than that, so cancelling meant no run on main
+# ever finished and nothing was ever reported. Without cancellation GitHub keeps one
+# running and one pending run per group and replaces the pending one with the newest
+# commit, so main always gets a finished run and the latest commit is the next one.
+# A pull request still cancels its own superseded run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
