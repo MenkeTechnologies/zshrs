@@ -1513,7 +1513,7 @@ mod corpus_dash_fc_bulk_g {
         bulk_g_count_functions_assoc => (r#"${#functions}"#, r#"print ${#functions}"#);
         bulk_g_lineno_two_prints => (r#"LINENO twice"#, r##"print -r "L1=$LINENO"; print -r "L2=$LINENO""##);
         bulk_g_cond_same_file_ef => (r#"[[ -ef ]]"#, r##"[[ /etc/hosts -ef /etc/hosts ]]; print efg=$?""##);
-        bulk_g_cond_ot_nt_mktemp => (r#"[[ -ot -nt ]]"#, r##"tdc=$(mktemp -d); touch $tdc/og; touch $tdc/ng; [[ $tdc/og -ot $tdc/ng ]]; otw=$?; [[ $tdc/ng -nt $tdc/og ]]; ntw=$?; print -r "$otw $ntw"; command rm -rf $tdc"##);
+        bulk_g_cond_ot_nt_mktemp => (r#"[[ -ot -nt ]]"#, r##"tdc=$(mktemp -d); touch -t 200001010000 $tdc/og; touch -t 200001010001 $tdc/ng; [[ $tdc/og -ot $tdc/ng ]]; otw=$?; [[ $tdc/ng -nt $tdc/og ]]; ntw=$?; print -r "$otw $ntw"; command rm -rf $tdc"##);
         bulk_g_float_division_print => (r#"5.0/2"#, r#"print $(( 5.0 / 2 ))"#);
         bulk_g_typeset_F_and_E => (r#"typeset -F -E"#, r#"typeset -F ff1_g=2.5 -E ff2_g=3e0; print $ff1_g $ff2_g"#);
         bulk_g_array_sort_oa_flag => (r#"sort (oa)"#, r#"aog=(3 1 2); print ${(oa)aog}"#);

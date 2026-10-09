@@ -11,7 +11,17 @@
 //!   $ zsh -c 'print -l *.toml(:r)' → Cargo
 
 use std::fs;
+use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
+
+/// The glob options and the pattern being compiled are process-wide, and libtest
+/// runs these tests on parallel threads, so one test's `set_opts()` and glob could
+/// land inside another's. Each test holds this for its whole body.
+static GLOBALS: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    GLOBALS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn set_opts() {
     use zsh::ported::options::opt_state_set;
@@ -35,6 +45,7 @@ fn setup() -> TempDir {
 
 #[test]
 fn colon_t_returns_basename() {
+    let _serial = serial();
     let tmp = setup();
     let pattern = format!("{}/*.toml(:t)", tmp.path().display());
     let got = {
@@ -46,6 +57,7 @@ fn colon_t_returns_basename() {
 
 #[test]
 fn colon_e_returns_extension() {
+    let _serial = serial();
     let tmp = setup();
     let pattern = format!("{}/*.toml(:e)", tmp.path().display());
     let got = {
@@ -57,6 +69,7 @@ fn colon_e_returns_extension() {
 
 #[test]
 fn colon_r_strips_extension() {
+    let _serial = serial();
     let tmp = setup();
     let pattern = format!("{}/*.toml(:r)", tmp.path().display());
     let got = {
@@ -69,6 +82,7 @@ fn colon_r_strips_extension() {
 
 #[test]
 fn colon_h_returns_dirname() {
+    let _serial = serial();
     let tmp = setup();
     let pattern = format!("{}/docs/AI*.md(:h)", tmp.path().display());
     let got = {
@@ -81,6 +95,7 @@ fn colon_h_returns_dirname() {
 
 #[test]
 fn colon_s_substitutes_first_match() {
+    let _serial = serial();
     let tmp = setup();
     let pattern = format!("{}/*.toml(:s/.toml/.zzz/)", tmp.path().display());
     let got = {
@@ -93,6 +108,7 @@ fn colon_s_substitutes_first_match() {
 
 #[test]
 fn chained_modifiers_apply_left_to_right() {
+    let _serial = serial();
     // `:r:t` strips extension THEN takes basename.
     let tmp = setup();
     let pattern = format!("{}/*.toml(:r:t)", tmp.path().display());
