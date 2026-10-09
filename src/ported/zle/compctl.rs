@@ -1878,7 +1878,7 @@ pub fn bin_compcall(
         }
     }
     COMPCURRENT.store(
-        crate::ported::params::getiparam("CURRENT") as i32,
+        crate::ported::params::getiparam("CURRENT"),
         std::sync::atomic::Ordering::Relaxed,
     );
     let flags = (if t_set { 0 } else { CFN_FIRST })      // c:1686
@@ -3354,7 +3354,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
         .unwrap()
         .clone();
     *CLWNUM.lock().unwrap() = compwords.len() as i32; // c:2367
-    *CLWPOS.lock().unwrap() = COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed) - 1; // c:2368
+    *CLWPOS.lock().unwrap() = (COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed) as i32) - 1; // c:2368
     CMDSTR.with(|r| *r.borrow_mut() = compwords.first().cloned()); // c:2369
     let clw: Vec<String> = compwords
         .iter()
@@ -4712,7 +4712,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     let cpm: Option<String> = crate::ported::zle::compcore::comppatmatch
         .get()
         .and_then(|m| m.lock().ok())
-        .and_then(|g| g.clone());
+        .map(|g| g.clone());
     let cpm_nonempty = cpm.as_deref().is_some_and(|c| !c.is_empty()); // `comppatmatch && *comppatmatch`
     let lpre_s: String = if cpm.is_some() {
         s[..cut].chars().map(|c| if c == Dash { '-' } else { c }).collect()

@@ -115,7 +115,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     // getter and store its result at each `compqstack` write.
     set_compstate_str(
         "all_quotes",
-        &crate::ported::zle::complete::get_compqstack(std::ptr::null_mut()),
+        &crate::ported::zle::complete::get_compqstack(&crate::ported::zsh_h::param::default()),
     );
 
     hasunqu.store(0, Ordering::Relaxed); // c:309
@@ -158,8 +158,8 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else {
         "".into()
     };
-    if let Ok(mut g) = comppatmatch.get_or_init(|| Mutex::new(None)).lock() {
-        *g = Some(opm.clone()); // c:319
+    if let Ok(mut g) = comppatmatch.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = opm.clone(); // c:319
     }
     // c:320-321 — `zsfree(comppatinsert); comppatinsert = ztrdup("menu");`
     // `comppatinsert` is a plain module global (`complete.c:69`) that the
@@ -329,10 +329,9 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     lastpostbr_set(None); // c:361
 
     let curpm = comppatmatch
-        .get_or_init(|| Mutex::new(None))
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
-        .ok()
-        .and_then(|g| g.clone())
+        .map(|g| g.clone())
         .unwrap_or_default();
     if !curpm.is_empty() && curpm != opm {
         // c:363
@@ -1282,7 +1281,7 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
             *g = ws.clone();
         }
-        COMPCURRENT.store(cur, Ordering::Relaxed);
+        COMPCURRENT.store((cur) as i64, Ordering::Relaxed);
         // zshrs bridge: `$words`/`$CURRENT` are plain paramtab copies here
         // (C binds them to the globals via gsu), so the rebuild has to
         // reach the params too — see get_comp_string's publish site.
@@ -2760,11 +2759,9 @@ pub fn check_param(s: &str, set: bool, test: bool, untok: bool) -> Option<usize>
             // and stopped at the `*`, so pattern parameter-name completion
             // saw the name end early and completed the wrong span.
             let patmatch_on = comppatmatch
-                .get_or_init(|| Mutex::new(None))
+                .get_or_init(|| Mutex::new(String::new()))
                 .lock()
-                .ok()
-                .and_then(|g| g.clone())
-                .map(|v| !v.is_empty())
+                .map(|g| !g.is_empty())
                 .unwrap_or(false); // c:1235
             let mut ie = e + walk_namespace(&bytes[e..]); // c:1232
             loop {
@@ -3633,7 +3630,7 @@ pub fn set_comp_sep() -> i32 {
         // `compqstack_gsu` (complete.c:1299) has no storage of its own.
         set_compstate_str(
             "all_quotes",
-            &crate::ported::zle::complete::get_compqstack(std::ptr::null_mut()),
+            &crate::ported::zle::complete::get_compqstack(&crate::ported::zsh_h::param::default()),
         );
     }
 
@@ -3704,7 +3701,7 @@ pub fn set_comp_sep() -> i32 {
         if compcur > cnt {
             compcur = cnt;
         }
-        COMPCURRENT.store(compcur, Ordering::Relaxed);
+        COMPCURRENT.store((compcur) as i64, Ordering::Relaxed);
     }
 
     // zshrs bridge: in C every comp* global written above IS the shell
@@ -3727,7 +3724,7 @@ pub fn set_comp_sep() -> i32 {
             .unwrap_or_default();
         setaparam("words", words);
         let _ =
-            crate::ported::params::setiparam("CURRENT", COMPCURRENT.load(Ordering::Relaxed) as i64);
+            crate::ported::params::setiparam("CURRENT", (COMPCURRENT.load(Ordering::Relaxed) as i32) as i64);
         for (param, global) in [
             ("PREFIX", &COMPPREFIX),
             ("SUFFIX", &COMPSUFFIX),
@@ -7075,7 +7072,7 @@ pub static compfunc: OnceLock<Mutex<Option<String>>> = OnceLock::new(); // zle_t
 /// Port of `mod_export char *comppatmatch` from `Src/Zle/zle_tricky.c`.
 /// `$compstate[pattern_match]` — when non-empty + non-"\0" enables
 /// pattern-aware matching for parameter-name completion.
-pub static comppatmatch: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+pub static comppatmatch: OnceLock<Mutex<String>> = OnceLock::new();
 // `compqstack` (C: complete.c `mod_export char *compqstack`) is deduped
 // to the single canonical `complete::COMPQSTACK`, imported at the top of
 // this module. The former compcore-local `compqstack` static was an
@@ -7725,7 +7722,7 @@ pub fn get_compstate_str(key: &str) -> Option<String> {
     // back missing nine entries — `_lastcomp[unambiguous]` and
     // `[unambiguous_cursor]` (read at sh:84-86 and by `_next_tags`
     // sh:105) among them.
-    let nil = std::ptr::null_mut();
+    let nil = &crate::ported::zsh_h::param::default();
     match key {
         // c:complete.c:1401-1405 — `get_nmatches`: flush pending match
         // groups via `permmatches(0)`, then read the counter. A stored
@@ -9200,7 +9197,7 @@ mod tests {
             "arg must re-lex into three words"
         );
         // c:1930 — 0-offset cur=1 -> 1-based compcurrent=2.
-        assert_eq!(COMPCURRENT.load(Ordering::Relaxed), 2);
+        assert_eq!((COMPCURRENT.load(Ordering::Relaxed) as i32), 2);
 
         // c:1894-1906 — prefix/suffix of the cursor word (COMPLETEINWORD off).
         assert_eq!(getg(&COMPPREFIX), "b");

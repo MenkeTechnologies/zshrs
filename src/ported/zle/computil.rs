@@ -3591,7 +3591,7 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
     // c:1832
 
     if (xor.is_empty() && opts == 0)                                         // c:1834
-        || cur > COMPCURRENT.load(Ordering::Relaxed)
+        || cur > (COMPCURRENT.load(Ordering::Relaxed) as i32)
     {
         return;
     }
@@ -3599,7 +3599,7 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
     // c:1839 — single-letter exclusions only when at compcurrent (option
     // clumping safety: a prefix-of-longer-opt at cursor mustn't kill the
     // multi-letter form prematurely).
-    let single = opts == 0 && cur == COMPCURRENT.load(Ordering::Relaxed);
+    let single = opts == 0 && cur == (COMPCURRENT.load(Ordering::Relaxed) as i32);
 
     // c:1841 — iterate xor entries. When opts=1 we synthesize a "-" pass.
     let iter_xor: Vec<String> = if opts != 0 {
@@ -3940,7 +3940,7 @@ pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {
 pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 {
     // c:2004
 
-    let compcur = COMPCURRENT.load(Ordering::Relaxed);
+    let compcur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
 
     // c:2019 — free old state if this is the first set.
     if first != 0 && ca_alloced.load(Ordering::Relaxed) != 0 {
@@ -5074,7 +5074,7 @@ pub fn bin_comparguments(
         }
     }
     COMPCURRENT.store(
-        crate::ported::params::getiparam("CURRENT") as i32,
+        crate::ported::params::getiparam("CURRENT"),
         Ordering::Relaxed,
     );
     if args.is_empty() {
@@ -5124,7 +5124,7 @@ pub fn bin_comparguments(
         b'i' => {
             // c:2625
             // c:2629 — compcurrent > 1 && compwords[0].
-            let compcur = COMPCURRENT.load(Ordering::Relaxed);
+            let compcur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
             let compwords_nonempty = COMPWORDS
                 .get()
                 .and_then(|m| m.lock().ok().map(|w| !w.is_empty() && !w[0].is_empty()))
@@ -5417,7 +5417,7 @@ pub fn bin_comparguments(
                     None => true,
                     Some(dd) if dd.r#type < CAA_RARGS => true,
                     Some(dd) if dd.r#type == CAA_RARGS => s.curpos == s.argbeg + 1,
-                    Some(_) => COMPCURRENT.load(Ordering::Relaxed) == 1,
+                    Some(_) => (COMPCURRENT.load(Ordering::Relaxed) as i32) == 1,
                 };
                 if actopts_ok && pos_ok {
                     ret = 0;
@@ -6331,7 +6331,7 @@ pub fn cv_parse_word(d: &mut cvdef) {
     let mut state_val: Option<Box<cvval>> = None;
     cv_alloced.store(1, Ordering::Relaxed);
 
-    let compcur = COMPCURRENT.load(Ordering::Relaxed);
+    let compcur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
     let compwords: Vec<String> = COMPWORDS
         .get()
         .and_then(|m| m.lock().ok().map(|w| w.clone()))
@@ -8005,7 +8005,7 @@ pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {
     // c:4628-4633 — if comppatmatch && haswilds(rembslash(prefix+suffix)): bail.
     let cpm_set = comppatmatch
         .get()
-        .and_then(|m| m.lock().ok().map(|g| g.is_some()))
+        .and_then(|m| m.lock().ok().map(|g| !g.is_empty())) // `comppatmatch && *comppatmatch`
         .unwrap_or(false);
     if cpm_set {
         let merged = format!("{}{}", compprefix, compsuffix);
@@ -9116,7 +9116,7 @@ mod tests {
         {
             *g = vec!["cargo".to_string(), "build".to_string(), "--".to_string()];
         }
-        COMPCURRENT.store(3, Ordering::Relaxed);
+        COMPCURRENT.store((3) as i64, Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
 
         let mut d = parse_cadef("comparguments", &spec).expect("spec must parse");
@@ -9901,7 +9901,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         inittyptab();
-        let saved_compcur = COMPCURRENT.load(Ordering::Relaxed);
+        let saved_compcur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
         let mut bar = caopt::default();
         bar.name = Some("-bar".into());
         bar.active.store(1, Ordering::Relaxed);
@@ -9915,11 +9915,11 @@ mod tests {
         d.opts = Some(Arc::new(foo));
         d.argsactive = 1;
         // Force COMPCURRENT >= cur so the guard at c:1834 is satisfied.
-        COMPCURRENT.store(2, Ordering::Relaxed);
+        COMPCURRENT.store((2) as i64, Ordering::Relaxed);
         ca_inactive(&mut d, &[], 1, 1);
         // Restore COMPCURRENT immediately so parallel non-ZLE tests
         // see the original value.
-        COMPCURRENT.store(saved_compcur, Ordering::Relaxed);
+        COMPCURRENT.store((saved_compcur) as i64, Ordering::Relaxed);
         let mut p = d.opts.as_deref();
         while let Some(o) = p {
             assert_eq!(

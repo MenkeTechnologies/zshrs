@@ -3018,7 +3018,7 @@ pub fn get_comp_string() -> Option<String> {
             {
                 *g = ws.clone();
             }
-            crate::ported::zle::complete::COMPCURRENT.store(cur, Ordering::SeqCst);
+            crate::ported::zle::complete::COMPCURRENT.store((cur) as i64, Ordering::SeqCst);
             // …but the compsys shell/rust functions read `$words` /
             // `$CURRENT` from the PARAM TABLE (getaparam/getsparam), and
             // these compparams have no gsu binding to the statics

@@ -6382,7 +6382,8 @@ pub fn getiparam(s: &str) -> i64 {
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(s) {
             if (pm.node.flags as u32 & PM_INTEGER) != 0 {
-                return pm.u_val;
+                // c:3048 — `pm->gsu.i->getfn(pm)`.
+                return pm.gsu_i.as_ref().map_or(pm.u_val, |g| (g.getfn)(pm));
             }
         }
     }
@@ -6425,7 +6426,8 @@ pub fn getnparam(s: &str) -> (i64, f64, bool) {
                 return (pm.u_dval as i64, pm.u_dval, true);
             }
             if (fl & PM_INTEGER) != 0 {
-                return (pm.u_val, pm.u_val as f64, false);
+                let v = pm.gsu_i.as_ref().map_or(pm.u_val, |g| (g.getfn)(pm)); // c:3066
+                return (v, v as f64, false);
             }
         }
     }
@@ -11250,7 +11252,12 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
     // `egidsetfn` failure reports) still dispatching under the guard.
     let committed = staged.u_val;
     if t == PM_INTEGER {
-        intsetfn(&mut staged, committed); // c:2870
+        // c:2870 — `v->pm->gsu.i->setfn(v->pm, …)`: a node whose gsu is not the
+        // standard integer one (`$CURRENT` views `compcurrent`) owns the store.
+        match staged.gsu_i.as_ref().map(|g| g.setfn) {
+            Some(sf) if sf as usize != intsetfn as usize => sf(&mut staged, committed),
+            _ => intsetfn(&mut staged, committed),
+        }
     }
     // Phase 3 — publish, IF the setfn wrote a value phase 1 had not already
     // committed. C needs no equivalent at all: its setfn wrote through the live
@@ -11857,6 +11864,19 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
     // a PM_RO_BY_DESIGN struct.
     let private_closure =
         crate::ported::modules::param_private::is_private(pm as *const param) != 0;
+    let custom_unsetfn: Option<fn(&mut param, i32)> = if (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+        match PM_TYPE(pm.node.flags as u32) {
+            t if t == PM_SCALAR || t == PM_NAMEREF => pm.gsu_s.as_ref().map(|g| g.unsetfn),
+            t if t == PM_INTEGER => pm.gsu_i.as_ref().map(|g| g.unsetfn),
+            t if t == PM_ARRAY => pm.gsu_a.as_ref().map(|g| g.unsetfn),
+            t if t == PM_HASHED => pm.gsu_h.as_ref().map(|g| g.unsetfn),
+            _ => None,
+        }
+        .filter(|f| *f as usize != stdunsetfn as usize)
+    } else {
+        None
+    };
+    let mut custom_unset_ran = false;
     if (pm.node.flags as u32 & PM_UNSET) == 0 || (pm.node.flags as u32 & PM_REMOVABLE) != 0 {
         if private_closure {
             if cur_ll <= pm.level {
@@ -11865,6 +11885,13 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
             if exp != 0 {
                 pm.node.flags |= PM_DECLARED as i32; // c:param_private.c:320
             }
+        } else if let Some(unsetfn) = custom_unsetfn {
+            // c:3870 — `pm->gsu.s->unsetfn(pm, exp)`: a special whose vtable
+            // carries its own unsetfn (`compunsetfn` for the completion
+            // params) owns the unset, including whether the node ends up
+            // PM_UNSET (it does not: `unset PREFIX` leaves `$PREFIX` empty).
+            unsetfn(pm, exp);
+            custom_unset_ran = true;
         } else {
             // c:3870 — `pm->gsu.s->unsetfn(pm, exp)` — open-coded to stdunsetfn.
             stdunsetfn(pm, exp);
@@ -11959,7 +11986,9 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
     }
     // The c:3851-3890 removenode/addnode postlude for `pm` itself stays with
     // the callers, which own the node (see `unsetparam`).
-    pm.node.flags |= PM_UNSET as i32;
+    if !custom_unset_ran {
+        pm.node.flags |= PM_UNSET as i32;
+    }
     0
 }
 
@@ -12473,6 +12502,14 @@ pub fn nullsethashfn(pm: &mut param, x: HashTable) {
 /// Port of `intvargetfn()` from `Src/params.c:4202`. C body:
 /// `return *pm->u.valptr;`
 pub fn intvargetfn(pm: &param) -> i64 {
+    // c:4202 `return *pm->u.valptr;` — `u.data` of a variable-bound integer
+    // (complete.c:1313 `pm->u.data = cp->var`) is the address of the global's
+    // Rust twin, an `AtomicI64` (`zlong`).
+    if pm.u_data != 0 {
+        // SAFETY: `u_data` is only ever set from `&'static AtomicI64`.
+        return unsafe { &*(pm.u_data as *const std::sync::atomic::AtomicI64) }
+            .load(Ordering::Relaxed);
+    }
     // c:4156 — `return *pm->u.valptr;`. For most IPDEF4/IPDEF5 specials the
     // pointer aims at a global that zshrs models as an atomic rather than as
     // storage on the node, so the read has to name that global. `$COLUMNS`
@@ -12509,6 +12546,13 @@ pub fn intvargetfn(pm: &param) -> i64 {
 /// Port of `intvarsetfn()` from `Src/params.c:4213`. C body:
 /// `*pm->u.valptr = x;`
 pub fn intvarsetfn(pm: &mut param, x: i64) {
+    // c:4213 `*pm->u.valptr = x;`
+    if pm.u_data != 0 {
+        // SAFETY: see `intvargetfn`.
+        unsafe { &*(pm.u_data as *const std::sync::atomic::AtomicI64) }
+            .store(x, Ordering::Relaxed);
+        return;
+    }
     pm.u_val = x;
 }
 
@@ -12558,18 +12602,51 @@ pub fn zlevarsetfn(pm: &mut param, x: i64) {
 /// Port of `strvarsetfn()` from `Src/params.c:4249`. C body:
 /// `zsfree(*q); *q = x;` where `q = (char **)pm->u.data`.
 pub fn strvarsetfn(pm: &mut param, x: Option<String>) {
+    // c:4249 `zsfree(*q); *q = x;` — `q = (char **)pm->u.data`, here the
+    // address of the global's Rust twin, an `OnceLock<Mutex<String>>`. A
+    // NULL `x` leaves the global empty (the getter maps NULL to "").
+    if pm.u_data != 0 {
+        // SAFETY: `u_data` is only ever set from
+        // `&'static OnceLock<Mutex<String>>`.
+        let q = unsafe { &*(pm.u_data as *const OnceLock<Mutex<String>>) };
+        if let Ok(mut g) = q.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = x.unwrap_or_default();
+        }
+        return;
+    }
     pm.u_str = x;
 }
 
 /// Port of `strvargetfn()` from `Src/params.c:4263`. C body:
 /// `s = *((char **)pm->u.data); return s ? s : hcalloc(1);`
 pub fn strvargetfn(pm: &param) -> String {
+    // c:4263 `s = *((char **)pm->u.data); return s ? s : hcalloc(1);`
+    if pm.u_data != 0 {
+        // SAFETY: see `strvarsetfn`.
+        let q = unsafe { &*(pm.u_data as *const OnceLock<Mutex<String>>) };
+        return q
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+    }
     pm.u_str.clone().unwrap_or_default()
 }
 
 /// Port of `arrvargetfn()` from `Src/params.c:4279`. C body:
 /// `arrptr = *((char ***)pm->u.data); return arrptr ?: &nullarray;`
 pub fn arrvargetfn(pm: &param) -> Vec<String> {
+    // c:4279 `arrptr = *((char ***)pm->u.data); return arrptr ?: &nullarray;`
+    if pm.u_data != 0 {
+        // SAFETY: `u_data` is only ever set from
+        // `&'static OnceLock<Mutex<Vec<String>>>`.
+        let q = unsafe { &*(pm.u_data as *const OnceLock<Mutex<Vec<String>>>) };
+        return q
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+    }
     pm.u_arr.clone().unwrap_or_default()
 }
 
@@ -12605,6 +12682,17 @@ pub fn arrvarsetfn(pm: &mut param, x: Option<Vec<String>>) {
             }
         }
     };
+    // c:4310 `*dptr = x;` — `dptr = (char ***)pm->u.data`, the address of
+    // the global's Rust twin (an `OnceLock<Mutex<Vec<String>>>`) for a
+    // variable-bound array such as `$words`.
+    if pm.u_data != 0 {
+        // SAFETY: see `arrvargetfn`.
+        let q = unsafe { &*(pm.u_data as *const OnceLock<Mutex<Vec<String>>>) };
+        if let Ok(mut g) = q.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            *g = final_val;
+        }
+        return;
+    }
     // c:4311-4316 — ename sync.
     if let Some(ename) = pm.ename.clone() {
         // c:4311 `if (pm->ename)`

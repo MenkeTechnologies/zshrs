@@ -136,7 +136,7 @@ fn publish_words_to_globals() {
     }
     let cur = getiparam("CURRENT");
     if cur > 0 {
-        COMPCURRENT.store(cur as i32, Ordering::Relaxed);
+        COMPCURRENT.store((cur as i32) as i64, Ordering::Relaxed);
     }
 }
 

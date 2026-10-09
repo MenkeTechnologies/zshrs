@@ -34,7 +34,11 @@ use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Mutex;
 
 use crate::ported::glob::{remnulargs, tokenize};
-use crate::ported::params::{createparam, paramtab};
+use crate::ported::params::{
+    arrvargetfn, arrvarsetfn, createparam, deleteparamtable, getintvalue, getstrvalue,
+    intvargetfn, intvarsetfn, newparamtable, nullintsetfn, nullstrsetfn, paramtab, strvargetfn,
+    strvarsetfn,
+};
 use crate::ported::pattern::{patcompile, pattry, range_type};
 use crate::ported::utils::{zerr, zwarnnam};
 use crate::ported::zle::comp_h::{
@@ -48,7 +52,9 @@ use crate::ported::zle::{
     zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*,
     zle_word::*,
 };
+use crate::ported::zle::comp_h::{CPN_COMPSTATE, CP_KEYPARAMS, CP_REALPARAMS};
 use crate::ported::zsh_h::{
+    gsu_array, gsu_hash, gsu_integer, gsu_scalar, value, HashTable, Param, PM_HASHELEM,
     eprog, funcwrap, module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER,
     PM_LOCAL, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET,
     PP_RANGE, PP_UNKWN,
@@ -244,7 +250,7 @@ pub use crate::ported::utils::INCOMPFUNC;
 
 /// Port of `int compcurrent` — index into compwords[] of the word
 /// being completed.
-pub static COMPCURRENT: AtomicI32 = AtomicI32::new(0); // c:complete.c
+pub static COMPCURRENT: AtomicI64 = AtomicI64::new(0); // c:37 zlong compcurrent
 
 /// Port of `mod_export zlong complistmax` from `Src/Zle/complete.c:37`.
 /// `$LISTMAX` value — maximum number of matches to list before asking
@@ -288,6 +294,17 @@ comp_string_global!(pub COMPREDIRECT,  "compredirect",  61);
 comp_string_global!(pub COMPPATINSERT, "comppatinsert", 69);
 comp_string_global!(pub COMPLASTPROMPT, "complastprompt", 57);
 comp_string_global!(pub COMPVARED,     "compvared",     73);
+comp_string_global!(pub COMPRESTORE,   "comprestore",   64);
+comp_string_global!(pub COMPINSERT,    "compinsert",    66);
+comp_string_global!(pub COMPEXACT,     "compexact",     67);
+comp_string_global!(pub COMPEXACTSTR,  "compexactstr",  68);
+comp_string_global!(pub COMPTOEND,     "comptoend",     70);
+comp_string_global!(pub COMPOLDLIST,   "compoldlist",   71);
+comp_string_global!(pub COMPOLDINS,    "compoldins",    72);
+
+/// Port of `char **compredirs` (complete.c:45) — the redirections of the
+/// command line being completed (`$redirections`).
+pub static COMPREDIRS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceLock::new();
 
 /// Port of `char **compwords` (complete.c:45) — argv-style array of
 /// the command-line words being completed.
@@ -1661,8 +1678,8 @@ pub fn restrict_range(b: i32, e: i32) {
             .cloned()
             .collect();
         *words = new_words; // c:930 freearray + assign
-        let cur = COMPCURRENT.load(Ordering::Relaxed);
-        COMPCURRENT.store(cur - b, Ordering::Relaxed); // c:931 compcurrent -= b
+        let cur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
+        COMPCURRENT.store((cur - b) as i64, Ordering::Relaxed); // c:931 compcurrent -= b
 
         // zshrs sync: in C `$words`/`$CURRENT` ARE the compwords/compcurrent
         // globals (special-param getfn reads them live), so restricting the
@@ -1673,7 +1690,7 @@ pub fn restrict_range(b: i32, e: i32) {
         // `'*:::'` (CAA_RREST) rest-arg ACTION sees the rest-only
         // `$words`/`$CURRENT` — e.g. `_systemctl_command`'s `(( CURRENT == 1 ))`.
         let restricted = words.clone();
-        let new_cur = COMPCURRENT.load(Ordering::Relaxed);
+        let new_cur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
         drop(words); // release COMPWORDS lock before touching paramtab
         crate::ported::params::setaparam("words", restricted);
         let _ = crate::ported::params::setiparam("CURRENT", new_cur as i64);
@@ -1725,7 +1742,7 @@ pub fn do_comp_vars(
             } else {
                 nb -= 1;
             } // c:946-948
-            let cur = COMPCURRENT.load(Ordering::Relaxed);
+            let cur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
             // c:950 — `if (compcurrent - 1 < na || compcurrent - 1 > nb) return 0;`
             if cur - 1 < na || cur - 1 > nb {
                 return 0;
@@ -1745,7 +1762,7 @@ pub fn do_comp_vars(
             let mut t = 0i32; // c:961
             let mut b = 0i32;
             let mut e = l - 1;
-            let mut i = COMPCURRENT.load(Ordering::Relaxed) - 1; // c:964 i = compcurrent - 1
+            let mut i = (COMPCURRENT.load(Ordering::Relaxed) as i32) - 1; // c:964 i = compcurrent - 1
             if i < 0 || i >= l {
                 return 0;
             } // c:965
@@ -1786,7 +1803,7 @@ pub fn do_comp_vars(
                     }
                     i += 1;
                 }
-                if tt != 0 && i < COMPCURRENT.load(Ordering::Relaxed) {
+                if tt != 0 && i < (COMPCURRENT.load(Ordering::Relaxed) as i32) {
                     // c:992
                     t = 0; // c:993
                 }
@@ -2209,135 +2226,333 @@ pub fn bin_compset(
 }
 
 // =====================================================================
-// compparam table machinery — port of `Src/Zle/complete.c:1235-1295`
-// (struct compparam comprparams[] / compkparams[] tables) +
-// addcompparams / makecompparams / comp_setunset / compunsetfn ported.
+// compparam table machinery — port of `Src/Zle/complete.c:1220-1407`
+// (struct compparam, the gsu vtables, comprparams[] / compkparams[],
+// addcompparams, makecompparams, get_compstate / set_compstate).
 // =====================================================================
 //
-// The substrate the C source uses (`createparam`, `paramtab()`,
-// `getparamnode`, `newparamtable`, `deleteparamtable`) is now
-// ported in `params.rs`:
-//   - createparam        → params.rs:4727
-//   - paramtab           → params.rs:3126
-//   - getparamnode       → params.rs:4889
-//   - newparamtable      → params.rs:5035
-//   - createparamtable   → params.rs:4694
-//
-// The ported below dispatch through that canonical Rust paramtab via
-// setsparam/setiparam/setaparam. The GSU-vtable swap on each param
-// (a per-param custom-getter hook) is what wires e.g. `$BUFFER`
-// reads to the live `ZLELINE` global — that hook surface is the
-// `Param.gsu` field on params.rs's Param struct, which today binds
-// to the default scalar/array getters. Custom-getter wiring for
-// `$BUFFER`/`$CURSOR`/`$KILLRING`-style params is what
-// makezleparams (zle_params.rs:498, ported) sets up at widget-call
-// entry; the read/write surface works today via the existing
-// scalar/array params.
+// `$words`, `$CURRENT`, `$PREFIX`, `$SUFFIX`, `$IPREFIX`, `$ISUFFIX`,
+// `$QIPREFIX`, `$QISUFFIX` and `$redirections` are real parameters whose
+// gsu vtable views the `compwords` / `compcurrent` / `compprefix` / …
+// globals; `$compstate` is a hash whose element Params view the
+// `compkparams` globals. `pm->u.data` carries the address of the Rust twin
+// of the C global, exactly as `pm->u.data = cp->var` does at c:1318.
 
-/// Direct port of `addcompparams(struct compparam *cp, Param *pp)` from
-/// `Src/Zle/complete.c:1297`. Walks the compparam table, calling
-/// `createparam` for each entry with `PM_SPECIAL|PM_REMOVABLE|PM_LOCAL`
-/// or'd into its type. The gsu vtable hookup (c:1308-1324) is set on
-/// the returned Param via `u_data`; the per-type gsu (compvarscalar_gsu
-/// etc.) isn't yet exposed as a sym so we record the `var`/`gsu`
-/// hooks on `u_data` for parity.
-#[allow(unused_variables)]
-pub fn addcompparams(cp: &[compparam], pp: &mut Vec<*mut param>) {
-    // c:1297
-    for entry in cp {
-        // c:1299
-        let flags = entry.r#type | PM_SPECIAL as i32 | PM_REMOVABLE as i32 | PM_LOCAL as i32;
-        // c:1300 — createparam(name, type | SPECIAL|REMOVABLE|LOCAL).
-        let pm = createparam(entry.name, flags);
-        if let Some(mut pm_val) = pm {
-            // c:1307 — `pm->level = locallevel + 1`. locallevel not
-            // exposed; the level field defaults to 0 which is fine
-            // for the static-link path.
-            pm_val.u_data = entry.var; // c:1308
-                                       // c:1309-1324 — gsu vtable per PM_TYPE. The Rust port
-                                       // stores the gsu address on u_data; the per-type gsu
-                                       // resolution happens at param-read time via the typed
-                                       // accessor (get_unambig, get_compstate, etc.) that the
-                                       // caller wired explicitly into the param entries.
-            pp.push(std::ptr::null_mut::<param>());
-        } else {
-            // c:1302 — `pm = paramtab->getnode(paramtab, name)`. Look
-            // up existing entry if createparam returned None.
-            pp.push(std::ptr::null_mut::<param>());
+/// Direct port of `struct compparam` from `Src/Zle/complete.c:1225`.
+/// One row per special completion parameter.
+#[allow(non_camel_case_types)]
+pub struct compparam {
+    // c:1225
+    pub name: &'static str, // c:1226 char *name
+    pub r#type: i32,        // c:1227 int type
+    pub var: compvar,       // c:1228 void *var
+    pub gsu: compgsu,       // c:1229 GsuScalar gsu
+}
+
+/// `void *var` of a [`compparam`]: `VAL(X)` (c:1223) is the address of a C
+/// global, which Rust spells as a reference to the global's twin — a string,
+/// a string array or a `zlong`. `NULL` is a row that has a `gsu` instead.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub enum compvar {
+    NULL,
+    STR(&'static std::sync::OnceLock<Mutex<String>>),
+    ARR(&'static std::sync::OnceLock<Mutex<Vec<String>>>),
+    INT(&'static AtomicI64),
+}
+
+/// `GsuScalar gsu` of a [`compparam`]: `GSU(X)` (c:1224) casts any gsu
+/// vtable to `GsuScalar` and `addcompparams` stores it into the union slot
+/// that `PM_TYPE(cp->type)` selects (c:1333); the two flavours the table
+/// uses are named here instead of punned.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub enum compgsu {
+    NULL,
+    S(&'static gsu_scalar),
+    I(&'static gsu_integer),
+}
+
+// c:1232-1255 — the gsu vtables.
+#[allow(non_upper_case_globals)]
+static compvarscalar_gsu: gsu_scalar = gsu_scalar {
+    getfn: strvargetfn,
+    setfn: |pm, x| strvarsetfn(pm, Some(x)),
+    unsetfn: compunsetfn,
+}; // c:1232
+#[allow(non_upper_case_globals)]
+static complist_gsu: gsu_scalar = gsu_scalar {
+    getfn: get_complist,
+    setfn: set_complist,
+    unsetfn: compunsetfn,
+}; // c:1234
+#[allow(non_upper_case_globals)]
+static unambig_gsu: gsu_scalar = gsu_scalar {
+    getfn: get_unambig,
+    setfn: nullstrsetfn,
+    unsetfn: compunsetfn,
+}; // c:1236
+#[allow(non_upper_case_globals)]
+static unambig_pos_gsu: gsu_scalar = gsu_scalar {
+    getfn: get_unambig_pos,
+    setfn: nullstrsetfn,
+    unsetfn: compunsetfn,
+}; // c:1238
+#[allow(non_upper_case_globals)]
+static insert_pos_gsu: gsu_scalar = gsu_scalar {
+    getfn: get_insert_pos,
+    setfn: nullstrsetfn,
+    unsetfn: compunsetfn,
+}; // c:1240
+#[allow(non_upper_case_globals)]
+static compqstack_gsu: gsu_scalar = gsu_scalar {
+    getfn: get_compqstack,
+    setfn: nullstrsetfn,
+    unsetfn: compunsetfn,
+}; // c:1242
+#[allow(non_upper_case_globals)]
+static compvarinteger_gsu: gsu_integer = gsu_integer {
+    getfn: intvargetfn,
+    setfn: intvarsetfn,
+    unsetfn: compunsetfn,
+}; // c:1245
+#[allow(non_upper_case_globals)]
+static nmatches_gsu: gsu_integer = gsu_integer {
+    getfn: get_nmatches,
+    setfn: nullintsetfn, // c:1248 NULL
+    unsetfn: compunsetfn,
+}; // c:1247
+#[allow(non_upper_case_globals)]
+static unambig_curs_gsu: gsu_integer = gsu_integer {
+    getfn: get_unambig_curs,
+    setfn: nullintsetfn, // c:1250 NULL
+    unsetfn: compunsetfn,
+}; // c:1249
+#[allow(non_upper_case_globals)]
+static listlines_gsu: gsu_integer = gsu_integer {
+    getfn: get_listlines,
+    setfn: nullintsetfn, // c:1252 NULL
+    unsetfn: compunsetfn,
+}; // c:1251
+#[allow(non_upper_case_globals)]
+static compvararray_gsu: gsu_array = gsu_array {
+    getfn: arrvargetfn,
+    setfn: |pm, x| arrvarsetfn(pm, Some(x)),
+    unsetfn: compunsetfn,
+}; // c:1254
+#[allow(non_upper_case_globals)]
+static compstate_gsu: gsu_hash = gsu_hash {
+    getfn: get_compstate,
+    setfn: set_compstate,
+    unsetfn: compunsetfn,
+}; // c:1338
+
+/// `Param *comprpms` from `Src/Zle/complete.c:84` — the live Params of
+/// `comprparams[]` plus `$compstate` (CPN_COMPSTATE), `NULL` outside a
+/// completion function. A `Param *` is the param's name here: paramtab is
+/// name-keyed and a Param is reached by lookup.
+#[allow(non_upper_case_globals)]
+pub static comprpms: Mutex<Option<Vec<Option<String>>>> = Mutex::new(None); // c:84
+
+/// `Param *compkpms` from `Src/Zle/complete.c:94` — the live element Params
+/// of `compkparams[]` inside `$compstate`, keyed by the element's name.
+#[allow(non_upper_case_globals)]
+pub static compkpms: Mutex<Option<Vec<Option<String>>>> = Mutex::new(None); // c:94
+
+/// Direct port of `static void addcompparams(struct compparam *cp, Param *pp)`
+/// from `Src/Zle/complete.c:1306`. Creates each row's param with
+/// `PM_SPECIAL|PM_REMOVABLE|PM_LOCAL` or'd in, stamps `level = locallevel + 1`
+/// and binds the gsu vtable that views the row's C global.
+///
+/// WARNING: param names don't match C — Rust=(cp, pp, tab) vs C=(cp, pp).
+/// C reaches the table through the global `paramtab`, which `makecompparams`
+/// swaps for `$compstate`'s own table (c:1357-1362); `tab` is that swap:
+/// `None` creates in the real paramtab, `Some` creates the element Params of
+/// the `$compstate` hash being built.
+pub fn addcompparams(cp: &[compparam], pp: &mut [Option<String>], mut tab: Option<&mut HashTable>) {
+    // c:1306
+    for (i, c) in cp.iter().enumerate() {
+        // c:1309
+        let flags = c.r#type | (PM_SPECIAL | PM_REMOVABLE | PM_LOCAL) as i32;
+        let level = crate::ported::params::locallevel.load(Ordering::Relaxed) + 1;
+        // c:1310-1315 — `createparam(...)`; a NULL return (the param already
+        // exists at this level) falls back to `paramtab->getnode`.
+        let mut node: Param = match tab.as_deref_mut() {
+            None => {
+                let _ = createparam(c.name, flags); // c:1310
+                match paramtab().read().ok().and_then(|t| t.get(c.name).cloned()) {
+                    Some(pm) => pm, // c:1313
+                    None => continue,
+                }
+            }
+            Some(_) => {
+                // createparam in a table other than realparamtab: c:1034-1035
+                // `flags |= PM_HASHELEM; flags &= ~PM_EXPORTED`, c:1155
+                // `pm->node.flags = flags & ~PM_LOCAL`.
+                let mut pm: Param = Box::new(param::default());
+                pm.node.nam = c.name.to_string();
+                pm.node.flags = (flags & !(PM_LOCAL as i32)) | PM_HASHELEM as i32;
+                pm
+            }
+        };
+        pp[i] = Some(c.name.to_string()); // c:1316
+        node.level = level; // c:1317
+        match c.var {
+            // c:1318 — `if ((pm->u.data = cp->var))`
+            compvar::NULL => {
+                // c:1333 — `pm->gsu.s = cp->gsu;` the union slot is chosen by type.
+                match c.gsu {
+                    compgsu::S(g) => node.gsu_s = Some(Box::new(g.clone())),
+                    compgsu::I(g) => node.gsu_i = Some(Box::new(g.clone())),
+                    compgsu::NULL => {}
+                }
+            }
+            var => {
+                node.u_data = match var {
+                    compvar::STR(r) => r as *const _ as usize,
+                    compvar::ARR(r) => r as *const _ as usize,
+                    compvar::INT(r) => r as *const _ as usize,
+                    compvar::NULL => 0,
+                };
+                match PM_TYPE(c.r#type as u32) {
+                    // c:1320-1323
+                    PM_SCALAR => node.gsu_s = Some(Box::new(compvarscalar_gsu.clone())),
+                    // c:1324-1327
+                    PM_INTEGER => {
+                        node.gsu_i = Some(Box::new(compvarinteger_gsu.clone()));
+                        node.base = 10;
+                    }
+                    // c:1328-1331
+                    PM_ARRAY => node.gsu_a = Some(Box::new(compvararray_gsu.clone())),
+                    _ => {}
+                }
+            }
+        }
+        match tab.as_deref_mut() {
+            None => {
+                if let Ok(mut t) = paramtab().write() {
+                    if let Some(live) = t.get_mut(c.name) {
+                        // The live node keeps its `old` chain and flags; only
+                        // the fields addcompparams owns are written back.
+                        live.level = node.level;
+                        live.u_data = node.u_data;
+                        live.base = node.base;
+                        live.gsu_s = node.gsu_s;
+                        live.gsu_i = node.gsu_i;
+                        live.gsu_a = node.gsu_a;
+                    }
+                }
+            }
+            Some(t) => {
+                t.parnodes.insert(c.name.to_string(), node);
+            }
         }
     }
 }
 
-/// Direct port of `makecompparams()` from `Src/Zle/complete.c:1333`.
-/// Calls addcompparams(comprparams) to register the CP_REALPARAMS
-/// entries ($words/$CURRENT/$PREFIX/etc.) into the global paramtab,
-/// then createparam("compstate", PM_HASHED) and addcompparams(
-/// compkparams) for the per-key entries inside the hash.
+/// Direct port of `void makecompparams(void)` from
+/// `Src/Zle/complete.c:1342`. Creates the `comprparams[]` params, then
+/// `$compstate` with a table of its own holding the `compkparams[]` elements.
 pub fn makecompparams() {
-    // c:1333
-    let mut comprpms: Vec<*mut param> = Vec::new();
-    addcompparams(COMPRPARAMS, &mut comprpms); // c:1338
+    // c:1342
+    let mut rp = comprpms.lock().unwrap();
+    let rp = rp.get_or_insert_with(|| vec![None; CP_REALPARAMS as usize]);
+    addcompparams(COMPRPARAMS, rp, None); // c:1348
 
-    // c:1340 — createparam(COMPSTATENAME, PM_SPECIAL|PM_REMOVABLE|
-    //          PM_SINGLE|PM_LOCAL|PM_HASHED).
+    // c:1350-1354 — `createparam(COMPSTATENAME, PM_SPECIAL|PM_REMOVABLE|
+    // PM_SINGLE|PM_LOCAL|PM_HASHED)`.
     let _ = createparam(
-        "compstate",
+        COMPSTATENAME,
         (PM_SPECIAL | PM_REMOVABLE | PM_SINGLE | PM_LOCAL | PM_HASHED) as i32,
     );
-    // c:1351 — addcompparams(compkparams, compkpms). These live inside
-    // the $compstate hash; without inner-hash createparam yet, register
-    // them at the top level so getsparam("compstate[X]") finds them.
-    let mut compkpms: Vec<*mut param> = Vec::new();
-    addcompparams(COMPKPARAMS, &mut compkpms);
+    rp[CPN_COMPSTATE as usize] = Some(COMPSTATENAME.to_string()); // c:1356
+
+    // c:1357-1362 — `cpm->level = locallevel + 1; cpm->gsu.h = &compstate_gsu;
+    // cpm->u.hash = paramtab = newparamtable(31, COMPSTATENAME);
+    // addcompparams(compkparams, compkpms);`
+    let mut tht = newparamtable(31, COMPSTATENAME).expect("newparamtable"); // c:1360
+    let mut kp = compkpms.lock().unwrap();
+    let kp = kp.get_or_insert_with(|| vec![None; CP_KEYPARAMS as usize]);
+    addcompparams(COMPKPARAMS, kp, Some(&mut tht)); // c:1361
+    if let Ok(mut t) = paramtab().write() {
+        if let Some(cpm) = t.get_mut(COMPSTATENAME) {
+            cpm.level = crate::ported::params::locallevel.load(Ordering::Relaxed) + 1; // c:1358
+            cpm.gsu_h = Some(Box::new(compstate_gsu.clone())); // c:1359
+            cpm.u_hash = Some(tht); // c:1360
+        }
+    }
 }
 
-/// Direct port of `HashTable get_compstate(Param pm)` from
-/// `Src/Zle/complete.c:1357`. C body (single statement):
-///     `return pm->u.hash;`
-/// Rust returns `Option<usize>` (opaque HashTable-pointer parity);
-/// `None` when the param has no hash.
-pub fn get_compstate(pm: *mut param) -> Option<usize> {
-    // c:1357
-    unsafe { pm.as_ref() } // c:1359 pm->...
-        .and_then(|p| p.u_hash.as_ref().map(|_| &p.u_hash as *const _ as usize))
+/// Direct port of `static HashTable get_compstate(Param pm)` from
+/// `Src/Zle/complete.c:1366`. C body: `return pm->u.hash;`.
+pub fn get_compstate(pm: &param) -> Option<&HashTable> {
+    // c:1366
+    pm.u_hash.as_ref() // c:1369
 }
 
-/// Direct port of `void set_compstate(Param pm, HashTable ht)` from
-/// `Src/Zle/complete.c:1364`. Writes each entry from `ht` back into
-/// the matching compkparams slot (per c:1376-1391). The C body iterates
-/// every hash node, matches its name against `compkparams[i].name`,
-/// and copies the int/string value into the C-side variable pointed
-/// to by `cp->var`, clearing PM_UNSET on the param.
-///
-/// Static-link path: without the compkparams `var` slots resolved to
-/// real Rust globals (they pointed to file-static C strings), the
-/// best we can do is copy each key-value pair into the matching
-/// `compstate[key]` paramtab entry via setsparam — preserving the
-/// observable side-effect that user-set $compstate values become
-/// visible to subsequent reads.
-#[allow(unused_variables)]
-pub fn set_compstate(
-    pm: *mut param, // c:1364
-    ht: Option<usize>,
-) {
-    // c:1373 — `if (!ht) return`.
-    let Some(_handle) = ht else {
-        return;
-    };
-    // c:1376-1391 — walk the inner hash, copying each compkparams
-    // entry's value into the matching var. Without the legacy var
-    // pointers, we drive the same effect via the
-    // `compstate[<key>]` paramtab values which the C var pointers
-    // reflected indirectly via the gsu vtable.
-    //
-    // In practice every $compstate write goes through setsparam
-    // already; this entry is the inverse direction (post-shfunc
-    // commit). Real param-hash access lands when the inner hash
-    // backing $compstate is wired as its own paramtable. For now
-    // the side-effect is already covered by the per-key gsu hooks
-    // (set_complist, etc.), so set_compstate is a structural pass-
-    // through that mirrors the C `if (ht != pm->u.hash)
-    // deleteparamtable(ht)` at c:1395 (handled by Drop).
+/// Direct port of `static void set_compstate(Param pm, HashTable ht)` from
+/// `Src/Zle/complete.c:1373`. Copies each assigned key into the C global its
+/// `compkparams` row names and clears the key's `PM_UNSET`.
+pub fn set_compstate(pm: &mut param, ht: HashTable) {
+    // c:1373
+    // c:1383 — `if (!ht) return;`
+    for (nam, hn) in ht.parnodes.iter() {
+        // c:1386-1387
+        for cp in COMPKPARAMS {
+            // c:1388-1389
+            if nam != cp.name {
+                // c:1390
+                continue;
+            }
+            let mut v = value {
+                // c:1391-1394
+                pm: Some(hn.clone()),
+                arr: Vec::new(),
+                scanflags: 0,
+                valflags: 0,
+                start: 0,
+                end: -1,
+            };
+            match cp.var {
+                // c:1395-1396 — `*((zlong *) cp->var) = getintvalue(&v);`
+                compvar::INT(r) if cp.r#type == PM_INTEGER as i32 => {
+                    r.store(getintvalue(Some(&mut v)), Ordering::Relaxed)
+                }
+                // c:1397-1400 — `*((char **) cp->var) = ztrdup(str);`
+                compvar::STR(r) => {
+                    let str = getstrvalue(Some(&mut v));
+                    if let Ok(mut g) = r.get_or_init(|| Mutex::new(String::new())).lock() {
+                        *g = str;
+                    }
+                }
+                // A row without a `var` (a `GSU(...)` row) is written through
+                // its own setfn — the vtable names the variable it fronts.
+                _ => {
+                    let str = getstrvalue(Some(&mut v));
+                    if let Some(mut elem) = pm
+                        .u_hash
+                        .as_ref()
+                        .and_then(|h| h.parnodes.get(cp.name).cloned())
+                    {
+                        if PM_TYPE(elem.node.flags as u32) == PM_INTEGER {
+                            if let Some(sf) = elem.gsu_i.as_ref().map(|g| g.setfn) {
+                                sf(&mut elem, crate::ported::math::mathevali(&str).unwrap_or(0));
+                            }
+                        } else if let Some(sf) = elem.gsu_s.as_ref().map(|g| g.setfn) {
+                            sf(&mut elem, str);
+                        }
+                    }
+                }
+            }
+            // c:1401 — `(*pp)->node.flags &= ~PM_UNSET;`
+            if let Some(elem) = pm.u_hash.as_mut().and_then(|h| h.parnodes.get_mut(cp.name)) {
+                elem.node.flags &= !(PM_UNSET as i32);
+            }
+            break; // c:1403
+        }
+    }
+    // c:1405-1406 — `if (ht != pm->u.hash) deleteparamtable(ht);` — `ht`
+    // is owned here and dropped on return.
 }
 
 /// Direct port of `zlong get_nmatches(UNUSED(Param pm))` from
@@ -2346,7 +2561,7 @@ pub fn set_compstate(
 /// then returns 0 if that returned non-zero (incomplete) or the
 /// nmatches counter otherwise.
 #[allow(unused_variables)]
-pub fn get_nmatches(pm: *mut param) -> i64 {
+pub fn get_nmatches(_pm: &param) -> i64 {
     // c:1401
     if compcore::permmatches(0) != 0 {
         // c:1403
@@ -2368,7 +2583,7 @@ pub fn get_nmatches(pm: *mut param) -> i64 {
 /// permmatches commit is pending. Falls back to the cached
 /// COMPLISTLINES atomic when listdat isn't initialized.
 #[allow(unused_variables)]
-pub fn get_listlines(pm: *mut param) -> i64 {
+pub fn get_listlines(_pm: &param) -> i64 {
     // c:1418 — `return list_lines();`. The port inlined only calclist(0),
     // dropping list_lines' `permmatches(0)`, the amatches↔pmatches swap and
     // BOTH `listdat.valid = 0` resets — so calclist short-circuited on a
@@ -2381,15 +2596,15 @@ pub fn get_listlines(pm: *mut param) -> i64 {
 /// C body (c:1417): `comp_list(v)` — sets the complist global and
 /// updates the onlyexpl bitmap.
 #[allow(unused_variables)]
-pub fn set_complist(pm: *mut param, v: &str) {
+pub fn set_complist(_pm: &mut param, v: String) {
     // c:1415
-    compresult::comp_list(Some(v)); // c:1417
+    compresult::comp_list(Some(&v)); // c:1417
 }
 
 /// Direct port of `get_complist(UNUSED(Param pm))` from `Src/Zle/complete.c:1422`.
 /// C body (c:1424): `return complist;`.
 #[allow(unused_variables)]
-pub fn get_complist(pm: *mut param) -> String {
+pub fn get_complist(_pm: &param) -> String {
     // c:1422
     lock_str(&COMPLIST)
         .lock()
@@ -2465,7 +2680,7 @@ static ORDEROPTS: &[OrderOpt] = &[
 /// match (skipping CMF_HIDE), and feeds the resulting `Vec<String>`
 /// to `unambig_data` which computes the LCP.
 #[allow(unused_variables)]
-pub fn get_unambig(pm: *mut param) -> String {
+pub fn get_unambig(_pm: &param) -> String {
     // c:1429
     // c:1431 — `unambig_data(NULL, NULL, NULL); return scache`.
     if let Some(s) = compcore::ainfo
@@ -2509,7 +2724,7 @@ pub fn get_unambig(pm: *mut param) -> String {
 /// `Test/Y02compmatch.ztst` `r:|.=**` sequence (line 752-758) zsh reports
 /// 4 and 2 where the length-derived value gave 10 and 11.
 #[allow(unused_variables)]
-pub fn get_unambig_curs(pm: *mut param) -> i64 {
+pub fn get_unambig_curs(_pm: &param) -> i64 {
     // c:1436
     // c:1438-1441 — `unambig_data(&c, NULL, NULL); return c;`
     // c:compresult.c:535/546 — `(ainfo->count ? ainfo->line : fainfo->line)`.
@@ -2538,7 +2753,7 @@ pub fn get_unambig_curs(pm: *mut param) -> i64 {
     }
     // Rust-only fallback (no `ainfo->line`): the divergence point of the
     // plain longest common prefix is its end.
-    let prefix = get_unambig(std::ptr::null_mut());
+    let prefix = get_unambig(&param::default());
     // c:compresult.c:564 — `if (cp) *cp = ccache + 1;`. The value is
     // ONE-BASED: `$compstate[unambiguous_cursor]` is "the index of the
     // character the cursor would sit before", and both consumers slice
@@ -2553,241 +2768,50 @@ pub fn get_unambig_curs(pm: *mut param) -> i64 {
     prefix.chars().count() as i64 + 1
 }
 
-/// Direct port of `struct compparam` from `Src/Zle/complete.c:1215`.
-/// One entry per special completion parameter (e.g. PREFIX, SUFFIX,
-/// IPREFIX, words, current). `var` holds a pointer to the storage
-/// the gsu reads/writes; for the kparams it's a pointer into the
-/// global completion-state buffers.
-#[allow(non_camel_case_types)]
-pub struct compparam {
-    // c:1215
-    pub name: &'static str, // c:1216 char *name
-    pub r#type: i32,        // c:1217 int type
-    pub var: usize,         // c:1218 void *var
-    pub gsu: usize,         // c:1219 GsuScalar gsu
-}
-
 /// Static table mirroring `static struct compparam comprparams[]` from
-/// `Src/Zle/complete.c:1248`. Real-params table (CP_REALPARAMS) — the
-/// non-keyparam compsys parameters that live directly in the global
-/// paramtab.
-pub const COMPRPARAMS: &[compparam] = &[
-    compparam {
-        name: "words",
-        r#type: PM_ARRAY as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "redirections",
-        r#type: PM_ARRAY as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "CURRENT",
-        r#type: PM_INTEGER as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "PREFIX",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "SUFFIX",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "IPREFIX",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "ISUFFIX",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "QIPREFIX",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "QISUFFIX",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
+/// `Src/Zle/complete.c:1258`. The real params that live in the global
+/// paramtab; the order matches the `CPN_*` / `CP_*` bits in comp.h.
+pub static COMPRPARAMS: &[compparam] = &[
+    compparam { name: "words", r#type: PM_ARRAY as i32, var: compvar::ARR(&COMPWORDS), gsu: compgsu::NULL }, // c:1259
+    compparam { name: "redirections", r#type: PM_ARRAY as i32, var: compvar::ARR(&COMPREDIRS), gsu: compgsu::NULL }, // c:1260
+    compparam { name: "CURRENT", r#type: PM_INTEGER as i32, var: compvar::INT(&COMPCURRENT), gsu: compgsu::NULL }, // c:1261
+    compparam { name: "PREFIX", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPPREFIX), gsu: compgsu::NULL }, // c:1262
+    compparam { name: "SUFFIX", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPSUFFIX), gsu: compgsu::NULL }, // c:1263
+    compparam { name: "IPREFIX", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPIPREFIX), gsu: compgsu::NULL }, // c:1264
+    compparam { name: "ISUFFIX", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPISUFFIX), gsu: compgsu::NULL }, // c:1265
+    compparam { name: "QIPREFIX", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::STR(&COMPQIPREFIX), gsu: compgsu::NULL }, // c:1266
+    compparam { name: "QISUFFIX", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::STR(&COMPQISUFFIX), gsu: compgsu::NULL }, // c:1267
 ];
 
 /// Static table mirroring `static struct compparam compkparams[]` from
-/// `Src/Zle/complete.c:1261`. Key-params table (CP_KEYPARAMS) — the
-/// per-call keys that live inside the $compstate hashed param.
-const COMPKPARAMS: &[compparam] = &[
-    compparam {
-        name: "nmatches",
-        r#type: (PM_INTEGER | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "context",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "parameter",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "redirect",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "quote",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "quoting",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "restore",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "list",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "insert",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "exact",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "exact_string",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "pattern_match",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "pattern_insert",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "unambiguous",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "unambiguous_cursor",
-        r#type: (PM_INTEGER | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "unambiguous_positions",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "insert_positions",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "list_max",
-        r#type: PM_INTEGER as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "last_prompt",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "to_end",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "old_list",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "old_insert",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "vared",
-        r#type: PM_SCALAR as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "list_lines",
-        r#type: (PM_INTEGER | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "all_quotes",
-        r#type: (PM_SCALAR | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
-    compparam {
-        name: "ignored",
-        r#type: (PM_INTEGER | PM_READONLY) as i32,
-        var: 0,
-        gsu: 0,
-    },
+/// `Src/Zle/complete.c:1271`. The elements of `$compstate`.
+pub static COMPKPARAMS: &[compparam] = &[
+    compparam { name: "nmatches", r#type: (PM_INTEGER | PM_READONLY) as i32, var: compvar::NULL, gsu: compgsu::I(&nmatches_gsu) }, // c:1272
+    compparam { name: "context", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPCONTEXT), gsu: compgsu::NULL }, // c:1273
+    compparam { name: "parameter", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPPARAMETER), gsu: compgsu::NULL }, // c:1274
+    compparam { name: "redirect", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPREDIRECT), gsu: compgsu::NULL }, // c:1275
+    compparam { name: "quote", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::STR(&COMPQUOTE), gsu: compgsu::NULL }, // c:1276
+    compparam { name: "quoting", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::STR(&COMPQUOTING), gsu: compgsu::NULL }, // c:1277
+    compparam { name: "restore", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPRESTORE), gsu: compgsu::NULL }, // c:1278
+    compparam { name: "list", r#type: PM_SCALAR as i32, var: compvar::NULL, gsu: compgsu::S(&complist_gsu) }, // c:1279
+    compparam { name: "insert", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPINSERT), gsu: compgsu::NULL }, // c:1280
+    compparam { name: "exact", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPEXACT), gsu: compgsu::NULL }, // c:1281
+    compparam { name: "exact_string", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPEXACTSTR), gsu: compgsu::NULL }, // c:1282
+    compparam { name: "pattern_match", r#type: PM_SCALAR as i32, var: compvar::STR(&compcore::comppatmatch), gsu: compgsu::NULL }, // c:1283
+    compparam { name: "pattern_insert", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPPATINSERT), gsu: compgsu::NULL }, // c:1284
+    compparam { name: "unambiguous", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::NULL, gsu: compgsu::S(&unambig_gsu) }, // c:1285
+    compparam { name: "unambiguous_cursor", r#type: (PM_INTEGER | PM_READONLY) as i32, var: compvar::NULL, gsu: compgsu::I(&unambig_curs_gsu) }, // c:1286
+    compparam { name: "unambiguous_positions", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::NULL, gsu: compgsu::S(&unambig_pos_gsu) }, // c:1288
+    compparam { name: "insert_positions", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::NULL, gsu: compgsu::S(&insert_pos_gsu) }, // c:1290
+    compparam { name: "list_max", r#type: PM_INTEGER as i32, var: compvar::INT(&COMPLISTMAX), gsu: compgsu::NULL }, // c:1292
+    compparam { name: "last_prompt", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPLASTPROMPT), gsu: compgsu::NULL }, // c:1293
+    compparam { name: "to_end", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPTOEND), gsu: compgsu::NULL }, // c:1294
+    compparam { name: "old_list", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPOLDLIST), gsu: compgsu::NULL }, // c:1295
+    compparam { name: "old_insert", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPOLDINS), gsu: compgsu::NULL }, // c:1296
+    compparam { name: "vared", r#type: PM_SCALAR as i32, var: compvar::STR(&COMPVARED), gsu: compgsu::NULL }, // c:1297
+    compparam { name: "list_lines", r#type: (PM_INTEGER | PM_READONLY) as i32, var: compvar::NULL, gsu: compgsu::I(&listlines_gsu) }, // c:1298
+    compparam { name: "all_quotes", r#type: (PM_SCALAR | PM_READONLY) as i32, var: compvar::NULL, gsu: compgsu::S(&compqstack_gsu) }, // c:1299
+    compparam { name: "ignored", r#type: (PM_INTEGER | PM_READONLY) as i32, var: compvar::INT(&COMPIGNORED), gsu: compgsu::NULL }, // c:1300
 ];
 
 /// Direct port of `char *get_unambig_pos(UNUSED(Param pm))` from
@@ -2811,7 +2835,7 @@ const COMPKPARAMS: &[compparam] = &[
 /// three-string cache is not modelled; the renders below are equivalent,
 /// just uncached).
 #[allow(unused_variables)]
-pub fn get_unambig_pos(pm: *mut param) -> String {
+pub fn get_unambig_pos(_pm: &param) -> String {
     // c:1447
     // c:compresult.c:535/546 — `(ainfo->count ? ainfo->line : fainfo->line)`.
     let line = {
@@ -2897,7 +2921,7 @@ pub fn get_unambig_pos(pm: *mut param) -> String {
 /// `Test/Y02compmatch.ztst` expects `{4:5:6}` (line 667) and `{9:27}`
 /// (line 714) where this reported `{6}` and `{27}`.
 #[allow(unused_variables)]
-pub fn get_insert_pos(pm: *mut param) -> String {
+pub fn get_insert_pos(_pm: &param) -> String {
     // c:1458
     // c:compresult.c:546 — `(ainfo->count ? ainfo->line : fainfo->line)`.
     let line = {
@@ -2933,7 +2957,7 @@ pub fn get_insert_pos(pm: *mut param) -> String {
     // line offset where the word being completed begins — the constant
     // part of the `ins == 2` walk's `padd` (compresult.c:170).
     let wb = compcore::WB.load(Ordering::Relaxed).max(0) as i64;
-    get_unambig_pos(std::ptr::null_mut())
+    get_unambig_pos(&param::default())
         .split(':') // c:489 build_pos_string joins with ':'
         .filter(|s| !s.is_empty())
         .filter_map(|s| s.parse::<i64>().ok())
@@ -2950,7 +2974,7 @@ pub fn get_insert_pos(pm: *mut param) -> String {
 /// QT_* byte stack which gave gibberish like `\x00\x01\x02` to
 /// callers reading `$compstate[quoting_stack]`.
 #[allow(unused_variables)]
-pub fn get_compqstack(pm: *mut param) -> String {
+pub fn get_compqstack(_pm: &param) -> String {
     // c:1469
     // c:1473 — `if (!compqstack) return "";`
     let stack = lock_str(&COMPQSTACK)
@@ -2974,131 +2998,126 @@ pub fn get_compqstack(pm: *mut param) -> String {
     out
 }
 
-/// Direct port of `void compunsetfn(Param pm, int exp)` from
-/// `Src/Zle/complete.c:1489`. Drops a completion param's storage when
-/// it goes out of scope. For `exp` (explicit unset) zeros the
-/// underlying storage by PM_TYPE. Otherwise (implicit fall-out) the
-/// PM_HASHED ($compstate) arm deletes its inner hashtable; nulls out
-/// matching comprpms / compkpms entries by name lookup against
-/// COMPRPARAMS / COMPKPARAMS.
-pub fn compunsetfn(pm: *mut param, exp: i32) {
-    // c:1489
-    if pm.is_null() {
-        return;
-    }
-    let name = unsafe { (*pm).node.nam.clone() };
+/// Direct port of `static void compunsetfn(Param pm, int exp)` from
+/// `Src/Zle/complete.c:1498`. An explicit unset empties the global the param
+/// views; the implicit unset of `$compstate` going out of scope drops its
+/// table and forgets every `compkpms` slot; an implicit unset of a
+/// `comprpms` param forgets that slot.
+pub fn compunsetfn(pm: &mut param, exp: i32) {
+    // c:1498
     if exp != 0 {
-        // c:1492
-        // c:1494/1497/1500 — switch on PM_TYPE(pm->node.flags).
-        match PM_TYPE(unsafe { (*pm).node.flags } as u32) {
-            PM_SCALAR => unsafe {
-                (*pm).u_str = Some(String::new());
-            }, // c:1494
-            PM_ARRAY => unsafe {
-                (*pm).u_arr = Some(Vec::new());
-            }, // c:1497
-            PM_HASHED => unsafe {
-                (*pm).u_hash = None;
-            }, // c:1500
+        // c:1501
+        match PM_TYPE(pm.node.flags as u32) {
+            // c:1503-1505
+            PM_SCALAR if pm.u_data != 0 => {
+                // SAFETY: `u_data` is only ever set by `addcompparams` from
+                // `&'static OnceLock<Mutex<String>>`.
+                let q = unsafe { &*(pm.u_data as *const std::sync::OnceLock<Mutex<String>>) };
+                if let Ok(mut g) = q.get_or_init(|| Mutex::new(String::new())).lock() {
+                    g.clear(); // c:1505 `*((char **) pm->u.data) = ztrdup("")`
+                }
+            }
+            // c:1506-1508
+            PM_ARRAY if pm.u_data != 0 => {
+                // SAFETY: as above, `&'static OnceLock<Mutex<Vec<String>>>`.
+                let q =
+                    unsafe { &*(pm.u_data as *const std::sync::OnceLock<Mutex<Vec<String>>>) };
+                if let Ok(mut g) = q.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                    g.clear(); // c:1508 `zshcalloc(sizeof(char *))`
+                }
+            }
+            // c:1509-1512
+            PM_HASHED if pm.u_hash.is_some() => {
+                deleteparamtable(pm.u_hash.take()); // c:1510
+            }
             _ => {}
         }
-    } else if PM_TYPE(unsafe { (*pm).node.flags } as u32) == PM_HASHED {
-        // c:1505
-        // c:1508 — `deletehashtable(pm->u.hash); pm->u.hash = NULL;`.
-        unsafe {
-            (*pm).u_hash = None;
-        } // c:1509
-          // c:1512-1514 — null out compkpms[i] for each CP_KEYPARAMS
-          // entry. Driven via paramtab: set PM_UNSET on each compkparams
-          // name so subsequent get_*'s see "unset".
-        for entry in COMPKPARAMS {
-            if let Ok(mut tab) = paramtab().write() {
-                if let Some(p) = tab.get_mut(entry.name) {
-                    p.node.flags |= PM_UNSET as i32;
+    } else if PM_TYPE(pm.node.flags as u32) == PM_HASHED {
+        // c:1514
+        pm.u_hash = None; // c:1518-1519 deletehashtable(pm->u.hash)
+        if let Ok(mut g) = compkpms.lock() {
+            if let Some(kp) = g.as_mut() {
+                for p in kp.iter_mut() {
+                    *p = None; // c:1521-1522
                 }
             }
         }
     }
-    // c:1524-1533 — `if (!exp) { for (p = comprpms, …) if (*p == pm) { *p = NULL; break; } }`.
-    // Drive via name match: if the unset target matches a comprparams
-    // entry, mark that slot in paramtab as PM_UNSET. The `if (!exp)` gate
-    // was missing, so an EXPLICIT `unset PREFIX` inside a completion
-    // function marked the parameter unset on top of C's clear-to-empty
-    // (c:1503-1505) — C only detaches the comprpms slot on the implicit
-    // scope-exit path, leaving an explicitly-unset PREFIX readable as "".
     if exp == 0 {
-        for entry in COMPRPARAMS {
-            if entry.name == name {
-                if let Ok(mut tab) = paramtab().write() {
-                    if let Some(p) = tab.get_mut(entry.name) {
-                        p.node.flags |= PM_UNSET as i32;
+        // c:1524
+        if let Ok(mut g) = comprpms.lock() {
+            if let Some(rp) = g.as_mut() {
+                for p in rp.iter_mut() {
+                    // c:1528-1531
+                    if p.as_deref() == Some(pm.node.nam.as_str()) {
+                        *p = None;
+                        break;
                     }
                 }
-                break;
             }
         }
     }
 }
 
 /// Direct port of `void comp_setunset(int rset, int runset, int kset,
-/// int kunset)` from `Src/Zle/complete.c:1528`. Two-pass flag-bitmap
-/// walk: for each bit `i` set in `rset`/`runset`, clear/set PM_UNSET on
-/// `comprpms[i]` (the i'th entry of `COMPRPARAMS`); same for `kset`/
-/// `kunset` against `COMPKPARAMS`. Drives the PM_UNSET state-machine
-/// the comp_wrapper save/restore relies on.
-pub fn comp_setunset(
-    mut rset: i32,
-    mut runset: i32, // c:1528
-    mut kset: i32,
-    mut kunset: i32,
-) {
-    // c:1532 — `if (comprpms && (rset >= 0 || runset >= 0))`.
+/// int kunset)` from `Src/Zle/complete.c:1537`. Two bitmap walks: bit `i` of
+/// `rset` / `runset` clears / sets `PM_UNSET` on `comprpms[i]`, bit `i` of
+/// `kset` / `kunset` on `compkpms[i]`.
+pub fn comp_setunset(mut rset: i32, mut runset: i32, mut kset: i32, mut kunset: i32) {
+    // c:1537
+    // c:1542 — `if (comprpms && (rset >= 0 || runset >= 0))`
     if rset >= 0 || runset >= 0 {
-        // c:1532
-        for entry in COMPRPARAMS {
-            // c:1533
-            if rset != 0 || runset != 0 {
-                // c:1533
-                if let Ok(mut tab) = paramtab().write() {
-                    if let Some(p) = tab.get_mut(entry.name) {
-                        if rset & 1 != 0 {
-                            // c:1535
-                            p.node.flags &= !(PM_UNSET as i32); // c:1536
-                        }
-                        if runset & 1 != 0 {
-                            // c:1537
-                            p.node.flags |= PM_UNSET as i32; // c:1538
+        let rp = comprpms.lock().unwrap().clone();
+        if let Some(rp) = rp {
+            let mut i = 0usize;
+            while (rset != 0 || runset != 0) && i < rp.len() {
+                // c:1543
+                if let Some(nam) = rp[i].as_deref() {
+                    // c:1544 `if (*p)`
+                    if let Ok(mut t) = paramtab().write() {
+                        if let Some(pm) = t.get_mut(nam) {
+                            if rset & 1 != 0 {
+                                pm.node.flags &= !(PM_UNSET as i32); // c:1546
+                            }
+                            if runset & 1 != 0 {
+                                pm.node.flags |= PM_UNSET as i32; // c:1548
+                            }
                         }
                     }
                 }
                 rset >>= 1;
                 runset >>= 1;
-            } else {
-                break;
+                i += 1;
             }
         }
     }
-    // c:1542 — `if (compkpms && (kset >= 0 || kunset >= 0))`.
+    // c:1552 — `if (compkpms && (kset >= 0 || kunset >= 0))`
     if kset >= 0 || kunset >= 0 {
-        // c:1542
-        for entry in COMPKPARAMS {
-            if kset != 0 || kunset != 0 {
-                if let Ok(mut tab) = paramtab().write() {
-                    if let Some(p) = tab.get_mut(entry.name) {
-                        if kset & 1 != 0 {
-                            // c:1545
-                            p.node.flags &= !(PM_UNSET as i32);
-                        }
-                        if kunset & 1 != 0 {
-                            // c:1547
-                            p.node.flags |= PM_UNSET as i32;
+        let kp = compkpms.lock().unwrap().clone();
+        if let Some(kp) = kp {
+            let mut i = 0usize;
+            while (kset != 0 || kunset != 0) && i < kp.len() {
+                // c:1553
+                if let Some(nam) = kp[i].as_deref() {
+                    // c:1554 `if (*p)`
+                    if let Ok(mut t) = paramtab().write() {
+                        if let Some(elem) = t
+                            .get_mut(COMPSTATENAME)
+                            .and_then(|p| p.u_hash.as_mut())
+                            .and_then(|h| h.parnodes.get_mut(nam))
+                        {
+                            if kset & 1 != 0 {
+                                elem.node.flags &= !(PM_UNSET as i32); // c:1556
+                            }
+                            if kunset & 1 != 0 {
+                                elem.node.flags |= PM_UNSET as i32; // c:1558
+                            }
                         }
                     }
                 }
                 kset >>= 1;
                 kunset >>= 1;
-            } else {
-                break;
+                i += 1;
             }
         }
     }
@@ -3244,7 +3263,7 @@ pub fn comp_wrapper(
     // i.e. the C global is gsu-bound to the `$compstate[restore]` KEY.
     let orest = compcore::get_compstate_str("restore"); // c:1575
     compcore::set_compstate_str("restore", "auto"); // c:1576
-    let ocur = COMPCURRENT.load(Ordering::Relaxed); // c:1577
+    let ocur = (COMPCURRENT.load(Ordering::Relaxed) as i32); // c:1577
     let opre = snap(&COMPPREFIX); // c:1578
     let osuf = snap(&COMPSUFFIX); // c:1579
     let oipre = snap(&COMPIPREFIX); // c:1580
@@ -3305,7 +3324,7 @@ pub fn comp_wrapper(
     // c:1593 — `if (comprestore && !strcmp(comprestore, "auto"))`.
     let comprestore_val = compcore::get_compstate_str("restore").unwrap_or_default();
     if comprestore_val == "auto" {
-        COMPCURRENT.store(ocur, Ordering::Relaxed); // c:1594
+        COMPCURRENT.store((ocur) as i64, Ordering::Relaxed); // c:1594
         restore(&COMPPREFIX, opre); // c:1596
         restore(&COMPSUFFIX, osuf); // c:1598
         restore(&COMPIPREFIX, oipre); // c:1600
@@ -3327,7 +3346,7 @@ pub fn comp_wrapper(
                                    // special-cases only `nmatches`, so nothing ever published
                                    // `all_quotes` and it read EMPTY where zsh gives `\`, `"`, `'`.
                                    // Run the getter and store its result at each `compqstack` write.
-        compcore::set_compstate_str("all_quotes", &get_compqstack(std::ptr::null_mut()));
+        compcore::set_compstate_str("all_quotes", &get_compqstack(&param::default()));
         restore(&AUTOQ, oaq); // c:1614
         if let Ok(mut g) = lock_vec(&COMPWORDS).lock() {
             *g = owords; // c:1617
@@ -3842,31 +3861,31 @@ mod tests {
 
         // c:1483-1484 — `if (!compqstack) return ""`.
         put("");
-        assert_eq!(get_compqstack(std::ptr::null_mut()), "");
+        assert_eq!(get_compqstack(&param::default()), "");
 
         // The three contexts `compstate[all_quotes]` is read in: unquoted
         // (compcore.c:305 seeds QT_BACKSLASH), inside `"`, inside `'`.
         put(&q(QT_BACKSLASH).to_string());
-        assert_eq!(get_compqstack(std::ptr::null_mut()), "\\");
+        assert_eq!(get_compqstack(&param::default()), "\\");
         put(&q(QT_DOUBLE).to_string());
-        assert_eq!(get_compqstack(std::ptr::null_mut()), "\"");
+        assert_eq!(get_compqstack(&param::default()), "\"");
         put(&q(QT_SINGLE).to_string());
-        assert_eq!(get_compqstack(std::ptr::null_mut()), "'");
+        assert_eq!(get_compqstack(&param::default()), "'");
 
         // c:1490 takes only the FIRST char, so QT_DOLLARS ("$'") is `$`.
         put(&q(QT_DOLLARS).to_string());
-        assert_eq!(get_compqstack(std::ptr::null_mut()), "$");
+        assert_eq!(get_compqstack(&param::default()), "$");
         // `comp_quoting_string` (compcore.c:1437-1447) has cases for only
         // QT_SINGLE / QT_DOUBLE / QT_DOLLARS; QT_BACKTICK hits
         // `default: return "\\"` (compcore.c:1445-1446), so a backtick level
         // reports as a backslash — not as a backtick.
         put(&q(QT_BACKTICK).to_string());
-        assert_eq!(get_compqstack(std::ptr::null_mut()), "\\");
+        assert_eq!(get_compqstack(&param::default()), "\\");
 
         // c:1488 walks the whole stack — nested levels, innermost first
         // (compcore.c:1861-1868 PREPENDS the newly opened quote).
         put(&format!("{}{}", q(QT_SINGLE), q(QT_DOUBLE)));
-        assert_eq!(get_compqstack(std::ptr::null_mut()), "'\"");
+        assert_eq!(get_compqstack(&param::default()), "'\"");
         put("");
     }
 
@@ -4721,11 +4740,134 @@ mod tests {
         restrict_range(0, 0);
     }
 
-    /// c:1598 — `get_compstate(null)` returns Option<usize> type.
+    use crate::ported::zle::comp_h::{CP_ALLKEYS, CP_ALLREALS, CP_PARAMETER, CP_QUOTE, CP_QUOTING, CP_REDIRECT};
+
+    fn comp_scope_enter() {
+        use crate::ported::zsh_h::hashtable;
+        *comprpms.lock().unwrap() = Some(vec![None; CP_REALPARAMS as usize]);
+        *compkpms.lock().unwrap() = Some(vec![None; CP_KEYPARAMS as usize]);
+        let mut scope: HashTable = newparamtable(1, "scope").unwrap();
+        let _: &hashtable = &scope;
+        crate::ported::params::startparamscope(&mut scope);
+        makecompparams();
+    }
+
+    fn comp_scope_leave() {
+        crate::ported::params::endparamscope();
+        *comprpms.lock().unwrap() = None;
+        *compkpms.lock().unwrap() = None;
+    }
+
+    fn gstr(g: &'static std::sync::OnceLock<Mutex<String>>) -> String {
+        g.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone()
+    }
+
+    /// `$PREFIX`, `$words`, `$CURRENT`, `$QIPREFIX` are gsu views of the
+    /// `compprefix` / `compwords` / `compcurrent` / `compqiprefix` globals
+    /// (c:1259-1267 + c:1318-1331): a global moving is visible through the
+    /// param with no republish, an assignment through the param lands in the
+    /// global, a read-only param rejects the assignment, and the whole set is
+    /// gone again when the scope ends.
     #[test]
-    fn get_compstate_null_returns_option_type() {
+    fn comprparams_are_views_of_the_c_globals() {
+        use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setiparam, setsparam};
         let _g = crate::test_util::global_state_lock();
-        let _: Option<usize> = get_compstate(std::ptr::null_mut());
+        *COMPPREFIX.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "ab".into();
+        *COMPQIPREFIX.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "q".into();
+        *lock_vec(&COMPWORDS).lock().unwrap() = vec!["ls".into(), "x".into()];
+        COMPCURRENT.store(2, Ordering::Relaxed);
+        comp_scope_enter();
+        assert_eq!(getsparam("PREFIX").as_deref(), Some("ab"));
+        assert_eq!(getsparam("QIPREFIX").as_deref(), Some("q"));
+        assert_eq!(getaparam("words"), Some(vec!["ls".to_string(), "x".to_string()]));
+        assert_eq!(getiparam("CURRENT"), 2);
+
+        // The global moving is visible through the param.
+        *COMPPREFIX.get().unwrap().lock().unwrap() = "moved".into();
+        assert_eq!(getsparam("PREFIX").as_deref(), Some("moved"));
+
+        // Assignment through the param lands in the global.
+        setsparam("PREFIX", "zz");
+        assert_eq!(gstr(&COMPPREFIX), "zz");
+        setaparam("words", vec!["a".into(), "b".into(), "c".into()]);
+        assert_eq!(*lock_vec(&COMPWORDS).lock().unwrap(), vec!["a", "b", "c"]);
+        setiparam("CURRENT", 3);
+        assert_eq!(COMPCURRENT.load(Ordering::Relaxed), 3);
+
+        // QIPREFIX is PM_READONLY: the assignment is rejected.
+        setsparam("QIPREFIX", "changed");
+        assert_eq!(gstr(&COMPQIPREFIX), "q");
+
+        // `unset PREFIX` empties the global (compunsetfn, exp = 1).
+        crate::ported::params::unsetparam("PREFIX");
+        assert_eq!(gstr(&COMPPREFIX), "");
+        comp_scope_leave();
+        assert!(paramtab().read().unwrap().get("PREFIX").is_none());
+        assert!(paramtab().read().unwrap().get("words").is_none());
+        assert!(paramtab().read().unwrap().get("compstate").is_none());
+    }
+
+    /// `$compstate[KEY]` reads and writes go through the element Param of the
+    /// `compkparams` row (c:1271-1300): `insert` is the `compinsert` global,
+    /// `list` fronts `comp_list` through `complist_gsu`, `nmatches` is a
+    /// read-only getter, and a key that `comp_setunset` flagged PM_UNSET is
+    /// absent from the key scan until it is assigned.
+    #[test]
+    fn compstate_keys_are_views_of_the_c_globals() {
+        use crate::ported::params::{assignsparam, gethkparam};
+        let _g = crate::test_util::global_state_lock();
+        *COMPINSERT.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "unambiguous".into();
+        comp_scope_enter();
+        // c:817-818 — the keys outside kset start PM_UNSET.
+        comp_setunset(
+            CP_ALLREALS as i32,
+            0,
+            (CP_ALLKEYS & !(CP_PARAMETER | CP_REDIRECT | CP_QUOTE | CP_QUOTING)) as i32,
+            (!(CP_ALLKEYS & !(CP_PARAMETER | CP_REDIRECT | CP_QUOTE | CP_QUOTING)) & CP_ALLKEYS)
+                as i32,
+        );
+        let keys = gethkparam("compstate").unwrap();
+        assert!(keys.contains(&"insert".to_string()));
+        assert!(!keys.contains(&"quote".to_string()), "PM_UNSET key hidden");
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("compstate", "insert"),
+            Some((true, Some("unambiguous".to_string())))
+        );
+
+        // Assignment through the element lands in the global.
+        assert!(assignsparam("compstate[insert]", "menu", 0).is_some());
+        assert_eq!(gstr(&COMPINSERT), "menu");
+        *COMPINSERT.get().unwrap().lock().unwrap() = "automenu".into();
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("compstate", "insert"),
+            Some((true, Some("automenu".to_string())))
+        );
+
+        // A read-only key rejects the write; its global is unchanged.
+        *COMPQUOTE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "'".into();
+        assert!(assignsparam("compstate[quote]", "x", 0).is_none());
+        assert_eq!(gstr(&COMPQUOTE), "'");
+
+        // The first assignment clears PM_UNSET on a hidden key.
+        assert!(assignsparam("compstate[parameter]", "foo", 0).is_some());
+        assert!(gethkparam("compstate").unwrap().contains(&"parameter".to_string()));
+        assert_eq!(gstr(&COMPPARAMETER), "foo");
+
+        // Whole-hash assignment goes through set_compstate (c:1373).
+        assert!(crate::ported::params::sethparam(
+            "compstate",
+            vec!["insert".into(), "all".into(), "list_max".into(), "77".into()]
+        )
+        .is_some());
+        assert_eq!(gstr(&COMPINSERT), "all");
+        assert_eq!(COMPLISTMAX.load(Ordering::Relaxed), 77);
+
+        // Explicit unset of a key empties its global and drops the node.
+        assert_eq!(crate::ported::params::unsetparam("compstate[insert]"), 0);
+        assert_eq!(gstr(&COMPINSERT), "");
+        assert!(!gethkparam("compstate").unwrap().contains(&"insert".to_string()));
+        comp_scope_leave();
+        assert!(paramtab().read().unwrap().get("compstate").is_none());
     }
 
     // ═══════════════════════════════════════════════════════════════════
