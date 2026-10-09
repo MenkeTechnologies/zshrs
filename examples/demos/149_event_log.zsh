@@ -8,7 +8,9 @@ typeset -a LOG
 log_event() {
     local level=$1
     shift
-    local ts=$EPOCHSECONDS
+    # A fixed, advancing clock: $EPOCHSECONDS differs between two runs a moment apart,
+    # so the equivalence run (zsh, then zshrs) would never print the same log.
+    local ts=$(( 1700000000 + ${#LOG[@]} ))
     LOG+=("$ts|$level|$*")
 }
 

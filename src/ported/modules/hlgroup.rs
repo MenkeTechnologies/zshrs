@@ -486,6 +486,9 @@ mod tests {
         let saved_len = *crate::ported::init::tclen.lock().unwrap();
         let saved_str = crate::ported::init::tcstr.lock().unwrap().clone();
         let saved_flags = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst);
+        // `init_term` (reached by `echoti` in a non-interactive shell) leaves the
+        // terminal's colour count behind; an unknown terminal is 0 colours.
+        let saved_colours = crate::ported::init::tccolours.swap(0, Ordering::SeqCst);
         {
             let mut len = crate::ported::init::tclen.lock().unwrap();
             let mut caps = crate::ported::init::tcstr.lock().unwrap();
@@ -499,6 +502,7 @@ mod tests {
         *crate::ported::init::tclen.lock().unwrap() = saved_len;
         *crate::ported::init::tcstr.lock().unwrap() = saved_str;
         crate::ported::params::TERMFLAGS.store(saved_flags, Ordering::SeqCst);
+        crate::ported::init::tccolours.store(saved_colours, Ordering::SeqCst);
         r
     }
 
@@ -529,15 +533,19 @@ mod tests {
         assert_eq!(with_attr_caps(|| convertattr("faint", false)), "\x1b[2m");
     }
 
-    /// 24-bit colours fall back to the direct SGR form when the terminal's
-    /// colour capabilities are unknown (applytextattributes, prompt.c:1645+).
+    /// A 24-bit colour on a terminal that declares truecolor renders the direct
+    /// SGR form (applytextattributes, prompt.c:1645+). Without the declaration
+    /// `match_colour` quantises the colour through `zsh/nearcolor` (prompt.c:1990-1992),
+    /// which any test in the process may have loaded, so the declaration is set
+    /// here rather than left to whatever state earlier tests left.
     #[test]
     fn convertattr_truecolor_renders_sgr_38_2() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            with_attr_caps(|| convertattr("fg=#ff0000", false)),
-            "\x1b[38;2;255;0;0m"
-        );
+        let saved = crate::ported::params::getaparam(".term.extensions");
+        let _ = crate::ported::params::setaparam(".term.extensions", vec!["truecolor".to_string()]);
+        let got = with_attr_caps(|| convertattr("fg=#ff0000", false));
+        let _ = crate::ported::params::setaparam(".term.extensions", saved.unwrap_or_default());
+        assert_eq!(got, "\x1b[38;2;255;0;0m");
     }
 
     /// The empty specification renders nothing in escape mode.
