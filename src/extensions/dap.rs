@@ -647,6 +647,13 @@ fn handle_request(
             // fd capture install) in which disconnect saw `false` and
             // spawned nothing.
             shared.launched.store(true, Ordering::SeqCst);
+            // The program path is recorded before the response goes out: a client
+            // may send `stackTrace` the moment it sees the reply, and the main
+            // thread has not necessarily taken the launch parameters yet, so
+            // that request read an empty path.
+            if let Ok(mut p) = shared.program.lock() {
+                *p = program.clone();
+            }
             let _ = shared.emit_response(req_seq, &cmd, true, json!({}));
             let _ = launch_tx.send(LaunchParams {
                 program,

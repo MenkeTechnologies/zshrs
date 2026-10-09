@@ -49,17 +49,20 @@ echo "work: ${total_work}ms (= 50min compressed)"
 echo "break: ${total_break}ms (= 30min compressed)"
 
 echo "── alarm clock pattern ──"
+# The announcement comes BEFORE the background job starts, and the two alarms are
+# 0.4 s apart: announced afterwards and 0.1 s apart, a slow machine let the first
+# alarm print between the two announcements.
 alarm_in() {
     local sec=$1 msg=$2
+    echo "alarm scheduled in ${sec}s"
     (
         sleep $sec
         echo "*** ALARM: $msg ***"
     ) &
-    echo "alarm scheduled in ${sec}s"
 }
 
-alarm_in 0.1 "first alarm"
-alarm_in 0.2 "second alarm"
+alarm_in 0.2 "first alarm"
+alarm_in 0.6 "second alarm"
 wait
 echo "all alarms done"
 
