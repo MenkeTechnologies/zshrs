@@ -1797,6 +1797,12 @@ pub fn zleread(
         *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&tp);
         *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&trp);
     }
+    // c:1378-1379 — `statusline = NULL; invalidatelist();` before trashzle().
+    // Without it a completion list left displayed when the line ends (^C, ^G
+    // aside) stayed valid, and the next zleread's first zrefresh repainted it
+    // below the fresh prompt.
+    *STATUSLINE.lock().unwrap() = None; // c:1378
+    crate::ported::zle::zle_h::invalidatelist(); // c:1379
     trashzle();
 
     // c:1383 — `zleactive = zlereadflags = lastlistlen = zlecontext = 0;`.

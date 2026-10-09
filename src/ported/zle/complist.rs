@@ -5625,7 +5625,10 @@ pub fn domenuselect(
         if do_last_key == 0 {
             crate::ported::zle::compcore::ZMULT.store(1, Ordering::SeqCst); // c:2627
             cmd = crate::ported::zle::zle_keymap::getkeycmd(); // c:2628
-                                                               // c:2629-2633 — swallow the interrupt flag (best-effort).
+            // c:2629-2633 — `errflag &= ~ERRFLAG_INT;` an interrupt makes
+            // getkeycmd return NULL and exits the loop below; the flag must
+            // not propagate or the redraw after the menu is skipped.
+            errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_INT, Ordering::SeqCst);
             if MTAB_BEEN_REALLOCATED.load(Ordering::SeqCst) != 0 {
                 do_last_key = 1; // c:2635
                 continue;
