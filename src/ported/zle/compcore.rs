@@ -13,11 +13,6 @@
 //!     `set_list_array`)
 //!   - the hook entry points (`before_complete`, `after_complete`)
 //!     in their non-runhookdef branches
-//!
-//! Functions blocked on heavier substrate (`do_completion`,
-//! `makecomplist`, `addmatches`, `callcompfunc`, `set_comp_sep`,
-//! `check_param`, `permmatches`, `dupmatch`, `add_match_data`,
-//! `makearray`) carry doc comments naming the missing dependencies.
 
 #![allow(non_snake_case, non_upper_case_globals, dead_code)]
 
@@ -57,11 +52,6 @@ use crate::ported::zsh_h::{
 use crate::DPUTS;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
-
-// =====================================================================
-// Substrate-blocked stubs — bodies need substrate listed in each
-// doc comment. Returns shape-correct safe defaults.
-// =====================================================================
 
 // =====================================================================
 // do_completion — `Src/Zle/compcore.c:287`.
@@ -773,9 +763,9 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
 
 /// Port of `static void callcompfunc(char *s, char *fn)` from
 /// compcore.c:544. Selects the `$compstate[context]` value, then
-/// dispatches into the user shell function `fn`. Paramtab setup
-/// (`comprpms`/`compkpms`) + result-readback is stubbed locally
-/// per PORT.md Rule 9 until `params.c` substrate lands.
+/// dispatches into the user shell function `fn`. The `comprpms`/
+/// `compkpms` slots are modelled by the `$compstate` hash storage
+/// (a key's PM_UNSET bit is spelled as removing the entry).
 pub fn callcompfunc(s: &str, fn_name: &str) {
     tracing::debug!(target: "compsys_args", %s, %fn_name, "callcompfunc ENTER");
     // c:544

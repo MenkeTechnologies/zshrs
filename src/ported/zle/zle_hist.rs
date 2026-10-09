@@ -2983,11 +2983,10 @@ pub static ISRCH_SPOTS: std::sync::OnceLock<std::sync::Mutex<Vec<isrch_spot>>> =
     std::sync::OnceLock::new();
 
 /// Set up history limits at ZLE startup.
-/// Stub mirroring the role of `inithist()` from Src/hist.c:1717,
-/// which sizes the global hist_ring at $HISTSIZE. zshrs's history
-/// lives in the file-scope `HISTORY` static (zle_main.rs); this
-/// helper is kept for API compatibility — callers can adjust
-/// max_size at init if needed.
+/// Rust-only compatibility shim with no callers and no C counterpart:
+/// `inithist()` (Src/hist.c:2613) already sizes the ring from
+/// $HISTSIZE, and the ZLE history lives in the file-scope `HISTORY`
+/// static (zle_main.rs). `max_size` is ignored.
 pub fn init_history(max_size: usize) {
     let _ = max_size;
 }
@@ -4062,8 +4061,7 @@ mod tests {
 
     // Note: uphistory/downhistory/historysearch* and friends read from
     // the live ZLE input buffer and BLOCK on missing terminal input,
-    // hanging the test runner. Type-pin tests for those widgets must
-    // first set up a fake key-read substrate; deferred.
+    // hanging the test runner, so none are exercised here.
 
     // ═══════════════════════════════════════════════════════════════════
     // Additional C-parity tests for Src/Zle/zle_hist.c

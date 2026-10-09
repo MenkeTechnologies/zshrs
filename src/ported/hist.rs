@@ -8,7 +8,7 @@ use crate::ported::glob::{getmatch, remnulargs};
 use crate::ported::hashtable::addhistnode;
 use crate::ported::input::{ingetc, inputsetline, inungetc};
 use crate::ported::lex::{
-    lexinit, parse_subst_string, untokenize, ztokens, LEX_ISFIRSTCH, LEX_LEXSTOP,
+    lexinit, parse_subst_string, untokenize, LEX_ISFIRSTCH, LEX_LEXSTOP,
 };
 use crate::ported::options::dosetopt;
 use crate::ported::parse::init_parse_status;
@@ -283,7 +283,10 @@ pub fn ihwaddc(c: i32) {
 
 /// Port of `iaddtoline()` from `Src/hist.c:397`. — C decl `iaddtoline(int c)`.
 ///
-/// C body (c:397-414):
+/// Adds a character to the ZLE input line while `doexpandhist` rewrites
+/// it, and tracks the new cursor position (`excs`) across the expansion.
+/// Called from `ihgetc` and from `gettok` for characters in comments.
+///
 /// ```c
 /// if (!expanding || lexstop) return;
 /// if (qbang && c == bangchar && stophist < 2) {
@@ -295,25 +298,8 @@ pub fn ihwaddc(c: i32) {
 ///     if (excs < zlemetacs) excs = zlemetacs;
 /// }
 /// exlast = inbufct;
-/// zleentry(ZLE_CMD_ADD_TO_LINE, itok(c) ? ztokens[c - Pound] : c);
+/// zleentry(ZLE_CMD_ADD_TO_LINE, c);
 /// ```
-///
-/// The previous Rust port collapsed the body to a single
-/// `chline.push(c as u8 as char)` and dropped:
-///   - The `!expanding || lexstop` guard (c:399) — pushed
-///     unconditionally even when not in history expansion.
-///   - The bang-escape `qbang` path (c:401-404).
-///   - The `excs`/`exlast` cursor tracking (c:405-410).
-///   - The crucial `itok(c) ? ztokens[c - Pound] : c` mapping at
-///     c:413 — without it, token bytes (`Pound`..`Nularg` =
-///     0x84..0xa1) get pushed RAW into the history line buffer
-///     instead of being decoded to their visible chars (`#`,
-///     `$`, `^`, `*`, `(`, ...).
-///
-/// Port the guard, bangchar escape, and the itok→ztokens
-/// mapping. The cursor tracking + zleentry hook are doc-pinned
-/// for future ZLE wireup but otherwise no-op since chline is
-/// the backing store for both code paths in zshrs.
 pub fn iaddtoline(c: i32) {
     // c:397
     // Rust-only: pool threads run C's `addtoline = nohw` arm (c:1145).
@@ -328,50 +314,43 @@ pub fn iaddtoline(c: i32) {
     let bc = bangchar.load(SeqCst);
     if qbang.load(SeqCst) && c == bc && stophist.load(SeqCst) < 2 {
         exlast.fetch_sub(1, SeqCst); // c:402
-        chline.lock().unwrap().push('\\'); // c:403 zleentry ADD '\\'
+        // c:403 — zleentry(ZLE_CMD_ADD_TO_LINE, '\\')
+        crate::ported::zle::zle_main::zle_main_entry(
+            crate::ported::zsh_h::ZLE_CMD_ADD_TO_LINE,
+            &mut crate::ported::zle::zle_main::zle_main_entry_args::AddToLine(b'\\' as i32),
+        );
     }
-    // c:405-411 — `if (excs > zlemetacs) { excs += 1 + inbufct -
-    // exlast; if (excs < zlemetacs) excs = zlemetacs; }`.
+    // c:405-411 — `if (excs > zlemetacs) { excs += 1 + inbufct - exlast;
+    // if (excs < zlemetacs) excs = zlemetacs; }`.
     //
-    // ZLE cursor position adjustment after history-expanded byte
-    // gets injected: if the cursor `excs` was past the line cursor
-    // `zlemetacs`, account for the byte just consumed from the
-    // input buffer (1 + inbufct - exlast slots). The post-adjust
-    // clamp to zlemetacs avoids the cursor underrunning the line.
-    //
-    // The previous Rust port omitted the entire block — typing
-    // `!str` mid-line would leave the ZLE cursor at the wrong
-    // position after expansion.
+    // !!! UNIT NOTE !!! zshrs's `ingetc` yields whole chars and `inbufct`
+    // counts chars, while `excs`/`zlemetacs` are byte offsets into the
+    // metafied line. A char of `n` bytes is `n` byte-reads in C (each one
+    // contributing `1 + (-1) = 0`), so the `n - 1` extra bytes are added
+    // back to keep a plain read a net zero on `excs`.
     let zlemetacs_v = ZLEMETACS.load(SeqCst);
     let excs_v = excs.load(SeqCst);
     if excs_v > zlemetacs_v {
         // c:405
         let inbufct_now = crate::ported::input::inbufct.with(|c| c.get());
         let exlast_v = exlast.load(SeqCst);
-        let mut new_excs = excs_v + 1 + inbufct_now - exlast_v; // c:406
+        let extra = char::from_u32(c as u32).map_or(0, |ch| ch.len_utf8() as i32 - 1);
+        let mut new_excs = excs_v + 1 + inbufct_now - exlast_v + extra; // c:406
         if new_excs < zlemetacs_v {
-            // c:407
+            // c:407 this case could be handled better but it is so rare
+            // that it does not worth it
             new_excs = zlemetacs_v; // c:410
         }
         excs.store(new_excs, SeqCst);
     }
-    // c:413 — `exlast = inbufct;`
+    // c:412 — `exlast = inbufct;`
     let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
-    exlast.store(inbufct_v, SeqCst); // c:413
-                                     // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
-    let push_ch: char = if char::from_u32(c as u32).is_some_and(crate::token_char::itok_char) {
-        let idx = (c as u8).wrapping_sub(Pound as u8) as usize;
-        // ztokens is the literal-char back-mapping for ITOK bytes.
-        // Defensively guard against an out-of-range token byte
-        // (the closed range Pound..=Nularg is 0x84..=0xa1, 30
-        // entries; ztokens covers them).
-        ztokens.bytes().nth(idx).unwrap_or(c as u8) as char
-    } else {
-        // Full Unicode scalar from the char-based ingetc — the previous
-        // `c as u8` truncated non-ASCII chars (same bug as ihwaddc).
-        char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
-    };
-    chline.lock().unwrap().push(push_ch); // c:413
+    exlast.store(inbufct_v, SeqCst); // c:412
+    // c:413 — zleentry(ZLE_CMD_ADD_TO_LINE, c)
+    crate::ported::zle::zle_main::zle_main_entry(
+        crate::ported::zsh_h::ZLE_CMD_ADD_TO_LINE,
+        &mut crate::ported::zle::zle_main::zle_main_entry_args::AddToLine(c),
+    );
 }
 
 /// Port of `safeinungetc()` from `Src/hist.c:467`. — C decl `safeinungetc(int c)`.
@@ -4076,7 +4055,7 @@ pub fn ihungetc(c: i32) {
         }
         return;
     }
-    let mut c = c as u8 as char; // c:991 int c
+    let mut c = char::from_u32(c as u32).unwrap_or(c as u8 as char); // c:991 int c
     let mut doit = 1; // c:991 doit = 1
     while !lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)
         && errflag.load(SeqCst) == 0
@@ -4101,8 +4080,11 @@ pub fn ihungetc(c: i32) {
         }
         if expanding.load(SeqCst) != 0 {
             // c:1004 if (expanding)
-            ZLEMETACS.fetch_sub(1, SeqCst); // c:1005 zlemetacs--
-            crate::ported::zle::compcore::ZLEMETALL.fetch_sub(1, SeqCst); // c:1006 zlemetall--
+            // c:1005-1006 — `zlemetacs--; zlemetall--;`. C ungets one BYTE; zshrs
+            // ungets a whole char, which `zleaddtoline` added as `len_utf8` bytes.
+            let w = c.len_utf8() as i32;
+            ZLEMETACS.fetch_sub(w, SeqCst); // c:1005 zlemetacs--
+            crate::ported::zle::compcore::ZLEMETALL.fetch_sub(w, SeqCst); // c:1006 zlemetall--
             exlast.fetch_add(1, SeqCst); // c:1007 exlast++
         }
         if (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS {
@@ -4115,10 +4097,10 @@ pub fn ihungetc(c: i32) {
                 hp > 0 && line_b.get(hp - 1).copied() != Some(c as u8), // c:1012
                 "BUG: wrong character in hungetc() "                    // c:1012
             );
-            let new_hp = hp.saturating_sub(1);
+            let new_hp = hp.saturating_sub(c.len_utf8()); // ihwaddc advanced hptr by len_utf8
             hptr.store(new_hp, SeqCst); // c:1011 hptr--
             let bangchar_v = bangchar.load(SeqCst) as u8;
-            let qb = c as u8 == bangchar_v && stop < 2                       // c:1014-1015
+            let qb = c == bangchar_v as char && stop < 2                       // c:1014-1015
                 && new_hp > 0 && line_b.get(new_hp - 1).copied() == Some(b'\\');
             qbang.store(qb, SeqCst);
         } else {
@@ -5531,15 +5513,19 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {
 /// `pophiststack`, which restores the saved state. Returns the new
 /// stack depth (`histsave_stack_pos`).
 ///
-/// Deferred, matching `pophiststack`'s convention in this layer: the
-/// ZLE `curline_in_ring` unlink/relink (c:3856/3892) and the
-/// `zleentry(ZLE_CMD_SET_HIST_LINE)` callback (c:3886); `inithist`'s C
-/// role (`createhisttable`, c:3890) is a no-op in the Vec-based ring
-/// model. The global `lasthist` is captured into the snapshot but not
-/// zeroed here — zeroing pairs with a `lasthist` restore on pop, which
-/// is a separate pending fix.
+/// `inithist`'s C role (`createhisttable`, c:3890) is a no-op in the
+/// Vec-based ring model. C's `hist_ring == &curline` test is
+/// `HA_ACTIVE && !HA_NOINC` here: `hbegin` links the current line only
+/// when it does not set `HA_NOINC` (c:1163-1169), and the Vec ring never
+/// holds the sentinel itself.
 pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
     // c:3845
+    // c:3848 — `int curline_in_ring = (histactive & HA_ACTIVE) && hist_ring == &curline;`
+    let ha = histactive.load(SeqCst);
+    let curline_in_ring = (ha & HA_ACTIVE) != 0 && (ha & HA_NOINC) == 0;
+    if curline_in_ring {
+        unlinkcurline(); // c:3856
+    }
     // c:3862-3868 — save the OLD HISTFILE so pop can restore it. With
     // `hf` set, record the current HISTFILE ("" when empty/unset); with
     // `hf` None, record None (C `h->histfile = NULL`).
@@ -5564,6 +5550,16 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
     histsave_stack.lock().unwrap().push(snap); // c:3859 histsave_stack[pos++] = *h
     histsave_stack_size.fetch_add(1, SeqCst);
     histsave_stack_pos.fetch_add(1, SeqCst);
+    // c:3877 — `memset(&lasthist, 0, sizeof lasthist);`
+    *lasthist.lock().unwrap() = histfile_stats {
+        text: None,
+        stim: 0,
+        mtim: 0,
+        fpos: 0,
+        fsiz: 0,
+        interrupted: 0,
+        next_write_ev: 0,
+    };
     // c:3878-3883 — switch HISTFILE to the new file (or unset it).
     if let Some(h) = hf {
         if !h.is_empty() {
@@ -5579,9 +5575,21 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
     // c:3884 — `hist_ring = NULL`: already emptied by the `mem::take` above.
     curhist.store(0, SeqCst); // c:3885 curhist = histlinect = 0
     histlinect.store(0, SeqCst);
+    // c:3886 — `if (zleactive) zleentry(ZLE_CMD_SET_HIST_LINE, curhist);`
+    if crate::ported::builtins::sched::zleactive.load(SeqCst) != 0 {
+        crate::ported::zle::zle_main::zle_main_entry(
+            crate::ported::zsh_h::ZLE_CMD_SET_HIST_LINE,
+            &mut crate::ported::zle::zle_main::zle_main_entry_args::SetHistLine(
+                curhist.load(SeqCst),
+            ),
+        );
+    }
     histsiz.store(hs, SeqCst); // c:3888 histsiz = hs
     savehistsiz.store(shs, SeqCst); // c:3889 savehistsiz = shs
-                                    // c:3895 — return histsave_stack_pos.
+    if curline_in_ring {
+        linkcurline(); // c:3892
+    }
+    // c:3895 — return histsave_stack_pos.
     histsave_stack_pos.load(SeqCst)
 }
 
@@ -5621,10 +5629,22 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
 /// (the depth that WAS popped).
 pub fn pophiststack() -> i32 {
     // c:3901
+    // c:3904 — `int curline_in_ring = (histactive & HA_ACTIVE) && hist_ring == &curline;`
+    // (see `pushhiststack` for the Vec-ring spelling of the test).
+    let ha = histactive.load(SeqCst);
+    let curline_in_ring = (ha & HA_ACTIVE) != 0 && (ha & HA_NOINC) == 0;
+    if histsave_stack.lock().unwrap().is_empty() {
+        return 0; // c:3907
+    }
+    if curline_in_ring {
+        unlinkcurline(); // c:3910
+    }
     let snap = match histsave_stack.lock().unwrap().pop() {
         Some(s) => s,
         None => return 0, // c:3907
     };
+    // c:3913-3916 — `zsfree(lasthist.text); lasthist = h->lasthist;`
+    *lasthist.lock().unwrap() = snap.lasthist.clone();
     // c:3920-3924 — restore HISTFILE via setsparam / unsetparam.
     if let Some(ref hf) = snap.histfile {
         if !hf.is_empty() {
@@ -5641,11 +5661,21 @@ pub fn pophiststack() -> i32 {
     }
     *hist_ring.lock().unwrap() = snap.hist_ring; // c:3925
     curhist.store(snap.curhist, SeqCst); // c:3926
+    // c:3927 — `if (zleactive) zleentry(ZLE_CMD_SET_HIST_LINE, curhist);`
+    if crate::ported::builtins::sched::zleactive.load(SeqCst) != 0 {
+        crate::ported::zle::zle_main::zle_main_entry(
+            crate::ported::zsh_h::ZLE_CMD_SET_HIST_LINE,
+            &mut crate::ported::zle::zle_main::zle_main_entry_args::SetHistLine(snap.curhist),
+        );
+    }
     histlinect.store(snap.histlinect, SeqCst); // c:3929
     histsiz.store(snap.histsiz, SeqCst); // c:3930
     savehistsiz.store(snap.savehistsiz, SeqCst); // c:3931
     histsave_stack_size.fetch_sub(1, SeqCst);
     histsave_stack_pos.fetch_sub(1, SeqCst);
+    if curline_in_ring {
+        linkcurline(); // c:3933
+    }
     // c:3934 — `return histsave_stack_pos + 1;` (new pos after
     // decrement, plus 1 for the just-popped depth).
     histsave_stack_pos.load(SeqCst) + 1
@@ -7581,6 +7611,13 @@ mod subst_modifier_tests {
         let saved_lexstop = lexstop.load(SeqCst);
         let saved_qbang = qbang.load(SeqCst);
         let saved_exlast = exlast.load(SeqCst);
+        // iaddtoline now reaches zleaddtoline, which edits the metafied line.
+        let saved_metaline = crate::ported::zle::compcore::ZLEMETALINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap()
+            .clone();
+        let saved_metall = crate::ported::zle::compcore::ZLEMETALL.load(SeqCst);
 
         // Set up: expanding=1, lexstop=false, qbang=0 (no bang
         // escape path), excs > zlemetacs so the adjustment fires.
@@ -7641,6 +7678,11 @@ mod subst_modifier_tests {
         lexstop.store(saved_lexstop, SeqCst);
         qbang.store(saved_qbang, SeqCst);
         exlast.store(saved_exlast, SeqCst);
+        *crate::ported::zle::compcore::ZLEMETALINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = saved_metaline;
+        crate::ported::zle::compcore::ZLEMETALL.store(saved_metall, SeqCst);
     }
 
     /// Pin `ihwbegin` to its canonical C body at `Src/hist.c:1656-1670`.

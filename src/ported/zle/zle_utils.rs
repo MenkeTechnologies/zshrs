@@ -62,40 +62,38 @@ pub fn sizeline(sz: usize) {
 ///   `spaceinline(1);
 ///    zlemetaline[zlemetacs++] = chr;`
 ///
-/// Opens one slot at the meta cursor + writes `chr` byte. Used by
-/// init paths that pre-populate the line buffer before zleread.
-/// Note C writes to ZLEMETALINE, not ZLELINE — this is a meta-mode
-/// helper called during early line construction.
+/// Opens one slot at the meta cursor and writes `chr` there. Reached
+/// through `zleentry(ZLE_CMD_ADD_TO_LINE, c)` from `iaddtoline`
+/// (hist.c:413) while `doexpandhist` rebuilds the line. Operates on
+/// ZLEMETALINE, not ZLELINE.
 pub fn zleaddtoline(chr: i32) {
     // c:102
-    use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
-
-    spaceinline(1); // c:104
-                    // c:105 — `zlemetaline[zlemetacs++] = chr;`
-    if ZLEMETALL.load(Ordering::SeqCst) > 0 {
-        if let Some(m) = ZLEMETALINE.get() {
-            if let Ok(mut g) = m.lock() {
-                let cs = ZLEMETACS.load(Ordering::SeqCst) as usize;
-                let byte = (chr & 0xff) as u8;
-                let mut bytes = g.as_bytes().to_vec();
-                if cs < bytes.len() {
-                    bytes[cs] = byte;
-                } else {
-                    bytes.push(byte);
-                }
-                *g = unsafe { String::from_utf8_unchecked(bytes) };
-                ZLEMETACS.fetch_add(1, Ordering::SeqCst);
-                return;
-            }
-        }
+    // c:104 — `spaceinline(1);` on the META arm (c:782-815, `if
+    // (zlemetaline)`): open one byte-slot at `zlemetacs`, `zlemetall += 1`,
+    // and `if (mark > zlemetacs) mark += 1`. `spaceinline` above carries only
+    // the non-meta arm, so the meta arm is spelled out here — this function
+    // "always operates on the metafied multibyte version of the line"
+    // (c:97-100). Region highlights keep character offsets only (no
+    // `start_meta`/`end_meta` pair), so there is nothing to shift for them.
+    //
+    // `chr` arrives as a whole scalar (zshrs's `ingetc` yields chars where
+    // C's yields metafied bytes), so the slot is `len_utf8` bytes wide and
+    // `zlemetacs`/`zlemetall` advance by that width.
+    let ch = char::from_u32(chr as u32).unwrap_or(char::REPLACEMENT_CHARACTER);
+    let width = ch.len_utf8();
+    let m = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new()));
+    let mut g = m.lock().unwrap();
+    let mut cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize).min(g.len());
+    while !g.is_char_boundary(cs) {
+        cs -= 1;
     }
-    // Fallback: meta-mode not active, write to ZLELINE codepoint
-    // vector. spaceinline already opened the slot.
-    let cs = ZLECS.load(Ordering::SeqCst);
-    if let Some(slot) = ZLELINE.lock().unwrap().get_mut(cs) {
-        *slot = (chr & 0xff) as u8 as char;
+    let mark_cur = MARK.load(Ordering::SeqCst);
+    if mark_cur > cs {
+        MARK.store(mark_cur + width, Ordering::SeqCst); // c:793 mark += ct
     }
-    ZLECS.fetch_add(1, Ordering::SeqCst);
+    g.insert(cs, ch); // c:105 zlemetaline[zlemetacs] = chr
+    ZLEMETALL.fetch_add(width as i32, Ordering::SeqCst); // c:790 zlemetall += ct
+    ZLEMETACS.store((cs + width) as i32, Ordering::SeqCst); // c:105 zlemetacs++
 }
 
 /// Port of `int zlecharasstring(ZLE_CHAR_T inchar, char *buf)` from Src/Zle/zle_utils.c:117.
@@ -1552,17 +1550,16 @@ pub fn printbind(seq: &[u8]) -> String {
 /// `Src/Zle/zle_utils.c:1310`. Display a message where the completion
 /// list normally goes; `msg` is metafied (c:1303-1305).
 ///
-/// Ports the non-`MULTIBYTE_SUPPORT` branch faithfully (c:1389-1397):
-/// trashzle → metafied byte scan with nicechar expansion + cc/up
-/// column tracking → clearflag-driven cursor restore. The
-/// `#ifdef MULTIBYTE_SUPPORT` branch (c:1330-1387, mbrtowc /
-/// wcs_nicechar wide-char path) needs multibyte substrate not yet
-/// wired; the visible-byte stream matches in the common case.
+/// Ports the `#ifdef MULTIBYTE_SUPPORT` branch (c:1330-1387): trashzle →
+/// per-character `wcs_nicechar` expansion with `cc`/`up` column tracking
+/// (by display width) → clearflag-driven cursor restore. `msg` is already
+/// decoded text, so the `unmetafy` + `mbrtowc` decode of C (and its
+/// MB_INVALID/MB_INCOMPLETE single-byte arm) has nothing left to do.
 pub fn showmsg(msg: &str) {
     // c:1310
-    use crate::ported::utils::{nicechar, write_loop};
+    use crate::ported::utils::{wcs_nicechar, write_loop};
     use crate::ported::zle::zle_refresh::{tcmultout, CLEARFLAG, NLNCT, SHOWINGLIST};
-    use crate::ported::zsh_h::{isset, Meta, ALWAYSLASTPROMPT, TCMULTUP, TCUP, USEZLE};
+    use crate::ported::zsh_h::{isset, ALWAYSLASTPROMPT, TCMULTUP, TCUP, USEZLE};
 
     let mut up: i32 = 0; // c:1316
     let mut cc: i32 = 0; // c:1316
@@ -1577,28 +1574,21 @@ pub fn showmsg(msg: &str) {
     let shout = if fd >= 0 { fd } else { 2 };
     let cols = crate::ported::utils::adjustcolumns().max(1) as i32; // zterm_columns
 
-    // c:1389 — for(p = msg; (c = *p); p++)
-    let bytes = msg.as_bytes();
-    let mut p = 0usize;
-    while p < bytes.len() {
-        let mut c = bytes[p];
-        if c == Meta {
-            // c:1391 — c = *++p ^ 32
-            p += 1;
-            c = bytes.get(p).copied().unwrap_or(0) ^ 32;
-        }
-        if c == b'\n' {
-            // c:1392-1395
+    // c:1330-1387 — walk the message one character at a time.
+    for c in msg.chars() {
+        if c == '\n' {
+            // c:1334-1340
             let _ = write_loop(shout, b"\n"); // putc('\n', shout)
             up += 1 + (cc - 1) / cols;
             cc = 0;
         } else {
-            // c:1396-1399 — n = nicechar(c); zputs(n, shout); cc += strlen(n)
-            let n = nicechar(c as char);
+            // c:1374-1380 — n = wcs_nicechar(c, &width, NULL); zputs(n, shout);
+            // cc += width
+            let mut width: usize = 0;
+            let n = wcs_nicechar(c, Some(&mut width), None);
             let _ = write_loop(shout, n.as_bytes());
-            cc += n.len() as i32;
+            cc += width as i32;
         }
-        p += 1;
     }
 
     up += (cc - 1) / cols; // c:1403
@@ -1633,8 +1623,8 @@ pub fn handlefeep() -> i32 {
 
 /// Port of `handlesuffix(UNUSED(char **args))` from Src/Zle/zle_utils.c:1415.
 /// C body: `return 0;` — the real suffix-handling lives on the
-/// callers (insertsuffix / removesuffix); this entry is a no-op
-/// stub the C source kept for hook-table registration.
+/// callers (insertsuffix / removesuffix); the widget itself only
+/// exists so users can bind and wrap it.
 pub fn handlesuffix(c: i32) -> i32 {
     // c:1415
     let _ = c;

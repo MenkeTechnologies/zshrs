@@ -920,7 +920,9 @@ pub fn docomplete(lst: i32) -> i32 {
         return 0; // _active_guard resets ACTIVE on drop
     }
 
-    // c:628 — `if (doexpandhist()) { active = 0; return 0; }`.
+    // c:628 — `if (doexpandhist()) { active = 0; return 0; }`. Runs BEFORE the
+    // editor->working-copy bridge below: `doexpandhist` copies the editor line
+    // into the working copy itself and writes the expansion back to the editor.
     if doexpandhist() != 0 {
         return 0; // _active_guard resets ACTIVE on drop
     }
@@ -4303,12 +4305,12 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
 /// Direct port of `static int docompletion(char *s, int lst, int incmd)`
 /// from `Src/Zle/zle_tricky.c:2339`. Wraps `(s, lst, incmd)` in a
 /// `compldat` struct and fires the COMPLETEHOOK chain via
-/// `runhookdef`. When no Hookfn is registered (matching the C
-/// `complete.c:boot_` `addhookfunc("complete", do_completion)` chain
-/// that the Rust port has not yet wired through `Hookfn` thunks), we
-/// fall through to the canonical handler in `compcore::do_completion`
-/// — same observational behavior as C's `def` fallback at
-/// `module.c:993-994`.
+/// `runhookdef`. The `complete` hook is registered with
+/// `addhookfunc("complete", complete_hook)` by `boot_` in complete.rs,
+/// so the dispatch below normally runs the thunk. When the hook table
+/// has no `complete` definition (the `zsh -f` path before the module
+/// boots), we call `compcore::do_completion` directly — same
+/// observational behavior as C's `def` fallback at `module.c:993-994`.
 pub fn docompletion(s: &str, lst: i32, incmd: i32) -> i32 {
     // c:2339
     let mut dat = crate::ported::zle::zle_h::compldat {
@@ -5037,65 +5039,201 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
     0
 }
 
-/// Direct port of `int doexpandhist(char **args)` from
-/// `Src/Zle/zle_tricky.c:2802`. Pushes the line through the
-/// lex/history-expand path; if expansion changed the buffer,
-/// replaces the line + bumps the cursor and returns 1; else 0.
+/// Port of `int doexpandhist(void)` from `Src/Zle/zle_tricky.c:2802-2865`.
 ///
-/// **Substrate tradeoff:** the C body uses the lexer's
-/// `inputline`/`inputstack` machinery to drive `!`-style history
-/// expansion via `histexpand()`. zshrs lexer (in `src/ported/lex.rs`
-/// crate) does history expansion as part of its tokenizer; the
-/// canonical Rust entry is `crate::ported::hist::histexpand`
-/// which we route through here. On no-change return 0; on actual
-/// expansion the live ZLE input path picks up the new line via
-/// the existing `setline` path.
+/// Re-lexes the line with history expansion live (`expanding = 1`): every
+/// character `ihgetc` reads is appended to the metafied line through
+/// `iaddtoline` -> `zleentry(ZLE_CMD_ADD_TO_LINE)` -> `zleaddtoline`, so a
+/// `!!` read from the pushed copy of the line lands in `zlemetaline` as its
+/// expansion. Returns 1 when the line changed, 0 when it did not or the
+/// expansion failed (the original line is restored).
+///
+/// !!! WARNING: TWO LINE MODELS !!! C keeps one `zleline`; zshrs keeps the
+/// editor line (`zle_main::{ZLELINE,ZLECS,ZLELL}`) and the metafy/unmetafy
+/// working copy (`compcore::{ZLELINE,ZLECS,ZLELL,ZLEMETA*}`). The editor line
+/// is authoritative on entry (C `UNMETACHECK()`: the line is not metafied)
+/// and on exit, so it is copied into the working copy before `metafy_line`
+/// and back after the final `unmetafy_line`.
 pub fn doexpandhist() -> i32 {
     // c:2802
-    let line = crate::ported::zle::compcore::ZLELINE
+    use crate::ported::hist::{excs, exlast, expanding, lexstop, strinbeg, strinend};
+    use crate::ported::lex::{
+        ctxtlex, hgetc, noaliases, set_noaliases, tok, LEX_INPUT, LEX_LEXSTOP, LEX_POS,
+        LEX_UNGET_BUF, LEX_UNGET_HPTR, LEX_UNGET_RAW,
+    };
+    use crate::ported::zle::compcore::ZLEMETACS as ZMCS;
+    use crate::ported::zsh_h::{ENDINPUT, LEXERR};
+
+    // c:2805 — `int ne = noerrs, err, ona = noaliases;`
+    let ne = *crate::ported::utils::noerrs_lock().lock().unwrap();
+    let ona = noaliases();
+
+    crate::ported::zle::zle_h::UNMETACHECK(); // c:2807
+
+    // editor line -> working copy (see the model note above).
+    {
+        let ed_line: String = crate::ported::zle::zle_main::ZLELINE
+            .lock()
+            .map(|g| g.iter().collect())
+            .unwrap_or_default();
+        let ed_ll = ed_line.chars().count() as i32;
+        let ed_cs = (crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32).min(ed_ll);
+        if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = ed_line;
+        }
+        crate::ported::zle::compcore::ZLECS.store(ed_cs, Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLELL.store(ed_ll, Ordering::SeqCst);
+    }
+
+    crate::ported::mem::pushheap(); // c:2809
+    crate::ported::zle::compcore::metafy_line(); // c:2810
+    crate::ported::zle::zle_utils::zle_save_positions(); // c:2811
+    // c:2812 — `ol = dupstring(zlemetaline);`
+    let ol: String = ZLEMETALINE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    if line.is_empty() {
-        return 0;
+    expanding.store(1, Ordering::SeqCst); // c:2813
+    excs.store(ZMCS.load(Ordering::SeqCst), Ordering::SeqCst); // c:2814
+    // c:2815 — `zlemetall = zlemetacs = 0;`. C then overwrites the old
+    // buffer in place, and `zlemetaline[zlemetall] = '\0'` (spaceinline)
+    // makes only the rebuilt prefix visible; the String is emptied so
+    // `zleaddtoline` rebuilds it from scratch.
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        g.clear();
     }
-    // c:2854 — `histexpand(line, &expanded)`. Compare original
-    // vs expanded; on diff, write back.
-    // `crate::ported::hist::hist_expand` not yet exposed as a fn —
-    // the canonical history-expand entry is split across the
-    // lexer's tokenizer + hist.c's getlinemark machinery. Without
-    // a single-call expand path here, return early-on-no-`!` heuristic
-    // (still a real check, not a constant return).
-    if !line.contains('!') {
-        return 0;
-    } // c:2843 no `!` = no expansion
-      // Pass-through: the substrate for a real single-call history expand
-      // isn't wired here yet (see doc comment above).
-    let expanded = line.clone();
-    // c:2843 — `if (strcmp(zlemetaline, ol))`: C returns 1 ONLY when the
-    // expansion actually CHANGED the line; otherwise it restores `ol`
-    // (c:2856), leaves the cursor where `zle_restore_positions` puts it,
-    // and returns 0 (c:2862).
-    //
-    // The port returned 1 — and slammed the cursor to end-of-line — for
-    // ANY line containing a `!`, even though the pass-through changes
-    // nothing. docomplete bails at c:628-631 whenever doexpandhist() is
-    // non-zero, so Tab silently did nothing (and moved the cursor) on
-    // every line with a bang in it: `git commit -m "fix!" <TAB>`,
-    // `[[ ! -f <TAB>`, `foo != <TAB>`.
-    if expanded == line {
-        return 0; // c:2862
+    ZLEMETALL.store(0, Ordering::SeqCst);
+    ZMCS.store(0, Ordering::SeqCst);
+    crate::ported::context::zcontext_save(); // c:2816
+
+    // !!! RUST-ONLY (no C counterpart) !!! — the lexer reads its own
+    // `LEX_INPUT` window and `LEX_UNGET_*` queues ahead of the input stack;
+    // park them so `hgetc` takes the frame pushed below, and so a character
+    // pushed back inside this nested lex cannot leak into the caller's
+    // lexer (C's `hungetc` returns it to the popped `inbuf` frame instead).
+    // Same isolation `selectargument` applies around its walk.
+    let saved_lex_input = LEX_INPUT.with_borrow_mut(std::mem::take);
+    let saved_lex_pos = LEX_POS.replace(0);
+    let saved_unget = LEX_UNGET_BUF.with_borrow_mut(std::mem::take);
+    let saved_unget_hptr = LEX_UNGET_HPTR.with_borrow_mut(std::mem::take);
+    let saved_unget_raw = LEX_UNGET_RAW.with_borrow_mut(std::mem::take);
+    let saved_unget_srccap =
+        crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(std::mem::take);
+    LEX_LEXSTOP.set(false);
+
+    // c:2817 — "We push ol as it will remain unchanged"
+    crate::ported::input::inpush(&ol, 0, None); // c:2818
+    strinbeg(1); // c:2819
+    set_noaliases(true); // c:2820
+    crate::ported::utils::set_noerrs(1); // c:2821
+    exlast.store(
+        crate::ported::input::inbufct.with(|c| c.get()),
+        Ordering::SeqCst,
+    ); // c:2822
+    loop {
+        // c:2823-2825 do { ctxtlex(); } while (tok != ENDINPUT && tok != LEXERR);
+        ctxtlex(); // c:2824
+        let t = tok();
+        if t == ENDINPUT || t == LEXERR {
+            break; // c:2825
+        }
     }
-    if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-    {
-        *g = expanded;
-        crate::ported::zle::compcore::ZLELL.store(g.len() as i32, Ordering::Relaxed);
-        crate::ported::zle::compcore::ZLECS.store(g.len() as i32, Ordering::Relaxed);
+    if tok() == LEXERR {
+        lexstop.store(false, Ordering::SeqCst); // c:2827
     }
-    1 // c:2852 expanded
+    // c:2828-2829 — `while (!lexstop) hgetc();`. The `is_none()` break is a
+    // Rust-only guard: `hgetc` returns None at end of input, where C's
+    // `ihgetc` sets `lexstop` and returns a blank.
+    while !lexstop.load(Ordering::SeqCst) {
+        if hgetc().is_none() {
+            break;
+        }
+    }
+    // c:2830-2832 — "We have to save errflags because it's reset in
+    // zcontext_restore. Since noerrs was set to 1 errflag is true if there
+    // was a habort() which means that the expanded string is unusable."
+    let err = crate::ported::utils::errflag.load(Ordering::SeqCst); // c:2833
+    crate::ported::utils::set_noerrs(ne); // c:2834
+    set_noaliases(ona); // c:2835
+    strinend(); // c:2836
+    crate::ported::input::inpop(); // c:2837
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
+    LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+    LEX_UNGET_HPTR.with_borrow_mut(|b| *b = saved_unget_hptr);
+    LEX_UNGET_RAW.with_borrow_mut(|b| *b = saved_unget_raw);
+    crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| *b = saved_unget_srccap);
+    crate::ported::context::zcontext_restore(); // c:2838
+    expanding.store(0, Ordering::SeqCst); // c:2839
+
+    // working copy -> editor line, run after every `unmetafy_line()` below.
+    let to_editor = || {
+        let line: Vec<char> = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.chars().collect())
+            .unwrap_or_default();
+        let ll = line.len();
+        let cs = (crate::ported::zle::compcore::ZLECS
+            .load(Ordering::SeqCst)
+            .max(0) as usize)
+            .min(ll);
+        if let Ok(mut g) = crate::ported::zle::zle_main::ZLELINE.lock() {
+            *g = line;
+        }
+        crate::ported::zle::zle_main::ZLECS.store(cs, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(ll, Ordering::SeqCst);
+    };
+
+    if err == 0 {
+        // c:2841
+        let expanded: String = ZLEMETALINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        // c:2842 — `zlemetacs = excs;` (the clamp is a Rust-only guard: the
+        // working copy is indexed by it in `unmetafy_line`).
+        ZMCS.store(
+            excs.load(Ordering::SeqCst).clamp(0, expanded.len() as i32),
+            Ordering::SeqCst,
+        );
+        if expanded != ol {
+            // c:2843 `strcmp(zlemetaline, ol)`
+            crate::ported::zle::zle_utils::zle_free_positions(); // c:2844
+            crate::ported::zle::compcore::unmetafy_line(); // c:2845
+            to_editor();
+            // c:2846-2850 — "For vi mode -- reset the beginning-of-insertion
+            // pointer to the beginning of the line. This seems a little
+            // silly, if we are, for example, expanding "exec !!"."
+            let bol = crate::ported::zle::zle_utils::findbol();
+            if crate::ported::zle::zle_main::VIINSBEGIN.load(Ordering::SeqCst) > bol {
+                crate::ported::zle::zle_main::VIINSBEGIN.store(bol, Ordering::SeqCst);
+            }
+            crate::ported::mem::popheap(); // c:2851
+            return 1; // c:2852
+        }
+    }
+
+    // c:2856 — `strcpy(zlemetaline, ol);`
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = ol.clone();
+    }
+    // `zle_restore_positions` below picks the metafied pair only while
+    // `zlemetall` is non-zero (its `zlemetaline != NULL` test), and the
+    // rebuild left `zlemetall` at the expansion's length, so re-state it.
+    ZLEMETALL.store(ol.len() as i32, Ordering::SeqCst);
+    crate::ported::zle::zle_utils::zle_restore_positions(); // c:2857
+    crate::ported::zle::compcore::unmetafy_line(); // c:2858
+    to_editor();
+
+    crate::ported::mem::popheap(); // c:2860
+
+    0 // c:2862
 }
 
 /// Port of `fixmagicspace()` from Src/Zle/zle_tricky.c:2867.
@@ -5148,52 +5286,135 @@ pub fn expandhistory() -> i32 {
     0
 }
 
-/// Port of `getcurcmd()` from Src/Zle/zle_tricky.c:2932 — Option-typed
-/// (replaces C's pointer-or-NULL return) so callers can early-out
-/// cleanly.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn getcurcmd() -> Option<String> {
-    // c:2932
-    // C body c:2934-2980 — runs lexer over zlemetaline up to cursor and
-    //                      returns the command word. Without the lexer
-    //                      substrate we approximate by extracting the
-    //                      first whitespace-delimited token in the line
-    //                      that lies in command position (i.e. the start
-    //                      of a pipeline segment). This matches the
-    //                      common case of `processcmd` invoked in the
-    //                      first segment.
-    //
-    // c:2966-2974 — `zlecs` and `zleline` are CHARACTER-addressed (the wide
-    // `ZLE_STRING_T`), which is why C runs `cmdwb`/`cmdwe` through
-    // `stringaszleline` before using them here: "cmdwb and cmdwe are indices
-    // in zlemetaline, but we need indices into zleline". zshrs keeps the same
-    // split — `zle_main::ZLELINE` is a `Vec<char>`, `ZLECS` a character index
-    // into it (zle_main.rs:4122-4124) — so walk the character vector. The port
-    // had collected it into a `String` and sliced `&snap[..cs]`, applying the
-    // character index as a BYTE offset; the `.min(snap.len())` clamp is
-    // against the BYTE length, which for multibyte input is strictly larger
-    // than the character count, so it never fires. `M-h` / `M-H` (run-help and
-    // which-command, both of which reach here through `processcmd`) then
-    // panicked on `byte index N is not a char boundary` for any command line
-    // holding a multibyte character left of the cursor.
-    let line = ZLELINE.lock().unwrap();
-    let cs = ZLECS.load(Ordering::SeqCst).min(line.len());
-    let prefix = &line[..cs];
-    let mut last_seg_start = 0;
-    for (i, c) in prefix.iter().enumerate() {
-        if matches!(c, '|' | ';' | '&') {
-            last_seg_start = i + 1;
+/// Port of `static int cmdwb, cmdwe;` from Src/Zle/zle_tricky.c:2936 — the
+/// bounds of the command word `getcurcmd` last found.
+pub static CMDWB: AtomicI32 = AtomicI32::new(0); // c:2936
+/// `cmdwe` — see [`CMDWB`].
+pub static CMDWE: AtomicI32 = AtomicI32::new(0); // c:2936
+
+/// Port of `static char *getcurcmd(int trackpos)` from
+/// Src/Zle/zle_tricky.c:2939. Lexes the whole line and returns the last
+/// STRING token that sat in command position (the lexer stops early once
+/// `lexflags` clears after the cursor word); `None` is C's `NULL`. Leaves
+/// the bounds of that word in `CMDWB`/`CMDWE`; with `trackpos` they are
+/// zleline (character) indices rather than metafied-line ones.
+///
+/// !!! UNITS !!! `wordbeg` and `inbufct` count characters in this port, so
+/// the bounds are computed against the character length of the metafied
+/// line. A metafied line differs from `zleline` only by Meta pairs, which
+/// never appear in decoded text, so character indices into it are already
+/// `zleline` indices and C's `stringaszleline` conversion (c:2966-2974)
+/// has nothing left to convert.
+pub fn getcurcmd(trackpos: i32) -> Option<String> {
+    // c:2939
+    use crate::ported::lex::{
+        ctxtlex, incmdpos, tok, tokstr, LEX_INPUT, LEX_LEXFLAGS, LEX_LEXSTOP, LEX_POS,
+        LEX_UNGET_BUF, LEX_UNGET_HPTR, LEX_UNGET_RAW, LEX_WORDBEG,
+    };
+    use crate::ported::zsh_h::{ENDINPUT, LEXERR, LEXFLAGS_ZLE, STRING_LEX};
+
+    let mut s: Option<String> = None; // c:2942
+
+    crate::ported::context::zcontext_save(); // c:2944
+    LEX_LEXFLAGS.set(LEXFLAGS_ZLE); // c:2945
+
+    // editor line -> working copy (see `doexpandhist` for the two models).
+    {
+        let ed_line: String = crate::ported::zle::zle_main::ZLELINE
+            .lock()
+            .map(|g| g.iter().collect())
+            .unwrap_or_default();
+        let ed_ll = ed_line.chars().count() as i32;
+        let ed_cs = (crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32).min(ed_ll);
+        if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = ed_line;
+        }
+        crate::ported::zle::compcore::ZLECS.store(ed_cs, Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLELL.store(ed_ll, Ordering::SeqCst);
+    }
+    crate::ported::zle::compcore::metafy_line(); // c:2946
+    let meta: String = ZLEMETALINE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let meta_chars = meta.chars().count() as i32;
+
+    // !!! RUST-ONLY (no C counterpart) !!! — park the lexer's own input
+    // window and pushback queues so the nested lex reads only the pushed
+    // frame and leaks nothing into the caller (see `doexpandhist`).
+    let saved_lex_input = LEX_INPUT.with_borrow_mut(std::mem::take);
+    let saved_lex_pos = LEX_POS.replace(0);
+    let saved_unget = LEX_UNGET_BUF.with_borrow_mut(std::mem::take);
+    let saved_unget_hptr = LEX_UNGET_HPTR.with_borrow_mut(std::mem::take);
+    let saved_unget_raw = LEX_UNGET_RAW.with_borrow_mut(std::mem::take);
+    let saved_unget_srccap =
+        crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(std::mem::take);
+    LEX_LEXSTOP.set(false);
+
+    crate::ported::input::inpush(&dupstrspace(&meta), 0, None); // c:2947
+    crate::ported::hist::strinbeg(1); // c:2948
+    crate::ported::mem::pushheap(); // c:2949
+    loop {
+        // c:2950 do {
+        let curlincmd = incmdpos(); // c:2951
+        ctxtlex(); // c:2952
+        let t = tok();
+        if t == ENDINPUT || t == LEXERR {
+            break; // c:2954
+        }
+        if t == STRING_LEX && curlincmd {
+            // c:2955
+            s = tokstr(); // c:2957
+            CMDWB.store(meta_chars - LEX_WORDBEG.get(), Ordering::SeqCst); // c:2958
+            CMDWE.store(
+                meta_chars + 1 - crate::ported::input::inbufct.with(|c| c.get()),
+                Ordering::SeqCst,
+            ); // c:2959
+        }
+        if LEX_LEXFLAGS.get() == 0 {
+            break; // c:2961 `while (... && lexflags)`
         }
     }
-    let cmd: String = prefix[last_seg_start..]
-        .iter()
-        .skip_while(|c| c.is_whitespace())
-        .take_while(|c| !c.is_ascii_whitespace())
-        .collect();
-    if cmd.is_empty() {
-        return None;
+    crate::ported::mem::popheap(); // c:2962
+    crate::ported::hist::strinend(); // c:2963
+    crate::ported::input::inpop(); // c:2964
+    crate::ported::utils::errflag.fetch_and(
+        !crate::ported::utils::ERRFLAG_ERROR,
+        Ordering::SeqCst,
+    ); // c:2965
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
+    LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+    LEX_UNGET_HPTR.with_borrow_mut(|b| *b = saved_unget_hptr);
+    LEX_UNGET_RAW.with_borrow_mut(|b| *b = saved_unget_raw);
+    crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| *b = saved_unget_srccap);
+    let _ = trackpos; // c:2966-2974 — see the UNITS note above.
+
+    crate::ported::zle::compcore::unmetafy_line(); // c:2976
+    {
+        let line: Vec<char> = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.chars().collect())
+            .unwrap_or_default();
+        let ll = line.len();
+        let cs = (crate::ported::zle::compcore::ZLECS
+            .load(Ordering::SeqCst)
+            .max(0) as usize)
+            .min(ll);
+        if let Ok(mut g) = crate::ported::zle::zle_main::ZLELINE.lock() {
+            *g = line;
+        }
+        crate::ported::zle::zle_main::ZLECS.store(cs, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(ll, Ordering::SeqCst);
     }
-    Some(cmd)
+    crate::ported::context::zcontext_restore(); // c:2977
+
+    s // c:2979
 }
 
 /// Port of `processcmd(UNUSED(char **args))` from Src/Zle/zle_tricky.c:2971.
@@ -5202,9 +5423,15 @@ pub fn processcmd() -> i32 {
     // C body c:2973-2989 — `s = getcurcmd(); if (!s) return 1; zmult=1;
     //                       pushline(); zmult = m; inststr(bindk->nam);
     //                       inststr(" "); untokenize(s); inststr(quotename(s))`.
-    let s = match getcurcmd() {
-        Some(s) if !s.is_empty() => s,
-        _ => return 1, // c:2980
+    // c:2970-2972 — `int m = zmult, na = noaliases; noaliases = 1;
+    //                s = getcurcmd(0); noaliases = na; if (!s) return 1;`
+    let na = crate::ported::lex::noaliases();
+    crate::ported::lex::set_noaliases(true);
+    let s = getcurcmd(0);
+    crate::ported::lex::set_noaliases(na);
+    let s = match s {
+        Some(s) => s,
+        None => return 1, // c:2980
     };
     let m = ZMOD.lock().unwrap().mult; // c:2974
     ZMOD.lock().unwrap().mult = 1; // c:2981
@@ -5221,6 +5448,7 @@ pub fn processcmd() -> i32 {
     // c:2985 — `inststr(" ");`.
     let _ = inststr(" ");
     // c:2986-2987 — `untokenize(s); inststr(quotename(s));`.
+    let s = crate::ported::lex::untokenize(&s);
     let q = quotename(&s, 0);
     let _ = inststr(&q);
     // c:3007 — `done = 1;`. `run-help` / `which-command` REPLACE the line
@@ -5243,50 +5471,28 @@ pub fn expandcmdpath() -> i32 {
     // c:3003 — int oldcs = zlecs, na = noaliases, strll;
     let oldcs = ZLECS.load(Ordering::SeqCst);
 
-    // c:3007-3009 — noaliases = 1; s = getcurcmd(); noaliases = na;
-    //               (noaliases is per-call lex flag; the lookup we use is
-    //               by path string and isn't alias-sensitive — collapses.)
-    let s = match getcurcmd() {
+    // c:3007-3009 — noaliases = 1; s = getcurcmd(1); noaliases = na;
+    let na = crate::ported::lex::noaliases();
+    crate::ported::lex::set_noaliases(true);
+    let s = getcurcmd(1);
+    crate::ported::lex::set_noaliases(na);
+    let s = match s {
         // c:3008
-        Some(c) if !c.is_empty() => c,
-        _ => return 1, // c:3010-3011
+        Some(c) => c,
+        None => return 1, // c:3010-3011
     };
 
-    // Compute (cmdwb, cmdwe) — start and end CHARACTER offsets of the command
-    // word in the line. c:3029/3038-3039 consume them as a `zlecs` value and
-    // as a `foredel` count, both character units; c:2966-2974 in `getcurcmd`
-    // exists precisely to convert the lexer's metafied BYTE offsets into
-    // character ones before control reaches here. Without the C lex substrate,
-    // find the word containing `oldcs` by walking outward to whitespace
-    // boundaries — over the `Vec<char>` line, not over a collected `String`.
-    // The port had sliced `line[..oldcs]` on a `String`, applying the
-    // character cursor as a BYTE offset (a panic whenever that landed
-    // mid-sequence, e.g. `éé x` with the cursor at character 3 = byte 3, a
-    // continuation byte), and then fed `rfind`/`find` BYTE offsets straight
-    // back into `ZLECS`, `foredel` and `Vec::insert`, all of which are
-    // character-addressed — so even when the slice happened to survive, the
-    // resolved path was spliced at the wrong offset.
-    let (cmdwb, cmdwe) = {
-        let line = ZLELINE.lock().unwrap();
-        let ll = line.len();
-        let cs = oldcs.min(ll);
-        let b = line[..cs]
-            .iter()
-            .rposition(|c| c.is_ascii_whitespace())
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        let e = line[cs..]
-            .iter()
-            .position(|c| c.is_ascii_whitespace())
-            .map(|i| i + cs)
-            .unwrap_or(ll);
-        (b, e)
-    };
-    // c:3013-3016 — if (cmdwb < 0 || cmdwe < cmdwb) return 1;
-    if cmdwe < cmdwb {
-        return 1;
+    // c:3013 — `cmdwb`/`cmdwe` as `getcurcmd(1)` left them: CHARACTER offsets
+    // of the command word. c:3029/3038-3039 consume them as a `zlecs` value
+    // and as a `foredel` count, both character units.
+    let (cmdwb_i, cmdwe_i) = (
+        CMDWB.load(Ordering::SeqCst),
+        CMDWE.load(Ordering::SeqCst),
+    );
+    if cmdwb_i < 0 || cmdwe_i < cmdwb_i {
+        return 1; // c:3014-3016
     }
-
+    let (cmdwb, cmdwe) = (cmdwb_i as usize, cmdwe_i as usize);
     // c:3018 — str = findcmd(s, 1, 0);
     let str_opt = crate::ported::builtin::findcmd(&s, 1, 0);
     // c:3020-3021 — if (!str) return 1;
@@ -6924,22 +7130,27 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
 
-        // `ls | échó` — 9 characters, 11 bytes.
+        // `ls | échó` — 9 characters, 11 bytes. The command word after the
+        // pipe is the last STRING token in command position, whatever the
+        // cursor offset (the lexer only stops once it has passed the cursor
+        // word, and that word is this one).
         *ZLELINE.lock().unwrap() = "ls | \u{e9}ch\u{f3}".chars().collect();
         ZLELL.store(9, Ordering::SeqCst);
 
         // Cursor just past the `\u{e9}`: character 6, byte 7. Byte 6 is the
-        // CONTINUATION byte of `\u{e9}`, so the pre-fix `&snap[..6]` died on
+        // CONTINUATION byte of `\u{e9}`, so a byte-sliced prefix died on
         // `byte index 6 is not a char boundary`.
         ZLECS.store(6, Ordering::SeqCst);
-        assert_eq!(getcurcmd(), Some("\u{e9}".to_string()));
+        assert_eq!(getcurcmd(0), Some("\u{e9}ch\u{f3}".to_string()));
 
-        // Cursor at end of line: character 9, byte 11. Byte 9 IS a boundary,
-        // so this arm never panicked — it silently returned the command word
-        // two bytes short (`\u{e9}ch`), one truncation per multibyte character
-        // left of the cursor.
+        // Cursor at end of line: character 9, byte 11.
         ZLECS.store(9, Ordering::SeqCst);
-        assert_eq!(getcurcmd(), Some("\u{e9}ch\u{f3}".to_string()));
+        assert_eq!(getcurcmd(1), Some("\u{e9}ch\u{f3}".to_string()));
+        assert_eq!(
+            (CMDWB.load(Ordering::SeqCst), CMDWE.load(Ordering::SeqCst)),
+            (5, 9),
+            "trackpos bounds are character offsets into the line"
+        );
     }
 
     /// c:3029/3038-3039 — `expandcmdpath` consumes `cmdwb`/`cmdwe` as a
