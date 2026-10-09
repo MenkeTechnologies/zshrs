@@ -821,7 +821,7 @@ fn cmd_defs(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
 fn cmd_snapshot(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
     let sub = rest
         .first()
-        .ok_or("usage: zd snapshot <save|list|load|diff> ...")?;
+        .ok_or("usage: zd snapshot <save|list|load|diff|sign|verify|publish|pubkey> ...")?;
     match sub.as_str() {
         "save" => {
             let tag = rest
@@ -874,6 +874,34 @@ fn cmd_config(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> 
 fn cmd_artifact(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
     let sub = rest
         .first()
+        "sign" => {
+            let tag = rest.get(1).ok_or("usage: zd snapshot sign TAG")?;
+            t.post("snapshot_sign", json!({"tag": tag}))
+        }
+        "verify" => {
+            let tag = rest
+                .get(1)
+                .ok_or("usage: zd snapshot verify TAG [--public-key HEX] [--registry R]")?;
+            let mut body = json!({"tag": tag});
+            if let Some(pos) = rest.iter().position(|a| a == "--public-key") {
+                body["public_key"] = json!(rest.get(pos + 1).ok_or("--public-key requires VALUE")?);
+            }
+            if let Some(pos) = rest.iter().position(|a| a == "--registry") {
+                body["registry"] = json!(rest.get(pos + 1).ok_or("--registry requires VALUE")?);
+            }
+            t.post("snapshot_verify", body)
+        }
+        "publish" => {
+            let tag = rest
+                .get(1)
+                .ok_or("usage: zd snapshot publish TAG [--registry R]")?;
+            let mut body = json!({"tag": tag});
+            if let Some(pos) = rest.iter().position(|a| a == "--registry") {
+                body["registry"] = json!(rest.get(pos + 1).ok_or("--registry requires VALUE")?);
+            }
+            t.post("snapshot_publish", body)
+        }
+        "pubkey" => t.post("snapshot_pubkey", json!({})),
         .ok_or("usage: zd artifact <put|get|list|gc> ...")?;
     match sub.as_str() {
         "put" => {

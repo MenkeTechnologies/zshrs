@@ -38,6 +38,11 @@ rusqlite = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# Snapshot signing (daemon/snapshot.rs). Exact pin; v2 API (from_bytes,
+# verify_strict). Seeds come from rand::rngs::OsRng, so no rand_core feature.
+ed25519-dalek = "=2.2.0"
+# Snapshot registry PUT/GET over http(s); same dep + features as the root crate.
+ureq = { version = "2", default-features = false, features = ["tls"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "signal", "time", "sync", "macros", "process"] }
 # tokio-stream wraps tokio channels as `futures::Stream` impls. Used by

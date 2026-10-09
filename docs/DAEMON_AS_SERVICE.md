@@ -336,7 +336,11 @@ SNAPSHOT — portable canonical-state artifacts
   snapshot_list  {}                → {snapshots[{tag, path, bytes}]}                      ✅
   snapshot_load  {tag}             → {rows_restored} (atomic replace_subsystem)           ✅
   snapshot_diff  {a, b}            → {added[], removed[], changed[]}                      ✅
-  snapshot_bisect / publish / pull / sign / verify                                       ⏳
+  snapshot_pubkey {}               → {public_key, algorithm, key_path}                    ✅
+  snapshot_sign  {tag}             → {sha256, bytes, public_key, sig_path} (ed25519)      ✅
+  snapshot_verify {tag, public_key?, registry?} → {ok, sha256, trusted} | snapshot_verify_failed ✅
+  snapshot_publish {tag, registry?} → {registry, sha256, files} (dir or http(s) PUT)      ✅
+  snapshot_bisect / pull                                                                 ⏳
 
 SHELL — cross-shell coordination (extends zsend/znotify/zsubscribe)
   list_shells   {tag?}                        → {shells[{shell_id, pid, tty, tags, ask_pending, …}]}  ✅
@@ -382,14 +386,14 @@ add a reverse proxy for browser pages).
 | EVENT | ✅ | scope.topic patterns, `publish` requires session (HTTP `handler_op` registers per request) |
 | LOCK | ✅ | named mutex, u128 token, PID liveness probe |
 | DEFINITIONS | ✅ | `kinds`, `query`, `emit`, `diff`, `subscribe`, `unsubscribe`; federated by `shell_id` (composite-key store keeps per-shell rows distinct); IPC subscribe is opt-in (silent clients don't get every recorder bundle); HTTP `/stream/definitions` auto-subscribes; see `docs/SHELL_IDS.md` for identifier registry |
-| SNAPSHOT | ✅ (publish/sign deferred) | save/list/load/diff via rkyv `CanonicalShard` |
+| SNAPSHOT | ✅ | save/list/load/diff via rkyv `CanonicalShard`; ed25519 sign/verify/publish |
 | SHELL | ✅ | pre-existing IPC ops surfaced over HTTP |
 | EXPORT (PDF) | ✅ | `printpdf`-rendered, base64-wire |
 | AUTH | ✅ | bearer tokens in `daemon.toml` (legacy flat string OR scoped table form); per-token scopes enforced against op→scope table in `daemon/auth.rs`; refuses non-loopback bind without tokens; unscoped tokens grant full access (backward compat) |
 | METRICS | ✅ | Prom 0.0.4 text + JSON op |
 
 Deferred to a follow-up round, named here for forward compatibility:
-- `snapshot_bisect / publish / pull / sign / verify`
+- `snapshot_bisect / pull`
 - per-namespace cache quotas, daemon-wide rate limits
 - artifact streaming for large blobs (octet-stream response)
 - OpenAPI / protobuf / cddl schema generation

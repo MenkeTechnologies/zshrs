@@ -118,7 +118,8 @@ _zd_ops() {
         log_rotate log_stats metrics notify ping publish pull_canonical
         push_canonical recorder_ingest register replay_log schedule_add
         schedule_add_once schedule_list schedule_remove send snapshot_diff
-        snapshot_list snapshot_load snapshot_save source_resolve
+        snapshot_list snapshot_load snapshot_publish snapshot_pubkey
+        snapshot_save snapshot_sign snapshot_verify source_resolve
         stats_flush subscribe subscribe_shard subscription_set_paused
         suggest tag untag unsubscribe verify view watch_list
         watch_subscribe watch_unsubscribe watcher_stats
@@ -141,7 +142,7 @@ cmds=(
     'events:stream pub/sub events (standalone binary only)'
     'watch:stream file events for a directory (standalone binary only)'
     'defs:federated definitions catalog'
-    'snapshot:save, list, load and diff canonical-state snapshots'
+    'snapshot:save, list, load, diff, sign, verify and publish canonical-state snapshots'
     'artifact:content-addressed artifact store'
     'schedule:cron-style and one-shot scheduled jobs'
     'export:render a target in a format'
@@ -337,6 +338,10 @@ case $state in
                     'list:list saved snapshots'
                     'load:restore the canonical state from TAG'
                     'diff:diff two snapshots'
+                    'sign:write a detached ed25519 signature for TAG'
+                    'verify:verify TAG against a public key or the local key'
+                    'publish:sign, verify and publish TAG to a registry'
+                    'pubkey:print the local signing public key'
                 )
                 if (( CURRENT == 2 )); then
                     _describe -t commands 'snapshot verb' sub && return 0
@@ -357,6 +362,22 @@ case $state in
                         ;;
                     diff)
                         (( CURRENT == 3 || CURRENT == 4 )) && _zd_snapshot_tags && return 0
+                        ;;
+                    sign)
+                        (( CURRENT == 3 )) && _zd_snapshot_tags && return 0
+                        ;;
+                    verify|publish)
+                        if (( CURRENT == 3 )); then
+                            _zd_snapshot_tags && return 0
+                        elif [[ $prev == --public-key ]]; then
+                            _message 'ed25519 public key (hex)' && return 0
+                        elif [[ $prev == --registry ]]; then
+                            _files -/ && return 0
+                        else
+                            flags=( '--registry:registry directory or URL' )
+                            [[ $words[2] == verify ]] && flags+=( '--public-key:trusted public key (hex)' )
+                            _describe -t options 'option' flags && return 0
+                        fi
                         ;;
                 esac
                 ;;

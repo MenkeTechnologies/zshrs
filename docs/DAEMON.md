@@ -673,6 +673,7 @@ HTTP-surfaced contract per op.
 | schedule | `schedule_add` / `schedule_add_once` / `schedule_remove` / `schedule_list` | cron-equivalent |
 | lock     | `lock_acquire` / `lock_try_acquire` / `lock_release` / `lock_list` | named cross-process mutex |
 | snapshot | `snapshot_save` / `snapshot_list` / `snapshot_load` / `snapshot_diff` | tag-based canonical state captures |
+| snapshot | `snapshot_sign` / `snapshot_verify` / `snapshot_publish` / `snapshot_pubkey` | ed25519 detached signatures, verification, registry publish (see "Snapshot signing and registry") |
 | source   | `source_resolve` | bytecode-cache lookup for `source FILE` / `. FILE` |
 | source   | `load_script` | cold-load `zshrs FILE` |
 | source   | `import_zwc` / `import_zcompdump` / `import_history` / `import_catalog` / `import_shard` / `import_all` | user-explicit legacy / backup ingest |
@@ -1272,3 +1273,22 @@ Removed acceptance criteria (no longer applicable):
   degraded mode (source-interp, no cache).
 - POSIX mode never spawns daemon — moot for the same reason.
 
+
+## Snapshot signing and registry
+
+Snapshots (`<state root>/snapshots/<tag>.rkyv`) can be signed, verified, and published.
+
+- **Key store.** A per-user ed25519 key is generated on first use at `<state root>/snapshot-signing.key` (hex seed, mode 0600; a key file readable by group/other is refused). `snapshot_pubkey` / `zd snapshot pubkey` exports the public key.
+- **`snapshot_sign {tag}`** writes `<tag>.rkyv.sig` beside the snapshot: a JSON document with the sha256 digest, the signer public key, and an ed25519 signature over the exact snapshot bytes.
+- **`snapshot_verify {tag, public_key?, registry?}`** checks the digest and signature against `public_key` (hex) or, if omitted, the local key. With `registry`, the published copy is verified instead of the local file. Digest mismatch, tampering, or a different signer returns the error `snapshot_verify_failed`.
+- **`snapshot_publish {tag, registry?}`** verifies the snapshot (signing it first if no signature exists; an invalid existing signature aborts), then writes `<registry>/<tag>/{snapshot.rkyv,snapshot.rkyv.sig,manifest.json}` with the manifest last. All local writes are tmp + rename.
+- **Registry.** A directory (absolute path or `file://` URL; needs no network) or an `http(s)://` base URL (each file is sent with PUT, and fetched with GET for verify). The `registry` argument overrides the config default:
+
+```toml
+# zshrs-daemon.toml
+[snapshot]
+registry = "/srv/zshrs-registry"        # or "https://registry.example.com/zshrs"
+registry_token = "..."                    # optional; sent as a bearer token over HTTP
+```
+
+Scopes: `snapshot_sign` and `snapshot_publish` need `snapshot.write`; `snapshot_verify` and `snapshot_pubkey` need `snapshot.read`.
