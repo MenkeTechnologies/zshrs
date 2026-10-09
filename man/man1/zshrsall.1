@@ -36,12 +36,12 @@ singleton coordinator
 optional shell-session recorder
 .PP
 .B src/ported/
-holds the strict 1:1 ports (106 files; every function maps to a real
+holds the strict 1:1 ports (every function maps to a real
 .IB Src/ x .c
 zsh function, enforced by
 .BR tests/port_purity.rs ).
 .B src/extensions/
-holds zshrs-only code (88 files: AOT, daemon coordination, plugin/
+holds zshrs-only code (AOT, daemon coordination, plugin/
 script/autoload caches, fish-style autosuggestions/abbreviations/
 syntax highlighting, the persistent worker pool, ZWC bytecode helpers).
 .SH "THE COMPILED PIPELINE"
@@ -1197,13 +1197,11 @@ For per-option detail see
 .BR bye ,
 .BR logout .
 .PP
-zshrs adds 48 fish-ported builtins surfaced under the same dispatch;
-they appear in
+zshrs-only builtins are listed under \fBzshrs\-only builtins\fR below; they appear in
 .B builtin
 and
 .B "whence -m"
-output. See
-.IR src/extensions/builtins/ .
+output.
 .SS "Status banner: zbanner"
 .B zbanner
 prints the ZSHRS logo, a box with the version and the builtin and
@@ -1280,6 +1278,297 @@ in
 HTTP or transport error, cost ceiling), 2 for bad flags; the reason is written
 to stderr as
 .BR "zshrs: ai: " \fIreason\fR.
+.SS "zshrs-only builtins"
+Builtins that exist in zshrs but not in zsh, dispatched
+in-process, with no fork.
+.TP
+.B arch
+Print the machine architecture (uname \-m equivalent): \fBx86_64\fR, \fBarm64\fR, \fBaarch64\fR, etc.
+.TP
+.B async
+Run a shell command string on the worker pool and print a job ID at once. \fBid=$(async 'cmd args')\fR; collect the output and status later with \fBawait $id\fR.
+.TP
+.B await
+Block until the async job with the given ID finishes, print its captured stdout and return its exit status. \fBawait $id\fR; the ID is required.
+.TP
+.B barrier
+Run commands in parallel and wait for all of them. \fBbarrier 'cmd1' ::: 'cmd2' ::: 'cmd3'\fR; returns the highest exit status.
+.TP
+.B base64
+Encode / decode Base64. \fB\-d\fR decodes; \fB\-w0\fR no line wrap. coreutils drop\-in.
+.TP
+.B caller
+Bash\-compatible \fBcaller\fR builtin. With no arg or 0: prints \fBLINE FUNC\fR for the current frame; with N>0: \fBLINE FUNC FILE\fR for the Nth call\-stack frame.
+.TP
+.B cdreplay
+Replay the \fBcompdef\fR calls deferred while completion was not yet initialised (zinit turbo mode). \fBcdreplay [\-q]\fR; \fB\-q\fR replays quietly.
+.TP
+.B cksum
+Print CRC32 checksum + byte count of each file. coreutils drop\-in.
+.TP
+.B comm
+Compare two sorted files line\-by\-line. \fB\-1\fR / \fB\-2\fR / \fB\-3\fR suppress columns. coreutils drop\-in.
+.TP
+.B compgen
+Bash\-compatible word generator. \fBcompgen \-W 'foo bar baz' fo\fR \(-> \fBfoo\fR. Used by bash\-completion scripts ported to zshrs.
+.TP
+.B cut
+Extract fields or character ranges. \fB\-d':' \-f1,3\fR / \fB\-c5\-10\fR. coreutils drop\-in.
+.TP
+.B date
+Print or set the system date. \fB+%FORMAT\fR strftime; \fB\-d 'rel'\fR parse relative; \fB\-u\fR UTC. coreutils drop\-in.
+.TP
+.B dbview
+Dump the local zshrs SQLite mirror tables (autoload bodies, completion mirror, history FTS). Mirrors only &mdash; the authoritative cache is the rkyv\-mmap'd shard set; SQLite is hydrated read\-only for SQL/\fBdbview\fR inspection. \fBdbview \-\-table autoloads\fR filters by table.
+.TP
+.B dircolors
+Emit \fBLS_COLORS\fR from a \fB.dircolors\fR file. coreutils drop\-in.
+.TP
+.B doctor
+Diagnostic report of shell health \(em cache stats, autoload coverage, fpath sanity, daemon presence, memory footprint, recent error summary. zshrs\-only.
+.TP
+.B env
+Run a command in a modified environment, or print the current environment. \fBenv \-i\fR empties; \fBenv VAR=val cmd\fR sets. coreutils drop\-in.
+.TP
+.B factor
+Print prime factors. \fBfactor 60\fR \(-> \fB60: 2 2 3 5\fR. coreutils drop\-in.
+.TP
+.B find
+Walk the filesystem and print / act on matches. Supports \fB\-name\fR/\fB\-type\fR/\fB\-mtime\fR/\fB\-exec\fR. coreutils drop\-in (subset).
+.TP
+.B fold
+Wrap each input line to a width. \fB\-w N\fR width, \fB\-s\fR break at spaces. coreutils drop\-in.
+.TP
+.B hashinfo
+Print hash\-table statistics for the shell's internal tables (the ZSH_HASH_DEBUG builtin of zsh).
+.TP
+.B head
+Print the first N lines (\fB\-n N\fR) or bytes (\fB\-c N\fR) of each file. coreutils drop\-in.
+.TP
+.B help
+Print help for a builtin. \fBhelp cd\fR shows the cd usage. zshrs\-only.
+.TP
+.B hostname
+Print the system hostname. \fB\-s\fR short, \fB\-f\fR FQDN.
+.TP
+.B id
+Print user / group IDs. \fB\-u\fR user only, \fB\-g\fR group only, \fB\-n\fR names. coreutils drop\-in.
+.TP
+.B intercept
+Register an AOP intercept. \fBintercept before|after|around <cmd> { body }\fR runs \fBbody\fR around every invocation of \fB<cmd>\fR. The body is stored as source and compiled on each fire. \fB$INTERCEPT_NAME\fR, \fB$INTERCEPT_ARGS\fR, \fB$INTERCEPT_CMD\fR are bound; \fBafter\fR adds \fB$INTERCEPT_MS\fR, \fB$INTERCEPT_US\fR, \fB$INTERCEPT_STATUS\fR. zshrs\-only.
+.TP
+.B intercept_proceed
+Inside an \fBaround\fR intercept body, invoke the underlying command. Required so the intercept doesn't shadow the call permanently.
+.TP
+.B logname
+Print the user's login name. coreutils drop\-in.
+.TP
+.B mem
+Print memory\-allocator statistics (the ZSH_MEM_DEBUG builtin of zsh).
+.TP
+.B mkfifo
+Create named pipes (FIFOs). \fBmkfifo path ...\fR. coreutils drop\-in.
+.TP
+.B mktemp
+Create a temp file or directory with a unique name. \fB\-d\fR directory, \fB\-p DIR\fR parent. coreutils drop\-in.
+.TP
+.B nameref
+Declare a ksh93\-style named reference; same handler as \fBtypeset \-n\fR.
+.TP
+.B nice
+Run a command with adjusted scheduling priority. \fBnice \-n 10 cmd\fR. coreutils drop\-in.
+.TP
+.B nl
+Number lines. \fB\-b a\fR numbers all, \fB\-w N\fR field width. coreutils drop\-in.
+.TP
+.B nproc
+Print the number of processing units available. \fB\-\-all\fR ignores affinity.
+.TP
+.B patdebug
+Dump the compiled form of a pattern (the ZSH_PAT_DEBUG builtin of zsh). \fBpatdebug [\-p] PATTERN\fR.
+.TP
+.B peach
+Parallel for\-each on the worker pool: run the template once per item with \fB{}\fR replaced by the item, printing output as each finishes. \fBpeach 'convert {} {}.png' *.svg\fR.
+.TP
+.B pgrep
+Print PIDs of processes matching a pattern. \fB\-f\fR matches full command line.
+.TP
+.B pmap
+Parallel map on the worker pool: run the template once per item with \fB{}\fR replaced by the item, printing output in input order. \fBpmap 'gzip {}' *.log\fR. Not the process memory\-map command of the same name.
+.TP
+.B printenv
+Print the value of one or more environment variables, or all if none given. coreutils drop\-in.
+.TP
+.B profile
+Profile command execution in\-process with nanosecond timing. \fBprofile CMD...\fR profiles a command line, \fBprofile \-s SCRIPT\fR a script string, \fBprofile \-f FUNC [ARGS]\fR a function call; \fB\-\-dump\fR shows and \fB\-\-clear\fR resets the accumulated data.
+.TP
+.B provenance
+Value lineage over bytecode execution. \fBprovenance \-m NAME\fR arms tracking for a parameter; \fBprovenance NAME\fR then prints where its bytes came from (\fB$(...)\fR, \fB<(...)\fR, glob, heredoc, an earlier assignment) and every bytecode op that produced or consumed them \(em \fBassign\fR, \fBexpand\fR, \fBconcat\fR, \fBexec\fR, \fBcall\fR, \fBunset\fR \(em each with its \fB$LINENO\fR. \fB\-j\fR emits JSON, \fB\-u\fR untracks, \fB\-c\fR clears. Records nothing until armed; disable entirely with \fB[provenance] enabled = false\fR in \fB~/.zshrs/zshrs.toml\fR or \fBZSHRS_PROVENANCE=0\fR.
+.TP
+.B realpath
+Resolve symlinks and \fB.\fR / \fB..\fR to a canonical absolute path. coreutils drop\-in.
+.TP
+.B rev
+Reverse each input line character\-by\-character. coreutils drop\-in.
+.TP
+.B run_tests
+Alias for \fBztest_run\fR \(em print the per\-block test summary and roll the per\-block counters into the run\-wide totals. Returns 0 on all\-pass, 1 if any assertion failed. Port of strykelang's \fBtest_run\fR / \fBrun_tests\fR builtin pair.
+.TP
+.B seq
+Print a sequence of numbers. \fBseq 1 10\fR / \fBseq 1 2 10\fR / \fBseq \-w 1 10\fR. coreutils drop\-in.
+.TP
+.B sha256sum
+Print or check SHA\-256 digests. \fB\-c FILE\fR checks. coreutils drop\-in.
+.TP
+.B shuf
+Shuffle input lines. \fB\-n N\fR limit, \fB\-e ITEM...\fR shuffle args, \fB\-i LO\-HI\fR shuffle range. coreutils drop\-in.
+.TP
+.B sleep
+Pause for the given duration. \fBsleep 1\fR, \fBsleep 0.5\fR, \fBsleep 1m\fR. coreutils drop\-in.
+.TP
+.B sum
+BSD/sysv checksum + 1K\-block count. coreutils drop\-in.
+.TP
+.B tac
+Concatenate files in reverse line order. coreutils drop\-in.
+.TP
+.B tail
+Print the last N lines (\fB\-n N\fR) or follow appends (\fB\-f\fR). coreutils drop\-in.
+.TP
+.B tee
+Copy stdin to stdout AND to each named file. \fB\-a\fR append. coreutils drop\-in.
+.TP
+.B touch
+Create a file or update its mtime. \fB\-d STR\fR set time, \fB\-r REF\fR copy from REF. coreutils drop\-in.
+.TP
+.B tput
+Terminal\-capability query. \fBtput cols\fR, \fBtput setaf 1\fR. Reads \fB$TERM\fR via terminfo.
+.TP
+.B tr
+Translate / squeeze / delete characters. \fBtr a\-z A\-Z\fR uppercases. coreutils drop\-in.
+.TP
+.B tsort
+Topological sort of partial\-order pairs read from stdin. coreutils drop\-in.
+.TP
+.B tty
+Print the controlling terminal device path, or \fBnot a tty\fR if stdin isn't one.
+.TP
+.B uname
+Print system info. \fB\-a\fR all, \fB\-s\fR kernel, \fB\-m\fR machine, \fB\-r\fR release. coreutils drop\-in.
+.TP
+.B unexpand
+Convert leading spaces to tabs. \fB\-a\fR all spaces. coreutils drop\-in.
+.TP
+.B unlink
+Remove a single file via the \fBunlink(2)\fR syscall (no \fB\-r\fR, no prompts). coreutils drop\-in.
+.TP
+.B users
+Print the login names of users currently logged in.
+.TP
+.B wc
+Count newlines, words, bytes. \fB\-l\fR lines, \fB\-w\fR words, \fB\-c\fR bytes. coreutils drop\-in.
+.TP
+.B whoami
+Print the effective user name. coreutils drop\-in.
+.TP
+.B yes
+Repeatedly output a line. \fByes\fR prints \fBy\fR forever; \fByes STR\fR prints STR. coreutils drop\-in.
+.TP
+.B zask
+Ask another shell for input through the daemon and manage the requests. \fBzask \-\-target shell:N picker|input|dialog|menu [opts]\fR, \fBzask progress\fR, \fBzask pending\fR, \fBzask take\fR, \fBzask dismiss ID | \-\-all\fR, \fBzask inbox\-clear\fR, \fBzask response ID DATA\fR.
+.TP
+.B zassert_contains
+\fBzassert_contains HAYSTACK NEEDLE [MSG]\fR \(em pass when NEEDLE is a substring of HAYSTACK. Bumps the per\-block \fBztest_pass_count\fR on success, \fBztest_fail_count\fR on failure; the OK/FAIL glyph + label print on stderr. Port of strykelang's \fBbuiltin_assert_contains\fR.
+.TP
+.B zassert_dies
+\fBzassert_dies "CMD" [MSG]\fR \(em shell\-native variant of strykelang's \fBassert_dies\fR (which takes a code ref). Runs CMD in a scratch \fBShellExecutor\fR (inheriting the host's \fBzsh_compat\fR / \fBbash_compat\fR / \fBposix_mode\fR); passes iff the command exits non\-zero or errors. Use to assert that a misuse correctly fails.
+.TP
+.B zassert_eq
+\fBzassert_eq A B [MSG]\fR \(em string equality. Like every \fBzassert_*\fR builtin, returns 0 on pass / 1 on fail and bumps the per\-block counters that \fBztest_run\fR reads.
+.TP
+.B zassert_err
+\fBzassert_err V [MSG]\fR \(em pass when V is shell\-falsy (empty *or* literal "0"). Convenient for asserting on \fB$?\fR after a command, or on a string that should be empty.
+.TP
+.B zassert_false
+\fBzassert_false V [MSG]\fR \(em alias of \fBzassert_err\fR.
+.TP
+.B zassert_ge
+\fBzassert_ge A B [MSG]\fR \(em pass iff numeric A >= B. Inputs are \fBtrim().parse::<f64>()\fR'd; non\-numeric inputs default to 0.
+.TP
+.B zassert_gt
+\fBzassert_gt A B [MSG]\fR \(em pass iff numeric A > B.
+.TP
+.B zassert_le
+\fBzassert_le A B [MSG]\fR \(em pass iff numeric A <= B.
+.TP
+.B zassert_lt
+\fBzassert_lt A B [MSG]\fR \(em pass iff numeric A < B.
+.TP
+.B zassert_match
+\fBzassert_match PATTERN STRING [MSG]\fR \(em regex match. PATTERN is compiled with the \fBregex\fR crate (Rust regex syntax, not POSIX BRE/ERE \(em so \fB\ed\fR/\fB\ew\fR/\fB\es\fR work, no backreferences). Fails (rather than panics) on a bad pattern.
+.TP
+.B zassert_ne
+\fBzassert_ne A B [MSG]\fR \(em string inequality.
+.TP
+.B zassert_near
+\fBzassert_near A B [EPS [MSG]]\fR \(em floating\-point approximate equality: pass iff \fB|A \- B| <= EPS\fR. EPS defaults to \fB1e\-9\fR. Right for asserting on math results without burning on the last few ULPs.
+.TP
+.B zassert_ok
+\fBzassert_ok V [MSG]\fR \(em pass when V is shell\-truthy (non\-empty *and* not literal "0"). Use \fBzassert_eq $? 0 ...\fR for command\-success assertions; reserve \fBzassert_ok\fR for assertions on populated strings or non\-zero counts.
+.TP
+.B zassert_true
+\fBzassert_true V [MSG]\fR \(em alias of \fBzassert_ok\fR.
+.TP
+.B zbuild
+Bake one or more shell scripts into a standalone executable that runs them in order under one shell. \fBzbuild \-\-in a.zsh b.zsh \-\-out app\fR; \fB\-\-native\fR compiles to native code with Cranelift.
+.TP
+.B zcache
+Inspect and manage the zshrs caches: daemon shards, the catalog and the caches the shell writes itself. \fBzcache info\fR, \fBzcache clean [all|shards|shard NAME|index|shell|log|catalog|stats|zwc|zcompdump|legacy] [\-\-dry\-run]\fR, \fBzcache verify\fR, \fBzcache view TARGET\fR, \fBzcache export\fR, \fBzcache import\fR, \fBzcache daemon status|stop|restart\fR.
+.TP
+.B zcmd\-result
+Responder side of \fBzsend \-\-wait\fR: report the exit status and output of a command a \fBcmd:execute\fR event delivered. \fBzcmd\-result \-\-id DELIVERY_ID [\-\-exit\-code N] [\-\-stdout TEXT] [\-\-stderr TEXT]\fR.
+.TP
+.B zcomplete
+Ask the daemon's \fBcomplete\fR op for candidates (commands, handlers, history) matching a command\-line prefix and print the JSON reply. \fBzcomplete PREFIX [\-\-limit N]\fR.
+.TP
+.B zhistory
+Read and write the daemon's cross\-shell history store (history.db). \fBzhistory append LINE [\-\-exit\-code N] [\-\-cwd DIR]\fR, \fBzhistory query [\-\-filter PAT] [\-\-mode match|fts|like|prefix|exact] [\-\-cwd DIR] [\-\-limit N]\fR, \fBzhistory count\fR.
+.TP
+.B zlock
+Named cross\-process locks held by the daemon; a lock is released when its holder dies. \fBzlock try NAME\fR, \fBzlock acquire NAME [\-\-timeout S]\fR, \fBzlock release NAME TOKEN\fR, \fBzlock list\fR.
+.TP
+.B zlog
+Inspect and manage the zshrs log files under ~/.zshrs. \fBzlog\fR (newest log path), \fBzlog tail [\-n N]\fR, \fBzlog grep REGEX\fR, \fBzlog clear\fR, \fBzlog stats\fR, \fBzlog level DIRECTIVE\fR, \fBzlog rotate\fR.
+.TP
+.B zpublish
+Publish an event on the daemon's pub/sub bus from this shell's scope. \fBzpublish TOPIC [DATA | \-\-json JSON]\fR; subscribers receive it via \fBzsubscribe\fR.
+.TP
+.B zsleep
+Sleep for a possibly fractional number of seconds. \fBzsleep 0.25\fR; exactly one argument, no options.
+.TP
+.B zsource
+Ask the daemon's compiled\-file registry whether a sourced file's cached body is a hit, stale or a miss. \fBzsource PATH\fR, \fBzsource \-\-stat PATH\fR.
+.TP
+.B zsuggest
+Ask the daemon for a suggestion completing a command\-line prefix. \fBzsuggest PREFIX [\-\-cwd DIR]\fR.
+.TP
+.B zsync
+Move canonical subsystem state (aliases, functions, options, ...) between this shell and the daemon. \fBzsync up SUBSYSTEM KEY VALUE\fR, \fBzsync up \-\-all\fR, \fBzsync pull SUBSYSTEM\fR, \fBzsync diff SUBSYSTEM \-\-overlay JSON\fR, \fBzsync watch SUBSYSTEM...\fR.
+.TP
+.B ztest_run
+Print the per\-block test summary (green OK All N passed / red FAIL M of N failed) and roll the per\-block \fBztest_pass_count\fR / \fBztest_fail_count\fR / \fBztest_skip_count\fR into the run\-wide \fB_total\fR counters, then zero the per\-block counters so a second test block in the same file starts fresh. A sticky \fBztest_run_failed\fR flag latches when any block reports failures \(em the \fB\-\-ztest\fR worker reads it to exit non\-zero even if the script ends with \fBexit 0\fR. Alias: \fBrun_tests\fR. Returns 0 on all\-pass, 1 if any assertion failed.
+.TP
+.B ztest_skip
+\fBztest_skip MSG\fR \(em bump the per\-block skip counter and emit a yellow SKIP marker on stderr. Typical use: gate an assertion behind a compat condition using shell short\-circuit (\fB(( cond )) || { ztest_skip "needs X"; continue; }\fR).
+.TP
+.B zunsubscribe
+Cancel a \fBzsubscribe\fR subscription. \fBzunsubscribe SCOPE.TOPIC\fR or \fBzunsubscribe \-\-id SUBSCRIPTION_ID\fR.
+.TP
+.B zuntag
+Remove tags from this shell's daemon session, or every tag with \fB\-\-all\fR, and print the remaining list. Inverse of \fBztag\fR.
+.TP
+.B zwhere
+Query the daemon's definitions catalog for which shell defined an alias, function, parameter, key binding, ... and where. \fBzwhere [KIND] [NAME] [\-\-prefix P] [\-\-shell\-id N] [\-\-limit N]\fR; \fBzwhere \-\-kinds\fR lists the kinds.
 .SH "OPTIONS"
 .B setopt
 turns options on;
@@ -1945,6 +2234,18 @@ sits on top of it.
 .SH "ENVIRONMENT"
 Standard zsh-recognised variables (see SPECIAL PARAMETERS) plus
 zshrs additions:
+.TP
+.B HELPDIR
+Directory of \fBrun\-help\fR's help database. Unless already set, zshrs points it at
+.IR ~/.zshrs/help ,
+where the bundled copy is materialised (zsh's own \fBrun\-help\fR hardcodes the
+help path of whichever zsh built it). A shell parameter only; never exported.
+Not set under \fB\-\-zsh\fR.
+.TP
+.B MANPATH\fR, \fBINFOPATH
+Extended with \fI~/.zshrs/man\fR and \fI~/.zshrs/info\fR plus an empty trailing
+entry, so the bundled zsh and zshrs pages (\fBman zshall\fR, \fBman zshrsall\fR)
+resolve without hiding the system's own. Not set under \fB\-\-zsh\fR.
 .TP
 .B ZSHRS_CACHE
 Override the cache root. Default:

@@ -917,13 +917,28 @@ fn bundled_docs_materialise_and_publish_search_paths() {
     let man1 = tmp.join(".zshrs").join("man").join("man1");
     let info = tmp.join(".zshrs").join("info");
     let manpath = run("print $MANPATH", None);
-    for page in ["zsh.1", "zshall.1", "zshbuiltins.1", "zshexpn.1", "zshmisc.1"] {
+    for page in [
+        "zsh.1",
+        "zshall.1",
+        "zshbuiltins.1",
+        "zshexpn.1",
+        "zshmisc.1",
+        "zshrs.1",
+        "zshrsall.1",
+    ] {
         assert!(
             man1.join(page).is_file(),
             "{page} missing from {}",
             man1.display()
         );
     }
+    // `man zshall` must carry the zshrs superset: the shipped copy `.so`-includes
+    // zshrsall.1 and lists it in OVERVIEW.
+    let zshall = std::fs::read_to_string(man1.join("zshall.1")).expect("read zshall.1");
+    assert!(
+        zshall.contains(".so man1/zshrsall.1"),
+        "bundled zshall.1 must include zshrsall.1"
+    );
     for f in ["zsh.info", "zsh.info-1"] {
         assert!(
             info.join(f).is_file(),

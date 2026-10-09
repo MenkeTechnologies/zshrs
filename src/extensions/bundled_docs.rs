@@ -11,7 +11,9 @@
 //! zsh installed — while the pages document the language zshrs itself
 //! implements. `build.rs` packs `vendor/zsh-doc` into the binary and this
 //! module writes it to `~/.zshrs/{man,info}` on first run, then puts those
-//! directories on `MANPATH` / `INFOPATH`.
+//! directories on `MANPATH` / `INFOPATH`. `build.rs` also bundles
+//! `man/man1/zshrs*.1` and splices `.so man1/zshrsall.1` into the shipped
+//! `zshall.1`, so `man zshall` carries the zshrs superset.
 //!
 //! Under `--zsh` / `--zsh-compat` none of this is published (no `MANPATH` /
 //! `INFOPATH` entries, no `HELPDIR`): the drop-in matches zsh, which sets none

@@ -30,6 +30,7 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/data/fake_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=vendor/zsh");
+    println!("cargo:rerun-if-changed=man/man1");
     println!("cargo:rerun-if-changed=functions");
     println!("cargo:rerun-if-changed=completions");
     println!("cargo:rerun-if-changed=../arb/completions");
@@ -775,6 +776,38 @@ fn bundle_zsh_functions() {
     );
 }
 
+/// Make the bundled `zshall.1` carry the zshrs superset: list `zshrsall` in
+/// its OVERVIEW and `.so`-include `man1/zshrsall.1` after the last zsh page,
+/// so `man zshall` documents everything zshrs adds on top of zsh. The
+/// vendored file on disk is untouched; only the shipped copy is spliced.
+fn splice_zshrsall_into_zshall(files: &mut [(String, Vec<u8>)]) {
+    const LAST_ZSH_PAGE: &str = ".so man1/zshcontrib.1\n";
+    const OVERVIEW_ANCHOR: &str = "\\fIzshcontrib\\fP";
+    let Some((_, body)) = files.iter_mut().find(|(n, _)| n == "man/man1/zshall.1") else {
+        return;
+    };
+    let text = String::from_utf8_lossy(body).into_owned();
+    if text.contains("zshrsall") {
+        return;
+    }
+    let mut out = text.replacen(
+        LAST_ZSH_PAGE,
+        &format!("{LAST_ZSH_PAGE}.so man1/zshrsall.1\n"),
+        1,
+    );
+    // Add the OVERVIEW list entry after the zshcontrib `.TP` item.
+    if let Some(at) = out.find(OVERVIEW_ANCHOR) {
+        if let Some(nl) = out[at..].find('\n') {
+            let end = at + nl + 1;
+            out.insert_str(
+                end,
+                ".TP\n\\fIzshrsall\\fP      Everything zshrs adds on top of zsh\n",
+            );
+        }
+    }
+    *body = out.into_bytes();
+}
+
 /// Pack zsh's man and info pages into a zstd blob for
 /// `crate::bundled_docs` to materialise into `~/.zshrs/{man,info}`.
 ///
@@ -816,7 +849,8 @@ fn bundle_zsh_docs() {
     // compressed, vs 0.10 for `help`), and it is the one whose absence is
     // least load-bearing: these are ZSH's pages, and a host that wants
     // them can install zsh. zshrs's OWN pages are `man/man1/zshrs.1` and
-    // `zshrsall.1`, a separate tree that still ships. A git or Homebrew
+    // `zshrsall.1`, bundled below from `man/man1` in every build and
+    // `.so`-included by the shipped `zshall.1`. A git or Homebrew
     // build has both trees and bundles them exactly as before, so this
     // only affects `cargo install zshrs`.
     //
@@ -858,6 +892,21 @@ fn bundle_zsh_docs() {
             panic!("vendor/zsh/{src} is missing or empty -- zsh's {src} pages must be vendored");
         }
     }
+    // zshrs's own pages (`zshrs.1`, `zshrsall.1`) live outside vendor/zsh
+    // and ship in every build, crates.io included.
+    if let Ok(rd) = fs::read_dir("man/man1") {
+        for e in rd.flatten() {
+            let p = e.path();
+            let Some(base) = p.file_name().and_then(|n| n.to_str()) else { continue };
+            if base.starts_with('.') || !p.is_file() {
+                continue;
+            }
+            if let Ok(body) = fs::read(&p) {
+                files.push((format!("man/man1/{base}"), body));
+            }
+        }
+    }
+    splice_zshrsall_into_zshall(&mut files);
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut raw: Vec<u8> = Vec::new();
     for (name, body) in &files {
