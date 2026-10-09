@@ -24083,6 +24083,18 @@ pub fn paramsubst(
             }
         };
         let quote_one = |s: &str| -> String {
+            // c:3811-3819 / c:3859-3864 — every style above QT_BACKSLASH
+            // (and `q+` QT_QUOTEDZPUTS) untokenizes the value first, so a
+            // lexer token such as Equals reaches quotestring as its plain
+            // character and is quoted by the `ispecial` gate. Plain `q`
+            // (c:3833, c:3876) hands quotestring the tokens untouched.
+            let untok;
+            let s = if quotemod > 0 && quotetype > QT_BACKSLASH {
+                untok = crate::ported::lex::untokenize(s);
+                untok.as_str()
+            } else {
+                s
+            };
             // c:4030
             if quotetype == QT_SINGLE_OPTIONAL {
                 // c:Src/utils.c:6181-6190 — QT_SINGLE_OPTIONAL sets

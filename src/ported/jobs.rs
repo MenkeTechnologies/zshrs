@@ -1945,22 +1945,14 @@ pub fn deletejob(jobtab: &mut [job], jn: usize, disowning: bool) {
     // are simply dropped.
     deletefilelist(&mut jobtab[jn], disowning);
     // c:1515-1518 — `if (jn->stat & STAT_ATTACH) { attachtty(mypgrp);
-    //                adjustwinsize(0); }`. `attachtty(mypgrp)` is the
-    // canonical `tcsetpgrp(0, mypgrp)` (the same pattern used inline at
-    // jobs.rs:2503/2527). `adjustwinsize(0)` re-reads $LINES/$COLUMNS
-    // from TIOCGWINSZ; on Rust we route through the canonical utils
-    // adjustcolumns/adjustlines which lazy-evaluate on demand, so the
-    // call is a no-op (the next adjust* read picks up the new pgrp).
+    //                adjustwinsize(0); }`.
     if (jobtab[jn].stat & STAT_ATTACH) != 0 {
         // c:1515
         #[cfg(unix)]
-        unsafe {
-            let pgrp = crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed);
-            if pgrp > 0 {
-                libc::tcsetpgrp(0, pgrp); // c:1516 attachtty(mypgrp)
-            }
+        {
+            crate::ported::utils::attachtty(crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed)); // c:1516
+            crate::ported::utils::adjustwinsize(0); // c:1517
         }
-        // c:1517 — `adjustwinsize(0);` — Rust adjust* are lazy-read.
     }
     // c:1519-1523 — `if (jn->stat & STAT_SUPERJOB) { job jno = jobtab +
     //                jn->other; if (jno->stat & STAT_SUBJOB)
@@ -4665,13 +4657,13 @@ pub fn bin_kill(
                 }
                 Err(_) => {
                     // c:3038-3040 — `} else if (!isanum(*argv)) {
-                    //   zwarnnam("kill", "invalid pid: %s", *argv);
+                    //   zwarnnam("kill", "illegal pid: %s", *argv);
                     //   returnval++; }`. C ACCUMULATES one failure per bad
                     // operand and the builtin's status is that count
                     // (c:3067 `return returnval < 126 ? returnval : 1;`), so
                     // `kill a b c` exits 3. Assigning 1 collapsed every
                     // multi-operand failure to 1.
-                    zwarnnam(nam, &format!("invalid pid: {}", arg));
+                    zwarnnam(nam, &format!("illegal pid: {}", arg));
                     returnval += 1; // c:3040 returnval++
                 }
             }
@@ -4749,13 +4741,13 @@ pub fn bin_kill(
                 }
                 Err(_) => {
                     // c:3038-3040 — `} else if (!isanum(*argv)) {
-                    //   zwarnnam("kill", "invalid pid: %s", *argv);
+                    //   zwarnnam("kill", "illegal pid: %s", *argv);
                     //   returnval++; }`. C ACCUMULATES one failure per bad
                     // operand, and the builtin's status is that COUNT
                     // (c:3067), so `kill a b c` exits 3 and `kill -INT a b c`
                     // exits 3. Assigning 1 collapsed every multi-operand
                     // failure to a single 1.
-                    zwarnnam(nam, &format!("invalid pid: {}", arg));
+                    zwarnnam(nam, &format!("illegal pid: {}", arg));
                     returnval += 1; // c:3040 returnval++
                 }
             }

@@ -869,7 +869,7 @@ pub(crate) fn mathevall(prec_tp: prec_type) -> Result<mnumber, String> {
         } else {
             // c:1498-1499 — `if (*junk) zerr("bad math expression:
             // illegal character: %c", *junk);`
-            return Err(format!("bad math expression: invalid character: {}", c));
+            return Err(format!("bad math expression: illegal character: {}", c));
         }
     }
 
@@ -3221,7 +3221,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         }
         if let Some(c) = rest.chars().next() {
             // c:1094-1095
-            crate::ported::utils::zerr(&format!("bad math expression: invalid character: {}", c));
+            crate::ported::utils::zerr(&format!("bad math expression: illegal character: {}", c));
             return None;
         }
         Some(out)
