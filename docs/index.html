@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zshrs — the most powerful shell ever created. No-fork architecture, AOP intercept, worker thread pool, bytecode caching, fusevm compiled execution.">
+  <meta name="description" content="zshrs — a Rust rewrite of zsh. No-fork architecture, AOP intercept, worker thread pool, bytecode caching, fusevm compiled execution.">
   <title>zshrs — Documentation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -144,7 +144,7 @@
 
     <main class="tutorial-main">
       <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZSHRS REFERENCE</h2>
-      <p class="tutorial-subtitle">The most powerful shell ever created. No-fork architecture, AOP intercept, worker thread pool, bytecode caching, fusevm compiled execution.</p>
+      <p class="tutorial-subtitle">A Rust rewrite of zsh. No-fork architecture, AOP intercept, worker thread pool, bytecode caching, fusevm compiled execution.</p>
 
       <!-- ════════════════════════════════════════════════════════════ -->
       <section class="tutorial-section">
@@ -412,13 +412,13 @@
 
   ┌─────────────────────────────────────────────────────┐
   │                    REPL / ZLE                        │
-  │   reedline + syntax highlighting + autosuggestions   │
+  │   native ZLE + syntax highlighting + autosuggestions │
   └──────────────────────┬──────────────────────────────┘
                          │
   ┌──────────────────────▼──────────────────────────────┐
-  │       ShellExecutor (vm_helper.rs, 7.9K lines)       │
+  │       ShellExecutor (vm_helper.rs)                   │
   │   parser ─► compiler ─► fusevm bytecode dispatch     │
-  │    245 builtins │ AOP intercept │ trap/signal        │
+  │    builtins │ AOP intercept │ trap/signal            │
   └──────┬─────────┬─────────┬─────────┬────────────────┘
          │         │         │         │
   ┌──────▼───┐ ┌───▼────┐ ┌─▼──────┐ ┌▼──────────────┐
@@ -2289,7 +2289,7 @@ intercept list</div>
         to native code and the first to persist its bytecode across processes. Shell scripts
         at machine code speed. Achieved in alpha.</p>
 
-        <p class="motto">THE FIRST JIT-COMPILED UNIX SHELL. THE MOST POWERFUL SHELL EVER CREATED.</p>
+        <p class="motto">A RUST REWRITE OF ZSH.</p>
       </section>
 
     </main>

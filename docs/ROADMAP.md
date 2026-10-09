@@ -132,7 +132,7 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - `zle/main.rs:496` (hook system stub): implement `precmd`/`preexec`/`chpwd` hook dispatch — call `executor.hook_functions[name]` via `execute_command` (now bytecode).
 - `zle/main.rs:553` (user widget execution): when `bindkey '^X^E' my-widget` is bound, hitting that key invokes `my-widget` via `execute_command(ShellCommand::Simple([Word::Literal("my-widget")]))`.
 - `zle/main.rs:646` (prompt expansion): use `expand_prompt` from `prompt.rs` which exists; the gap is the wiring.
-- `zle/hist.rs:196` (incremental search UI): real `Ctrl+R` impl via reedline.
+- `zle/hist.rs:196` (incremental search UI): real `Ctrl+R` impl in the native ZLE.
 - Completion: when user types Tab in line editor, fire bound widget which calls the user's completion function (via `compdef name handler`); handler runs through bytecode VM, populates `executor.comp_matches`, line editor reads them.
 - **Tests:** keypress simulation tests that bindkey a widget, simulate the keystroke, assert widget ran and side effects landed.
 - **Acceptance:** tab-completing `git ` in zshrs produces the same matches as zsh (both backed by zsh-completions corpus).
@@ -317,7 +317,7 @@ Each G item ships with its own tests. Phase J is the additional sweep beyond per
 These features absorb the best of other shells. None ship before Phase G is done.
 
 ### L1 — Fish-style syntax highlighting in ZLE
-- Already partially in `fish/` subtree; finish wiring into reedline highlighter.
+- Already partially in `fish/` subtree; finish wiring into the native ZLE highlighter.
 
 ### L2 — Fish-style autosuggestions
 - History-based; SQLite history backend already exists; just needs the inline-render hook.
