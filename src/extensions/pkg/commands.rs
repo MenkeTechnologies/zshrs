@@ -270,7 +270,7 @@ pub fn load(name: Option<&str>) -> PkgResult<()> {
             // 1. Already installed under this name → load from the store
             //    (fast: native = dlopen the mmap'd cdylib; no reinstall).
             if let Some(entry) = index.find(n) {
-                return load_entry(&store, entry);
+                return load_or_reinstall(&store, entry);
             }
             // 2. `n` is a SOURCE spec (owner/repo, github:…, path:…) — is a
             //    plugin from that source already installed? The index keys on
@@ -278,7 +278,7 @@ pub fn load(name: Option<&str>) -> PkgResult<()> {
             //    the plugin's `znative.toml` name (`zshrs-forgit` → `forgit`).
             if let Some(label) = resolver::source_label(n) {
                 if let Some(entry) = index.packages.iter().find(|p| p.source == label) {
-                    return load_entry(&store, entry);
+                    return load_or_reinstall(&store, entry);
                 }
                 // 3. Not in the store yet → install-on-first-use, then load.
                 //    This is what makes `znative load owner/repo` in `.zshrc`
@@ -330,6 +330,22 @@ fn source_to_spec(source: &str) -> String {
     } else {
         // `github:owner/repo` and `git+URL` are already valid `add` specs.
         source.to_string()
+    }
+}
+
+/// Load an index entry. When its store copy is gone (directory removed behind
+/// the index's back), reinstall from the recorded source instead of failing
+/// in `dlopen` / `source` on a path that no longer exists.
+fn load_or_reinstall(store: &Store, p: &InstalledPlugin) -> PkgResult<()> {
+    let present = if p.kind == "native" {
+        store.package_dir(&p.name, &p.version).join(&p.lib).is_file()
+    } else {
+        store.has_package(&p.name, &p.version)
+    };
+    if present {
+        load_entry(store, p)
+    } else {
+        add(&source_to_spec(&p.source))
     }
 }
 

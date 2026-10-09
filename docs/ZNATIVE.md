@@ -146,6 +146,9 @@ A bare `znative load` (no argument) loads everything already in the store — ha
 if you prefer to `znative add` interactively and keep just one line in `.zshrc`. A
 complete example startup file is at [`examples/zshrc`](../examples/zshrc).
 
+If a named plugin is listed in the index but its store directory is gone, `znative load NAME`
+reinstalls it from the recorded source instead of failing.
+
 ## Examples
 
 ```sh
