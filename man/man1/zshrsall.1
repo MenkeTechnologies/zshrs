@@ -2426,7 +2426,8 @@ emits the same corpus as HTML;
 lists every canonical name, one per line.
 .TP
 .B \-\-dump\-plugins
-JSON for every sourced plugin, grouped by the manager that installed it.
+JSON for every plugin the most recent recorded session sourced or put on fpath, grouped by the manager that installed it.
+The daemon writes the list to \fIplugins.db\fR when it ingests a recorder shard; the output is empty until one has been ingested.
 .TP
 .B \-\-doctor
 Full diagnostic report; useful when filing issues.

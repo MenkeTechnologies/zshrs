@@ -1079,10 +1079,12 @@ zshrs --lsp                  # LSP server over stdio
 zshrs --dap HOST:PORT        # DAP debugger; TCP connect-back to IDE listener
 zshrs --dap                  # DAP debugger over stdio (executable-spawned clients)
 zshrs --dump-reflection      # JSON dump of builtins / keywords / options
-zshrs --dump-plugins         # JSON dump of every sourced plugin grouped
-                             # by manager (zinit / oh-my-zsh / prezto /
-                             # antidote / antigen / zplug / loose);
-                             # feeds the IDE's External Libraries view
+zshrs --dump-plugins         # JSON dump of the plugins the last recorded
+                             # session sourced, grouped by manager (zinit /
+                             # oh-my-zsh / prezto / antidote / antigen /
+                             # zplug); the daemon fills plugins.db from each
+                             # recorder shard, so it is empty until one is
+                             # ingested; feeds the IDE's External Libraries view
 zshrs --docs <name>          # render the LSP hover card for <name>
 zshrs --fmt [-w] [-t] [-i N] [FILE…]
                              # format zsh source: block-structure
