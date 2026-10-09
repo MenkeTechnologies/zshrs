@@ -14413,7 +14413,7 @@ pub fn bin_break(
                     if ANCESTOR_LOOPS.load(Relaxed) != 0 {
                         "not in same subshell as first enclosing loop" // c:5802
                     } else {
-                        "not in for, while, until, select, or repeat loop" // c:5803
+                        "not in while, until, select, or repeat loop" // c:5803 (5.9.2; the dev tree adds "for")
                     },
                 );
                 return 1; // c:5804
@@ -15257,17 +15257,7 @@ pub fn bin_dot(
     // FS_SOURCE frame just below) — only the eval-context entry was absent.
     // Popped on every return path by the guard. Bug #1067.
     let sync_eval_ctx = |stack: &[String]| {
-        let joined = stack.join(":");
-        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut("zsh_eval_context") {
-                pm.u_arr = Some(stack.to_vec());
-                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-            }
-            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
-                pm.u_str = Some(joined);
-                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-            }
-        }
+        crate::ported::exec::EvalContextFrame::sync(stack);
     };
     if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
         ctx.push("file".to_string());
@@ -18290,7 +18280,17 @@ pub fn bin_let(
     for expr in argv {
         // c:7474
         match matheval(expr) {
-            Ok(v) => val = v, // c:7475
+            Ok(v) => {
+                // c:7475 — `val = matheval(*argv++)`; matheval returns zero when
+                // the evaluation raised an error (math.c: `if (errflag) { xyval.type
+                // = MN_INTEGER; xyval.u.l = 0; }`), e.g. an unset parameter under
+                // NO_UNSET still yields a value from the expression walker here.
+                val = if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
+                    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                } else {
+                    v
+                };
+            }
             Err(msg) => {
                 // c:Src/math.c:checkunary zerr side-effect — the C
                 // path writes the parse-error string to stderr via
@@ -18298,19 +18298,16 @@ pub fn bin_let(
                 // captures the message in Err and bin_let was
                 // discarding it via `if let Ok(...)`. Surface it.
                 zerr(&msg);
-                // Continue loop; errflag set below resets to local 2.
+                // c:7475 — a failed matheval yields zero_mnumber.
+                val = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
             }
         }
     }
-    // c:7475-7479 — math errors are non-fatal in let; CLEAR
-    // ERRFLAG_ERROR and return 2 (upstream 54285; C01arith.ztst:497
-    // `let noexist==0` under NO_UNSET expects 2). Released zsh <= 5.9.2
-    // predates 54285 and returns 1.
-    if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
-        // c:7476
-        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
-        return 2; // c:7479
-    }
+    // c:7476-7478 (5.9.2) — `/* Errors in math evaluation in let are
+    // non-fatal. */ errflag &= ~ERRFLAG_ERROR;` then the status comes from
+    // the value below; the dev tree's upstream 54285 returns 2 here, 5.9.2
+    // returns 1 because the failed evaluation yields zero.
+    errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
     // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
     if val.type_ == MN_INTEGER {
         // c:7482

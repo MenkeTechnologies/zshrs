@@ -3221,16 +3221,8 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     // zwarn("defining function based on alias `%s'",
                     // hasalias); YYERROR(oecused); }`
                     //
-                    // c:2064-2066 — `herrflush(); if (noerrs != 2) errflag |=
-                    // ERRFLAG_ERROR;` before YYERROR: with errflag set, the caller's
-                    // yyerror (c:673) stays silent (zwarn bails on errflag, c:Src/utils.c:220),
-                    // so the warning is the only diagnostic.
-                    //
-                    // `hasalias != input_hasalias()` is the "the alias body
-                    // was NOT itself a complete definition" test: when the
-                    // `()` still comes out of the same alias expansion the
-                    // two are equal and the definition is legitimate
-                    // (`alias x='f() { … }'; eval x` — A02alias.ztst:140).
+                    // 5.9.2 parse.c:2057-2061 is just `zwarn(...); YYERROR(oecused);` — no herrflush/errflag
+                    // (the dev tree adds them), so yyerror still reports `parse error near `()'` after the warning.
                     if isset(EXECOPT)
                         && hasalias.is_some()
                         && !isset(ALIASFUNCDEF)
@@ -3242,11 +3234,6 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                             "defining function based on alias `{}'",
                             hasalias.as_deref().unwrap_or("")
                         ));
-                        crate::ported::hist::herrflush(); // c:2064
-                        if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
-                            // c:2065-2066
-                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
-                        }
                         set_tok(LEXERR); // c:2067 YYERROR
                         return None;
                     }
@@ -3310,16 +3297,8 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // zwarn("defining function based on alias `%s'", hasalias);
                 // YYERROR(oecused); }`
                 //
-                // c:2064-2066 — `herrflush(); if (noerrs != 2) errflag |=
-                // ERRFLAG_ERROR;` before YYERROR: with errflag set, the caller's
-                // yyerror (c:673) stays silent (zwarn bails on errflag, c:Src/utils.c:220),
-                // so the warning is the only diagnostic.
-                //
-                // `hasalias != input_hasalias()` is the "the alias body
-                // was NOT itself a complete definition" test: when the
-                // `()` still comes out of the same alias expansion the
-                // two are equal and the definition is legitimate
-                // (`alias x='f() { … }'; eval x` — A02alias.ztst:140).
+                // 5.9.2 parse.c:2057-2061 is just `zwarn(...); YYERROR(oecused);` — no herrflush/errflag
+                // (the dev tree adds them), so yyerror still reports `parse error near `()'` after the warning.
                 if isset(EXECOPT)
                     && hasalias.is_some()
                     && !isset(ALIASFUNCDEF)
@@ -3331,11 +3310,6 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                         "defining function based on alias `{}'",
                         hasalias.as_deref().unwrap_or("")
                     ));
-                    crate::ported::hist::herrflush(); // c:2064
-                    if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
-                        // c:2065-2066
-                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
-                    }
                     set_tok(LEXERR); // c:2067 YYERROR
                     return None;
                 }

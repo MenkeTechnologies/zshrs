@@ -2024,17 +2024,7 @@ pub fn dotrap(sig: i32) -> i32 {
         // so the push belongs here. Popped on every return path by the guard.
         // Bug #1065 (trap leg).
         let sync_eval_ctx = |stack: &[String]| {
-            let joined = stack.join(":");
-            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-                if let Some(pm) = tab.get_mut("zsh_eval_context") {
-                    pm.u_arr = Some(stack.to_vec());
-                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-                }
-                if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
-                    pm.u_str = Some(joined);
-                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-                }
-            }
+            crate::ported::exec::EvalContextFrame::sync(stack);
         };
         if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
             ctx.push("trap".to_string());

@@ -9760,7 +9760,11 @@ fn test_test_lt_gt_string_comparators() {
     // COND_STRGTR (upstream 54103; C02cond.ztst:217,220). Released zsh
     // <= 5.9.2 rejected them with `condition expected: >`.
     assert_eq!(run_zshrs(r#"[ "5" \> "3" ]"#).0, 0);
-    assert_eq!(run_zshrs(r#"[ "5" \< "3" ]"#).0, 1);
+    // parse.c:2668-2673: `t0 = (b[0] == '>' || Outang) || b[0] == '<' || Inang` is true for
+    // `<` too, so the three-argument form compiles `<` to COND_STRGTR: in test/[,
+    // `5 < 3` is evaluated as `5 > 3` (the reference build agrees).
+    assert_eq!(run_zshrs(r#"[ "5" \< "3" ]"#).0, 0);
+    assert_eq!(run_zshrs(r#"[ "3" \< "5" ]"#).0, 1);
     assert_eq!(run_zshrs("[ zzd '>' zzb -a e '<' x ]").0, 0);
     // An angle bracket in operand position is still a plain string.
     assert_eq!(run_zshrs(r#"[ -o \> -a ]"#).0, 0);
@@ -11010,10 +11014,10 @@ fn test_let_orphan_mul_at_op() {
     // orphan-at-start expressions like pure-binary ops with no
     // unary form (Mul, Div, Mod, Power).
     let (status, _, stderr) = run_zshrs("let \"*\"");
-    // Math-error STATUS: c:Src/builtin.c:7475-7479 `errflag &=
-    // ~ERRFLAG_ERROR; return 2;` (upstream 54285, which the ztst corpus
-    // tracks: C01arith.ztst:497). Released zsh <= 5.9.2 returns 1.
-    assert_eq!(status, 2);
+    // Math-error STATUS: zsh 5.9.2 Src/builtin.c:7316-7319 clears
+    // ERRFLAG_ERROR and returns `val == 0` = 1 (C01arith.ztst "NO_UNSET
+    // part 3"); the dev tree's upstream 54285 returns 2 instead.
+    assert_eq!(status, 1);
     assert!(stderr.contains("operand expected at `*'"), "got: {stderr}");
 }
 
@@ -11022,7 +11026,7 @@ fn test_let_orphan_div_at_op() {
     // Same orphan-binary case for Div.
     let (status, _, stderr) = run_zshrs("let \"/\"");
     // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
-    assert_eq!(status, 2);
+    assert_eq!(status, 1);
     assert!(stderr.contains("operand expected at `/'"), "got: {stderr}");
 }
 
@@ -11034,7 +11038,7 @@ fn test_let_orphan_mul_with_right_includes_remaining() {
     // context.
     let (status, _, stderr) = run_zshrs("let \"*5\"");
     // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
-    assert_eq!(status, 2);
+    assert_eq!(status, 1);
     assert!(stderr.contains("operand expected at `*5'"), "got: {stderr}");
 }
 
@@ -11046,7 +11050,7 @@ fn test_let_trailing_mul_still_end_of_string() {
     // explicitly only fires when stack.is_empty().
     let (status, _, stderr) = run_zshrs("let \"5*\"");
     // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
-    assert_eq!(status, 2);
+    assert_eq!(status, 1);
     assert!(
         stderr.contains("operand expected at end of string"),
         "got: {stderr}"
@@ -14138,7 +14142,7 @@ fn test_private_nameref_survives_callee_local_of_same_name() {
          () { typeset -a ary; local -P -n ref=ary; () { typeset ref=XX }; typeset -p ary ref }",
     );
     assert_eq!(st, 0, "stderr: {err:?}");
-    assert_eq!(out, "typeset -a ary\ntypeset -hn ref=ary\n");
+    assert_eq!(out, "typeset -a ary\ntypeset -n ref=ary\n");
 }
 
 #[test]
@@ -14185,13 +14189,13 @@ fn test_typeset_n_lists_name_of_lifted_private_reference() {
 }
 
 #[test]
-fn test_typeset_p_reports_hide_flag() {
-    // B02 "parameter hiding preserved by typeset -p": pmtypes row
-    // c:Src/params.c:6018 `{ PM_HIDE, "hide", 'h', 0 }`.
+fn test_typeset_p_omits_hide_flag() {
+    // zsh 5.9.2's pmtypes[] (Src/params.c:5783) has no PM_HIDE row, so
+    // `typeset -p` and the `typeset` listing never print the hide flag.
     let (st, out, err) =
         run_zshrs_parity("() { local -h status; typeset -p status; local -h x=1; typeset -p x; typeset +m x }");
     assert_eq!(st, 0, "stderr: {err:?}");
-    assert_eq!(out, "typeset -h status=''\ntypeset -h x=1\nlocal hide x\n");
+    assert_eq!(out, "typeset status=''\ntypeset x=1\nlocal x\n");
 }
 
 #[test]
@@ -16823,28 +16827,27 @@ fn test_colon_s_replacement_keeps_glob_tokens() {
 }
 
 #[test]
-fn test_alias_func_def_warning_is_the_only_diagnostic() {
-    // c:Src/parse.c:2061-2068 — the ALIAS_FUNC_DEF refusal sets
-    // ERRFLAG_ERROR before YYERROR, so the caller's yyerror stays silent:
-    // no trailing "parse error near `()'" (A02alias.ztst:124,130).
+fn test_alias_func_def_warning_then_parse_error() {
+    // zsh 5.9.2 Src/parse.c:2057-2061 is `zwarn(...); YYERROR(oecused);` with no
+    // errflag set, so yyerror still reports `parse error near `()'` after the
+    // warning (A02alias.ztst "ALIAS_FUNC_DEF off by default").
     let (status, _, stderr) = run_zshrs_parity(
-        "alias firstalias=notacommand; alias secondalias=firstalias
-eval 'secondalias() { print no; }'",
+        "alias badalias=notacommand; eval 'badalias() { print no; }'",
     );
     assert_eq!(status, 1, "{stderr}");
     assert_eq!(
         stderr,
-        "(eval):1: defining function based on alias `secondalias'\n"
+        "(eval):1: defining function based on alias `badalias'\n(eval):1: parse error near `()'\n"
     );
 }
 
 #[test]
-fn test_let_nounset_error_returns_2() {
-    // c:Src/builtin.c:7475-7479 — a math error in `let` (here NO_UNSET's
-    // "parameter not set") is non-fatal and returns 2 (C01arith.ztst:497).
+fn test_let_nounset_error_returns_1() {
+    // zsh 5.9.2 Src/builtin.c:7316-7319 — a math error in `let` (here NO_UNSET's
+    // "parameter not set") is non-fatal and returns 1 (C01arith.ztst "NO_UNSET part 3").
     let (status, out, stderr) =
         run_zshrs_parity("( unsetopt unset; let noexist==0 ); print rc=$?");
-    assert_eq!(out, "rc=2\n", "{stderr}");
+    assert_eq!(out, "rc=1\n", "{stderr}");
     assert_eq!(status, 0);
     assert!(stderr.contains("noexist: parameter not set"), "{stderr}");
 }

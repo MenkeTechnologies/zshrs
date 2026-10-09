@@ -7254,17 +7254,7 @@ impl ShellExecutor {
                 // guard below, mirroring execode's stack discipline.
                 // Bug #1065.
                 let sync_eval_ctx = |stack: &[String]| {
-                    let joined = stack.join(":");
-                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-                        if let Some(pm) = tab.get_mut("zsh_eval_context") {
-                            pm.u_arr = Some(stack.to_vec());
-                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-                        }
-                        if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
-                            pm.u_str = Some(joined);
-                            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-                        }
-                    }
+                    crate::ported::exec::EvalContextFrame::sync(stack);
                 };
                 if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
                     ctx.push("cmdsubst".to_string());

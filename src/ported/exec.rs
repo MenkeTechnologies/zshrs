@@ -9367,7 +9367,7 @@ impl EvalContextFrame {
     /// mutation of the static has to be mirrored — through the
     /// `u_arr`/`u_str` fields directly because both names are
     /// `PM_READONLY_SPECIAL`.
-    fn sync(stack: &[String]) {
+    pub(crate) fn sync(stack: &[String]) {
         // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
         // C has one `char **zsh_eval_context` and one thread, so the
         // publish below cannot be reached from anywhere but the frame that
@@ -9382,11 +9382,28 @@ impl EvalContextFrame {
         }
         let joined = stack.join(":");
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut("zsh_eval_context") {
+            // C writes through the one global `zsh_eval_context` the SPECIAL
+            // points at. `typeset -h` / `local -h` over a special leaves a
+            // plain local shadowing it in the table (c:Src/builtin.c:2062-2073,
+            // `newspecial` stays NS_NONE); the shadow must not receive the
+            // publish, so walk the `old` chain down to the node that still
+            // carries PM_SPECIAL.
+            fn special_of<'a>(
+                mut pm: Option<&'a mut crate::ported::zsh_h::param>,
+            ) -> Option<&'a mut crate::ported::zsh_h::param> {
+                while let Some(p) = pm {
+                    if p.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL != 0 {
+                        return Some(p);
+                    }
+                    pm = p.old.as_deref_mut();
+                }
+                None
+            }
+            if let Some(pm) = special_of(tab.get_mut("zsh_eval_context").map(|p| &mut **p)) {
                 pm.u_arr = Some(stack.to_vec());
                 pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
             }
-            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+            if let Some(pm) = special_of(tab.get_mut("ZSH_EVAL_CONTEXT").map(|p| &mut **p)) {
                 pm.u_str = Some(joined);
                 pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
             }

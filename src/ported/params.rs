@@ -16081,13 +16081,8 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 typeflag: 0,
                 flags: PMTF_TEST_LEVEL,
             },
-            // c:6018
-            PmType {
-                binflag: PM_HIDE,
-                string: "hide",
-                typeflag: b'h',
-                flags: 0,
-            },
+            // 5.9.2 pmtypes[] (params.c:5783) has no PM_HIDE row; the dev tree adds
+            // `{ PM_HIDE, "hide", 'h', 0 }` and `typeset -p` then prints `-h`.
             PmType {
                 binflag: PM_LEFT,
                 string: "left justified",
