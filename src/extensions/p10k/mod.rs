@@ -32,6 +32,8 @@ pub mod segments_sys;
 pub mod segments_zshrs;
 pub mod shared;
 pub mod transient;
+pub mod vcs_backends;
+pub mod vcs_hooks;
 pub mod vcs_other;
 pub mod wizard;
 
