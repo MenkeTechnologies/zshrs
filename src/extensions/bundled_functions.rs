@@ -74,6 +74,30 @@ fn needs_write(dir: &Path) -> bool {
     }
 }
 
+/// Write `body` to `dir/name` so that no reader ever sees it half-written.
+///
+/// Every shell that starts without a current bundle installs it, and shells
+/// start together (sixteen of them share one `$HOME`), so one shell's
+/// `compinit` can scan this directory while another is still writing it. A
+/// plain `fs::write` truncates the file and then fills it: a scan landing in
+/// between reads an empty completer, finds no `#compdef` line and registers
+/// nothing for it -- measured as two `$_comps` entries missing from one shell
+/// of eight started at once. The body goes to a process-private dot-file first
+/// and is renamed over the destination, which is atomic within a filesystem; the
+/// dot prefix keeps the scan (`_*` only) from ever opening the temporary.
+fn write_atomically(dir: &Path, name: &str, body: &[u8]) -> bool {
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let dest = dir.join(name);
+    let ok = std::fs::File::create(&tmp)
+        .and_then(|mut f| f.write_all(body))
+        .and_then(|()| std::fs::rename(&tmp, &dest))
+        .is_ok();
+    if !ok {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    ok
+}
+
 /// Materialise the bundle when missing or stale. Returns how many files
 /// were written; `Some(0)` means the tree was already current.
 ///
@@ -109,15 +133,61 @@ pub fn ensure_installed() -> Option<usize> {
         if name.contains('/') || name.contains("..") || name.is_empty() {
             continue;
         }
-        let dest = dir.join(&name);
-        if std::fs::write(&dest, body).is_ok() {
+        if write_atomically(&dir, &name, body) {
             n += 1;
         }
     }
-    if let Ok(mut f) = std::fs::File::create(dir.join(STAMP)) {
-        let _ = f.write_all(stamp_value().as_bytes());
-    }
+    write_atomically(&dir, STAMP, stamp_value().as_bytes());
     tracing::info!(target: "bundled_functions", written = n, dir = %dir.display(),
                    "materialised bundled zsh functions");
     Some(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reader polling a file while another process rewrites it must only ever
+    /// see a complete body. `fs::write` (truncate, then fill) fails this within a
+    /// few hundred iterations; rename-into-place never does.
+    #[test]
+    fn a_reader_never_sees_a_partly_written_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let body = vec![b'x'; 256 * 1024];
+        assert!(write_atomically(dir.path(), "_probe", &body));
+        let path = dir.path().join("_probe");
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (path, stop, len) = (path.clone(), stop.clone(), body.len());
+            std::thread::spawn(move || {
+                let mut torn = 0usize;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(read) = std::fs::read(&path) {
+                        if read.len() != len {
+                            torn += 1;
+                        }
+                    }
+                }
+                torn
+            })
+        };
+        for _ in 0..400 {
+            assert!(write_atomically(dir.path(), "_probe", &body));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(reader.join().expect("reader"), 0, "a read saw a truncated or partial file");
+    }
+
+    #[test]
+    fn the_temporary_is_gone_after_the_rename() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(write_atomically(dir.path(), "_one", b"#compdef one\n"));
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["_one".to_string()]);
+    }
 }
