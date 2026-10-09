@@ -2192,8 +2192,9 @@ pub fn zshrs_main() {
     // --dump-plugins: emit the JSON consumed by the IntelliJ External
     // Libraries view. Groups every entry in the plugin_cache SQLite
     // by inferred plugin manager (zinit / oh-my-zsh / prezto / antidote /
-    // antigen / zplug / zsh-more-completions / zpwr / loose). Empty array
-    // when the cache is empty (first run before any plugin is sourced).
+    // antigen / zplug / zsh-more-completions / zpwr / loose). The daemon
+    // fills the table from each recorder shard it ingests
+    // (daemon/plugins_db.rs). Empty array until a shard has been ingested.
     if args.iter().any(|a| a == "--dump-plugins") {
         println!("{}", zsh::plugin_cache::dump_plugins_json());
         return;

@@ -1860,3 +1860,26 @@ impl crate::ported::vm_helper::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+#[cfg(all(test, feature = "daemon"))]
+mod daemon_registry_tests {
+    use super::*;
+
+    /// Rows written by the daemon's `plugins_db::record` must come back
+    /// through `list_plugins`, the reader behind `--dump-plugins`.
+    #[test]
+    fn daemon_written_rows_round_trip_through_list_plugins() {
+        let home = tempfile::tempdir().unwrap();
+        let plug = home.path().join(".zinit/plugins/a---b");
+        std::fs::create_dir_all(&plug).unwrap();
+        let file = plug.join("a.plugin.zsh");
+        std::fs::write(&file, "").unwrap();
+        let db = home.path().join("plugins.db");
+
+        crate::daemon::plugins_db::record(&db, &[file.to_string_lossy().into_owned()], &[]).unwrap();
+        let got = list_plugins(&db);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].manager.as_str(), got[0].name.as_str()), ("zinit", "a/b"));
+        assert_eq!(got[0].root, plug);
+    }
+}

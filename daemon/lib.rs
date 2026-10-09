@@ -52,6 +52,8 @@ pub mod ops;
 pub mod paths;
 /// `pidlock` submodule.
 pub mod pidlock;
+/// `plugins.db` registry writer behind `zshrs --dump-plugins`.
+pub mod plugins_db;
 /// `pubsub` submodule.
 pub mod pubsub;
 /// `recorder_shard` submodule.

@@ -630,7 +630,7 @@ pub fn detect_plugins(sourced: &[String], fpath: &[String]) -> Vec<(String, Stri
 }
 
 /// The `(manager, name)` a path belongs to, or `None`.
-fn plugin_from_path(path: &str) -> Option<(String, String)> {
+pub(crate) fn plugin_from_path(path: &str) -> Option<(String, String)> {
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     // The segment(s) after the first occurrence of `marker`, when `marker`
     // is a single path component.

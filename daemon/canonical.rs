@@ -192,6 +192,7 @@ impl CanonicalEngine {
         changed.sort_by_key(|(_, mtime)| *mtime);
         let mut applied = 0;
         let mut newest_plugins = None;
+        let mut newest_paths = None;
         for (path, mtime) in changed {
             let shard = match read_canonical_shard(&path) {
                 Ok(s) => s,
@@ -221,6 +222,7 @@ impl CanonicalEngine {
                 }
             };
             newest_plugins = Some(super::recorder_shard::shard_plugins(&shard));
+            newest_paths = Some((shard.sourced_files.clone(), shard.fpath.clone()));
             self.inner.write().recorder_shard_mtimes.insert(path.clone(), mtime);
             applied += 1;
             tracing::info!(path = %path.display(), rows, "recorder shard applied to canonical catalog");
@@ -231,6 +233,13 @@ impl CanonicalEngine {
                 .and_then(|conn| super::catalog::hydrate_plugins(&conn, &plugins));
             if let Err(e) = mirrored {
                 tracing::warn!(?e, "catalog.db plugins mirror not hydrated (rkyv is authoritative)");
+            }
+        }
+        if let Some((sourced, fpath)) = newest_paths {
+            // plugins.db is what `zshrs --dump-plugins` reads.
+            let db = self.paths.root.join("plugins.db");
+            if let Err(e) = super::plugins_db::record(&db, &sourced, &fpath) {
+                tracing::warn!(?e, "plugins.db not updated from recorder shard");
             }
         }
         applied

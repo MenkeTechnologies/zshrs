@@ -1518,6 +1518,10 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     if let Err(e) = state.with_catalog(|conn| super::catalog::hydrate_plugins(conn, &plugins)) {
         tracing::warn!(?e, "recorder_ingest: plugins mirror not hydrated (rkyv authoritative)");
     }
+    let plugins_db = state.paths.root.join("plugins.db");
+    if let Err(e) = super::plugins_db::record(&plugins_db, &shard.sourced_files, &shard.fpath) {
+        tracing::warn!(?e, "recorder_ingest: plugins.db not updated");
+    }
 
     // Hydrate SQLite mirror so `zcache view ...` is fresh.
     let hydrated = match canon.hydrate_sqlite_view(state) {
