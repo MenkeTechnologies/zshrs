@@ -29493,6 +29493,13 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     // `"${(@P)n}"` yielded ONE EMPTY WORD where zsh yields zero — visible as
     // `expl[1] = ''` vs `expl[0] =` after any port that declares its own
     // `expl` (132 stock completers splat that name).
+    // c:3107 `v->pm->gsu.a->getfn(v->pm)` — a vtable whose getfn is not
+    // `arrgetfn` (`$words` viewing `compwords`) owns the value.
+    if let Some(g) = pm.gsu_a.as_ref() {
+        if g.getfn as usize != crate::ported::params::arrgetfn as usize {
+            return Some((g.getfn)(pm));
+        }
+    }
     if pm.u_arr.is_none()
         && crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == PM_ARRAY as u32
     {

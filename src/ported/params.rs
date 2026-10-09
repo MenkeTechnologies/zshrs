@@ -2972,6 +2972,15 @@ pub fn createparam(
             pm.gsu_s = gs;
             pm.gsu_i = gi;
             pm.gsu_f = gf;
+            // c:2385 "we keep the same struct": the array vtable and the
+            // `u.data` variable pointer (a `compwords` view) travel too.
+            let (ga, ud) = pm
+                .old
+                .as_ref()
+                .map(|o| (o.gsu_a.clone(), o.u_data))
+                .unwrap_or((None, 0));
+            pm.gsu_a = ga;
+            pm.u_data = ud;
             // Re-stamp the type from the shadowed special: createparam was
             // called with the caller's flags (PM_SCALAR for a bare `local X=1`),
             // which would otherwise override the special's real type.
@@ -15241,8 +15250,13 @@ pub fn endparamscope() {
                     // c:5904 — a REMOVABLE special (a private, c:Src/Modules/
                     // param_private.c:174) is "normal": the local is unset
                     // and the old node re-added, with no value replay.
-                    let restored_is_special = (prev.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0
-                        && (prev.node.flags as u32 & PM_REMOVABLE) == 0;
+                    // …a completion param (`u_data` names the C global it views) is
+                    // the exception: `local PREFIX` keeps its struct (c:2385) and
+                    // scanendscope replays the saved value through the setfn.
+                    let restored_is_special = ((prev.node.flags as u32 & (PM_SPECIAL | PM_TIED))
+                        != 0
+                        && (prev.node.flags as u32 & PM_REMOVABLE) == 0)
+                        || prev.u_data != 0;
                     let restored_is_array = (PM_TYPE(prev.node.flags as u32) & PM_ARRAY) != 0;
                     // c:5961-5962 — `case PM_HASHED: pm->gsu.h->setfn(pm,
                     // tpm->u.hash)`. typeset_single's copy of a magic hash

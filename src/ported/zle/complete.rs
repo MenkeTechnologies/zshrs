@@ -257,9 +257,6 @@ pub static COMPCURRENT: AtomicI64 = AtomicI64::new(0); // c:37 zlong compcurrent
 /// the user via asklistscroll. 0 means no limit.
 pub static COMPLISTMAX: AtomicI64 = AtomicI64::new(0); // c:37
 
-/// Port of `int nmatches` — total matches accumulated this round.
-pub static NMATCHES_GLOBAL: AtomicI64 = AtomicI64::new(0); // c:compcore.c:160
-
 /// Port of `zlong complistlines` — line count of the listed
 /// matches when paginated.
 pub static COMPLISTLINES: AtomicI64 = AtomicI64::new(0); // c:complete.c:40
@@ -2540,7 +2537,7 @@ pub fn get_nmatches(_pm: &param) -> i64 {
         // c:1403
         return 0;
     }
-    NMATCHES_GLOBAL.load(Ordering::Relaxed) // c:1404 nmatches
+    compcore::nmatches.load(Ordering::Relaxed) as i64 // c:1404 nmatches
 }
 
 /// Direct port of `zlong get_listlines(UNUSED(Param pm))` from
@@ -4759,6 +4756,32 @@ mod tests {
         assert_eq!(*lock_vec(&COMPWORDS).lock().unwrap(), vec!["a", "b"]);
         assert_eq!(COMPCURRENT.load(Ordering::Relaxed), 2);
         comp_scope_leave();
+    }
+
+    /// `local PREFIX` / `local words` in a function nested below the completion
+    /// function (so `locallevel != pm->level`, c:Src/builtin.c:2078) keep the
+    /// special's struct (c:2385): assignments reach the C global and scope exit
+    /// puts the saved value back through the setfn.
+    #[test]
+    fn local_of_a_completion_param_writes_the_global_and_restores_it() {
+        let _g = crate::test_util::global_state_lock();
+        *COMPPREFIX.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "outer".into();
+        *lock_vec(&COMPWORDS).lock().unwrap() = vec!["a".into(), "b".into()];
+        COMPCURRENT.store(2, Ordering::Relaxed);
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
+        let _scope = crate::test_util::comp_scope();
+        exec.execute_script(
+            "f() { local PREFIX=inner words=(x y z) CURRENT=3; typeset -g SEEN=$PREFIX:$#words:$CURRENT; typeset -g DBG=\"${#words}|$words[2]|${(j:,:)words}|$#\" }; g() { f }; g",
+        )
+        .unwrap();
+        assert_eq!(crate::ported::params::getsparam("DBG").as_deref(), Some("3|y|x,y,z|0"));
+        assert_eq!(crate::ported::params::getsparam("SEEN").as_deref(), Some("inner:3:3"));
+        assert_eq!(gstr(&COMPPREFIX), "outer");
+        assert_eq!(*lock_vec(&COMPWORDS).lock().unwrap(), vec!["a", "b"]);
+        assert_eq!(COMPCURRENT.load(Ordering::Relaxed), 2);
+        crate::ported::params::unsetparam("SEEN");
+        crate::ported::params::unsetparam("DBG");
     }
 
     /// `$compstate[KEY]` reads and writes go through the element Param of the
