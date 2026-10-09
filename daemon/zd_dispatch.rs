@@ -844,36 +844,6 @@ fn cmd_snapshot(t: &mut dyn Transport, rest: &[String]) -> Result<String, String
             }
             t.post("snapshot_diff", json!({"a": rest[1], "b": rest[2]}))
         }
-        other => Err(format!("unknown snapshot subcommand: {other}")),
-    }
-}
-
-/// `zd config <get|set|list>` — runtime knob plumbing. Maps 1:1 to
-/// the `config_get`, `config_set`, `config_list` daemon ops. Sets are
-/// in-memory only — writing to `zshrs-daemon.toml` is a separate
-/// (unwired) concern; today the toml seeds the initial values and
-/// `config_set` overrides them for the daemon's lifetime.
-fn cmd_config(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd config <get|set|list> ...")?;
-    match sub.as_str() {
-        "get" => {
-            let key = rest.get(1).ok_or("usage: zd config get KEY")?;
-            t.post("config_get", json!({"key": key}))
-        }
-        "set" => {
-            if rest.len() < 3 {
-                return Err("usage: zd config set KEY VALUE".into());
-            }
-            t.post("config_set", json!({"key": rest[1], "value": rest[2]}))
-        }
-        "list" => t.post("config_list", json!({})),
-        other => Err(format!("unknown config subcommand: {other}")),
-    }
-}
-
-fn cmd_artifact(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest
-        .first()
         "sign" => {
             let tag = rest.get(1).ok_or("usage: zd snapshot sign TAG")?;
             t.post("snapshot_sign", json!({"tag": tag}))
@@ -926,6 +896,36 @@ fn cmd_artifact(t: &mut dyn Transport, rest: &[String]) -> Result<String, String
             }
             t.post("snapshot_pull", body)
         }
+        other => Err(format!("unknown snapshot subcommand: {other}")),
+    }
+}
+
+/// `zd config <get|set|list>` — runtime knob plumbing. Maps 1:1 to
+/// the `config_get`, `config_set`, `config_list` daemon ops. Sets are
+/// in-memory only — writing to `zshrs-daemon.toml` is a separate
+/// (unwired) concern; today the toml seeds the initial values and
+/// `config_set` overrides them for the daemon's lifetime.
+fn cmd_config(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
+    let sub = rest.first().ok_or("usage: zd config <get|set|list> ...")?;
+    match sub.as_str() {
+        "get" => {
+            let key = rest.get(1).ok_or("usage: zd config get KEY")?;
+            t.post("config_get", json!({"key": key}))
+        }
+        "set" => {
+            if rest.len() < 3 {
+                return Err("usage: zd config set KEY VALUE".into());
+            }
+            t.post("config_set", json!({"key": rest[1], "value": rest[2]}))
+        }
+        "list" => t.post("config_list", json!({})),
+        other => Err(format!("unknown config subcommand: {other}")),
+    }
+}
+
+fn cmd_artifact(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
+    let sub = rest
+        .first()
         .ok_or("usage: zd artifact <put|get|list|gc> ...")?;
     match sub.as_str() {
         "put" => {
