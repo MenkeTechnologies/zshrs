@@ -1,7 +1,7 @@
 //! Port of `_complete_help` from
 //! `Completion/Base/Widget/_complete_help`.
 //!
-//! Full upstream body (92 lines, abridged):
+//! Upstream body (92 lines, condensed):
 //! ```text
 //! sh: 1  #compdef -k complete-word \C-xh
 //! sh: 3  _complete_help() {
@@ -41,19 +41,19 @@
 //! `_help_sort_tags` by zsh dynamic scoping, which the in-process Rust
 //! dispatch emulates via the global param table.
 //!
-//! Honest substrate gaps:
-//!   * `zstyle`/`compcall` are Rust builtins; `_main_complete`
-//!     dispatches them as builtins, bypassing any shell-function
-//!     override. So `help_sfuncs`/`help_styles` are not populated and
-//!     the styles report (the `NUMERIC != 1` branch) is empty. The
-//!     branch is ported faithfully so it produces output once
-//!     builtin-call interception exists.
-//!   * `compadd`'s `{ return 1 }` shadow (suppress real matches during
-//!     the help run) likewise cannot intercept the builtin; matches the
-//!     inner completion adds are not suppressed here.
-//!   * `_help_sort_tags`'s `$f` derivation walks `$funcstack`; the
-//!     result is only as accurate as the compsys call chain present on
-//!     `FUNCSTACK` when compsys functions are dispatched in-process.
+//! Not ported: the `zstyle()` override at sh:16-45, and with it the
+//! `help_sfuncs`/`help_styles` records behind the `NUMERIC != 1` styles
+//! report (which therefore prints nothing). A shell-function `zstyle` is only
+//! ever consulted where a command word is resolved (`execcmd`,
+//! c:Src/exec.c:3105-3109); the native ports read styles through
+//! `lookupstyle` (`src/ported/modules/zutil.rs:1071`) and `bin_zstyle`
+//! directly, and neither has a shfunc-override prologue the way
+//! `bin_compadd` does (`src/ported/zle/complete.rs:964`, which is why the
+//! `compadd() { return 1 }` override below IS honoured). Adding the same
+//! prologue/trace hook to `lookupstyle` is a change under `src/ported/`.
+//!
+//! `_help_sort_tags` derives `$f` from `$funcstack`, so the tag report is as
+//! complete as the frames compsys functions leave on `FUNCSTACK`.
 
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::bin_zformat;
@@ -262,9 +262,8 @@ pub fn _complete_help(args: &[String]) -> i32 {
     //   `.shadow.depth`/`.shadow.stack` globals behind after every ^Xh.
     //   `compadd` returns 1 (suppress real matches during the diagnostic
     //   scan); the tag recording happens via `$_sort_tags=_help_sort_tags`
-    //   set above. (`zstyle`'s recording override — sh:16 — needs
-    //   builtin-side zstyle interception; the styles sub-report stays
-    //   limited, as documented in the module header.)
+    //   set above. (`zstyle`'s recording override — sh:16 — is not installed;
+    //   see the module header for why.)
     crate::ported::modules::parameter::setfunction("compadd", "return 1".to_string(), 0);
     crate::ported::modules::parameter::setfunction(
         "compcall",

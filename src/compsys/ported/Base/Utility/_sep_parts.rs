@@ -149,24 +149,10 @@ fn arrlen(name: &str) -> usize {
     getaparam(name).map(|v| v.len()).unwrap_or(0)
 }
 
-/// `${(q)word}` — backslash-quote shell-special characters.
-/// Approximation of zsh `(q)`: alphanumerics and the common
-/// separator characters (`@ % + = : , . / - _`) pass through
-/// unquoted; anything else is backslash-escaped. Single-character
-/// separators (the usual `_sep_parts` case) are covered exactly.
+/// `${(q)word}` / `${word:q}` — backslash-quote shell-special characters
+/// (`QT_BACKSLASH`, the same routine the `q` flag runs).
 fn q_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric()
-            || matches!(c, '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-' | '_')
-        {
-            out.push(c);
-        } else {
-            out.push('\\');
-            out.push(c);
-        }
-    }
-    out
+    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_BACKSLASH)
 }
 
 /// Resolve `$1` into the shell-array NAME to hand to `compadd -a`.

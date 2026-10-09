@@ -7,7 +7,7 @@
 //! descr end ign tried type sdef ignvars ignvar prepath oprefix rfiles
 //! rfile subtree ret`.
 //!
-//! Sections ported (all present, unlike the prior approximation):
+//! Sections ported:
 //!   * sh:9-25   — glob-qualifier dispatch (`_have_glob_qual`,
 //!                 `_globflags`, `_globquals`, `_describe`) incl. the
 //!                 globbing-flags-at-word-start `(#…` case.
@@ -18,15 +18,15 @@
 //!   * sh:81-151 — the tag → `_tags` → `_next_label` → `_path_files -g`
 //!                 loop, including the `recursive-files` subtree walk.
 //!
-//! Approximations (marked `// sh:N approx`): the `eval "def=( … )"`
-//! word-split (sh:83), the `${(q)}`/`${(Q)}` quoting, and the sh:36-41
-//! blank→brace / `#q` glob rewrites use string ops rather than the full
-//! zsh expansion engine.
+//! sh:83's `eval "def=( … )"` runs through the real parameter-expansion
+//! engine; `${(Q)…}` goes through [`dequote_q`]; the sh:36-41 glob
+//! rewrites and the `[^\\]:` splitting below follow the upstream patterns
+//! character for character.
 
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_path_files::_path_files;
 use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::shared::dispatch_action_command;
+use crate::compsys::ported::shared::{dequote_q, dispatch_action_command};
 use crate::ported::glob::{matchpat, tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
@@ -110,12 +110,12 @@ fn has_active_glob(s: &str) -> bool {
 
 fn has_unescaped_colon(s: &str) -> bool {
     let b = s.as_bytes();
-    (0..b.len()).any(|i| b[i] == b':' && (i == 0 || b[i - 1] != b'\\'))
+    (1..b.len()).any(|i| b[i] == b':' && b[i - 1] != b'\\') // `*[^\\]:*` needs a char before the colon
 }
 
 fn first_unescaped_colon(s: &str) -> Option<usize> {
     let b = s.as_bytes();
-    (0..b.len()).find(|&i| b[i] == b':' && (i == 0 || b[i - 1] != b'\\'))
+    (1..b.len()).find(|&i| b[i] == b':' && b[i - 1] != b'\\')
 }
 
 /// Split on `:` not preceded by a backslash (the `${...#*[^\\]:}` /
@@ -126,7 +126,7 @@ fn split_unescaped_colon(s: &str) -> Vec<String> {
     let mut start = 0;
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b':' && (i == 0 || b[i - 1] != b'\\') {
+        if b[i] == b':' && i > 0 && b[i - 1] != b'\\' {
             parts.push(s[start..i].to_string());
             start = i + 1;
         }
@@ -136,29 +136,14 @@ fn split_unescaped_colon(s: &str) -> Vec<String> {
     parts
 }
 
-/// `${(q)head}` dedup key — the `pat:` head of a spec (up to and
-/// including the first unescaped colon).
+/// sh:85 `${(@M)def#*[^\\]:}` — the `pat:` head of a spec (up to and
+/// including the first unescaped colon); `M` keeps only the matched part, so
+/// an element with no such colon contributes the empty string.
 fn pat_head(s: &str) -> String {
     match first_unescaped_colon(s) {
         Some(i) => s[..=i].to_string(),
-        None => s.to_string(),
+        None => String::new(),
     }
-}
-
-/// `${(Q)s}` — strip one level of backslash quoting. sh approx.
-fn unquote_q(s: &str) -> String {
-    let mut out = String::new();
-    let mut it = s.chars();
-    while let Some(c) = it.next() {
-        if c == '\\' {
-            if let Some(n) = it.next() {
-                out.push(n);
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// sh:36 test — a blank preceded by a non-backslash.
@@ -185,19 +170,23 @@ fn blanks_to_commas(s: &str) -> String {
     }
     out
 }
-/// sh:40-41 — insert `#q` into the trailing `(qualifier)` if absent.
+/// sh:40-41 — `[[ $glob = (#b)(*\()([^\|\~]##\)) && $match[2] != \#q* ]] &&
+/// glob="${match[1]}#q${match[2]}"`. The leading `*` is greedy, so the LAST
+/// `(` whose remainder is one or more non-`|`/`~` characters followed by `)`
+/// wins; an earlier `(` is only tried when a later one fails.
 fn add_hashq(g: &str) -> String {
-    if let Some(op) = g.rfind('(') {
-        let head = &g[..op];
+    for (op, _) in g.rmatch_indices('(') {
         let after = &g[op + 1..];
-        if after.ends_with(')')
-            && !after.starts_with("#q")
-            && after[..after.len() - 1]
-                .chars()
-                .all(|c| c != '|' && c != '~')
-        {
-            return format!("{}(#q{}", head, after);
+        let Some(body) = after.strip_suffix(')') else {
+            continue;
+        };
+        if body.is_empty() || body.contains(['|', '~']) {
+            continue;
         }
+        if after.starts_with("#q") {
+            return g.to_string(); // `$match[2] != \#q*` fails
+        }
+        return format!("{}(#q{}", &g[..op], after);
     }
     g.to_string()
 }
@@ -297,13 +286,14 @@ pub fn _files(argv: &[String]) -> i32 {
     // sh:34-44 — derive glob.
     let mut glob: Option<String> = None;
     if tmp.iter().any(|e| e.starts_with("-g")) {
-        let raw: String = tmp
+        // sh:35 — each `-g` element loses its leading/trailing blanks, then
+        // the quoted array joins with a space.
+        let mut g = tmp
             .iter()
             .filter(|e| e.starts_with("-g"))
-            .map(|e| e[2..].to_string())
+            .map(|e| e[2..].trim_matches(|c| c == ' ' || c == '\t'))
             .collect::<Vec<_>>()
-            .join("");
-        let mut g = raw.trim().to_string(); // ##/%% blank strip
+            .join(" ");
         if has_unescaped_blank(&g) {
             g = format!("{{{}}}", blanks_to_commas(&g));
         }
@@ -315,17 +305,23 @@ pub fn _files(argv: &[String]) -> i32 {
 
     // sh:45-61 — resolve -F ignore vars.
     let mut ign: Vec<String> = Vec::new();
-    if let Some(tpos) = opts.iter().position(|e| e == "-F") {
-        let spec = opts.get(tpos + 1).cloned().unwrap_or_default();
-        if spec.trim() == "_comp_ignore" {
-            ign = getaparam("_comp_ignore").unwrap_or_default();
-        } else if spec.starts_with('(') {
-            ign = spec[1..spec.len().saturating_sub(1)]
-                .split_whitespace()
-                .map(String::from)
-                .collect();
+    // sh:45 `tmp=$opts[(I)-F]` — the LAST `-F`.
+    if let Some(tpos) = opts.iter().rposition(|e| e == "-F") {
+        // sh:47 `ignvars=($=opts[tmp+1])`
+        let ignvars: Vec<String> = opts
+            .get(tpos + 1)
+            .map(|s| s.split_whitespace().map(String::from).collect())
+            .unwrap_or_default();
+        if ignvars.join(" ") == "_comp_ignore" {
+            ign = getaparam("_comp_ignore").unwrap_or_default(); // sh:49
+        } else if ignvars.join(" ").starts_with('(') {
+            // sh:51 `${=ignvars[2,-2]}` — ELEMENTS 2..-2 of the word array.
+            ign = ignvars
+                .get(1..ignvars.len().saturating_sub(1))
+                .unwrap_or_default()
+                .to_vec();
         } else {
-            for ignvar in spec.split_whitespace() {
+            for ignvar in &ignvars {
                 ign.extend(
                     getaparam(ignvar)
                         .or_else(|| getsparam(ignvar).map(|s| vec![s]))
@@ -340,7 +336,10 @@ pub fn _files(argv: &[String]) -> i32 {
 
     // sh:63-79 — build pats.
     let file_patterns = zstyle_a(&ctx, "file-patterns");
-    let glob_or_star = glob.clone().unwrap_or_else(|| "*".to_string());
+    let glob_or_star = glob
+        .clone()
+        .filter(|g| !g.is_empty())
+        .unwrap_or_else(|| "*".to_string()); // `${glob:-\*}`
     let glob_colon = glob_or_star.replace(':', "\\:");
     let pats: Vec<String> = if !file_patterns.is_empty() {
         // sh:64-72 — %p substitution + word split; add :files default tag.
@@ -414,7 +413,7 @@ pub fn _files(argv: &[String]) -> i32 {
                 .replace("\\:", ":");
             let tag = cols.get(1).cloned().unwrap_or_default();
             let (descr, end) = if cols.len() >= 3 {
-                (unquote_q(&cols[2..].join(":")), false)
+                (dequote_q(&cols[2..].join(":")), false)
             } else if opts.iter().any(|e| e == "-X") {
                 (String::new(), true)
             } else {
@@ -678,5 +677,30 @@ mod tests {
     fn accepts_dirs_only_flag() {
         let _g = crate::test_util::global_state_lock();
         let _r = _files(&["-/".to_string()]);
+    }
+
+    /// sh:40-41 — `(*\()([^\|\~]##\))`: the LAST `(` whose remainder is a
+    /// non-empty `[^|~]` run closed by `)`; an empty `()` or a `|`/`~` inside
+    /// the group leaves the glob alone, and an existing `#q` is not doubled.
+    #[test]
+    fn add_hashq_follows_the_sh40_pattern() {
+        assert_eq!(add_hashq("*(.)"), "*(#q.)");
+        assert_eq!(add_hashq("*(#q.)"), "*(#q.)");
+        assert_eq!(add_hashq("*(.|/)"), "*(.|/)");
+        assert_eq!(add_hashq("*()"), "*()");
+        // the greedy `*\(` backs off to an earlier `(` when the last fails
+        assert_eq!(add_hashq("x(y)()"), "x(#qy)()");
+        assert_eq!(add_hashq("plain"), "plain");
+    }
+
+    /// sh:85 `${(@M)def#*[^\\]:}` — a spec with no unescaped colon preceded by
+    /// a character contributes the empty string, and a leading colon does not
+    /// count (`[^\\]` needs a character in front of it).
+    #[test]
+    fn pat_head_needs_a_character_before_the_colon() {
+        assert_eq!(pat_head("*.c:files"), "*.c:");
+        assert_eq!(pat_head("*.c\\:x:files"), "*.c\\:x:");
+        assert_eq!(pat_head(":files"), "");
+        assert_eq!(pat_head("nocolon"), "");
     }
 }

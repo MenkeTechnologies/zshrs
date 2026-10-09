@@ -2198,6 +2198,59 @@ pub fn dequote_q(s: &str) -> String {
     }
 }
 
+/// `${~spec}` for a word that starts with `~`: tilde expansion of `~`, `~/…`,
+/// `~user`, `~N`, `~-`, `~+` through the ported `filesubstr`
+/// (c:Src/subst.c `filesubstr`), which wants the leading `~` as its Tilde
+/// token. `None` when the expansion fails (an unknown user), the case
+/// `eval "x=~user/" 2>/dev/null` leaves empty.
+pub fn tilde_expand(spec: &str) -> Option<String> {
+    let rest = spec.strip_prefix('~')?;
+    crate::ported::subst::filesubstr(&format!("\u{e198}{}", rest), false)
+}
+
+/// `setopt localoptions` — the whole option table is snapshotted on entry and
+/// put back when the guard drops, so an option the function flips (`setopt
+/// nonomatch`, `emulate -R zsh`) cannot outlive it on any exit path.
+pub struct LocalOptions {
+    opts: std::collections::HashMap<String, bool>,
+    emulation: i32,
+    emulation_bits: i32,
+    fully: bool,
+    dash: bool,
+}
+
+impl LocalOptions {
+    pub fn enter() -> Self {
+        use std::sync::atomic::Ordering::Relaxed;
+        Self {
+            opts: crate::ported::options::opt_state_snapshot(),
+            emulation: crate::ported::options::emulation.load(Relaxed),
+            emulation_bits: crate::ported::options::EMULATION.load(Relaxed),
+            fully: crate::ported::options::FULLY_EMULATING.load(Relaxed),
+            dash: crate::extensions::dash_mode::dash_strict(),
+        }
+    }
+}
+
+impl Drop for LocalOptions {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        crate::ported::options::opt_state_restore(std::mem::take(&mut self.opts));
+        crate::ported::options::emulation.store(self.emulation, Relaxed);
+        crate::ported::options::EMULATION.store(self.emulation_bits, Relaxed);
+        crate::ported::options::FULLY_EMULATING.store(self.fully, Relaxed);
+        crate::extensions::dash_mode::set_dash_strict(self.dash);
+    }
+}
+
+/// `${(z)s}` — split `s` into shell words with the real lexer, keeping each
+/// word's quoting (c:Src/subst.c:2439-2440 `shsplit = LEXFLAGS_ACTIVE`, then
+/// `bufferwords`, c:Src/subst.c:4185-4199). `${(z):-x $pats}[2,-1]` callers
+/// pass the whole string and drop the sentinel word themselves.
+pub fn split_z(s: &str) -> Vec<String> {
+    crate::ported::hist::bufferwords(s, None, crate::ported::zsh_h::LEXFLAGS_ACTIVE).0
+}
+
 /// `${#<assoc>[(I)<prefix>*]}` — how many keys of the associative parameter
 /// `name` begin with `prefix`. Same accessor story as [`assoc_get`].
 pub fn assoc_key_count_with_prefix(name: &str, prefix: &str) -> usize {

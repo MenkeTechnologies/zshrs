@@ -1,7 +1,7 @@
 //! Port of `_correct_filename` from
 //! `Completion/Base/Widget/_correct_filename`.
 //!
-//! Full upstream body (72 lines, abridged):
+//! Upstream body (72 lines, condensed):
 //! ```text
 //! sh: 1  #compdef -k complete-word \C-xC
 //! sh:17  setopt extendedglob
@@ -79,30 +79,17 @@ fn make_ops() -> options {
 pub fn _correct_filename(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_correct_filename");
 
-    // sh:17  `setopt extendedglob`.
+    // sh:16-17  `emulate -LR zsh` + `setopt extendedglob`.
     //
-    // Load-bearing, not cosmetic: with EXTENDED_GLOB off, `patcompcharsset`
-    // masks Hash out of the active specials (pattern.rs:492, c:480-483), so the
-    // `(#a$approx)` of sh:58 and sh:60 is not a glob flag at all — it compiles
-    // as the six literal characters `(#a1)` and matches nothing. Verified: at
-    // top level `whence -wm "(#a1)lls"` prints nothing in BOTH shells; under
-    // `setopt extendedglob` both print `gls`/`ls`/`rls`.
-    //
-    // sh:16's `emulate -LR zsh` remains unported and this is deliberately
-    // narrower than the `localoptions` it implies: there is no scoped-option
-    // substrate here, so this is the same targeted save/restore
-    // `_expand_with` uses for its one option (_expand.rs:152-177). A port that
-    // needs a second option must not assume this covers it.
-    struct ExtendedGlobGuard(Option<bool>);
-    impl Drop for ExtendedGlobGuard {
-        fn drop(&mut self) {
-            if let Some(prev) = self.0 {
-                crate::ported::options::opt_state_set("extendedglob", prev);
-            }
-        }
-    }
-    let _extendedglob = ExtendedGlobGuard(crate::ported::options::opt_state_get("extendedglob"));
-    crate::ported::options::opt_state_set("extendedglob", true);
+    // `-L` scopes the whole option table to this function, so the table is
+    // snapshotted here and put back on every exit path. EXTENDED_GLOB is
+    // load-bearing: with it off, `patcompcharsset` masks Hash out of the
+    // active specials (pattern.rs:492, c:480-483), so the `(#a$approx)` of
+    // sh:58 and sh:60 is not a glob flag at all — it compiles as the six
+    // literal characters `(#a1)` and matches nothing.
+    let _local_options = crate::compsys::ported::shared::LocalOptions::enter();
+    crate::ported::options::emulate("zsh", true); // sh:16 `-R`
+    crate::ported::options::opt_state_set("extendedglob", true); // sh:17
 
     let widget = getsparam("WIDGET").unwrap_or_default();
     let prefix = getsparam("PREFIX").unwrap_or_default();
@@ -117,12 +104,24 @@ pub fn _correct_filename(args: &[String]) -> i32 {
         (format!("{}{}", prefix, suffix), true)
     };
 
-    // sh:25-29  tilde expand (~/path)
-    if file.starts_with("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            file = format!("{}{}", home, &file[1..]);
-        }
+    // sh:29-33  `[[ $file = \~*/* ]]` — tilde=${file%%/*}, etilde=${~tilde}
+    // (2>/dev/null: a failed expansion leaves it empty), and the tilde in
+    // `file` is replaced by its expansion for the existence tests.
+    let mut tilde = String::new();
+    let mut etilde = String::new();
+    if file.starts_with('~') && file.contains('/') {
+        tilde = file[..file.find('/').unwrap()].to_string();
+        etilde = crate::compsys::ported::shared::tilde_expand(&tilde).unwrap_or_default();
+        file = format!("{}{}", etilde, &file[tilde.len()..]); // `${file/#$tilde/$etilde}`
     }
+    // `${name/#$etilde/$tilde}` — put the tilde back (literal prefix replace;
+    // an empty `etilde` prepends `tilde`, as zsh does).
+    let restore_tilde = |s: &str| -> String {
+        match s.strip_prefix(etilde.as_str()) {
+            Some(rest) => format!("{}{}", tilde, rest),
+            None => s.to_string(),
+        }
+    };
 
     // sh:31-42  testcmd detection
     let current = getiparam("CURRENT");
@@ -173,7 +172,7 @@ pub fn _correct_filename(args: &[String]) -> i32 {
                 iprefix.clone(),
                 "-I".to_string(),
                 getsparam("ISUFFIX").unwrap_or_default(),
-                file.clone(),
+                restore_tilde(&file), // sh:48
             ];
             let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
             let cur_insert =
@@ -239,7 +238,7 @@ pub fn _correct_filename(args: &[String]) -> i32 {
             "-I".to_string(),
             getsparam("ISUFFIX").unwrap_or_default(),
         ];
-        argv.extend(full);
+        argv.extend(full.iter().map(|t| restore_tilde(t))); // sh:68
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
         let cur_insert =
             crate::ported::zle::compcore::get_compstate_str("insert").unwrap_or_default();

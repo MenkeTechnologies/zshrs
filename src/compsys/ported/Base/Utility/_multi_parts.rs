@@ -110,22 +110,10 @@ fn stamp_unique(names: &[&str]) {
     }
 }
 
-/// `${(q)word}` approximation (see `_sep_parts::q_quote`). Used only
-/// for the `"$orig" != "${orig:q}"` menu test — equality holds when
-/// `orig` contains no shell-special characters.
+/// `${(q)word}` / `${word:q}` — backslash-quote shell-special characters
+/// (`QT_BACKSLASH`, the same routine the `q` flag runs).
 fn q_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric()
-            || matches!(c, '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-' | '_')
-        {
-            out.push(c);
-        } else {
-            out.push('\\');
-            out.push(c);
-        }
-    }
-    out
+    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_BACKSLASH)
 }
 
 /// `zstyle -t ":completion:${curcontext}:" <style> <value>` — true
@@ -446,9 +434,9 @@ pub fn _multi_parts_impl(args: &[String]) -> i32 {
         let _ = setsparam("SUFFIX", &msuffix);
 
         // sh:83-87  exact-component check.
-        // NOTE: `${(@M)matches:#PAT*}` is glob; components here are
-        // literal, so we match by string prefix (approximation for
-        // glob metacharacters in the segment).
+        // `${(@M)matches:#${PREFIX}${SUFFIX}${sep}*}` — the text that comes
+        // out of the `${…}` expansions is literal (no GLOB_SUBST), only the
+        // trailing `*` is a pattern, so this is a string-prefix test.
         let exact_pat = format!("{}{}{}", mprefix, msuffix, sep);
         if !format!("{}{}", mprefix, msuffix).is_empty() || pre.starts_with(&sep) {
             tmp1 = matches

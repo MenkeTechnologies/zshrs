@@ -25,16 +25,19 @@
 //! call (compfiles/compadd/compquote read/write params by name) and
 //! read back into the corresponding Rust locals.
 //!
-//! Approximations (marked inline with `// sh:N approx`): the gnarliest
-//! zsh parameter-expansion idioms — `(e)`-eval of a parameter-expansion
-//! prefix, `(z)` word tokenisation, `(b)`/`(q)` pattern quoting, the
-//! `(#b)` backreference substitutions and the sh:201 dir-detect glob —
-//! are implemented with the closest available primitive and commented.
+//! The parameter-expansion idioms go through the ported engine: `(z)` via
+//! [`split_z`] (the real lexer), `(b)`/`(q)` via `quotestring`, `(Q)` via
+//! [`dequote_q`], the `(e)` eval of a parameter-expansion prefix through
+//! `execute_script`, and every `[[ … = pattern ]]` test through `matchpat`
+//! with the upstream pattern text.
 //! `compfiles -p$cfopt` emits the shell's exact option token (`-p` or
 //! `-p-`), matching C's accepted forms (computil.c:5011-5015).
 
 use crate::compsys::ported::shared::{PM_ARRAY, PM_UNIQUE};
-use crate::compsys::ported::shared::dispatch_action_command;
+use crate::compsys::ported::shared::{dequote_q, dispatch_action_command, split_z};
+use crate::ported::glob::matchpat;
+use crate::ported::utils::quotestring;
+use crate::ported::zsh_h::{QT_BACKSLASH, QT_BACKSLASH_PATTERN};
 use crate::ported::glob::{shtokenize, tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
@@ -195,51 +198,25 @@ fn assoc_get(name: &str, key: &str) -> Option<String> {
 }
 
 /// `${(b)s}` — backslash-quote pattern metacharacters so `s` matches
-/// literally when used as a pattern. sh approx.
+/// literally when used as a pattern (`QT_BACKSLASH_PATTERN`, c:Src/subst.c
+/// `case 'b'`).
 fn quote_b(s: &str) -> String {
-    let mut out = String::new();
+    quotestring(s, QT_BACKSLASH_PATTERN)
+}
+
+/// `[[ s = (|*[^\\])[][*?#~^\|\<\>]* ]]` — a pattern metacharacter that is
+/// not preceded by a backslash, or one at the very start.
+fn has_active_glob(s: &str) -> bool {
+    let mut prev: Option<char> = None;
     for c in s.chars() {
         if matches!(
             c,
-            '\\' | '('
-                | ')'
-                | '['
-                | ']'
-                | '|'
-                | '*'
-                | '?'
-                | '#'
-                | '^'
-                | '~'
-                | '<'
-                | '>'
-                | '{'
-                | '}'
-        ) {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// True if `s` contains an unescaped glob metacharacter (the shell's
-/// `(|*[^\\])[][*?#~^\|\<\>]*` test). sh approx.
-fn has_active_glob(s: &str) -> bool {
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'\\' {
-            i += 2;
-            continue;
-        }
-        if matches!(
-            b[i],
-            b'[' | b']' | b'*' | b'?' | b'#' | b'~' | b'^' | b'|' | b'<' | b'>'
-        ) {
+            ']' | '[' | '*' | '?' | '#' | '~' | '^' | '|' | '<' | '>'
+        ) && prev != Some('\\')
+        {
             return true;
         }
-        i += 1;
+        prev = Some(c);
     }
     false
 }
@@ -457,9 +434,11 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
 
     // sh:5-8 — file-split-chars.
     if let Some(splitchars) = zstyle_s(&ctx, "file-split-chars") {
-        // sh:7 approx: (q)-quote each char for the char class.
-        let quoted: String = splitchars.chars().flat_map(|c| ['\\', c]).collect();
-        compset(vec!["-P".into(), format!("*[{}]", quoted)]);
+        // sh:7 `compset -P "*[${(q)splitchars}]"`
+        compset(vec![
+            "-P".into(),
+            format!("*[{}]", quotestring(&splitchars, QT_BACKSLASH)),
+        ]);
     }
 
     // sh:22-39 — glob-qualifier dispatch.
@@ -647,11 +626,11 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
         .map(|e| e[2..].to_string())
         .collect();
     let mut pats: Vec<String> = {
-        // sh:69/72 approx: (z) word-split the joined -g patterns.
-        let split: Vec<String> = g_pats
-            .join(" ")
-            .split_whitespace()
-            .map(String::from)
+        // sh:69/72 `pats=( ${${(z):-x $pats}[2,-1]} )` — the joined -g
+        // patterns, split by the shell lexer with the sentinel word dropped.
+        let split: Vec<String> = split_z(&format!("x {}", g_pats.join(" ")))
+            .into_iter()
+            .skip(1)
             .collect();
         if topt.iter().any(|e| e == "-/") {
             let mut v = vec!["*(-/)".to_string()];
@@ -699,34 +678,36 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     let entry_prefix = get_str("PREFIX");
     let entry_suffix = get_str("SUFFIX");
 
-    // sh:80-93 — resolve -W into prepaths.
+    // sh:80-93 — resolve -W into prepaths (`typeset -U prepaths`).
     if !prepaths.is_empty() {
+        // `${x%/}/` — drop ONE trailing slash, then append one.
+        let slashed = |w: &str| format!("{}/", w.strip_suffix('/').unwrap_or(w));
         let tmp1s = prepaths.get(1).cloned().unwrap_or_default();
         if tmp1s.starts_with('(') {
-            // sh:83 — ${^=tmp1[2,-2]%/}/
-            let inner = &tmp1s[1..tmp1s.len().saturating_sub(1)];
-            prepaths = inner
-                .split_whitespace()
-                .map(|w| format!("{}/", w.trim_end_matches('/')))
+            // sh:83 `prepaths=( ${^=tmp1[2,-2]%/}/ )`
+            let inner: String = tmp1s
+                .chars()
+                .skip(1)
+                .take(tmp1s.chars().count().saturating_sub(2))
                 .collect();
+            prepaths = inner.split_whitespace().map(slashed).collect();
         } else if tmp1s.starts_with('/') {
-            prepaths = vec![format!("{}/", tmp1s.trim_end_matches('/'))];
+            // sh:85 `prepaths=( "${tmp1%/}/" )`
+            prepaths = vec![slashed(&tmp1s)];
         } else {
-            // sh:87 — ${(P)^tmp1%/}/ (indirect through named param).
+            // sh:87 `prepaths=( ${(P)^tmp1%/}/ )` — an unset target still
+            // yields one empty word, hence `/`; only an empty ARRAY yields
+            // none and falls through to sh:88.
             let vals = getaparam(&tmp1s)
-                .or_else(|| getsparam(&tmp1s).map(|s| vec![s]))
-                .unwrap_or_default();
-            prepaths = vals
-                .iter()
-                .filter(|v| !v.is_empty())
-                .map(|v| format!("{}/", v.trim_end_matches('/')))
-                .collect();
+                .unwrap_or_else(|| vec![getsparam(&tmp1s).unwrap_or_default()]);
+            prepaths = vals.iter().map(|v| slashed(v)).collect();
             if prepaths.is_empty() {
-                prepaths = vec![format!("{}/", tmp1s.trim_end_matches('/'))];
+                prepaths = vec![slashed(&tmp1s)]; // sh:88
             }
         }
+        prepaths = dedup(prepaths);
         if prepaths.is_empty() {
-            prepaths = vec![String::new()];
+            prepaths = vec![String::new()]; // sh:90
         }
     } else {
         prepaths = vec![String::new()];
@@ -741,9 +722,13 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                 .map(String::from)
                 .collect();
         } else {
+            // sh:99 `ignore=( ${(P)ignore[2]} )` — an empty scalar vanishes.
             ignore = getaparam(&ig2)
                 .or_else(|| getsparam(&ig2).map(|s| vec![s]))
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|v| !v.is_empty())
+                .collect();
         }
     }
 
@@ -799,7 +784,8 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     let fignore = get_arr("fignore");
     let comp_no_ignore = get_str("_comp_no_ignore");
     let fignore_env = get_str("FIGNORE");
-    let pats_is_star = pats.join(" ").trim() == "*"; // sh:137 approx
+    // sh:137 `"$pats" = \ #\*\ #` — spaces around a lone `*`.
+    let pats_is_star = pats.join(" ").trim_matches(' ') == "*";
     if comp_no_ignore.is_empty()
         && ignore.is_empty()
         && (!gopt || pats_is_star)
@@ -886,10 +872,14 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     // sh:197-212 — assorted styles.
     let sdirs = zstyle_s(&paths_ctx, "special-dirs").unwrap_or_default();
     let listsfx = zstyle_t(&paths_ctx, "list-suffixes");
-    // sh:201 approx — bump sopt to include `/` when pats look dir-ish.
-    if sopt.is_some()
-        && (pats.iter().any(|p| p.contains("(-/)")) || pats.iter().any(|p| p.trim() == "*"))
-    {
+    // sh:202 — `sopt=$sopt/` when the joined patterns are a bare `*`, end or
+    // start in `*(…)`, or carry a `(…/…)` qualifier. An unset `sopt` becomes `/`.
+    if matchpat(
+        r"((|*[[:blank:]])\*(|[[:blank:]]*|\([^[:blank:]]##\))|*\([^[:blank:]]#/[^[:blank:]]#\)*)",
+        &pats.join(" "),
+        true,
+        true,
+    ) {
         sopt = Some(format!("{}/", sopt.clone().unwrap_or_default()));
     }
     let accex = zstyle_a(&paths_ctx, "accept-exact");
@@ -983,28 +973,36 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     let mut donepath;
     let quote = cs_s("quote");
 
-    // sh:261 — parameter-expansion prefix branch (approx: only take the
-    // branch when pre contains `$` before a slash and isn't single-quoted).
-    if quote != "'" && pre.contains('$') && {
-        // matches [^glob]#(`...`|$)*/*  — roughly: a $… followed later by /
-        pre.find('$')
-            .map(|d| pre[d..].contains('/'))
-            .unwrap_or(false)
-    } {
-        // sh:269 linepath = ${(M)pre##*$[^/]##/}  — through the first
-        // slash after the parameter expansion.
-        let dollar = pre.find('$').unwrap();
-        let after = &pre[dollar..];
-        let slash_rel = after.find('/').unwrap();
-        linepath = pre[..dollar + slash_rel + 1].to_string();
-        // sh:273 realpath = eval ${(e)~linepath} — expand params via
-        // singsub (PREFORK_SINGLE). sh approx: env/param expansion only.
-        realpath = singsub(&linepath);
+    // sh:261 — a parameter expansion (or command substitution) in the word
+    // from the line, with a slash somewhere after it.
+    if quote != "'"
+        && matchpat(
+            r"[^][*?#^\|\<\>\\]#(\`[^\`]#\`|\$)*/*",
+            &pre,
+            true,
+            true,
+        )
+    {
+        // sh:269 `linepath="${(M)pre##*\$[^/]##/}"` — the LONGEST prefix
+        // matching `*$<non-slashes>/`.
+        let slashes: Vec<usize> = pre.match_indices('/').map(|(i, _)| i).collect();
+        linepath = slashes
+            .iter()
+            .rev()
+            .map(|&i| &pre[..=i])
+            .find(|cand| matchpat(r"*\$[^/]##/", cand, true, true))
+            .unwrap_or("")
+            .to_string();
+        // sh:270-274 — `eval 'realpath=${(e)~linepath}' 2>/dev/null` under
+        // `setopt localoptions nounset`.
+        realpath = eval_e_glob(&linepath);
         if realpath.is_empty() || realpath == linepath {
-            return 1;
+            return 1; // sh:275
         }
-        pre = pre[linepath.len()..].to_string();
-        // sh:277-279 orig truncated after the same slash count.
+        // sh:276 `pre="${pre#${linepath}}"`
+        pre = strip_prefix_literal(&pre, &linepath);
+        // sh:277-279 `i="${#linepath//$i}"` with `i='[^/]'` counts the slashes;
+        // `orig="${orig[1,(in:i:)/][1,-2]}"`.
         let nslash = linepath.matches('/').count();
         orig = truncate_after_nth_slash(&orig, nslash);
         donepath = String::new();
@@ -1032,8 +1030,21 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             }
             if tmp1n == 0 {
                 realpath = format!("{}/", get_str("PWD"));
-            } else if tmp1n <= dirstack.len() as i64 && tmp1n >= 1 {
-                realpath = format!("{}/", dirstack[(tmp1n - 1) as usize]);
+            } else if tmp1n <= dirstack.len() as i64 {
+                // sh:306 `$dirstack[tmp1]/` — a negative subscript counts from the end.
+                let at = if tmp1n < 0 {
+                    dirstack.len() as i64 + tmp1n
+                } else {
+                    tmp1n - 1
+                };
+                realpath = format!(
+                    "{}/",
+                    usize::try_from(at)
+                        .ok()
+                        .and_then(|i| dirstack.get(i))
+                        .map(String::as_str)
+                        .unwrap_or("")
+                );
             } else {
                 dispatch0("_message", &["not enough directory stack entries".into()], 310);
                 return 1;
@@ -1087,26 +1098,35 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     let nm = cs_i("nmatches");
     let skips_squeeze = squeeze;
 
+    // sh:35 `local … mid …` — function-level, so it survives across prepaths.
+    let mut mid = String::new();
+
     for prepath in prepaths.clone() {
         let mut skipped = String::new();
         let mut cpre = String::new();
 
         // sh:373-410 — accept an exact directory prefix immediately.
         if (accept_exact_dirs || !path_completion) && pre.contains('/') {
-            // (#b)(*)/([^/]#)
+            // `${pre} = (#b)(*)/([^/]#)`
             if let Some(cut) = pre.rfind('/') {
-                let mut tmp1s = pre[..cut].to_string(); // match[1]
-                let mut tpre = pre[cut + 1..].to_string(); // match[2]
+                // The file generator strips quotes only from pattern
+                // characters, so tmp1/tpre/tmp3 are unquoted copies while
+                // tmp2 keeps the line's own spelling (sh:386-396).
+                let tmp2 = pre[..cut].to_string();
+                let mut tmp1s = unquote_where(&tmp2, |_| true);
+                let mut tpre = unquote_where(&pre[cut + 1..], |c| !is_quoted_pattern_char(c));
+                let mut tmp3 = unquote_where(&donepath, |_| true);
                 loop {
-                    let candidate = format!("{}{}{}{}", prepath, realpath, donepath, tmp1s);
+                    let candidate = format!("{}{}{}{}", prepath, realpath, tmp3, tmp2);
                     if !path_completion || is_dir(&candidate) {
-                        donepath = format!("{}{}/", donepath, tmp1s);
+                        tmp3 = format!("{}{}/", tmp3, tmp1s);
+                        donepath = requote_pattern_chars(&tmp3); // sh:401
                         pre = tpre.clone();
                         break;
                     } else if let Some(cut2) = tmp1s.rfind('/') {
-                        let nt = tmp1s[cut2 + 1..].to_string();
-                        tmp1s = tmp1s[..cut2].to_string();
-                        tpre = format!("{}/{}", nt, tpre);
+                        // `$tmp1 = (#b)(*)/([^/]#)`
+                        tpre = format!("{}/{}", &tmp1s[cut2 + 1..], tpre);
+                        tmp1s.truncate(cut2);
                     } else {
                         break;
                     }
@@ -1116,8 +1136,9 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
 
         let mut tpre = pre.clone();
         let mut tsuf = suf.clone();
-        // sh:421 — testpath from donepath (unquoted).
-        let mut testpath = donepath.clone();
+        // sh:421 — testpath is used as a literal string, so the quoting of
+        // pattern characters comes off donepath.
+        let mut testpath = unquote_where(&donepath, is_quoted_pattern_char);
 
         // sh:423-426 — strip leading skips.
         let mut tmp2s = match_skips_prefix(&tpre, skips_squeeze);
@@ -1240,7 +1261,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                             base.push('/');
                         }
                         let probe =
-                            format!("{}{}{}", base, unquote(&cur_prefix), unquote(&cur_suffix));
+                            format!("{}{}{}", base, dequote_q(&cur_prefix), dequote_q(&cur_suffix));
                         if path_exists(&probe) {
                             npathcheck = 2;
                         }
@@ -1482,7 +1503,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
         loop {
             // sh:634-635 — compfiles -r.
             setaparam("tmp1", tmp1.clone());
-            let amb = compfiles(vec!["-r".into(), "tmp1".into(), unquote(&tmp3)]);
+            let amb = compfiles(vec!["-r".into(), "tmp1".into(), dequote_q(&tmp3)]);
             tmp1 = get_arr("tmp1");
             tmp4 = amb.to_string();
 
@@ -1711,7 +1732,8 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                         } else {
                             if !pattern_match.is_empty() {
                                 // SUFFIX gs./.*/ + '*'
-                                let cs = get_str("SUFFIX").replace('/', "/*/") + "*";
+                                // sh:733 `SUFFIX="${SUFFIX:gs./.*/}*"` — old `/`, new `*/`.
+                                let cs = get_str("SUFFIX").replace('/', "*/") + "*";
                                 setsparam("SUFFIX", &cs);
                             }
                             for it in tmp1.clone() {
@@ -1792,7 +1814,10 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                 }
                 tpre = tpre.splitn(2, '/').nth(1).unwrap_or("").to_string();
             } else if tsuf.contains('/') {
-                // mid handling folded below via testpath
+                // sh:785 `[[ "$tsuf" != /* ]] && mid="$testpath"`
+                if !tsuf.starts_with('/') {
+                    mid = testpath.clone();
+                }
                 if use_line_head {
                     cpre = format!(
                         "{}{}/",
@@ -1818,10 +1843,84 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
         }
 
         // sh:800-876 — final add of collected matches (non-ambiguous).
-        if tmp4.is_empty() {
-            // The `mid` middle-of-line branch (sh:803-840) is folded into
-            // the common last-component add below; testpath already
-            // carries the committed directory prefix. sh approx.
+        if tmp4.is_empty() && mid.ends_with('/') {
+            // Completing in the middle of the word, not in the last
+            // component (upstream `if [[ "$mid" = */ ]]`).
+            setsparam("PREFIX", &opre);
+            setsparam("SUFFIX", &osuf);
+            let mut tmp4v = strip_prefix_literal(&testpath, &mid); // `${testpath#${mid}}`
+            // `${mid%/*/}`: shortest suffix matching `/*/`, i.e. from the last
+            // slash before the final one; unchanged when there is none.
+            let mid_dir = match mid[..mid.len() - 1].rfind('/') {
+                Some(i) => mid[..i].to_string(),
+                None => mid.clone(),
+            };
+            let mut tmp2v = mid
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .to_string(); // `${${mid%/}##*/}`
+            let ipx = get_str("IPREFIX");
+            let isx = get_str("ISUFFIX");
+            let multi = mid.matches('/').count() >= 2; // `$mid = */*/*`
+            let mut tmp3v = mid_dir.clone();
+            if multi {
+                setaparam("tmp3", vec![tmp3v.clone()]);
+                if !linepath.is_empty() {
+                    compquote(vec!["-p".into(), "tmp3".into()]);
+                } else {
+                    compquote(vec!["tmp3".into()]);
+                }
+                tmp3v = get_arr("tmp3").into_iter().next().unwrap_or_default();
+            }
+            setaparam("tmp4", vec![tmp4v.clone()]);
+            setaparam("tmp2", vec![tmp2v.clone()]);
+            setaparam("tmp1", tmp1.clone());
+            compquote(vec!["tmp4".into(), "tmp2".into(), "tmp1".into()]);
+            tmp4v = get_arr("tmp4").into_iter().next().unwrap_or_default();
+            tmp2v = get_arr("tmp2").into_iter().next().unwrap_or_default();
+            tmp1 = get_arr("tmp1");
+            let anchor_dir = format!("{}{}{}", prepath, realpath, mid_dir);
+            for i in tmp1.clone() {
+                setaparam("tmp2", vec![tmp2v.clone()]);
+                dispatch0("_list_files", &["tmp2".into(), anchor_dir.clone()], 822);
+                tmp2v = get_arr("tmp2").into_iter().next().unwrap_or(tmp2v);
+                let listopts = get_arr("listopts");
+                let mut a: Vec<String> = Vec::new();
+                if !uopt.is_empty() {
+                    a.push(uopt.clone());
+                }
+                a.push("-Qf".into());
+                a.extend(mopts.clone());
+                a.push("-p".into());
+                let ip = if uopt.is_empty() { "" } else { ipx.as_str() };
+                a.push(if multi {
+                    format!("{}{}{}/", ip, linepath, tmp3v)
+                } else {
+                    format!("{}{}", ip, linepath)
+                });
+                a.push("-s".into());
+                a.push(format!(
+                    "/{}{}{}",
+                    tmp4v,
+                    i,
+                    if uopt.is_empty() { "" } else { isx.as_str() }
+                ));
+                a.push("-W".into());
+                a.push(if multi {
+                    format!("{}/", anchor_dir)
+                } else {
+                    format!("{}{}", prepath, realpath)
+                });
+                a.extend(pfxsfx.clone());
+                a.extend(mopts_r.clone());
+                a.extend(listopts);
+                a.push("-".into());
+                a.push(tmp2v.clone());
+                compadd(a);
+            }
+        } else if tmp4.is_empty() {
             if osuf.contains('/') {
                 setsparam("PREFIX", &format!("{}{}", opre, osuf));
                 setsparam("SUFFIX", "");
@@ -1931,7 +2030,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
         && zstyle_t_word(&paths_ctx, "expand", &["prefix"])
         && nm == cs_i("nmatches")
         && !exppaths.is_empty()
-        && format!("{}{}", linepath, exppaths.join(" ")) != eorig
+        && format!("{}{}", linepath, dedup(exppaths.clone()).join(" ")) != eorig
     {
         setsparam("PREFIX", &opre);
         setsparam("SUFFIX", &osuf);
@@ -1969,27 +2068,11 @@ fn dedup(v: Vec<String>) -> Vec<String> {
     v.into_iter().filter(|e| seen.insert(e.clone())).collect()
 }
 
-fn unquote(s: &str) -> String {
-    let mut out = String::new();
-    let mut it = s.chars();
-    while let Some(c) = it.next() {
-        if c == '\\' {
-            if let Some(n) = it.next() {
-                out.push(n);
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
 /// `eval "x=~spec"` — tilde expansion (`~`, `~user`, `~-`, `~+`). Routes
 /// through the ported `filesubstr` by converting the leading ASCII `~`
 /// to the Tilde token it expects.
 fn expand_tilde(spec: &str) -> Option<String> {
-    let rest = spec.strip_prefix('~')?;
-    filesubstr(&format!("\u{e198}{}", rest), false)
+    crate::compsys::ported::shared::tilde_expand(spec)
 }
 
 fn is_dir(p: &str) -> bool {
@@ -2015,7 +2098,8 @@ fn head_dir(s: &str) -> String {
 }
 
 /// `${orig[1,(in:i:)/][1,-2]}` — keep everything up to and including the
-/// i-th slash, then drop the final char. sh approx.
+/// n-th slash, then drop the final char. With fewer than n slashes `(in:i:)`
+/// is one past the end, so the whole string is kept and its last char dropped.
 fn truncate_after_nth_slash(s: &str, n: usize) -> String {
     let mut count = 0;
     for (idx, c) in s.char_indices() {
@@ -2026,12 +2110,73 @@ fn truncate_after_nth_slash(s: &str, n: usize) -> String {
             }
         }
     }
-    s.to_string()
+    let mut t = s.to_string();
+    t.pop();
+    t
+}
+
+/// The characters upstream's quoting substitutions treat as pattern
+/// characters: `\\ ] [ ^ ~ ( ) # * ?` (sh:392, sh:400, sh:421).
+fn is_quoted_pattern_char(c: char) -> bool {
+    matches!(c, '\\' | ']' | '[' | '^' | '~' | '(' | ')' | '#' | '*' | '?')
+}
+
+/// `${s//(#b)\\(X)/$match[1]}` — drop the backslash in front of every
+/// character for which `pred` holds, scanning left to right without overlap.
+fn unquote_where(s: &str, pred: impl Fn(char) -> bool) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        match (c, it.peek()) {
+            ('\\', Some(&n)) if pred(n) => {
+                out.push(n);
+                it.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// `${s//(#b)([\\\]\[\^\~\(\)\#\*\?])/\\$match[1]}` — backslash every
+/// pattern character (sh:401).
+fn requote_pattern_chars(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if is_quoted_pattern_char(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `eval 'realpath=${(e)~linepath}' 2>/dev/null` inside
+/// `function { setopt localoptions nounset; … }` (sh:270-274), run by the
+/// shell engine. A failing expansion (an unset parameter under `nounset`)
+/// assigns nothing, which is the empty string here.
+fn eval_e_glob(linepath: &str) -> String {
+    crate::compsys::ported::shared::declare_locals(&["_cs_pf_linepath", "_cs_pf_realpath"], 0);
+    let _ = setsparam("_cs_pf_linepath", linepath);
+    let _ = setsparam("_cs_pf_realpath", "");
+    let _ = crate::ported::exec::execute_script(
+        r#"function { setopt localoptions nounset; eval '_cs_pf_realpath=${(e)~_cs_pf_linepath}' 2>/dev/null }"#,
+    );
+    let out = get_str("_cs_pf_realpath");
+    let _ = crate::ported::params::unsetparam("_cs_pf_linepath");
+    let _ = crate::ported::params::unsetparam("_cs_pf_realpath");
+    out
+}
+
+/// `${s#${prefix}}` — a parameter expansion inside a `#` pattern is literal
+/// (no GLOB_SUBST), so this removes `prefix` verbatim when `s` starts with it.
+fn strip_prefix_literal(s: &str, prefix: &str) -> String {
+    s.strip_prefix(prefix).unwrap_or(s).to_string()
 }
 
 /// `pre = (#b)(${~pp})*` — return the leading match of pattern `pp`
-/// against `pre` (the matched prefix), if any. sh approx: literal or
-/// simple leading match.
+/// against `pre` (the matched prefix), if any; `(#b)(${~pp})*` binds the
+/// group greedily, so the LONGEST matching prefix wins.
 fn match_leading_pattern(pre: &str, pp: &str) -> Option<String> {
     if let Some(prog) = crate::ported::pattern::patcompile(
         &{
@@ -2189,5 +2334,52 @@ mod tests {
         let _ = setsparam("SUFFIX", "");
         // No active completion => nmatches unchanged => rc 1.
         assert_eq!(_path_files_impl(&[]), 1);
+    }
+
+    /// sh:392/400 — `\\(?)` drops every backslash, `\\([^\\\]\[\^\~\(\)\#\*\?])`
+    /// only those in front of a NON-pattern character, and sh:421's
+    /// `\\([\\\]\[\^\~\(\)\#\*\?])` only those in front of a pattern one.
+    #[test]
+    fn quoting_substitutions_of_the_accept_exact_dirs_block() {
+        assert_eq!(unquote_where(r"a\ b\*c", |_| true), "a b*c");
+        assert_eq!(
+            unquote_where(r"a\ b\*c", |c| !is_quoted_pattern_char(c)),
+            r"a b\*c"
+        );
+        assert_eq!(
+            unquote_where(r"a\ b\*c", is_quoted_pattern_char),
+            r"a\ b*c"
+        );
+        // a doubled backslash is one escaped backslash, not two escapes
+        assert_eq!(unquote_where(r"a\\b", |_| true), r"a\b");
+        assert_eq!(requote_pattern_chars("a*b(c)"), r"a\*b\(c\)");
+    }
+
+    /// `(|*[^\\])[][*?#~^\|\<\>]*` — an unescaped metacharacter anywhere.
+    #[test]
+    fn has_active_glob_ignores_backslash_escaped_metachars() {
+        assert!(has_active_glob("*"));
+        assert!(has_active_glob("a?b"));
+        assert!(!has_active_glob(r"a\*b"));
+        // the pattern only looks at the single preceding character
+        assert!(!has_active_glob(r"a\\*b"));
+        assert!(!has_active_glob("plain/path"));
+    }
+
+    /// `${orig[1,(in:i:)/][1,-2]}` — everything before the i-th slash; with
+    /// fewer slashes the whole string minus its last character.
+    #[test]
+    fn truncate_after_nth_slash_cuts_before_the_slash() {
+        assert_eq!(truncate_after_nth_slash("a/b/c", 1), "a");
+        assert_eq!(truncate_after_nth_slash("a/b/c", 2), "a/b");
+        assert_eq!(truncate_after_nth_slash("abc", 1), "ab");
+    }
+
+    /// `${s#${prefix}}` — the prefix comes out of a parameter expansion, so
+    /// it is literal and glob characters in it are not special.
+    #[test]
+    fn strip_prefix_literal_takes_the_text_verbatim() {
+        assert_eq!(strip_prefix_literal("$foo/bar", "$foo/"), "bar");
+        assert_eq!(strip_prefix_literal("xyz", "*"), "xyz");
     }
 }

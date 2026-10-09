@@ -126,12 +126,15 @@ fn param_type(name: &str) -> String {
     }
 }
 
-/// sh:104 — `[[ "$i" = ${PREFIX}*${SUFFIX} ]]`. PREFIX/SUFFIX are
-/// glob patterns in the source; for array indexes they are literal
-/// digit strings, so this treats them literally (prefix + anything +
-/// suffix). Approximation of the general glob case.
+/// sh:107 — `[[ "$i" = ${PREFIX}*${SUFFIX} ]]`. The right-hand side of `=`
+/// in `[[ ]]` is a pattern, text from the parameters included.
 fn index_matches(i: &str, prefix: &str, suffix: &str) -> bool {
-    i.len() >= prefix.len() + suffix.len() && i.starts_with(prefix) && i.ends_with(suffix)
+    crate::ported::glob::matchpat(
+        &format!("{}*{}", prefix, suffix),
+        i,
+        crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB),
+        true,
+    )
 }
 
 /// sh:105 — `$(print -D -- <val>)`.

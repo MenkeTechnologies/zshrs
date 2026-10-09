@@ -17,20 +17,13 @@
 //! sh:142-184 _tags email-$plugins; while _tags; do per-plugin _requested/_next_label
 //! ```
 //!
-//! Approximations (available-primitive limits, never faked):
-//!  * `$~__addrspec` (sh:170) — the RFC-822 addr-spec is a zsh
-//!    extended-glob pattern; `(SM)…##` returns the matched substring.
-//!    We approximate with a `localpart@domain` token extractor
-//!    (`extract_addrspec`); the full grammar strings are still built
-//!    verbatim (see `__specialx`…`__addresses`) and passed through.
-//!  * `$~__addresses$opts[-s]` count (sh:124) — the exact
-//!    "chars before the last unquoted separator" computation via the
-//!    glob backreference is approximated by a greedy
-//!    `compset -P "*<sep>"` (strips through the LAST separator).
-//!  * `_email-ldap` (sh:59) — depends on the external `ldapsearch`
-//!    binary + the `filter` style; without the style it returns 1
-//!    immediately (faithful early-out).
-//!  * `_email-MH` (sh:36) — depends on the external `ali` binary.
+//! sh:124 (the separator count) and sh:170 (the addr-spec extraction) run the
+//! upstream statements themselves through the shell engine, with the
+//! RFC-822 patterns built exactly as sh:95-117 build them.
+//!
+//!  * `_email-ldap` (sh:59) — needs the external `ldapsearch` binary and the
+//!    `filter` style; without the style it returns 1 at sh:55.
+//!  * `_email-MH` (sh:36) — needs the external `ali` binary.
 
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
@@ -40,7 +33,9 @@ use crate::compsys::ported::_wanted::_wanted;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle, zstyletab};
-use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, unsetparam};
+use crate::ported::params::{
+    getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam, unsetparam,
+};
 use crate::ported::utils::getshfunc;
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
@@ -114,19 +109,36 @@ fn replace_tab_field(s: &str) -> String {
     s.to_string()
 }
 
-/// Approximation of `${(SM)value##$~__addrspec}` (sh:170) — extract
-/// the `localpart@domain` token. `_pattern` is the verbatim zsh glob
-/// (kept for provenance; the match itself is approximated).
-fn extract_addrspec(s: &str, _pattern: &str) -> String {
-    let inner = match (s.find('<'), s.find('>')) {
-        (Some(a), Some(b)) if a < b => &s[a + 1..b],
-        _ => s,
-    };
-    inner
-        .split_whitespace()
-        .find(|t| t.contains('@'))
-        .map(|t| t.trim_matches('"').to_string())
-        .unwrap_or_default()
+/// sh:170 `reply=( ${(SM)${reply#*:}##$~__addrspec} )` — the upstream
+/// statement, run by the shell engine on a copy of `reply` with
+/// `__addrspec` bound to the pattern. EXTENDED_GLOB is forced because
+/// `$~__addrspec` is full of `#`/`##`. Elements with no addr-spec vanish.
+fn select_addrspecs(reply: &[String], addrspec: &str) -> Vec<String> {
+    crate::compsys::ported::shared::declare_locals(&["__cs_ea_reply", "__cs_ea_addrspec"], 0);
+    setaparam("__cs_ea_reply", reply.to_vec());
+    let _ = setsparam("__cs_ea_addrspec", addrspec);
+    let _ = crate::ported::exec::execute_script(
+        "function { setopt localoptions extendedglob; \
+         __cs_ea_reply=( ${(SM)${__cs_ea_reply#*:}##$~__cs_ea_addrspec} ) }",
+    );
+    let out = getaparam("__cs_ea_reply").unwrap_or_default();
+    unsetparam("__cs_ea_reply");
+    unsetparam("__cs_ea_addrspec");
+    out
+}
+
+/// sh:124-126 — `if [[ ${(Q)PREFIX} = (#b)($~__addresses$opts[-s])* ]]; then
+/// IFS="$opts[-s]" eval 'compset -P $(( ${#${=${:-x${match[1]}x}}} - 1 )) "*${opts[-s]}"'; fi`,
+/// run by the shell engine: strips PREFIX through the last unquoted separator.
+fn strip_through_last_separator(addresses: &str) {
+    crate::compsys::ported::shared::declare_locals(&["__cs_ea_addresses"], 0);
+    let _ = setsparam("__cs_ea_addresses", addresses);
+    let _ = crate::ported::exec::execute_script(
+        "function { local -a match mbegin mend; setopt localoptions extendedglob; \
+         if [[ ${(Q)PREFIX} = (#b)($~__cs_ea_addresses$opts[-s])* ]]; then \
+         IFS=\"$opts[-s]\" eval 'compset -P $(( ${#${=${:-x${match[1]}x}}} - 1 )) \"*${opts[-s]}\"'; fi }",
+    );
+    unsetparam("__cs_ea_addresses");
 }
 
 /// `zstyle -t ctx style` — true only when the style is set truthy.
@@ -510,8 +522,7 @@ pub fn _email_addresses(args: &[String]) -> i32 {
     let __addrspec = format!("{}{}@{}{}", __localpart, __space, __space, __domain);
 
     let __addresses = format!("({}|{})##", __qtext, __quotedstring);
-    // Built verbatim for provenance; matching is approximated (see notes).
-    let _ = (&__specials, &__phrase, &__addresses);
+    let _ = (&__specials, &__phrase); // sh:97/110, used only by plugins
 
     // sh:119  zparseopts -D -E -A opts n: s: c
     let src = "__compsys_argv";
@@ -541,19 +552,8 @@ pub fn _email_addresses(args: &[String]) -> i32 {
 
     // sh:122-130  -s separator handling
     if let Some(sep) = assoc_get("opts", "-s").filter(|s| !s.is_empty()) {
-        // sh:124  remove up to the last unquoted separator (approx —
-        //   see module note; the __addresses count is approximated by
-        //   a greedy compset -P).
-        let _ = &__addresses;
-        let prefix = getsparam("PREFIX").unwrap_or_default();
-        if prefix.contains(&sep) {
-            let _ = bin_compset(
-                "compset",
-                &["-P".to_string(), format!("*{}", sep)],
-                &make_ops(),
-                0,
-            );
-        }
+        // sh:124-126
+        strip_through_last_separator(&__addresses);
         // sh:129  compset -S "$opts[-s]*" || set -- -q -S "$opts[-s]" "$@"
         if bin_compset(
             "compset",
@@ -784,13 +784,7 @@ pub fn _email_addresses(args: &[String]) -> i32 {
                             // sh:169-174  transform reply
                             let new_reply: Vec<String> = if !plugin_args.is_empty() {
                                 // sh:170  ${(SM)${reply#*:}##$~__addrspec}
-                                reply
-                                    .iter()
-                                    .map(|r| {
-                                        let after = r.splitn(2, ':').nth(1).unwrap_or(r);
-                                        extract_addrspec(after, &__addrspec)
-                                    })
-                                    .collect()
+                                select_addrspecs(&reply, &__addrspec)
                             } else {
                                 // sh:173  keep elems with `@`, strip up to first `:`
                                 reply
@@ -842,12 +836,25 @@ mod tests {
         assert_eq!(r, 1);
     }
 
+    /// sh:170 — `(SM)…##$~__addrspec` keeps the longest addr-spec in each
+    /// `alias:address` value and drops values that contain none.
     #[test]
-    fn extract_addrspec_pulls_bare_address() {
-        // sh:170 — addr-spec extraction from an RFC-822 phrase.
-        assert_eq!(extract_addrspec("Jane Doe <j@x.io>", ""), "j@x.io");
-        assert_eq!(extract_addrspec("u@host", ""), "u@host");
-        assert_eq!(extract_addrspec("no address here", ""), "");
+    fn select_addrspecs_keeps_longest_match_and_drops_misses() {
+        let _g = crate::test_util::global_state_lock();
+        // The statement runs on the live executor; a unit test has none.
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
+        let atom = "[^][()<>@,;:\\\\\".[:blank:]]##";
+        let spec = format!("{atom}@{atom}(.{atom})#");
+        let got = select_addrspecs(
+            &[
+                "a:Jane Doe <j@x.io>".to_string(),
+                "b:no address here".to_string(),
+                "c:u@host".to_string(),
+            ],
+            &spec,
+        );
+        assert_eq!(got, vec!["j@x.io".to_string(), "u@host".to_string()]);
     }
 
     #[test]

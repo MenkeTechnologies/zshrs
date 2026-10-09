@@ -79,26 +79,20 @@
 //!     (was a command / undefined) — exactly the upstream markers.
 //!   * `REPLY` (sh:65 / sh:89).
 //!
-//! Approximations (documented, not silent):
-//!   * `functions -c` (sh:54, sh:84) is a plain shfunc clone here;
-//!     the upstream BUGS note says `functions -c` "acts like
-//!     `autoload +X`" — we do not force-load an autoload stub before
-//!     cloning, we copy whatever is currently in `shfunctab`.
-//!   * The default `${funcstack[2]}:${functrace[2]}:<depth+1>`
-//!     suffix (sh:42) is built from the live `funcstack`/`functrace`
-//!     special params; callers that pass `-s` (e.g. `_approximate`)
-//!     never exercise this path.
-//!   * `${(q-)…}` quoting of the wrapper name/body (sh:58, sh:61) is
-//!     omitted: shadowed names here are shell identifiers
-//!     (`compadd`, `compcall`, …) that need no quoting.
-//!   * The top-level autoload trailer (sh:97) is subsumed: invoking
-//!     `_shadow(args)` corresponds to calling the `_shadow()` shell
-//!     function directly, which is what the router does.
+//! `functions -c` (sh:54, sh:84) is the real builtin (`bin_functions`,
+//! c:Src/builtin.c:3399-3454), so an autoload stub is loaded before it is
+//! cloned, which is the upstream BUGS note ("`functions -c` acts like
+//! `autoload +X`"). The `${funcstack[2]}:${functrace[2]}:<depth+1>` default
+//! suffix (sh:42) is read from the live `funcstack`/`functrace` specials of
+//! the `_shadow` frame. The top-level autoload trailer (sh:97) is subsumed:
+//! invoking `_shadow(args)` is calling the `_shadow()` shell function, which
+//! is what the router does.
 
-use crate::ported::hashtable::{removeshfuncnode, shfunctab_lock};
+use crate::ported::hashtable::removeshfuncnode;
 use crate::ported::modules::parameter::setfunction;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setiparam, setsparam};
-use crate::ported::utils::getshfunc;
+use crate::ported::utils::{getshfunc, quotestring};
+use crate::ported::zsh_h::QT_SINGLE_OPTIONAL;
 
 const STACK_PARAM: &str = ".shadow.stack";
 const DEPTH_PARAM: &str = ".shadow.depth";
@@ -120,23 +114,23 @@ fn builtin_defined(name: &str) -> bool {
     crate::compsys::ported::shared::plus_builtins(name)
 }
 
-/// `builtin functions -c -- $src $dst` (sh:54, sh:84) — clone the
-/// `shfunc` currently registered under `src` into `dst`. Returns
-/// `true` when `src` existed and was copied. See module-doc
-/// approximation note re: `autoload +X`.
+/// `builtin functions -c -- $src $dst` (sh:54, sh:84) — the real builtin:
+/// it loads an undefined autoload stub first and clones the definition under
+/// `dst`. `true` when the builtin succeeded.
 fn functions_copy(src: &str, dst: &str) -> bool {
-    let mut tab = match shfunctab_lock().write() {
-        Ok(t) => t,
-        Err(_) => return false,
+    let mut ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
     };
-    match tab.get_including_disabled(src).cloned() {
-        Some(mut copy) => {
-            copy.node.nam = dst.to_string();
-            tab.add(copy);
-            true
-        }
-        None => false,
-    }
+    ops.ind[b'c' as usize] = 1;
+    crate::ported::builtin::bin_functions(
+        "functions",
+        &[src.to_string(), dst.to_string()],
+        &ops,
+        0,
+    ) == 0
 }
 
 /// `builtin unfunction -- $name` (sh:81, sh:85).
@@ -203,11 +197,19 @@ pub fn _shadow(args: &[String]) -> i32 {
             fnames.push(format!("f@{}", fname));
         } else if builtin_defined(fname) {
             // sh:56-59 — wrapper dispatching to the real builtin.
-            setfunction(&shadowname, format!("builtin {} \"$@\"", fname), 0);
+            setfunction(
+                &shadowname,
+                format!("builtin {} \"$@\"", quotestring(fname, QT_SINGLE_OPTIONAL)),
+                0,
+            );
             fnames.push(format!("b@{}", fname));
         } else {
             // sh:60-63 — wrapper dispatching to an external command.
-            setfunction(&shadowname, format!("command {} \"$@\"", fname), 0);
+            setfunction(
+                &shadowname,
+                format!("command {} \"$@\"", quotestring(fname, QT_SINGLE_OPTIONAL)),
+                0,
+            );
             fnames.push(format!("c@{}", fname));
         }
     }
@@ -335,6 +337,7 @@ pub fn current_backup_name(fname: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ported::hashtable::shfunctab_lock;
     use crate::ported::zsh_h::{hashnode, shfunc};
 
     fn make_shfunc(name: &str, body: &str) -> shfunc {

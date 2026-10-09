@@ -1,6 +1,6 @@
 //! Port of `_approximate` from
 //! `Completion/Base/Completer/_approximate` as shipped in zsh 5.9.2
-//! (`share/zsh/functions/_approximate`, 125 lines, abridged):
+//! (`share/zsh/functions/_approximate`, 125 lines, condensed):
 //! ```text
 //! sh: 11  [[ _matcher_num -gt 1 || "${#:-$PREFIX$SUFFIX}" -le 1 ]] && return 1
 //! sh: 13  local _comp_correct _correct_expl _correct_group comax cfgacc match
@@ -178,26 +178,18 @@ pub fn _approximate(args: &[String]) -> i32 {
     }
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
-    if prefix.len() + suffix.len() <= 1 {
+    if prefix.chars().count() + suffix.chars().count() <= 1 {
         return 1;
     }
 
     // sh:21-29  -a / max-errors style
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let cfgacc = if let Some(a) = args.first() {
-        if let Some(rest) = a.strip_prefix("-a") {
-            if !rest.is_empty() {
-                rest.to_string()
-            } else if args.len() > 1 {
-                args[1].clone()
-            } else {
-                "2 numeric".to_string()
-            }
-        } else {
-            max_errors_style(&curcontext)
-        }
-    } else {
-        max_errors_style(&curcontext)
+    // sh:18 `[[ "$1" = -a* ]]` also matches a bare `-a`, so sh:19 gives it
+    // `${1[3,-1]}` = "" and the `elif [[ "$1" = -a ]]` arm of sh:20 can never
+    // run; an empty `cfgacc` then fails sh:43.
+    let cfgacc = match args.first().and_then(|a| a.strip_prefix("-a")) {
+        Some(rest) => rest.to_string(),
+        None => max_errors_style(&curcontext),
     };
 
     // sh:32-44
@@ -206,11 +198,7 @@ pub fn _approximate(args: &[String]) -> i32 {
         if cfgacc.contains("not-numeric") {
             return 1;
         }
-        if numeric < 1 {
-            1
-        } else {
-            numeric
-        }
+        numeric // sh:36 `comax="${NUMERIC:-1}"`; a value below 1 fails sh:43
     } else {
         cfgacc
             .chars()
@@ -345,7 +333,7 @@ pub fn _approximate(args: &[String]) -> i32 {
                     // sh:100-101
                     let list = get_compstate_str("list").unwrap_or_default();
                     if !list.starts_with("list") {
-                        set_compstate_str("list", format!("{} force", list).trim());
+                        set_compstate_str("list", &format!("{} force", list));
                     }
                 }
             }
@@ -417,6 +405,17 @@ mod tests {
         assert_eq!(replace_completer_field(":correct:cd:", 2), ":correct-2:cd:");
         // Fewer than two fields: zsh's substitution does not match.
         assert_eq!(replace_completer_field(":approximate", 1), ":approximate");
+    }
+
+    /// sh:18 — `[[ "$1" = -a* ]]` also matches a bare `-a`, so `cfgacc` is
+    /// `${1[3,-1]}` = "" and sh:43 gives up; the `-a` arm of sh:20 is dead.
+    #[test]
+    fn bare_dash_a_gives_an_empty_error_budget() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("_matcher_num", "1");
+        let _ = setsparam("PREFIX", "abcdef");
+        let _ = setsparam("SUFFIX", "");
+        assert_eq!(_approximate(&["-a".to_string(), "3".to_string()]), 1);
     }
 
     /// sh:57 `-[a-zA-Z]#U[a-zA-Z]#` vs sh:66 `-*[JV]` — two different

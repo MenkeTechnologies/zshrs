@@ -69,10 +69,7 @@ pub fn _set_command_impl() -> i32 {
         return 0;
     }
 
-    // sh:12 — builtin OR function lookup (we approximate: check the
-    //   shfunc table; builtins are also enumerable but we keep it
-    //   simple, falling through to the path-classify branches when
-    //   not a known function).
+    // sh:12 `(( $+builtins[$command] + $+functions[$command] ))`
     //
     // sh:12 reads BOTH `$builtins[$command]` and `$functions[$command]`
     // as subscripts (`$+a + $+b` evaluates both operands), so in zsh each
@@ -118,16 +115,15 @@ pub fn _set_command_impl() -> i32 {
         return 0;
     }
 
-    // sh:16 — `..*/...` relative path
-    if let Some(stripped) = command.strip_prefix("..") {
-        if stripped.starts_with('/') {
-            let pwd = getsparam("PWD").unwrap_or_default();
-            let _ = setsparam("_comp_command1", &format!("{}/{}", pwd, command));
-            let tail = basename(&command);
-            let _ = setsparam("_comp_command2", &tail);
-            let _ = setsparam("_comp_command", &tail);
-            return 0;
-        }
+    // sh:19 — `[[ "$command" = ..#/* ]]`: a `.`, any further dots, then `/`
+    // (`./x`, `../x`, `.../x`).
+    if command.starts_with('.') && command.trim_start_matches('.').starts_with('/') {
+        let pwd = getsparam("PWD").unwrap_or_default();
+        let _ = setsparam("_comp_command1", &format!("{}/{}", pwd, command));
+        let tail = basename(&command);
+        let _ = setsparam("_comp_command2", &tail);
+        let _ = setsparam("_comp_command", &tail);
+        return 0;
     }
 
     // sh:23 — `*/*` containing slash
@@ -333,6 +329,20 @@ mod tests {
             getsparam("_comp_command1").as_deref(),
             Some("/here/../tools/runme")
         );
+        assert_eq!(getsparam("_comp_command2").as_deref(), Some("runme"));
+        assert_eq!(getsparam("_comp_command").as_deref(), Some("runme"));
+    }
+
+    /// sh:19 `[[ "$command" = ..#/* ]]` — `..#` is a dot followed by ANY number
+    /// of further dots, so `./x` takes the PWD-prefixed branch too, not the
+    /// plain `*/*` one of sh:23.
+    #[test]
+    fn single_dot_relative_path_uses_pwd_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("PWD", "/here");
+        setaparam("words", vec!["./runme".to_string()]);
+        let _ = _set_command_impl();
+        assert_eq!(getsparam("_comp_command1").as_deref(), Some("/here/./runme"));
         assert_eq!(getsparam("_comp_command2").as_deref(), Some("runme"));
         assert_eq!(getsparam("_comp_command").as_deref(), Some("runme"));
     }

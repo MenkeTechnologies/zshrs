@@ -1,7 +1,7 @@
 //! Port of `_user_expand` from
 //! `Completion/Base/Completer/_user_expand`.
 //!
-//! Upstream body (147 lines, abridged):
+//! Upstream body (147 lines, condensed):
 //! ```text
 //! sh: 1  #autoload
 //! sh:13  [[ _matcher_num -gt 1 ]] && return 1
@@ -42,21 +42,16 @@
 //!     `_expand` sh:218-220), and correspondingly no `pref=` line.
 //! The three pieces the two blocks DO share live in `shared`.
 //!
-//! Deliberately NOT ported, named here rather than claimed:
-//!   * sh:11 `setopt localoptions nonomatch` — no `zglob` call on this path,
-//!     but `$-` reads NOMATCH (`zshletters[]`, c:Src/options.c:296 maps `3`
-//!     to `-NOMATCH`), so a spec function that inspects `$-` sees a
-//!     difference. `_expand_with` carries a targeted guard for the same line;
-//!     this port has no glob step to protect, so the flip is not reproduced.
+//! sh:11 `setopt localoptions nonomatch` is a [`LocalOptions`] snapshot with
+//! NOMATCH switched off, so a spec function that reads `$-` sees it.
 
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::{
     caller_is_prefix, expansion_description_args, expansion_partition_argv, right_pad_or_truncate,
-    LocalScope, PM_ARRAY,
+    LocalOptions, LocalScope, PM_ARRAY,
 };
-use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -76,21 +71,20 @@ fn make_ops() -> options {
 /// `_user_expand` — completer that applies user-defined expansions.
 pub fn _user_expand() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_user_expand");
+    // sh:11 `setopt localoptions nonomatch`
+    let _local_options = LocalOptions::enter();
+    crate::ported::options::opt_state_set("nomatch", false);
     // sh:13
     if getiparam("_matcher_num") > 1 {
         return 1;
     }
 
-    // sh:15-16 — the part of the `local` line this port newly writes.
-    // `dir`, `space`, `normal` and `dstr` are handed to `compadd -a` /
-    // `compadd -d` BY NAME below, so they have to be real parameters, and
-    // `REPLY` is clobbered per spec iteration at sh:33 and read back at sh:89.
-    // Upstream declares them local, and none of them may survive into the next
-    // completer.
-    //
-    // The rest of sh:15-16 (`exp`, `reply`, `specs`, `word`, `sort`, `suf`,
-    // `asp`, `tmp`, `spec`) is left as this port already had it — those writes
-    // predate this change and scoping them is its own edit.
+    // sh:15-16 `local exp word sort expr expl subd suf asp tmp spec REPLY` /
+    // `local -a specs reply` — the names this port publishes to the paramtab.
+    // `dir`, `space`, `normal` and `dstr` (sh:99, sh:125) are handed to
+    // `compadd -a` / `compadd -d` BY NAME, and `REPLY` is clobbered per spec
+    // iteration at sh:33 and read back at sh:89. None may survive into the
+    // next completer.
     //
     // `expl` is in the list even though this port never writes it: sh:89/91,
     // sh:102/104 and sh:128/130 hand the NAME to `_description`, whose last
@@ -98,7 +92,10 @@ pub fn _user_expand() -> i32 {
     // is born at whatever level is current. Measured with a `user-expand` style
     // and `ls foo<TAB>`, /opt/homebrew/bin/zsh 5.9.2 leaves `expl` unset where
     // zshrs left `expl=(-J -default-)` behind for the next completer.
-    let mut _scope = LocalScope::declare(&["dir", "space", "normal", "dstr", "expl"], PM_ARRAY);
+    let mut _scope = LocalScope::declare(
+        &["dir", "space", "normal", "dstr", "expl", "exp", "reply"],
+        PM_ARRAY,
+    );
     _scope.also(&["REPLY"], 0);
 
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
@@ -129,14 +126,27 @@ pub fn _user_expand() -> i32 {
         // sh:33 — cleared per iteration, so `$REPLY` at sh:89 is whatever the
         // spec that matched left behind and nothing older.
         let _ = setsparam("REPLY", "");
-        if let Some(name) = spec.strip_prefix('$') {
-            // sh:36  assoc-lookup
-            let arr = getaparam(name).unwrap_or_default();
-            let val = arr
-                .chunks(2)
-                .find(|kv| kv.first().map(|k| k == &word).unwrap_or(false))
-                .and_then(|kv| kv.get(1).cloned())
-                .unwrap_or_default();
+        if let Some(name) = spec
+            .strip_prefix('$')
+            .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_'))
+        {
+            // sh:39 `eval tmp='${'$spec[2,-1]'[$word]}'` — an association is
+            // looked up by key; an array by the word read as an index (a
+            // non-numeric word evaluates to 0, which selects nothing).
+            let val = if crate::ported::params::gethkparam(name).is_some() {
+                crate::compsys::ported::shared::assoc_get(name, &word).unwrap_or_default()
+            } else {
+                match (getaparam(name), word.trim().parse::<i64>()) {
+                    (Some(arr), Ok(i)) => {
+                        let at = if i < 0 { arr.len() as i64 + i } else { i - 1 };
+                        usize::try_from(at)
+                            .ok()
+                            .and_then(|k| arr.get(k).cloned())
+                            .unwrap_or_default()
+                    }
+                    _ => String::new(),
+                }
+            };
             if !val.is_empty() {
                 exp = vec![val]; // sh:41
                 break;
@@ -144,7 +154,8 @@ pub fn _user_expand() -> i32 {
         } else if spec.starts_with('_') {
             // sh:47-52  shell-fn dispatch — fn writes into $reply
             setaparam("reply", Vec::new());
-            let _ = dispatch_function_call(spec, &[word.clone()]);
+            // sh:48 `$spec $word` is a command word.
+            crate::compsys::ported::shared::dispatch_action_command(spec, &[word.clone()], 48);
             let reply = getaparam("reply").unwrap_or_default();
             if !reply.is_empty() {
                 exp = reply;
@@ -391,8 +402,8 @@ mod tests {
     /// `$compstate[insert]`.
     ///
     /// The spec is sh:36's `$IDENT` assoc arm, which reads the named parameter
-    /// and pairs it up as key/value — a flat array stands in for the assoc, as
-    /// in `prefix_caller_drops_isuffix_from_the_word` above. `compadd` refuses
+    /// and looks `$word` up in it, so the map is a real association, as in
+    /// `prefix_caller_drops_isuffix_from_the_word` below. `compadd` refuses
     /// to run outside a completion function (`bin_compadd`, c:Src/Zle/complete.c),
     /// so `INCOMPFUNC` is raised for the call.
     fn drive(word: &str, expansion: &str, insert: &str) -> (Vec<Cmatch>, String) {
@@ -405,7 +416,7 @@ mod tests {
         let _ = setsparam("ISUFFIX", "");
         let _ = setsparam("curcontext", "");
         crate::ported::params::setiparam("_matcher_num", 1);
-        setaparam(
+        let _ = crate::ported::params::sethparam(
             "ZZQ_UE_MAP",
             vec![word.to_string(), expansion.to_string()],
         );
@@ -524,19 +535,18 @@ mod tests {
     #[test]
     fn prefix_caller_drops_isuffix_from_the_word() {
         let _g = crate::test_util::global_state_lock();
+        let _g2 = crate::ported::zle::zle_main::zle_test_setup();
         let _ = setsparam("IPREFIX", "");
         let _ = setsparam("PREFIX", "foo");
         let _ = setsparam("SUFFIX", "");
         let _ = setsparam("ISUFFIX", "bar");
         let _ = setsparam("curcontext", "");
         crate::ported::params::setiparam("_matcher_num", 1);
-        // sh:36's `$IDENT` arm reads the named parameter and pairs it up as
-        // key/value, so a flat array stands in for the assoc here.
-        setaparam(
+        // sh:36's `$IDENT` arm evaluates `${ZZQ_UE_MAP[$word]}`.
+        let _ = crate::ported::params::sethparam(
             "ZZQ_UE_MAP",
             vec!["foo".to_string(), "ZZQ_HIT".to_string()],
         );
-        setaparam("exp", Vec::new());
         let _ = bin_zstyle(
             "zstyle",
             &[
@@ -573,15 +583,20 @@ mod tests {
                 });
             }
         }
+        crate::comp_match_handles::matches_arc().lock().unwrap().clear();
+        crate::ported::zle::complete::INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = crate::ported::zle::compcore::set_compstate_str("insert", "");
         let _ = _user_expand();
+        crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         {
             let mut stack = crate::ported::modules::parameter::FUNCSTACK.lock().unwrap();
             stack.pop();
             stack.pop();
         }
+        let got = crate::comp_match_handles::matches_arc().lock().unwrap().clone();
         assert_eq!(
-            getaparam("exp").unwrap_or_default(),
-            vec!["ZZQ_HIT".to_string()],
+            got.last().and_then(|m| m.str.clone()),
+            Some("ZZQ_HIT".to_string()),
             "sh:19 arm must look up `foo`, not `foo`+$ISUFFIX"
         );
     }
