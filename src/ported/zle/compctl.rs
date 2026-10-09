@@ -2947,7 +2947,7 @@ pub(crate) fn gen_matches_files(mut dirs: i32, mut execs: i32, mut all: i32) {
                         let cpm: Option<String> = crate::ported::zle::compcore::comppatmatch
                             .get()
                             .and_then(|m| m.lock().ok())
-                            .and_then(|g| g.clone());
+                            .map(|g| g.clone());
                         let cpm_nonempty = cpm.as_deref().is_some_and(|c| !c.is_empty());
                         let tt: bool;
                         if crate::ported::zle::compcore::ispattern.load(Ordering::Relaxed) != 0

@@ -584,7 +584,7 @@ mod tests {
         }
         crate::comp_match_handles::matches_arc().lock().unwrap().clear();
         crate::ported::zle::complete::INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
-        let _ = crate::ported::zle::compcore::set_compstate_str("insert", "");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "");
         let _ = _user_expand();
         crate::ported::zle::complete::INCOMPFUNC.store(0, std::sync::atomic::Ordering::Relaxed);
         {
