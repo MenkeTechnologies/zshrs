@@ -8,7 +8,10 @@ tmpdir=$(mktemp -d)
 # Build a fixture tree.
 touch $tmpdir/a.txt $tmpdir/b.txt $tmpdir/c.log $tmpdir/d.bak
 touch $tmpdir/foo.py $tmpdir/bar.py $tmpdir/baz.rb
-touch $tmpdir/test1.zsh $tmpdir/test2.zsh $tmpdir/test10.zsh
+touch $tmpdir/test1.zsh $tmpdir/test2.zsh
+# test10.zsh must be strictly newer than the files above for the (om) demo below.
+sleep 1
+touch $tmpdir/test10.zsh
 touch $tmpdir/.hidden_file
 mkdir -p $tmpdir/sub1 $tmpdir/sub2 $tmpdir/.hidden_dir
 touch $tmpdir/sub1/nested.txt $tmpdir/sub2/another.txt

@@ -15,11 +15,11 @@ echo "  defined: report_a report_b report_c log_x log_y log_z misc"
 
 echo
 echo "── typeset -m 'report_*' shows matching vars ──"
-typeset -m 'report_*' 2>/dev/null | sed 's/^/  /'
+typeset -m 'report_*' 2>/dev/null | sort | sed 's/^/  /'
 
 echo
 echo "── typeset -m 'log_*' shows matching ──"
-typeset -m 'log_*' 2>/dev/null | sed 's/^/  /'
+typeset -m 'log_*' 2>/dev/null | sort | sed 's/^/  /'
 
 echo
 echo "── typeset -rm 'report_*' sets readonly on matches ──"
@@ -30,6 +30,8 @@ echo "  report_a is still: $report_a"
 
 # Need to unset readonly for cleanup — zsh doesn't easily support that.
 echo
+# Listing order is the parameter table's hash order, which depends on how many
+# parameters the environment put there; sort so the output is the same anywhere.
 echo "── typeset -m for arrays ──"
 typeset -gA mymap_color
 mymap_color=( red 1 blue 2 green 3 )
@@ -37,7 +39,7 @@ typeset -gA mymap_size
 mymap_size=( small 1 medium 2 large 3 )
 
 echo "  associative arrays:"
-typeset -m 'mymap_*' 2>/dev/null | head -5 | sed 's/^/    /'
+typeset -m 'mymap_*' 2>/dev/null | sort | head -5 | sed 's/^/    /'
 
 echo
 echo "── typeset -gum '*' converts globals to uppercase ──"
@@ -106,7 +108,7 @@ typeset -gp 2>/dev/null | grep -E "^typeset .* (report_a|log_x|misc) " | head -5
 
 echo
 echo "── typeset -m '*_x' shows ALL ending in _x ──"
-typeset -m '*_x' 2>/dev/null | sed 's/^/  /'
+typeset -m '*_x' 2>/dev/null | sort | sed 's/^/  /'
 
 echo
 echo "── attribute listing ──"

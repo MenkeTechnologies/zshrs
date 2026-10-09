@@ -13,6 +13,13 @@ echo "tiny" > small.txt
 echo "med size data" > medium.txt
 touch zero.txt
 mkdir empty_dir
+# Distinct, increasing mtimes in creation order: files made back to back can
+# share one timestamp, and the (om) ordering below would then depend on how the
+# platform's qsort breaks the tie.
+touch -t 202001010000.01 big.txt
+touch -t 202001010000.02 small.txt
+touch -t 202001010000.03 medium.txt
+touch -t 202001010000.04 zero.txt
 
 echo "── (.) plain files ──"
 print -l *(.)

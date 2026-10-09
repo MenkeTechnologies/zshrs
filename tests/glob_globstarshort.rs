@@ -8,7 +8,18 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
+
+/// The glob options and the pattern being compiled are process-wide, and libtest
+/// runs these tests on parallel threads: one test's `set_opts()` and glob landed
+/// in the middle of another's, so `**.stk` sometimes matched `a.txt` and `sub`.
+/// Each test holds this for its whole body.
+static GLOBALS: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    GLOBALS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 // GlobOptions struct was deleted (Rust-only bag). Options are now
 // read from the canonical option store; tests set the relevant
@@ -32,6 +43,7 @@ fn set_opts() {
 
 #[test]
 fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
+    let _serial = serial();
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
 
@@ -103,6 +115,7 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
 
 #[test]
 fn globstarshort_double_star_dot_rs_finds_project_sources() {
+    let _serial = serial();
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let pattern = format!("{}/src/**.rs", manifest_dir);
     let got = {
@@ -154,6 +167,7 @@ fn globstarshort_double_star_dot_rs_finds_project_sources() {
 /// single directory level — so `**/*.md` returned only the depth-1 match.
 #[test]
 fn globstarshort_explicit_slash_double_star_recurses_all_depths() {
+    let _serial = serial();
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
 

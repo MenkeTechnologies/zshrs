@@ -9,14 +9,24 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 fn zshrs_bin() -> std::path::PathBuf {
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("target/debug/zshrs");
-    p
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_zshrs"))
 }
 
+/// Linux caps ONE argument at 128 KiB (`MAX_ARG_STRLEN`), so a script longer
+/// than that cannot travel in `-c`; it goes through a file instead.
+const MAX_ARGV_SCRIPT: usize = 100_000;
+
 fn run_via_zsh_pipeline(src: &str) -> (i32, String) {
-    let mut child = Command::new(zshrs_bin())
-        .args(["-f", "-c", src])
+    let file;
+    let mut cmd = Command::new(zshrs_bin());
+    if src.len() > MAX_ARGV_SCRIPT {
+        file = tempfile::NamedTempFile::new().expect("script tempfile");
+        std::fs::write(file.path(), src).expect("write script");
+        cmd.arg("-f").arg(file.path());
+    } else {
+        cmd.args(["-f", "-c", src]);
+    }
+    let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

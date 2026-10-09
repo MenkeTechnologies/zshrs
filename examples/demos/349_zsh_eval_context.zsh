@@ -113,8 +113,9 @@ my_line_fn
 echo
 echo "── ZSH_NAME / ZSH_VERSION / ZSH_PATCHLEVEL ──"
 echo "  ZSH_NAME:       ${ZSH_NAME:-N/A}"
-echo "  ZSH_VERSION:    ${ZSH_VERSION:-N/A}"
-echo "  ZSH_PATCHLEVEL: ${ZSH_PATCHLEVEL:-N/A}"
+# The values differ between zsh releases and builds; the portable fact is that they are set.
+echo "  ZSH_VERSION set:    ${${ZSH_VERSION:+yes}:-no}"
+echo "  ZSH_PATCHLEVEL set: ${${ZSH_PATCHLEVEL:+yes}:-no}"
 
 echo
 echo "── PIPESTATUS ──"

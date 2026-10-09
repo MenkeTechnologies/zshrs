@@ -9,9 +9,8 @@ echo "  compinit autoloaded: $?"
 
 echo
 echo "── compinit pre-flight ──"
-echo "  fpath has ${#fpath} entries"
-echo "  first 3 fpath entries:"
-print -l "${fpath[@]:0:3}" 2>/dev/null | sed 's/^/    /'
+# The directories (and how many) are the host's; the portable fact is that fpath is populated.
+echo "  fpath populated: ${${fpath:+yes}:-no}"
 
 echo
 echo "── what compinit does (lifecycle) ──"

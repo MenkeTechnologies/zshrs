@@ -62,7 +62,10 @@ fn run_demo(bin: &Path, script: &Path) -> (i32, String, String) {
         .spawn()
         .expect("spawn zshrs");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // A hang detector, not a performance budget: the compute-heavy demos take
+    // 25-30 s in an unoptimised build on an unloaded machine, and a CI runner is
+    // slower than that.
+    let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -86,7 +89,7 @@ fn run_demo(bin: &Path, script: &Path) -> (i32, String, String) {
                 if Instant::now() > deadline {
                     let _ = child.kill();
                     panic!(
-                        "demo {} exceeded 30s wall-clock — likely a regression",
+                        "demo {} exceeded 180s wall-clock — likely a hang",
                         script.display()
                     );
                 }
