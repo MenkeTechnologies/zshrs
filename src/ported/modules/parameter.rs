@@ -2273,6 +2273,30 @@ pub fn scanbuiltins(
                 pm.node.nam = n;
                 f(&pm, flags);
             }
+            // The folded extension bintabs (`ext_builtins::
+            // extension_builtin_defs`: znative, ztest/zassert, watch) are
+            // another registry: they live in `createbuiltintable`'s map,
+            // which `BUILTINTAB_NODES` (built from `BUILTINS`) never sees.
+            // `${+builtins[znative]}` and `whence -w znative` already
+            // answered builtin, so `${(k)builtins}` — and with it compsys's
+            // `_command_names` — has to list them too. Same `dis == 0` /
+            // `hide_ext_builtins()` gating as the loops above.
+            for b in crate::extensions::ext_builtins::extension_builtin_defs() {
+                let n = b.node.nam.clone();
+                if disabled_set.contains(&n) {
+                    continue; // c:825 honor `disable`
+                }
+                if !emitted.insert(n.clone()) {
+                    continue;
+                }
+                pm.u_str = if want_val {
+                    Some("defined".to_string()) // c:846 — dispatches in-process
+                } else {
+                    None
+                };
+                pm.node.nam = n;
+                f(&pm, flags);
+            }
             // Host-registered native commands (`extensions/native_cmds.rs`) —
             // a THIRD extension registry, and the only one owned by the
             // binary rather than by this crate: the fat `zshrs-native` build

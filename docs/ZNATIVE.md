@@ -142,6 +142,8 @@ znative load MenkeTechnologies/zshrs-forgit
 znative load zsh-users/zsh-syntax-highlighting   # keep highlighting last
 ```
 
+`znative <TAB>` completes sub-commands and installed plugin names (`completions/_znative`).
+
 A bare `znative load` (no argument) loads everything already in the store — handy
 if you prefer to `znative add` interactively and keep just one line in `.zshrc`. A
 complete example startup file is at [`examples/zshrc`](../examples/zshrc).

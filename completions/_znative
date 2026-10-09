@@ -1,0 +1,66 @@
+#compdef znative
+
+# Plugin package manager: install, load and manage native (cdylib) and script
+# plugins in the global store.
+#
+# zshrs builtin; verbs and aliases mirror the dispatch in
+# src/extensions/pkg/builtin.rs (znative). Bundled into ~/.zshrs/functions by
+# build.rs.
+
+local curcontext=$curcontext state line
+typeset -A opt_args
+
+local -a verbs
+verbs=(
+    'load:load plugins; a source not yet stored is installed first'
+    'add:install and load a plugin'
+    'remove:unload and delete an installed plugin'
+    'list:list installed plugins'
+    'info:show details for one plugin'
+    'update:re-resolve and reinstall from the recorded source'
+    'gc:remove orphan store entries and the git clone cache'
+    'clean:clear scratch caches'
+    'help:print usage'
+    'install:alias for add'
+    'i:alias for add'
+    'rm:alias for remove'
+    'uninstall:alias for remove'
+    'ls:alias for list'
+    'show:alias for info'
+    'source:alias for load'
+    'up:alias for update'
+    'upgrade:alias for update'
+)
+
+_arguments -C \
+    '1:command:->verb' \
+    '*::arg:->rest' && return 0
+
+case $state in
+    verb) _describe -t commands 'znative command' verbs && return 0 ;;
+    rest)
+        local -a plugins expl
+        # `znative list` prints `NAME VERSION KIND SOURCE` per plugin.
+        plugins=( ${${(f)"$(_call_program plugins znative list 2>/dev/null)"}%% *} )
+        plugins=( ${plugins:#znative:*} )
+        case $words[1] in
+            remove|rm|uninstall|info|show|update|up|upgrade)
+                _wanted plugins expl 'installed plugin' compadd -a plugins && return 0
+                ;;
+            load|source|add|install|i)
+                if [[ $PREFIX == path:* ]]; then
+                    compset -P 'path:'
+                    _files -/ && return 0
+                fi
+                [[ $words[1] == (load|source) ]] &&
+                    _wanted plugins expl 'installed plugin' compadd -a plugins
+                _message -e sources 'owner/repo, github:owner/repo, git+URL or path:DIR'
+                return 0
+                ;;
+            gc)
+                _arguments '(-n --dry-run)'{-n,--dry-run}'[report what would be removed]' && return 0
+                ;;
+        esac
+        ;;
+esac
+return 1
