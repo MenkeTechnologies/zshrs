@@ -155,11 +155,13 @@ fn unbraced_subscript_takes_modifiers() {
 
 // c:Src/glob.c:947-972 — GS_DEPTH compares the match NAMES, which carry no
 // `./` for a top-level match (c:424), so `(od)` puts deeper matches first.
+// `on` is the explicit tiebreak: with no name key the order of same-depth
+// matches is whatever libc `qsort` leaves (glibc 2.37+ is not stable).
 #[test]
 fn glob_depth_sort_compares_match_names() {
     check(
         "d=$(mktemp -d) && cd $d && mkdir -p sub/deep && : > a.txt > b.txt > sub/s.txt > sub/deep/d.txt \
-         && print -r -- **/*(.od) && print -r -- **/*(.Od); cd / && rm -r -- $d",
+         && print -r -- **/*(.odon) && print -r -- **/*(.Odon); cd / && rm -r -- $d",
         "sub/deep/d.txt sub/s.txt a.txt b.txt\na.txt b.txt sub/s.txt sub/deep/d.txt\n",
         "",
         0,

@@ -571,7 +571,7 @@ mod files_module {
         );
         std::fs::write(&path, "x").unwrap();
         let body = format!(
-            "zf_chmod 0644 {path}\nstat -f '%Lp' {path} 2>/dev/null || stat -c '%a' {path}\n"
+            "zf_chmod 0644 {path}\nstat -c '%a' {path} 2>/dev/null || stat -f '%Lp' {path}\n"
         );
         assert_parity(&with_modules(&["files"], &body));
         let _ = std::fs::remove_file(&path);

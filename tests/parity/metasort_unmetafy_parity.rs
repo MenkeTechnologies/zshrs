@@ -82,22 +82,32 @@ fn run_zshrs(locale: &str, script: &str) -> Vec<u8> {
     o.stdout
 }
 
-/// Assert zshrs reproduces the pinned oracle bytes, and — when a real zsh
-/// is installed — that the pin still matches what that zsh emits today.
+/// Assert zshrs reproduces the oracle's bytes.
+///
+/// The pinned hex was captured on macOS, whose libc collates the bytes of an
+/// invalid UTF-8 sequence in its own way; glibc orders them differently (and a
+/// runner without `en_US.UTF-8` falls back to byte order). So the pin is checked
+/// against the live oracle on Apple targets only, and zshrs is compared with the
+/// oracle's current output everywhere else — the contract itself, under whatever
+/// locale the host provides.
 fn assert_sort_bytes(locale: &str, script: &str, expect_hex: &str) {
     let want = unhex(expect_hex);
-    if zsh_available() {
-        let z = run_zsh(locale, script);
-        assert_eq!(
-            hex(&z),
-            hex(&want),
-            "pinned bytes no longer match the oracle\n  LC_ALL={locale}\n  script: {script}"
-        );
+    let apple = cfg!(target_vendor = "apple");
+    let oracle = zsh_available().then(|| run_zsh(locale, script));
+    if apple {
+        if let Some(z) = &oracle {
+            assert_eq!(
+                hex(z),
+                hex(&want),
+                "pinned bytes no longer match the oracle\n  LC_ALL={locale}\n  script: {script}"
+            );
+        }
     }
     let got = run_zshrs(locale, script);
+    let expected = if apple { want } else { oracle.unwrap_or(want) };
     assert_eq!(
         hex(&got),
-        hex(&want),
+        hex(&expected),
         "zshrs diverged from zsh\n  LC_ALL={locale}\n  script: {script}"
     );
 }

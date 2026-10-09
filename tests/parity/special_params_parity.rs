@@ -384,10 +384,14 @@ mod plus_table_flags {
 mod tied_pair_double_local {
     use super::*;
 
+    // Every script starts from a known `fpath`: its size at startup is the shell's
+    // own (the oracle seeds 3 entries on a Linux runner, zshrs 4), and what these
+    // tests pin is how the tied pair behaves relative to that start.
+
     #[test]
     fn array_half_after_scalar_half_keeps_value() {
         assert_parity(
-            "f() { local +h FPATH=/aa:$FPATH; local +h -a fpath; print ${#fpath} $fpath[1] }; \
+            "fpath=(/p1 /p2 /p3); f() { local +h FPATH=/aa:$FPATH; local +h -a fpath; print ${#fpath} $fpath[1] }; \
              print $#fpath; f; print $#fpath",
         );
     }
@@ -397,7 +401,7 @@ mod tied_pair_double_local {
         // No prior localization of the scalar half → no PM_NORESTORE → C's
         // c:2626 `pm->gsu.a->setfn(pm, mkarray(NULL))` runs and the local
         // starts empty. This is the arm the fix must NOT disturb.
-        assert_parity("f() { local +h -a fpath; print ${#fpath} }; f; print $#fpath");
+        assert_parity("fpath=(/p1 /p2 /p3); f() { local +h -a fpath; print ${#fpath} }; f; print $#fpath");
     }
 
     #[test]
@@ -413,7 +417,7 @@ mod tied_pair_double_local {
         // The zinit shape verbatim: build a new fpath on top of the value the
         // scalar half installed, then check the global is intact afterwards.
         assert_parity(
-            "f() { local +h FPATH=/aa:$FPATH; local +h -a fpath; fpath=(/q $fpath); \
+            "fpath=(/p1 /p2 /p3); f() { local +h FPATH=/aa:$FPATH; local +h -a fpath; fpath=(/q $fpath); \
              print ${#fpath} $fpath[1] $fpath[2] }; print $#fpath; f; print $#fpath",
         );
     }
@@ -424,7 +428,7 @@ mod tied_pair_double_local {
         // half is declared its `ename` peer IS at locallevel — same c:2394 arm,
         // opposite direction.
         assert_parity(
-            "f() { local +h -a fpath; local +h FPATH=/aa:$FPATH; print ${#fpath} $fpath[1] }; \
+            "fpath=(/p1 /p2 /p3); f() { local +h -a fpath; local +h FPATH=/aa:$FPATH; print ${#fpath} $fpath[1] }; \
              print $#fpath; f; print $#fpath",
         );
     }
