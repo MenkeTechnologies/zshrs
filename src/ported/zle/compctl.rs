@@ -44,8 +44,11 @@ use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::zsh_h::{
     IN_NOTHING, QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE,
 };
+use crate::ported::zle::zle_tricky::{INBACKT, INSTRING};
+use crate::ported::zsh_h::{Bnullkeep, Nularg, Qstring};
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 // Re-export the canonical `compctl.h` ports from compctl_h.rs so
@@ -152,19 +155,9 @@ pub(crate) fn freecompctl(cc: Arc<Compctl>) {
     // Arc carries refcounting natively; `Arc::strong_count > 1`
     // mirrors the C `--cc->refc > 0` test exactly.
     // c:105-107 — pointer-equality vs cc_default/cc_first/cc_compos.
-    // The Rust port stores those sentinel structs in COMPCTL_TAB keyed
-    // by `__cc_*` (see c:806-856 below). Snapshot them inline so we
-    // don't smuggle a Rust-only helper through src/ported/.
-    let (cc_default_ref, cc_first_ref, cc_compos_ref) = {
-        match COMPCTL_TAB.read().ok().and_then(|g| g.clone()) {
-            Some(map) => (
-                map.get("__cc_default").cloned(),
-                map.get("__cc_first").cloned(),
-                map.get("__cc_compos").cloned(),
-            ),
-            None => (None, None, None),
-        }
-    };
+    let cc_default_ref = CC_DEFAULT.lock().unwrap().clone();
+    let cc_first_ref = CC_FIRST.lock().unwrap().clone();
+    let cc_compos_ref = CC_COMPOS.lock().unwrap().clone();
     let is_sentinel = cc_default_ref.as_ref().is_some_and(|s| Arc::ptr_eq(s, &cc))
         || cc_first_ref.as_ref().is_some_and(|s| Arc::ptr_eq(s, &cc))
         || cc_compos_ref.as_ref().is_some_and(|s| Arc::ptr_eq(s, &cc));
@@ -399,21 +392,22 @@ pub(crate) fn print_gmatcher(ac: i32) {
 }
 
 /// Get a compctl from arg vector — main compctl-spec parser.
-/// Port of `get_compctl(char *name, char ***av, Compctl cc, int first, int isdef, int cl)` from Src/Zle/compctl.c:377 (~600 lines).
+/// Port of `get_compctl(char *name, char ***av, Compctl cc, int first, int isdef, int cl)` from Src/Zle/compctl.c:377 (~480 lines).
 ///
-/// Walks `argv` letter-by-letter, applying flag bits to `cc.mask` /
-/// `cc.mask2` and capturing the string args (`-K func`, `-X expl`,
-/// `-P prefix`, `-S suffix`, `-g glob`, `-s str`, etc.).
+/// Parses the basic flags for `compctl`: `first` says we are not in
+/// extended completion, `hx` says we are in an or (`+`) completion
+/// (needed because the initial compctl of default/command completion is
+/// special). `cct` is a temporary that only holds the flags parsed so
+/// far; `cc_assign` copies it into the compctl being built.
 ///
-/// Returns 0 on success, 1 on parse error. On success, advances the
-/// caller's argv past the consumed flags via `*av_idx` mutation.
+/// C walks `argv` as a `char **` and re-points `*argv` inside the
+/// current word; the port keeps the word index `ai`, the word's chars
+/// `cur` and the position `cp` inside it. The xor (`+`) chain C grows
+/// through `cc->xor` is collected in `nodes` and linked into `Arc`s
+/// once parsing is done, because a shared `Arc<Compctl>` is immutable.
 ///
-/// Implements the simple-flag-char arms (per-char → mask bit) from
-/// compctl.c:418-508, every arg-taking flag (`-k`/`-K`/`-Y`/`-X`/
-/// `-y`/`-P`/`-S`/`-g`/`-s`/`-l`/`-h`/`-W`/`-J`/`-V`/`-M`/`-H`/`-t`),
-/// the `-+` xor-chain marker, and the special-target flags (`-C`/
-/// `-D`/`-T`/`-L`). The `-x` extended-condition form is handled by
-/// `get_xcompctl` (called from the caller chain).
+/// On success the consumed words are drained off the front of `av`
+/// (C: `*av = argv`) and 0 is returned; 1 on a parse error.
 pub(crate) fn get_compctl(
     name: &str,
     av: &mut Vec<String>,
@@ -422,23 +416,26 @@ pub(crate) fn get_compctl(
     mut isdef: bool,
     cl: i32,
 ) -> i32 {
-    // C: `argv = *av;` — alias the caller's array.
-    let mut i: usize = 0;
-    let hx = false;
-    let mut cclist_local = CCLIST.with(|c| c.get());
-    cc.mask2 = CC_CCCONT; // c:407
+    use crate::ported::utils::zwarnnam;
 
-    // C: `compctl + foo ...` becomes default — c:392-404
+    let alen = av.len() as isize;
+    let mut ai: isize = 0; // C: argv
+    let mut ready = 0; // c:384
+    let mut hx = false; // c:384
+
+    // c:392-404 — `compctl + foo ...' becomes a default compctl by removing
+    // it from the hash table.
     if first
-        && i < av.len()
-        && av[i] == "+"
-        && !(i + 1 < av.len() && av[i + 1].starts_with('-') && av[i + 1].len() > 1)
+        && av.first().is_some_and(|a| a == "+")
+        && !av
+            .get(1)
+            .is_some_and(|a| a.starts_with('-') && a.len() > 1)
     {
-        i += 1;
-        if i < av.len() && av[i].starts_with('-') {
-            i += 1;
+        ai += 1;
+        if av.get(ai as usize).is_some_and(|a| a.starts_with('-')) {
+            ai += 1;
         }
-        av.drain(0..i);
+        av.drain(0..(ai as usize).min(av.len()));
         if cl != 0 {
             return 1;
         } else {
@@ -447,300 +444,557 @@ pub(crate) fn get_compctl(
         }
     }
 
-    // Loop through the flags. C: c:412 `for (; !ready && argv[0] && argv[0][0] == '-' && (argv[0][1] || !first); )`
-    let mut ready = false;
-    while !ready && i < av.len() && av[i].starts_with('-') && (av[i].len() > 1 || !first) {
-        // C: bare `-` becomes `-+` to absorb the next iter — c:413-414
-        if av[i].len() == 1 {
-            av[i] = "-+".to_string();
-        }
-        // Walk chars after the `-`. C: `while (!ready && *++(*argv))`
-        let arg = av[i].clone();
-        let chars: Vec<char> = arg.chars().skip(1).collect();
-        let mut consumed = false;
-        for c in chars {
-            if ready {
-                break;
+    // c:406-407 — struct compctl cct; cct.mask2 = CC_CCCONT;
+    let mut cct = Compctl::default();
+    cct.mask2 = CC_CCCONT;
+
+    // `cc` plus the xor'd compctls that follow it (C: cc = cc->xor).
+    let mut nodes: Vec<Compctl> = vec![std::mem::take(cc)];
+    let mut xor_default = false; // C: cc->xor = &cc_default
+    let mut root_special = false; // cc_assign pointed the root at a special target
+
+    // The word being walked: C's `*argv` (chars after the leading `-`).
+    let mut cur: Vec<char> = Vec::new();
+    let mut cp: usize = 0;
+
+    // The `if (**argv) ... else if (!argv[1]) warn, return 1; else *++argv`
+    // idiom shared by every flag taking an argument. Evaluates to
+    // Some(arg), or None after warning when the argument is missing.
+    macro_rules! flag_arg {
+        ($arg:expr, $msg:literal) => {{
+            if cp < cur.len() {
+                let v: String = cur[cp..].iter().collect();
+                cp = cur.len(); // *argv = argv_end
+                Some(v)
+            } else if ai + 1 >= alen {
+                zwarnnam(name, &format!($msg, $arg));
+                None
+            } else {
+                ai += 1;
+                cur.clear(); // *argv = argv_end on the new word
+                cp = 0;
+                Some(av[ai as usize].clone())
             }
-            // Simple-flag-char dispatch — direct port of the
-            // switch at c:418-508.
-            match c {
-                'f' => cc.mask |= CC_FILES,             // c:419
-                'c' => cc.mask |= CC_COMMPATH,          // c:422
-                'm' => cc.mask |= CC_EXTCMDS,           // c:425
-                'w' => cc.mask |= CC_RESWDS,            // c:428
-                'o' => cc.mask |= CC_OPTIONS,           // c:431
-                'v' => cc.mask |= CC_VARS,              // c:434
-                'b' => cc.mask |= CC_BINDINGS,          // c:437
-                'A' => cc.mask |= CC_ARRAYS,            // c:440
-                'I' => cc.mask |= CC_INTVARS,           // c:443
-                'F' => cc.mask |= CC_SHFUNCS,           // c:446
-                'p' => cc.mask |= CC_PARAMS,            // c:449
-                'E' => cc.mask |= CC_ENVVARS,           // c:452
-                'j' => cc.mask |= CC_JOBS,              // c:455
-                'r' => cc.mask |= CC_RUNNING,           // c:458
-                'z' => cc.mask |= CC_STOPPED,           // c:461
-                'B' => cc.mask |= CC_BUILTINS,          // c:464
-                'a' => cc.mask |= CC_ALREG | CC_ALGLOB, // c:467
-                'R' => cc.mask |= CC_ALREG,             // c:470
-                'G' => cc.mask |= CC_ALGLOB,            // c:473
-                'u' => cc.mask |= CC_USERS,             // c:476
-                'd' => cc.mask |= CC_DISCMDS,           // c:479
-                'e' => cc.mask |= CC_EXCMDS,            // c:482
-                'N' => cc.mask |= CC_SCALARS,           // c:485
-                'O' => cc.mask |= CC_READONLYS,         // c:488
-                'Z' => cc.mask |= CC_SPECIALS,          // c:491
-                'q' => cc.mask |= CC_REMOVE,            // c:494
-                'U' => cc.mask |= CC_DELETE,            // c:497
-                'n' => cc.mask |= CC_NAMED,             // c:500
-                'Q' => cc.mask |= CC_QUOTEFLAG,         // c:503
-                '/' => cc.mask |= CC_DIRS,              // c:506
+        }};
+    }
+    let atoi = |s: &str| -> i32 {
+        let t = s.trim_start();
+        let (neg, digits) = match t.strip_prefix('-') {
+            Some(r) => (true, r),
+            None => (false, t.strip_prefix('+').unwrap_or(t)),
+        };
+        let n: i32 = digits
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+        if neg {
+            -n
+        } else {
+            n
+        }
+    };
+
+    // c:412 — loop through the flags until we have no more: those with
+    // arguments are not properly allocated yet, we just hang on to the
+    // argument that was passed.
+    while ready == 0
+        && ai < alen
+        && av[ai as usize].starts_with('-')
+        && (av[ai as usize].len() > 1 || !first)
+    {
+        if av[ai as usize].len() == 1 {
+            av[ai as usize] = "-+".to_string(); // c:413-414
+        }
+        cur = av[ai as usize].chars().skip(1).collect(); // c:415 ++*argv
+        cp = 0;
+        while ready == 0 && cp < cur.len() {
+            let arg = cur[cp]; // c:418 unmeta_one(*argv, &sz)
+            cp += 1;
+            match arg {
+                'f' => cct.mask |= CC_FILES,             // c:419
+                'c' => cct.mask |= CC_COMMPATH,          // c:422
+                'm' => cct.mask |= CC_EXTCMDS,           // c:425
+                'w' => cct.mask |= CC_RESWDS,            // c:428
+                'o' => cct.mask |= CC_OPTIONS,           // c:431
+                'v' => cct.mask |= CC_VARS,              // c:434
+                'b' => cct.mask |= CC_BINDINGS,          // c:437
+                'A' => cct.mask |= CC_ARRAYS,            // c:440
+                'I' => cct.mask |= CC_INTVARS,           // c:443
+                'F' => cct.mask |= CC_SHFUNCS,           // c:446
+                'p' => cct.mask |= CC_PARAMS,            // c:449
+                'E' => cct.mask |= CC_ENVVARS,           // c:452
+                'j' => cct.mask |= CC_JOBS,              // c:455
+                'r' => cct.mask |= CC_RUNNING,           // c:458
+                'z' => cct.mask |= CC_STOPPED,           // c:461
+                'B' => cct.mask |= CC_BUILTINS,          // c:464
+                'a' => cct.mask |= CC_ALREG | CC_ALGLOB, // c:467
+                'R' => cct.mask |= CC_ALREG,             // c:470
+                'G' => cct.mask |= CC_ALGLOB,            // c:473
+                'u' => cct.mask |= CC_USERS,             // c:476
+                'd' => cct.mask |= CC_DISCMDS,           // c:479
+                'e' => cct.mask |= CC_EXCMDS,            // c:482
+                'N' => cct.mask |= CC_SCALARS,           // c:485
+                'O' => cct.mask |= CC_READONLYS,         // c:488
+                'Z' => cct.mask |= CC_SPECIALS,          // c:491
+                'q' => cct.mask |= CC_REMOVE,            // c:494
+                'U' => cct.mask |= CC_DELETE,            // c:497
+                'n' => cct.mask |= CC_NAMED,             // c:500
+                'Q' => cct.mask |= CC_QUOTEFLAG,         // c:503
+                '/' => cct.mask |= CC_DIRS,              // c:506
+                't' => {
+                    // c:509
+                    if cl != 0 {
+                        zwarnnam(name, &format!("bad option: -{}", arg));
+                        return 1;
+                    }
+                    let Some(p) = flag_arg!(arg, "retry specification expected after -{}") else {
+                        return 1;
+                    };
+                    match p.chars().next() {
+                        Some('+') => cct.mask2 = CC_XORCONT, // c:528
+                        Some('n') => cct.mask2 = 0,          // c:531
+                        Some('-') => cct.mask2 = CC_PATCONT, // c:534
+                        Some('x') => cct.mask2 = CC_DEFCONT, // c:537
+                        other => {
+                            zwarnnam(
+                                name,
+                                &format!(
+                                    "invalid retry specification character `{}'",
+                                    other.map(String::from).unwrap_or_default()
+                                ),
+                            );
+                            return 1;
+                        }
+                    }
+                    if p.chars().count() > 1 {
+                        let rest: String = p.chars().skip(1).collect();
+                        zwarnnam(
+                            name,
+                            &format!("too many retry specification characters: `{}'", rest),
+                        );
+                        return 1;
+                    }
+                }
+                'k' => {
+                    // c:553
+                    let Some(v) = flag_arg!(arg, "variable name expected after -{}") else {
+                        return 1;
+                    };
+                    cct.keyvar = Some(v);
+                }
+                'K' => {
+                    // c:565
+                    let Some(v) = flag_arg!(arg, "function name expected after -{}") else {
+                        return 1;
+                    };
+                    cct.func = Some(v);
+                }
+                'Y' | 'X' => {
+                    // c:577 — Y sets CC_EXPANDEXPL, X clears it; then `expl:`
+                    if arg == 'Y' {
+                        cct.mask |= CC_EXPANDEXPL;
+                    } else {
+                        cct.mask &= !CC_EXPANDEXPL;
+                    }
+                    let Some(v) = flag_arg!(arg, "string expected after -{}") else {
+                        return 1;
+                    };
+                    cct.explain = Some(v);
+                }
+                'y' => {
+                    // c:594 — C warns but does not return here.
+                    if let Some(v) = flag_arg!(arg, "function/variable expected after -{}") {
+                        cct.ylist = Some(v);
+                    }
+                }
+                'P' => {
+                    // c:606
+                    let Some(v) = flag_arg!(arg, "string expected after -{}") else {
+                        return 1;
+                    };
+                    cct.prefix = Some(v);
+                }
+                'S' => {
+                    // c:618
+                    let Some(v) = flag_arg!(arg, "string expected after -{}") else {
+                        return 1;
+                    };
+                    cct.suffix = Some(v);
+                }
+                'g' => {
+                    // c:630
+                    let Some(v) = flag_arg!(arg, "glob pattern expected after -{}") else {
+                        return 1;
+                    };
+                    cct.glob = Some(v);
+                }
+                's' => {
+                    // c:642
+                    let Some(v) = flag_arg!(arg, "command string expected after -{}") else {
+                        return 1;
+                    };
+                    cct.str = Some(v);
+                }
+                'l' => {
+                    // c:655
+                    if cl != 0 {
+                        zwarnnam(name, &format!("bad option: -{}", arg));
+                        return 1;
+                    }
+                    let Some(v) = flag_arg!(arg, "command name expected after -{}") else {
+                        return 1;
+                    };
+                    cct.subcmd = Some(v);
+                }
+                'h' => {
+                    // c:670
+                    if cl != 0 {
+                        zwarnnam(name, &format!("bad option: -{}", arg));
+                        return 1;
+                    }
+                    let Some(v) = flag_arg!(arg, "command name expected after -{}") else {
+                        return 1;
+                    };
+                    cct.substr = Some(v);
+                }
+                'W' => {
+                    // c:685
+                    let Some(v) = flag_arg!(arg, "path expected after -{}") else {
+                        return 1;
+                    };
+                    cct.withd = Some(v);
+                }
+                'J' => {
+                    // c:697
+                    let Some(v) = flag_arg!(arg, "group name expected after -{}") else {
+                        return 1;
+                    };
+                    cct.gname = Some(v);
+                }
+                'V' => {
+                    // c:709
+                    let Some(v) = flag_arg!(arg, "group name expected after -{}") else {
+                        return 1;
+                    };
+                    cct.gname = Some(v);
+                    cct.mask2 |= CC_NOSORT;
+                }
                 '1' => {
                     // c:722
-                    cc.mask2 |= CC_UNIQALL;
-                    cc.mask2 &= !CC_UNIQCON;
+                    cct.mask2 |= CC_UNIQALL;
+                    cct.mask2 &= !CC_UNIQCON;
                 }
                 '2' => {
                     // c:726
-                    cc.mask2 |= CC_UNIQCON;
-                    cc.mask2 &= !CC_UNIQALL;
+                    cct.mask2 |= CC_UNIQCON;
+                    cct.mask2 &= !CC_UNIQALL;
+                }
+                'M' => {
+                    // c:730
+                    if (CCLIST.with(|c| c.get()) & COMP_LIST) != 0 {
+                        CCLIST.with(|c| c.set(c.get() | COMP_LISTMATCH));
+                    } else {
+                        let Some(v) = flag_arg!(arg, "matching specification expected after -{}")
+                        else {
+                            return 1;
+                        };
+                        match parse_cmatcher(name, &v) {
+                            None => {
+                                cct.matcher = None;
+                                cct.mstr = None;
+                                return 1;
+                            }
+                            Some(m) => {
+                                cct.matcher = Some(m);
+                                cct.mstr = Some(v);
+                            }
+                        }
+                    }
+                }
+                'H' => {
+                    // c:757
+                    if cp < cur.len() {
+                        cct.hnum = atoi(&cur[cp..].iter().collect::<String>());
+                    } else if ai + 1 < alen {
+                        ai += 1;
+                        cct.hnum = atoi(&av[ai as usize]);
+                    } else {
+                        zwarnnam(name, &format!("number expected after -{}", arg));
+                        return 1;
+                    }
+                    if ai + 1 >= alen {
+                        zwarnnam(name, &format!("missing pattern after -{}", arg));
+                        return 1;
+                    }
+                    ai += 1;
+                    let mut hpat = av[ai as usize].clone();
+                    if cct.hnum < 1 {
+                        cct.hnum = 0;
+                    }
+                    if hpat == "*" {
+                        hpat = String::new();
+                    }
+                    cct.hpat = Some(hpat);
+                    cur.clear(); // *argv = argv_end
+                    cp = 0;
                 }
                 'C' => {
                     // c:777
                     if cl != 0 {
-                        eprintln!("{}: bad option: -{}", name, c);
+                        zwarnnam(name, &format!("bad option: -{}", arg));
                         return 1;
                     }
                     if first && !hx {
-                        cclist_local |= COMP_COMMAND;
+                        CCLIST.with(|c| c.set(c.get() | COMP_COMMAND));
                     } else {
-                        eprintln!("{}: misplaced command completion (-C) flag", name);
+                        zwarnnam(name, "misplaced command completion (-C) flag");
                         return 1;
                     }
                 }
                 'D' => {
                     // c:789
                     if cl != 0 {
-                        eprintln!("{}: bad option: -{}", name, c);
+                        zwarnnam(name, &format!("bad option: -{}", arg));
                         return 1;
                     }
                     if first && !hx {
                         isdef = true;
-                        cclist_local |= COMP_DEFAULT;
+                        CCLIST.with(|c| c.set(c.get() | COMP_DEFAULT));
                     } else {
-                        eprintln!("{}: misplaced default completion (-D) flag", name);
+                        zwarnnam(name, "misplaced default completion (-D) flag");
                         return 1;
                     }
                 }
                 'T' => {
                     // c:802
                     if cl != 0 {
-                        eprintln!("{}: bad option: -{}", name, c);
+                        zwarnnam(name, &format!("bad option: -{}", arg));
                         return 1;
                     }
                     if first && !hx {
-                        cclist_local |= COMP_FIRST;
+                        CCLIST.with(|c| c.set(c.get() | COMP_FIRST));
                     } else {
-                        eprintln!("{}: misplaced first completion (-T) flag", name);
+                        zwarnnam(name, "misplaced first completion (-T) flag");
                         return 1;
                     }
                 }
                 'L' => {
                     // c:814
                     if cl != 0 {
-                        eprintln!("{}: bad option: -{}", name, c);
+                        zwarnnam(name, &format!("bad option: -{}", arg));
                         return 1;
                     }
                     if !first || hx {
-                        eprintln!("{}: invalid use of -L flag", name);
+                        zwarnnam(name, "invalid use of -L flag");
                         return 1;
                     }
-                    cclist_local |= COMP_LIST;
+                    CCLIST.with(|c| c.set(c.get() | COMP_LIST));
                 }
-                '+' => {
-                    // c:850 (xor chain marker)
-                    // Marks end of this compctl spec; remainder is
-                    // the next xor'd compctl. Stop the loop here;
-                    // the caller iterates again for the xor chain.
-                    ready = true;
-                    consumed = true;
-                    break;
-                }
-                _ => {
-                    // Arg-taking flags + unknown — bail to the
-                    // post-loop handler. These are c:509+ (`t` retry,
-                    // `k` keyvar, `K` func, `Y`/`X` explain, `y`
-                    // ylist, `P`/`S` prefix/suffix, `g` glob, `s`
-                    // str, `l`/`h` subcmd/substr, `W` withd, `J`/`V`
-                    // gname, `M` matcher, `H` history, `x` extended).
-                    // For now, if the arg-taking char is followed by
-                    // no body, consume one extra argv slot as the
-                    // arg. Else ignore. Real impls land per-flag.
-                    let (has_inline, inline_val) = (
-                        arg.len() > 2 && arg.chars().nth(1) == Some(c),
-                        if arg.len() > 2 {
-                            arg[2..].to_string()
-                        } else {
-                            String::new()
-                        },
-                    );
-                    let mut val: Option<String> = None;
-                    if has_inline {
-                        val = Some(inline_val);
-                    } else if i + 1 < av.len() {
-                        val = Some(av[i + 1].clone());
-                        i += 1;
+                'x' => {
+                    // c:826
+                    if cl != 0 {
+                        zwarnnam(name, "extended completion not allowed");
+                        return 1;
                     }
-                    match c {
-                        'k' => cc.keyvar = val, // c:553
-                        'K' => cc.func = val,   // c:565
-                        'Y' => {
-                            // c:577
-                            cc.mask |= CC_EXPANDEXPL;
-                            cc.explain = val;
-                        }
-                        'X' => {
-                            // c:580
-                            cc.mask &= !CC_EXPANDEXPL;
-                            cc.explain = val;
-                        }
-                        'y' => cc.ylist = val,  // c:594
-                        'P' => cc.prefix = val, // c:606
-                        'S' => cc.suffix = val, // c:618
-                        'g' => cc.glob = val,   // c:630
-                        's' => cc.str = val,    // c:642
-                        'l' => cc.subcmd = val, // c:655
-                        'h' => cc.substr = val, // c:670
-                        'W' => cc.withd = val,  // c:685
-                        'J' => cc.gname = val,  // c:697
-                        'V' => {
-                            // c:709
-                            cc.gname = val;
-                            cc.mask2 |= CC_NOSORT;
-                        }
-                        'M' => {
-                            // c:730
-                            // Matcher spec — store the raw string and
-                            // also validate it via `parse_cmatcher`
-                            // (Src/Zle/complete.c:242), failing the
-                            // compctl parse on a malformed matcher
-                            // per C c:731-735.
-                            if let Some(s) = val {
-                                if parse_cmatcher(name, &s).is_none() {
-                                    eprintln!("{}: bad matcher specification `{}'", name, s);
-                                    return 1;
-                                }
-                                cc.mstr = Some(s);
-                            }
-                        }
-                        'H' => {
-                            // c:757
-                            // -H N PAT — number + pattern. The
-                            // simple-flag walker consumed N as `val`;
-                            // the next argv is PAT.
-                            if let Some(s) = val {
-                                cc.hnum = s.parse::<i32>().unwrap_or(0).max(0);
-                            }
-                            if i + 1 < av.len() {
-                                cc.hpat = Some(av[i + 1].clone());
-                                if cc.hpat.as_deref() == Some("*") {
-                                    cc.hpat = Some(String::new());
-                                }
-                                i += 1;
-                            }
-                        }
-                        't' => {
-                            // c:509 retry spec
-                            // `-t {+|n|-|x}` controls continuation.
-                            // Direct port of the switch at c:528-545.
-                            if let Some(s) = val {
-                                let bit = match s.as_str() {
-                                    "+" => CC_XORCONT,
-                                    "n" => 0,
-                                    "-" => CC_PATCONT,
-                                    "x" => CC_DEFCONT,
-                                    _ => {
-                                        eprintln!(
-                                            "{}: invalid retry specification character `{}`",
-                                            name, s
-                                        );
-                                        return 1;
-                                    }
-                                };
-                                cc.mask2 = bit;
-                            }
-                        }
-                        _ => {
-                            eprintln!("{}: unknown compctl flag `-{}`", name, c);
+                    if ai + 1 >= alen {
+                        zwarnnam(name, &format!("condition expected after -{}", arg));
+                        return 1;
+                    }
+                    if first {
+                        ai += 1; // argv++
+                        let mut sub: Vec<String> = av[ai as usize..].to_vec();
+                        if get_xcompctl(name, &mut sub, &mut cct, isdef) != 0 {
+                            cct.ext = None; // if (cct.ext) freecompctl(cct.ext)
                             return 1;
                         }
+                        // get_xcompctl leaves in `sub` what follows the last
+                        // word it consumed; `ai` is left on that word (C:
+                        // `*av = argv - 1`) so the `*++argv` below steps past it.
+                        ai = alen - sub.len() as isize - 1;
+                        ready = 2;
+                        cur.clear();
+                        cp = 0;
+                    } else {
+                        zwarnnam(name, "recursive extended completion not allowed");
+                        return 1;
                     }
-                    consumed = true;
-                    break;
+                }
+                _ => {
+                    // c:845
+                    if !first && (arg == '-' || arg == '+') && cp >= cur.len() {
+                        // *argv -= sz + 1, argv--, ready = 1
+                        ai -= 1;
+                        ready = 1;
+                    } else {
+                        zwarnnam(name, &format!("bad option: -{}", arg));
+                        return 1;
+                    }
                 }
             }
         }
-        i += 1;
-        if !consumed {
-            // Pure simple-flag arg — already advanced.
+
+        ai += 1; // c:857 *++argv
+        if ai < alen
+            && (ready == 0 || ready == 2)
+            && av[ai as usize].starts_with('+')
+            && av[ai as usize].len() == 1
+        {
+            if cl != 0 {
+                zwarnnam(name, "xor'ed completion invalid");
+                return 1;
+            }
+            // c:866 — There's an alternative (+) completion: assign what we
+            // have so far before moving on to that.
+            let reass = first && !hx;
+            let special = reass
+                && (CCLIST.with(|c| c.get()) & COMP_LIST) == 0
+                && (CCLIST.with(|c| c.get()) & COMP_SPECIAL) != 0;
+            if cc_assign(name, nodes.last_mut().unwrap(), &cct, reass) != 0 {
+                return 1;
+            }
+            root_special |= special;
+
+            hx = true;
+            ready = 0;
+
+            ai += 1;
+            if ai >= alen
+                || !av[ai as usize].starts_with('-')
+                || av[ai as usize] == "-"
+                || av[ai as usize] == "--"
+            {
+                // No argument to +, which means do default completion.
+                if isdef {
+                    zwarnnam(name, "recursive xor'd default completions not allowed");
+                } else {
+                    xor_default = true; // cc->xor = &cc_default
+                }
+            } else {
+                // More flags follow: prepare to loop again.
+                nodes.push(Compctl::default()); // cc->xor = zshcalloc; cc = cc->xor
+                cct = Compctl::default();
+                cct.mask2 = CC_CCCONT;
+            }
         }
     }
+    if ready == 0 && ai < alen && av[ai as usize].starts_with('-') {
+        ai += 1; // c:889
+    }
 
-    // C: c:1582 — push the parsed cct into the caller's slot.
-    av.drain(0..i);
-    let _ = isdef;
-    CCLIST.with(|c| c.set(cclist_local));
+    if (cct.mask & (CC_EXCMDS | CC_DISCMDS)) == 0 {
+        cct.mask |= CC_EXCMDS; // c:892
+    }
+
+    // c:895 — assign the last set of flags we parsed.
+    let reass = first && !hx;
+    let special = reass
+        && (CCLIST.with(|c| c.get()) & COMP_LIST) == 0
+        && (CCLIST.with(|c| c.get()) & COMP_SPECIAL) != 0;
+    if cc_assign(name, nodes.last_mut().unwrap(), &cct, reass) != 0 {
+        return 1;
+    }
+    root_special |= special;
+
+    // Link the xor chain back to front, ending in cc_default if `+` had
+    // no flags after it.
+    let mut tail: Option<Arc<Compctl>> = if xor_default {
+        CC_DEFAULT.lock().unwrap().clone()
+    } else {
+        None
+    };
+    while nodes.len() > 1 {
+        let mut n = nodes.pop().unwrap();
+        n.xor = tail.take();
+        tail = Some(Arc::new(n));
+    }
+    let mut root = nodes.pop().unwrap();
+    root.xor = tail;
+    if root_special {
+        // cc_assign pointed `cc` at cc_compos / cc_default / cc_first, so
+        // the parsed chain belongs to that static.
+        let cclist = CCLIST.with(|c| c.get());
+        let slot = if (cclist & COMP_COMMAND) != 0 {
+            &CC_COMPOS
+        } else if (cclist & COMP_DEFAULT) != 0 {
+            &CC_DEFAULT
+        } else {
+            &CC_FIRST
+        };
+        *slot.lock().unwrap() = Some(Arc::new(root));
+    } else {
+        *cc = root;
+    }
+
+    av.drain(0..(ai.max(0) as usize).min(av.len())); // c:899 *av = argv
     0
 }
 
 /// Parse the `-x` extended-condition compctl form.
 /// Port of `get_xcompctl(char *name, char ***av, Compctl cc, int isdef)` from Src/Zle/compctl.c:909 (~260 lines).
 ///
-/// C signature: `int get_xcompctl(char *name, char ***av, Compctl cc,
-/// int isdef)`. Walks the per-condition syntax `s[…][…], p[…]` …
-/// and chains them as Compcond entries on `cc.ext`. Each `case`
-/// letter dispatches to one CCT_* type (`s`→CURSUF, `p`→POS, etc.),
-/// then the `[…]` argument syntax is parsed per-type.
+/// Handles the `-x ... --` part of compctl: each condition string is
+/// something like `s[...][...], p[...]` (or'ed with `,`, and'ed by
+/// juxtaposition), followed by the flags that go with it, up to a `--`.
+/// The conditions become `Compcond` chains on the compctls linked
+/// through `cc.ext` / `next`.
 ///
-/// Inside the `[]`, the C source uses temporary lexer-style markers
-/// `\200` (CCT_END) and `\201` (CCT_AND) to mark the active `]`/`,`
-/// boundaries — Rust uses Vec splits instead.
+/// C marks the active `]` and `,` of a condition by overwriting them
+/// with `\200` and `\201` in the argument string; the port does the
+/// same in a char buffer, with two non-characters as the markers.
 ///
-/// Returns 0 on success, 1 on parse error. Advances `*av` past the
-/// consumed conditions.
+/// On success `av` is left holding what follows the last consumed word
+/// (C: `*av = argv - 1`, which the caller steps past); 1 is returned
+/// on a parse error.
 pub(crate) fn get_xcompctl(name: &str, av: &mut Vec<String>, cc: &mut Compctl, isdef: bool) -> i32 {
-    let mut ready = false;
-    let mut next_chain: Vec<Arc<Compctl>> = Vec::new();
+    use crate::ported::utils::zwarnnam;
+    const END: char = '\u{10fffe}'; // C: '\200' — the active `]`
+    const COMMA: char = '\u{10ffff}'; // C: '\201' — the active `,`
+
+    let mut argv: Vec<String> = std::mem::take(av);
+    let mut ready = false; // c:913
+    let mut nodes: Vec<Compctl> = Vec::new(); // C: the cc->ext / next chain
+    let atoi = |s: &str| -> i32 {
+        let t = s.trim_start();
+        let (neg, digits) = match t.strip_prefix('-') {
+            Some(r) => (true, r),
+            None => (false, t.strip_prefix('+').unwrap_or(t)),
+        };
+        let n: i32 = digits
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+        if neg {
+            -n
+        } else {
+            n
+        }
+    };
 
     while !ready {
-        // C: c:920 — `o = m = c = (Compcond) zshcalloc(...)`
-        // o tracks or-chain head, m tracks first cond (root), c tracks
-        // current cond being parsed.
-        let mut head: Compcond = Compcond::default();
-        let mut current_or = &mut head as *mut Compcond;
-
-        // C: c:922 — `for (t = *argv; *t;)` walk one argv slot
-        if av.is_empty() {
-            // C: c:1150 — missing args
-            eprintln!("{}: missing command names", name);
+        if argv.is_empty() {
+            zwarnnam(name, "missing command names");
             return 1;
         }
-        let arg = av[0].clone();
-        let bytes: Vec<char> = arg.chars().collect();
-        let mut t = 0_usize;
-        let mut current_and: Option<*mut Compcond> = None;
+        // c:920 — o keeps track of or's, m remembers the starting
+        // condition, c is the current condition being parsed. `groups`
+        // holds one and-chain per or'ed condition; its last entry's last
+        // node is `c`.
+        let mut groups: Vec<Vec<Compcond>> = vec![vec![Compcond::default()]];
+        let mut tb: Vec<char> = argv[0].chars().collect();
+        let mut t: usize = 0;
+        let ch = |tb: &Vec<char>, i: usize| -> char { tb.get(i).copied().unwrap_or('\0') };
 
-        while t < bytes.len() {
-            // Skip leading spaces — c:923-924
-            while t < bytes.len() && bytes[t] == ' ' {
+        // c:922 — loop over each condition: something like 's[...][...], p[...]'
+        while ch(&tb, t) != '\0' {
+            while ch(&tb, t) == ' ' {
                 t += 1;
             }
-            if t >= bytes.len() {
-                break;
-            }
-
-            // C: c:926-972 — switch on condition code char
-            let typ = match bytes[t] {
+            // c:926 — first get the condition code
+            let typ = match ch(&tb, t) {
                 'q' => CCT_QUOTE,    // c:927
                 's' => CCT_CURSUF,   // c:930
                 'S' => CCT_CURPRE,   // c:933
@@ -754,287 +1008,332 @@ pub(crate) fn get_xcompctl(name: &str, av: &mut Vec<String>, cc: &mut Compctl, i
                 'm' => CCT_NUMWORDS, // c:957
                 'r' => CCT_RANGESTR, // c:960
                 'R' => CCT_RANGEPAT, // c:963
-                _ => {
-                    eprintln!("{}: unknown condition code: {}", name, bytes[t]);
+                other => {
+                    let shown = if other == '\0' { String::new() } else { other.to_string() };
+                    zwarnnam(name, &format!("unknown condition code: {}", shown));
                     return 1;
                 }
             };
-
-            // C: c:974 — must be followed by `[`
-            if t + 1 >= bytes.len() || bytes[t + 1] != '[' {
-                eprintln!(
-                    "{}: expected condition after condition code: {}",
-                    name, bytes[t]
+            // c:974 — now get the arguments in square brackets
+            if ch(&tb, t + 1) != '[' {
+                zwarnnam(
+                    name,
+                    &format!("expected condition after condition code: {}", ch(&tb, t)),
                 );
                 return 1;
             }
             t += 1;
-
-            // C: c:985-997 — count `[…][…]` blocks (n = arity).
-            // Walk balanced brackets, collecting bodies.
-            let mut bodies: Vec<String> = Vec::new();
-            while t < bytes.len() && bytes[t] == '[' {
-                t += 1; // skip `[`
-                        // skip leading spaces inside brackets — c:1028
-                while t < bytes.len() && bytes[t] == ' ' {
-                    t += 1;
-                }
-                let body_start = t;
-                let mut depth = 1_i32;
-                while t < bytes.len() && depth > 0 {
-                    if bytes[t] == '\\' && t + 1 < bytes.len() {
-                        t += 2;
-                        continue;
+            // c:985 — first count how many or'd arguments there are,
+            // marking the active ]'s and ,'s with unprintable characters.
+            let mut n: i32 = 0;
+            let mut l: i32 = 0;
+            let mut tt = t;
+            while ch(&tb, tt) == '[' {
+                l = 1;
+                tt += 1;
+                while ch(&tb, tt) != '\0' && l != 0 {
+                    if ch(&tb, tt) == '\\' && ch(&tb, tt + 1) != '\0' {
+                        tt += 1;
+                    } else if ch(&tb, tt) == '[' {
+                        l += 1;
+                    } else if ch(&tb, tt) == ']' {
+                        l -= 1;
+                    } else if l == 1 && ch(&tb, tt) == ',' {
+                        tb[tt] = COMMA;
                     }
-                    if bytes[t] == '[' {
-                        depth += 1;
-                    } else if bytes[t] == ']' {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    t += 1;
+                    tt += 1;
                 }
-                if t >= bytes.len() {
-                    eprintln!("{}: error after condition code", name);
-                    return 1;
+                if tt > 0 && ch(&tb, tt - 1) == ']' {
+                    tb[tt - 1] = END;
                 }
-                let body: String = bytes[body_start..t].iter().collect();
-                bodies.push(body);
-                t += 1; // skip `]`
+                n += 1;
             }
-            let n = bodies.len() as i32;
+            if l != 0 {
+                zwarnnam(name, "error after condition code: [");
+                return 1;
+            }
 
-            // C: c:1009-1025 — allocate per-type data, dispatch parse.
-            let data = match typ {
-                t if t == CCT_POS || t == CCT_NUMWORDS => {
-                    // c:1030-1054 — one or two ints per body.
-                    let mut a: Vec<i32> = Vec::with_capacity(n as usize);
-                    let mut b: Vec<i32> = Vec::with_capacity(n as usize);
-                    for body in &bodies {
-                        // body shape: "N" or "N,M"
-                        let parts: Vec<&str> = body.splitn(2, ',').collect();
-                        let av_n: i32 = parts[0].trim().parse().unwrap_or(0);
-                        let bv_n: i32 = if parts.len() == 2 {
-                            parts[1].trim().parse().unwrap_or(0)
-                        } else {
-                            av_n // c:1042 — single arg → b copies a
-                        };
-                        a.push(av_n);
-                        b.push(bv_n);
+            let mut c = Compcond::default();
+            c.typ = typ;
+            c.n = n;
+            // c:1009 — allocate space for all the arguments of the conditions
+            let mut ra: Vec<i32> = Vec::new();
+            let mut rb: Vec<i32> = Vec::new();
+            let mut sp: Vec<i32> = Vec::new();
+            let mut ss: Vec<String> = Vec::new();
+            let mut la: Vec<String> = Vec::new();
+            let mut lb: Vec<String> = Vec::new();
+
+            // c:1028 — now loop over the actual arguments
+            let mut l: i32 = 0;
+            while ch(&tb, t) == '[' {
+                t += 1;
+                while ch(&tb, t) != '\0' && ch(&tb, t) == ' ' {
+                    t += 1;
+                }
+                let mut tt = t;
+                if typ == CCT_POS || typ == CCT_NUMWORDS {
+                    // p[...] or m[...]: one or two numbers expected
+                    while ch(&tb, t) != '\0' && ch(&tb, t) != COMMA && ch(&tb, t) != END {
+                        t += 1;
                     }
-                    CompcondData::R { a, b }
-                }
-                t if t == CCT_CURSUF || t == CCT_CURPRE || t == CCT_QUOTE => {
-                    // c:1056-1069 — single string per body.
-                    let s: Vec<String> = bodies.iter().cloned().collect();
-                    let p: Vec<i32> = vec![0; s.len()];
-                    CompcondData::S { p, s }
-                }
-                t if t == CCT_RANGESTR || t == CCT_RANGEPAT => {
-                    // c:1070-1099 — two strings per body, comma-separated.
-                    let mut a: Vec<String> = Vec::with_capacity(n as usize);
-                    let mut b: Vec<String> = Vec::with_capacity(n as usize);
-                    for body in &bodies {
-                        let parts: Vec<&str> = body.splitn(2, ',').collect();
-                        a.push(parts[0].to_string());
-                        b.push(parts.get(1).map(|s| s.to_string()).unwrap_or_default());
+                    let sav = ch(&tb, t);
+                    if sav == '\0' {
+                        zwarnnam(name, "error in condition");
+                        return 1;
                     }
-                    CompcondData::L { a, b }
-                }
-                _ => {
-                    // c:1100-1121 — number followed by string per body.
-                    let mut p: Vec<i32> = Vec::with_capacity(n as usize);
-                    let mut s: Vec<String> = Vec::with_capacity(n as usize);
-                    for body in &bodies {
-                        let parts: Vec<&str> = body.splitn(2, ',').collect();
-                        if parts.len() != 2 {
-                            eprintln!("{}: error in condition", name);
+                    let a = atoi(&tb[tt..t].iter().collect::<String>());
+                    ra.push(a);
+                    // Second argument is optional: see if it's there
+                    if sav == END {
+                        rb.push(a); // no: copy first argument
+                    } else {
+                        t += 1;
+                        tt = t;
+                        while ch(&tb, t) != '\0' && ch(&tb, t) != END {
+                            t += 1;
+                        }
+                        if ch(&tb, t) == '\0' {
+                            zwarnnam(name, "error in condition");
                             return 1;
                         }
-                        p.push(parts[0].trim().parse().unwrap_or(0));
-                        s.push(parts[1].to_string());
+                        rb.push(atoi(&tb[tt..t].iter().collect::<String>()));
                     }
-                    CompcondData::S { p, s }
+                } else if typ == CCT_CURSUF || typ == CCT_CURPRE || typ == CCT_QUOTE {
+                    // -s[..] or -S[..]: single string expected
+                    while ch(&tb, t) != '\0' && ch(&tb, t) != END {
+                        if ch(&tb, t) == COMMA {
+                            tb[t] = ',';
+                        }
+                        t += 1;
+                    }
+                    if ch(&tb, t) == '\0' {
+                        zwarnnam(name, "error in condition");
+                        return 1;
+                    }
+                    ss.push(tb[tt..t].iter().collect());
+                } else if typ == CCT_RANGESTR || typ == CCT_RANGEPAT {
+                    // -r[..,..] or -R[..,..]: two strings expected
+                    while ch(&tb, t) != '\0' && ch(&tb, t) != COMMA && ch(&tb, t) != END {
+                        t += 1;
+                    }
+                    if ch(&tb, t) == '\0' {
+                        zwarnnam(name, "error in condition");
+                        return 1;
+                    }
+                    let hc = ch(&tb, t) == COMMA;
+                    la.push(tb[tt..t].iter().collect());
+                    if hc {
+                        t += 1;
+                        tt = t;
+                        // any more commas are text, not active
+                        while ch(&tb, t) != '\0' && ch(&tb, t) != END {
+                            if ch(&tb, t) == COMMA {
+                                tb[t] = ',';
+                            }
+                            t += 1;
+                        }
+                        if ch(&tb, t) == '\0' {
+                            zwarnnam(name, "error in condition");
+                            return 1;
+                        }
+                        lb.push(tb[tt..t].iter().collect());
+                    } else {
+                        lb.push(String::new()); // C: NULL
+                    }
+                } else {
+                    // remaining patterns are number followed by string
+                    while ch(&tb, t) != '\0' && ch(&tb, t) != END && ch(&tb, t) != COMMA {
+                        t += 1;
+                    }
+                    if ch(&tb, t) == '\0' || ch(&tb, t) == END {
+                        zwarnnam(name, "error in condition");
+                        return 1;
+                    }
+                    sp.push(atoi(&tb[tt..t].iter().collect::<String>()));
+                    t += 1;
+                    tt = t;
+                    while ch(&tb, t) != '\0' && ch(&tb, t) != END {
+                        if ch(&tb, t) == COMMA {
+                            tb[t] = ',';
+                        }
+                        t += 1;
+                    }
+                    if ch(&tb, t) == '\0' {
+                        zwarnnam(name, "error in condition");
+                        return 1;
+                    }
+                    ss.push(tb[tt..t].iter().collect());
                 }
+                l += 1;
+                t += 1; // for (...; l++, t++)
+            }
+            let _ = l;
+            c.u = if typ == CCT_POS || typ == CCT_NUMWORDS {
+                CompcondData::R { a: ra, b: rb }
+            } else if typ == CCT_RANGESTR || typ == CCT_RANGEPAT {
+                CompcondData::L { a: la, b: lb }
+            } else if typ == CCT_CURSUF || typ == CCT_CURPRE || typ == CCT_QUOTE {
+                CompcondData::S {
+                    p: Vec::new(),
+                    s: ss,
+                }
+            } else {
+                CompcondData::S { p: sp, s: ss }
             };
+            *groups.last_mut().unwrap().last_mut().unwrap() = c;
 
-            // Fill the current condition node.
-            // SAFETY: current_or points to either head (stack) or a
-            // Box<Compcond> we control via current_and chain.
-            unsafe {
-                let cur = match current_and {
-                    Some(p) => p,
-                    None => current_or,
-                };
-                (*cur).typ = typ;
-                (*cur).n = n;
-                (*cur).u = data;
-            }
-
-            // Skip trailing spaces — c:1123
-            while t < bytes.len() && bytes[t] == ' ' {
+            while ch(&tb, t) == ' ' {
                 t += 1;
             }
-
-            // C: c:1125-1134 — `,` → or-chain, else and-chain
-            if t < bytes.len() && bytes[t] == ',' {
-                let new_node = Box::new(Compcond::default());
-                let new_ptr = Box::into_raw(new_node);
-                unsafe {
-                    let cur = current_and.unwrap_or(current_or);
-                    (*cur).or = Some(Box::from_raw(new_ptr));
-                    current_or = (*cur).or.as_mut().unwrap().as_mut() as *mut Compcond;
-                }
-                current_and = None;
+            if ch(&tb, t) == ',' {
+                // Another condition to `or'
+                groups.push(vec![Compcond::default()]);
                 t += 1;
-            } else if t < bytes.len() {
-                let new_node = Box::new(Compcond::default());
-                let new_ptr = Box::into_raw(new_node);
-                unsafe {
-                    let cur = current_and.unwrap_or(current_or);
-                    (*cur).and = Some(Box::from_raw(new_ptr));
-                    current_and = Some((*cur).and.as_mut().unwrap().as_mut() as *mut Compcond);
-                }
+            } else if ch(&tb, t) != '\0' {
+                // Another condition to `and'
+                groups.last_mut().unwrap().push(Compcond::default());
             }
         }
 
-        // C: c:1137-1142 — assign condition to a fresh compctl on
-        // the chain, parse the flags that follow.
-        let mut next_cc = Compctl::default();
-        next_cc.cond = Some(Box::new(head));
-        // Drop the consumed argv slot.
-        av.remove(0);
-        if get_compctl(name, av, &mut next_cc, false, isdef, 0) != 0 {
+        // Link the or / and chains: each group head's `or` is the next
+        // group head, each node's `and` the next node of its group.
+        let mut m: Option<Box<Compcond>> = None;
+        for group in groups.into_iter().rev() {
+            let mut head: Option<Box<Compcond>> = None;
+            for mut node in group.into_iter().rev() {
+                node.and = head.take();
+                head = Some(Box::new(node));
+            }
+            let mut h = head.unwrap();
+            h.or = m.take();
+            m = Some(h);
+        }
+
+        // c:1137 — assign condition to current compctl
+        let mut next = Compctl::default();
+        next.cond = m;
+        argv.remove(0);
+        // End of the condition; get the flags that go with it.
+        if get_compctl(name, &mut argv, &mut next, false, isdef, 0) != 0 {
             return 1;
         }
-        next_chain.push(Arc::new(next_cc));
-
-        // C: c:1143-1145 — special target → finished
-        let cclist = CCLIST.with(|c| c.get());
-        if (av.is_empty()) && (cclist & COMP_SPECIAL) != 0 {
+        nodes.push(next);
+        if argv.is_empty() && (CCLIST.with(|c| c.get()) & COMP_SPECIAL) != 0 {
+            // default, first, or command completion finished
             ready = true;
-            continue;
+        } else {
+            // see if we are looking for more conditions or are ready to
+            // return (ready = true)
+            if argv.is_empty()
+                || !argv[0].starts_with('-')
+                || ((argv[0].len() == 1 || argv[0].chars().nth(1) == Some('+')) && argv.len() < 2)
+            {
+                zwarnnam(name, "missing command names");
+                return 1;
+            }
+            if argv[0] == "--" {
+                ready = true;
+            } else if argv[0] == "-+" && argv.get(1).is_some_and(|a| a == "--") {
+                ready = true;
+                argv.remove(0);
+            }
+            argv.remove(0);
         }
-
-        // C: c:1150-1162 — look for next `-` flag block or `--` term
-        if av.is_empty() || !av[0].starts_with('-') || (av[0].len() == 1 && av.len() < 2) {
-            eprintln!("{}: missing command names", name);
-            return 1;
-        }
-        if av[0] == "--" {
-            ready = true;
-        } else if av[0] == "-+" && av.len() >= 2 && av[1] == "--" {
-            ready = true;
-            av.remove(0);
-        }
-        av.remove(0);
     }
 
-    // C: c:1167-1168 — install the chain on cc.ext.
-    if let Some(first) = next_chain.into_iter().next() {
-        cc.ext = Some(first);
+    // Link the compctls through `next` and hang them off cc.ext.
+    let mut tail: Option<Arc<Compctl>> = None;
+    for mut n in nodes.into_iter().rev() {
+        n.next = tail.take();
+        tail = Some(Arc::new(n));
     }
+    cc.ext = tail;
+    // c:1167 — save position at end of parsing
+    *av = argv;
     0
 }
 
-/// Copy fields from `cct` into the spec stored at `name`.
+/// Copy the flags parsed into `cct` onto the compctl being built.
 /// Port of `cc_assign(char *name, Compctl *ccptr, Compctl cct, int reass)` from Src/Zle/compctl.c:1174 (~75 lines).
 ///
-/// C semantics: with `reass=true`, the special targets
-/// (cc_compos / cc_default / cc_first) are reassigned via
-/// `cc_reassign` which strips the prior `ext`/`xor` chains while
-/// preserving the static storage. Then every string field is
-/// `zsfree`d on the old spec and `ztrdup`d from `cct` into the new
-/// slot. Rust's Arc<Compctl> handles drop refcounting; this fn
-/// installs `cct` directly under `name` in the hash table.
-///
-/// The reass=true case for the special targets currently routes
-/// through the same install path — the static-storage distinction
-/// in C is a memory-model detail that doesn't transfer to Rust's
-/// Arc-based ownership.
-pub(crate) fn cc_assign(name: &str, cct: Arc<Compctl>, reass: bool) {
+/// With `reass` (the first compctl of a command line that is not just
+/// listing) `-C`/`-D`/`-T` retarget `*ccptr` to the static
+/// `cc_compos` / `cc_default` / `cc_first`, whose old `ext` / `xor`
+/// chains are dropped by `cc_reassign`. The statics are `Arc`s here, so
+/// `*ccptr` becomes a working copy of the static; `get_compctl` stores
+/// the finished chain back into the static once it is complete.
+pub(crate) fn cc_assign(name: &str, ccptr: &mut Compctl, cct: &Compctl, reass: bool) -> i32 {
     let cclist = CCLIST.with(|c| c.get());
+    // Handle assignment of new default or command completion
     if reass && (cclist & COMP_LIST) == 0 {
-        // C: c:1182-1188 — reject conflicting special targets
-        let conflicts = cclist == (COMP_COMMAND | COMP_DEFAULT)
+        // if not listing
+        if cclist == (COMP_COMMAND | COMP_DEFAULT)
             || cclist == (COMP_COMMAND | COMP_FIRST)
             || cclist == (COMP_DEFAULT | COMP_FIRST)
-            || cclist == COMP_SPECIAL;
-        if conflicts {
-            eprintln!("{}: can't set -D, -T, and -C simultaneously", name);
-            return;
+            || cclist == COMP_SPECIAL
+        {
+            crate::ported::utils::zwarnnam(name, "can't set -D, -T, and -C simultaneously");
+            // ... because the following code wouldn't work.
+            return 1;
         }
-        // C: c:1190-1202 — reassign special target. The COMMAND /
-        // DEFAULT / FIRST cases install under reserved names. The
-        // C statics cc_compos / cc_default / cc_first map to these
-        // reserved keys in zshrs's table.
-        if (cclist & COMP_COMMAND) != 0 {
-            let _ = cc_reassign(cct.clone());
-            let mut g = COMPCTL_TAB.write().unwrap();
-            if g.is_none() {
-                *g = Some(HashMap::new());
-            }
-            if let Some(map) = g.as_mut() {
-                map.insert("__cc_compos".to_string(), cct);
-            }
-            return;
-        }
-        if (cclist & COMP_DEFAULT) != 0 {
-            let _ = cc_reassign(cct.clone());
-            let mut g = COMPCTL_TAB.write().unwrap();
-            if g.is_none() {
-                *g = Some(HashMap::new());
-            }
-            if let Some(map) = g.as_mut() {
-                map.insert("__cc_default".to_string(), cct);
-            }
-            return;
-        }
-        if (cclist & COMP_FIRST) != 0 {
-            let _ = cc_reassign(cct.clone());
-            let mut g = COMPCTL_TAB.write().unwrap();
-            if g.is_none() {
-                *g = Some(HashMap::new());
-            }
-            if let Some(map) = g.as_mut() {
-                map.insert("__cc_first".to_string(), cct);
-            }
-            return;
+        let slot = if (cclist & COMP_COMMAND) != 0 {
+            Some(&CC_COMPOS) // c:1190 command
+        } else if (cclist & COMP_DEFAULT) != 0 {
+            Some(&CC_DEFAULT) // c:1194 default
+        } else if (cclist & COMP_FIRST) != 0 {
+            Some(&CC_FIRST) // c:1198 first
+        } else {
+            None
+        };
+        if let Some(slot) = slot {
+            *ccptr = slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|a| (**a).clone())
+                .unwrap_or_default();
+            cc_reassign(ccptr);
         }
     }
-    // C: c:1205-1247 — Rust's Arc replaces the manual zsfree/ztrdup
-    // ladder. The new spec is installed under `name`; the prior
-    // entry (if any) drops its refcount when this insert overwrites.
-    let mut g = COMPCTL_TAB.write().unwrap();
-    if g.is_none() {
-        *g = Some(HashMap::new());
-    }
-    if let Some(map) = g.as_mut() {
-        map.insert(name.to_string(), cct);
-    }
+
+    // c:1205-1247 — free the old compctl's strings and copy over the new
+    // stuff (Drop frees; clone allocates).
+    ccptr.mask = cct.mask;
+    ccptr.mask2 = cct.mask2;
+    ccptr.keyvar = cct.keyvar.clone();
+    ccptr.glob = cct.glob.clone();
+    ccptr.str = cct.str.clone();
+    ccptr.func = cct.func.clone();
+    ccptr.explain = cct.explain.clone();
+    ccptr.ylist = cct.ylist.clone();
+    ccptr.prefix = cct.prefix.clone();
+    ccptr.suffix = cct.suffix.clone();
+    ccptr.subcmd = cct.subcmd.clone();
+    ccptr.substr = cct.substr.clone();
+    ccptr.withd = cct.withd.clone();
+    ccptr.gname = cct.gname.clone();
+    ccptr.hpat = cct.hpat.clone();
+    ccptr.hnum = cct.hnum;
+    ccptr.matcher = crate::ported::zle::complete::cpcmatcher(cct.matcher.as_deref());
+    ccptr.mstr = cct.mstr.clone();
+
+    // careful with extended completion:  it's already allocated
+    ccptr.ext = cct.ext.clone();
+
+    0
 }
 
-/// Free a special-target compctl's chain while preserving its slot.
+/// Free a new default or command completion's chains, keeping the node.
 /// Port of `cc_reassign(Compctl cc)` from Src/Zle/compctl.c:1253.
 ///
-/// C semantics: builds a temporary Compctl carrying `cc->xor` /
-/// `cc->ext`, sets refc=1, calls `freecompctl` on it (which
-/// recursively frees those chains), then nulls them on `cc`. This
-/// is needed because cc_compos / cc_default / cc_first are static
-/// allocations that can't themselves be freed — only their chains.
-///
-/// Rust's Arc handles refcounting. Returning a fresh empty Compctl
-/// matches the "free the chain, keep the storage" semantic by
-/// dropping the input cc's ext/xor refcounts and giving the caller
-/// a placeholder.
-/// WARNING: param names don't match C — Rust=() vs C=(cc)
-pub(crate) fn cc_reassign(_cc: Arc<Compctl>) -> Arc<Compctl> {
-    // Arc drop on the input cc handles the C `freecompctl(c2)` call —
-    // when refcount hits zero, ext/xor chains drop too. Return an
-    // empty placeholder for the caller to populate.
-    Arc::new(Compctl::default())
+/// C builds a temporary compctl carrying `cc->xor` / `cc->ext`, frees
+/// it (which frees both chains) and nulls them on `cc`, so the
+/// statically allocated `cc_compos` / `cc_default` / `cc_first` itself
+/// is never freed. Dropping the `Arc`s does the freeing here.
+pub(crate) fn cc_reassign(cc: &mut Compctl) {
+    cc.ext = None;
+    cc.xor = None;
 }
 
 /// Test whether the given string is a pattern.
@@ -1084,207 +1383,315 @@ pub(crate) fn delpatcomp(n: &str) {
 
 /// Process the parsed compctl into the table.
 /// Port of `compctl_process_cc(char **s, Compctl cc)` from Src/Zle/compctl.c:1315 —
-/// installs the spec into compctltab (or patcomps for `-p PAT`),
-/// or removes entries when COMP_REMOVE is set (the `-` flag).
+/// installs the spec into compctltab (or patcomps when the name is a
+/// pattern), or removes entries when COMP_REMOVE is set (the `+` form).
 /// WARNING: param names don't match C — Rust=(cc) vs C=(s, cc)
-pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<Compctl>) -> i32 {
-    let cclist = CCLIST.with(|c| c.get());
-    if (cclist & COMP_REMOVE) != 0 {
-        // C: c:1320-1328 — delete entries for the listed commands
-        for n in s {
-            // pattern shape — `compctl -p`. compctl_name_pat
-            // returns true if `n` looks like a pattern; here we
-            // just check both tables.
-            let mut p = PATCOMPS.write().unwrap();
-            let len_before = p.len();
-            p.retain(|(pat, _)| pat != n);
-            let pat_removed = p.len() != len_before;
-            drop(p);
-            if !pat_removed {
-                if let Some(map) = COMPCTL_TAB.write().unwrap().as_mut() {
-                    map.remove(n);
-                }
+pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<Compctl>) {
+    if (CCLIST.with(|c| c.get()) & COMP_REMOVE) != 0 {
+        // Delete entries for the commands listed
+        for name in s {
+            let (ispat, n) = compctl_name_pat(name);
+            if ispat {
+                delpatcomp(&n);
+            } else if let Some(map) = COMPCTL_TAB.write().unwrap().as_mut() {
+                map.remove(&n);
             }
         }
     } else {
-        // C: c:1330-1351 — add the parsed compctl to the table
-        for n in s {
-            // For now, treat all names as plain (not pattern) —
-            // pattern-mode `-p` requires get_compctl to set a flag
-            // we haven't ported yet.
-            let mut g = COMPCTL_TAB.write().unwrap();
-            if g.is_none() {
-                *g = Some(HashMap::new());
-            }
-            if let Some(map) = g.as_mut() {
-                map.insert(n.clone(), cc.clone());
+        // Add the compctl just read to the hash table
+        for name in s {
+            let (ispat, n) = compctl_name_pat(name);
+            if ispat {
+                delpatcomp(&n);
+                PATCOMPS.write().unwrap().insert(0, (n, cc.clone())); // pc->next = patcomps
+            } else {
+                let mut g = COMPCTL_TAB.write().unwrap();
+                g.get_or_insert_with(HashMap::new).insert(n, cc.clone());
             }
         }
     }
-    0
 }
 
-/// Print a single compctl spec.
+/// Print a `compctl`.
 /// Port of `printcompctl(char *s, Compctl cc, int printflags, int ispat)` from Src/Zle/compctl.c:1359 (~190 lines).
 ///
-/// Emits the `compctl -FLAGS NAME` line that re-creates the spec.
-/// Direct port of the C flag-letter walk (c:1362 `css = "fcqovbAIFp..."`):
-/// each char in the css string corresponds to a CC_* bit; if the bit
-/// is set in cc.mask, the letter prints. Same for `mss` against mask2.
+/// Emits the `compctl` command line (`-L` style) or the plain listing
+/// entry that re-creates the spec: the flag letters, the flags taking
+/// an argument, the `-x 'cond' flags ... --` extended part and the `+`
+/// xor chain. `s` is the command name (or pattern), NULL (`None`) for
+/// the recursive calls that print only the flags.
 ///
-/// Then per-string-arg flags (-K func, -X expl, etc.), -x extended
-/// chain, +xor chain. Trailing arg is the command name (or pattern
-/// when ispat=true).
-/// WARNING: param names don't match C — Rust=(cc, printflags, ispat) vs C=(s, cc, printflags, ispat)
-pub(crate) fn printcompctl(s: &str, cc: &Compctl, printflags: i32, ispat: bool) {
-    // C: c:1362-1364 — flag-letter strings (positional → bit index)
-    const CSS: &str = "fcqovbAIFpEjrzBRGudeNOZUnQmw/";
-    const MSS: &str = " pcCwWsSnNmrRq";
+/// Output goes through `std::io::stdout()` directly (C: `printf` /
+/// `putchar` on `stdout`).
+pub(crate) fn printcompctl(s: Option<&str>, cc: &Compctl, printflags: i32, ispat: bool) {
+    use crate::ported::zsh_h::{PRINT_LIST, PRINT_TYPE};
+    use std::io::Write;
+    macro_rules! out {
+        ($($a:tt)*) => {{
+            let _ = write!(std::io::stdout(), $($a)*);
+        }};
+    }
+    // c:1399 printqt — the quote-escaping shared with the other printers.
+    let printqt = |q: &str| {
+        let rcquotes = crate::ported::zsh_h::isset(crate::ported::zsh_h::RCQUOTES);
+        for ch in q.chars() {
+            if ch == '\'' {
+                out!("{}", if rcquotes { "''" } else { "'\\''" });
+            } else {
+                out!("{}", ch);
+            }
+        }
+    };
+    // builtin.c printif: ` -c ` followed by the quoted string, if any.
+    let printif = |q: &Option<String>, c: char| {
+        if let Some(q) = q {
+            out!(" -{} {}", c, crate::ported::utils::quotedzputs(q));
+        }
+    };
+    let is_static = |slot: &Mutex<Option<Arc<Compctl>>>| {
+        slot.lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|a| std::ptr::eq(Arc::as_ptr(a), cc))
+    };
 
-    // C: c:1366
-    let mut flags = cc.mask;
-    let flags2 = cc.mask2;
+    const CSS: &str = "fcqovbAIFpEjrzBRGudeNOZUnQmw/"; // c:1361
+    const MSS: &[u8] = b" pcCwWsSnNmrRq"; // c:1362
+    let mut t: u64 = 0x7fffffff; // c:1363
+    let mut flags: u64 = cc.mask;
+    let flags2: u64 = cc.mask2;
 
-    // C: c:1369-1372 — printflags adjusts cclist mode
-    const PRINT_LIST: i32 = 1 << 0;
-    const PRINT_TYPE: i32 = 1 << 1;
-    let mut cclist = CCLIST.with(|c| c.get());
+    // Printflags is used outside the standard compctl commands
     if (printflags & PRINT_LIST) != 0 {
-        cclist |= COMP_LIST;
+        CCLIST.with(|c| c.set(c.get() | COMP_LIST));
     } else if (printflags & PRINT_TYPE) != 0 {
-        cclist &= !COMP_LIST;
+        CCLIST.with(|c| c.set(c.get() & !COMP_LIST));
     }
 
-    // C: c:1374 — adjust EXCMDS if DISCMDS not set
     if (flags & CC_EXCMDS) != 0 && (flags & CC_DISCMDS) == 0 {
         flags &= !CC_EXCMDS;
     }
 
-    // C: c:1379 — showmask filter
+    // If showmask is non-zero, then print only those commands with that
+    // flag set.
     let showmask = SHOWMASK.with(|c| c.get());
     if showmask != 0 && (flags & showmask) == 0 {
         return;
     }
 
-    // C: c:1384-1385 — clear showmask for recursive calls
+    // Temporarily clear showmask in case we make recursive calls to
+    // printcompctl.
     let oldshowmask = showmask;
     SHOWMASK.with(|c| c.set(0));
 
-    // C: c:1388-1402 — print prefix
-    if (cclist & COMP_LIST) != 0 {
-        print!("compctl");
-    } else if !s.is_empty() {
-        print!("compctl");
-    }
-
-    // C: c:1404-1417 — walk CSS for primary mask flags
-    for (i, ch) in CSS.chars().enumerate() {
-        if ch == ' ' {
-            continue;
-        }
-        if (flags & (1u64 << i)) != 0 {
-            print!(" -{}", ch);
-        }
-    }
-
-    // C: walk MSS for mask2 flags (NOSORT, etc.)
-    let _ = MSS; // mss is for the printable mask2 letters; pending
-                 // a full per-bit mapping in zsh's source
-
-    // C: c:1418-1430 — string-arg flags (-K func, etc.)
-    if let Some(s) = &cc.keyvar {
-        print!(" -k '{}'", s);
-    }
-    if let Some(s) = &cc.glob {
-        print!(" -g '{}'", s);
-    }
-    if let Some(s) = &cc.str {
-        print!(" -s '{}'", s);
-    }
-    if let Some(s) = &cc.func {
-        print!(" -K '{}'", s);
-    }
-    if let Some(s) = &cc.explain {
-        if (cc.mask & CC_EXPANDEXPL) != 0 {
-            print!(" -Y '{}'", s);
+    // print either command name or start of compctl command itself
+    if let Some(s) = s {
+        if (CCLIST.with(|c| c.get()) & COMP_LIST) != 0 {
+            out!("compctl");
+            if is_static(&CC_COMPOS) {
+                out!(" -C");
+            }
+            if is_static(&CC_DEFAULT) {
+                out!(" -D");
+            }
+            if is_static(&CC_FIRST) {
+                out!(" -T");
+            }
+        } else if ispat {
+            let p = crate::ported::lex::untokenize(s);
+            out!("{}", crate::ported::utils::quotedzputs(&p));
         } else {
-            print!(" -X '{}'", s);
-        }
-    }
-    if let Some(s) = &cc.ylist {
-        print!(" -y '{}'", s);
-    }
-    if let Some(s) = &cc.prefix {
-        print!(" -P '{}'", s);
-    }
-    if let Some(s) = &cc.suffix {
-        print!(" -S '{}'", s);
-    }
-    if let Some(s) = &cc.subcmd {
-        print!(" -l '{}'", s);
-    }
-    if let Some(s) = &cc.substr {
-        print!(" -h '{}'", s);
-    }
-    if let Some(s) = &cc.withd {
-        print!(" -W '{}'", s);
-    }
-    if let Some(s) = &cc.gname {
-        if (flags2 & CC_NOSORT) != 0 {
-            print!(" -V '{}'", s);
-        } else {
-            print!(" -J '{}'", s);
-        }
-    }
-    if let Some(s) = &cc.mstr {
-        print!(" -M '{}'", s);
-    }
-    if cc.hnum > 0 {
-        if let Some(p) = &cc.hpat {
-            print!(" -H {} '{}'", cc.hnum, if p.is_empty() { "*" } else { p });
+            out!(
+                "{}",
+                crate::ported::utils::quotedzputs(&crate::ported::utils::quotestring(
+                    s,
+                    crate::ported::zsh_h::QT_BACKSLASH
+                ))
+            );
         }
     }
 
-    // C: c:1518-1523 — xor chain
-    if cc.xor.is_some() {
-        print!(" +");
-    }
-
-    // C: c:1524-1543 — trailing name (or pattern)
-    if !s.is_empty() && (cclist & COMP_LIST) != 0 {
-        if ispat {
-            print!(" -p '{}'", s);
-        } else {
-            print!(" '{}'", s);
+    // loop through flags w/o args that are set, printing them if so
+    if (flags & t) != 0 || (flags2 & (CC_UNIQALL | CC_UNIQCON)) != 0 {
+        out!(" -");
+        if (flags & (CC_ALREG | CC_ALGLOB)) == (CC_ALREG | CC_ALGLOB) {
+            out!("a");
+            flags &= !(CC_ALREG | CC_ALGLOB);
         }
-    } else if !s.is_empty() {
-        print!(" '{}'", s);
+        for ch in CSS.chars() {
+            if (flags & t & 1) != 0 {
+                out!("{}", ch);
+            }
+            flags >>= 1;
+            t >>= 1;
+        }
+        if (flags2 & CC_UNIQALL) != 0 {
+            out!("1");
+        } else if (flags2 & CC_UNIQCON) != 0 {
+            out!("2");
+        }
     }
-    println!();
+    if (flags2 & (CC_XORCONT | CC_PATCONT | CC_DEFCONT)) != 0 {
+        out!(" -t");
+        if (flags2 & CC_XORCONT) != 0 {
+            out!("+");
+        }
+        if (flags2 & CC_PATCONT) != 0 {
+            out!("-");
+        }
+        if (flags2 & CC_DEFCONT) != 0 {
+            out!("x");
+        }
+    } else if (flags2 & CC_CCCONT) == 0 {
+        out!(" -tn");
+    }
+    // now flags with arguments
+    printif(&cc.mstr, 'M');
+    if (flags2 & CC_NOSORT) != 0 {
+        printif(&cc.gname, 'V');
+    } else {
+        printif(&cc.gname, 'J');
+    }
+    printif(&cc.keyvar, 'k');
+    printif(&cc.func, 'K');
+    printif(
+        &cc.explain,
+        if (cc.mask & CC_EXPANDEXPL) != 0 { 'Y' } else { 'X' },
+    );
+    printif(&cc.ylist, 'y');
+    printif(&cc.prefix, 'P');
+    printif(&cc.suffix, 'S');
+    printif(&cc.glob, 'g');
+    printif(&cc.str, 's');
+    printif(&cc.subcmd, 'l');
+    printif(&cc.substr, 'h');
+    printif(&cc.withd, 'W');
+    if let Some(hpat) = &cc.hpat {
+        out!(" -H {} {}", cc.hnum, crate::ported::utils::quotedzputs(hpat));
+    }
 
-    // C: c:1545 — restore showmask
+    // now the -x ... -- extended completion part
+    if cc.ext.is_some() {
+        let mut cc2: Option<Arc<Compctl>> = cc.ext.clone();
+        out!(" -x");
+
+        while let Some(c2) = cc2 {
+            // loop over conditions
+            out!(" '");
+            let mut c: Option<&Compcond> = c2.cond.as_deref();
+            while let Some(cn) = c {
+                // loop over or's
+                let o = cn.or.as_deref();
+                let mut a: Option<&Compcond> = Some(cn);
+                while let Some(cx) = a {
+                    // loop over and's
+                    out!("{}", MSS[cx.typ as usize] as char);
+
+                    for i in 0..cx.n as usize {
+                        // for all [...]'s of a given condition
+                        out!("[");
+                        match (&cx.u, cx.typ) {
+                            (CompcondData::R { a, b }, ty) if ty == CCT_POS || ty == CCT_NUMWORDS => {
+                                out!("{},{}", a[i], b[i]);
+                            }
+                            (CompcondData::S { s, .. }, ty)
+                                if ty == CCT_CURSUF || ty == CCT_CURPRE || ty == CCT_QUOTE =>
+                            {
+                                printqt(&s[i]);
+                            }
+                            (CompcondData::L { a, b }, ty)
+                                if ty == CCT_RANGESTR || ty == CCT_RANGEPAT =>
+                            {
+                                printqt(&a[i]);
+                                out!(",");
+                                printqt(&b[i]);
+                            }
+                            (CompcondData::S { p, s }, _) => {
+                                out!("{},", p[i]);
+                                printqt(&s[i]);
+                            }
+                            _ => {}
+                        }
+                        out!("]");
+                    }
+                    a = cx.and.as_deref();
+                    if a.is_some() {
+                        out!(" ");
+                    }
+                }
+                c = o;
+                if c.is_some() {
+                    out!(" , ");
+                }
+            }
+            out!("'");
+            // now print the flags for the current condition (C: cc2->cond
+            // is cleared around the call)
+            let mut flagsonly = (*c2).clone();
+            flagsonly.cond = None;
+            printcompctl(None, &flagsonly, 0, false);
+            cc2 = c2.next.clone();
+            if cc2.is_some() {
+                out!(" -");
+            }
+        }
+        if (CCLIST.with(|c| c.get()) & COMP_LIST) != 0 {
+            out!(" --");
+        }
+    }
+    if let Some(xor) = &cc.xor {
+        // print xor'd (+) completions
+        out!(" +");
+        // `cc->xor != &cc_default`; a stale link to a replaced cc_default
+        // is told apart by the static's refc.
+        let xor_is_default = xor.refc == 10000
+            || CC_DEFAULT
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|d| Arc::ptr_eq(d, xor));
+        if !xor_is_default {
+            printcompctl(None, xor, 0, false);
+        }
+    }
+    if let Some(s) = s {
+        if (CCLIST.with(|c| c.get()) & COMP_LIST) != 0
+            && !is_static(&CC_COMPOS)
+            && !is_static(&CC_DEFAULT)
+            && !is_static(&CC_FIRST)
+        {
+            if s.starts_with('-') || s.starts_with('+') {
+                out!(" -");
+            }
+            out!(" ");
+            let p = crate::ported::lex::untokenize(s);
+            if ispat {
+                out!("{}", crate::ported::utils::quotedzputs(&p));
+            } else {
+                out!(
+                    "{}",
+                    crate::ported::utils::quotedzputs(&crate::ported::utils::quotestring(
+                        &p,
+                        crate::ported::zsh_h::QT_BACKSLASH
+                    ))
+                );
+            }
+        }
+        out!("\n");
+    }
+
     SHOWMASK.with(|c| c.set(oldshowmask));
 }
 
-/// Print a compctl hash node.
-/// Port of `printcompctlp(HashNode hn, int printflags)` from Src/Zle/compctl.c:1550 — hash-table
-/// callback that calls printcompctl.
+/// Port of `printcompctlp(HashNode hn, int printflags)` from Src/Zle/compctl.c:1550 —
+/// the ScanFunc needed for use by scanhashtable().
+/// WARNING: param names don't match C — Rust=(name, hn, printflags) vs C=(hn, printflags)
 pub(crate) fn printcompctlp(name: &str, hn: &Compctl, printflags: i32) {
-    printcompctl(name, hn, printflags, false);
+    printcompctl(Some(name), hn, printflags, false);
 }
 
 /// `compctl` builtin entry point.
 /// Port of `bin_compctl(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/compctl.c:1562 (~110 lines).
-/// Direct port of the C dispatch flow:
-///   1. Reset cclist + showmask
-///   2. Try `get_gmatcher` — if returns non-zero, return that-1
-///   3. Allocate cct, run `get_compctl`. On failure, free + return 1
-///   4. Save mask in showmask (with EXCMDS/DISCMDS adjust)
-///   5. If no remaining args or COMP_LIST, free cc
-///   6. If no args and no special: print all (patcomps + compctltab +
-///      cc_compos/cc_default/cc_first + global matchers)
-///   7. If COMP_LIST: print only the named entries
-///   8. Else: install via compctl_process_cc
 /// WARNING: param names don't match C — Rust=(argv) vs C=(name, argv, ops, func)
 pub fn bin_compctl(
     name: &str,
@@ -1294,106 +1701,120 @@ pub fn bin_compctl(
 ) -> i32 {
     let mut argv: Vec<String> = argv.to_vec();
     let mut ret: i32 = 0;
+    let mut cc = Compctl::default();
 
-    // C: c:1570-1571 — clear static flags
+    // clear static flags
     CCLIST.with(|c| c.set(0));
     SHOWMASK.with(|c| c.set(0));
 
-    // C: c:1574-1596 — parse args if any
+    // Parse all the arguments
     if !argv.is_empty() {
-        // C: c:1576 — try global matcher first
+        // Let's see if this is a global matcher definition.
         let gret = get_gmatcher(name, &argv);
         if gret != 0 {
             return gret - 1;
         }
 
-        // C: c:1581 — allocate compctl
-        let mut cc = Compctl::default();
-        // C: c:1582 — parse the spec
         if get_compctl(name, &mut argv, &mut cc, true, false, 0) != 0 {
-            // freecompctl(cc) is implicit on Drop
             return 1;
         }
 
-        // C: c:1589 — remember flags for printing
+        // remember flags for printing
         let mut showmask = cc.mask;
         if (showmask & CC_EXCMDS) != 0 && (showmask & CC_DISCMDS) == 0 {
             showmask &= !CC_EXCMDS;
         }
         SHOWMASK.with(|c| c.set(showmask));
-
-        let cclist = CCLIST.with(|c| c.get());
-        // C: c:1594 — if no command args or just listing, drop cc
-        if argv.is_empty() || (cclist & COMP_LIST) != 0 {
-            // cc dropped at end of if-let
-        } else {
-            // C: c:1656-1664 — install via compctl_process_cc
-            if (cclist & COMP_SPECIAL) != 0 {
-                // C: c:1657 — special targets ignore extra args
-                eprintln!("{}: extraneous commands ignored", name);
-            } else {
-                let cc_arc = Arc::new(cc);
-                ret = compctl_process_cc(&argv, cc_arc);
-            }
-            return ret;
-        }
     }
-
     let cclist = CCLIST.with(|c| c.get());
 
-    // C: c:1601 — if no commands and no special-target flag, print all
+    // The statics cc_compos / cc_default / cc_first, as printed below.
+    let cc_compos = CC_COMPOS.lock().unwrap().clone().unwrap_or_default();
+    let cc_default = CC_DEFAULT.lock().unwrap().clone().unwrap_or_default();
+    let cc_first = CC_FIRST.lock().unwrap().clone().unwrap_or_default();
+
+    // If no commands and no -C, -T, or -D, print all the compctl's. If
+    // some flags (other than -C, -T, or -D) were given, then only print
+    // compctl containing those flags.
     if argv.is_empty() && (cclist & (COMP_SPECIAL | COMP_LISTMATCH)) == 0 {
-        // Print pattern compctls
         let pats = PATCOMPS.read().unwrap().clone();
-        for (pat, cc) in &pats {
-            printcompctl(pat, cc, 0, true);
+        for (pat, pcc) in &pats {
+            printcompctl(Some(pat), pcc, 0, true);
         }
-        // Print all hash table entries (sorted for stable output)
-        if let Some(map) = COMPCTL_TAB.read().unwrap().as_ref() {
-            let mut names: Vec<&String> = map.keys().collect();
-            names.sort();
-            for n in names {
-                if let Some(cc) = map.get(n) {
-                    printcompctlp(n, cc, 0);
-                }
-            }
+
+        let tab: Vec<(String, Arc<Compctl>)> = {
+            let g = COMPCTL_TAB.read().unwrap();
+            let mut v: Vec<(String, Arc<Compctl>)> = g
+                .as_ref()
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+            v.sort_by(|a, b| a.0.cmp(&b.0)); // scanhashtable(.., sorted = 1, ..)
+            v
+        };
+        for (n, tcc) in &tab {
+            printcompctlp(n, tcc, 0);
         }
-        // Print special compctls (cc_compos, cc_default, cc_first
-        // are handled by the `default` table — out of scope until
-        // we wire up those globals).
+        let listing = (cclist & COMP_LIST) != 0;
+        printcompctl(Some(if listing { "" } else { "COMMAND" }), &cc_compos, 0, false);
+        printcompctl(Some(if listing { "" } else { "DEFAULT" }), &cc_default, 0, false);
+        printcompctl(Some(if listing { "" } else { "FIRST" }), &cc_first, 0, false);
         print_gmatcher((cclist & COMP_LIST) as i32);
         return ret;
     }
 
-    // C: c:1618 — if listing, print only named entries
+    // If we're listing and we've made it to here, then there are
+    // arguments or a COMP_SPECIAL flag (-D, -C, -T), so print only those.
     if (cclist & COMP_LIST) != 0 {
         SHOWMASK.with(|c| c.set(0));
-        for n in &argv {
+        for ptr in &argv {
+            let (ispat, n) = compctl_name_pat(ptr);
             let mut found = false;
-            // Try pattern compctls first
-            let pats = PATCOMPS.read().unwrap().clone();
-            for (pat, cc) in &pats {
-                if pat == n {
-                    printcompctl(pat, cc, 0, true);
+            if ispat {
+                let pats = PATCOMPS.read().unwrap().clone();
+                if let Some((pat, pcc)) = pats.iter().find(|(pat, _)| *pat == n) {
+                    printcompctl(Some(pat), pcc, 0, true);
                     found = true;
-                    break;
+                }
+            } else {
+                let hn = COMPCTL_TAB
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|m| m.get(&n).cloned());
+                if let Some(hn) = hn {
+                    printcompctlp(&n, &hn, 0);
+                    found = true;
                 }
             }
             if !found {
-                if let Some(map) = COMPCTL_TAB.read().unwrap().as_ref() {
-                    if let Some(cc) = map.get(n) {
-                        printcompctlp(n, cc, 0);
-                        found = true;
-                    }
-                }
-            }
-            if !found {
-                eprintln!("{}: no compctl defined for {}", name, n);
+                crate::ported::utils::zwarnnam(name, &format!("no compctl defined for {}", n));
                 ret = 1;
             }
         }
+        if (cclist & COMP_COMMAND) != 0 {
+            printcompctl(Some(""), &cc_compos, 0, false);
+        }
+        if (cclist & COMP_DEFAULT) != 0 {
+            printcompctl(Some(""), &cc_default, 0, false);
+        }
+        if (cclist & COMP_FIRST) != 0 {
+            printcompctl(Some(""), &cc_first, 0, false);
+        }
         if (cclist & COMP_LISTMATCH) != 0 {
-            print_gmatcher(COMP_LIST as i32);
+            print_gmatcher(COMP_LIST);
+        }
+        return ret;
+    }
+
+    // Assign the compctl to the commands given
+    if !argv.is_empty() {
+        if (cclist & COMP_SPECIAL) != 0 {
+            // Ideally we'd handle this properly, setting both the special
+            // and normal completions.  For the moment, this is better than
+            // silently failing.
+            crate::ported::utils::zwarnnam(name, "extraneous commands ignored");
+        } else {
+            compctl_process_cc(&argv, Arc::new(cc));
         }
     }
 
@@ -1733,7 +2154,7 @@ pub(crate) fn maketildelist() {
     // so the name matches the file prefix (`~roo` → fpre `roo` → `root`) and
     // the `~` is re-attached on insertion.
     for name in entries {
-        addmatch(&name, None);
+        addhnmatch(&name, 0);
     }
 }
 
@@ -1975,14 +2396,14 @@ pub(crate) fn getcpat(str: &str, cpatindex: i32, cpat: &str, class: i32) -> i32 
 /// Port of `dumphashtable(HashTable ht, int what)` from Src/Zle/compctl.c:2106.
 ///
 /// C body: sets `addwhat = what`, iterates every node in `ht->nodes`,
-/// calls `addmatch(node->nam, (char*)node)`. Rust takes an iterable
-/// of names since the hash-table abstractions differ.
+/// calls `addmatch(dupstring(hn->nam), (char *) hn)`. Rust takes the
+/// table's (name, node) pairs since the hash-table abstractions differ.
 /// WARNING: param names don't match C — Rust=(what) vs C=(ht, what)
-pub(crate) fn dumphashtable<I: IntoIterator<Item = String>>(names: I, what: i32) {
+pub(crate) fn dumphashtable<I: IntoIterator<Item = (String, AddmatchNode)>>(ht: I, what: i32) {
     // C: c:2111 — set addwhat global before the iteration
     ADDWHAT.with(|c| c.set(what));
-    for nam in names {
-        addmatch(&nam, None);
+    for (nam, hn) in ht {
+        addmatch(&nam, Some(&hn));
     }
 }
 
@@ -2073,6 +2494,17 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// The `HashNode` that `dumphashtable` hands to `addmatch` as C's `char *t`
+/// (cast back to `HashNode` / `Param` at c:1953-1954). `Hash` carries the
+/// `struct hashnode` head every table node starts with (alias, reswd,
+/// shfunc, builtin, cmdnam, nameddir, thingy, option); `Param` the full
+/// `struct param`, whose `level` and scalar `gsu` the `-4`/`-9` and
+/// parameter-flag predicates read.
+pub(crate) enum AddmatchNode {
+    Hash(crate::ported::zsh_h::hashnode),
+    Param(crate::ported::zsh_h::param),
+}
+
 /// Add a match to the completion match list.
 /// Port of `addmatch(char *s, char *t)` from Src/Zle/compctl.c:1925 (~130 lines).
 ///
@@ -2090,27 +2522,32 @@ thread_local! {
 /// (`matches`/`fmatches`, `ainfo`, `mnum`) the compsys `compadd` uses.
 ///
 /// The prefix/suffix statics comp_match/add_match_data read here are
-/// populated by the `makecomplistflags` preamble (c:3070-3403). The
-/// per-node hash-flag predicates that C evaluates inline for the
-/// accept thread are enforced upstream by the makecomplistflags arms
-/// (see the header comment on the fn body). `MATCH_LIST` is retained
-/// as a Rust-only observability mirror for the higher-level tests.
-pub(crate) fn addmatch(s: &str, t: Option<&str>) {
-    // C's `t` is the source `HashNode`/`Param`. In the Rust dispatch the
-    // per-node hash-flag predicates that C evaluates inline for the
-    // `addwhat > 0` and `-3`/`-4`/`-9` threads (DISABLED / PM_ARRAY /
-    // PM_UNSET / `pm->level` / `pm->gsu.s->getfn` etc., c:1991-2014) are
-    // enforced UPSTREAM by the `makecomplistflags` arms, which pre-filter
-    // each name table before calling `addmatch`. So the node is not
-    // threaded here; reaching a positive/-3/-4/-9 branch means the name
-    // was already accepted and only the match-construction remains.
-    let _ = t;
+/// populated by the `makecomplistflags` preamble (c:3070-3403). `t` is the
+/// C `char *t` that `dumphashtable` passes as the `HashNode` being added
+/// (NULL from every other caller); the per-node predicates of the accept
+/// thread (c:1991-2014: DISABLED, PM_* flags, `pm->level`, the `-4`
+/// scalar getfn) are evaluated here on it. `MATCH_LIST` is retained as a
+/// Rust-only observability mirror for the higher-level tests.
+pub(crate) fn addmatch(s: &str, t: Option<&AddmatchNode>) {
+    use crate::ported::zsh_h::{
+        param, ALIAS_GLOBAL, DISABLED, PM_ARRAY, PM_EXPORTED, PM_INTEGER, PM_READONLY, PM_SCALAR,
+        PM_SPECIAL, PM_UNSET, PM_TYPE,
+    };
     use crate::ported::zle::comp_h::{Cline, CMF_FILE};
     use crate::ported::zle::compcore::{add_match_data, multiquote, tildequote};
     use crate::ported::zle::compmatch::comp_match;
     use std::sync::atomic::Ordering;
 
     let aw = ADDWHAT.with(|c| c.get());
+    // c:1953-1954 — `hn = (HashNode) t; pm = (Param) t;`
+    let (hflags, pm): (i32, Option<&param>) = match t {
+        Some(AddmatchNode::Hash(h)) => (h.flags, None),
+        Some(AddmatchNode::Param(p)) => (p.node.flags, Some(p)),
+        None => (0, None),
+    };
+    let pm_level = pm.map_or(0, |p| p.level);
+    let awu = aw as u64;
+    let hf = hflags as u32;
     let mut isfile: i32 = 0; // c:1928
     let mut isalt: i32 = 0; // c:1928
     let mut isexact: i32 = 0; // c:1928
@@ -2194,11 +2631,41 @@ pub(crate) fn addmatch(s: &str, t: Option<&str>) {
             return;
         }
         isfile = CMF_FILE; // c:1990
-    } else if aw == CC_QUOTEFLAG as i32 || aw == -2 || aw == -3 || aw == -4 || aw == -9 || aw > 0 {
-        // c:1991-2041 — conditional / hash-node accept thread. (hn->flags
-        // predicate enforced upstream — see fn header.) Match the word
-        // against the real prefix/suffix, trying the quoted pattern-driven
-        // form first, then the plain form.
+    } else if aw == CC_QUOTEFLAG as i32
+        || aw == -2
+        || (aw == -3 && (hflags & DISABLED) == 0) // c:1991
+        || (aw == -4
+            && pm.is_some_and(|p| {
+                PM_TYPE(p.node.flags as u32) == PM_SCALAR // c:1992
+                    && p.level == 0
+                    && p.gsu_s
+                        .as_ref()
+                        .map_or_else(|| crate::ported::params::strgetfn(p), |g| (g.getfn)(p))
+                        .starts_with('/')
+            }))
+        || (aw == -9 && (hf & PM_UNSET) == 0 && pm_level == 0) // c:1995
+        || (aw > 0
+            && (((hf & PM_UNSET) == 0 // c:1997
+                && (((awu & CC_ARRAYS) != 0 && (hf & PM_ARRAY) != 0) // c:1998
+                    || ((awu & CC_INTVARS) != 0 && (hf & PM_INTEGER) != 0) // c:1999
+                    || ((awu & CC_ENVVARS) != 0 && (hf & PM_EXPORTED) != 0) // c:2000
+                    || ((awu & CC_SCALARS) != 0 && (hf & PM_SCALAR) != 0) // c:2001
+                    || ((awu & CC_READONLYS) != 0 && (hf & PM_READONLY) != 0) // c:2002
+                    || ((awu & CC_SPECIALS) != 0 && (hf & PM_SPECIAL) != 0) // c:2003
+                    || ((awu & CC_PARAMS) != 0 && (hf & PM_EXPORTED) == 0)) // c:2004
+                && pm_level == 0)
+                || ((((awu & CC_SHFUNCS) != 0) // c:2006
+                    || ((awu & CC_BUILTINS) != 0) // c:2007
+                    || ((awu & CC_EXTCMDS) != 0) // c:2008
+                    || ((awu & CC_RESWDS) != 0) // c:2009
+                    || ((awu & CC_ALREG) != 0 && (hflags & ALIAS_GLOBAL) == 0) // c:2010
+                    || ((awu & CC_ALGLOB) != 0 && (hflags & ALIAS_GLOBAL) != 0)) // c:2011
+                    && (((awu & CC_DISCMDS) != 0 && (hflags & DISABLED) != 0) // c:2012
+                        || ((awu & CC_EXCMDS) != 0 && (hflags & DISABLED) == 0))) // c:2013
+                || ((awu & CC_BINDINGS) != 0 && (hflags & DISABLED) == 0))) // c:2014
+    {
+        // c:2015-2041 — Match the word against the real prefix/suffix,
+        // trying the quoted pattern-driven form first, then the plain form.
         let (p1s, s1s, p2s, s2s) = if aw == CC_QUOTEFLAG as i32 {
             // c:2018-2019
             (
@@ -2350,54 +2817,38 @@ pub(crate) fn addhnmatch(name: &str, _flags: i32) {
     addmatch(name, None);
 }
 
-/// Expand a string via prefork (parameter / arith / cmd-sub /
-/// tilde / brace / glob), suppressing errors.
+/// Perform expansion on the given string and return the result.
+/// During this errors are not reported.
 /// Port of `getreal(char *str)` from Src/Zle/compctl.c:2132.
-///
-/// C body builds a one-element LinkList, sets `noerrs=1`, runs
-/// `prefork(l, 0, NULL)`, then returns the first element if the
-/// list is non-empty and the first elem has content; else returns
-/// the original string.
-///
-/// Rust: routes through `singsub` since that's the equivalent
-/// "expand a single word with errors swallowed". Returns owned
-/// String (vs C's heap-string-pointer).
 /// WARNING: param names don't match C — Rust=(str_in) vs C=(str)
 pub(crate) fn getreal(str_in: &str) -> String {
     // c:2132
-    // c:2134 — LinkList l = newlinklist();
-    // c:2135 — int ne = noerrs;
-    let mut ne_guard = crate::ported::utils::noerrs_lock()
-        .lock()
-        .expect("NOERRS poisoned");
-    let ne = *ne_guard;
-    // c:2137 — noerrs = 1;
-    *ne_guard = 1;
-    drop(ne_guard);
-    // c:2138 — addlinknode(l, dupstring(str));
-    // c:2139 — prefork(l, 0, NULL);
-    // singsub is the equivalent single-word expansion (prefork on a
-    // single-element list + extract the first elem) — keeps the
-    // expanded form when non-empty.
-    let s = crate::ported::subst::singsub(str_in);
-    // c:2140 — noerrs = ne;
-    *crate::ported::utils::noerrs_lock()
-        .lock()
-        .expect("NOERRS poisoned") = ne;
-    // c:2141-2143 — if (!errflag && nonempty(l) && first non-empty) → use expanded.
-    if errflag.load(std::sync::atomic::Ordering::Relaxed) == 0 && !s.is_empty() {
-        return s;
+    let ne = *crate::ported::utils::noerrs_lock().lock().unwrap(); // c:2135
+    let mut l: crate::ported::subst::LinkList = // c:2134 newlinklist()
+        vec![str_in.to_string()].into_iter().collect(); // c:2138 addlinknode(l, dupstring(str))
+
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 1; // c:2137
+    let mut ret_flags: i32 = 0;
+    crate::ported::subst::prefork(&mut l, 0, &mut ret_flags); // c:2139
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = ne; // c:2140
+    // c:2141-2143 — if (!errflag && nonempty(l) && peekfirst(l) && peekfirst(l)[0])
+    //                   return dupstring(peekfirst(l));
+    if errflag.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        if let Some(first) = l.into_iter().next() {
+            if !first.is_empty() {
+                return first;
+            }
+        }
     }
     // c:2144 — errflag &= ~ERRFLAG_ERROR;
     errflag.fetch_and(
         !crate::ported::utils::ERRFLAG_ERROR,
         std::sync::atomic::Ordering::Relaxed,
     );
-    // c:2146 — return dupstring(str);
-    str_in.to_string()
+
+    str_in.to_string() // c:2146
 }
 
-// (getreal port location; impl above already routes through singsub)
 /// This reads a directory and adds the files to the list of matches.  The
 /// parameters say which files should be added.
 /// Port of `gen_matches_files(int dirs, int execs, int all)` from Src/Zle/compctl.c:2161.
@@ -2569,10 +3020,6 @@ pub(crate) fn gen_matches_files(mut dirs: i32, mut execs: i32, mut all: i32) {
 ///   IN_COND   → cc_dummy with -o/-nt/-ot/-ef logic
 ///   IN_REDIR  → cc_default (redirections)
 ///   default   → makecomplistcmd (per-command lookup)
-///
-/// `linwhat` and friends live in zle_tricky.c. For the foundation,
-/// we assume "default" (per-command lookup) which is the most
-/// common path.
 pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -> i32 {
     use std::sync::atomic::Ordering;
     // c:2406 — reset ccont.
@@ -2832,8 +3279,8 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     let ow = CLWORDS.lock().unwrap().clone();
     let on = *CLWNUM.lock().unwrap();
     let op = *CLWPOS.lock().unwrap();
-    let ois = *INSTRING.lock().unwrap();
-    let oib = *INBACKT.lock().unwrap();
+    let ois = INSTRING.load(Ordering::Relaxed);
+    let oib = INBACKT.load(Ordering::Relaxed);
     let oisuf = ISUF.lock().unwrap().clone();
     let oqp = QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
     let oqs = QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
@@ -2853,8 +3300,8 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     match compquote.chars().next() {
         Some('`') => {
             // c:2331-2338 — backtick: instring/inbackt cleared, no autoq.
-            *INSTRING.lock().unwrap() = QT_NONE;
-            *INBACKT.lock().unwrap() = 0;
+            INSTRING.store(QT_NONE, Ordering::Relaxed);
+            INBACKT.store(0, Ordering::Relaxed);
             *AUTOQ
                 .get_or_init(|| Mutex::new(String::new()))
                 .lock()
@@ -2862,12 +3309,15 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
         }
         Some(c) if c == '\'' || c == '"' || c == '$' => {
             // c:2340-2355 — single/double/dollar quoting.
-            *INSTRING.lock().unwrap() = match c {
-                '\'' => QT_SINGLE,
-                '"' => QT_DOUBLE,
-                _ => QT_DOLLARS,
-            };
-            *INBACKT.lock().unwrap() = 0;
+            INSTRING.store(
+                match c {
+                    '\'' => QT_SINGLE,
+                    '"' => QT_DOUBLE,
+                    _ => QT_DOLLARS,
+                },
+                Ordering::Relaxed,
+            );
+            INBACKT.store(0, Ordering::Relaxed);
             // c:2354 — autoq = (compquote == '$' ? compquote+1 : compquote).
             *AUTOQ
                 .get_or_init(|| Mutex::new(String::new()))
@@ -2880,8 +3330,8 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
         }
         _ => {
             // c:2357-2360 — no quoting context.
-            *INSTRING.lock().unwrap() = QT_NONE;
-            *INBACKT.lock().unwrap() = 0;
+            INSTRING.store(QT_NONE, Ordering::Relaxed);
+            INBACKT.store(0, Ordering::Relaxed);
             *AUTOQ
                 .get_or_init(|| Mutex::new(String::new()))
                 .lock()
@@ -2935,8 +3385,8 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     *ISUF.lock().unwrap() = oisuf;
     *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqp;
     *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqs;
-    *INSTRING.lock().unwrap() = ois;
-    *INBACKT.lock().unwrap() = oib;
+    INSTRING.store(ois, Ordering::Relaxed);
+    INBACKT.store(oib, Ordering::Relaxed);
     *AUTOQ
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
@@ -2958,13 +3408,26 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
 /// or makecomplistflags (for the regular flag-mask compctl).
 /// WARNING: param names don't match C — Rust=(s, incmd, compadd) vs C=(ylist)
 pub(crate) fn makecomplistlist(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i32) {
+    use crate::ported::zle::compcore::{OFFS, WB, WE, ZLEMETACS};
+    let oloffs = OFFS.load(Ordering::Relaxed); // c:2621
+    let owe = WE.load(Ordering::Relaxed);
+    let owb = WB.load(Ordering::Relaxed);
+    let ocs = ZLEMETACS.load(Ordering::Relaxed);
+
     if cc.ext.is_some() {
-        // C: c:3155 — extended -x conditions
+        // Handle extended completion.
         makecomplistext(cc, s, incmd);
     } else {
-        // C: c:3499 — regular flag-driven completion
+        // Only normal flags.
         makecomplistflags(cc, s.to_string(), incmd, compadd);
     }
+
+    // Reset some information variables for the next try.
+    errflag.fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::Relaxed);
+    OFFS.store(oloffs, Ordering::Relaxed);
+    WB.store(owb, Ordering::Relaxed);
+    WE.store(owe, Ordering::Relaxed);
+    ZLEMETACS.store(ocs, Ordering::Relaxed);
 }
 
 /// Extended (`-x`) completion list builder.
@@ -2976,15 +3439,15 @@ pub(crate) fn makecomplistlist(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd:
 /// WARNING: param names don't match C — Rust=(os, incmd) vs C=(Equals)
 pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
     use crate::ported::glob::tokenize;
-    use crate::ported::lex::untokenize;
+    use crate::ported::lex::untokenize_ztokens as untokenize;
     use crate::ported::zle::compcore::rembslash;
 
     // c:2655 — ins = (instring != QT_NONE ? instring : (inbackt ? QT_BACKTICK : 0)).
     let ins = {
-        let is = *INSTRING.lock().unwrap();
+        let is = INSTRING.load(Ordering::Relaxed);
         if is != QT_NONE {
             is
-        } else if *INBACKT.lock().unwrap() != 0 {
+        } else if INBACKT.load(Ordering::Relaxed) != 0 {
             QT_BACKTICK
         } else {
             0
@@ -3001,6 +3464,8 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
     while let Some(compc) = compc_opt {
         let mut compadd = 0i32; // c:2659
         let mut t; // c:2659
+        *BRANGE.lock().unwrap() = 0; // c:2650 compadd = t = brange = 0
+        *ERANGE.lock().unwrap() = *CLWNUM.lock().unwrap() - 1; // c:2651
 
         // c:2662 — loop over OR'ed patterns: `for (cc = compc->cond;
         // cc && !t; cc = or)`. `t` starts 0 for the first OR arm.
@@ -3344,372 +3809,419 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
     ret // c:2558
 }
 
-/// Separate the cursor word into prefix/word/suffix components.
-/// Port of `sep_comp_string(char *ss, char *s, int noffs)` from Src/Zle/compctl.c:2806 (~225 lines).
+/// Re-lex a quoted completion string and complete its current word.
+/// Port of `sep_comp_string(char *ss, char *s, int noffs)` from
+/// Src/Zle/compctl.c:2813.
 ///
-/// C signature: `int sep_comp_string(char *ss, char *s, int noffs)`.
-///
-/// The function constructs a synthetic line of the form `ss + " " +
-/// s[..noffs] + 'x' + s[noffs..]` and runs the lexer over it to
-/// recover word boundaries with the cursor (the inserted 'x') in
-/// view. Then adjusts wb/we/zlemetacs to reflect positions inside
-/// the lexed word, accounting for inull markers. Pushes results
-/// into clwords + cmdstr + qipre/qisuf and dispatches to
-/// makecomplistcmd.
-///
-/// Faithful port:
-///   - constructs the temp buffer per c:2827-2832
-///   - applies rembslash if QT_BACKSLASH stack head (c:2833)
-///   - state save/restore for instring/inbackt/noaliases/autoq (c:2810-2813)
-///   - state save/restore for clwords/cmdstr/qipre/qisuf (c:2980-3023)
-///   - inull/Bnull adjustment loop (c:2931-2952)
-///   - nested makecomplistcmd dispatch (c:3006)
-///
-/// The actual `ctxtlex()` driver is replaced by the lex.rs module
-/// — for this port we approximate by
-/// splitting the temp string on whitespace + tracking the cursor
-/// word. Full lexer-token reconstruction (LEXERR/STRING/ENDINPUT
-/// handling for unbalanced quotes per c:2842-2855) is the
-/// remaining gap; the foundation here handles plain-token cases
-/// which cover the most common compctl flows.
+/// `ss` is the text before the string (the command and whatever else the
+/// outer line holds), `s` the string being completed and `noffs` the
+/// cursor offset inside `s`. A synthetic line `ss ' ' s[..noffs] 'x'
+/// s[noffs..]` is run through the real lexer (the dummy `x` marks the
+/// cursor so `gotword` sets `wb`/`we` around the cursor word); the words
+/// it yields replace `clwords`, `qipre`/`qisuf` receive the quoted text
+/// before and after the word, and `makecomplistcmd` is called on the
+/// word. Offsets are CHARACTER offsets throughout (`inbufct`, `wb`, `we`
+/// and `zlemetacs` are character based in this port).
 pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
-    // Canonical globals (deduped from former private compctl shadows).
-    use crate::ported::zle::compcore::{ZLEMETACS as CS_G, ZLEMETALINE as LINE_G};
+    // c:2813
+    use crate::ported::hist::{strinbeg, strinend};
+    use crate::ported::lex::{
+        ctxtlex, noaliases, set_noaliases, set_tok, set_tokstr, tok, tokstr, untokenize_ztokens as untokenize, LEX_INPUT, LEX_LEXFLAGS,
+        LEX_LEXSTOP, LEX_POS, LEX_UNGET_BUF, LEX_UNGET_HPTR, LEX_UNGET_RAW,
+    };
+    use crate::ported::zle::compcore::{
+        check_param, multiquote, rembslash, ADDEDX, OFFS, WB, WE, ZLEMETACS, ZLEMETALINE,
+        ZLEMETALL,
+    };
+    use crate::ported::zsh_h::{ENDINPUT, LEXERR, LEXFLAGS_ZLE, STRING_LEX};
     use std::sync::atomic::Ordering;
-    // C: c:2810-2813 — save state to restore on exit
-    let owe = crate::ported::zle::compcore::WE.load(std::sync::atomic::Ordering::Relaxed);
-    let owb = crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed);
-    let ocs = CS_G.load(Ordering::Relaxed);
-    let oll = *ZLEMETALL.lock().unwrap();
-    let ois = *INSTRING.lock().unwrap();
-    let oib = *INBACKT.lock().unwrap();
-    let ona = *NOALIASES.lock().unwrap();
+
+    let mut foo: Vec<String> = Vec::new(); // c:2815 LinkList foo
+    let owe = WE.load(Ordering::SeqCst); // c:2817
+    let mut owb = WB.load(Ordering::SeqCst);
+    let ocs = ZLEMETACS.load(Ordering::SeqCst);
     let ne = *crate::ported::utils::noerrs_lock().lock().unwrap();
-    let ol = LINE_G
+    let mut sl = ss.chars().count() as i32; // c:2818
+    let mut got = false;
+    let mut i: i32 = 0;
+    let mut cur: i32 = -1;
+    let oll = ZLEMETALL.load(Ordering::SeqCst);
+    let ois = INSTRING.load(Ordering::SeqCst); // c:2819
+    let oib = INBACKT.load(Ordering::SeqCst);
+    let ona = noaliases();
+    let ol = ZLEMETALINE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap()
-        .clone();
+        .clone(); // c:2820
     let oaq = AUTOQ
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap()
         .clone();
 
-    let sl = ss.len() as i32;
-    let mut got = false;
-    let mut i = 0_i32;
-    let mut cur: i32 = -1;
-    let mut swb = 0_i32;
-    let mut swe = 0_i32;
-    let mut soffs = 0_i32;
-    let mut ns: String = String::new();
-    let mut foo: Vec<String> = Vec::new();
+    let mut swb: i32 = 0; // c:2823
+    let mut swe: i32 = 0;
+    let mut soffs: i32 = 0;
+    let mut ns: String = String::new(); // c:2824 ns = NULL
 
-    // C: c:2823-2832 — build the temp buffer with cursor `x` marker.
-    // tmp = ss + " " + s[..noffs] + 'x' + s[noffs..]
-    *ADDEDX.lock().unwrap() = 1;
-    *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
-    *LEXFLAGS.lock().unwrap() = LEXFLAGS_ZLE;
-    let mut tmp = String::with_capacity(ss.len() + 3 + s.len());
-    tmp.push_str(ss);
-    tmp.push(' ');
+    // c:2828-2829 — put the string in the lexer buffer and call the lexer
+    // to get the words we have to expand.
+    ADDEDX.store(1, Ordering::SeqCst); // c:2830
+    crate::ported::utils::set_noerrs(1); // c:2831
+    crate::ported::context::zcontext_save(); // c:2832
+    LEX_LEXFLAGS.set(LEXFLAGS_ZLE); // c:2833
     let s_chars: Vec<char> = s.chars().collect();
-    let noffs_u = (noffs as usize).min(s_chars.len());
-    let s_pre: String = s_chars[..noffs_u].iter().collect();
-    let s_post: String = s_chars[noffs_u..].iter().collect();
-    tmp.push_str(&s_pre);
-    let scs_initial = sl + 1 + noffs;
-    CS_G.store(scs_initial, Ordering::Relaxed);
-    let mut scs = scs_initial;
+    let noffs_u = (noffs.max(0) as usize).min(s_chars.len());
+    let tl = sl + 3 + s_chars.len() as i32; // c:2834
+    let mut tmp = String::with_capacity(ss.len() + 3 + s.len());
+    tmp.push_str(ss); // c:2835
+    tmp.push(' '); // c:2836
+    tmp.extend(&s_chars[..noffs_u]); // c:2837
+    let mut scs = sl + 1 + noffs_u as i32; // c:2838
+    ZLEMETACS.store(scs, Ordering::SeqCst);
     tmp.push('x');
-    tmp.push_str(&s_post);
-    let tl = tmp.len() as i32;
-
-    // C: c:2833 — apply rembslash if QT_BACKSLASH stack head
-    let qstack_head = COMPQSTACK
+    tmp.extend(&s_chars[noffs_u..]); // c:2839
+    let remq = COMPQSTACK
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap()
         .chars()
         .next()
-        .unwrap_or(QT_NONE as u8 as char);
-    let remq = qstack_head as i32 == QT_BACKSLASH;
+        .map_or(false, |c| c as i32 == QT_BACKSLASH); // c:2840
     if remq {
-        // rembslash — strip backslashes
-        let mut stripped = String::with_capacity(tmp.len());
-        let mut chars = tmp.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                if let Some(&_nx) = chars.peek() {
-                    // Skip backslash, keep next char
-                    continue;
-                }
-            }
-            stripped.push(c);
-        }
-        tmp = stripped;
+        tmp = rembslash(&tmp); // c:2841
     }
 
-    // C: c:2835-2839 — push input, set zlemetaline
-    *LINE_G
+    // !!! RUST-ONLY (no C counterpart) !!! — the lexer reads its own
+    // `LEX_INPUT` window and `LEX_UNGET_*` queues ahead of the input
+    // stack; park them so the nested lex reads only the pushed frame and
+    // leaks nothing into the caller (same isolation `getcurcmd` and the
+    // `compctl -s` arm apply).
+    let saved_lex_input = LEX_INPUT.with_borrow_mut(std::mem::take);
+    let saved_lex_pos = LEX_POS.replace(0);
+    let saved_unget = LEX_UNGET_BUF.with_borrow_mut(std::mem::take);
+    let saved_unget_hptr = LEX_UNGET_HPTR.with_borrow_mut(std::mem::take);
+    let saved_unget_raw = LEX_UNGET_RAW.with_borrow_mut(std::mem::take);
+    let saved_unget_srccap =
+        crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(std::mem::take);
+    LEX_LEXSTOP.set(false);
+
+    crate::ported::input::inpush(&dupstrspace(&tmp), 0, None); // c:2842
+    *ZLEMETALINE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
-        .unwrap() = tmp.clone();
-    *ZLEMETALL.lock().unwrap() = tl - 1;
-    *NOALIASES.lock().unwrap() = 1;
-
-    // C: c:2840-2873 — lex loop. We approximate ctxtlex() with a
-    // whitespace-tokenize + cursor-word detection. Real lexer
-    // integration requires lex.rs wired with
-    // ZLE input-stack semantics.
-    {
-        let chars: Vec<char> = tmp.chars().collect();
-        let mut t_start = 0_usize;
-        let mut idx = 0_usize;
-        let mut word_idx = 0_i32;
-        while idx <= chars.len() {
-            let at_end = idx == chars.len();
-            let is_sep = !at_end && chars[idx] == ' ';
-            if at_end || is_sep {
-                if idx > t_start {
-                    let token: String = chars[t_start..idx].iter().collect();
-                    let abs_start = t_start as i32;
-                    let abs_end = idx as i32;
-                    foo.push(token.clone());
-                    // C: c:2862-2871 — first time scs falls inside
-                    // a token, that's the cursor word.
-                    if !got && scs >= abs_start && scs <= abs_end {
-                        got = true;
-                        cur = word_idx;
-                        swb = abs_start;
-                        swe = abs_end;
-                        soffs = scs - swb;
-                        // C: chuck(p + soffs) — remove the dummy 'x'
-                        let mut t = token.clone();
-                        if (soffs as usize) < t.len() {
-                            t.remove(soffs as usize);
-                        }
-                        ns = t;
-                    }
-                    word_idx += 1;
+        .unwrap() = tmp; // c:2843
+    ZLEMETALL.store(tl - 1, Ordering::SeqCst); // c:2844
+    strinbeg(0); // c:2845
+    set_noaliases(true); // c:2846
+    loop {
+        // c:2847 do {
+        ctxtlex(); // c:2848
+        let mut ts = tokstr();
+        if tok() == LEXERR {
+            // c:2849
+            let tsv = match ts.as_mut() {
+                Some(v) => v,
+                None => break, // c:2852-2853
+            };
+            // c:2854-2856 — count the Snull/Dnull markers.
+            let j = tsv.chars().filter(|&c| c == Snull || c == Dnull).count();
+            if j & 1 == 1 {
+                // c:2857
+                set_tok(STRING_LEX); // c:2858 (the global: zshlex returns early on LEXERR)
+                if tsv.ends_with(' ') {
+                    tsv.pop(); // c:2859-2860 p[-1] = '\0'
                 }
-                t_start = idx + 1;
+                set_tokstr(Some(tsv.clone()));
             }
-            if at_end {
-                break;
-            }
-            idx += 1;
         }
-        i = word_idx;
-    }
-
-    *NOALIASES.lock().unwrap() = ona;
-    *crate::ported::utils::noerrs_lock().lock().unwrap() = ne;
-    crate::ported::zle::compcore::WB.store(owb, std::sync::atomic::Ordering::Relaxed);
-    crate::ported::zle::compcore::WE.store(owe, std::sync::atomic::Ordering::Relaxed);
-    CS_G.store(ocs, Ordering::Relaxed);
-    *LINE_G
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .unwrap() = ol;
-    *ZLEMETALL.lock().unwrap() = oll;
-
-    // C: c:2885 — bail if no cursor word found
-    if cur < 0 || i < 1 {
-        return 1;
-    }
-
-    // C: c:2887-2896 — check_param dispatch (params + Snull/Dnull
-    // marker conversion). Skipped pending check_param port.
-
-    // C: c:2898-2929 — quote-prefix detection. Examine ns[0] for
-    // Snull/Dnull/Stringg/QSTRING_TOK and adjust instring + autoq.
-    let ts = ns.clone();
-    let _ = ts.clone();
-    let first_char = ns.chars().next();
-    let is_quoted_open = matches!(first_char, Some(Snull) | Some(Dnull))
-        || (matches!(first_char, Some(Stringg) | Some(QSTRING_TOK))
-            && ns.chars().nth(1) == Some(Snull));
-
-    if is_quoted_open {
-        let new_instring = match first_char {
-            Some(Snull) => QT_SINGLE,
-            Some(Dnull) => QT_DOUBLE,
-            _ => QT_DOLLARS,
+        if tok() == ENDINPUT || tok() == LEXERR {
+            break; // c:2863-2864
+        }
+        let mut p: Option<String> = match ts {
+            Some(v) if !v.is_empty() => Some(v), // c:2865-2866
+            _ => None,                           // c:2868
         };
-        *INSTRING.lock().unwrap() = new_instring;
-        *INBACKT.lock().unwrap() = 0;
-        swb += 1;
-        // C: c:2921 — if the closing quote-marker matches at end, swe--
-        if let (Some(first), Some(last)) = (ns.chars().next(), ns.chars().last()) {
-            if first == last && ns.len() >= 2 {
-                swe -= 1;
+        if !got && LEX_LEXFLAGS.get() == 0 {
+            // c:2869 — no current word in substr when `p` is None.
+            got = true; // c:2871
+            cur = i; // c:2872
+            swb = WB.load(Ordering::SeqCst) - 1; // c:2873
+            swe = WE.load(Ordering::SeqCst) - 1; // c:2874
+            soffs = ZLEMETACS.load(Ordering::SeqCst) - swb; // c:2875
+            if let Some(pv) = p.as_mut() {
+                // c:2876 — chuck(p + soffs): drop the dummy `x`. The
+                // chucked string is the very one `foo` holds.
+                if soffs >= 0 {
+                    if let Some((bi, _)) = pv.char_indices().nth(soffs as usize) {
+                        pv.remove(bi);
+                    }
+                }
+                ns = pv.clone(); // c:2877
             }
         }
-        // C: c:2925 — autoq from compqstack[1] and multiquote
-        let qstack = COMPQSTACK
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-            .unwrap()
-            .clone();
-        if qstack.len() >= 2 {
-            *AUTOQ
-                .get_or_init(|| Mutex::new(String::new()))
-                .lock()
-                .unwrap() = String::new();
-        } else {
-            *AUTOQ
-                .get_or_init(|| Mutex::new(String::new()))
-                .lock()
-                .unwrap() = ts.clone();
+        if let Some(pv) = p {
+            foo.push(pv); // c:2866 addlinknode(foo, p)
         }
-    } else {
-        *INSTRING.lock().unwrap() = QT_NONE;
+        i += 1; // c:2879
+        if tok() == ENDINPUT || tok() == LEXERR {
+            break; // c:2880 while (tok != ENDINPUT && tok != LEXERR)
+        }
+    }
+    set_noaliases(ona); // c:2881
+    strinend(); // c:2882
+    crate::ported::input::inpop(); // c:2883
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
+    LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+    LEX_UNGET_HPTR.with_borrow_mut(|b| *b = saved_unget_hptr);
+    LEX_UNGET_RAW.with_borrow_mut(|b| *b = saved_unget_raw);
+    crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| *b = saved_unget_srccap);
+    errflag.fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::Relaxed); // c:2884
+    crate::ported::utils::set_noerrs(ne); // c:2885
+    crate::ported::context::zcontext_restore(); // c:2886
+    WB.store(owb, Ordering::SeqCst); // c:2887
+    WE.store(owe, Ordering::SeqCst); // c:2888
+    ZLEMETACS.store(ocs, Ordering::SeqCst); // c:2889
+    *ZLEMETALINE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = ol; // c:2890
+    ZLEMETALL.store(oll, Ordering::SeqCst); // c:2891
+    if cur < 0 || i < 1 {
+        return 1; // c:2893
+    }
+    owb = OFFS.load(Ordering::SeqCst); // c:2894
+    OFFS.store(soffs, Ordering::SeqCst); // c:2895
+    if check_param(&ns, false, true, false).is_some() {
+        // c:2896
+        ns = ns
+            .chars()
+            .map(|c| match c {
+                Dnull => '"',  // c:2898-2899
+                Snull => '\'', // c:2900-2901
+                c => c,
+            })
+            .collect();
+    }
+    OFFS.store(owb, Ordering::SeqCst); // c:2903
+
+    let mut ts: Vec<char> = untokenize(&ns).chars().collect(); // c:2905
+    let ns_c: Vec<char> = ns.chars().collect();
+    let cqs: Vec<char> = COMPQSTACK
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap()
+        .chars()
+        .collect();
+    let first = ns_c.first().copied();
+    if first == Some(Snull)
+        || first == Some(Dnull)
+        || ((first == Some(Stringg) || first == Some(Qstring)) && ns_c.get(1) == Some(&Snull))
+    {
+        // c:2907-2908
+        let mut tsptr: usize = 0; // c:2909
+        let mut nsptr: usize = 0;
+        match first {
+            Some(Snull) => INSTRING.store(QT_SINGLE, Ordering::SeqCst), // c:2911-2912
+            Some(Dnull) => INSTRING.store(QT_DOUBLE, Ordering::SeqCst), // c:2915-2916
+            _ => {
+                INSTRING.store(QT_DOLLARS, Ordering::SeqCst); // c:2920
+                nsptr += 1; // c:2921
+                tsptr += 1; // c:2922
+            }
+        }
+        INBACKT.store(0, Ordering::SeqCst); // c:2926
+        swb += 1; // c:2927
+        if ns_c.last() == Some(&ns_c[nsptr]) && ns_c.get(nsptr + 1).is_some() {
+            swe -= 1; // c:2928-2929
+        }
+        tsptr += 1; // c:2930 sav = *++tsptr
+        let head: String = ts[..tsptr.min(ts.len())].iter().collect(); // c:2931
+        let has_q1 = cqs.get(1).map_or(false, |&c| c != '\0');
         *AUTOQ
             .get_or_init(|| Mutex::new(String::new()))
             .lock()
-            .unwrap() = String::new();
+            .unwrap() = if has_q1 {
+            String::new()
+        } else {
+            multiquote(&head, 1)
+        }; // c:2932
+        ts.drain(..tsptr.min(ts.len())); // c:2933 ts = tsptr
+    } else {
+        INSTRING.store(QT_NONE, Ordering::SeqCst); // c:2935
+        AUTOQ
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap()
+            .clear(); // c:2936
     }
-
-    // C: c:2931-2952 — inull walk: drop inull markers from ns,
-    // adjusting scs/soffs/swb as we go.
-    let mut ns_chars: Vec<char> = ns.chars().collect();
-    let mut p_idx = 0_usize;
-    let mut walk_i = swb;
-    while p_idx < ns_chars.len() {
-        let c = ns_chars[p_idx];
-        if inull(c) {
-            if walk_i < scs {
-                soffs -= 1;
-                if remq && c == Bnull && p_idx + 1 < ns_chars.len() {
-                    swb -= 2;
+    // c:2938-2959 — walk the tokenized word dropping the null markers,
+    // keeping `scs`, `soffs` and `swb` in step.
+    let mut np = ns_c;
+    let mut pi: usize = 0;
+    let mut ci: i32 = swb;
+    while pi < np.len() {
+        let c = np[pi];
+        let has_next = np.get(pi + 1).is_some();
+        if matches!(c, Snull | Dnull | Bnull | Bnullkeep | Nularg) {
+            // c:2939 inull(*p)
+            if ci < scs {
+                // c:2940
+                soffs -= 1; // c:2941
+                if remq && c == Bnull && has_next {
+                    swb -= 2; // c:2942-2943
                 }
             }
-            let next = ns_chars.get(p_idx + 1).copied();
-            if next.is_some() || c != Bnull {
+            if has_next || c != Bnull {
+                // c:2945
                 if c == Bnull {
-                    if scs == walk_i + 1 {
-                        scs += 1;
+                    if scs == ci + 1 {
+                        scs += 1; // c:2947-2948
                         soffs += 1;
                     }
-                } else if scs > walk_i {
-                    scs -= 1;
-                    walk_i -= 1; // C: `scs > i--`
+                } else {
+                    let was = ci;
+                    ci -= 1; // c:2950 scs > i--
+                    if scs > was {
+                        scs -= 1; // c:2951
+                    }
                 }
             } else if scs == swe {
-                scs -= 1;
+                scs -= 1; // c:2954-2955
             }
-            ns_chars.remove(p_idx);
-            // Don't advance p_idx — re-check the new char at p_idx
-            // (matches C's `chuck(p--); p++;` next-iter increment).
-            walk_i -= 1;
+            np.remove(pi); // c:2957 chuck(p--)
         } else {
-            p_idx += 1;
-            walk_i += 1;
+            pi += 1;
+        }
+        ci += 1;
+    }
+    let mut ns: String = ts.iter().collect(); // c:2960
+
+    if INSTRING.load(Ordering::SeqCst) != QT_NONE && cqs.iter().any(|&c| c as i32 == QT_BACKSLASH)
+    {
+        // c:2962
+        let rl = ns.chars().count() as i32; // c:2963
+        let ql = multiquote(&ns, cqs.get(1).map_or(0, |&c| (c != '\0') as i32))
+            .chars()
+            .count() as i32;
+        if ql > rl {
+            swb -= ql - rl; // c:2966
         }
     }
-    ns = ns_chars.iter().collect();
-
-    // C: c:2961-2974 — build qp/qs from ss + qipre/qisuf
-    let qipre_val = QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
-    let qisuf_val = QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
-    let qp = format!(
-        "{}{}",
-        qipre_val,
-        &s[..((swb - sl - 1).max(0) as usize).min(s.len())]
-    );
-    if swe < swb {
-        swe = swb;
-    }
-    swe -= sl + 1;
-    let s_len = s.len() as i32;
-    if swe > s_len {
-        swe = s_len;
-        if (ns.len() as i32) > swe - swb + 1 {
-            ns.truncate((swe - swb + 1) as usize);
-        }
-    }
-    let qs_start = (swe.max(0) as usize).min(s.len());
-    let qs = format!("{}{}", &s[qs_start..], qisuf_val);
-    let s_chars_len = ns.len() as i32;
-    if soffs > s_chars_len {
-        soffs = s_chars_len;
-    }
-
-    // C: c:2980-3023 — state save/restore + nested makecomplistcmd
-    let ow = CLWORDS.lock().unwrap().clone();
-    let os = CMDSTR.with(|r| r.borrow().clone());
-    let oqp = QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
-    let oqs = QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
-    let oqst = COMPQSTACK
+    let ix = (swb - sl - 1).clamp(0, s_chars.len() as i32) as usize; // c:2968
+    let head: String = s_chars[..ix].iter().collect(); // c:2969
+    let qipre_v = QIPRE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap()
         .clone();
-    let olws = *CLWSIZE.lock().unwrap();
-    let olwn = *CLWNUM.lock().unwrap();
-    let olwp = *CLWPOS.lock().unwrap();
-    let obr = *BRANGE.lock().unwrap();
-    let oer = *ERANGE.lock().unwrap();
-    let oof = crate::ported::zle::compcore::OFFS.load(Ordering::Relaxed);
-    let occ = CCONT.with(|c| c.get());
-
-    // C: c:2986-2989 — push current quote char onto compqstack
-    let new_quote_char = if *INSTRING.lock().unwrap() != QT_NONE {
-        char::from_u32(*INSTRING.lock().unwrap() as u32).unwrap_or('\\')
-    } else {
-        char::from_u32(QT_BACKSLASH as u32).unwrap_or('\\')
-    };
-    let mut new_compqstack = String::new();
-    new_compqstack.push(new_quote_char);
-    new_compqstack.push_str(&oqst);
-    *COMPQSTACK
+    let qisuf_v = QISUF
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
-        .unwrap() = new_compqstack;
+        .unwrap()
+        .clone();
+    let qp = format!("{}{}", qipre_v, multiquote(&head, 0)); // c:2970
+    if swe < swb {
+        swe = swb; // c:2972-2973
+    }
+    swe -= sl + 1; // c:2974
+    sl = s_chars.len() as i32; // c:2975
+    if swe > sl {
+        // c:2976
+        swe = sl; // c:2977
+        let keep = (swe - swb + 1).max(0) as usize;
+        if ns.chars().count() > keep {
+            ns = ns.chars().take(keep).collect(); // c:2979
+        }
+    }
+    let tail: String = s_chars[(swe.max(0) as usize).min(s_chars.len())..]
+        .iter()
+        .collect();
+    let qs = format!("{}{}", multiquote(&tail, 0), qisuf_v); // c:2981
+    sl = ns.chars().count() as i32; // c:2982
+    if soffs > sl {
+        soffs = sl; // c:2983-2984
+    }
 
-    // C: c:2991-2997 — install foo into clwords
-    *CLWSIZE.lock().unwrap() = foo.len() as i32;
-    *CLWNUM.lock().unwrap() = foo.len() as i32;
-    *CLWORDS.lock().unwrap() = foo.clone();
-    *CLWPOS.lock().unwrap() = cur;
-    CMDSTR.with(|r| *r.borrow_mut() = foo.first().cloned());
-    *BRANGE.lock().unwrap() = 0;
-    *ERANGE.lock().unwrap() = (foo.len() as i32) - 1;
-    *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = qp;
-    *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = qs;
-    crate::ported::zle::compcore::OFFS.store(soffs, Ordering::Relaxed);
-    CCONT.with(|c| c.set(CC_CCCONT));
+    {
+        // c:2986-3031
+        let ow = CLWORDS.lock().unwrap().clone(); // c:2987
+        let os = CMDSTR.with(|r| r.borrow().clone());
+        let oqp = qipre_v;
+        let oqs = qisuf_v;
+        let oqst: String = cqs.iter().collect(); // c:2988
+        let olws = *CLWSIZE.lock().unwrap(); // c:2989
+        let olwn = *CLWNUM.lock().unwrap();
+        let olwp = *CLWPOS.lock().unwrap();
+        let obr = *BRANGE.lock().unwrap(); // c:2990
+        let oer = *ERANGE.lock().unwrap();
+        let oof = OFFS.load(Ordering::SeqCst);
+        let occ = CCONT.with(|c| c.get()); // c:2991
 
-    // C: c:3006 — nested dispatch
-    const CFN_FIRST: i32 = 1;
-    let _ = makecomplistcmd(&ns, cur == 0, CFN_FIRST);
+        // c:2993-2996 — compnewchar is the new innermost quoting level.
+        let ins = INSTRING.load(Ordering::SeqCst);
+        let compnewchar = if ins != QT_NONE { ins } else { QT_BACKSLASH };
+        let mut nq = String::new();
+        nq.push(char::from_u32(compnewchar as u32).unwrap_or('\\'));
+        nq.push_str(&oqst);
+        *COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = nq;
 
-    CCONT.with(|c| c.set(occ));
-    crate::ported::zle::compcore::OFFS.store(oof, Ordering::Relaxed);
-    CMDSTR.with(|r| *r.borrow_mut() = os);
-    *CLWORDS.lock().unwrap() = ow;
-    *CLWSIZE.lock().unwrap() = olws;
-    *CLWNUM.lock().unwrap() = olwn;
-    *CLWPOS.lock().unwrap() = olwp;
-    *BRANGE.lock().unwrap() = obr;
-    *ERANGE.lock().unwrap() = oer;
-    *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqp;
-    *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqs;
-    *COMPQSTACK
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .unwrap() = oqst;
-
+        // c:2998-3004 — clwords = the lexed words, untokenized.
+        let words: Vec<String> = foo.iter().map(|w| untokenize(w)).collect();
+        *CLWSIZE.lock().unwrap() = words.len() as i32; // c:2998
+        *CLWNUM.lock().unwrap() = words.len() as i32;
+        let cmd0 = words.first().cloned(); // c:3006
+        *CLWORDS.lock().unwrap() = words; // c:2999-3004
+        *CLWPOS.lock().unwrap() = cur; // c:3005
+        CMDSTR.with(|r| *r.borrow_mut() = cmd0);
+        *BRANGE.lock().unwrap() = 0; // c:3007
+        *ERANGE.lock().unwrap() = *CLWNUM.lock().unwrap() - 1; // c:3008
+        *QIPRE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = qp; // c:3009
+        *QISUF
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = qs; // c:3010
+        OFFS.store(soffs, Ordering::SeqCst); // c:3011
+        CCONT.with(|c| c.set(CC_CCCONT)); // c:3012
+        let _ = makecomplistcmd(&ns, cur == 0, CFN_FIRST); // c:3013
+        CCONT.with(|c| c.set(occ)); // c:3014
+        OFFS.store(oof, Ordering::SeqCst); // c:3015
+        CMDSTR.with(|r| *r.borrow_mut() = os); // c:3016-3017
+        *CLWORDS.lock().unwrap() = ow; // c:3018-3019
+        *CLWSIZE.lock().unwrap() = olws; // c:3020
+        *CLWNUM.lock().unwrap() = olwn; // c:3021
+        *CLWPOS.lock().unwrap() = olwp; // c:3022
+        *BRANGE.lock().unwrap() = obr; // c:3023
+        *ERANGE.lock().unwrap() = oer; // c:3024
+        *QIPRE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = oqp; // c:3025-3026
+        *QISUF
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = oqs; // c:3027-3028
+        *COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = oqst; // c:3029-3030
+    }
     *AUTOQ
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
-        .unwrap() = oaq;
-    *INSTRING.lock().unwrap() = ois;
-    *INBACKT.lock().unwrap() = oib;
+        .unwrap() = oaq; // c:3032
+    INSTRING.store(ois, Ordering::SeqCst); // c:3033
+    INBACKT.store(oib, Ordering::SeqCst); // c:3034
 
-    0
+    0 // c:3036
 }
 
 // `ccused` — per-completion list of compctls used. Port of
@@ -3731,16 +4243,58 @@ thread_local! { static CCSTACK: std::cell::RefCell<Vec<Arc<Compctl>>> = const { 
 ///   - Stop based on ccont bits (CC_PATCONT, CC_DEFCONT, CC_XORCONT)
 /// WARNING: param names don't match C — Rust=(s, incmd, compadd, sub) vs C=(cc, s, incmd, compadd, sub)
 pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i32, sub: i32) {
-    let mut current = cc.clone();
+    use crate::ported::zle::zle_tricky::USEMENU;
+    let mut um = USEMENU.load(Ordering::Relaxed); // c:2583
+    let mut cc: Option<Arc<Compctl>> = Some(cc.clone());
+
+    // Loop over xors.
     loop {
-        makecomplistlist(&current, s, incmd, compadd);
-        // Walk to next xor
-        match &current.xor {
-            Some(next) => current = next.clone(),
-            None => break,
+        let mn = crate::ported::zle::compcore::mnum.load(Ordering::Relaxed); // c:2587
+
+        // Loop over ors.
+        loop {
+            // Reset the range information if we are not in a sub-list.
+            if sub == 0 {
+                *BRANGE.lock().unwrap() = 0; // c:2593
+                *ERANGE.lock().unwrap() = *CLWNUM.lock().unwrap() - 1; // c:2594
+            }
+            USEMENU.store(0, Ordering::Relaxed); // c:2596
+            let cur = cc.take().unwrap();
+            makecomplistlist(&cur, s, incmd, compadd); // c:2597
+            um |= USEMENU.load(Ordering::Relaxed); // c:2598
+
+            let ct = cur.mask2 & CC_XORCONT; // c:2600
+
+            // cc = cc->xor; a link to the old cc_default (refc 10000, the
+            // static marker) means the current cc_default.
+            cc = cur.xor.as_ref().map(|x| {
+                if x.refc == 10000 {
+                    CC_DEFAULT.lock().unwrap().clone().unwrap_or_else(|| x.clone())
+                } else {
+                    x.clone()
+                }
+            });
+            if !(cc.is_some() && ct != 0) {
+                break; // c:2603 while (cc && ct)
+            }
         }
-        let _ = sub;
+
+        // Stop if we got some matches.
+        if mn != crate::ported::zle::compcore::mnum.load(Ordering::Relaxed) {
+            break; // c:2607
+        }
+        if cc.is_some() {
+            CCONT.with(|c| c.set(c.get() & !(CC_DEFCONT | CC_PATCONT))); // c:2609
+            if sub == 0 {
+                CCONT.with(|c| c.set(c.get() & !CC_CCCONT)); // c:2611
+            }
+        }
+        if cc.is_none() {
+            break; // c:2613 while (cc)
+        }
     }
+
+    USEMENU.store(um, Ordering::Relaxed); // c:2615
 }
 
 /// The flag-driven completion-list builder — workhorse fn.
@@ -3877,7 +4431,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     // plus the compctl-private prefix statics declared near ADDWHAT.
     // =================================================================
     let incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
-    let instr = *INSTRING.lock().unwrap_or_else(|e| e.into_inner());
+    let instr = INSTRING.load(Ordering::Relaxed);
     // Port of the `quotename(s)` macro (c:1757). NB: C's
     // `quotestring("", QT_BACKSLASH)` returns "" (the `''` form is only
     // emitted under QT_BACKSLASH_SHOWNULL, utils.c:6165), but the Rust
@@ -3977,11 +4531,22 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     // and become the ignored-prefix `ipre`.
     let mut offs = crate::ported::zle::compcore::OFFS.load(Ordering::Relaxed);
     if compadd > 0 {
-        let mut ca = (compadd as usize).min(s.len());
-        while ca > 0 && !s.is_char_boundary(ca) {
-            ca -= 1;
+        // C counts bytes of the tokenized word, where a token is ONE byte; a
+        // token is a multi-byte private-use char here, so count it as one.
+        let mut ca = 0usize;
+        let mut counted = 0i32;
+        for (i, ch) in s.char_indices() {
+            if counted >= compadd {
+                break;
+            }
+            counted += if crate::token_char::itok_char(ch) {
+                1
+            } else {
+                ch.len_utf8() as i32
+            };
+            ca = i + ch.len_utf8();
         }
-        let ip = crate::ported::lex::untokenize(&s[..ca]);
+        let ip = crate::ported::lex::untokenize_ztokens(&s[..ca]);
         let cell = crate::ported::zle::compcore::ipre.get_or_init(|| Mutex::new(String::new()));
         if let Ok(mut g) = cell.lock() {
             *g = ip;
@@ -4036,7 +4601,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     if let Some(prefix) = cc.prefix.as_ref() {
         if !s.is_empty() {
             let dp = rembslash(prefix);
-            let sd = crate::ported::lex::untokenize(&s);
+            let sd = crate::ported::lex::untokenize_ztokens(&s);
             let mut pl = crate::ported::zle::zle_tricky::pfxlen(&dp, &sd).min(s.len());
             while pl > 0 && !s.is_char_boundary(pl) {
                 pl -= 1;
@@ -4052,7 +4617,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         while sdup.ends_with(' ') {
             sdup.pop();
         }
-        let sd = crate::ported::lex::untokenize(&s);
+        let sd = crate::ported::lex::untokenize_ztokens(&s);
         let sl = sdup.len();
         let suffixll = sd.len();
         if !sd.is_empty()
@@ -4284,7 +4849,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         if patcomp_set {
             tok.chars().map(|c| if c == Dash { '-' } else { c }).collect()
         } else {
-            crate::ported::lex::untokenize(tok)
+            crate::ported::lex::untokenize_ztokens(tok)
         }
     };
     let s1: Option<usize> = s1_t.map(|i| fix(&rpre_t[..i]).len());
@@ -4295,8 +4860,8 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     RSL.with(|c| c.set(rsuf_s.len() as i32));
 
     // c:3295-3296 — untokenize the line prefix/suffix.
-    let lpre_s = crate::ported::lex::untokenize(&lpre_s);
-    let lsuf_s = crate::ported::lex::untokenize(&lsuf_s);
+    let lpre_s = crate::ported::lex::untokenize_ztokens(&lpre_s);
+    let lsuf_s = crate::ported::lex::untokenize_ztokens(&lsuf_s);
 
     // Commit the real/line statics.
     LPRE.with(|r| *r.borrow_mut() = lpre_s.clone());
@@ -4456,8 +5021,8 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
             FILECOMP.with(|r| *r.borrow_mut() = prog);
         }
         if !filecomp_set {
-            fpre_s = crate::ported::lex::untokenize(&fpre_s); // c:3397
-            fsuf_s = crate::ported::lex::untokenize(&fsuf_s); // c:3398
+            fpre_s = crate::ported::lex::untokenize_ztokens(&fpre_s); // c:3397
+            fsuf_s = crate::ported::lex::untokenize_ztokens(&fsuf_s); // c:3398
             FPL.with(|c| c.set(fpre_s.len() as i32)); // c:3400
             FSL.with(|c| c.set(fsuf_s.len() as i32)); // c:3401
         }
@@ -4510,14 +5075,22 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                 let path = crate::ported::params::getaparam("path").unwrap_or_default();
                 crate::ported::hashtable::fillcmdnamtable(&path);
             }
-            let cmds: Vec<String> = crate::ported::hashtable::cmdnamtab_lock()
+            let cmds: Vec<(String, AddmatchNode)> = crate::ported::hashtable::cmdnamtab_lock()
                 .read()
-                .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+                .map(|tab| {
+                    tab.iter()
+                        .map(|(n, v)| (n.clone(), AddmatchNode::Hash(v.node.clone())))
+                        .collect()
+                })
                 .unwrap_or_default();
             dumphashtable(cmds, -7);
-            let aliases: Vec<String> = crate::ported::hashtable::aliastab_lock()
+            let aliases: Vec<(String, AddmatchNode)> = crate::ported::hashtable::aliastab_lock()
                 .read()
-                .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+                .map(|tab| {
+                    tab.iter()
+                        .map(|(n, v)| (n.clone(), AddmatchNode::Hash(v.node.clone())))
+                        .collect()
+                })
                 .unwrap_or_default();
             dumphashtable(aliases, -2);
             if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
@@ -4803,21 +5376,33 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     // All dumped with addwhat=-3 so the matches carry no file-type marker.
     if ic == '\0' && (cc.mask & CC_COMMPATH) != 0 && ppre.is_empty() && psuf.is_empty() {
         // c:3651 — regular + global aliases.
-        let aliases: Vec<String> = crate::ported::hashtable::aliastab_lock()
+        let aliases: Vec<(String, AddmatchNode)> = crate::ported::hashtable::aliastab_lock()
             .read()
-            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .map(|tab| {
+                tab.iter()
+                    .map(|(n, v)| (n.clone(), AddmatchNode::Hash(v.node.clone())))
+                    .collect()
+            })
             .unwrap_or_default();
         dumphashtable(aliases, -3);
         // c:3652 — reserved words.
-        let reswds: Vec<String> = crate::ported::hashtable::reswdtab_lock()
+        let reswds: Vec<(String, AddmatchNode)> = crate::ported::hashtable::reswdtab_lock()
             .read()
-            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .map(|tab| {
+                tab.iter()
+                    .map(|(n, v)| (n.clone(), AddmatchNode::Hash(v.node.clone())))
+                    .collect()
+            })
             .unwrap_or_default();
         dumphashtable(reswds, -3);
         // c:3653 — shell functions.
-        let funcs: Vec<String> = crate::ported::hashtable::shfunctab_lock()
+        let funcs: Vec<(String, AddmatchNode)> = crate::ported::hashtable::shfunctab_lock()
             .read()
-            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .map(|tab| {
+                tab.iter()
+                    .map(|(n, v)| (n.clone(), AddmatchNode::Hash(v.node.clone())))
+                    .collect()
+            })
             .unwrap_or_default();
         dumphashtable(funcs, -3);
         // c:3654 — builtins. C walks `builtintab`, which holds only the
@@ -4830,10 +5415,22 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         // (`strftime`, `zstat`, `zpty`, `zf_chmod`, `pcre_match`, …)
         // that `${(k)builtins}` did not list and that real zsh only
         // exposes after the owning `zmodload`.
-        let mut builtins: Vec<String> = crate::ported::builtin::BUILTINS
+        // The DISABLED bit of a builtin lives in `BUILTINS_DISABLED` (the
+        // `builtintab` static is immutable), so fold it into the node flags.
+        let bi_dis = crate::ported::builtin::BUILTINS_DISABLED
+            .lock()
+            .unwrap()
+            .clone();
+        let mut builtins: Vec<(String, AddmatchNode)> = crate::ported::builtin::BUILTINS
             .iter()
-            .map(|b| b.node.nam.clone())
-            .filter(|n| crate::ext_builtins::builtin_in_builtintab(n))
+            .filter(|b| crate::ext_builtins::builtin_in_builtintab(&b.node.nam))
+            .map(|b| {
+                let mut hn = b.node.clone();
+                if bi_dis.contains(&hn.nam) {
+                    hn.flags |= DISABLED;
+                }
+                (hn.nam.clone(), AddmatchNode::Hash(hn))
+            })
             .collect();
         // zshrs extension builtins dispatch in-process but have no
         // entry in the C-port BUILTINS table, so command-position
@@ -4845,11 +5442,14 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         // harnesses' measurement knob, which changes NOTHING else:
         // the names still dispatch and still resolve via `whence`.
         if !crate::ext_builtins::hide_ext_builtins() {
-            builtins.extend(
-                crate::ext_builtins::EXT_BUILTIN_NAMES
-                    .iter()
-                    .map(|s| (*s).to_string()),
-            );
+            builtins.extend(crate::ext_builtins::EXT_BUILTIN_NAMES.iter().map(|s| {
+                let hn = crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: (*s).to_string(),
+                    flags: 0,
+                };
+                ((*s).to_string(), AddmatchNode::Hash(hn))
+            }));
         }
         dumphashtable(builtins, -3);
         // c:3655-3657 — external commands; HASHLISTALL (default on) bulk-
@@ -4858,9 +5458,13 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
             let path = crate::ported::params::getaparam("path").unwrap_or_default();
             crate::ported::hashtable::fillcmdnamtable(&path);
         }
-        let cmds: Vec<String> = crate::ported::hashtable::cmdnamtab_lock()
+        let cmds: Vec<(String, AddmatchNode)> = crate::ported::hashtable::cmdnamtab_lock()
             .read()
-            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .map(|tab| {
+                tab.iter()
+                    .map(|(n, v)| (n.clone(), AddmatchNode::Hash(v.node.clone())))
+                    .collect()
+            })
             .unwrap_or_default();
         dumphashtable(cmds, -3);
         // c:3662-3664 — and parameter names if autocd and cdablevars are set:
@@ -4868,20 +5472,12 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::AUTOCD)
             && crate::ported::zsh_h::isset(crate::ported::zsh_h::CDABLEVARS)
         {
-            let names: Vec<String> = {
+            let names: Vec<(String, AddmatchNode)> = {
                 let tab = crate::ported::params::paramtab().read().unwrap();
                 tab.iter()
-                    .filter(|(_, pm)| {
-                        crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == PM_SCALAR
-                            && pm.level == 0
-                    })
-                    .map(|(n, _)| n.clone())
+                    .map(|(n, pm)| (n.clone(), AddmatchNode::Param((**pm).clone())))
                     .collect()
             };
-            let names: Vec<String> = names
-                .into_iter()
-                .filter(|n| crate::ported::params::getsparam(n).is_some_and(|v| v.starts_with('/')))
-                .collect();
             dumphashtable(names, -4);
         }
     }
@@ -4898,9 +5494,16 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
 
     // c:3673 — CC_OPTIONS: add setopt option names.
     if (cc.mask & CC_OPTIONS) != 0 {
-        let names: Vec<String> = crate::ported::options::OPTIONTAB
+        let names: Vec<(String, AddmatchNode)> = crate::ported::options::OPTIONTAB
             .iter()
-            .map(|o| o.to_string())
+            .map(|o| {
+                let hn = crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: o.to_string(),
+                    flags: 0,
+                };
+                (o.to_string(), AddmatchNode::Hash(hn))
+            })
             .collect();
         dumphashtable(names, oaw);
     }
@@ -4908,11 +5511,10 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     // filters unset params and non-top-level (`pm->level`) ones; we
     // apply the same predicate while building the name list.
     if (cc.mask & CC_VARS) != 0 {
-        let names: Vec<String> = {
+        let names: Vec<(String, AddmatchNode)> = {
             let tab = crate::ported::params::paramtab().read().unwrap();
             tab.iter()
-                .filter(|(_, pm)| (pm.node.flags & PM_UNSET as i32) == 0 && pm.level == 0)
-                .map(|(n, _)| n.clone())
+                .map(|(n, pm)| (n.clone(), AddmatchNode::Param((**pm).clone())))
                 .collect()
         };
         dumphashtable(names, -9);
@@ -4920,9 +5522,20 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     }
     // c:3681 — CC_BINDINGS: zle widget (thingy) names.
     if (cc.mask & CC_BINDINGS) != 0 {
-        let names: Vec<String> = crate::ported::zle::zle_thingy::thingytab()
+        let names: Vec<(String, AddmatchNode)> = crate::ported::zle::zle_thingy::thingytab()
             .lock()
-            .map(|t| t.keys().cloned().collect())
+            .map(|t| {
+                t.iter()
+                    .map(|(n, th)| {
+                        let hn = crate::ported::zsh_h::hashnode {
+                            next: None,
+                            nam: n.clone(),
+                            flags: th.flags,
+                        };
+                        (n.clone(), AddmatchNode::Hash(hn))
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         dumphashtable(names, CC_BINDINGS as i32);
         ADDWHAT.with(|c| c.set(oaw)); // c:3684
@@ -4959,8 +5572,8 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                     at -= 1;
                 }
                 (
-                    crate::ported::lex::untokenize(&os[..at]),
-                    crate::ported::lex::untokenize(&os[at..]),
+                    crate::ported::lex::untokenize_ztokens(&os[..at]),
+                    crate::ported::lex::untokenize_ztokens(&os[at..]),
                 )
             } else {
                 (
@@ -5223,10 +5836,8 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         }
     }
 
-    // c:3842-3845 — parameter flavours (arrays/ints/exports/etc.).
-    // addwhat carries the requested flavour bits; addmatch (addwhat>0)
-    // accepts, so we replicate its per-node predicate here: top-level,
-    // set parameters whose PM_* flags intersect the request.
+    // c:3842-3845 — parameter flavours (arrays/ints/exports/etc.). The
+    // per-node predicate is evaluated by addmatch on each paramtab node.
     {
         let t = cc.mask
             & (CC_ARRAYS
@@ -5237,102 +5848,87 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                 | CC_SPECIALS
                 | CC_PARAMS);
         if t != 0 {
-            let names: Vec<String> = {
+            let names: Vec<(String, AddmatchNode)> = {
                 let tab = crate::ported::params::paramtab().read().unwrap();
                 tab.iter()
-                    .filter(|(_, pm)| {
-                        let f = pm.node.flags as u32;
-                        if (f & PM_UNSET) != 0 || pm.level != 0 {
-                            return false;
-                        }
-                        ((t & CC_ARRAYS) != 0 && (f & PM_ARRAY) != 0)
-                            || ((t & CC_INTVARS) != 0 && (f & PM_INTEGER) != 0)
-                            || ((t & CC_ENVVARS) != 0 && (f & PM_EXPORTED) != 0)
-                            || ((t & CC_SCALARS) != 0 && (f & PM_SCALAR) != 0)
-                            || ((t & CC_READONLYS) != 0 && (f & PM_READONLY) != 0)
-                            || ((t & CC_SPECIALS) != 0 && (f & PM_SPECIAL) != 0)
-                            || ((t & CC_PARAMS) != 0 && (f & PM_EXPORTED) == 0)
-                    })
-                    .map(|(n, _)| n.clone())
+                    .map(|(n, pm)| (n.clone(), AddmatchNode::Param((**pm).clone())))
                     .collect()
             };
-            dumphashtable(names, t as i32);
+            dumphashtable(names, t as i32); // c:3845
         }
     }
 
-    // Enable/disable predicate shared by the command-table arms
-    // (shfuncs/builtins/extcmds/reswds/aliases): addmatch admits a node
-    // when (CC_DISCMDS && disabled) || (CC_EXCMDS && !disabled). c:2012.
-    let want_dis = (cc.mask & CC_DISCMDS) != 0;
-    let want_ex = (cc.mask & CC_EXCMDS) != 0;
-    let en_ok = |disabled: bool| (want_dis && disabled) || (want_ex && !disabled);
+    // c:3846-3860 — every command-table arm passes
+    // `t | (cc->mask & (CC_DISCMDS|CC_EXCMDS))`; addmatch applies the
+    // enable/disable predicate (c:2012-2013) per node.
+    let dis_ex = (cc.mask & (CC_DISCMDS | CC_EXCMDS)) as i32;
 
     // c:3846-3848 — CC_SHFUNCS: shell function names.
     if (cc.mask & CC_SHFUNCS) != 0 {
-        let names: Vec<String> = crate::ported::hashtable::shfunctab_lock()
+        let names: Vec<(String, AddmatchNode)> = crate::ported::hashtable::shfunctab_lock()
             .read()
             .map(|tab| {
                 tab.iter()
-                    .filter(|(_, f)| en_ok((f.node.flags & DISABLED) != 0))
-                    .map(|(n, _)| n.clone())
+                    .map(|(n, f)| (n.clone(), AddmatchNode::Hash(f.node.clone())))
                     .collect()
             })
             .unwrap_or_default();
-        dumphashtable(names, (cc.mask & CC_SHFUNCS) as i32);
+        dumphashtable(names, (cc.mask & CC_SHFUNCS) as i32 | dis_ex);
     }
     // c:3849-3851 — CC_BUILTINS: builtin command names.
     if (cc.mask & CC_BUILTINS) != 0 {
-        let names: Vec<String> = crate::ported::builtin::BUILTINS
+        let bi_dis = crate::ported::builtin::BUILTINS_DISABLED
+            .lock()
+            .unwrap()
+            .clone();
+        let names: Vec<(String, AddmatchNode)> = crate::ported::builtin::BUILTINS
             .iter()
-            .filter(|b| en_ok((b.node.flags & DISABLED) != 0))
-            .map(|b| b.node.nam.clone())
+            .filter(|b| crate::ext_builtins::builtin_in_builtintab(&b.node.nam))
+            .map(|b| {
+                let mut hn = b.node.clone();
+                if bi_dis.contains(&hn.nam) {
+                    hn.flags |= DISABLED;
+                }
+                (hn.nam.clone(), AddmatchNode::Hash(hn))
+            })
             .collect();
-        dumphashtable(names, (cc.mask & CC_BUILTINS) as i32);
+        dumphashtable(names, (cc.mask & CC_BUILTINS) as i32 | dis_ex);
     }
     // c:3852-3857 — CC_EXTCMDS: external command names (cmdnamtab).
     if (cc.mask & CC_EXTCMDS) != 0 {
-        let names: Vec<String> = crate::ported::hashtable::cmdnamtab_lock()
+        let names: Vec<(String, AddmatchNode)> = crate::ported::hashtable::cmdnamtab_lock()
             .read()
             .map(|tab| {
                 tab.iter()
-                    .filter(|(_, c)| en_ok((c.node.flags & DISABLED) != 0))
-                    .map(|(n, _)| n.clone())
+                    .map(|(n, c)| (n.clone(), AddmatchNode::Hash(c.node.clone())))
                     .collect()
             })
             .unwrap_or_default();
-        dumphashtable(names, (cc.mask & CC_EXTCMDS) as i32);
+        dumphashtable(names, (cc.mask & CC_EXTCMDS) as i32 | dis_ex);
     }
     // c:3858-3860 — CC_RESWDS: reserved words.
     if (cc.mask & CC_RESWDS) != 0 {
-        let names: Vec<String> = crate::ported::hashtable::reswdtab_lock()
+        let names: Vec<(String, AddmatchNode)> = crate::ported::hashtable::reswdtab_lock()
             .read()
             .map(|tab| {
                 tab.iter()
-                    .filter(|(_, r)| en_ok((r.node.flags & DISABLED) != 0))
-                    .map(|(n, _)| n.clone())
+                    .map(|(n, r)| (n.clone(), AddmatchNode::Hash(r.node.clone())))
                     .collect()
             })
             .unwrap_or_default();
-        dumphashtable(names, (cc.mask & CC_RESWDS) as i32);
+        dumphashtable(names, (cc.mask & CC_RESWDS) as i32 | dis_ex);
     }
     // c:3861-3863 — CC_ALREG / CC_ALGLOB: regular / global aliases.
     if (cc.mask & (CC_ALREG | CC_ALGLOB)) != 0 {
-        let want_reg = (cc.mask & CC_ALREG) != 0;
-        let want_glob = (cc.mask & CC_ALGLOB) != 0;
-        let names: Vec<String> = crate::ported::hashtable::aliastab_lock()
+        let names: Vec<(String, AddmatchNode)> = crate::ported::hashtable::aliastab_lock()
             .read()
             .map(|tab| {
                 tab.iter()
-                    .filter(|(_, a)| {
-                        let g = (a.node.flags & ALIAS_GLOBAL) != 0;
-                        let type_ok = (want_reg && !g) || (want_glob && g);
-                        type_ok && en_ok((a.node.flags & DISABLED) != 0)
-                    })
-                    .map(|(n, _)| n.clone())
+                    .map(|(n, a)| (n.clone(), AddmatchNode::Hash(a.node.clone())))
                     .collect()
             })
             .unwrap_or_default();
-        dumphashtable(names, (cc.mask & (CC_ALREG | CC_ALGLOB)) as i32);
+        dumphashtable(names, (cc.mask & (CC_ALREG | CC_ALGLOB)) as i32 | dis_ex);
     }
 
     // c:3930-3992 — `compctl -l`: handle sub-completion.
@@ -5464,9 +6060,6 @@ pub(crate) fn setup_() -> i32 {
 // canonical `compcore::ZLEMETACS` (lex.c:104) instead of a private
 // thread-local shadow. Same C variable, same meaning.
 
-/// `zlemetall` — line length in bytes. Port of `int zlemetall;`.
-static ZLEMETALL: Mutex<i32> = Mutex::new(0);
-
 /// Features hook — port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/compctl.c:4034.
 ///
 /// Returns the list of feature strings the module exposes. zsh C
@@ -5575,11 +6168,8 @@ static PATCOMPS: std::sync::RwLock<Vec<(String, Arc<Compctl>)>> =
 // `crate::ported::utils::noerrs_lock()` (utils.rs:221/244/262/279). A
 // diagnostic raised by the expansion inside `getreal` therefore printed where
 // zsh is silent. Every use below now goes to the single shared storage.
-static NOALIASES: Mutex<i32> = Mutex::new(0);
-static INSTRING: Mutex<i32> = Mutex::new(QT_NONE);
-
-/// `inbackt` — inside backtick command-substitution. Port of `int inbackt;`.
-static INBACKT: Mutex<i32> = Mutex::new(0);
+// `noaliases` is `lex::noaliases()`; `instring`/`inbackt` are the canonical
+// `zle_tricky::{INSTRING, INBACKT}` (one C variable each, zle_tricky.c:419).
 
 // `autoq` and `compqstack` were formerly compctl-private copies; they
 // are now deduped to the canonical `zle_tricky::AUTOQ` (glob-imported)
@@ -5627,17 +6217,6 @@ static CLWPOS: Mutex<i32> = Mutex::new(0);
 // offered every name ENDING in `-` (`-`, `_2to3-`) instead of the none that
 // start with it. Same dedup the `clwords`/`compwords` note above describes.
 
-/// `addedx` — non-zero while the dummy `x` cursor marker is in
-/// the line being lexed.
-static ADDEDX: Mutex<i32> = Mutex::new(0);
-
-/// `lexflags` — lexer mode flags (LEXFLAGS_ZLE etc.). Port of
-/// `int lexflags;` from Src/lex.c.
-static LEXFLAGS: Mutex<i32> = Mutex::new(0);
-
-/// LEXFLAGS_ZLE — the bit set during ZLE-driven completion lex.
-/// Port of `LEXFLAGS_ZLE` from Src/zsh.h.
-const LEXFLAGS_ZLE: i32 = 1 << 0;
 
 /// `brange` / `erange` — `-l` word-range begin/end.
 static BRANGE: Mutex<i32> = Mutex::new(0);
@@ -5664,8 +6243,6 @@ pub const Snull: char = '\u{e19d}'; // Single-quote null
 pub const Dnull: char = '\u{e19e}'; // Double-quote null
 pub const Bnull: char = '\u{e19f}'; // Backslash null
 pub const Stringg: char = '\u{e185}'; // META-$
-/// `QSTRING_TOK` constant.
-pub const QSTRING_TOK: char = '\u{e184}'; // Qstring (for $'...')
 
 // =================================================================
 // Module boot/cleanup hooks — port of compctl.c:4000+
@@ -5699,7 +6276,7 @@ static COMPCTLREAD_INSTALLED: Mutex<bool> = Mutex::new(false);
 /// produces).
 fn inull(c: char) -> bool {
     // c:62
-    matches!(c, Snull | Dnull | Bnull | Stringg | QSTRING_TOK)
+    matches!(c, Snull | Dnull | Bnull | Bnullkeep | Nularg)
 }
 
 #[cfg(test)]
@@ -5725,18 +6302,21 @@ mod tests {
     }
 
     #[test]
-    fn cc_assign_inserts_into_table() {
+    fn cc_assign_copies_cct_flags_into_ccptr() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createcompctltable();
-        let cc = Arc::new(Compctl {
+        CCLIST.with(|c| c.set(0));
+        let cct = Compctl {
             mask: CC_FILES,
+            func: Some("fn1".to_string()),
+            mstr: None,
             ..Default::default()
-        });
-        cc_assign("ls", cc, false);
-        let g = COMPCTL_TAB.read().unwrap();
-        assert!(g.as_ref().unwrap().contains_key("ls"));
+        };
+        let mut dst = Compctl::default();
+        assert_eq!(cc_assign("ls", &mut dst, &cct, false), 0);
+        assert_eq!(dst.mask, CC_FILES);
+        assert_eq!(dst.func.as_deref(), Some("fn1"));
     }
 
     #[test]
@@ -5745,7 +6325,9 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
-        cc_assign("rm", Arc::new(Compctl::default()), false);
+        CCLIST.with(|c| c.set(0));
+        compctl_process_cc(&["rm".to_string()], Arc::new(Compctl::default()));
+        assert!(COMPCTL_TAB.read().unwrap().as_ref().unwrap().contains_key("rm"));
         freecompctlp("rm");
         let g = COMPCTL_TAB.read().unwrap();
         assert!(!g.as_ref().unwrap().contains_key("rm"));
@@ -5996,39 +6578,38 @@ mod tests {
     }
 
     #[test]
-    fn cc_assign_with_reass_command_target_uses_special_key() {
+    fn get_compctl_dash_c_stores_into_cc_compos() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createcompctltable();
-        CCLIST.with(|c| c.set(COMP_COMMAND));
-        cc_assign(
-            "compctl",
-            Arc::new(Compctl {
-                mask: CC_FILES,
-                ..Default::default()
-            }),
-            true,
-        );
-        let g = COMPCTL_TAB.read().unwrap();
-        assert!(g.as_ref().unwrap().contains_key("__cc_compos"));
-        // Reset for other tests.
-        drop(g);
+        setup_();
+        CCLIST.with(|c| c.set(0));
+        let mut argv: Vec<String> = vec!["-C".into(), "-f".into()];
+        let mut cc = Compctl::default();
+        assert_eq!(get_compctl("compctl", &mut argv, &mut cc, true, false, 0), 0);
+        assert_eq!(CCLIST.with(|c| c.get()), COMP_COMMAND);
+        let compos = CC_COMPOS.lock().unwrap().clone().unwrap();
+        assert_eq!(compos.mask, CC_FILES | CC_EXCMDS);
+        // The caller's own compctl is untouched, as C's `cc` pointer is.
+        assert_eq!(cc.mask, 0);
         CCLIST.with(|c| c.set(0));
     }
 
     #[test]
-    fn cc_assign_with_reass_default_target_uses_special_key() {
+    fn get_compctl_dash_d_stores_into_cc_default_keeping_refc() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createcompctltable();
-        CCLIST.with(|c| c.set(COMP_DEFAULT));
-        cc_assign("compctl", Arc::new(Compctl::default()), true);
-        let g = COMPCTL_TAB.read().unwrap();
-        assert!(g.as_ref().unwrap().contains_key("__cc_default"));
-        drop(g);
+        setup_();
         CCLIST.with(|c| c.set(0));
+        let mut argv: Vec<String> = vec!["-D".into(), "-g".into(), "*.c".into()];
+        let mut cc = Compctl::default();
+        assert_eq!(get_compctl("compctl", &mut argv, &mut cc, true, false, 0), 0);
+        let def = CC_DEFAULT.lock().unwrap().clone().unwrap();
+        assert_eq!(def.glob.as_deref(), Some("*.c"));
+        assert_eq!(def.refc, 10000);
+        CCLIST.with(|c| c.set(0));
+        setup_();
     }
 
     #[test]
@@ -6348,7 +6929,17 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
-        let entries = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
+        let entries: Vec<(String, AddmatchNode)> = ["alpha", "beta", "gamma"]
+            .iter()
+            .map(|n| {
+                let hn = crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: n.to_string(),
+                    flags: 0,
+                };
+                (n.to_string(), AddmatchNode::Hash(hn))
+            })
+            .collect();
         dumphashtable(entries, -5);
         let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 3);
@@ -6428,6 +7019,7 @@ mod tests {
         });
         let cc1 = Arc::new(Compctl {
             str: Some("first".to_string()),
+            mask2: CC_XORCONT, // c:2600 ct: continue into the xor even with matches
             xor: Some(cc2),
             ..Default::default()
         });
@@ -6479,12 +7071,9 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
         CCLIST.with(|c| c.set(COMP_COMMAND | COMP_DEFAULT));
-        cc_assign("compctl", Arc::new(Compctl::default()), true);
-        let g = COMPCTL_TAB.read().unwrap();
-        // Should have been rejected — neither key installed.
-        assert!(!g.as_ref().unwrap().contains_key("__cc_compos"));
-        assert!(!g.as_ref().unwrap().contains_key("__cc_default"));
-        drop(g);
+        let mut dst = Compctl::default();
+        // Rejected: -C and -D together can't both be targeted.
+        assert_eq!(cc_assign("compctl", &mut dst, &Compctl::default(), true), 1);
         CCLIST.with(|c| c.set(0));
     }
 
@@ -6494,8 +7083,11 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
-        cc_assign("foo", Arc::new(Compctl::default()), false);
-        cc_assign("bar", Arc::new(Compctl::default()), false);
+        CCLIST.with(|c| c.set(0));
+        compctl_process_cc(
+            &["foo".to_string(), "bar".to_string()],
+            Arc::new(Compctl::default()),
+        );
         CCLIST.with(|c| c.set(COMP_REMOVE));
         compctl_process_cc(&["foo".to_string()], Arc::new(Compctl::default()));
         let g = COMPCTL_TAB.read().unwrap();
@@ -6543,10 +7135,10 @@ mod tests {
         WE.store(42, Ordering::Relaxed);
         WB.store(7, Ordering::Relaxed);
         CS_G.store(11, Ordering::Relaxed);
-        *ZLEMETALL.lock().unwrap() = 99;
-        *INSTRING.lock().unwrap() = QT_DOUBLE;
-        *INBACKT.lock().unwrap() = 1;
-        *NOALIASES.lock().unwrap() = 1;
+        crate::ported::zle::compcore::ZLEMETALL.store(99, Ordering::Relaxed);
+        INSTRING.store(QT_DOUBLE, Ordering::Relaxed);
+        INBACKT.store(1, Ordering::Relaxed);
+        crate::ported::lex::set_noaliases(true);
         *crate::ported::utils::noerrs_lock().lock().unwrap() = 0;
         *LINE_G
             .get_or_init(|| Mutex::new(String::new()))
@@ -6562,10 +7154,10 @@ mod tests {
         assert_eq!(WE.load(Ordering::Relaxed), 42);
         assert_eq!(WB.load(Ordering::Relaxed), 7);
         assert_eq!(CS_G.load(Ordering::Relaxed), 11);
-        assert_eq!(*ZLEMETALL.lock().unwrap(), 99);
-        assert_eq!(*INSTRING.lock().unwrap(), QT_DOUBLE);
-        assert_eq!(*INBACKT.lock().unwrap(), 1);
-        assert_eq!(*NOALIASES.lock().unwrap(), 1);
+        assert_eq!(crate::ported::zle::compcore::ZLEMETALL.load(Ordering::Relaxed), 99);
+        assert_eq!(INSTRING.load(Ordering::Relaxed), QT_DOUBLE);
+        assert_eq!(INBACKT.load(Ordering::Relaxed), 1);
+        assert!(crate::ported::lex::noaliases());
         assert_eq!(*crate::ported::utils::noerrs_lock().lock().unwrap(), 0);
         assert_eq!(
             *LINE_G
@@ -6583,17 +7175,273 @@ mod tests {
         );
     }
 
+    /// `compctl -x COND1 -s TAG1 - COND2 -s TAG2 -- foo`, built directly:
+    /// every `(cond, tag)` pair becomes one extended-completion entry whose
+    /// only effect is to add `tag` as a match when `cond` holds. Runs
+    /// `sep_comp_string(ss, s, noffs)` and returns the matches the nested
+    /// dispatch (c:3013) produced, i.e. which conditions held for the word
+    /// array the re-lex built.
+    fn sep_probe(conds: &[(Compcond, &str)], ss: &str, s: &str, noffs: i32) -> Vec<String> {
+        createcompctltable();
+        *CC_DEFAULT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *CC_FIRST.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *CC_COMPOS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let mut ext: Option<Arc<Compctl>> = None;
+        for (cond, tag) in conds.iter().rev() {
+            ext = Some(Arc::new(Compctl {
+                cond: Some(Box::new(cond.clone())),
+                str: Some(tag.to_string()),
+                next: ext,
+                ..Default::default()
+            }));
+        }
+        COMPCTL_TAB
+            .write()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert("foo".to_string(), Arc::new(Compctl { ext, ..Default::default() }));
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        reset_compctl_statics();
+        CLWORDS.lock().unwrap().clear();
+        assert_eq!(sep_comp_string(ss, s, noffs), 0);
+        MATCH_LIST.with(|r| r.borrow().clone())
+    }
+
+    /// `p[n]` — the cursor is on word `n`.
+    fn cond_pos(n: i32) -> Compcond {
+        Compcond {
+            typ: CCT_POS,
+            n: 1,
+            u: CompcondData::R { a: vec![n], b: vec![n] },
+            ..Default::default()
+        }
+    }
+
+    /// `p[0,9999]` — always true.
+    fn cond_pos_any() -> Compcond {
+        Compcond {
+            typ: CCT_POS,
+            n: 1,
+            u: CompcondData::R { a: vec![0], b: vec![9999] },
+            ..Default::default()
+        }
+    }
+
+    /// `w[idx,str]` / `c[off,str]` — word `idx` (or cursor word + `off`) is `str`.
+    fn cond_word(typ: i32, idx: i32, s: &str) -> Compcond {
+        Compcond {
+            typ,
+            n: 1,
+            u: CompcondData::S { p: vec![idx], s: vec![s.to_string()] },
+            ..Default::default()
+        }
+    }
+
+
+    /// Run `sep_comp_string` with the cursor/`wb`/`we` globals parked at 0
+    /// (so c:3066 does not move the cursor to the word end) and report
+    /// which `p[n]` entry of the extended-completion chain fired, i.e. the
+    /// `clwpos` the nested dispatch saw (the command word is word 0).
+    fn sep_clwpos(ss: &str, s: &str, noffs: i32) -> Option<i32> {
+        let conds: Vec<(Compcond, String)> =
+            (0..8).map(|p| (cond_pos(p), format!("h{p}"))).collect();
+        let chain: Vec<(Compcond, &str)> =
+            conds.iter().map(|(c, t)| (c.clone(), t.as_str())).collect();
+        sep_probe(&chain, ss, s, noffs)
+            .first()
+            .and_then(|t| t[1..].parse().ok())
+    }
+
+    /// Whether `cond` holds for the word array `sep_comp_string` built.
+    fn sep_cond(cond: Compcond, ss: &str, s: &str, noffs: i32) -> bool {
+        !sep_probe(&[(cond, "hit")], ss, s, noffs).is_empty()
+    }
+
+    /// c:2847-2880 — the cursor word is the one whose lexed range holds the
+    /// dummy `x`, wherever the cursor sits in the string.
+    #[test]
+    fn sep_comp_string_cursor_word_index() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // `foo h h h` with the cursor in each of the three words of `s`
+        // (every word is `h` so the `hN` tag always passes the prefix filter).
+        assert_eq!(sep_clwpos("foo", "h h h", 1), Some(1));
+        assert_eq!(sep_clwpos("foo", "h h h", 3), Some(2));
+        assert_eq!(sep_clwpos("foo", "h h h", 5), Some(3));
+        assert_eq!(sep_clwpos("foo", "a b h", 5), Some(3));
+        // Cursor right after a separator: the empty word being started.
+        assert_eq!(sep_clwpos("foo", "a b ", 4), Some(3));
+        // More words in `ss` shift the index.
+        assert_eq!(sep_clwpos("foo -f -g", "h", 1), Some(3));
+    }
+
+    /// c:2998-3006 — `clwords` is the lexed words, untokenized, with the
+    /// cursor word's dummy `x` removed (c:2876 `chuck(p + soffs)`).
+    #[test]
+    fn sep_comp_string_words_array_contents() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(sep_cond(cond_word(CCT_WORDSTR, 1, "a"), "foo", "a h c", 3));
+        assert!(sep_cond(cond_word(CCT_WORDSTR, 2, "h"), "foo", "a h c", 3));
+        assert!(sep_cond(cond_word(CCT_WORDSTR, 3, "c"), "foo", "a h c", 3));
+        assert!(!sep_cond(cond_word(CCT_WORDSTR, 2, "hx"), "foo", "a h c", 3));
+        // c[-1,a]: the word before the cursor word.
+        assert!(sep_cond(cond_word(CCT_CURSTR, -1, "a"), "foo", "a h c", 3));
+        assert!(sep_cond(cond_word(CCT_CURSTR, -2, "foo"), "foo", "a h c", 3));
+        assert!(!sep_cond(cond_word(CCT_CURSTR, -1, "foo"), "foo", "a h c", 3));
+        // Words of `ss` are lexed too, so a flag in `ss` is word 1.
+        assert!(sep_cond(cond_word(CCT_CURSTR, -1, "-f"), "foo -f", "h", 1));
+        // The dummy `x` is dropped from the cursor word wherever it sits
+        // (cursor after the `h` of `hit`; the tag `hit` still matches).
+        assert!(sep_cond(cond_word(CCT_WORDSTR, 1, "hit"), "foo", "hit", 1));
+        assert!(!sep_cond(cond_word(CCT_WORDSTR, 1, "hxit"), "foo", "hit", 1));
+    }
+
+    /// c:2907-2937 — a leading quote makes the whole quoted string one word
+    /// and sets `instring` for the dispatch; `autoq` follows it.
+    #[test]
+    fn sep_comp_string_quoted_words_and_instring() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // `'x y' h`: the single-quoted string is ONE word (word 1), the
+        // cursor word is the next one.
+        assert_eq!(sep_clwpos("foo", "'x y' h", 7), Some(2));
+        assert!(sep_cond(cond_word(CCT_WORDSTR, 1, "'x y'"), "foo", "'x y' h", 7));
+        assert_eq!(sep_clwpos("foo", "\"x y\" h", 7), Some(2));
+        // Unterminated quote (c:2849-2862): LEXERR with an odd number of
+        // quote markers is turned back into a STRING, so `'x h` is one word.
+        assert_eq!(sep_clwpos("foo", "'x h", 4), Some(1));
+        assert_eq!(sep_clwpos("foo", "a \"x h", 6), Some(2));
+        // instring during the dispatch (c:2907-2924): q[s] / q[d] / none.
+        let q = |c: &str| Compcond {
+            typ: CCT_QUOTE,
+            n: 1,
+            u: CompcondData::S { p: vec![0], s: vec![c.to_string()] },
+            ..Default::default()
+        };
+        assert!(sep_cond(q("s"), "foo", "'x h", 4));
+        assert!(!sep_cond(q("d"), "foo", "'x h", 4));
+        assert!(sep_cond(q("d"), "foo", "\"x h", 4));
+        assert!(!sep_cond(q("s"), "foo", "\"x h", 4));
+        assert!(!sep_cond(q("s"), "foo", "x h", 3));
+        assert!(!sep_cond(q("d"), "foo", "x h", 3));
+    }
+
+    /// c:2938-2981 — the cursor offset inside the word (`offs`) and the
+    /// prefix/suffix `makecomplistflags` splits it into, after the quote
+    /// markers before the cursor are dropped (`soffs--` per inull).
+    #[test]
+    fn sep_comp_string_offs_follows_quote_markers() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let split = |s: &str, n: i32| {
+            let _ = sep_probe(&[(cond_pos_any(), "zz")], "foo", s, n);
+            (
+                LPRE.with(|r| r.borrow().clone()),
+                LSUF.with(|r| r.borrow().clone()),
+            )
+        };
+        // Unquoted: the cursor splits the word where it sits.
+        assert_eq!(split("a hx", 3), ("h".to_string(), "x".to_string()));
+        assert_eq!(split("a hx", 4), ("hx".to_string(), String::new()));
+        // Quoted: the opening quote is not part of the word (soffs--), so
+        // the same cursor-after-`hx` position yields the same prefix.
+        assert_eq!(split("a 'hx'", 5), ("hx".to_string(), "'".to_string()));
+        assert_eq!(split("a 'hx'", 4), ("h".to_string(), "x'".to_string()));
+        assert_eq!(split("a \"hx\" b", 5), ("hx".to_string(), "\"".to_string()));
+    }
+
+    /// c:2840-2841 — with a backslash-quoting level on `compqstack`,
+    /// `rembslash` is applied to the synthetic line, so `a\ b` is TWO words.
+    #[test]
+    fn sep_comp_string_remq_strips_backslashes() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Without a backslash level, `a\ b` stays one word.
+        COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap()
+            .clear();
+        assert_eq!(sep_clwpos("foo", "a\\ b h", 6), Some(2));
+        // With QT_BACKSLASH on top the backslash is removed first.
+        *COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = char::from_u32(QT_BACKSLASH as u32).unwrap().to_string();
+        assert_eq!(sep_clwpos("foo", "a\\ b h", 6), Some(3));
+        // c:3029-3030 — the stack is restored after the dispatch.
+        assert_eq!(
+            *COMPQSTACK
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap(),
+            char::from_u32(QT_BACKSLASH as u32).unwrap().to_string()
+        );
+        COMPQSTACK
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap()
+            .clear();
+    }
+
+    /// c:2881-2891, c:3025-3034 — nothing the re-lex or the dispatch touches
+    /// leaks out: lexer globals, noerrs/noaliases/errflag, and the
+    /// qipre/qisuf/autoq/compqstack/instring set, on both the balanced and
+    /// the unterminated-quote path.
+    #[test]
+    fn sep_comp_string_restores_lexer_and_quote_state() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for (s, n) in [("a h c", 3), ("'x y' h", 7), ("'x h", 4), ("a \"x h", 6)] {
+            crate::ported::lex::set_noaliases(false);
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = 0;
+            crate::ported::lex::LEX_LEXFLAGS.set(0);
+            *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "QP".to_string();
+            *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "QS".to_string();
+            *AUTOQ.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "AQ".to_string();
+            INSTRING.store(QT_NONE, Ordering::Relaxed);
+            INBACKT.store(0, Ordering::Relaxed);
+            let _ = sep_probe(&[(cond_pos_any(), "zz")], "foo", s, n);
+            assert!(!crate::ported::lex::noaliases(), "noaliases leaked for {s:?}");
+            assert_eq!(*crate::ported::utils::noerrs_lock().lock().unwrap(), 0);
+            assert_eq!(crate::ported::lex::LEX_LEXFLAGS.get(), 0, "lexflags leaked for {s:?}");
+            assert_eq!(errflag.load(Ordering::Relaxed) & crate::ported::utils::ERRFLAG_ERROR, 0);
+            assert_eq!(*QIPRE.get().unwrap().lock().unwrap(), "QP");
+            assert_eq!(*QISUF.get().unwrap().lock().unwrap(), "QS");
+            assert_eq!(*AUTOQ.get().unwrap().lock().unwrap(), "AQ");
+            assert_eq!(INSTRING.load(Ordering::Relaxed), QT_NONE);
+            assert_eq!(INBACKT.load(Ordering::Relaxed), 0);
+            assert_eq!(*CLWORDS.lock().unwrap(), Vec::<String>::new());
+        }
+    }
+
+
     #[test]
     fn inull_recognises_marker_chars() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        // C compctl.c:2917 — INULL macro recognises Snull/Dnull/Bnull
-        // plus String/Qstring tokens for inull-walk.
+        // ztype.h:62 INULL covers Snull..Nularg (zsh.h:193-206); String/Qstring
+        // are not null tokens.
         assert!(inull(Snull));
         assert!(inull(Dnull));
         assert!(inull(Bnull));
-        assert!(inull(Stringg));
-        assert!(inull(QSTRING_TOK));
+        assert!(inull(Bnullkeep));
+        assert!(inull(Nularg));
+        assert!(!inull(Stringg));
+        assert!(!inull(Qstring));
         assert!(!inull('a'));
         assert!(!inull(' '));
     }
@@ -6623,8 +7471,10 @@ mod tests {
         assert!(inull(Snull));
         assert!(inull(Dnull));
         assert!(inull(Bnull));
-        assert!(inull(Stringg));
-        assert!(inull(QSTRING_TOK));
+        assert!(inull(Bnullkeep));
+        assert!(inull(Nularg));
+        assert!(!inull(Stringg));
+        assert!(!inull(Qstring));
     }
 
     /// `inull` rejects ordinary printable chars.
@@ -7177,5 +8027,555 @@ mod tests {
         let (is_pat, out) = compctl_name_pat("ls*");
         assert!(is_pat);
         assert_eq!(out, format!("ls{}", crate::ported::zsh_h::Star));
+    }
+
+    // ---------------------------------------------------------------
+    // compctl -x: grammar, listing and evaluation
+    // ---------------------------------------------------------------
+
+    fn sv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Parse `compctl ARGS` the way bin_compctl does and return the
+    /// root compctl plus the words left over (the command names).
+    fn parse_spec(args: &[&str]) -> (i32, Compctl, Vec<String>) {
+        CCLIST.with(|c| c.set(0));
+        let mut argv = sv(args);
+        let mut cc = Compctl::default();
+        let r = get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        (r, cc, argv)
+    }
+
+    fn test_ops() -> crate::ported::zsh_h::options {
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
+    }
+
+    /// What `compctl ARGS` prints, captured from fd 1.
+    fn compctl_output(args: &[&str]) -> String {
+        let ops = test_ops();
+        let argv = sv(args);
+        crate::compsys::ported::shared::capture_builtin_stdout(false, || {
+            bin_compctl("compctl", &argv, &ops, 0);
+        })
+    }
+
+    #[test]
+    fn get_compctl_x_links_one_compctl_per_condition() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (r, cc, rest) = parse_spec(&[
+            "-f", "-x", "s[-]", "-/", "-", "p[1,2]", "-g", "*.c", "--", "cmd",
+        ]);
+        assert_eq!(r, 0);
+        assert_eq!(rest, sv(&["cmd"]));
+        assert_ne!(cc.mask & CC_FILES, 0);
+        let n1 = cc.ext.clone().expect("first -x compctl");
+        let c1 = n1.cond.as_deref().unwrap();
+        assert_eq!(c1.typ, CCT_CURSUF);
+        assert_eq!(c1.n, 1);
+        assert!(matches!(&c1.u, CompcondData::S { s, .. } if s == &sv(&["-"])));
+        assert_ne!(n1.mask & CC_DIRS, 0);
+        let n2 = n1.next.clone().expect("second -x compctl");
+        let c2 = n2.cond.as_deref().unwrap();
+        assert_eq!(c2.typ, CCT_POS);
+        assert!(matches!(&c2.u, CompcondData::R { a, b } if a == &vec![1] && b == &vec![2]));
+        assert_eq!(n2.glob.as_deref(), Some("*.c"));
+        assert!(n2.next.is_none());
+    }
+
+    #[test]
+    fn get_xcompctl_and_or_structure_and_multiple_brackets() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // `a b , c`: a AND b, OR c.
+        let (r, cc, _) = parse_spec(&["-x", "c[-1,-f] w[1,foo] , C[0,x*]", "-f", "--", "cmd"]);
+        assert_eq!(r, 0);
+        let n = cc.ext.clone().unwrap();
+        let a = n.cond.as_deref().unwrap();
+        assert_eq!(a.typ, CCT_CURSTR);
+        assert!(matches!(&a.u, CompcondData::S { p, s } if p == &vec![-1] && s == &sv(&["-f"])));
+        let b = a.and.as_deref().unwrap();
+        assert_eq!(b.typ, CCT_WORDSTR);
+        assert!(b.and.is_none());
+        assert!(a.or.is_some());
+        let c = a.or.as_deref().unwrap();
+        assert_eq!(c.typ, CCT_CURPAT);
+        assert!(matches!(&c.u, CompcondData::S { p, s } if p == &vec![0] && s == &sv(&["x*"])));
+        assert!(c.and.is_none() && c.or.is_none());
+
+        // Several [..] groups; commas and nested brackets inside a string.
+        let (r, cc, _) = parse_spec(&["-x", "s[a,b][c[d]e] r[x,y][z]", "-f", "--", "cmd"]);
+        assert_eq!(r, 0);
+        let n = cc.ext.clone().unwrap();
+        let s = n.cond.as_deref().unwrap();
+        assert_eq!((s.typ, s.n), (CCT_CURSUF, 2));
+        assert!(matches!(&s.u, CompcondData::S { s, .. } if s == &sv(&["a,b", "c[d]e"])));
+        let rr = s.and.as_deref().unwrap();
+        assert_eq!((rr.typ, rr.n), (CCT_RANGESTR, 2));
+        assert!(matches!(&rr.u,
+            CompcondData::L { a, b } if a == &sv(&["x", "z"]) && b == &sv(&["y", ""])));
+    }
+
+    #[test]
+    fn get_xcompctl_rejects_malformed_conditions() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // unknown condition code
+        assert_eq!(parse_spec(&["-x", "z[1]", "-f", "--", "cmd"]).0, 1);
+        // code not followed by `[`
+        assert_eq!(parse_spec(&["-x", "p1", "-f", "--", "cmd"]).0, 1);
+        // unterminated bracket
+        assert_eq!(parse_spec(&["-x", "p[1", "-f", "--", "cmd"]).0, 1);
+        // `n[..]` needs `index,string`
+        assert_eq!(parse_spec(&["-x", "n[1]", "-f", "--", "cmd"]).0, 1);
+        // no condition word after -x
+        assert_eq!(parse_spec(&["-x"]).0, 1);
+        // flags with no `--` and no command names
+        assert_eq!(parse_spec(&["-x", "p[1]", "-f"]).0, 1);
+        // -x is not recursive
+        assert_eq!(
+            parse_spec(&["-x", "p[1]", "-x", "p[2]", "-f", "--", "--", "cmd"]).0,
+            1
+        );
+    }
+
+    #[test]
+    fn get_compctl_xor_chain_and_default_xor() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        setup_();
+        let (r, cc, rest) = parse_spec(&["-f", "+", "-g", "*.c", "cmd"]);
+        assert_eq!(r, 0);
+        assert_eq!(rest, sv(&["cmd"]));
+        assert_ne!(cc.mask & CC_FILES, 0);
+        let x = cc.xor.clone().expect("xor'd compctl");
+        assert_eq!(x.glob.as_deref(), Some("*.c"));
+        assert!(x.xor.is_none());
+
+        // `+` with no flags after it: the xor is cc_default.
+        let (r, cc, rest) = parse_spec(&["-f", "+", "cmd"]);
+        assert_eq!(r, 0);
+        assert_eq!(rest, sv(&["cmd"]));
+        let x = cc.xor.clone().unwrap();
+        assert!(Arc::ptr_eq(&x, CC_DEFAULT.lock().unwrap().as_ref().unwrap()));
+    }
+
+    #[test]
+    fn compctl_l_prints_extended_spec_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        setup_();
+        let ops = test_ops();
+        let spec = sv(&[
+            "-x", "s[-]", "-f", "-", "c[-1,-f]", "-/", "--", "xcmd",
+        ]);
+        assert_eq!(bin_compctl("compctl", &spec, &ops, 0), 0);
+        assert_eq!(
+            compctl_output(&["-L", "xcmd"]),
+            "compctl -x 's[-]' -f - 'c[-1,-f]' -/ -- xcmd\n"
+        );
+
+        // Feeding the printed form back in prints the same thing.
+        let again = sv(&[
+            "-x", "s[-]", "-f", "-", "c[-1,-f]", "-/", "--", "ycmd",
+        ]);
+        assert_eq!(bin_compctl("compctl", &again, &ops, 0), 0);
+        assert_eq!(
+            compctl_output(&["-L", "ycmd"]).replace("ycmd", "xcmd"),
+            compctl_output(&["-L", "xcmd"])
+        );
+        CCLIST.with(|c| c.set(0));
+    }
+
+    #[test]
+    fn compctl_l_prints_all_condition_kinds() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        setup_();
+        let ops = test_ops();
+        let spec = sv(&[
+            "-x",
+            "p[2] , m[3,4] q[s] S[x] , n[-1,=] N[2,:] , C[0,*.c] W[1,a*] w[2,b] , r[a,b] R[c*,d*]",
+            "-g",
+            "*.h",
+            "--",
+            "kcmd",
+        ]);
+        assert_eq!(bin_compctl("compctl", &spec, &ops, 0), 0);
+        assert_eq!(
+            compctl_output(&["-L", "kcmd"]),
+            "compctl -x 'p[2,2] , m[3,4] q[s] S[x] , n[-1,=] N[2,:] , C[0,*.c] W[1,a*] w[2,b] , r[a,b] R[c*,d*]' -g '*.h' -- kcmd\n"
+        );
+        CCLIST.with(|c| c.set(0));
+    }
+
+    #[test]
+    fn compctl_d_with_extended_condition_sets_and_lists_cc_default() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        setup_();
+        let ops = test_ops();
+        // `-D` ends the argument list without command names, with or
+        // without the closing `--`.
+        for spec in [
+            sv(&["-D", "-f", "-x", "p[1]", "-/"]),
+            sv(&["-D", "-f", "-x", "p[1]", "-/", "--"]),
+        ] {
+            setup_();
+            assert_eq!(bin_compctl("compctl", &spec, &ops, 0), 0);
+            let def = CC_DEFAULT.lock().unwrap().clone().unwrap();
+            assert_eq!(def.refc, 10000);
+            assert_ne!(def.mask & CC_FILES, 0);
+            let ext = def.ext.clone().expect("cc_default.ext");
+            assert_eq!(ext.cond.as_deref().unwrap().typ, CCT_POS);
+            assert_ne!(ext.mask & CC_DIRS, 0);
+            assert_eq!(
+                compctl_output(&["-L", "-D"]),
+                "compctl -D -f -x 'p[1,1]' -/ --\n"
+            );
+        }
+        // -C and -T go to their own statics.
+        setup_();
+        assert_eq!(
+            bin_compctl("compctl", &sv(&["-C", "-x", "p[1]", "-c"]), &ops, 0),
+            0
+        );
+        assert!(CC_COMPOS.lock().unwrap().as_ref().unwrap().ext.is_some());
+        assert!(CC_DEFAULT.lock().unwrap().as_ref().unwrap().ext.is_none());
+        assert_eq!(
+            bin_compctl("compctl", &sv(&["-T", "-x", "p[1]", "-f"]), &ops, 0),
+            0
+        );
+        assert!(CC_FIRST.lock().unwrap().as_ref().unwrap().ext.is_some());
+        assert_eq!(
+            compctl_output(&["-L", "-T"]),
+            "compctl -T -x 'p[1,1]' -f --\n"
+        );
+        // -D and -T together cannot be set in one command.
+        assert_eq!(
+            bin_compctl("compctl", &sv(&["-D", "-T", "-f"]), &ops, 0),
+            1
+        );
+        CCLIST.with(|c| c.set(0));
+        setup_();
+    }
+
+    #[test]
+    fn compctl_l_prints_xor_chain() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        setup_();
+        let ops = test_ops();
+        assert_eq!(
+            bin_compctl("compctl", &sv(&["-f", "+", "-g", "*.c", "zcmd"]), &ops, 0),
+            0
+        );
+        assert_eq!(
+            compctl_output(&["-L", "zcmd"]),
+            "compctl -f + -g '*.c' zcmd\n"
+        );
+        assert_eq!(
+            bin_compctl("compctl", &sv(&["-f", "+", "zdef"]), &ops, 0),
+            0
+        );
+        assert_eq!(compctl_output(&["-L", "zdef"]), "compctl -f + zdef\n");
+        CCLIST.with(|c| c.set(0));
+    }
+
+    /// Run the compctl built from `args` against a synthetic line and
+    /// return the candidates it produced. `-s WORD` flags are the
+    /// observable: each spec contributes its own WORD.
+    fn run_extended(args: &[&str], words: &[&str], pos: i32, os: &str) -> Vec<String> {
+        let (r, cc, _) = parse_spec(args);
+        assert_eq!(r, 0, "spec {:?} failed to parse", args);
+        *CLWORDS.lock().unwrap() = sv(words);
+        *CLWNUM.lock().unwrap() = words.len() as i32;
+        *CLWPOS.lock().unwrap() = pos;
+        // the cursor sits at the end of the cursor word
+        crate::ported::zle::compcore::OFFS.store(os.len() as i32, Ordering::Relaxed);
+        CCONT.with(|c| c.set(0));
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        let mut tos = os.to_string(); // the cursor word arrives tokenized
+        crate::ported::glob::tokenize(&mut tos);
+        makecomplistext(&Arc::new(cc), &tos, false);
+        MATCH_LIST.with(|r| r.borrow().clone())
+    }
+
+    #[test]
+    fn makecomplistext_position_condition() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let spec = ["-s", "dflt", "-x", "p[1]", "-s", "one", "-", "p[2,3]", "-s", "two", "--", "c"];
+        assert_eq!(run_extended(&spec, &["c", ""], 1, ""), sv(&["one"]));
+        assert_eq!(run_extended(&spec, &["c", "a", ""], 2, ""), sv(&["two"]));
+        assert_eq!(run_extended(&spec, &["c", "a", "b", ""], 3, ""), sv(&["two"]));
+        assert_eq!(
+            run_extended(&spec, &["c", "a", "b", "d", ""], 4, ""),
+            sv(&["dflt"])
+        );
+        // Negative bounds count from the end: p[-1] is the last word.
+        let neg = ["-s", "dflt", "-x", "p[-1]", "-s", "last", "--", "c"];
+        assert_eq!(run_extended(&neg, &["c", "a", ""], 2, ""), sv(&["last"]));
+        assert_eq!(run_extended(&neg, &["c", "a", ""], 1, ""), sv(&["dflt"]));
+    }
+
+    #[test]
+    fn makecomplistext_word_conditions() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // c[-1,-f]: the word before the cursor word is `-f`.
+        let c = ["-s", "dflt", "-x", "c[-1,-f]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&c, &["c", "-f", ""], 2, ""), sv(&["hit"]));
+        assert_eq!(run_extended(&c, &["c", "-g", ""], 2, ""), sv(&["dflt"]));
+        // w[1,foo]: the absolute word 1 is `foo`.
+        let w = ["-s", "dflt", "-x", "w[1,foo]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&w, &["c", "foo", ""], 2, ""), sv(&["hit"]));
+        assert_eq!(run_extended(&w, &["c", "bar", ""], 2, ""), sv(&["dflt"]));
+        // m[3]: exactly three words on the line.
+        let m = ["-s", "dflt", "-x", "m[3]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&m, &["c", "a", ""], 2, ""), sv(&["hit"]));
+        assert_eq!(run_extended(&m, &["c", ""], 1, ""), sv(&["dflt"]));
+    }
+
+    #[test]
+    fn makecomplistext_pattern_conditions() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // C[-1,*.c]: previous word matches the glob.
+        let cp = ["-s", "dflt", "-x", "C[-1,*.c]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&cp, &["c", "x.c", ""], 2, ""), sv(&["hit"]));
+        assert_eq!(run_extended(&cp, &["c", "x.h", ""], 2, ""), sv(&["dflt"]));
+        // W[1,f*]: absolute word 1 matches the glob.
+        let wp = ["-s", "dflt", "-x", "W[1,f*]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&wp, &["c", "foo", ""], 2, ""), sv(&["hit"]));
+        assert_eq!(run_extended(&wp, &["c", "boo", ""], 2, ""), sv(&["dflt"]));
+    }
+
+    #[test]
+    fn makecomplistext_or_and_chains() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // `p[1] c[-1,c]` needs both; `, p[3]` is the alternative.
+        let spec = ["-s", "dflt", "-x", "p[1] c[-1,c] , p[3]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&spec, &["c", ""], 1, ""), sv(&["hit"]));
+        assert_eq!(run_extended(&spec, &["c", "a", "b", ""], 3, ""), sv(&["hit"]));
+        // pos 2 satisfies neither arm
+        assert_eq!(run_extended(&spec, &["c", "a", ""], 2, ""), sv(&["dflt"]));
+        // pos 1 but the previous word is not `c`
+        assert_eq!(run_extended(&spec, &["x", ""], 1, ""), sv(&["dflt"]));
+    }
+
+    #[test]
+    fn makecomplistext_range_condition_bounds() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let spec = ["-s", "dflt", "-x", "r[-f,--]", "-s", "hit", "--", "c"];
+        // `-f` seen, no closing `--` yet: the cursor is inside the range.
+        assert_eq!(run_extended(&spec, &["c", "-f", "x", ""], 3, ""), sv(&["hit"]));
+        // `-f` ... `--` already closed before the cursor.
+        assert_eq!(
+            run_extended(&spec, &["c", "-f", "x", "--", ""], 4, ""),
+            sv(&["dflt"])
+        );
+        // no `-f` at all
+        assert_eq!(run_extended(&spec, &["c", "x", ""], 2, ""), sv(&["dflt"]));
+    }
+
+    #[test]
+    fn makecomplistext_quote_condition_follows_instring() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let spec = ["-s", "dflt", "-x", "q[s]", "-s", "hit", "--", "c"];
+        let old = INSTRING.load(Ordering::Relaxed);
+        INSTRING.store(QT_SINGLE, Ordering::Relaxed);
+        let in_single = run_extended(&spec, &["c", ""], 1, "");
+        INSTRING.store(QT_DOUBLE, Ordering::Relaxed);
+        let in_double = run_extended(&spec, &["c", ""], 1, "");
+        INSTRING.store(old, Ordering::Relaxed);
+        assert_eq!(in_single, sv(&["hit"]));
+        assert_eq!(in_double, sv(&["dflt"]));
+    }
+
+    #[test]
+    fn makecomplistext_prefix_suffix_conditions() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // s[-] and S[-]: the current word starts with `-`. `s` also strips
+        // the prefix it matched (compadd), `S` does not.
+        let s = ["-s", "dflt", "-x", "s[-]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&s, &["c", "-"], 1, "-"), sv(&["hit"]));
+        assert_eq!(run_extended(&s, &["c", "d"], 1, "d"), sv(&["dflt"]));
+        let upper = ["-s", "xdflt", "-x", "S[d]", "-s", "dhit", "--", "c"];
+        assert_eq!(run_extended(&upper, &["c", "d"], 1, "d"), sv(&["dhit"]));
+        assert_eq!(run_extended(&upper, &["c", "x"], 1, "x"), sv(&["xdflt"]));
+    }
+
+    #[test]
+    fn makecomplistext_cursub_condition() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // n[1,=]: the cursor word contains an `=`; the text after it is
+        // what gets completed.
+        let spec = ["-s", "dflt", "-x", "n[1,=]", "-s", "hit", "--", "c"];
+        assert_eq!(run_extended(&spec, &["c", "a="], 1, "a="), sv(&["hit"]));
+        assert_eq!(run_extended(&spec, &["c", "d"], 1, "d"), sv(&["dflt"]));
+    }
+
+    // ---------------------------------------------------------------
+    // addmatch: the HashNode predicates of c:1991-2014
+    // ---------------------------------------------------------------
+
+    /// Number of matches registered by `addmatch(name, node)` under `addwhat`.
+    fn added_by(addwhat: i32, name: &str, node: Option<&AddmatchNode>) -> i64 {
+        clear_matches();
+        reset_compctl_statics();
+        let before = mnum_now();
+        ADDWHAT.with(|c| c.set(addwhat));
+        addmatch(name, node);
+        mnum_now() as i64 - before as i64
+    }
+
+    fn hash_node(nam: &str, flags: i32) -> AddmatchNode {
+        AddmatchNode::Hash(crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: nam.to_string(),
+            flags,
+        })
+    }
+
+    fn param_node(nam: &str, flags: u32, level: i32, val: Option<&str>) -> AddmatchNode {
+        AddmatchNode::Param(crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: nam.to_string(),
+                flags: flags as i32,
+            },
+            u_str: val.map(String::from),
+            level,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn addmatch_command_names_skip_disabled_nodes() {
+        use crate::ported::zsh_h::DISABLED;
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // c:1991 — addwhat -3 requires the node not be DISABLED.
+        assert_eq!(added_by(-3, "ls", Some(&hash_node("ls", 0))), 1);
+        assert_eq!(added_by(-3, "ls", Some(&hash_node("ls", DISABLED))), 0);
+    }
+
+    #[test]
+    fn addmatch_enable_disable_selection_for_command_tables() {
+        use crate::ported::zsh_h::DISABLED;
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let ex = CC_SHFUNCS as i32 | CC_EXCMDS as i32; // c:2012-2013
+        let dis = CC_SHFUNCS as i32 | CC_DISCMDS as i32;
+        assert_eq!(added_by(ex, "f", Some(&hash_node("f", 0))), 1);
+        assert_eq!(added_by(ex, "f", Some(&hash_node("f", DISABLED))), 0);
+        assert_eq!(added_by(dis, "f", Some(&hash_node("f", DISABLED))), 1);
+        assert_eq!(added_by(dis, "f", Some(&hash_node("f", 0))), 0);
+        // Aliases: CC_ALREG excludes global aliases, CC_ALGLOB wants them.
+        let reg = CC_ALREG as i32 | CC_EXCMDS as i32;
+        let glob = CC_ALGLOB as i32 | CC_EXCMDS as i32;
+        let galias = crate::ported::zsh_h::ALIAS_GLOBAL;
+        assert_eq!(added_by(reg, "a", Some(&hash_node("a", 0))), 1);
+        assert_eq!(added_by(reg, "a", Some(&hash_node("a", galias))), 0);
+        assert_eq!(added_by(glob, "a", Some(&hash_node("a", galias))), 1);
+        assert_eq!(added_by(glob, "a", Some(&hash_node("a", 0))), 0);
+        // Bindings: only the DISABLED bit matters (c:2014).
+        assert_eq!(added_by(CC_BINDINGS as i32, "w", Some(&hash_node("w", 0))), 1);
+        assert_eq!(
+            added_by(CC_BINDINGS as i32, "w", Some(&hash_node("w", DISABLED))),
+            0
+        );
+        // A command-table mask alone (no CC_EXCMDS / CC_DISCMDS) adds nothing.
+        assert_eq!(added_by(CC_SHFUNCS as i32, "f", Some(&hash_node("f", 0))), 0);
+    }
+
+    #[test]
+    fn addmatch_parameter_flavours_check_flags_unset_and_level() {
+        use crate::ported::zsh_h::{PM_ARRAY, PM_EXPORTED, PM_INTEGER, PM_READONLY, PM_UNSET};
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // c:1995 — addwhat -9: set, top-level parameters.
+        assert_eq!(added_by(-9, "p", Some(&param_node("p", 0, 0, Some("v")))), 1);
+        assert_eq!(
+            added_by(-9, "p", Some(&param_node("p", PM_UNSET, 0, None))),
+            0
+        );
+        assert_eq!(added_by(-9, "p", Some(&param_node("p", 0, 1, Some("v")))), 0);
+        // c:1998-2004 — flavour masks need the matching PM_* flag.
+        let arrays = CC_ARRAYS as i32;
+        assert_eq!(added_by(arrays, "a", Some(&param_node("a", PM_ARRAY, 0, None))), 1);
+        assert_eq!(added_by(arrays, "a", Some(&param_node("a", 0, 0, None))), 0);
+        assert_eq!(
+            added_by(arrays, "a", Some(&param_node("a", PM_ARRAY, 1, None))),
+            0,
+            "pm->level must be 0"
+        );
+        let ints = CC_INTVARS as i32;
+        assert_eq!(added_by(ints, "i", Some(&param_node("i", PM_INTEGER, 0, None))), 1);
+        let envs = CC_ENVVARS as i32;
+        assert_eq!(added_by(envs, "e", Some(&param_node("e", PM_EXPORTED, 0, None))), 1);
+        assert_eq!(added_by(envs, "e", Some(&param_node("e", 0, 0, None))), 0);
+        let ros = CC_READONLYS as i32;
+        assert_eq!(added_by(ros, "r", Some(&param_node("r", PM_READONLY, 0, None))), 1);
+        // CC_PARAMS is the non-exported ones.
+        let params = CC_PARAMS as i32;
+        assert_eq!(added_by(params, "x", Some(&param_node("x", 0, 0, None))), 1);
+        assert_eq!(
+            added_by(params, "x", Some(&param_node("x", PM_EXPORTED, 0, None))),
+            0
+        );
+        // An unset parameter is never offered, whatever its flavour.
+        assert_eq!(
+            added_by(arrays, "a", Some(&param_node("a", PM_ARRAY | PM_UNSET, 0, None))),
+            0
+        );
+    }
+
+    #[test]
+    fn addmatch_cdable_param_needs_scalar_with_absolute_path_value() {
+        use crate::ported::zsh_h::PM_INTEGER;
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // c:1992-1994 — addwhat -4: top-level scalar whose value starts with `/`.
+        assert_eq!(added_by(-4, "d", Some(&param_node("d", 0, 0, Some("/usr")))), 1);
+        assert_eq!(added_by(-4, "d", Some(&param_node("d", 0, 0, Some("usr")))), 0);
+        assert_eq!(added_by(-4, "d", Some(&param_node("d", 0, 0, None))), 0);
+        assert_eq!(added_by(-4, "d", Some(&param_node("d", 0, 1, Some("/usr")))), 0);
+        assert_eq!(
+            added_by(-4, "d", Some(&param_node("d", PM_INTEGER, 0, Some("/usr")))),
+            0
+        );
     }
 }
