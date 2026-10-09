@@ -4807,6 +4807,33 @@ mod tests {
         assert!(paramtab().read().unwrap().get("compstate").is_none());
     }
 
+    /// `$( … )` is a forked child in C, so writes to the completion params
+    /// inside it die with it. zshrs runs the body in-process: the completion
+    /// globals the params view have to be saved and put back with the rest of
+    /// the subshell state, or `$(PREFIX=x; :)` leaves `$PREFIX` set.
+    #[test]
+    fn command_substitution_does_not_leak_completion_param_writes() {
+        use crate::ported::params::getsparam;
+        let _g = crate::test_util::global_state_lock();
+        *COMPPREFIX.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "keep".into();
+        *COMPINSERT.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "menu".into();
+        *lock_vec(&COMPWORDS).lock().unwrap() = vec!["a".into(), "b".into()];
+        COMPCURRENT.store(2, Ordering::Relaxed);
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
+        comp_scope_enter();
+        let out = exec.run_command_substitution(
+            "PREFIX=leaked; words=(x y z); CURRENT=9; compstate[insert]=zz; print -n \"$PREFIX $CURRENT $compstate[insert]\"",
+        );
+        assert_eq!(out, "leaked 9 zz", "the body sees its own writes");
+        assert_eq!(getsparam("PREFIX").as_deref(), Some("keep"));
+        assert_eq!(gstr(&COMPPREFIX), "keep");
+        assert_eq!(gstr(&COMPINSERT), "menu");
+        assert_eq!(*lock_vec(&COMPWORDS).lock().unwrap(), vec!["a", "b"]);
+        assert_eq!(COMPCURRENT.load(Ordering::Relaxed), 2);
+        comp_scope_leave();
+    }
+
     /// `$compstate[KEY]` reads and writes go through the element Param of the
     /// `compkparams` row (c:1271-1300): `insert` is the `compinsert` global,
     /// `list` fronts `comp_list` through `complist_gsu`, `nmatches` is a

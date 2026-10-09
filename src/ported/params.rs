@@ -5878,11 +5878,19 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 // of 8. Without this the integer `+=` operator silently
                 // replaced.
                 let final_val = if (flags & ASSPM_AUGMENT) != 0 {
-                    pm.u_val.wrapping_add(ival)
+                    // c:2776 `pm->u.val += val.l` through the getfn's value.
+                    pm.gsu_i
+                        .as_ref()
+                        .map_or(pm.u_val, |g| (g.getfn)(pm))
+                        .wrapping_add(ival)
                 } else {
                     ival
                 };
-                intsetfn(pm, final_val);
+                // c:2775-2778 — `v->pm->gsu.i->setfn(v->pm, …)`.
+                match pm.gsu_i.as_ref().map(|g| g.setfn) {
+                    Some(sf) if sf as usize != intsetfn as usize => sf(pm, final_val),
+                    _ => intsetfn(pm, final_val),
+                }
                 if (pm.node.flags as u32 & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
                     && pm.width == 0
                 {

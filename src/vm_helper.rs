@@ -479,6 +479,128 @@ impl Default for InlineEnvFrame {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// No C counterpart: C forks for `( … )` and `$( … )`, so the child's writes to
+/// the `Src/Zle/complete.c:35-73` completion globals (`compprefix`,
+/// `compwords`, `compcurrent`, `comprestore`, …) die with the child. Those
+/// globals are what `$PREFIX`, `$words`, `$CURRENT` and the `$compstate`
+/// elements VIEW (complete.c:1258-1300), and they live outside `paramtab`, so
+/// the in-process paramtab snapshot restores the param nodes but not the
+/// values behind them: `$(PREFIX=x; :)` would leave `$PREFIX` set to `x` in the
+/// parent. This struct is the missing half of that snapshot.
+pub struct CompGlobalsSnap {
+    strings: Vec<String>,
+    words: Vec<String>,
+    redirs: Vec<String>,
+    patmatch: Option<String>,
+    ints: [i64; 4],
+    rpms: Option<Vec<Option<String>>>,
+    kpms: Option<Vec<Option<String>>>,
+}
+
+/// The string-valued `complete.c` globals, in snapshot order.
+fn comp_string_globals() -> [&'static std::sync::OnceLock<std::sync::Mutex<String>>; 25] {
+    use crate::ported::zle::complete as c;
+    [
+        &c::COMPPREFIX,
+        &c::COMPSUFFIX,
+        &c::COMPLASTPREFIX,
+        &c::COMPLASTSUFFIX,
+        &c::COMPIPREFIX,
+        &c::COMPISUFFIX,
+        &c::COMPQIPREFIX,
+        &c::COMPQISUFFIX,
+        &c::COMPQUOTE,
+        &c::COMPQUOTING,
+        &c::COMPQSTACK,
+        &c::COMPLIST,
+        &c::COMPCONTEXT,
+        &c::COMPPARAMETER,
+        &c::COMPREDIRECT,
+        &c::COMPPATINSERT,
+        &c::COMPLASTPROMPT,
+        &c::COMPVARED,
+        &c::COMPRESTORE,
+        &c::COMPINSERT,
+        &c::COMPEXACT,
+        &c::COMPEXACTSTR,
+        &c::COMPTOEND,
+        &c::COMPOLDLIST,
+        &c::COMPOLDINS,
+    ]
+}
+
+impl CompGlobalsSnap {
+    /// Capture the completion globals.
+    pub fn save() -> Self {
+        use crate::ported::zle::complete as c;
+        use std::sync::atomic::Ordering::Relaxed;
+        let get = |g: &'static std::sync::OnceLock<std::sync::Mutex<String>>| {
+            g.get_or_init(|| std::sync::Mutex::new(String::new()))
+                .lock()
+                .map(|v| v.clone())
+                .unwrap_or_default()
+        };
+        let getv = |g: &'static std::sync::OnceLock<std::sync::Mutex<Vec<String>>>| {
+            g.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                .lock()
+                .map(|v| v.clone())
+                .unwrap_or_default()
+        };
+        CompGlobalsSnap {
+            strings: comp_string_globals().iter().map(|g| get(g)).collect(),
+            words: getv(&c::COMPWORDS),
+            redirs: getv(&c::COMPREDIRS),
+            patmatch: crate::ported::zle::compcore::comppatmatch
+                .get()
+                .and_then(|m| m.lock().ok().map(|v| v.clone())),
+            ints: [
+                c::COMPCURRENT.load(Relaxed),
+                c::COMPLISTMAX.load(Relaxed),
+                c::COMPLISTLINES.load(Relaxed),
+                c::COMPIGNORED.load(Relaxed),
+            ],
+            rpms: c::comprpms.lock().map(|g| g.clone()).unwrap_or_default(),
+            kpms: c::compkpms.lock().map(|g| g.clone()).unwrap_or_default(),
+        }
+    }
+
+    /// Put the captured completion globals back.
+    pub fn restore(self) {
+        use crate::ported::zle::complete as c;
+        use std::sync::atomic::Ordering::Relaxed;
+        for (g, v) in comp_string_globals().iter().zip(self.strings) {
+            if let Ok(mut s) = g.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+                *s = v;
+            }
+        }
+        if let Ok(mut g) = c::COMPWORDS.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock() {
+            *g = self.words;
+        }
+        if let Ok(mut g) = c::COMPREDIRS.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock() {
+            *g = self.redirs;
+        }
+        if let Some(pm) = self.patmatch {
+            if let Ok(mut g) = crate::ported::zle::compcore::comppatmatch
+                .get_or_init(|| std::sync::Mutex::new(String::new()))
+                .lock()
+            {
+                *g = pm;
+            }
+        }
+        c::COMPCURRENT.store(self.ints[0], Relaxed);
+        c::COMPLISTMAX.store(self.ints[1], Relaxed);
+        c::COMPLISTLINES.store(self.ints[2], Relaxed);
+        c::COMPIGNORED.store(self.ints[3], Relaxed);
+        if let Ok(mut g) = c::comprpms.lock() {
+            *g = self.rpms;
+        }
+        if let Ok(mut g) = c::compkpms.lock() {
+            *g = self.kpms;
+        }
+    }
+}
+
 /// Snapshot of subshell-isolated state. Captured at `(` entry, restored at
 /// `)` exit. zsh subshell semantics: assignments inside `(…)` don't leak to
 /// the outer scope — and that includes `export`. zsh forks a child for the
@@ -506,6 +628,9 @@ pub struct SubshellSnapshot {
     pub paramtab: crate::ported::hashtable::hashtable_nodes<crate::ported::zsh_h::Param>,
     /// `paramtab_hashed_storage` field.
     pub paramtab_hashed_storage: crate::cow_map::CowHashMap<String, IndexMap<String, String>>,
+    /// The `complete.c` globals the completion params view; see
+    /// [`CompGlobalsSnap`].
+    pub comp_globals: CompGlobalsSnap,
     /// `positional_params` field.
     pub positional_params: Vec<String>,
     /// Values of the special parameters whose backing store is a process
@@ -7124,6 +7249,9 @@ impl ShellExecutor {
                     .map(|m| m.clone())
                     .unwrap_or_default();
                 let pparams_snap = self.pparams();
+                // c:Src/exec.c:4783 — the forked child owns private copies of
+                // the completion globals `$PREFIX`/`$words`/`$compstate[…]` view.
+                let comp_globals_snap = (!shared_state).then(CompGlobalsSnap::save);
                 let opts_snap = crate::ported::options::opt_state_snapshot();
                 // c:Src/exec.c:1161 — a command substitution runs in a
                 // subshell, so IFS changes inside it must NOT leak to the
@@ -7420,6 +7548,9 @@ impl ShellExecutor {
                     }
                     if let Ok(mut m) = crate::ported::params::paramtab_hashed_storage().lock() {
                         *m = paramtab_hashed_snap;
+                    }
+                    if let Some(g) = comp_globals_snap {
+                        g.restore();
                     }
                     self.set_pparams(pparams_snap);
                     crate::ported::options::opt_state_restore(opts_snap);

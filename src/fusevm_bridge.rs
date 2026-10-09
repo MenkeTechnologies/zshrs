@@ -20791,6 +20791,7 @@ impl fusevm::ShellHost for ZshrsHost {
                     .fetch_add(crate::ported::builtin::LOOPS.swap(0, SeqCst), SeqCst);
             }
             exec.subshell_snapshots.push(SubshellSnapshot {
+                comp_globals: crate::vm_helper::CompGlobalsSnap::save(),
                 // c:Src/utils.c:2111 `addlockfd` — the fds carrying
                 // `zsystem flock` locks. Recorded so subshell_end can close
                 // the ones the subshell itself opened (C's fork does it for
@@ -21138,6 +21139,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 {
                     *tab = snap.paramtab;
                 }
+                snap.comp_globals.restore();
                 // Restore the global-backed specials (see
                 // SubshellSnapshot::special_globals). MUST run after the
                 // paramtab restore above: setsparam writes through the GSU setfn
