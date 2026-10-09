@@ -192,6 +192,10 @@ fn autoload_missing_function_reports_failure() {
 /// check_dump_file body load (c:parse.c:3919-3958).
 #[test]
 fn autoload_zwc_only_dir_real_zsh_compiled() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -224,6 +228,10 @@ fn autoload_zwc_only_dir_real_zsh_compiled() {
 /// round-trip, and that real zsh accepts zshrs-written dumps).
 #[test]
 fn autoload_zwc_only_dir_zshrs_compiled() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -253,6 +261,10 @@ fn autoload_zwc_only_dir_zshrs_compiled() {
 /// Distinct bodies make the winner observable.
 #[test]
 fn autoload_zwc_mtime_preference() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -293,6 +305,10 @@ fn autoload_zwc_mtime_preference() {
 /// self-call output and the real-call output, in order.
 #[test]
 fn autoload_zwc_kshload_flag() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -324,6 +340,10 @@ fn autoload_zwc_kshload_flag() {
 /// fpath element that IS a `.zwc` file (c:parse.c:3753 strsfx arm).
 #[test]
 fn autoload_zwc_digest_and_zwc_fpath_entry() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -368,6 +388,10 @@ fn autoload_zwc_digest_and_zwc_fpath_entry() {
 /// (`f:2:`).
 #[test]
 fn corrupt_digest_warning_names_the_caller_then_the_autoloaded_body() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -416,6 +440,10 @@ fn corrupt_digest_warning_names_the_caller_then_the_autoloaded_body() {
 /// file is deleted entirely (slash-path arm, c:builtin.c:6092-6100).
 #[test]
 fn source_zwc_sibling_and_zwc_only() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -447,6 +475,10 @@ fn source_zwc_sibling_and_zwc_only() {
 /// must load + run the zshrs-written dump.
 #[test]
 fn autoload_zwc_open_paren_case_arms() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -509,6 +541,10 @@ fn autoload_zwc_open_paren_case_arms() {
 /// both.
 #[test]
 fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -580,6 +616,10 @@ fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
 /// being wrapped.
 #[test]
 fn autoload_zwc_digest_and_ksh_body_ignore_rcquotes() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }
@@ -854,6 +894,10 @@ kf
 /// plain file then runs.
 #[test]
 fn source_corrupt_zwc_diagnostic_names_the_caller() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     if !zsh_available() {
         return;
     }

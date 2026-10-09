@@ -833,6 +833,10 @@ if [[ $all == *'command not found: _zzuntagged_action'* ]]; then print \"K=yes\"
 /// one of those files.
 #[test]
 fn compinit_through_a_zwc_digest_registers_the_same_comps() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     use std::process::Command;
     if !crate::zpty_probe::zsh_available() {
         eprintln!("skip: zsh not found");
@@ -1043,6 +1047,10 @@ fn arguments_compadd_diagnostic_names_line_551() {
 /// differs between the two shells — so only its basename is compared.
 #[test]
 fn a_corrupt_digest_met_loading_a_completion_function_names_the_caller() {
+    if !crate::oracle::same_zsh_version() {
+        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
+        return;
+    }
     let zsh = crate::oracle::zsh_path();
     let tmp = tempfile::TempDir::new().expect("tmp");
     let fp = tmp.path().join("fp");
