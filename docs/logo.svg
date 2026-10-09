@@ -1,17 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-label="zshrs">
-  <rect width="1200" height="360" fill="#0F1419"/>
+  <defs>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="-400" y="-400" width="2400" height="1600">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="scan" width="8" height="8" patternUnits="userSpaceOnUse">
+      <rect width="8" height="3" fill="#000" opacity="0.28"/>
+    </pattern>
+  </defs>
+  <defs>
+    <g id="wm" fill="none" stroke-width="9" stroke-linejoin="miter" stroke-linecap="butt">
+      <path d="M4 22 H38 L4 54 H38"/>
+      <path transform="translate(52 0)" d="M38 22 H8 L4 26 V32 L8 36 H34 L38 40 V50 L34 54 H4"/>
+      <path transform="translate(104 0)" d="M6 2 V54 M6 28 H32 L38 34 V54"/>
+      <path transform="translate(156 0)" d="M6 22 V54 M6 32 L16 22 H38"/>
+      <path transform="translate(208 0)" d="M38 22 H8 L4 26 V32 L8 36 H34 L38 40 V50 L34 54 H4"/>
+    </g>
+  </defs>
+  <rect width="1200" height="360" fill="#05050a"/>
+  <polygon points="0,355 1200,355 1200,360 0,360" fill="#d300c5"/>
   <g transform="translate(30 30) scale(0.5859)">
-    <rect x="16" y="16" width="480" height="480" rx="96" fill="#1A222B" stroke="#2C3844" stroke-width="8"/>
-    <path d="M112 196 L172 256 L112 316" fill="none" stroke="#F2994A" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M236 178 H396 L236 330 H396" fill="none" stroke="#5CC8D7" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-    <rect x="236" y="372" width="160" height="28" rx="14" fill="#F2994A"/>
+    <polygon points="16,72 72,16 496,16 496,440 440,496 16,496" fill="#0a0a14" stroke="#05d9e8" stroke-width="6"/>
+    <polygon points="34,78 78,34 478,34 478,434 434,478 34,478" fill="none" stroke="#d300c5" stroke-width="2" opacity="0.7"/>
+    <polygon points="112,150 384,150 384,192 196,342 384,342 384,386 112,386 112,344 300,194 112,194" fill="#d300c5" opacity="0.85"/>
+    <g filter="url(#glow)">
+      <polygon points="120,140 392,140 392,182 204,332 392,332 392,376 120,376 120,334 308,184 120,184" fill="#05d9e8"/>
+    </g>
+    <rect x="100" y="246" width="200" height="8" fill="#0a0a14"/>
+    <polygon points="120,258 190,258 184,266 120,266" fill="#ff2a6d"/>
+    <polygon points="318,214 372,256 318,298 318,270 340,256 318,242" fill="#ff2a6d" filter="url(#glow)"/>
+    <rect x="34" y="34" width="444" height="444" fill="url(#scan)"/>
+    <polygon points="400,470 470,470 470,400" fill="#ff2a6d"/>
   </g>
-  <g transform="translate(400 108) scale(2.4)" fill="none" stroke="#E8E6DF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4 4 H40 L4 56 H40"/>
-    <path transform="translate(55 0)" d="M40 4 H4 V30 H40 V56 H4"/>
-    <path transform="translate(110 0)" d="M4 4 V56 M4 30 H40 V56"/>
-    <path transform="translate(165 0)" d="M4 56 V4 H40"/>
-    <path transform="translate(220 0)" d="M40 4 H4 V30 H40 V56 H4"/>
-    <rect x="279" y="52" width="40" height="9" rx="4.5" fill="#F2994A" stroke="none"/>
+  <g transform="translate(400 86) scale(2.7)">
+    <use href="#wm" transform="translate(-3 2)" stroke="#d300c5"/>
+    <g filter="url(#glow)"><use href="#wm" stroke="#05d9e8" opacity="0.55"/></g>
+    <use href="#wm" stroke="#e0f0ff"/>
+    <rect x="262" y="40" width="26" height="14" fill="#ff2a6d" filter="url(#glow)"/>
   </g>
 </svg>

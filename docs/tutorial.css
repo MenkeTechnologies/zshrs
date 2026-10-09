@@ -667,3 +667,11 @@
   .tutorial-card    { opacity: 1; }
 }
 
+
+.tutorial-logo {
+  display: block;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  margin-right: 1rem;
+}
