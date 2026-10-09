@@ -481,12 +481,15 @@ pub fn handle_sub(jobtab: &mut [job], super_idx: usize, fg: bool) -> i32 {
 
             // c:322-325 — `if (jn->stat & STAT_DISOWN) deletejob(jn, 1);`
             if (jobtab[super_idx].stat & stat::DISOWN) != 0 {
-                deletejob(&mut jobtab[super_idx], true);
+                deletejob(jobtab, super_idx, true);
             }
         }
-        // c:327 — curjob = jn - jobtab;
-        if let Ok(mut cj) = CURJOB.get_or_init(|| Mutex::new(-1)).lock() {
-            *cj = super_idx as i32;
+        // c:327-329 — `if (fg) curjob = jn - jobtab;` — not from a signal
+        // handler, where the superjob might not be the current job at all.
+        if fg {
+            if let Ok(mut cj) = CURJOB.get_or_init(|| Mutex::new(-1)).lock() {
+                *cj = super_idx as i32;
+            }
         }
         return 0; // c:340 fall-through return
     } else if (jobtab[sub_idx].stat & stat::STOPPED) != 0 {
@@ -512,10 +515,7 @@ pub fn handle_sub(jobtab: &mut [job], super_idx: usize, fg: bool) -> i32 {
         if let Ok(mut cj) = CURJOB.get_or_init(|| Mutex::new(-1)).lock() {
             *cj = super_idx as i32; // c:336
         }
-        // c:337 — printjob(jn, !!isset(LONGLISTJOBS), 1);
-        // NOT PORTED: handle_sub() does not call printjob(); the Rust
-        // printjob() returns the text and needs the cur_job/prev_job
-        // indices from the caller.
+        crate::exec_jobs::printjob_synch(jobtab, super_idx, i32::from(isset(LONGLISTJOBS)), 1); // c:337
         return 1; // c:338
     }
     0 // c:340
@@ -832,12 +832,11 @@ pub fn update_job(jobtab: &mut [job], jn: usize) -> bool {
                     && (jobtab[i].stat & stat::NOPRINT) == 0
                 {
                     // c:532-543 — print the user-visible superjob's state.
-                    if crate::exec_jobs::printjob_async(jobtab, i, thisjob)
+                    if crate::exec_jobs::printjob_synch(jobtab, i, i32::from(isset(LONGLISTJOBS)), 0)
                         && zleactive.load(Ordering::Relaxed) != 0
                     {
                         crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH);
                     }
-                    crate::exec_jobs::printjob_delete_tail(jobtab, i);
                 }
             }
             return true; // c:545
@@ -1004,12 +1003,11 @@ pub fn update_job(jobtab: &mut [job], jn: usize) -> bool {
     {
         // c:645-652 — `a & job started earlier in the SAME list is left in
         // the table until STAT_LOCKED` (docs/BUGS.md #1094).
-        if crate::exec_jobs::printjob_async(jobtab, jn, thisjob)
+        if crate::exec_jobs::printjob_synch(jobtab, jn, i32::from(isset(LONGLISTJOBS)), 0)
             && zleactive.load(Ordering::Relaxed) != 0
         {
             crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH);
         }
-        crate::exec_jobs::printjob_delete_tail(jobtab, jn); // c:Src/jobs.c:1350-1363
     }
 
     // c:654-678 — When MONITOR is set, the foreground process runs in a
@@ -1532,7 +1530,7 @@ pub fn sigmsg(sig: i32) -> &'static str {
 ///
 /// `thisfmt` is C's `int thisfmt = job == thisjob && synch != 2;`
 /// (c:1255), computed by the caller: only the asynchronous report
-/// (`exec_jobs::printjob_async`, synch 0) can pass `true`.
+/// (`exec_jobs::printjob_print`, synch 0) can pass `true`.
 ///
 /// WARNING: param names don't match C — Rust=(job, job_num, lng, cur_job,
 /// prev_job, thisfmt) vs C=(jn, lng, synch)
@@ -1717,9 +1715,8 @@ pub fn printjob(
     // c:1344-1353 — `jobs -d` (lng & 4) follows the job with the
     // directory it was started in: `jn->pwd` once a later `cd` has
     // stamped it (setjobpwd, c:1890), otherwise the current `pwd`.
-    // NOT PORTED: the `interact && job == thisjob && jn->pwd != pwd`
-    // "(pwd now: …)" arm — this formatter has no reliable `thisjob`
-    // (THISJOB is -1 between pipelines), so it would misfire.
+    // The `interact && job == thisjob && jn->pwd != pwd` "(pwd now: …)" arm
+    // is `exec_jobs::printjob_print`'s, which knows `thisjob`.
     let header = if (lng & 4) != 0 {
         let dir = match job.pwd.as_deref() {
             Some(p) => p.to_string(),
@@ -1730,16 +1727,8 @@ pub fn printjob(
         header
     };
 
-    // c:1220-1221 — `if (should_report_time(jn)) dumptime(jn);`
-    //               Also fires for c:1354-1355 (synchronous-wait variant).
-    let reporttime: f64 = getsparam("REPORTTIME")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(-1.0);
-    if should_report_time(job, reporttime) {
-        if let Some(timing) = dumptime(job) {
-            return format!("{}\n{}", header, timing);
-        }
-    }
+    // The `should_report_time`/`dumptime` step belongs to the done-job tail
+    // (c:1350-1355), not the status lines: `exec_jobs::printjob_delete_tail`.
     header
 }
 
@@ -1884,36 +1873,34 @@ pub fn cleanfilelists(jobtab: &mut [job]) {
 /// The previous Rust port was missing the `pwd`/`ty`/`other`/
 /// `stty_in_env` field resets — leaked saved-tty state into the
 /// next job reuse of the slot. Now resets all fields per C. The
-/// STAT_WASSUPER recursive delete (c:1480-1488) reaches the
-/// partner slot through the global `JOBTAB`.
-pub fn freejob(jn: &mut job, deleting: bool) {
+/// STAT_WASSUPER recursive delete (c:1480-1488) reaches the partner slot
+/// through `jobtab`, as C's `jobtab + jn->other` does: `jobtab` is the
+/// caller's slice of the table and `jn` the slot's index in it, so nothing
+/// here locks `JOBTAB` and a caller may hold the guard.
+pub fn freejob(jobtab: &mut [job], jn: usize, deleting: bool) {
     // c:1457
     // c:1461-1466 — `procs = NULL; free each`. Rust Drop on Vec covers.
-    jn.procs.clear();
+    jobtab[jn].procs.clear();
     // c:1468-1473 — `auxprocs = NULL; free each`.
-    jn.auxprocs.clear();
+    jobtab[jn].auxprocs.clear();
     // c:1475-1476 — `if (jn->ty) zfree(jn->ty);`.
-    jn.ty = None;
+    jobtab[jn].ty = None;
     // c:1477-1479 — `if (jn->pwd) zsfree(jn->pwd); jn->pwd = NULL;`.
-    jn.pwd = None;
+    jobtab[jn].pwd = None;
     // c:1480-1488 — `if (jn->stat & STAT_WASSUPER) { int job = jn -
     // jobtab; if (deleting) deletejob(jobtab + jn->other, 0); else
-    // freejob(jobtab + jn->other, 0); jn = jobtab + job; }`. try_lock:
-    // a caller that already holds the JOBTAB guard owns the partner
-    // slot through that guard and cannot be re-entered here.
-    if (jn.stat & stat::WASSUPER) != 0 {
-        if let Some(tab) = JOBTAB.get() {
-            if let Ok(mut jobs) = tab.try_lock() {
-                if let Some(jno) = jobs.get_mut(jn.other as usize) {
-                    if deleting {
-                        deletejob(jno, false); // c:1484
-                    } else {
-                        freejob(jno, false); // c:1486
-                    }
-                }
+    // freejob(jobtab + jn->other, 0); jn = jobtab + job; }`.
+    if (jobtab[jn].stat & stat::WASSUPER) != 0 {
+        let other = jobtab[jn].other as usize;
+        if other < jobtab.len() {
+            if deleting {
+                deletejob(jobtab, other, false); // c:1484
+            } else {
+                freejob(jobtab, other, false); // c:1486
             }
         }
     }
+    let jn = &mut jobtab[jn];
     // c:1489 — `jn->gleader = jn->other = 0;`.
     jn.gleader = 0;
     jn.other = 0;
@@ -1947,12 +1934,16 @@ pub fn freejob(jn: &mut job, deleting: bool) {
 /// stayed populated even after the job was "deleted", silently
 /// corrupting the next slot reuse. The STAT_ATTACH (attachtty) and
 /// STAT_SUPERJOB orphan-marking paths are implemented below.
-pub fn deletejob(jn: &mut job, disowning: bool) {
+///
+/// `jobtab` is the caller's slice of the table (C's global `jobtab`) and `jn`
+/// the job's index in it (C's `jn - jobtab`); the STAT_SUPERJOB arm reaches
+/// `jobtab + jn->other` through the slice, so `JOBTAB` is never locked here.
+pub fn deletejob(jobtab: &mut [job], jn: usize, disowning: bool) {
     // c:1512
     // c:1514 — `deletefilelist(jn->filelist, disowning);`. When
     // disowning, files are NOT deleted from disk; the filelist entries
     // are simply dropped.
-    deletefilelist(jn, disowning);
+    deletefilelist(&mut jobtab[jn], disowning);
     // c:1515-1518 — `if (jn->stat & STAT_ATTACH) { attachtty(mypgrp);
     //                adjustwinsize(0); }`. `attachtty(mypgrp)` is the
     // canonical `tcsetpgrp(0, mypgrp)` (the same pattern used inline at
@@ -1960,7 +1951,7 @@ pub fn deletejob(jn: &mut job, disowning: bool) {
     // from TIOCGWINSZ; on Rust we route through the canonical utils
     // adjustcolumns/adjustlines which lazy-evaluate on demand, so the
     // call is a no-op (the next adjust* read picks up the new pgrp).
-    if (jn.stat & STAT_ATTACH) != 0 {
+    if (jobtab[jn].stat & STAT_ATTACH) != 0 {
         // c:1515
         #[cfg(unix)]
         unsafe {
@@ -1974,23 +1965,19 @@ pub fn deletejob(jn: &mut job, disowning: bool) {
     // c:1519-1523 — `if (jn->stat & STAT_SUPERJOB) { job jno = jobtab +
     //                jn->other; if (jno->stat & STAT_SUBJOB)
     //                  jno->stat |= STAT_SUBJOB_ORPHANED; }`.
-    if (jn.stat & STAT_SUPERJOB) != 0 {
+    if (jobtab[jn].stat & STAT_SUPERJOB) != 0 {
         // c:1519
-        let other = jn.other as usize;
-        if let Some(tab) = JOBTAB.get() {
+        let other = jobtab[jn].other as usize;
+        if let Some(jno) = jobtab.get_mut(other) {
             // c:1520 jobtab + jn->other
-            if let Ok(mut jobs) = tab.lock() {
-                if let Some(jno) = jobs.get_mut(other) {
-                    if (jno.stat & STAT_SUBJOB) != 0 {
-                        // c:1521
-                        jno.stat |= STAT_SUBJOB_ORPHANED; // c:1522
-                    }
-                }
+            if (jno.stat & STAT_SUBJOB) != 0 {
+                // c:1521
+                jno.stat |= STAT_SUBJOB_ORPHANED; // c:1522
             }
         }
     }
     // c:1525 — `freejob(jn, 1);` full reset of all per-job state.
-    freejob(jn, true);
+    freejob(jobtab, jn, true);
 }
 
 /// Add process to job (from jobs.c addproc lines 1537-1597)
@@ -2181,70 +2168,11 @@ pub fn zwaitjob(job: usize, wait_cmd: i32) -> Option<i32> {
     if changed {
         // c:1691-1692 — `if (jn->stat & STAT_CHANGED)
         //                    printjob(jn, !!isset(LONGLISTJOBS), 1);`
-        // (synch 1: Src/jobs.c:1147-1365). Table access stays under one
-        // guard; nothing in here re-enters JOBTAB except through the
-        // already-locked slice.
+        // (synch 1: Src/jobs.c:1147-1365, print gate, `(pwd now:)` line and
+        // the done-job delete tail included). The table is handed to
+        // printjob as the locked slice; nothing in it re-locks JOBTAB.
         let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
-        let thisjob = *THISJOB
-            .get_or_init(|| Mutex::new(-1))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let cur = *CURJOB
-            .get_or_init(|| Mutex::new(-1))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let prev = *PREVJOB
-            .get_or_init(|| Mutex::new(-1))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let is_thisjob = job as i32 == thisjob;
-        if let Some(jn) = tab.get(job) {
-            // c:1163-1164, c:1190-1221 — does any finished process force a report?
-            let skip_print = (jn.stat & stat::NOPRINT) != 0;
-            let mut sflag = false;
-            for pn in jn.procs.iter() {
-                if pn.status == SP_RUNNING {
-                    continue;
-                }
-                if libc::WIFSIGNALED(pn.status) {
-                    let sig = libc::WTERMSIG(pn.status);
-                    if sig != libc::SIGINT && sig != libc::SIGPIPE {
-                        sflag = true;
-                    }
-                } else if !libc::WIFSTOPPED(pn.status)
-                    && isset(crate::ported::zsh_h::PRINTEXITVALUE)
-                    && isset(crate::ported::zsh_h::SHINSTDIN)
-                    && libc::WEXITSTATUS(pn.status) != 0
-                {
-                    sflag = true;
-                }
-            }
-            // c:1248-1250 — `synch == 2 || ((interact || synch) && jobbing &&
-            //                 ((jn->stat & STAT_STOPPED) || sflag || job != thisjob))`
-            if !skip_print
-                && crate::ported::zsh_h::jobbing()
-                && ((jn.stat & stat::STOPPED) != 0 || sflag || !is_thisjob)
-            {
-                let s = printjob(
-                    jn,
-                    job,
-                    i32::from(isset(LONGLISTJOBS)),
-                    (cur >= 0).then_some(cur as usize),
-                    (prev >= 0).then_some(prev as usize),
-                    is_thisjob, // c:1255 — `thisfmt = job == thisjob && synch != 2`
-                );
-                let tty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-                let fd = if tty >= 0 { tty } else { libc::STDERR_FILENO };
-                let _ = crate::ported::utils::write_loop(fd, format!("{}\n", s).as_bytes());
-            }
-        }
-        // c:1350-1365 — delete job if done.
-        if tab.get(job).is_some_and(|jn| (jn.stat & stat::DONE) != 0) {
-            storepipestats(&tab[job], i32::from(is_thisjob), i32::from(is_thisjob)); // c:1352
-            crate::exec_jobs::printjob_delete_tail(&mut tab, job); // c:1356-1362
-        } else if let Some(jn) = tab.get_mut(job) {
-            jn.stat &= !stat::CHANGED; // c:1364
-        }
+        crate::exec_jobs::printjob_synch(&mut tab, job, i32::from(isset(LONGLISTJOBS)), 1);
     }
     {
         // c:1693-1704 — the main shell is finished with any file descriptors
@@ -2341,58 +2269,128 @@ pub fn zwaitjob(job: usize, wait_cmd: i32) -> Option<i32> {
 }
 
 // wait for running job to finish                                           // c:1763
-/// Wait for all foreground jobs to finish (from jobs.c waitjobs)
-pub fn waitjobs(jobtab: &mut [job], thisjob: usize) {
-    // c:1763
-    if thisjob < jobtab.len() {
-        while !jobtab[thisjob].is_done() && !jobtab[thisjob].is_stopped() {
+/// Port of `waitjobs(void)` from `Src/jobs.c:1772-1783`.
+/// ```c
+/// Job jn = jobtab + thisjob;
+/// DPUTS(thisjob == -1, "No valid job in waitjobs.");
+/// /* If there's a subjob, it should finish first. */
+/// if (jn->stat & STAT_SUPERJOB)
+///     waitonejob(jobtab + jn->other);
+/// waitonejob(jn);
+/// thisjob = -1;
+/// ```
+/// Like `zwaitjob`, no `JOBTAB` guard is held across a wait: each pass locks
+/// the table for the done/stopped test, releases it for `waitpid`, and locks
+/// it again only to file the reaped status with `update_bg_job`, so callers
+/// must not hold the guard either (C's `jobtab` is a bare global).
+pub fn waitjobs() {
+    // c:1772
+    let table = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    let thisjob = *THISJOB
+        .get_or_init(|| Mutex::new(-1))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    DPUTS!(thisjob == -1, "No valid job in waitjobs."); // c:1775
+    if thisjob < 0 {
+        return;
+    }
+    let thisjob = thisjob as usize;
+    // c:1778-1780 — the subjob finishes first, then the job itself.
+    let subjob = table
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(thisjob)
+        .filter(|jn| (jn.stat & stat::SUPERJOB) != 0)
+        .map(|jn| jn.other as usize);
+    for jn in subjob.into_iter().chain(std::iter::once(thisjob)) {
+        loop {
+            let finished = table
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(jn)
+                .map_or(true, |j| j.is_done() || j.is_stopped());
+            if finished {
+                break;
+            }
             #[cfg(unix)]
             {
                 let mut status: i32 = 0;
                 let pid = unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED) };
                 if pid > 0 {
-                    update_bg_job(jobtab, pid, status);
-                    continue;
-                }
-                // !!! WARNING: RUST-ONLY !!! C waits in zwaitjob's
-                // signal_suspend and its own SIGCHLD handler files the status
-                // into the proc. zshrs is multi-threaded: SIGCHLD can land on
-                // another thread whose reaper takes the child first, so this
-                // waitpid sees EINTR (the handler ran here) or ECHILD (it ran
-                // elsewhere). Breaking out on either left the proc at
-                // SP_RUNNING (-1), whose exit status reads as 255:
-                // `cmd=/bin/true; $cmd; echo $?` printed 255 on Linux about
-                // one run in four. Retry an interrupted wait; on ECHILD
-                // claim what the reaper published for each unfinished proc.
-                match std::io::Error::last_os_error().raw_os_error() {
-                    Some(libc::EINTR) => continue,
-                    Some(libc::ECHILD) => {
-                        let running: Vec<i32> = jobtab[thisjob]
-                            .procs
-                            .iter()
-                            .filter(|p| p.is_running())
-                            .map(|p| p.pid)
-                            .collect();
-                        let mut claimed = false;
-                        for pid in running {
-                            if let Some((raw, _, _)) = crate::fusevm_bridge::take_reaped_status(pid) {
-                                update_bg_job(jobtab, pid, raw);
-                                claimed = true;
+                    update_bg_job(
+                        &mut table.lock().unwrap_or_else(|e| e.into_inner()),
+                        pid,
+                        status,
+                    );
+                } else {
+                    // !!! WARNING: RUST-ONLY !!! C waits in zwaitjob's
+                    // signal_suspend and its own SIGCHLD handler files the
+                    // status into the proc. zshrs is multi-threaded: SIGCHLD
+                    // can land on another thread whose reaper takes the child
+                    // first, so this waitpid sees EINTR (the handler ran here)
+                    // or ECHILD (it ran elsewhere). Breaking out on either
+                    // left the proc at SP_RUNNING (-1), whose exit status
+                    // reads as 255: `cmd=/bin/true; $cmd; echo $?` printed 255
+                    // on Linux about one run in four. Retry an interrupted
+                    // wait; on ECHILD claim what the reaper published for each
+                    // unfinished proc.
+                    match std::io::Error::last_os_error().raw_os_error() {
+                        Some(libc::EINTR) => {}
+                        Some(libc::ECHILD) => {
+                            let running: Vec<i32> = table
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .get(jn)
+                                .map(|j| j.procs.iter().filter(|p| p.is_running()).map(|p| p.pid).collect())
+                                .unwrap_or_default();
+                            let mut claimed = false;
+                            for pid in running {
+                                if let Some((raw, _, _)) = crate::fusevm_bridge::take_reaped_status(pid) {
+                                    update_bg_job(
+                                        &mut table.lock().unwrap_or_else(|e| e.into_inner()),
+                                        pid,
+                                        raw,
+                                    );
+                                    claimed = true;
+                                }
+                            }
+                            if !claimed {
+                                break;
                             }
                         }
-                        if !claimed {
-                            break;
-                        }
+                        _ => break,
                     }
-                    _ => break,
                 }
             }
             #[cfg(not(unix))]
             {
                 break;
             }
+            // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for
+            // a child that is not `thisjob`, run now that JOBTAB is unlocked.
+            for _ in 0..CHLD_TRAP_PENDING.swap(0, Ordering::SeqCst) {
+                crate::ported::signals::dotrap(libc::SIGCHLD);
+            }
+            // c:658-678 — the trapped SIGINT/SIGQUIT pseudo-delivery
+            // update_job parked in PSEUDO_SIG_TRAP_PENDING.
+            let pseudo = PSEUDO_SIG_TRAP_PENDING.swap(0, Ordering::SeqCst);
+            if pseudo != 0 {
+                crate::ported::signals::dotrap(pseudo); // c:663
+                if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+                    crate::ported::builtin::BREAKS.store(
+                        crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    ); // c:671-672
+                }
+                check_cursh_sig(&table.lock().unwrap_or_else(|e| e.into_inner()), pseudo); // c:677
+            }
         }
     }
+    // c:1782 — `thisjob = -1;`
+    *THISJOB
+        .get_or_init(|| Mutex::new(-1))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = -1;
 }
 
 /// Port of `clearjobtab(int monitor)` from `Src/jobs.c:1780`.
@@ -2452,7 +2450,7 @@ pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
         } else if (jobs[i].stat & STAT_INUSE) != 0 {
             // c:1796
             // c:1797 — `freejob(jobtab+i, 0);`.
-            freejob(&mut jobs[i], false); // c:1797
+            freejob(&mut jobs, i, false); // c:1797
         }
     }
     // c:1800-1817 — `if (monitor && oldmaxjob) { snapshot to oldjobtab }`.
@@ -2730,8 +2728,8 @@ pub fn spawnjob() {
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
             .expect("jobtab poisoned");
-        if let Some(j) = tab.get_mut(thisjob) {
-            deletejob(j, false); // c:1916
+        if thisjob < tab.len() {
+            deletejob(&mut tab, thisjob, false); // c:1916
         }
     } else {
         let mut tab = JOBTAB
@@ -2919,41 +2917,11 @@ pub fn scanjobs(jobtab: &mut [job]) {
     // finished entry and clears STAT_CHANGED otherwise (c:1364).
     // WARNING: param names don't match C — Rust=(jobtab) vs C=(void);
     // C reads the jobtab global, Rust callers pass the locked slice.
-    let long_list = isset(LONGLISTJOBS);
     for i in 1..jobtab.len() {
         // c:1998
         if (jobtab[i].stat & stat::CHANGED) != 0 {
             // c:1999
-            if crate::ported::zsh_h::jobbing() {
-                // c:1236-1238 print gate
-                let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-                let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-                let s = printjob(
-                    &jobtab[i],
-                    i,
-                    long_list as i32,
-                    if curjob >= 0 {
-                        Some(curjob as usize)
-                    } else {
-                        None
-                    },
-                    if prevjob >= 0 {
-                        Some(prevjob as usize)
-                    } else {
-                        None
-                    },
-                    false,
-                ); // c:2000
-                if !s.is_empty() {
-                    eprintln!("{}", s);
-                }
-            }
-            if (jobtab[i].stat & stat::DONE) != 0 {
-                // c:1350-1363 — printjob's done-delete tail.
-                crate::exec_jobs::printjob_delete_tail(jobtab, i);
-            } else {
-                jobtab[i].stat &= !stat::CHANGED; // c:1364
-            }
+            crate::exec_jobs::printjob_synch(jobtab, i, i32::from(isset(LONGLISTJOBS)), 1); // c:2000
         }
     }
 }
@@ -3773,7 +3741,7 @@ pub fn bin_fg(
                         ),
                     );
                 }
-                deletejob(j, true); // c:2748
+                deletejob(&mut tab, job, true); // c:2748
                 drop(tab);
                 // Same curjob/prevjob repair as the per-arg disown arm.
                 let cj = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
@@ -3818,8 +3786,8 @@ pub fn bin_fg(
                 // `deletejob(jobtab + job, 1)` — drop the entry without
                 // killing/ waiting on the process.
                 let mut tab = table.lock().expect("jobtab poisoned");
-                if let Some(j) = tab.get_mut(curjob as usize) {
-                    deletejob(j, true); // c:2729
+                if (curjob as usize) < tab.len() {
+                    deletejob(&mut tab, curjob as usize, true); // c:2729
                 }
                 drop(tab);
                 // The deleted job was curjob — re-pick (printjob's
@@ -4248,7 +4216,7 @@ pub fn bin_fg(
             // finished entry leaves the table before wait returns
             // (zsh: a second `wait %1` errors "no such job").
             if let Ok(mut tab) = table.lock() {
-                crate::exec_jobs::printjob_delete_tail(&mut tab, p as usize);
+                crate::exec_jobs::printjob_delete_tail(&mut tab, p as usize, p as usize, 1);
             }
         } else if func == BIN_JOBS {
             let t = table.lock().expect("jobtab poisoned");
@@ -4290,7 +4258,7 @@ pub fn bin_fg(
                         ),
                     ); // c:2717-2721
                 }
-                deletejob(j, true); // c:2729
+                deletejob(&mut tab, p as usize, true); // c:2729
             }
             drop(tab);
             // curjob/prevjob re-pick if we just disowned one of them.
@@ -5422,21 +5390,14 @@ pub fn waitonejob(jn: i32) {
         // c:1751 — `zwaitjob(jn - jobtab, 0);`
         zwaitjob(jn as usize, 0);
     } else {
-        // c:1753 — `deletejob(jn, 0);` The slot is taken out of the table
-        // for the call: deletejob locks JOBTAB itself (STAT_SUPERJOB arm),
-        // so it must not run under a guard. A `jn` outside the table (-1:
-        // a command that never built a job) has nothing to delete.
+        // c:1753 — `deletejob(jn, 0);` through the table slice, which
+        // deletejob indexes itself (no second JOBTAB lock). A `jn` outside
+        // the table (-1: a command that never built a job) has nothing to
+        // delete.
         if let Some(i) = idx {
-            let taken = table
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_mut(i)
-                .map(std::mem::take);
-            if let Some(mut slot) = taken {
-                deletejob(&mut slot, false);
-                if let Some(dst) = table.lock().unwrap_or_else(|e| e.into_inner()).get_mut(i) {
-                    *dst = slot;
-                }
+            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            if i < tab.len() {
+                deletejob(&mut tab, i, false);
             }
         }
         // c:1754 — `pipestats[0] = lastval;`
@@ -5979,10 +5940,11 @@ mod tests {
         unsetparam("TIMEFMT");
     }
 
-    /// `printjob` appends the dumptime block when the job is
-    /// STAT_TIMED (c:1220-1221 in printjob).
+    /// The status lines of `printjob` carry no timing block: dumptime runs in
+    /// the done-job tail (c:1354-1355, `exec_jobs::printjob_delete_tail`), so a
+    /// STAT_TIMED job's text appears exactly once in the formatted output.
     #[test]
-    fn printjob_appends_timing_when_stat_timed() {
+    fn printjob_status_lines_omit_timing_for_stat_timed() {
         let _g = crate::test_util::global_state_lock();
         setsparam("TIMEFMT", "%J");
         let mut job = job::default();
@@ -5999,12 +5961,7 @@ mod tests {
             "expected status line; got: {:?}",
             out
         );
-        // Last line should be the dumptime output (%J → text).
-        assert!(
-            out.ends_with("echo hi"),
-            "expected timing line at end; got: {:?}",
-            out
-        );
+        assert_eq!(out.matches("echo hi").count(), 1, "no dumptime line in the formatter; got: {:?}", out);
         unsetparam("TIMEFMT");
     }
 
@@ -6512,17 +6469,161 @@ mod tests {
     #[test]
     fn deletejob_calls_freejob_to_clear_all_state() {
         let _g = crate::test_util::global_state_lock();
-        let mut jn = job::new();
-        jn.pwd = Some("/tmp/deletejob-pwd".to_string());
-        jn.other = 42;
-        jn.stty_in_env = 1;
-        jn.stat = stat::SUPERJOB;
-        deletejob(&mut jn, false);
+        let mut tab = vec![job::new()];
+        tab[0].pwd = Some("/tmp/deletejob-pwd".to_string());
+        tab[0].other = 42;
+        tab[0].stty_in_env = 1;
+        tab[0].stat = stat::SUPERJOB;
+        deletejob(&mut tab, 0, false);
         // c:1525 — freejob(jn, 1) called → all fields reset.
-        assert_eq!(jn.pwd, None, "c:1525 — pwd cleared via freejob chain");
-        assert_eq!(jn.other, 0, "c:1525 — other cleared");
-        assert_eq!(jn.stty_in_env, 0, "c:1525 — stty_in_env cleared");
-        assert_eq!(jn.stat, 0, "c:1525 — stat cleared");
+        assert_eq!(tab[0].pwd, None, "c:1525 — pwd cleared via freejob chain");
+        assert_eq!(tab[0].other, 0, "c:1525 — other cleared");
+        assert_eq!(tab[0].stty_in_env, 0, "c:1525 — stty_in_env cleared");
+        assert_eq!(tab[0].stat, 0, "c:1525 — stat cleared");
+    }
+
+    /// Runs the closure on a helper thread and fails (instead of hanging the test
+    /// run) when it has not finished after five seconds. The caller keeps the
+    /// global `JOBTAB` guard held for the whole call, which is the state the
+    /// deadlocks were reached in.
+    macro_rules! finishes_while_jobtab_is_held {
+        ($f:expr) => {{
+            let _held = JOBTAB
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let (tx, rx) = std::sync::mpsc::channel();
+            let f = $f;
+            std::thread::spawn(move || {
+                let _ = tx.send(f());
+            });
+            rx.recv_timeout(Duration::from_secs(5))
+                .expect("deadlock: the call re-locked JOBTAB while the caller held its guard")
+        }};
+    }
+
+    /// `Src/jobs.c:1519-1523` — deleting a superjob marks its subjob
+    /// STAT_SUBJOB_ORPHANED through `jobtab + jn->other`. The ported
+    /// deletejob locked the global `JOBTAB` for that, so any caller already
+    /// holding the guard (printjob's tail from update_job, handle_sub,
+    /// zwaitjob) hung on it.
+    #[test]
+    fn deletejob_of_superjob_orphans_subjob_without_locking_jobtab() {
+        let _g = crate::test_util::global_state_lock();
+        let tab = finishes_while_jobtab_is_held!(|| {
+            let mut tab = vec![job::default(); 3];
+            tab[1].stat = stat::INUSE | stat::SUBJOB;
+            tab[2].stat = stat::INUSE | stat::SUPERJOB;
+            tab[2].other = 1;
+            deletejob(&mut tab, 2, false);
+            tab
+        });
+        assert_eq!(tab[2].stat, 0, "c:1525 — the superjob slot is freed");
+        assert_ne!(tab[1].stat & STAT_SUBJOB_ORPHANED, 0, "c:1522 — subjob marked orphaned");
+    }
+
+    /// `Src/jobs.c:1480-1488` — freejob of a STAT_WASSUPER job with
+    /// `deleting` set deletes the partner slot too. The port reached it with
+    /// a `try_lock` on `JOBTAB` that silently skipped the partner whenever
+    /// the caller held the guard.
+    #[test]
+    fn freejob_wassuper_deletes_partner_slot_through_the_slice() {
+        let _g = crate::test_util::global_state_lock();
+        let tab = finishes_while_jobtab_is_held!(|| {
+            let mut tab = vec![job::default(); 3];
+            tab[1].stat = stat::INUSE;
+            tab[1].pwd = Some("/partner".to_string());
+            tab[2].stat = stat::INUSE | stat::WASSUPER;
+            tab[2].other = 1;
+            deletejob(&mut tab, 2, false);
+            tab
+        });
+        assert_eq!(tab[2].stat, 0);
+        assert_eq!(tab[1].stat, 0, "c:1484 — partner slot deleted");
+        assert_eq!(tab[1].pwd, None, "c:1484 — partner slot freed");
+    }
+
+    /// `Src/jobs.c:1350-1363` through `printjob` — a done superjob that is
+    /// reported (here: skipped, STAT_NOPRINT) is deleted by the print tail
+    /// with the table slice in hand; deleting it orphans its subjob.
+    #[test]
+    fn printjob_synch_done_superjob_is_deleted_with_jobtab_held() {
+        let _g = crate::test_util::global_state_lock();
+        let tab = finishes_while_jobtab_is_held!(|| {
+            let mut tab = vec![job::default(); 3];
+            tab[1].stat = stat::INUSE | stat::SUBJOB;
+            tab[2].stat =
+                stat::INUSE | stat::SUPERJOB | stat::DONE | stat::CHANGED | stat::NOPRINT;
+            tab[2].other = 1;
+            let mut p = process::new(7);
+            p.status = 0;
+            tab[2].procs.push(p);
+            crate::exec_jobs::printjob_synch(&mut tab, 2, 0, 1);
+            tab
+        });
+        assert_eq!(tab[2].stat, 0, "c:1356 — done job deleted by the tail");
+        assert_ne!(tab[1].stat & STAT_SUBJOB_ORPHANED, 0);
+    }
+
+    /// `Src/jobs.c:1364` — printjob of a job that is not done only clears
+    /// STAT_CHANGED; the job stays.
+    #[test]
+    fn printjob_synch_running_job_clears_changed_only() {
+        let _g = crate::test_util::global_state_lock();
+        let mut tab = vec![job::default(); 2];
+        tab[1].stat = stat::INUSE | stat::CHANGED;
+        tab[1].procs.push(process::new(9));
+        crate::exec_jobs::printjob_synch(&mut tab, 1, 0, 1);
+        assert_eq!(tab[1].stat, stat::INUSE);
+        assert_eq!(tab[1].procs.len(), 1);
+    }
+
+    /// `Src/jobs.c:327-337` — handle_sub of a stopped subjob stops the
+    /// superjob, copies the stopped status onto its running procs, makes it
+    /// the current job and calls `printjob(jn, lng, 1)`, which leaves the
+    /// reported job in the table with STAT_CHANGED cleared (c:1364). Run with the
+    /// `JOBTAB` guard held.
+    #[test]
+    fn handle_sub_stopped_subjob_prints_superjob_with_jobtab_held() {
+        let _g = crate::test_util::global_state_lock();
+        let old_cur = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+        let (ret, tab) = finishes_while_jobtab_is_held!(|| {
+            let mut tab = vec![job::default(); 3];
+            let mut sub = process::new(11);
+            sub.status = 0x7f | (libc::SIGTSTP << 8); // WIFSTOPPED
+            tab[1].stat = stat::INUSE | stat::SUBJOB | stat::STOPPED | stat::CHANGED;
+            tab[1].procs.push(sub);
+            tab[2].stat = stat::INUSE | stat::SUPERJOB;
+            tab[2].other = 1;
+            tab[2].procs.push(process::new(12));
+            let ret = handle_sub(&mut tab, 2, false);
+            (ret, tab)
+        });
+        assert_eq!(ret, 1, "c:338");
+        assert_ne!(tab[2].stat & stat::STOPPED, 0, "c:331");
+        assert!(tab[2].procs[0].is_stopped(), "c:335 — running proc takes the stopped status");
+        // c:1171-1185 — printjob reports the subjob in place of the superjob
+        // and, not being done, only clears its STAT_CHANGED.
+        assert_eq!(tab[1].stat & stat::CHANGED, 0, "c:1364 — printjob ran");
+        assert_eq!(*CURJOB.get().unwrap().lock().unwrap(), 2, "c:336");
+        *CURJOB.get().unwrap().lock().unwrap() = old_cur;
+    }
+
+    /// `Src/jobs.c:1772-1783` — waitjobs returns once the current job is
+    /// done, waiting on no JOBTAB guard, and ends with `thisjob = -1`.
+    #[test]
+    fn waitjobs_returns_for_finished_job_and_clears_thisjob() {
+        let _g = crate::test_util::global_state_lock();
+        let mut tab = vec![job::default(); 2];
+        tab[1].stat = stat::INUSE | stat::DONE;
+        tab[1].procs.push(process::new(5));
+        *JOBTAB.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap() = tab;
+        let old_this = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+        *THISJOB.get().unwrap().lock().unwrap() = 1;
+        waitjobs();
+        assert_eq!(*THISJOB.get().unwrap().lock().unwrap(), -1);
+        *THISJOB.get().unwrap().lock().unwrap() = old_this;
+        *JOBTAB.get().unwrap().lock().unwrap() = Vec::new();
     }
 
     /// `Src/jobs.c:1457-1495` — `freejob(jn, deleting)`. Resets ALL
@@ -6532,7 +6633,8 @@ mod tests {
     #[test]
     fn freejob_resets_all_per_job_state_fields() {
         let _g = crate::test_util::global_state_lock();
-        let mut jn = job::new();
+        let mut tab = vec![job::new()];
+        let jn = &mut tab[0];
         // Pre-populate every freejob-reset field.
         jn.pwd = Some("/tmp/saved-pwd".to_string());
         jn.gleader = 12345;
@@ -6541,7 +6643,8 @@ mod tests {
         jn.stty_in_env = 1;
         jn.text = "echo foo".to_string();
         // Call freejob.
-        freejob(&mut jn, false);
+        freejob(&mut tab, 0, false);
+        let jn = &tab[0];
         // All fields reset.
         assert_eq!(jn.pwd, None, "c:1477-1479 — pwd reset to None");
         assert_eq!(jn.gleader, 0, "c:1489 — gleader = 0");

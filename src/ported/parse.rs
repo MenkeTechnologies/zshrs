@@ -1002,7 +1002,9 @@ pub fn parse_list() -> Option<eprog> {
 pub fn parse_cond() -> Option<eprog> {
     // c:722
     init_parse();
-    if par_cond().is_none() {
+    // `par_cond_top` is C's wordcode `par_cond` (c:2409); the bare name is
+    // taken by the `[[ ]]` AST parser in this file.
+    if par_cond_top() == 0 {
         clear_hdocs();
         return None;
     }
@@ -3452,6 +3454,10 @@ pub fn par_nl_wordlist() -> Vec<String> {
 /// reproduces C's `*zshlextext != ';'` exclusion in both modes.
 #[inline]
 pub fn COND_SEP() -> bool {
+    // c:2403 — `condlex != testlex`: the test-mode lexer never yields SEPER.
+    if CONDLEX_TESTLEX.get() {
+        return false;
+    }
     match tok() {
         NEWLIN => true,
         SEPER => crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) != 0,
@@ -3549,21 +3555,82 @@ pub fn par_cond_1() -> i32 {
 /// binary `[ A op B ]`, and `[ A op1 B op2 C … ]` n-ary chains.
 pub fn par_cond_2() -> i32 {
     // c:2476
-    // `n_testargs` only applies in `testlex` mode (=== /bin/test
-    // compat). zshrs has no testlex yet, so always 0.
-    let n_testargs: i32 = 0;
+    // c:2480 — `(condlex == testlex) ? arrlen(testargs) + 1 : 0`. C's
+    // `testargs` is a pointer into the argv; here it is an index into
+    // `TESTARGS`, so `arrlen(testargs)` is the length less that index.
+    let n_testargs: i32 = if CONDLEX_TESTLEX.get() {
+        crate::ported::builtin::TESTARGS
+            .with_borrow(|a| a.len() - crate::ported::builtin::TESTARGS_IDX.get())
+            as i32
+            + 1
+    } else {
+        0
+    };
+    // C's `*testargs`: the argument after the current token, `None` where C
+    // sees the argv's NULL terminator.
+    let next_testarg = || -> Option<String> {
+        crate::ported::builtin::TESTARGS
+            .with_borrow(|a| a.get(crate::ported::builtin::TESTARGS_IDX.get()).cloned())
+    };
 
-    // c:2481 — handled inline; this Rust port skips the n_testargs
-    // arm since zshrs invokes par_cond via [[ ... ]] only.
-
-    while COND_SEP() {
-        condlex();
+    if n_testargs != 0 {
+        // c:2482 — See the description of test in POSIX 1003.2.
+        if tok() == crate::ported::zsh_h::NULLTOK {
+            // c:2485 — no arguments: false.
+            return par_cond_double("-n", "");
+        }
+        if n_testargs == 1 {
+            // c:2487 — one argument: `[ foo ]` is equivalent to `[ -n foo ]`.
+            let s1 = tokstr().unwrap_or_default();
+            condlex();
+            // c:2492 — ksh behavior: `[ -t ]` means `[ -t 1 ]`; bash disagrees.
+            if unset(POSIXBUILTINS) && check_cond(&s1, "t") {
+                return par_cond_double(&s1, "1");
+            }
+            return par_cond_double("-n", &s1);
+        }
+        if n_testargs > 2 {
+            // c:2496 — three arguments: if the second argument is a binary
+            // operator, perform that binary test on the first and third.
+            let nx = next_testarg().unwrap_or_default();
+            let mut nxc = nx.chars();
+            if nx == "="
+                || nx == "<"
+                || nx == ">"
+                || nx == "=="
+                || nx == "!="
+                || (nxc.next().map_or(false, IS_DASH) && get_cond_num(nxc.as_str()) >= 0)
+            {
+                let s1 = tokstr().unwrap_or_default(); // c:2505
+                condlex();
+                let s2 = tokstr().unwrap_or_default(); // c:2507
+                condlex();
+                let s3 = tokstr().unwrap_or_default(); // c:2509
+                condlex();
+                return par_cond_triple(&s1, &s2, &s3); // c:2511
+            }
+        }
+        // c:2514-2516 — we fall through here on any non-numeric infix
+        // operator or any other time there are at least two arguments.
+    } else {
+        while COND_SEP() {
+            condlex();
+        }
     }
     if tok() == BANG_TOK {
-        // c:2522 — `[[ ! cond ]]`
-        condlex();
-        ecadd(WCB_COND(COND_NOT as u32, 0));
-        return par_cond_2();
+        // c:2521-2524 — in "test" compatibility mode, `! -a ...` and
+        // `! -o ...` are treated as `[string] [and] ...` / `[string] [or] ...`.
+        let nx = next_testarg();
+        if !(n_testargs > 2
+            && nx
+                .as_deref()
+                .map_or(false, |t| check_cond(t, "a") || check_cond(t, "o")))
+        {
+            // c:2528 — `[[ ! cond ]]`
+            condlex();
+            ecadd(WCB_COND(COND_NOT as u32, 0));
+            return par_cond_2();
+        }
     }
     if tok() == INPAR_TOK {
         // c:2533 — `[[ (cond) ]]`. Recurse into the WORDCODE cond OR-chain
@@ -3605,18 +3672,6 @@ pub fn par_cond_2() -> i32 {
         && "abcdefghknoprstuvwxzLONGS".contains(s1_chars[1]);
     if tok() != STRING_LEX {
         if !s1.is_empty() && tok() != LEXERR && (!dble || n_testargs != 0) {
-            // c:2486-2497 — `if (n_testargs == 1)` block: under
-            // POSIXBUILTINS-off, `[ -t ]` rewrites to `[ -t 1 ]`
-            // (ksh behavior). The C gate is `unset(POSIXBUILTINS)
-            // && check_cond(s1, "t")`. zshrs's parser has
-            // n_testargs=0 (no testlex), so this rewrite path is
-            // unreachable from zshrs's [[ ]] / [ ] entry points;
-            // wired here as a marker for parity. When testlex is
-            // ported the call below activates.
-            if n_testargs == 1 && unset(POSIXBUILTINS) && check_cond(&s1, "t") {
-                condlex();
-                return par_cond_double(&s1, "1");
-            }
             // c:2557 — `[[ STRING ]]` re-interpreted as `[[ -n STRING ]]`.
             condlex();
             while COND_SEP() {
@@ -3627,8 +3682,15 @@ pub fn par_cond_2() -> i32 {
         YYERROR!(ECUSED.get()); // c:2560 `YYERROR(ecused);`
     }
     condlex();
-    while COND_SEP() {
-        condlex();
+    if n_testargs == 2 && tok() != STRING_LEX && tokstr().is_some() && s1_chars.first().map_or(false, |c| IS_DASH(*c)) {
+        // c:2563-2569 — something like "test -z" followed by a token. We'll
+        // turn the token into a string (we've also checked it does have a
+        // string representation).
+        set_tok(STRING_LEX);
+    } else {
+        while COND_SEP() {
+            condlex();
+        }
     }
     if tok() == INANG_TOK || tok() == OUTANG_TOK {
         // c:2576 — `<` / `>` string compare.
@@ -3681,7 +3743,11 @@ pub fn par_cond_2() -> i32 {
     // this, the original `dble` from s1 stayed false, the parser
     // grabbed s3 and built COND_MODI silently. parity bug #25.
     let s2_chars: Vec<char> = s2.chars().collect();
-    let dble = !s2_chars.is_empty() && IS_DASH(s2_chars[0]) && s2_chars.len() == 2;
+    let dble = if n_testargs == 0 {
+        !s2_chars.is_empty() && IS_DASH(s2_chars[0]) && s2_chars.len() == 2
+    } else {
+        dble
+    };
     if tok() == STRING_LEX && !dble {
         let s3 = tokstr().unwrap_or_default();
         condlex();
@@ -3829,13 +3895,13 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
         ecadd(np);
         return 1;
     }
-    // c:2668-2673 — `(t0 = b[0]=='>' || Outang) || b[0]=='<' || Inang`.
+    // c:2668-2673 — `(t0 = (b[0] == '>' || b[0] == Outang) || b[0] == '<' || b[0] == Inang) && !b[1]`
+    // then `t0 ? COND_STRGTR : COND_STRLT`. The assignment binds only the first
+    // parenthesised term, but the `||` chain over the whole expression makes it true for
+    // '<' and Inang as well, so C always emits COND_STRGTR here: in `test`/`[`, `a < b` is
+    // evaluated as `a > b` (the reference build does the same).
     if bc.len() == 1 && (is_gt(bc[0]) || is_lt(bc[0])) {
-        let op = if is_gt(bc[0]) {
-            COND_STRGTR
-        } else {
-            COND_STRLT
-        };
+        let op = COND_STRGTR;
         ecadd(WCB_COND(op as u32, 0));
         ecstr(a);
         ecstr(c);
@@ -11046,14 +11112,25 @@ pub fn ecstr(s: &str) {
     ecadd(code);
 }
 
-/// Port of `condlex()` from `Src/parse.c:2399` — C decl `void (*condlex) (void) = zshlex;`. C is a mutable function pointer (`zshlex` or `testlex`); zshrs has no `testlex` yet, so this always calls `zshlex`.
-/// Port of `condlex` function-pointer global from `Src/parse.c:2399`. C
-/// flips this between `zshlex` and `testlex` depending on whether
-/// we're inside `[[ ]]` vs `/bin/test` builtin. zshrs has no
-/// separate `testlex` yet, so this just defers to `zshlex`.
+/// Port of the `condlex` function-pointer global from `Src/parse.c:2399` —
+/// C decl `void (*condlex) (void) = zshlex;`. C repoints it between `zshlex`
+/// and `testlex` (builtin.c:7200); `CONDLEX_TESTLEX` is that pointer, true
+/// while it addresses `testlex`. `bin_test` sets it around `parse_cond`
+/// (builtin.c:7278, 7280) and `par_cond_2` compares it (`condlex == testlex`,
+/// c:2480) exactly as C does.
+thread_local! {
+    pub static CONDLEX_TESTLEX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Port of calling through `condlex` from `Src/parse.c:2399`: dispatches to
+/// `testlex` while `CONDLEX_TESTLEX` is set, otherwise to `zshlex`.
 #[inline]
 pub fn condlex() {
-    zshlex();
+    if CONDLEX_TESTLEX.get() {
+        crate::ported::builtin::testlex();
+    } else {
+        zshlex();
+    }
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!

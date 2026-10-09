@@ -2065,6 +2065,23 @@ pub fn preprompt() {
         for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
             crate::ported::signals::dotrap(libc::SIGCHLD);
         }
+        // c:Src/jobs.c:658-678 — the trapped SIGINT/SIGQUIT pseudo-delivery
+        // update_job parked in PSEUDO_SIG_TRAP_PENDING while it held the
+        // JOBTAB guard: `dotrap(sig); if (errflag) breaks = loops;
+        // check_cursh_sig(sig);`, run now that JOBTAB is unlocked.
+        let pseudo = crate::ported::jobs::PSEUDO_SIG_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst);
+        if pseudo != 0 {
+            crate::ported::signals::dotrap(pseudo); // c:663
+            if errflag.load(Ordering::Relaxed) != 0 {
+                crate::ported::builtin::BREAKS.store(
+                    crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                ); // c:671-672
+            }
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                crate::ported::jobs::check_cursh_sig(&jt.lock().unwrap_or_else(|e| e.into_inner()), pseudo); // c:677
+            }
+        }
     }
 
     // c:1569-1572 — `if (unset(NOTIFY)) scanjobs();` — sync job-status
@@ -5564,13 +5581,57 @@ pub fn skipwsep(s: &str) -> (&str, usize) {
 /// `{Nularg,'\0'}`) empty fields, which survive and are later stripped to
 /// `""` by remnulargs.
 ///
-/// WARNING: param names don't match C — Rust=(s, allownull) vs C=(s,
-/// allownull, heap, quote). The `quote` arm (backslash-escaped seps) and
-/// `heap` C-buffer param drop: all zshrs callers pass quote=0, and Rust
-/// owns its String storage. The previous port split only on hardcoded
+/// WARNING: param names don't match C — Rust=(s, allownull, quote) vs
+/// C=(s, allownull, heap, quote). The `heap` C-buffer param drops: Rust owns
+/// its String storage. With `quote` (c:3722-3727, c:3741-3743) a backslash
+/// before a separator keeps it inside its field and is stripped from the
+/// private copy of `s` the split works on (`findsep`'s quote arm,
+/// c:3795-3811). The previous port split only on hardcoded
 /// `[' ','\t','\n']`, ignoring `$IFS` entirely (Bug #636).
-pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
+pub fn spacesplit(s: &str, allownull: bool, quote: bool) -> Vec<String> {
     // c:3711
+    if quote {
+        // c:3722-3727 — "we will be stripping quoted separators by hacking
+        // string, so make sure it's hackable": work on a private copy.
+        let mut buf = s.to_string();
+        let mut ret: Vec<String> = Vec::new();
+        let mut si = 0usize;
+        let mut t = si; // c:3729 — `t = s;`
+        si += buf[si..].len() - skipwsep(&buf[si..]).0.len(); // c:3730 — `skipwsep(&s);`
+        if si < buf.len() && itype_end(&buf[si..], ISEP as u32, true) != 0 {
+            // c:3732-3733 — `*ptr++ = dup(allownull ? "" : nulstring);`
+            ret.push(if allownull { String::new() } else { Nularg.to_string() });
+        } else if !allownull && t != si {
+            ret.push(String::new()); // c:3734-3735
+        }
+        while si < buf.len() {
+            // c:3736
+            let iend = itype_end(&buf[si..], ISEP as u32, true); // c:3737
+            if iend != 0 {
+                // c:3738-3740 — `s = iend; skipwsep(&s);`
+                si += iend;
+                si += buf[si..].len() - skipwsep(&buf[si..]).0.len();
+            } else if buf.as_bytes()[si] == b'\\' {
+                // c:3741-3743 — `else if (quote && *s == '\\') { s++; skipwsep(&s); }`
+                si += 1;
+                si += buf[si..].len() - skipwsep(&buf[si..]).0.len();
+            }
+            t = si; // c:3745 — `t = s;`
+            findsep(&mut buf, &mut si, None, true); // c:3746 — `findsep(&s, NULL, quote);`
+            if si > t || allownull {
+                // c:3747-3750 — `ztrncpy(*ptr++, t, s - t);`
+                ret.push(buf[t..si].to_string());
+            } else {
+                ret.push(Nularg.to_string()); // c:3752 — `dup(nulstring)`
+            }
+            t = si; // c:3753 — `t = s;`
+            si += buf[si..].len() - skipwsep(&buf[si..]).0.len(); // c:3754
+        }
+        if !allownull && t != si {
+            ret.push(String::new()); // c:3756-3757
+        }
+        return ret;
+    }
     use crate::ported::ztype_h::zistype;
     let bytes = s.as_bytes();
     // Meta-aware decode of the logical char value + its byte length at a
@@ -6059,7 +6120,7 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
     };
 
     match sep {
-        None => spacesplit(s, allownull),
+        None => spacesplit(s, allownull, false),
         Some("") => {
             // Empty separator: split into characters
             if allownull {
@@ -13573,8 +13634,21 @@ mod tests {
     #[test]
     fn test_spacesplit() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(spacesplit("a b c", false), vec!["a", "b", "c"]);
-        assert_eq!(spacesplit("a  b", false), vec!["a", "b"]);
+        assert_eq!(spacesplit("a b c", false, false), vec!["a", "b", "c"]);
+        assert_eq!(spacesplit("a  b", false, false), vec!["a", "b"]);
+    }
+
+    /// `Src/utils.c:3741-3743` + `findsep` (c:3795-3811) — with `quote` a
+    /// backslash before a separator keeps it inside the field (and is
+    /// stripped), `\\` collapses to `\`, and without `quote` the backslash is
+    /// an ordinary byte. This is the split `vared` applies to an array
+    /// (zle_main.c:1878, `spacesplit(t, 1, 0, 1)`).
+    #[test]
+    fn spacesplit_quote_keeps_escaped_separators_in_the_field() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(spacesplit("a\\ b c", true, true), vec!["a b", "c"]);
+        assert_eq!(spacesplit("a\\\\b c", true, true), vec!["a\\b", "c"]);
+        assert_eq!(spacesplit("a\\ b c", true, false), vec!["a\\", "b", "c"]);
     }
 
     #[test]

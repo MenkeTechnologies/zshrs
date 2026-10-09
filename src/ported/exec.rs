@@ -645,7 +645,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Option<Vec<String>> {
         return Some(vec![s.to_string()]); // c:4864
     }
     // c:4866-4871 — `spacesplit` + per-word GLOBSUBST `shtokenize`.
-    let mut words = crate::ported::utils::spacesplit(s, false); // c:4867
+    let mut words = crate::ported::utils::spacesplit(s, false, false); // c:4867
     if isset(crate::ported::zsh_h::GLOBSUBST) {
         // c:4870
         for w in words.iter_mut() {
@@ -4092,7 +4092,7 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
         return vec![s.to_string()]; // c:4864
     }
     // c:4866-4871 — `spacesplit` + per-word GLOBSUBST `shtokenize`.
-    let mut words = crate::ported::utils::spacesplit(s, false); // c:4867
+    let mut words = crate::ported::utils::spacesplit(s, false, false); // c:4867
     if isset(crate::ported::zsh_h::GLOBSUBST) {
         // c:4870
         for w in words.iter_mut() {
@@ -6605,10 +6605,8 @@ pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
             if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
                 let has = crate::ported::jobs::hasprocs(&guard, tj as usize);
-                if !has {
-                    if let Some(j) = guard.get_mut(tj as usize) {
-                        crate::ported::jobs::deletejob(j, false);
-                    }
+                if !has && (tj as usize) < guard.len() {
+                    crate::ported::jobs::deletejob(&mut guard, tj as usize, false);
                 }
             }
         }
@@ -6638,7 +6636,7 @@ pub fn execcond(state: &mut estate, _do_exec: i32) -> i32 {
         crate::ported::cond::tracingcond.fetch_add(1, Ordering::Relaxed); // `tracingcond++;`
     }
     cmdpush(CS_COND as u8);
-    let stat: i32 = crate::ported::cond::wordcode::evalcond(state, None); // `stat = evalcond(state, NULL);`
+    let stat: i32 = crate::ported::cond::evalcond(state, None); // `stat = evalcond(state, NULL);`
                                                                           // 2 indicates a syntax error.  For compatibility, turn this into a shell error.
     if stat == 2 {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
@@ -6760,8 +6758,8 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
                     } else {
                         Vec::new()
                     };
-                    if let Some(j) = guard.get_mut(tj as usize) {
-                        crate::ported::jobs::deletejob(j, false); // c:5556
+                    if (tj as usize) < guard.len() {
+                        crate::ported::jobs::deletejob(&mut guard, tj as usize, false); // c:5556
                     }
                 }
             }
@@ -10489,7 +10487,7 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
             if tj >= 0 {
                 let mut g = jt.lock().unwrap();
                 pipecleanfilelist(&mut g[tj as usize], false); // c:1809
-                deletejob(&mut g[tj as usize], true); // c:1810
+                deletejob(&mut g, tj as usize, true); // c:1810
             }
             thisjob_set(-1); // c:1811
         } else {
@@ -10616,7 +10614,7 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                 }
             } else if newjob as i32 != list_pipe_job.load(Ordering::Relaxed) {
                 let mut g = jt.lock().unwrap();
-                deletejob(&mut g[jn_idx], false); // c:1878
+                deletejob(&mut g, jn_idx, false); // c:1878
             } else {
                 LASTWJ.store(-1, Ordering::Relaxed); // c:1879
             }
@@ -10643,10 +10641,10 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
             if !locked {
                 let tj = thisjob_get();
                 {
-                    let mut g = jt.lock().unwrap();
+                    let g = jt.lock().unwrap();
                     updated = hasprocs(&g, tj as usize); // c:1890
-                    waitjobs(&mut g, tj as usize); // c:1891
                 }
+                waitjobs(); // c:1891 — no JOBTAB guard held across the wait
                 child_block(); // c:1892
             } else {
                 updated = false; // c:1894
@@ -10836,7 +10834,7 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
         if drop_and_signal {
             {
                 let mut g = jt.lock().unwrap();
-                deletejob(&mut g[jn_idx], false); // c:2022
+                deletejob(&mut g, jn_idx, false); // c:2022
             }
             jn_idx = pj as usize; // c:2023 `jn = jobtab + pj;`
             let gl = {
@@ -10857,7 +10855,7 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
         };
         if final_delete {
             let mut g = jt.lock().unwrap();
-            deletejob(&mut g[jn_idx], false); // c:2030
+            deletejob(&mut g, jn_idx, false); // c:2030
         }
         thisjob_set(pj); // c:2031
     } else {
@@ -13268,10 +13266,7 @@ fn execcmd_exec_err_path(
                                // c:4360-4361 — `if (thisjob != -1) waitjobs();`
         let thisjob = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         if thisjob != -1 {
-            if let Some(jt) = JOBTAB.get() {
-                let mut guard = jt.lock().unwrap();
-                crate::ported::jobs::waitjobs(&mut guard, thisjob as usize); // c:4361
-            }
+            crate::ported::jobs::waitjobs(); // c:4361
         }
         crate::ported::builtin::_realexit(); // c:4362
     }

@@ -2533,34 +2533,7 @@ pub fn bin_vared(
          * and unquote.  This duplicates the string, so we still need to free.
          */
         // c:1874-1877
-        // c:1878 — `a = spacesplit(t, 1, 0, 1);` inlined from utils.c:3711
-        // (allownull = 1, quote = 1): utils.rs `spacesplit` has no quote arm.
-        let mut a: Vec<String> = Vec::new();
-        let mut si: usize = 0;
-        let skipwsep_len = |st: &str, i: usize| -> usize {
-            st[i..].len() - crate::ported::utils::skipwsep(&st[i..]).0.len()
-        };
-        si += skipwsep_len(&t, si); // utils.c:3729 skipwsep(&s)
-        if si < t.len() && crate::ported::utils::itype_end(&t[si..], ISEP as u32, true) != 0 {
-            a.push(String::new()); // utils.c:3732 dup(allownull ? "" : nulstring)
-        }
-        while si < t.len() {
-            // utils.c:3735
-            let iend = crate::ported::utils::itype_end(&t[si..], ISEP as u32, true); // utils.c:3736
-            if iend != 0 {
-                // utils.c:3737
-                si += iend; // utils.c:3738
-                si += skipwsep_len(&t, si); // utils.c:3739
-            } else if t.as_bytes()[si] == b'\\' {
-                // utils.c:3741
-                si += 1; // utils.c:3742
-                si += skipwsep_len(&t, si); // utils.c:3743
-            }
-            let ts = si; // utils.c:3745
-            crate::ported::utils::findsep(&mut t, &mut si, None, true); // utils.c:3746
-            a.push(t[ts..si].to_string()); // utils.c:3748-3750 (allownull)
-            si += skipwsep_len(&t, si); // utils.c:3754
-        }
+        let a: Vec<String> = crate::ported::utils::spacesplit(&t, true, true); // c:1878
         if pt == PM_ARRAY {
             // c:1880
             crate::ported::params::assignaparam(&args[0], a, warn_flags); // c:1881

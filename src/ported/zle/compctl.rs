@@ -1046,34 +1046,18 @@ pub(crate) fn cc_reassign(_cc: Arc<Compctl>) -> Arc<Compctl> {
 /// backslashes removed (literal). Rust port: returns `(is_pattern,
 /// new_text)` tuple since we can't mutate a `&str` in-place.
 ///
-/// Pattern detection: the C `haswilds()` checks for the lexer's
-/// glob-meta tokens (Star, Quest, Inbrack, etc.). Since the input
-/// here is plain user-typed text, we approximate by checking for
-/// the literal `*`/`?`/`[` characters.
+/// Pattern detection is `haswilds()` on the tokenized, remnulargs-cleaned copy.
 /// WARNING: param names don't match C — Rust=() vs C=(p)
 pub(crate) fn compctl_name_pat(p: &str) -> (bool, String) {
-    // C: c:1282 `if (haswilds(s))` — has glob metas
-    let has_glob = p.chars().any(|c| matches!(c, '*' | '?' | '['));
-    if has_glob {
-        // C: c:1283 `*p = s` — keep the (tokenized) pattern as-is.
-        // Rust: return the original; caller treats as pattern.
-        (true, p.to_string())
+    let mut s = p.to_string(); // c:1277 char *s = *p;
+    crate::ported::glob::tokenize(&mut s); // c:1279 tokenize(s = dupstring(s));
+    crate::ported::glob::remnulargs(&mut s); // c:1280
+
+    if crate::ported::pattern::haswilds(&s) {
+        // c:1282
+        (true, s) // c:1283-1284 *p = s; return 1;
     } else {
-        // C: c:1286 `*p = rembslash(*p)` — strip backslashes from
-        // literal text (`\X` → `X`).
-        let mut out = String::with_capacity(p.len());
-        let mut chars = p.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                if let Some(&nx) = chars.peek() {
-                    out.push(nx);
-                    chars.next();
-                    continue;
-                }
-            }
-            out.push(c);
-        }
-        (false, out)
+        (false, crate::ported::zle::compcore::rembslash(p)) // c:1286 *p = rembslash(*p);
     }
 }
 
@@ -2060,6 +2044,10 @@ thread_local! {
     static QRSUF: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     static QLPRE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     static QLSUF: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    // glob.c:153 `char *glob_pre, *glob_suf;` — the file prefix/suffix the -g
+    // globbing code uses to reject names early; NULL (None) unless set below.
+    static GLOB_PRE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static GLOB_SUF: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     // c:1739 — int length statics.
     static LPL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     static LSL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
@@ -2410,72 +2398,165 @@ pub(crate) fn getreal(str_in: &str) -> String {
 }
 
 // (getreal port location; impl above already routes through singsub)
-/// Read a directory and add files to the matches list.
-/// Port of `gen_matches_files(int dirs, int execs, int all)` from Src/Zle/compctl.c:2154.
-///
-/// C signature: `void gen_matches_files(int dirs, int execs, int all)`.
-/// Walks the directory at `prpre` (the expanded pre-cursor path
-/// component), filtering each entry per:
-///   dirs   → only directories
-///   execs  → only executable files
-///   all    → no filter (everything except `.`/`..` unless `all`)
-/// Calls addmatch for each accepted entry.
-///
-/// Rust port reads `prpre` (PRPRE static if set; else current dir),
-/// applies the same dirent-stat dispatch.
-/// WARNING: param names don't match C — Rust=(execs, all) vs C=(dirs, execs, all)
-pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
-    let prpre = PRPRE
-        .with(|r| r.borrow().clone())
-        .unwrap_or_else(|| ".".to_string());
-    let entries = match std::fs::read_dir(&prpre) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    // A leading `.` in the file prefix (`cat .h<Tab>`) means the user
-    // explicitly asked for dotfiles, so don't hide them — matches zsh,
-    // which only suppresses dotfiles when the prefix doesn't start with `.`.
-    let dot_prefix = FPRE.with(|r| r.borrow().starts_with('.'));
-    for entry in entries.flatten() {
-        let name = match entry.file_name().into_string() {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-        // Skip `.`/`..` unless `all` is set
-        if !all && (name == "." || name == "..") {
-            continue;
-        }
-        // Hidden-file rule: leading `.` requires `all` or a dot-prefixed word.
-        if !all && !dot_prefix && name.starts_with('.') {
-            continue;
-        }
-        let meta = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        // Type filter per (dirs, execs): `dirs` keeps directories,
-        // `execs` keeps executables, and when BOTH are set (the
-        // CC_COMMPATH `$path` walk, c:3504 `gen_matches_files(1,1,0)`)
-        // keep either. Neither set → keep every visible entry (plain
-        // file completion). The previous code applied the two filters in
-        // series, so the combined dirs+execs case kept nothing (a file
-        // is never both a dir and a non-dir).
-        let is_dir = meta.is_dir();
-        #[cfg(unix)]
-        let is_exec = !is_dir && (meta.permissions().mode() & 0o111 != 0);
-        #[cfg(not(unix))]
-        let is_exec = false;
-        let keep = match (dirs, execs) {
-            (false, false) => true,
-            (true, false) => is_dir,
-            (false, true) => is_exec,
-            (true, true) => is_dir || is_exec,
-        };
-        if !keep {
-            continue;
-        }
-        addmatch(&name, None);
+/// This reads a directory and adds the files to the list of matches.  The
+/// parameters say which files should be added.
+/// Port of `gen_matches_files(int dirs, int execs, int all)` from Src/Zle/compctl.c:2161.
+pub(crate) fn gen_matches_files(mut dirs: i32, mut execs: i32, mut all: i32) {
+    use crate::ported::zsh_h::{GLOBDOTS, NULLGLOB, Outpar, Star};
+    use std::sync::atomic::Ordering;
+
+    let psuf = PSUF.with(|r| r.borrow().clone());
+    let mut ns: bool = false; // c:2167
+    let ng = crate::ported::zsh_h::isset(NULLGLOB); // c:2167
+    let aw = ADDWHAT.with(|c| c.get()); // c:2167
+
+    crate::ported::options::opt_state_set(&crate::ported::zsh_h::opt_name(NULLGLOB), true); // c:2169
+
+    if !psuf.is_empty() {
+        // c:2171 — if there is a path suffix, check if it doesn't have a `*'
+        // or `)' at the end (this is used to determine if we should use
+        // globbing).
+        let q = psuf.chars().next_back(); // c:2174
+        ns = !(q == Some(Star) || q == Some(Outpar)); // c:2176
+        // And generate only directory names.
+        dirs = 1; // c:2180
+        all = 0;
+        execs = 0;
     }
+    // c:2183 — open directory.
+    let pathpref: Option<String> = PRPRE.with(|r| r.borrow().clone()).filter(|p| !p.is_empty());
+    let pathpreflen = pathpref.as_ref().map_or(0, |p| p.len());
+    if pathpreflen > libc::PATH_MAX as usize {
+        crate::ported::options::opt_state_set(&crate::ported::zsh_h::opt_name(NULLGLOB), ng);
+        return; // c:2189
+    }
+    if let Ok(mut d) = std::fs::read_dir(pathpref.as_deref().unwrap_or(".")) {
+        // c:2194
+        // c:2196 — if we search only special files, prepare a path buffer for stat.
+        let mut p: String = if all == 0 && pathpreflen != 0 {
+            pathpref.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let fpre = FPRE.with(|r| r.borrow().clone());
+        let fpl = FPL.with(|c| c.get()) as usize;
+        let fsuf = FSUF.with(|r| r.borrow().clone());
+        let fsl = FSL.with(|c| c.get()) as usize;
+        let mstack_set = crate::ported::zle::compcore::mstack
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.is_some()))
+            .unwrap_or(false);
+        // c:2202 — fine, now read the directory.
+        while let Some(n) = crate::ported::utils::zreaddir(&mut d, 1) {
+            if errflag.load(Ordering::Relaxed) != 0 {
+                break;
+            }
+            // c:2204 — ignore files beginning with `.' unless the thing we
+            // found on the command line also starts with a dot or GLOBDOTS
+            // is set.
+            if !n.starts_with('.') || fpre.starts_with('.') || crate::ported::zsh_h::isset(GLOBDOTS)
+            {
+                ADDWHAT.with(|c| c.set(if execs != 0 { -8 } else { -5 })); // c:2206
+                let test: bool;
+                let filecomp_matched = FILECOMP.with(|fc| {
+                    fc.borrow().as_ref().map(|prog| pattry(prog, &n))
+                });
+                if let Some(t) = filecomp_matched {
+                    // c:2207 — if we have a pattern for the filename check, use it.
+                    test = t; // c:2209
+                } else {
+                    // c:2211 — otherwise use the prefix and suffix strings directly.
+                    let nb = n.as_bytes();
+                    let mut t = nb.len() >= fsl // c:2212 e = n + strlen(n) - fsl
+                        && nb.starts_with(&fpre.as_bytes()[..fpl.min(fpre.len())]) // c:2213
+                        && nb[nb.len() - fsl..] == *fsuf.as_bytes(); // c:2214
+                    if !t && mstack_set {
+                        t = true; // c:2216
+                        ADDWHAT.with(|c| c.set(CC_FILES as i32)); // c:2217
+                    }
+                    test = t;
+                }
+                // c:2221 — filename didn't match?
+                if !test {
+                    continue;
+                }
+                let mut buf: Option<std::fs::Metadata> = None;
+                if all == 0 {
+                    // c:2223 — we still have to check the file type, so prepare
+                    // the path buffer by appending the filename.
+                    if n.len() + pathpreflen + 1 > libc::PATH_MAX as usize {
+                        continue; // c:2230
+                    }
+                    p.truncate(pathpreflen);
+                    p.push_str(&n); // c:2232
+                    // c:2234 — and do the stat.
+                    match std::fs::metadata(&p) {
+                        Ok(m) => buf = Some(m),
+                        Err(_) => continue, // c:2235
+                    }
+                }
+                let ok = all != 0
+                    || buf.as_ref().is_some_and(|b| {
+                        (dirs != 0 && b.is_dir())
+                            || (execs != 0 && b.is_file() && (b.permissions().mode() & 0o111) != 0)
+                    }); // c:2238-2241
+                if ok {
+                    // c:2243 — if we want all files or the file has the right type...
+                    if !psuf.is_empty() {
+                        // c:2245 — we have to test for a path suffix.
+                        let o = p.len(); // c:2247
+                        if o + psuf.len() > libc::PATH_MAX as usize {
+                            continue; // c:2250
+                        }
+                        // c:2252 — append it to the path buffer.
+                        p.push_str(&psuf);
+
+                        // c:2255 — do we have to use globbing?
+                        let cpm: Option<String> = crate::ported::zle::compcore::comppatmatch
+                            .get()
+                            .and_then(|m| m.lock().ok())
+                            .and_then(|g| g.clone());
+                        let cpm_nonempty = cpm.as_deref().is_some_and(|c| !c.is_empty());
+                        let tt: bool;
+                        if crate::ported::zle::compcore::ispattern.load(Ordering::Relaxed) != 0
+                            || (ns && cpm_nonempty)
+                        {
+                            // c:2257 — yes, so append a `*' if needed.
+                            if ns && cpm.as_deref().is_some_and(|c| c.starts_with('*')) {
+                                p.push(Star); // c:2260-2263
+                            }
+                            // c:2266 — do the globbing...
+                            crate::ported::glob::remnulargs(&mut p);
+                            let mut l: crate::ported::subst::LinkList =
+                                vec![p.clone()].into_iter().collect();
+                            crate::ported::subst::globlist(&mut l, 0);
+                            // c:2269 — and see if that produced a filename.
+                            tt = l.into_iter().next().is_some();
+                        } else {
+                            // c:2275 — otherwise just check, if we have access
+                            // to the file.
+                            tt = std::ffi::CString::new(p.as_str())
+                                .map(|c| unsafe { libc::access(c.as_ptr(), libc::F_OK) } == 0)
+                                .unwrap_or(false);
+                        }
+
+                        p.truncate(o); // c:2279
+                        if tt {
+                            // c:2280 — ok, we can add the filename to the list
+                            // of matches.
+                            addmatch(&n, None);
+                        }
+                    } else {
+                        // c:2284 — we want all files, so just add the name to
+                        // the matches.
+                        addmatch(&n, None);
+                    }
+                }
+            }
+        }
+    }
+    crate::ported::options::opt_state_set(&crate::ported::zsh_h::opt_name(NULLGLOB), ng); // c:2287
+    ADDWHAT.with(|c| c.set(aw)); // c:2288
 }
 
 /// Line-context dispatch — global completion entry.
@@ -3674,7 +3755,7 @@ pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i
 /// Walks the bits of cc.mask and cc.mask2, dispatching per CC_* bit
 /// to the matching generator:
 ///   CC_FILES     → gen_matches_files (regular files)
-///   CC_DIRS      → gen_matches_files(dirs=true)
+///   CC_DIRS      → gen_matches_files(1, 0, 0)
 ///   CC_COMMPATH  → command-path completion
 ///   CC_OPTIONS   → option completion
 ///   CC_VARS      → dumphashtable(paramtab, CC_VARS)
@@ -4505,20 +4586,19 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
             for dir in dirs {
                 // c:3513 — `prpre = *dirs;`
                 PRPRE.with(|r| *r.borrow_mut() = if dir.is_empty() { None } else { Some(dir.clone()) });
-                ADDWHAT.with(|c| c.set(-5));
 
                 if sf2 != 0 {
                     // c:3515-3517 — we are in the path, so add only directories.
-                    gen_matches_files(true, false, false);
+                    gen_matches_files(1, 0, 0);
                 } else {
                     if (cc.mask & CC_FILES) != 0 {
                         // c:3520 — add all files.
-                        gen_matches_files(false, false, false);
+                        gen_matches_files(0, 0, 1);
                     } else if (cc.mask & CC_COMMPATH) != 0 {
                         // c:3523 — completion of command paths.
                         if sf1 != 0 || cc.withd.is_some() {
                             // c:3526 — a path prefix: directories and executables.
-                            gen_matches_files(true, true, false);
+                            gen_matches_files(1, 1, 0);
                         } else {
                             // c:3531-3542 — no path prefix: the things reachable via
                             // $path, i.e. the current directory if "." or "" is in it.
@@ -4526,12 +4606,12 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                             if path.iter().any(|p| p.is_empty() || p == ".") {
                                 let pp = PRPRE.with(|r| r.borrow().clone());
                                 PRPRE.with(|r| *r.borrow_mut() = Some("./".to_string())); // c:3539
-                                gen_matches_files(true, true, false); // c:3540
+                                gen_matches_files(1, 1, 0); // c:3540
                                 PRPRE.with(|r| *r.borrow_mut() = pp); // c:3541
                             }
                         }
                     } else if (cc.mask & CC_DIRS) != 0 {
-                        gen_matches_files(true, false, false); // c:3545
+                        gen_matches_files(1, 0, 0); // c:3545
                     }
 
                     // c:3547-3629 — the compctl has a glob pattern (compctl -g).
@@ -4542,6 +4622,19 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                             1,
                         ); // c:3552-3562 noerrs = 1
                         let md = crate::ported::zsh_h::isset(crate::ported::zsh_h::MARKDIRS);
+                        // c:3538-3543 — these are used in the globbing code to make things
+                        // a bit faster.
+                        let mstack_set = crate::ported::zle::compcore::mstack
+                            .get()
+                            .and_then(|m| m.lock().ok().map(|g| g.is_some()))
+                            .unwrap_or(false);
+                        if ispattern_v != 0 || mstack_set {
+                            GLOB_PRE.with(|r| *r.borrow_mut() = None);
+                            GLOB_SUF.with(|r| *r.borrow_mut() = None);
+                        } else {
+                            GLOB_PRE.with(|r| *r.borrow_mut() = Some(FPRE.with(|f| f.borrow().clone())));
+                            GLOB_SUF.with(|r| *r.borrow_mut() = Some(FSUF.with(|f| f.borrow().clone())));
+                        }
                         ADDWHAT.with(|c| c.set(-6)); // c:3564
                         crate::ported::options::opt_state_set(
                             &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::MARKDIRS),
@@ -4649,6 +4742,8 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                                 }
                             }
                         }
+                        GLOB_PRE.with(|r| *r.borrow_mut() = None); // c:3665
+                        GLOB_SUF.with(|r| *r.borrow_mut() = None);
                         *crate::ported::utils::noerrs_lock().lock().unwrap() = ne; // c:3667
                         crate::ported::options::opt_state_set(
                             &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::MARKDIRS),
@@ -4975,12 +5070,98 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         }
     }
 
-    // cc.str (-s) — call singsub on the string.
-    if let Some(s) = &cc.str {
-        let expanded = getreal(s);
-        // Push as a single match with addwhat=GLOB_EXPAND
-        ADDWHAT.with(|c| c.set(-6));
-        addmatch(&expanded, None);
+    // c:3758-3801 — cc.str (compctl -s): lex the string into words, then
+    // fully expand (prefork + globlist) and add every resulting word.
+    if let Some(cstr) = &cc.str {
+        use crate::ported::hist::{strinbeg, strinend};
+        use crate::ported::lex::{
+            ctxtlex, noaliases, set_noaliases, tok, tokstr, LEX_INPUT, LEX_LEXFLAGS, LEX_LEXSTOP,
+            LEX_POS, LEX_UNGET_BUF, LEX_UNGET_HPTR, LEX_UNGET_RAW,
+        };
+        use crate::ported::zsh_h::{ENDINPUT, LEXERR, LEXFLAGS_ZLE};
+        let mut foo: Vec<String> = Vec::new(); // c:3760 LinkList foo
+        let mut first = true; // c:3762
+        let ng = crate::ported::zsh_h::isset(crate::ported::zsh_h::NULLGLOB); // c:3762
+        let oowe = crate::ported::zle::compcore::WE.load(Ordering::Relaxed); // c:3762
+        let oowb = crate::ported::zle::compcore::WB.load(Ordering::Relaxed); // c:3762
+        let ona = noaliases(); // c:3763
+
+        crate::ported::options::opt_state_set(
+            &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::NULLGLOB),
+            true,
+        ); // c:3767
+
+        // c:3771 — put the string in the lexer buffer and call the lexer to
+        // get the words we have to expand.
+        crate::ported::context::zcontext_save();
+        // The lexer reads its own `LEX_INPUT` window and `LEX_UNGET_*`
+        // queues ahead of the input stack; park them so the nested lex
+        // reads only the pushed frame (same isolation sep_comp_string's
+        // caller applies in zle_tricky.rs).
+        let saved_lex_input = LEX_INPUT.with_borrow_mut(std::mem::take);
+        let saved_lex_pos = LEX_POS.replace(0);
+        let saved_unget = LEX_UNGET_BUF.with_borrow_mut(std::mem::take);
+        let saved_unget_hptr = LEX_UNGET_HPTR.with_borrow_mut(std::mem::take);
+        let saved_unget_raw = LEX_UNGET_RAW.with_borrow_mut(std::mem::take);
+        let saved_unget_srccap =
+            crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(std::mem::take);
+        LEX_LEXSTOP.set(false);
+        LEX_LEXFLAGS.set(LEXFLAGS_ZLE); // c:3772
+        let tmpbuf = format!("foo {}", cstr); // c:3773-3774 KLUDGE!
+        crate::ported::input::inpush(&tmpbuf, 0, None); // c:3775
+        strinbeg(0); // c:3776
+        set_noaliases(true); // c:3777
+        loop {
+            ctxtlex(); // c:3779
+            let t = tok();
+            if t == ENDINPUT || t == LEXERR {
+                break; // c:3781
+            }
+            if !first {
+                if let Some(ts) = tokstr() {
+                    if !ts.is_empty() {
+                        foo.push(ts); // c:3783
+                    }
+                }
+            }
+            first = false; // c:3784
+        }
+        set_noaliases(ona); // c:3786
+        strinend(); // c:3787
+        crate::ported::input::inpop(); // c:3788
+        LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+        LEX_POS.set(saved_lex_pos);
+        LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+        LEX_UNGET_HPTR.with_borrow_mut(|b| *b = saved_unget_hptr);
+        LEX_UNGET_RAW.with_borrow_mut(|b| *b = saved_unget_raw);
+        crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| *b = saved_unget_srccap);
+        errflag.fetch_and(
+            !crate::ported::utils::ERRFLAG_ERROR,
+            Ordering::Relaxed,
+        ); // c:3789
+        crate::ported::context::zcontext_restore(); // c:3790
+
+        // c:3792 — fine, now do full expansion.
+        let mut l: crate::ported::subst::LinkList = foo.into_iter().collect();
+        let mut ret_flags: i32 = 0;
+        crate::ported::subst::prefork(&mut l, 0, &mut ret_flags);
+        if errflag.load(Ordering::Relaxed) == 0 {
+            // c:3793
+            crate::ported::subst::globlist(&mut l, 0); // c:3794
+            if errflag.load(Ordering::Relaxed) == 0 {
+                // c:3795-3798 — and add the resulting words as matches.
+                let words: Vec<String> = l.into_iter().collect();
+                for w in &words {
+                    addmatch(w, None);
+                }
+            }
+        }
+        crate::ported::options::opt_state_set(
+            &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::NULLGLOB),
+            ng,
+        ); // c:3799
+        crate::ported::zle::compcore::WE.store(oowe, Ordering::Relaxed); // c:3800
+        crate::ported::zle::compcore::WB.store(oowb, Ordering::Relaxed); // c:3801
     }
 
     // c:3803-3841 — cc.hpat (compctl -H): pull words out of the
@@ -6220,6 +6401,7 @@ mod tests {
     #[test]
     fn makecomplistflags_cc_str_expansion_emits_one_match() {
         let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -6795,4 +6977,205 @@ mod tests {
         assert!(r >= 0, "bin_compcall exit code must be ≥ 0, got {}", r);
     }
 
+
+    // ═══════════════════════════════════════════════════════════════════
+    // gen_matches_files (Src/Zle/compctl.c:2161) against a temp directory.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Builds `<tmp>/{alpha.txt,alpine.rs,beta.txt,.hidden,runme(+x),adir/inner,bdir/,.hdir/}`
+    /// and returns the directory path with a trailing slash (the `prpre`).
+    fn files_fixture(tag: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "zshrs_gmf_{}_{}_{}",
+            tag,
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(root.join("adir")).unwrap();
+        std::fs::create_dir_all(root.join("bdir")).unwrap();
+        std::fs::create_dir_all(root.join(".hdir")).unwrap();
+        for f in ["alpha.txt", "alpine.rs", "beta.txt", ".hidden", "runme", "adir/inner"] {
+            std::fs::write(root.join(f), b"x").unwrap();
+        }
+        for f in ["alpha.txt", "alpine.rs", "beta.txt", ".hidden", "adir/inner"] {
+            std::fs::set_permissions(root.join(f), std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        std::fs::set_permissions(root.join("runme"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        format!("{}/", root.display())
+    }
+
+    /// Runs gen_matches_files(dirs, execs, all) with the given file
+    /// prefix/suffix and returns the sorted accepted names.
+    fn run_gen_matches_files(
+        prpre: &str,
+        fpre: &str,
+        fsuf: &str,
+        psuf: &str,
+        dirs: i32,
+        execs: i32,
+        all: i32,
+    ) -> Vec<String> {
+        clear_matches();
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        reset_compctl_statics();
+        crate::ported::zle::compcore::ispattern.store(0, std::sync::atomic::Ordering::Relaxed);
+        FPRE.with(|r| *r.borrow_mut() = fpre.to_string());
+        QFPRE.with(|r| *r.borrow_mut() = fpre.to_string());
+        FPL.with(|c| c.set(fpre.len() as i32));
+        FSUF.with(|r| *r.borrow_mut() = fsuf.to_string());
+        QFSUF.with(|r| *r.borrow_mut() = fsuf.to_string());
+        FSL.with(|c| c.set(fsuf.len() as i32));
+        PSUF.with(|r| *r.borrow_mut() = psuf.to_string());
+        PRPRE.with(|r| *r.borrow_mut() = Some(prpre.to_string()));
+        gen_matches_files(dirs, execs, all);
+        PRPRE.with(|r| *r.borrow_mut() = None);
+        let mut got: Vec<String> = crate::comp_match_handles::matches_arc()
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|cm| cm.orig.clone())
+            .collect();
+        got.sort();
+        got
+    }
+
+    fn drop_fixture(prpre: &str) {
+        let _ = std::fs::remove_dir_all(prpre.trim_end_matches('/'));
+    }
+
+    #[test]
+    fn gen_matches_files_all_filters_by_file_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("pre");
+        let got = run_gen_matches_files(&dir, "al", "", "", 0, 0, 1);
+        drop_fixture(&dir);
+        assert_eq!(got, vec!["alpha.txt".to_string(), "alpine.rs".to_string()]);
+    }
+
+    #[test]
+    fn gen_matches_files_all_filters_by_file_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("suf");
+        let got = run_gen_matches_files(&dir, "", ".txt", "", 0, 0, 1);
+        drop_fixture(&dir);
+        assert_eq!(got, vec!["alpha.txt".to_string(), "beta.txt".to_string()]);
+    }
+
+    #[test]
+    fn gen_matches_files_dotfiles_only_with_dot_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("dot");
+        // c:2204 — `*n != '.' || *fpre == '.' || isset(GLOBDOTS)`.
+        let hidden_off = run_gen_matches_files(&dir, "", "", "", 0, 0, 1);
+        let hidden_on = run_gen_matches_files(&dir, ".", "", "", 0, 0, 1);
+        drop_fixture(&dir);
+        assert!(
+            !hidden_off.iter().any(|n| n.starts_with('.')),
+            "dotfiles listed without a dot prefix: {:?}",
+            hidden_off
+        );
+        assert_eq!(hidden_on, vec![".hdir".to_string(), ".hidden".to_string()]);
+    }
+
+    #[test]
+    fn gen_matches_files_dirs_only() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("dirs");
+        // compctl -/ : gen_matches_files(1, 0, 0).
+        let got = run_gen_matches_files(&dir, "", "", "", 1, 0, 0);
+        drop_fixture(&dir);
+        assert_eq!(got, vec!["adir".to_string(), "bdir".to_string()]);
+    }
+
+    #[test]
+    fn gen_matches_files_execs_only_skips_plain_files_and_dirs() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("exe");
+        let got = run_gen_matches_files(&dir, "", "", "", 0, 1, 0);
+        drop_fixture(&dir);
+        assert_eq!(got, vec!["runme".to_string()]);
+    }
+
+    #[test]
+    fn gen_matches_files_path_suffix_keeps_only_dirs_containing_it() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("psuf");
+        // c:2171 — a path suffix forces dirs=1, all=execs=0 and each
+        // directory is kept only if `<dir>/<name><psuf>` is accessible.
+        let got = run_gen_matches_files(&dir, "", "", "/inner", 0, 0, 1);
+        drop_fixture(&dir);
+        assert_eq!(got, vec!["adir".to_string()]);
+    }
+
+    #[test]
+    fn gen_matches_files_uses_filecomp_pattern_when_set() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("pat");
+        // c:2207 — with a compiled `filecomp` the name is tested with pattry.
+        let mut pat = "al*.txt".to_string();
+        crate::ported::glob::tokenize(&mut pat);
+        let prog = patcompile(&pat, 0, None);
+        assert!(prog.is_some(), "al*.txt must compile");
+        clear_matches();
+        reset_compctl_statics();
+        FILECOMP.with(|r| *r.borrow_mut() = prog);
+        PRPRE.with(|r| *r.borrow_mut() = Some(dir.clone()));
+        gen_matches_files(0, 0, 1);
+        PRPRE.with(|r| *r.borrow_mut() = None);
+        FILECOMP.with(|r| *r.borrow_mut() = None);
+        let got: Vec<String> = crate::comp_match_handles::matches_arc()
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|cm| cm.orig.clone())
+            .collect();
+        drop_fixture(&dir);
+        assert_eq!(got, vec!["alpha.txt".to_string()]);
+    }
+
+    #[test]
+    fn gen_matches_files_restores_addwhat_and_nullglob() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = files_fixture("rst");
+        ADDWHAT.with(|c| c.set(-6));
+        let ng = crate::ported::zsh_h::isset(crate::ported::zsh_h::NULLGLOB);
+        let _ = run_gen_matches_files(&dir, "", "", "", 1, 0, 0);
+        drop_fixture(&dir);
+        // c:2287-2288 — NULLGLOB and addwhat are put back.
+        assert_eq!(ADDWHAT.with(|c| c.get()), -6);
+        assert_eq!(crate::ported::zsh_h::isset(crate::ported::zsh_h::NULLGLOB), ng);
+    }
+
+    #[test]
+    fn compctl_name_pat_tokenizes_pattern_result() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // c:1279-1284 — the pattern case returns the tokenized copy, so the
+        // glob metacharacter is the Star token rather than a literal `*`.
+        let (is_pat, out) = compctl_name_pat("ls*");
+        assert!(is_pat);
+        assert_eq!(out, format!("ls{}", crate::ported::zsh_h::Star));
+    }
 }

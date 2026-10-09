@@ -5,37 +5,42 @@
 //!
 //! ## Port status
 //!
-//! C-faithful: the per-test helpers `doaccess` (c:438), `getstat`
-//! (c:452), `dostat` (c:474), `dolstat` (c:488), `optison` (c:502),
-//! `cond_str` (c:525), `cond_val` (c:539), `cond_match` (c:552),
-//! `tracemodcond` (c:563) are direct ports with C-named signatures.
-//!
-//! The C `evalcond()` at cond.c:70 walks pre-compiled wordcode (`Estate state`,
-//! opcodes via `WC_COND_TYPE`, operand strings via `ecgetstr`). That walker is
-//! `cond::wordcode::evalcond`, called from `execcond` (exec.rs) for `WC_COND`
-//! programs. The top-level `evalcond` here is the argv-driven form used by
-//! `test` / `[` and the `[[ ]]` fusevm bridge, which parses and evaluates the
-//! operand stream inline. (The earlier `CondExpr` / `CondParser` scaffold types
-//! have been deleted.)
+//! C-faithful: `evalcond` (c:70) walks pre-compiled wordcode (`Estate state`,
+//! opcodes via `WC_COND_TYPE`, operand strings via `ecgetstr`) and is called
+//! from `execcond` (exec.rs) for `[[ ]]` programs and from `bin_test`
+//! (builtin.rs) for `test` / `[` programs built by `parse_cond`. The per-test
+//! helpers `doaccess` (c:438), `getstat` (c:452), `dostat` (c:474), `dolstat`
+//! (c:488), `optison` (c:502), `cond_str` (c:525), `cond_val` (c:539),
+//! `cond_match` (c:552), `tracemodcond` (c:563) are direct ports with C-named
+//! signatures.
 
-use std::collections::HashMap;
 use std::fs::{self, Metadata};
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::sync::atomic::Ordering;
 
 use crate::glob::matchpat;
+use crate::ported::exec::quote_tokenized_output;
 use crate::ported::lex::untokenize;
-use crate::ported::math::mathevali;
+use crate::ported::math::{matheval, mathevali};
+use crate::ported::module::{ensurefeature, getconddef, MODULESTAB};
 use crate::ported::options::{optlookup, optlookupc};
-use crate::ported::params::setaparam;
+use crate::ported::params::{issetvar, setaparam};
+use crate::ported::parse::{ecgetarr, ecgetstr, ecrawstr};
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::ported::string::dupstring;
 use crate::ported::glob::{checkglobqual, zglob};
 use crate::ported::linklist::hlinklist2array;
 use crate::ported::subst::{prefork, singsub};
-use crate::ported::utils::{has_token, privasserted, sepjoin, unmeta, zwarn, zwarnnam};
+use crate::ported::utils::{
+    has_token, privasserted, quotedzputs, sepjoin, unmeta, zerr, zerrnam, zstrtol, zwarn, zwarnnam,
+};
 use crate::ported::zsh_h::{
-    isset, unset, CASEGLOB, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT,
-    COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
-    EXTENDEDGLOB, POSIXBUILTINS,
+    conddef, estate, isset, mnumber, unset, CASEGLOB, COND_AND, COND_EF, COND_EQ, COND_GE, COND_GT,
+    COND_LE, COND_LT, COND_MOD, COND_MODI, COND_NE, COND_NOT, COND_NT, COND_OR, COND_OT,
+    COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, EC_DUP, EC_DUPTOK,
+    EC_NODUP, EXTENDEDGLOB, IS_DASH, MN_FLOAT, MN_INTEGER, PAT_STATIC, POSIXBUILTINS, REMATCHPCRE,
+    WC_COND_SKIP, WC_COND_TYPE,
 };
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
@@ -47,17 +52,6 @@ use std::os::unix::io::FromRawFd;
 //
 // `evalcond`'s integer return values are documented in the C source
 // at cond.c:62-66; we use bare i32 throughout (no enum wrapper).
-
-// `CondExpr` enum + `CondParser` struct DELETED. The Rust port no
-// longer builds an intermediate AST: `evalcond` below is a single-
-// pass recursive-descent walker that parses AND evaluates the argv
-// stream in one go. C's `evalcond` at `Src/cond.c:70` walks
-// pre-compiled wordcode (`Estate state` + `WC_COND_TYPE` opcode
-// dispatch) — when the wordcode pipeline is wired through this
-// builtin's call site, `evalcond` should be re-shaped to match
-// the C signature `int evalcond(Estate, char *fromtest)` and walk
-// `WC_COND_*` opcodes directly. Until then, the streaming evaluator
-// here gives equivalent runtime behaviour without an AST type.
 
 /// Port of `int tracingcond` from `Src/cond.c:33` — "updated by
 /// execcond() in exec.c": non-zero while `set -x` is tracing a `[[ ]]`.
@@ -98,151 +92,159 @@ pub fn cond_subst(strp: &mut String, glob_ok: i32) {
     }
 }
 
-/// The `Estate`/wordcode form of `evalcond` (`Src/cond.c:70`). The argv-form
-/// driver used by `test` / `[` already owns the name `evalcond` at this
-/// module's top level, so the wordcode walker lives in its own module under
-/// the same C name.
-pub mod wordcode {
-    use super::{cond_subst, condstr, doaccess, dolstat, dostat, getstat, optison, tracemodcond, tracingcond};
-    use crate::ported::exec::quote_tokenized_output;
-    use crate::ported::lex::untokenize;
-    use crate::ported::math::{mathevali, matheval};
-    use crate::ported::module::{ensurefeature, getconddef, MODULESTAB};
-    use crate::ported::params::issetvar;
-    use crate::ported::parse::{ecgetarr, ecgetstr, ecrawstr};
-    use crate::ported::pattern::{patcompile, pattry};
-    use crate::ported::signals_h::{queue_signals, unqueue_signals};
-    use crate::ported::string::dupstring;
-    use crate::ported::subst::singsub;
-    use crate::ported::utils::{privasserted, quotedzputs, zerr, zerrnam, zstrtol, zwarn, zwarnnam};
-    use crate::ported::zsh_h::{
-        conddef, estate, isset, mnumber, IS_DASH, WC_COND_SKIP, WC_COND_TYPE, COND_AND, COND_EF,
-        COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_MOD, COND_MODI, COND_NE, COND_NOT,
-        COND_NT, COND_OR, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT,
-        COND_STRNEQ, EC_DUP, EC_DUPTOK, EC_NODUP, MN_FLOAT, MN_INTEGER, PAT_STATIC, REMATCHPCRE,
+/// Port of `evalcond(Estate state, char *fromtest)` from
+/// `Src/cond.c:70`. Walks the `WC_COND` wordcode tree at `state.pc`.
+/// `fromtest` is `Some(name)` when called from `test` / `[`.
+///
+/// Return status is the final shell status, i.e. 0 for true, 1 for
+/// false, 2 for syntax error, 3 for "option in tested in -o does not
+/// exist".
+pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
+    // c:70
+    // zwarnnam(fromtest, ...) with fromtest == NULL prints no command name.
+    let warnnam = |msg: &str| match fromtest {
+        Some(n) => zwarnnam(n, msg),
+        None => zwarn(msg),
     };
-    use std::os::unix::fs::MetadataExt;
-    use std::sync::atomic::Ordering;
+    // rec: (c:77)
+    loop {
+        let mut overridename: Option<String> = None;
+        let pcode = state.pc;
+        state.pc += 1;
+        let code = state.prog.prog[pcode];
+        let mut ctype = WC_COND_TYPE(code) as i32;
+        let mut htok: i32 = 0;
 
-    /// Port of `evalcond(Estate state, char *fromtest)` from
-    /// `Src/cond.c:70`. Walks the `WC_COND` wordcode tree at `state.pc`.
-    /// `fromtest` is `Some(name)` when called from `test` / `[`.
-    ///
-    /// Return status is the final shell status, i.e. 0 for true, 1 for
-    /// false, 2 for syntax error, 3 for "option in tested in -o does not
-    /// exist".
-    pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
-        // c:70
-        // zwarnnam(fromtest, ...) with fromtest == NULL prints no command name.
-        let warnnam = |msg: &str| match fromtest {
-            Some(n) => zwarnnam(n, msg),
-            None => zwarn(msg),
-        };
-        // rec: (c:77)
-        loop {
-            let mut overridename: Option<String> = None;
-            let pcode = state.pc;
-            state.pc += 1;
-            let code = state.prog.prog[pcode];
-            let mut ctype = WC_COND_TYPE(code) as i32;
-            let mut htok: i32 = 0;
-
-            match ctype {
-                COND_NOT => {
-                    // c:86
+        match ctype {
+            COND_NOT => {
+                // c:86
+                if tracingcond.load(Ordering::Relaxed) != 0 {
+                    eprint!(" {}", condstr[ctype as usize]);
+                }
+                let ret = evalcond(state, fromtest);
+                if ret == 0 || ret == 1 {
+                    return (ret == 0) as i32;
+                }
+                return ret;
+            }
+            COND_AND => {
+                // c:94
+                let ret = evalcond(state, fromtest);
+                if ret == 0 {
                     if tracingcond.load(Ordering::Relaxed) != 0 {
                         eprint!(" {}", condstr[ctype as usize]);
                     }
-                    let ret = evalcond(state, fromtest);
-                    if ret == 0 || ret == 1 {
-                        return (ret == 0) as i32;
-                    }
-                    return ret;
+                    continue;
                 }
-                COND_AND => {
-                    // c:94
-                    let ret = evalcond(state, fromtest);
-                    if ret == 0 {
-                        if tracingcond.load(Ordering::Relaxed) != 0 {
-                            eprint!(" {}", condstr[ctype as usize]);
-                        }
-                        continue;
+                state.pc = pcode + (WC_COND_SKIP(code) as usize + 1);
+                return ret;
+            }
+            COND_OR => {
+                // c:103
+                let ret = evalcond(state, fromtest);
+                if ret == 1 || ret == 3 {
+                    if tracingcond.load(Ordering::Relaxed) != 0 {
+                        eprint!(" {}", condstr[ctype as usize]);
                     }
-                    state.pc = pcode + (WC_COND_SKIP(code) as usize + 1);
-                    return ret;
+                    continue;
                 }
-                COND_OR => {
-                    // c:103
-                    let ret = evalcond(state, fromtest);
-                    if ret == 1 || ret == 3 {
-                        if tracingcond.load(Ordering::Relaxed) != 0 {
-                            eprint!(" {}", condstr[ctype as usize]);
-                        }
-                        continue;
+                state.pc = pcode + (WC_COND_SKIP(code) as usize + 1);
+                return ret;
+            }
+            _ => {}
+        }
+
+        if ctype == COND_REGEX {
+            // c:113
+            let modname = if isset(REMATCHPCRE) {
+                "zsh/pcre"
+            } else {
+                "zsh/regex"
+            };
+            let on = format!("-{}-match", &modname[4..]);
+            if let Ok(mut tab) = MODULESTAB.try_lock() {
+                let _ = ensurefeature(&mut tab, modname, "C:", Some(&on[1..]));
+            }
+            overridename = Some(on);
+            ctype = COND_MODI;
+        }
+        if ctype == COND_MOD || ctype == COND_MODI {
+            // c:121-194
+            let mut l = WC_COND_SKIP(code) as usize;
+            let mut name: String = match overridename.clone() {
+                Some(n) => n,
+                None => ecgetstr(state, EC_NODUP, None),
+            };
+            let mut strs: Vec<String>;
+            if ctype == COND_MOD {
+                strs = ecgetarr(state, l, EC_DUP, None);
+            } else {
+                let s0 = ecgetstr(state, EC_NODUP, None);
+                let s1 = ecgetstr(state, EC_NODUP, None);
+                strs = vec![s0, s1];
+                l = 2;
+            }
+            let errname: String = if name.chars().next().map_or(false, IS_DASH) {
+                untokenize(&name)
+            } else if strs
+                .first()
+                .and_then(|s| s.chars().next())
+                .map_or(false, IS_DASH)
+            {
+                untokenize(&strs[0])
+            } else {
+                "<null>".to_string()
+            };
+            // getconddef() may load a module, which re-enters MODULESTAB;
+            // the lock is released before any handler runs.
+            let lookup = |inf: i32, nm: &str| -> Option<conddef> {
+                match MODULESTAB.try_lock() {
+                    Ok(mut tab) => getconddef(inf, nm, 1, &mut tab),
+                    Err(_) => None,
+                }
+            };
+            if name.chars().next().map_or(false, IS_DASH) {
+                let rest: String = name.chars().skip(1).collect(); // name + 1
+                if let Some(cd) = lookup((ctype == COND_MODI) as i32, &rest) {
+                                            if ctype == COND_MOD
+                        && ((l as i64) < cd.min as i64
+                            || (cd.max >= 0 && (l as i64) > cd.max as i64))
+                    {
+                        warnnam(&format!("unknown condition: {}", name));
+                        return 2;
                     }
-                    state.pc = pcode + (WC_COND_SKIP(code) as usize + 1);
-                    return ret;
+                    if tracingcond.load(Ordering::Relaxed) != 0 {
+                        tracemodcond(&name, &strs, ctype == COND_MODI);
+                    }
+                    let r = cd.handler.map_or(0, |h| h(&strs, cd.condid));
+                    return (r == 0) as i32;
                 }
-                _ => {}
             }
 
-            if ctype == COND_REGEX {
-                // c:113
-                let modname = if isset(REMATCHPCRE) {
-                    "zsh/pcre"
-                } else {
-                    "zsh/regex"
-                };
-                let on = format!("-{}-match", &modname[4..]);
-                if let Ok(mut tab) = MODULESTAB.try_lock() {
-                    let _ = ensurefeature(&mut tab, modname, "C:", Some(&on[1..]));
+            let s: Option<String> = strs.first().cloned();
+            if let Some(ov) = overridename {
+                // standard regex function not available: hard error.
+                let msg = format!("{} not available for regex", ov);
+                match fromtest {
+                    Some(n) => zerrnam(n, &msg),
+                    None => zerr(&msg),
                 }
-                overridename = Some(on);
-                ctype = COND_MODI;
+                return 2;
             }
-            if ctype == COND_MOD || ctype == COND_MODI {
-                // c:121-194
-                let mut l = WC_COND_SKIP(code) as usize;
-                let mut name: String = match overridename.clone() {
-                    Some(n) => n,
-                    None => ecgetstr(state, EC_NODUP, None),
-                };
-                let mut strs: Vec<String>;
-                if ctype == COND_MOD {
-                    strs = ecgetarr(state, l, EC_DUP, None);
-                } else {
-                    let s0 = ecgetstr(state, EC_NODUP, None);
-                    let s1 = ecgetstr(state, EC_NODUP, None);
-                    strs = vec![s0, s1];
-                    l = 2;
-                }
-                let errname: String = if name.chars().next().map_or(false, IS_DASH) {
-                    untokenize(&name)
-                } else if strs
-                    .first()
-                    .and_then(|s| s.chars().next())
-                    .map_or(false, IS_DASH)
-                {
-                    untokenize(&strs[0])
-                } else {
-                    "<null>".to_string()
-                };
-                // getconddef() may load a module, which re-enters MODULESTAB;
-                // the lock is released before any handler runs.
-                let lookup = |inf: i32, nm: &str| -> Option<conddef> {
-                    match MODULESTAB.try_lock() {
-                        Ok(mut tab) => getconddef(inf, nm, 1, &mut tab),
-                        Err(_) => None,
-                    }
-                };
-                if name.chars().next().map_or(false, IS_DASH) {
-                    let rest: String = name.chars().skip(1).collect(); // name + 1
-                    if let Some(cd) = lookup((ctype == COND_MODI) as i32, &rest) {
-                                                if ctype == COND_MOD
-                            && ((l as i64) < cd.min as i64
-                                || (cd.max >= 0 && (l as i64) > cd.max as i64))
+            if !strs.is_empty() {
+                strs[0] = dupstring(&name);
+            }
+            let first_dash = s.as_deref().and_then(|x| x.chars().next());
+            if let Some(c0) = first_dash {
+                if IS_DASH(c0) {
+
+                    name = s.clone().unwrap_or_default();
+                    let rest: String = name.chars().skip(1).collect();
+                    if let Some(cd) = lookup(0, &rest) {
+                        if (l as i64) < cd.min as i64
+                            || (cd.max >= 0 && (l as i64) > cd.max as i64)
                         {
-                            warnnam(&format!("unknown condition: {}", name));
+                            warnnam(&format!("unknown condition: {}", errname));
                             return 2;
                         }
                         if tracingcond.load(Ordering::Relaxed) != 0 {
@@ -252,889 +254,220 @@ pub mod wordcode {
                         return (r == 0) as i32;
                     }
                 }
+            }
+            warnnam(&format!("unknown condition: {}", errname));
+            return 2;
+        }
 
-                let s: Option<String> = strs.first().cloned();
-                if let Some(ov) = overridename {
-                    // standard regex function not available: hard error.
-                    let msg = format!("{} not available for regex", ov);
-                    match fromtest {
-                        Some(n) => zerrnam(n, &msg),
-                        None => zerr(&msg),
-                    }
+        // c:196
+        let mut left = ecgetstr(state, EC_DUPTOK, Some(&mut htok));
+        if htok != 0 {
+            cond_subst(&mut left, fromtest.is_none() as i32);
+            left = untokenize(&left);
+        }
+        let mut right = String::new();
+        if ctype <= COND_GE && ctype != COND_STREQ && ctype != COND_STRDEQ && ctype != COND_STRNEQ
+        {
+
+            right = ecgetstr(state, EC_DUPTOK, Some(&mut htok));
+            if htok != 0 {
+                cond_subst(&mut right, fromtest.is_none() as i32);
+                right = untokenize(&right);
+            }
+        }
+        if tracingcond.load(Ordering::Relaxed) != 0 {
+            // c:209
+            if ctype < COND_MOD {
+                eprint!(" {} {} ", quotedzputs(&left), condstr[ctype as usize]);
+                if ctype == COND_STREQ || ctype == COND_STRDEQ || ctype == COND_STRNEQ {
+                    let mut rt = ecrawstr(&state.prog, state.pc, None);
+                    cond_subst(&mut rt, fromtest.is_none() as i32);
+                    let _ = quote_tokenized_output(&rt, &mut std::io::stderr());
+                } else {
+                    eprint!("{}", quotedzputs(&right));
+                }
+            } else {
+                eprint!(" -{} {}", ctype as u8 as char, quotedzputs(&left));
+            }
+        }
+
+        if ctype >= COND_EQ && ctype <= COND_GE {
+            // c:228
+            let mut mn1: mnumber;
+            let mut mn2: mnumber;
+            if fromtest.is_some() {
+
+                let (l1, eptr) = zstrtol(&left, 10);
+                let mut err: &str = &left;
+                let mut l2: i64 = 0;
+                let mut bad = !eptr.is_empty();
+                if !bad {
+                    let (v2, e2) = zstrtol(&right, 10);
+                    l2 = v2;
+                    err = &right;
+                    bad = !e2.is_empty();
+                }
+                if bad {
+
+                    warnnam(&format!("integer expression expected: {}", err));
                     return 2;
                 }
-                if !strs.is_empty() {
-                    strs[0] = dupstring(&name);
-                }
-                let first_dash = s.as_deref().and_then(|x| x.chars().next());
-                if let Some(c0) = first_dash {
-                    if IS_DASH(c0) {
-
-                        name = s.clone().unwrap_or_default();
-                        let rest: String = name.chars().skip(1).collect();
-                        if let Some(cd) = lookup(0, &rest) {
-                            if (l as i64) < cd.min as i64
-                                || (cd.max >= 0 && (l as i64) > cd.max as i64)
-                            {
-                                warnnam(&format!("unknown condition: {}", errname));
-                                return 2;
-                            }
-                            if tracingcond.load(Ordering::Relaxed) != 0 {
-                                tracemodcond(&name, &strs, ctype == COND_MODI);
-                            }
-                            let r = cd.handler.map_or(0, |h| h(&strs, cd.condid));
-                            return (r == 0) as i32;
-                        }
-                    }
-                }
-                warnnam(&format!("unknown condition: {}", errname));
-                return 2;
+                mn1 = mnumber { l: l1, d: 0.0, type_: MN_INTEGER };
+                mn2 = mnumber { l: l2, d: 0.0, type_: MN_INTEGER };
+            } else {
+                let zero = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
+                mn1 = matheval(&left).unwrap_or(zero);
+                mn2 = matheval(&right).unwrap_or(zero);
             }
+            if ((mn1.type_ | mn2.type_) & (MN_INTEGER | MN_FLOAT)) == (MN_INTEGER | MN_FLOAT) {
 
-            // c:196
-            let mut left = ecgetstr(state, EC_DUPTOK, Some(&mut htok));
-            if htok != 0 {
-                cond_subst(&mut left, fromtest.is_none() as i32);
-                left = untokenize(&left);
-            }
-            let mut right = String::new();
-            if ctype <= COND_GE && ctype != COND_STREQ && ctype != COND_STRDEQ && ctype != COND_STRNEQ
-            {
-
-                right = ecgetstr(state, EC_DUPTOK, Some(&mut htok));
-                if htok != 0 {
-                    cond_subst(&mut right, fromtest.is_none() as i32);
-                    right = untokenize(&right);
+                if mn1.type_ & MN_INTEGER != 0 {
+                    mn1.type_ = MN_FLOAT;
+                    mn1.d = mn1.l as f64;
+                }
+                if mn2.type_ & MN_INTEGER != 0 {
+                    mn2.type_ = MN_FLOAT;
+                    mn2.d = mn2.l as f64;
                 }
             }
-            if tracingcond.load(Ordering::Relaxed) != 0 {
-                // c:209
-                if ctype < COND_MOD {
-                    eprint!(" {} {} ", quotedzputs(&left), condstr[ctype as usize]);
-                    if ctype == COND_STREQ || ctype == COND_STRDEQ || ctype == COND_STRNEQ {
-                        let mut rt = ecrawstr(&state.prog, state.pc, None);
-                        cond_subst(&mut rt, fromtest.is_none() as i32);
-                        let _ = quote_tokenized_output(&rt, &mut std::io::stderr());
-                    } else {
-                        eprint!("{}", quotedzputs(&right));
-                    }
-                } else {
-                    eprint!(" -{} {}", ctype as u8 as char, quotedzputs(&left));
+            let fl = mn1.type_ & MN_FLOAT != 0;
+            let t = match ctype {
+                COND_EQ => {
+                    if fl { mn1.d == mn2.d } else { mn1.l == mn2.l }
                 }
-            }
+                COND_NE => {
+                    if fl { mn1.d != mn2.d } else { mn1.l != mn2.l }
+                }
+                COND_LT => {
+                    if fl { mn1.d < mn2.d } else { mn1.l < mn2.l }
+                }
+                COND_GT => {
+                    if fl { mn1.d > mn2.d } else { mn1.l > mn2.l }
+                }
+                COND_LE => {
+                    if fl { mn1.d <= mn2.d } else { mn1.l <= mn2.l }
+                }
+                _ => {
+                    if fl { mn1.d >= mn2.d } else { mn1.l >= mn2.l } // COND_GE
+                }
+            };
+            return (!t) as i32;
+        }
 
-            if ctype >= COND_EQ && ctype <= COND_GE {
-                // c:228
-                let mut mn1: mnumber;
-                let mut mn2: mnumber;
-                if fromtest.is_some() {
-
-                    let (l1, eptr) = zstrtol(&left, 10);
-                    let mut err: &str = &left;
-                    let mut l2: i64 = 0;
-                    let mut bad = !eptr.is_empty();
-                    if !bad {
-                        let (v2, e2) = zstrtol(&right, 10);
-                        l2 = v2;
-                        err = &right;
-                        bad = !e2.is_empty();
-                    }
-                    if bad {
-
-                        warnnam(&format!("integer expression expected: {}", err));
+        // `!x` over a C truth value: 0 when true, 1 when false.
+        let nz = |t: bool| -> i32 { (!t) as i32 };
+        let fmt = libc::S_IFMT as u32;
+        return match ctype {
+            COND_STREQ | COND_STRDEQ | COND_STRNEQ => {
+                // c:293-327
+                queue_signals();
+                // c:302-318 — every pattern slot is a dummy_patprog here (the Rust
+                // `pats` slots hold no compiled pattern), so take the dummy-pattern
+                // compile path: substitute the raw pattern, then compile it.
+                let opat = ecrawstr(&state.prog, state.pc, Some(&mut htok));
+                right = dupstring(&opat);
+                right = singsub(&right);
+                let pprog = patcompile(&right, PAT_STATIC, None);
+                let ret = match pprog {
+                    None => {
+                        warnnam(&format!("bad pattern: {}", right));
+                        unqueue_signals();
                         return 2;
                     }
-                    mn1 = mnumber { l: l1, d: 0.0, type_: MN_INTEGER };
-                    mn2 = mnumber { l: l2, d: 0.0, type_: MN_INTEGER };
-                } else {
-                    let zero = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
-                    mn1 = matheval(&left).unwrap_or(zero);
-                    mn2 = matheval(&right).unwrap_or(zero);
-                }
-                if ((mn1.type_ | mn2.type_) & (MN_INTEGER | MN_FLOAT)) == (MN_INTEGER | MN_FLOAT) {
-
-                    if mn1.type_ & MN_INTEGER != 0 {
-                        mn1.type_ = MN_FLOAT;
-                        mn1.d = mn1.l as f64;
-                    }
-                    if mn2.type_ & MN_INTEGER != 0 {
-                        mn2.type_ = MN_FLOAT;
-                        mn2.d = mn2.l as f64;
-                    }
-                }
-                let fl = mn1.type_ & MN_FLOAT != 0;
-                let t = match ctype {
-                    COND_EQ => {
-                        if fl { mn1.d == mn2.d } else { mn1.l == mn2.l }
-                    }
-                    COND_NE => {
-                        if fl { mn1.d != mn2.d } else { mn1.l != mn2.l }
-                    }
-                    COND_LT => {
-                        if fl { mn1.d < mn2.d } else { mn1.l < mn2.l }
-                    }
-                    COND_GT => {
-                        if fl { mn1.d > mn2.d } else { mn1.l > mn2.l }
-                    }
-                    COND_LE => {
-                        if fl { mn1.d <= mn2.d } else { mn1.l <= mn2.l }
-                    }
-                    _ => {
-                        if fl { mn1.d >= mn2.d } else { mn1.l >= mn2.l } // COND_GE
+                    Some(p) => {
+                        state.pc += 2;
+                        let test = pattry(&p, &left);
+                        let test = if ctype == COND_STRNEQ { !test } else { test };
+                        nz(test)
                     }
                 };
-                return (!t) as i32;
+                unqueue_signals();
+                ret
             }
-
-            // `!x` over a C truth value: 0 when true, 1 when false.
-            let nz = |t: bool| -> i32 { (!t) as i32 };
-            let fmt = libc::S_IFMT as u32;
-            return match ctype {
-                COND_STREQ | COND_STRDEQ | COND_STRNEQ => {
-                    // c:293-327
-                    queue_signals();
-                    // c:302-318 — every pattern slot is a dummy_patprog here (the Rust
-                    // `pats` slots hold no compiled pattern), so take the dummy-pattern
-                    // compile path: substitute the raw pattern, then compile it.
-                    let opat = ecrawstr(&state.prog, state.pc, Some(&mut htok));
-                    right = dupstring(&opat);
-                    right = singsub(&right);
-                    let pprog = patcompile(&right, PAT_STATIC, None);
-                    let ret = match pprog {
-                        None => {
-                            warnnam(&format!("bad pattern: {}", right));
-                            unqueue_signals();
-                            return 2;
-                        }
-                        Some(p) => {
-                            state.pc += 2;
-                            let test = pattry(&p, &left);
-                            let test = if ctype == COND_STRNEQ { !test } else { test };
-                            nz(test)
-                        }
-                    };
-                    unqueue_signals();
-                    ret
+            // c:328
+            COND_STRLT => nz(left.as_bytes() < right.as_bytes()),
+            // c:330
+            COND_STRGTR => nz(left.as_bytes() > right.as_bytes()),
+            // c:332-428 — the single-letter and file-comparison cases
+            _ => match ctype as u8 as char {
+                'e' | 'a' => nz(doaccess(&left, libc::F_OK) != 0),
+                'b' => nz((dostat(&left) & fmt) == libc::S_IFBLK as u32),
+                'c' => nz((dostat(&left) & fmt) == libc::S_IFCHR as u32),
+                'd' => nz((dostat(&left) & fmt) == libc::S_IFDIR as u32),
+                'f' => nz((dostat(&left) & fmt) == libc::S_IFREG as u32),
+                'g' => nz((dostat(&left) & (libc::S_ISGID as u32)) != 0),
+                'k' => nz((dostat(&left) & (libc::S_ISVTX as u32)) != 0),
+                'n' => nz(!left.is_empty()),
+                'o' => optison(fromtest, &left),
+                'p' => nz((dostat(&left) & fmt) == libc::S_IFIFO as u32),
+                'r' => nz(doaccess(&left, libc::R_OK) != 0),
+                's' => nz(getstat(&left).map_or(false, |m| m.size() != 0)),
+                'S' => nz((dostat(&left) & fmt) == libc::S_IFSOCK as u32),
+                'u' => nz((dostat(&left) & (libc::S_ISUID as u32)) != 0),
+                'v' => nz(issetvar(&left) != 0),
+                'w' => nz(doaccess(&left, libc::W_OK) != 0),
+                'x' => {
+                    // c:365
+                    if privasserted() {
+                        let mode = dostat(&left);
+                        nz(((mode & 0o111) != 0) || ((mode & fmt) == libc::S_IFDIR as u32))
+                    } else {
+                        nz(doaccess(&left, libc::X_OK) != 0)
+                    }
                 }
-                // c:328
-                COND_STRLT => nz(left.as_bytes() < right.as_bytes()),
-                // c:330
-                COND_STRGTR => nz(left.as_bytes() > right.as_bytes()),
-                // c:332-428 — the single-letter and file-comparison cases
-                _ => match ctype as u8 as char {
-                    'e' | 'a' => nz(doaccess(&left, libc::F_OK) != 0),
-                    'b' => nz((dostat(&left) & fmt) == libc::S_IFBLK as u32),
-                    'c' => nz((dostat(&left) & fmt) == libc::S_IFCHR as u32),
-                    'd' => nz((dostat(&left) & fmt) == libc::S_IFDIR as u32),
-                    'f' => nz((dostat(&left) & fmt) == libc::S_IFREG as u32),
-                    'g' => nz((dostat(&left) & (libc::S_ISGID as u32)) != 0),
-                    'k' => nz((dostat(&left) & (libc::S_ISVTX as u32)) != 0),
-                    'n' => nz(!left.is_empty()),
-                    'o' => optison(fromtest, &left),
-                    'p' => nz((dostat(&left) & fmt) == libc::S_IFIFO as u32),
-                    'r' => nz(doaccess(&left, libc::R_OK) != 0),
-                    's' => nz(getstat(&left).map_or(false, |m| m.size() != 0)),
-                    'S' => nz((dostat(&left) & fmt) == libc::S_IFSOCK as u32),
-                    'u' => nz((dostat(&left) & (libc::S_ISUID as u32)) != 0),
-                    'v' => nz(issetvar(&left) != 0),
-                    'w' => nz(doaccess(&left, libc::W_OK) != 0),
-                    'x' => {
-                        // c:365
-                        if privasserted() {
-                            let mode = dostat(&left);
-                            nz(((mode & 0o111) != 0) || ((mode & fmt) == libc::S_IFDIR as u32))
+                'z' => (!left.is_empty()) as i32,
+                'h' | 'L' => nz((dolstat(&left) & fmt) == libc::S_IFLNK as u32),
+                'O' => nz(getstat(&left).map_or(false, |m| m.uid() == unsafe { libc::geteuid() })),
+                'G' => nz(getstat(&left).map_or(false, |m| m.gid() == unsafe { libc::getegid() })),
+                'N' => match getstat(&left) {
+                    // c:380
+                    None => 1,
+                    Some(m) => {
+                        if m.atime() == m.mtime() {
+                            (m.atime_nsec() > m.mtime_nsec()) as i32
                         } else {
-                            nz(doaccess(&left, libc::X_OK) != 0)
+                            (m.atime() > m.mtime()) as i32
                         }
-                    }
-                    'z' => (!left.is_empty()) as i32,
-                    'h' | 'L' => nz((dolstat(&left) & fmt) == libc::S_IFLNK as u32),
-                    'O' => nz(getstat(&left).map_or(false, |m| m.uid() == unsafe { libc::geteuid() })),
-                    'G' => nz(getstat(&left).map_or(false, |m| m.gid() == unsafe { libc::getegid() })),
-                    'N' => match getstat(&left) {
-                        // c:380
-                        None => 1,
-                        Some(m) => {
-                            if m.atime() == m.mtime() {
-                                (m.atime_nsec() > m.mtime_nsec()) as i32
-                            } else {
-                                (m.atime() > m.mtime()) as i32
-                            }
-                        }
-                    },
-                    't' => nz(unsafe { libc::isatty(mathevali(&left).unwrap_or(0) as i32) } != 0),
-                    _ if ctype == COND_NT || ctype == COND_OT => {
-                        // c:400
-                        let (a, nsecs) = match getstat(&left) {
-                            None => return 1,
-                            Some(m) => (m.mtime(), m.mtime_nsec()),
-                        };
-                        let m2 = match getstat(&right) {
-                            None => return 1,
-                            Some(m) => m,
-                        };
-                        if a == m2.mtime() {
-                            // c:419
-                            nz(if ctype == COND_NT {
-                                nsecs > m2.mtime_nsec()
-                            } else {
-                                nsecs < m2.mtime_nsec()
-                            })
-                        } else {
-                            nz(if ctype == COND_NT { a > m2.mtime() } else { a < m2.mtime() })
-                        }
-                    }
-                    _ if ctype == COND_EF => {
-                        // c:426
-                        let (d, i) = match getstat(&left) {
-                            None => return 1,
-                            Some(m) => (m.dev(), m.ino()),
-                        };
-                        match getstat(&right) {
-                            None => 1,
-                            Some(m) => nz(d == m.dev() && i == m.ino()),
-                        }
-                    }
-                    _ => {                        warnnam("bad cond code");
-                        2
                     }
                 },
-            };
-        }
-    }
-}
-
-/// Argv-form `[[ … ]]` / `test … ]` driver. C signature differs:
-/// `int evalcond(Estate state, char *fromtest)` at cond.c:70 walks
-/// wordcode; this argv-form is a Rust-side adaptation pending the
-/// wordcode pipeline wiring.
-///
-/// Returns C's convention (cond.c:62-66): 0=true, 1=false, 2=syntax
-/// error, 3=option-tested-with-`-o`-not-found.
-pub fn evalcond(
-    // c:70 — C signature is `int evalcond(Estate state, char *fromtest)`.
-    // The Rust port adds posix_mode + an explicit args slice (Estate
-    // walks wordcode in C; we walk argv tokens). `from_test` mirrors C's
-    // `fromtest` parameter byte-for-byte: when `Some(name)`, the
-    // integer-comparison arms route through strict zstrtol parsing that
-    // emits `zwarnnam(name, "integer expression expected: %s", err)` +
-    // rc=2 on parse failure (c:Src/cond.c:248-251). When `None`, the
-    // `[[ ]]`-style mathevali coercion-to-0 path is used.
-    args: &[&str],
-    options: &HashMap<String, bool>,
-    variables: &HashMap<String, String>,
-    posix_mode: bool,
-    from_test: Option<&str>,
-) -> i32 {
-    if args.is_empty() {
-        return 1;
-    }
-    // Operands reach evalcond WITHOUT their structural delimiters: the `[`
-    // builtin pops its trailing `]` in bin_test (builtin.rs c:7246) and the
-    // `[[ … ]]` dispatch passes only operands/operators. So every `[`/`]`
-    // still present here is a LITERAL operand — e.g. `[[ -n '[' ]]`, or
-    // autopair's `[[ -n $rchar ]]` where `$rchar` is `]`/`)`. A blanket
-    // `filter(… != "[" | "]" | …)` silently deleted those operands, so
-    // `[[ -n '[' ]]` saw `-n` with no argument and returned false — which
-    // broke real plugins (autopair binds the wrong close-pair key). Keep
-    // every token; delimiter stripping is the caller's job, not ours.
-    let toks: Vec<&str> = args.iter().copied().collect();
-    if toks.is_empty() {
-        return 1;
-    }
-
-    // Inner walker — the entire cond.c:81-185 switch collapsed into
-    // one fn. `prec` selects the recursion level (0=OR, 1=AND,
-    // 2=NOT, 3=primary). This is the one Rust adaptation: C's
-    // `evalcond` walks a single wordcode stream; we walk argv via
-    // operator-precedence climbing. No helper ported / no AST.
-    fn walk(
-        toks: &[&str],
-        pos: &mut usize,
-        opts: &HashMap<String, bool>,
-        vars: &HashMap<String, String>,
-        posix: bool,
-        from_test: Option<&str>,
-        prec: u8,
-    ) -> i32 {
-        let b2i = |b: bool| -> i32 {
-            if b {
-                0
-            } else {
-                1
-            }
+                't' => nz(unsafe { libc::isatty(mathevali(&left).unwrap_or(0) as i32) } != 0),
+                _ if ctype == COND_NT || ctype == COND_OT => {
+                    // c:400
+                    let (a, nsecs) = match getstat(&left) {
+                        None => return 1,
+                        Some(m) => (m.mtime(), m.mtime_nsec()),
+                    };
+                    let m2 = match getstat(&right) {
+                        None => return 1,
+                        Some(m) => m,
+                    };
+                    if a == m2.mtime() {
+                        // c:419
+                        nz(if ctype == COND_NT {
+                            nsecs > m2.mtime_nsec()
+                        } else {
+                            nsecs < m2.mtime_nsec()
+                        })
+                    } else {
+                        nz(if ctype == COND_NT { a > m2.mtime() } else { a < m2.mtime() })
+                    }
+                }
+                _ if ctype == COND_EF => {
+                    // c:426
+                    let (d, i) = match getstat(&left) {
+                        None => return 1,
+                        Some(m) => (m.dev(), m.ino()),
+                    };
+                    match getstat(&right) {
+                        None => 1,
+                        Some(m) => nz(d == m.dev() && i == m.ino()),
+                    }
+                }
+                _ => {                        warnnam("bad cond code");
+                    2
+                }
+            },
         };
-        let peek = |i: usize| -> Option<&str> { toks.get(i).copied() };
-
-        match prec {
-            // OR — c:96 COND_OR.
-            0 => {
-                let mut left = walk(toks, pos, opts, vars, posix, from_test, 1);
-                while peek(*pos) == Some("||") || peek(*pos) == Some("-o") {
-                    *pos += 1;
-                    let right = walk(toks, pos, opts, vars, posix, from_test, 1);
-                    left = if left == 0 {
-                        0
-                    } else if left >= 2 {
-                        left
-                    } else {
-                        right
-                    };
-                }
-                left
-            }
-            // AND — c:88 COND_AND.
-            1 => {
-                let mut left = walk(toks, pos, opts, vars, posix, from_test, 2);
-                while peek(*pos) == Some("&&") || peek(*pos) == Some("-a") {
-                    *pos += 1;
-                    let right = walk(toks, pos, opts, vars, posix, from_test, 2);
-                    left = if left != 0 { left } else { right };
-                }
-                left
-            }
-            // NOT — c:81 COND_NOT.
-            2 => {
-                if peek(*pos) == Some("!") {
-                    *pos += 1;
-                    let r = walk(toks, pos, opts, vars, posix, from_test, 2);
-                    if r < 2 {
-                        if r == 0 {
-                            1
-                        } else {
-                            0
-                        }
-                    } else {
-                        r
-                    }
-                } else {
-                    walk(toks, pos, opts, vars, posix, from_test, 3)
-                }
-            }
-            // Primary — c:179+ default arm. Parenthesised group,
-            // unary `-X arg`, binary `l OP r`, or bare arg.
-            //
-            // prec 3 is the ordinary primary; prec 4 is the LITERAL primary
-            // used by the POSIX three-argument rule below, where the first
-            // token is an OPERAND however much it looks like syntax. Both the
-            // paren-group arm and the unary `-X arg` arm are therefore skipped
-            // at prec 4 — see the comment on the caller.
-            _ => {
-                if prec == 3 && peek(*pos) == Some("(") {
-                    *pos += 1;
-                    let r = walk(toks, pos, opts, vars, posix, from_test, 0);
-                    if peek(*pos) != Some(")") {
-                        return 2;
-                    }
-                    *pos += 1;
-                    return r;
-                }
-                // Unary `-X arg`.
-                if let Some(tok) = peek(*pos).filter(|_| prec == 3) {
-                    if tok.starts_with('-') && tok.len() == 2 {
-                        let op = tok.chars().nth(1).unwrap();
-                        if matches!(
-                            op,
-                            'a' | 'b'
-                                | 'c'
-                                | 'd'
-                                | 'e'
-                                | 'f'
-                                | 'g'
-                                | 'h'
-                                | 'k'
-                                | 'L'
-                                | 'n'
-                                | 'o'
-                                | 'p'
-                                | 'r'
-                                | 's'
-                                | 'S'
-                                | 't'
-                                | 'u'
-                                | 'v'
-                                | 'w'
-                                | 'x'
-                                | 'z'
-                                | 'G'
-                                | 'N'
-                                | 'O'
-                        ) {
-                            *pos += 1;
-                            let arg = match peek(*pos) {
-                                Some(a) => {
-                                    *pos += 1;
-                                    a.to_string()
-                                }
-                                None => return 2,
-                            };
-                            return match op {
-                                'a' | 'e' => b2i(Path::new(&arg).exists()), // c:179-180
-                                'b' => {
-                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFBLK as u32)
-                                }
-                                'c' => {
-                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFCHR as u32)
-                                }
-                                'd' => b2i(Path::new(&arg).is_dir()),
-                                'f' => b2i(Path::new(&arg).is_file()),
-                                'g' => b2i(dostat(&arg) & libc::S_ISGID as u32 != 0),
-                                'h' | 'L' => {
-                                    b2i(dolstat(&arg) & libc::S_IFMT as u32 == libc::S_IFLNK as u32)
-                                }
-                                'k' => b2i(dostat(&arg) & libc::S_ISVTX as u32 != 0),
-                                'p' => {
-                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFIFO as u32)
-                                }
-                                'r' => b2i(doaccess(&arg, 4) != 0), // c:438
-                                's' => b2i(getstat(&arg).map(|m| m.len() > 0).unwrap_or(false)),
-                                'S' => {
-                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFSOCK as u32)
-                                }
-                                'u' => b2i(dostat(&arg) & libc::S_ISUID as u32 != 0),
-                                'w' => b2i(doaccess(&arg, 2) != 0), // c:438
-                                // c:368-373 — `-x file` test:
-                                //   if (privasserted()) {
-                                //       mode_t mode = dostat(left);
-                                //       return !((mode & S_IXUGO) || S_ISDIR(mode));
-                                //   }
-                                //   return !doaccess(left, X_OK);
-                                //
-                                // The previous Rust port unconditionally
-                                // did `doaccess || S_ISDIR` — adding the
-                                // S_ISDIR fallback even for non-privileged
-                                // shells. Under non-privileged shell,
-                                // `[[ -x /no-x-perm-dir ]]` would return
-                                // TRUE in Rust (the S_ISDIR fallback
-                                // bypassed the access check) but FALSE
-                                // in C (doaccess alone, no S_ISDIR fall-
-                                // back). Gate on `privasserted()` to
-                                // match C exactly.
-                                'x' => {
-                                    if privasserted() {
-                                        // c:368
-                                        let mode = dostat(&arg);
-                                        // c:370 — `(mode & S_IXUGO) || S_ISDIR(mode)`.
-                                        let s_ixugo = 0o111u32; // S_IXUSR|S_IXGRP|S_IXOTH
-                                        let is_dir =
-                                            mode & libc::S_IFMT as u32 == libc::S_IFDIR as u32;
-                                        b2i((mode & s_ixugo) != 0 || is_dir) // c:370
-                                    } else {
-                                        // c:372
-                                        b2i(doaccess(&arg, 1) != 0) // c:373 X_OK
-                                    }
-                                }
-                                'O' => b2i(getstat(&arg)
-                                    .map(|m| m.uid() == unsafe { libc::geteuid() })
-                                    .unwrap_or(false)),
-                                'G' => b2i(getstat(&arg)
-                                    .map(|m| m.gid() == unsafe { libc::getegid() })
-                                    .unwrap_or(false)),
-                                // c:380-389 — `-N`: file modified since last
-                                // read. True iff atime <= mtime at full
-                                // (nanosecond) precision: `atime > mtime` →
-                                // false; on an equal-second tie the nsec fields
-                                // break it (`atime_nsec > mtime_nsec` → false).
-                                // Second-only granularity wrongly passed files
-                                // like /dev/null whose atime/mtime share a
-                                // second but differ in nsec.
-                                'N' => b2i(getstat(&arg)
-                                    .map(|m| {
-                                        if m.atime() == m.mtime() {
-                                            m.atime_nsec() <= m.mtime_nsec() // c:385
-                                        } else {
-                                            m.atime() < m.mtime() // c:386
-                                        }
-                                    })
-                                    .unwrap_or(false)),
-                                'n' => b2i(!arg.is_empty()),
-                                'z' => b2i(arg.is_empty()),
-                                'o' => {
-                                    let r = optison(from_test, &arg); // c:502 (fromtest)
-                                    if r != 3 {
-                                        r
-                                    } else if opts.contains_key(&arg) {
-                                        b2i(opts[&arg])
-                                    } else {
-                                        3
-                                    }
-                                }
-                                'v' => b2i(vars.contains_key(&arg)),
-                                // c:330+ — `-t fd` accepts ARITHMETIC
-                                // (`mathevali`), not just plain digits.
-                                // C: `fd = mathevali(left); return
-                                // !isatty(fd);`. The previous Rust port
-                                // used `.parse::<i32>()` which rejected
-                                // `[[ -t $((0)) ]]` / `[[ -t 1+0 ]]`.
-                                // Route through `mathevali` so all
-                                // arith-expression forms work.
-                                't' => mathevali(&arg)
-                                    .map(|fd| b2i(unsafe { libc::isatty(fd as i32) } != 0))
-                                    .unwrap_or(2),
-                                _ => 2,
-                            };
-                        }
-                    }
-                }
-                // Binary `left OP right` or bare `left` (implicit `-n`).
-                let left = match peek(*pos) {
-                    Some(a) => {
-                        *pos += 1;
-                        a.to_string()
-                    }
-                    None => return 2,
-                };
-                let code: Option<i32> = peek(*pos).and_then(|t| match t {
-                    "=" => Some(COND_STREQ),
-                    "==" => Some(COND_STRDEQ),
-                    "!=" => Some(COND_STRNEQ),
-                    "<" => Some(COND_STRLT),
-                    ">" => Some(COND_STRGTR),
-                    "-eq" => Some(COND_EQ),
-                    "-ne" => Some(COND_NE),
-                    "-lt" => Some(COND_LT),
-                    "-gt" => Some(COND_GT),
-                    "-le" => Some(COND_LE),
-                    "-ge" => Some(COND_GE),
-                    "-nt" => Some(COND_NT),
-                    "-ot" => Some(COND_OT),
-                    "-ef" => Some(COND_EF),
-                    "=~" | "-regex-match" => Some(COND_REGEX),
-                    _ => None,
-                });
-                if let Some(code) = code {
-                    *pos += 1;
-                    let right = match peek(*pos) {
-                        Some(a) => {
-                            *pos += 1;
-                            a.to_string()
-                        }
-                        None => return 2,
-                    };
-                    // c:415-422 — C uses `mathevali(left)` /
-                    // `mathevali(right)` for the integer-compare ops
-                    // (-eq / -ne / -lt / -gt / -le / -ge). The previous
-                    // Rust port called `s.parse::<i64>()` which
-                    // silently returned None for any non-trivial
-                    // arithmetic — `[[ 1+2 -eq 3 ]]` errored out at
-                    // parse time even though C evaluates the LHS to 3.
-                    //
-                    // Under POSIX-mode, C falls back to plain integer
-                    // parsing (no arithmetic eval). Mirror both
-                    // branches.
-                    let parse_num = |s: &str| -> Option<f64> {
-                        if from_test.is_some() {
-                            // c:236-246 — "For test and [, the expressions
-                            // must be base 10 integers, not integer
-                            // expressions." `mn1.u.l = zstrtol(left,
-                            // &eptr, 10); ... if (*eptr) zwarnnam(...)`.
-                            // zstrtol skips leading blanks only and
-                            // accepts an empty string as 0 (eptr lands
-                            // on the NUL), so `[ '' -eq 0 ]` is true and
-                            // `[ '5 ' -eq 5 ]` is an error.
-                            let (n, rest) = crate::ported::utils::zstrtol(s, 10);
-                            return if rest.is_empty() { Some(n as f64) } else { None };
-                        }
-                        let t = s.trim();
-                        if posix {
-                            // Same shape under POSIXBUILTINS.
-                            t.parse::<i64>().ok().map(|i| i as f64)
-                        } else {
-                            // c:415 — route through `mathevali`.
-                            // Falls back to plain decimal / float
-                            // parsing for non-arith string operands.
-                            mathevali(t)
-                                .ok()
-                                .map(|i| i as f64)
-                                .or_else(|| t.parse::<i64>().ok().map(|i| i as f64))
-                                .or_else(|| t.parse::<f64>().ok())
-                        }
-                    };
-                    let num_cmp = |l: &str, r: &str, f: fn(f64, f64) -> bool| -> i32 {
-                        match (parse_num(l), parse_num(r)) {
-                            (Some(a), Some(b)) => b2i(f(a, b)),
-                            _ => {
-                                // c:Src/cond.c:248-251 — when fromtest is
-                                // set and the operand isn't a base-10
-                                // integer, emit the canonical diagnostic
-                                // and return 2. C reports the FIRST bad
-                                // operand: left if left failed, else
-                                // right. Bug #411.
-                                if let Some(name) = from_test {
-                                    let err = if parse_num(l).is_none() { l } else { r };
-                                    crate::ported::utils::zwarnnam(
-                                        name,
-                                        &format!("integer expression expected: {}", err),
-                                    );
-                                }
-                                2
-                            }
-                        }
-                    };
-                    let mtime_cmp = |l: &str, r: &str, f: fn(i64, i64) -> bool| -> i32 {
-                        // !!! EMULATION-ONLY (no C counterpart) !!! bash, ksh93 and
-                        // mksh treat a MISSING file as infinitely old: `[[ a -nt
-                        // missing ]]` and `[[ missing -ot a ]]` are true, two missing
-                        // files compare false either way. zsh (c:Src/cond.c) fails
-                        // the test whenever either stat fails.
-                        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
-                            let t = |p: &str| getstat(p).map_or(i64::MIN, |m| m.mtime());
-                            return b2i(f(t(l), t(r)));
-                        }
-                        let lm = match getstat(l) {
-                            Some(m) => m,
-                            None => return 1,
-                        };
-                        let rm = match getstat(r) {
-                            Some(m) => m,
-                            None => return 1,
-                        };
-                        b2i(f(lm.mtime(), rm.mtime()))
-                    };
-                    // c:2519 (glob.c) — `matchpat` reads EXTENDED_GLOB
-                    // and CASEGLOB from option globals. Rust port
-                    // extends the signature; read both flags here so
-                    // `setopt nocaseglob` / `setopt extendedglob`
-                    // actually affect `[[ str = pat ]]` dispatch.
-                    // c:Src/cond.c:312-317 — `[[ str = pat ]]` compiles the
-                    // pattern itself rather than delegating to matchpat():
-                    //
-                    //   if (!(pprog = patcompile(right, ...))) {
-                    //       zwarnnam(fromtest, "bad pattern: %s", right);
-                    //       return 2;
-                    //   }
-                    //   test = (pprog && pattry(pprog, left));
-                    //
-                    // A pattern that fails to compile is an ERROR (status 2
-                    // + the full pattern echoed), not a silent no-match
-                    // (status 1). `Err(())` carries that compile failure out
-                    // to the arms below, which is why this can't just return
-                    // a bool the way matchpat does.
-                    let strpat = |pat: &str, text: &str| -> Result<bool, ()> {
-                        if posix {
-                            return Ok(text == pat);
-                        }
-                        // Tokenize + PAT_HEAPDUP: the compile contract
-                        // matchpat uses (glob.rs:2070). Case sensitivity is
-                        // resolved inside patcompile, which drops GF_IGNCASE
-                        // for a non-PAT_FILE pattern, so `nocaseglob` stays
-                        // out of `[[ ]]`.
-                        // !!! BASH-MODE GATE (no C counterpart) !!! bash
-                        // `shopt -s nocasematch` makes `[[ == ]]` case-
-                        // insensitive; lowercase both sides (glob metachars are
-                        // not letters, so pattern structure is preserved).
-                        let (pat, text) = if crate::dash_mode::nocasematch() {
-                            (
-                                std::borrow::Cow::Owned(pat.to_lowercase()),
-                                std::borrow::Cow::Owned(text.to_lowercase()),
-                            )
-                        } else {
-                            (
-                                std::borrow::Cow::Borrowed(pat),
-                                std::borrow::Cow::Borrowed(text),
-                            )
-                        };
-                        let mut tok = pat.to_string();
-                        // c:Src/cond.c:299-303 — C hands `patcompile` the RAW
-                        // wordcode string, whose glob metacharacters were
-                        // TOKENIZED at parse time. `[[ ]]` reaches evalcond
-                        // that way, so the port has to tokenize here to get
-                        // `[[ ab = a* ]]` right. The `test`/`[` BUILTIN does
-                        // not: its operands are post-expansion argv strings
-                        // that were never tokenized, so every metacharacter in
-                        // them is LITERAL — real zsh gives
-                        //   `test aX = 'a*'`   → 1 (no match)
-                        //   `test a = '[a]'`   → 1
-                        //   `test '(' = '('`   → 0 (was `bad pattern: (`)
-                        // `from_test` is exactly C's `fromtest`, i.e. the
-                        // wordcode-vs-argv caller split, so gate on it.
-                        if from_test.is_none() {
-                            crate::ported::glob::tokenize(&mut tok);
-                        }
-                        match crate::ported::pattern::patcompile(
-                            &tok,
-                            crate::ported::zsh_h::PAT_HEAPDUP,
-                            None,
-                        ) {
-                            // c:322 — `test = (pprog && pattry(pprog, left));`
-                            Some(p) => Ok(crate::ported::pattern::pattry(&p, &text)),
-                            None => Err(()), // c:313
-                        }
-                    };
-                    // c:314-316 — report with the full right-hand pattern and
-                    // yield status 2.
-                    let badpat = |pat: &str| -> i32 {
-                        // c:314 — `zwarnnam(fromtest, "bad pattern: %s", right)`.
-                        // `test`/`[` pass their name; `[[ ]]` passes NULL, and a
-                        // NULL cmd makes C's zwarnnam degrade to the unprefixed
-                        // zerr form.
-                        let msg = format!("bad pattern: {}", pat);
-                        match from_test {
-                            Some(n) => crate::ported::utils::zwarnnam(n, &msg),
-                            None => crate::ported::utils::zerr(&msg),
-                        }
-                        2 // c:316
-                    };
-                    return match code {
-                        c if c == COND_STREQ || c == COND_STRDEQ => match strpat(&right, &left) {
-                            Ok(m) => b2i(m),
-                            Err(()) => badpat(&right),
-                        },
-                        c if c == COND_STRNEQ => match strpat(&right, &left) {
-                            Ok(m) => b2i(!m),
-                            Err(()) => badpat(&right),
-                        },
-                        c if c == COND_STRLT => b2i(left.as_str() < right.as_str()),
-                        c if c == COND_STRGTR => b2i(left.as_str() > right.as_str()),
-                        c if c == COND_EQ => num_cmp(&left, &right, |a, b| a == b),
-                        c if c == COND_NE => num_cmp(&left, &right, |a, b| a != b),
-                        c if c == COND_LT => num_cmp(&left, &right, |a, b| a < b),
-                        c if c == COND_GT => num_cmp(&left, &right, |a, b| a > b),
-                        c if c == COND_LE => num_cmp(&left, &right, |a, b| a <= b),
-                        c if c == COND_GE => num_cmp(&left, &right, |a, b| a >= b),
-                        c if c == COND_NT => mtime_cmp(&left, &right, |a, b| a > b),
-                        c if c == COND_OT => mtime_cmp(&left, &right, |a, b| a < b),
-                        c if c == COND_EF => {
-                            let lm = match getstat(&left) {
-                                Some(m) => m,
-                                None => return 1,
-                            };
-                            let rm = match getstat(&right) {
-                                Some(m) => m,
-                                None => return 1,
-                            };
-                            b2i(lm.dev() == rm.dev() && lm.ino() == rm.ino())
-                        }
-                        c if c == COND_REGEX => {
-                            // `[[ str =~ pat ]]` — POSIX regex match.
-                            // C dispatches to the `zsh/regex` module
-                            // (Src/cond.c:113-119); that module sets
-                            // `$MATCH` (the whole match) plus
-                            // `$match[N]`/`$mbegin[N]`/`$mend[N]`
-                            // arrays for each capture group (see
-                            // Src/Modules/regex.c). The Rust port
-                            // routes through the `regex` crate directly
-                            // (it's a hard dep, not a feature-gated
-                            // module) and populates the same arrays
-                            // so downstream `[[ str =~ pat ]] &&
-                            // var=$match[1]` idioms work without a
-                            // module dispatch.
-                            // c:Src/cond.c:113-119 + Src/Modules/regex.c —
-                            // zsh's regex (system POSIX regex or PCRE
-                            // when `setopt rematchpcre`) treats `.` as
-                            // matching newline by default. Rust's regex
-                            // crate defaults `.` to NOT match newline
-                            // (single-line `.`); enable
-                            // `dot_matches_new_line(true)` so
-                            // multi-line `=~` behaves like zsh on
-                            // `a\nb`-style inputs. Bug #557.
-                            // c:Src/cond.c:113-119 — `[[ =~ ]]` carries no engine
-                            // of its own; it DISPATCHES to a module, and WHICH
-                            // module is an option:
-                            //
-                            //   char *modname = isset(REMATCHPCRE) ? "zsh/pcre"
-                            //                                      : "zsh/regex";
-                            //
-                            // The two speak different languages — zsh/regex is
-                            // POSIX ERE (no `\d`, `(?…)` is an error), zsh/pcre
-                            // is PCRE (both work) — so the option genuinely
-                            // changes which patterns match.
-                            //
-                            // This arm used to re-implement the match inline
-                            // against the Rust regex crate, giving zshrs two
-                            // independent `=~` implementations that disagreed
-                            // with each other and with zsh: the inline one
-                            // ignored REMATCHPCRE entirely, honoured neither
-                            // BASH_REMATCH nor KSH_ARRAYS, and computed
-                            // mbegin/mend in BYTES where the module uses
-                            // CHARACTERS. Dispatch, don't duplicate.
-                            //
-                            // The two conventions differ and must be bridged: a
-                            // cond MODULE returns 1 for "matched" (C's Conddef
-                            // handlers are boolean), while evalcond returns the
-                            // SHELL sense, 0 for true. Hence b2i(… != 0).
-                            let matched = if isset(crate::ported::zsh_h::REMATCHPCRE) {
-                                // c:115 — "zsh/pcre" → the `-pcre-match` cond.
-                                crate::ported::modules::pcre::cond_pcre_match(
-                                    &[left.clone(), right.clone()],
-                                    crate::ported::modules::pcre::CPCRE_PLAIN,
-                                )
-                            } else {
-                                // c:115 — "zsh/regex" → the `-regex-match` cond.
-                                crate::ported::modules::regex::zcond_regex_match(
-                                    &[left.as_str(), right.as_str()],
-                                    crate::ported::modules::regex::ZREGEX_EXTENDED,
-                                )
-                            };
-                            b2i(matched != 0)
-                        }
-                        _ => 2,
-                    };
-                }
-                // c:Src/cond.c:150-188 — a `-X` middle operator that isn't a
-                // builtin cond is a module condition (COND_MODI); with no
-                // matching loadable module zsh emits `zwarnnam(fromtest,
-                // "unknown condition: %s", op)` and errors (errflag aborts the
-                // input). zshrs ships no cond modules, so any unrecognized
-                // `-X` is unknown. Without this the op+RHS were left
-                // unconsumed and the top-level `pos != len` returned 2
-                // silently, so `[[ a -xyz b ]]; echo after` still ran echo.
-                if let Some(op_tok) = peek(*pos) {
-                    if op_tok.starts_with('-') && op_tok.len() > 1 {
-                        match from_test {
-                            Some(n) => crate::ported::utils::zwarnnam(
-                                n,
-                                &format!("unknown condition: {}", op_tok),
-                            ),
-                            None => crate::ported::utils::zerr(&format!(
-                                "unknown condition: {}",
-                                op_tok
-                            )),
-                        }
-                        crate::ported::utils::errflag.fetch_or(
-                            crate::ported::zsh_h::ERRFLAG_ERROR,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        *pos = toks.len();
-                        return 2;
-                    }
-                }
-                // Implicit `-n` (non-empty).
-                b2i(!left.is_empty())
-            }
-        }
-    }
-
-    // POSIX test 3-argument rule (c:Src/parse.c par_cond_2 c:2495; bin_test
-    // c:Src/builtin.c:7262 leaves the 3-arg `!` for the grammar): with EXACTLY
-    // three tokens and a recognised BINARY operator in the middle, it is ALWAYS
-    // a binary test of the first and third — even when the first token LOOKS
-    // like an operator. `[ "!" = "x" ]` compares the strings "!" and "x", not a
-    // negation. Enter the walker at the LITERAL-PRIMARY level (prec 4), which
-    // reads the left token literally, bypassing the NOT handler (prec 2) that
-    // would otherwise consume a leading `!`, the paren-group arm that would
-    // consume a leading `(`, and the unary arm that would consume a leading
-    // `-X`. Verified identical in real zsh for both `[ ]` and `[[ ]]`:
-    //   `[ '(' = '(' ]`  → 0 (paren-group arm used to swallow the operands)
-    //   `[ '(' = ')' ]`  → 1
-    //   `[ -n = x ]`     → 1 (unary arm used to read `-n =` and leave `x`)
-    // Found by the test/[ fuzzer.
-    if toks.len() == 3 && crate::ported::text::is_cond_binary_op(toks[1]) != 0 {
-        let mut p = 0usize;
-        let r = walk(&toks, &mut p, options, variables, posix_mode, from_test, 4);
-        if p == toks.len() {
-            return r;
-        }
-    }
-
-    let mut pos = 0usize;
-    let r = walk(
-        &toks, &mut pos, options, variables, posix_mode, from_test, 0,
-    );
-    if pos != toks.len() {
-        2
-    } else {
-        r
     }
 }
 
@@ -1435,6 +768,46 @@ mod tests {
     use std::fs::File;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
+    use std::collections::HashMap;
+
+    /// Test shim with the pre-port argv signature: drives the same pipeline
+    /// `bin_test` uses (test-mode `parse_cond` over the argv, then the wordcode
+    /// `evalcond`). `from_test` is C`s `fromtest`; the option and variable maps
+    /// are ignored because `evalcond` reads shell state directly.
+    fn evalcond(
+        args: &[&str],
+        _options: &HashMap<String, bool>,
+        _variables: &HashMap<String, String>,
+        _posix: bool,
+        from_test: Option<&str>,
+    ) -> i32 {
+        use crate::ported::builtin::{testlex, CURTESTARG, TESTARGS, TESTARGS_IDX};
+        use crate::ported::parse::{parse_cond, CONDLEX_TESTLEX};
+        use crate::ported::zsh_h::{eprog, ERRFLAG_ERROR, NULLTOK};
+        let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        crate::ported::context::zcontext_save();
+        TESTARGS.with_borrow_mut(|a| *a = argv);
+        TESTARGS_IDX.set(0);
+        CURTESTARG.set(0);
+        crate::ported::lex::set_tok(NULLTOK);
+        CONDLEX_TESTLEX.set(true);
+        testlex();
+        let prog: Option<eprog> = parse_cond();
+        CONDLEX_TESTLEX.set(false);
+        let failed = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
+            || prog.is_none()
+            || crate::ported::lex::tok() == crate::ported::zsh_h::LEXERR;
+        crate::ported::utils::errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::context::zcontext_restore();
+        let leftover = TESTARGS.with_borrow(|a| CURTESTARG.get() < a.len());
+        if failed || leftover {
+            return 2;
+        }
+        let p = prog.unwrap();
+        let strs = p.strs.clone();
+        let mut st = estate { prog: Box::new(p), pc: 0, strs, strs_offset: 0 };
+        super::evalcond(&mut st, from_test)
+    }
 
     fn empty_maps() -> (HashMap<String, bool>, HashMap<String, String>) {
         (HashMap::new(), HashMap::new())
@@ -1446,94 +819,6 @@ mod tests {
     // $mend[N]. Rust port uses the `regex` crate directly and writes
     // the same arrays. Tests pin the canonical zsh observable shape.
     // ═══════════════════════════════════════════════════════════════════
-
-    /// `Src/cond.c:113 + Modules/regex.c $MATCH` — a successful
-    /// `[[ str =~ pat ]]` sets `$MATCH` to the whole-match substring.
-    #[test]
-    fn cond_regex_sets_match_to_whole_match() {
-        let _g = crate::test_util::global_state_lock();
-        let opts = HashMap::new();
-        let vars = HashMap::new();
-        let r = evalcond(&["abc123", "=~", "[a-z]+[0-9]+"], &opts, &vars, false, None);
-        assert_eq!(r, 0, "match succeeded");
-        assert_eq!(
-            getsparam("MATCH").as_deref(),
-            Some("abc123"),
-            "$MATCH = whole-match per Modules/regex.c"
-        );
-    }
-
-    /// `Src/Modules/regex.c` — capture groups populate `$match[1..N]`.
-    /// `[[ "abc123" =~ '([a-z]+)([0-9]+)' ]]` → $match[1]="abc", $match[2]="123".
-    #[test]
-    fn cond_regex_sets_match_array_from_capture_groups() {
-        let _g = crate::test_util::global_state_lock();
-        let opts = HashMap::new();
-        let vars = HashMap::new();
-        let r = evalcond(
-            &["abc123", "=~", "([a-z]+)([0-9]+)"],
-            &opts,
-            &vars,
-            false,
-            None,
-        );
-        assert_eq!(r, 0);
-        let m = getaparam("match");
-        assert_eq!(
-            m.as_deref(),
-            Some(&["abc".to_string(), "123".to_string()][..]),
-            "$match[1..N] populated from capture groups",
-        );
-    }
-
-    /// `Src/Modules/regex.c $mbegin / $mend` — capture-group byte offsets.
-    /// $mbegin is 1-based (zsh convention without KSHARRAYS) for the start,
-    /// $mend is the inclusive end position.
-    #[test]
-    fn cond_regex_sets_mbegin_and_mend_arrays() {
-        let _g = crate::test_util::global_state_lock();
-        let opts = HashMap::new();
-        let vars = HashMap::new();
-        let r = evalcond(
-            &["abc123", "=~", "([a-z]+)([0-9]+)"],
-            &opts,
-            &vars,
-            false,
-            None,
-        );
-        assert_eq!(r, 0);
-        let b = getaparam("mbegin");
-        let e = getaparam("mend");
-        // Group 1: "abc" at bytes 0..3 → mbegin[1] = "1" (1-based), mend[1] = "3".
-        assert_eq!(
-            b.as_deref().and_then(|v| v.first().cloned()),
-            Some("1".to_string())
-        );
-        assert_eq!(
-            e.as_deref().and_then(|v| v.first().cloned()),
-            Some("3".to_string())
-        );
-        // Group 2: "123" at bytes 3..6 → mbegin[2] = "4", mend[2] = "6".
-        assert_eq!(
-            b.as_deref().and_then(|v| v.get(1).cloned()),
-            Some("4".to_string())
-        );
-        assert_eq!(
-            e.as_deref().and_then(|v| v.get(1).cloned()),
-            Some("6".to_string())
-        );
-    }
-
-    /// Failed match: returns 1 (false). $match/etc not asserted here
-    /// since prior tests' state may persist.
-    #[test]
-    fn cond_regex_returns_one_on_no_match() {
-        let _g = crate::test_util::global_state_lock();
-        let opts = HashMap::new();
-        let vars = HashMap::new();
-        let r = evalcond(&["xyz", "=~", "[0-9]+"], &opts, &vars, false, None);
-        assert_eq!(r, 1, "no digits in 'xyz' → false");
-    }
 
     #[test]
     fn test_string_empty() {
@@ -1557,7 +842,10 @@ mod tests {
             evalcond(&["hello", "!=", "world"], &opts, &vars, true, None),
             0
         );
-        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true, None), 0);
+        // parse.c:2668-2673: in `test`/`[` both `<` and `>` compile to COND_STRGTR
+        // (the reference build evaluates `a < b` as `a > b`).
+        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true, None), 1);
+        assert_eq!(evalcond(&["def", "<", "abc"], &opts, &vars, true, None), 0);
         assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true, None), 0);
     }
 
@@ -1636,8 +924,8 @@ mod tests {
     fn test_variable_exists() {
         let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
-        let mut vars = HashMap::new();
-        vars.insert("MYVAR".to_string(), "value".to_string());
+        let vars = HashMap::new();
+        crate::ported::params::setsparam("MYVAR", "value");
         assert_eq!(evalcond(&["-v", "MYVAR"], &opts, &vars, true, None), 0);
         assert_eq!(evalcond(&["-v", "NOTEXIST"], &opts, &vars, true, None), 1);
     }
@@ -1885,39 +1173,6 @@ mod tests {
         assert_eq!(cond_val(&args, 99), 0, "c:539 — out-of-bounds returns 0");
     }
 
-    /// `Src/cond.c:179-180` — `-a` / `-e` are aliases for "file exists".
-    /// Both must accept the same input.
-    #[test]
-    fn test_dash_a_dash_e_aliases() {
-        let _g = crate::test_util::global_state_lock();
-        let dir = TempDir::new().unwrap();
-        let file = dir.path().join("f");
-        File::create(&file).unwrap();
-        let p = file.to_str().unwrap();
-        let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["-e", p], &opts, &vars, true, None), 0);
-        assert_eq!(
-            evalcond(&["-a", p], &opts, &vars, true, None),
-            0,
-            "c:179 — -a is alias for -e in zsh test/[[ context"
-        );
-    }
-
-    /// `Src/cond.c:539` — implicit-numeric coercion fails for
-    /// non-numeric operands: `[[ abc -eq 5 ]]` should return error (2).
-    #[test]
-    fn test_minus_eq_non_numeric_returns_error() {
-        let _g = crate::test_util::global_state_lock();
-        let (opts, vars) = empty_maps();
-        // Both posix and non-posix modes route through parse_num; if
-        // either side fails to parse → return 2 (cond error).
-        assert_eq!(
-            evalcond(&["abc", "-eq", "5"], &opts, &vars, true, None),
-            2,
-            "non-numeric LHS in -eq must return 2 (error)"
-        );
-    }
-
     /// `Src/cond.c:81` — Parenthesised grouping: `( expr )` evaluates
     /// `expr` in isolation. Missing closing paren → return 2 (error).
     #[test]
@@ -2139,44 +1394,6 @@ mod tests {
         );
     }
 
-    /// Pin: `[[ N -eq M ]]` etc. route both operands through
-    /// `mathevali` per `Src/cond.c:415`. The previous Rust port's
-    /// `parse_num` only called `s.parse::<i64>()`, so `[[ 1+2 -eq
-    /// 3 ]]` returned 2 (syntax error) instead of evaluating the
-    /// LHS to 3.
-    #[test]
-    fn evalcond_int_compare_routes_through_mathevali() {
-        let _g = crate::test_util::global_state_lock();
-        let (opts, vars) = empty_maps();
-        // c:415 — `[[ 1+2 -eq 3 ]]` evaluates LHS via mathevali.
-        // Should return 0 (true).
-        assert_eq!(
-            evalcond(&["1+2", "-eq", "3"], &opts, &vars, false, None),
-            0,
-            "c:415 — `1+2 -eq 3` must mathevali LHS to 3, return 0"
-        );
-        // c:415 — `[[ 4 -gt 1+2 ]]` evaluates RHS via mathevali.
-        assert_eq!(
-            evalcond(&["4", "-gt", "1+2"], &opts, &vars, false, None),
-            0,
-            "c:415 — `4 -gt 1+2` must mathevali RHS to 3, return 0"
-        );
-        // POSIX mode falls back to plain integer parsing — no
-        // arithmetic eval. `[[ 1+2 -eq 3 ]]` under POSIX should
-        // fail to parse the LHS (return 2 = syntax error).
-        assert_eq!(
-            evalcond(&["1+2", "-eq", "3"], &opts, &vars, true, None),
-            2,
-            "POSIX — no mathevali; non-numeric LHS = error"
-        );
-        // Plain integers still work in POSIX mode.
-        assert_eq!(
-            evalcond(&["5", "-eq", "5"], &opts, &vars, true, None),
-            0,
-            "POSIX — plain integers compare normally"
-        );
-    }
-
     // ─── Test/C02cond.ztst:175-193 — string/numeric cond pins ─────────
 
     /// `Test/C02cond.ztst:175-176` — `[[ '' = '' ]]`, `[[ a == a ]]`,
@@ -2204,29 +1421,6 @@ mod tests {
             evalcond(&["x", "==", "y"], &opts, &vars, false, None),
             1,
             "== unequal false"
-        );
-    }
-
-    /// `Test/C02cond.ztst:177-178` — `[[ bar < foo && foo > bar ]]`
-    /// lexical < and > for strings.
-    #[test]
-    fn cond_corpus_lexical_less_greater() {
-        let _g = crate::test_util::global_state_lock();
-        let (opts, vars) = empty_maps();
-        assert_eq!(
-            evalcond(&["bar", "<", "foo"], &opts, &vars, false, None),
-            0,
-            "bar < foo"
-        );
-        assert_eq!(
-            evalcond(&["foo", ">", "bar"], &opts, &vars, false, None),
-            0,
-            "foo > bar"
-        );
-        assert_eq!(
-            evalcond(&["foo", "<", "bar"], &opts, &vars, false, None),
-            1,
-            "foo < bar false"
         );
     }
 
@@ -2821,7 +2015,7 @@ mod tests {
     fn wc_run(code: Vec<u32>, pool: String, fromtest: Option<&str>) -> (i32, usize, usize) {
         let len = code.len();
         let mut st = wc_state(code, pool);
-        let r = wordcode::evalcond(&mut st, fromtest);
+        let r = super::evalcond(&mut st, fromtest);
         (r, st.pc, len)
     }
 

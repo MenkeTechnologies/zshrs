@@ -17138,491 +17138,54 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
     }
 }
 
-/// The single-letter conditions the condition grammar compiles inline rather
-/// than dispatching to a module.
-///
-/// C spells the same 25 letters twice in a different order: `par_cond_double`
-/// uses `"abcdefgknoprstuvwxzhLONGS"` (c:Src/parse.c:2630) and `par_cond_2`'s
-/// `dble` flag uses `"abcdefghknoprstuvwxzLONGS"` (c:Src/parse.c:2551).
-/// Anything outside the set is a module condition (`COND_MOD`).
-const COND_UNARY_LETTERS: &str = "abcdefghknoprstuvwxzLONGS";
-
 /// Port of `testlex()` from Src/builtin.c:7200.
 /// C: `void testlex(void)` — advance the test-builtin lexer one token
 ///   from `testargs` into `tok`/`tokstr`. Maps `-o`→DBAR, `-a`→DAMPER,
-///   `!`→Bang, `(`→Inpar, `)`→Outpar, otherwise STRING.
-///
-/// This is the global-state form C reaches through the `condlex` function
-/// pointer. The token rules themselves live in `TestParse::testlex`, which
-/// `bin_test` drives with per-call state so two threads cannot share one
-/// cursor the way C's globals do.
+///   `!`→BANG, `(`→INPAR, `)`→OUTPAR, `<`→INANG, `>`→OUTANG, otherwise STRING.
+///   `parse_cond` reaches it through the `condlex` pointer (parse.rs
+///   `CONDLEX_TESTLEX`).
 pub fn testlex() {
-    // c:7200
-    let targs = TESTARGS.lock().unwrap_or_else(|e| {
-        TESTARGS.clear_poison();
-        e.into_inner()
+    use crate::ported::lex::{set_tok, set_tokstr, tok};
+    use crate::ported::zsh_h::{
+        BANG_TOK, DAMPER, DBAR, INANG_TOK, INPAR_TOK, LEXERR, NULLTOK, OUTANG_TOK, OUTPAR_TOK,
+        STRING_LEX,
+    };
+    // c:7203
+    if tok() == LEXERR {
+        return;
+    }
+
+    TESTARGS.with_borrow(|testargs| {
+        let i = TESTARGS_IDX.get();
+        CURTESTARG.set(i); // c:7205 — `curtestarg = testargs`
+        set_tokstr(testargs.get(i).cloned()); // c:7205 — `tokstr = *curtestarg`
+        let Some(arg) = testargs.get(i) else {
+            // c:7206 — `if (!*testargs)`
+            // c:7208 — if tok is already zero, reading past the end: error
+            set_tok(if tok() != NULLTOK { NULLTOK } else { LEXERR });
+            return;
+        };
+        set_tok(match arg.as_str() {
+            "-o" => DBAR,       // c:7211
+            "-a" => DAMPER,     // c:7213
+            "!" => BANG_TOK,    // c:7215
+            "(" => INPAR_TOK,   // c:7217
+            ")" => OUTPAR_TOK,  // c:7219
+            "<" => INANG_TOK,   // c:7221
+            ">" => OUTANG_TOK,  // c:7223
+            _ => STRING_LEX,    // c:7225
+        });
+        TESTARGS_IDX.set(i + 1); // c:7226 — `testargs++`
     });
-    let mut p = TestParse::new(&targs);
-    p.idx = TESTARGS_IDX.load(Relaxed) as usize;
-    p.tok = TEST_TOK.load(Relaxed);
-    p.testlex();
-    TEST_TOK.store(p.tok, Relaxed);
-    TESTARGS_IDX.store(p.idx as i32, Relaxed);
-    if let Some(t) = p.tokstr {
-        if let Ok(mut ts) = TOKSTR.lock() {
-            *ts = t; // c:7205
-        }
-    }
-}
-
-/// One node of the condition tree `parse_cond` builds for `test` / `[`.
-///
-/// C emits wordcode into `ecbuf` (`WCB_COND(...)` + `ecstr(...)`) and
-/// `evalcond` walks it. zshrs evaluates conditions from an argv slice
-/// (`cond::evalcond`), so the parser yields this tree instead and the
-/// structural opcodes are applied to it; the leaves are handed back to the
-/// argv evaluator as the 2- or 3-token forms C compiled them from.
-enum TestCond {
-    /// c:Src/parse.c:2530 — `WCB_COND(COND_NOT, 0)`.
-    Not(Box<TestCond>),
-    /// c:Src/parse.c:2447 — `WCB_COND(COND_AND, …)`.
-    And(Box<TestCond>, Box<TestCond>),
-    /// c:Src/parse.c:2422 — `WCB_COND(COND_OR, …)`.
-    Or(Box<TestCond>, Box<TestCond>),
-    /// c:Src/parse.c:2626 — `par_cond_double(a, b)`.
-    Double(String, String),
-    /// c:Src/parse.c:2659 — `par_cond_triple(a, b, c)`.
-    Triple(String, String, String),
-    /// c:Src/parse.c:2716 — `par_cond_multi(a, l)`.
-    Multi(String, Vec<String>),
-}
-
-/// The condition grammar of Src/parse.c:2409-2729 driven by `testlex`.
-///
-/// This is the entry point C reserves for `bin_test` (c:Src/parse.c:714-731
-/// "This entry point is only used for bin_test"). The whole point of running
-/// the real grammar is `n_testargs` (c:Src/parse.c:2480): the POSIX rules for
-/// `test` are keyed on how many arguments REMAIN, so which `-a` is the
-/// connective and which is a plain operand falls out of the parse position
-/// rather than from scanning the argument list for a spelling.
-struct TestParse<'a> {
-    args: &'a [String],
-    /// C: `testargs` — index of the next argument `testlex` will fetch.
-    idx: usize,
-    /// C: `curtestarg` — index of the argument most recently fetched.
-    cur: usize,
-    /// C: `tok`.
-    tok: i32,
-    /// C: `tokstr`; `None` once the lexer has read past the last argument.
-    tokstr: Option<String>,
-    /// C: `errflag |= ERRFLAG_ERROR`, set by `COND_ERROR`
-    /// (c:Src/parse.c:89-96). `bin_test` checks it before anything else and
-    /// returns 2 with no further diagnostic (c:7284-7288).
-    errflag: bool,
-}
-
-impl<'a> TestParse<'a> {
-    fn new(args: &'a [String]) -> Self {
-        TestParse {
-            args,
-            idx: 0,
-            cur: 0,
-            // c:7278 — `tok = NULLTOK;` before the priming testlex().
-            tok: TEST_NULLTOK,
-            tokstr: None,
-            errflag: false,
-        }
-    }
-
-    /// Port of `testlex()` from Src/builtin.c:7200 — advance one token over
-    /// `args`. C holds this state in the `testargs` / `curtestarg` / `tok` /
-    /// `tokstr` globals; the parser owns a copy so concurrent shells on
-    /// different threads cannot share one cursor.
-    fn testlex(&mut self) {
-        // c:7203 — `if (tok == LEXERR) return;`
-        if self.tok == TEST_LEXERR {
-            return;
-        }
-        // c:7205 — `tokstr = *(curtestarg = testargs);`
-        self.cur = self.idx;
-        self.tokstr = self.args.get(self.idx).cloned();
-        // c:7206-7209 — `if (!*testargs)`: the ARRAY is exhausted. C tests the
-        // POINTER, so an EMPTY-STRING argument (`test '' -a x`) is an ordinary
-        // STRING token, not end-of-input.
-        if self.idx >= self.args.len() {
-            // c:7208 — `tok = tok ? NULLTOK : LEXERR;` (NULLTOK is 0, so
-            // reading past the end a second time is the error).
-            self.tok = if self.tok != TEST_NULLTOK {
-                TEST_NULLTOK
-            } else {
-                TEST_LEXERR
-            };
-            return;
-        }
-        self.tok = match self.args[self.idx].as_str() {
-            "-o" => TEST_DBAR,   // c:7211
-            "-a" => TEST_DAMPER, // c:7213
-            "!" => TEST_BANG,    // c:7215
-            "(" => TEST_INPAR,   // c:7217
-            ")" => TEST_OUTPAR,  // c:7219
-            "<" => TEST_INANG,  // c:7221
-            ">" => TEST_OUTANG, // c:7223
-            _ => TEST_STRING,                     // c:7225
-        };
-        self.idx += 1; // c:7226 — `testargs++`
-    }
-
-    /// c:Src/parse.c:2480 — `arrlen(testargs) + 1`: the argument count from
-    /// the CURRENT token onward. `testargs` already points past it.
-    fn n_testargs(&self) -> usize {
-        self.args.len() - self.idx + 1
-    }
-
-    /// c:Src/parse.c:2496 etc — C's `*testargs`, the argument AFTER the
-    /// current token. `None` where C would see the array's NULL terminator.
-    fn next_arg(&self) -> Option<&str> {
-        self.args.get(self.idx).map(|s| s.as_str())
-    }
-
-    /// c:Src/parse.c:87 — `#define YYERROR(O) { tok = LEXERR; … return 0; }`.
-    fn yyerror(&mut self) -> Option<TestCond> {
-        self.tok = TEST_LEXERR;
-        None
-    }
-
-    /// c:Src/parse.c:89-96 — `COND_ERROR(X, Y)`: report via `zwarn` (no
-    /// builtin-name prefix), set `errflag`, then `YYERROR`.
-    fn cond_error(&mut self, msg: String) -> Option<TestCond> {
-        crate::ported::utils::zwarn(&msg); // c:91
-        self.errflag = true; // c:94
-        self.yyerror() // c:95
-    }
-
-    /// Port of `par_cond(void)` from Src/parse.c:2409.
-    /// C: `cond : cond_1 { SEPER } [ DBAR { SEPER } cond ]`. `COND_SEP()` is
-    /// false throughout under `testlex` (c:2405 `condlex != testlex`).
-    fn par_cond(&mut self) -> Option<TestCond> {
-        let r = self.par_cond_1()?; // c:2413
-        if self.tok == TEST_DBAR {
-            // c:2416
-            self.testlex(); // c:2417
-            let rhs = self.par_cond()?; // c:2421
-            return Some(TestCond::Or(Box::new(r), Box::new(rhs))); // c:2422
-        }
-        Some(r) // c:2425
-    }
-
-    /// Port of `par_cond_1(void)` from Src/parse.c:2434.
-    /// C: `cond_1 : cond_2 { SEPER } [ DAMPER { SEPER } cond_1 ]`.
-    fn par_cond_1(&mut self) -> Option<TestCond> {
-        let r = self.par_cond_2()?; // c:2438
-        if self.tok == TEST_DAMPER {
-            // c:2441
-            self.testlex(); // c:2442
-            let rhs = self.par_cond_1()?; // c:2446
-            return Some(TestCond::And(Box::new(r), Box::new(rhs))); // c:2447
-        }
-        Some(r) // c:2450
-    }
-
-    /// Port of `par_cond_2(void)` from Src/parse.c:2476 — the POSIX `test`
-    /// rules, all of them keyed on `n_testargs`.
-    fn par_cond_2(&mut self) -> Option<TestCond> {
-        // c:2480 — under `testlex` this is always >= 1, so every `n_testargs`
-        // guard in the C (`!n_testargs` / `|| n_testargs`) resolves the
-        // testlex way here; the `[[ … ]]` half of those conditions lives in
-        // parse.rs's wordcode `par_cond_2`.
-        let n_testargs = self.n_testargs();
-
-        // c:2484-2486 — no arguments left: false.
-        if self.tok == TEST_NULLTOK {
-            return self.par_cond_double("-n".to_string(), String::new());
-        }
-        // c:2487-2495 — one argument: `[ foo ]` is `[ -n foo ]`, whatever
-        // `foo` looks like. This is the rule an argument-count scanner cannot
-        // express: the trailing `-a` of `test -e /dev/null -a -a` reaches
-        // par_cond_2 as the LAST argument and is therefore an operand.
-        if n_testargs == 1 {
-            let s1 = self.tokstr.clone().unwrap_or_default(); // c:2489
-            self.testlex(); // c:2490
-                            // c:2492 — ksh: `[ -t ]` means `[ -t 1 ]`; bash disagrees.
-            if !isset(POSIXBUILTINS) && crate::ported::parse::check_cond(&s1, "t") {
-                return self.par_cond_double(s1, "1".to_string()); // c:2493
-            }
-            return self.par_cond_double("-n".to_string(), s1); // c:2494
-        }
-        // c:2496-2512 — three or more arguments: if the SECOND is a binary
-        // operator, apply it to the first and third.
-        if n_testargs > 2 {
-            let nxt = self.next_arg().unwrap_or_default().to_string();
-            let is_binop = nxt == "="
-                || nxt == "<" // c:2500
-                || nxt == ">" // c:2501
-                || nxt == "=="
-                || nxt == "!="
-                || (nxt.starts_with(crate::ported::zsh_h::IS_DASH)
-                    && crate::ported::parse::get_cond_num(
-                        &nxt[nxt.chars().next().map_or(0, char::len_utf8)..],
-                    ) >= 0); // c:2504
-            if is_binop {
-                let s1 = self.tokstr.clone().unwrap_or_default(); // c:2505
-                self.testlex();
-                let s2 = self.tokstr.clone().unwrap_or_default(); // c:2507
-                self.testlex();
-                let s3 = self.tokstr.clone().unwrap_or_default(); // c:2509
-                self.testlex();
-                return self.par_cond_triple(s1, s2, s3); // c:2511
-            }
-        }
-        if self.tok == TEST_BANG {
-            // c:2521-2532 — in `test` compatibility mode `! -a …` / `! -o …`
-            // read as "[string] [and] …", not as a negation.
-            let next_is_connective = n_testargs > 2
-                && self.next_arg().is_some_and(|t| {
-                    crate::ported::parse::check_cond(t, "a")
-                        || crate::ported::parse::check_cond(t, "o")
-                }); // c:2526
-            if !next_is_connective {
-                self.testlex(); // c:2529
-                let inner = self.par_cond_2()?; // c:2531
-                return Some(TestCond::Not(Box::new(inner))); // c:2530
-            }
-        }
-        if self.tok == TEST_INPAR {
-            // c:2534-2547
-            self.testlex(); // c:2537
-            let r = self.par_cond()?; // c:2540
-            if self.tok != TEST_OUTPAR {
-                return self.yyerror(); // c:2544
-            }
-            self.testlex(); // c:2545
-            return Some(r); // c:2546
-        }
-        let s1 = self.tokstr.clone(); // c:2548
-                                      // c:2549-2552 — `dble`: a two-character `-X` built-in condition, which
-                                      // takes exactly ONE operand and so blocks the triple/multi forms below.
-        let dble = s1.as_deref().is_some_and(TestCond::is_unary_letter);
-        if self.tok != TEST_STRING {
-            // c:2553-2561 — `[[ STRING ]]` re-interpretation. The
-            // `(!dble || n_testargs)` guard is satisfied by `n_testargs`.
-            match s1 {
-                Some(s) if self.tok != TEST_LEXERR => {
-                    self.testlex(); // c:2557
-                    return self.par_cond_double("-n".to_string(), s); // c:2558
-                }
-                _ => return self.yyerror(), // c:2560
-            }
-        }
-        let s1 = s1.unwrap_or_default();
-        self.testlex(); // c:2562
-                        // c:2563-2569 — something like `test -z` followed by a non-STRING
-                        // token: turn that token back into a plain string operand.
-        if n_testargs == 2
-            && self.tok != TEST_STRING
-            && self.tokstr.is_some()
-            && s1.starts_with(crate::ported::zsh_h::IS_DASH)
-        {
-            self.tok = TEST_STRING; // c:2569
-        }
-        if self.tok == TEST_INANG || self.tok == TEST_OUTANG {
-            // c:2573-2583 — `STRING ( INANG | OUTANG ) STRING`.
-            let xtok = self.tok; // c:2574
-            self.testlex(); // c:2575
-            if self.tok != TEST_STRING {
-                return self.yyerror(); // c:2577
-            }
-            let s3 = self.tokstr.clone().unwrap_or_default(); // c:2578
-            self.testlex(); // c:2579
-                            // c:2580 — COND_STRLT for `<`, COND_STRGTR for `>`.
-            let op = if xtok == TEST_INANG { "<" } else { ">" };
-            return Some(TestCond::Triple(s1, op.to_string(), s3));
-        }
-        if self.tok != TEST_STRING {
-            // c:2585-2596
-            if self.tok != TEST_LEXERR {
-                return self.par_cond_double("-n".to_string(), s1); // c:2592
-            }
-            return self.yyerror(); // c:2596
-        }
-        let s2 = self.tokstr.clone().unwrap_or_default(); // c:2598
-                                                          // c:2599-2600 — `if (!n_testargs) dble = …`; never taken under testlex.
-        self.testlex(); // c:2602
-        if self.tok == TEST_STRING && !dble {
-            // c:2604
-            let s3 = self.tokstr.clone().unwrap_or_default(); // c:2605
-            self.testlex(); // c:2606
-            if self.tok == TEST_STRING {
-                // c:2607
-                let mut l = vec![s2, s3]; // c:2610-2611
-                while self.tok == TEST_STRING {
-                    // c:2613
-                    l.push(self.tokstr.clone().unwrap_or_default()); // c:2614
-                    self.testlex(); // c:2615
-                }
-                return self.par_cond_multi(s1, l); // c:2617
-            }
-            return self.par_cond_triple(s1, s2, s3); // c:2619
-        }
-        self.par_cond_double(s1, s2) // c:2621
-    }
-
-    /// Port of `par_cond_double(char *a, char *b)` from Src/parse.c:2626.
-    /// The `-X` / `COND_MOD` split C makes here is deferred to evaluation,
-    /// where the module lookup that decides the diagnostic actually happens
-    /// (c:Src/cond.c:143-190); only the parse-time rejection is done now.
-    fn par_cond_double(&mut self, a: String, b: String) -> Option<TestCond> {
-        // c:2628 — `if (!IS_DASH(a[0]) || !a[1])`
-        if !a.starts_with(crate::ported::zsh_h::IS_DASH) || a.chars().count() < 2 {
-            return self.cond_error(format!("parse error: condition expected: {}", a));
-            // c:2629
-        }
-        Some(TestCond::Double(a, b))
-    }
-
-    /// Port of `par_cond_triple(char *a, char *b, char *c)` from
-    /// Src/parse.c:2659. Recognises the operator spellings C compiles to a
-    /// `COND_*` opcode plus the two `COND_MOD`/`COND_MODI` fallbacks; anything
-    /// else is a parse error naming the middle argument.
-    fn par_cond_triple(&mut self, a: String, b: String, c: String) -> Option<TestCond> {
-        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `test` has `=` and
-        // `!=` only; `==` and `=~` are "unexpected operator" (status 2).
-        let string_ops_ok = if crate::dash_mode::dash_faithful() {
-            matches!(b.as_str(), "=" | "!=")
-        } else {
-            matches!(b.as_str(), "=" | "==" | "!=" | "=~")
-        };
-        let known = string_ops_ok // c:2663-2691
-            || matches!(b.as_str(), "<" | ">") // c:2666-2671 COND_STRLT/STRGTR
-            || b.starts_with(crate::ported::zsh_h::IS_DASH)                    // c:2692
-            || (a.starts_with(crate::ported::zsh_h::IS_DASH) && a.chars().count() > 1); // c:2703
-        if known {
-            return Some(TestCond::Triple(a, b, c));
-        }
-        self.cond_error(format!("condition expected: {}", b)) // c:2709
-    }
-
-    /// Port of `par_cond_multi(char *a, LinkList l)` from Src/parse.c:2716 —
-    /// four or more bare words, which can only be a module condition.
-    fn par_cond_multi(&mut self, a: String, l: Vec<String>) -> Option<TestCond> {
-        // c:2718 — `if (!IS_DASH(a[0]) || !a[1])`
-        if !a.starts_with(crate::ported::zsh_h::IS_DASH) || a.chars().count() < 2 {
-            return self.cond_error(format!("condition expected: {}", a)); // c:2719
-        }
-        Some(TestCond::Multi(a, l))
-    }
-}
-
-impl TestCond {
-    /// True for the two-character `-X` form whose `X` is a built-in condition —
-    /// C's `!a[2] && strspn(a+1, "abcdefgknoprstuvwxzhLONGS") == 1`
-    /// (c:Src/parse.c:2630). Anything else is a module condition.
-    fn is_unary_letter(a: &str) -> bool {
-        let mut ch = a.chars();
-        match (ch.next(), ch.next(), ch.next()) {
-            (Some(d), Some(l), None) => {
-                crate::ported::zsh_h::IS_DASH(d) && COND_UNARY_LETTERS.contains(l)
-            }
-            _ => false,
-        }
-    }
-
-    /// Evaluate the tree `TestParse` produced.
-    ///
-    /// The structural opcodes are ported from `evalcond` (c:Src/cond.c:86-112);
-    /// the leaves go back through `cond::evalcond` in the 2- or 3-token argv
-    /// form C compiled them from, so every operator implementation stays in one
-    /// place. A leaf whose operator is not built in is C's `COND_MOD` /
-    /// `COND_MODI`: with no module supplying it, `evalcond` reports
-    /// `unknown condition` (c:Src/cond.c:187-189) naming the first
-    /// dash-prefixed word (c:Src/cond.c:143-148).
-    fn eval(
-        &self,
-        name: &str,
-        options: &HashMap<String, bool>,
-        variables: &HashMap<String, String>,
-        posix: bool,
-    ) -> i32 {
-        let leaf = |toks: &[&str]| -> i32 {
-            crate::ported::cond::evalcond(toks, options, variables, posix, Some(name))
-        };
-        let unknown = |which: &str| -> i32 {
-            // c:Src/cond.c:187 — `zwarnnam(fromtest, "unknown condition: %s", errname)`
-            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", which));
-            2 // c:Src/cond.c:193
-        };
-        match self {
-            TestCond::Not(inner) => {
-                // c:Src/cond.c:86-93
-                let ret = inner.eval(name, options, variables, posix);
-                if ret == 0 || ret == 1 {
-                    1 - ret // c:91
-                } else {
-                    ret // c:93
-                }
-            }
-            TestCond::And(l, r) => {
-                // c:Src/cond.c:94-102 — evaluate the right side only when the
-                // left is TRUE (0); any other status short-circuits out.
-                let ret = l.eval(name, options, variables, posix);
-                if ret == 0 {
-                    r.eval(name, options, variables, posix)
-                } else {
-                    ret // c:101
-                }
-            }
-            TestCond::Or(l, r) => {
-                // c:Src/cond.c:103-112 — 1 (false) and 3 (no such option) both
-                // continue to the right side; 0 and 2 short-circuit.
-                let ret = l.eval(name, options, variables, posix);
-                if ret == 1 || ret == 3 {
-                    r.eval(name, options, variables, posix)
-                } else {
-                    ret // c:111
-                }
-            }
-            TestCond::Double(a, b) => {
-                // c:Src/parse.c:2630 — a two-character `-X` is compiled inline;
-                // anything else is COND_MOD.
-                if TestCond::is_unary_letter(a) {
-                    leaf(&[a.as_str(), b.as_str()])
-                } else {
-                    unknown(a)
-                }
-            }
-            TestCond::Triple(a, b, c) => {
-                // c:Src/parse.c:2663-2702 — the operator spellings with a real
-                // opcode. A dash-prefixed `b` that is not one of them is
-                // COND_MODI, reported against `b`; otherwise `a` carried the
-                // module name (c:2703) and is reported instead.
-                let opcode = matches!(
-                    b.as_str(),
-                    "=" | "<" | ">" | "==" | "!=" | "=~" | "-regex-match"
-                ) || (b.starts_with(crate::ported::zsh_h::IS_DASH)
-                    // c:2693 — `get_cond_num(b + 1)`; skip one CHAR, since the
-                    // lexer's `Dash` token is multi-byte in UTF-8.
-                    && crate::ported::parse::get_cond_num(
-                        &b[b.chars().next().map_or(0, char::len_utf8)..],
-                    ) >= 0);
-                if opcode {
-                    leaf(&[a.as_str(), b.as_str(), c.as_str()])
-                } else if b.starts_with(crate::ported::zsh_h::IS_DASH) {
-                    unknown(b) // c:2698 COND_MODI
-                } else {
-                    unknown(a) // c:2704 COND_MOD
-                }
-            }
-            // c:Src/parse.c:2723 — COND_MOD with `a` as the module condition name.
-            TestCond::Multi(a, _) => unknown(a),
-        }
-    }
 }
 
 /// Port of `bin_test()` from `Src/builtin.c:7231`.
 /// C decl: `bin_test(char *name, char **argv, UNUSED(Options ops), int func)`
 /// C: `int bin_test(char *name, char **argv, UNUSED(Options ops), int func)`
 /// — the `test` / `[` builtin: when invoked as `[`, requires a trailing
-///   `]`; XSI-extension paren-stripping for 3/4-arg forms; final
-///   evalcond dispatch returns 0/1/2.
+///   `]`; XSI-extension paren-stripping for 3/4-arg forms; the argv is
+///   compiled to wordcode by `parse_cond` and run through `evalcond`,
+///   returning 0/1/2.
 /// WARNING: param names don't match C — Rust=(name, argv, func) vs C=(name, argv, ops, func)
 pub fn bin_test(
     name: &str,
@@ -17630,6 +17193,9 @@ pub fn bin_test(
     _ops: &options,
     func: i32,
 ) -> i32 {
+    use crate::ported::lex::tok;
+    use crate::ported::parse::{parse_cond, CONDLEX_TESTLEX};
+    use crate::ported::zsh_h::{estate, LEXERR, NULLTOK};
     // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash runs its own
     // `testcmd` grammar (src/bltin/test.c), not zsh's par_cond.
     if crate::dash_mode::dash_faithful() {
@@ -17693,77 +17259,70 @@ pub fn bin_test(
     }
 
     // c:7276-7281 — `zcontext_save(); testargs = argv; tok = NULLTOK;
-    //                condlex = testlex; testlex(); prog = parse_cond();`
-    let mut p = TestParse::new(&argv);
-    p.testlex(); // c:7280
-                 // c:Src/parse.c:722-731 — `parse_cond()` is just `par_cond()`,
-                 // returning NULL when the grammar bailed out.
-    let prog = p.par_cond(); // c:7281
+    //                condlex = testlex; testlex(); prog = parse_cond();
+    //                condlex = zshlex;`
+    crate::ported::context::zcontext_save(); // c:7276
+    let nargv = argv.len();
+    TESTARGS.with_borrow_mut(|a| *a = argv); // c:7277 — testargs = argv
+    TESTARGS_IDX.set(0);
+    crate::ported::lex::set_tok(NULLTOK); // c:7278
+    CONDLEX_TESTLEX.set(true); // c:7279 — condlex = testlex
+    testlex(); // c:7280
+    let prog = parse_cond(); // c:7281
+    CONDLEX_TESTLEX.set(false); // c:7282 — condlex = zshlex
 
     // c:7284-7288 — a COND_ERROR already printed its diagnostic.
-    if p.errflag {
+    if errflag.load(Relaxed) != 0 {
         // c:7284
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7285
+        crate::ported::context::zcontext_restore(); // c:7286
         return 2; // c:7287
     }
     // c:7290-7294 — a bare YYERROR prints here. `tokstr` is NULL exactly when
     // the lexer ran off the end of the argument list.
-    if prog.is_none() || p.tok == TEST_LEXERR {
+    if prog.is_none() || tok() == LEXERR {
         // c:7290
         zwarnnam(
             name,
-            if p.tokstr.is_some() {
+            if crate::ported::lex::tokstr().is_some() {
                 "parse error"
             } else {
                 "argument expected"
             },
         ); // c:7291
+        crate::ported::context::zcontext_restore(); // c:7292
         return 2; // c:7293
     }
+    crate::ported::context::zcontext_restore(); // c:7295
+
     // c:7297-7300 — `if (*curtestarg)`: the grammar stopped before consuming
     // every argument.
-    if p.cur < argv.len() {
+    if CURTESTARG.get() < nargv {
         // c:7297
         zwarnnam(name, "too many arguments"); // c:7298
         return 2; // c:7299
     }
 
     // c:7302-7308 — syntax is OK, so evaluate.
-    let options = HashMap::new();
-    let mut variables = HashMap::new();
-    // C `evalcond` reaches param values through `getvalue` / `getsparam`
-    // which read paramtab. The previous Rust port populated the
-    // variables map from `std::env::vars()` — the OS environment —
-    // so shell-internal vars (not exported) appeared "unset" to
-    // `[[ -z $var ]]` / `[[ $a = $b ]]` etc. Walk paramtab to mirror
-    // C; fall back to env for entries the paramtab hasn't imported.
-    {
-        let tab = paramtab().read().unwrap();
-        for (k, pm) in tab.iter() {
-            // Skip PM_UNSET — these are name-declared-but-no-value.
-            if (pm.node.flags as u32 & PM_UNSET) != 0 {
-                continue;
-            }
-            let v = pm.u_str.clone().unwrap_or_default();
-            variables.insert(k.clone(), v);
-        }
-    }
-    // Layer env vars on top of paramtab for the rare case where the
-    // OS env has a name paramtab hasn't yet imported (e.g. external
-    // wrapper that exec'd zshrs with env vars).
-    for (k, v) in env::vars() {
-        variables.entry(k).or_insert(v);
-    }
-    let posix = isset(POSIXBUILTINS);
-    // c:Src/builtin.c:7305 — `stat = evalcond(state, name);`. The
-    // `name` argument is C's `fromtest` signal — non-NULL means "called
-    // from test/[", which enables the strict integer-expression error
-    // path (c:Src/cond.c:236-251). Bug #411.
-    let mut ret = prog.unwrap().eval(name, &options, &variables, posix); // c:7305
+    let prog = prog.unwrap();
+    let strs = prog.strs.clone();
+    let mut state = estate {
+        // c:7303 — `state.prog = prog; state.pc = prog->prog;`
+        prog: Box::new(prog),
+        pc: 0,
+        strs, // c:7305 — `state.strs = prog->strs;`
+        strs_offset: 0,
+    };
 
-    // c:7307-7308 — `if (ret < 2 && sense) ret = !ret;`
+    // c:7307 — `ret = evalcond(&state, name);`. `name` is C's `fromtest`
+    // signal — non-NULL means "called from test/[", which enables the strict
+    // integer-expression error path (c:Src/cond.c:236-251). Bug #411.
+    let mut ret = crate::ported::cond::evalcond(&mut state, Some(name)); // c:7307
+
+    // c:7308-7309 — `if (ret < 2 && sense) ret = !ret;`
     if ret < 2 && sense != 0 {
-        // c:7307
-        ret = if ret == 0 { 1 } else { 0 }; // c:7308
+        // c:7308
+        ret = if ret == 0 { 1 } else { 0 }; // c:7309
     }
     ret // c:7310
 }
@@ -20601,29 +20160,19 @@ pub static SUBSHELL_DEPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::Ato
 /// `LASTVAL` static.
 pub static LASTVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-// `tok` for the test builtin — Src/builtin.c:7000 ranges. The full enum
-// lives in src/ported/lex.rs; we mirror the few values testlex() touches.
-/// `TEST_TOK` static.
-pub static TEST_TOK: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-const TEST_LEXERR: i32 = -1; // c:7209
-const TEST_NULLTOK: i32 = 0;
-const TEST_DBAR: i32 = 2; // c:7213
-const TEST_DAMPER: i32 = 3; // c:7215
-const TEST_BANG: i32 = 4; // c:7217
-const TEST_INPAR: i32 = 5; // c:7219
-const TEST_OUTPAR: i32 = 6; // c:7221
-const TEST_INANG: i32 = 7; // c:7223
-const TEST_OUTANG: i32 = 8; // c:7225
-const TEST_STRING: i32 = 9; // c:7227
-
-// `testargs` / `curtestarg` / `tokstr` globals from Src/builtin.c — the
-// argv-style cursor that bin_test seeds and testlex() advances.
-/// `TESTARGS` static.
-pub static TESTARGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-/// `TESTARGS_IDX` static.
-pub static TESTARGS_IDX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-/// `TOKSTR` static.
-pub static TOKSTR: Mutex<String> = Mutex::new(String::new());
+// `char **testargs, **curtestarg` from Src/builtin.c:7186 — the argv cursor
+// `bin_test` seeds and `testlex()` advances. C holds pointers into the argv
+// array; here `TESTARGS` owns the argv and `TESTARGS_IDX` / `CURTESTARG` are
+// the offsets of `testargs` / `curtestarg` into it. Thread-local because the
+// lexer state `testlex` writes (`tok`, `tokstr`) is thread-local too.
+thread_local! {
+    /// The argv `testargs` points into.
+    pub static TESTARGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Offset of `testargs` into `TESTARGS`.
+    pub static TESTARGS_IDX: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Offset of `curtestarg` into `TESTARGS`.
+    pub static CURTESTARG: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 // int doprintdir = 0; set in exec.c (for autocd, cdpath, etc.)            // c:722
 // `doprintdir` from Src/exec.c — set when an autocd'd command should

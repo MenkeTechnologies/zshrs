@@ -5014,7 +5014,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     {
                         let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
                         jobs::pipecleanfilelist(&mut tab[idx], false);
-                        jobs::deletejob(&mut tab[idx], true);
+                        jobs::deletejob(&mut tab, idx, true);
                     }
                     if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
                         *tj = -1;
@@ -5123,7 +5123,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         {
                             let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
                             jobs::pipecleanfilelist(&mut tab[idx], false); // c:1753
-                            jobs::deletejob(&mut tab[idx], true); // c:1754
+                            jobs::deletejob(&mut tab, idx, true); // c:1754
                         }
                         if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
                             *tj = -1; // c:1755
@@ -12348,23 +12348,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // `[[ -z X ]]` / `[[ -n X ]]` — pop one Value, route through
-    // canonical `src/ported/cond.rs::evalcond` so the actual
-    // empty/non-empty test reuses the C-port at `cond.rs:270-271`
-    // (`'n' => !arg.is_empty()`, `'z' => arg.is_empty()`).
+    // `[[ -z X ]]` / `[[ -n X ]]` — pop one Value and apply the empty /
+    // non-empty test evalcond's `-z` / `-n` arms perform (cond.rs).
     //
-    // The Array→args conversion lives at the bridge because cond.rs
-    // expects `&[&str]` (C `cond_str` signature equivalent). For
+    // The Array→words conversion lives at the bridge. For
     // `"${arr[@]}"` in DQ context the splice yields `Value::Array`
     // — an empty array still expands to one implicit empty word
     // (per zsh's "${arr[@]}" splat preserving at least one slot
     // in cond context), so:
-    //   - Array(0)   → ["-z", ""]            → evalcond → 0 (true)
-    //   - Array(1)   → ["-z", word]          → evalcond → 0/1
-    //   - Array(2+)  → ["-z", w1, w2, ...]   → evalcond → 2 (parse
+    //   - Array(0)   → ["-z", ""]            → 0 (true)
+    //   - Array(1)   → ["-z", word]          → 0/1
+    //   - Array(2+)  → ["-z", w1, w2, ...]   → 2 (parse
     //                                          error: too many ops)
     //                                          → coerced to false
-    //   - Str(s)     → ["-z", s]             → evalcond → 0/1
+    //   - Str(s)     → ["-z", s]             → 0/1
     //
     // Bug #185 in docs/BUGS.md.
     fn run_cond_str_empty(v: Value, op: &str) -> Value {
@@ -12373,21 +12370,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Str(s) => vec![s.to_string()],
             other => vec![other.to_str()],
         };
-        let mut args: Vec<&str> = vec![op];
-        if words.is_empty() {
-            args.push("");
-        } else {
-            args.extend(words.iter().map(|s| s.as_str()));
-        }
-        let opts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
-        let vars: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         // c:Src/cond.c:62-66 — `evalcond` returns 0=true, 1=false,
         // 2=syntax-error. Coerce error to false (observable behavior
         // in zsh: `[[ -z a b ]]` errors and the test as a whole
         // returns non-zero).
-        // `[[ ]]` dispatch — C's `evalcond(state, NULL)` calling convention.
-        // `None` for from_test → mathevali integer-compare coercion path.
-        let ret = crate::ported::cond::evalcond(&args, &opts, &vars, false, None);
+        // c:Src/cond.c — evalcond's `-n` arm is `!strlen(left)` negated and its
+        // `-z` arm `strlen(left)`; a single operand needs no wordcode. Two or
+        // more words are the syntax error (2) the wordcode parser reports
+        // for `-z a b`. No word at all is the implicit empty operand.
+        let ret = if words.len() > 1 {
+            2
+        } else {
+            let empty = words.first().map_or(true, |w| w.is_empty());
+            ((op == "-z") != empty) as i32
+        };
         Value::Int(if ret == 0 { 1 } else { 0 })
     }
     vm.register_builtin(BUILTIN_COND_STR_EMPTY, |vm, _argc| {
@@ -13786,9 +13782,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         {
             use crate::ported::jobs;
             let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let forked = jobs::hasprocs(&table.lock().unwrap_or_else(|e| e.into_inner()), newjob);
+            if forked {
+                // waitjobs() reads thisjob and holds no JOBTAB guard across the wait.
+                *jobs::THISJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = newjob as i32;
+                jobs::waitjobs(); // c:1835
+            }
             let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
-            if jobs::hasprocs(&tab, newjob) {
-                jobs::waitjobs(&mut tab, newjob); // c:1835
+            if forked {
                 if let Some(p) = tab[newjob].procs.last() {
                     let val = if p.is_signaled() {
                         0o200 | p.term_sig() // c:Src/jobs.c:489-490
@@ -13803,7 +13807,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `thisjob = pj` restores the caller's job. A held slot is the
             // job frame's to delete when the pipeline closes.
             if held.is_none() && newjob < tab.len() {
-                jobs::deletejob(&mut tab[newjob], false);
+                jobs::deletejob(&mut tab, newjob, false);
             }
             *jobs::THISJOB
                 .get_or_init(|| std::sync::Mutex::new(-1))

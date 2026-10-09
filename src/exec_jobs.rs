@@ -73,7 +73,7 @@ fn shout_write(s: &str) {
 /// line — including either side of `&&`/`||`. `nested` is the caller's
 /// in-process `( … )` (C forks it, and the child has no MONITOR).
 ///
-/// Then printjob's own gate (exec_jobs::printjob_async): an interactive
+/// Then printjob's own gate (exec_jobs::printjob_print): an interactive
 /// shell with MONITOR reports a signal other than SIGINT/SIGPIPE as
 /// `zsh: terminated  cmd`, and a SIGINT only with a newline (c:1203-1205,
 /// c:1260-1263, c:1338-1341).
@@ -112,8 +112,8 @@ pub fn foreground_job_report(status: i32, text: Option<String>, nested: bool) {
         ..Default::default()
     };
     // The job sits at index 1 and is `thisjob` (c:Src/jobs.c:645).
-    let tab = vec![job::default(), jn];
-    printjob_async(&tab, 1, 1);
+    let mut tab = vec![job::default(), jn];
+    printjob_print(&mut tab, 1, i32::from(crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS)), 0, 1);
 }
 
 /// !!! WARNING: RUST-ONLY ADAPTER !!! The tail of C `update_job` for the
@@ -177,80 +177,110 @@ pub fn foreground_job_signalled(status: i32) {
     }
 }
 
-/// Executor-side stand-in for C `printjob`'s done-job delete tail,
-/// `Src/jobs.c:1350-1363`:
+/// !!! WARNING: RUST-ONLY SPLIT OF `printjob` — C HAS ONE FUNCTION !!!
+/// Port of the done-job tail of C `printjob`, `Src/jobs.c:1350-1363`:
 /// ```c
 /// if (jn->stat & STAT_DONE) {
-///     ...
+///     /* This looks silly, but see update_job() */
+///     if (synch <= 1)
+///         storepipestats(jn, job == thisjob, job == thisjob);
+///     if (should_report_time(jn))
+///         dumptime(jn);
 ///     deletejob(jn, 0);
 ///     if (job == curjob) { curjob = prevjob; prevjob = job; }
 ///     if (job == prevjob) setprevjob();
 /// }
 /// ```
-/// The ported `printjob` (src/ported/jobs.rs) is a pure formatter
-/// returning a String; C's version mutates the table as a side
-/// effect. Every site that calls (or would call) printjob on a
-/// possibly-done job runs this tail so finished jobs leave the table
-/// exactly when they do in C. Lives here (not src/ported/) because
-/// it has no C name of its own — it is the side-effect half of
-/// printjob, split out by the Rust purity refactor.
-pub fn printjob_delete_tail(tab: &mut [job], idx: usize) {
-    if idx >= tab.len() || (tab[idx].stat & stat::DONE) == 0 {
+/// `jn` is the table index of the job being deleted and `job` the number
+/// printjob was called with: they differ when printjob reported a subjob in
+/// place of its superjob (c:1171-1185). Callers that formatted the job
+/// themselves (the `wait` builtin) run this tail alone, as C's update_job
+/// reaches it through printjob.
+///
+/// `tab` is the caller's locked slice of `JOBTAB`; nothing here locks it.
+pub fn printjob_delete_tail(tab: &mut [job], jn: usize, job: usize, synch: i32) {
+    if jn >= tab.len() || (tab[jn].stat & stat::DONE) == 0 {
         return;
     }
-    deletejob(&mut tab[idx], false); // c:Src/jobs.c:1356
-    let mut cj = CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-    let mut pj = PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-    if *cj == idx as i32 {
-        // c:Src/jobs.c:1357-1360
-        *cj = *pj;
-        *pj = idx as i32;
+    let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
+    let is_thisjob = i32::from(job as i32 == thisjob);
+    if synch <= 1 {
+        crate::ported::jobs::storepipestats(&tab[jn], is_thisjob, is_thisjob); // c:1352
     }
-    let need_setprev = *pj == idx as i32; // c:Src/jobs.c:1361
+    // c:1354-1355 — `if (should_report_time(jn)) dumptime(jn);`
+    let reporttime: f64 = crate::ported::params::getsparam("REPORTTIME")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(-1.0);
+    if crate::ported::jobs::should_report_time(&tab[jn], reporttime) {
+        if let Some(timing) = crate::ported::jobs::dumptime(&tab[jn]) {
+            eprintln!("{}", timing); // printtime writes to stderr
+        }
+    }
+    deletejob(tab, jn, false); // c:1356
+    let mut cj = CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
+    let mut pj = PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
+    if *cj == job as i32 {
+        // c:1357-1360
+        *cj = *pj;
+        *pj = job as i32;
+    }
+    let need_setprev = *pj == job as i32; // c:1361
     drop(cj);
     drop(pj);
     if need_setprev {
-        setprevjob_locked(tab); // c:Src/jobs.c:1362
+        setprevjob_locked(tab); // c:1362
     }
 }
 
-/// `printjob(jn, !!isset(LONGLISTJOBS), 0)` — the asynchronous (synch 0)
-/// report update_job issues at `Src/jobs.c:647` when a job changes state.
-/// Returns 1-as-true when something was printed (C's `doneprint`).
+/// !!! WARNING: RUST-ONLY SPLIT OF `printjob` — C HAS ONE FUNCTION !!!
+/// Port of C `printjob(Job jn, int lng, int synch)`, `Src/jobs.c:1147-1365`,
+/// up to but excluding the done-job tail: the superjob redirect
+/// (c:1171-1185), the scan that decides whether a state change is worth
+/// reporting (c:1187-1221), the print gate and the status lines
+/// (c:1226-1337), and the `(pwd now: …)` line (c:1344-1353). The lines
+/// themselves are laid out by `ported::jobs::printjob`. Returns
+/// `(doneprint, jn, skip_print)` where `jn` is the index of the job reported
+/// (the subjob when it stood in for the superjob).
 ///
-/// Lives here (not src/ported/) because it has no C name of its own. The Rust `printjob` is a pure formatter with no
-/// print gate; this is the gate + output half of C's printjob for synch 0.
-/// The done-job delete tail (c:1350-1363) stays with the caller
-/// (`printjob_delete_tail`), which runs it whether or not this printed —
-/// exactly as C falls through to it.
+/// `ji` is C's `job` (`jn - jobtab` before the redirect), `thisjob` C's global.
 ///
-/// This path was missing entirely: update_bg_job deleted a finished job
-/// without reporting it, so `: &` + `wait` never said `[1]  + done  :`,
-/// `kill %1` never said `[1]  + terminated  ...`, and a foreground job
-/// killed by a signal never said `zsh: terminated  ...`.
+/// `lng` is never negative here and `synch` is 0 or 1 or 2: the `fg`/`bg`
+/// "continued" and POSIX plain-format arms (`lng < 0`, `synch == 3`) have
+/// no caller that reaches this function.
 ///
-/// NOT PORTED: the STAT_SUPERJOB -> subjob redirect (c:1171-1185) and the
-/// `(pwd now: …)` line (c:1349-1353).
-///
-/// WARNING: param names don't match C — Rust=(tab, ji, thisjob) vs
-/// C=(jn, lng, synch)
-pub fn printjob_async(tab: &[job], ji: usize, thisjob: i32) -> bool {
+/// WARNING: param names don't match C — Rust=(tab, ji, lng, synch, thisjob)
+/// vs C=(jn, lng, synch)
+pub fn printjob_print(tab: &mut [job], ji: usize, lng: i32, synch: i32, thisjob: i32) -> (bool, usize, bool) {
     use crate::ported::builtins::sched::zleactive;
-    use crate::ported::zsh_h::{isset, INTERACTIVE, LONGLISTJOBS, PRINTEXITVALUE, SHINSTDIN, SP_RUNNING};
+    use crate::ported::zsh_h::{isset, INTERACTIVE, PRINTEXITVALUE, SHINSTDIN, SP_RUNNING};
     use std::sync::atomic::Ordering;
-    let jn = &tab[ji];
+    let is_thisjob = ji as i32 == thisjob; // `job == thisjob`
     // c:1163-1164 — `if (jn->stat & STAT_NOPRINT) skip_print = 1;`
-    let mut skip_print = (jn.stat & stat::NOPRINT) != 0;
+    let mut skip_print = (tab[ji].stat & stat::NOPRINT) != 0;
+    let mut jn = ji;
+    // c:1171-1185 — a subjob that still has processes is reported as if it
+    // were the user-visible superjob.
+    if (tab[jn].stat & stat::SUPERJOB) != 0 && tab[jn].other != 0 {
+        let sjn = tab[jn].other as usize;
+        if sjn < tab.len() && (!tab[sjn].procs.is_empty() || !tab[sjn].auxprocs.is_empty()) {
+            jn = sjn;
+        }
+    }
     let mut sflag = false; // c:1150
     let mut doputnl = false; // c:1151
-    let is_thisjob = ji as i32 == thisjob;
-    // c:1190-1221 — does any finished process force a report?
-    for pn in jn.procs.iter() {
-        if pn.status == SP_RUNNING {
-            continue; // c:1193
+    let superjob = (tab[jn].stat & stat::SUPERJOB) != 0;
+    let nprocs = tab[jn].procs.len();
+    // c:1187-1221 — does any finished process force a report?
+    for k in 0..nprocs {
+        if superjob && tab[jn].procs[0].status == SP_RUNNING && k + 1 == nprocs {
+            tab[jn].procs[k].status = SP_RUNNING; // c:1192-1194
         }
-        if libc::WIFSIGNALED(pn.status) {
-            let sig = libc::WTERMSIG(pn.status); // c:1195
+        let status = tab[jn].procs[k].status;
+        if status == SP_RUNNING {
+            continue; // c:1195
+        }
+        if libc::WIFSIGNALED(status) {
+            let sig = libc::WTERMSIG(status); // c:1197
             if sig != libc::SIGINT && sig != libc::SIGPIPE {
                 sflag = true; // c:1202-1203
             }
@@ -261,53 +291,96 @@ pub fn printjob_async(tab: &[job], ji: usize, thisjob: i32) -> bool {
                 sflag = true; // c:1206-1208
                 skip_print = false;
             }
-        } else if libc::WIFSTOPPED(pn.status) {
-            let sig = libc::WSTOPSIG(pn.status); // c:1210
+        } else if libc::WIFSTOPPED(status) {
+            let sig = libc::WSTOPSIG(status); // c:1210
             if is_thisjob && sig == libc::SIGTSTP {
                 doputnl = true; // c:1214-1215
             }
-        } else if isset(PRINTEXITVALUE) && isset(SHINSTDIN) && libc::WEXITSTATUS(pn.status) != 0
-        {
+        } else if isset(PRINTEXITVALUE) && isset(SHINSTDIN) && libc::WEXITSTATUS(status) != 0 {
             sflag = true; // c:1216-1219
             skip_print = false;
         }
     }
-    // c:1224-1238 — a skipped job is only deleted (caller's tail).
+    // c:1224-1238 — a skipped job is only deleted (the caller's tail).
     if skip_print {
-        return false;
+        return (false, jn, true);
     }
+    let mut doneprint = false; // c:1152
     let interact = isset(INTERACTIVE);
-    let stopped = (jn.stat & stat::STOPPED) != 0;
-    // c:1248-1250 — `(interact || synch) && jobbing &&
-    //                ((jn->stat & STAT_STOPPED) || sflag || job != thisjob)`
-    if interact && crate::ported::zsh_h::jobbing() && (stopped || sflag || !is_thisjob) {
+    let stopped = (tab[jn].stat & stat::STOPPED) != 0;
+    // c:1248-1250 — `synch == 2 || ((interact || synch) && jobbing &&
+    //                ((jn->stat & STAT_STOPPED) || sflag || job != thisjob))`
+    if synch == 2
+        || ((interact || synch != 0) && crate::ported::zsh_h::jobbing() && (stopped || sflag || !is_thisjob))
+    {
         // c:1258-1259 — `if (!synch) zleentry(ZLE_CMD_TRASH);` (trashzle
         // itself is a no-op unless zleactive).
-        if zleactive.load(Ordering::Relaxed) != 0 {
+        if synch == 0 && zleactive.load(Ordering::Relaxed) != 0 {
             crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_TRASH);
         }
-        let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-        let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+        let mut out = String::new();
+        if doputnl && synch == 0 {
+            doneprint = true; // c:1262-1263
+            out.push('\n');
+        }
+        let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
+        let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
         let s = crate::ported::jobs::printjob(
-            jn,
+            &tab[jn],
             ji,
-            isset(LONGLISTJOBS) as i32,
+            lng,
             (curjob >= 0).then_some(curjob as usize),
             (prevjob >= 0).then_some(prevjob as usize),
-            is_thisjob, // c:1255 — `thisfmt = job == thisjob && synch != 2`
+            is_thisjob && synch != 2, // c:1255 — `thisfmt = job == thisjob && synch != 2`
         );
-        // c:1260-1263 — `if (doputnl && !synch) putc('\n', fout);`
-        let nl = if doputnl { "\n" } else { "" };
-        shout_write(&format!("{}{}\n", nl, s));
-        return true;
-    } else if doputnl && interact {
+        if !s.is_empty() {
+            doneprint = true; // c:1275
+            out.push_str(&s);
+            out.push('\n');
+        }
+        shout_write(&out);
+    } else if doputnl && interact && synch == 0 {
         // c:1338-1341
+        doneprint = true;
         shout_write("\n");
-        return true;
     }
-    false
+    // c:1344-1353 — `(pwd now: …)` once a later `cd` has moved the shell away
+    // from the directory the job started in (`jobs -d`, lng & 4, is the
+    // layout routine's).
+    if (lng & 4) == 0 && interact && is_thisjob {
+        if let Some(jpwd) = tab[jn].pwd.as_deref() {
+            let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+            if jpwd != pwd {
+                doneprint = true;
+                shout_write(&format!("(pwd now: {})\n", crate::ported::utils::fprintdir(&pwd)));
+            }
+        }
+    }
+    (doneprint, jn, false)
 }
 
+/// !!! WARNING: RUST-ONLY SPLIT OF `printjob` — C HAS ONE FUNCTION !!!
+/// Port of C `printjob(Job jn, int lng, int synch)`, `Src/jobs.c:1147-1365`,
+/// reading `thisjob` from the global: [`printjob_print`] followed by the
+/// done-job tail ([`printjob_delete_tail`]) or, for a job that is not done,
+/// `jn->stat &= ~STAT_CHANGED` (c:1364). Returns C's `doneprint`.
+///
+/// `tab` is the caller's locked slice of `JOBTAB`; nothing here locks it, so
+/// update_job, handle_sub, zwaitjob and scanjobs call it with their guard
+/// held.
+///
+/// WARNING: param names don't match C — Rust=(tab, ji, lng, synch) vs
+/// C=(jn, lng, synch)
+pub fn printjob_synch(tab: &mut [job], ji: usize, lng: i32, synch: i32) -> bool {
+    let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
+    let (doneprint, jn, skipped) = printjob_print(tab, ji, lng, synch, thisjob);
+    if (tab[jn].stat & stat::DONE) != 0 {
+        printjob_delete_tail(tab, jn, ji, synch);
+    } else if !skipped {
+        tab[jn].stat &= !stat::CHANGED; // c:1364
+    }
+    doneprint
+}
 
 /// `setprevjob` (Src/jobs.c:698-717) body operating on an
 /// already-locked table slice — `printjob_delete_tail` callers hold
@@ -501,11 +574,11 @@ fn release_held_slots(start: usize) {
             // A stopped job stays in the table for `fg` (zwaitjob returns on
             // STAT_STOPPED and nothing deletes it), and a superjob belongs to
             // the list_pipe machinery, not to this frame.
-            if let Some(jn) = tab.get_mut(held.slot) {
+            if let Some(jn) = tab.get(held.slot) {
                 if (jn.stat & stat::INUSE) != 0
                     && (jn.stat & (stat::STOPPED | stat::SUPERJOB)) == 0
                 {
-                    deletejob(jn, false); // c:Src/jobs.c:1754
+                    deletejob(&mut tab, held.slot, false); // c:Src/jobs.c:1754
                 }
             }
         }
