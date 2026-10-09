@@ -47,8 +47,15 @@ fn user_code_cannot_reach_the_shells_own_descriptors() {
     let home = tempfile::tempdir().expect("tempdir");
     // First run creates the log and the history database.
     run(home.path(), "print seed");
-    let db = home.path().join("zshrs_history.db");
-    let before = std::fs::read(&db).expect("history db must exist after a run");
+    // A non-interactive run opens the plugins database and only an interactive
+    // one opens the history database, so guard whichever SQLite file the shell
+    // actually holds.
+    let db = ["zshrs_history.db", "plugins.db"]
+        .iter()
+        .map(|name| home.path().join(name))
+        .find(|path| path.exists())
+        .expect("a SQLite database must exist after a run");
+    let before = std::fs::read(&db).expect("read the database");
 
     // Attack every descriptor the shell could plausibly hold, by every
     // route that names one.
@@ -78,7 +85,7 @@ fn user_code_cannot_reach_the_shells_own_descriptors() {
     // prefix that existed before rather than the whole file: a write
     // through a raw descriptor lands at offset 0 and would corrupt the
     // header, which is exactly what happened before this was fixed.
-    let after = std::fs::read(&db).expect("history db must still exist");
+    let after = std::fs::read(&db).expect("the database must still exist");
     assert_eq!(
         &after[..16],
         &before[..16],
@@ -86,7 +93,7 @@ fn user_code_cannot_reach_the_shells_own_descriptors() {
     );
     assert!(
         after.starts_with(b"SQLite format 3\0"),
-        "history db no longer has a SQLite header"
+        "the database no longer has a SQLite header"
     );
     // NOT asserted: the absence of the string "ATTACK-" in the file. The
     // shell records the probe COMMAND in history through its own API, so
