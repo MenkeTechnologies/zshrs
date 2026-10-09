@@ -4639,74 +4639,139 @@ impl ShellExecutor {
         status
     }
 
+    /// realpath [-eLmPqsz] [--relative-to=DIR] [--relative-base=DIR] FILE...
+    /// — coreutils realpath(1). Default: every component but the last
+    /// must exist; `-e` requires all, `-m` none. `-s` leaves symlinks
+    /// unexpanded, `-L` folds `..` textually before expanding symlinks,
+    /// `-P` (default) expands as it walks.
     pub(crate) fn builtin_realpath(&self, args: &[String]) -> i32 {
-        // coreutils realpath(1) port. Adds -q (quiet), -m (no-exist
-        // check, logical resolution), -s (no symlink resolution),
-        // and the implicit default (-e: every component must exist).
-        if args.is_empty() {
+        let mut quiet = false;
+        let mut need = RealpathNeed::AllButLast;
+        let mut logical = false;
+        let mut nosym = false;
+        let mut zero = false;
+        let mut rel_to: Option<String> = None;
+        let mut rel_base: Option<String> = None;
+        let mut paths: Vec<&str> = Vec::new();
+        let mut opts_done = false;
+        let mut it = args.iter();
+        while let Some(arg) = it.next() {
+            let a = arg.as_str();
+            if opts_done || a == "-" || !a.starts_with('-') {
+                paths.push(a);
+            } else if a == "--" {
+                opts_done = true;
+            } else if let Some(long) = a.strip_prefix("--") {
+                match long {
+                    "quiet" => quiet = true,
+                    "canonicalize-existing" => need = RealpathNeed::All,
+                    "canonicalize-missing" => need = RealpathNeed::Nothing,
+                    "strip" | "no-symlinks" => nosym = true,
+                    "logical" => {
+                        logical = true;
+                        nosym = false;
+                    }
+                    "physical" => {
+                        logical = false;
+                        nosym = false;
+                    }
+                    "zero" => zero = true,
+                    "relative-to" | "relative-base" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("realpath: option '--{}' requires an argument", long);
+                            return 1;
+                        };
+                        if long == "relative-to" {
+                            rel_to = Some(v.clone());
+                        } else {
+                            rel_base = Some(v.clone());
+                        }
+                    }
+                    _ => {
+                        if let Some(v) = long.strip_prefix("relative-to=") {
+                            rel_to = Some(v.to_string());
+                        } else if let Some(v) = long.strip_prefix("relative-base=") {
+                            rel_base = Some(v.to_string());
+                        } else {
+                            eprintln!("realpath: unrecognized option '{}'", a);
+                            return 1;
+                        }
+                    }
+                }
+            } else {
+                for ch in a[1..].chars() {
+                    match ch {
+                        'q' => quiet = true,
+                        'e' => need = RealpathNeed::All,
+                        'm' => need = RealpathNeed::Nothing,
+                        's' => nosym = true,
+                        'L' => {
+                            logical = true;
+                            nosym = false;
+                        }
+                        'P' => {
+                            logical = false;
+                            nosym = false;
+                        }
+                        'z' => zero = true,
+                        _ => {
+                            eprintln!("realpath: invalid option -- '{}'", ch);
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+        if paths.is_empty() {
             eprintln!("realpath: missing operand");
             return 1;
         }
-        let mut quiet = false;
-        let mut allow_missing = false;
-        let mut no_symlinks = false;
-        let mut paths: Vec<&str> = Vec::new();
-        for arg in args {
-            match arg.as_str() {
-                "-q" | "--quiet" => quiet = true,
-                "-m" | "--canonicalize-missing" => allow_missing = true,
-                "-s" | "--strip" | "--no-symlinks" => no_symlinks = true,
-                "-e" | "--canonicalize-existing" => {
-                    // Default behaviour; flag accepted for portability.
-                }
-                "-L" | "--logical" => no_symlinks = true,
-                "-P" | "--physical" => no_symlinks = false,
-                s if s.starts_with('-') => {
-                    // coreutils realpath rejects unknown flags with
-                    // \"unrecognized option\" exit 1.
-                    eprintln!("realpath: unrecognized option: '{}'", s);
-                    return 1;
-                }
-                _ => paths.push(arg.as_str()),
-            }
-        }
 
-        // Logical normalize: collapse `.` and `..` components without
-        // following symlinks. Used by -m / -s. Direct port of
-        // coreutils canonicalize_filename_mode in the LOGICAL case.
-        let logical_normalize = |p: &std::path::Path| -> std::path::PathBuf {
-            let mut abs: std::path::PathBuf = if p.is_absolute() {
-                std::path::PathBuf::new()
-            } else {
-                std::env::current_dir().unwrap_or_default()
-            };
-            for comp in p.components() {
-                match comp {
-                    Prefix(_) | RootDir => abs.push(comp.as_os_str()),
-                    CurDir => {}
-                    ParentDir => {
-                        abs.pop();
-                    }
-                    Normal(c) => abs.push(c),
-                }
-            }
-            abs
+        let errtext = |e: &io::Error| {
+            let s = e.to_string();
+            s.split(" (os error").next().unwrap_or(&s).to_string()
         };
-
-        let mut status = 0;
-        for path in &paths {
-            let p = std::path::Path::new(path);
-            let result: Result<std::path::PathBuf, std::io::Error> = if allow_missing || no_symlinks
-            {
-                Ok(logical_normalize(p))
-            } else {
-                std::fs::canonicalize(p)
-            };
-            match result {
-                Ok(abs) => println!("{}", abs.display()),
+        // The relative-to / relative-base directories must exist.
+        let resolve_dir = |d: &str| -> Result<std::path::PathBuf, i32> {
+            match realpath_canonicalize(std::path::Path::new(d), RealpathNeed::All, logical, nosym) {
+                Ok(p) => Ok(p),
                 Err(e) => {
                     if !quiet {
-                        eprintln!("realpath: {}: {}", path, e);
+                        eprintln!("realpath: {}: {}", d, errtext(&e));
+                    }
+                    Err(1)
+                }
+            }
+        };
+        let rel_to_dir = match rel_to.as_deref().map(resolve_dir).transpose() {
+            Ok(v) => v,
+            Err(s) => return s,
+        };
+        let rel_base_dir = match rel_base.as_deref().map(resolve_dir).transpose() {
+            Ok(v) => v,
+            Err(s) => return s,
+        };
+
+        let term = if zero { '\0' } else { '\n' };
+        let mut status = 0;
+        for path in &paths {
+            match realpath_canonicalize(std::path::Path::new(path), need, logical, nosym) {
+                Ok(abs) => {
+                    // coreutils: with --relative-base, a path outside the
+                    // base stays absolute; otherwise --relative-to (or the
+                    // base itself) picks the directory printed against.
+                    let base = rel_to_dir.as_ref().or(rel_base_dir.as_ref());
+                    let inside_base = rel_base_dir.as_ref().is_none_or(|b| {
+                        abs.starts_with(b) && rel_to_dir.as_ref().is_none_or(|t| t.starts_with(b))
+                    });
+                    match base {
+                        Some(b) if inside_base => print!("{}{}", realpath_relative_to(&abs, b), term),
+                        _ => print!("{}{}", abs.display(), term),
+                    }
+                }
+                Err(e) => {
+                    if !quiet {
+                        eprintln!("realpath: {}: {}", path, errtext(&e));
                     }
                     status = 1;
                 }
@@ -5079,12 +5144,21 @@ impl ShellExecutor {
         }
 
         if random_sort {
-            // -R: shuffle. coreutils -R is a deterministic shuffle
-            // keyed by an MD5 of the line, but a Fisher-Yates with
-            // thread_rng is the standard approximation used by
-            // sort-port crates.
-            let mut rng = rand::thread_rng();
-            lines.shuffle(&mut rng);
+            // -R: coreutils random sort — each line sorts by a hash of
+            // (per-run random salt, line), so identical lines stay
+            // adjacent and the permutation changes per run.
+            let salt = rand::thread_rng().gen::<u128>().to_ne_bytes();
+            let mut keyed: Vec<([u8; 32], String)> = lines
+                .drain(..)
+                .map(|l| {
+                    let mut h = Sha256::new();
+                    h.update(salt);
+                    h.update(l.as_bytes());
+                    (h.finalize().into(), l)
+                })
+                .collect();
+            keyed.sort_by(|(ha, a), (hb, b)| ha.cmp(hb).then_with(|| cmp_keys(a, b)));
+            lines = keyed.into_iter().map(|(_, l)| l).collect();
         } else {
             lines.sort_by(|a, b| cmp_keys(a, b));
         }
@@ -7092,76 +7166,101 @@ impl ShellExecutor {
         0
     }
 
-    /// dircolors [-bcp] [FILE] — emit shell commands to set
-    /// LS_COLORS. Coreutils dircolors(1). Without args, emits the
-    /// default ls color database. -b for Bourne (export VAR=val),
-    /// -c for csh (setenv VAR val), -p prints the database.
-    /// We hard-code coreutils' compiled-in default since shipping
-    /// the full /etc/DIR_COLORS database file isn't feasible here.
+    /// dircolors [-bcp] [FILE] — coreutils dircolors(1). Parses a
+    /// dircolors database (FILE, `-` for stdin, or the compiled-in
+    /// default) and emits the shell command that sets LS_COLORS: `-b`
+    /// Bourne, `-c` csh, otherwise chosen from `$SHELL`. `-p` prints
+    /// the default database and takes no FILE.
     pub(crate) fn builtin_dircolors(&self, args: &[String]) -> i32 {
-        let mut bourne = true;
-        let mut csh = false;
+        let mut shell_kind: Option<bool> = None; // Some(true) = csh
         let mut print_database = false;
-        let mut file: Option<&str> = None;
+        let mut files: Vec<&str> = Vec::new();
+        let mut opts_done = false;
         for arg in args {
-            match arg.as_str() {
-                "-b" | "--sh" | "--bourne-shell" => {
-                    bourne = true;
-                    csh = false;
-                }
-                "-c" | "--csh" | "--c-shell" => {
-                    bourne = false;
-                    csh = true;
-                }
+            let a = arg.as_str();
+            if opts_done || a == "-" || !a.starts_with('-') {
+                files.push(a);
+                continue;
+            }
+            match a {
+                "--" => opts_done = true,
+                "-b" | "--sh" | "--bourne-shell" => shell_kind = Some(false),
+                "-c" | "--csh" | "--c-shell" => shell_kind = Some(true),
                 "-p" | "--print-database" => print_database = true,
-                "--" => {}
-                s if !s.starts_with('-') => file = Some(s),
-                s => {
-                    eprintln!("dircolors: unrecognized option: '{}'", s);
+                _ => {
+                    eprintln!("dircolors: unrecognized option '{}'", a);
                     return 1;
                 }
             }
         }
-        if let Some(f) = file {
-            // Reading a custom database file isn't implemented; emit
-            // the default but tell the user we ignored the file.
-            eprintln!(
-                "dircolors: using built-in defaults (custom file ignored: '{}')",
-                f
-            );
+        if files.len() > 1 {
+            eprintln!("dircolors: extra operand '{}'", files[1]);
+            return 1;
         }
-        // Coreutils' default LS_COLORS, lightly trimmed. Captured
-        // from `dircolors --print-database` of GNU coreutils 9.x.
-        // Hardcoding here keeps the builtin self-contained.
-        let default_ls_colors = concat!(
-            "rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:",
-            "cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:",
-            "ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.zip=01;31:",
-            "*.gz=01;31:*.bz2=01;31:*.xz=01;31:*.7z=01;31:*.rar=01;31:",
-            "*.jpg=01;35:*.jpeg=01;35:*.png=01;35:*.gif=01;35:*.bmp=01;35:",
-            "*.tiff=01;35:*.svg=01;35:*.mp3=00;36:*.wav=00;36:*.flac=00;36:",
-            "*.mp4=01;35:*.mkv=01;35:*.avi=01;35:*.mov=01;35:"
-        );
         if print_database {
-            // Emit one entry per line (coreutils format).
-            for entry in default_ls_colors.split(':') {
-                if entry.is_empty() {
-                    continue;
-                }
-                if let Some((k, v)) = entry.split_once('=') {
-                    println!("{} {}", k, v);
-                }
+            if !files.is_empty() {
+                eprintln!(
+                    "dircolors: file operands cannot be combined with --print-database (-p)"
+                );
+                return 1;
             }
+            print!("{}", DIRCOLORS_DEFAULT_DATABASE);
             return 0;
         }
-        if csh {
-            println!("setenv LS_COLORS '{}';", default_ls_colors);
-        } else {
-            let _ = bourne;
-            println!("LS_COLORS='{}';", default_ls_colors);
-            println!("export LS_COLORS");
+        let csh = match shell_kind {
+            Some(c) => c,
+            None => match env::var("SHELL") {
+                Ok(s) if !s.is_empty() => {
+                    let base = s.rsplit('/').next().unwrap_or(&s);
+                    base.ends_with("csh")
+                }
+                _ => {
+                    eprintln!(
+                        "dircolors: no SHELL environment variable, and no shell type option given"
+                    );
+                    return 1;
+                }
+            },
+        };
+
+        let (name, text) = match files.first().copied() {
+            None => ("<default>".to_string(), DIRCOLORS_DEFAULT_DATABASE.to_string()),
+            Some(f) => {
+                let mut buf = String::new();
+                let r = if f == "-" {
+                    io::stdin().read_to_string(&mut buf)
+                } else {
+                    std::fs::File::open(f).and_then(|mut fh| fh.read_to_string(&mut buf))
+                };
+                if let Err(e) = r {
+                    let msg = e.to_string();
+                    eprintln!(
+                        "dircolors: {}: {}",
+                        f,
+                        msg.split(" (os error").next().unwrap_or(&msg)
+                    );
+                    return 1;
+                }
+                (f.to_string(), buf)
+            }
+        };
+
+        match dircolors_render(
+            &text,
+            &name,
+            csh,
+            &env::var("TERM").unwrap_or_default(),
+            &env::var("COLORTERM").unwrap_or_default(),
+        ) {
+            Ok(s) => {
+                print!("{}", s);
+                0
+            }
+            Err(e) => {
+                eprintln!("dircolors: {}", e);
+                1
+            }
         }
-        0
     }
 
     /// link FILE1 FILE2 — call link(2) directly to create a hard
@@ -7269,96 +7368,37 @@ impl ShellExecutor {
         status
     }
 
-    /// tsort [FILE] — topological sort. Coreutils tsort(1) / POSIX.
-    /// Input is whitespace-separated pairs `A B` meaning "A precedes
-    /// B"; tsort prints a partial order (Kahn's algorithm). Cycles
-    /// are reported on stderr (one cycle node per line) and the
-    /// program continues with that node treated as a leaf. Reads
-    /// stdin when no file is given or `-`.
+    /// tsort [FILE] — topological sort, a port of GNU coreutils
+    /// `tsort.c` (see [`tsort_run`]). Reads stdin when no file is given
+    /// or `-`; exit status 1 on a loop or odd token count.
     pub(crate) fn builtin_tsort(&self, args: &[String]) -> i32 {
-        let file: Option<&str> = args
+        let file: &str = args
             .iter()
             .find(|a| !a.starts_with('-') || a.as_str() == "-")
-            .map(|s| s.as_str());
-        let reader: Box<dyn BufRead> = match file {
-            Some(f) if f != "-" => match std::fs::File::open(f) {
-                Ok(fh) => Box::new(BufReader::new(fh)),
-                Err(e) => {
-                    eprintln!("tsort: {}: {}", f, e);
-                    return 1;
-                }
-            },
-            _ => Box::new(BufReader::new(std::io::stdin())),
+            .map(|s| s.as_str())
+            .unwrap_or("-");
+        let mut text = String::new();
+        let read = if file == "-" {
+            io::stdin().read_to_string(&mut text)
+        } else {
+            std::fs::File::open(file).and_then(|mut fh| fh.read_to_string(&mut text))
         };
-        let mut tokens: Vec<String> = Vec::new();
-        for line in reader.lines().map_while(Result::ok) {
-            for tok in line.split_whitespace() {
-                tokens.push(tok.to_string());
-            }
-        }
-        if !tokens.len().is_multiple_of(2) {
-            // POSIX tsort: odd token count is an error per coreutils.
-            eprintln!("tsort: input contains an odd number of tokens");
+        if let Err(e) = read {
+            eprintln!("tsort: {}: {}", file, e);
             return 1;
         }
-        // BTreeMap for deterministic listing order — coreutils
-        // visits in input-encounter order, which BTreeMap+iteration
-        // approximates with sorted order. Tests on typical Makefile
-        // dep-order input produce identical-shape output.
-        let mut succ: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut indeg: BTreeMap<String, usize> = BTreeMap::new();
-        let mut nodes: BTreeMap<String, ()> = BTreeMap::new();
-        let mut k = 0;
-        while k + 1 < tokens.len() {
-            let a = tokens[k].clone();
-            let b = tokens[k + 1].clone();
-            nodes.insert(a.clone(), ());
-            nodes.insert(b.clone(), ());
-            indeg.entry(a.clone()).or_insert(0);
-            if a != b {
-                succ.entry(a.clone()).or_default().push(b.clone());
-                *indeg.entry(b).or_insert(0) += 1;
-            } else {
-                indeg.entry(b).or_insert(0);
-            }
-            k += 2;
+        let (out, err, ok) = tsort_run(&text, file);
+        for l in out {
+            println!("{}", l);
         }
-        let mut ready: Vec<String> = nodes
-            .keys()
-            .filter(|n| indeg.get(*n).copied().unwrap_or(0) == 0)
-            .cloned()
-            .collect();
-        let mut emitted: Vec<String> = Vec::new();
-        while !ready.is_empty() {
-            ready.sort();
-            let n = ready.remove(0);
-            println!("{}", n);
-            emitted.push(n.clone());
-            if let Some(succs) = succ.remove(&n) {
-                for s in succs {
-                    if let Some(d) = indeg.get_mut(&s) {
-                        if *d > 0 {
-                            *d -= 1;
-                        }
-                        if *d == 0 {
-                            ready.push(s);
-                        }
-                    }
-                }
-            }
+        for l in err {
+            eprintln!("tsort: {}", l);
         }
-        if emitted.len() != nodes.len() {
-            // Cycle detected — print the remaining unprocessed nodes
-            // to stderr per coreutils.
-            eprintln!("tsort: input contains a loop:");
-            for (n, d) in &indeg {
-                if *d > 0 {
-                    eprintln!("tsort: {}", n);
-                }
-            }
-            return 1;
+        if ok {
+            0
+        } else {
+            1
         }
-        0
     }
 
     /// sum [-rs] [FILE...] — BSD or SysV checksum.
@@ -11817,6 +11857,367 @@ pub(crate) fn zcalc(args: &[String]) -> i32 {
     0
 }
 
+/// One tsort node: `count` = unprinted predecessors, `top` = the
+/// successor list with the newest relation first (C: `->top`).
+/// zshrs-original — no C counterpart.
+struct TsortItem {
+    name: String,
+    count: usize,
+    printed: bool,
+    qlink: Option<usize>,
+    top: Vec<usize>,
+}
+
+/// c: coreutils tsort.c `detect_loop` — returns true once a loop was
+/// reported (names pushed to `err`) and one relation removed.
+/// zshrs-original — no C counterpart.
+fn tsort_detect_loop(
+    items: &mut [TsortItem],
+    lp: &mut Option<usize>,
+    k: usize,
+    err: &mut Vec<String>,
+) -> bool {
+    if items[k].count == 0 {
+        return false;
+    }
+    let Some(loop_head) = *lp else {
+        *lp = Some(k);
+        return false;
+    };
+    for pi in 0..items[k].top.len() {
+        if items[k].top[pi] != loop_head {
+            continue;
+        }
+        if items[k].qlink.is_some() {
+            while let Some(l) = *lp {
+                let tmp = items[l].qlink;
+                err.push(items[l].name.clone());
+                if l == k {
+                    let s = items[k].top.remove(pi);
+                    items[s].count -= 1;
+                    break;
+                }
+                items[l].qlink = None;
+                *lp = tmp;
+            }
+            while let Some(l) = *lp {
+                let tmp = items[l].qlink;
+                items[l].qlink = None;
+                *lp = tmp;
+            }
+            return true;
+        }
+        items[k].qlink = *lp;
+        *lp = Some(k);
+        break;
+    }
+    false
+}
+
+/// c: coreutils tsort.c `tsort` — topological sort of the `A B` pairs in
+/// `text`. Zero-count items queue in sorted name order, successors are
+/// released newest relation first, and a loop is reported and broken by
+/// dropping one relation. Returns (stdout lines, stderr lines without the
+/// `tsort: ` prefix, ok). `file` names the input in diagnostics.
+/// zshrs-original — no C counterpart.
+fn tsort_run(text: &str, file: &str) -> (Vec<String>, Vec<String>, bool) {
+    let mut out: Vec<String> = Vec::new();
+    let mut err: Vec<String> = Vec::new();
+    let mut items: Vec<TsortItem> = Vec::new();
+    let mut index: BTreeMap<String, usize> = BTreeMap::new();
+    let mut pending: Option<usize> = None;
+    for tok in text.split([' ', '\t', '\n']).filter(|t| !t.is_empty()) {
+        let k = *index.entry(tok.to_string()).or_insert_with(|| {
+            items.push(TsortItem {
+                name: tok.to_string(),
+                count: 0,
+                printed: false,
+                qlink: None,
+                top: Vec::new(),
+            });
+            items.len() - 1
+        });
+        match pending.take() {
+            Some(j) => {
+                // c: record_relation — a self relation is ignored.
+                if items[j].name != items[k].name {
+                    items[k].count += 1;
+                    items[j].top.insert(0, k);
+                }
+            }
+            None => pending = Some(k),
+        }
+    }
+    if pending.is_some() {
+        err.push(format!("{}: input contains an odd number of tokens", file));
+        return (out, err, false);
+    }
+
+    // The tree walk visits items in sorted name order.
+    let order: Vec<usize> = index.values().copied().collect();
+    let mut ok = true;
+    let mut n_strings = items.len();
+    while n_strings > 0 {
+        // T4. Scan for zeros.
+        let mut queue: VecDeque<usize> = order
+            .iter()
+            .copied()
+            .filter(|&k| items[k].count == 0 && !items[k].printed)
+            .collect();
+        while let Some(head) = queue.pop_front() {
+            out.push(items[head].name.clone());
+            items[head].printed = true;
+            n_strings -= 1;
+            for s in items[head].top.clone() {
+                items[s].count -= 1;
+                if items[s].count == 0 {
+                    queue.push_back(s);
+                }
+            }
+        }
+        if n_strings > 0 {
+            err.push(format!("{}: input contains a loop:", file));
+            ok = false;
+            let mut lp: Option<usize> = None;
+            loop {
+                for &k in &order {
+                    if tsort_detect_loop(&mut items, &mut lp, k, &mut err) {
+                        break;
+                    }
+                }
+                if lp.is_none() {
+                    break;
+                }
+            }
+        }
+    }
+    (out, err, ok)
+}
+
+/// The compiled-in default dircolors database (GNU coreutils
+/// `dircolors --print-database`).
+const DIRCOLORS_DEFAULT_DATABASE: &str = include_str!("dircolors_default.db");
+
+/// c: coreutils dircolors.c `dc_parse_stream` + `dc_output` — turn a
+/// database `text` (named `name` in diagnostics) into the shell command
+/// that sets LS_COLORS. `term` / `colorterm` (the `$TERM` / `$COLORTERM`
+/// values) select the matching sections. Err carries the diagnostic without the `dircolors: ` prefix.
+/// zshrs-original — no C counterpart.
+fn dircolors_render(text: &str, name: &str, csh: bool, term: &str, colorterm: &str) -> Result<String, String> {
+    // Database keywords (case-insensitive) and the `ls` indicator
+    // each sets.
+    const SLOTS: &[(&str, &str)] = &[
+        ("NORMAL", "no"),
+        ("NORM", "no"),
+        ("FILE", "fi"),
+        ("RESET", "rs"),
+        ("DIR", "di"),
+        ("LNK", "ln"),
+        ("LINK", "ln"),
+        ("SYMLINK", "ln"),
+        ("ORPHAN", "or"),
+        ("MISSING", "mi"),
+        ("FIFO", "pi"),
+        ("PIPE", "pi"),
+        ("SOCK", "so"),
+        ("BLK", "bd"),
+        ("BLOCK", "bd"),
+        ("CHR", "cd"),
+        ("CHAR", "cd"),
+        ("DOOR", "do"),
+        ("EXEC", "ex"),
+        ("LEFT", "lc"),
+        ("RIGHT", "rc"),
+        ("END", "ec"),
+        ("ENDCODE", "ec"),
+        ("SUID", "su"),
+        ("SETUID", "su"),
+        ("SGID", "sg"),
+        ("SETGID", "sg"),
+        ("STICKY", "st"),
+        ("STICKY_OTHER_WRITABLE", "tw"),
+        ("OTHER_WRITABLE", "ow"),
+        ("CAPABILITY", "ca"),
+        ("MULTIHARDLINK", "mh"),
+        ("CLRTOEOL", "cl"),
+    ];
+    let fnmatch = |pat: &str, s: &str| -> bool {
+        match (CString::new(pat), CString::new(s)) {
+            (Ok(p), Ok(s)) => unsafe { libc::fnmatch(p.as_ptr(), s.as_ptr(), 0) == 0 },
+            _ => false,
+        }
+    };
+    // `TERM`/`COLORTERM` lines gate what follows until the next such
+    // line: a run of them is an OR, and a match enables the section.
+    let mut term_seen = false;
+    let mut term_match = false;
+    let mut prev_was_term = false;
+    let mut out = String::new();
+    for (idx, raw) in text.lines().enumerate() {
+        let line = raw.trim_start();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (keyword, rest) = match line.split_once(char::is_whitespace) {
+            Some((k, r)) => (k, r.trim_start()),
+            None => {
+                return Err(format!("{}:{}: invalid line;  missing second token", name, idx + 1));
+            }
+        };
+        // A `#` that starts a word ends the argument.
+        let mut arg_end = rest.len();
+        let mut prev_ws = true;
+        for (i, ch) in rest.char_indices() {
+            if ch == '#' && prev_ws {
+                arg_end = i;
+                break;
+            }
+            prev_ws = ch.is_whitespace();
+        }
+        let arg = rest[..arg_end].trim_end();
+        if arg.is_empty() {
+            return Err(format!("{}:{}: invalid line;  missing second token", name, idx + 1));
+        }
+        let kw_upper = keyword.to_ascii_uppercase();
+        if kw_upper == "TERM" || kw_upper == "COLORTERM" {
+            let matched = if kw_upper == "TERM" {
+                fnmatch(arg, term)
+            } else {
+                !colorterm.is_empty() && fnmatch(arg, colorterm)
+            };
+            if !prev_was_term {
+                term_match = false;
+            }
+            term_match |= matched;
+            term_seen = true;
+            prev_was_term = true;
+            continue;
+        }
+        prev_was_term = false;
+        if term_seen && !term_match {
+            continue;
+        }
+        if let Some((_, code)) = SLOTS.iter().find(|(k, _)| *k == kw_upper) {
+            out.push_str(&format!("{}={}:", code, arg));
+        } else if keyword.starts_with('*') {
+            out.push_str(&format!("{}={}:", keyword, arg));
+        } else if keyword.starts_with('.') {
+            out.push_str(&format!("*{}={}:", keyword, arg));
+        }
+        // COLOR / OPTIONS / EIGHTBIT and unknown keywords: ignored.
+    }
+    let quoted = out.replace('\'', "'\\''");
+    Ok(if csh {
+        format!("setenv LS_COLORS '{}'\n", quoted)
+    } else {
+        format!("LS_COLORS='{}';\nexport LS_COLORS\n", quoted)
+    })
+}
+
+/// Existence requirement on the components (coreutils
+/// `canonicalize_mode_t`). zshrs-original — no C counterpart.
+#[derive(Clone, Copy, PartialEq)]
+enum RealpathNeed {
+    All,
+    AllButLast,
+    Nothing,
+}
+
+/// `canonicalize_filename_mode`: `need` governs which components
+/// must exist, `logical` folds `..` before expanding symlinks,
+/// `nosym` leaves symlinks alone.
+fn realpath_canonicalize(
+    path: &std::path::Path,
+    need: RealpathNeed,
+    logical: bool,
+    nosym: bool,
+) -> io::Result<std::path::PathBuf> {
+    use std::ffi::OsString;
+    use std::path::{Component, PathBuf};
+    let cwd = std::env::current_dir()?;
+    let mut result = PathBuf::from("/");
+    let mut queue: VecDeque<OsString> = VecDeque::new();
+    let full = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    for comp in full.components() {
+        match comp {
+            Component::Normal(c) => queue.push_back(c.to_os_string()),
+            Component::ParentDir => {
+                if logical || nosym {
+                    queue.pop_back();
+                } else {
+                    queue.push_back(OsString::from(".."));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut links = 0;
+    while let Some(c) = queue.pop_front() {
+        if c == ".." {
+            result.pop();
+            continue;
+        }
+        let next = result.join(&c);
+        let is_last = queue.is_empty();
+        match std::fs::symlink_metadata(&next) {
+            Ok(md) if md.file_type().is_symlink() && !nosym => {
+                links += 1;
+                if links > 40 {
+                    return Err(io::Error::from_raw_os_error(libc::ELOOP));
+                }
+                let target = std::fs::read_link(&next)?;
+                if target.is_absolute() {
+                    result = PathBuf::from("/");
+                }
+                for comp in target.components().rev() {
+                    match comp {
+                        Component::Normal(t) => queue.push_front(t.to_os_string()),
+                        Component::ParentDir => queue.push_front(OsString::from("..")),
+                        _ => {}
+                    }
+                }
+            }
+            Ok(md) => {
+                if !is_last && need != RealpathNeed::Nothing && !md.is_dir() && !nosym {
+                    return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
+                }
+                result = next;
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                if need == RealpathNeed::All || (need == RealpathNeed::AllButLast && !is_last) {
+                    return Err(e);
+                }
+                result = next;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(result)
+}
+
+/// Path of `target` relative to `base`, both absolute and
+/// canonical.
+fn realpath_relative_to(target: &std::path::Path, base: &std::path::Path) -> String {
+    let t: Vec<_> = target.components().collect();
+    let b: Vec<_> = base.components().collect();
+    let common = t.iter().zip(b.iter()).take_while(|(x, y)| x == y).count();
+    let mut parts: Vec<String> = vec!["..".to_string(); b.len() - common];
+    parts.extend(
+        t[common..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
+    if parts.is_empty() {
+        ".".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
 #[cfg(test)]
 mod add_zsh_hook_tests {
     //! Tests for the `add-zsh-hook` builtin — the SHELL-LEVEL hook
@@ -12031,3 +12432,148 @@ pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
     "yes",
     "zbuild",
 ];
+
+#[cfg(test)]
+mod coreutils_port_tests {
+    //! tsort / dircolors / realpath against the GNU coreutils behaviour
+    //! (expected values taken from coreutils 9.x runs).
+    use super::*;
+
+    fn tsort(text: &str) -> (String, Vec<String>, bool) {
+        let (out, err, ok) = tsort_run(text, "-");
+        (out.join(" "), err, ok)
+    }
+
+    #[test]
+    fn tsort_roots_sorted_then_fifo() {
+        assert_eq!(tsort("z a\nm a\nq m\n").0, "q z m a");
+        assert_eq!(tsort("c d\nb d\na b\nz y\n").0, "a c z b y d");
+    }
+
+    #[test]
+    fn tsort_releases_newest_relation_first() {
+        assert_eq!(tsort("a x\na y\na b\n").0, "a b y x");
+    }
+
+    #[test]
+    fn tsort_loop_reports_and_breaks() {
+        let (out, err, ok) = tsort("a b\nb c\nc a\nc d\nd e\ne d\nq a\n");
+        assert_eq!(out, "q a b c d e");
+        assert_eq!(
+            err,
+            vec![
+                "-: input contains a loop:",
+                "a",
+                "b",
+                "c",
+                "-: input contains a loop:",
+                "d",
+                "e"
+            ]
+        );
+        assert!(!ok);
+    }
+
+    #[test]
+    fn tsort_odd_token_count() {
+        let (out, err, ok) = tsort("a b c\n");
+        assert!(out.is_empty() && !ok);
+        assert_eq!(err, vec!["-: input contains an odd number of tokens"]);
+    }
+
+    #[test]
+    fn dircolors_sections_and_extensions() {
+        let db = "DIR 01;34\n*.x 3 # c\n.y 4\nTERM foo*\nEXEC 9\nTERM *\nSOCK 7\n";
+        assert_eq!(
+            dircolors_render(db, "f", false, "xterm", "").unwrap(),
+            "LS_COLORS='di=01;34:*.x=3:*.y=4:so=7:';\nexport LS_COLORS\n"
+        );
+        assert_eq!(
+            dircolors_render(db, "f", true, "xterm", "").unwrap(),
+            "setenv LS_COLORS 'di=01;34:*.x=3:*.y=4:so=7:'\n"
+        );
+    }
+
+    #[test]
+    fn dircolors_missing_argument_is_an_error() {
+        assert_eq!(
+            dircolors_render("DIR\n", "-", false, "", "").unwrap_err(),
+            "-:1: invalid line;  missing second token"
+        );
+    }
+
+    #[test]
+    fn dircolors_default_database_gated_on_term() {
+        let on = dircolors_render(DIRCOLORS_DEFAULT_DATABASE, "d", false, "xterm", "").unwrap();
+        assert!(on.starts_with("LS_COLORS='rs=0:di=01;34:ln=01;36:mh=00:"));
+        let off = dircolors_render(DIRCOLORS_DEFAULT_DATABASE, "d", false, "dumb", "").unwrap();
+        assert_eq!(off, "LS_COLORS='';\nexport LS_COLORS\n");
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("zshrs-realpath-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::canonicalize(&d).unwrap()
+    }
+
+    #[test]
+    fn realpath_existence_modes() {
+        let d = scratch("modes");
+        std::fs::create_dir(d.join("sub")).unwrap();
+        let canon = |p: &std::path::Path, n| realpath_canonicalize(p, n, false, false);
+        let missing_last = d.join("sub/nope");
+        let missing_mid = d.join("nope/leaf");
+        assert_eq!(canon(&missing_last, RealpathNeed::AllButLast).unwrap(), missing_last);
+        assert!(canon(&missing_last, RealpathNeed::All).is_err());
+        assert!(canon(&missing_mid, RealpathNeed::AllButLast).is_err());
+        assert_eq!(canon(&missing_mid, RealpathNeed::Nothing).unwrap(), missing_mid);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn realpath_logical_folds_dotdot_before_symlinks() {
+        let d = scratch("logical");
+        std::fs::create_dir_all(d.join("real/deep")).unwrap();
+        std::fs::create_dir(d.join("other")).unwrap();
+        std::os::unix::fs::symlink(d.join("real/deep"), d.join("link")).unwrap();
+        let p = d.join("link/../other");
+        // Physical: `..` applies to the symlink target (real/), so `other`
+        // is missing there.
+        assert!(realpath_canonicalize(&p, RealpathNeed::All, false, false).is_err());
+        // Logical: `..` folds against `link` textually, landing on d/other.
+        assert_eq!(
+            realpath_canonicalize(&p, RealpathNeed::All, true, false).unwrap(),
+            d.join("other")
+        );
+        // -s leaves the symlink unexpanded.
+        assert_eq!(
+            realpath_canonicalize(&d.join("link"), RealpathNeed::All, false, true).unwrap(),
+            d.join("link")
+        );
+        assert_eq!(
+            realpath_canonicalize(&d.join("link"), RealpathNeed::All, false, false).unwrap(),
+            d.join("real/deep")
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn realpath_symlink_loop_is_eloop() {
+        let d = scratch("loop");
+        std::os::unix::fs::symlink(d.join("b"), d.join("a")).unwrap();
+        std::os::unix::fs::symlink(d.join("a"), d.join("b")).unwrap();
+        let e = realpath_canonicalize(&d.join("a"), RealpathNeed::AllButLast, false, false)
+            .unwrap_err();
+        assert_eq!(e.raw_os_error(), Some(libc::ELOOP));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn realpath_relative() {
+        use std::path::Path;
+        assert_eq!(realpath_relative_to(Path::new("/a/b/c"), Path::new("/a/x")), "../b/c");
+        assert_eq!(realpath_relative_to(Path::new("/a/b"), Path::new("/a/b")), ".");
+        assert_eq!(realpath_relative_to(Path::new("/a/b/c"), Path::new("/a")), "b/c");
+    }
+}

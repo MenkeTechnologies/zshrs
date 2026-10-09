@@ -20,11 +20,9 @@
 //! This is intentionally self-contained: no dependency on global zshrs
 //! state. Each request operates on a per-URI document buffer.
 
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::sync::Mutex;
 
 // ── Framing ─────────────────────────────────────────────────────────────
 
@@ -1865,11 +1863,9 @@ fn completion(state: &State, params: &Value) -> Value {
         }
     }
 
-    // Phase 0: stage compsys dispatch behind the existing hand-table
-    // / scan-symbol path. Today this returns no extra items (stub).
-    // Phase 0.5 wires shadow-compadd capture + compdef dispatch so
-    // `git a<TAB>` / `kubectl get p<TAB>` / `_options ext<TAB>` start
-    // surfacing matches from the user's fpath. Design:
+    // Compsys dispatch layered over the hand-table / scan-symbol path:
+    // `git a<TAB>` / `kubectl get p<TAB>` / `_options ext<TAB>` surface
+    // matches from the user's fpath. Design:
     // `docs/IN_EDITOR_COMPSYS_COMPLETION.md`.
     if let Some(extra) = try_compsys_completion(state, params) {
         // Append items + propagate isIncomplete (true when a
@@ -3115,7 +3111,7 @@ fn position_inside_string_literal(line_text: &str, start: usize, end: usize) -> 
     }
     // Inside an open quote at `start`. The identifier is in-string
     // unless the closing quote sits BEFORE `end` AND we walk back to
-    // out-of-string before `end`. Cheap approximation: the identifier
+    // out-of-string before `end`. The identifier
     // is fully inside the string when the same quote doesn't reappear
     // in `[start, end)`.
     let q = in_str.unwrap();
@@ -3481,8 +3477,9 @@ pub(crate) fn line_position_inside_uninterpolating_context(line: &str, end: usiz
         } else if c == b'#' {
             // `#` only opens a comment when preceded by whitespace /
             // statement boundary; `$#` (argc), `${#var}` (length),
-            // etc. don't. We approximate by checking the previous
-            // byte — bottoms out as "start of line" allowed.
+            // etc. don't. The rule is: the previous
+            // byte is whitespace or a statement/subshell boundary, or the
+            // `#` starts the line.
             let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
             let starts_comment = match prev {
                 None => true,
@@ -3553,8 +3550,8 @@ pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
 /// `lookup_doc` — see implementation.
 pub fn lookup_doc(name: &str) -> String {
     // Upstream-yodl-derived tables come first — they carry the real
-    // `man zshall` prose. The hand-curated stub tables below still
-    // exist as a fallback for any entry the yo parser missed.
+    // `man zshall` prose. The hand-curated tables below still
+    // serve as a fallback for any entry the yo parser missed.
     //
     // Source files (regenerate via `scripts/gen_option_docs.py`):
     //   * Doc/Zsh/grammar.yo    → KEYWORD_DOCS    (`lookup_keyword_doc`)
@@ -3591,7 +3588,7 @@ pub fn lookup_doc(name: &str) -> String {
         if let Some(d) = KEYWORD_DOCS.iter().find(|(k, _)| *k == name) {
             return format!("**{}** — _zsh keyword_\n\n{}", d.0, d.1);
         }
-        // Reserved word with no hand fallback — emit a minimal stub
+        // Reserved word with no hand fallback — emit the bare keyword header
         // instead of falling through to a bogus builtin entry.
         return format!("**{}** — _zsh keyword_", name);
     }
@@ -3665,7 +3662,7 @@ pub fn lookup_doc(name: &str) -> String {
     if let Some((canon, body)) = crate::zsh_option_docs::lookup_option_doc(name) {
         return format!("**{}** — _zsh option_\n\n{}", canon, body);
     }
-    // Hand-curated stub fallback for anything still uncovered.
+    // Hand-curated table fallback for anything still uncovered.
     if let Some(d) = KEYWORD_DOCS.iter().find(|(k, _)| *k == name) {
         return format!("**{}** — _zsh keyword_\n\n{}", d.0, d.1);
     }
@@ -4144,7 +4141,7 @@ const KEYMAP_NAMES: &[(&str, &str)] = &[
     ("visual", "vi visual-mode keymap"),
     (
         ".safe",
-        "minimal fallback keymap — only `self-insert` + `accept-line`",
+        "fallback keymap holding only `self-insert` + `accept-line`",
     ),
     (
         "main",
@@ -6131,7 +6128,7 @@ const COMPSYS_FN_DOCS: &[(&str, &str)] = &[
     ),
     (
         "_ls",
-        "Completion for `ls` — flags + file paths. Baseline stub that delegates path completion to `_files` and option completion to a static spec.",
+        "Completion for `ls` — flags + file paths. Option specs plus file-path completion via `_files`.",
     ),
     (
         "_cd",
@@ -6734,8 +6731,8 @@ fn line_is_decl(src: &str, line: u32, name: &str, kind: &crate::lsp_symbols::Sym
 }
 
 /// Find the first whole-word occurrence of `name` on `src`'s `line`.
-/// Returns `(start_col, end_col)` in UTF-16 code units approximated by
-/// char count. Whole-word means surrounded by non-ident, non-`-` chars
+/// Returns `(start_col, end_col)` in UTF-16 code units (the LSP
+/// `character` unit). Whole-word means surrounded by non-ident, non-`-` chars
 /// (matches the boundary used in [`references`]).
 fn find_first_word_col(src: &str, line: u32, name: &str) -> Option<(u32, u32)> {
     let l = src.lines().nth(line as usize)?;
@@ -6751,7 +6748,10 @@ fn find_first_word_col(src: &str, line: u32, name: &str) -> Option<(u32, u32)> {
             .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
             .unwrap_or(true);
         if ok_b && ok_a && !line_position_inside_string_or_comment(l, abs) {
-            return Some((abs as u32, (abs + name.len()) as u32));
+            return Some((
+                byte_to_utf16_col(l, abs),
+                byte_to_utf16_col(l, abs + name.len()),
+            ));
         }
         start = abs + name.len();
     }
@@ -7047,6 +7047,8 @@ fn prepare_rename(state: &State, params: &Value) -> Value {
     // hover uses. Trying to rename `env` on the shebang line is never
     // what the user wants.
     let line_text = text.lines().nth(line_no).unwrap_or("");
+    // LSP `character` is UTF-16 code units; the scanners below index bytes.
+    let col = utf16_col_to_byte(line_text, col);
     if line_starts_comment_before(line_text, col) {
         tracing::debug!(
             target: "zshrs::lsp::prepareRename",
@@ -7064,8 +7066,8 @@ fn prepare_rename(state: &State, params: &Value) -> Value {
                         %word, line = line_no, "accepted",
                     );
                     return json!({
-                        "start": { "line": line_no, "character": s },
-                        "end":   { "line": line_no, "character": s + word.len() },
+                        "start": { "line": line_no, "character": byte_to_utf16_col(line, s) },
+                        "end":   { "line": line_no, "character": byte_to_utf16_col(line, s + word.len()) },
                         "placeholder": word,
                     });
                 }
@@ -9866,19 +9868,6 @@ fn find_close(bytes: &[u8], start: usize, needle: &[u8]) -> Option<usize> {
         i += 1;
     }
     None
-}
-
-// silence the unused-import warning when `Mutex` ends up not needed by future edits
-#[allow(dead_code)]
-fn _hush() {
-    let _ = std::mem::size_of::<Mutex<()>>();
-}
-
-// silence unused warnings for the serde derive helpers below; placeholder
-// kept for future structured request typing
-#[derive(Serialize, Deserialize, Default, Debug)]
-struct _Placeholder {
-    _x: Option<u32>,
 }
 
 #[cfg(test)]

@@ -325,16 +325,10 @@ pub mod zsh_version {
 /// O(1) builtin-name lookup set derived from the canonical
 /// `BUILTINS` table (`src/ported/builtin.rs:122`, the 1:1 port of
 /// `static struct builtin builtins[]` at `Src/builtin.c:40-137`).
-/// Earlier incarnation hardcoded a separate 130-entry list which
-/// drifted whenever new builtins landed in the canonical table — and
-/// shadowed the `fusevm::shell_builtins::BUILTIN_SET` u16 opcode
-/// constant. Renaming to `BUILTIN_NAMES` removes the shadow; the
-/// initialiser walks `BUILTINS` so the set stays in sync.
-///
-/// The hardcoded entries inside `LazyLock::new` below are kept as
-/// the union of: (1) names from `BUILTINS` (walked at first access),
-/// (2) zshrs daemon-side builtins from `ZSHRS_BUILTIN_NAMES`. Both
-/// arms run once at static init.
+/// The set is the union of: (1) names from `BUILTINS` (walked at first
+/// access), (2) zshrs daemon-side builtins from `ZSHRS_BUILTIN_NAMES`.
+/// Both arms run once at static init, so the set cannot drift from the
+/// canonical table.
 pub(crate) static BUILTIN_NAMES: LazyLock<HashSet<String>> = LazyLock::new(|| {
     let mut s: HashSet<String> = HashSet::new();
     // Walk the canonical `BUILTINS` table — the 1:1 port of
@@ -2073,9 +2067,6 @@ impl ShellExecutor {
         }
     }
 
-    /// Unset an array parameter. Direct port of `unsetparam_pm` for
-    /// a PM_ARRAY Param. Mirrors are kept for now while the field
-    /// transitions.
     /// Unset an array parameter via canonical `unsetparam`
     /// (Src/params.c:3819). Routes through the C-faithful port
     /// that runs PM_NAMEREF skip + PM_READONLY rejection via
@@ -7354,11 +7345,24 @@ impl ShellExecutor {
                 // only if it was defined INSIDE the subshell (the
                 // parent's TRAPEXIT fires at parent exit, not here).
                 // ZSIG_FUNC bit on sigtrapped[SIGEXIT] tells us
-                // whether a TRAPEXIT function is registered; check
-                // BEFORE the snapshot restore.
-                // Skip for now — function-form detection mirrors the
-                // raw-body check above; deferred until a clean
-                // sigtrapped snapshot/restore pair exists.
+                // whether a TRAPEXIT function is registered; it is read
+                // BEFORE the snapshot restore, and an inherited one (flag
+                // already set in the parent's snapshot) is left alone.
+                if let Some(parent) = &sigtrapped_snap {
+                    let func = crate::ported::zsh_h::ZSIG_FUNC as i32;
+                    let exit_idx = crate::signals_h::SIGEXIT as usize;
+                    let live = crate::ported::signals::sigtrapped
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.get(exit_idx).copied())
+                        .unwrap_or(0);
+                    let inherited = parent.get(exit_idx).copied().unwrap_or(0);
+                    if live & func != 0 && inherited & func == 0 {
+                        crate::ported::signals::intrap.fetch_add(1, Ordering::SeqCst); // c:1123
+                        let _ = crate::ported::exec::execute_script("TRAPEXIT");
+                        crate::ported::signals::intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
+                    }
+                }
                 // Restore parent's exit / loop / function-return
                 // state so the outer VM continues normally.
                 //

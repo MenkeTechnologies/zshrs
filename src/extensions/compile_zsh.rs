@@ -13632,8 +13632,8 @@ impl ZshCompiler {
                 return;
             }
             "-v" => {
-                // `[[ -v name ]]` — variable existence check (bash; zsh
-                // approximates via `(t)` flag). Stack-top is the name —
+                // `[[ -v name ]]` — variable-set test (c:Src/cond.c:361
+                // `case 'v'`). Stack-top is the name —
                 // route through BUILTIN_VAR_EXISTS which checks scalar /
                 // array / assoc / env tables.
                 self.builder
@@ -15116,8 +15116,7 @@ fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand, job: bool) -> String {
         // and `time { cmd }` printtime via `printjob → dumptime` read
         // p->text built from the AST's full reconstruction (with the
         // outer parens/braces + a trailing semicolon per nested
-        // statement). zshrs's previous placeholder `"( ... )"` lost
-        // the body; mirror the C textual round-trip so `time (sleep
+        // statement). The C textual round-trip is mirrored so `time (sleep
         // 0.1; echo done)` prints `( sleep 0.1; echo done; )`.
         // Bug #432.
         // c:525-542 WC_SUBSH — `taddstr("("); tindent++; taddnl(1);` … then
@@ -17489,7 +17488,7 @@ fn extract_filter_pat_from_raw_s(s: &str) -> Option<String> {
     let marker = format!(":{}", Pound);
     let idx = mid.find(&marker)?;
     let name_part = &mid[..idx];
-    // Only handle simple `NAME` (identifier) shape for now. Skip when
+    // Only the simple `NAME` (identifier) shape is extracted. Skip when
     // the name has a flag or subscript so we don't misextract patterns
     // for shapes like `${(@)a:#…}` or `${a[i]:#…}`.
     if !name_part
@@ -19596,52 +19595,6 @@ fn has_unquoted_expansion(s: &str) -> bool {
         i += 1;
     }
     false
-}
-
-/// Reconstruct an approximate source-text representation of a
-/// `[[ ]]` cond AST for xtrace output. Direct port of zsh's
-/// exec.c::execcond which emits the cond's source form to
-/// xtrerr before evaluation. Untokenize each operand so lexer
-/// META markers don't leak into the trace.
-fn render_cond(c: &crate::parse::ZshCond) -> String {
-    fn untok(s: &str) -> String {
-        crate::lex::untokenize(s)
-    }
-    match c {
-        ZshCond::Not(inner) => format!("! {}", render_cond(inner)),
-        ZshCond::And(a, b) => format!("{} && {}", render_cond(a), render_cond(b)),
-        ZshCond::Or(a, b) => format!("{} || {}", render_cond(a), render_cond(b)),
-        ZshCond::Unary(op, arg) => {
-            let op = untok(op);
-            let arg = untok(arg);
-            if arg.is_empty() {
-                op
-            } else {
-                format!("{} {}", op, arg)
-            }
-        }
-        ZshCond::Binary(left, op, right) => {
-            let left = untok(left);
-            let op = untok(op);
-            let right = untok(right);
-            if right.is_empty() {
-                format!("{} {}", op, left)
-            } else {
-                format!("{} {} {}", left, op, right)
-            }
-        }
-        ZshCond::Regex(left, regex) => {
-            format!("{} =~ {}", untok(left), untok(regex))
-        }
-        ZshCond::ModCond(op, args) => {
-            let mut s = untok(op);
-            for a in args {
-                s.push(' ');
-                s.push_str(&untok(a));
-            }
-            s
-        }
-    }
 }
 
 /// True when a typeset-family arg word is assignment-shaped:
