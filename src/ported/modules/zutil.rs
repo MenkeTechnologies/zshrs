@@ -19,8 +19,8 @@ use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{errflag, zwarnnam};
 use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::zsh_h::{
-    eprog, features, hashnode, isset, module, opt_name, options, param, Eprog, HashNode, Param,
-    Patprog, ERRFLAG_INT, EXTENDEDGLOB, MAX_OPS, OPT_ARG, OPT_ISSET, PAT_STATIC, PM_ARRAY,
+    eprog, features, hashnode, hashtable, isset, module, opt_name, options, param, Eprog, HashNode,
+    HashTable, Param, Patprog, ERRFLAG_INT, EXTENDEDGLOB, MAX_OPS, OPT_ARG, OPT_ISSET, PAT_STATIC, PM_ARRAY,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -517,30 +517,20 @@ impl style_table {
     }
 }
 
+/// Port of `static Patprog zstyle_contprog;` from Src/Modules/zutil.c:178 —
+/// the pattern `zstyle -L [context]` filters printed style patterns with.
+thread_local! {
+    static ZSTYLE_CONTPROG: std::cell::RefCell<Option<crate::ported::pattern::Patprog>> = const { std::cell::RefCell::new(None) }; // c:178
+}
+
 /// Port of `printstylenode(HashNode hn, int printflags)` from Src/Modules/zutil.c:184.
 /// C: `static void printstylenode(HashNode hn, int printflags)` — emit
-/// `zstyle -L` / basic-list output for one style entry.
+/// `zstyle -L` / basic-list output for one style entry. The context filter
+/// is the file-static `zstyle_contprog`, set by `bin_zstyle` before the scan
+/// (c:562-570), exactly as in C.
 #[allow(non_snake_case)]
-pub fn printstylenode(hn: &hashnode, printflags: i32, context_pat: Option<&str>) {
+pub fn printstylenode(hn: &HashNode, printflags: i32) {
     // c:184
-    // c:186-211 — Two distinct output formats based on `printflags`:
-    //
-    //   ZSLIST_BASIC = 1: `zstyle -L NAME` long format. Emits the
-    //                     style name, then one line per (pat, vals)
-    //                     prefixed by `(eval)` or 6 spaces.
-    //   other (= 0):      `zstyle -L` re-feedable format. Emits
-    //                     `zstyle [-e] '<pat>' '<style>' '<val>...'`
-    //                     for each pattern.
-    //
-    // Prior Rust port for ZSLIST_BASIC stopped after emitting the
-    // style name and never walked the patterns — `zstyle -L NAME`
-    // printed only the heading, omitting the (pattern, values) lines
-    // that are the whole point of the listing.
-    //
-    // Prior Rust port for the re-feedable arm always emitted
-    // `zstyle ` without the `-e` flag, so an eval-style (set via
-    // `zstyle -e PAT STYLE BODY`) round-tripped to a plain literal
-    // style instead of the same eval form.
     let nam: String = hn.nam.clone();
     let mut stdout = std::io::stdout().lock();
     use crate::ported::utils::quotedzputs;
@@ -552,15 +542,6 @@ pub fn printstylenode(hn: &hashnode, printflags: i32, context_pat: Option<&str>)
         Some(p) => p,
         None => return,
     };
-    // c:196-197 — `zstyle_contprog`, the optional context-filter pattern
-    // supplied to `zstyle -L <context>`. Each stored style-pattern is kept
-    // only when it MATCHES this glob (so `zstyle -L :c1` lists just the
-    // entries whose pattern matches `:c1`). Compile once per node.
-    let cprog = context_pat.and_then(|c| {
-        let mut pat = c.to_string();
-        crate::ported::glob::tokenize(&mut pat);
-        patcompile(&pat, crate::ported::zsh_h::PAT_STATIC, None)
-    });
     if printflags == 1 {
         // c:190-193 — ZSLIST_BASIC header: the style name on its own line.
         // Only emitted when at least one pattern will survive the filter,
@@ -571,10 +552,12 @@ pub fn printstylenode(hn: &hashnode, printflags: i32, context_pat: Option<&str>)
     }
     for p in patterns {
         // c:196-197 — skip patterns that don't match the context filter.
-        if let Some(ref prog) = cprog {
-            if !pattry(prog, &p.pat) {
-                continue;
-            }
+        if ZSTYLE_CONTPROG.with(|c| {
+            c.borrow()
+                .as_ref()
+                .is_some_and(|prog| !pattry(prog, &p.pat))
+        }) {
+            continue;
         }
         let is_eval = p.eval.is_some();
         if printflags == 1 {
@@ -923,13 +906,27 @@ impl ZFormat {
 
 /// Port of `newzstyletable(int size, char const *name)` from Src/Modules/zutil.c:270.
 /// C: `static HashTable newzstyletable(int size, char const *name)` —
-/// alloc a fresh style hash table.
+/// `newhashtable` plus the style table's function-pointer slots.
 #[allow(non_snake_case)]
-#[allow(unused_variables)]
-pub fn newzstyletable(size: i32, name: &str) -> Option<HashNode> {
+pub fn newzstyletable(size: i32, name: &str) -> HashTable {
     // c:270
-    // c:273-285 — newhashtable + assign cmpnodes/freenode/etc handlers.
-    None
+    let mut ht = crate::ported::hashtable::newhashtable(size, name); // c:273
+
+    ht.hash = Some(crate::ported::hashtable::hasher); // c:275
+    ht.emptytable = Some(hashtable::emptyhashtable); // c:276
+    ht.filltable = None; // c:277
+    ht.cmpnodes = Some(|a, b| a.cmp(b) as i32); // c:278 strcmp
+    ht.addnode = Some(hashtable::addhashnode); // c:279
+    /* DISABLED is not supported */
+    ht.getnode = Some(hashtable::gethashnode2); // c:281
+    ht.getnode2 = Some(hashtable::gethashnode2); // c:282
+    ht.removenode = Some(hashtable::removehashnode); // c:283
+    ht.disablenode = None; // c:284
+    ht.enablenode = None; // c:285
+    ht.freenode = Some(freestylenode); // c:286
+    ht.printnode = Some(printstylenode); // c:287
+
+    ht // c:289
 }
 
 /// Port of `setstypat(Style s, char *pat, Patprog prog, char **vals, int eval)` from Src/Modules/zutil.c:295.
@@ -1323,14 +1320,15 @@ pub fn bin_zstyle(
         };
         let mut sorted = names;
         sorted.sort();
+        ZSTYLE_CONTPROG.with(|c| *c.borrow_mut() = None); // c:572 zstyle_contprog = NULL
         for nam in sorted {
             // c:580 — scanhashtable callback dispatch per style.
-            let hn = hashnode {
+            let hn: HashNode = Box::new(hashnode {
                 next: None,
                 nam,
                 flags: 0,
-            };
-            printstylenode(&hn, 1, None); // c:580-581 — ZSLIST_BASIC
+            });
+            printstylenode(&hn, 1); // c:580-581 — ZSLIST_BASIC
         }
         return 0; // c:585
     }
@@ -1344,10 +1342,14 @@ pub fn bin_zstyle(
                                                          // c:562-570 — validate the context pattern up front (invalid → rc 1).
         if let Some(c) = context {
             let mut pat = c.to_string();
-            crate::ported::glob::tokenize(&mut pat);
-            if patcompile(&pat, crate::ported::zsh_h::PAT_STATIC, None).is_none() {
-                return 1;
+            crate::ported::glob::tokenize(&mut pat); // c:563 tokenize(context)
+            let prog = patcompile(&pat, crate::ported::zsh_h::PAT_STATIC, None); // c:564
+            if prog.is_none() {
+                return 1; // c:566-568
             }
+            ZSTYLE_CONTPROG.with(|cp| *cp.borrow_mut() = prog);
+        } else {
+            ZSTYLE_CONTPROG.with(|cp| *cp.borrow_mut() = None); // c:572
         }
         // c:573-582 — a named style lists just that node (error if it does
         // not exist); otherwise scan every style.
@@ -1371,12 +1373,12 @@ pub fn bin_zstyle(
             }
         };
         for nam in names {
-            let hn = hashnode {
+            let hn: HashNode = Box::new(hashnode {
                 next: None,
                 nam,
                 flags: 0,
-            };
-            printstylenode(&hn, 2, context); // c:501 — ZSLIST_SYNTAX
+            });
+            printstylenode(&hn, 2); // c:501 — ZSLIST_SYNTAX
         }
         return 0; // c:585
     }
@@ -5070,17 +5072,16 @@ mod tests {
         assert!(s.is_some(), "addstyle on existing name still returns Some");
     }
 
-    /// `newzstyletable` returns None per current stub (no
-    /// HashNode-allocating impl yet).
+    /// `newzstyletable` installs the c:275-287 function-pointer slots.
     #[test]
-    fn zutil_corpus_newzstyletable_current_impl_returns_none() {
+    fn zutil_corpus_newzstyletable_installs_slots() {
         let _g = crate::test_util::global_state_lock();
-        let t = newzstyletable(64, "test_tab");
-        // Current impl is a stub returning None — pin the contract.
-        assert!(
-            t.is_none(),
-            "newzstyletable stub returns None; pin until ported"
-        );
+        let t = newzstyletable(17, "test_tab");
+        assert_eq!((t.hsize, t.ct), (17, 0));
+        assert!(t.hash.is_some() && t.emptytable.is_some() && t.cmpnodes.is_some());
+        assert!(t.addnode.is_some() && t.getnode.is_some() && t.getnode2.is_some());
+        assert!(t.removenode.is_some() && t.freenode.is_some() && t.printnode.is_some());
+        assert!(t.filltable.is_none() && t.disablenode.is_none() && t.enablenode.is_none());
     }
 
     // ═══════════════════════════════════════════════════════════════════

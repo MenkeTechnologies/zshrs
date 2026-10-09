@@ -38,7 +38,7 @@ use crate::signals::{settrap, unsettrap};
 use crate::text::{getpermtext, zoutputtab};
 use crate::utils::{nicezputs, quotedzputs, unmetafy_str, xsymlink, zputs, ztrcmp, zwarn};
 use crate::zsh_h::{
-    cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN,
+    cmdnam, hashnode, hashtable, HashNode, HashTable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN,
     HASHED, HIST_DUP, HIST_FOREIGN, HIST_MAKEUNIQUE, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED,
     PM_LOADDIR, PM_TAGGED, PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED, PRINT_LIST,
     PRINT_NAMEONLY, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE,
@@ -365,19 +365,215 @@ impl<'a, T> IntoIterator for &'a hashtable_nodes<T> {
 
 /// Port of `newhashtable(int size, UNUSED(char const *name), UNUSED(PrintTableStats printinfo))` from `Src/hashtable.c:100`.
 ///
-/// C allocates a `HashTable` header with `size` buckets and the
-/// supplied `name` for `bin_hashinfo` reporting. Rust uses
-/// `HashMap` (auto-resizing) so the bucket count is informational;
-/// the named-table accounting is recorded for `printhashtabinfo`.
-///
-/// Returns a `(name, expected_size)` tuple — callers (the table-
-/// specific creators) typically discard since each Rust table
-/// type has its own constructor. Provided for C name parity.
+/// C `zshcalloc`s the header (every function-pointer slot NULL), allocates
+/// `size` zeroed bucket heads and sets `hsize = size`, `ct = 0`,
+/// `scantab = NULL`. The caller (e.g. `newzstyletable`, `newparamtable`)
+/// then installs its own `hash`/`addnode`/`getnode`/... slots.
 // Get a new hash table                                                     // c:100
 /// WARNING: param names don't match C — Rust=(size, name) vs C=(size, name, printinfo)
-pub fn newhashtable(size: i32, name: &str) -> (String, i32) {
+pub fn newhashtable(size: i32, name: &str) -> HashTable {
     // c:100
-    (name.to_string(), size)
+    let _ = name; // c:100 UNUSED(name) outside ZSH_HASH_DEBUG
+    let mut nodes: Vec<Option<HashNode>> = Vec::new();
+    nodes.resize_with(size.max(0) as usize, || None); // c:121 zshcalloc(size * sizeof(HashNode))
+    Box::new(hashtable {
+        hsize: size, // c:122
+        ct: 0,       // c:123
+        nodes,       // c:121
+        tmpdata: 0,
+        hash: None,
+        emptytable: None,
+        filltable: None,
+        cmpnodes: None,
+        addnode: None,
+        getnode: None,
+        getnode2: None,
+        removenode: None,
+        disablenode: None,
+        enablenode: None,
+        freenode: None,
+        printnode: None,
+        scantab: None, // c:125
+    })
+}
+
+/// The `Src/hashtable.c` generic table methods, ported over the C-shaped
+/// [`hashtable`] header (`Src/zsh.h:1200-1222`): bucket array of
+/// `HashNode` chains plus the function-pointer slots. Each is an
+/// associated fn with no receiver so that `hashtable::addhashnode` etc.
+/// coerce to the `AddNodeFunc`/`GetNodeFunc`/... slot types, the way
+/// `ht->addnode = addhashnode;` assigns the C function.
+///
+/// C's `void *nodeptr` is `usize` here (`AddNodeFunc`): the address of a
+/// `Box<hashnode>` obtained with `Box::into_raw`.
+impl hashtable {
+    /// Port of `addhashnode(HashTable ht, char *nam, void *nodeptr)` from `Src/hashtable.c:157`.
+    pub fn addhashnode(ht: &mut hashtable, nam: String, nodeptr: usize) {
+        // c:157
+        let oldnode = hashtable::addhashnode2(ht, nam, nodeptr); // c:159
+        if let Some(oldnode) = oldnode {
+            // c:160
+            if let Some(freenode) = ht.freenode {
+                freenode(oldnode); // c:161
+            }
+        }
+    }
+
+    /// Port of `addhashnode2(HashTable ht, char *nam, void *nodeptr)` from `Src/hashtable.c:168`.
+    /// Adds a node, returning the old node on replacement. A replaced key keeps
+    /// its chain position (c:187-203); a new key goes to the front (c:214-215).
+    pub fn addhashnode2(ht: &mut hashtable, nam: String, nodeptr: usize) -> Option<HashNode> {
+        // c:168
+        // c:174 — `hn = (HashNode) nodeptr; hn->nam = nam;`
+        // SAFETY: callers pass `Box::into_raw(Box<hashnode>) as usize`.
+        let mut hn: HashNode = unsafe { Box::from_raw(nodeptr as *mut hashnode) };
+        hn.nam = nam;
+
+        let hash = ht.hash.expect("hashtable.hash unset");
+        let cmpnodes = ht.cmpnodes.expect("hashtable.cmpnodes unset");
+        let hashval = (hash(&hn.nam) % ht.hsize as u32) as usize; // c:177
+
+        // Detach the chain so it can be walked and re-linked.
+        let mut chain: Vec<HashNode> = Vec::new();
+        let mut cur = ht.nodes[hashval].take(); // c:178 hp = ht->nodes[hashval]
+        while let Some(mut n) = cur {
+            cur = n.next.take();
+            chain.push(n);
+        }
+
+        // c:182-209 — first-node and rest-of-chain key checks.
+        let old = match chain.iter().position(|n| cmpnodes(&n.nam, &hn.nam) == 0) {
+            Some(i) => Some(std::mem::replace(&mut chain[i], hn)), // c:187-203 replacing:
+            None => {
+                chain.insert(0, hn); // c:214-215
+                None
+            }
+        };
+
+        let mut head: Option<HashNode> = None;
+        for mut n in chain.into_iter().rev() {
+            n.next = head;
+            head = Some(n);
+        }
+        ht.nodes[hashval] = head;
+
+        if old.is_none() {
+            ht.ct += 1; // c:218
+            if ht.ct >= ht.hsize * 2 {
+                // c:219
+                hashtable::expandhashtable(ht); // c:220
+            }
+        }
+        old // c:203 / c:221
+    }
+
+    /// Port of `gethashnode2(HashTable ht, const char *nam)` from `Src/hashtable.c:255`.
+    /// Looks the key up ignoring the DISABLED flag; the returned node is a copy of
+    /// the chain entry (`next` cleared).
+    pub fn gethashnode2(ht: &hashtable, nam: &str) -> Option<HashNode> {
+        // c:255
+        let hash = ht.hash?;
+        let cmpnodes = ht.cmpnodes?;
+        let hashval = (hash(nam) % ht.hsize as u32) as usize; // c:260
+        let mut hp = ht.nodes.get(hashval)?.as_ref(); // c:261
+        while let Some(n) = hp {
+            if cmpnodes(&n.nam, nam) == 0 {
+                // c:262
+                return Some(Box::new(hashnode {
+                    next: None,
+                    nam: n.nam.clone(),
+                    flags: n.flags,
+                })); // c:263
+            }
+            hp = n.next.as_ref(); // c:261
+        }
+        None // c:265
+    }
+
+    /// Port of `removehashnode(HashTable ht, const char *nam)` from `Src/hashtable.c:275`.
+    pub fn removehashnode(ht: &mut hashtable, nam: &str) -> Option<HashNode> {
+        // c:275
+        let hash = ht.hash?;
+        let cmpnodes = ht.cmpnodes?;
+        let hashval = (hash(nam) % ht.hsize as u32) as usize; // c:280
+
+        let mut chain: Vec<HashNode> = Vec::new();
+        let mut cur = ht.nodes.get_mut(hashval)?.take(); // c:281 hp = ht->nodes[hashval]
+        while let Some(mut n) = cur {
+            cur = n.next.take();
+            chain.push(n);
+        }
+        let removed = chain
+            .iter()
+            .position(|n| cmpnodes(&n.nam, nam) == 0) // c:285 / c:301
+            .map(|i| chain.remove(i));
+
+        let mut head: Option<HashNode> = None;
+        for mut n in chain.into_iter().rev() {
+            n.next = head;
+            head = Some(n);
+        }
+        ht.nodes[hashval] = head;
+
+        if removed.is_some() {
+            ht.ct -= 1; // c:289 gotit: ht->ct--
+        }
+        removed // c:299 / c:312
+    }
+
+    /// Port of `expandhashtable(HashTable ht)` from `Src/hashtable.c:458`.
+    /// Quadruples `hsize` and re-adds every node via `ht->addnode`, walking the
+    /// old table in bucket order.
+    pub fn expandhashtable(ht: &mut hashtable) {
+        // c:458
+        let osize = ht.hsize; // c:463
+        let onodes = std::mem::take(&mut ht.nodes); // c:464
+
+        ht.hsize = osize * 4; // c:466
+        ht.nodes.resize_with(ht.hsize as usize, || None); // c:467
+        ht.ct = 0; // c:468
+
+        let addnode = ht.addnode.expect("hashtable.addnode unset");
+        for ha in onodes {
+            // c:471
+            let mut hn = ha; // c:472
+            while let Some(mut n) = hn {
+                hn = n.next.take(); // c:473 hp = hn->next
+                let nam = n.nam.clone();
+                addnode(ht, nam, Box::into_raw(n) as usize); // c:474
+            }
+        }
+    }
+
+    /// Port of `resizehashtable(HashTable ht, int newsize)` from `Src/hashtable.c:486`.
+    /// Frees every node through `ht->freenode`, then re-zeroes (or reallocates) the
+    /// bucket array.
+    pub fn resizehashtable(ht: &mut hashtable, newsize: i32) {
+        // c:486
+        let freenode = ht.freenode;
+        for ha in ht.nodes.iter_mut() {
+            // c:493
+            let mut hn = ha.take();
+            while let Some(mut n) = hn {
+                hn = n.next.take(); // c:495 hp = hn->next
+                if let Some(freenode) = freenode {
+                    freenode(n); // c:496
+                }
+            }
+        }
+        // c:502-511 — new size: reallocate; same size: re-zero.
+        ht.nodes.clear();
+        ht.nodes.resize_with(newsize.max(0) as usize, || None);
+        ht.hsize = newsize;
+        ht.ct = 0; // c:513
+    }
+
+    /// Port of `emptyhashtable(HashTable ht)` from `Src/hashtable.c:519`.
+    pub fn emptyhashtable(ht: &mut hashtable) {
+        // c:519
+        let hsize = ht.hsize;
+        hashtable::resizehashtable(ht, hsize); // c:521
+    }
 }
 
 /// Port of `deletehashtable(HashTable ht)` from `Src/hashtable.c:129`.
@@ -4845,12 +5041,14 @@ mod tests {
         assert!(gethashnode2(&h, "anything").is_none());
     }
 
-    /// `newhashtable` returns (name, size); name preserved.
+    /// `newhashtable` allocates `size` empty buckets and no function slots (c:100-126).
     #[test]
-    fn hashtable_corpus_newhashtable_preserves_name() {
-        let (name, sz) = newhashtable(64, "myht");
-        assert_eq!(name, "myht");
-        assert!(sz > 0, "size positive, got {sz}");
+    fn hashtable_corpus_newhashtable_allocates_buckets() {
+        let ht = newhashtable(64, "myht");
+        assert_eq!(ht.hsize, 64);
+        assert_eq!(ht.ct, 0);
+        assert_eq!(ht.nodes.len(), 64);
+        assert!(ht.addnode.is_none() && ht.hash.is_none());
     }
 
     /// Round-trip with many distinct keys.
@@ -5017,10 +5215,11 @@ mod tests {
         }
     }
 
-    /// c:85 — `newhashtable(0, "")` returns (String, i32) tuple type pin.
+    /// c:100 — `newhashtable(0, "")` returns a `HashTable` with no buckets.
     #[test]
-    fn newhashtable_returns_string_i32_tuple_type() {
-        let _: (String, i32) = newhashtable(0, "");
+    fn newhashtable_returns_hashtable_type() {
+        let ht: HashTable = newhashtable(0, "");
+        assert_eq!(ht.hsize, 0);
     }
 
     /// c:97 — `deletehashtable` on empty table is safe no-op.
@@ -5243,10 +5442,35 @@ mod tests {
         assert!(h.is_empty(), "delete must empty the table");
     }
 
-    /// c:85 — `newhashtable` returns (String, i32) tuple (compile-time pin).
+    /// c:100 — the generic table methods round-trip nodes through the
+    /// function-pointer slots, replace in place and grow at `ct >= 2*hsize`.
     #[test]
-    fn newhashtable_returns_tuple_type() {
-        let _: (String, i32) = newhashtable(0, "test");
+    fn hashtable_methods_add_get_remove_expand() {
+        let mut ht = newhashtable(2, "t");
+        ht.hash = Some(hasher);
+        ht.cmpnodes = Some(|a, b| a.cmp(b) as i32);
+        ht.addnode = Some(hashtable::addhashnode);
+        ht.freenode = Some(|hn| drop(hn));
+        let mk = |flags: i32| {
+            Box::into_raw(Box::new(hashnode {
+                next: None,
+                nam: String::new(),
+                flags,
+            })) as usize
+        };
+        for i in 0..10 {
+            hashtable::addhashnode(&mut ht, format!("k{i}"), mk(i));
+        }
+        assert_eq!(ht.ct, 10);
+        assert!(ht.hsize > 2, "expandhashtable quadrupled hsize");
+        hashtable::addhashnode(&mut ht, "k3".to_string(), mk(99));
+        assert_eq!(ht.ct, 10, "replacement does not change ct");
+        assert_eq!(hashtable::gethashnode2(&ht, "k3").unwrap().flags, 99);
+        assert!(hashtable::removehashnode(&mut ht, "k3").is_some());
+        assert!(hashtable::gethashnode2(&ht, "k3").is_none());
+        assert_eq!(ht.ct, 9);
+        hashtable::emptyhashtable(&mut ht);
+        assert_eq!(ht.ct, 0);
     }
 
     /// c:954 — printshfuncnode renders a function body with

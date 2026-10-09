@@ -2249,7 +2249,9 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         endcmgroup(None); // c:992
 
         // c:995 — runhookdef(COMPCTLCLEANUPHOOK, NULL).
-        runhookdef_compcore("COMPCTLCLEANUPHOOK"); // c:995
+        // c:995 — `runhookdef(COMPCTLCLEANUPHOOK, NULL)`; COMPCTLCLEANUPHOOK is
+        // `comphooks + 3` (comp.h:450) = the "compctl_cleanup" hookdef.
+        runhookdef(gethookdef("compctl_cleanup"), std::ptr::null_mut()); // c:995
 
         if oldlist.load(Ordering::Relaxed) != 0 {
             // c:997
@@ -2347,8 +2349,20 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
             incmd,                      // c:1043
             lst,                        // c:1044
         };
-        runhookdef_compctlmake(&mut dat); // c:1045
-        runhookdef_compcore("COMPCTLCLEANUPHOOK"); // c:1048
+        // !!! RUST-ONLY — compctl.c:4049 `boot_` (which addhookfunc()s
+        // ccmakehookfn/cccleanuphookfn on these hooks) is never reached by
+        // zshrs's static module registration, so attach them on first use.
+        static COMPCTL_HOOKS: std::sync::Once = std::sync::Once::new();
+        COMPCTL_HOOKS.call_once(|| {
+            crate::ported::zle::compctl::boot_();
+        });
+        // c:1046 — `runhookdef(COMPCTLMAKEHOOK, (void *) &dat)`; COMPCTLMAKEHOOK is
+        // `comphooks + 2` (comp.h:449) = the "compctl_make" hookdef.
+        runhookdef(
+            gethookdef("compctl_make"),
+            &mut dat as *mut Ccmakedat as *mut std::ffi::c_void,
+        ); // c:1046
+        runhookdef(gethookdef("compctl_cleanup"), std::ptr::null_mut()); // c:1049
         return dat.lst; // c:1050
     }
 }
@@ -7973,132 +7987,6 @@ pub static HOOK_FNS: OnceLock<Mutex<std::collections::HashMap<String, Vec<String
 /// canonical atomic in `ported::utils::errflag`.
 fn errflag_get() -> bool {
     crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 // init.c
-}
-
-/// Local dispatcher used by compcore call sites for hook names that
-/// don't yet have a typed-data argument. Delegates to the canonical
-/// `module::runhookdef(gethookdef(name), NULL)` — no-op when no
-/// Hookfn is registered (c:993-995). Returns the Hookfn return value
-/// (or 0 when no handler fires).
-fn runhookdef_compcore(hook: &str) -> i32 {
-    // c:990
-    let h = gethookdef(hook);
-    if h.is_null() {
-        return 0;
-    }
-    runhookdef(h, std::ptr::null_mut())
-}
-
-/// Port of `static int ccmakehookfn(Hookdef, Ccmakedat dat)` from
-/// `Src/Zle/compctl.c:1763` — the function the compctl module registers
-/// on COMPCTLMAKEHOOK. This is the compctl-side analog of the compfunc
-/// branch in `makecomplist`: it builds the match list via
-/// `makecomplistglobal` (the default command/file completion the bare
-/// `zsh -f` shell uses), finalizes it with `permmatches`, and reports
-/// success through `dat.lst` (0 = matches, 1 = none). The previous stub
-/// only called the unrelated `makecomplistctl` and never set `dat.lst`,
-/// so `makecomplist` returned the raw list-type (nonzero) and
-/// `do_completion` always took the feep/error path — `l<Tab>` produced
-/// nothing.
-///
-/// The C source loops over the global matcher list (`cmatcher`); the
-/// common case (and always under `-f`) has none, so this port runs the
-/// single no-matcher pass, matching begcmgroup/makecomplistglobal/
-/// endcmgroup/permmatches exactly as the compfunc branch does.
-fn runhookdef_compctlmake(
-    // c:1763
-    dat: &mut Ccmakedat,
-) {
-    let os = dat.str.clone().unwrap_or_default();
-    let incmd = dat.incmd;
-    let lst = dat.lst;
-
-    // c:1794-1810 — no global matchers → mstack = NULL, bmatchers = NULL.
-    if let Ok(mut g) = bmatchers.get_or_init(|| Mutex::new(None)).lock() {
-        *g = None;
-    }
-    if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-        *g = None;
-    }
-    // c:1812-1813 — ainfo = fainfo = hcalloc.
-    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
-        *g = Some(Aminfo::default());
-    }
-    if let Ok(mut g) = fainfo.get_or_init(|| Mutex::new(None)).lock() {
-        *g = Some(Aminfo::default());
-    }
-    if let Ok(mut g) = freecl.get_or_init(|| Mutex::new(None)).lock() {
-        *g = None; // c:1815
-    }
-    if VALIDLIST.load(Ordering::Relaxed) == 0 {
-        LASTAMBIG.store(0, Ordering::Relaxed); // c:1817
-    }
-    if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        g.clear(); // c:1818
-    }
-    mnum.store(0, Ordering::Relaxed); // c:1819
-    unambig_mnum.store(-1, Ordering::Relaxed); // c:1820
-    if let Ok(mut g) = isuf.get_or_init(|| Mutex::new(String::new())).lock() {
-        g.clear(); // c:1821
-    }
-    // c:1822 — `insmnum = zmult;` where `zmult` is `zmod.mult` (c:Src/Zle/zle.h:267).
-    // Read ZMOD, not the ZMULT copy: nothing syncs ZMULT before a fresh
-    // completion, so `reverse-menu-complete`'s negation (zle_tricky.c:347)
-    // never reached do_ambig_menu and the menu started at the FIRST match.
-    insmnum.store(
-        crate::ported::zle::zle_main::ZMOD.lock().map(|g| g.mult).unwrap_or(1),
-        Ordering::Relaxed,
-    );
-    oldlist.store(0, Ordering::Relaxed); // c:1829
-    oldins.store(0, Ordering::Relaxed); // c:1829
-    begcmgroup(Some("default"), 0); // c:1830
-    MENUCMP.store(0, Ordering::Relaxed); // c:1831
-    menuacc.store(0, Ordering::Relaxed); // c:1831
-    newmatches.store(0, Ordering::Relaxed); // c:1831
-    onlyexpl.store(0, Ordering::Relaxed); // c:1831
-
-    // c:1836-1837 — makecomplistglobal(s, incmd, lst, 0) generates the
-    // matches (per-command compctl or the default command/file logic).
-    crate::ported::zle::compctl::makecomplistglobal(&os, incmd != 0, lst, 0);
-    endcmgroup(None); // c:1838
-
-    // c:1879-1892 — permmatches(1); amatches = pmatches; swap holders.
-    permmatches(1); // c:1879
-    let p_snap = pmatches
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .ok()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        *g = p_snap.clone(); // c:1880
-    }
-    lastpermmnum.store(permmnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1881
-    lastpermgnum.store(permgnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1882
-    if let Ok(mut g) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        *g = p_snap; // c:1884
-    }
-    let lm_snap = lmatches
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|g| g.clone());
-    if let Ok(mut g) = lastlmatches.get_or_init(|| Mutex::new(None)).lock() {
-        *g = lm_snap; // c:1885
-    }
-    if let Ok(mut g) = pmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        g.clear(); // c:1886
-    }
-    hasperm.store(0, Ordering::Relaxed); // c:1887
-    hasoldlist.store(1, Ordering::Relaxed); // c:1888
-
-    // c:1890-1901 — success iff we produced matches and no error.
-    if nmatches.load(Ordering::Relaxed) != 0 && !errflag_get() {
-        VALIDLIST.store(1, Ordering::Relaxed); // c:1891
-        dat.lst = 0; // c:1894
-    } else {
-        dat.lst = 1; // c:1908
-    }
 }
 
 // =====================================================================

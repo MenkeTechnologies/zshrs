@@ -2754,8 +2754,8 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     let ois = *INSTRING.lock().unwrap();
     let oib = *INBACKT.lock().unwrap();
     let oisuf = ISUF.lock().unwrap().clone();
-    let oqp = QIPRE.lock().unwrap().clone();
-    let oqs = QISUF.lock().unwrap().clone();
+    let oqp = QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+    let oqs = QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
     let oaq = AUTOQ
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
@@ -2809,8 +2809,8 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
     }
 
     // c:2362-2363 — qipre/qisuf from the compctl driver params.
-    *QIPRE.lock().unwrap() = COMPQIPREFIX.lock().unwrap().clone();
-    *QISUF.lock().unwrap() = COMPQISUFFIX.lock().unwrap().clone();
+    *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = COMPQIPREFIX.lock().unwrap().clone();
+    *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = COMPQISUFFIX.lock().unwrap().clone();
     // c:2364-2366 — isuf = remnulargs(ctokenize(compisuffix)).
     let mut isuf_v = crate::ported::zle::compcore::ctokenize(&COMPISUFFIX.lock().unwrap().clone());
     crate::ported::glob::remnulargs(&mut isuf_v);
@@ -2852,8 +2852,8 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
 
     // c:2382-2396 — restore the saved state.
     *ISUF.lock().unwrap() = oisuf;
-    *QIPRE.lock().unwrap() = oqp;
-    *QISUF.lock().unwrap() = oqs;
+    *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqp;
+    *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqs;
     *INSTRING.lock().unwrap() = ois;
     *INBACKT.lock().unwrap() = oib;
     *AUTOQ
@@ -3531,8 +3531,8 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     ns = ns_chars.iter().collect();
 
     // C: c:2961-2974 — build qp/qs from ss + qipre/qisuf
-    let qipre_val = QIPRE.lock().unwrap().clone();
-    let qisuf_val = QISUF.lock().unwrap().clone();
+    let qipre_val = QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+    let qisuf_val = QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
     let qp = format!(
         "{}{}",
         qipre_val,
@@ -3559,8 +3559,8 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     // C: c:2980-3023 — state save/restore + nested makecomplistcmd
     let ow = CLWORDS.lock().unwrap().clone();
     let os = CMDSTR.with(|r| r.borrow().clone());
-    let oqp = QIPRE.lock().unwrap().clone();
-    let oqs = QISUF.lock().unwrap().clone();
+    let oqp = QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+    let oqs = QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
     let oqst = COMPQSTACK
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
@@ -3596,8 +3596,8 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     CMDSTR.with(|r| *r.borrow_mut() = foo.first().cloned());
     *BRANGE.lock().unwrap() = 0;
     *ERANGE.lock().unwrap() = (foo.len() as i32) - 1;
-    *QIPRE.lock().unwrap() = qp;
-    *QISUF.lock().unwrap() = qs;
+    *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = qp;
+    *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = qs;
     crate::ported::zle::compcore::OFFS.store(soffs, Ordering::Relaxed);
     CCONT.with(|c| c.set(CC_CCCONT));
 
@@ -3614,8 +3614,8 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     *CLWPOS.lock().unwrap() = olwp;
     *BRANGE.lock().unwrap() = obr;
     *ERANGE.lock().unwrap() = oer;
-    *QIPRE.lock().unwrap() = oqp;
-    *QISUF.lock().unwrap() = oqs;
+    *QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqp;
+    *QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = oqs;
     *COMPQSTACK
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
@@ -3707,17 +3707,24 @@ pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i
 /// CC_EXCMDS / CC_EXTCMDS → cmdnamtab walk, CC_RESWDS → reswdtab
 /// walk. cc.func → shfunc_call dispatch, cc.glob → addmatch, cc.str
 /// → singsub-expanded addmatch.
-pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, compadd: i32) {
+pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, compadd: i32) {
     use crate::ported::string::dupstrpfx;
     use crate::ported::utils::quotestring;
     use crate::ported::zle::comp_h::{Cexpl, CGF_NOSORT, CGF_UNIQALL, CGF_UNIQCON, CMF_REMOVE};
     use crate::ported::zle::compcore::{begcmgroup, check_param, endcmgroup, rembslash};
-    use crate::ported::zsh_h::{Equals, Stringg, Tick, Tilde};
+    use crate::ported::zsh_h::{Dash, Equals, Star, Stringg, Tick, Tilde};
     use crate::ported::zsh_h::{
         ALIAS_GLOBAL, DISABLED, PM_ARRAY, PM_EXPORTED, PM_INTEGER, PM_READONLY, PM_SCALAR,
         PM_SPECIAL, PM_UNSET,
     };
     use std::sync::atomic::Ordering;
+
+    // c:3045-3047 — `int ... um = usemenu ...; int mn = mnum, ohp = haspattern;
+    //                char ... *os = dupstring(s);`
+    let um = crate::ported::zle::zle_tricky::USEMENU.load(Ordering::Relaxed);
+    let mn = crate::ported::zle::compcore::mnum.load(Ordering::Relaxed);
+    let ohp = crate::ported::zle::compcore::haspattern.load(Ordering::Relaxed);
+    let os = s.clone();
 
     // c:3049 — `ccont |= (cc->mask2 & (CC_CCCONT | CC_DEFCONT | CC_PATCONT));`
     // is applied further down together with the rest of the state setup.
@@ -3787,12 +3794,6 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     // half stays in the arms further down. Reads/writes the canonical
     // ZLE globals (offs/ipre/ripre/mflags/hasmatched in compcore.rs)
     // plus the compctl-private prefix statics declared near ADDWHAT.
-    //
-    // Not built here: the `brbeg`/`brend` brace adjustments of
-    // lppre/lpsuf (c:3317-3374) and the `itok`/ispattern glob-pattern
-    // detection + patcompile (c:3240-3294, 3384-3396); with
-    // comppatmatch empty C forces ispattern=0, so patcomp/filecomp stay
-    // None.
     // =================================================================
     let incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
     let instr = *INSTRING.lock().unwrap_or_else(|e| e.into_inner());
@@ -3819,6 +3820,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     };
 
     let mut delit = false; // c:3071 delit = 0
+    crate::ported::zle::zle_tricky::USEMENU.store(um, Ordering::Relaxed); // c:3072 usemenu = um
                            // c:3073-3076 — reset compiled patterns and every prefix static.
     PATCOMP.with(|r| *r.borrow_mut() = None);
     FILECOMP.with(|r| *r.borrow_mut() = None);
@@ -4038,11 +4040,15 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     };
     let cc: &Arc<Compctl> = param_cc.as_ref().unwrap_or(cc);
 
+    let ooffs = offs; // c:3171 ooffs = offs
     // c:3177-3183 — CC_DELETE blanks the word entirely.
     if (cc.mask & CC_DELETE) != 0 {
         delit = true;
         s.clear();
         offs = 0;
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::AUTOMENU) {
+            crate::ported::zle::zle_tricky::USEMENU.store(1, Ordering::Relaxed); // c:3181
+        }
     }
     crate::ported::zle::compcore::OFFS.store(offs, Ordering::Relaxed);
 
@@ -4054,7 +4060,18 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         }
         c
     };
-    let lpre_s = s[..cut].to_string();
+    // c:3186-3201 — `comppatmatch` (a possibly-empty string, NULL when unset)
+    // turns the Dash token back into a literal `-` in the line prefix.
+    let cpm: Option<String> = crate::ported::zle::compcore::comppatmatch
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|g| g.clone());
+    let cpm_nonempty = cpm.as_deref().is_some_and(|c| !c.is_empty()); // `comppatmatch && *comppatmatch`
+    let lpre_s: String = if cpm.is_some() {
+        s[..cut].chars().map(|c| if c == Dash { '-' } else { c }).collect()
+    } else {
+        s[..cut].to_string()
+    };
     let lsuf_s = s[cut..].to_string();
     LPL.with(|c| c.set(lpre_s.len() as i32));
     LSL.with(|c| c.set(lsuf_s.len() as i32));
@@ -4114,24 +4131,95 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     let qrsuf_s = quotename(&rsuf_s);
     NOREAL.with(|c| c.set(noreal));
 
-    // c:3263-3294 — pattern handling. With comppatmatch empty, C forces
-    // ispattern = 0 and never compiles patcomp; the non-empty path is a
-    // documented gap. Either way patcomp is None here, so we untokenize.
-    crate::ported::zle::compcore::ispattern.store(0, Ordering::Relaxed);
-    rpre_s = crate::ported::lex::untokenize(&rpre_s);
-    rsuf_s = crate::ported::lex::untokenize(&rsuf_s);
-    let rpl = rpre_s.len();
-    let rsl = rsuf_s.len();
-    RPL.with(|c| c.set(rpl as i32));
-    RSL.with(|c| c.set(rsl as i32));
+    // c:3238-3261 — is the word a pattern?  The loops transcribe C's: `rpre`
+    // is scanned backwards (c:3239-3248), `rsuf` forwards (c:3250-3259), both
+    // while still tokenized, recording the last slash of `rpre` (s1), the first
+    // slash of `rsuf` (s2) and how many slashes were seen (sf1/sf2).
+    let mut ispattern_v: i32 = 0;
+    let mut s1_t: Option<usize> = None;
+    let mut sf1: i32 = 0;
+    for (idx, ch) in rpre_s.char_indices().rev() {
+        if ispattern_v == 3 && sf1 != 0 {
+            break; // c:3242 `(ispattern != 3 || !sf1)`
+        }
+        if crate::token_char::itok_char(ch) && (idx > 0 || (ch != Equals && ch != Tilde)) {
+            ispattern_v |= if sf1 != 0 { 1 } else { 2 }; // c:3244
+        } else if ch == '/' {
+            sf1 += 1; // c:3246
+            if s1_t.is_none() {
+                s1_t = Some(idx); // c:3247
+            }
+        }
+    }
+    let mut s2_t: Option<usize> = None;
+    let mut sf2: i32 = 0;
+    let mut t: i32 = 0;
+    for (idx, ch) in rsuf_s.char_indices() {
+        if t != 0 && sf2 != 0 {
+            break; // c:3251 `(!t || !sf2)`
+        }
+        if crate::token_char::itok_char(ch) {
+            t |= if sf2 != 0 { 4 } else { 2 }; // c:3253
+        } else if ch == '/' {
+            sf2 += 1; // c:3255
+            if s2_t.is_none() {
+                s2_t = Some(idx); // c:3256
+            }
+        }
+    }
+    ispattern_v |= t; // c:3260
+
+    // c:3263-3265 — never treat the word as a pattern when asked not to do
+    // glob completion.
+    if !cpm_nonempty {
+        ispattern_v = 0;
+    }
+
+    // c:3267-3282 — the word is a pattern: compile `rpre` `*` `rsuf`.
+    let mut patcomp_set = false;
+    if ispattern_v != 0 {
+        let mut p = rpre_s.clone(); // c:3270
+        if !rpre_s.is_empty()
+            && !rpre_s.ends_with(Star)
+            && cpm.as_deref().is_some_and(|c| c.starts_with('*'))
+        {
+            p.push(Star); // c:3273
+        }
+        p.push_str(&rsuf_s); // c:3274 / c:3277
+        let prog = patcompile(&p, 0, None); // c:3278
+        patcomp_set = prog.is_some();
+        PATCOMP.with(|r| *r.borrow_mut() = prog);
+        crate::ported::zle::compcore::haspattern.store(1, Ordering::Relaxed); // c:3279
+    }
+    crate::ported::zle::compcore::ispattern.store(ispattern_v, Ordering::Relaxed);
+
+    // c:3281-3293 — without a pattern the prefix/suffix are plain text
+    // (`untokenize`); with one only the Dash token is turned back into `-`.
+    // The slash offsets are remapped through the same transformation so they
+    // stay valid indices into the converted strings.
+    let rpre_t = rpre_s;
+    let rsuf_t = rsuf_s;
+    let fix = |tok: &str| -> String {
+        if patcomp_set {
+            tok.chars().map(|c| if c == Dash { '-' } else { c }).collect()
+        } else {
+            crate::ported::lex::untokenize(tok)
+        }
+    };
+    let s1: Option<usize> = s1_t.map(|i| fix(&rpre_t[..i]).len());
+    let s2: Option<usize> = s2_t.map(|i| fix(&rsuf_t[..i]).len());
+    let rpre_s = fix(&rpre_t);
+    let rsuf_s = fix(&rsuf_t);
+    RPL.with(|c| c.set(rpre_s.len() as i32));
+    RSL.with(|c| c.set(rsuf_s.len() as i32));
 
     // c:3295-3296 — untokenize the line prefix/suffix.
     let lpre_s = crate::ported::lex::untokenize(&lpre_s);
     let lsuf_s = crate::ported::lex::untokenize(&lsuf_s);
 
     // Commit the real/line statics.
-    LPRE.with(|r| *r.borrow_mut() = lpre_s);
-    LSUF.with(|r| *r.borrow_mut() = lsuf_s);
+    LPRE.with(|r| *r.borrow_mut() = lpre_s.clone());
+    LSUF.with(|r| *r.borrow_mut() = lsuf_s.clone());
     RPRE.with(|r| *r.borrow_mut() = rpre_s.clone());
     RSUF.with(|r| *r.borrow_mut() = rsuf_s.clone());
     QLPRE.with(|r| *r.borrow_mut() = qlpre_s);
@@ -4143,15 +4231,16 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     if (cc.mask & CC_DELETE) == 0 {
         crate::ported::zle::compcore::hasmatched.store(1, Ordering::Relaxed);
     }
+    // c:3050 — ccont gets the mask2 continuation bits.
+    CCONT.with(|c| c.set(c.get() | (cc.mask2 & (CC_CCCONT | CC_DEFCONT | CC_PATCONT))));
 
-    // c:3303-3403 — file completion: derive the path/file prefix+suffix.
+    // c:3301-3639 — file completion: derive the path/file prefix+suffix, then
+    // generate the matches.
+    let mut ppre = String::new();
+    let mut psuf = String::new();
     if (cc.mask & (CC_FILES | CC_DIRS | CC_COMMPATH)) != 0 || cc.glob.is_some() {
-        // s1 = last '/' in rpre, s2 = first '/' in rsuf (c:3240-3258 slash
-        // scan, minus the itok/pattern bits we intentionally skip).
-        let s1 = rpre_s.rfind('/');
-        let s2 = rsuf_s.find('/');
-
-        // c:3311-3315 — path prefix/suffix.
+        // c:3303-3316 — path prefix/suffix; `s1 = rpre`/`s2 = rsuf + rsl` when
+        // there was no slash.
         let ppre_s = match s1 {
             Some(idx) => rpre_s[..idx + 1].to_string(),
             None => String::new(),
@@ -4161,14 +4250,91 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             None => String::new(),
         };
 
-        // c:3376-3382 — the file prefix and suffix.
+        // c:3318-3374 — lppre/lpsuf: the directory portion of the word as it
+        // is on the line, with the brace insertions (`brbeg`/`brend`) and the
+        // quoted ignored prefix/suffix taken out.
+        let meta = crate::ported::zle::compcore::ZLEMETALINE
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        let wb = crate::ported::zle::compcore::WB.load(Ordering::Relaxed).max(0) as usize;
+        let we = crate::ported::zle::compcore::WE.load(Ordering::Relaxed).max(0) as usize;
+        let cs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::Relaxed).max(0) as usize;
+        let lppre_s = if cs != wb {
+            // c:3320-3326 — `zlemetaline + wb + strlen(qipre) - (qipre starts
+            // with a quote)`, cut at the cursor.
+            let qi = QIPRE.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+            let skip = if qi.is_empty() {
+                0
+            } else {
+                qi.len() - usize::from(qi.starts_with('\'') || qi.starts_with('"'))
+            };
+            let mut lp = meta.get((wb + skip).min(cs)..cs).unwrap_or("").to_string();
+            // c:3327-3332 — `for (bp = brbeg; bp; bp = bp->next)
+            //                  strcpy(lppre + bp->qpos, lppre + bp->qpos + strlen(bp->str));`
+            if let Some(g) = crate::ported::zle::compcore::BRBEG
+                .get()
+                .and_then(|m| m.lock().ok())
+            {
+                let mut bp = g.as_deref();
+                while let Some(b) = bp {
+                    let q = b.qpos.max(0) as usize;
+                    let e = (q + b.str.as_ref().map_or(0, |x| x.len())).min(lp.len());
+                    if q <= e && lp.is_char_boundary(q) && lp.is_char_boundary(e) {
+                        lp.replace_range(q..e, "");
+                    }
+                    bp = b.next.as_deref();
+                }
+            }
+            if let Some(p) = lp.rfind('/') {
+                lp.truncate(p + 1); // c:3334-3335
+                lp
+            } else if sf1 == 0 {
+                String::new() // c:3337-3338
+            } else {
+                ppre_s.clone() // c:3340-3341
+            }
+        } else {
+            String::new() // c:3344-3345
+        };
+        let lpsuf_s = if cs != we {
+            // c:3347-3354 — the line text from the cursor to the end of the
+            // word, minus the quoted ignored suffix.
+            let qs = QISUF.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clone();
+            let mut end = we as i64;
+            if !qs.is_empty() {
+                end -= qs.len() as i64 - i64::from(qs.ends_with('\'') || qs.ends_with('"'));
+            }
+            let mut ls = meta.get(cs..end.max(0) as usize).unwrap_or("").to_string();
+            // c:3355-3362 — `for (bp = brend; bp; bp = bp->next) { p2 = lpsuf +
+            //                  (we - zlemetacs) - bp->qpos; p1 = p2 - strlen(bp->str);
+            //                  memmove(p1, p2, strlen(p2) + 1); }`
+            if let Some(g) = crate::ported::zle::compcore::BREND
+                .get()
+                .and_then(|m| m.lock().ok())
+            {
+                let mut bp = g.as_deref();
+                while let Some(b) = bp {
+                    let p2 = (we as i64 - cs as i64 - b.qpos as i64).max(0) as usize;
+                    let p1 = p2.saturating_sub(b.str.as_ref().map_or(0, |x| x.len()));
+                    if p2 <= ls.len() && ls.is_char_boundary(p1) && ls.is_char_boundary(p2) {
+                        ls.replace_range(p1..p2, "");
+                    }
+                    bp = b.next.as_deref();
+                }
+            }
+            match ls.find('/') {
+                Some(i) => ls[i..].to_string(), // c:3363 strchr(lpsuf, '/')
+                None if sf2 != 0 => psuf_s.clone(), // c:3363 `&& sf2`
+                None => String::new(),
+            }
+        } else {
+            String::new() // c:3367-3368
+        };
+
+        // c:3372-3376 — the file prefix and suffix.
         let s_first = s.as_bytes().first().copied();
-        // c:3378 — `zlemetacs == wb`. cs reads the canonical global
-        // (deduped); wb is still the compctl-local shadow (WB dedup is a
-        // separate, un-authorized change — see report).
-        let cs_eq_wb = crate::ported::zle::compcore::ZLEMETACS
-            .load(std::sync::atomic::Ordering::Relaxed)
-            == crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed);
+        let cs_eq_wb = cs == wb; // c:3374 `zlemetacs == wb`
         let s1_is_start = s1.is_none() || s1 == Some(0);
         let start_cond = s1_is_start || ic != '\0';
         let mut fpre_s = if start_cond && (s_first != Some(b'/') || cs_eq_wb) {
@@ -4192,179 +4358,331 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         let qfpre_s = quotename(&fpre_s);
         let qfsuf_s = quotename(&fsuf_s);
 
-        // c:3397-3403 — no filecomp pattern, so untokenize + record lens.
-        fpre_s = crate::ported::lex::untokenize(&fpre_s);
-        fsuf_s = crate::ported::lex::untokenize(&fsuf_s);
-        FPL.with(|c| c.set(fpre_s.len() as i32));
-        FSL.with(|c| c.set(fsuf_s.len() as i32));
-
-        // c:3310-3335 — lppre: the directory portion of the word as it was
-        // actually typed on the line (zlemetaline[wb..cs]), truncated after
-        // its last '/'. This is what keeps `/usr/` on the line when
-        // completing `/usr/b<Tab>` → `/usr/bin/`. With no slash it is empty
-        // unless the prefix itself carried one (sf1), in which case it falls
-        // back to ppre. (qipre/brace adjustments omitted — empty for `-f`.)
-        let meta = crate::ported::zle::compcore::ZLEMETALINE
-            .get()
-            .and_then(|m| m.lock().ok().map(|g| g.clone()))
-            .unwrap_or_default();
-        let wb =
-            crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed) as usize;
-        let we =
-            crate::ported::zle::compcore::WE.load(std::sync::atomic::Ordering::Relaxed) as usize;
-        let cs = crate::ported::zle::compcore::ZLEMETACS.load(std::sync::atomic::Ordering::Relaxed)
-            as usize;
-        let sf1 = !ppre_s.is_empty();
-        let lppre_s = if cs != wb && wb <= cs && cs <= meta.len() {
-            let word = &meta[wb..cs];
-            match word.rfind('/') {
-                Some(p) => word[..=p].to_string(), // c:3326-3328
-                None if !sf1 => String::new(),     // c:3329-3331
-                None => ppre_s.clone(),            // c:3332-3334
+        // c:3382-3395 — a glob pattern in the file part: compile
+        // `fpre` `*` `fsuf` into filecomp.
+        let mut filecomp_set = false;
+        if cpm_nonempty && (ispattern_v & 2) != 0 {
+            let mut p = fpre_s.clone(); // c:3388
+            if (fpre_s.is_empty() || !fpre_s.ends_with(Star))
+                && !fsuf_s.starts_with(Star)
+                && cpm.as_deref().is_some_and(|c| c.starts_with('*'))
+            {
+                p.push(Star); // c:3390
             }
-        } else {
-            String::new()
-        };
-        // c:3340-3363 — lpsuf: directory portion of the suffix on the line.
-        let lpsuf_s = if cs != we && cs <= we && we <= meta.len() {
-            let tail = &meta[cs..we];
-            match tail.find('/') {
-                Some(p) => tail[p..].to_string(),
-                None if s2.is_some() => psuf_s.clone(), // sf2 fallback
-                None => String::new(),
-            }
-        } else {
-            String::new()
-        };
+            p.push_str(&fsuf_s); // c:3392
+            let prog = patcompile(&p, 0, None); // c:3393
+            filecomp_set = prog.is_some();
+            FILECOMP.with(|r| *r.borrow_mut() = prog);
+        }
+        if !filecomp_set {
+            fpre_s = crate::ported::lex::untokenize(&fpre_s); // c:3397
+            fsuf_s = crate::ported::lex::untokenize(&fsuf_s); // c:3398
+            FPL.with(|c| c.set(fpre_s.len() as i32)); // c:3400
+            FSL.with(|c| c.set(fsuf_s.len() as i32)); // c:3401
+        }
+        LPPL.with(|c| c.set(lppre_s.len() as i32));
+        LPSL.with(|c| c.set(lpsuf_s.len() as i32));
 
-        PPRE.with(|r| *r.borrow_mut() = ppre_s);
-        PSUF.with(|r| *r.borrow_mut() = psuf_s);
+        PPRE.with(|r| *r.borrow_mut() = ppre_s.clone());
+        PSUF.with(|r| *r.borrow_mut() = psuf_s.clone());
         FPRE.with(|r| *r.borrow_mut() = fpre_s);
         FSUF.with(|r| *r.borrow_mut() = fsuf_s);
         QFPRE.with(|r| *r.borrow_mut() = qfpre_s);
         QFSUF.with(|r| *r.borrow_mut() = qfsuf_s);
         LPPRE.with(|r| *r.borrow_mut() = lppre_s);
         LPSUF.with(|r| *r.borrow_mut() = lpsuf_s);
+        ppre = ppre_s;
+        psuf = psuf_s;
+        ADDWHAT.with(|c| c.set(-1)); // c:3403
+
+        let saved_prpre = PRPRE.with(|r| r.borrow().clone());
+        if ic == Tilde {
+            // c:3405-3411 — usernames + named directories. `ipre = "~"` so
+            // each bare name matches the file prefix and gets the `~` back.
+            let oi = crate::ported::zle::compcore::ipre
+                .get_or_init(|| std::sync::Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            if let Ok(mut g) = crate::ported::zle::compcore::ipre
+                .get_or_init(|| std::sync::Mutex::new(String::new()))
+                .lock()
+            {
+                *g = format!("~{}", oi); // c:3408 — dyncat("~", ipre)
+            }
+            maketildelist();
+            if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+                *g = oi; // c:3410 — restore
+            }
+        } else if ic == Equals {
+            // c:3412-3423 — command names (cmdnamtab, addwhat -7) + regular
+            // aliases (addwhat -2). `ipre = "="` so the `=` stays on the line.
+            let oi = crate::ported::zle::compcore::ipre
+                .get_or_init(|| std::sync::Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+                *g = format!("={}", oi); // c:3417 — dyncat("=", ipre)
+            }
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHLISTALL) {
+                let path = crate::ported::params::getaparam("path").unwrap_or_default();
+                crate::ported::hashtable::fillcmdnamtable(&path);
+            }
+            let cmds: Vec<String> = crate::ported::hashtable::cmdnamtab_lock()
+                .read()
+                .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+                .unwrap_or_default();
+            dumphashtable(cmds, -7);
+            let aliases: Vec<String> = crate::ported::hashtable::aliastab_lock()
+                .read()
+                .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+                .unwrap_or_default();
+            dumphashtable(aliases, -2);
+            if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+                *g = oi; // c:3427 — restore
+            }
+        } else if (ispattern_v & 1) != 0 {
+            // c:3429-3458 — normal file completion, but with pattern matching
+            // in the directory part: glob `lpre` `*` `lsuf` `*`.
+            let ng = crate::ported::zsh_h::isset(crate::ported::zsh_h::NULLGLOB);
+            crate::ported::options::opt_state_set(
+                &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::NULLGLOB),
+                true,
+            ); // c:3436
+
+            ADDWHAT.with(|c| c.set(0)); // c:3438
+            let lpre_u = LPRE.with(|r| r.borrow().clone());
+            let lsuf_u = LSUF.with(|r| r.borrow().clone());
+            let mut p = lpre_u.clone(); // c:3440
+            if !lsuf_u.starts_with('*') && !lpre_u.is_empty() && !lpre_u.ends_with('*') {
+                p.push('*'); // c:3442
+            }
+            p.push_str(&lsuf_u); // c:3444
+            if !lsuf_u.is_empty() && !lsuf_u.ends_with('*') && !lsuf_u.ends_with(')') {
+                p.push('*'); // c:3446
+            }
+
+            // c:3449-3452 — do the globbing.
+            crate::ported::glob::tokenize(&mut p);
+            crate::ported::glob::remnulargs(&mut p);
+            let mut l: crate::ported::subst::LinkList = vec![p].into_iter().collect();
+            crate::ported::subst::globlist(&mut l, 0);
+
+            // c:3454-3461 — and add the resulting words.
+            let found: Vec<String> = l.into_iter().collect();
+            if !found.is_empty() {
+                crate::ported::zle::compcore::mflags
+                    .fetch_or(crate::ported::zle::comp_h::CMF_FILE, Ordering::Relaxed);
+                for n in &found {
+                    addmatch(n, None);
+                }
+                crate::ported::zle::compcore::mflags
+                    .fetch_and(!crate::ported::zle::comp_h::CMF_FILE, Ordering::Relaxed);
+            }
+            crate::ported::options::opt_state_set(
+                &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::NULLGLOB),
+                ng,
+            ); // c:3463
+        } else {
+            // c:3465-3633 — no pattern matching: one pass per directory.
+            ADDWHAT.with(|c| c.set(CC_FILES as i32)); // c:3469
+
+            // c:3471-3498 — `compctl -W`: the directories to look in, from the
+            // named array/word list, each as `<dir>/<ppre>`.
+            let mut dirs: Option<Vec<String>> = None;
+            if let Some(withd) = cc.withd.as_ref() {
+                if let Some(pp) = crate::ported::zle::compcore::get_user_var(Some(withd.as_str())) {
+                    dirs = Some(pp.iter().map(|d| format!("{}/{}", d, ppre)).collect());
+                }
+            }
+            let dirs: Vec<String> = dirs.unwrap_or_else(|| {
+                vec![match cc.withd.as_ref() {
+                    Some(withd) => format!("{}/{}", withd, ppre), // c:3503-3507
+                    None => ppre.clone(),                         // c:3509
+                }]
+            });
+            for dir in dirs {
+                // c:3513 — `prpre = *dirs;`
+                PRPRE.with(|r| *r.borrow_mut() = if dir.is_empty() { None } else { Some(dir.clone()) });
+                ADDWHAT.with(|c| c.set(-5));
+
+                if sf2 != 0 {
+                    // c:3515-3517 — we are in the path, so add only directories.
+                    gen_matches_files(true, false, false);
+                } else {
+                    if (cc.mask & CC_FILES) != 0 {
+                        // c:3520 — add all files.
+                        gen_matches_files(false, false, false);
+                    } else if (cc.mask & CC_COMMPATH) != 0 {
+                        // c:3523 — completion of command paths.
+                        if sf1 != 0 || cc.withd.is_some() {
+                            // c:3526 — a path prefix: directories and executables.
+                            gen_matches_files(true, true, false);
+                        } else {
+                            // c:3531-3542 — no path prefix: the things reachable via
+                            // $path, i.e. the current directory if "." or "" is in it.
+                            let path = crate::ported::params::getaparam("path").unwrap_or_default();
+                            if path.iter().any(|p| p.is_empty() || p == ".") {
+                                let pp = PRPRE.with(|r| r.borrow().clone());
+                                PRPRE.with(|r| *r.borrow_mut() = Some("./".to_string())); // c:3539
+                                gen_matches_files(true, true, false); // c:3540
+                                PRPRE.with(|r| *r.borrow_mut() = pp); // c:3541
+                            }
+                        }
+                    } else if (cc.mask & CC_DIRS) != 0 {
+                        gen_matches_files(true, false, false); // c:3545
+                    }
+
+                    // c:3547-3629 — the compctl has a glob pattern (compctl -g).
+                    if let Some(globstr) = cc.glob.as_ref() {
+                        let pl = dir.len(); // c:3550 pl = strlen(prpre)
+                        let ne = std::mem::replace(
+                            &mut *crate::ported::utils::noerrs_lock().lock().unwrap(),
+                            1,
+                        ); // c:3552-3562 noerrs = 1
+                        let md = crate::ported::zsh_h::isset(crate::ported::zsh_h::MARKDIRS);
+                        ADDWHAT.with(|c| c.set(-6)); // c:3564
+                        crate::ported::options::opt_state_set(
+                            &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::MARKDIRS),
+                            false,
+                        ); // c:3568
+
+                        // c:3571-3627 — the -g string may hold several blank-
+                        // separated patterns.
+                        let mut rest: &str = globstr.as_str();
+                        loop {
+                            // c:3578-3584 — skip blanks; stop at the end.
+                            rest = rest.trim_start_matches(|c: char| {
+                                c.is_ascii() && crate::ported::ztype_h::inblank(c as u8)
+                            });
+                            if rest.is_empty() {
+                                break;
+                            }
+                            // c:3585-3587 — find the blank ending the pattern.
+                            let b = rest.as_bytes();
+                            let mut i = rest.chars().next().map_or(0, |c| c.len_utf8());
+                            while i < b.len() && !crate::ported::ztype_h::inblank(b[i]) {
+                                if b[i] == b'\\' && i + 1 < b.len() {
+                                    i += 1;
+                                }
+                                i += 1;
+                            }
+                            let i = i.min(b.len());
+                            // c:3589-3594 — get the pattern string.
+                            let mut g = rest[..i].to_string();
+                            rest = &rest[i..];
+                            crate::ported::glob::tokenize(&mut g);
+                            if g.starts_with('=')
+                                && crate::ported::zsh_h::isset(crate::ported::zsh_h::EQUALSOPT)
+                            {
+                                g.replace_range(..1, &Equals.to_string()); // c:3592
+                            }
+                            if g.starts_with('~') {
+                                g.replace_range(..1, &Tilde.to_string()); // c:3594
+                            }
+                            crate::ported::glob::remnulargs(&mut g); // c:3595
+
+                            let first = g.chars().next();
+                            let l_word: String;
+                            if (first == Some(Equals) || first == Some(Tilde)) && cc.withd.is_none() {
+                                // c:3596-3601 — `~`/`=` at the beginning: expand it.
+                                g = crate::ported::subst::filesub(&g, 0);
+                                l_word = g.clone();
+                            } else if first == Some('/') && cc.withd.is_none() {
+                                // c:3602-3605 — a full path: add it unchanged.
+                                l_word = g.clone();
+                            } else {
+                                // c:3606-3615 — a simple pattern: append it to the
+                                // path we have on the command line.
+                                l_word = format!("{}{}", dir, g);
+                            }
+                            // c:3617-3621 — do the globbing.
+                            let ng = crate::ported::zsh_h::isset(crate::ported::zsh_h::NULLGLOB);
+                            crate::ported::options::opt_state_set(
+                                &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::NULLGLOB),
+                                true,
+                            );
+                            let mut l: crate::ported::subst::LinkList =
+                                vec![l_word].into_iter().collect();
+                            crate::ported::subst::globlist(&mut l, 0);
+                            crate::ported::options::opt_state_set(
+                                &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::NULLGLOB),
+                                ng,
+                            );
+                            // c:3623-3659 — get the results.
+                            let results: Vec<String> = l.into_iter().collect();
+                            if let Some(first_res) = results.first() {
+                                if !first_res.chars().any(crate::token_char::itok_char) {
+                                    let gf = g.chars().next();
+                                    if gf == Some(Equals)
+                                        || gf == Some(Tilde)
+                                        || gf == Some('/')
+                                        || cc.withd.is_some()
+                                    {
+                                        // c:3632-3641 — started with `~`, `=` or `/`
+                                        // (or an initial directory was given): add
+                                        // the result only if it matches the line.
+                                        for p2 in &results {
+                                            if crate::ported::utils::strpfx(&dir, p2) {
+                                                addmatch(&p2[pl..], None);
+                                            }
+                                        }
+                                    } else {
+                                        // c:3642-3654 — otherwise ignore the path we
+                                        // prepended to the pattern.
+                                        for p3 in &results {
+                                            let mut ns = sf1;
+                                            let mut start = 0;
+                                            for (ix, ch) in p3.char_indices() {
+                                                if ns == 0 {
+                                                    break;
+                                                }
+                                                start = ix + ch.len_utf8();
+                                                if ch == '/' {
+                                                    ns -= 1;
+                                                }
+                                            }
+                                            addmatch(&p3[start..], None);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        *crate::ported::utils::noerrs_lock().lock().unwrap() = ne; // c:3667
+                        crate::ported::options::opt_state_set(
+                            &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::MARKDIRS),
+                            md,
+                        ); // c:3668
+                    }
+                }
+            }
+        }
+        // c:3637-3639 — `lppre = lpsuf = NULL; lppl = lpsl = 0;` and (c:3630)
+        // `prpre = NULL`.
+        PRPRE.with(|r| *r.borrow_mut() = saved_prpre);
+        LPPRE.with(|r| r.borrow_mut().clear());
+        LPSUF.with(|r| r.borrow_mut().clear());
+        LPPL.with(|c| c.set(0));
+        LPSL.with(|c| c.set(0));
+    }
+    // c:3641-3646 — change the `~`/`=` tokens to the real characters so that
+    // things starting with them get added.
+    if ic != '\0' {
+        let pfx = if ic == Tilde { "~" } else { "=" };
+        RPRE.with(|r| {
+            let mut b = r.borrow_mut();
+            *b = format!("{}{}", pfx, *b);
+        });
+        RPL.with(|c| c.set(c.get() + 1));
+        QRPRE.with(|r| {
+            let mut b = r.borrow_mut();
+            *b = format!("{}{}", pfx, *b);
+        });
     }
     // ===================== end preamble =====================
 
     let s: &str = &s;
-    // Path prefix/suffix computed in the preamble (c:3304-3308).
-    let ppre = PPRE.with(|r| r.borrow().clone());
-    let psuf = PSUF.with(|r| r.borrow().clone());
-    // c:3050 — ccont gets the mask2 continuation bits.
-    CCONT.with(|c| c.set(c.get() | (cc.mask2 & (CC_CCCONT | CC_DEFCONT | CC_PATCONT))));
-
-    // c:3490-3491 — the file-generating arms all run with `prpre = ppre`,
-    // so directory-prefixed words (`cat /tmp/dir/f<Tab>`) open the typed
-    // directory rather than the cwd. When ppre is empty (no path prefix)
-    // C leaves prpre = "" → opendir("."); the Rust gen_matches_files
-    // treats a None PRPRE as ".", so leave it untouched in that case.
-    let saved_prpre = PRPRE.with(|r| r.borrow().clone());
-    if !ppre.is_empty() {
-        PRPRE.with(|r| *r.borrow_mut() = Some(ppre.clone()));
-    }
-    // c:3399-3417 — after a leading `~`/`=` (no `/`), the normal file arms
-    // are replaced: `~` completes usernames + named dirs (maketildelist),
-    // `=` completes command names + regular aliases (equals expansion). Only
-    // the plain-file `else` runs gen_matches_files.
-    // c:3296 — the whole `~`/`=`/file dispatch only applies when this cc does
-    // file/dir/command/glob completion. Without this guard the tilde/equals
-    // arms fired for cc_first (mask=0, run before cc_default) where fpre is
-    // empty, so every username matched and `~roo` collapsed to `~`.
-    let has_file_mask = (cc.mask & (CC_FILES | CC_DIRS | CC_COMMPATH)) != 0 || cc.glob.is_some();
-    if ic == Tilde && has_file_mask {
-        // c:3401-3406 — usernames + named directories. `ipre = "~"` so each
-        // bare name matches the file prefix and gets the `~` back on insert.
-        ADDWHAT.with(|c| c.set(-1)); // c:3397
-        let oi = crate::ported::zle::compcore::ipre
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
-        if let Ok(mut g) = crate::ported::zle::compcore::ipre
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-        {
-            *g = format!("~{}", oi); // c:3404 — dyncat("~", ipre)
-        }
-        maketildelist();
-        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
-            *g = oi; // c:3406 — restore
-        }
-    } else if ic == Equals && has_file_mask {
-        // c:3407-3417 — command names (cmdnamtab, addwhat -7) + regular
-        // aliases (addwhat -2). `ipre = "="` (c:3412) so the `=` is kept on
-        // the line (`=tru` → `=truncate`).
-        ADDWHAT.with(|c| c.set(-7));
-        let oi = crate::ported::zle::compcore::ipre
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
-        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
-            *g = format!("={}", oi); // c:3412 — dyncat("=", ipre)
-        }
-        if crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHLISTALL) {
-            let path = crate::ported::params::getaparam("path").unwrap_or_default();
-            crate::ported::hashtable::fillcmdnamtable(&path);
-        }
-        let cmds: Vec<String> = crate::ported::hashtable::cmdnamtab_lock()
-            .read()
-            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
-            .unwrap_or_default();
-        dumphashtable(cmds, -7);
-        let aliases: Vec<String> = crate::ported::hashtable::aliastab_lock()
-            .read()
-            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
-            .unwrap_or_default();
-        dumphashtable(aliases, -2);
-        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
-            *g = oi; // c:3417 — restore
-        }
-    } else {
-        // c:3650 — CC_FILES regular files.
-        if (cc.mask & CC_FILES) != 0 {
-            ADDWHAT.with(|c| c.set(-5));
-            gen_matches_files(false, false, false);
-        }
-        // CC_DIRS — c:3680
-        if (cc.mask & CC_DIRS) != 0 {
-            ADDWHAT.with(|c| c.set(-5));
-            gen_matches_files(true, false, false);
-        }
-        // CC_COMMPATH — c:3500-3519. File-side of command completion. With a
-        // typed path prefix (`/usr/bin/tr<Tab>`, sf1) add that directory's
-        // directories+executables; with no prefix, add the cwd's executables
-        // only when the cwd is itself reachable through $path (an empty or
-        // "." element). The bulk of the command names (everything reachable
-        // via $path) comes from the cmdnamtab dump below, NOT from a $path
-        // walk here — those matches are added with addwhat=-3 so they carry
-        // no file-type marker, matching `zsh -f`.
-        if (cc.mask & CC_COMMPATH) != 0 {
-            ADDWHAT.with(|c| c.set(-5));
-            let sf1 = !ppre.is_empty(); // path prefix present (slash in word)
-            if sf1 {
-                // c:3505 — directories + executables under the typed prefix.
-                let save = PRPRE.with(|r| r.borrow().clone());
-                PRPRE.with(|r| *r.borrow_mut() = Some(ppre.clone()));
-                gen_matches_files(true, true, false);
-                PRPRE.with(|r| *r.borrow_mut() = save);
-            } else {
-                // c:3509-3518 — cwd only if "." (or "") is in $path.
-                let path = crate::ported::params::getaparam("path").unwrap_or_default();
-                let cwd_in_path = path.iter().any(|p| p.is_empty() || p == ".");
-                if cwd_in_path {
-                    let save = PRPRE.with(|r| r.borrow().clone());
-                    PRPRE.with(|r| *r.borrow_mut() = Some("./".to_string()));
-                    gen_matches_files(true, true, false); // c:3516
-                    PRPRE.with(|r| *r.borrow_mut() = save);
-                }
-            }
-        }
-    } // end `else` (plain-file arms; the `~`/`=` cases handled above)
-      // c:3540 — restore prpre after the file-generating arms.
-    PRPRE.with(|r| *r.borrow_mut() = saved_prpre);
     // CC_NAMED — c:3664 `dumphashtable(nameddirtab, addwhat)`. maketildelist
     // now emits bare names (the `~` comes from ipre), so set ipre = "~" here
     // too, matching the tilde arm above.
@@ -4450,6 +4768,27 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
             .unwrap_or_default();
         dumphashtable(cmds, -3);
+        // c:3662-3664 — and parameter names if autocd and cdablevars are set:
+        // scalar top-level parameters whose value starts with `/` (addmatch -4).
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::AUTOCD)
+            && crate::ported::zsh_h::isset(crate::ported::zsh_h::CDABLEVARS)
+        {
+            let names: Vec<String> = {
+                let tab = crate::ported::params::paramtab().read().unwrap();
+                tab.iter()
+                    .filter(|(_, pm)| {
+                        crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == PM_SCALAR
+                            && pm.level == 0
+                    })
+                    .map(|(n, _)| n.clone())
+                    .collect()
+            };
+            let names: Vec<String> = names
+                .into_iter()
+                .filter(|n| crate::ported::params::getsparam(n).is_some_and(|v| v.starts_with('/')))
+                .collect();
+            dumphashtable(names, -4);
+        }
     }
 
     // c:3668 — oaw = addwhat = (cc->mask & CC_QUOTEFLAG) ? -2 : CC_QUOTEFLAG.
@@ -4514,10 +4853,27 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     // then walk via addmatch.
     if let Some(func_name) = cc.func.as_ref() {
         if let Some(mut shfunc) = crate::ported::utils::getshfunc(func_name) {
-            // c:3702-3717 — `addlinknode(args, cc->func); ... lpre; lsuf;`.
-            // Without the lpre/lsuf split substrate here we pass the
-            // raw cursor word as a single arg.
-            let largs: Vec<String> = vec![func_name.clone(), s.to_string()];
+            // c:3702-3717 — `addlinknode(args, cc->func);` then, with the
+            // word deleted, the ORIGINAL line split at `ooffs` (untokenized),
+            // otherwise `lpre` and `lsuf`.
+            let lv = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed); // c:3701
+            let (arg_pre, arg_suf) = if delit {
+                let mut at = ooffs.max(0) as usize;
+                at = at.min(os.len());
+                while at > 0 && !os.is_char_boundary(at) {
+                    at -= 1;
+                }
+                (
+                    crate::ported::lex::untokenize(&os[..at]),
+                    crate::ported::lex::untokenize(&os[at..]),
+                )
+            } else {
+                (
+                    LPRE.with(|r| r.borrow().clone()),
+                    LSUF.with(|r| r.borrow().clone()),
+                )
+            };
+            let largs: Vec<String> = vec![func_name.clone(), arg_pre.clone(), arg_suf.clone()];
             // c:3722-3724 — `if (incompfunc != 1) incompctlfunc = 1;
             //                sfcontext = SFC_COMPLETE;`.
             let in_compfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
@@ -4530,7 +4886,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             );
             // c:3725 — `doshfunc(shfunc, args, 1);`.
             let name_for_body = func_name.clone();
-            let body_args: Vec<String> = vec![s.to_string()];
+            let body_args: Vec<String> = vec![arg_pre, arg_suf];
             let body_runner = move || -> i32 {
                 crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
             };
@@ -4548,6 +4904,37 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
                 for m in reply {
                     addmatch(&m, None);
                 }
+            }
+            crate::ported::builtin::LASTVAL.store(lv, std::sync::atomic::Ordering::Relaxed); // c:3737 lastval = lv
+        }
+    }
+
+    // c:3745-3762 — `compctl -j/-r/-z`: job names.
+    if (cc.mask & (CC_JOBS | CC_RUNNING | CC_STOPPED)) != 0 {
+        let texts: Vec<(String, bool)> = crate::ported::jobs::JOBTAB
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|tab| {
+                tab.iter()
+                    .filter(|j| {
+                        (j.stat & crate::ported::zsh_h::STAT_INUSE) != 0
+                            && j.procs.first().is_some_and(|p| !p.text.is_empty())
+                    })
+                    .map(|j| {
+                        (
+                            j.procs[0].text.clone(),
+                            (j.stat & crate::ported::zsh_h::STAT_STOPPED) != 0,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (text, stopped) in texts {
+            if (cc.mask & CC_JOBS) != 0
+                || (stopped && (cc.mask & CC_STOPPED) != 0)
+                || (!stopped && (cc.mask & CC_RUNNING) != 0)
+            {
+                addmatch(&text, None); // c:3758
             }
         }
     }
@@ -4587,8 +4974,6 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             }
         }
     }
-
-    // cc.glob — globlist expansion. Skipped pending glob-port use.
 
     // cc.str (-s) — call singsub on the string.
     if let Some(s) = &cc.str {
@@ -4768,6 +5153,84 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             .unwrap_or_default();
         dumphashtable(names, (cc.mask & (CC_ALREG | CC_ALGLOB)) as i32);
     }
+
+    // c:3930-3992 — `compctl -l`: handle sub-completion.
+    if let Some(subcmd) = cc.subcmd.as_ref() {
+        let ow = CLWORDS.lock().unwrap().clone(); // c:3932 ow = clwords
+        let ocmd = CMDSTR.with(|r| r.borrow().clone()); // c:3932 os = cmdstr
+        let oldn = *CLWNUM.lock().unwrap(); // c:3933
+        let oldp = *CLWPOS.lock().unwrap(); // c:3933
+        let occ = CCONT.with(|c| c.get()); // c:3934
+
+        CCONT.with(|c| c.set(CC_CCCONT)); // c:3936
+
+        // c:3938-3947 — restrict the words-array.
+        let mut brange = *BRANGE.lock().unwrap();
+        let mut erange = *ERANGE.lock().unwrap();
+        if brange >= oldn {
+            brange = oldn - 1;
+        }
+        if brange < 1 {
+            brange = 1;
+        }
+        if erange >= oldn {
+            erange = oldn - 1;
+        }
+        if erange < 1 {
+            erange = 1;
+        }
+        *BRANGE.lock().unwrap() = brange;
+        *ERANGE.lock().unwrap() = erange;
+        let mut clwnum = erange - brange + 1; // c:3948
+        let mut clwpos = oldp - brange; // c:3949
+        let br = brange as usize; // c:3950
+        let mut incmd_sub = incmd;
+        let new_words: Vec<String>;
+        let new_cmd: Option<String>;
+        if !subcmd.is_empty() {
+            // c:3953-3963 — put the command name given to the flag into
+            // the array (in place of clwords[br - 1]) and start there.
+            clwpos += 1;
+            clwnum += 1;
+            incmd_sub = false;
+            let mut w: Vec<String> = ow.get(br - 1..).unwrap_or(&[]).to_vec();
+            if let Some(first) = w.first_mut() {
+                *first = subcmd.clone(); // c:3960
+            } else {
+                w.push(subcmd.clone());
+            }
+            new_words = w;
+            new_cmd = Some(subcmd.clone()); // c:3961
+        } else {
+            // c:3964-3968
+            new_words = ow.get(br..).unwrap_or(&[]).to_vec();
+            new_cmd = ow.get(br).cloned();
+            incmd_sub = clwpos == 0;
+        }
+        *CLWORDS.lock().unwrap() = new_words;
+        CMDSTR.with(|r| *r.borrow_mut() = new_cmd);
+        *CLWNUM.lock().unwrap() = clwnum;
+        *CLWPOS.lock().unwrap() = clwpos;
+
+        // c:3970 — produce the matches.
+        makecomplistcmd(s, incmd_sub, CFN_FIRST);
+
+        // c:3972-3984 — and restore the things we changed.
+        *CLWORDS.lock().unwrap() = ow;
+        CMDSTR.with(|r| *r.borrow_mut() = ocmd);
+        *CLWNUM.lock().unwrap() = oldn;
+        *CLWPOS.lock().unwrap() = oldp;
+        CCONT.with(|c| c.set(occ));
+    }
+    // c:3986-3987 — `if (cc->substr) sep_comp_string(cc->substr, s, offs);`
+    if let Some(substr) = cc.substr.as_ref() {
+        sep_comp_string(substr, s, offs);
+    }
+    // c:3987-3992 — `uremnode(ccstack, ...)` and `mstack = mstack->next` are
+    // done by `ccstack_pop` on drop.
+    if mn == crate::ported::zle::compcore::mnum.load(Ordering::Relaxed) {
+        crate::ported::zle::compcore::haspattern.store(ohp, Ordering::Relaxed); // c:3994
+    }
 }
 
 /// Setup hook — port of `setup_(UNUSED(Module m))` from Src/Zle/compctl.c:4014.
@@ -4941,10 +5404,11 @@ static INBACKT: Mutex<i32> = Mutex::new(0);
 // are now deduped to the canonical `zle_tricky::AUTOQ` (glob-imported)
 // and `complete::COMPQSTACK` respectively. C declares one of each.
 
-/// `qipre` / `qisuf` — quoted ignored prefix/suffix from the
-/// completion driver. Port of `char *qipre, *qisuf;`.
-static QIPRE: Mutex<String> = Mutex::new(String::new());
-static QISUF: Mutex<String> = Mutex::new(String::new());
+// `qipre` / `qisuf` — quoted ignored prefix/suffix. ONE variable pair in C
+// (`Src/Zle/zle_tricky.c:137`), ported as `zle_tricky::QIPRE` / `QISUF`
+// (glob-imported above); compctl.rs used to keep a private second copy that
+// only `makecomplistctl`/`sep_comp_string` wrote, so the live
+// `get_comp_string` values never reached it.
 
 /// `compqiprefix` / `compqisuffix` / `compisuffix` — completion-context
 /// state from the user's compfunc. Port of those file-statics.
