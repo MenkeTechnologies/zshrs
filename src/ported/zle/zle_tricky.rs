@@ -4957,7 +4957,9 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
 
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::Relaxed);
+    let nlnct = (crate::ported::zle::zle_refresh::NLNCT.load(Ordering::Relaxed)
+        - crate::ported::zle::zle_refresh::PROMPT_LAST_ROW.load(Ordering::Relaxed))
+    .max(1); // C nlnct (see PROMPT_LAST_ROW)
     let zterm_lines = crate::ported::utils::adjustlines() as i32;
 
     // c:2709-2740 — `max = getiparam("LISTMAX"); if ((max && num > max) ||

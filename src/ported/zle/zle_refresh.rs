@@ -1278,6 +1278,10 @@ pub fn zrefresh() {
     // The skip is clamped to the row length, so an over-wide value can't
     // overrun.
     LPROMPTW.store(prompt_width as i32, Ordering::Relaxed);
+    // c:770 — `countprompt(lpromptbuf, &lpromptwof, &lprompth, 1)`: publish the
+    // prompt height. Only resetvideo (tests) stored it, so LPROMPTH stayed 0
+    // and `redisplay`'s `tc_upcurs(lprompth - 1)` (c:2439) never moved.
+    LPROMPTH.store(prompt_rows as i32, Ordering::Relaxed);
     let rprompt_width = countprompt(&rprompt);
     // c:774 — `countprompt(rpromptbuf, &rpromptw, &rprompth, 0)`. The live
     // zrefresh (unlike `resetvideo`, which sets these but is only reached
@@ -4322,7 +4326,11 @@ pub fn clearscreen() -> i32 {
 /// zrefresh.
 pub fn redisplay() -> i32 {
     // c:2435
-    moveto(0, 0); // c:2437
+    // c:2437 — C `moveto(0, 0)` is the first row of the edit area, i.e. the
+    // prompt's LAST row; this port's NBUF also holds the earlier prompt rows
+    // (see PROMPT_LAST_ROW). Homing to NBUF row 0 made a second redisplay in a
+    // row (`zle reset-prompt; zle .redisplay`) skip its cursor-up that C emits.
+    moveto(PROMPT_LAST_ROW.load(Ordering::SeqCst) as usize, 0);
     zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: TXT_ERROR }); // c:2438 zputc(&zr_cr)
     let lprompth = LPROMPTH.load(Ordering::SeqCst);
     tc_upcurs(lprompth - 1); // c:2439

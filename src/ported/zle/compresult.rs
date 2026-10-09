@@ -3439,7 +3439,9 @@ pub fn asklist() -> i32 {
                 crate::ported::zle::zle_refresh::tcmultout(
                     crate::ported::zsh_h::TCUP,
                     crate::ported::zsh_h::TCMULTUP,
-                    crate::ported::zle::zle_refresh::NLNCT.load(Relaxed),
+                    (crate::ported::zle::zle_refresh::NLNCT.load(Relaxed)
+                        - crate::ported::zle::zle_refresh::PROMPT_LAST_ROW.load(Relaxed))
+                    .max(1), // C nlnct (see PROMPT_LAST_ROW)
                 );
             }
             // c:1952 — `minfo.asked = 2`.
@@ -3477,7 +3479,9 @@ pub fn asklist() -> i32 {
         crate::ported::zle::zle_refresh::tcmultout(
             crate::ported::zsh_h::TCUP,
             crate::ported::zsh_h::TCMULTUP,
-            crate::ported::zle::zle_refresh::NLNCT.load(Relaxed),
+            (crate::ported::zle::zle_refresh::NLNCT.load(Relaxed)
+                        - crate::ported::zle::zle_refresh::PROMPT_LAST_ROW.load(Relaxed))
+                    .max(1), // C nlnct (see PROMPT_LAST_ROW)
         );
     }
 
@@ -3819,7 +3823,9 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
     // list forced a terminal scroll (completion menu climbed up line by line).
     LASTLISTLEN.store(0, Relaxed); // c:2160
     let ep_clearflag = CLEARFLAG.load(Relaxed);
-    let ep_nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Relaxed);
+    let ep_nlnct = (crate::ported::zle::zle_refresh::NLNCT.load(Relaxed)
+        - crate::ported::zle::zle_refresh::PROMPT_LAST_ROW.load(Relaxed))
+    .max(1); // C nlnct (see PROMPT_LAST_ROW)
     let ep_nlines = crate::ported::zle::compcore::listdat
         .get()
         .and_then(|m| m.lock().ok())
