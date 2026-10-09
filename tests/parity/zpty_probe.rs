@@ -323,7 +323,22 @@ fn dump(shell: &Path, zshrs: bool, driver: &str, tag: &str) -> String {
 /// or an undrained pty all produce empty on both sides, and that is
 /// false agreement rather than parity.
 pub fn assert_same_dump(driver: &str, what: &str) {
-    if !zsh_available() {
+    assert_same_dump_against(zsh_path(), driver, what);
+}
+
+/// [`assert_same_dump`] against the release zsh zshrs reports as its own version
+/// (`oracle::release_zsh_path`), for the probes that move a `.zwc` between the two
+/// shells. Skips when no such zsh is installed.
+pub fn assert_same_dump_release(driver: &str, what: &str) {
+    let Some(zsh) = crate::oracle::release_zsh_path() else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
+    };
+    assert_same_dump_against(zsh, driver, what);
+}
+
+fn assert_same_dump_against(zsh: &str, driver: &str, what: &str) {
+    if !Command::new(zsh).arg("--version").output().is_ok_and(|o| o.status.success()) {
         eprintln!("skip: zsh not found");
         return;
     }
@@ -342,7 +357,7 @@ pub fn assert_same_dump(driver: &str, what: &str) {
     let mut reference = String::new();
     let mut under_test = String::new();
     for _ in 0..3 {
-        reference = dump(Path::new(zsh_path()), false, driver, "zsh");
+        reference = dump(Path::new(zsh), false, driver, "zsh");
         under_test = dump(&zshrs_bin(), true, driver, "zshrs");
         if !reference.is_empty() && !under_test.is_empty() {
             break;

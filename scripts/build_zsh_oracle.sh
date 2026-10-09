@@ -14,7 +14,9 @@
 set -eu
 src=${1:-$HOME/forkedRepos/zsh}
 [ $# -gt 0 ] && shift
-prefix=$HOME/.cache/zshrs/zsh-oracle
+# $ZSHRS_ORACLE_PREFIX builds a second reference next to the first (the CI release
+# oracle: zsh 5.9.2, whose version, $ZSH_PATCHLEVEL and .zwc header zshrs shares).
+prefix=${ZSHRS_ORACLE_PREFIX:-$HOME/.cache/zshrs/zsh-oracle}
 work=$(mktemp -d "${TMPDIR:-/tmp}/zsh-oracle.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 # A full clone: $ZSH_PATCHLEVEL comes from `git describe` and needs the tags.

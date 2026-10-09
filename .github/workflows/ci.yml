@@ -73,6 +73,16 @@ jobs:
       # resolve through $ZSHRS_ORACLE_ZSH (upstream 54181 / 54013 / 55061
       # changed answers the released zsh still gives).
       - uses: ./.github/actions/zsh-oracle
+      # The release zshrs reports as its own version. The master oracle above is the
+      # tree the port follows, but zshrs's $ZSH_VERSION / $ZSH_PATCHLEVEL, the .zwc
+      # header version and the zparseopts / zformat semantics are the release's, and a
+      # dump written by one version is refused by the other. The tests that pin those
+      # compare against this one through $ZSHRS_RELEASE_ZSH.
+      - uses: ./.github/actions/zsh-oracle
+        with:
+          commit: zsh-5.9.2
+          dir: zsh-5.9.2
+          env-var: ZSHRS_RELEASE_ZSH
       # tests/port_purity.rs maps every src/ported/ file and fn onto the C it
       # ports, read from src/zsh/Src (gitignored locally). Check out the C at
       # the commit the oracle is built from, taken from the action's default

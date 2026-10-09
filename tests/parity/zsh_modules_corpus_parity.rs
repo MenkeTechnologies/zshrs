@@ -91,6 +91,33 @@ fn assert_parity(script: &str) {
     );
 }
 
+/// [`assert_parity`] against the release zsh zshrs reports as its own version
+/// (`oracle::release_zsh_path`), for the builtins the port pins to that release
+/// (`zparseopts`'s option set). Skips when none is installed.
+fn assert_parity_release(script: &str) {
+    let Some(zsh) = crate::oracle::release_zsh_path() else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
+    };
+    let out = Command::new(zsh).args(["-fc", script]).output().expect("invoke zsh");
+    let z = ShellResult {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        exit: out.status.code().unwrap_or(-1),
+    };
+    let r = run_zshrs(script);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence from the release zsh on script:\n{}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        script, z.stdout, r.stdout
+    );
+    assert_eq!(
+        z.exit, r.exit,
+        "exit-code divergence from the release zsh on:\n{}\n--- zsh ---\n{}\n--- zshrs ---\n{}",
+        script, z.exit, r.exit
+    );
+}
+
 // ════════════════════════════ zsh/zutil ════════════════════════════
 
 mod zmod_zutil {
@@ -421,7 +448,7 @@ print "a:[${H[-a]}] b:[${H[-b]}]""###,
     /// `src/ported/modules/zutil.rs` — so this asserts it unguarded.
     #[test]
     fn zparseopts_K_long() {
-        assert_parity(
+        assert_parity_release(
             r###"zmodload zsh/zutil
 arr=(default)
 set -- foo
@@ -452,7 +479,7 @@ printf "[%s]\n" "${gg[@]}""###,
     /// consume them as such.
     #[test]
     fn zparseopts_bare_long_spec_zinit_shape() {
-        assert_parity(
+        assert_parity_release(
             r###"zmodload zsh/zutil
 set -- --auto --norm keep1 --move2 keep2
 zparseopts -D -E -move=opt_move -move2=opt_move2 -norm=opt_norm \
@@ -472,7 +499,7 @@ print -r "ret=$? move=($opt_move) move2=($opt_move2) norm=($opt_norm) auto=($opt
     /// rollback in zshrs's scan that has to be right.
     #[test]
     fn zparseopts_unknown_letter_rewinds_whole_word() {
-        assert_parity(
+        assert_parity_release(
             r###"zmodload zsh/zutil
 set -- --Dx keep
 zparseopts -E -a arr -Dx

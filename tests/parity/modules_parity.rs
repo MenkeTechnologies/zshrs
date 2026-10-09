@@ -157,6 +157,24 @@ fn assert_parity(script: &str) {
     );
 }
 
+/// [`assert_parity`] against the release zsh zshrs reports as its own version
+/// (`oracle::release_zsh_path`), for the builtins the port pins to that release.
+/// Skips when none is installed.
+fn assert_parity_release(script: &str) {
+    let Some(zsh) = crate::oracle::release_zsh_path() else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
+    };
+    let z = Command::new(zsh).args(["-fc", script]).output().expect("zsh");
+    let r = run_zshrs(script);
+    assert_eq!(
+        String::from_utf8_lossy(&z.stdout),
+        r.stdout,
+        "stdout divergence from the release zsh on script:\n{script}"
+    );
+    assert_eq!(z.status.code().unwrap_or(-1), r.exit, "exit divergence on:\n{script}");
+}
+
 /// Strict parity — also requires stderr to match byte-for-byte. Useful
 /// when the test exercises an error path whose diagnostic format zshrs
 /// has explicitly aligned with the C source.
@@ -1482,7 +1500,7 @@ print -- "name=${name_[2]:-unset}""#,
     /// every array empty.
     #[test]
     fn zparseopts_long_spec_starting_with_n_or_v() {
-        assert_parity(&with_modules(
+        assert_parity_release(&with_modules(
             &["zutil"],
             r#"set -- --num 5 --num 6; zparseopts -num+:=N; print -r -- "N=(${N[*]})"
 set -- --name x --verbose; zparseopts -name:=M -verbose=V; print -r -- "M=(${M[*]}) V=(${V[*]})"

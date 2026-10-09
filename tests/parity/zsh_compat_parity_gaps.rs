@@ -99,6 +99,51 @@ fn assert_parity(script: &str, label: &str) {
     }
 }
 
+/// [`assert_parity`] against the release zsh zshrs reports as its own version
+/// (`oracle::release_zsh_path`). Skips when none is installed.
+fn assert_parity_release(script: &str, label: &str) {
+    let Some(zsh) = crate::oracle::release_zsh_path() else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
+    };
+    let z = {
+        let out = Command::new(zsh)
+            .args(["-fc", script])
+            .env_remove("OLDPWD")
+            .output()
+            .expect("invoke zsh");
+        ShellResult {
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            exit: out.status.code().unwrap_or(-1),
+        }
+    };
+    let r = run_zshrs(script);
+    if z.stdout != r.stdout || z.exit != r.exit {
+        panic!(
+            "parity gap vs release zsh (exit + stdout): {label}\nscript:\n{script}\n\
+--- zsh stdout ---\n{:?}\n--- zshrs stdout ---\n{:?}\n\
+--- zsh stderr (context) ---\n{:?}\n--- zshrs stderr (context) ---\n{:?}\n\
+--- exit zsh={} zshrs={}",
+            z.stdout, r.stdout, z.stderr, r.stderr, z.exit, r.exit
+        );
+    }
+}
+
+/// [`parity_gap_tests`] for rows whose answer is the RELEASE's, not the development
+/// tree's: zshrs reports the release it targets, so these compare against that one.
+macro_rules! parity_release_tests {
+    ($($(#[$meta:meta])* $name:ident => ($label:literal, $script:expr);)+) => {
+        $(
+            #[test]
+            $(#[$meta])*
+            fn $name() {
+                assert_parity_release($script, $label);
+            }
+        )+
+    };
+}
+
 /// Expands to one `#[test] fn` per `name => (label, script)` row (label + script: raw strings).
 macro_rules! parity_gap_tests {
     ($($(#[$meta:meta])* $name:ident => ($label:literal, $script:expr);)+) => {
@@ -291,6 +336,7 @@ mod typeset_and_dump {
         typeset_p_missing_precmd_functions_stderr => (r#"typeset -p precmd_functions"#, r#"typeset -p precmd_functions"#);
         typeset_p_ifs_default_quoting => (r#"typeset -p IFS"#, r#"typeset -p IFS"#);
         typeset_p_path_line => (r#"typeset -p path"#, r#"typeset -p path"#);
+        #[ignore = "the default $fpath is the host's: zsh's is its install prefix, zshrs's is the host's site-functions plus its bundled tree"]
         typeset_p_fpath_line => (r#"typeset -p fpath"#, r#"typeset -p fpath"#);
         typeset_p1_scalar_form => (r#"typeset -p1 PWD"#, r#"typeset -p1 PWD"#);
         set_plus_o_full_dump => (r#"set +o"#, r#"set +o"#);
@@ -974,7 +1020,6 @@ mod corpus_dash_fc_bulk_b {
         bulk_b_euid_and_username => (r#"EUID USERNAME"#, r#"print $EUID $USERNAME"#);
         bulk_b_lang_scalar => (r#"LANG"#, r#"print ${LANG:-nil_lang}"#);
         bulk_b_lc_all_scalar => (r#"LC_ALL"#, r#"print ${LC_ALL:-nil_lcall}"#);
-        bulk_b_zsh_patchlevel_string => (r#"ZSH_PATCHLEVEL"#, r##"print -r "$ZSH_PATCHLEVEL""##);
         bulk_b_terminfo_colors_bracket => (r#"terminfo[colors]"#, r#"print ${terminfo[colors]:-terminfo_no_colors}"#);
         bulk_b_prompt_expand_ps1_pct_hash => (r#"PS1 % + (%)PS1"#, r#"PS1_bb="%#"; print ${(%)PS1_bb}"#);
         bulk_b_cond_char_dev_null => (r##"[[ -e /dev/null ]]"##, r#"[[ -e /dev/null ]]; print $?"#);
@@ -1289,7 +1334,6 @@ print -r "$hde""##);
         bulk_e_zmodload_zsh_complist => (r#"zmodload zsh/complist"#, r##"zmodload zsh/complist 2>&1; print -r "ex=$?""##);
         bulk_e_zmodload_zsh_zselect => (r#"zmodload zsh/zselect"#, r##"zmodload zsh/zselect 2>&1; print -r "ex=$?""##);
         bulk_e_zmodload_zsh_curses => (r#"zmodload zsh/curses"#, r##"zmodload zsh/curses 2>&1; print -r "ex=$?""##);
-        bulk_e_print_zsh_name_version => (r#"ZSH_NAME"#, r##"print -r "$ZSH_NAME $ZSH_VERSION""##);
         bulk_e_argv0_default => (r#"ARGV0"#, r#"print ${ARGV0:-nil_argv0}"#);
         bulk_e_word_begin_end_match_arrays => (r#"mbegin mend"#, r##"[[ 123 =~ ([0-9]+) ]]; print -r "$#mbegin $#mend""##);
         // Same correction as bulk_c_zparseopts_array_accumulate above: the
@@ -1652,6 +1696,7 @@ mod corpus_dash_fc_bulk_i {
         bulk_i_zmodload_zsh_clone => (r#"zmodload zsh/clone"#, r##"zmodload zsh/clone 2>&1; print -r "ex=$?""##);
         bulk_i_hash_num_commands => (r#"count commands"#, r#"print ${#commands}"#);
         bulk_i_hash_num_patchars => (r#"count patchars"#, r#"print ${#patchars}"#);
+        #[ignore = "the default $fpath is the host's: zsh's is its install prefix, zshrs's is the host's site-functions plus its bundled tree"]
         bulk_i_hash_num_fpath => (r#"count fpath"#, r#"print ${#fpath}"#);
         bulk_i_hash_num_path => (r#"count path"#, r#"print ${#path}"#);
         bulk_i_hash_num_dis_builtins => (r#"count dis_builtins"#, r#"print ${#dis_builtins}"#);
@@ -1734,7 +1779,6 @@ print -r "x_i=$x_i""##);
         bulk_i_opt_rc_expand_param => (r#"options[rc_expand_param]"#, r#"print $options[rc_expand_param]"#);
         bulk_i_autoload_zmv => (r#"autoload zmv"#, r##"autoload -Uz zmv 2>&1; print -r "zmv_i=$?""##);
         bulk_i_param_LANG => (r#"LANG"#, r#"print ${LANG:-nil_LANG}"#);
-        bulk_i_param_ZSH_PATCHLEVEL => (r#"ZSH_PATCHLEVEL"#, r#"print $ZSH_PATCHLEVEL"#);
         bulk_i_nullcmds_READNULL_and_NULL => (r#"NULL READNULL"#, r##"print -r "${NULLCMD:-N_nc}" "${READNULLCMD:-N_rd}""##);
         bulk_i_CHOST_and_MACHTYPE => (r#"CHOST MACHTYPE"#, r##"print -r "${CHOST:-}"; print -r "$MACHTYPE""##);
         bulk_i_commands_assoc_lookup_print => (r#"commands[print]"#, r##"print -r "${commands[print]:-noprintpath}""##);
@@ -2675,7 +2719,6 @@ mod corpus_dash_fc_bulk_ab {
         bulk_ab_fc_cond_is_dir_bin => (r#"-d /bin"#, r##"[[ -d /bin ]]; print -r "dd=$?""##);
         bulk_ab_fc_join_tab_array => (r#"(pj:\\t:)"#, r##"tw_ab=(x_ab y_ab); print -r "${(pj:\t:)tw_ab}""##);
         bulk_ab_fc_posix_bracket_eq => (r#"[ -eq ]"#, r##"[ 1 -eq 1 ]; print -r "pq=$?""##);
-        bulk_ab_fc_zsh_patchlevel_or_nil => (r#"ZSH_PATCHLEVEL"#, r##"print -r "${ZSH_PATCHLEVEL:-nil}""##);
         bulk_ab_fc_read_after_printf_two_lines => (r#"printf|read"#, r##"printf '%s\n%s' a_ab b_ab | IFS= read -r ln_ab; print -r "${#ln_ab}""##);
         bulk_ab_fc_arith_ge_and_le => (r#"&& in \$(( ))"#, r##"print -r "$(( 6 >= 6 && 1 <= 2 ))""##);
         bulk_ab_fc_scalar_slash_slash_remove_space => (r#"//  del"#, r##"sz_ab='  x_ab  '; print -r "${sz_ab// /}""##);
@@ -48269,5 +48312,18 @@ mod subscripted_assignment_to_a_non_array {
         assert_parity(r#"{ integer i; i[2]+=6; print -r -- $i } 2>&1; print rc=$?"#, "subscripted_non_array_9");
         assert_parity(r#"{ float f=1; k=1; f[$k]+=3; print -r -- $f } 2>&1; print rc=$?"#, "subscripted_non_array_10");
         assert_parity(r#"a=(x y); a[2]+=z; typeset -A h; h[k]=v; h[k]+=w; print -r -- $a $h[k]"#, "subscripted_non_array_11");
+    }
+}
+
+/// Rows that are zshrs's own identity: `$ZSH_VERSION`, `$ZSH_NAME`, `$ZSH_PATCHLEVEL`.
+/// The development-tree reference reports a different version by construction.
+mod release_identity {
+    use super::*;
+
+    parity_release_tests! {
+        bulk_b_zsh_patchlevel_string => (r#"ZSH_PATCHLEVEL"#, r##"print -r "$ZSH_PATCHLEVEL""##);
+        bulk_e_print_zsh_name_version => (r#"ZSH_NAME"#, r##"print -r "$ZSH_NAME $ZSH_VERSION""##);
+        bulk_i_param_ZSH_PATCHLEVEL => (r#"ZSH_PATCHLEVEL"#, r#"print $ZSH_PATCHLEVEL"#);
+        bulk_ab_fc_zsh_patchlevel_or_nil => (r#"ZSH_PATCHLEVEL"#, r##"print -r "${ZSH_PATCHLEVEL:-nil}""##);
     }
 }

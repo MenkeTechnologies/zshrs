@@ -869,6 +869,16 @@ divergences from 5.9.2 are upstream changes (loop, pcre, special, trap, func,
 subscript, prompt, jobs). The current build reports `ZSH_VERSION=5.9.999.3-test`,
 `ZSH_PATCHLEVEL=zsh-5.9.0.3-test-476-g8cc5ead`.
 
+zshrs itself reports the release it targets (`ZSH_VERSION=5.9.2`), pins `zparseopts`
+and `zformat` to that release's semantics, and writes `.zwc` files whose header carries
+that version, which a shell of another version refuses. The tests that pin one of those
+compare against a second reference, the zsh 5.9.2 release:
+`tests/parity/oracle.rs` `release_zsh_path()` resolves `$ZSHRS_RELEASE_ZSH`, then
+`~/.cache/zshrs/zsh-5.9.2/bin/zsh`, then a system zsh, and returns it only when it reports
+exactly zshrs's `$ZSH_VERSION`; with none, those tests skip. Build it with
+`ZSHRS_ORACLE_PREFIX=$HOME/.cache/zshrs/zsh-5.9.2 scripts/build_zsh_oracle.sh <tree checked out at zsh-5.9.2>`;
+CI builds it with the same `.github/actions/zsh-oracle` action (`commit: zsh-5.9.2`).
+
 **Differential parity suite** — [`tests/parity/`](tests/parity) is the largest
 measurement here: hand-written assertions run against the oracle, comparing
 stdout, exit status and (for diagnostics) stderr.

@@ -1,16 +1,25 @@
-name: zsh master oracle
+name: zsh reference oracle
 description: >
-  Build (or restore from cache) the reference zsh the parity suites compare
-  against — the upstream development tree the port follows, not a released
-  zsh (tests/parity/oracle.rs) — into ~/.cache/zshrs/zsh-oracle via
-  scripts/build_zsh_oracle.sh, and export ZSHRS_ORACLE_ZSH to later steps.
+  Build (or restore from cache) a reference zsh the parity suites compare
+  against, into ~/.cache/zshrs/<dir> via scripts/build_zsh_oracle.sh, and export
+  its path to later steps. The default is the upstream development tree the port
+  follows, not a released zsh (tests/parity/oracle.rs). A second use builds the
+  release zshrs reports as its own version (zsh 5.9.2), for the tests whose
+  answer is the release's: $ZSH_VERSION, $ZSH_PATCHLEVEL, the .zwc header
+  version and the zparseopts / zformat semantics the port pins to it.
 inputs:
   commit:
     description: >
-      zsh-users/zsh commit the port's `c:` citations point at
-      (ZSH_PATCHLEVEL zsh-5.9.0.3-test-476-g8cc5ead, see README
-      "Compatibility measurement"). Move it together with the port.
+      zsh-users/zsh commit or tag to build. The default is the commit the port's
+      `c:` citations point at (ZSH_PATCHLEVEL zsh-5.9.0.3-test-476-g8cc5ead, see
+      README "Compatibility measurement"); move it together with the port.
     default: 8cc5eade5ff80de1dca7bd27509eddca4f849f29
+  dir:
+    description: Directory under ~/.cache/zshrs the build is installed into.
+    default: zsh-oracle
+  env-var:
+    description: Environment variable later steps read the binary's path from.
+    default: ZSHRS_ORACLE_ZSH
 outputs:
   zsh:
     description: Path of the oracle binary.
@@ -21,8 +30,8 @@ runs:
     - id: cache
       uses: actions/cache@v4
       with:
-        path: ~/.cache/zshrs/zsh-oracle
-        key: zsh-oracle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.commit }}-${{ hashFiles('scripts/build_zsh_oracle.sh', '.github/actions/zsh-oracle/action.yml') }}
+        path: ~/.cache/zshrs/${{ inputs.dir }}
+        key: ${{ inputs.dir }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.commit }}-${{ hashFiles('scripts/build_zsh_oracle.sh', '.github/actions/zsh-oracle/action.yml') }}
     - name: Install build dependencies (ubuntu)
       if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
       shell: bash
@@ -35,7 +44,7 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        src="$RUNNER_TEMP/zsh-src"
+        src="$RUNNER_TEMP/zsh-src-${{ inputs.dir }}"
         # A full clone: $ZSH_PATCHLEVEL comes from `git describe` and needs the tags.
         git clone -q https://github.com/zsh-users/zsh.git "$src"
         git -C "$src" checkout -q -B oracle "${{ inputs.commit }}"
@@ -44,11 +53,11 @@ runs:
         # default /etc is the macOS layout.
         etc=
         if [ "$RUNNER_OS" = Linux ]; then etc=--enable-etcdir=/etc/zsh; fi
-        sh scripts/build_zsh_oracle.sh "$src" $etc
+        ZSHRS_ORACLE_PREFIX="$HOME/.cache/zshrs/${{ inputs.dir }}" sh scripts/build_zsh_oracle.sh "$src" $etc
     - id: export
       shell: bash
       run: |
-        zsh="$HOME/.cache/zshrs/zsh-oracle/bin/zsh"
+        zsh="$HOME/.cache/zshrs/${{ inputs.dir }}/bin/zsh"
         "$zsh" -f -c 'print -r -- "zsh oracle: $ZSH_VERSION $ZSH_PATCHLEVEL"'
-        echo "ZSHRS_ORACLE_ZSH=$zsh" >> "$GITHUB_ENV"
+        echo "${{ inputs.env-var }}=$zsh" >> "$GITHUB_ENV"
         echo "zsh=$zsh" >> "$GITHUB_OUTPUT"

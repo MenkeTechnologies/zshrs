@@ -43,7 +43,26 @@ struct R {
 }
 
 fn run_zsh_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zsh_path())
+    run_reference_in(zsh_path(), d, s)
+}
+
+/// The release zsh zshrs reports as its own version (`oracle::release_zsh_path`).
+/// A `.zwc` carries the writing shell's version, so the dump tests move files
+/// between zshrs and THIS shell; the development-tree reference refuses them.
+fn release_zsh_available() -> bool {
+    crate::oracle::release_zsh_path().is_some()
+}
+
+fn run_release_zsh_in(d: &Path, s: &str) -> R {
+    run_reference_in(
+        crate::oracle::release_zsh_path().expect("release zsh, checked by release_zsh_available"),
+        d,
+        s,
+    )
+}
+
+fn run_reference_in(zsh: &str, d: &Path, s: &str) -> R {
+    let o = Command::new(zsh)
         .args(["-fc", s])
         .current_dir(d)
         .output()
@@ -192,23 +211,19 @@ fn autoload_missing_function_reports_failure() {
 /// check_dump_file body load (c:parse.c:3919-3958).
 #[test]
 fn autoload_zwc_only_dir_real_zsh_compiled() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("zwfn"), "echo zw_body $1\n").unwrap();
-    let z = run_zsh_in(d.path(), "zcompile zwfn");
+    let z = run_release_zsh_in(d.path(), "zcompile zwfn");
     assert_eq!(z.exit, 0, "zsh zcompile sanity");
     std::fs::remove_file(d.path().join("zwfn")).unwrap();
     let script = format!(
         r#"fpath=({}); autoload -Uz zwfn; zwfn arg1"#,
         d.path().display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(
         z.stdout.trim(),
@@ -228,11 +243,7 @@ fn autoload_zwc_only_dir_real_zsh_compiled() {
 /// round-trip, and that real zsh accepts zshrs-written dumps).
 #[test]
 fn autoload_zwc_only_dir_zshrs_compiled() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
@@ -244,7 +255,7 @@ fn autoload_zwc_only_dir_zshrs_compiled() {
         r#"fpath=({}); autoload -Uz rwfn; rwfn arg1"#,
         d.path().display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(
         z.stdout.trim(),
@@ -261,16 +272,12 @@ fn autoload_zwc_only_dir_zshrs_compiled() {
 /// Distinct bodies make the winner observable.
 #[test]
 fn autoload_zwc_mtime_preference() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("mtfn"), "echo compiled_body\n").unwrap();
-    let z = run_zsh_in(d.path(), "zcompile mtfn");
+    let z = run_release_zsh_in(d.path(), "zcompile mtfn");
     assert_eq!(z.exit, 0, "zsh zcompile sanity");
     // Rewrite the source with different output, then backdate it so
     // the dump is newer.
@@ -278,7 +285,7 @@ fn autoload_zwc_mtime_preference() {
     let old = filetime::FileTime::from_unix_time(1577836800, 0); // 2020-01-01
     filetime::set_file_mtime(d.path().join("mtfn"), old).unwrap();
     let script = format!(r#"fpath=({}); autoload -Uz mtfn; mtfn"#, d.path().display());
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout.trim(), "compiled_body", "zsh sanity (dump newer)");
     assert_eq!(r.stdout, z.stdout, "zshrs ignored newer dump");
@@ -290,7 +297,7 @@ fn autoload_zwc_mtime_preference() {
     // newer than the just-built dump.
     let new = filetime::FileTime::from_unix_time(1893456000, 0); // 2030-01-01
     filetime::set_file_mtime(d.path().join("mtfn"), new).unwrap();
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout.trim(), "source_body", "zsh sanity (source newer)");
     assert_eq!(
@@ -305,23 +312,19 @@ fn autoload_zwc_mtime_preference() {
 /// self-call output and the real-call output, in order.
 #[test]
 fn autoload_zwc_kshload_flag() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("kfn"), "kfn() { echo kbody $1; }\nkfn boot\n").unwrap();
-    let z = run_zsh_in(d.path(), "zcompile -k kfn");
+    let z = run_release_zsh_in(d.path(), "zcompile -k kfn");
     assert_eq!(z.exit, 0, "zsh zcompile -k sanity");
     std::fs::remove_file(d.path().join("kfn")).unwrap();
     let script = format!(
         r#"fpath=({}); autoload -Uz kfn; kfn arg1"#,
         d.path().display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(
         z.stdout, "kbody boot\nkbody arg1\n",
@@ -340,11 +343,7 @@ fn autoload_zwc_kshload_flag() {
 /// fpath element that IS a `.zwc` file (c:parse.c:3753 strsfx arm).
 #[test]
 fn autoload_zwc_digest_and_zwc_fpath_entry() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
@@ -352,7 +351,7 @@ fn autoload_zwc_digest_and_zwc_fpath_entry() {
     std::fs::create_dir(&fns).unwrap();
     std::fs::write(fns.join("dg1"), "echo dg_one $1\n").unwrap();
     std::fs::write(fns.join("dg2"), "echo dg_two $1\n").unwrap();
-    let z = run_zsh_in(d.path(), "zcompile fns.zwc fns/dg1 fns/dg2");
+    let z = run_release_zsh_in(d.path(), "zcompile fns.zwc fns/dg1 fns/dg2");
     assert_eq!(z.exit, 0, "zsh digest zcompile sanity");
     std::fs::remove_file(fns.join("dg1")).unwrap();
     std::fs::remove_file(fns.join("dg2")).unwrap();
@@ -361,7 +360,7 @@ fn autoload_zwc_digest_and_zwc_fpath_entry() {
         r#"fpath=({}); autoload -Uz dg1 dg2; dg1 a; dg2 b"#,
         fns.display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout, "dg_one a\ndg_two b\n", "zsh digest sanity");
     assert_eq!(r.stdout, z.stdout, "zshrs digest <dir>.zwc lookup broken");
@@ -370,7 +369,7 @@ fn autoload_zwc_digest_and_zwc_fpath_entry() {
         r#"fpath=({}/fns.zwc); autoload -Uz dg1; dg1 c"#,
         d.path().display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout, "dg_one c\n", "zsh zwc-as-fpath sanity");
     assert_eq!(r.stdout, z.stdout, "zshrs zwc-as-fpath-entry lookup broken");
@@ -388,11 +387,7 @@ fn autoload_zwc_digest_and_zwc_fpath_entry() {
 /// (`f:2:`).
 #[test]
 fn corrupt_digest_warning_names_the_caller_then_the_autoloaded_body() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
@@ -404,7 +399,7 @@ fn corrupt_digest_warning_names_the_caller_then_the_autoloaded_body() {
     for i in 0..6 {
         std::fs::write(fns.join(format!("pad{i}")), ":\n").unwrap();
     }
-    let z = run_zsh_in(d.path(), "zcompile fns.zwc fns/*");
+    let z = run_release_zsh_in(d.path(), "zcompile fns.zwc fns/*");
     assert_eq!(z.exit, 0, "zsh digest zcompile sanity");
     let zwc = d.path().join("fns.zwc");
     let mut perm = std::fs::metadata(&zwc).unwrap().permissions();
@@ -424,7 +419,7 @@ fn corrupt_digest_warning_names_the_caller_then_the_autoloaded_body() {
         "fpath=({}); autoload -Uz outer inner\nf() {{\n  local tmp=outer\n  \"$tmp\"\n}}\nf",
         fns.display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     let zwc_s = zwc.display().to_string();
     let want = format!(
@@ -440,28 +435,24 @@ fn corrupt_digest_warning_names_the_caller_then_the_autoloaded_body() {
 /// file is deleted entirely (slash-path arm, c:builtin.c:6092-6100).
 #[test]
 fn source_zwc_sibling_and_zwc_only() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("s.zsh"), "echo compiled_src\n").unwrap();
-    let z = run_zsh_in(d.path(), "zcompile s.zsh");
+    let z = run_release_zsh_in(d.path(), "zcompile s.zsh");
     assert_eq!(z.exit, 0, "zsh zcompile sanity");
     std::fs::write(d.path().join("s.zsh"), "echo plain_src\n").unwrap();
     let old = filetime::FileTime::from_unix_time(1577836800, 0);
     filetime::set_file_mtime(d.path().join("s.zsh"), old).unwrap();
     let script = format!("source {}/s.zsh", d.path().display());
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout.trim(), "compiled_src", "zsh sanity (zwc newer)");
     assert_eq!(r.stdout, z.stdout, "zshrs source ignored newer .zwc");
     // zwc-only: plain file removed, slash path still sources the dump.
     std::fs::remove_file(d.path().join("s.zsh")).unwrap();
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout.trim(), "compiled_src", "zsh sanity (zwc only)");
     assert_eq!(r.stdout, z.stdout, "zshrs source of zwc-only path broken");
@@ -475,11 +466,7 @@ fn source_zwc_sibling_and_zwc_only() {
 /// must load + run the zshrs-written dump.
 #[test]
 fn autoload_zwc_open_paren_case_arms() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
@@ -501,7 +488,7 @@ fn autoload_zwc_open_paren_case_arms() {
             d.path().display(),
             arg
         );
-        let z = run_zsh_in(d.path(), &script);
+        let z = run_release_zsh_in(d.path(), &script);
         let r = run_zshrs_in(d.path(), &script);
         assert_eq!(
             z.stdout.trim(),
@@ -541,11 +528,7 @@ fn autoload_zwc_open_paren_case_arms() {
 /// both.
 #[test]
 fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
@@ -558,7 +541,7 @@ fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
         "local v='a=''{b}'''\nprint -r -- \"Q:[$v]\"\nprint -r -- GA: ga\n",
     )
     .unwrap();
-    let z = run_zsh_in(&fns, "zcompile qfn");
+    let z = run_release_zsh_in(&fns, "zcompile qfn");
     assert_eq!(z.exit, 0, "zsh zcompile sanity: {}", z.stdout);
 
     // `-Uz` (aliases already suppressed by PM_UNALIASED) and `-z` (they are
@@ -570,7 +553,7 @@ fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
             fns.display(),
             flags
         );
-        let z = run_zsh_in(d.path(), &script);
+        let z = run_release_zsh_in(d.path(), &script);
         let r = run_zshrs_in(d.path(), &script);
         assert_eq!(
             z.stdout, "Q:[a={b}]\nGA: ga\n",
@@ -595,7 +578,7 @@ fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
          alias print='print -r -- REALIAS'; autoload -z qfn; qfn",
         plain.display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(
         z.stdout, "REALIAS -r -- Q:[a='{b}']\nREALIAS -r -- GA: LEAKED\n",
@@ -616,11 +599,7 @@ fn autoload_zwc_body_ignores_rcquotes_and_aliases() {
 /// being wrapped.
 #[test]
 fn autoload_zwc_digest_and_ksh_body_ignore_rcquotes() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
@@ -636,7 +615,7 @@ fn autoload_zwc_digest_and_ksh_body_ignore_rcquotes() {
         "kfn() { local v='a=''{b}'''; print -r -- \"K:[$v]\"; }\n",
     )
     .unwrap();
-    let z = run_zsh_in(d.path(), "zcompile fns.zwc fns/dfn fns/kfn");
+    let z = run_release_zsh_in(d.path(), "zcompile fns.zwc fns/dfn fns/kfn");
     assert_eq!(z.exit, 0, "zsh digest zcompile sanity: {}", z.stdout);
     std::fs::remove_file(fns.join("dfn")).unwrap();
     std::fs::remove_file(fns.join("kfn")).unwrap();
@@ -645,7 +624,7 @@ fn autoload_zwc_digest_and_ksh_body_ignore_rcquotes() {
         "fpath=({}); setopt rcquotes; autoload -Uz dfn; dfn",
         fns.display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout, "D:[a={b}]\n", "zsh digest sanity: {:?}", z.stdout);
     assert_eq!(r.stdout, z.stdout, "zshrs re-lexed a digest-loaded body");
@@ -655,7 +634,7 @@ fn autoload_zwc_digest_and_ksh_body_ignore_rcquotes() {
         "fpath=({}); setopt rcquotes ksh_autoload; autoload -U kfn; kfn",
         fns.display()
     );
-    let z = run_zsh_in(d.path(), &script);
+    let z = run_release_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(
         z.stdout, "K:[a={b}]\n",
@@ -894,16 +873,12 @@ kf
 /// plain file then runs.
 #[test]
 fn source_corrupt_zwc_diagnostic_names_the_caller() {
-    if !crate::oracle::same_zsh_version() {
-        eprintln!("skip: the reference zsh and zshrs report different versions, so neither reads the other's .zwc");
-        return;
-    }
-    if !zsh_available() {
+    if !release_zsh_available() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("victim"), "print victim ran\n").unwrap();
-    let z = run_zsh_in(d.path(), "zcompile victim");
+    let z = run_release_zsh_in(d.path(), "zcompile victim");
     assert_eq!(z.exit, 0, "zsh zcompile sanity");
     let zwc = d.path().join("victim.zwc");
     // zcompile writes the dump read-only (A09zwc.ztst `chmod u+w`).
@@ -915,7 +890,7 @@ fn source_corrupt_zwc_diagnostic_names_the_caller() {
     let npats: [u8; 4] = if bytes[0] == 0x07 { [0, 0, 0, 0x40] } else { [0x40, 0, 0, 0] };
     bytes[56..60].copy_from_slice(&npats);
     std::fs::write(&zwc, &bytes).unwrap();
-    let z = run_zsh_in(d.path(), "source ./victim");
+    let z = run_release_zsh_in(d.path(), "source ./victim");
     let r = run_zshrs_in(d.path(), "source ./victim");
     assert_eq!(z.stdout, "victim ran\n", "zsh sanity");
     assert_eq!(r.stdout, z.stdout);
