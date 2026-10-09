@@ -69,7 +69,12 @@ pub fn bin_echoti(
         return 1; // c:76
     }
     let interactive = isset(INTERACTIVE); // c:77
-    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 && interactive {
+    // c:77-78 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return 1;`
+    // An unknown terminal that cannot be set up (no `$TERM`) is a silent status 1,
+    // not a "no such capability" warning.
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0
+        && (interactive || crate::ported::init::init_term() == 0)
+    {
         return 1; // c:78
     }
 
