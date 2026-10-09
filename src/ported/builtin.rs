@@ -4969,28 +4969,29 @@ pub fn bin_typeset(
             Some(i) => (&argv[0][..i], Some(argv[0][i + 1..].to_string())),
             None => (argv[0].as_str(), None),
         };
-        // NOT PORTED: c:2841-2846's
+        // c:2838-2846 —
         //     asg0 = *asg;
         //     if (ASG_ARRAYP(&asg0)) {
         //         zwarnnam(name, "first argument of tie must be scalar: %s",
         //                  asg0.name);
         //         return 1;
         //     }
-        // so `typeset -T S=(a b) s` is still silently accepted where zsh fails.
-        //
-        // It cannot be decided here. ASG_ARRAYP asks whether the PARSER built an
-        // array-valued assignment — the reserved-word `typeset` form seeing a
-        // literal `=(` — and that is a property of the parse, not of the text.
-        // By the time bin_typeset has argv it is just a string, and the two
-        // cases are textually identical:
-        //     typeset -T S=(a b) s     → array assignment, must FAIL
-        //     typeset -T "S=(a b)" s   → scalar assignment of the literal text
-        //                                `(a b)`, must SUCCEED (rc=0, $S is
-        //                                `(a b)` — verified against the oracle)
-        // A `starts_with('(')` test rejects both; it was tried and broke the
-        // quoted form. Fixing this needs the assignment shape carried down from
-        // the compiler (C's `assigns` LinkList), which is the same missing
-        // reserved-word/builtin distinction that ASG_ARRAYP exists to express.
+        // ASG_ARRAYP is the parser's flag for an unquoted `NAME=(`. zshrs
+        // carries it as the `\u{1f}` REJOIN_SEP that compile_zsh's
+        // BUILTIN_TYPESET_PAREN_PACK / BUILTIN_TYPESET_PAREN_CLOSE put inside
+        // the paren body (`S=(\u{1f}a\u{1f}b\u{1f})`, empty `S=(\u{1f})`);
+        // a quoted `"S=(a b)"` is a scalar assignment of the text `(a b)` and
+        // carries no marker (same test as `is_paren_init` in the per-arg loop).
+        if let Some(v) = &sval_opt {
+            if v.starts_with('(') && v.ends_with(')') && v.len() >= 2 && v.contains('\u{1f}') {
+                unqueue_signals(); // c:2842
+                zwarnnam(
+                    name,
+                    &format!("first argument of tie must be scalar: {}", sname),
+                ); // c:2843
+                return 1; // c:2845
+            }
+        }
         // Second arg: ARRAY name (with optional =(elements...) init).
         // Per c:2847-2854, second arg must be array-shape if it carries
         // a value. The Rust port accepts either `arr` or `arr=(a b c)`.

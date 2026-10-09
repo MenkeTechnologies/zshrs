@@ -1343,6 +1343,9 @@ pub fn zlecore() {
         // fish reader does the same per readline command (reader.rs
         // update_autosuggestion / super_highlight_me_plenty).
         crate::zle_fx::on_post_widget(&thingy.nam);
+        // Native p10k engine: SHOW_ON_COMMAND / keymap / region refresh,
+        // the role of p10k's own `zle-line-pre-redraw` hook (p10k:8020-8050).
+        crate::p10k::on_zle_redraw();
         redrawhook();
 
         // c:1192-1194 — `if (!kungetct) zrefresh();`. Repaint after EVERY
@@ -1370,13 +1373,15 @@ pub fn zlecore() {
 /// prompt templates, expands them, sets the read flags + context,
 /// then enters zlecore; the host (bin) handles the line-init /
 /// line-finish hooks via pending_hooks.
-/// WARNING: param names don't match C — Rust=(lprompt, rprompt, flags, context) vs C=(lp, rp, flags, context, init, finish)
+/// WARNING: param names don't match C — Rust=(lprompt, rprompt) vs C=(lp, rp)
 pub fn zleread(
     // c:1216
     lprompt: &str,
     rprompt: &str,
     flags: i32,
     context: i32,
+    init: &str,
+    finish: &str,
 ) -> io::Result<String> {
     // c:1220 — `int tmout = getiparam("TMOUT");`. Read once on entry; the
     // alarm it arms is set further down (c:1323-1324), and a TMOUT the
@@ -1697,8 +1702,8 @@ pub fn zleread(
 
     // c:1356 — `zlecallhook(init, NULL)` — runs user's zle-line-init widget
     // before the editing loop (e.g. for bindkey installation / zle -A wiring).
-    if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-init") {
-        let _ = execzlefunc("zle-line-init", &["zle-line-init".to_string()], 1, 0);
+    if crate::ported::zle::zle_thingy::rthingy_nocreate(init) {
+        let _ = execzlefunc(init, &[init.to_string()], 1, 0);
     }
 
     // c:1366 — `zrefresh()` paints the initial frame BEFORE the loop, so
@@ -1765,9 +1770,9 @@ pub fn zleread(
     if DONE.load(SeqCst) != 0
         && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
         && crate::utils::errflag.load(SeqCst) == 0
-        && crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-finish")
+        && crate::ported::zle::zle_thingy::rthingy_nocreate(finish)
     {
-        let _ = execzlefunc("zle-line-finish", &["zle-line-finish".to_string()], 1, 0);
+        let _ = execzlefunc(finish, &[finish.to_string()], 1, 0);
     }
 
     // c:1380 — `trashzle()` after the loop parks the cursor below the edited
@@ -2185,94 +2190,101 @@ pub fn handleprefixes() {
 }
 
 /// Port of `savekeymap(char *cmdname, char *oldname, char *newname, Keymap *savemapptr)` from Src/Zle/zle_main.c:1632.
-/// WARNING: param names don't match C — Rust=(oldname, newname) vs C=(cmdname, oldname, newname, savemapptr)
-pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<Keymap>> {
+pub fn savekeymap(
+    cmdname: &str,
+    oldname: &str,
+    newname: &str,
+    savemapptr: &mut Option<std::sync::Arc<Keymap>>,
+) -> i32 {
     // c:1632
-    // C body (c:1634-1651): `km = openkeymap(newname); if (km) {
-    //                       *savemap = openkeymap(oldname);
-    //                       if (*savemap != km) { refkeymap(*savemap);
-    //                           linkkeymap(km, oldname, 0); } return 0; }
-    //                       else return 1`.
-    let km = openkeymap(newname)?;
-    let saved = openkeymap(oldname);
-    let same = saved
-        .as_ref()
-        .map(|s| std::sync::Arc::ptr_eq(s, &km))
-        .unwrap_or(false);
-    if !same {
-        linkkeymap(km, oldname, 0);
-    }
-    if same {
-        None
+    let km = openkeymap(newname); // c:1634
+
+    if let Some(km) = km {
+        // c:1636
+        *savemapptr = openkeymap(oldname); // c:1637
+        /* I love special cases */
+        // c:1638
+        if savemapptr
+            .as_ref()
+            .map(|s| std::sync::Arc::ptr_eq(s, &km))
+            .unwrap_or(false)
+        {
+            *savemapptr = None; // c:1640
+        } else {
+            /* make sure this doesn't get deleted. */
+            // c:1643 — `refkeymap(*savemapptr)`: the Arc held in
+            // *savemapptr is the reference.
+            linkkeymap(km, oldname, 0); // c:1645
+        }
+        0 // c:1647
     } else {
-        saved
+        zwarnnam(cmdname, &format!("no such keymap: {}", newname)); // c:1649
+        1 // c:1650
     }
 }
 
 /// Port of `restorekeymap(char *cmdname, char *oldname, char *newname, Keymap savemap)` from Src/Zle/zle_main.c:1656.
-/// WARNING: param names don't match C — Rust=(oldname, savemap) vs C=(cmdname, oldname, newname, savemap)
-pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<Keymap>>) {
+pub fn restorekeymap(
+    cmdname: &str,
+    oldname: &str,
+    newname: Option<&str>,
+    savemap: Option<std::sync::Arc<Keymap>>,
+) {
     // c:1656
-    // C body (c:1657-1666): `if (savemap) { linkkeymap(savemap,
-    //                       oldname, 0); unrefkeymap(savemap); }
-    //                       else if (newname) zwarnnam(...)`.
-    if let Some(km) = savemap {
-        linkkeymap(km, oldname, 0);
+    if let Some(savemap) = savemap {
+        // c:1658
+        linkkeymap(savemap, oldname, 0); // c:1659
+        /* we incremented the reference count above */
+        // c:1661 — `unrefkeymap(savemap)`: the Arc drops here.
+    } else if newname.is_some() {
+        /* urr... can this happen? */
+        // c:1663
+        zwarnnam(
+            cmdname,
+            &format!("keymap {} was not defined, not restored", oldname),
+        ); // c:1664
     }
 }
 
-// `SavedKeymap` deleted — Rust-invented helper for `save_keymap` /
-// `restore_keymap` (also deleted above). No C counterpart.
-
-// `acceptline(&str) -> Option<Widget>` deleted — Rust-only helper
-// that just wrapped `Widget::builtin(name)` in `Some(...)`. Callers
-// (execimmortal, execzlefunc) inlined to use `Widget::builtin`
-// directly. The real C `acceptline()` (zle_misc.c:401) takes
-// `char **args` and returns int; its Rust port lives at
-// `zle_misc.rs:708` (the legit free fn).
-
-// `vared_zle_run` deleted — Rust-only helper with no C counterpart
-// (the C `bin_vared` inlines its zleread call at c:1839-1860). The
-// fake helper had no callers and bundled a `VaredOpts` struct
-// (also deleted) that doesn't exist in C.
-
 /// Direct port of `bin_vared(char *name, char **args, Options ops, UNUSED(int func))` from `Src/Zle/zle_main.c:1678`.
-/// C signature: `static int bin_vared(char *name, char **args,
-/// Options ops, UNUSED(int func))`.
 /// BUILTIN spec at zle_main.c:2186 takes `"AaceghM:m:p:r:i:f:"`.
-/// WARNING: param names don't match C — Rust=(name, args, _func) vs C=(name, args, ops, func)
+/// WARNING: param names don't match C — Rust=(name, args, ops, _func) vs C=(name, args, ops, func)
 pub fn bin_vared(
     name: &str,
     args: &[String], // c:1678
     ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
+    use crate::ported::zsh_h::{
+        value, ASSPM_WARN, ERRFLAG_ERROR, PM_TYPE, SCANPM_MATCHMANY, SCANPM_WANTKEYS,
+        SCANPM_WANTVALS, USEZLE, ZLCON_VARED,
+    };
+    use crate::ported::ztype_h::{ISEP, WC_ZISTYPE};
+
+    let ova: Option<String> = varedarg.lock().unwrap().clone(); // c:1680
     let mut type_: u32 = PM_SCALAR; // c:1685
-                                    // c:1691 — `if ((interact && unset(USEZLE)) || !strcmp(term, "emacs"))`.
-                                    // C reads the `term` global (Src/init.c:777) which is the shell's
-                                    // \$TERM param. The previous Rust port read \`std::env::var(\"TERM\")\`
-                                    // — same env-vs-paramtab divergence family as the prior
-                                    // termcap / datetime / newuser fixes.
+    let obreaks = crate::ported::builtin::BREAKS.load(SeqCst); // c:1685
+    let mut haso = false; // c:1685
+    let mut oshtty: i32 = 0; // c:1685 oSHTTY
+    let mut oshout: usize = 0; // c:1689
+    let mut main_keymapsave: Option<std::sync::Arc<Keymap>> = None; // c:1688
+    let mut vicmd_keymapsave: Option<std::sync::Arc<Keymap>> = None; // c:1688
+
+    // c:1691 — `term` is the shell's $TERM param (Src/init.c:777).
     let term = getsparam("TERM").unwrap_or_default();
-    if term == "emacs" {
+    if (crate::ported::zsh_h::interact() && crate::ported::zsh_h::unset(USEZLE)) || term == "emacs"
+    {
         // c:1691
         zwarnnam(name, "ZLE not enabled"); // c:1692
         return 1; // c:1693
     }
-    // c:1695 — refuse recursive ZLE.
-    if zleactive.load(
+    if zleactive.load(Ordering::Relaxed) != 0 {
         // c:1695
-        Ordering::Relaxed,
-    ) != 0
-    {
         zwarnnam(name, "ZLE cannot be used recursively (yet)"); // c:1696
         return 1; // c:1697
     }
-    // c:1700 — `warn_flags = OPT_ISSET(ops, 'g') ? 0 : ASSPM_WARN`.
-    // Forwarded to `assignsparam` at the c:1893 commit so the -g
-    // option silences the "you have already created such a variable"
-    // warning.
-    let warn_flags = if OPT_ISSET(ops, b'g') { 0 } else { 1 }; // c:1700 ASSPM_WARN
+
+    let warn_flags = if OPT_ISSET(ops, b'g') { 0 } else { ASSPM_WARN }; // c:1700
     if OPT_ISSET(ops, b'A') {
         // c:1701
         if OPT_ISSET(ops, b'a') {
@@ -2285,125 +2297,281 @@ pub fn bin_vared(
         // c:1710
         type_ = PM_ARRAY; // c:1711
     }
-    let p1 = OPT_ARG_SAFE(ops, b'p').unwrap_or(""); // c:1712
-    let p2 = OPT_ARG_SAFE(ops, b'r').unwrap_or(""); // c:1713
-    let main_keymapname = OPT_ARG_SAFE(ops, b'M').unwrap_or(""); // c:1714
-    let vicmd_keymapname = OPT_ARG_SAFE(ops, b'm').unwrap_or(""); // c:1715
-    let init = OPT_ARG_SAFE(ops, b'i').unwrap_or(""); // c:1716
-    let finish = OPT_ARG_SAFE(ops, b'f').unwrap_or(""); // c:1717
-    let _ = (main_keymapname, vicmd_keymapname, init, finish);
+    let p1: &str = OPT_ARG_SAFE(ops, b'p').unwrap_or(""); // c:1712
+    let p2: &str = OPT_ARG_SAFE(ops, b'r').unwrap_or(""); // c:1713
+    let mut main_keymapname = OPT_ARG_SAFE(ops, b'M'); // c:1714
+    let mut vicmd_keymapname = OPT_ARG_SAFE(ops, b'm'); // c:1715
+    let init = OPT_ARG_SAFE(ops, b'i'); // c:1716
+    let finish = OPT_ARG_SAFE(ops, b'f'); // c:1717
+
     if type_ != PM_SCALAR && !OPT_ISSET(ops, b'c') {
         // c:1719
         zwarnnam(
-            name, // c:1720
+            name,
             &format!("-{} ignored", if type_ == PM_ARRAY { "a" } else { "A" }),
-        );
+        ); // c:1720
     }
-    // c:1724 — `s = args[0];`
+
+    /* handle non-existent parameter */
+    // c:1723
     if args.is_empty() {
         zwarnnam(name, "not enough arguments");
         return 1;
     }
-    let varname = &args[0]; // c:1724
-                            // c:1725 queue_signals.
-    crate::ported::mem::queue_signals();
-    // c:1726 — `fetchvalue(&vbuf, &s, ...)`. C looks the param up in
-    //          paramtab; for -c (create), allow missing variable;
-    //          otherwise error. Was reading the OS env via
-    //          `std::env::var` plus an invented `__zshrs_array`
-    //          fallback that never matches anything real. Read
-    //          paramtab directly so scalar + array + hashed params
-    //          all count as "exists".
-    let exists = {
-        let tab = crate::ported::params::paramtab().read().unwrap();
-        tab.contains_key(varname)
+    let mut vbuf = value {
+        pm: None,
+        arr: Vec::new(),
+        scanflags: 0,
+        valflags: 0,
+        start: 0,
+        end: -1,
     };
-    if !exists && !OPT_ISSET(ops, b'c') {
+    let mut cursor: &str = &args[0]; // c:1724 s = args[0]
+    let s: String;
+    crate::ported::mem::queue_signals(); // c:1725
+    let v = crate::ported::params::fetchvalue(
+        Some(&mut vbuf),
+        &mut cursor,
+        (!OPT_ISSET(ops, b'c') || type_ == PM_SCALAR) as i32,
+        (SCANPM_WANTKEYS | SCANPM_WANTVALS | SCANPM_MATCHMANY) as i32,
+    ); // c:1726
+    if v.is_none() && !OPT_ISSET(ops, b'c') {
         // c:1728
         unqueue_signals(); // c:1729
-        zwarnnam(name, &format!("no such variable: {}", varname)); // c:1730
+        zwarnnam(name, &format!("no such variable: {}", args[0])); // c:1730
         return 1; // c:1731
-    }
-    unqueue_signals();
-    // c:1799-1814 — `if (SHTTY == -1 || OPT_ISSET(ops,'t'))` open /dev/tty
-    //   (or `-t <path>`). On open failure: `zwarnnam(name, "can't access
-    //   terminal"); return 1;`. Non-interactive callers without a
-    //   controlling tty error loudly instead of silently no-opping into
-    //   the stdin-fallback path below.
-    {
-        use std::sync::atomic::Ordering;
-        let need_open = SHTTY.load(Ordering::Relaxed) == -1 || OPT_ISSET(ops, b't');
-        if need_open {
-            let path = OPT_ARG_SAFE(ops, b't').unwrap_or("/dev/tty"); // c:1802
-            let cpath = std::ffi::CString::new(path).unwrap_or_default();
-            let fd = unsafe {
-                libc::open(
-                    cpath.as_ptr(),
-                    libc::O_RDWR | libc::O_NOCTTY, // c:1803
-                )
-            };
-            if fd == -1 {
-                zwarnnam(name, "can't access terminal"); // c:1804
-                return 1; // c:1806
-            }
-            if unsafe { libc::isatty(fd) } == 0 {
-                zwarnnam(name, &format!("{}: not a terminal", path)); // c:1809
-                unsafe {
-                    libc::close(fd);
+    } else if let Some(v) = v {
+        // c:1732
+        if !cursor.is_empty() {
+            // c:1733
+            unqueue_signals(); // c:1734
+            zwarnnam(name, &format!("not an identifier: `{}'", args[0])); // c:1735
+            return 1; // c:1736
+        }
+        if v.scanflags != 0 {
+            // c:1738
+            /* Array: check for separators and quote them. */
+            // c:1739
+            let arr = crate::ported::params::getvaluearr(Some(&mut *v)); // c:1740
+            let mut tmparr: Vec<String> = Vec::with_capacity(arr.len()); // c:1741
+            for aptr in arr.iter() {
+                // c:1742
+                let mut sepcount = 0; // c:1743
+                /*
+                 * See if this word contains a separator character
+                 * or backslash
+                 */
+                // c:1745-1748
+                for c in aptr.chars() {
+                    // c:1750
+                    if c == '\\' || WC_ZISTYPE(c, ISEP as u32) {
+                        // c:1751-1756
+                        sepcount += 1; // c:1753, c:1757
+                    }
                 }
-                return 1; // c:1813
+                if sepcount != 0 {
+                    // c:1760
+                    /* Yes, so allocate enough space to quote it. */
+                    // c:1761
+                    let mut newstr = String::with_capacity(aptr.len() + sepcount + 1); // c:1763
+                    /* Go through string quoting separators */
+                    // c:1764
+                    for c in aptr.chars() {
+                        // c:1766
+                        if c == '\\' {
+                            // c:1767
+                            newstr.push('\\'); // c:1768
+                            newstr.push(c); // c:1769
+                        } else {
+                            if WC_ZISTYPE(c, ISEP as u32) {
+                                // c:1772
+                                newstr.push('\\'); // c:1773
+                            }
+                            newstr.push(c); // c:1774-1775
+                        }
+                    }
+                    /* Stick this into the array of words to join up */
+                    // c:1779
+                    tmparr.push(newstr); // c:1780
+                } else {
+                    tmparr.push(aptr.clone()); /* No, keep original array element */
+                    // c:1782
+                }
             }
+            s = crate::ported::utils::sepjoin(&tmparr, None); // c:1785
+        } else {
+            s = crate::ported::params::getstrvalue(Some(&mut *v)); // c:1787 ztrdup(getstrvalue(v))
+        }
+        unqueue_signals(); // c:1789
+    } else if !cursor.is_empty() {
+        // c:1790
+        unqueue_signals(); // c:1791
+        zwarnnam(name, &format!("invalid parameter name: {}", args[0])); // c:1792
+        return 1; // c:1793
+    } else {
+        unqueue_signals(); // c:1795
+        s = String::new(); // c:1796 ztrdup(s), *s == '\0'
+    }
+
+    if SHTTY.load(SeqCst) == -1 || OPT_ISSET(ops, b't') {
+        // c:1799
+        /* need to open /dev/tty specially */
+        // c:1800
+        oshtty = SHTTY.load(SeqCst); // c:1801
+        let tpath = OPT_ARG_SAFE(ops, b't').unwrap_or("/dev/tty");
+        let ctpath = std::ffi::CString::new(tpath).unwrap_or_default();
+        let fd = unsafe { libc::open(ctpath.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
+        SHTTY.store(fd, SeqCst); // c:1802
+        if fd == -1 {
+            // c:1803
+            zwarnnam(name, "can't access terminal"); // c:1804
+            return 1; // c:1806
+        }
+        if unsafe { libc::isatty(SHTTY.load(SeqCst)) } == 0 {
+            // c:1808
+            zwarnnam(name, &format!("{}: not a terminal", tpath)); // c:1809
             unsafe {
-                libc::close(fd);
-            } // C keeps this fd as SHTTY/shout for zleread (c:1816-1827); the stdin read below does not use it
+                libc::close(SHTTY.load(SeqCst)); // c:1810
+            }
+            SHTTY.store(oshtty, SeqCst); // c:1811
+            return 1; // c:1813
+        }
+        oshout = *crate::ported::init::shout.lock().unwrap(); // c:1815
+        crate::ported::init::init_shout(); // c:1816
+
+        haso = true; // c:1818
+    }
+
+    /* edit the parameter value */
+    // c:1821
+    BUFSTACK.lock().unwrap().insert(0, s); // c:1822 zpushnode(bufstack, s)
+
+    if let Some(n) = main_keymapname {
+        // c:1824
+        if savekeymap(name, "main", n, &mut main_keymapsave) != 0 {
+            main_keymapname = None; // c:1826
         }
     }
-    // c:1841-1860 — zleread(ZLCON_VARED) drives the actual edit. Static-
-    // link path: the live ZLE editor isn't reachable from this lib-side
-    // entrypoint. Delegate to vared_zle_run when the ZLE entrypoint is
-    // wired into the executor; until then, fall back to a stdin read so the
-    // builtin is functional in non-interactive scripts that pipe input.
-    let prompt = if !p1.is_empty() {
-        p1.to_string()
-    } else {
-        String::new()
+    if let Some(n) = vicmd_keymapname {
+        // c:1827
+        if savekeymap(name, "vicmd", n, &mut vicmd_keymapsave) != 0 {
+            vicmd_keymapname = None; // c:1829
+        }
+    }
+
+    *varedarg.lock().unwrap() = Some(args[0].clone()); // c:1831
+    let ifl = crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.get()); // c:1832
+    if OPT_ISSET(ops, b'h') {
+        // c:1833
+        crate::ported::hist::hbegin(2); // c:1834
+    }
+    crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.set(OPT_ISSET(ops, b'e'))); // c:1835
+
+    // c:1837 — `zleread` hands back "" for C's NULL (a finished line always
+    // ends in a newline, so a real result is never empty).
+    let t: Option<String> = match zleread(
+        p1,
+        p2,
+        if OPT_ISSET(ops, b'h') { ZLRF_HISTORY } else { 0 },
+        ZLCON_VARED,
+        init.unwrap_or("zle-line-init"),
+        finish.unwrap_or("zle-line-finish"),
+    ) {
+        Ok(line) if !line.is_empty() => Some(line),
+        _ => None,
     };
-    let rprompt = if !p2.is_empty() {
-        p2.to_string()
+    if OPT_ISSET(ops, b'h') {
+        // c:1840
+        crate::ported::hist::hend(None); // c:1841
+    }
+    crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.set(ifl)); // c:1842
+    *varedarg.lock().unwrap() = ova; // c:1843
+
+    restorekeymap(name, "main", main_keymapname, main_keymapsave); // c:1845
+    restorekeymap(name, "vicmd", vicmd_keymapname, vicmd_keymapsave); // c:1846
+
+    if haso {
+        // c:1848
+        unsafe {
+            libc::close(SHTTY.load(SeqCst)); // c:1849 fclose(shout) /* close(SHTTY) */
+        }
+        *crate::ported::init::shout.lock().unwrap() = oshout; // c:1850
+        SHTTY.store(oshtty, SeqCst); // c:1851
+    }
+    if t.is_none() || errflag.load(SeqCst) != 0 {
+        // c:1853
+        /* error in editing */
+        // c:1854
+        errflag.fetch_and(!ERRFLAG_ERROR, SeqCst); // c:1855
+        crate::ported::builtin::BREAKS.store(obreaks, SeqCst); // c:1856
+        return 1; // c:1859
+    }
+    let mut t = t.unwrap_or_default();
+    /* strip off trailing newline, if any */
+    // c:1861
+    if t.ends_with('\n') {
+        // c:1862
+        t.pop(); // c:1863
+    }
+    /* final assignment of parameter value */
+    // c:1864
+    if OPT_ISSET(ops, b'c') {
+        // c:1865
+        crate::ported::params::unsetparam(&args[0]); // c:1866
+        crate::ported::params::createparam(&args[0], type_ as i32); // c:1867
+    }
+    crate::ported::mem::queue_signals(); // c:1869
+    let pm_type = crate::ported::params::paramtab()
+        .read()
+        .unwrap()
+        .get(&args[0])
+        .map(|pm| PM_TYPE(pm.node.flags as u32)); // c:1870
+    if let Some(pt) = pm_type.filter(|pt| (pt & (PM_ARRAY | PM_HASHED)) != 0) {
+        // c:1871
+        /*
+         * Use spacesplit with fourth argument 1: identify quoted separators,
+         * and unquote.  This duplicates the string, so we still need to free.
+         */
+        // c:1874-1877
+        // c:1878 — `a = spacesplit(t, 1, 0, 1);` inlined from utils.c:3711
+        // (allownull = 1, quote = 1): utils.rs `spacesplit` has no quote arm.
+        let mut a: Vec<String> = Vec::new();
+        let mut si: usize = 0;
+        let skipwsep_len = |st: &str, i: usize| -> usize {
+            st[i..].len() - crate::ported::utils::skipwsep(&st[i..]).0.len()
+        };
+        si += skipwsep_len(&t, si); // utils.c:3729 skipwsep(&s)
+        if si < t.len() && crate::ported::utils::itype_end(&t[si..], ISEP as u32, true) != 0 {
+            a.push(String::new()); // utils.c:3732 dup(allownull ? "" : nulstring)
+        }
+        while si < t.len() {
+            // utils.c:3735
+            let iend = crate::ported::utils::itype_end(&t[si..], ISEP as u32, true); // utils.c:3736
+            if iend != 0 {
+                // utils.c:3737
+                si += iend; // utils.c:3738
+                si += skipwsep_len(&t, si); // utils.c:3739
+            } else if t.as_bytes()[si] == b'\\' {
+                // utils.c:3741
+                si += 1; // utils.c:3742
+                si += skipwsep_len(&t, si); // utils.c:3743
+            }
+            let ts = si; // utils.c:3745
+            crate::ported::utils::findsep(&mut t, &mut si, None, true); // utils.c:3746
+            a.push(t[ts..si].to_string()); // utils.c:3748-3750 (allownull)
+            si += skipwsep_len(&t, si); // utils.c:3754
+        }
+        if pt == PM_ARRAY {
+            // c:1880
+            crate::ported::params::assignaparam(&args[0], a, warn_flags); // c:1881
+        } else {
+            crate::ported::params::sethparam(&args[0], a); // c:1883
+        }
     } else {
-        String::new()
-    };
-    // c:1841-1846 — `zleread` writes lprompt + current-value + rprompt
-    //                to shout (the controlling tty), then takes input.
-    //                Was a fake: prompt→stderr / current→stdout via
-    //                `eprint!`/`print!`, AND `current` came from
-    //                `std::env::var` instead of `getsparam`. Both
-    //                routes now match C: SHTTY (stdout fallback) and
-    //                paramtab.
-    let current = getsparam(varname).unwrap_or_default();
-    {
-        use std::sync::atomic::Ordering;
-        let fd = SHTTY.load(Ordering::Relaxed);
-        let out = if fd >= 0 { fd } else { 1 };
-        if !prompt.is_empty() {
-            let _ = write_loop(out, prompt.as_bytes());
-        }
-        let _ = write_loop(out, current.as_bytes());
-        if !rprompt.is_empty() {
-            let _ = write_loop(out, rprompt.as_bytes());
-        }
+        crate::ported::params::assignsparam(&args[0], &t, warn_flags); // c:1885
     }
-    let mut input = String::new();
-    if io::stdin().read_line(&mut input).is_ok() {
-        // c:1841 zleread fallback
-        let value = input.trim_end_matches('\n').to_string();
-        let _ = crate::ported::params::assignsparam(
-            // c:1893
-            varname, &value, warn_flags,
-        );
-        return 0; // c:1903
-    }
-    1
+    unqueue_signals(); // c:1886
+    0 // c:1887
 }
 
 /// Direct port of `int describekeybriefly(char **args)` from
@@ -3407,13 +3575,16 @@ pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> 
                 // c:2139-2142
                 // c:2144 — `return zleread(lp, rp, flags, context,
                 //                          "zle-line-init", "zle-line-finish");`
-                // The "init"/"finish" args (zle-line-init / zle-line-finish
-                // hooks) aren't yet wired into the Rust `zleread` entry —
-                // it dispatches them through ZLE_WIDGET_HOOK at the call
-                // path. Keep the C arg structure faithful via the comment.
                 let lprompt = lp.as_deref().unwrap_or("");
                 let rprompt = rp.as_deref().unwrap_or("");
-                let r = zleread(lprompt, rprompt, *flags, *context);
+                let r = zleread(
+                    lprompt,
+                    rprompt,
+                    *flags,
+                    *context,
+                    "zle-line-init",
+                    "zle-line-finish",
+                );
                 return r.ok();
             }
         }
@@ -4580,6 +4751,10 @@ pub fn was_yank() -> bool {
 pub static LASTCOL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 /// Port of `LinkList bufstack` from `Src/Zle/zle_hist.c`.
 pub static BUFSTACK: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// Port of `mod_export char *varedarg` from `Src/Zle/zle_main.c:1672` —
+/// the parameter name `vared` is editing, `None` (C NULL) outside `vared`.
+/// Read by `ksh93_wrapper` for `.sh.edcol`/`.sh.edtext`/`.sh.value`.
+pub static varedarg: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// Port of `char *vichgbuf` from `Src/Zle/zle_vi.c`.
 pub static VICHGBUF: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
 /// Port of `char *srch_str` from `Src/Zle/zle_hist.c`.

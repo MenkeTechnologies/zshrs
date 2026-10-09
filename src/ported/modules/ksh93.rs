@@ -28,7 +28,9 @@
 use crate::ported::builtins::sched::zleactive;
 pub use crate::ported::options::emulation;
 pub use crate::ported::params::locallevel;
-use crate::ported::params::{createparam, paramtab, setiparam, setloopvar, setsparam};
+use crate::ported::params::{createparam, getsparam, paramtab, setiparam, setloopvar, setsparam};
+use crate::ported::utils::itype_end;
+use crate::ported::zle::zle_main::varedarg;
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::{dupstring, ztrdup};
 use crate::ported::zsh_h::{
@@ -439,18 +441,11 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
             em[0] = 0;
             em[1] = 0;
         }
-        // c:197-198 — if (sh_edchar == sh_unsetval) sh_edchar = dupstring(getsparam("KEYS"));
-        let edch_unset = sh_edchar.lock().unwrap().is_empty();
-        if edch_unset {
-            let keys: String = paramtab()
-                .read()
-                .ok()
-                .and_then(|t| t.get("KEYS").and_then(|p| p.u_str.clone()))
-                .unwrap_or_default();
-            *sh_edchar.lock().unwrap() = dupstring(&keys);
-        }
-        let varedarg_val = varedarg.lock().unwrap().clone();
-        if !varedarg_val.is_empty() {
+        // c:197 — sh_edchar = dupstring(getsparam("KEYS"));
+        *sh_edchar.lock().unwrap() = dupstring(&getsparam("KEYS").unwrap_or_default());
+        // c:198 — if (varedarg)
+        let varedarg_cur = varedarg.lock().unwrap().clone();
+        if let Some(varedarg_val) = varedarg_cur {
             // c:199
             // c:200 — char *ie = itype_end((sh_name = dupstring(varedarg)), INAMESPC, 0);
             *sh_name.lock().unwrap() = dupstring(&varedarg_val);
@@ -458,20 +453,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
             // c:200 — `char *ie = itype_end((sh_name=...), INAMESPC, 0);`
             // itype_end returns a pointer past the run of chars matching
             // the type-bits; INAMESPC = identifier-namespace chars.
-            // Rust port: utils::itype_end takes (s, allow_digits_start)
-            // — wrong signature for INAMESPC. Inline the byte-walk to
-            // mirror the C `for (;;) test bit; advance;` loop.
-            let _ = INAMESPC;
-            let ie_off = {
-                let mut k = 0;
-                for &b in nm.as_bytes() {
-                    match b {
-                        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => k += 1,
-                        _ => break,
-                    }
-                }
-                k
-            };
+            let ie_off = itype_end(&nm, INAMESPC, false);
             if ie_off < nm.len() {
                 // c:201 if (ie && *ie)
                 // c:202 — *ie++ = '\0';
@@ -779,11 +761,6 @@ static PATAB: OnceLock<Mutex<Vec<paramdef>>> = OnceLock::new();
 // `startparamscope` on function entry, decremented by `endparamscope`
 // on return. `ksh93_wrapper` increments before `createparam()` and
 // decrements after.
-
-/// `varedarg` — `char *` global defined at `Src/Zle/zle_main.c:1672`,
-/// declared `extern` at c:190. Holds the parameter name being edited by
-/// `vared`; `bin_vared` assigns it (zle_main.c:1831/1843).
-pub static varedarg: Mutex<String> = Mutex::new(String::new());
 
 // `funcstack` — `Funcstack` global from `Src/exec.c:340` is
 // `modules::parameter::FUNCSTACK`.

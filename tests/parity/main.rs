@@ -205,6 +205,7 @@ mod zle_editor_params_parity;
 mod zle_history_search_parity;
 mod zle_pending_parity;
 mod zle_undo_parity;
+mod zle_vared_parity;
 mod zle_widget_parity;
 mod zsh_compat_parity_gaps;
 mod zsh_idioms_parity;
