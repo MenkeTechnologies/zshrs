@@ -28,7 +28,6 @@
 
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::subst::singsub;
-use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -67,7 +66,7 @@ pub fn _globqual_delims() -> i32 {
 pub fn _globqual_delims_impl() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_globqual_delims");
     // sh:6
-    set_compstate_str("restore", "no");
+    let _ = crate::ported::params::setsparam("compstate[restore]", "no");
 
     // sh:8 `delim=$PREFIX[1]` — empty when `$PREFIX` is. `delim` is not
     //   local: `_globquals` reads it back.
@@ -122,6 +121,7 @@ mod tests {
         // Measured with zsh 5.9.2 over matchl="<({[": `<` -> 1, `{` -> 3,
         // `(` -> 0 (a lone `(` is a bad pattern), empty -> 5 (past the end).
         let _g = crate::test_util::global_state_lock();
+        let _scope = crate::test_util::comp_scope();
         for (prefix, want) in [("<foo", ">"), ("{foo", "}"), ("(foo", "("), ("", "")] {
             let _ = setsparam("PREFIX", prefix);
             let _ = _globqual_delims_impl();

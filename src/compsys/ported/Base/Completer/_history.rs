@@ -25,7 +25,6 @@ use crate::compsys::ported::_wanted::_wanted;
 use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::get_compstate_str;
 
 /// `_history` — complete from `$historywords` array.
 pub fn _history() -> i32 {
@@ -126,7 +125,7 @@ pub fn _history() -> i32 {
     let _ = setsparam("ISUFFIX", "");
 
     // sh:50-59  walk slices until nmatches > 0 or beg >= max.
-    while get_compstate_str("nmatches").and_then(|s| s.parse::<i64>().ok()) == Some(0) && beg < max
+    while crate::ported::params::getsparam("compstate[nmatches]").and_then(|s| s.parse::<i64>().ok()) == Some(0) && beg < max
     {
         let end = (beg + slice).min(hmax);
         let hslice: Vec<String> = if beg <= end && beg >= 1 && end <= historywords.len() {
@@ -152,7 +151,7 @@ pub fn _history() -> i32 {
     }
 
     // sh:65
-    let nm: i64 = get_compstate_str("nmatches")
+    let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     if nm == 0 {
@@ -170,9 +169,8 @@ mod tests {
     fn empty_historywords_returns_one() {
         let _g = crate::test_util::global_state_lock();
         // `compstate[nmatches]` is a LIVE GSU integer (complete.c:1411)
-        // backed by the `nmatches` counter — writing it through
-        // `set_compstate_str` is a no-op, the reader always consults the
-        // counter. Zero the counter itself so a non-zero count left by
+        // backed by the `nmatches` counter — the key is read-only, the
+        // reader always consults the counter. Zero the counter itself so a non-zero count left by
         // an earlier completion test doesn't turn "no matches" into 0.
         crate::ported::zle::compcore::nmatches.store(0, std::sync::atomic::Ordering::Relaxed);
         setaparam("historywords", Vec::new());

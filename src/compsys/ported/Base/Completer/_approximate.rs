@@ -47,7 +47,6 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{
     bin_compadd, clear_compadd_prefix_injector, set_compadd_prefix_injector, COMPADD_ARGV_SHADOW,
 };
@@ -215,9 +214,9 @@ pub fn _approximate(args: &[String]) -> i32 {
     let _ = _tags(&["corrections".to_string(), "original".to_string()]);
 
     // sh:74-77
-    let opm = get_compstate_str("pattern_match").unwrap_or_default();
+    let opm = crate::ported::params::getsparam("compstate[pattern_match]").unwrap_or_default();
     if opm.is_empty() {
-        set_compstate_str("pattern_match", "*");
+        let _ = crate::ported::params::setsparam("compstate[pattern_match]", "*");
     }
 
     // sh:55-56 — `if (( ! $+functions[compadd] )); then dounfunction=1`.
@@ -286,15 +285,15 @@ pub fn _approximate(args: &[String]) -> i32 {
 
         if comp_ret == 0 {
             // sh:85-87  insert-unambiguous?
-            let unambig = get_compstate_str("unambiguous").unwrap_or_default();
+            let unambig = crate::ported::params::getsparam("compstate[unambiguous]").unwrap_or_default();
             // sh:89 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
             if zstyle_t(&format!(":completion:{}:", new_ctx), "insert-unambiguous") == 0
                 && unambig.chars().count() >= pre_suf.chars().count()
             {
-                set_compstate_str("pattern_insert", "unambiguous");
+                let _ = crate::ported::params::setsparam("compstate[pattern_insert]", "unambiguous");
             } else if _requested(&["original".to_string()]) == 0 {
                 // sh:88-90
-                let nm: i64 = get_compstate_str("nmatches")
+                let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
                 // sh:94 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
@@ -331,14 +330,14 @@ pub fn _approximate(args: &[String]) -> i32 {
                     let _ = bin_compadd("compadd", &compadd_argv, &make_ops(), 0);
 
                     // sh:100-101
-                    let list = get_compstate_str("list").unwrap_or_default();
+                    let list = crate::ported::params::getsparam("compstate[list]").unwrap_or_default();
                     if !list.starts_with("list") {
-                        set_compstate_str("list", &format!("{} force", list));
+                        let _ = crate::ported::params::setsparam("compstate[list]", &format!("{} force", list));
                     }
                 }
             }
             // sh:103
-            set_compstate_str("pattern_match", &opm);
+            let _ = crate::ported::params::setsparam("compstate[pattern_match]", &opm);
             ret = 0;
             break;
         }
@@ -363,7 +362,7 @@ pub fn _approximate(args: &[String]) -> i32 {
         // sh:119 — the failure path restores pattern_match too; only the
         //   success path did so before, so a failed `_approximate` left
         //   `compstate[pattern_match]` at `*` for every later completer.
-        set_compstate_str("pattern_match", &opm);
+        let _ = crate::ported::params::setsparam("compstate[pattern_match]", &opm);
     }
     ret
 }

@@ -100,24 +100,6 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     if let Ok(mut g) = COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = head_q.to_string(); // c:305-306
     }
-    // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
-    // In C, `$compstate[all_quotes]` has NO storage of its own: its
-    // `compkparams` row is `{ "all_quotes", PM_SCALAR | PM_READONLY, NULL,
-    // GSU(compqstack_gsu) }` (complete.c:1299) and `compqstack_gsu`
-    // (complete.c:1242-1243) routes every read through `get_compqstack`
-    // (complete.c:1479) against the live `compqstack` global — so the
-    // c:305-306 assignment IS the parameter update. zshrs splits the two: a
-    // single-key `${compstate[KEY]}` read comes straight out of
-    // `paramtab_hashed_storage` (`src/ported/subst.rs:7034-7044`), which
-    // special-cases only `nmatches`, so nothing ever published `all_quotes`
-    // and it read EMPTY where zsh gives `\`, `"`, `'` (`_cmdambivalent`
-    // sh:47 and the documented `compquote` idiom both read it). Run the
-    // getter and store its result at each `compqstack` write.
-    set_compstate_str(
-        "all_quotes",
-        &crate::ported::zle::complete::get_compqstack(&crate::ported::zsh_h::param::default()),
-    );
-
     hasunqu.store(0, Ordering::Relaxed); // c:309
     let wouldinstab_v = WOULDINSTAB.load(Ordering::Relaxed); // c:310
     useline.store(
@@ -132,7 +114,13 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         Ordering::Relaxed,
     );
     useexact.store(opt_isset("RECEXACT"), Ordering::Relaxed); // c:311
-    set_compstate_str("exact_string", ""); // c:312
+    // c:312 — `zsfree(compexactstr); compexactstr = ztrdup("");`
+    if let Ok(mut g) = crate::ported::zle::complete::COMPEXACTSTR
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+    {
+        g.clear();
+    }
     let useline_v = useline.load(Ordering::Relaxed);
     uselist.store(
         // c:314
@@ -177,7 +165,6 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     {
         *g = "menu".into(); // c:321
     }
-    set_compstate_str("pattern_insert", "menu"); // c:320
     forcelist.store(0, Ordering::Relaxed); // c:322
     haspattern.store(0, Ordering::Relaxed); // c:323
                                             // c:324 — complistmax mirrors the LISTMAX parameter for every
@@ -197,15 +184,6 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     {
         *g = lastprompt_v.into();
     }
-    set_compstate_str(
-        // c:326
-        "last_prompt",
-        if opt_isset("ALWAYSLASTPROMPT") != 0 {
-            "yes"
-        } else {
-            ""
-        },
-    );
     dolastprompt.store(1, Ordering::Relaxed); // c:327
 
     // c:329-330 — complist string.
@@ -766,6 +744,18 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
 /// `compkpms` slots are modelled by the `$compstate` hash storage
 /// (a key's PM_UNSET bit is spelled as removing the entry).
 pub fn callcompfunc(s: &str, fn_name: &str) {
+    use crate::ported::zle::comp_h::{
+        CP_ALLKEYS, CP_ALLREALS, CP_EXACT, CP_EXACTSTR, CP_INSERT, CP_KEYPARAMS, CP_LASTPROMPT,
+        CP_LIST, CP_OLDINS, CP_OLDLIST, CP_PARAMETER, CP_PATMATCH, CP_QUOTE, CP_QUOTING,
+        CP_REALPARAMS, CP_REDIRECT, CP_VARED,
+    };
+    use crate::ported::zle::complete::{
+        comp_setunset, compkpms, comprpms, makecompparams, COMPCONTEXT, COMPCURRENT, COMPEXACT,
+        COMPINSERT, COMPIPREFIX, COMPISUFFIX, COMPLASTPREFIX, COMPLASTPROMPT, COMPLASTSUFFIX,
+        COMPOLDINS, COMPOLDLIST, COMPPARAMETER, COMPPREFIX as COMPPFX, COMPQIPREFIX, COMPQISUFFIX,
+        COMPQUOTE, COMPQUOTING, COMPREDIRECT, COMPREDIRS, COMPSUFFIX as COMPSFX, COMPTOEND,
+        COMPVARED, COMPWORDS,
+    };
     tracing::debug!(target: "compsys_args", %s, %fn_name, "callcompfunc ENTER");
     // c:544
 
@@ -790,51 +780,68 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     let _icf = INCOMPFUNC.load(Ordering::Relaxed); // c:555
     let _osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed); // c:555
 
-    let _useglob = USEGLOB.load(Ordering::Relaxed); // c:579
+    let useglob_v = USEGLOB.load(Ordering::Relaxed); // c:579
 
-    // c:561-563 — `kset = CP_ALLKEYS & ~(CP_PARAMETER | CP_REDIRECT |
-    // CP_QUOTE | CP_QUOTING | CP_EXACTSTR | CP_OLDLIST | CP_OLDINS | …)`,
-    // handed to `comp_setunset(…, kset, ~kset & CP_ALLKEYS)` at c:818.
-    // Every cleared bit raises PM_UNSET on that key's `compkpms` slot
-    // (complete.c:1557-1558), and a PM_UNSET param is skipped by every
-    // hash scan — so `${(@kv)compstate}`, and therefore `_lastcomp`
-    // (`_main_complete` sh:407), carries no entry for it at all.
-    //
-    // zshrs's assoc backing is a flat name→map with no per-key flag bits,
-    // so the equivalent of raising PM_UNSET is removing the entry. The
-    // publishes below used to write "" for these keys instead, which is a
-    // different observable state: present, with an empty value.
-    let kunset = |key: &str| {
-        // c:complete.c:1558 — `(*p)->node.flags |= PM_UNSET`.
-        if let Ok(mut tab) = paramtab_hashed_storage().lock() {
-            if let Some(hash) = tab.get_mut(crate::ported::zle::complete::COMPSTATENAME) {
-                hash.remove(key);
-            }
+    // The C globals this function assigns (c:565-812); `$PREFIX`, `$words`,
+    // `$compstate[...]` … are gsu views of them, so storing here IS the
+    // publish.
+    let setg = |g: &'static OnceLock<Mutex<String>>, v: &str| {
+        if let Ok(mut x) = g.get_or_init(|| Mutex::new(String::new())).lock() {
+            *x = v.to_string();
         }
-        crate::ported::params::unsetparam(&format!("compstate[{}]", key));
     };
-    // c:562 — `CP_EXACTSTR` is one of the bits cleared out of `kset`, so
-    // `$compstate[exact_string]` starts the round UNSET; only a later
-    // exact match publishes it (c:3046-3055, mirrored at the
-    // `set_compstate_str("exact_string", …)` site below). do_completion's
-    // c:312 `compexactstr = ""` resets the GLOBAL, not the param's set
-    // bit — the port's matching publish left the key present-and-empty,
-    // so `_lastcomp` carried an `exact_string` entry zsh does not have
-    // whenever the round found no exact match.
-    kunset("exact_string"); // c:562
+    let getg = |g: &'static OnceLock<Mutex<String>>| -> String {
+        g.get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|x| x.clone())
+            .unwrap_or_default()
+    };
 
-    // c:667-693 — `compquote` / `compquoting` from the quote state
-    // `get_comp_string` recorded. These ARE `$compstate[quote]` and
-    // `$compstate[quoting]` (complete.c:1276-1277). Neither was ported, so
-    // both read empty for every completion — `_main_complete`'s
-    // `[[ -n $compstate[quote] ]]` branches, `_path_files`'s quoting
-    // decisions and `addmatches`'s own c:2139 quote block all behaved as
-    // if nothing were ever quoted.
+    // c:555-558 — `Param *ocrpms = comprpms, *ockpms = compkpms;
+    //              comprpms = zalloc(CP_REALPARAMS * sizeof(Param));
+    //              compkpms = zalloc(CP_KEYPARAMS * sizeof(Param));`
+    let ocrpms = comprpms.lock().ok().and_then(|mut g| g.take());
+    let ockpms = compkpms.lock().ok().and_then(|mut g| g.take());
+    if let Ok(mut g) = comprpms.lock() {
+        *g = Some(vec![None; CP_REALPARAMS as usize]);
+    }
+    if let Ok(mut g) = compkpms.lock() {
+        *g = Some(vec![None; CP_KEYPARAMS as usize]);
+    }
+
+    // c:560-564
+    let rset: u32 = CP_ALLREALS;
+    let mut kset: u32 = CP_ALLKEYS
+        & !(CP_PARAMETER
+            | CP_REDIRECT
+            | CP_QUOTE
+            | CP_QUOTING
+            | CP_EXACTSTR
+            | CP_OLDLIST
+            | CP_OLDINS
+            | (if useglob_v != 0 { 0 } else { CP_PATMATCH }));
+    // c:565-570 — `zsfree(compvared); if (varedarg) { compvared =
+    // ztrdup(varedarg); kset |= CP_VARED; } else compvared = ztrdup("");`
+    match crate::ported::zle::zle_main::varedarg.lock().ok().and_then(|g| g.clone()) {
+        Some(v) => {
+            setg(&COMPVARED, &v);
+            kset |= CP_VARED;
+        }
+        None => setg(&COMPVARED, ""),
+    }
+    // c:571-572
+    if getg(&COMPLASTPROMPT).is_empty() {
+        kset &= !CP_LASTPROMPT;
+    }
+
+    // c:667-694 — `compquote` / `compquoting` from the quote state
+    // `get_comp_string` recorded; `$compstate[quote]` / `[quoting]` view them
+    // (complete.c:1276-1277).
     {
-        use crate::ported::zle::complete::{COMPQUOTE, COMPQUOTING};
         let instring = INSTRING.load(Ordering::Relaxed);
         let (cq, cqg): (&str, &str) = if instring > QT_BACKSLASH {
             // c:669
+            kset |= CP_QUOTE | CP_QUOTING; // c:686
             match instring {
                 QT_SINGLE => ("'", "single"),    // c:671-674
                 QT_DOUBLE => ("\"", "double"),   // c:676-679
@@ -842,41 +849,19 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
                 _ => ("", ""),
             }
         } else if INBACKT.load(Ordering::Relaxed) != 0 {
+            kset |= CP_QUOTE | CP_QUOTING; // c:690
             ("`", "backtick") // c:687-689
         } else {
             ("", "") // c:691-693
         };
-        for (global, v) in [(&COMPQUOTE, cq), (&COMPQUOTING, cqg)] {
-            if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
-                *g = v.to_string();
-            }
-        }
-        // The `$compstate` entries are gsu VIEWS onto those globals in C;
-        // this port has to publish them explicitly.
-        //
-        // c:561-563 — `CP_QUOTE | CP_QUOTING` start cleared in `kset`;
-        // only the two quoted arms (c:686, c:690) raise them. The
-        // unquoted arm at c:691-693 leaves the globals empty AND the
-        // params unset, so the keys must disappear rather than appear
-        // with an empty value.
-        if cq.is_empty() && cqg.is_empty() {
-            kunset("quote"); // c:562
-            kunset("quoting"); // c:562
-        } else {
-            set_compstate_str("quote", cq); // complete.c:1276, c:686/690
-            set_compstate_str("quoting", cqg); // complete.c:1277, c:686/690
-        }
+        setg(&COMPQUOTE, cq);
+        setg(&COMPQUOTING, cqg);
     }
 
-    // Publish the completion word split at the cursor into the
-    // `$PREFIX` / `$SUFFIX` params (+ empty ignored-prefix/suffix). In C
-    // these are gsu-bound to `compprefix`/`compsuffix`; the Rust ports
-    // have no gsu binding, so without this every completer reads
-    // `$PREFIX=''` — `_main_complete`'s `compset -P 1 '='` then matches
-    // the empty prefix and wrongly forces `$compstate[context]=equal`,
-    // and `_path_files` has no prefix to glob. The word is split the way
-    // c:699-718 splits it — whole-word under `unset(COMPLETEINWORD)`, else
-    // at `OFFS` (zlemetacs - wb), the cursor offset within the word.
+    // c:695-722 — assign `compprefix` / `compsuffix` (+ the ignored
+    // prefix/suffix), which `$PREFIX` / `$SUFFIX` view. The word is split the
+    // way c:699-718 splits it — whole-word under `unset(COMPLETEINWORD)`,
+    // else at `OFFS` (zlemetacs - wb), the cursor offset within the word.
     {
         // c:699-718 — the compprefix/compsuffix split. C branches on
         // `unset(COMPLETEINWORD)` FIRST: with the option OFF (the default)
@@ -985,8 +970,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // `inittyptab` had stored `ZTF_BANGCHAR` (utils.c:4291); in a
         // non-interactive shell it correctly stays clear.
         crate::ported::utils::makebangspecial(true);
-        let _ = crate::ported::params::setsparam("PREFIX", &pre);
-        let _ = crate::ported::params::setsparam("SUFFIX", &suf);
+        setg(&COMPPFX, &pre); // c:701 / c:712
+        setg(&COMPSFX, &suf); // c:702 / c:716
         // c:724-741 — `$IPREFIX` / `$ISUFFIX`.
         //
         //     zsfree(compiprefix); zsfree(compisuffix);
@@ -1037,8 +1022,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             OFFS.store(PAROFFS.load(Ordering::Relaxed), Ordering::Relaxed); // c:741
             (ip, is)
         };
-        let _ = crate::ported::params::setsparam("IPREFIX", &ipre_v);
-        let _ = crate::ported::params::setsparam("ISUFFIX", &isuf_v);
+        setg(&COMPIPREFIX, &ipre_v); // c:726 / c:731-733
+        setg(&COMPISUFFIX, &isuf_v); // c:727 / c:734-736
         // c:742-745 — `compqiprefix = ztrdup(qipre ? qipre : "");
         //              compqisuffix = ztrdup(qisuf ? qisuf : "");`
         // `compqiprefix`/`compqisuffix` ARE `$QIPREFIX`/`$QISUFFIX`
@@ -1049,34 +1034,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // completing inside `"…"` / `'…'` / `$'…'` dropped the opening
         // quote off the command line and every `$QIPREFIX`-testing
         // completer took its unquoted branch.
-        crate::vm_helper::set_readonly_special(
-            "QIPREFIX",
-            &crate::ported::zle::zle_tricky::qipre_get(),
-        ); // c:743
-        crate::vm_helper::set_readonly_special(
-            "QISUFFIX",
-            &crate::ported::zle::zle_tricky::qisuf_get(),
-        ); // c:745
-           // c:complete.c:1235-1295 — in C these params ARE `compprefix`/
-           // `compsuffix`/`compiprefix`/`compisuffix` (gsu-bound, one
-           // storage), so the publish above resets the globals too. The Rust
-           // compparams have no gsu binding, so the globals kept the PREVIOUS
-           // call's values — and `expand-or-complete` calls this twice per
-           // TAB. Mirror the reset onto the globals. (Same block as
-           // addmatches below and bin_compfiles -p/-P in computil.rs.)
-        for (param, global) in [
-            ("PREFIX", &COMPPREFIX),
-            ("SUFFIX", &COMPSUFFIX),
-            ("IPREFIX", &COMPIPREFIX),
-            ("ISUFFIX", &crate::ported::zle::complete::COMPISUFFIX),
-        ] {
-            if let Some(v) = crate::ported::params::getsparam(param) {
-                if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
-                    *g = v;
-                }
-            }
-        }
-
+        setg(&COMPQIPREFIX, &crate::ported::zle::zle_tricky::qipre_get()); // c:743
+        setg(&COMPQISUFFIX, &crate::ported::zle::zle_tricky::qisuf_get()); // c:745
         // c:720-723 — `zsfree(complastprefix); zsfree(complastsuffix);
         //              complastprefix = ztrdup(compprefix);
         //              complastsuffix = ztrdup(compsuffix);`.
@@ -1088,10 +1047,7 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // `domenuselect`'s interactive status line renders the search
         // buffer as `interactive: <prefix>[]<suffix>` (setmstatus,
         // complist.c:2234-2235).
-        for (src, dst) in [
-            (&COMPPREFIX, &crate::ported::zle::complete::COMPLASTPREFIX),
-            (&COMPSUFFIX, &crate::ported::zle::complete::COMPLASTSUFFIX),
-        ] {
+        for (src, dst) in [(&COMPPFX, &COMPLASTPREFIX), (&COMPSFX, &COMPLASTSUFFIX)] {
             let v = src
                 .get_or_init(|| Mutex::new(String::new()))
                 .lock()
@@ -1120,14 +1076,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // (gsu-bound, complete.c) — read back the values the publish above set
         // rather than a second, independently derived copy.
         {
-            use crate::ported::zle::complete::{COMPISUFFIX, COMPQIPREFIX, COMPQISUFFIX};
-            let qip = crate::ported::params::getsparam("QIPREFIX").unwrap_or_default(); // c:744
-            let qis = crate::ported::params::getsparam("QISUFFIX").unwrap_or_default(); // c:746
-            for (global, v) in [(&COMPQIPREFIX, &qip), (&COMPQISUFFIX, &qis)] {
-                if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
-                    *g = v.clone();
-                }
-            }
+            let qip = getg(&COMPQIPREFIX); // c:746
+            let qis = getg(&COMPQISUFFIX); // c:748
             let glen = |g: &std::sync::OnceLock<Mutex<String>>| -> usize {
                 g.get_or_init(|| Mutex::new(String::new()))
                     .lock()
@@ -1135,19 +1085,19 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
                     .unwrap_or(0)
             };
             origlpre.store(
-                (qip.len() + glen(&COMPIPREFIX) + glen(&COMPPREFIX)) as i32,
+                (qip.len() + glen(&COMPIPREFIX) + glen(&COMPPFX)) as i32,
                 Ordering::Relaxed,
             ); // c:747-748
             origlsuf.store(
-                (qis.len() + glen(&COMPISUFFIX) + glen(&COMPSUFFIX)) as i32,
+                (qis.len() + glen(&COMPISUFFIX) + glen(&COMPSFX)) as i32,
                 Ordering::Relaxed,
             ); // c:749-750
             lenchanged.store(0, Ordering::Relaxed); // c:751
         }
     }
 
-    // c:591-617 — context selection.
-    let context = compcontext_for(s); // c:591-617
+    // c:577-633 — context selection.
+    let context = compcontext_for(s);
     tracing::debug!(
         target: "compsys_args",
         %context,
@@ -1155,14 +1105,11 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         ispar = ispar.load(Ordering::Relaxed),
         "callcompfunc context"
     );
-    set_compstate_str("context", &context); // c:619
+    setg(&COMPCONTEXT, &context); // c:633
 
     // c:577 — `compparameter = compredirect = ""`, then c:586 (subscript),
     // c:607 (IN_ENV value / array_value) overwrite it with `varname`, the
-    // parameter name `get_comp_string` split off the line. This publish was
-    // missing entirely, so `$compstate[parameter]` kept whatever a previous
-    // completion left: `_value` dispatched `-value-,,-default-` instead of
-    // `-value-,PATH,-default-` and never reached the per-parameter completer.
+    // parameter name `get_comp_string` split off the line.
     let varname = || {
         crate::ported::zle::zle_tricky::VARNAME
             .get_or_init(|| Mutex::new(None))
@@ -1183,76 +1130,53 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             .unwrap_or_default(),
         _ => String::new(), // c:577
     };
-    // c:561-563 — `kset = CP_ALLKEYS & ~(CP_PARAMETER | …)`: the key
-    // starts UNSET and only c:586 / c:594 / c:607 / c:626 raise
-    // `kset |= CP_PARAMETER`, which is exactly the set of arms that give
-    // `compparameter` a name. Publishing "" instead left the key present
-    // in `${(@kv)compstate}` (and so in `_lastcomp`) where zsh has no
-    // entry at all.
-    if compparameter.is_empty() {
-        kunset("parameter"); // c:562
-    } else {
-        set_compstate_str("parameter", &compparameter);
+    // c:586 / c:594 / c:607 / c:626 — the arms that raise `CP_PARAMETER`.
+    let param_arm = match context.as_str() {
+        "value" | "array_value" => true,
+        "subscript" if linwhat.load(Ordering::Relaxed) == IN_MATH_LW => !varname().is_empty(),
+        "subscript" => true,
+        _ => false,
+    };
+    if param_arm {
+        kset |= CP_PARAMETER;
     }
+    // c:663-665 — `compparameter = ztrdup(compparameter)`.
+    setg(&COMPPARAMETER, &compparameter);
 
     // c:598-602 — `compcontext = "redirect"; if (rdstr) compredirect =
-    // rdstr;`. `compredirect` is `$compstate[redirect]` (complete.c:1265)
-    // and was never written by this port, so `_redirect` had nothing to
-    // dispatch on and `_expand`'s multios branch (sh:236) saw an empty
-    // operator. Reset to "" (c:577) in every other context.
+    // rdstr; kset |= CP_REDIRECT;`.
     let compredirect = if context == "redirect" {
+        kset |= CP_REDIRECT; // c:601
         crate::ported::zle::zle_tricky::RDSTR
             .lock()
             .ok()
             .and_then(|g| g.clone())
-            .unwrap_or_default() // c:600-601
+            .unwrap_or_default() // c:600
     } else {
         String::new() // c:577
     };
-    // c:561-563 / c:601 — `CP_REDIRECT` likewise starts cleared and is
-    // raised only by the `redirect` context arm.
-    if compredirect.is_empty() {
-        kunset("redirect"); // c:562
-    } else {
-        set_compstate_str("redirect", &compredirect); // c:601
-    }
-    // C binds `compredirect` to `$compstate[redirect]` through one gsu
-    // storage; this port keeps the global and the param separate, so
-    // mirror the write (same pattern as PREFIX/COMPPREFIX above).
-    if let Ok(mut g) = crate::ported::zle::complete::COMPREDIRECT
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-    {
-        *g = compredirect;
-    }
+    setg(&COMPREDIRECT, &compredirect); // c:666
 
-    // c:648-653 — `compredirs = zlinklist2array(rdstrs, 1)`, published as
-    // the `redirections` real-param (complete.c:1250). One entry per
+    // c:647-652 — `compredirs = zlinklist2array(rdstrs, 1)`: one entry per
     // COMPLETED redirection on the line, each `<op>:<target>`.
-    setaparam(
-        "redirections",
-        crate::ported::zle::zle_tricky::RDSTRS
+    if let Ok(mut g) = COMPREDIRS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        *g = crate::ported::zle::zle_tricky::RDSTRS
             .lock()
             .map(|g| g.clone())
-            .unwrap_or_default(),
-    );
+            .unwrap_or_default();
+    }
 
     // c:634-645 — `if (compwords) freearray(compwords); if (usea && …)
     // { compwords = copy of clwords } else compwords = empty`. C rebuilds
     // `$words` from the parsed line on EVERY call, which is what makes the
     // SECOND completion pass of `expand-or-complete` (zle_tricky.c:851)
     // see the full command line again — `get_comp_string` runs only once
-    // per TAB. This port was missing the rebuild, so a first pass that
-    // restricted `$words` (any `_arguments` spec with a `*::`/`*:::` rest
-    // argument calls `comparguments -W` → restrict_range) left the second
-    // pass with an empty word array: no command word, no completer
-    // dispatch, and every match from the first pass discarded.
+    // per TAB.
     //
     // `usea` (c:590) is 0 only in the math context; C's `aadd` sub-case
     // (parameter-subscript, c:626-630) needs `varname`, which this port
     // does not compute yet — it is treated as 0 here, exactly as before.
     {
-        use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS};
         let usea = linwhat.load(Ordering::Relaxed) != IN_MATH_LW;
         let ws: Vec<String> = if usea {
             crate::ported::zle::zle_tricky::CLWORDS
@@ -1266,10 +1190,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // c:751 — `compcurrent = (usea ? (clwpos + 1 - aadd) : 0)`. Like
         // `compwords`, this is RECOMPUTED per call, never carried over: the
         // first pass' `comparguments -W` shifts it down to the restricted
-        // range, and reusing that value left the second pass pointing at
-        // the command word. `clwpos < 0` means the cursor sits past the
-        // last word (fresh trailing word) — same guard as the publish site
-        // in get_comp_string.
+        // range. `clwpos < 0` means the cursor sits past the last word
+        // (fresh trailing word).
         let clwpos = crate::ported::zle::zle_tricky::CLWPOS.load(Ordering::Relaxed);
         let cur = if !usea {
             0 // c:751 — math context: no words, no current
@@ -1279,60 +1201,18 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             (clwpos + 1).max(1)
         };
         if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            *g = ws.clone();
+            *g = ws;
         }
-        COMPCURRENT.store((cur) as i64, Ordering::Relaxed);
-        // zshrs bridge: `$words`/`$CURRENT` are plain paramtab copies here
-        // (C binds them to the globals via gsu), so the rebuild has to
-        // reach the params too — see get_comp_string's publish site.
-        setaparam("words", ws);
-        let _ = crate::ported::params::setiparam("CURRENT", cur as i64);
+        COMPCURRENT.store(cur as i64, Ordering::Relaxed);
     }
 
-    // c:571-572 —
-    // ```c
-    //     if (!*complastprompt)
-    //         kset &= ~CP_LASTPROMPT;
-    // ```
-    // C only READS `complastprompt` here (to drop CP_LASTPROMPT from the
-    // "keys the completion function may set" mask); it never writes it.
-    // The single writer is do_completion at c:325,
-    // `complastprompt = ztrdup(isset(ALWAYSLASTPROMPT) ? "yes" : "")`,
-    // ported at compcore.rs:200-208.
-    //
-    // This site used to WRITE `$compstate[last_prompt]` back from
-    // `dolastprompt` (which do_completion has just set to 1 at c:326),
-    // which stomped the "" that NO_ALWAYS_LAST_PROMPT had just stored.
-    // addmatch's `if (!complastprompt || !*complastprompt) dolastprompt = 0`
-    // (c:3014-3015) then never fired, so `dolastprompt` stayed 1,
-    // `clearflag` came out 1 in asklist (c:1925) / compprintlist (c:2061),
-    // and zrefresh's reset frame took the `if (clearflag)` branch at
-    // c:1168-1172 (`\r` + `moveto(0, lpromptw)`) instead of the
-    // `!clearflag` branch at c:1146-1167 (TCCLEAREOD + `zputs(lpromptbuf)`)
-    // — so after a completion listing the prompt was never repainted.
-    // `kset` is not materialised in this port (it is only used
-    // descriptively, see c:561-563 above), so the C statement has no
-    // representable effect beyond the read.
-    let _complastprompt_isset = !get_compstate_str("last_prompt")
-        .unwrap_or_default()
-        .is_empty(); // c:571
-
     // c:753-765 — `$compstate[list]` is REBUILT here from `uselist`, it is
-    // not the value do_completion left in `complist` at c:327-330:
-    //
-    //     switch (uselist) { case 0: ""; 1: "list"; 2: "autolist";
-    //                        3: "ambiguous"; }
-    //     if (isset(LISTPACKED))   complist = dyncat(complist, " packed");
-    //     if (isset(LISTROWSFIRST)) complist = dyncat(complist, " rows");
-    //
-    // The port published only the do_completion half ("packed"/"rows"), so
-    // the leading state word was never there: `_main_complete` and friends
-    // test `$compstate[list]` for `list`/`autolist`/`ambiguous` and always
-    // read them as absent. Write the rebuilt value to BOTH the param and the
-    // `complist` global, which is one storage in C (gsu-bound) and is what
-    // `addmatch` reads at c:2048-2050 for CMF_PACKED/CMF_ROWS.
+    // not the value do_completion left in `complist` at c:327-330.
     let mut cl_value = match uselist.load(Ordering::Relaxed) {
-        0 => String::new(),           // c:755
+        0 => {
+            kset &= !CP_LIST; // c:755
+            String::new()
+        }
         1 => "list".to_string(),      // c:756
         2 => "autolist".to_string(),  // c:757
         3 => "ambiguous".to_string(), // c:758
@@ -1344,33 +1224,17 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     if opt_isset("LISTROWSFIRST") != 0 {
         cl_value.push_str(" rows"); // c:763
     }
-    if let Ok(mut g) = COMPLIST.get_or_init(|| Mutex::new(String::new())).lock() {
-        *g = cl_value.clone(); // c:765
-    }
-    set_compstate_str("list", &cl_value); // c:765
+    setg(&crate::ported::zle::complete::COMPLIST, &cl_value); // c:765
 
-    // c:767-782 — `$compstate[insert]` per (useline, usemenu).
+    // c:766-782 — `compinsert` per (useline, usemenu).
     let ul = useline.load(Ordering::Relaxed);
     let um = USEMENU.load(Ordering::Relaxed);
     let ins = if ul != 0 {
-        // c:768-776
+        // c:767-776 — AUTO_MENU is on in every emulation by default, so the
+        // ordinary first TAB yields "automenu-unambiguous": the only way the
+        // shell function layer learns that the next TAB may start menu
+        // completion (_main_complete:302, _match:53).
         match um {
-            // c:769-772 — `compinsert = (isset(AUTOMENU) ?
-            //                            "automenu-unambiguous" : "unambiguous");`
-            //
-            // AUTO_MENU is on in every emulation by default (options.c:90
-            // lists it as `OPT_ALL`), so this arm — the one taken by an
-            // ordinary first TAB — normally yields "automenu-unambiguous",
-            // NOT the bare "unambiguous" this port hardcoded.
-            //
-            // The distinction is not cosmetic: it is the only way the shell
-            // function layer learns that the next TAB is allowed to start
-            // menu completion. Completion/Base/Core/_main_complete:302 gates
-            // the whole MENUSELECT/MENUMODE block on
-            // `[[ "$compstate[insert]" = *menu* ]]`, which
-            // "automenu-unambiguous" satisfies and "unambiguous" does not
-            // (ported at _main_complete.rs:929-931), and
-            // Base/Completer/_match:53 tests for the value verbatim.
             0 => {
                 if opt_isset("AUTOMENU") != 0 {
                     "automenu-unambiguous"
@@ -1383,49 +1247,32 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             _ => "",
         }
     } else {
-        // c:777-780 — `compinsert = ""; kset &= ~CP_INSERT;`
+        kset &= !CP_INSERT; // c:779
         ""
     };
     // c:781 — `compinsert = (useline < 0 ? tricat("tab ", "", compinsert)
-    //                                    : ztrdup(compinsert));`
-    //
-    // `useline < 0` is set at c:310 from `wouldinstab`, i.e. TAB was
-    // pressed with nothing but blanks to its left AND a completion
-    // widget is installed (zle_tricky.c:192-196). The "tab " prefix is
-    // the ONLY signal `_main_complete` has for that case: sh:70-79 of
-    // Completion/Base/Core/_main_complete tests `compstate[insert] =
-    // tab*` and, with the default `insert-tab yes`, returns 0 before
-    // any completer runs, so the widget falls through to inserting a
-    // literal TAB. Dropping the prefix made zshrs run the full
-    // completer chain on an empty command line, which surfaced every
-    // diagnostic those completers emit (e.g. a user `_describe` over an
-    // unset array printing "compdescribe: invalid argument") onto a
-    // prompt where zsh prints nothing at all.
+    //                                    : ztrdup(compinsert));` — the "tab "
+    // prefix is the only signal `_main_complete` has for the
+    // `wouldinstab` case (sh:70-79).
     let ins = if ul < 0 {
-        format!("tab {}", ins) // c:781
+        format!("tab {}", ins)
     } else {
         ins.to_string()
     };
-    set_compstate_str("insert", &ins); // c:781
+    setg(&COMPINSERT, &ins); // c:781
 
-    // c:785-790 — `$compstate[exact]`:
-    //     if (useexact) compexact = ztrdup("accept");
-    //     else { compexact = ztrdup(""); kset &= ~CP_EXACT; }
-    // Outside `kset` the key is PM_UNSET (c:818 comp_setunset), so it is
-    // not in `${(k)compstate}`. The store has no per-key unset bit, so the
-    // unset key is represented by its absence; the c:912 read-back treats
-    // an absent key as the "" published here (useexact stays 0).
+    // c:783-789 — `if (useexact) compexact = "accept"; else { compexact = "";
+    // kset &= ~CP_EXACT; }`
     if useexact.load(Ordering::Relaxed) != 0 {
-        set_compstate_str("exact", "accept"); // c:786
-    } else if let Ok(mut tab) = paramtab_hashed_storage().lock() {
-        if let Some(h) = tab.get_mut("compstate") {
-            h.shift_remove("exact"); // c:788-789
-        }
+        setg(&COMPEXACT, "accept"); // c:785
+    } else {
+        setg(&COMPEXACT, ""); // c:787
+        kset &= !CP_EXACT; // c:788
     }
 
-    // c:791-794 — `$compstate[to_end]` per movetoend.
-    set_compstate_str(
-        "to_end",
+    // c:790-794 — `$compstate[to_end]` per movetoend.
+    setg(
+        &COMPTOEND,
         if movetoend.load(Ordering::Relaxed) == 1 {
             "single"
         } else {
@@ -1433,48 +1280,35 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         },
     );
 
-    // c:797-812 — `$compstate[old_list]` / `$compstate[old_insert]`:
-    //
-    //     if (hasoldlist && lastpermmnum) {
-    //         compoldlist = listshown ? "shown" : "yes";
-    //         if (minfo.cur) { sprintf(buf,"%d",(*minfo.cur)->gnum);
-    //                          compoldins = buf; }
-    //         else compoldins = "";
-    //     } else compoldlist = compoldins = "";
-    //
-    // Both publishes were missing, so a completer could never tell that a
-    // previous list is still around. `_menu` and `_history_complete_word`
-    // read `$compstate[old_list]` and write back "keep" to reuse it; with
-    // the entry value absent (and the c:923-925 readback below equally
-    // absent) the keep round-trip could not work at all.
+    // c:795-812 — `compoldlist` / `compoldins`.
     let hasoldlist_v = hasoldlist.load(Ordering::Relaxed);
     let lastpermmnum_v = lastpermmnum.load(Ordering::Relaxed);
     if hasoldlist_v != 0 && lastpermmnum_v != 0 {
         // c:797
-        set_compstate_str(
-            "old_list",
+        setg(
+            &COMPOLDLIST,
             if LISTSHOWN.load(Ordering::Relaxed) != 0 {
                 "shown" // c:799
             } else {
                 "yes" // c:801
             },
         );
+        kset |= CP_OLDLIST; // c:802
         // c:803-808 — `compoldins = minfo.cur ? (*minfo.cur)->gnum : ""`.
         let cur_gnum: Option<i32> = MINFO
             .get()
             .and_then(|m| m.lock().ok())
             .and_then(|m| m.cur.as_ref().map(|c| c.gnum));
         match cur_gnum {
-            // c:806 — `kset |= CP_OLDINS` only in the minfo.cur arm.
-            Some(g) => set_compstate_str("old_insert", &g.to_string()), // c:804-805
-            None => kunset("old_insert"),                               // c:808
+            Some(g) => {
+                setg(&COMPOLDINS, &g.to_string()); // c:804-805
+                kset |= CP_OLDINS; // c:806
+            }
+            None => setg(&COMPOLDINS, ""), // c:808
         }
     } else {
-        // c:810 — `compoldlist = compoldins = ""` with CP_OLDLIST /
-        // CP_OLDINS still cleared from c:562, i.e. both params stay
-        // PM_UNSET and neither key appears in `${(@kv)compstate}`.
-        kunset("old_list");
-        kunset("old_insert");
+        setg(&COMPOLDLIST, ""); // c:810
+        setg(&COMPOLDINS, "");
     }
 
     // c:838 — `incompfunc = 1` before invoking the user fn.
@@ -1514,27 +1348,6 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     let largs_for_body = largs.clone();
     let fn_name_owned = fn_name.to_string();
 
-    // c:843-925 reads `complist`/`compinsert`/`compexact`/`comptoend`/
-    // `compoldlist`/`compoldins` AFTER `endparamscope()` (c:838). It can do
-    // that because in C those are plain globals (complete.c:36-44) and the
-    // `$compstate` entries are only gsu VIEWS onto them (complete.c:1280-1300
-    // `VAL(compinsert)` …) — tearing down the parameter cannot touch the
-    // value.
-    //
-    // This port has no gsu binding: the values live in the `compstate`
-    // parameter itself, which `callcompfunc` stamps PM_SPECIAL|PM_REMOVABLE
-    // at `locallevel + 1` (the c:816-817 block above), so `doshfunc`'s
-    // `endparamscope()` DELETES it. Measured with a tracing probe on the
-    // `cd /<TAB>` round: every key read back `None` after the call — `list`,
-    // `insert`, `exact` and `to_end` alike.
-    //
-    // So snapshot the hash at the END OF THE BODY — still inside the
-    // function scope, and after the completion function's last write, which
-    // is exactly the state C's globals hold when it reads them at c:843.
-    let compstate_end: std::sync::Arc<Mutex<Option<indexmap::IndexMap<String, String>>>> =
-        std::sync::Arc::new(Mutex::new(None));
-    let compstate_end_body = std::sync::Arc::clone(&compstate_end);
-
     let body_runner = move || -> i32 {
         // c:6042 — `runshfunc(prog, wrappers, name)`. zshrs runs the
         // body via either the Rust compsys port (direct fn call) or
@@ -1547,14 +1360,6 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // short-circuits. C convention: largs[0] = fn name, [1..] = argv.
         let rc = crate::ported::exec::run_function_body(&fn_name_owned, &largs_for_body[1..])
             .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
-        // Capture `$compstate` before the enclosing doshfunc scope ends.
-        if let Ok(tab) = paramtab_hashed_storage().lock() {
-            if let Some(h) = tab.get("compstate") {
-                if let Ok(mut g) = compstate_end_body.lock() {
-                    *g = Some(h.clone());
-                }
-            }
-        }
         rc
     };
 
@@ -1586,105 +1391,23 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         body: None,
         redir_text: None,
     };
-    // c:817-819 — `makecompparams(); comp_setunset(rset, …, kset,
-    // ~kset & CP_ALLKEYS);`. makecompparams creates every compkparams row
-    // (complete.c:1261-1290) inside `$compstate`; comp_setunset then marks
-    // the rows outside `kset` PM_UNSET. The rows below are in `kset` on
-    // every call — the c:562-564 initial mask never excludes them and no
-    // later c:565-812 statement clears them — so `${(k)compstate}` always
-    // lists them. Their values come from getters or C globals
-    // (get_compstate_str), never from a set_compstate_str publish, so
-    // without this the keys were missing from `${(k)compstate}` and from
-    // `_lastcomp`. The value stored is only a placeholder: assoc scans
-    // recompute it (params.rs, the get_compstate_str refresh).
-    for key in [
-        "nmatches",              // c:1262 GSU(nmatches_gsu)
-        "unambiguous",           // c:1275 GSU(unambig_gsu)
-        "unambiguous_cursor",    // c:1276 GSU(unambig_curs_gsu)
-        "unambiguous_positions", // c:1278 GSU(unambig_pos_gsu)
-        "insert_positions",      // c:1280 GSU(insert_pos_gsu)
-        "list_max",              // c:1282 VAL(complistmax)
-        "vared",                 // c:1287 VAL(compvared); c:569 only adds the bit
-        "list_lines",            // c:1288 GSU(listlines_gsu)
-        "all_quotes",            // c:1289 GSU(compqstack_gsu)
-        "ignored",               // c:1290 VAL(compignored)
-    ] {
-        let present = paramtab_hashed_storage()
-            .lock()
-            .map(|t| t.get("compstate").is_some_and(|h| h.contains_key(key)))
-            .unwrap_or(true);
-        if !present {
-            set_compstate_str(key, &get_compstate_str(key).unwrap_or_default());
-        }
-    }
-
-    // c:816-817 — `startparamscope(); makecompparams();`.
+    // c:815-818 — `startparamscope(); makecompparams();
+    // comp_setunset(rset, (~rset & CP_ALLREALS), kset, (~kset & CP_ALLKEYS));`
     //
-    // C creates `$words` / `$CURRENT` / `$PREFIX` / `$SUFFIX` /
-    // `$IPREFIX` / `$ISUFFIX` / `$QIPREFIX` / `$QISUFFIX` /
-    // `$compstate` here with `createparam(name, type|PM_SPECIAL|
-    // PM_REMOVABLE|PM_LOCAL)` and then `pm->level = locallevel + 1`
-    // (addcompparams c:1300-1307, makecompparams c:1348). Their VALUES
-    // live in C globals reached through a gsu vtable, so creating them
-    // empty here costs nothing.
-    //
-    // zshrs has no gsu binding: the values live in the params, and the
-    // block above has already written every one of them with
-    // `setsparam`/`setaparam`/`setiparam` — i.e. at level 0, flagged as
-    // ordinary scalars. Re-running `createparam` would shadow those
-    // values with empty ones, so only the scope half of c:817 is
-    // applied: stamp the level and the special/removable bits onto the
-    // params that are already in place.
-    //
-    // Without this, `${(t)PREFIX}` read `scalar` instead of
-    // `scalar-local-special` and the names outlived the completion.
-    // `_parameters` filters candidates with
-    // `${(@k)parameters[(R)…~*local*]}`, so every one of these was
-    // offered as a completion for `unset <TAB>`.
-    //
-    // `PM_READONLY` (on QIPREFIX/QISUFFIX in the c:1256-1259 table) is
-    // stamped from each row's own type, the way c:1301 or's `cp->type`
-    // in. The bit used to be dropped here because a sticky one failed
-    // the next completion's publish; the publishes that run after this
-    // stamp now go through `vm_helper::set_readonly_special`, the
-    // gsu-setfn equivalent C uses (c:1308-1324), which is not subject to
-    // the assignment gate.
+    // The params are created at `locallevel + 1` of the scope opened here,
+    // which is the level the completion function's own `doshfunc` scope
+    // removes on its way out (as in C).
     {
-        use crate::ported::zsh_h::{PM_READONLY, PM_REMOVABLE, PM_SPECIAL};
-        // c:1307 / c:1348 — `pm->level = locallevel + 1`.
-        let level = crate::ported::params::locallevel.load(Ordering::Relaxed) + 1;
-        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            for (name, ty) in crate::ported::zle::complete::COMPRPARAMS
-                .iter()
-                .map(|cp| (cp.name, cp.r#type))
-                .chain([("compstate", 0)])
-            {
-                if let Some(pm) = tab.get_mut(name) {
-                    pm.level = level;
-                    // c:1301 — the row's own type bits, which is where
-                    // QIPREFIX/QISUFFIX's PM_READONLY comes from.
-                    pm.node.flags |= ty & PM_READONLY as i32;
-                    // c:complete.c:1313-1315 — every comprparams integer
-                    // row is a `VAL(...)` row (`CURRENT`), so it gets
-                    // `pm->gsu.i = &compvarinteger_gsu; pm->base = 10;`,
-                    // which is why `typeset -p CURRENT` prints `-i10`.
-                    if crate::ported::zsh_h::PM_TYPE(ty as u32)
-                        == crate::ported::zsh_h::PM_INTEGER
-                    {
-                        pm.base = 10;
-                    }
-                    // c:1301 — `cp->type | PM_SPECIAL | PM_REMOVABLE |
-                    // PM_LOCAL`. PM_REMOVABLE is load-bearing:
-                    // `scanendscope` (params.c:5905) only takes the
-                    // "restore the shadowed value" branch for
-                    // `(flags & (PM_SPECIAL|PM_REMOVABLE)) == PM_SPECIAL`.
-                    // These params have no shadow to restore — they must
-                    // be deleted, which is the PM_REMOVABLE path.
-                    pm.node.flags |= (PM_SPECIAL | PM_REMOVABLE) as i32;
-                }
-            }
-        }
+        let mut scope = crate::ported::params::newparamtable(1, "scope").expect("newparamtable");
+        crate::ported::params::startparamscope(&mut scope); // c:815
     }
+    makecompparams(); // c:816
+    comp_setunset(
+        rset as i32,
+        (!rset & CP_ALLREALS) as i32,
+        kset as i32,
+        (!kset & CP_ALLKEYS) as i32,
+    ); // c:817-818
 
     // c:820 — `makezleparams(1);`.
     //
@@ -1741,58 +1464,20 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         oxt != 0,
     );
 
+    // c:838 — `endparamscope();`
+    crate::ported::params::endparamscope();
+
     // c:839-841 — `lastcmd = 0; incompfunc = icf; startauto = 0;`.
     // `startauto` is cleared BEFORE the c:908 recompute below; without the
     // clear the AUTO_MENU value do_completion stored at c:331 survived any
     // completer that emptied `$compstate[insert]`.
     startauto.store(0, Ordering::Relaxed); // c:841
 
-    // c:843-925 — unwind: read the compstate values the completion function
-    // may have rewritten back into the compcore globals. In C these ARE the
-    // globals (the compstate entries are gsu-bound to `complist`,
-    // `compinsert`, `compexact`, `comptoend`, `compoldlist`, `compoldins`),
-    // so this is a plain read of a mutated variable; here it is a read of
-    // `$compstate[…]`.
-    //
-    // Only the `usemenu` third of the c:857-907 arm existed before. Every
-    // other assignment in the block — `uselist`, `forcelist`, `onlyexpl`,
-    // `useline`, `insmnum`, `insspace`, `startauto`, `useexact`,
-    // `movetoend`, `oldlist`, `oldins` — was simply absent, so a completion
-    // function could not influence any of them: `compstate[list]=...force`
-    // never forced a list, `_menu`'s `compstate[old_list]=keep` never kept
-    // one, `compstate[insert]=2` never selected the 2nd match, and
-    // `compstate[insert]=''` never suppressed insertion.
-    //
-    // Read `$compstate[…]` via the compstate hash (the canonical home), NOT
-    // the flat `compstate[KEY]` bracketed param: the latter reads empty here
-    // because the completion fn's write lands in the hash storage while the
-    // flat param is scoped to the fn.
-
-    // Read one `$compstate` entry as C reads its backing global at c:843+:
-    // the end-of-body snapshot first, then whatever is still live.
-    //
-    // `None` means the port HAS NO VALUE for this entry — a state C cannot
-    // be in, because `callcompfunc` itself assigned every one of these
-    // globals before the call (c:753-812). Applying C's "NULL" arm to it
-    // would be a mistranslation of "absent" as "empty", and that is exactly
-    // what regressed `menu select`: the `insert`/`list` entries read back
-    // absent, so `useline` and `uselist` were both driven to 0 and
-    // `do_completion` took its c:425 else-branch (revert the line, show
-    // nothing) instead of listing. On `None` the globals keep the values
-    // this function published, which is the round-trip C would have seen.
-    let post = |key: &str| -> Option<String> {
-        if let Some(v) = compstate_end
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().and_then(|h| h.get(key).cloned()))
-        {
-            return Some(v);
-        }
-        get_compstate_str(key)
-    };
-
+    // c:843-925 — unwind: the completion function may have rewritten the
+    // globals the params view; C reads them back as plain variables.
     // c:843-855 — uselist / forcelist / onlyexpl from `complist`.
-    if let Some(post_list) = post("list") {
+    {
+        let post_list = getg(&crate::ported::zle::complete::COMPLIST);
         uselist.store(
             if post_list.starts_with("list") {
                 1 // c:846
@@ -1814,19 +1499,11 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
                 | (if post_list.contains("messages") { 2 } else { 0 }), // c:855
             Ordering::Relaxed,
         );
-        // Keep the `complist` global in step with the param — one storage in C.
-        if let Ok(mut g) = COMPLIST.get_or_init(|| Mutex::new(String::new())).lock() {
-            *g = post_list.clone();
-        }
     }
 
     // c:857-907 — useline / usemenu / insmnum / insspace from `compinsert`.
-    let post_insert = match post("insert") {
-        Some(v) => v,
-        // Absent: leave useline/usemenu/insmnum/insspace as published.
-        None => String::new(),
-    };
-    let have_insert = post("insert").is_some();
+    let post_insert = getg(&COMPINSERT);
+    let have_insert = true;
     // c:857-858 — `if (!compinsert) useline = 0;`. C's test is on the
     // POINTER: it fires only when `$compstate[insert]` has no value at all.
     // An EMPTY STRING is a perfectly ordinary `char *` and falls all the way
@@ -1955,44 +1632,17 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     }
 
     // c:912 — `useexact = (compexact && !strcmp(compexact, "accept"));`
-    if let Some(post_exact) = post("exact") {
+    {
+        let post_exact = getg(&COMPEXACT);
         useexact.store(
             if post_exact == "accept" { 1 } else { 0 },
             Ordering::Relaxed,
         );
     }
 
-    // `comppatinsert` (complete.c:69) is `VAL()`-bound to
-    // `$compstate[pattern_insert]` (complete.c:1281), so a completer's
-    // `compstate[pattern_insert]=unambiguous` (`_expand:_expand:…`,
-    // `_approximate:91`) lands straight in the C global and C needs no
-    // read-back here. This port keeps the two storages separate, so mirror
-    // the parameter into the global now — same treatment `complist` gets at
-    // c:846-853 above. Absent (`None`) keeps the c:321 value, which is the
-    // state C would be in when no completer touched it.
-    if let Some(post_patins) = post("pattern_insert") {
-        if let Ok(mut g) = crate::ported::zle::complete::COMPPATINSERT
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-        {
-            *g = post_patins;
-        }
-    }
-
-    // `complastprompt` (complete.c:57) is `VAL()`-bound to
-    // `$compstate[last_prompt]` (complete.c:1293); mirror a completer's
-    // write into the global the same way.
-    if let Some(post_lastprompt) = post("last_prompt") {
-        if let Ok(mut g) = crate::ported::zle::complete::COMPLASTPROMPT
-            .get_or_init(|| Mutex::new(String::new()))
-            .lock()
-        {
-            *g = post_lastprompt;
-        }
-    }
-
     // c:914-921 — movetoend from `comptoend`.
-    if let Some(post_toend) = post("to_end") {
+    {
+        let post_toend = getg(&COMPTOEND);
         movetoend.store(
             if post_toend.is_empty() {
                 0 // c:915
@@ -2013,7 +1663,7 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     //                         compoldins && !strcmp(compoldins, "keep"));`
     let hasoldlist_v = hasoldlist.load(Ordering::Relaxed);
     oldlist.store(
-        if hasoldlist_v != 0 && post("old_list").as_deref() == Some("keep") {
+        if hasoldlist_v != 0 && getg(&COMPOLDLIST) == "keep" {
             1
         } else {
             0
@@ -2026,13 +1676,22 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         .map(|m| m.cur.is_some())
         .unwrap_or(false);
     oldins.store(
-        if hasoldlist_v != 0 && has_cur && post("old_insert").as_deref() == Some("keep") {
+        if hasoldlist_v != 0 && has_cur && getg(&COMPOLDINS) == "keep" {
             1
         } else {
             0
         },
         Ordering::Relaxed,
     ); // c:924-925
+
+    // c:927-930 — `zfree(comprpms, …); zfree(compkpms, …);
+    // comprpms = ocrpms; compkpms = ockpms;`
+    if let Ok(mut g) = comprpms.lock() {
+        *g = ocrpms;
+    }
+    if let Ok(mut g) = compkpms.lock() {
+        *g = ockpms;
+    }
 
     // c:932 — `lastval = lv`: the completion function's exit status must not
     // leak into the interactive shell's `$?`.
@@ -3624,14 +3283,6 @@ pub fn set_comp_sep() -> i32 {
         }
         new_qstack.push_str(&compqstack_s);
         put(&COMPQSTACK, new_qstack);
-        // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
-        // Same reason as the c:305-306 site above: in C the c:1854-1860
-        // `compqstack = p` IS the `$compstate[all_quotes]` update, because
-        // `compqstack_gsu` (complete.c:1299) has no storage of its own.
-        set_compstate_str(
-            "all_quotes",
-            &crate::ported::zle::complete::get_compqstack(&crate::ported::zsh_h::param::default()),
-        );
     }
 
     // c:1870-1892 — compquote / compquoting + comp_setunset.
@@ -3702,57 +3353,6 @@ pub fn set_comp_sep() -> i32 {
             compcur = cnt;
         }
         COMPCURRENT.store((compcur) as i64, Ordering::Relaxed);
-    }
-
-    // zshrs bridge: in C every comp* global written above IS the shell
-    // parameter (gsu-bound at complete.c:1235-1295 — one storage), so a
-    // completer sees the re-split word list the instant `compset -q`
-    // returns. zshrs's `$words` / `$CURRENT` / `$PREFIX` / … are plain
-    // paramtab copies published once per `callcompfunc`, so without this
-    // mirror they still describe the PRE-split line. `_trap` is
-    //     if [[ CURRENT -eq 2 ]]; then compset -q; _normal; else …
-    // and `_normal` re-reads `$words[1]` — which stayed `trap`, so it
-    // dispatched `_trap` again: unbounded recursion until FUNCNEST, with
-    // the error text landing in the user's buffer. Same mirror
-    // `restrict_range` (complete.rs:1301-1307) already does for its own
-    // COMPWORDS/COMPCURRENT edit.
-    {
-        let words = COMPWORDS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
-        setaparam("words", words);
-        let _ =
-            crate::ported::params::setiparam("CURRENT", (COMPCURRENT.load(Ordering::Relaxed) as i32) as i64);
-        for (param, global) in [
-            ("PREFIX", &COMPPREFIX),
-            ("SUFFIX", &COMPSUFFIX),
-            ("IPREFIX", &COMPIPREFIX),
-            ("ISUFFIX", &COMPISUFFIX),
-            ("QIPREFIX", &COMPQIPREFIX),
-            ("QISUFFIX", &COMPQISUFFIX),
-            // NOTE: the list ENDS here, matching `comprparams[]`
-            // (Src/Zle/complete.c:1248-1258), whose last entry is QISUFFIX.
-            //
-            // `QUOTE` and `QUOTING` were previously published here as
-            // top-level parameters. They are NOT in comprparams — `compquote`
-            // and `compquoting` live in `compkparams`
-            // (Src/Zle/complete.c:1266-1267) and are therefore
-            // `$compstate[quote]` / `$compstate[quoting]` KEYS ONLY, never
-            // shell parameters. zsh's `callcompfunc` (c:1585-1610) restores
-            // the C globals, not any `$QUOTE`/`$QUOTING`.
-            //
-            // Publishing them created two real scalars that zsh does not have,
-            // which the user's `_parameters` then offered as completion
-            // matches — a stable +2 on any cell reaching this path.
-            // The compstate side is published correctly and separately at
-            // compcore.rs:886-890.
-        ] {
-            // Same gsu-setfn bypass as the restore in complete.rs:
-            // QIPREFIX/QISUFFIX carry PM_READONLY (c:1256-1257).
-            crate::vm_helper::set_readonly_special(param, &snap(global));
-        }
     }
 
     // c:1935-1937 — restore instring / inbackt, ret = 0.
@@ -4209,12 +3809,6 @@ pub fn addmatches(
     // group lost CGF_PACKED and calclist skipped the per-column-width pass,
     // collapsing the name/description columns into one uniform column. Sync the
     // param → global here so `packed`/`rows` reach CMF_PACKED/CMF_ROWS.
-    if let Some(cl) = get_compstate_str("list") {
-        if let Ok(mut g) = COMPLIST.get_or_init(|| Mutex::new(String::new())).lock() {
-            *g = cl;
-        }
-    }
-
     if dat.dummies >= 0 {
         // c:2106
         dat.aflags = (dat.aflags | CAF_NOSORT | CAF_UNIQCON) & !CAF_UNIQALL; // c:2107-2108
@@ -4372,7 +3966,11 @@ pub fn addmatches(
     // parameter of that literal name, which nothing ever sets — so this line
     // unconditionally CLEARED `useexact` on every compadd, defeating
     // REC_EXACT and any completer that set `compstate[exact]=accept`.
-    let exact_str = get_compstate_str("exact").unwrap_or_default();
+    let exact_str = crate::ported::zle::complete::COMPEXACT
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     useexact.store(if exact_str == "accept" { 1 } else { 0 }, Ordering::Relaxed);
 
     // c:2170-2175 —
@@ -4523,31 +4121,6 @@ pub fn addmatches(
         Vec::new()
     };
 
-    // zshrs bridge: in C the `compprefix`/`compsuffix`/`compiprefix`/
-    // `compisuffix` globals ARE `$PREFIX`/`$SUFFIX`/`$IPREFIX`/`$ISUFFIX`
-    // (the compparams are gsu-bound to them). The Rust compparams carry
-    // no gsu binding (`complete.rs` `gsu: 0`), so the compsys completers'
-    // writes to `$PREFIX` land in the param table while `compadd` reads
-    // the globals — leaving `lpre` empty and every candidate matching.
-    // During a live completion (`INCOMPFUNC`), refresh the globals from
-    // the params so `comp_match` filters against the prefix the completer
-    // actually set. Gated on INCOMPFUNC so direct-call unit tests that
-    // seed the globals aren't clobbered.
-    if INCOMPFUNC.load(Ordering::Relaxed) != 0 {
-        for (param, global) in [
-            ("PREFIX", &COMPPREFIX),
-            ("SUFFIX", &COMPSUFFIX),
-            ("IPREFIX", &COMPIPREFIX),
-            ("ISUFFIX", &crate::ported::zle::complete::COMPISUFFIX),
-        ] {
-            if let Some(v) = getsparam(param) {
-                if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
-                    *g = v;
-                }
-            }
-        }
-    }
-
     // c:2253-2300 — CAF_MATCH lipre/lisuf/lpre/lsuf assembly.
     let compiprefix_s = COMPIPREFIX
         .get_or_init(|| Mutex::new(String::new()))
@@ -4603,8 +4176,16 @@ pub fn addmatches(
     // the unambiguous string comes out shorter than the word on the line.
     // Never assigned before, so the flag was stuck at 0.
     if (dat.aflags & CAF_MATCH) != 0 {
-        let qip = getsparam("QIPREFIX").unwrap_or_default();
-        let qis = getsparam("QISUFFIX").unwrap_or_default();
+        let qip = crate::ported::zle::complete::COMPQIPREFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let qis = crate::ported::zle::complete::COMPQISUFFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         if lpre.len() + qip.len() + lipre.len() != origlpre.load(Ordering::Relaxed) as usize
             || lsuf.len() + qis.len() + lisuf.len() != origlsuf.load(Ordering::Relaxed) as usize
         {
@@ -4804,7 +4385,11 @@ pub fn addmatches(
     // probing haswilds() on lpre+lsuf WITHOUT the placeholder — only real
     // wildcards in the typed prefix/suffix (`(#a1)`, `*`, `[...]`) count.
     let cp: Option<crate::ported::pattern::Patprog> = {
-        let cpm = get_compstate_str("pattern_match").unwrap_or_default();
+        let cpm = comppatmatch
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         if !cpm.is_empty() {
             let is = cpm.starts_with('*'); // c:2361 is = (*comppatmatch == '*')
             let mut probe = format!("{}{}", lpre, lsuf);
@@ -5945,7 +5530,11 @@ pub fn add_match_data(
     // was cleared on every completion, so `clearflag` stayed 0 and `trashzle`
     // never emitted TCCLEAREOD: an on-screen completion list was left
     // stranded when the command was accepted.
-    let complastprompt_v = get_compstate_str("last_prompt").unwrap_or_default();
+    let complastprompt_v = crate::ported::zle::complete::COMPLASTPROMPT
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     if complastprompt_v.is_empty() {
         dolastprompt.store(0, Ordering::Relaxed);
     }
@@ -5991,11 +5580,12 @@ pub fn add_match_data(
         // `_main_complete` reads to decide whether to accept the exact match
         // outright. The publish was missing, so the parameter stayed at the
         // "" that do_completion writes at c:312 and the exact match was never
-        // recognisable to the shell-function layer. Computed BEFORE taking
-        // the ai lock (set_compstate_str takes the paramtab lock).
+        // recognisable to the shell-function layer.
         let publish_exact = INCOMPFUNC.load(Ordering::Relaxed) != 0
-            && get_compstate_str("exact_string")
-                .map(|s| s.is_empty())
+            && crate::ported::zle::complete::COMPEXACTSTR
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.is_empty())
                 .unwrap_or(true);
         let exact_str = format!(
             "{}{}{}",
@@ -6030,7 +5620,12 @@ pub fn add_match_data(
             }
         }
         if do_publish {
-            set_compstate_str("exact_string", &exact_str); // c:3046-3055
+            if let Ok(mut g) = crate::ported::zle::complete::COMPEXACTSTR
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+            {
+                *g = exact_str; // c:3046-3055
+            }
         }
     }
 
@@ -7361,7 +6956,7 @@ fn goto_compend(ret: i32) -> i32 {
 // real constant is 1 per `Src/Zle/zle.h:357`).
 
 // `char_from_qt` deleted — Rust-only 1-line `(qt as u8) as char`
-// helper. Inlined at the two call sites in get_compstate_str.
+// helper. Inlined at its call sites.
 
 // `showinglist_stub` / `showinglist_set` / `clearlist_set` /
 // `listshown_stub` / `instring_stub` deleted — Rust-only 1-line
@@ -7625,176 +7220,6 @@ pub fn shfunc_call(name: &str) -> i32 {
     crate::ported::exec::dispatch_function_call(name, &[])
         .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
 }
-/// Real call into `setsparam(&format!("compstate[{key}]"), val)` — the
-/// canonical paramtab write. Mirrors C's `setsparam` at params.c:3350.
-///
-/// Now `pub` so compsys engine ports can write `$compstate[KEY]`
-/// directly. Also dual-writes to `paramtab_hashed_storage()` under
-/// the "compstate" key so subscript lookups via the hash-param
-/// machinery see the same value — `$compstate` IS a PM_HASHED param
-/// (created by `makecompparams` at `complete.rs:1499`), and shell
-/// scripts read it as such.
-pub fn set_compstate_str(key: &str, val: &str) {
-    // !!! RUST-ONLY: in C these keys are globals behind compstate_gsu and
-    // `$compstate` exists only between makecompparams (complete.c:1340)
-    // and endparamscope (compcore.c:839). This bridge publishes them
-    // through the param, so the association has to exist first.
-    //
-    // Hash-storage write FIRST: a `compstate` row in
-    // `paramtab_hashed_storage()` is what makes the setsparam below
-    // route `compstate[KEY]` as an association key rather than an
-    // arithmetic subscript. assignsparam does not special-case the
-    // name, because outside completion zsh has no `$compstate`.
-    if let Ok(mut tab) = paramtab_hashed_storage().lock() {
-        tab.entry("compstate".to_string())
-            .or_default()
-            .insert(key.to_string(), val.to_string());
-    }
-
-    // params.c:3350 — flat bracketed-param write; creates the PM_HASHED
-    // node on first use and keeps it in step with the store.
-    let pname = format!("compstate[{}]", key);
-    let _ = setsparam(&pname, val);
-
-    // The `VAL(...)` rows in `compkparams` (`Src/Zle/complete.c:1292`,
-    // `:1297`, `:1300`) name a real variable rather than a getter, so in
-    // C an assignment to `$compstate[KEY]` updates that variable and a
-    // later read sees it. [`get_compstate_str`] serves those keys from
-    // the backing global, so the write has to land there too or the
-    // round-trip is lost. The getter-only rows are deliberately absent:
-    // C recomputes them on every read and a stored value would be stale.
-    match key {
-        // c:1292 `VAL(complistmax)`.
-        "list_max" => {
-            if let Ok(n) = val.parse::<i64>() {
-                crate::ported::zle::complete::COMPLISTMAX.store(n, Ordering::Relaxed);
-            }
-        }
-        // c:1297 `VAL(compvared)`.
-        "vared" => {
-            if let Ok(mut s) = crate::ported::zle::complete::COMPVARED
-                .get_or_init(|| Mutex::new(String::new()))
-                .lock()
-            {
-                *s = val.to_string();
-            }
-        }
-        // c:1300 `VAL(compignored)`.
-        "ignored" => {
-            if let Ok(n) = val.parse::<i64>() {
-                crate::ported::zle::complete::COMPIGNORED.store(n, Ordering::Relaxed);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The `$compstate` keys whose values C does not store: their
-/// `compkparams` rows (`Src/Zle/complete.c:1261-1300`) carry a `gsu`
-/// vtable instead of a `var` pointer, so every read runs the getter
-/// against live completion state. Listed in `compkparams` order.
-pub const LIVE_COMPSTATE_KEYS: &[&str] = &[
-    "nmatches",              // c:1262 nmatches_gsu
-    "unambiguous",           // c:1285 unambig_gsu
-    "unambiguous_cursor",    // c:1286 unambig_curs_gsu
-    "unambiguous_positions", // c:1288 unambig_pos_gsu
-    "insert_positions",      // c:1290 insert_pos_gsu
-    "list_max",              // c:1292 VAL(complistmax)
-    "vared",                 // c:1297 VAL(compvared)
-    "list_lines",            // c:1298 listlines_gsu
-    "all_quotes",            // c:1299 compqstack_gsu
-    "ignored",               // c:1300 VAL(compignored)
-];
-
-/// Read `$compstate[KEY]`. Returns `None` when the key was never set.
-///
-/// The [`LIVE_COMPSTATE_KEYS`] arm below is the Rust stand-in for C's
-/// per-key gsu getter firing on each read; everything else comes from
-/// the hash-storage view (the canonical home for a PM_HASHED param),
-/// falling back to the legacy flat `compstate[KEY]` bracketed param for
-/// entries that some code wrote via raw `setsparam` without going
-/// through [`set_compstate_str`].
-pub fn get_compstate_str(key: &str) -> Option<String> {
-    // c:complete.c:1236-1252 — the gsu-backed keys are recomputed on
-    // every read; a stored value would be stale. Before this arm covered
-    // more than `nmatches`, none of them existed anywhere in zshrs's
-    // compstate storage, so `_lastcomp` (`_main_complete` sh:407) came
-    // back missing nine entries — `_lastcomp[unambiguous]` and
-    // `[unambiguous_cursor]` (read at sh:84-86 and by `_next_tags`
-    // sh:105) among them.
-    let nil = &crate::ported::zsh_h::param::default();
-    match key {
-        // c:complete.c:1401-1405 — `get_nmatches`: flush pending match
-        // groups via `permmatches(0)`, then read the counter. A stored
-        // read served a stale 0, so every completer's
-        // `nm != $compstate[nmatches]` idiom (_describe, _arguments,
-        // _alternative, …) concluded "nothing was added" and option
-        // completion died even though addmatches had added hundreds.
-        "nmatches" => {
-            let v = if permmatches(0) != 0 {
-                0
-            } else {
-                nmatches.load(Ordering::Relaxed)
-            };
-            return Some(v.to_string());
-        }
-        // c:1439-1442 — `unambig_data(NULL, NULL, NULL)`.
-        "unambiguous" => return Some(crate::ported::zle::complete::get_unambig(nil)),
-        // c:1446-1450 — `unambig_data(&c, NULL, NULL); return c`.
-        "unambiguous_cursor" => {
-            return Some(crate::ported::zle::complete::get_unambig_curs(nil).to_string())
-        }
-        // c:1447-1456 — `unambig_data(NULL, &p, NULL); return p`.
-        "unambiguous_positions" => return Some(crate::ported::zle::complete::get_unambig_pos(nil)),
-        // c:1458-1466 — `unambig_data(NULL, NULL, &p); return p`.
-        "insert_positions" => return Some(crate::ported::zle::complete::get_insert_pos(nil)),
-        // c:1292 `VAL(complistmax)`; seeded from $LISTMAX at c:323.
-        "list_max" => {
-            return Some(
-                crate::ported::zle::complete::COMPLISTMAX
-                    .load(Ordering::Relaxed)
-                    .to_string(),
-            )
-        }
-        // c:1297 `VAL(compvared)` — the parameter name `vared` is
-        // editing, `""` outside `vared` (c:compcore.c:565-570). zshrs
-        // does not track `varedarg` yet, so the global stays at the
-        // `""` C publishes for every non-`vared` completion.
-        "vared" => {
-            return Some(
-                crate::ported::zle::complete::COMPVARED
-                    .get_or_init(|| Mutex::new(String::new()))
-                    .lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default(),
-            )
-        }
-        // c:1408-1420 — `get_listlines` → `list_lines()`.
-        "list_lines" => return Some(crate::ported::zle::complete::get_listlines(nil).to_string()),
-        // c:1469 — `get_compqstack`: one char per quoting level.
-        "all_quotes" => return Some(crate::ported::zle::complete::get_compqstack(nil)),
-        // c:1300 `VAL(compignored)` — matches dropped by `compadd -F`.
-        "ignored" => {
-            return Some(
-                crate::ported::zle::complete::COMPIGNORED
-                    .load(Ordering::Relaxed)
-                    .to_string(),
-            )
-        }
-        _ => {}
-    }
-    if let Ok(tab) = paramtab_hashed_storage().lock() {
-        if let Some(hash) = tab.get("compstate") {
-            if let Some(v) = hash.get(key) {
-                return Some(v.clone());
-            }
-        }
-    }
-    // Fallback: pre-existing callers wrote via raw `setsparam` only.
-    let pname = format!("compstate[{}]", key);
-    getsparam(&pname)
-}
-
 /// Local helper: position before-the-current char (handles UTF-8).
 #[inline]
 fn prev_char_index(bytes: &[u8], pos: usize) -> usize {
@@ -7919,10 +7344,9 @@ fn lexrestore(_token: usize) {
 /// !!! WARNING: RUST-ONLY HELPER !!!
 /// C dereferences the bare global; the port keeps it in an
 /// `OnceLock<Mutex<String>>`, so the deref needs a function. It used to
-/// read `zle_tricky::COMPQUOTE` — a Rust-only DUPLICATE of the global
-/// that has no counterpart in `Src/Zle/zle_tricky.c` and that nothing
-/// ever writes, so `addmatches`'s quote block (c:2139-2168) always took
-/// the `else` arm and cleared `instring`/`autoq` on every compadd.
+/// read a Rust-only duplicate of the global that nothing ever wrote, so
+/// `addmatches`'s quote block (c:2139-2168) always took the `else` arm
+/// and cleared `instring`/`autoq` on every compadd.
 fn compquote_first() -> Option<char> {
     // complete.c:54
     crate::ported::zle::complete::COMPQUOTE
@@ -8760,12 +8184,9 @@ mod tests {
     /// `$BUFFER`/`$CURSOR`/`$HISTNO`/`$WIDGET`/`$KEYS`/`$LBUFFER`/
     /// `$RBUFFER`/`$BUFFERLINES`/`$PENDING` as the empty string.
     ///
-    /// Both halves are pinned with ONE observable: seed `BUFFER` with a
-    /// sentinel at the enclosing scope first.
-    ///   * publish missing  → the sentinel survives (`Some(sentinel)`),
-    ///   * publish present but teardown missing → the live line survives,
-    ///   * both present      → the name is gone entirely.
-    /// Only the last is C behaviour.
+    /// Both halves are pinned: the completion function records what it saw
+    /// (`publish missing` → empty), and after the call none of the ZLE
+    /// params remain (`teardown missing` → the live line survives).
     #[test]
     fn callcompfunc_publishes_and_tears_down_zle_params() {
         let _g = crate::test_util::global_state_lock();
@@ -8775,15 +8196,15 @@ mod tests {
         // `$FUNCNEST` is unset in a bare unit-test paramtab, and
         // `getiparam` reports 0 for unset — which trips doshfunc's
         // c:6000 guard (`funcstacksz >= zsh_funcnest`) on the very first
-        // frame and returns BEFORE c:839's endparamscope. Give it the
-        // shell's real default so the scope actually unwinds.
+        // frame. Give it the shell's real default.
         let funcnest_save = crate::ported::params::getiparam("FUNCNEST");
         let _ = crate::ported::params::setiparam("FUNCNEST", 500);
 
-        const SENTINEL: &str = "@@not-published@@";
-        for name in ["BUFFER", "WIDGET", "LBUFFER"] {
-            let _ = crate::ported::params::setsparam(name, SENTINEL);
-        }
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
+        exec.execute_script("_test_fn() { typeset -g ZLE_SEEN=\"$BUFFER|$LBUFFER\" }")
+            .unwrap();
+
         // A non-empty editor line so the publish is distinguishable from
         // "published an empty string".
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "fc -".chars().collect();
@@ -8794,21 +8215,21 @@ mod tests {
         callcompfunc("-", "_test_fn");
         let _ = crate::ported::params::setiparam("FUNCNEST", funcnest_save);
 
+        assert_eq!(
+            crate::ported::params::getsparam("ZLE_SEEN").as_deref(),
+            Some("fc -|fc -"),
+            "c:820 makezleparams(1) never ran, so the completion function saw no ZLE parameters"
+        );
         for name in ["BUFFER", "WIDGET", "LBUFFER"] {
-            let after = crate::ported::params::getsparam(name);
-            assert_ne!(
-                after.as_deref(),
-                Some(SENTINEL),
-                "${name} still holds the pre-call sentinel — c:820 makezleparams(1) \
-                 never ran, so the completion function saw no ZLE parameters"
-            );
             assert_eq!(
-                after, None,
-                "${name} outlived the completion scope — c:839 endparamscope must \
+                crate::ported::params::getsparam(name),
+                None,
+                "${name} outlived the completion scope — c:838 endparamscope must \
                  unset every PM_LOCAL zleparam, or the name leaks into the \
                  interactive shell after the first TAB"
             );
         }
+        crate::ported::params::unsetparam("ZLE_SEEN");
     }
 
     /// Test-only serializer for tests that mutate file-scope globals.
@@ -9153,6 +8574,7 @@ mod tests {
         };
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
+        let _scope = crate::test_util::comp_scope();
 
         let setg = |g: &'static OnceLock<Mutex<String>>, v: &str| {
             *g.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = v.to_string();
@@ -9215,11 +8637,10 @@ mod tests {
         );
         assert_eq!(recon, "a b c", "qip + word + qis must reconstruct the arg");
 
-        // c:1926-1934 + c:complete.c:1235-1295 — in C `$words` / `$CURRENT`
-        // ARE `compwords` / `compcurrent` (gsu-bound, one storage), so the
+        // c:1926-1934 + c:complete.c:1259-1261 — `$words` / `$CURRENT` ARE
+        // `compwords` / `compcurrent` (gsu-bound, one storage), so the
         // re-split is visible to the calling completer the moment `compset -q`
-        // returns. zshrs's params are separate paramtab copies, so the port
-        // has to publish them explicitly. Without that publish `_trap`
+        // returns. Without it `_trap`
         //     if [[ CURRENT -eq 2 ]]; then compset -q; _normal; else …
         // left `$words` as `(trap -)` with `$CURRENT` still 2, `_normal`
         // re-dispatched the command word `trap`, and `_trap` recursed until

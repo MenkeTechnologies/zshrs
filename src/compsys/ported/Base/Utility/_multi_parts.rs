@@ -29,7 +29,6 @@
 
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compadd_body};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -362,8 +361,8 @@ pub fn _multi_parts_impl(args: &[String]) -> i32 {
     let orig = format!("{}{}", pre, suf);
 
     // sh:51-53  menu detection
-    let insert = get_compstate_str("insert").unwrap_or_default();
-    let pattern_match = get_compstate_str("pattern_match").unwrap_or_default();
+    let insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
+    let pattern_match = crate::ported::params::getsparam("compstate[pattern_match]").unwrap_or_default();
     let insert_is_menu = insert.ends_with("menu")
         || insert
             .chars()

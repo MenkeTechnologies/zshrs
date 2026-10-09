@@ -28,13 +28,12 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setsparam};
-use crate::ported::zle::compcore::get_compstate_str;
 
 /// `_tilde` — complete `~user` / `~name` / `~+N` tilde expansions.
 pub fn _tilde(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_tilde");
     // sh:7
-    if !get_compstate_str("quote").unwrap_or_default().is_empty() {
+    if !crate::ported::params::getsparam("compstate[quote]").unwrap_or_default().is_empty() {
         return 1;
     }
 
@@ -138,14 +137,13 @@ pub fn _tilde(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::zle::compcore::set_compstate_str;
 
     #[test]
     fn quote_set_returns_one() {
         // sh:7 — $compstate[quote] non-empty short-circuits.
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("quote", "'");
+        let _ = crate::ported::params::setsparam("compstate[quote]", "'");
         assert_eq!(_tilde(&[]), 1);
-        set_compstate_str("quote", "");
+        let _ = crate::ported::params::setsparam("compstate[quote]", "");
     }
 }

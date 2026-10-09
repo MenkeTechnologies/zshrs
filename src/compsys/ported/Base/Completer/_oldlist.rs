@@ -47,7 +47,6 @@
 use crate::compsys::ported::shared::zstyle_T;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getiparam, getsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{isset, options, AUTOMENU, MAX_OPS};
 
@@ -103,7 +102,7 @@ pub fn _oldlist() -> i32 {
     // `zutil.c:649`'s join of the whole value array rather than element 1.
     let list = crate::compsys::ported::shared::zstyle_s(&format!(":completion:{}:", curcontext), "old-list").unwrap_or_default();
 
-    let old_list = get_compstate_str("old_list").unwrap_or_default();
+    let old_list = crate::ported::params::getsparam("compstate[old_list]").unwrap_or_default();
     let widget = getsparam("WIDGET").unwrap_or_default();
     let lastwidget = getsparam("LASTWIDGET").unwrap_or_default();
     let widgetstyle = getsparam("WIDGETSTYLE").unwrap_or_default();
@@ -117,7 +116,7 @@ pub fn _oldlist() -> i32 {
         // sh:18
         let style_force_list = list == "always" || list != "shown";
         if widgetstyle.contains("list") && style_force_list {
-            set_compstate_str("old_list", "keep");
+            let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
             return 0;
         }
         // sh:21
@@ -126,12 +125,12 @@ pub fn _oldlist() -> i32 {
             // sh:22
             let insert_kind = lastcomp_get("insert").unwrap_or_default();
             if insert_kind.starts_with("unambig") {
-                set_compstate_str("to_end", "single");
+                let _ = crate::ported::params::setsparam("compstate[to_end]", "single");
             }
-            set_compstate_str("old_list", "keep");
+            let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
             // sh:24-28
             if isset(AUTOMENU) {
-                set_compstate_str("insert", "menu");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
             } else {
                 let prefix = getsparam("PREFIX").unwrap_or_default();
                 let suffix = getsparam("SUFFIX").unwrap_or_default();
@@ -143,14 +142,14 @@ pub fn _oldlist() -> i32 {
     }
 
     // sh:37
-    let old_insert = get_compstate_str("old_insert").unwrap_or_default();
+    let old_insert = crate::ported::params::getsparam("compstate[old_insert]").unwrap_or_default();
     if old_insert.is_empty()
         && !old_list.is_empty()
         && (lastcomp_nmatches != 0 || widget != lastwidget)
         && lastwidget != "_complete_help"
         && widget != "_complete_help"
     {
-        set_compstate_str("old_list", "keep");
+        let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
         return 0;
     }
 
@@ -162,13 +161,13 @@ pub fn _oldlist() -> i32 {
     let old_menu_on = zstyle_T(&format!(":completion:{}:", curcontext), "old-menu") == 0;
     if widget_is_complete && old_menu_on {
         if !old_insert.is_empty() {
-            set_compstate_str("old_list", "keep");
+            let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
             let oi: i64 = old_insert.parse().unwrap_or(0);
             // sh:46
             if widgetstyle.contains("reverse") {
-                set_compstate_str("insert", &(oi - 1).to_string());
+                let _ = crate::ported::params::setsparam("compstate[insert]", &(oi - 1).to_string());
             } else {
-                set_compstate_str("insert", &(oi + 1).to_string());
+                let _ = crate::ported::params::setsparam("compstate[insert]", &(oi + 1).to_string());
             }
             return 0;
         } else {

@@ -40,7 +40,6 @@ use crate::compsys::ported::shared::zstyle_t;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// `_prefix` — try the next completer chain after ignoring the
 /// current `$SUFFIX`. Returns 0 on first successful completer.
@@ -102,12 +101,12 @@ pub fn _prefix() -> i32 {
         // that resolved nowhere returned in silence.
         if dispatch_action_command(bare, &[], 51) == 0 {
             // sh:44-46
-            let old_list = get_compstate_str("old_list").unwrap_or_default();
-            let unambig = get_compstate_str("unambiguous").unwrap_or_default();
+            let old_list = crate::ported::params::getsparam("compstate[old_list]").unwrap_or_default();
+            let unambig = crate::ported::params::getsparam("compstate[unambiguous]").unwrap_or_default();
             let unambig_no_suf = unambig.trim_end_matches(&saved_suffix as &str);
             let prefix = getsparam("PREFIX").unwrap_or_default();
             if !old_list.is_empty() || unambig_no_suf == prefix {
-                set_compstate_str("to_end", "match");
+                let _ = crate::ported::params::setsparam("compstate[to_end]", "match");
             }
             // Restore + return success
             let _ = setsparam("curcontext", &saved_curcontext);

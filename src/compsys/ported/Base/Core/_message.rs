@@ -54,14 +54,13 @@
 //! Calls real `bin_compadd`, `bin_zparseopts`, `bin_zformat`,
 //! `lookupstyle`. Cross-fn calls (`_tags`, `_next_label`) go through
 //! sibling ports. Reads/writes `$compstate[insert]`/`[nmatches]`
-//! through `get_compstate_str`/`set_compstate_str`.
+//! through `getsparam`/`setsparam` on `compstate[KEY]`.
 
 use super::_next_label::_next_label_impl;
 use super::_tags::_tags_impl;
 use crate::compsys::ported::shared::zstyle_s;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{bin_compadd, bin_compadd_body};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -272,13 +271,13 @@ pub fn _message_impl(args: &[String]) -> i32 {
 
         // sh:28-29  if no matches AND compstate[insert] contains
         //   "unambiguous", clear compstate[insert].
-        let nmatches: i64 = get_compstate_str("nmatches")
+        let nmatches: i64 = crate::ported::params::getsparam("compstate[nmatches]")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         if nmatches == 0 {
-            let insert = get_compstate_str("insert").unwrap_or_default();
+            let insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
             if insert.contains("unambiguous") {
-                set_compstate_str("insert", "");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "");
             }
         }
 

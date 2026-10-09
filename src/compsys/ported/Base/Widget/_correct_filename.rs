@@ -59,7 +59,6 @@ use crate::ported::builtin::bin_whence;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::{getiparam, getsparam, setsparam};
 use crate::ported::utils::quotestring;
-use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS, QT_BACKSLASH_PATTERN};
 use std::path::Path;
@@ -176,9 +175,9 @@ pub fn _correct_filename(args: &[String]) -> i32 {
             ];
             let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
             let cur_insert =
-                crate::ported::zle::compcore::get_compstate_str("insert").unwrap_or_default();
+                crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
             if !cur_insert.is_empty() {
-                set_compstate_str("insert", "menu");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
             }
         } else {
             println!("{}", file);
@@ -241,9 +240,9 @@ pub fn _correct_filename(args: &[String]) -> i32 {
         argv.extend(full.iter().map(|t| restore_tilde(t))); // sh:68
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
         let cur_insert =
-            crate::ported::zle::compcore::get_compstate_str("insert").unwrap_or_default();
+            crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
         if !cur_insert.is_empty() {
-            set_compstate_str("insert", "menu");
+            let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
         }
     } else {
         // sh:71  print "$IPREFIX${^trylist[@]}" — `${^…}` is RC_EXPAND_PARAM

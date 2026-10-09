@@ -33,7 +33,6 @@
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{options, MAX_OPS};
 use std::fs;
@@ -198,7 +197,7 @@ pub fn _extensions() -> i32 {
         argv.push("-a".to_string());
         argv.push("files".to_string());
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
-        if get_compstate_str("exact_string")
+        if crate::ported::params::getsparam("compstate[exact_string]")
             .unwrap_or_default()
             .is_empty()
         {

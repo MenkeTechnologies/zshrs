@@ -61,7 +61,6 @@
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -139,7 +138,7 @@ pub fn _next_tags() -> i32 {
     let _ = setsparam("_next_tags_sfx", &suffix);
 
     // sh:99  ins="${compstate[old_insert]:+1}"
-    let old_insert = get_compstate_str("old_insert").unwrap_or_default();
+    let old_insert = crate::ported::params::getsparam("compstate[old_insert]").unwrap_or_default();
     let ins = if old_insert.is_empty() { "" } else { "1" };
 
     // sh:101  _main_complete _complete _next_tags_completer
@@ -150,13 +149,13 @@ pub fn _next_tags() -> i32 {
     .unwrap_or(1);
 
     // sh:103  [[ $compstate[insert] = automenu ]] && compstate[insert]=automenu-unambiguous
-    if get_compstate_str("insert").as_deref() == Some("automenu") {
-        set_compstate_str("insert", "automenu-unambiguous");
+    if crate::ported::params::getsparam("compstate[insert]").as_deref() == Some("automenu") {
+        let _ = crate::ported::params::setsparam("compstate[insert]", "automenu-unambiguous");
     }
 
     // sh:104-105  [[ insert = *unambiguous && -n ops && -z _lastcomp[unambiguous] ]]
     //             && compadd -Uns "$SUFFIX" - "$PREFIX"
-    let insert = get_compstate_str("insert").unwrap_or_default();
+    let insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
     if insert.contains("unambiguous") && !ops.is_empty() && lastcomp_val("unambiguous").is_empty() {
         // $PREFIX/$SUFFIX may have been rewritten by _main_complete; use
         //   the current values, as the shell `"$SUFFIX"`/`"$PREFIX"` do.
@@ -167,9 +166,9 @@ pub fn _next_tags() -> i32 {
     }
 
     // sh:107  compstate[insert]="$ins"
-    set_compstate_str("insert", ins);
+    let _ = crate::ported::params::setsparam("compstate[insert]", ins);
     // sh:108  compstate[list]='list force'
-    set_compstate_str("list", "list force");
+    let _ = crate::ported::params::setsparam("compstate[list]", "list force");
 
     // sh:110  compprefuncs+=( _next_tags_pre )
     let mut cpf = getaparam("compprefuncs").unwrap_or_default();

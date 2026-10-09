@@ -45,7 +45,6 @@ use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -63,10 +62,10 @@ fn make_ops() -> options {
 /// glob patterns.
 pub fn _match() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_match");
-    let opm = get_compstate_str("pattern_match").unwrap_or_default();
+    let opm = crate::ported::params::getsparam("compstate[pattern_match]").unwrap_or_default();
     let oms = getsparam("_old_match_string").unwrap_or_default();
-    let _ocsi = get_compstate_str("insert").unwrap_or_default();
-    let _ocspi = get_compstate_str("pattern_insert").unwrap_or_default();
+    let _ocsi = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
+    let _ocspi = crate::ported::params::getsparam("compstate[pattern_insert]").unwrap_or_default();
     let mut ret: i32 = 1;
 
     // sh:20-21  short-circuit when prefix has no special meta chars
@@ -103,7 +102,7 @@ pub fn _match() -> i32 {
 
     // sh:32
     if !orig.is_empty() {
-        set_compstate_str("pattern_match", "-");
+        let _ = crate::ported::params::setsparam("compstate[pattern_match]", "-");
         // sh:34 is a COMMAND WORD, so `dispatch_action_command`
         // (shared.rs:1407) resolves it exactly as `execcmd` does:
         // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
@@ -113,7 +112,7 @@ pub fn _match() -> i32 {
         if dispatch_action_command("_complete", &[], 34) == 0 {
             ret = 0;
         }
-        set_compstate_str("pattern_match", &opm);
+        let _ = crate::ported::params::setsparam("compstate[pattern_match]", &opm);
         // sh:39
         if ret == 1 && orig == "only" {
             return 1;
@@ -122,7 +121,7 @@ pub fn _match() -> i32 {
 
     // sh:42
     if ret != 0 {
-        set_compstate_str("pattern_match", "*");
+        let _ = crate::ported::params::setsparam("compstate[pattern_match]", "*");
         // sh:44 is a COMMAND WORD, so `dispatch_action_command`
         // (shared.rs:1407) resolves it exactly as `execcmd` does:
         // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
@@ -132,30 +131,30 @@ pub fn _match() -> i32 {
         if dispatch_action_command("_complete", &[], 44) == 0 {
             ret = 0;
         }
-        set_compstate_str("pattern_match", &opm);
+        let _ = crate::ported::params::setsparam("compstate[pattern_match]", &opm);
     }
 
     // sh:41-79
     if ret == 0 {
-        let nm: i64 = get_compstate_str("nmatches")
+        let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         if ins == "pattern" && nm > 1 {
             let new_oms = format!("{}{}{}", prefix, suffix, histno);
-            let cur_insert = get_compstate_str("insert").unwrap_or_default();
+            let cur_insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
             if oms == new_oms && cur_insert == "automenu-unambiguous" {
-                set_compstate_str("insert", "automenu");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "automenu");
             }
-            let cur_insert2 = get_compstate_str("insert").unwrap_or_default();
+            let cur_insert2 = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
             if !cur_insert2.ends_with("menu") {
-                set_compstate_str("pattern_insert", "");
-                set_compstate_str("insert", "");
+                let _ = crate::ported::params::setsparam("compstate[pattern_insert]", "");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "");
             }
         }
         // sh:67
-        let unambig = get_compstate_str("unambiguous").unwrap_or_default();
+        let unambig = crate::ported::params::getsparam("compstate[unambiguous]").unwrap_or_default();
         if matches!(ins.as_str(), "true" | "yes" | "on" | "1") && unambig.len() >= combined.len() {
-            set_compstate_str("pattern_insert", "unambiguous");
+            let _ = crate::ported::params::setsparam("compstate[pattern_insert]", "unambiguous");
         } else if _requested(&["original".to_string()]) == 0 {
             let orig_style_on = lookupstyle(&ctx, "original")
                 .first()

@@ -25,7 +25,6 @@
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::setsparam;
-use crate::ported::zle::compcore::set_compstate_str;
 
 /// `_call_function` — invoke a named shell function with the rest
 /// of the args, storing its exit status under the param named by
@@ -68,7 +67,7 @@ pub fn _call_function(args: &[String]) -> i32 {
     }
 
     // sh:27
-    set_compstate_str("restore", "");
+    let _ = crate::ported::params::setsparam("compstate[restore]", "");
 
     // sh:29
     0

@@ -36,7 +36,6 @@
 //! ```
 
 use crate::compsys::ported::_arguments::_arguments;
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// sh:6-12 — the fixed FUSE option specs, with the `{-h,--help}` /
 /// `{-V,--version}` brace expansions already flattened into their two
@@ -155,7 +154,7 @@ fn parse_leading(argv: Vec<String>) -> (Vec<String>, Vec<String>, bool) {
 
 /// Read `$compstate[nmatches]` as an integer (0 when unset/unparsable).
 fn nmatches() -> i64 {
-    get_compstate_str("nmatches")
+    crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.trim().parse::<i64>().ok())
         .unwrap_or(0)
 }
@@ -193,7 +192,7 @@ pub fn _fuse_arguments(args: &[String]) -> i32 {
 
     // sh:46-51
     if ret == 300 {
-        set_compstate_str("restore", ""); // sh:49 — compstate[restore]=
+        let _ = crate::ported::params::setsparam("compstate[restore]", ""); // sh:49 — compstate[restore]=
         if !rawret {
             // sh:50 — ret=$(( nm == $compstate[nmatches] ))
             ret = if nm == nmatches() { 1 } else { 0 };

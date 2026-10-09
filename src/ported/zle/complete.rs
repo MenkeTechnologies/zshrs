@@ -1604,7 +1604,7 @@ pub fn ignore_prefix(l: i32) {
     // c:864
     if l > 0 {
         // c:864
-        let (new_prefix, new_iprefix) = {
+        {
             let mut prefix = lock_str(&COMPPREFIX).lock().unwrap();
             let pl = prefix.len() as i32; // c:870 strlen(compprefix)
             let take = l.min(pl) as usize; // c:888
@@ -1612,17 +1612,8 @@ pub fn ignore_prefix(l: i32) {
             let tail: String = prefix[take..].to_string(); // c:888 ztrdup(compprefix+l)
             let mut iprefix = lock_str(&COMPIPREFIX).lock().unwrap();
             iprefix.push_str(&head); // c:888 tricat(compiprefix, head)
-            *prefix = tail.clone(); // c:888 zsfree+ztrdup
-            (tail, iprefix.clone())
-        };
-        // gsu-mirror: in C `compprefix`/`compiprefix` are gsu-bound to
-        // $PREFIX/$IPREFIX (one storage). The Rust port keeps the globals
-        // and the params in separate stores that only re-sync at addmatches,
-        // so a caller reading $PREFIX (e.g. `_values`' `-i` prefix strip)
-        // would see the stale pre-`ignore_prefix` value. Write the params
-        // here to preserve the C binding's single-storage semantics.
-        let _ = crate::ported::params::setsparam("PREFIX", &new_prefix);
-        let _ = crate::ported::params::setsparam("IPREFIX", &new_iprefix);
+            *prefix = tail; // c:888 zsfree+ztrdup
+        }
     }
 }
 
@@ -1633,7 +1624,7 @@ pub fn ignore_suffix(l: i32) {
     // c:888
     if l > 0 {
         // c:888
-        let (new_suffix, new_isuffix) = {
+        {
             let mut suffix = lock_str(&COMPSUFFIX).lock().unwrap();
             let sl = suffix.len() as i32; // c:894 strlen(compsuffix)
             let mut split = sl - l; // c:896 (l = sl - l)
@@ -1646,14 +1637,9 @@ pub fn ignore_suffix(l: i32) {
             let mut isuffix = lock_str(&COMPISUFFIX).lock().unwrap();
             let mut new_isuffix = tail; // c:911
             new_isuffix.push_str(&isuffix);
-            *isuffix = new_isuffix.clone();
-            *suffix = head.clone(); // c:911 zsfree+ztrdup
-            (head, new_isuffix)
-        };
-        // gsu-mirror: see ignore_prefix — $SUFFIX/$ISUFFIX must track the
-        // compsuffix/compisuffix globals (gsu-bound as one storage in C).
-        let _ = crate::ported::params::setsparam("SUFFIX", &new_suffix);
-        let _ = crate::ported::params::setsparam("ISUFFIX", &new_isuffix);
+            *isuffix = new_isuffix;
+            *suffix = head; // c:911 zsfree+ztrdup
+        }
     }
 }
 
@@ -1681,19 +1667,6 @@ pub fn restrict_range(b: i32, e: i32) {
         let cur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
         COMPCURRENT.store((cur - b) as i64, Ordering::Relaxed); // c:931 compcurrent -= b
 
-        // zshrs sync: in C `$words`/`$CURRENT` ARE the compwords/compcurrent
-        // globals (special-param getfn reads them live), so restricting the
-        // globals is instantly visible to a completion function. zshrs's
-        // `$words`/`$CURRENT` are static param copies (set once at completion
-        // setup), so they desync from the globals here. Mirror the restricted
-        // range into the params so an `_arguments '*::'` (CAA_RARGS) /
-        // `'*:::'` (CAA_RREST) rest-arg ACTION sees the rest-only
-        // `$words`/`$CURRENT` — e.g. `_systemctl_command`'s `(( CURRENT == 1 ))`.
-        let restricted = words.clone();
-        let new_cur = (COMPCURRENT.load(Ordering::Relaxed) as i32);
-        drop(words); // release COMPWORDS lock before touching paramtab
-        crate::ported::params::setaparam("words", restricted);
-        let _ = crate::ported::params::setiparam("CURRENT", new_cur as i64);
     }
 }
 
@@ -3150,21 +3123,6 @@ pub fn comp_setunset(mut rset: i32, mut runset: i32, mut kset: i32, mut kunset: 
 /// `CURRENT=2 words=(man '')`, so `_main_complete` fell through to
 /// `_complete_hist`).
 ///
-/// zshrs difference (load-bearing): in C `$words`/`$CURRENT`/`$PREFIX`/…
-/// are gsu VIEWS onto the `compwords`/`compcurrent`/`compprefix`/… globals
-/// — `{ "words", PM_ARRAY, VAL(compwords), NULL, NULL }` (c:1249) — so
-/// restoring the global restores the shell-visible parameter for free.
-/// This port has no gsu binding: the parameters own their own copies
-/// (`compcore.rs:2989-3010`, and `restrict_range` at complete.rs:1546).
-/// The restore below therefore has to write BOTH halves — restoring only
-/// the globals would leave a completer's `$words` narrowed for the rest of
-/// the completion. Each half is snapshotted and restored SEPARATELY,
-/// because the two are not in lockstep: shell-level assignments inside a
-/// completion function move only the parameter, so mid-function the global
-/// and the parameter can legitimately disagree. See the note at the
-/// parameter-side snapshot below for the `ls /us<TAB>` measurement that
-/// pins this down.
-///
 /// WARNING: param names don't match C — Rust=(_prog, _w, name, runshfunc)
 /// vs C=(prog, w, name). The trailing closure IS c:1591's
 /// `runshfunc(prog, w, name)`: a zshrs function body is a caller-supplied
@@ -3181,16 +3139,15 @@ pub fn comp_wrapper(
         CP_ALLKEYS, CP_ALLREALS, CP_COMPSTATE, CP_CURRENT, CP_IPREFIX, CP_ISUFFIX, CP_PREFIX,
         CP_QIPREFIX, CP_QISUFFIX, CP_REDIRS, CP_RESTORE, CP_SUFFIX, CP_WORDS,
     };
-    use std::sync::atomic::Ordering;
-    // c:1558-1559 — `if (incompfunc != 1) return 1;`. 1 is the chain's
+    // c:1568-1569 — `if (incompfunc != 1) return 1;`. 1 is the chain's
     // "not handled, keep walking" answer (`Src/exec.c:6186` short-circuits
     // only on 0), so an ordinary non-completion function call pays one
     // relaxed load and then runs completely unwrapped.
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
-        // c:1558
-        return 1; // c:1559
+        // c:1568
+        return 1; // c:1569
     }
-    let _ = name; // c:1591 passes it to runshfunc; the delegate already has it
+    let _ = name; // c:1601 passes it to runshfunc; the delegate already has it
     let snap = |g: &'static std::sync::OnceLock<Mutex<String>>| -> String {
         g.get_or_init(|| Mutex::new(String::new()))
             .lock()
@@ -3203,14 +3160,15 @@ pub fn comp_wrapper(
         }
     };
 
-    // c:1567-1572 — record which real params are ALREADY PM_UNSET so the
-    // c:1619 `comp_setunset` can put each one back to the state it had
+    // c:1577-1584 — record which real params are ALREADY PM_UNSET so the
+    // c:1629 `comp_setunset` can put each one back to the state it had
     // rather than blanket-marking the whole set as "set".
     //   m = CP_WORDS | CP_REDIRS | CP_CURRENT | CP_PREFIX | CP_SUFFIX |
     //       CP_IPREFIX | CP_ISUFFIX | CP_QIPREFIX | CP_QISUFFIX;
     //   for (pp = comprpms, sm = 1; m; pp++, m >>= 1, sm <<= 1)
     //       if ((m & 1) && ((*pp)->node.flags & PM_UNSET)) runset |= sm;
-    let mut runset: u32 = 0; // c:1564
+    let mut runset: u32 = 0; // c:1574
+    let mut kunset: u32 = 0; // c:1574
     {
         let mut m = CP_WORDS
             | CP_REDIRS
@@ -3220,169 +3178,93 @@ pub fn comp_wrapper(
             | CP_IPREFIX
             | CP_ISUFFIX
             | CP_QIPREFIX
-            | CP_QISUFFIX; // c:1567-1568
+            | CP_QISUFFIX; // c:1577-1578
         let mut sm: u32 = 1;
+        let rp = comprpms.lock().unwrap().clone().unwrap_or_default();
         if let Ok(tab) = paramtab().read() {
-            for cp in COMPRPARAMS {
-                // c:1569
+            for pp in rp.iter() {
+                // c:1579
                 if m == 0 {
                     break;
                 }
                 if (m & 1) != 0 {
-                    // c:1570 — C always has the node and only the flag
-                    // varies; a name this port never created is the same
-                    // observable state, so count it as unset.
-                    let is_unset = tab
-                        .get(cp.name)
-                        .map(|p| (p.node.flags & PM_UNSET as i32) != 0)
-                        .unwrap_or(true);
+                    let is_unset = pp
+                        .as_deref()
+                        .and_then(|nam| tab.get(nam))
+                        .map(|p| (p.node.flags as u32 & PM_UNSET) != 0)
+                        .unwrap_or(false);
                     if is_unset {
-                        runset |= sm; // c:1571
+                        runset |= sm; // c:1581
                     }
                 }
                 m >>= 1;
                 sm <<= 1;
             }
         }
+        // c:1583-1584 — `if (compkpms[CPN_RESTORE]->node.flags & PM_UNSET)
+        // kunset = CP_RESTORE;`
+        let kp = compkpms.lock().unwrap().clone().unwrap_or_default();
+        let restore_unset = kp
+            .get(crate::ported::zle::comp_h::CPN_RESTORE as usize)
+            .and_then(|n| n.as_deref())
+            .and_then(|nam| {
+                paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get(COMPSTATENAME)
+                            .and_then(|p| p.u_hash.as_ref())
+                            .and_then(|h| h.parnodes.get(nam))
+                            .map(|e| e.node.flags)
+                    })
+            })
+            .map(|f| (f as u32 & PM_UNSET) != 0)
+            .unwrap_or(false);
+        if restore_unset {
+            kunset = CP_RESTORE;
+        }
     }
-    // c:1573-1574 — `if (compkpms[CPN_RESTORE]->node.flags & PM_UNSET)
-    // kunset = CP_RESTORE;`. `$compstate` keys are hash entries here, not
-    // Params carrying their own flag word, so "absent from the hash" is
-    // this port's PM_UNSET.
-    let kunset: u32 = if compcore::get_compstate_str("restore").is_none() {
-        CP_RESTORE // c:1574
-    } else {
-        0 // c:1564
-    };
 
-    // c:1575-1576 — `orest = comprestore; comprestore = ztrdup("auto");`.
-    // The default is SEEDED here, before the function runs, and the
-    // caller's value put back at c:1642-1643.
-    // `comprestore` is NOT a parameter of its own: complete.c:1268 lists it
-    // in `compkparams` as `{ "restore", PM_SCALAR, VAL(comprestore) }`,
-    // i.e. the C global is gsu-bound to the `$compstate[restore]` KEY.
-    let orest = compcore::get_compstate_str("restore"); // c:1575
-    compcore::set_compstate_str("restore", "auto"); // c:1576
-    let ocur = (COMPCURRENT.load(Ordering::Relaxed) as i32); // c:1577
-    let opre = snap(&COMPPREFIX); // c:1578
-    let osuf = snap(&COMPSUFFIX); // c:1579
-    let oipre = snap(&COMPIPREFIX); // c:1580
-    let oisuf = snap(&COMPISUFFIX); // c:1581
-    let oqipre = snap(&COMPQIPREFIX); // c:1582
-    let oqisuf = snap(&COMPQISUFFIX); // c:1583
-    let oq = snap(&COMPQUOTE); // c:1584
-    let oqi = snap(&COMPQUOTING); // c:1585
-    let oqs = snap(&COMPQSTACK); // c:1586
-    let oaq = snap(&AUTOQ); // c:1587
-    let owords = lock_vec(&COMPWORDS)
-        .lock()
-        .map(|v| v.clone())
-        .unwrap_or_default(); // c:1588
-                              // c:1589 — `oredirs = zarrdup(compredirs);`. There is no `compredirs`
-                              // global in this port; the `redirections` parameter (COMPRPARAMS[1]) is
-                              // the only storage, so snapshot it from paramtab. `None` = the name was
-                              // never created, which is the `runset` bit already recorded above.
-    let oredirs = crate::ported::params::getaparam("redirections"); // c:1589
+    // c:1585-1586 — `orest = comprestore; comprestore = ztrdup("auto");`
+    let orest = snap(&COMPRESTORE);
+    restore(&COMPRESTORE, "auto".to_string());
+    let ocur = COMPCURRENT.load(Ordering::Relaxed); // c:1587
+    let opre = snap(&COMPPREFIX); // c:1588
+    let osuf = snap(&COMPSUFFIX); // c:1589
+    let oipre = snap(&COMPIPREFIX); // c:1590
+    let oisuf = snap(&COMPISUFFIX); // c:1591
+    let oqipre = snap(&COMPQIPREFIX); // c:1592
+    let oqisuf = snap(&COMPQISUFFIX); // c:1593
+    let oq = snap(&COMPQUOTE); // c:1594
+    let oqi = snap(&COMPQUOTING); // c:1595
+    let oqs = snap(&COMPQSTACK); // c:1596
+    let oaq = snap(&AUTOQ); // c:1597
+    let owords = lock_vec(&COMPWORDS).lock().map(|v| v.clone()).unwrap_or_default(); // c:1598
+    let oredirs = lock_vec(&COMPREDIRS).lock().map(|v| v.clone()).unwrap_or_default(); // c:1599
 
-    // PARAMETER-SIDE snapshot of the same c:1577-1589 set.
-    //
-    // C needs only the globals above because every one of these names is a
-    // gsu VIEW onto them (`{ "PREFIX", PM_SCALAR, VAL(compprefix), ... }`,
-    // c:1249): one storage, so restoring `compprefix` restores `$PREFIX`.
-    // This port has two storages and they are NOT in lockstep — a
-    // shell-level `PREFIX=...` assignment inside a completion function
-    // (`_path_files` does it at sh:436/439/567/639/643/673/808/845/848/890)
-    // lands in the parameter, while the globals only move when the engine
-    // writes them (`compset`, `restrict_range`, `callcompfunc`). So the two
-    // legitimately hold DIFFERENT values mid-function: measured under
-    // `ls /us<TAB>`, at the `_list_files` call the global was "us" while
-    // `$PREFIX` was "/us" — and "/us" is what real zsh reports there.
-    //
-    // Each storage therefore has to go back to ITS OWN entry value.
-    // Restoring the parameter from the GLOBAL's snapshot instead is what
-    // broke file completion: it published the stale global into `$PREFIX`,
-    // so `_path_files` resumed after `_list_files` with a truncated prefix,
-    // its match generation collapsed, and `_main_complete` fell through the
-    // completer list to `_fasd_zsh_word_complete_trigger`.
-    //
-    // `None` means the name was never created — this port's PM_UNSET,
-    // already recorded in `runset`, so it must NOT be recreated here.
-    let opre_p = crate::ported::params::getsparam("PREFIX"); // c:1578
-    let osuf_p = crate::ported::params::getsparam("SUFFIX"); // c:1579
-    let oipre_p = crate::ported::params::getsparam("IPREFIX"); // c:1580
-    let oisuf_p = crate::ported::params::getsparam("ISUFFIX"); // c:1581
-    let oqipre_p = crate::ported::params::getsparam("QIPREFIX"); // c:1582
-    let oqisuf_p = crate::ported::params::getsparam("QISUFFIX"); // c:1583
-    let oq_p = crate::ported::params::getsparam("QUOTE"); // c:1584
-    let oqi_p = crate::ported::params::getsparam("QUOTING"); // c:1585
-    let ocur_p = crate::ported::params::getiparam("CURRENT"); // c:1577
-    let owords_p = crate::ported::params::getaparam("words"); // c:1588
-
-    // c:1591 — `runshfunc(prog, w, name);`
+    // c:1601 — `runshfunc(prog, w, name);`
     runshfunc();
 
-    // c:1593 — `if (comprestore && !strcmp(comprestore, "auto"))`.
-    let comprestore_val = compcore::get_compstate_str("restore").unwrap_or_default();
-    if comprestore_val == "auto" {
-        COMPCURRENT.store((ocur) as i64, Ordering::Relaxed); // c:1594
-        restore(&COMPPREFIX, opre); // c:1596
-        restore(&COMPSUFFIX, osuf); // c:1598
-        restore(&COMPIPREFIX, oipre); // c:1600
-        restore(&COMPISUFFIX, oisuf); // c:1602
-        restore(&COMPQIPREFIX, oqipre); // c:1604
-        restore(&COMPQISUFFIX, oqisuf); // c:1606
-        restore(&COMPQUOTE, oq); // c:1608
-        restore(&COMPQUOTING, oqi); // c:1610
-        restore(&COMPQSTACK, oqs); // c:1612
-                                   // !!! RUST-ONLY LINE — NO C COUNTERPART !!!
-                                   // In C, `$compstate[all_quotes]` has NO storage of its own: its
-                                   // `compkparams` row is `{ "all_quotes", PM_SCALAR | PM_READONLY,
-                                   // NULL, GSU(compqstack_gsu) }` (c:1299) and `compqstack_gsu`
-                                   // (c:1242-1243) routes every read through `get_compqstack` (c:1479)
-                                   // against the live `compqstack` global — so c:1612's assignment IS
-                                   // the parameter update. zshrs splits the two: a single-key
-                                   // `${compstate[KEY]}` read comes straight out of
-                                   // `paramtab_hashed_storage` (`src/ported/subst.rs:7034-7044`), which
-                                   // special-cases only `nmatches`, so nothing ever published
-                                   // `all_quotes` and it read EMPTY where zsh gives `\`, `"`, `'`.
-                                   // Run the getter and store its result at each `compqstack` write.
-        compcore::set_compstate_str("all_quotes", &get_compqstack(&param::default()));
-        restore(&AUTOQ, oaq); // c:1614
+    // c:1603 — `if (comprestore && !strcmp(comprestore, "auto"))`.
+    if snap(&COMPRESTORE) == "auto" {
+        COMPCURRENT.store(ocur, Ordering::Relaxed); // c:1604
+        restore(&COMPPREFIX, opre); // c:1606
+        restore(&COMPSUFFIX, osuf); // c:1608
+        restore(&COMPIPREFIX, oipre); // c:1610
+        restore(&COMPISUFFIX, oisuf); // c:1612
+        restore(&COMPQIPREFIX, oqipre); // c:1614
+        restore(&COMPQISUFFIX, oqisuf); // c:1616
+        restore(&COMPQUOTE, oq); // c:1618
+        restore(&COMPQUOTING, oqi); // c:1620
+        restore(&COMPQSTACK, oqs); // c:1622
+        restore(&AUTOQ, oaq); // c:1624
         if let Ok(mut g) = lock_vec(&COMPWORDS).lock() {
-            *g = owords; // c:1617
+            *g = owords; // c:1627
         }
-
-        // No-gsu mirror (see the note beside the parameter-side snapshot
-        // above): c:1617's `compwords = owords` restores the shell-visible
-        // `$words` for free in C. Here the parameters are separate storage,
-        // so each goes back to the value IT held on entry — not to the
-        // corresponding global's, which can legitimately differ.
-        if let Some(w) = owords_p {
-            crate::ported::params::setaparam("words", w); // c:1617 ($words view)
+        if let Ok(mut g) = lock_vec(&COMPREDIRS).lock() {
+            *g = oredirs; // c:1628
         }
-        let _ = crate::ported::params::setiparam("CURRENT", ocur_p); // c:1594 ($CURRENT view)
-        for (param, val) in [
-            ("PREFIX", opre_p),     // c:1596
-            ("SUFFIX", osuf_p),     // c:1598
-            ("IPREFIX", oipre_p),   // c:1600
-            ("ISUFFIX", oisuf_p),   // c:1602
-            ("QIPREFIX", oqipre_p), // c:1604
-            ("QISUFFIX", oqisuf_p), // c:1606
-            ("QUOTE", oq_p),        // c:1608
-            ("QUOTING", oqi_p),     // c:1610
-        ] {
-            if let Some(v) = val {
-                // QIPREFIX/QISUFFIX are PM_READONLY (c:1256-1257); C
-                // restores them by writing compqiprefix/compqisuffix
-                // directly, so the bit never applies to this path.
-                crate::vm_helper::set_readonly_special(param, &v);
-            }
-        }
-        if let Some(r) = oredirs {
-            crate::ported::params::setaparam("redirections", r); // c:1618
-        }
-
-        // c:1619-1625 — `comp_setunset(CP_COMPSTATE | (~runset & (…)),
+        // c:1629-1635 — `comp_setunset(CP_COMPSTATE | (~runset & (…)),
         //                (runset & CP_ALLREALS),
         //                (~kunset & CP_RESTORE), (kunset & CP_ALLKEYS));`
         let realmask = CP_WORDS
@@ -3393,27 +3275,27 @@ pub fn comp_wrapper(
             | CP_IPREFIX
             | CP_ISUFFIX
             | CP_QIPREFIX
-            | CP_QISUFFIX; // c:1620-1623
+            | CP_QISUFFIX; // c:1630-1633
         comp_setunset(
-            (CP_COMPSTATE | (!runset & realmask)) as i32, // c:1619-1623
-            (runset & CP_ALLREALS) as i32,                // c:1624
-            (!kunset & CP_RESTORE) as i32,                // c:1625
-            (kunset & CP_ALLKEYS) as i32,                 // c:1625
+            (CP_COMPSTATE | (!runset & realmask)) as i32, // c:1629-1633
+            (runset & CP_ALLREALS) as i32,                // c:1634
+            (!kunset & CP_RESTORE) as i32,                // c:1635
+            (kunset & CP_ALLKEYS) as i32,                 // c:1635
         );
     } else {
-        // c:1627-1628 — the callee opted out of the restore; only the
+        // c:1637-1638 — the callee opted out of the restore; only the
         // `$compstate` / `restore` set-state bookkeeping still runs. The
-        // C `zsfree`/`freearray` calls at c:1629-1640 are Rust drops.
+        // C `zsfree`/`freearray` calls at c:1639-1650 are Rust drops.
         comp_setunset(
-            CP_COMPSTATE as i32,           // c:1627
-            0,                             // c:1627
-            (!kunset & CP_RESTORE) as i32, // c:1627
-            (kunset & CP_RESTORE) as i32,  // c:1628
+            CP_COMPSTATE as i32,           // c:1637
+            0,                             // c:1637
+            (!kunset & CP_RESTORE) as i32, // c:1637
+            (kunset & CP_RESTORE) as i32,  // c:1638
         );
     }
-    // c:1642-1643 — `zsfree(comprestore); comprestore = orest;`.
-    compcore::set_compstate_str("restore", orest.as_deref().unwrap_or(""));
-    0 // c:1645
+    // c:1652-1653 — `zsfree(comprestore); comprestore = orest;`.
+    restore(&COMPRESTORE, orest);
+    0 // c:1655
 }
 
 /// Direct port of `comp_check()` from `Src/Zle/complete.c:1651`.
@@ -3504,13 +3386,38 @@ pub fn setup_(m: *const module) -> i32 {
     clear(&COMPPARAMETER);
     clear(&COMPREDIRECT);
     clear(&COMPQUOTE);
-    crate::ported::zle::zle_tricky::COMPQUOTE
+    clear(&COMPQUOTING);
+    clear(&COMPRESTORE);
+    clear(&COMPLIST);
+    clear(&COMPINSERT);
+    clear(&COMPEXACT);
+    clear(&COMPEXACTSTR);
+    clear(&COMPPATINSERT);
+    clear(&COMPLASTPROMPT);
+    clear(&COMPTOEND);
+    clear(&COMPOLDLIST);
+    clear(&COMPOLDINS);
+    clear(&COMPVARED);
+    clear(&COMPQSTACK);
+    if let Ok(mut g) = compcore::comppatmatch
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
-        .ok()
-        .map(|mut s| s.clear());
-    clear(&COMPLIST);
-    clear(&COMPQSTACK);
+    {
+        g.clear(); // c:1740 comppatmatch = NULL
+    }
+    // c:1731-1732 — `comprpms = compkpms = NULL; compwords = compredirs = NULL;`
+    if let Ok(mut g) = comprpms.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = compkpms.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = COMPREDIRS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        g.clear();
+    }
+    if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        g.clear();
+    }
     // c:1733-1734 — `complastprefix = complastsuffix = ztrdup("")`.
     if let Ok(mut s) = COMPLASTPREFIX
         .get_or_init(|| Mutex::new(String::new()))
@@ -3524,7 +3431,7 @@ pub fn setup_(m: *const module) -> i32 {
     {
         s.clear();
     }
-    // c:1735 — `complistmax = 0`. (LISTMAX read at use-site.)
+    COMPLISTMAX.store(0, Ordering::Relaxed); // c:1735
     // c:1736 — `hascompmod = 1;`. This is the ONLY place C raises the flag,
     // and `docomplete` reads it at `zle_tricky.c:712` to decide whether a
     // `=word` under `expand-or-complete` may expand unconditionally: with no
@@ -3782,10 +3689,29 @@ pub fn finish_(m: *const module) -> i32 {
     clear(&COMPQUOTE);
     clear(&COMPQSTACK);
     clear(&COMPQUOTING); // c:1805-1807
+    clear(&COMPRESTORE); // c:1808
     clear(&COMPLIST); // c:1809
+    clear(&COMPINSERT);
+    clear(&COMPEXACT);
+    clear(&COMPEXACTSTR);
+    clear(&COMPPATINSERT);
+    clear(&COMPLASTPROMPT);
+    clear(&COMPTOEND);
+    clear(&COMPOLDLIST);
+    clear(&COMPOLDINS);
+    clear(&COMPVARED); // c:1810-1818
+    if let Ok(mut g) = compcore::comppatmatch
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+    {
+        g.clear(); // c:1815
+    }
     if let Ok(mut g) = COMPWORDS.get_or_init(|| Mutex::new(Vec::new())).lock()
     // c:1790
     {
+        g.clear();
+    }
+    if let Ok(mut g) = COMPREDIRS.get_or_init(|| Mutex::new(Vec::new())).lock() {
         g.clear();
     }
     // c:1821 — `hascompmod = 0;`. The unload half of the c:1736 flag: once
@@ -4416,6 +4342,7 @@ mod tests {
     fn compset_p_moves_prefix_chars_to_iprefix() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
+        let _scope = crate::test_util::comp_scope();
         INCOMPFUNC.store(1, Ordering::Relaxed);
         *lock_str(&COMPPREFIX).lock().unwrap() = "~ro".to_string();
         *lock_str(&COMPIPREFIX).lock().unwrap() = String::new();

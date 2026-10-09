@@ -94,7 +94,6 @@ use crate::compsys::ported::shared::{
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
 use crate::ported::utils::{errflag, noerrs_lock, quotestring};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{
     isset, options, ERRFLAG_ERROR, MAX_OPS, MULTIOS, QT_BACKSLASH, RECEXACT,
@@ -541,7 +540,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
     // sh:184-243 — emit.
     // ---------------------------------------------------------------
 
-    if get_compstate_str("insert").unwrap_or_default().is_empty() {
+    if crate::ported::params::getsparam("compstate[insert]").unwrap_or_default().is_empty() {
         // sh:184-191 — nothing is going to be inserted, so one flat group
         // of every expansion is all that is wanted.
         setaparam("exp", exp.clone());
@@ -661,7 +660,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
 
             // sh:236  [[ -o multios ]] && exp=($exp[1] $compstate[redirect]${^exp[2,-1]})
             if isset(MULTIOS) {
-                let redirect = get_compstate_str("redirect").unwrap_or_default();
+                let redirect = crate::ported::params::getsparam("compstate[redirect]").unwrap_or_default();
                 let mut rebuilt: Vec<String> = Vec::new();
                 if let Some(first) = exp.first() {
                     rebuilt.push(first.clone());
@@ -696,7 +695,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
         }
 
         // sh:242 — the groups above are alternatives, not a common prefix.
-        set_compstate_str("insert", "menu");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
     }
 
     // sh:245  return continue

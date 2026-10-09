@@ -32,7 +32,6 @@ use crate::compsys::ported::shared::zstyle_t;
 use crate::compsys::ported::shared::zstyle_s;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// Reach `_setup` as a BARE COMMAND WORD, the way every upstream caller
 /// writes it — `_setup "$1" "${gname:--default-}"` (Completion/Base/Core/_description sh:19) — so the normal function lookup runs.
@@ -64,7 +63,7 @@ pub fn _setup_impl(args: &[String]) -> i32 {
     let ctx = format!(":completion:{}:{}", curcontext, tag);
 
     // sh:3 — snapshot nmatches for sh:60 stash decision
-    let nm: i64 = get_compstate_str("nmatches")
+    let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -131,23 +130,23 @@ pub fn _setup_impl(args: &[String]) -> i32 {
 
     // sh:50-56  last-prompt
     match zstyle_t(&ctx, "last-prompt") {
-        0 => set_compstate_str("last_prompt", "yes"), // sh:51
-        1 => set_compstate_str("last_prompt", ""),    // sh:53
+        0 => { let _ = crate::ported::params::setsparam("compstate[last_prompt]", "yes"); }, // sh:51
+        1 => { let _ = crate::ported::params::setsparam("compstate[last_prompt]", ""); },    // sh:53
         _ => {
             // sh:55 — style undefined for this context: restore saved
             let saved = getsparam("_saved_lastprompt").unwrap_or_default();
-            set_compstate_str("last_prompt", &saved);
+            let _ = crate::ported::params::setsparam("compstate[last_prompt]", &saved);
         }
     }
 
     // sh:58-64  accept-exact
     match zstyle_t(&ctx, "accept-exact") {
-        0 => set_compstate_str("exact", "accept"), // sh:59
-        1 => set_compstate_str("exact", ""),       // sh:61
+        0 => { let _ = crate::ported::params::setsparam("compstate[exact]", "accept"); }, // sh:59
+        1 => { let _ = crate::ported::params::setsparam("compstate[exact]", ""); },       // sh:61
         _ => {
             // sh:63
             let saved = getsparam("_saved_exact").unwrap_or_default();
-            set_compstate_str("exact", &saved);
+            let _ = crate::ported::params::setsparam("compstate[exact]", &saved);
         }
     }
 
@@ -235,7 +234,7 @@ fn zmodload_complist() {
 fn apply_list_flag(ctx: &str, style: &str, flag: &str) {
     // sh:33 / sh:42 — `zstyle -t …` is a VALUE test; see [`zstyle_t`].
     let rc = zstyle_t(ctx, style);
-    let mut list_val = get_compstate_str("list").unwrap_or_default();
+    let mut list_val = crate::ported::params::getsparam("compstate[list]").unwrap_or_default();
     if rc == 0 {
         if !list_val.contains(flag) {
             if !list_val.is_empty() {
@@ -243,15 +242,15 @@ fn apply_list_flag(ctx: &str, style: &str, flag: &str) {
             }
             list_val.push_str(flag);
         }
-        set_compstate_str("list", &list_val);
+        let _ = crate::ported::params::setsparam("compstate[list]", &list_val);
     } else if rc == 1 {
         // sh:35 / sh:44 — `compstate[list]="${compstate[list]:gs/<flag>//}"`
         let stripped = list_val.replace(flag, "");
-        set_compstate_str("list", stripped.trim());
+        let _ = crate::ported::params::setsparam("compstate[list]", stripped.trim());
     } else {
         // sh:37 / sh:46 — style undefined for this context
         let saved = getsparam("_saved_list").unwrap_or_default();
-        set_compstate_str("list", &saved);
+        let _ = crate::ported::params::setsparam("compstate[list]", &saved);
     }
 }
 
@@ -366,7 +365,7 @@ mod tests {
     #[test]
     fn list_packed_style_appends_to_compstate_list() {
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("list", "");
+        let _ = crate::ported::params::setsparam("compstate[list]", "");
         // We don't actually set the zstyle here — covers the "no
         //   style set" fall-through path. The assertion just checks
         //   no panic + integer return.
@@ -388,6 +387,7 @@ mod tests {
     #[test]
     fn last_prompt_style_zero_stores_empty_not_yes() {
         let _g = crate::test_util::global_state_lock();
+        let _scope = crate::test_util::comp_scope();
         let _ = setsparam("_comp_force_list", "");
         let _ = setsparam("curcontext", "lpz:lpz:lpz");
         let ops = crate::ported::zsh_h::options {
@@ -406,9 +406,9 @@ mod tests {
             &ops,
             0,
         );
-        set_compstate_str("last_prompt", "yes");
+        let _ = crate::ported::params::setsparam("compstate[last_prompt]", "yes");
         let _ = _setup_impl(&["lptag".to_string()]);
-        let landed = get_compstate_str("last_prompt");
+        let landed = crate::ported::params::getsparam("compstate[last_prompt]");
         // Restore shared globals before asserting.
         let _ = crate::ported::modules::zutil::bin_zstyle(
             "zstyle",

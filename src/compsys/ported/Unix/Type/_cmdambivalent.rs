@@ -25,7 +25,6 @@ use crate::compsys::ported::_cmdstring::_cmdstring;
 use crate::compsys::ported::_command_names::_command_names;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getaparam, getsparam};
-use crate::ported::zle::compcore::get_compstate_str;
 
 /// `_cmdambivalent` — choose between cmdstring/command-names/normal
 /// completion based on cursor position and quoting state.
@@ -44,7 +43,7 @@ pub fn _cmdambivalent() -> i32 {
             return _cmdstring();
         }
         // sh:8  compstate[all_quotes][1] is `'` or `"`
-        let all_quotes = get_compstate_str("all_quotes").unwrap_or_default();
+        let all_quotes = crate::ported::params::getsparam("compstate[all_quotes]").unwrap_or_default();
         if all_quotes.starts_with('\'') || all_quotes.starts_with('"') {
             return _cmdstring();
         }

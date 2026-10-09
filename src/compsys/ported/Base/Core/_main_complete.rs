@@ -43,7 +43,6 @@ use crate::ported::params::{
     getaparam, gethkparam, gethparam, getiparam, getsparam, setaparam, sethparam, setsparam,
     unsetparam,
 };
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{isset, options, EQUALSOPT, MAX_OPS};
 
@@ -591,10 +590,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
     // sh:25  snapshot compstate so we can restore on exit
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
     let saved_compskip = getsparam("_compskip").unwrap_or_default();
-    let saved_exact = get_compstate_str("exact").unwrap_or_default();
-    let saved_lastprompt = get_compstate_str("last_prompt").unwrap_or_default();
-    let saved_list = get_compstate_str("list").unwrap_or_default();
-    let saved_insert = get_compstate_str("insert").unwrap_or_default();
+    let saved_exact = crate::ported::params::getsparam("compstate[exact]").unwrap_or_default();
+    let saved_lastprompt = crate::ported::params::getsparam("compstate[last_prompt]").unwrap_or_default();
+    let saved_list = crate::ported::params::getsparam("compstate[list]").unwrap_or_default();
+    let saved_insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
     let saved_colors = getsparam("ZLS_COLORS").unwrap_or_default();
     let saved_colors_set = getsparam("ZLS_COLORS").is_some();
     let _ = setsparam("_saved_exact", &saved_exact);
@@ -643,20 +642,20 @@ pub fn _main_complete(args: &[String]) -> i32 {
     };
     if pending_match {
         tracing::debug!(target: "compsys_args", pending, %insert_tab, "_main_complete EARLY RETURN: pending tab");
-        set_compstate_str("insert", "tab");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "tab");
         return 0;
     }
 
     // sh:70-79  tab-init handling — if the user pressed TAB and
     //   insert-tab is on for non-vared context, exit immediately.
-    let cur_insert = get_compstate_str("insert").unwrap_or_default();
+    let cur_insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
     if cur_insert.starts_with("tab") {
         let on_tab = matches!(insert_tab.trim(), "yes" | "true" | "on" | "1")
             || insert_tab.starts_with("yes ")
             || insert_tab.starts_with("true ")
             || insert_tab.starts_with("on ")
             || insert_tab.starts_with("1 ");
-        let vared = get_compstate_str("vared").unwrap_or_default();
+        let vared = crate::ported::params::getsparam("compstate[vared]").unwrap_or_default();
         if on_tab
             && (!curcontext.starts_with(':')
                 || vared.is_empty()
@@ -668,13 +667,13 @@ pub fn _main_complete(args: &[String]) -> i32 {
         }
         // Strip the leading `tab` from compstate[insert]
         let stripped = cur_insert.replace("tab ", "");
-        set_compstate_str("insert", &stripped);
+        let _ = crate::ported::params::setsparam("compstate[insert]", &stripped);
     }
 
     // sh:83-89  GLOB_COMPLETE second-attempt: split PREFIX at the
     //   prior `_lastcomp[unambiguous_cursor]` so the user's typed
     //   characters split into a fresh PREFIX/SUFFIX pair.
-    if get_compstate_str("pattern_match").as_deref() == Some("*") {
+    if crate::ported::params::getsparam("compstate[pattern_match]").as_deref() == Some("*") {
         let last_prefix = lastcomp_get("unambiguous").unwrap_or_default();
         let prefix = getsparam("PREFIX").unwrap_or_default();
         if last_prefix == prefix {
@@ -709,7 +708,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
     //         fi
     //       fi
     //     fi
-    let quote = get_compstate_str("quote").unwrap_or_default();
+    let quote = crate::ported::params::getsparam("compstate[quote]").unwrap_or_default();
     if quote.is_empty() {
         let prefix = getsparam("PREFIX").unwrap_or_default();
         // Instrumentation for the sh:96 guard. It is a byte test on the LIVE
@@ -734,7 +733,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
                 0,
             ) == 0
         {
-            set_compstate_str("context", "equal");
+            let _ = crate::ported::params::setsparam("compstate[context]", "equal");
         } else if prefix.starts_with('~') && !prefix.contains('/') {
             // sh:96 — BOTH halves of this guard gate the `~[` arm too: it is
             // the `elif`'s body in the shell source, not a sibling branch.
@@ -763,7 +762,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
                     &make_ops(),
                     0,
                 );
-                set_compstate_str("context", "subscript");
+                let _ = crate::ported::params::setsparam("compstate[context]", "subscript");
                 // sh:104 — `[[ -n $_comps[-subscript-] ]] &&
                 //            $_comps[-subscript-] && return`. Dispatch the
                 // registered `-subscript-` completer directly and, when it
@@ -784,7 +783,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
                     &make_ops(),
                     0,
                 );
-                set_compstate_str("context", "tilde");
+                let _ = crate::ported::params::setsparam("compstate[context]", "tilde");
             }
         }
     }
@@ -1039,11 +1038,11 @@ pub fn _main_complete(args: &[String]) -> i32 {
     // kill's flow — verified: kill nm 3→3 here, unchanged). c:begcmgroup alias.
     crate::ported::zle::compcore::endcmgroup(None);
     // Snapshot for the warnings/format branch
-    let nm: i64 = get_compstate_str("nmatches")
+    let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let comp_mesg = getsparam("_comp_mesg").unwrap_or_default();
-    let old_list = get_compstate_str("old_list").unwrap_or_default();
+    let old_list = crate::ported::params::getsparam("compstate[old_list]").unwrap_or_default();
 
     // sh:234-349 — menu-completion decision. When there are enough matches
     // (or we kept an old list), evaluate the `menu` style (stashed by
@@ -1064,7 +1063,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
             setaparam("_menu_style", ms);
         }
         // sh:239 — tmp = list_lines + BUFFERLINES + 1.
-        let list_lines: i64 = get_compstate_str("list_lines")
+        let list_lines: i64 = crate::ported::params::getsparam("compstate[list_lines]")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         let bufferlines = getiparam("BUFFERLINES");
@@ -1085,10 +1084,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
                     "yes=long-list" | "true=long-list" | "on=long-list" | "1=long-list"
                 )
         });
-        let list_has = get_compstate_str("list")
+        let list_has = crate::ported::params::getsparam("compstate[list]")
             .map(|l| l == "list" || l.contains(" list") || l.starts_with("list "))
             .unwrap_or(false);
-        let cur_insert = get_compstate_str("insert").unwrap_or_default();
+        let cur_insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
 
         // Compute the smallest numeric threshold across elements matching a
         // yes-like prefix (sh:252-267); mirrors the C min/max loops: a bare
@@ -1148,29 +1147,29 @@ pub fn _main_complete(args: &[String]) -> i32 {
         let auto = has(&|e| e.starts_with("auto"));
 
         if list_has && tmp > lines && long_list {
-            set_compstate_str("insert", "menu"); // sh:246
+            let _ = crate::ported::params::setsparam("compstate[insert]", "menu"); // sh:246
         } else if cur_insert == saved_insert {
             // sh:247
             let long = has(&|e| matches!(e, "yes=long" | "true=long" | "1=long" | "on=long"));
             if !cur_insert.is_empty() && long && tmp > lines {
-                set_compstate_str("insert", "menu"); // sh:250
+                let _ = crate::ported::params::setsparam("compstate[insert]", "menu"); // sh:250
             } else {
                 let min = threshold(&|e: &str| yes_like(e)); // sh:252-267
                 let max = threshold(&|e: &str| no_like(e)); // sh:270-285
                 if (min.is_some_and(|mn| nm >= mn) && max.map(|mx| nm < mx).unwrap_or(true))
                     || (auto && cur_insert == "automenu")
                 {
-                    set_compstate_str("insert", "menu"); // sh:291
+                    let _ = crate::ported::params::setsparam("compstate[insert]", "menu"); // sh:291
                 } else if max.is_some_and(|mx| nm >= mx) {
-                    set_compstate_str("insert", "unambiguous"); // sh:293
+                    let _ = crate::ported::params::setsparam("compstate[insert]", "unambiguous"); // sh:293
                 } else if auto && cur_insert != "automenu" {
-                    set_compstate_str("insert", "automenu-unambiguous"); // sh:296
+                    let _ = crate::ported::params::setsparam("compstate[insert]", "automenu-unambiguous"); // sh:296
                 }
             }
         }
 
         // sh:301-349 — MENUSELECT/MENUMODE setup for `*menu*` inserts.
-        if get_compstate_str("insert")
+        if crate::ported::params::getsparam("compstate[insert]")
             .unwrap_or_default()
             .contains("menu")
         {
@@ -1224,8 +1223,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
     }
     // sh:350-352 — no matches but a message was set: list it
     else if nm < 1 && !comp_mesg.is_empty() {
-        set_compstate_str("insert", "");
-        set_compstate_str("list", "list force");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "");
+        let _ = crate::ported::params::setsparam("compstate[list]", "list force");
     } else if nm == 0 && comp_mesg.is_empty() && old_list != "keep" {
         // sh:353-371  warnings format emission.
         //
@@ -1266,8 +1265,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
             crate::compsys::ported::shared::zstyle_s(&format!(":completion:{}:warnings", curcontext), "format");
         if live_pending == 0 && !lastdescr.is_empty() && warn_format.is_some() {
             let warn_format = warn_format.unwrap_or_default();
-            set_compstate_str("list", "list force");
-            set_compstate_str("insert", "");
+            let _ = crate::ported::params::setsparam("compstate[list]", "list force");
+            let _ = crate::ported::params::setsparam("compstate[insert]", "");
             // sh:360 — `tmp=( "\`${(@)^_lastdescr:#}'" )`. The `:#` with an
             // EMPTY pattern drops every element that matches it, i.e. every
             // empty element. That matters because `_description` sh:14
@@ -1317,8 +1316,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
     // sh:373-378  ambiguous-color injection
     let ambig_color = getsparam("_ambiguous_color").unwrap_or_default();
     if !ambig_color.is_empty() {
-        let unambig = get_compstate_str("unambiguous").unwrap_or_default();
-        let upos: usize = get_compstate_str("unambiguous_cursor")
+        let unambig = crate::ported::params::getsparam("compstate[unambiguous]").unwrap_or_default();
+        let upos: usize = crate::ported::params::getsparam("compstate[unambiguous_cursor]")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         if upos > 0 && upos <= unambig.len() + 1 {
@@ -1340,12 +1339,12 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let force_list = getsparam("_comp_force_list").unwrap_or_default();
     let force_at: i64 = force_list.parse().unwrap_or(0);
     if force_list == "always" || (!force_list.is_empty() && nm >= force_at) {
-        let mut list_val = get_compstate_str("list").unwrap_or_default();
+        let mut list_val = crate::ported::params::getsparam("compstate[list]").unwrap_or_default();
         list_val = list_val.replace("messages", "");
         if !list_val.contains("force") {
             list_val = format!("{} force", list_val.trim());
         }
-        set_compstate_str("list", list_val.trim());
+        let _ = crate::ported::params::setsparam("compstate[list]", list_val.trim());
     }
 
     // sh:399-405  post-funcs (snapshot + clear so we don't loop)
@@ -1392,14 +1391,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // listing that second scan was ~20% of the whole pre-paint phase, all
         // of it recomputing values this scan already has.
         //
-        // `gethparam` leaves the freshly computed table in the hashed storage,
-        // so the keys come out of that same single scan.
+        // The keys come from the keys-only scan (`gethkparam`, c:3131-3140),
+        // which never runs a value getter; `gethparam` runs each exactly once.
         let vals = gethparam("compstate").unwrap_or_default(); // c:params.c:3117-3125
-        let keys: Vec<String> = crate::ported::params::paramtab_hashed_storage()
-            .lock()
-            .ok()
-            .and_then(|t| t.get("compstate").map(|h| h.keys().cloned().collect()))
-            .unwrap_or_default();
+        let keys: Vec<String> = crate::ported::params::gethkparam("compstate").unwrap_or_default();
         for (k, v) in keys.iter().zip(vals.iter()) {
             lastcomp.push(k.clone());
             lastcomp.push(v.clone());
@@ -1424,7 +1419,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
     sethparam("_lastcomp", lastcomp); // sh:407-416, c:params.c:3602
 
     // sh:384-396  always-block: ZLS_COLORS save/restore.
-    if get_compstate_str("old_list").as_deref() == Some("keep") {
+    if crate::ported::params::getsparam("compstate[old_list]").as_deref() == Some("keep") {
         if saved_colors_set {
             let _ = setsparam("ZLS_COLORS", &saved_colors);
         } else {

@@ -65,7 +65,6 @@ use crate::ported::glob::tokenize;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::pattern::{patcompile, pattry, Patprog};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -245,7 +244,7 @@ pub fn _pids(args: &[String]) -> i32 {
             "-U".to_string(),
         ];
         match_pat = format!("*[[:blank:]]*[[/[:blank:]]{}*{}*", prefix, suffix);
-        nm = get_compstate_str("nmatches").unwrap_or_default();
+        nm = crate::ported::params::getsparam("compstate[nmatches]").unwrap_or_default();
     }
     let match_prog = compile_pat(&match_pat);
 
@@ -361,15 +360,15 @@ pub fn _pids(args: &[String]) -> i32 {
         .unwrap_or_else(|| "menu".to_string());
         match insert_ids.as_str() {
             // sh:52  menu) compstate[insert]=menu
-            "menu" => set_compstate_str("insert", "menu"),
+            "menu" => { let _ = crate::ported::params::setsparam("compstate[insert]", "menu"); },
             // sh:53-54  single) …
             "single" => {
-                let nmatches: i64 = get_compstate_str("nmatches")
+                let nmatches: i64 = crate::ported::params::getsparam("compstate[nmatches]")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0);
                 let prev: i64 = nm.parse().unwrap_or(0);
-                if nmatches != prev + 1 && get_compstate_str("insert").as_deref() != Some("menu") {
-                    set_compstate_str("insert", "");
+                if nmatches != prev + 1 && crate::ported::params::getsparam("compstate[insert]").as_deref() != Some("menu") {
+                    let _ = crate::ported::params::setsparam("compstate[insert]", "");
                 }
             }
             // sh:55-56  *) …
@@ -379,9 +378,9 @@ pub fn _pids(args: &[String]) -> i32 {
                     getsparam("PREFIX").unwrap_or_default(),
                     getsparam("SUFFIX").unwrap_or_default()
                 );
-                let unambiguous = get_compstate_str("unambiguous").unwrap_or_default();
+                let unambiguous = crate::ported::params::getsparam("compstate[unambiguous]").unwrap_or_default();
                 if ps.chars().count() > unambiguous.chars().count() {
-                    set_compstate_str("insert", "menu");
+                    let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
                 }
             }
         }

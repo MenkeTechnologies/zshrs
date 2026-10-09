@@ -72,7 +72,6 @@ use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::quotestring;
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{
     options, MAX_OPS, PM_ARRAY, PM_READONLY, PM_SCALAR, QT_BACKSLASH_PATTERN, SCANPM_MATCHVAL,
@@ -323,7 +322,7 @@ pub fn _parameters(args: &[String]) -> i32 {
         &["nm"],
         crate::compsys::ported::shared::PM_INTEGER,
     );
-    let nm: i64 = get_compstate_str("nmatches")
+    let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
     let _ = crate::ported::params::setiparam("nm", nm);
@@ -631,7 +630,7 @@ pub fn _parameters(args: &[String]) -> i32 {
     //   this call pass a non-empty list". `_describe` at sh:36 can be the
     //   only thing that added, and an empty `normal` at sh:55 does not make
     //   the function fail in that case.
-    let nm_after = get_compstate_str("nmatches")
+    let nm_after = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
     if nm_after > nm {

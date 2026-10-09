@@ -577,7 +577,7 @@ pub fn _bpf_filters(args: &[String]) -> i32 {
     tracing::debug!(
         target: "compsys::_bpf_filters",
         suf = %getsparam("suf").unwrap_or_default(),
-        quote = %crate::ported::zle::compcore::get_compstate_str("quote")
+        quote = %crate::ported::params::getsparam("compstate[quote]")
             .unwrap_or_default(),
         "sh:58 bracket suffix for this quoting context",
     );

@@ -24,7 +24,6 @@
 //! ```
 
 use crate::compsys::ported::shared::dispatch_action_command;
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// `_correct` — spelling-correction completer: wraps `_approximate`
 /// with `compstate[pattern_match]` swapped to `-` for the duration.
@@ -32,9 +31,9 @@ pub fn _correct() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_correct");
     // sh:11
     let mut ret: i32 = 1;
-    let opm = get_compstate_str("pattern_match").unwrap_or_default();
+    let opm = crate::ported::params::getsparam("compstate[pattern_match]").unwrap_or_default();
     // sh:13
-    set_compstate_str("pattern_match", "-");
+    let _ = crate::ported::params::setsparam("compstate[pattern_match]", "-");
     // sh:15
     // sh:15 is a COMMAND WORD, so `dispatch_action_command`
     // (shared.rs:1407) resolves it exactly as `execcmd` does:
@@ -46,7 +45,7 @@ pub fn _correct() -> i32 {
         ret = 0;
     }
     // sh:17
-    set_compstate_str("pattern_match", &opm);
+    let _ = crate::ported::params::setsparam("compstate[pattern_match]", &opm);
     // sh:19
     ret
 }
@@ -65,10 +64,11 @@ mod tests {
     fn restores_pattern_match_after_run() {
         // sh:17 — original compstate[pattern_match] must be put back.
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("pattern_match", "original");
+        let _scope = crate::test_util::comp_scope();
+        let _ = crate::ported::params::setsparam("compstate[pattern_match]", "original");
         let _ = _correct();
         assert_eq!(
-            get_compstate_str("pattern_match").as_deref(),
+            crate::ported::params::getsparam("compstate[pattern_match]").as_deref(),
             Some("original")
         );
     }

@@ -54,7 +54,6 @@ use crate::compsys::ported::shared::{
 };
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{isset, options, MAX_OPS, MULTIOS};
 use std::path::Path;
@@ -229,7 +228,7 @@ pub fn _user_expand() -> i32 {
     // sh:87-145 — emit.
     // ---------------------------------------------------------------
 
-    if get_compstate_str("insert").unwrap_or_default().is_empty() {
+    if crate::ported::params::getsparam("compstate[insert]").unwrap_or_default().is_empty() {
         // sh:87-94 — nothing is going to be inserted, so one flat group of
         // every expansion is all that is wanted.
         setaparam("exp", exp.clone());
@@ -349,7 +348,7 @@ pub fn _user_expand() -> i32 {
 
         // sh:138  [[ -o multios ]] && exp=($exp[1] $compstate[redirect]${^exp[2,-1]})
         if isset(MULTIOS) {
-            let redirect = get_compstate_str("redirect").unwrap_or_default();
+            let redirect = crate::ported::params::getsparam("compstate[redirect]").unwrap_or_default();
             let mut rebuilt: Vec<String> = Vec::new();
             if let Some(first) = exp.first() {
                 rebuilt.push(first.clone());
@@ -384,7 +383,7 @@ pub fn _user_expand() -> i32 {
     }
 
     // sh:144 — the groups above are alternatives, not a common prefix.
-    set_compstate_str("insert", "menu");
+    let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
 
     // sh:147
     0
@@ -407,7 +406,6 @@ mod tests {
     /// to run outside a completion function (`bin_compadd`, c:Src/Zle/complete.c),
     /// so `INCOMPFUNC` is raised for the call.
     fn drive(word: &str, expansion: &str, insert: &str) -> (Vec<Cmatch>, String) {
-        use crate::ported::zle::compcore::set_compstate_str;
         use std::sync::atomic::Ordering;
 
         let _ = setsparam("IPREFIX", "");
@@ -430,7 +428,7 @@ mod tests {
             &make_ops(),
             0,
         );
-        set_compstate_str("insert", insert);
+        let _ = crate::ported::params::setsparam("compstate[insert]", insert);
 
         crate::comp_match_handles::matches_arc().lock().unwrap().clear();
         crate::ported::zle::complete::INCOMPFUNC.store(1, Ordering::Relaxed);
@@ -441,7 +439,7 @@ mod tests {
         let got = arc.lock().unwrap().clone();
         (
             got,
-            crate::ported::zle::compcore::get_compstate_str("insert").unwrap_or_default(),
+            crate::ported::params::getsparam("compstate[insert]").unwrap_or_default(),
         )
     }
 
@@ -495,6 +493,7 @@ mod tests {
     #[test]
     fn non_empty_compstate_insert_takes_the_menu_arm() {
         let _g = crate::test_util::global_state_lock();
+        let _scope = crate::test_util::comp_scope();
         let _g2 = crate::ported::zle::zle_main::zle_test_setup();
 
         let (_, insert) = drive("zzqmenu", "zzqEXPANSION", "automenu");

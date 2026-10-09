@@ -23,7 +23,6 @@
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setaparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -120,7 +119,7 @@ pub fn _globflags() -> i32 {
         "U:consider all characters to be one byte",
         "u:support multibyte characters in pattern",
     ];
-    let context = get_compstate_str("context").unwrap_or_default();
+    let context = crate::ported::params::getsparam("compstate[context]").unwrap_or_default();
     if context == "condition" {
         flags.extend(&[
             "b:activate backreferences",

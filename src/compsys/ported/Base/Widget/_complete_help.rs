@@ -60,7 +60,6 @@ use crate::ported::modules::zutil::bin_zformat;
 use crate::ported::params::{
     getaparam, gethkparam, gethparam, getsparam, setaparam, sethparam, setsparam, unsetparam,
 };
-use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_comptry;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -312,8 +311,8 @@ pub fn _complete_help(args: &[String]) -> i32 {
     }
 
     // sh:78-79 — compstate[list]='list force'; compstate[insert]=''
-    set_compstate_str("list", "list force");
-    set_compstate_str("insert", "");
+    let _ = crate::ported::params::setsparam("compstate[list]", "list force");
+    let _ = crate::ported::params::setsparam("compstate[insert]", "");
 
     // sh:80 — compadd -UX "$text[2,-1]" -n ''
     //   `$text[2,-1]` drops the leading newline accumulated by the

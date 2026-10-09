@@ -34,14 +34,13 @@
 
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::getsparam;
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// `_in_vared` — `vared` widget context: classify the parameter
 /// being edited (scalar / array element / whole array) and dispatch
 /// the appropriate `-value-` / `-array-value-` context.
 pub fn _in_vared() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_in_vared");
-    let vared = get_compstate_str("vared").unwrap_or_default();
+    let vared = crate::ported::params::getsparam("compstate[vared]").unwrap_or_default();
     let also: String;
 
     // sh:7
@@ -49,36 +48,36 @@ pub fn _in_vared() -> i32 {
         if vared.contains(']') {
             // sh:9-12  vared on array element
             let head = vared.splitn(2, ']').next().unwrap_or("").replace('[', "-");
-            set_compstate_str("parameter", &head);
-            set_compstate_str("context", "value");
+            let _ = crate::ported::params::setsparam("compstate[parameter]", &head);
+            let _ = crate::ported::params::setsparam("compstate[context]", "value");
             also = "-value-".to_string();
         } else {
             // sh:14-17  vared on array-value (mid-edit)
             let head = vared.splitn(2, '[').next().unwrap_or("");
-            set_compstate_str("parameter", head);
-            set_compstate_str("context", "value");
+            let _ = crate::ported::params::setsparam("compstate[parameter]", head);
+            let _ = crate::ported::params::setsparam("compstate[context]", "value");
             also = "-value-".to_string();
         }
     } else {
         // sh:20-28  bare parameter
-        set_compstate_str("parameter", &vared);
+        let _ = crate::ported::params::setsparam("compstate[parameter]", &vared);
         // sh:22  ${(tP)compstate[vared]} — type-of (typeset-style) for
         //   the named param. Read directly from the param table:
         //   array param if `parameter` reports `array`/`association`.
         let raw_type = param_type(&vared);
         if raw_type.contains("array") || raw_type.contains("assoc") {
-            set_compstate_str("context", "array_value");
+            let _ = crate::ported::params::setsparam("compstate[context]", "array_value");
             also = "-array-value-".to_string();
         } else {
-            set_compstate_str("context", "value");
+            let _ = crate::ported::params::setsparam("compstate[context]", "value");
             also = "-value-".to_string();
         }
     }
 
     // sh:34
-    let insert = get_compstate_str("insert").unwrap_or_default();
+    let insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
     let cleaned = insert.replace("tab ", "");
-    set_compstate_str("insert", &cleaned);
+    let _ = crate::ported::params::setsparam("compstate[insert]", &cleaned);
 
     // sh:35
     // sh:35 is a COMMAND WORD, so `dispatch_action_command`
@@ -118,7 +117,7 @@ mod tests {
     /// status is c:908's 127. It used to return a silent 1.
     fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("vared", "myvar");
+        let _ = crate::ported::params::setsparam("compstate[vared]", "myvar");
         assert_eq!(_in_vared(), 127);
     }
 
@@ -126,20 +125,22 @@ mod tests {
     fn array_param_sets_array_value_context() {
         // sh:22-24
         let _g = crate::test_util::global_state_lock();
+        let _scope = crate::test_util::comp_scope();
         setaparam("myarr", vec!["a".to_string(), "b".to_string()]);
-        set_compstate_str("vared", "myarr");
+        let _ = crate::ported::params::setsparam("compstate[vared]", "myarr");
         let _ = _in_vared();
-        assert_eq!(get_compstate_str("context").as_deref(), Some("array_value"));
+        assert_eq!(crate::ported::params::getsparam("compstate[context]").as_deref(), Some("array_value"));
     }
 
     #[test]
     fn bracketed_vared_uses_value_context() {
         // sh:10-12
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("vared", "myarr[key]");
+        let _scope = crate::test_util::comp_scope();
+        let _ = crate::ported::params::setsparam("compstate[vared]", "myarr[key]");
         let _ = _in_vared();
-        assert_eq!(get_compstate_str("context").as_deref(), Some("value"));
-        assert_eq!(get_compstate_str("parameter").as_deref(), Some("myarr-key"));
+        assert_eq!(crate::ported::params::getsparam("compstate[context]").as_deref(), Some("value"));
+        assert_eq!(crate::ported::params::getsparam("compstate[parameter]").as_deref(), Some("myarr-key"));
     }
 
     // ========================================================
@@ -177,32 +178,35 @@ mod tests {
     fn half_bracket_vared_strips_array_subscript_prefix() {
         // sh:14-17  vared="arr[partial" (mid-edit, no closing `]`)
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("vared", "arr[partial");
+        let _scope = crate::test_util::comp_scope();
+        let _ = crate::ported::params::setsparam("compstate[vared]", "arr[partial");
         let _ = _in_vared();
-        assert_eq!(get_compstate_str("context").as_deref(), Some("value"));
-        assert_eq!(get_compstate_str("parameter").as_deref(), Some("arr"));
+        assert_eq!(crate::ported::params::getsparam("compstate[context]").as_deref(), Some("value"));
+        assert_eq!(crate::ported::params::getsparam("compstate[parameter]").as_deref(), Some("arr"));
     }
 
     #[test]
     fn scalar_param_sets_value_context_not_array_value() {
         let _g = crate::test_util::global_state_lock();
+        let _scope = crate::test_util::comp_scope();
         crate::ported::params::unsetparam("scalar_param_for_context");
         let _ = crate::ported::params::setsparam("scalar_param_for_context", "x");
-        set_compstate_str("vared", "scalar_param_for_context");
+        let _ = crate::ported::params::setsparam("compstate[vared]", "scalar_param_for_context");
         let _ = _in_vared();
-        assert_eq!(get_compstate_str("context").as_deref(), Some("value"));
+        assert_eq!(crate::ported::params::getsparam("compstate[context]").as_deref(), Some("value"));
     }
 
     #[test]
     fn unset_param_falls_into_scalar_value_branch() {
         // sh:25-27  bare param, unset → param_type empty → scalar branch
         let _g = crate::test_util::global_state_lock();
+        let _scope = crate::test_util::comp_scope();
         crate::ported::params::unsetparam("doesnt_exist_anywhere");
-        set_compstate_str("vared", "doesnt_exist_anywhere");
+        let _ = crate::ported::params::setsparam("compstate[vared]", "doesnt_exist_anywhere");
         let _ = _in_vared();
         // Context is "value" because the empty type doesn't contain
         // "array" or "assoc".
-        assert_eq!(get_compstate_str("context").as_deref(), Some("value"));
+        assert_eq!(crate::ported::params::getsparam("compstate[context]").as_deref(), Some("value"));
     }
 
     #[test]
@@ -210,10 +214,11 @@ mod tests {
         // Empty vared field — falls into the bare-param branch with
         // empty name → param_type("") = empty → scalar.
         let _g = crate::test_util::global_state_lock();
+        let _scope = crate::test_util::comp_scope();
         crate::ported::params::unsetparam("");
-        set_compstate_str("vared", "");
+        let _ = crate::ported::params::setsparam("compstate[vared]", "");
         let _ = _in_vared();
-        assert_eq!(get_compstate_str("context").as_deref(), Some("value"));
+        assert_eq!(crate::ported::params::getsparam("compstate[context]").as_deref(), Some("value"));
     }
 
     // ========================================================
@@ -224,19 +229,21 @@ mod tests {
     fn insert_field_has_tab_token_stripped() {
         // sh:33  insert="${insert//tab /}" — every "tab " run drops.
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("vared", "");
-        set_compstate_str("insert", "tab menu");
+        let _scope = crate::test_util::comp_scope();
+        let _ = crate::ported::params::setsparam("compstate[vared]", "");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "tab menu");
         let _ = _in_vared();
-        assert_eq!(get_compstate_str("insert").as_deref(), Some("menu"));
+        assert_eq!(crate::ported::params::getsparam("compstate[insert]").as_deref(), Some("menu"));
     }
 
     #[test]
     fn insert_field_without_tab_unchanged() {
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("vared", "");
-        set_compstate_str("insert", "menu only");
+        let _scope = crate::test_util::comp_scope();
+        let _ = crate::ported::params::setsparam("compstate[vared]", "");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "menu only");
         let _ = _in_vared();
-        assert_eq!(get_compstate_str("insert").as_deref(), Some("menu only"));
+        assert_eq!(crate::ported::params::getsparam("compstate[insert]").as_deref(), Some("menu only"));
     }
 
     #[test]
@@ -244,12 +251,13 @@ mod tests {
         // sh:10  parameter="${${compstate[vared]%%\]*}//\[/-}"
         // Multiple brackets in the prefix must each become `-`.
         let _g = crate::test_util::global_state_lock();
-        set_compstate_str("vared", "outer[inner]extra]");
+        let _scope = crate::test_util::comp_scope();
+        let _ = crate::ported::params::setsparam("compstate[vared]", "outer[inner]extra]");
         let _ = _in_vared();
         // outer[inner]extra] → take pre-first-`]` = "outer[inner"
         // then replace `[` with `-` → "outer-inner".
         assert_eq!(
-            get_compstate_str("parameter").as_deref(),
+            crate::ported::params::getsparam("compstate[parameter]").as_deref(),
             Some("outer-inner")
         );
     }

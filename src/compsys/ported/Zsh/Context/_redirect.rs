@@ -26,7 +26,6 @@
 use crate::compsys::ported::_set_command::_set_command;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::getsparam;
-use crate::ported::zle::compcore::get_compstate_str;
 
 /// `_redirect` — completion within a `>`/`<`/`|` redirection: try
 /// per-command + per-redirect-target dispatch chain.
@@ -56,7 +55,7 @@ pub fn _redirect() -> i32 {
     // sh:18-19  build the dispatch argv with brace-expansion done
     //   manually: `-redirect-,{X,Y},Z` → `-redirect-,X,Z` and
     //   `-redirect-,Y,Z`.
-    let redir = get_compstate_str("redirect").unwrap_or_default();
+    let redir = crate::ported::params::getsparam("compstate[redirect]").unwrap_or_default();
     let cc = getsparam("_comp_command").unwrap_or_default();
     let mut argv: Vec<String> = vec![format!("-redirect-,{},{}", redir, cc)];
     for s in &strs {

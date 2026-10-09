@@ -47,7 +47,6 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -178,7 +177,7 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
         .collect();
     let _ = _tags(&tag_names);
 
-    let nm_initial: i64 = get_compstate_str("nmatches")
+    let nm_initial: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -345,7 +344,7 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
             }
         }
         // sh:76  nm != $compstate[nmatches] → success
-        let nm_now: i64 = get_compstate_str("nmatches")
+        let nm_now: i64 = crate::ported::params::getsparam("compstate[nmatches]")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         if nm_now != nm_initial {

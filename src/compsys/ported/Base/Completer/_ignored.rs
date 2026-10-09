@@ -31,7 +31,6 @@ use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -52,7 +51,7 @@ pub fn _ignored() -> i32 {
     if getiparam("_matcher_num") > 1 {
         return 1;
     }
-    let ignored: i64 = get_compstate_str("ignored")
+    let ignored: i64 = crate::ported::params::getsparam("compstate[ignored]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     if ignored == 0 {
@@ -107,18 +106,18 @@ pub fn _ignored() -> i32 {
                     "single-ignored",
                 )
                 .unwrap_or_default();
-            let old_list = get_compstate_str("old_list").unwrap_or_default();
-            let nmatches: i64 = get_compstate_str("nmatches")
+            let old_list = crate::ported::params::getsparam("compstate[old_list]").unwrap_or_default();
+            let nmatches: i64 = crate::ported::params::getsparam("compstate[nmatches]")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             if !single_ignored.is_empty() && old_list != "shown" && nmatches == 1 {
                 match single_ignored.as_str() {
                     "show" => {
-                        set_compstate_str("insert", "");
-                        set_compstate_str("list", "list force");
+                        let _ = crate::ported::params::setsparam("compstate[insert]", "");
+                        let _ = crate::ported::params::setsparam("compstate[list]", "list force");
                     }
                     "menu" => {
-                        set_compstate_str("insert", "menu");
+                        let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
                         let _ = _description(&[
                             "original".to_string(),
                             "expl".to_string(),
@@ -165,7 +164,7 @@ mod tests {
     fn no_ignored_compstate_returns_one() {
         let _g = crate::test_util::global_state_lock();
         setiparam("_matcher_num", 1);
-        set_compstate_str("ignored", "0");
+        let _ = crate::ported::params::setsparam("compstate[ignored]", "0");
         assert_eq!(_ignored(), 1);
     }
 }

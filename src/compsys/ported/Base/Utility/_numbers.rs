@@ -65,7 +65,6 @@ use crate::compsys::ported::_description::_description;
 use crate::ported::glob::{matchpat, shtokenize};
 use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle, zformat_substring};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{bin_compadd, bin_compset, cond_psfix, CVT_PREPAT};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -416,9 +415,9 @@ pub fn _numbers(args: &[String]) -> i32 {
     desc_argv.extend(formats);
     let _ = _description(&desc_argv);
     // sh:85
-    let insert = get_compstate_str("insert").unwrap_or_default();
+    let insert = crate::ported::params::getsparam("compstate[insert]").unwrap_or_default();
     if insert.contains("unambiguous") {
-        set_compstate_str("insert", "");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "");
     }
     // sh:86
     let expl = getaparam("expl").unwrap_or_default();

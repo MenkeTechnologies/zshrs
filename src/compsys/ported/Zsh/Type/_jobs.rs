@@ -26,7 +26,6 @@
 use crate::compsys::ported::_wanted::_wanted;
 use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam};
-use crate::ported::zle::compcore::get_compstate_str;
 
 /// Helper: key/value pairs of an associative parameter.
 ///
@@ -97,7 +96,7 @@ pub fn _jobs(args: &[String]) -> i32 {
         let jobs_ctx = format!(":completion:{}:jobs", curcontext);
         let prefix_needed = zstyle_T(&jobs_ctx, "prefix-needed") == 0;
         let prefix = getsparam("PREFIX").unwrap_or_default();
-        let nm: i64 = get_compstate_str("nmatches")
+        let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         if prefix_needed && !prefix.starts_with('%') && nm != 0 {

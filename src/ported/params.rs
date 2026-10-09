@@ -6500,6 +6500,32 @@ pub fn getnparam(s: &str) -> (i64, f64, bool) {
 /// unset).
 pub fn getsparam(name: &str) -> Option<String> {
     // c:3076
+    // c:3078 `getvalue(&vbuf, &s, …)` + c:3080 `getstrvalue(v)` on a `name[key]`
+    // expression naming an element of a hash that owns its element Params
+    // (`compstate`): the key's own Param answers through its gsu getfn; an
+    // absent or PM_UNSET key is unset.
+    if let Some((base, key)) = name.strip_suffix(']').and_then(|n| n.split_once('[')) {
+        let elem: Option<Option<Param>> = paramtab().read().ok().and_then(|t| {
+            t.get(base)
+                .and_then(|p| p.u_hash.as_ref())
+                .filter(|h| !h.parnodes.is_empty())
+                .map(|h| h.parnodes.get(key).cloned())
+        });
+        if let Some(elem) = elem {
+            return elem
+                .filter(|e| (e.node.flags as u32 & PM_UNSET) == 0)
+                .map(|e| {
+                    getstrvalue(Some(&mut value {
+                        pm: Some(e),
+                        arr: Vec::new(),
+                        scanflags: 0,
+                        valflags: 0,
+                        start: 0,
+                        end: -1,
+                    }))
+                });
+        }
+    }
     // 1. GSU dispatch — `Param.gsu->getfn(pm)` equivalent. Special
     //    parameters (UID/RANDOM/USERNAME/...) live behind getfn
     //    hooks that the table read below would otherwise miss.
@@ -7049,30 +7075,6 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
         // c:3122
         return None;
     }
-    // c:3118 — `paramvalarr(pm->gsu.h->getfn(pm), SCANPM_WANTVALS)`: the
-    // hash getter runs BEFORE the scan. For `$compstate` that is
-    // `get_compstate` (`Src/Zle/complete.c:1357`), handing back an inner
-    // hash whose NODES carry their own per-key gsu getters
-    // (`nmatches_gsu`, `unambig_gsu`, `unambig_curs_gsu`,
-    // `unambig_pos_gsu`, `insert_pos_gsu`, `listlines_gsu`,
-    // `compqstack_gsu` — c:1236-1252), which fire during the scan. Those
-    // ten values are computed live and stored nowhere.
-    //
-    // zshrs reads assoc values straight out of `paramtab_hashed_storage`,
-    // so recompute them into that map here, at the same point C invokes
-    // the getters. Without it `${(@kv)compstate}` — and therefore
-    // `_lastcomp` (`_main_complete` sh:407) — had no `unambiguous`,
-    // `unambiguous_cursor`, `unambiguous_positions`, `insert_positions`,
-    // `list_lines`, `list_max`, `all_quotes`, `ignored` or `vared` entry
-    // at all.
-    if name == crate::ported::zle::complete::COMPSTATENAME {
-        for k in crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS {
-            if let Some(v) = crate::ported::zle::compcore::get_compstate_str(k) {
-                crate::ported::zle::compcore::set_compstate_str(k, &v);
-            }
-        }
-    }
-
     // c:Src/params.c:570-575 — nameref deref before the type check.
     let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
@@ -7235,16 +7237,6 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
     if name.starts_with(|c: char| c.is_ascii_digit()) {
         // c:3136
         return None;
-    }
-    // c:3138 — `paramvalarr(pm->gsu.h->getfn(pm), SCANPM_WANTKEYS)`: same
-    // getfn-before-scan contract as `gethparam` above; see the note there
-    // for why `$compstate`'s gsu-backed keys have to be recomputed here.
-    if name == crate::ported::zle::complete::COMPSTATENAME {
-        for k in crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS {
-            if let Some(v) = crate::ported::zle::compcore::get_compstate_str(k) {
-                crate::ported::zle::compcore::set_compstate_str(k, &v);
-            }
-        }
     }
     // c:Src/params.c:717 — same magic-hash rule as `gethparam` above: the
     // scanfn IS the backing for a PARTAB name, so an empty
@@ -19901,7 +19893,7 @@ mod tests {
     }
 
     /// Regression: a subscript WRITE to a hash-storage-backed special assoc
-    /// (`$compstate`, populated during completion via set_compstate_str) with a
+    /// (any name present in `paramtab_hashed_storage()`) with a
     /// STRING key must succeed, not error "assignment to invalid subscript
     /// range". After the undeclared-subscript auto-vivify was removed, the
     /// completion system's `compstate[insert]=menu` writes started arithmetic-
@@ -19920,7 +19912,7 @@ mod tests {
         // instead of the hash-backed one this test pins.
         unsetparam("compstate");
         // Simulate the completion setup that populates $compstate before the
-        // user completer widget runs (compcore::callcompfunc → set_compstate_str).
+        // user completer widget runs (compcore::callcompfunc → makecompparams).
         paramtab_hashed_storage()
             .lock()
             .unwrap()

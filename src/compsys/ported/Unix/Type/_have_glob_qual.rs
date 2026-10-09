@@ -126,7 +126,7 @@ pub fn _have_glob_qual(args: &[String]) -> i32 {
     // (`complete.c:1408-1420` → `compresult.c:1446-1459`). `_path_files` calls
     // this predicate several times per completion, so on a 47k-match listing
     // those whole-hash reads were about a third of the entire pre-paint phase.
-    let quote = crate::ported::zle::compcore::get_compstate_str("quote").unwrap_or_default();
+    let quote = crate::ported::params::getsparam("compstate[quote]").unwrap_or_default();
     if !quote.is_empty() {
         return 1;
     }

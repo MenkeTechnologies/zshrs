@@ -142,7 +142,6 @@ use crate::compsys::ported::shared::zstyle_s;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -461,7 +460,7 @@ pub fn _description_impl(args: &[String]) -> i32 {
                 }
                 "current-shown" => {
                     // sh:61-63
-                    let old_list = get_compstate_str("old_list").unwrap_or_default();
+                    let old_list = crate::ported::params::getsparam("compstate[old_list]").unwrap_or_default();
                     if old_list.contains("shown") && current_idx >= 1 && current_idx <= qwords.len()
                     {
                         comp_ignore.push(qwords[current_idx - 1].clone());

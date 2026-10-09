@@ -50,7 +50,6 @@
 //! ```
 
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compadd_body};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -175,7 +174,7 @@ fn resolve_array_name(arr: &str) -> String {
 pub fn _sep_parts(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sep_parts");
     // sh:21  nm=$compstate[nmatches]
-    let nm: i64 = get_compstate_str("nmatches")
+    let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     // sh:25-26  zparseopts
@@ -392,7 +391,7 @@ pub fn _sep_parts(args: &[String]) -> i32 {
     let _ = unsetparam("tmparr");
 
     // sh:146  [[ nm -ne compstate[nmatches] ]]
-    let nm2: i64 = get_compstate_str("nmatches")
+    let nm2: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     if nm != nm2 {

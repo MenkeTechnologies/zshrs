@@ -30,7 +30,6 @@
 
 use crate::compsys::ported::_values::_values;
 use crate::ported::params::{getaparam, getsparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::set_compstate_str;
 
 /// sh:25-45 — the FUSE mount-option value specs (`name[desc]` / `name[desc]:arg`).
 const FVALS: &[&str] = &[
@@ -162,7 +161,7 @@ pub fn _fuse_values(args: &[String]) -> i32 {
     // sh:62-68 — restore state plumbing.
     if !getsparam("state").unwrap_or_default().is_empty() {
         // sh:63 — `_values` set a state; let the caller keep it.
-        set_compstate_str("restore", "");
+        let _ = crate::ported::params::setsparam("compstate[restore]", "");
     } else if !stateset.is_empty() {
         // sh:65 — restore the state we saved.
         setsparam("state", &stateset);

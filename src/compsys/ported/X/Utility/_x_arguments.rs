@@ -28,7 +28,6 @@
 //! ```
 
 use crate::compsys::ported::_arguments::_arguments;
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// sh:5 — the fixed X toolkit option specs.
 const XARGS: [&str; 2] = [
@@ -113,7 +112,7 @@ fn parse_leading(argv: &[String]) -> (Vec<String>, Vec<String>, bool) {
 
 /// Read `$compstate[nmatches]` as an integer (0 when unset/unparsable).
 fn nmatches() -> i64 {
-    get_compstate_str("nmatches")
+    crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.trim().parse::<i64>().ok())
         .unwrap_or(0)
 }
@@ -149,7 +148,7 @@ pub fn _x_arguments(args: &[String]) -> i32 {
     // sh:28 — ret=$?
     // sh:30-33
     if ret == 300 {
-        set_compstate_str("restore", ""); // sh:31 — compstate[restore]=''
+        let _ = crate::ported::params::setsparam("compstate[restore]", ""); // sh:31 — compstate[restore]=''
         if !rawret {
             // sh:32 — ret=$(( nm == $compstate[nmatches] ))
             ret = if nm == nmatches() { 1 } else { 0 };

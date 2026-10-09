@@ -26,7 +26,6 @@
 
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setsparam};
-use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -55,7 +54,7 @@ pub fn _vars(args: &[String]) -> i32 {
         } else {
             prefix[..p_end].to_string()
         };
-        set_compstate_str("parameter", &param);
+        let _ = crate::ported::params::setsparam("compstate[parameter]", &param);
 
         // sh:11
         let _ = setsparam("IPREFIX", &format!("{}[", &prefix[..p_end]));

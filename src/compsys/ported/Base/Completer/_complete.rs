@@ -45,7 +45,6 @@ use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_normal::_normal;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 /// `compadd`'s option block — the builtin is normally reached through
@@ -212,7 +211,7 @@ pub fn _complete_impl() -> i32 {
         target: "compsys_args",
         %compcontext,
         compskip = %getsparam("_compskip").unwrap_or_default(),
-        context = %get_compstate_str("context").unwrap_or_default(),
+        context = %crate::ported::params::getsparam("compstate[context]").unwrap_or_default(),
         "_complete ENTER"
     );
     if !compcontext.is_empty() {
@@ -364,16 +363,16 @@ pub fn _complete_impl() -> i32 {
     }
 
     // sh:110  vared override
-    let vared = get_compstate_str("vared").unwrap_or_default();
+    let vared = crate::ported::params::getsparam("compstate[vared]").unwrap_or_default();
     if !vared.is_empty() {
-        set_compstate_str("context", "vared");
+        let _ = crate::ported::params::setsparam("compstate[context]", "vared");
     }
 
     // sh:114 `ret=1` — whatever the -first- hook returned is discarded here;
     // only the context dispatch below decides `_complete`'s status.
     ret = 1;
     // sh:115-140
-    let context = get_compstate_str("context").unwrap_or_default();
+    let context = crate::ported::params::getsparam("compstate[context]").unwrap_or_default();
     if context == "command" {
         // sh:116 `curcontext="$oldcontext"` — undo any `ccarray[3]`
         //   written by the `-first-` branch before handing off to
@@ -477,7 +476,7 @@ mod tests {
     fn returns_one_without_executor() {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("compcontext", "");
-        set_compstate_str("context", "command");
+        let _ = crate::ported::params::setsparam("compstate[context]", "command");
         crate::ported::params::setaparam("_comps", Vec::new());
         let _r = _complete_impl();
     }

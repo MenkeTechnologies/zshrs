@@ -58,7 +58,6 @@ use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::hashtable_h::BIN_PRINT;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setiparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zsh_h::{options, MAX_OPS};
 use std::os::unix::io::AsRawFd;
 
@@ -177,12 +176,12 @@ pub fn _complete_debug(args: &[String]) -> i32 {
         ]);
 
         // sh:33-35  if nmatches <= 1 && list !*force* -> list='list force messages'
-        let nmatches: i64 = get_compstate_str("nmatches")
+        let nmatches: i64 = crate::ported::params::getsparam("compstate[nmatches]")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
-        let list = get_compstate_str("list").unwrap_or_default();
+        let list = crate::ported::params::getsparam("compstate[list]").unwrap_or_default();
         if nmatches <= 1 && !list.contains("force") {
-            set_compstate_str("list", "list force messages");
+            let _ = crate::ported::params::setsparam("compstate[list]", "list force messages");
         }
     }
 

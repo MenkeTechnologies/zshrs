@@ -26,7 +26,6 @@
 
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{isset, options, MAGICEQUALSUBST, MAX_OPS};
 use std::fs;
@@ -144,7 +143,7 @@ pub fn _external_pwds() -> i32 {
     }
 
     // sh:41
-    set_compstate_str("pattern_match", "*");
+    let _ = crate::ported::params::setsparam("compstate[pattern_match]", "*");
 
     // sh:8 `local -au dirs` — the lowercase `-u` is PM_UPPER (uppercase
     // conversion), not PM_UNIQUE, and it is NOT replicated here.

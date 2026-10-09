@@ -54,7 +54,6 @@ use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_compdescribe;
 use crate::ported::zsh_h::{isset, options, EXTENDEDGLOB, MAX_OPS};
@@ -390,7 +389,7 @@ pub fn _describe_impl(args: &[String]) -> i32 {
     // sh:64 — request the tag.
     let _ = _tags(&[_type.clone()]);
 
-    let csl = get_compstate_str("list").unwrap_or_default();
+    let csl = crate::ported::params::getsparam("compstate[list]").unwrap_or_default();
     let mut _try = 0i32;
 
     // sh:65 — while _tags; do
@@ -531,7 +530,7 @@ pub fn _describe_impl(args: &[String]) -> i32 {
             }
 
             // sh:127 — compstate[list]="$csl".
-            set_compstate_str("list", &csl);
+            let _ = crate::ported::params::setsparam("compstate[list]", &csl);
 
             // sh:129-135 — pull each group out and add it.
             loop {
@@ -553,7 +552,7 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                 if !csl2.is_empty() {
                     list_val = list_val.replacen("rows", "", 1);
                 }
-                set_compstate_str("list", &list_val);
+                let _ = crate::ported::params::setsparam("compstate[list]", &list_val);
 
                 // sh:134 — compadd "$_args[@]" -d _tmpd -a _tmpm && _ret=0.
                 let mut cadd: Vec<String> = getaparam("_args").unwrap_or_default();

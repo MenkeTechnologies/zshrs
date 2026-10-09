@@ -44,7 +44,6 @@ use crate::compsys::ported::shared::LocalScope;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setaparam, setsparam};
 use crate::ported::utils::quotestring;
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::computil::bin_compquote;
 use crate::ported::zsh_h::{options, MAX_OPS, PM_ARRAY, QT_BACKSLASH};
 
@@ -246,7 +245,7 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
         close = %getsparam("close").unwrap_or_default(),
         andop = %getsparam("andop").unwrap_or_default(),
         orop = %getsparam("orop").unwrap_or_default(),
-        quote = %get_compstate_str("quote").unwrap_or_default(),
+        quote = %crate::ported::params::getsparam("compstate[quote]").unwrap_or_default(),
         prefix = %getsparam("PREFIX").unwrap_or_default(),
         "sh:43-44 bracket text for this quoting context",
     );
@@ -254,7 +253,7 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
     // sh:46 — `[[ -z $compstate[quote] && -z $PREFIX ]] && pre='"('`:
     // default to double rather than backslash quoting. This is what makes the
     // completed filter open with `"(` instead of a bare `(`.
-    if get_compstate_str("quote").unwrap_or_default().is_empty()
+    if crate::ported::params::getsparam("compstate[quote]").unwrap_or_default().is_empty()
         && getsparam("PREFIX").unwrap_or_default().is_empty()
     {
         setsparam("pre", "\"(");

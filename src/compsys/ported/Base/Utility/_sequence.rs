@@ -22,7 +22,6 @@
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::utils::quotestring;
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zle::computil::bin_compquote;
 use crate::ported::zsh_h::{options, MAX_OPS, QT_BACKSLASH};
@@ -263,7 +262,7 @@ pub fn _sequence(args: &[String]) -> i32 {
         // Outside a quoting context the words carry compquote's backslashes;
         // the matches they are compared against do not, so they are unquoted
         // again. Inside one there is nothing to strip and the test skips it.
-        if get_compstate_str("quoting")
+        if crate::ported::params::getsparam("compstate[quoting]")
             .unwrap_or_default()
             .is_empty()
         {
@@ -335,14 +334,14 @@ pub fn _sequence(args: &[String]) -> i32 {
         target: "compsys::_sequence",
         qsep = %qsep,
         qqsep = %qqsep,
-        quote = %get_compstate_str("quote").unwrap_or_default(),
+        quote = %crate::ported::params::getsparam("compstate[quote]").unwrap_or_default(),
         suf = ?suf,
         "sh:23-36 separator text for this quoting context",
     );
 
     // Apply -F dedup to compstate ignored-prefix (approx by setting
     //   compstate[ignored])
-    set_compstate_str("ignored", "");
+    let _ = crate::ported::params::setsparam("compstate[ignored]", "");
 
     // sh:39-40  split argv on bare `-`; left part is command, right
     //   is trailing args.

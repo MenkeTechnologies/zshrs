@@ -28,7 +28,6 @@
 
 use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::params::{getiparam, getsparam, setsparam};
-use crate::ported::zle::compcore::set_compstate_str;
 
 /// `_list` — request "list before insert" behavior. Returns 1
 /// always (defers to next completer in the chain).
@@ -67,8 +66,8 @@ pub fn _list() -> i32 {
     let last_suf = getsparam("_list_suffix").unwrap_or_default();
     if condition_on && (pre != last_pre || suf != last_suf) {
         // sh:29-32
-        set_compstate_str("insert", "");
-        set_compstate_str("list", "list force");
+        let _ = crate::ported::params::setsparam("compstate[insert]", "");
+        let _ = crate::ported::params::setsparam("compstate[list]", "list force");
         let _ = setsparam("_list_prefix", &pre);
         let _ = setsparam("_list_suffix", &suf);
     }

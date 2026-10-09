@@ -376,3 +376,33 @@ impl Drop for TruecolorTerminal {
         }
     }
 }
+
+/// A live completion scope for a test: what `callcompfunc` opens around a
+/// completion function (`Src/Zle/compcore.c:814-818` — `startparamscope();
+/// makecompparams(); comp_setunset(…)`). `$PREFIX`, `$words`, `$CURRENT`,
+/// the other `comprparams[]` params and the `$compstate` hash exist only
+/// inside it, as gsu views of the `complete.c` globals. Dropping the guard
+/// ends the scope (`endparamscope()`).
+pub struct CompScope;
+
+/// Open a [`CompScope`] with every `$compstate` key set, as a completion
+/// function sees them after `comp_setunset(CP_ALLREALS, 0, CP_ALLKEYS, 0)`.
+pub fn comp_scope() -> CompScope {
+    use crate::ported::zle::comp_h::{CP_ALLKEYS, CP_ALLREALS, CP_KEYPARAMS, CP_REALPARAMS};
+    use crate::ported::zle::complete::{comp_setunset, compkpms, comprpms, makecompparams};
+    *comprpms.lock().unwrap() = Some(vec![None; CP_REALPARAMS as usize]);
+    *compkpms.lock().unwrap() = Some(vec![None; CP_KEYPARAMS as usize]);
+    let mut scope = crate::ported::params::newparamtable(1, "scope").unwrap();
+    crate::ported::params::startparamscope(&mut scope);
+    makecompparams();
+    comp_setunset(CP_ALLREALS as i32, 0, CP_ALLKEYS as i32, 0);
+    CompScope
+}
+
+impl Drop for CompScope {
+    fn drop(&mut self) {
+        crate::ported::params::endparamscope();
+        *crate::ported::zle::complete::comprpms.lock().unwrap() = None;
+        *crate::ported::zle::complete::compkpms.lock().unwrap() = None;
+    }
+}

@@ -33,7 +33,6 @@ use crate::compsys::ported::_wanted::_wanted;
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::{bin_zformat, bin_zstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zle::computil::bin_compquote;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -290,7 +289,7 @@ pub fn _subscript(args: &[String]) -> i32 {
         ]);
     }
 
-    let param = get_compstate_str("parameter").unwrap_or_default();
+    let param = crate::ported::params::getsparam("compstate[parameter]").unwrap_or_default();
 
     // sh:29  elif compset -P '\('  — subscript-flag catalog via _values
     if bin_compset("compset", &[s("-P"), s("\\(")], &make_ops(), 0) == 0 {
@@ -641,7 +640,7 @@ mod tests {
         let _ = crate::ported::params::setsparam("ISUFFIX", "");
         let _ = crate::ported::params::setsparam("BUFFER", "");
         let _ = crate::ported::params::setsparam("CURSOR", "0");
-        crate::ported::zle::compcore::set_compstate_str("parameter", "");
+        let _ = crate::ported::params::setsparam("compstate[parameter]", "");
         assert_eq!(_subscript(&[]), 127);
     }
 

@@ -42,7 +42,6 @@ use crate::ported::glob::{shtokenize, tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
 use crate::ported::subst::{filesubstr, singsub};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compadd_body, bin_compset};
 use crate::ported::zle::computil::{bin_compfiles, bin_compquote};
 use crate::ported::zsh_h::{isset, options, CASEGLOB, MAX_OPS};
@@ -121,12 +120,12 @@ fn get_str(name: &str) -> String {
 }
 
 fn cs_i(key: &str) -> i64 {
-    get_compstate_str(key)
+    crate::ported::params::getsparam(&format!("compstate[{}]", key))
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
 }
 fn cs_s(key: &str) -> String {
-    get_compstate_str(key).unwrap_or_default()
+    crate::ported::params::getsparam(&format!("compstate[{}]", key)).unwrap_or_default()
 }
 
 /// `zstyle -s ctx style name [sep]` — Src/Modules/zutil.c:643-658:
@@ -1574,7 +1573,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
 
                 if listing {
                     if amb != 0 && zstyle_t(&paths_ctx, "ambiguous") {
-                        crate::ported::zle::compcore::set_compstate_str("to_end", "");
+                        let _ = crate::ported::params::setsparam("compstate[to_end]", "");
                     }
                     if tmp3.contains('/') {
                         if !listsfx

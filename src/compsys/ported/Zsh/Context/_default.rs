@@ -30,7 +30,6 @@
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
-use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{isset, options, MAGICEQUALSUBST, MAX_OPS};
 
@@ -141,7 +140,7 @@ pub fn _default_impl(args: &[String]) -> i32 {
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if isset(MAGICEQUALSUBST) && prefix.contains('=') {
         let param = prefix.splitn(2, '=').next().unwrap_or("").to_string();
-        set_compstate_str("parameter", &param);
+        let _ = crate::ported::params::setsparam("compstate[parameter]", &param);
         let _ = bin_compset(
             "compset",
             &["-P".to_string(), "1".to_string(), "*=".to_string()],

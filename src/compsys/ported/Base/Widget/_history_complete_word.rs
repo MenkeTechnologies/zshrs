@@ -27,7 +27,6 @@ use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// sh:95-119 `_history_complete_word_gen_matches`.
 ///
@@ -45,10 +44,10 @@ fn gen_matches(direction: &str) -> i32 {
     // sh:101
     let ctx = getsparam("curcontext").unwrap_or_default();
     if zstyle_T(&format!(":completion:{}:history-words", ctx), "list") != 0 {
-        set_compstate_str("list", "");
+        let _ = crate::ported::params::setsparam("compstate[list]", "");
     }
     // sh:103
-    let menu_len = get_compstate_str("nmatches").unwrap_or_default();
+    let menu_len = crate::ported::params::getsparam("compstate[nmatches]").unwrap_or_default();
     let _ = setsparam("_hist_menu_length", &menu_len);
     // sh:105-114
     let lastcomp_insert =
@@ -57,8 +56,8 @@ fn gen_matches(direction: &str) -> i32 {
         let n: i64 = menu_len.parse().unwrap_or(0);
         let stop_adj = if hist_stop.is_empty() { 0 } else { 1 };
         match direction {
-            "newer" => set_compstate_str("insert", &(n - stop_adj).to_string()),
-            "older" => set_compstate_str("insert", &(1 + stop_adj).to_string()),
+            "newer" => { let _ = crate::ported::params::setsparam("compstate[insert]", &(n - stop_adj).to_string()); },
+            "older" => { let _ = crate::ported::params::setsparam("compstate[insert]", &(1 + stop_adj).to_string()); },
             _ => {}
         }
     }
@@ -99,17 +98,17 @@ pub fn _history_complete_word() -> i32 {
     //   produces. The branch was therefore dead and `compstate[list]` was
     //   never cleared.
     if zstyle_T(&format!(":completion:{}:history-words", new_ctx), "list") != 0 {
-        set_compstate_str("list", "");
+        let _ = crate::ported::params::setsparam("compstate[list]", "");
     }
 
     let lastwidget = getsparam("LASTWIDGET").unwrap_or_default();
-    let old_list = get_compstate_str("old_list").unwrap_or_default();
+    let old_list = crate::ported::params::getsparam("compstate[old_list]").unwrap_or_default();
     let hist_stop = getsparam("_hist_stop").unwrap_or_default();
     let in_history_chain = lastwidget.starts_with("_history-complete-");
     let menu_len: i64 = getsparam("_hist_menu_length")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let old_insert: i64 = get_compstate_str("old_insert")
+    let old_insert: i64 = crate::ported::params::getsparam("compstate[old_insert]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -120,30 +119,30 @@ pub fn _history_complete_word() -> i32 {
                 // sh:41-45
                 let _ = setsparam("PREFIX", &old_prefix);
                 let _ = gen_matches(direction);
-                set_compstate_str("insert", "2");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "2");
                 let _ = setsparam("_hist_stop", "");
             } else if hist_stop == "old" {
                 // sh:46-50
                 let _ = setsparam("PREFIX", &old_prefix);
                 let _ = gen_matches(direction);
-                set_compstate_str("insert", "1");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "1");
                 let _ = setsparam("_hist_stop", "");
             } else if old_insert < menu_len {
-                set_compstate_str("old_list", "keep");
-                set_compstate_str("insert", &(old_insert + 1).to_string());
+                let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
+                let _ = crate::ported::params::setsparam("compstate[insert]", &(old_insert + 1).to_string());
             } else if stop_on {
                 let _ = setsparam("_hist_stop", "old");
                 let _ = _message(&["beginning of history reached".to_string()]);
                 let _ = setsparam("curcontext", &saved_ctx);
                 return 1;
             } else {
-                set_compstate_str("old_list", "keep");
-                set_compstate_str("insert", "1");
+                let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
+                let _ = crate::ported::params::setsparam("compstate[insert]", "1");
             }
         } else {
             // newer
             let nmatches = || -> i64 {
-                get_compstate_str("nmatches")
+                crate::ported::params::getsparam("compstate[nmatches]")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0)
             };
@@ -151,25 +150,25 @@ pub fn _history_complete_word() -> i32 {
                 // sh:63-67
                 let _ = setsparam("PREFIX", &old_prefix);
                 let _ = gen_matches(direction);
-                set_compstate_str("insert", &(nmatches() - 1).to_string());
+                let _ = crate::ported::params::setsparam("compstate[insert]", &(nmatches() - 1).to_string());
                 let _ = setsparam("_hist_stop", "");
             } else if hist_stop == "new" {
                 // sh:68-72
                 let _ = setsparam("PREFIX", &old_prefix);
                 let _ = gen_matches(direction);
-                set_compstate_str("insert", &nmatches().to_string());
+                let _ = crate::ported::params::setsparam("compstate[insert]", &nmatches().to_string());
                 let _ = setsparam("_hist_stop", "");
             } else if old_insert > 1 {
-                set_compstate_str("old_list", "keep");
-                set_compstate_str("insert", &(old_insert - 1).to_string());
+                let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
+                let _ = crate::ported::params::setsparam("compstate[insert]", &(old_insert - 1).to_string());
             } else if stop_on {
                 let _ = setsparam("_hist_stop", "new");
                 let _ = _message(&["end of history reached".to_string()]);
                 let _ = setsparam("curcontext", &saved_ctx);
                 return 1;
             } else {
-                set_compstate_str("old_list", "keep");
-                set_compstate_str("insert", &menu_len.to_string());
+                let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
+                let _ = crate::ported::params::setsparam("compstate[insert]", &menu_len.to_string());
             }
         }
         let _ = setsparam("curcontext", &saved_ctx);
@@ -182,7 +181,7 @@ pub fn _history_complete_word() -> i32 {
     let _ = setsparam("_hist_old_prefix", &prefix);
     let _ = gen_matches(direction);
 
-    let nm: i64 = get_compstate_str("nmatches")
+    let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let _ = setsparam("curcontext", &saved_ctx);
@@ -203,13 +202,11 @@ mod tests {
         let _ = setsparam("WIDGET", "_history-complete-older");
         let _ = setsparam("LASTWIDGET", "");
         // `compstate[nmatches]` is a LIVE GSU integer (complete.c:1411)
-        // backed by the `nmatches` counter, so writing it through
-        // `set_compstate_str` is a no-op — the reader ignores the stored
-        // hash for this one key. Zero the counter itself, or matches
-        // added by an earlier completion test make this widget report
-        // "found something" and return 0.
+        // backed by the `nmatches` counter, so the key is read-only.
+        // Zero the counter itself, or matches added by an earlier
+        // completion test make this widget report "found something" and
+        // return 0.
         crate::ported::zle::compcore::nmatches.store(0, std::sync::atomic::Ordering::Relaxed);
-        set_compstate_str("nmatches", "0");
         assert_eq!(_history_complete_word(), 1);
     }
 }

@@ -38,7 +38,6 @@ use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::{dispatch_function_call, execute_script};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_compvalues;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -493,7 +492,7 @@ fn values_impl(args: &[String]) -> i32 {
             // sh:95
             let _ = setsparam("context", &subc);
         }
-        set_compstate_str("restore", ""); // sh:97
+        let _ = crate::ported::params::setsparam("compstate[restore]", ""); // sh:97
         return 1; // sh:98
     }
 
@@ -605,7 +604,7 @@ fn values_impl(args: &[String]) -> i32 {
     let _ = setsparam("curcontext", &oldcontext);
     // sh:155 — success iff matches were added since the caller's `nm`.
     let nm = getiparam("nm");
-    let nmatches = get_compstate_str("nmatches")
+    let nmatches = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
     if nm != nmatches {

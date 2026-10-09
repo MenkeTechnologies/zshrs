@@ -45,7 +45,6 @@ use crate::ported::params::{
     getaparam, gethkparam, gethparam, getiparam, getsparam, setaparam, sethparam, setiparam,
     setsparam, unsetparam,
 };
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_comparguments;
 use crate::ported::zsh_h::{isset, options, EXTENDEDGLOB, MAX_OPS};
@@ -251,7 +250,7 @@ fn prefix_suffix() -> String {
 
 /// `$compstate[nmatches]` as an integer (0 when unset).
 fn nmatches() -> i64 {
-    get_compstate_str("nmatches")
+    crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
 }
@@ -1291,7 +1290,7 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                                 context.push(subc.clone());
                                 setaparam("context", context.clone());
                             }
-                            set_compstate_str("restore", ""); // sh:401
+                            let _ = crate::ported::params::setsparam("compstate[restore]", ""); // sh:401
                             aret = true; // sh:402
                         }
                         continue; // handled this spec

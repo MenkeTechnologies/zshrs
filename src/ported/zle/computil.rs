@@ -5049,34 +5049,6 @@ pub fn bin_comparguments(
     // parameter and the C global are ONE STORAGE: a completer's
     // `words=( … )` / `(( CURRENT++ ))` IS the write that `ca_parse_line`
     // reads back at c:2070-2092.
-    //
-    // zshrs's compparams carry `var: 0, gsu: 0` (complete.rs), i.e. two
-    // separate storages. Every ENGINE write mirrors global->param, but nothing
-    // mirrors param->global, so a shell-level assignment was invisible here.
-    // `Completion/Unix/Command/_ansible:293-295` does exactly that —
-    // `words=( role "$words[@]" ); (( CURRENT++ ))` before a nested
-    // `_arguments` — and the parse still saw the PRE-shift words, so
-    // `ansible-galaxy <TAB>` offered 2 matches where zsh offers 11.
-    // Minimal witness: a completer doing that shift then
-    // `_arguments : '1:one:(AAA)' '2:two:(BBB)'` inserts `BBB` in zsh
-    // (positional 2, shifted) and inserted `AAA` here.
-    //
-    // Same shape and the same INCOMPFUNC gate as the established precedent for
-    // PREFIX/SUFFIX/IPREFIX/ISUFFIX at compcore.rs (`refresh the globals from
-    // the params so comp_match filters against the prefix the completer
-    // actually set`).
-    if let Some(w) = crate::ported::params::getaparam("words") {
-        if let Ok(mut g) = COMPWORDS
-            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-            .lock()
-        {
-            *g = w;
-        }
-    }
-    COMPCURRENT.store(
-        crate::ported::params::getiparam("CURRENT"),
-        Ordering::Relaxed,
-    );
     if args.is_empty() {
         return 1;
     }
@@ -8643,32 +8615,6 @@ pub fn bin_compfiles(
 
     match sub {
         b'p' | b'P' => {
-            // `_path_files` rewrites `$PREFIX`/`$SUFFIX` for each path component
-            // then calls compfiles; cf_pats/cfp_opt_pats build the glob from the
-            // compprefix/compsuffix GLOBALS. In C those globals ARE the params
-            // (gsu-bound); the Rust compparams aren't bound, and only addmatches
-            // (compadd) refreshes them — so compfiles read a STALE prefix
-            // (globbed the previous component's `sub*` for the final component
-            // `al`, so `cmd /a/b/c/pre<TAB>` never matched). Mirror addmatches'
-            // refresh here. (Same block as compcore.rs addmatches; no C fn — the
-            // C binding is implicit, so this stays inline rather than a helper.)
-            if crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) != 0 {
-                for (param, global) in [
-                    ("PREFIX", &crate::ported::zle::complete::COMPPREFIX),
-                    ("SUFFIX", &crate::ported::zle::complete::COMPSUFFIX),
-                    ("IPREFIX", &crate::ported::zle::complete::COMPIPREFIX),
-                    ("ISUFFIX", &crate::ported::zle::complete::COMPISUFFIX),
-                ] {
-                    if let Some(v) = crate::ported::params::getsparam(param) {
-                        if let Ok(mut g) = global
-                            .get_or_init(|| std::sync::Mutex::new(String::new()))
-                            .lock()
-                        {
-                            *g = v;
-                        }
-                    }
-                }
-            }
             // c:4981
             // c:4983 — `if (args[0][2] && (args[0][2] != '-' || args[0][3]))`
             // reject: the only valid forms are `-p`/`-P` (no 3rd char) or
@@ -9179,15 +9125,14 @@ mod tests {
         let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let mut surviving = |words: &[&str]| -> (i32, bool) {
-            // c:2586-2592 — `bin_comparguments` re-reads `$words` / `$CURRENT`
-            // from the shell params on entry, so seeding the ZLE globals alone
-            // is not enough: `CURRENT` would read back 0 and the c:2670 guard
-            // would reject every line.
-            crate::ported::params::setaparam(
-                "words",
-                words.iter().map(|w| w.to_string()).collect(),
-            );
-            crate::ported::params::setiparam("CURRENT", words.len() as i64);
+            // c:2070-2092 — `bin_comparguments` reads `compwords` /
+            // `compcurrent` (what `$words` / `$CURRENT` view).
+            *crate::ported::zle::complete::COMPWORDS
+                .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                .lock()
+                .unwrap() = words.iter().map(|w| w.to_string()).collect();
+            crate::ported::zle::complete::COMPCURRENT
+                .store(words.len() as i64, Ordering::Relaxed);
             ca_parsed.store(0, Ordering::Relaxed);
             let rc = bin_comparguments("comparguments", &spec, &ops, 0);
             let more = ca_laststate

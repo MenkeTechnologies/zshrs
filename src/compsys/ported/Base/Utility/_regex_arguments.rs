@@ -33,7 +33,6 @@ use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_message::_message;
 use crate::ported::modules::zutil::bin_zregexparse;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS, QT_DOLLARS};
 use std::collections::HashMap;
@@ -230,7 +229,7 @@ pub fn dispatch_registered(funcname: &str) -> i32 {
     };
 
     // sh:64 — `nm=$compstate[nmatches]`.
-    let nm: i64 = get_compstate_str("nmatches")
+    let nm: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -338,7 +337,7 @@ pub fn dispatch_registered(funcname: &str) -> i32 {
 
     // sh:82 — `[[ nm -ne "$compstate[nmatches]" ]]` — return 0 iff the
     // match count changed (i.e. this function produced completions).
-    let nm2: i64 = get_compstate_str("nmatches")
+    let nm2: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     if nm != nm2 {

@@ -41,7 +41,6 @@
 use crate::compsys::ported::_description::_description;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -72,10 +71,10 @@ pub fn _all_matches() -> i32 {
     // sh:8
     if matches!(old.as_str(), "only" | "true" | "yes" | "1" | "on") {
         // sh:10
-        let old_list = get_compstate_str("old_list").unwrap_or_default();
+        let old_list = crate::ported::params::getsparam("compstate[old_list]").unwrap_or_default();
         if !old_list.is_empty() {
-            set_compstate_str("insert", "all");
-            set_compstate_str("old_list", "keep");
+            let _ = crate::ported::params::setsparam("compstate[insert]", "all");
+            let _ = crate::ported::params::setsparam("compstate[old_list]", "keep");
             return 0;
         }
         // sh:15
@@ -115,7 +114,7 @@ pub fn _all_matches_end() -> i32 {
     }
 
     // sh:33
-    let nmatches: i64 = get_compstate_str("nmatches")
+    let nmatches: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let completer = getsparam("_completer").unwrap_or_default();
@@ -131,7 +130,7 @@ pub fn _all_matches_end() -> i32 {
             .map(|v| matches!(v.as_str(), "yes" | "true" | "1" | "on"))
             .unwrap_or(false)
         {
-            set_compstate_str("insert", "all");
+            let _ = crate::ported::params::setsparam("compstate[insert]", "all");
         } else {
             // sh:39-40
             let _ = _description(&[

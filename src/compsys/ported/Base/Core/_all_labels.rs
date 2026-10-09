@@ -65,7 +65,6 @@ use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::get_compstate_str as _get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_comptags;
 use crate::ported::zsh_h::{options, MAX_OPS};

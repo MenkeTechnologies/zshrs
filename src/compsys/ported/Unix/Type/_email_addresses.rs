@@ -37,7 +37,6 @@ use crate::ported::params::{
     getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam, unsetparam,
 };
 use crate::ported::utils::getshfunc;
-use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{options, MAX_OPS};
 use std::fs;
@@ -314,7 +313,7 @@ fn email_ldap(args: &[String], curcontext: &str, curtag: &str) -> i32 {
         }
     }
     // sh:71  compstate[insert]=menu
-    let _ = set_compstate_str("insert", "menu");
+    let _ = crate::ported::params::setsparam("compstate[insert]", "menu");
     // sh:72-73  _wanted email-ldap expl 'matching name' compadd -U -i "$IPREFIX" -I "$ISUFFIX" "$@" -a - ali
     // sh:48 — `local -a expl ali res filter`, in `_email-ldap`. That
     // function is a plain Rust fn here (`email_ldap`), so it has no param

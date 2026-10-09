@@ -34,7 +34,6 @@ use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
-use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{isset, options, BANGHIST, MAX_OPS};
 
@@ -149,8 +148,8 @@ pub fn _normal_impl(args: &[String]) -> i32 {
     } else {
         String::new()
     };
-    let quote = get_compstate_str("quote").unwrap_or_default();
-    let all_quotes = get_compstate_str("all_quotes").unwrap_or_default();
+    let quote = crate::ported::params::getsparam("compstate[quote]").unwrap_or_default();
+    let all_quotes = crate::ported::params::getsparam("compstate[all_quotes]").unwrap_or_default();
     let bare_bang = curword.starts_with('!') && curword.ends_with(':') && quote.is_empty();
     let quoted_bang = curword.starts_with("\"!") && curword.ends_with(':') && all_quotes == "\"";
     if bang_hist && (bare_bang || quoted_bang) {

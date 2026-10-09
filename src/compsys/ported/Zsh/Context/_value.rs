@@ -46,7 +46,6 @@ use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -69,7 +68,7 @@ pub fn _value(args: &[String]) -> i32 {
         let mut strs: Vec<String> = vec!["-default-".to_string()];
         let mut ctx = String::new();
 
-        let comp_context = get_compstate_str("context").unwrap_or_default();
+        let comp_context = crate::ported::params::getsparam("compstate[context]").unwrap_or_default();
         let cc1 = getsparam("_comp_command1").unwrap_or_default();
         let cc2 = getsparam("_comp_command2").unwrap_or_default();
         let cc = getsparam("_comp_command").unwrap_or_default();
@@ -83,7 +82,7 @@ pub fn _value(args: &[String]) -> i32 {
 
         // sh:21-22 — build dispatch argv by brace-expanding the two
         //   `-value-,{P,-default-},${^strs}` matrix.
-        let param = get_compstate_str("parameter").unwrap_or_default();
+        let param = crate::ported::params::getsparam("compstate[parameter]").unwrap_or_default();
         let mut argv: Vec<String> = vec![format!("-value-,{},{}", param, ctx)];
         for s in &strs {
             argv.push(format!("-value-,{},{}", param, s));
@@ -99,8 +98,8 @@ pub fn _value(args: &[String]) -> i32 {
     }
 
     // sh:23 — inner -value-,* dispatch
-    let param = get_compstate_str("parameter").unwrap_or_default();
-    let context = get_compstate_str("context").unwrap_or_default();
+    let param = crate::ported::params::getsparam("compstate[parameter]").unwrap_or_default();
+    let context = crate::ported::params::getsparam("compstate[context]").unwrap_or_default();
     if !param.contains('-') && context == "array_value" && param_is_assoc(&param) {
         // sh:28
         let current = getiparam("CURRENT");
@@ -124,7 +123,7 @@ pub fn _value(args: &[String]) -> i32 {
             String::new()
         };
         let new_param = format!("{}-{}", param, prev);
-        set_compstate_str("parameter", &new_param);
+        let _ = crate::ported::params::setsparam("compstate[parameter]", &new_param);
         let argv = vec![
             format!("-value-,{},", new_param),
             format!("-value-,{},-default-", new_param),
@@ -207,8 +206,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("service", "-value-");
         let _ = setsparam("_comp_command", "");
-        set_compstate_str("context", "value");
-        set_compstate_str("parameter", "myvar");
+        let _ = crate::ported::params::setsparam("compstate[context]", "value");
+        let _ = crate::ported::params::setsparam("compstate[parameter]", "myvar");
         assert_eq!(_value(&[]), 127);
     }
 }
