@@ -134,9 +134,7 @@
         <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
       </nav>
       <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.8;">
-        zshrs 0.13.3 (<code>e93ff67c6a</code>) against zsh. Oracle: zsh-5.9.1's own
-        <code>Test/*.ztst</code>, built from source; surface and daily-driver checks against
-        the host zsh 5.9.2. One pinned debug binary for every run. Measured 2026-10-03, aarch64-apple-darwin.
+        zshrs 0.13.18 (<code>ce3defc7ee</code>) against zsh. Oracle: zsh-5.9.2's own <code>Test/*.ztst</code>, built from the <code>zsh-5.9.2</code> tag; surface, TAB and fuzz checks against the host zsh 5.9.2. One snapshot debug build of the tag for every run. Measured 2026-10-09, aarch64-apple-darwin.
       </p>
     </div>
     <div class="tutorial-toolbar">
@@ -157,24 +155,24 @@
 
 <main class="tutorial-main">
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SUMMARY</h2>
-<p class="lede">On zsh's own regression suite, zshrs passes <b>2,039</b> of the <b>2,048</b> assertions that zsh 5.9.1 passes (<b>99.56%</b>). Every assertion it misses, and every other difference measured today, is listed below. Re-run on main (2026-10-03), 6 of the 9 misses pass, 1 (E02xtrace #6) is an artifact of the oracle build, and <b>2 remain</b>: A05execution #33 and #34.</p>
+<p class="lede">On zsh's own regression suite, zshrs passes <b>2,038</b> of the <b>2,068</b> assertions that zsh 5.9.2 passes (<b>98.55%</b>). Every assertion it misses, and every other difference measured today, is listed below. Against v0.13.3 (5.9.1 oracle) the core suite gained misses in <code>kill</code> wording, lexer-token leakage, <code>zsh_eval_context</code> hiding, <code>$jobstates</code> and the ZLE highlight file, which now hangs.</p>
 <div class="stat-grid">
-  <div class="stat-card"><div class="stat-val green">99.56%</div><div class="stat-label">zsh Test Suite</div><div class="stat-sub">2,039 / 2,048</div></div>
-  <div class="stat-card"><div class="stat-val red">9</div><div class="stat-label">ztst Divergences</div><div class="stat-sub">core suite only</div></div>
-  <div class="stat-card"><div class="stat-val green">182/182</div><div class="stat-label">Completion ztst</div><div class="stat-sub">Y01&ndash;Y03, same verdict</div></div>
-  <div class="stat-card"><div class="stat-val">472/487</div><div class="stat-label">TAB Screens</div><div class="stat-sub">byte-identical</div></div>
-  <div class="stat-card"><div class="stat-val green">1,290</div><div class="stat-label">Names Matched</div><div class="stat-sub">0 missing</div></div>
-  <div class="stat-card"><div class="stat-val">49,218</div><div class="stat-label">cargo Parity Pass</div><div class="stat-sub">12 fail &middot; 8 timing</div></div>
-  <div class="stat-card"><div class="stat-val yellow">98</div><div class="stat-label">C Fn Stubs</div><div class="stat-sub">of 2,476 C functions</div></div>
+  <div class="stat-card"><div class="stat-val yellow">98.55%</div><div class="stat-label">zsh Test Suite</div><div class="stat-sub">2,038 / 2,068</div></div>
+  <div class="stat-card"><div class="stat-val red">30</div><div class="stat-label">ztst Divergences</div><div class="stat-sub">27 core &middot; 3 completion</div></div>
+  <div class="stat-card"><div class="stat-val yellow">175/178</div><div class="stat-label">Completion ztst</div><div class="stat-sub">Y01&ndash;Y03</div></div>
+  <div class="stat-card"><div class="stat-val">468/488</div><div class="stat-label">TAB Screens</div><div class="stat-sub">byte-identical</div></div>
+  <div class="stat-card"><div class="stat-val yellow">1,269</div><div class="stat-label">Names Matched</div><div class="stat-sub">15 missing of 1,284</div></div>
+  <div class="stat-card"><div class="stat-val">49,254</div><div class="stat-label">cargo Parity Pass</div><div class="stat-sub">45 fail &middot; 4 timing</div></div>
+  <div class="stat-card"><div class="stat-val yellow">95</div><div class="stat-label">C Fn Stubs</div><div class="stat-sub">of 2,473 C functions</div></div>
   <div class="stat-card"><div class="stat-val">8-Way</div><div class="stat-label">Emulation Fuzz</div><div class="stat-sub">--zsh 0 / 2,000 divergent</div></div>
-  <div class="stat-card"><div class="stat-val magenta">41</div><div class="stat-label">zshrs-only Passes</div><div class="stat-sub">fail or unrunnable in this zsh build</div></div>
+  <div class="stat-card"><div class="stat-val magenta">25</div><div class="stat-label">zshrs-only Passes</div><div class="stat-sub">fail or unrunnable in this zsh build</div></div>
 </div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>BY METHOD</h2>
 <div id="meters"></div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZTST BY CATEGORY</h2>
-<div class="note cyan">Only assertions zsh 5.9.1 passes in this build count, so tests zsh skips or cannot run here never count against zshrs. Y is the completion suite (Y01&ndash;Y03 in 5.9.1); every other letter is the core suite, run with zshrs as its own ztst harness via <code>scripts/ztst_compsys.py --core</code>.</div>
+<div class="note cyan">Only assertions zsh 5.9.2 passes in this build count, so tests zsh skips or cannot run here never count against zshrs. Y is the completion suite (Y01&ndash;Y03 in 5.9.2); every other letter is the core suite, run with zshrs as its own ztst harness via <code>scripts/ztst_compsys.py --core</code>.</div>
 <div class="tbl"><table class="fn-table">
   <thead><tr><th>Cat</th><th>Area</th><th class="num">Files</th><th class="num">zsh pass</th><th class="num">zshrs pass</th><th class="num">Missed</th><th>Status</th></tr></thead>
   <tbody id="cats"></tbody>
@@ -183,56 +181,56 @@
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>EVERY TEST FILE</h2>
 <div class="legend"><span>same result as zsh on every assertion</span><span class="d">zshrs misses an assertion zsh passes</span><span class="x">zsh passes nothing here in this build (root, gdbm, pcre, private module)</span></div>
 <div class="wall" id="wall"></div>
-<p class="body-txt">Tile figures: zshrs pass / zsh pass. Y04&ndash;Y06 exist only in the zsh development tree, not in 5.9.1, so they hold no assertions here.</p>
+<p class="body-txt">Tile figures: zshrs pass / zsh pass. Y04&ndash;Y06 exist only in the zsh development tree, not in 5.9.2, so they hold no assertions here.</p>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZTST DIVERGENCES</h2>
 <div class="tbl"><table class="fn-table">
-  <thead><tr><th>File</th><th class="num">#</th><th>Assertion</th><th>Differs in</th><th>v0.13.3</th><th>main, 2026-10-03</th></tr></thead>
+  <thead><tr><th>File</th><th class="num">#</th><th>Assertion</th><th>Differs in</th><th>Cause</th></tr></thead>
   <tbody id="ztfail"></tbody>
 </table></div>
-<div class="note">Other direction: zshrs passes 3 assertions zsh marks expected-to-fail (D04parameter #231, E03posix #13, V01zmodload #35), and 41 that fail or cannot run in this zsh build (V07pcre, V10private, and 4 V01zmodload checks that need every module to load).</div>
+<div class="note">Other direction: zshrs passes 3 assertions zsh marks expected-to-fail (D04parameter #234, E03posix #13, V01zmodload #35), and 25 that zsh does not pass in this build (V10private and V11db_gdbm are skipped by zsh here; the rest are in A, B, D and V files).</div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>TAB COMPLETION SCREENS</h2>
-<div class="note cyan">Each cell types a buffer, presses TAB once, and diffs the 40&times;110 grid zsh draws against the grid zshrs draws (<code>-f -i</code>, the same pinned zsh-written compdump, native mode, 30 s key budget). 490 cells: the shared corpus plus 300 commands discovered on this host. 472 identical, 15 diverged, 3 skipped (npm, zinit and zpwr are not on the test shell's PATH).</div>
+<div class="note cyan">Each cell types a buffer, presses TAB once, and diffs the 40&times;110 grid zsh draws against the grid zshrs draws (<code>-f -i</code>, the same pinned zsh-written compdump, native mode, 30 s key budget). 490 cells: the shared corpus plus 300 commands discovered on this host. 468 identical, 20 diverged, 2 skipped (zinit and zpwr are not on the test shell's PATH).</div>
 <div class="tbl"><table class="fn-table">
   <thead><tr><th>Buffer</th><th class="num">zsh</th><th class="num">zshrs</th><th class="num">&Delta;</th><th>What differs</th></tr></thead>
   <tbody id="tabfail"></tbody>
 </table></div>
-<p class="body-txt">13 of 15 differ only in the candidate count the listing prompt reports. Where zshrs lists more, the extras are its own: 16 parameters zsh does not have (<code>ZSHRS_VERSION</code>, <code>HELPDIR</code>, &hellip;) and 41 completion functions shipped in <code>~/.zshrs/functions</code>. <code>unset&nbsp;</code> runs the other way, 9 fewer than zsh.</p>
+<p class="body-txt">16 of 20 differ only in the candidate count the listing prompt reports; 2 differ in the RANDOM description row and 2 in the order of the history-modifier list. Where zshrs lists more, the extras are its own parameters and completion functions.</p>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>CARGO PARITY TESTS</h2>
-<div class="note cyan"><code>cargo test --test parity</code>: 49,218 passed, 20 failed, 24 ignored (known divergences, not counted). Each failure was then re-run alone, single-threaded: 12 still fail, 8 pass and failed only under parallel load.</div>
+<div class="note cyan"><code>cargo test --test parity</code>: 49,254 passed, 49 failed, 26 ignored (known divergences, not counted). The reference shell is the zsh development-tree oracle build (<code>5.9.999.3-test</code>). Each failure was then re-run alone, single-threaded: 45 still fail, 4 pass and failed only under parallel load.</div>
 <div class="tbl"><table class="fn-table">
   <thead><tr><th>Test</th><th>Re-run alone</th></tr></thead>
   <tbody id="cargofail"></tbody>
 </table></div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SURFACE</h2>
-<div class="note cyan">Name-by-name diff of <code>zsh -fc</code> against <code>zshrs --zsh -fc</code>. Without <code>--zsh</code>, zshrs exposes 121 builtins of its own (224 total).</div>
+<div class="note cyan">Name-by-name diff of <code>zsh -fc</code> against <code>zshrs --zsh -fc</code> with every loadable module except <code>example</code> loaded in both. Missing: option <code>restricted</code>; parameters <code>zcurses_*</code> (4) and <code>ZFTP_*</code> (4) and the two <code>ZCURSES_*</code> arrays; widgets <code>delete-to-char</code> and <code>zap-to-char</code> with their dotted forms. zshrs also exposes names zsh 5.9.2 lacks: builtin <code>nameref</code>; parameters <code>.zle.esc</code>, <code>.zle.sgr</code>, <code>SRANDOM</code>, <code>ZSH_EXEPATH</code>; modules <code>zsh/hlgroup</code>, <code>zsh/ksh93</code>, <code>zsh/random</code>. Without <code>--zsh</code>, zshrs exposes more builtins of its own.</div>
 <div class="tbl"><table class="fn-table">
   <thead><tr><th>Set</th><th class="num">zsh 5.9.2</th><th class="num">zshrs</th><th class="num">Missing</th><th>Status</th></tr></thead>
   <tbody id="surface"></tbody>
 </table></div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>8-WAY EMULATION PARITY</h2>
-<div class="note cyan"><code>parity-fuzz --shell &lt;target&gt; --count 2000 --seed 1 --verify 2</code>, one run per leg. Each leg runs <code>zshrs</code> in an emulation mode against the real shell it imitates and compares stdout and exit status. A case counts only when it diverges on two consecutive runs. Each target has its own script generator, so rates are not comparable across rows. On this host <code>ash</code> is a symlink to <code>dash</code>, and with no pdksh installed the <code>pdksh</code> leg falls back to <code>mksh</code>, so the 10 legs reduce to the 8 distinct comparisons below. &ldquo;Distinct&rdquo; counts the different minimized programs among the divergent cases.</div>
+<div class="note cyan"><code>parity-fuzz --shell &lt;target&gt; --count 2000 --seed 1 --verify 2</code> (v0.13.18), one run per leg. Each leg runs <code>zshrs</code> in an emulation mode against the real shell it imitates and compares stdout and exit status. A case counts only when it diverges on two consecutive runs. Each target has its own script generator, so rates are not comparable across rows. On this host <code>ash</code> is a symlink to <code>dash</code>, and with no pdksh installed the <code>pdksh</code> leg falls back to <code>mksh</code>, so the 10 legs reduce to the 8 distinct comparisons below. &ldquo;Distinct&rdquo; counts the different minimized programs among the divergent cases.</div>
 <div class="tbl"><table class="fn-table">
   <thead><tr><th>Leg</th><th>zshrs</th><th>Reference</th><th class="num">Cases</th><th class="num">Divergent</th><th class="num">Rate</th><th class="num">Distinct</th><th>Most frequent minimized divergence</th><th>Status</th></tr></thead>
   <tbody>
     <tr><td>zsh</td><td><code>--zsh</code></td><td>zsh 5.9.2</td><td class="num">2,000</td><td class="num">0</td><td class="num">0.0%</td><td class="num">0</td><td>&mdash;</td><td><span class="pill pass">match</span></td></tr>
     <tr><td>sh, zsh-style</td><td><code>--sh --zsh</code></td><td>zsh 5.9.2 <code>emulate sh</code></td><td class="num">2,000</td><td class="num">0</td><td class="num">0.0%</td><td class="num">0</td><td>1,577 cases had no signal: the oracle exited non-zero with empty stdout</td><td><span class="pill pass">match</span></td></tr>
     <tr><td>ksh, zsh-style</td><td><code>--ksh --zsh</code></td><td>zsh 5.9.2 <code>emulate ksh</code></td><td class="num">2,000</td><td class="num">1</td><td class="num">0.05%</td><td class="num">1</td><td><code>setopt NO_UNSET; [[ -z ${arr[99]} ]]; print -r -- $?</code></td><td><span class="pill fail">diverged</span></td></tr>
-    <tr><td>dash (= ash)</td><td><code>--dash</code></td><td>dash 0.5.13.5</td><td class="num">2,000</td><td class="num">44</td><td class="num">2.2%</td><td class="num">3</td><td><code>f() { local x; printf '[%s]\n' "$x"; }; x=out; f</code> &mdash; dash's <code>local x</code> keeps the outer value</td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>dash (= ash)</td><td><code>--dash</code></td><td>dash 0.5.13.5</td><td class="num">2,000</td><td class="num">2</td><td class="num">0.1%</td><td class="num">2</td><td><code>getopts ':a:b' o -a</code>: dash reports <code>?</code>, zshrs reports <code>:</code> with <code>OPTARG=a</code></td><td><span class="pill fail">diverged</span></td></tr>
     <tr><td>sh</td><td><code>--sh</code></td><td>/bin/sh (bash 3.2.57, POSIX mode)</td><td class="num">2,000</td><td class="num">200</td><td class="num">10.0%</td><td class="num">8</td><td><code>(set -u; : "$nope") 2&gt;/dev/null; printf '%d\n' $?</code> &mdash; exit status of expansion errors</td><td><span class="pill fail">diverged</span></td></tr>
-    <tr><td>bash</td><td><code>--bash</code></td><td>bash 5.3.20</td><td class="num">2,000</td><td class="num">503</td><td class="num">25.2%</td><td class="num">54</td><td><code>$LINENO</code> inside a function, <code>caller</code></td><td><span class="pill fail">diverged</span></td></tr>
-    <tr><td>ksh</td><td><code>--ksh</code></td><td>ksh 93u+m/1.0.10</td><td class="num">2,000</td><td class="num">901</td><td class="num">45.1%</td><td class="num">71</td><td><code>${.sh.fun}</code>, <code>typeset -p</code> of an export, <code>${.sh.version}</code></td><td><span class="pill fail">diverged</span></td></tr>
-    <tr><td>mksh (= pdksh)</td><td><code>--mksh</code></td><td>mksh R59</td><td class="num">2,000</td><td class="num">958</td><td class="num">47.9%</td><td class="num">74</td><td><code>${KSH_VERSION+set}</code>, base-N integers <code>typeset -i v=8#17</code></td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>bash</td><td><code>--bash</code></td><td>bash 5.3.20</td><td class="num">2,000</td><td class="num">208</td><td class="num">10.4%</td><td class="num">18</td><td><code>caller</code> inside a function (<code>$0</code> of the caller reported as <code>zsh</code>)</td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>ksh</td><td><code>--ksh</code></td><td>ksh 93u+m/1.0.10</td><td class="num">2,000</td><td class="num">212</td><td class="num">10.6%</td><td class="num">33</td><td><code>printf '%..Nd'</code> width forms, <code>builtin -d</code>, <code>${.sh.version}</code></td><td><span class="pill fail">diverged</span></td></tr>
+    <tr><td>mksh (= pdksh)</td><td><code>--mksh</code></td><td>mksh R59</td><td class="num">2,000</td><td class="num">209</td><td class="num">10.5%</td><td class="num">26</td><td>base-N integers <code>typeset -i v=8#17</code>, <code>[[ -o emacs ]]</code></td><td><span class="pill fail">diverged</span></td></tr>
   </tbody>
 </table></div>
-<div class="note">The curated nine-way corpus (<code>cargo test --test emulation_parity</code>) found all reference shells (&ldquo;tested 9 way(s), 0 missing&rdquo;) and passed 47 of 48 tests. The failure: <code>pdksh_line_has_pipestatus_but_ksh93_does_not</code>, where <code>zshrs --mksh</code> reports <code>PIPESTATUS</code> as <code>[0]</code> instead of <code>[0 1 0]</code>.</div>
+<div class="note">The curated nine-way corpus (<code>cargo test --test emulation_parity</code>) passed 54 of 54 tests.</div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>DAILY DRIVER</h2>
-<div class="note cyan">Both shells started interactively in a pty with the real <code>~/.zshrc</code> (zpwr, zinit turbo) and probed through a sourced file once the prompt settled.</div>
+<div class="note cyan">Measured 2026-10-03 on v0.13.3; not re-run. Both shells started interactively in a pty with the real <code>~/.zshrc</code> (zpwr, zinit turbo) and probed through a sourced file once the prompt settled.</div>
 <div class="tbl"><table class="fn-table">
   <thead><tr><th>Check</th><th class="num">zsh</th><th class="num">zshrs</th><th>Status</th><th>Reading</th></tr></thead>
   <tbody>
@@ -246,13 +244,15 @@
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>METHOD</h2>
 <ul class="body-txt">
-  <li>zshrs built from tag v0.13.3 in a clean checkout and snapshotted, so other work in the shared tree could not relink it mid-run.</li>
-  <li>Oracle: zsh 5.9.1, the closest tagged release to the 5.9.2 target, built from source. <code>scripts/ztst_compsys.py</code> ran the suite once with zsh as baseline and once with zshrs as the shell under test.</li>
-  <li>This zsh build could not load pcre or <code>zsh/param/private</code>, has no gdbm, and P01privileged needs root. Those 74 assertions are excluded from both sides.</li>
-  <li>TAB screens: <code>scripts/comptab_parity.py</code>, native mode, pinned zsh-written compdump.</li>
-  <li>Surface and daily-driver checks compare against the host zsh 5.9.2.</li>
-  <li>C port coverage is read from the published port report (generated 2026-10-01), not regenerated for this page.</li>
-  <li>The <i>main, 2026-10-03</i> column re-runs the 7 files holding the 9 divergences through <code>scripts/ztst_compsys.py --core</code> with a debug build of main against a zsh 5.9.1 built from the <code>zsh-5.9.1</code> tag; every other figure on this page is the v0.13.3 run.</li>
+  <li>zshrs built from tag v0.13.18 (<code>git archive</code> into a scratch directory, debug profile), so other work in the shared tree could not change it mid-run. Every figure below except the daily-driver table comes from that one build.</li>
+  <li>Oracle: zsh 5.9.2 built from the <code>zsh-5.9.2</code> tag with <code>--enable-unicode9</code>. <code>scripts/ztst_compsys.py</code> ran the suite once with zsh as baseline and once with zshrs as the shell under test (<code>--core</code> for the non-Y files, default mode for Y01&ndash;Y03). The 5.9.2 tree holds no Y04&ndash;Y06.</li>
+  <li>This zsh build has no gdbm and cannot load <code>zsh/param/private</code>, and P01privileged needs root. Those assertions are excluded from both sides.</li>
+  <li>X04zlehighlight hangs under zshrs and is killed at 180 s; its 12 assertions count as missed.</li>
+  <li>TAB screens: <code>scripts/comptab_parity.py --sequences tab1 --discover 300 --key-budget 30</code>, native mode, a pinned zsh-written compdump, reference Homebrew zsh 5.9.2.</li>
+  <li>cargo parity: <code>cargo test --test parity</code> in the same snapshot; the reference shell is the development-tree oracle build resolved by <code>tests/parity/oracle.rs</code>. Failures re-run alone with <code>--test-threads=1</code>.</li>
+  <li>Surface and fuzz checks compare against the host zsh 5.9.2 and the reference shells named in each table.</li>
+  <li>C port coverage is read from the published port report (generated 2026-10-06), not regenerated for this page.</li>
+  <li>The daily-driver table was not re-measured: its figures are from 2026-10-03 on v0.13.3.</li>
 </ul>
 </main>
 </div>
@@ -260,71 +260,131 @@
 <script src="hud-theme.js"></script>
 <script>
 const METERS = [
-  ["zsh core ztst", "62 files: grammar, builtins, expansion, options, modules, jobs, ZLE", 1864, 1873, 0, "99.5%", "1,864 / 1,873"],
-  ["zsh completion ztst", "Y01–Y03: compsys, matching control, _arguments", 175, 175, 0, "100%", "175 / 175"],
-  ["TAB screens", "490 cells, single TAB, byte-compared", 472, 487, 0, "96.9%", "472 / 487"],
-  ["cargo parity", "cargo test --test parity, 24 ignored", 49218, 49238, 8, "99.96%", "12 fail · 8 timing"],
-  ["Shell surface", "builtins, options, params, widgets, keymaps, reswords, modules", 1290, 1290, 0, "100%", "1,290 / 1,290"],
-  ["C functions ported", "port report, 2026-10-01", 2378, 2476, 98, "96.0%", "98 stubs"]
+  ["zsh core ztst", "62 files: grammar, builtins, expansion, options, modules, jobs, ZLE", 1863, 1890, 0, "98.6%", "1,863 / 1,890"],
+  ["zsh completion ztst", "Y01–Y03: compsys, matching control, _arguments", 175, 178, 0, "98.3%", "175 / 178"],
+  ["TAB screens", "490 cells, single TAB, byte-compared", 468, 488, 0, "95.9%", "468 / 488"],
+  ["cargo parity", "cargo test --test parity, 26 ignored", 49254, 49303, 4, "99.90%", "45 fail · 4 timing"],
+  ["Shell surface", "builtins, options, params, widgets, keymaps, reswords, modules", 1269, 1284, 0, "98.8%", "1,269 / 1,284"],
+  ["C functions ported", "port report, 2026-10-06", 2368, 2473, 95, "95.8%", "95 stubs · 10 unported"]
 ];
 const CATS = [
-  ["A", "Grammar & execution", 8, 377, 373],
-  ["B", "Builtins", 13, 240, 239],
-  ["C", "Arithmetic, conditions, traps", 5, 267, 267],
-  ["D", "Expansion & substitution", 9, 508, 508],
-  ["E", "Options & xtrace", 3, 118, 115],
+  ["A", "Grammar & execution", 8, 377, 375],
+  ["B", "Builtins", 13, 240, 235],
+  ["C", "Arithmetic, conditions, traps", 5, 267, 266],
+  ["D", "Expansion & substitution", 9, 513, 511],
+  ["E", "Options & xtrace", 3, 117, 114],
   ["P", "Privileged", 1, 0, 0],
-  ["V", "Modules", 14, 207, 207],
-  ["W", "History & jobs", 3, 21, 20],
-  ["X", "ZLE", 3, 115, 115],
+  ["V", "Modules", 14, 220, 220],
+  ["W", "History & jobs", 3, 21, 19],
+  ["X", "ZLE", 3, 115, 103],
   ["Z", "Shell functions", 3, 20, 20],
-  ["Y", "Completion", 3, 175, 175]
+  ["Y", "Completion", 6, 178, 175]
 ];
-const FILES = [["A01grammar",109,109],["A02alias",18,18],["A03quoting",11,11],["A04redirect",78,77],["A05execution",39,37],["A06assign",103,102],["A07control",17,17],["A09zwc",2,2],["B01cd",6,5],["B02typeset",79,79],["B03print",66,66],["B04read",16,16],["B05eval",4,4],["B06fc",4,4],["B07emulate",20,20],["B08shift",2,2],["B09hash",10,10],["B10getopts",20,20],["B11kill",8,8],["B12limit",2,2],["B13whence",3,3],["C01arith",73,73],["C02cond",59,59],["C03traps",75,75],["C04funcdef",52,52],["C05debug",8,8],["D01prompt",15,15],["D02glob",74,74],["D03procsubst",19,19],["D04parameter",241,241],["D05array",20,20],["D06subscript",36,36],["D07multibyte",49,49],["D08cmdsubst",26,26],["D09brace",28,28],["E01options",94,92],["E02xtrace",14,13],["E03posix",10,10],["P01privileged",0,0],["V01zmodload",34,34],["V02zregexparse",61,61],["V03mathfunc",11,11],["V04features",24,24],["V05styles",23,23],["V06parameter",4,4],["V07pcre",0,0],["V08zpty",2,2],["V09datetime",14,14],["V10private",0,0],["V11db_gdbm",0,0],["V12zparseopts",14,14],["V13zformat",6,6],["V14system",14,14],["W01history",7,7],["W02jobs",11,10],["W03jobparameters",3,3],["X02zlevi",94,94],["X03zlebindkey",9,9],["X04zlehighlight",12,12],["Z01is-at-least",2,2],["Z02zmathfunc",6,6],["Z03run-help",12,12],["Y01completion",27,27],["Y02compmatch",51,51],["Y03arguments",97,97],["Y04regexargs",0,0],["Y05describe",0,0],["Y06values",0,0]];
+const FILES = [["A01grammar",109,109],["A02alias",18,17],["A03quoting",11,11],["A04redirect",78,78],["A05execution",39,39],["A06assign",103,103],["A07control",17,16],["A09zwc",2,2],["B01cd",6,6],["B02typeset",79,78],["B03print",66,66],["B04read",16,16],["B05eval",4,4],["B06fc",4,4],["B07emulate",20,20],["B08shift",2,2],["B09hash",10,10],["B10getopts",20,20],["B11kill",8,4],["B12limit",2,2],["B13whence",3,3],["C01arith",73,72],["C02cond",59,59],["C03traps",75,75],["C04funcdef",52,52],["C05debug",8,8],["D01prompt",15,15],["D02glob",74,74],["D03procsubst",19,19],["D04parameter",244,242],["D05array",20,20],["D06subscript",36,36],["D07multibyte",51,51],["D08cmdsubst",26,26],["D09brace",28,28],["E01options",94,92],["E02xtrace",13,13],["E03posix",10,9],["P01privileged",0,0],["V01zmodload",34,34],["V02zregexparse",61,61],["V03mathfunc",11,11],["V04features",24,24],["V05styles",23,23],["V06parameter",5,5],["V07pcre",12,12],["V08zpty",2,2],["V09datetime",14,14],["V10private",0,0],["V11db_gdbm",0,0],["V12zparseopts",14,14],["V13zformat",6,6],["V14system",14,14],["W01history",7,7],["W02jobs",11,11],["W03jobparameters",3,1],["X02zlevi",94,94],["X03zlebindkey",9,9],["X04zlehighlight",12,0],["Z01is-at-least",2,2],["Z02zmathfunc",6,6],["Z03run-help",12,12],["Y01completion",30,28],["Y02compmatch",51,51],["Y03arguments",97,96],["Y04regexargs",0,0],["Y05describe",0,0],["Y06values",0,0]];
 const ZTFAIL = [
-  ["A04redirect", 34, "multio with globbing", "stderr", "pass", "passes with no code change; the 0.13.3 miss did not recur in repeated runs"],
-  ["A05execution", 33, "'wait' exit status and warning for unknown ID", "stderr", "fail", "open: zsh gives every running pipeline a job slot (exec.c initjob), so a function in progress becomes $prevjob and leaves %% pointing at a freed slot; zshrs allocates slots only at fork time"],
-  ["A05execution", 34, "'wait' exit status for unknown ID (POSIX mode)", "stdout", "fail", "open: same job-slot cause as #33"],
-  ["A06assign", 76, "GLOB_ASSIGN doesn't monkey with type if not scalar assignment", "stderr", "pass", "passes with no code change"],
-  ["B01cd", 5, "Implicit cd with unset HOME", "stderr", "pass", "fixed: the -c error prefix names the executed file, not argv[0]"],
-  ["E01options", 12, "CLOBBER option", "stderr", "pass", "fixed: a debug print in the RM_STAR check wrote to stderr"],
-  ["E01options", 92, "RM_STAR_SILENT", "stdout", "pass", "fixed: same debug print"],
-  ["E02xtrace", 6, "a function that redefines itself preserves tracing", "stdout", "build", "oracle build: this zsh was configured without --enable-unicode9, so it prints byte 0xE3 as \\M-c under LC_ALL=C; zsh 5.9.2 from Homebrew prints the raw byte, as zshrs does"],
-  ["W02jobs", 11, "various `kill` signals with multiple running jobs", "stdout", "pass", "passes with no code change"]
+  ["A02alias", 15, "ALIAS_FUNC_DEF off by default", "stderr", "zsh reports defining a function from an alias, then a parse error; zshrs stops after the first line"],
+  ["A07control", 2, "continue outside loop", "stderr", "message wording: zshrs says \"not in for, while, until, select, or repeat loop\", 5.9.2 omits \"for\""],
+  ["B02typeset", 38, "Parameter hiding and tagging, printing types and values", "stdout", "local <code>ZSH_EVAL_CONTEXT</code>/<code>zsh_eval_context</code> appear hidden in <code>typeset -p</code> output"],
+  ["B11kill", 3, "kill with multiple wrong inputs should increment status", "stderr", "\"invalid pid\" where 5.9.2 prints \"illegal pid\""],
+  ["B11kill", 4, "kill with sigspec and wrong inputs should increment status", "stderr", "same wording"],
+  ["B11kill", 7, "kill with empty pid and sigspec should not send signal to current process group", "stderr", "same wording"],
+  ["B11kill", 8, "Plain kill with empty pid should not send signal to current process group", "stderr", "same wording"],
+  ["C01arith", 72, "Arithmetic, NO_UNSET part 3", "status", "exit status 2, expected 1"],
+  ["D04parameter", 178, "regression: workers/54909, (q) etc tokenised chars", "stdout", "lexer token characters leak as private-use characters (<code>$'\\356\\206\\215'</code>) in <code>(q)</code> output"],
+  ["D04parameter", 237, "${(#X)...}: bad math expression", "stderr", "\"invalid character\" where 5.9.2 prints \"illegal character\""],
+  ["E01options", 69, "RESTRICTED option", "stdout", "stdout holds a 35-line directory listing; expected empty"],
+  ["E01options", 92, "RM_STAR_SILENT", "stdout", "the rm-star prompt counts 16 files, expected 15"],
+  ["E03posix", 1, "Parameter hiding and tagging, printing types and values", "stdout", "same cause as B02typeset #38"],
+  ["W03jobparameters", 2, "$jobstate shows one job started in main shell or one started in subshell", "stdout", "zshrs marks the subshell's job as current (<code>+</code>) in <code>$jobstates</code>; 5.9.2 does not"],
+  ["W03jobparameters", 3, "$jobstate shows no job started in main shell but one started in subshell", "stdout", "zsh prints a <code>running::*=running</code> entry zshrs omits"],
+  ["X04zlehighlight", 1, "region highlight - standout overlapping on other region_highlight entry", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 2, "basic region_highlight with 8 colors", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 3, "region_highlight memo information round trips", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 4, "region_highlight memo information forward compatibility, #1", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 5, "region_highlight memo information forward compatibility, #2", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 6, "region_highlight memo information forward compatibility, #3: NULs", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 7, "basic region_highlight with true-color (hex-triplets)", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 8, "basic region_highlight with near-color (hex-triplets at input)", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 9, "overlapping region_highlight with 8 colors", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 10, "overlapping region_highlight with true-color", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 11, "overlapping region_highlight with near-color (hex-triplets at input)", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["X04zlehighlight", 12, "zle $widgetname -f nolast", "hang", "the file hangs on its first assertion and is killed at 180 s; the remaining 11 never run"],
+  ["Y01completion", 20, "ignore backslashes when sorting completion matches", "output", "completion listing differs"],
+  ["Y01completion", 26, "multiple envarrays", "output", "completion listing differs"],
+  ["Y03arguments", 83, "exclusion with option argument that looks like an option", "output", "completion listing differs"]
 ];
 const TABFAIL = [
-  ["echo $", 324, 340, "candidate count"], ["echo ${", 324, 340, "candidate count"],
-  ["echo $path[", 367, 383, "candidate count"], ["echo ${path[", 367, 383, "candidate count"],
-  ["unset ", 388, 379, "candidate count"], ["functions ", 46763, 46804, "candidate count"],
-  ["unfunction ", 46763, 46804, "candidate count"], ["which ", 52399, 52440, "candidate count"],
-  ["env ", 52787, 52856, "candidate count"], ["sudo ", 5563, 5571, "candidate count"],
-  ["function ", 52755, 52816, "candidate count"], ["diff <(", 52755, 52816, "candidate count"],
-  ["tee >(", 52751, 52816, "candidate count"],
-  ["echo $((", null, null, "RANDOM description row"], ["echo $arr[$((", null, null, "RANDOM description row"]
+  ["echo $path[", 376, 392, "candidate count"],
+  ["unset ", 400, 387, "candidate count"],
+  ["setopt ", 198, 197, "candidate count"],
+  ["unsetopt no", 143, 142, "candidate count"],
+  ["functions ", 46804, 46830, "candidate count"],
+  ["which ", 52409, 52436, "candidate count"],
+  ["sudo ", 5532, 5540, "candidate count"],
+  ["env ", 52813, 52864, "candidate count"],
+  ["unfunction ", 46804, 46830, "candidate count"],
+  ["echo $", 336, 352, "candidate count"],
+  ["echo ${", 336, 352, "candidate count"],
+  ["echo ${path[", 376, 392, "candidate count"],
+  ["diff <(", 52777, 52820, "candidate count"],
+  ["tee >(", 52777, 52820, "candidate count"],
+  ["builtin ", 103, 104, "candidate count"],
+  ["function ", 52777, 52824, "candidate count"],
+  ["echo $((", null, null, "RANDOM description row"], ["echo $arr[$((", null, null, "RANDOM description row"],
+  ["ls *(.:", null, null, "history-modifier list order (S vs a first)"], ["echo !!:", null, null, "history-modifier list order"]
 ];
 const CARGO = [
-  ["always_break_parity::compinit_autoload_stubs::the_stub_set_matches_the_reference_shell", 0],
-  ["binary_parity::zcompdump_byte_identical_roundtrip", 0],
-  ["binary_parity::zcompdump_synthesize_format", 0],
-  ["binary_parity::zstyle_canonical_roundtrip", 0],
-  ["bindkey_parity::zle_dash_l_lists_dotted_internal_widgets", 0],
-  ["completion_old_list_parity::history_complete_older_second_press_redraws_the_kept_list", 0],
+  ["autoload_parity::autoload_zwc_body_ignores_rcquotes_and_aliases", 0],
+  ["autoload_parity::autoload_zwc_digest_and_ksh_body_ignore_rcquotes", 0],
+  ["autoload_parity::autoload_zwc_digest_and_zwc_fpath_entry", 0],
+  ["autoload_parity::autoload_zwc_kshload_flag", 0],
+  ["autoload_parity::autoload_zwc_mtime_preference", 0],
+  ["autoload_parity::autoload_zwc_only_dir_real_zsh_compiled", 0],
+  ["autoload_parity::autoload_zwc_only_dir_zshrs_compiled", 0],
+  ["autoload_parity::autoload_zwc_open_paren_case_arms", 0],
+  ["autoload_parity::corrupt_digest_warning_names_the_caller_then_the_autoloaded_body", 0],
+  ["autoload_parity::source_corrupt_zwc_diagnostic_names_the_caller", 0],
+  ["autoload_parity::source_zwc_sibling_and_zwc_only", 0],
+  ["completion_keys_parity::a_corrupt_digest_met_loading_a_completion_function_names_the_caller", 0],
+  ["completion_keys_parity::compinit_through_a_zwc_digest_registers_the_same_comps", 0],
+  ["compsys_master_ports_parity::description_quotes_percent_in_the_description", 0],
+  ["compsys_master_ports_parity::message_dash_e_accepts_an_option_terminator", 0],
+  ["compsys_master_ports_parity::message_shows_percent_literally", 0],
+  ["compsys_special_params_lifecycle_parity::suffix_alias_files_keeps_directories", 0],
+  ["compsys_special_params_lifecycle_parity::suffix_alias_files_quotes_the_alias_name", 0],
   ["emulation_builtin_fmt_parity::getopts_state_matches_reference_shells", 0],
-  ["history_expansion_parity::hist_verify_leaves_open_s_modifier_in_the_buffer", 0],
-  ["zle_widget_parity::lastwidget_names_the_inner_widget_and_nolast_keeps_it", 0],
-  ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_l::bulk_l_param_OLDPWD_default", 0],
+  ["glob_numeric_parity::default_word_alternation::unquoted_bar_in_default_word_alternates", 0],
+  ["glob_parity::default_word_globbing::assembled_word_globs", 0],
+  ["glob_parity::default_word_globbing::concatenated_default_globs_on_every_haswilds_char", 0],
+  ["locale_parity::multibyte_width_is_locale_driven::count_width_and_mm_agree_with_zsh_in_every_locale", 0],
+  ["locale_parity::multibyte_width_is_locale_driven::m_padding_uses_the_locale_length_in_every_locale", 0],
+  ["modules_parity::cap_module::cap_stubs_use_bin_notavail_text", 0],
+  ["modules_parity::zutil_extra::zparseopts_long_spec_starting_with_n_or_v", 0],
+  ["prompt_loop_parity::chpwd_runs_on_a_directory_change", 0],
+  ["terminfo_parity::echoti_expands_parameterized_capabilities_identically", 0],
+  ["terminfo_parity::numeric_and_boolean_capabilities_match", 0],
+  ["terminfo_parity::terminfo_parameter_matches_the_reference_shell", 0],
+  ["tilde_globsubst_scope_parity::inner_default_word_glob_stays_inside_an_outer_pattern_op::pass_through_and_case_modifier_still_glob", 0],
+  ["tilde_globsubst_scope_parity::substitution_segment_globs_with_the_assembled_word::suffix_joins_the_pattern", 0],
+  ["wordcode_parity::corpus_wordcode_parity", 0],
+  ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_ab::bulk_ab_fc_zsh_patchlevel_or_nil", 0],
+  ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_b::bulk_b_zsh_patchlevel_string", 0],
+  ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_e::bulk_e_print_zsh_name_version", 0],
+  ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_i::bulk_i_param_ZSH_PATCHLEVEL", 0],
   ["zsh_compat_parity_gaps::corpus_dash_fc_bulk_l::bulk_l_zmodload_zsh_deltochar", 0],
-  ["zsh_compat_parity_gaps::typeset_and_dump::export_minus_p_full_dump", 0],
-  ["history_expansion_parity::hist_verify_leaves_bang_bang_in_the_buffer", 1],
-  ["quoted_command_word_parity::a_quoted_precommand_still_recurses_onto_the_real_command", 1],
-  ["vi_multiline_parity::ci_quote_via_the_autoloaded_select_quoted_function", 1],
-  ["zle_buffer_state_parity::multibyte::word_motion_counts_accented_characters", 1],
-  ["zle_buffer_state_parity::ztst_x0::a_csi_introducer_binding_does_not_fire_on_a_full_sequence", 1],
-  ["zle_buffer_state_parity::ztst_x0::cia_changes_the_inside_of_a_quoted_shell_word", 1],
-  ["zle_editor_params_parity::a_numeric_prefix_is_visible_to_the_next_widget", 1],
-  ["zsh_compat_parity_gaps::probe_sweep_2026_06_12_b::probe_b_row_149", 1]
+  ["zsh_modules_corpus_parity::contrib::zmv_W_Q_trailing_group_is_qualifier", 0],
+  ["zsh_modules_corpus_parity::contrib::zmv_no_match_aborts_with_status_1", 0],
+  ["zsh_modules_corpus_parity::contrib::zmv_recursive_group", 0],
+  ["zsh_modules_corpus_parity::zmod_zutil::zformat_ternary_bad_math_in_spec_value_reports_and_abandons", 0],
+  ["zsh_modules_corpus_parity::zmod_zutil::zparseopts_K_long", 0],
+  ["zsh_modules_corpus_parity::zmod_zutil::zparseopts_bare_long_spec_zinit_shape", 0],
+  ["zsh_modules_corpus_parity::zmod_zutil::zparseopts_unknown_letter_rewinds_whole_word", 0],
+  ["expansion_parity::subscript_reads_over_a_large_table_are_linear", 1],
+  ["jobs_parity::signalled_foreground_command_status", 1],
+  ["prompt_loop_parity::jobs_cuts_long_process_text_where_getjobtext_does", 1],
+  ["quoted_command_word_parity::an_unquoted_command_word_reaches_its_completer", 1]
 ];
-const SURFACE = [["Builtins",103,103],["Options",197,197],["Parameters",527,527],["ZLE widgets",386,386],["Keymaps",9,9],["Reserved words",31,31],["Loadable modules",37,37]];
+const SURFACE = [["Builtins",147,147],["Options",197,196],["Parameters",470,460],["ZLE widgets",392,388],["Keymaps",11,11],["Reserved words",32,32],["Loadable modules",35,35]];
 
 const fmt = n => n.toLocaleString("en-US");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
@@ -352,9 +412,8 @@ document.getElementById("wall").innerHTML = FILES.map(([f, z, b]) => {
   return `<div class="tile ${cls}" title="${esc(f)}"><span class="n">${esc(f)}</span><span class="c">${z === 0 ? "not run" : b + " / " + z}</span></div>`;
 }).join("");
 
-document.getElementById("ztfail").innerHTML = ZTFAIL.map(([f, n, msg, kind, now, why]) =>
-  `<tr><td><code>${esc(f)}</code></td><td class="num">${n}</td><td>${esc(msg)}</td><td>${kind}</td><td>${pill("fail", "fail")}</td>` +
-  `<td>${now === "pass" ? pill("pass", "pass") : now === "build" ? pill("tag", "oracle build") : pill("fail", "fail")} ${esc(why)}</td></tr>`).join("");
+document.getElementById("ztfail").innerHTML = ZTFAIL.map(([f, n, msg, kind, why]) =>
+  `<tr><td><code>${esc(f)}</code></td><td class="num">${n}</td><td>${esc(msg)}</td><td>${kind}</td><td>${why}</td></tr>`).join("");
 
 document.getElementById("tabfail").innerHTML = TABFAIL.map(([buf, z, r, what]) => {
   const d = z == null ? "" : (r < z ? `<span style="color:#ff6b6b">&minus;${z - r}</span>` : `+${r - z}`);
@@ -365,7 +424,7 @@ document.getElementById("cargofail").innerHTML = CARGO.map(([name, alone]) =>
   `<tr><td><code>${esc(name)}</code></td><td>${alone ? pill("flaky", "passes · timing") : pill("fail", "still fails")}</td></tr>`).join("");
 
 document.getElementById("surface").innerHTML = SURFACE.map(([s, z, r]) =>
-  `<tr><td>${esc(s)}</td><td class="num">${z}</td><td class="num">${r}</td><td class="num">0</td><td>${pill("pass", "match")}</td></tr>`).join("");
+  `<tr><td>${esc(s)}</td><td class="num">${z}</td><td class="num">${r}</td><td class="num">${z - r}</td><td>${z === r ? pill("pass", "match") : pill("fail", "missing")}</td></tr>`).join("");
 </script>
 </body>
 </html>

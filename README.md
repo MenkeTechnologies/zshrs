@@ -954,13 +954,10 @@ scripts/ztst_compsys.py --zsh-build <built zsh tree> --core            # zshrs
 scripts/ztst_compsys.py --zsh-build <built zsh tree> --core --baseline # zsh
 ```
 
-Against zsh 5.9.1 built from the `zsh-5.9.1` tag, **every ztst assertion zsh
-passes, zshrs passes, except 2**: `A05execution` #33 and #34 (`wait` exit
-status and warning for an unknown job ID). zsh gives every running pipeline a
-job slot (`exec.c` `initjob`), so a function in progress becomes `$prevjob` and
-leaves `%%` pointing at a freed slot; zshrs allocates slots only at fork time.
-The completion suite (`Y01`-`Y03`) matches on all 175 assertions. The v0.13.3
-run and the per-divergence history are in
+Against zsh 5.9.2 built from the `zsh-5.9.2` tag, v0.13.18 passes 2,038 of
+the 2,068 assertions zsh passes (core suite 1,863 of 1,890, completion suite
+`Y01`-`Y03` 175 of 178). The misses, with causes, and the cargo, TAB, surface
+and fuzz measurements are in
 [`docs/parity_report.html`](docs/parity_report.html).
 
 **Upstream ztst corpus, in-tree runner** -- the `.ztst` files copied into this

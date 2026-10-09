@@ -70,10 +70,8 @@ together (see the Compatibility measurement section in `README.md`):
 - **Differential fuzz** (`bins/parity-fuzz.rs`) — 22,200 generated cases
   against real zsh, 27 divergences across 71-of-74 clean modes.
 - **zsh's own test suite** (`scripts/ztst_compsys.py --core`, oracle zsh
-  5.9.1 from the `zsh-5.9.1` tag) — zshrs passes every ztst assertion zsh
-  passes except 2, `A05execution` #33 and #34 (`wait` on an unknown job ID;
-  zsh gives every running pipeline a job slot, zshrs only forked ones). Detail
-  in `docs/parity_report.html`.
+  5.9.2 from the `zsh-5.9.2` tag) — v0.13.18 passes 2,038 of the 2,068
+  assertions zsh passes. Detail in `docs/parity_report.html`.
 - **In-tree ztst corpus** (`tests/ztst_runner.rs`, no oracle) — 2,625 of
   2,796 chunks pass at `17bf07d5ed`; see `README.md` for what the failures are.
 
