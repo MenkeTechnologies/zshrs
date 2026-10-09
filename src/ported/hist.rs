@@ -9032,12 +9032,12 @@ mod subst_modifier_tests {
     #[test]
     fn firsthist_default_when_ring_empty() {
         let _g = crate::test_util::global_state_lock();
+        // The ring is process-wide and earlier tests leave entries in it, so
+        // empty it for the assertion and put it back.
+        let saved = std::mem::take(&mut *hist_ring.lock().unwrap());
         let r = firsthist();
-        assert!(
-            r >= 1,
-            "firsthist ≥ 1 (default + populated both ≥ 1), got {}",
-            r
-        );
+        *hist_ring.lock().unwrap() = saved;
+        assert_eq!(r, 1, "an empty ring reports the default first event");
     }
 
     /// c:4449 — `firsthist` is deterministic on stable ring.

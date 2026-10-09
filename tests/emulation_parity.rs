@@ -3957,17 +3957,23 @@ fn dash_specifics_match_dash() {
     if type_rejects_options {
         probes.push("type -a echo");
     }
-    // Some dash builds (Ubuntu's package) print nothing for `$LINENO` inside a function
-    // and answer the missing-file `-nt` / `-ot` and out-of-range integer tests
-    // differently. zshrs mirrors the dash that numbers function lines, so those probes
-    // run only against such a dash.
+    // Some dash builds (Ubuntu's package) print nothing for `$LINENO` inside a function,
+    // so that probe runs only against a dash that numbers function lines.
     if run_code(&dash, &[], "f(){ echo $LINENO; }; f").0.trim() != "" {
-        probes.extend([
-            "f(){ echo $LINENO; echo $LINENO; }; f",
-            "[ /bin/sh -nt /nonexistent ]; echo $?",
-            "[ /nonexistent -ot /bin/sh ]; echo $?",
-            "[ 99999999999999999999 -gt 1 ]; echo $?",
-        ]);
+        probes.push("f(){ echo $LINENO; echo $LINENO; }; f");
+    }
+    // Missing-file `-nt` / `-ot` and an out-of-range integer in `[` are answered
+    // differently by dash builds (macOS's and Ubuntu's both say 1 / 1 / 2). zshrs
+    // mirrors the dash that answers 0 for each, so a probe runs only against a dash
+    // that does.
+    for probe in [
+        "[ /bin/sh -nt /nonexistent ]; echo $?",
+        "[ /nonexistent -ot /bin/sh ]; echo $?",
+        "[ 99999999999999999999 -gt 1 ]; echo $?",
+    ] {
+        if run_code(&dash, &[], probe).0 == "0\n" {
+            probes.push(probe);
+        }
     }
     for flag in ["--dash", "--ash"] {
         let bad: Vec<String> = probes

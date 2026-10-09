@@ -83,6 +83,14 @@ jobs:
           git init -q src/zsh
           git -C src/zsh fetch -q --depth 1 https://github.com/zsh-users/zsh.git "$sha"
           git -C src/zsh checkout -q FETCH_HEAD
+      # tests/builtin_output_parity.rs and the emulation suites diff against the
+      # `bash` and `ksh` that `command -v` finds. The ones in /bin are 2007 and 2012
+      # builds (see the Emulation parity job), so put Homebrew's modern ones first.
+      - name: Install reference shells (macOS runner)
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash ksh93
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Test (all targets)
         if: runner.os == 'Linux'
         run: cargo test --locked --no-fail-fast

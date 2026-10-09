@@ -705,7 +705,8 @@ command rm -f -- $t"#,
 
 #[test]
 fn bug490_write_to_invalid_fd_errors_rc1() {
-    let (ec, stdout, stderr) = run_zshrs("print x >&5");
+    // Close fd 5 first: a CI runner can hand its children descriptors above 2.
+    let (ec, stdout, stderr) = run_zshrs("exec 5>&-; print x >&5");
     if zshrs_bin().is_none() {
         return;
     }
@@ -720,7 +721,7 @@ fn bug490_write_to_invalid_fd_errors_rc1() {
 
 #[test]
 fn bug490_read_from_invalid_fd_errors_rc1() {
-    let (ec, stdout, stderr) = run_zshrs("read x <&5");
+    let (ec, stdout, stderr) = run_zshrs("exec 5>&-; read x <&5");
     if zshrs_bin().is_none() {
         return;
     }

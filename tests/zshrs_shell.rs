@@ -42,6 +42,7 @@ fn run_zshrs_parity(code: &str) -> (i32, String, String) {
 fn run_zshrs_parity_bytes(code: &str) -> (i32, Vec<u8>) {
     let out = Command::new(zshrs_bin())
         .args(["--zsh", "-f", "-c", code])
+        .env("TERM", "xterm-256color")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -70,8 +71,11 @@ fn tempdir_for_test() -> String {
 }
 
 fn run_zshrs_with_args(args: &[&str]) -> (i32, String, String) {
+    // `%B` / `%U` / `%F{n}` only emit escapes when the terminal has the
+    // capability; CI runs with TERM unset, so pin one that does.
     let mut child = Command::new(zshrs_bin())
         .args(args)
+        .env("TERM", "xterm-256color")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -109,6 +113,7 @@ fn run_zshrs_with_args(args: &[&str]) -> (i32, String, String) {
 fn run_zshrs(code: &str) -> (i32, String, String) {
     let mut child = Command::new(zshrs_bin())
         .args(["-f", "-c", code])
+        .env("TERM", "xterm-256color")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1298,7 +1303,8 @@ fn test_subscript_parity_env_and_scope() {
         print "6:[$exit_test]"
         "#,
     );
-    let expected = "1:[/User]\n2:[parent]\n3:[before]\n4:[local-val]\n5:[unset]\n6:[exit=1]";
+    let home5: String = std::env::var("HOME").unwrap_or_default().chars().take(5).collect();
+    let expected = &format!("1:[{home5}]\n2:[parent]\n3:[before]\n4:[local-val]\n5:[unset]\n6:[exit=1]");
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
@@ -1722,11 +1728,9 @@ fn test_subscript_parity_type_whence() {
         whence -p ls 2>&1 | head -1
         "#,
     );
-    assert_eq!(
-        output.trim(),
-        "print is a shell builtin\necho: builtin\n/bin/ls",
-        "got: {output:?}"
-    );
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(&lines[..2], ["print is a shell builtin", "echo: builtin"], "got: {output:?}");
+    assert!(lines.get(2).is_some_and(|l| l.ends_with("/ls")), "got: {output:?}");
 }
 
 #[test]
@@ -1908,10 +1912,10 @@ fn test_subscript_parity_pipe_and_subshell() {
         print "8:[$y]"
         "#,
     );
-    // Don't `.trim()` — `wc -c` output has leading spaces that
-    // stripping would corrupt.
-    let stripped_trailing = output.trim_end();
-    let expected = "       6\n1:done\n2:[DATA]\na\nb\n3:status=0\n4:status=1\n5:[hidden]\n6:[unset]\n7:[visible]\n8:[visible]";
+    // BSD `wc -c` right-aligns the count in 8 columns and GNU `wc` does not,
+    // so compare from the first digit.
+    let stripped_trailing = output.trim();
+    let expected = "6\n1:done\n2:[DATA]\na\nb\n3:status=0\n4:status=1\n5:[hidden]\n6:[unset]\n7:[visible]\n8:[visible]";
     assert_eq!(stripped_trailing, expected, "got: {output:?}");
 }
 
@@ -6384,6 +6388,9 @@ fn test_tr_complement_with_delete() {
 
 #[test]
 fn test_wc_uses_bsd_8char_padding() {
+    if !cfg!(target_vendor = "apple") {
+        return; // GNU wc does not pad
+    }
     // zsh's bundled wc on macOS right-pads counts to 8 chars
     // (`       3` for line count of 3). Was trim_start'ing.
     let mut child = std::process::Command::new(zshrs_bin())
@@ -11450,7 +11457,7 @@ fn test_glob_alternation_at_path_level() {
     //      multiple alternatives via `expand_glob_alternation`,
     //      glob each, dedup, sort (matches zsh's lexicographic
     //      glob result order).
-    let (_, output, _) = run_zshrs("echo /etc/(passwd|hostname)");
+    let (_, output, _) = run_zshrs("echo /etc/(passwd|nosuchfile_zz)");
     assert_eq!(output.trim(), "/etc/passwd", "got: {output:?}");
     let (_, output, _) = run_zshrs("echo /etc/(passwd|nonexistent)");
     assert_eq!(output.trim(), "/etc/passwd", "got: {output:?}");
