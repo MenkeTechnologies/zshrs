@@ -879,10 +879,10 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
        // cannot yet represent — see the `charinc` note below.
     patglobflags.store(seeded_globflags | GF_MULTIBYTE, Ordering::Relaxed);
 
-    // c:583-590 — emit P_GFLAGS placeholder. Phase 5.1: instead of
-    // emitting an opcode, hoist leading `(#...)` flag specifiers into
+    // c:583-590 — leading `(#...)` flag specifiers are hoisted into
     // patprog.globflags so the matcher applies them globally for the
-    // whole match. Full mid-pattern P_GFLAGS opcode still deferred.
+    // whole match; mid-pattern `(#...)` forms emit real P_GFLAGS nodes
+    // (see the patnode(P_GFLAGS) sites below).
     // c:525 — `patglobflags = isset(MULTIBYTE) ? GF_MULTIBYTE : 0`.
     // (#U) inside the spec clears the bit per c:1116.
     //
@@ -7318,10 +7318,10 @@ pub fn patmatch(
                 }
             }
             _ => {
-                // Unrecognized opcode — Phase 5 features (P_NUMRNG,
-                // P_GFLAGS, P_EXCLUDE, P_COUNT, P_ISSTART/ISEND,
-                // P_BACKREF) land here. Treat as no-op for now so
-                // current tests still pass.
+                // c:3465-3467 — `default: dputs("BUG: bad operand in
+                // patmatch."); return 0;`
+                crate::ported::utils::dputs("BUG: bad operand in patmatch.");
+                return None;
             }
         }
 
@@ -7446,12 +7446,15 @@ pub fn patallocstr(
         let mut dst = String::with_capacity(total); // c:2182 zhalloc
 
         // c:2184-2192 — choose source chunk(s).
+        let pathbuf: String = crate::ported::glob::CURGLOBDATA
+            .lock()
+            .map(|gd| gd.pathbuf.clone())
+            .unwrap_or_default(); // c:Src/glob.c:170 gd_pathbuf
         let mut ptr: &str;
         let mut ncopy: i32;
         if needfullpath {
             // c:2185
-            // c:2186 — `ptr = pathbuf;` (stubbed empty)
-            ptr = "";
+            ptr = &pathbuf; // c:2186
             ncopy = patstralloc.unmetalenp; // c:2188
         } else {
             // c:2189
@@ -7523,9 +7526,8 @@ pub type PatProg = Patprog;
 // to the previous AST-based port's surface area (vm_helper, exec_shims.rs,
 // fusevm_bridge.rs, glob.rs). These are NOT C-faithful ports — they're
 // helper aggregates the previous AST port introduced for one-shot
-// pattern processing in the executor/VM bridge. Track with a TODO
-// for eventual deletion + migration of callers to the bytecode API
-// (patcompile + pattry + patgetglobflags). Allowlisted as transitional.
+// pattern processing in the executor/VM bridge. Callers bind to the
+// bytecode API (patcompile + pattry + patgetglobflags) where they can.
 // =====================================================================
 
 // `NumericRange` struct + impl DELETED. C zsh's `patcomppiece`
@@ -7799,7 +7801,10 @@ mod tests {
     #[test]
     fn captures() {
         let _g = crate::test_util::global_state_lock();
-        let prog = compile("(foo)(bar)");
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
+        let prog = compile("(#b)(foo)(bar)");
+        crate::ported::options::opt_state_set("extendedglob", saved);
         let mut nump = 0i32;
         let mut begp: Vec<i32> = Vec::new();
         let mut endp: Vec<i32> = Vec::new();
@@ -7815,13 +7820,11 @@ mod tests {
             Some(&mut endp),
         );
         assert!(ok);
-        // capture range population currently deferred — see the
-        // body comment at the c:2294 port. Verify match success.
-        let _ = (nump, begp, endp);
-        let refs: Vec<(usize, usize)> = vec![(0, 3), (3, 6)];
-        assert_eq!(refs.len(), 2);
-        assert_eq!(refs[0], (0, 3));
-        assert_eq!(refs[1], (3, 6));
+        // c:2556-2566 — begp holds the first character of each group, endp
+        // the LAST character (inclusive).
+        assert_eq!(nump, 2);
+        assert_eq!(&begp[..2], &[0, 3]);
+        assert_eq!(&endp[..2], &[2, 5]);
     }
 
     /// c:1626-1627 — `if (kshchar && (hash || count)) return 0;`, where

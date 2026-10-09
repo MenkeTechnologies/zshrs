@@ -2495,7 +2495,7 @@ impl modulestab {
         //                                     u.linked = NULL; } }
         //   else { if (u.handle) { finish_module(m);
         //                          u.handle = NULL; } }
-        //   if (del && m->deps) { /* deferred dep walk */ }
+        //   if (del && m->deps) { /* unload deps flagged MOD_UNLOAD */ }
         //   if (m->autoloads && firstnode(m->autoloads))
         //       autofeatures("zsh", name, hlinklist2array(autoloads),
         //                    0, FEAT_IGNORE);
@@ -2581,7 +2581,7 @@ impl modulestab {
             }
         }
 
-        // c:2861-2902 — deferred dep walk: when del was set, find every
+        // c:2861-2902 — dep walk: when del was set, find every
         // dep that has MOD_UNLOAD and check no other live module
         // depends on it, then recursively unload.
         if del {
@@ -6518,15 +6518,30 @@ pub fn bin_zmodload_features(
     //           *patprogp = patcompile(arg, 0, 0);
     //       }
     //   } else patprogs = NULL;
-    // Static-link path: pattern compilation deferred. The -m flag is
-    // observed at the -a / require_module dispatch below, but the
-    // patprogs array stays NULL — patcompile callers (autofeatures,
-    // do_module_features) fall back to exact-name matching.
+    let patprogs = if OPT_ISSET(ops, b'm') {
+        Some(
+            rest_args
+                .iter()
+                .map(|raw| {
+                    let arg = raw
+                        .strip_prefix('+')
+                        .or_else(|| raw.strip_prefix('-'))
+                        .unwrap_or(raw); // c:3044-3045
+                    let mut pat_src = arg.to_string();
+                    crate::ported::glob::tokenize(&mut pat_src); // c:3046
+                    crate::ported::pattern::patcompile(&pat_src, 0, None) // c:3047
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
+    // `-m` also reaches autofeatures / do_module_features through
+    // FEAT_PATTERN_ARGS (see its doc comment).
 
     // c:3049-3226 — `-l/-L/-e` arm: list features one per line with
     // +/- (-l), as a `zmodload -F` statement (-L), or test existence
-    // (-e). `-m` patprogs stay deferred (exact-name matching), same
-    // as the c:3032-3047 note above.
+    // (-e).
     if OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'e') {
         let param: Option<String> = OPT_ARG_SAFE(ops, b'P').map(|s| s.to_string()); // c:3060
                                                                                     // c:3062 — `m = find_module(modname, FINDMOD_ALIASP, NULL);`
@@ -6632,7 +6647,7 @@ pub fn bin_zmodload_features(
         let enables: Vec<i32> = enables_opt.unwrap_or_else(|| vec![0; features.len()]);
 
         // c:3125-3155 — validate every feature argument.
-        for raw in rest_args {
+        for (iarg, raw) in rest_args.iter().enumerate() {
             // c:3127-3135 — strip +/- into `on`.
             let (on, arg): (i32, &str) = match raw.strip_prefix('-') {
                 Some(rest) => (0, rest),
@@ -6643,14 +6658,22 @@ pub fn bin_zmodload_features(
             };
             let mut found = 0;
             for (fp, ep) in features.iter().zip(enables.iter()) {
-                // c:3137-3138 — patprogs deferred: exact `strcmp`.
-                if arg == fp {
+                // c:3142-3143 — `patprogs ? pattry(patprogs[iarg], *fp) : !strcmp(arg, *fp)`
+                let hit = match patprogs.as_ref() {
+                    Some(pp) => pp[iarg]
+                        .as_ref()
+                        .is_some_and(|p| crate::ported::pattern::pattry(p, fp)),
+                    None => arg == fp,
+                };
+                if hit {
                     // c:3140-3142 — for -e, check given state, if any.
                     if OPT_ISSET(ops, b'e') && on != -1 && on != (ep & 1) {
                         return 1; // c:3142
                     }
                     found += 1;
-                    break; // c:3144-3145
+                    if patprogs.is_none() {
+                        break; // c:3149-3150
+                    }
                 }
             }
             if found == 0 {
@@ -6658,7 +6681,11 @@ pub fn bin_zmodload_features(
                 if !OPT_ISSET(ops, b'e') {
                     zwarnnam(
                         nam,
-                        &format!("module `{}' has no such feature: `{}'", modname, raw),
+                        &if patprogs.is_some() {
+                            format!("module `{}' has no feature matching: `{}'", modname, raw)
+                        } else {
+                            format!("module `{}' has no such feature: `{}'", modname, raw)
+                        },
                     );
                 }
                 return 1; // c:3153
@@ -6678,16 +6705,28 @@ pub fn bin_zmodload_features(
         // (`!strcmp(*fp, arg)`, c:3170). Ported as written.
         let matches_stripped = |f: &str| -> bool {
             rest_args.is_empty()
-                || rest_args.iter().any(|raw| {
+                || rest_args.iter().enumerate().any(|(iarg, raw)| {
                     let arg = raw
                         .strip_prefix('+')
                         .or_else(|| raw.strip_prefix('-'))
                         .unwrap_or(raw);
-                    f == arg
+                    match patprogs.as_ref() {
+                        Some(pp) => pp[iarg]
+                            .as_ref()
+                            .is_some_and(|p| crate::ported::pattern::pattry(p, f)),
+                        None => f == arg,
+                    }
                 })
         };
-        let matches_unstripped =
-            |f: &str| -> bool { rest_args.is_empty() || rest_args.iter().any(|raw| f == raw) };
+        let matches_unstripped = |f: &str| -> bool {
+            rest_args.is_empty()
+                || rest_args.iter().enumerate().any(|(iarg, raw)| match patprogs.as_ref() {
+                    Some(pp) => pp[iarg]
+                        .as_ref()
+                        .is_some_and(|p| crate::ported::pattern::pattry(p, f)),
+                    None => f == raw,
+                })
+        };
 
         let mut arrset: Option<Vec<String>> = None;
         if param.is_some() {
@@ -6767,8 +6806,8 @@ pub fn bin_zmodload_features(
     // OPT_ISSET(ops,'s'))`.
     //
     // C builds a fep[] array with str + (optional) patprog pairs.
-    // The Rust port flattens to a `Vec<String>` since patprogs are
-    // deferred; require_module accepts Option<&[String]>.
+    // The Rust port flattens to a `Vec<String>`; the `-m` decision rides
+    // along as the `pat` argument of require_module (FEAT_PATTERN_ARGS).
     let feats: Vec<String> = rest_args.to_vec();
     // c:3252-3260 —
     //   fep = features = (Feature_enables)zhalloc((arrlen(args)+1)*sizeof(*fep));

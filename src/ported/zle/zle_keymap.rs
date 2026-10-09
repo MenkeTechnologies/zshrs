@@ -1391,6 +1391,7 @@ pub fn bin_bindkey(
     }
 
     // c:786-807 — resolve keymap.
+    let mut km_sel: Option<Arc<Keymap>> = None; // c:Keymap km
     let kmname: Option<String> = if op.selp {
         let nm = if OPT_ISSET(ops, b'e') {
             "emacs".to_string()
@@ -1412,6 +1413,7 @@ pub fn bin_bindkey(
                 return 1;
             }
         };
+        km_sel = Some(km.clone());
         if OPT_ISSET(ops, b'e') || OPT_ISSET(ops, b'v') {
             linkkeymap(km, "main", 0);
         }
@@ -1441,7 +1443,7 @@ pub fn bin_bindkey(
 
     // c:826-827 — dispatch. C: `return op->func(name, kmname, km, argv, ops, op->o);`
     let func_i: i32 = op.o as i32;
-    let km_ref: Option<&Keymap> = None; // c:826 km — substrate via openkeymap(kmname) deferred
+    let km_ref: Option<&Keymap> = km_sel.as_deref(); // c:826 km — from openkeymap(kmname)
     let km_str = kmname.as_deref();
     match op.func {
         Op::LsMaps => bin_bindkey_lsmaps(name, km_str, km_ref, args, ops, func_i),
@@ -2924,8 +2926,6 @@ pub fn getrestchar_keybuf() -> i32 {
 }
 
 /// Port of `getkeymapcmd()` from `Src/Zle/zle_keymap.c:1581`.
-/// !!! WARNING: PARTIAL PORT — stub. C `getkeymapcmd(Keymap km,
-/// Thingy *funcp, char **strp)` at Src/Zle/zle_keymap.c:1581 is the
 /// Direct port of `char *getkeymapcmd(Keymap km, Thingy *funcp,
 /// char **strp)` from `Src/Zle/zle_keymap.c:1581`. Walks the
 /// keybinding trie one byte at a time against the supplied

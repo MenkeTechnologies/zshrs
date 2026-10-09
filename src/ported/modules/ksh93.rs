@@ -284,9 +284,14 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
     // c:146 — `Param pm;`
     let mut pm: *mut param;
     // c:147 — `zlong num = funcstack->prev ? getiparam(".sh.level") : 0;`
-    // funcstack is the global from Src/exec.c:340; stub holds NULL so
-    // funcstack->prev is always NULL → branch picks 0.
-    let mut num: i64 = if (*funcstack.lock().unwrap()) != 0 {
+    // funcstack is the global from Src/exec.c:340, held as the
+    // FUNCSTACK Vec in modules::parameter; `funcstack->prev` is non-NULL
+    // when the call chain is deeper than one frame.
+    let mut num: i64 = if crate::ported::modules::parameter::FUNCSTACK
+        .lock()
+        .map(|stack| stack.len() > 1)
+        .unwrap_or(false)
+    {
         paramtab()
             .read()
             .ok()
@@ -418,10 +423,10 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
     if zleactive.load(Ordering::Relaxed) != 0 {
         // c:188
         // c:189-190 — extern mod_import_variable char *curkeymapname / *varedarg;
-        // (extern declarations are at the locals-block level in C; ours
-        // are file-level statics below.)
+        // (`curkeymapname` is zle_keymap.rs's global; `varedarg` is the
+        // file-level static below.)
         /* bindkey -v forces VIMODE so this test is as good as any */   // c:191
-        let curkmap = curkeymapname.lock().unwrap().clone();
+        let curkmap = crate::ported::zle::zle_keymap::curkeymapname().clone();
         if !curkmap.is_empty() && isset(VIMODE) && curkmap == "main" {
             // c:192-193
             // c:194 — strcpy(sh_edmode, "\033");
@@ -536,7 +541,8 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
 // static struct paramdef partab[]                                    c:116
 // static struct features module_features                             c:133
 //
-// Param/feature dispatch tables. Omitted pending module-loader port.
+// The partab rows are built in `setfeatureenables` (PATAB); the feature
+// list in `featuresarray`/`module_features`.
 // =====================================================================
 
 // =====================================================================
@@ -761,8 +767,7 @@ fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -
 static PATAB: OnceLock<Mutex<Vec<paramdef>>> = OnceLock::new();
 
 // =====================================================================
-// External ported / globals from other Src/*.c files. Stubbed locally
-// pending the proper ports of their home files.
+// Externals from other Src/*.c files.
 // =====================================================================
 
 // `emulation` lives in `crate::ported::options::emulation` per Rule C
@@ -775,19 +780,13 @@ static PATAB: OnceLock<Mutex<Vec<paramdef>>> = OnceLock::new();
 // on return. `ksh93_wrapper` increments before `createparam()` and
 // decrements after.
 
-/// `curkeymapname` — `char *` global from `Src/Zle/zle_keymap.c`,
-/// declared `extern` at c:189. Holds the active keymap name.
-pub static curkeymapname: Mutex<String> = Mutex::new(String::new());
-
-/// `varedarg` — `char *` global from `Src/Zle/zle_misc.c`, declared
-/// `extern` at c:190. Holds the parameter name being edited by `vared`.
+/// `varedarg` — `char *` global defined at `Src/Zle/zle_main.c:1672`,
+/// declared `extern` at c:190. Holds the parameter name being edited by
+/// `vared`; `bin_vared` assigns it (zle_main.c:1831/1843).
 pub static varedarg: Mutex<String> = Mutex::new(String::new());
 
-// `funcstack` — `Funcstack` global from `Src/exec.c:340`. Stubbed as
-// a Mutex-wrapped raw-pointer holder since pointers aren't `Sync`
-// without explicit handling. NULL by default — exec.c port wires the
-// real walk.
-static funcstack: Mutex<usize> = Mutex::new(0);
+// `funcstack` — `Funcstack` global from `Src/exec.c:340` is
+// `modules::parameter::FUNCSTACK`.
 
 // `param.u.arr` field — the C `union u` has `char **arr` at c:1835.
 // The Rust `param` struct exposes it as `pub u_arr: Option<Vec<String>>`
@@ -854,9 +853,7 @@ mod tests {
 
     /// Verifies `ksh93_wrapper` runs the full body (and still returns 1
     /// per c:227) when EMULATE_KSH is set on the `emulation` global.
-    /// Body relies on stubbed externals so it can't validate the
-    /// param-creation side-effects yet, but it MUST not panic and MUST
-    /// terminate.
+    /// Only checks that it does not panic and terminates.
     #[test]
     fn ksh93_wrapper_runs_full_body_under_emulate_ksh() {
         let _g = crate::test_util::global_state_lock();

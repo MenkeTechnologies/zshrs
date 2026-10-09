@@ -16,20 +16,20 @@
 //! `getprivatenode2`, `scopeprivate`, `wrap_private`, plus 6 module
 //! loaders. 1 struct: `gsu_closure` (c:34).
 //!
-//! **Strict status: PARTIAL — see `TODO.md`.** Some wiring has
-//! landed: `bin_private` calls real `startparamscope`/`endparamscope`
-//! via params.rs, `boot_`/`finish_` manage the `emptytable` marker
-//! through `newparamtable`/`deleteparamtable`, and
-//! `printprivatenode` routes to `params::printparamnode`. What still
-//! requires substrate work outside this module: the
-//! `addwrapper(m, wrapper)` dispatch (paramtab swap-on-call in
-//! `wrap_private`), the realparamtab `getnode`/`getnode2`/`printnode`
-//! override chain that `setup_` installs at c:619-630, and the
-//! `bin_typeset` re-entry through `c:251` (which depends on the typed
-//! paramtab in zshrs's executor — currently `HashMap<String,String>`).
-//! The 12 per-type GSU callbacks (`pps_*`/`ppi_*`/`ppf_*`/`ppa_*`/
-//! `pph_*`) shape-match C's signatures but their `gsu_closure` chain
-//! lookup is no-op until `pm->gsu.s` is a real vtable pointer.
+//! How the C hijacks are realised here: `bin_private` calls
+//! `startparamscope`/`endparamscope` and `bin_typeset`, then walks
+//! paramtab with `makeprivate`; `boot_`/`finish_` manage the
+//! `emptytable` marker through `newparamtable`/`deleteparamtable`;
+//! `printprivatenode` routes to `params::printparamnode`. The
+//! builtintab/realparamtab are immutable statics with no getnode
+//! vtable, so `setup_` registers the `private` reserved word and the
+//! `getnode`/`getnode2`/`printnode` overrides (c:675-680) and the
+//! `local` handler swap (c:683-685) are done by `getprivatenode` calls
+//! in params.rs and a name-route in fusevm_bridge.rs (see `setup_`).
+//! `wrap_private` is invoked by doshfunc while the module is booted.
+//! The `pp*_getfn`/`pp*_setfn`/`pp*_unsetfn` callbacks read and write
+//! the param's own value slots directly and track private-ness in
+//! `PRIVATE_PARAMS`, instead of chaining through a `gsu_closure`.
 
 use crate::ported::builtin::bin_typeset;
 use crate::ported::hashtable::reswdtab_lock;
@@ -350,12 +350,9 @@ pub fn is_private(pm: *const param) -> i32 {
 /// creation, then runs `makeprivate` over the new scope to promote
 /// or reject each entry.
 ///
-/// **Strict status: PARTIAL.** Without `bin_typeset`/`locallevel`/
-/// `makeprivate` ported, the Rust port falls back to plain `local`-
-/// style assignment via `exec.variables`/`exec.arrays`. This is
-/// observable behavior-equivalent for the simple `private name=value`
-/// form (no shadowing) but cannot reject promotions or detect
-/// scope-conflict cases the C body handles at c:140-178.
+/// The `-P`-less forms go straight to `bin_typeset`; the `-P` form runs
+/// `bin_typeset` inside a fresh param scope and walks paramtab with
+/// `makeprivate` (c:248-256), reporting `makeprivate_error | from_typeset`.
 ///
 /// Builtin spec from c:702: `"AE:%F:HL:R:TUZ:afhi:lprtuxmM"`. Most
 /// flags are typeset's; `private` adds nothing of its own that isn't
@@ -438,9 +435,7 @@ pub fn bin_private(
     queue_signals(); // c:248
     FAKELEVEL.store(locallevel2, Ordering::Relaxed); // c:249
                                                      // c:250 — startparamscope(): increment locallevel via the canonical
-                                                     // params.rs helper. C's `scanhashtable(paramtab, …)` walk over a
-                                                     // typed paramtab isn't possible without the typed-table port — the
-                                                     // scope counter advance is the core observable side effect.
+    // params.rs helper.
     let mut paramscope_buf = newparamtable(17, "private_scope").unwrap_or_else(|| {
         Box::new(hashtable {
             hsize: 0,
@@ -1434,8 +1429,9 @@ pub fn finish_(m: *const module) -> i32 {
     }
     // c:737-743 — restores realparamtab->getnode/getnode2/printnode to
     // their save_* originals + restores `local` builtintab node from
-    // save_local. The realparamtab/builtintab override substrate isn't
-    // ported; the deferred restore is a no-op on the static-link path.
+    // save_local. setup_ never replaced them (the overrides are
+    // getprivatenode calls in params.rs and a name-route gated on the
+    // module being booted), so unloading the module already undoes them.
     0 // c:744
 }
 

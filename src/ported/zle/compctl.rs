@@ -7,10 +7,8 @@
 //! List of pattern compctls                                                 // c:48
 //! Main entry point for the `compctl' builtin                               // c:1558
 //!
-//! 4076 lines / 47 ported. This file ports the type definitions, constants,
-//! and simpler free ported first; large ported (`makecomplist*`, `bin_compctl`,
-//! `printcompctl`) are stubbed with C source-line citations and ported
-//! incrementally.
+//! This file ports the type definitions, constants, and the free functions
+//! of `compctl.c` (`makecomplist*`, `bin_compctl`, `printcompctl`, ...).
 //!
 //! Citations: every fn comment references `Src/Zle/compctl.c:<line>` so
 //! drift can be checked against the upstream snapshot.
@@ -21,7 +19,7 @@
 use crate::ported::builtin::findcmd;
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::errflag;
-use crate::ported::zle::comp_h::{Aminfo, Cmlist};
+use crate::ported::zle::comp_h::{Aminfo, Ccmakedat, Cmlist};
 use crate::ported::zle::compctl_h::{
     Compcond, CompcondData, Compctl, CCT_CURPAT, CCT_CURPRE, CCT_CURSTR, CCT_CURSUB, CCT_CURSUBC,
     CCT_CURSUF, CCT_NUMWORDS, CCT_POS, CCT_QUOTE, CCT_RANGEPAT, CCT_RANGESTR, CCT_WORDPAT,
@@ -1490,110 +1488,228 @@ pub fn bin_compcall(
 }
 
 /// Hook for completion-list build start.
-/// Port of `ccmakehookfn(UNUSED(Hookdef dummy), struct ccmakedat *dat)` from Src/Zle/compctl.c:1763 (~145 lines).
+/// Port of `ccmakehookfn(UNUSED(Hookdef dummy), struct ccmakedat *dat)` from Src/Zle/compctl.c:1763.
 ///
-/// Called by the completion driver via `addhookfunc("compctl_make",
-/// ccmakehookfn)` (boot_). Walks `cmatcher` (global -M chain),
-/// builds matcher copy, runs makecomplistglobal for each, manages
-/// the per-iteration ccused/ccstack lists, accumulates results into
-/// pmatches/lastmatches.
-///
-/// Walks the global CMATCHER chain populating the per-call `matchers`
-/// Vec, clears bmatchers/ainfo/fainfo, resets LASTAMBIG/MENUCMP. The
-/// per-iteration `makecomplistglobal` call is driven from the
-/// dispatch surface (compcore.rs) which already invokes this hook.
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
+/// Registered on `compctl_make` by `boot_`. Runs `makecomplistglobal`
+/// once per entry of the global `-M` matcher chain (or once with no
+/// matcher when there is none), stopping at the first pass that yields
+/// matches. `dat` points at a [`Ccmakedat`]; `dat.lst` is set to 0 when
+/// matches were produced, 1 otherwise.
+pub(crate) fn ccmakehookfn(_dummy: *mut crate::ported::zsh_h::hookdef, dat: *mut std::ffi::c_void) -> i32 {
+    use crate::ported::zle::compcore as cc;
     use std::sync::atomic::Ordering;
-    // c:1779-1794 — copy global cmatcher list into the per-call
-    // `matchers` Vec so makecomplistglobal sees the matcher chain.
-    if let Ok(g) = CMATCHER.read() {
-        let mut cur: Option<&Cmlist> = g.as_deref();
-        if let Ok(mut mlist) = crate::ported::zle::compcore::matchers
-            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-            .lock()
-        {
-            mlist.clear();
-            while let Some(p) = cur {
-                // c:1783
-                mlist.push(p.matcher.clone()); // c:1789 addlinknode
-                cur = p.next.as_deref();
-            }
+    // SAFETY: the hook dispatcher passes the `Ccmakedat` it owns (c:1042).
+    let dat: &mut Ccmakedat = unsafe { &mut *(dat as *mut Ccmakedat) };
+    let os = dat.str.clone().unwrap_or_default(); // c:1765 os = s = dat->str
+    let incmd = dat.incmd; // c:1766
+    let lst = dat.lst; // c:1766
+    let onm = cc::nmatches.load(Ordering::Relaxed); // c:1769
+    let odm = cc::diffmatches.load(Ordering::Relaxed); // c:1769
+    let osi = crate::ported::utils::movefd(0); // c:1769
+
+    crate::ported::signals_h::queue_signals(); // c:1772
+
+    /* We build a copy of the list of matchers to use to make sure that this
+     * works even if a shell function called from the completion code changes
+     * the global matchers. */
+    // The Cmlist nodes are immutable and shared by `Arc`, so holding the
+    // head is the copy.
+    let mut m: Option<Arc<Cmlist>> = CMATCHER.read().ok().and_then(|g| g.clone()); // c:1778
+    if let Ok(mut mlist) = cc::matchers
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+    {
+        let mut cur = m.clone();
+        while let Some(node) = cur {
+            mlist.push(node.matcher.clone()); // c:1790 addlinknode(matchers, m->matcher)
+            cur = node.next.clone();
         }
     }
-    // c:1798 — bmatchers = NULL.
-    if let Ok(mut g) = crate::ported::zle::compcore::bmatchers
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-    {
-        *g = None;
+
+    /* Walk through the global matchers. */
+    loop {
+        // c:1802
+        if let Ok(mut g) = cc::bmatchers.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None; // c:1803 bmatchers = NULL
+        }
+        if let Some(mm) = m.as_ref() {
+            // c:1804
+            let ms = Arc::new(Cmlist {
+                next: None,                    // c:1805
+                matcher: mm.matcher.clone(),   // c:1806
+                str: String::new(),
+            });
+            if let Ok(mut g) = cc::mstack.get_or_init(|| Mutex::new(None)).lock() {
+                *g = Some(ms); // c:1807 mstack = &ms
+            }
+
+            /* Store the matchers used in the bmatchers list which is used
+             * when building new parts for the string to insert into the
+             * line. */
+            crate::ported::zle::compmatch::add_bmatchers(Some(&*mm.matcher)); // c:1813
+        } else if let Ok(mut g) = cc::mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None; // c:1815 mstack = NULL
+        }
+
+        if let Ok(mut g) = cc::ainfo.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Aminfo::default()); // c:1817 ainfo = hcalloc(...)
+        }
+        if let Ok(mut g) = cc::fainfo.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Aminfo::default()); // c:1818 fainfo = hcalloc(...)
+        }
+
+        if let Ok(mut g) = cc::freecl.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None; // c:1820 freecl = NULL
+        }
+
+        if crate::ported::zle::zle_tricky::VALIDLIST.load(Ordering::Relaxed) == 0 {
+            crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed); // c:1823
+        }
+        if let Ok(mut g) = cc::amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            g.clear(); // c:1824 amatches = NULL
+        }
+        cc::mnum.store(0, Ordering::Relaxed); // c:1825
+        cc::unambig_mnum.store(-1, Ordering::Relaxed); // c:1826
+        if let Ok(mut g) = cc::isuf.get_or_init(|| Mutex::new(String::new())).lock() {
+            g.clear(); // c:1827 isuf = NULL
+        }
+        cc::insmnum.store(
+            crate::ported::zle::zle_main::ZMOD.lock().map(|g| g.mult).unwrap_or(1),
+            Ordering::Relaxed,
+        ); // c:1828 insmnum = zmult
+        cc::oldlist.store(0, Ordering::Relaxed); // c:1834
+        cc::oldins.store(0, Ordering::Relaxed); // c:1834
+        cc::begcmgroup(Some("default"), 0); // c:1835
+        crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed); // c:1836
+        cc::menuacc.store(0, Ordering::Relaxed); // c:1836
+        cc::newmatches.store(0, Ordering::Relaxed); // c:1836
+        cc::onlyexpl.store(0, Ordering::Relaxed); // c:1836
+
+        CCUSED.with(|r| r.borrow_mut().clear()); // c:1838 ccused = newlinklist()
+
+        let s = crate::ported::mem::dupstring(&os); // c:1841
+        makecomplistglobal(&s, incmd != 0, lst, 0); // c:1842
+        cc::endcmgroup(None); // c:1843
+
+        let have_amatches = cc::amatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map(|g| !g.is_empty())
+            .unwrap_or(false);
+        if have_amatches && cc::oldlist.load(Ordering::Relaxed) == 0 {
+            // c:1845 — remember the compctls used for the next cycle.
+            *LASTCCUSED.lock().unwrap() = CCUSED.with(|r| r.borrow().clone()); // c:1846-1851
+        }
+
+        if cc::oldlist.load(Ordering::Relaxed) != 0 {
+            // c:1857
+            cc::nmatches.store(onm, Ordering::Relaxed); // c:1858
+            cc::diffmatches.store(odm, Ordering::Relaxed); // c:1859
+            crate::ported::zle::zle_tricky::VALIDLIST.store(1, Ordering::Relaxed); // c:1860
+            let last = cc::lastmatches
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            if let Ok(mut g) = cc::amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                *g = last; // c:1861 amatches = lastmatches
+            }
+            let last_l = cc::lastlmatches
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            if let Ok(mut g) = cc::lmatches.get_or_init(|| Mutex::new(None)).lock() {
+                *g = last_l; // c:1866 lmatches = lastlmatches
+            }
+            let pm = cc::pmatches
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .map(|mut g| std::mem::take(&mut *g))
+                .unwrap_or_default();
+            if !pm.is_empty() {
+                // c:1867
+                cc::freematches(pm, 1); // c:1868
+                cc::hasperm.store(0, Ordering::Relaxed); // c:1870
+            }
+            crate::ported::utils::redup(osi, 0); // c:1872
+
+            dat.lst = 0; // c:1874
+            crate::ported::signals_h::unqueue_signals(); // c:1875
+            return 0; // c:1876
+        }
+        let old_last = cc::lastmatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default();
+        if !old_last.is_empty() {
+            // c:1878
+            cc::freematches(old_last, 1); // c:1879
+        }
+        cc::permmatches(1); // c:1882
+        let pm = cc::pmatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default();
+        if let Ok(mut g) = cc::amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            *g = pm.clone(); // c:1883 amatches = pmatches
+        }
+        cc::lastpermmnum.store(cc::permmnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1884
+        cc::lastpermgnum.store(cc::permgnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1885
+
+        if let Ok(mut g) = cc::lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            *g = pm; // c:1887 lastmatches = pmatches
+        }
+        let lm = cc::lmatches
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.clone());
+        if let Ok(mut g) = cc::lastlmatches.get_or_init(|| Mutex::new(None)).lock() {
+            *g = lm; // c:1888 lastlmatches = lmatches
+        }
+        // c:1889 pmatches = NULL (taken above)
+        cc::hasperm.store(0, Ordering::Relaxed); // c:1890
+        cc::hasoldlist.store(1, Ordering::Relaxed); // c:1891
+
+        if cc::nmatches.load(Ordering::Relaxed) != 0 && errflag.load(Ordering::Relaxed) == 0 {
+            // c:1893
+            crate::ported::zle::zle_tricky::VALIDLIST.store(1, Ordering::Relaxed); // c:1894
+
+            crate::ported::utils::redup(osi, 0); // c:1896
+
+            dat.lst = 0; // c:1898
+            crate::ported::signals_h::unqueue_signals(); // c:1899
+            return 0; // c:1900
+        }
+        // c:1902 — `if (!m || !(m = m->next)) break;`
+        m = match m.and_then(|node| node.next.clone()) {
+            Some(next) => Some(next),
+            None => break,
+        };
+
+        errflag.fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::Relaxed); // c:1905
     }
-    // c:1811-1812 — ainfo = fainfo = fresh Aminfo.
-    if let Ok(mut g) = crate::ported::zle::compcore::ainfo
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-    {
-        *g = Some(Aminfo::default());
-    }
-    if let Ok(mut g) = crate::ported::zle::compcore::fainfo
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-    {
-        *g = Some(Aminfo::default());
-    }
-    // c:1817 — `if (!validlist) lastambig = 0`.
-    crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed);
-    // c:1818-1822 — `amatches = NULL; mnum = 0; unambig_mnum = -1; isuf = NULL;`
-    if let Ok(mut g) = crate::ported::zle::compcore::amatches
-        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock()
-    {
-        g.clear(); // c:1818
-    }
-    // c:1828 — `oldlist = oldins = 0;`
-    // c:1830 — `menucmp = menuacc = newmatches = onlyexpl = 0`.
-    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
-    crate::ported::zle::compcore::menuacc.store(0, Ordering::Relaxed); // c:1830
-    crate::ported::zle::compcore::onlyexpl.store(0, Ordering::Relaxed);
+    crate::ported::utils::redup(osi, 0); // c:1907
+    dat.lst = 1; // c:1908
 
-    // c:1832-1833 — `ccused = newlinklist(); ccstack = newlinklist();`
-    // Per-call accumulators; Rust uses stack-local Vec since they
-    // don't outlive this scope.
-    let _ccused: Vec<String> = Vec::new(); // c:1832
-    let _ccstack: Vec<String> = Vec::new(); // c:1833
-
-    // c:1835-1837 — `s = dupstring(os); makecomplistglobal(s, incmd, lst, 0); endcmgroup(NULL);`
-    // makecomplistglobal not yet ported as a callable free fn from
-    // this hook entry; the canonical match-list driver (compcore.rs)
-    // already invokes the per-completion call.
-
-    // c:1839-1849 — `if (amatches && !oldlist)` save ccused into
-    // lastccused for the next cycle's free.
-
-    // c:1873-1876 — `if (lastmatches) freematches(lastmatches, 1);`
-    // c:1877 — `permmatches(1);` — permanent-alloc snapshot of pmatches.
-    // c:1882-1886 — promote pmatches→lastmatches; hasperm=0; hasoldlist=1.
-    // !!! STUB: lastmatches / pmatches / hasperm / hasoldlist file-
-    // statics not yet exposed in compcore.rs; the per-call flow
-    // currently lives inside compcore::do_completion which calls
-    // this hook AFTER building pmatches. Leave the post-processing
-    // shape documented; the work happens in that driver.
-
-    // c:1903-1905 — `dat->lst = 1; return 0;`
-    0
+    crate::ported::signals_h::unqueue_signals(); // c:1910
+    0 // c:1912
 }
 
 /// Hook for completion-list build cleanup.
 /// Port of `cccleanuphookfn(UNUSED(Hookdef dummy), UNUSED(void *dat))` from Src/Zle/compctl.c:1910.
 ///
 /// Called via `addhookfunc("compctl_cleanup", cccleanuphookfn)` at
-/// boot_. The C body just nulls the ccused/ccstack file-statics —
-/// Rust drops them automatically when the per-call state goes out
-/// of scope. Kept as a name-faithful entry for the hook table.
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub(crate) fn cccleanuphookfn(_dat: ()) -> i32 {
-    // C: c:1912 — `ccused = ccstack = NULL;` — Rust equivalent is
-    // a no-op since per-call state is stack-allocated.
+/// boot_. The C body nulls the ccused/ccstack file-statics.
+pub(crate) fn cccleanuphookfn(
+    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dat: *mut std::ffi::c_void,
+) -> i32 {
+    CCUSED.with(|r| r.borrow_mut().clear()); // c:1912 ccused = NULL
+    CCSTACK.with(|r| r.borrow_mut().clear()); // c:1912 ccstack = NULL
     0
 }
 
@@ -1652,85 +1768,131 @@ pub(crate) fn maketildelist() {
 use crate::ported::zle::complete::INCOMPFUNC;
 
 /// `compctl -K`'s bound `compctlread` callback.
-/// Port of `compctlread(char *name, char **args, Options ops, char *reply)` from Src/Zle/compctl.c:190 (~150 lines).
+/// Port of `compctlread(char *name, char **args, Options ops, char *reply)` from Src/Zle/compctl.c:190.
 ///
 /// The function reads input for the `read` builtin invoked from
 /// inside a completion function (e.g. `compctl -K myfunc` calls
-/// `read -E` etc.). Replaces fallback_compctlread when the compctl
-/// module is loaded. Dispatches based on -l/-n/-c flags:
-///   -l    → return the current line as a scalar in `reply`
-///   -ln   → return the cursor word index
-///   -lc   → return the count of words on the line
-///   -le/-lE — print to stdout in addition to assigning
-///
-/// This port stubs the ZLE-state-touching arms and keeps the
-/// option-walking / error-checking faithful. The actual ZLE state
-/// (zlemetacs, clwords, clwnum) lives in src/ported/zle/zle_main.rs.
-pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
-    // C: c:195 — must be called from compctl-invoked function
-    let incompctlfunc = INCOMPCTLFUNC.with(|c| c.get());
-    if !incompctlfunc {
-        eprintln!(
-            "{}: option valid only in functions called via compctl",
-            name
-        );
-        return 1;
+/// `read -l` etc.). Replaces fallback_compctlread when the compctl
+/// module is loaded. Dispatches on -l/-n/-e/-E/-A:
+///   -l    → the current line goes to `reply` as a scalar
+///   -ln   → the cursor offset into the line (1-based)
+///   -n    → the cursor position within the current word (1-based)
+///   -A    → the words of the line go to `reply` as one array
+///   -e/-E → print instead of / in addition to assigning
+pub(crate) fn compctlread(
+    name: &str,
+    args: &[String],
+    ops: &crate::ported::zsh_h::options,
+    reply: &str,
+) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use std::io::Write;
+    /* only allowed to be called for completion */
+    if !INCOMPCTLFUNC.with(|c| c.get()) {
+        // c:195
+        crate::ported::utils::zwarnnam(name, "option valid only in functions called via compctl");
+        return 1; // c:197
     }
-    // Walk option flags. C uses `OPT_ISSET(ops, 'X')` — Rust scans args.
-    let mut opt_l = false;
-    let mut opt_n = false;
-    let mut opt_c = false;
-    let mut opt_e = false;
-    let mut opt_e_upper = false;
-    let mut reply: Option<&String> = None;
-    for a in args {
-        if let Some(rest) = a.strip_prefix('-') {
-            for ch in rest.chars() {
-                match ch {
-                    'l' => opt_l = true,
-                    'n' => opt_n = true,
-                    'c' => opt_c = true,
-                    'e' => opt_e = true,
-                    'E' => opt_e_upper = true,
-                    _ => {}
-                }
+
+    crate::ported::zle::zle_h::METACHECK(); // c:200
+
+    let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(std::sync::atomic::Ordering::Relaxed);
+    let clwpos = crate::ported::zle::zle_tricky::CLWPOS.load(std::sync::atomic::Ordering::Relaxed);
+    let print_it = OPT_ISSET(ops, b'e') || OPT_ISSET(ops, b'E');
+    let mut stdout = std::io::stdout();
+
+    if OPT_ISSET(ops, b'l') {
+        // c:202
+        /*
+         * -ln gives the index of the word the cursor is currently on, which
+         * is available in zlemetacs (but remember that Zsh counts from one,
+         * not zero!)
+         */
+        if OPT_ISSET(ops, b'n') {
+            // c:208
+            if print_it {
+                let _ = writeln!(stdout, "{}", zlemetacs + 1); // c:212
             }
+            if !OPT_ISSET(ops, b'e') {
+                crate::ported::params::setsparam(reply, &(zlemetacs + 1).to_string()); // c:215
+            }
+            return 0; // c:217
+        }
+        /* without -n, the current line is assigned to the given parameter as a
+        scalar */
+        let zlemetaline = crate::ported::zle::compcore::ZLEMETALINE
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        if print_it {
+            // c:221
+            crate::ported::utils::zputs(&zlemetaline, &mut stdout); // c:222
+            let _ = writeln!(stdout); // c:223
+        }
+        if !OPT_ISSET(ops, b'e') {
+            crate::ported::params::setsparam(reply, &zlemetaline); // c:226
+        }
+    } else {
+        let clwords: Vec<String> = crate::ported::zle::zle_tricky::CLWORDS
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let clwnum = clwords.len();
+
+        /* -cn gives the current cursor position within the current word, which
+        is available in clwpos (but remember that Zsh counts from one, not
+        zero!) */
+        if OPT_ISSET(ops, b'n') {
+            // c:236
+            if print_it {
+                let _ = writeln!(stdout, "{}", clwpos + 1); // c:240
+            }
+            if !OPT_ISSET(ops, b'e') {
+                crate::ported::params::setsparam(reply, &(clwpos + 1).to_string()); // c:243
+            }
+            return 0; // c:245
+        }
+        /* without -n, the words of the current line are assigned to the given
+        parameters separately */
+        if OPT_ISSET(ops, b'A') && !OPT_ISSET(ops, b'e') {
+            // c:249
+            /* the -A option means that one array is specified, instead of
+            many parameters */
+            crate::ported::params::setaparam(reply, clwords.clone()); // c:255-258
+            return 0; // c:259
+        }
+        if print_it {
+            // c:261
+            for w in &clwords {
+                crate::ported::utils::zputs(w, &mut stdout); // c:263
+                let _ = writeln!(stdout); // c:264
+            }
+
+            if OPT_ISSET(ops, b'e') {
+                return 0; // c:268
+            }
+        }
+
+        let mut reply = reply.to_string();
+        let mut rest = args;
+        let mut i = 0usize;
+        while i < clwnum && !rest.is_empty() {
+            // c:271
+            crate::ported::params::setsparam(&reply, &clwords[i]);
+            reply = rest[0].clone();
+            rest = &rest[1..];
+            i += 1;
+        }
+
+        let buf = if i < clwnum {
+            // c:274 — the remaining words, space-joined, go to the last name.
+            clwords[i..].join(" ")
         } else {
-            reply = Some(a);
-        }
+            String::new() // c:287
+        };
+        crate::ported::params::setsparam(&reply, &buf); // c:288
     }
-    // C: c:202-218 — `-ln` returns cursor word index. C reads the
-    // live ZLE cursor offset from `zlemetacs` and emits `1 + that`.
-    if opt_l && opt_n {
-        let idx = 1 + crate::ported::zle::compcore::ZLEMETACS // c:202
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if opt_e || opt_e_upper {
-            println!("{}", idx);
-        }
-        if !opt_e {
-            if let Some(r) = reply {
-                // c:215
-                // c:216-217 — `setsparam(reply, idx_str)`.
-                let idx_str = idx.to_string();
-                let _ = crate::ported::params::assignsparam(&r, &idx_str, 0);
-            }
-        }
-        return 0;
-    }
-    if opt_l && opt_c {
-        // C: c:225 — return word count. Placeholder pending ZLE.
-        let cnt = 0;
-        if opt_e || opt_e_upper {
-            println!("{}", cnt);
-        }
-        return 0;
-    }
-    // Plain `-l` or other forms — read the relevant ZLE state.
-    // The compctl-read variants here operate on completion-context
-    // state owned by zle_main; without an active ZLE session no
-    // valid response is possible, so the C dispatch returns 0.
-    let _ = reply;
-    0
+    0 // c:290
 }
 
 // True iff we're inside a function called via compctl -K. Mirrors
@@ -3473,6 +3635,11 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 // file-static `LinkList ccused` at Src/Zle/compctl.c:2574.
 thread_local! { static CCUSED: std::cell::RefCell<Vec<Arc<Compctl>>> = const { std::cell::RefCell::new(Vec::new()) }; }
 
+// `ccstack` — the compctls currently being expanded; guards against a
+// compctl referring back to itself. Port of file-static `LinkList ccstack`
+// at Src/Zle/compctl.c:1706.
+thread_local! { static CCSTACK: std::cell::RefCell<Vec<Arc<Compctl>>> = const { std::cell::RefCell::new(Vec::new()) }; }
+
 /// Walk the xor chain of compctls.
 /// Port of `makecomplistor(Compctl cc, char *s, int incmd, int compadd, int sub)` from Src/Zle/compctl.c:2574.
 ///
@@ -3502,7 +3669,7 @@ pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i
 /// path/file prefix+suffix statics (LPRE/RPRE/PPRE/FPRE/… and their
 /// quoted forms) that `addmatch` reads back when building each Cmatch,
 /// then dispatches the per-CC_* generation arms below. See the preamble
-/// header inside the fn for the deliberately-deferred sub-parts.
+/// header inside the fn for the sub-parts it does not build.
 ///
 /// Walks the bits of cc.mask and cc.mask2, dispatching per CC_* bit
 /// to the matching generator:
@@ -3552,6 +3719,37 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     };
     use std::sync::atomic::Ordering;
 
+    // c:3049 — `ccont |= (cc->mask2 & (CC_CCCONT | CC_DEFCONT | CC_PATCONT));`
+    // is applied further down together with the rest of the state setup.
+    // c:3052-3057 — refuse to expand a compctl that is already being
+    // expanded; otherwise push it on `ccstack`.
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1
+        && CCSTACK.with(|r| r.borrow().iter().any(|c| Arc::ptr_eq(c, cc)))
+    {
+        return;
+    }
+    CCSTACK.with(|r| r.borrow_mut().push(cc.clone()));
+    // c:3998-4000 — undone on every exit: `uremnode(ccstack, firstnode(ccstack));
+    // if (cc->matcher) mstack = mstack->next;`
+    struct CcstackPop {
+        matcher_pushed: bool,
+    }
+    impl Drop for CcstackPop {
+        fn drop(&mut self) {
+            CCSTACK.with(|r| {
+                r.borrow_mut().pop();
+            });
+            if self.matcher_pushed {
+                if let Some(cell) = crate::ported::zle::compcore::mstack.get() {
+                    if let Ok(mut g) = cell.lock() {
+                        *g = g.take().and_then(|top| top.next.clone());
+                    }
+                }
+            }
+        }
+    }
+    let mut ccstack_pop = CcstackPop { matcher_pushed: false };
+
     // c:3066-3068 — "Go to the end of the word if complete_in_word is not
     // set."
     //
@@ -3590,17 +3788,11 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     // ZLE globals (offs/ipre/ripre/mflags/hasmatched in compcore.rs)
     // plus the compctl-private prefix statics declared near ADDWHAT.
     //
-    // Deliberate gaps (need substrate not wired for the compctl flow):
-    //   * the `cc->matcher` mstack push + add_bmatchers (c:3115-3125);
-    //   * the check_param redirect of the flag-walk to `cc_dummy`
-    //     (c:3171-3174) — `s` is advanced but the arms below still read
-    //     the original `cc->mask`;
-    //   * the zlemetaline brace-memmove that derives lppre/lpsuf
-    //     (c:3317-3374) — LPPRE/LPSUF stay empty;
-    //   * the `itok`/ispattern glob-pattern detection + patcompile
-    //     (c:3240-3294, 3384-3396) — with comppatmatch empty (the common
-    //     case) C forces ispattern=0 anyway, so patcomp/filecomp stay
-    //     None; the non-empty-comppatmatch path is not built here.
+    // Not built here: the `brbeg`/`brend` brace adjustments of
+    // lppre/lpsuf (c:3317-3374) and the `itok`/ispattern glob-pattern
+    // detection + patcompile (c:3240-3294, 3384-3396); with
+    // comppatmatch empty C forces ispattern=0, so patcomp/filecomp stay
+    // None.
     // =================================================================
     let incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
     let instr = *INSTRING.lock().unwrap_or_else(|e| e.into_inner());
@@ -3718,6 +3910,43 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             // c:3108-3111 — compadd bigger than our word prefix: bail.
             return;
         }
+    }
+
+    // c:3115-3127 — the compctl's own matcher goes on the matcher stack.
+    if let Some(m) = cc.matcher.as_ref() {
+        let cell = crate::ported::zle::compcore::mstack.get_or_init(|| Mutex::new(None));
+        if let Ok(mut g) = cell.lock() {
+            let prev = g.take(); // c:3116 ms.next = mstack
+            *g = Some(Arc::new(Cmlist {
+                next: prev,
+                matcher: m.clone(), // c:3117 ms.matcher = cc->matcher
+                str: String::new(),
+            })); // c:3118 mstack = &ms
+        }
+        ccstack_pop.matcher_pushed = true;
+
+        if crate::ported::zle::compcore::mnum.load(Ordering::Relaxed) == 0 {
+            crate::ported::zle::compmatch::add_bmatchers(Some(&**m)); // c:3121
+        }
+
+        if let Ok(mut mlist) = crate::ported::zle::compcore::matchers
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+        {
+            mlist.push(m.clone()); // c:3124 addlinknode(matchers, cc->matcher)
+        }
+    }
+    if crate::ported::zle::compcore::mnum.load(Ordering::Relaxed) != 0
+        && (crate::ported::zle::compcore::mstack
+            .get()
+            .and_then(|c| c.lock().ok().map(|g| g.is_some()))
+            .unwrap_or(false)
+            || crate::ported::zle::compcore::bmatchers
+                .get()
+                .and_then(|c| c.lock().ok().map(|g| g.is_some()))
+                .unwrap_or(false))
+    {
+        crate::ported::zle::compmatch::update_bmatchers(); // c:3127
     }
 
     // c:3130-3143 — -P prefix: skip the part already typed on the line.
@@ -4623,12 +4852,9 @@ pub(crate) fn enables_() -> Vec<i32> {
 /// dispatch via the same names; the actual hook registry is in
 /// src/ported/module.rs.
 pub(crate) fn boot_() -> i32 {
-    // c:4051-4052 — `addhookfunc("compctl_make", ccmakehookfn);
-    //                addhookfunc("compctl_cleanup", cccleanuphookfn);`
-    // Deferred until ccmakehookfn / cccleanuphookfn carry the Hookfn
-    // signature `(Hookdef, void *) -> int`. The current Rust thunks
-    // are wrappers around makecomplistctl with non-Hookfn shapes;
-    // re-enable once that refactor lands.
+    // c:4051-4052
+    crate::ported::module::addhookfunc("compctl_make", ccmakehookfn);
+    crate::ported::module::addhookfunc("compctl_cleanup", cccleanuphookfn);
     0
 }
 
@@ -4640,10 +4866,9 @@ pub(crate) fn boot_() -> i32 {
 /// Reverses boot_: removes the two hooks, then disables features
 /// via `setfeatureenables(m, &module_features, NULL)`.
 pub(crate) fn cleanup_() -> i32 {
-    // c:4060-4062 — `deletehookfunc("compctl_make", ccmakehookfn);
-    //                deletehookfunc("compctl_cleanup", cccleanuphookfn);`
-    // Same registration deferral as `boot_()` above — no-op until
-    // the Hookfn-sig refactor.
+    // c:4060-4062
+    crate::ported::module::deletehookfunc("compctl_make", ccmakehookfn);
+    crate::ported::module::deletehookfunc("compctl_cleanup", cccleanuphookfn);
     0
 }
 
@@ -5258,8 +5483,22 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         INCOMPCTLFUNC.with(|c| c.set(false));
-        let r = compctlread("compctlread", &[]);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = compctlread("compctlread", &[], &ops, "reply");
         assert_eq!(r, 1);
+    }
+
+    /// c:1763 / c:1910 — both compctl hooks have the `Hookfn` shape that
+    /// `addhookfunc` takes.
+    #[test]
+    fn compctl_hooks_have_hookfn_signature() {
+        let _: crate::ported::zsh_h::Hookfn = ccmakehookfn;
+        let _: crate::ported::zsh_h::Hookfn = cccleanuphookfn;
     }
 
     #[test]
@@ -5267,7 +5506,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // Trivial — no state to verify, just that it doesn't panic.
-        assert_eq!(cccleanuphookfn(()), 0);
+        assert_eq!(cccleanuphookfn(std::ptr::null_mut(), std::ptr::null_mut()), 0);
     }
 
     // Helpers for the addmatch tests: snapshot the real match registry so
@@ -5845,31 +6084,19 @@ mod tests {
         delpatcomp("");
     }
 
-    /// c:1485 — `ccmakehookfn` returns i32 (type pin).
-    #[test]
-    fn ccmakehookfn_returns_i32_type() {
-        let _: i32 = ccmakehookfn(());
-    }
 
     /// c:1573 — `cccleanuphookfn` returns i32 (type pin).
     #[test]
     fn cccleanuphookfn_returns_i32_type() {
-        let _: i32 = cccleanuphookfn(());
+        let _: i32 = cccleanuphookfn(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
-    /// c:1485 — `ccmakehookfn` is idempotent.
-    #[test]
-    fn ccmakehookfn_idempotent() {
-        for _ in 0..5 {
-            let _ = ccmakehookfn(());
-        }
-    }
 
     /// c:1573 — `cccleanuphookfn` is idempotent.
     #[test]
     fn cccleanuphookfn_idempotent() {
         for _ in 0..5 {
-            let _ = cccleanuphookfn(());
+            let _ = cccleanuphookfn(std::ptr::null_mut(), std::ptr::null_mut());
         }
     }
 
@@ -5971,26 +6198,14 @@ mod tests {
         let _: i32 = bin_compcall("compcall", &[], &ops, 0);
     }
 
-    /// c:1485 — `ccmakehookfn(())` is deterministic.
-    #[test]
-    fn ccmakehookfn_is_deterministic() {
-        let first = ccmakehookfn(());
-        for _ in 0..3 {
-            assert_eq!(
-                ccmakehookfn(()),
-                first,
-                "ccmakehookfn must be deterministic"
-            );
-        }
-    }
 
-    /// c:1573 — `cccleanuphookfn(())` is deterministic.
+    /// c:1573 — `cccleanuphookfn(std::ptr::null_mut(), std::ptr::null_mut())` is deterministic.
     #[test]
     fn cccleanuphookfn_is_deterministic() {
-        let first = cccleanuphookfn(());
+        let first = cccleanuphookfn(std::ptr::null_mut(), std::ptr::null_mut());
         for _ in 0..3 {
             assert_eq!(
-                cccleanuphookfn(()),
+                cccleanuphookfn(std::ptr::null_mut(), std::ptr::null_mut()),
                 first,
                 "cccleanuphookfn must be deterministic"
             );
@@ -6116,9 +6331,4 @@ mod tests {
         assert!(r >= 0, "bin_compcall exit code must be ≥ 0, got {}", r);
     }
 
-    /// c:1485 — `ccmakehookfn` returns i32 (compile-time pin, alt).
-    #[test]
-    fn ccmakehookfn_returns_i32_type_alt() {
-        let _: i32 = ccmakehookfn(());
-    }
 }

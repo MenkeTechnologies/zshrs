@@ -1148,7 +1148,6 @@ pub const special_params_sh: &[special_paramdef] = &[
 /// `pm = loadparamnode(ht, gethashnode2(ht, nam), nam);
 ///  if (pm && ht == realparamtab && !PM_UNSET) pm = resolve_nameref(pm);
 ///  return (HashNode)pm;`
-/// Stub: needs HashTable + autoload + nameref resolve.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, nam)
 pub fn getparamnode(ht: &HashTable, nam: &str) -> Option<Param> {
     // c:572 — `pm = loadparamnode(ht, gethashnode2(ht, nam), nam)`.
@@ -1673,11 +1672,9 @@ pub fn split_env_string(env: &str) -> Option<(String, String)> {
 ///      env sync, CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
 ///      ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL (c:931-979).
 ///
-/// Limitations:
-///   - `noerrs` counter (`utils.c:NOERRS`) is module-private to the
-///     Rust port, so the `noerrs = 2` guard at c:850 is a no-op.
-///   The rest of the C body (ALLEXPORT toggle, set_pwd_env,
-///   signals[] build with SIGRTMIN..MAX) is fully wired below.
+/// The `noerrs = 2` guard (c:872) is held until the signals[] build
+/// completes (c:1009). The rest of the C body (ALLEXPORT toggle,
+/// set_pwd_env, signals[] build with SIGRTMIN..MAX) follows below.
 /// Port of `extern char **environ` (POSIX, read by `createparamtable`
 /// at Src/params.c:893). C reads the environment EXACTLY as it was at
 /// process entry — nothing mutates `environ` before zsh walks it. In
@@ -1835,8 +1832,7 @@ pub fn createparamtable() {
     //         `PPARAMS` via `value.start`/`value.end` indices (see
     //         fetchvalue at params.rs:6395-6407), so no separate
     //         Param descriptor is wired up here.
-    // c:851 — `noerrs = 2`; NOERRS module-private, so this guard is
-    //         a no-op for now.
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 2; // c:872 noerrs = 2
 
     // c:858-860 — standard non-special params (must precede env import).
     setiparam("MAILCHECK", 60); // c:858
@@ -2184,7 +2180,7 @@ pub fn createparamtable() {
         tab.insert("signals".to_string(), pm);
     }
 
-    // c:980 — `noerrs = 0` restore. NOERRS module-private (see above).
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 0; // c:1009 noerrs = 0
 }
 
 /// Parallel storage for PM_HASHED parameter values. `param.u_hash`
@@ -4215,7 +4211,7 @@ pub(crate) fn getarg<'a>(
 /// Port of `getindex()` from `Src/params.c:2001`. Returns 0 on
 /// success, non-zero on parse error. C body parses `[N]`/`[N,M]`/
 /// `[(flags)pat]` after a Value's name and updates v->start/end/
-/// scanflags. Stub: needs subscript expression evaluator.
+/// scanflags.
 /// Direct port of `int getindex(char **pptr, Value v, int
 /// scanflags)` from `Src/params.c:2001-2167`. Parses the bracket
 /// subscript after a Value's name and updates v->start/v->end/
@@ -4224,19 +4220,16 @@ pub(crate) fn getarg<'a>(
 /// Handles:
 ///   - `[*]` / `[@]` — full range, with `[@]` setting
 ///     SCANPM_ISVAR_AT (c:2027-2032).
-///   - `[N]` / `[N,M]` — single index / slice via getarg.
-///   - Inverse subscripts `[(I)pat]` (partial — falls back to
-///     direct start/end without the MB_METACHAR inverse-offset
-///     translation in c:2050-2090).
-///
-/// Deferred from full C body:
-///   - MB_METACHARLEN-based inverse-offset translation
-///     (c:2050-2090).
-///   - KSH_ARRAYS / KSHZEROSUBSCRIPT non-strict option dispatch
-///     (c:2130-2150).
-///   - Flag-prefixed subscript forms `[(r)val]` / `[(i)val]` /
-///     `[(I)pat]` route through getarg's separate dispatcher
-///     because the Rust getarg has a different signature from C.
+///   - `[N]` / `[N,M]` — operands evaluated through `mathevalarg`
+///     (c:1618), KSH_ARRAYS adjustment (c:1619-1620), and the
+///     KSHZEROSUBSCRIPT zero-subscript rule (c:2126-2150).
+///   - Hash subscripts: exact key (c:1575-1595) and the `(r R k K i I
+///     e n)` search flags (c:1391-1760), parsed inline because this
+///     port's `getarg` has no `Value` out-parameter.
+///   - Array `(i)`/`(I)` index searches (c:2110-2114) and `(r)`/`(R)`
+///     element searches, resolved through `getarg`.
+///   - Subscripts index by character, so the MB_METACHARLEN
+///     previous/next-length offsets of c:2144-2145 are always 1.
 pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     // c:2001
 
@@ -4863,13 +4856,13 @@ pub fn getvalue<'a>(
 /// param in paramtab and populates the Value's pm/start/end/
 /// scanflags fields.
 ///
-/// Currently a partial port: identifier + special-char + digit
-/// names are parsed and looked up. Nameref resolution
-/// (PM_NAMEREF path at c:2246-2270), bracket subscripts
-/// (`getindex` at c:2288), and the SCANPM_ARRONLY scanflags
-/// promotion for hash/array params are handled. The
-/// REFSLICE/upscope path for nameref-of-array-element is deferred
-/// pending the GETREFNAME/upscope ports.
+/// Identifier, special-char and digit names are parsed and looked up.
+/// Nameref resolution (the `getnode` vs `getnode2` choice on
+/// SCANPM_NONAMEREF, c:2227-2236), bracket subscripts (`getindex` at
+/// c:2288) and the SCANPM_ARRONLY scanflags promotion for hash/array
+/// params are handled. C's fetchvalue has no separate nameref-slice
+/// path; `getparamnode` (c:570-575) resolves references through
+/// `resolve_nameref`.
 pub fn fetchvalue<'a>(
     // c:2180
     v: Option<&'a mut value>,
@@ -5419,8 +5412,25 @@ pub fn getintvalue(v: Option<&mut value>) -> i64 {
         return v.start as i64;
     }
     if v.scanflags != 0 {
-        // sepjoin(arr, NULL, 1) → mathevali(scal); arr backend missing.
-        return 0;
+        // c:2599-2605 — `arr = getarrvalue(v); if (arr) { scal = sepjoin(arr,
+        // NULL, 1); return mathevali(scal); } else return 0;`. Same
+        // array/slice selection as getnumvalue below.
+        if v.pm.is_none() {
+            return 0;
+        }
+        let whole = !v.arr.is_empty() || (v.start == 0 && v.end == -1);
+        let (start, end) = (v.start as i64, v.end as i64);
+        let full = getvaluearr(Some(&mut *v));
+        let arr = if whole {
+            full
+        } else {
+            getarrvalue(&full, if start >= 0 { start + 1 } else { start }, end)
+        };
+        let scal = crate::ported::utils::sepjoin(&arr, None);
+        return mathevali(&scal).unwrap_or_else(|e| {
+            zerr(&e);
+            0
+        });
     }
     let pm = match v.pm.as_mut() {
         Some(p) => p,
@@ -5794,13 +5804,8 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 if e <= z_chars.len() {
                     x.extend(z_chars[e..].iter());
                 }
+                // c:3997-4000 — strsetfn does the PM_NAMEDDIR / adduserdir step.
                 strsetfn(pm, x);
-                if (pm.node.flags as u32 & PM_HASHELEM) == 0
-                    && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0 || isset(AUTONAMEDIRS))
-                {
-                    pm.node.flags |= PM_NAMEDDIR as i32;
-                    // adduserdir(pm.node.nam, &z, 0, 0); -- userdirs not ported
-                }
             }
         }
         t if t == PM_INTEGER => {
@@ -6134,10 +6139,9 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
 ///   - PM_ARRAY with slice → bounds adjust + splice (c:2933+)
 ///
 /// VALFLAG_INV + !KSHARRAYS off-by-one (c:2938-2942) is ported below.
-/// PM_UNIQUE dedupe (c:2966-2967) is ported at the tail. ASSPM_AUGMENT
-/// prepend (c:2945-2954) for slice-AUGMENT remains deferred — rare path
-/// (`a[i,j]+=...` array+=) that requires snapshotting the pre-existing
-/// slice value before splice.
+/// PM_UNIQUE dedupe (c:2966-2967) is ported at the tail. C's
+/// setarrvalue has no ASSPM_AUGMENT handling for slices; the only
+/// AUGMENT arm is the whole-hash `[-1,0]` form (c:2925-2928).
 pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     // c:2895
     // c:2897-2898 — `if (unset(EXECOPT)) return;`. Match the same
@@ -7386,12 +7390,9 @@ pub enum getarg_out<'a> {
 ///   - c:3343 `assignstrvalue(v, val, flags)`.
 ///   - c:3344 `unqueue_signals()`; c:3345 return v->pm.
 ///
-/// The full HashTable substrate (vtable callbacks, scope-stacked
-/// iterators) is not yet wired; non-essential branches such as
-/// `+= AUGMENT` numeric/array slice append and `check_warn_pm`
-/// are documented but elided where unreachable from current
-/// callers — none of those code paths are exercised by zshrs's
-/// existing call sites.
+/// `+=` (ASSPM_AUGMENT) and `check_warn_pm` (c:3266-3268) are handled
+/// in the branches of the body below; the parameter table is the typed
+/// `hashtable_nodes<Param>` store (see PARAMTAB_INNER).
 /// c:Src/params.c:395-422 — the IPDEF8 PM_TIED colon-array pairs. A
 /// SUBSCRIPT modification of the ARRAY side (`path[N]=x`, `path[i,j]=(…)`,
 /// `unset path[N]`) must re-derive the tied SCALAR side, exactly as C's
@@ -9569,12 +9570,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // the C globals are reproduced as `OnceLock<Mutex<…>>` module
 // statics here, with the get/set ported mutating the static.
 //
-// Functions that genuinely need a `Param *` (the GSU dispatch
-// callbacks for non-special arr/hash/int/float/str params, the
-// param-table mutators, scope helpers, etc.) cannot be properly
-// ported until zshrs gains a Param struct + callback-table ABI;
-// those keep their C signatures but the body is a WARNING-stub
-// that does nothing.
+// The GSU dispatch callbacks for non-special arr/hash/int/float/str
+// params, the param-table mutators and the scope helpers operate on
+// the `param` struct (zsh_h.rs) and its `gsu_*` function-pointer
+// fields.
 // ===========================================================
 
 // -----------------------------------------------------------
@@ -9601,8 +9600,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // Entries are keyed on `node.nam` (the canonical `param` struct
 // lives in `zsh_h.rs`). The full `HashTable` substrate (vtable
 // callbacks, intrusive `next` chain, scope-stacked iterators) is
-// not yet wired; until it is, the typed map is the operative
-// storage.
+// replaced by the typed map below, which is the operative storage.
 //
 // Node storage is `hashtable_nodes<Param>` — the port of the
 // open-hashed bucket array `newparamtable(151, "paramtab")` builds
@@ -10674,28 +10672,24 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
 
 // -----------------------------------------------------------
 // Param-table mutators / scope / nameref helpers.
-// `Src/params.c` calls these against the global `paramtab`
-// HashTable; until our HashTable vtable (`Box<hashtable>` in
-// zsh_h.rs:285) is wired, these remain no-op shims with the
-// real C signatures.
+// `Src/params.c` calls these against the global `paramtab`; here they
+// operate on the typed `paramtab()` store.
 // -----------------------------------------------------------
 
 /// Port of `assignnparam()` from `Src/params.c:3664`. C body
 /// looks up the param via `gethashnode2(realparamtab, s)`,
 /// dispatches on PM_TYPE: PM_INTEGER → `intsetfn(pm, val.u.l)`;
 /// PM_FFLOAT/EFLOAT → `floatsetfn(pm, val.u.d)`; otherwise
-/// `assignstrvalue(&v, conv_to_string(val), flags)`. Stub
-/// pending HashTable backend; signature mirrors C `mnumber val`.
+/// `assignstrvalue(&v, conv_to_string(val), flags)`. Signature
+/// mirrors C `mnumber val`.
 /// flow: isident guard → unset(EXECOPT) bail → `getvalue(&vbuf,&s,1)`
 /// → if existing array/hashed (non-special, non-tied, non-KSHARRAYS,
 /// no subscript) → unsetparam_pm + recreate → else if no value →
 /// `createparam(t, type)` (POSIXIDENTIFIERS gates SCALAR vs
 /// MN_INTEGER→PM_INTEGER else PM_FFLOAT) → second `getvalue` →
 /// `check_warn_pm` if ASSPM_WARN → clear PM_DEFAULTED → `setnumvalue`
-/// → return pm. This port wires the structural flow against the
-/// already-ported helpers; the createparam/paramtab backend is
-/// still stubbed elsewhere so the create-new-param branch returns
-/// None until `createparam` lands.
+/// → return pm. The create-new-param branch calls `createparam`
+/// and returns None only when the parameter cannot be found or created.
 pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
     // c:3666 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
@@ -11206,10 +11200,11 @@ pub fn unsetparam(name: &str) -> i32 {
     // CDPATH/cdpath, PSVAR/psvar pairs are tied (`pm->ename` points
     // to the alt name) — unsetting one must clear the other or
     // command lookup keeps finding binaries via the surviving `path`
-    // array even after `unset PATH`. The full ename machinery is
-    // deferred until the gsu vtable lands; until then, mirror the
-    // tie explicitly for the canonical pairs so `unset PATH` is
-    // actually a security boundary. Bug #416.
+    // array even after `unset PATH`. The generic `ename` cascade lives in
+    // unsetparam_pm (it covers user `typeset -T` ties). The canonical
+    // special pairs keep derived state outside the node, so they are
+    // mirrored explicitly here, making `unset PATH` a security boundary.
+    // Bug #416.
     let tied_alt: Option<&str> = match name {
         "PATH" => Some("path"),
         "path" => Some("PATH"),
@@ -11480,14 +11475,12 @@ pub fn unsetparam(name: &str) -> i32 {
 }
 
 /// Unset parameter (from params.c unsetparam_pm)
-/// Port of `unsetparam_pm()` from `Src/params.c:3841`. Full body
-/// removes `pm` from `paramtab` (after invoking
-/// `pm->gsu.s->unsetfn(pm, exp)`), tears down the tied alternate
-/// (`pm->ename`) when `!altflag`, deletes the env entry, and
-/// resurrects `pm->old` at the right scope. Stub: needs paramtab
-/// HashTable backend (`paramtab->removenode/addnode`) plus the
-/// `delenv`/`adduserdir` helpers — direct port retains only the
-/// in-memory mutation of `pm` that doesn't touch the table.
+/// Port of `unsetparam_pm()` from `Src/params.c:3841`. Runs the
+/// readonly guard, `pm->gsu.s->unsetfn(pm, exp)`, `delenv`, and the
+/// tied-alternate (`pm->ename`) teardown when `!altflag`. The
+/// c:3851-3890 `removenode`/`addnode` postlude and `pm->old`
+/// resurrection for `pm` itself is done by the callers, which own the
+/// node (see `unsetparam`).
 #[allow(unused_variables)]
 pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
     // c:3850 — `if ((pm->node.flags & PM_READONLY) && pm->level <= locallevel)`.
@@ -20528,8 +20521,7 @@ mod tests {
             "c:3137 — non-PM_HASHED returns None"
         );
 
-        // PM_HASHED param → Some(Vec::new()) (backend not yet wired,
-        // but signature should at least classify the type correctly).
+        // PM_HASHED param → Some(Vec::new()) for an empty association.
         {
             let mut tab = paramtab().write().unwrap();
             tab.insert(

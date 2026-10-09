@@ -1207,8 +1207,8 @@ pub struct execcmd_dispatch {
     /// walk (c:3062 `cflags |= hn->flags`).
     pub cflags: u32,
     /// `command -p` requested: use the default `$PATH` for lookup
-    /// (`Src/exec.c:3160 use_defpath = 1`). NOT YET HONORED by the
-    /// fusevm compiler — flagged for follow-up.
+    /// (`Src/exec.c:3160 use_defpath = 1`). Consumed by the fusevm
+    /// compiler (`fusevm_bridge.rs`) when it emits the exec call.
     pub use_defpath: bool,
     /// `command -v` / `command -V` requested: the dispatch target
     /// flips to `bin_whence` per `Src/exec.c:3149-3157`
@@ -1295,14 +1295,10 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
     // compiler can emit `bin_whence` instead of resolving the head.
     let mut has_command_vv = false;
 
-    // c:2962-2973 — `%job` head: rewrite `%name` → `fg|bg|disown %name`.
-    // Not in scope for the compile-time dispatch walk: jobspec
-    // expansion happens at runtime in fusevm; the bytecode emits a
-    // direct `fg`/`bg` call when it sees a leading `%`. Flagged for
-    // follow-up when the canonical port lands.
-
-    // c:2975-2986 — AUTORESUME prefix-match against jobtab. Same
-    // status as the %job head: runtime concern, deferred.
+    // c:2962-2973 (`%job` head rewrite) and c:2975-2986 (AUTORESUME
+    // prefix match) need `how`, `redir` and `input`, which this head
+    // classifier does not receive; execcmd_exec performs both rewrites
+    // before calling it.
 
     // c:3013-3091 — precommand-modifier walk.
     let mut preargs: Vec<String> = args.to_vec(); // c:3027 newlinklist
@@ -1672,10 +1668,9 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
 }
 
 // =============================================================================
-// Leaf-function ports — c:283 (parse_string) and below. Added incrementally to
-// chip at the ~5500 lines of exec.c still un-ported beyond the wordcode
-// walker (execlist / execpline / execcmd which the fusevm bytecode VM
-// replaces — see the WARNING block in execcmd_exec).
+// Leaf-function ports — c:283 (parse_string) and below. The wordcode walker
+// (execlist / execpline / execcmd_exec) is ported below; the fusevm bytecode
+// VM is the primary execution path (see the WARNING block in execcmd_exec).
 // =============================================================================
 
 /// Port of `parse_string()` from `Src/exec.c:283` — C decl `parse_string(char *s, int reset_lineno)`.
@@ -4207,10 +4202,9 @@ pub fn makecline(list: &[String]) -> Vec<String> {
 ///     cursor-walk (c:830-846) still falls to the full $PATH scan;
 ///     observable behavior matches C when the hash hit is HASHED.
 /// (b) `commandnotfound(arg0, args)` (c:809, 873) calls into the
-///     not-yet-ported `doshfunc` for the `command_not_found_handler`
-///     shell function. Already routes through executor dispatch
-///     (see exec.rs:2783).
-/// (c) `_realexit()` (c:810, 874) — bare `std::process::exit`.
+///     `doshfunc` for the `command_not_found_handler` shell function.
+///     Routes through executor dispatch (see exec.rs:2783).
+/// (c) `_realexit()` (c:810, 874) — `builtin::_realexit`.
 /// (d) `SHTTY` close on `!FD_CLOEXEC` (c:781-784) — Rust assumes
 ///     FD_CLOEXEC platform default (macOS, Linux).
 /// (e) `path` Rust accessor uses paramtab lookup for "PATH";
@@ -4521,10 +4515,11 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
 ///     `SubshStateGuard` substitute is needed or wanted here.
 /// (d) `execode` is now ported (exec.rs:6047) — the body still
 ///     re-feeds through fusevm for cache coherence with execstring.
-/// (e) `_realexit` flushes stdio + jobs + history. We use bare
-///     `std::process::exit(0)` for now.
-/// (f) TMPSUFFIX link()-rename block (c:4951-4958) deferred; rare
-///     `setopt suffix_alias` interaction with =(…).
+/// (e) The child ends with `_realexit()` (c:4991) after flushing
+///     Rust's in-process stdout buffer.
+/// (f) The TMPSUFFIX link() block (c:4951-4958) hard-links the temp
+///     file to `nam` + `$TMPSUFFIX`; both names are registered for
+///     cleanup.
 pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:4910
     let bytes = cmd.as_bytes();
@@ -4585,7 +4580,22 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         }
         return None; // c:4949
     }
-    // c:4951-4958 — TMPSUFFIX link block (see WARNING f).
+    // c:4951-4958 — `char *suffix = getsparam("TMPSUFFIX"); if (suffix &&
+    // *suffix && !strstr(suffix, "/")) { suffix = dyncat(nam,
+    // unmeta(suffix)); if (link(nam, suffix) == 0) { addfilelist(nam, 0);
+    // nam = suffix; } }`
+    let mut linked_orig: Option<String> = None;
+    if let Some(suffix) = getsparam("TMPSUFFIX") {
+        if !suffix.is_empty() && !suffix.contains('/') {
+            let linkname = dyncat(&nam, &unmeta(&suffix));
+            let c_link = std::ffi::CString::new(linkname.clone());
+            if let Ok(c_link) = c_link {
+                if unsafe { libc::link(c_nam.as_ptr(), c_link.as_ptr()) } == 0 {
+                    linked_orig = Some(std::mem::replace(&mut nam, linkname));
+                }
+            }
+        }
+    }
     // c:4960 — `addfilelist(nam, 0);` — register temp file in current
     // job's filelist so it's unlinked at job exit (not relying on the
     // OS temp-reaper).
@@ -4599,6 +4609,9 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         if tj >= 0 {
             if let Some(j) = guard.get_mut(tj as usize) {
+                if let Some(orig) = &linked_orig {
+                    crate::ported::jobs::addfilelist(j, Some(orig), 0); // c:4955
+                }
                 crate::ported::jobs::addfilelist(j, Some(&nam), 0);
             }
         }
@@ -4611,6 +4624,9 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         unsafe {
             libc::close(fd);
         } // c:4967
+        if let Some(orig) = &linked_orig {
+            crate::fusevm_bridge::psub_pending_file_add(orig);
+        }
         crate::fusevm_bridge::psub_pending_file_add(&nam);
         return Some(nam); // c:4968
     }
@@ -4623,6 +4639,9 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
             libc::close(fd);
         } // c:4973
         child_unblock(); // c:4974
+        if let Some(orig) = &linked_orig {
+            crate::fusevm_bridge::psub_pending_file_add(orig);
+        }
         crate::fusevm_bridge::psub_pending_file_add(&nam);
         return Some(nam); // c:4975
     } else if pid != 0 {
@@ -4632,6 +4651,9 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         } // c:4977
         let _ = waitforpid(pid); // c:4978
         cmdoutval.store(0, Ordering::Relaxed); // c:4979
+        if let Some(orig) = &linked_orig {
+            crate::fusevm_bridge::psub_pending_file_add(orig);
+        }
         crate::fusevm_bridge::psub_pending_file_add(&nam);
         return Some(nam); // c:4980
     }
@@ -4656,8 +4678,9 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     unsafe {
         libc::close(1);
     } // c:4990
-      // _realexit — WARNING (e)
-    std::process::exit(0); // c:4991
+    // Rust's stdout is buffered in-process; C builtins fflush their own.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    crate::ported::builtin::_realexit(); // c:4991
     #[allow(unreachable_code)]
     {
         // c:4992-4993 — `zerr("exit returned in child!!"); kill(getpid(), SIGKILL);`
@@ -4686,8 +4709,8 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 ///     forked child.
 /// (e) `execode` is ported at exec.rs:6047. Body still re-feeds
 ///     through fusevm for cache coherence.
-/// (f) `_realexit` flushes stdio + jobs + history. We use bare
-///     `std::process::exit(LASTVAL)` for now.
+/// (f) The child ends with `_realexit()` (c:5104) after flushing
+///     Rust's in-process stdout buffer.
 /// (g) `fdtable[fd] = FDT_PROC_SUBST` (c:5086) — set via fdtable_set.
 pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:5025
@@ -4786,7 +4809,8 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
     cmdpop(); // c:5102
     let _ = zclose(out); // c:5103
-    std::process::exit(LASTVAL.load(Ordering::Relaxed)); // c:5104
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    crate::ported::builtin::_realexit(); // c:5104
 }
 
 /// Port of `enum { ESUB_ASYNC, ESUB_PGRP, ... };` from `Src/exec.c:1056`.
@@ -5756,8 +5780,8 @@ impl Drop for SubshFdFrame {
 ///     this caller still uses the fusevm pipeline for cache
 ///     coherence with execstring; switch over when the wordcode
 ///     walker becomes the primary path.
-/// (d) `_realexit()` flushes stdio + jobs + history. We use bare
-///     `std::process::exit(lastval)` for now.
+/// (d) The child ends with `_realexit()` (c:5152) after flushing
+///     Rust's in-process stdout buffer.
 pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     // c:5119
     let bytes = cmd.as_bytes();
@@ -5837,8 +5861,8 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     };
     let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
     cmdpop(); // c:5151
-              // c:5152 — _realexit() — WARNING (d).
-    std::process::exit(LASTVAL.load(Ordering::Relaxed));
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    crate::ported::builtin::_realexit(); // c:5152
 }
 
 /// Port of `spawnpipes()` from `Src/exec.c:5184` — C decl `spawnpipes(LinkList l, int nullexec)`.
@@ -6269,14 +6293,7 @@ use crate::ported::zsh_h::{
     CS_MATH, CS_REPEAT, CS_UNTIL, CS_WHILE, MN_INTEGER,
 };
 
-// --- Local stubs for C primitives not yet ported elsewhere ------------
-//
-// These mirror the C functions of the same names. Each cites the C
-// source file:line where the canonical body lives. They are inlined
-// here (rather than a separate `pub fn` in the owning C-file module)
-// because the owning ports are pending the wider exec-substrate
-// work (sub-PR). Once those land, these locals collapse to direct
-// `crate::ported::<owner>::<fn>` calls.
+// --- exec.c ports used by the exec paths below --------------------------
 
 /// Port of `execsubst()` from `Src/exec.c:2684` — C decl `execsubst(LinkList strs)`.
 ///
@@ -6622,9 +6639,10 @@ pub fn execcond(state: &mut estate, _do_exec: i32) -> i32 {
         // c:5212 — `tracingcond++;` not modeled in zshrs.
     }
     cmdpush(CS_COND as u8); // c:5214
-                            // c:5215 — `stat = evalcond(state, NULL);` — TODO faithful: needs
-                            // the wordcode-level evalcond from Src/cond.c which is distinct
-                            // from the test-builtin evalcond ported in cond.rs. Pending.
+                            // c:5215 — `stat = evalcond(state, NULL);` — NOT PORTED:
+                            // the wordcode evalcond (Src/cond.c:70) has no Rust
+                            // counterpart; cond.rs::evalcond is the argv-form
+                            // driver. `stat` is therefore always 0 here.
     let stat: i32 = 0;
     // c:5219-5221 — `if (stat == 2) errflag |= ERRFLAG_ERROR;`
     if stat == 2 {
@@ -6711,13 +6729,8 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
 /// Port of `execshfunc()` from `Src/exec.c:5540` — C decl `execshfunc(Shfunc shf, LinkList args)`.
 /// `execshfunc(Shfunc shf, LinkList args)` — `Src/exec.c:5540`.
 /// Promoted to top-level pub fn so execcmd_exec at the shfunc
-/// dispatch site (c:4102-4105) can route through it. The real port
-/// owns queue_signals + cmdstack + sfcontext setup before calling
-/// doshfunc; doshfunc itself is unported, so we route the body
-/// through `runshfunc` (exec.rs:1700), which carries the
-/// wrapper-chain + zunderscore restore. Degraded vs C (no cmdstack
-/// push, no sfcontext flip, no XTRACE arg-trace) but the function
-/// body executes and `lastval` is updated.
+/// dispatch site (c:4102-4105) can route through it. Owns the
+/// queue_signals + cmdstack + sfcontext setup around `doshfunc`, as C.
 pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // c:5546-5547 — `if (errflag) return;`
     // A user interrupt sets ERRFLAG_INT, never ERRFLAG_ERROR (signals.c:457), and
@@ -6731,6 +6744,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // that's not the pipe-leader AND has no procs yet, deletejob()
     // recycles it. Avoids leaking job-table slots across recursive
     // function calls. Same pattern as execcursh's c:482-486.
+    let mut last_file_list: Vec<jobfile> = Vec::new(); // c:5598
     {
         let lp = list_pipe.load(Ordering::Relaxed);
         let lpj = list_pipe_job.load(Ordering::Relaxed);
@@ -6744,7 +6758,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
                     //                jobtab[thisjob].filelist = NULL;` — preserve
                     //                the filelist so deletejob doesn't unlink temp
                     //                files. Rust take()s the Vec into a local.
-                    let _last_file_list: Vec<jobfile> = if let Some(j) = guard.get_mut(tj as usize)
+                    last_file_list = if let Some(j) = guard.get_mut(tj as usize)
                     {
                         std::mem::take(&mut j.filelist)
                     } else {
@@ -6764,18 +6778,21 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
         printprompt4();
         for (i, a) in args.iter().enumerate() {
             if i > 0 {
-                eprint!(" ");
+                crate::fusevm_bridge::xtrerr_fputs(" "); // c:5565 fputc(' ', xtrerr)
             }
-            eprint!("{}", quotedzputs(a));
+            crate::fusevm_bridge::xtrerr_fputs(&quotedzputs(a)); // c:5566
         }
-        eprintln!();
+        crate::fusevm_bridge::xtrerr_fputs("\n"); // c:5568
+        crate::fusevm_bridge::xtrerr_flush(); // c:5569
     }
-    // c:5572-5578 cmdstack/sfcontext setup: omit (no cmdstack in
-    // zshrs yet — replaced by tracing).
-    // c:5580 — `doshfunc(shf, args, 0);` — doshfunc swaps PPARAMS
-    // ($1, $2, …) to the function's args, runs the body via
-    // runshfunc, then restores. doshfunc itself isn't ported yet
-    // so we do the swap-and-restore inline here.
+    queue_signals(); // c:5627
+    // c:5628-5631 — `ocs = cmdstack; ocsp = cmdsp; cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;`
+    let ocs: Vec<u8> = crate::ported::prompt::CMDSTACK.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    // c:5632-5633 — `if ((osfc = sfcontext) == SFC_NONE) sfcontext = SFC_DIRECT;`
+    let osfc = sfcontext.load(Ordering::Relaxed);
+    if osfc == crate::ported::zsh_h::SFC_NONE {
+        sfcontext.store(crate::ported::zsh_h::SFC_DIRECT, Ordering::Relaxed);
+    }
     // c:5580 — `doshfunc(shf, args, 0);`. The C path always has
     // `funcdef` populated since C parses at definition time. zshrs
     // compiles to fusevm chunks instead, so `funcdef` is None for
@@ -6843,7 +6860,16 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
         crate::ported::utils::xtrerr.store(2, Ordering::Relaxed); // c:5634 xtrerr = stderr;
         let _ = doshfunc(shf, args.clone(), false, body_runner);
     }
-    // c:5582-5589 cmdstack restore/free: omit (no cmdstack).
+    sfcontext.store(osfc, Ordering::Relaxed); // c:5638
+    // c:5639-5641 — `free(cmdstack); cmdstack = ocs; cmdsp = ocsp;`
+    crate::ported::prompt::CMDSTACK.with(|s| *s.borrow_mut() = ocs);
+    if list_pipe.load(Ordering::Relaxed) == 0 {
+        // c:5643-5644 — `deletefilelist(last_file_list, 0);`
+        let mut holder = crate::ported::zsh_h::job::default();
+        holder.filelist = last_file_list;
+        crate::ported::jobs::deletefilelist(&mut holder, false);
+    }
+    unqueue_signals(); // c:5645
 }
 
 /// Port of `int doshfunc(Shfunc shfunc, LinkList doshargs, int noreturnval)`
@@ -7005,11 +7031,11 @@ pub fn doshfunc(
         None
     };
 
-    // c:5882-5896 — TRAPEXIT special case (deep-copy shfunc so
-    // starttrapscope doesn't rug-pull). zshrs doesn't yet support
-    // running TRAPEXIT directly via doshfunc; flagged for follow-up.
-    // (Skip: name = "TRAPEXIT" path.)
-    let _ = name.as_str(); // sentinel for the eventual port.
+    // c:5882-5896 — `if (!strcmp(fname, "TRAPEXIT")) { shcopy = copy of
+    // *shfunc; shfunc = shcopy; name = shfunc->node.nam; }`: C copies the
+    // node because starttrapscope() unsets the table's TRAPEXIT entry. Every
+    // doshfunc caller passes its own `&mut shfunc` copy (not the shfunctab
+    // node), so unsettrap() cannot invalidate it and no copy is needed.
 
     // c:5898 — `starttrapscope();` — canonical port at signals.rs:1135
     // tags SIGEXIT for deferred restoration at scope end.
@@ -8059,8 +8085,11 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
         }
     }
 
-    // c:5341-5342 DPUTS — debug assertion (anon + redir simultaneously).
-    // Not portable as panic; left as comment.
+    // c:5397-5398 — `DPUTS(!names && redir_prog, "Passing redirection to anon function definition.");`
+    crate::DPUTS!(
+        num == 0 && redir_prog.is_some(),
+        "Passing redirection to anon function definition."
+    );
 
     // c:5343 — `while (!names || (s = (char *) ugetnode(names))) {`
     // num==0 → anon (no names); else iterate names.
@@ -8476,173 +8505,400 @@ pub fn execsimple(state: &mut estate) -> i32 {
     lv
 }
 
-/// Port of `execlist()` from `Src/exec.c:1349` — C decl `execlist(Estate state, int dont_change_job, int exiting)`.
-/// Walks WC_LIST entries, dispatches each
-/// sublist (WC_SUBLIST chain inlined per c:1525-1625, same as C —
-/// there's no separate execsublist function), handles signal-trap
-/// dispatch + ERREXIT propagation.
-///
-/// Body ports the structural skeleton faithfully (WC_LIST walk,
-/// per-iteration breaks/retflag/errflag guards, ltype dispatch on
-/// Z_END/Z_SYNC/Z_ASYNC, donetrap handling). The full signal queue
-/// + DEBUGBEFORECMD trap machinery from c:1357-1500 is preserved
-/// in shape with TODO-citations where dependent primitives aren't
-/// yet ported.
-pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i32 {
-    let mut last_status: i32 = 0;
-    let mut donetrap: i32 = 0; // c:1352 — `static int donetrap;`
+/// Port of `execlist()` from `Src/exec.c:1402` — C decl `execlist(Estate state, int dont_change_job, int exiting)`.
+/// Walks WC_LIST entries, dispatches each sublist (WC_SUBLIST chain
+/// inlined, same as C — there is no separate execsublist function),
+/// runs the DEBUG / ERR / EXIT traps and applies ERREXIT / ERRRETURN.
+pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) {
+    use crate::ported::signals_h::{SIGDEBUG, SIGEXIT, SIGZERR};
+    use crate::ported::zsh_h::{
+        CS_CMDAND, CS_CMDOR, DEBUGBEFORECMD, ERREXIT, ERRRETURN, SHINSTDIN, WC_LIST_SKIP,
+        WC_PIPE_LINENO, WC_SUBLIST_AND, WC_SUBLIST_NOT, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE,
+        WC_SUBLIST_SKIP, Z_SIMPLE, Z_SYNC,
+    };
+    static DONETRAP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:1404
+
+    // c:1415 — `int oldnoerrexit = noerrexit;`
+    let oldnoerrexit = noerrexit.load(Ordering::Relaxed);
+
+    queue_signals(); // c:1417
+
     let cj = *THISJOB
         .get_or_init(|| std::sync::Mutex::new(-1))
         .lock()
-        .unwrap(); // c:1364 — `cj = thisjob;`
-    let _ = dont_change_job; // c:1361 — restored on exit if nonzero.
-                             // c:1380 — `code = *state->pc++;`
-    if state.pc >= state.prog.prog.len() {
-        return last_status;
+        .unwrap(); // c:1419
+    let old_pline_level = pline_level.load(Ordering::Relaxed); // c:1420
+    let old_list_pipe = list_pipe.load(Ordering::Relaxed); // c:1421
+    let old_list_pipe_job = list_pipe_job.load(Ordering::Relaxed); // c:1422
+    let old_list_pipe_text: Option<String> = {
+        // c:1423-1426
+        let t = LIST_PIPE_TEXT.lock().unwrap();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.clone())
+        }
+    };
+    let oldlineno = crate::ported::input::lineno.with(|l| l.get()); // c:1427
+
+    // c:1429-1432 — `if (sourcelevel && unset(SHINSTDIN)) {...}`
+    if crate::ported::init::sourcelevel.load(Ordering::Relaxed) != 0 && !isset(SHINSTDIN) {
+        pline_level.store(0, Ordering::Relaxed);
+        list_pipe.store(0, Ordering::Relaxed);
+        list_pipe_job.store(0, Ordering::Relaxed);
+        LIST_PIPE_TEXT.lock().unwrap().clear();
     }
+
+    // c:1436-1440 — `code = *state->pc++; if (wc_code(code) != WC_LIST) lastval = 0;`
     let mut code = state.prog.prog[state.pc];
     state.pc += 1;
-    // c:1382-1384 — empty list returns lastval = 0.
     if wc_code(code) != WC_LIST {
         LASTVAL.store(0, Ordering::Relaxed);
-        return 0;
     }
-    use crate::ported::zsh_h::{WC_LIST_SKIP, WC_LIST_TYPE, Z_END, Z_SIMPLE, Z_SYNC};
-    // c:1385-1499 — main WC_LIST loop.
     while wc_code(code) == WC_LIST
         && BREAKS.load(Ordering::SeqCst) == 0
         && RETFLAG.load(Ordering::SeqCst) == 0
-        // c:1390 — `while (wc_code(code) == WC_LIST && !breaks && !retflag &&
-        // !errflag)`: the WHOLE errflag. A user interrupt sets ERRFLAG_INT and
-        // never ERRFLAG_ERROR (signals.c:457), so the mask let the rest of the
-        // list run after ^C or an interrupting trap:
-        //   TRAPINT() { print T; return 1 }
-        //   f() { print A; kill -INT $$; print C }; f; print B
-        //   zsh: A T      zshrs: A T B
         && errflag.load(Ordering::Relaxed) == 0
     {
-        let ltype = WC_LIST_TYPE(code) as i32;
-        // c:1396 — `csp = cmdsp;` — snapshot cmdstack depth at start
-        // of this WC_LIST iteration; restored at end so partial
-        // cmdpush sequences (e.g. from execcond, execfuncs) don't
-        // leak into the next sublist.
-        let csp = crate::ported::prompt::CMDSTACK.with(|s| s.borrow().len());
-        // c:1502-1509 — Z_SIMPLE fast-path.
-        if (ltype & Z_SIMPLE as i32) != 0 {
-            let next_pc = state.pc + WC_LIST_SKIP(code) as usize;
-            let s = execsimple(state);
-            last_status = s;
-            state.pc = next_pc;
-        } else {
-            // c:1513-1523 — sublist chain.
-            if state.pc >= state.prog.prog.len() {
-                break;
+        let mut this_donetrap = 0; // c:1443
+        this_noerrexit.store(0, Ordering::Relaxed); // c:1444
+
+        let ltype = WC_LIST_TYPE(code) as i32; // c:1446
+        let csp = crate::ported::prompt::CMDSTACK.with(|s| s.borrow().len()); // c:1447
+
+        if !crate::ported::zsh_h::IN_EVAL_TRAP()
+            && crate::ported::builtin::INEVAL.load(Ordering::SeqCst) == 0
+        {
+            // c:1449-1469 — valid line number for debugging.
+            let code2 = state.prog.prog[state.pc];
+            let mut lnp1: wordcode = 0;
+            if (ltype & Z_SIMPLE as i32) != 0 {
+                lnp1 = code2;
+            } else if wc_code(code2) == WC_SUBLIST {
+                if WC_SUBLIST_FLAGS(code2) == WC_SUBLIST_SIMPLE {
+                    lnp1 = state.prog.prog[state.pc + 1];
+                } else {
+                    lnp1 = WC_PIPE_LINENO(state.prog.prog[state.pc + 1]);
+                }
             }
-            code = state.prog.prog[state.pc];
-            state.pc += 1;
-            // c:1525-1625 — sublist chain (&&/|| operators) inlined.
-            use crate::ported::zsh_h::{
-                WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_NOT, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE,
-                WC_SUBLIST_SKIP,
-            };
-            let mut sub_code = code;
-            let _ = dont_change_job;
-            while wc_code(sub_code) == WC_SUBLIST {
-                let flags = WC_SUBLIST_FLAGS(sub_code);
-                let next = state.pc + WC_SUBLIST_SKIP(sub_code) as usize;
-                let sl_type = WC_SUBLIST_TYPE(sub_code) as i32;
-                let last1 = if WC_SUBLIST_TYPE(sub_code) == WC_SUBLIST_END {
-                    exiting
-                } else {
-                    0
-                };
-                if flags == WC_SUBLIST_SIMPLE {
-                    last_status = execsimple(state); // c:1605
-                } else {
-                    let _ = execpline(state, sub_code, sl_type, last1); // c:1607
-                    last_status = LASTVAL.load(Ordering::Relaxed);
-                }
-                // c:1612 — `WC_SUBLIST_NOT` inverts status.
-                if (flags & WC_SUBLIST_NOT) != 0 {
-                    last_status = if last_status == 0 { 1 } else { 0 };
-                    LASTVAL.store(last_status, Ordering::Relaxed);
-                }
-                state.pc = next;
-                if WC_SUBLIST_TYPE(sub_code) == WC_SUBLIST_END {
-                    break;
-                }
-                if state.pc >= state.prog.prog.len() {
-                    break;
-                }
-                // c:1617-1623 — short-circuit on && / ||.
-                if sl_type == WC_SUBLIST_AND as i32 && last_status != 0 {
-                    while state.pc < state.prog.prog.len() {
-                        let c = state.prog.prog[state.pc];
-                        if wc_code(c) != WC_SUBLIST {
-                            break;
-                        }
-                        state.pc = state.pc + 1 + WC_SUBLIST_SKIP(c) as usize;
-                        if WC_SUBLIST_TYPE(c) == WC_SUBLIST_END {
-                            break;
-                        }
-                    }
-                    break;
-                }
-                if sl_type == WC_SUBLIST_OR as i32 && last_status == 0 {
-                    while state.pc < state.prog.prog.len() {
-                        let c = state.prog.prog[state.pc];
-                        if wc_code(c) != WC_SUBLIST {
-                            break;
-                        }
-                        state.pc = state.pc + 1 + WC_SUBLIST_SKIP(c) as usize;
-                        if WC_SUBLIST_TYPE(c) == WC_SUBLIST_END {
-                            break;
-                        }
-                    }
-                    break;
-                }
-                sub_code = state.prog.prog[state.pc];
-                state.pc += 1;
+            if lnp1 != 0 {
+                crate::ported::input::lineno.with(|l| l.set(lnp1 as usize - 1)); // c:1469
             }
         }
-        // c:1593 — `cmdsp = csp;` — restore cmdstack depth to the
-        // snapshot taken at start of iteration. Reverses any cmdpush
-        // calls made by nested execcond / execfuncs / execcmd_exec
-        // that didn't pop cleanly.
+
+        let debug_trapped = sigtrapped
+            .lock()
+            .unwrap()
+            .get(SIGDEBUG as usize)
+            .copied()
+            .unwrap_or(0)
+            != 0;
+        let donedebug: i32;
+        if debug_trapped && isset(DEBUGBEFORECMD) && intrap.load(Ordering::Relaxed) == 0 {
+            // c:1472-1496
+            let mut pc2 = state.pc;
+            let oerrexit_opt = isset(ERREXIT);
+            opt_state_set("errexit", false);
+            noerrexit.fetch_or(NOERREXIT_EXIT | NOERREXIT_RETURN, Ordering::Relaxed);
+            if (ltype & Z_SIMPLE as i32) != 0 {
+                pc2 += 1; // c:1478 skip the line number
+            }
+            let pm = assignsparam(
+                "ZSH_DEBUG_CMD",
+                &crate::ported::text::getpermtext(state.prog.clone(), Some(pc2), 0),
+                0,
+            ); // c:1479
+
+            exiting = DONETRAP.load(Ordering::Relaxed); // c:1483
+            let ret = LASTVAL.load(Ordering::Relaxed); // c:1484
+            crate::ported::signals::dotrap(SIGDEBUG); // c:1485
+            if RETFLAG.load(Ordering::SeqCst) == 0 {
+                LASTVAL.store(ret, Ordering::Relaxed); // c:1487
+            }
+            DONETRAP.store(exiting, Ordering::Relaxed); // c:1488
+            noerrexit.store(oldnoerrexit, Ordering::Relaxed); // c:1489
+            // c:1493 — only execute the trap once per sublist, even if
+            // the DEBUGBEFORECMD option changes.
+            donedebug = if isset(ERREXIT) { 2 } else { 1 };
+            opt_state_set("errexit", oerrexit_opt); // c:1494
+            if pm.is_some() {
+                unsetparam("ZSH_DEBUG_CMD"); // c:1496 unsetparam_pm(pm, 0, 1)
+            }
+        } else {
+            donedebug = if intrap.load(Ordering::Relaxed) != 0 { 1 } else { 0 }; // c:1498
+        }
+
+        // c:1502 — reset donetrap: a trap is only called once for each
+        // sublist that fails.
+        DONETRAP.store(0, Ordering::Relaxed);
+        'sublist_done: {
+            if (ltype & Z_SIMPLE as i32) != 0 {
+                // c:1503-1509
+                let next = state.pc + WC_LIST_SKIP(code) as usize;
+                if donedebug != 2 {
+                    execsimple(state);
+                }
+                state.pc = next;
+                break 'sublist_done;
+            }
+
+            // c:1511 — loop through code followed by &&, ||, or end of sublist.
+            code = state.prog.prog[state.pc];
+            state.pc += 1;
+            if donedebug == 2 {
+                // c:1513-1522 — skip sublist.
+                while wc_code(code) == WC_SUBLIST {
+                    state.pc += WC_SUBLIST_SKIP(code) as usize;
+                    if WC_SUBLIST_TYPE(code) == WC_SUBLIST_END {
+                        break;
+                    }
+                    code = state.prog.prog[state.pc];
+                    state.pc += 1;
+                }
+                DONETRAP.store(1, Ordering::Relaxed);
+                break 'sublist_done;
+            }
+            while wc_code(code) == WC_SUBLIST {
+                this_noerrexit.store(0, Ordering::Relaxed); // c:1525
+                let isandor = WC_SUBLIST_TYPE(code) != WC_SUBLIST_END; // c:1526
+                let isnot = (WC_SUBLIST_FLAGS(code) & WC_SUBLIST_NOT) != 0; // c:1527
+                let mut next = state.pc + WC_SUBLIST_SKIP(code) as usize; // c:1528
+                // c:1530 — suppress errexit for commands before && and || and after !
+                if isandor || isnot {
+                    noerrexit.fetch_or(NOERREXIT_EXIT | NOERREXIT_RETURN, Ordering::Relaxed);
+                }
+                let simple = (WC_SUBLIST_FLAGS(code) & WC_SUBLIST_SIMPLE) != 0;
+                match WC_SUBLIST_TYPE(code) {
+                    x if x == WC_SUBLIST_END => {
+                        // c:1533-1543 — end of sublist; just execute, ignoring status.
+                        if simple {
+                            execsimple(state);
+                        } else {
+                            execpline(
+                                state,
+                                code,
+                                ltype,
+                                if (ltype & Z_END as i32) != 0 && exiting != 0 { 1 } else { 0 },
+                            );
+                        }
+                        state.pc = next;
+                        // c:1541 — suppress errexit for the command "! ..."
+                        if isnot {
+                            this_noerrexit.store(1, Ordering::Relaxed);
+                        }
+                        break 'sublist_done;
+                    }
+                    x if x == WC_SUBLIST_AND => {
+                        // c:1545 — if the return code is non-zero, skip pipelines
+                        // until we find a sublist followed by ORNEXT.
+                        let r = if simple {
+                            execsimple(state)
+                        } else {
+                            execpline(state, code, Z_SYNC, 0)
+                        };
+                        if r != 0 || BREAKS.load(Ordering::SeqCst) != 0 {
+                            state.pc = next;
+                            code = state.prog.prog[state.pc];
+                            state.pc += 1;
+                            next = state.pc + WC_SUBLIST_SKIP(code) as usize;
+                            while wc_code(code) == WC_SUBLIST
+                                && WC_SUBLIST_TYPE(code) == WC_SUBLIST_AND
+                            {
+                                state.pc = next;
+                                code = state.prog.prog[state.pc];
+                                state.pc += 1;
+                                next = state.pc + WC_SUBLIST_SKIP(code) as usize;
+                            }
+                            if wc_code(code) != WC_SUBLIST {
+                                // c:1562-1567 — skipped to the end of the list
+                                // without executing the final pipeline: no error
+                                // handling for this sublist.
+                                this_donetrap = 1;
+                                break 'sublist_done;
+                            } else if WC_SUBLIST_TYPE(code) == WC_SUBLIST_END {
+                                this_donetrap = 1;
+                                state.pc = next;
+                                break 'sublist_done;
+                            }
+                        }
+                        cmdpush(CS_CMDAND as u8); // c:1580
+                    }
+                    x if x == WC_SUBLIST_OR => {
+                        // c:1582 — if the return code is zero, skip pipelines
+                        // until we find a sublist followed by ANDNEXT.
+                        let r = if simple {
+                            execsimple(state)
+                        } else {
+                            execpline(state, code, Z_SYNC, 0)
+                        };
+                        if r == 0 || BREAKS.load(Ordering::SeqCst) != 0 {
+                            state.pc = next;
+                            code = state.prog.prog[state.pc];
+                            state.pc += 1;
+                            next = state.pc + WC_SUBLIST_SKIP(code) as usize;
+                            while wc_code(code) == WC_SUBLIST
+                                && WC_SUBLIST_TYPE(code) == WC_SUBLIST_OR
+                            {
+                                state.pc = next;
+                                code = state.prog.prog[state.pc];
+                                state.pc += 1;
+                                next = state.pc + WC_SUBLIST_SKIP(code) as usize;
+                            }
+                            if wc_code(code) != WC_SUBLIST {
+                                this_donetrap = 1;
+                                break 'sublist_done;
+                            } else if WC_SUBLIST_TYPE(code) == WC_SUBLIST_END {
+                                this_donetrap = 1;
+                                state.pc = next;
+                                break 'sublist_done;
+                            }
+                        }
+                        cmdpush(CS_CMDOR as u8); // c:1617
+                    }
+                    _ => {}
+                }
+                state.pc = next; // c:1621
+                code = state.prog.prog[state.pc];
+                state.pc += 1;
+                noerrexit.store(oldnoerrexit, Ordering::Relaxed); // c:1623
+            }
+            state.pc -= 1; // c:1625
+        }
+        // sublist_done:
+        noerrexit.store(oldnoerrexit, Ordering::Relaxed); // c:1628
+
+        let debug_trapped = sigtrapped
+            .lock()
+            .unwrap()
+            .get(SIGDEBUG as usize)
+            .copied()
+            .unwrap_or(0)
+            != 0;
+        if debug_trapped && !isset(DEBUGBEFORECMD) && donedebug == 0 {
+            // c:1630-1648 — save and restore ERREXIT for consistency with
+            // DEBUGBEFORECMD, even though it's not used.
+            let oerrexit_opt = isset(ERREXIT);
+            opt_state_set("errexit", false);
+            noerrexit.fetch_or(NOERREXIT_EXIT | NOERREXIT_RETURN, Ordering::Relaxed);
+            exiting = DONETRAP.load(Ordering::Relaxed);
+            let ret = LASTVAL.load(Ordering::Relaxed);
+            crate::ported::signals::dotrap(SIGDEBUG);
+            if RETFLAG.load(Ordering::SeqCst) == 0 {
+                LASTVAL.store(ret, Ordering::Relaxed);
+            }
+            DONETRAP.store(exiting, Ordering::Relaxed);
+            noerrexit.store(oldnoerrexit, Ordering::Relaxed);
+            opt_state_set("errexit", oerrexit_opt);
+        }
+
+        // c:1650 — `cmdsp = csp;`
         crate::ported::prompt::CMDSTACK.with(|s| {
             let mut g = s.borrow_mut();
             if g.len() > csp {
                 g.truncate(csp);
             }
         });
-        // c:1626-1634 — donetrap is reset between sublists.
-        donetrap = 0;
-        // c:1640-1645 — fetch next WC_LIST header (or break out).
-        if state.pc >= state.prog.prog.len() {
-            break;
+
+        // c:1652-1690 — check whether we are suppressing traps/errexit
+        // and if we haven't already performed them for this sublist.
+        if this_noerrexit.load(Ordering::Relaxed) == 0
+            && DONETRAP.load(Ordering::Relaxed) == 0
+            && this_donetrap == 0
+        {
+            let zerr_trapped = sigtrapped
+                .lock()
+                .unwrap()
+                .get(SIGZERR as usize)
+                .copied()
+                .unwrap_or(0)
+                != 0;
+            if zerr_trapped
+                && LASTVAL.load(Ordering::Relaxed) != 0
+                && (noerrexit.load(Ordering::Relaxed) & NOERREXIT_EXIT) == 0
+            {
+                let eflag = errflag.load(Ordering::Relaxed);
+                errflag.store(0, Ordering::Relaxed);
+                crate::ported::signals::dotrap(SIGZERR);
+                errflag.store(eflag, Ordering::Relaxed);
+                DONETRAP.store(1, Ordering::Relaxed);
+            }
+            if LASTVAL.load(Ordering::Relaxed) != 0 {
+                let ne = noerrexit.load(Ordering::Relaxed);
+                let errreturn = isset(ERRRETURN)
+                    && (isset(INTERACTIVE)
+                        || (locallevel.load(Ordering::Relaxed) as i32) != 0
+                        || crate::ported::init::sourcelevel.load(Ordering::Relaxed) != 0)
+                    && (ne & NOERREXIT_RETURN) == 0;
+                let errexit = (isset(ERREXIT) || (isset(ERRRETURN) && !errreturn))
+                    && (ne & NOERREXIT_EXIT) == 0;
+                if errexit {
+                    errflag.store(0, Ordering::Relaxed);
+                    let exit_trapped = sigtrapped
+                        .lock()
+                        .unwrap()
+                        .get(SIGEXIT as usize)
+                        .copied()
+                        .unwrap_or(0)
+                        != 0;
+                    if exit_trapped {
+                        crate::ported::signals::dotrap(SIGEXIT);
+                    }
+                    if crate::ported::params::mypid.load(Ordering::Relaxed)
+                        != unsafe { libc::getpid() } as i64
+                    {
+                        crate::ported::builtin::_realexit();
+                    } else {
+                        crate::ported::builtin::realexit();
+                    }
+                }
+                if errreturn {
+                    RETFLAG.store(1, Ordering::SeqCst);
+                    BREAKS.store(LOOPS.load(Ordering::SeqCst), Ordering::SeqCst);
+                }
+            }
         }
-        let next_code = state.prog.prog[state.pc];
-        if wc_code(next_code) != WC_LIST {
-            break;
-        }
-        state.pc += 1;
-        code = next_code;
-        // c:1389 — z_end means last sublist, exiting becomes 1 for tail-exec.
         if (ltype & Z_END as i32) != 0 {
-            exiting = 1;
+            break; // c:1692
         }
+        code = state.prog.prog[state.pc]; // c:1694
+        state.pc += 1;
     }
-    // c:1659-1664 — cleanup: restore thisjob if dont_change_job, this_noerrexit=1.
+    this_noerrexit.store(0, Ordering::Relaxed); // c:1696
+    pline_level.store(old_pline_level, Ordering::Relaxed);
+    list_pipe.store(old_list_pipe, Ordering::Relaxed);
+    list_pipe_job.store(old_list_pipe_job, Ordering::Relaxed);
+    match old_list_pipe_text {
+        Some(t) => *LIST_PIPE_TEXT.lock().unwrap() = t, // c:1701
+        None => LIST_PIPE_TEXT.lock().unwrap().clear(), // c:1704
+    }
+    crate::ported::input::lineno.with(|l| l.set(oldlineno)); // c:1706
     if dont_change_job != 0 {
         *THISJOB
             .get_or_init(|| std::sync::Mutex::new(-1))
             .lock()
-            .unwrap() = cj;
+            .unwrap() = cj; // c:1708
     }
-    let _ = donetrap;
-    this_noerrexit.store(1, Ordering::Relaxed);
-    LASTVAL.store(last_status, Ordering::Relaxed);
-    last_status
+
+    let exit_trapped = sigtrapped
+        .lock()
+        .unwrap()
+        .get(SIGEXIT as usize)
+        .copied()
+        .unwrap_or(0)
+        != 0;
+    if exiting != 0 && exit_trapped {
+        // c:1710-1716
+        let eflag = errflag.load(Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed); // clear the context for trap
+        crate::ported::signals::dotrap(SIGEXIT);
+        // make sure this doesn't get executed again.
+        if let Some(slot) = sigtrapped.lock().unwrap().get_mut(SIGEXIT as usize) {
+            *slot = 0;
+        }
+        errflag.store(eflag, Ordering::Relaxed);
+    }
+
+    unqueue_signals(); // c:1719
 }
 
 // WC_SUBLIST chain walk is inlined into execlist (per `Src/exec.c:1525-
@@ -10677,7 +10933,7 @@ mod _execcmd_tail_doc_anchor {
 ///   c:4366-4403  — `done:` label: POSIX special-builtin error escalation,
 ///                  shelltime stop, newxtrerr close, AUTOCONTINUE restore
 ///
-/// **Substrate stubs (declared inside this fn citing home C file):**
+/// **Helpers used from elsewhere in exec.rs:**
 ///   - `save_params(state, varspc, restorelist, removelist)` → Src/exec.c:4409
 ///   - `restore_params(restorelist, removelist)` → Src/exec.c:4463
 ///   - `isreallycom(cn)` → Src/exec.c:2670
@@ -10685,11 +10941,8 @@ mod _execcmd_tail_doc_anchor {
 ///   - `execautofn_basic(state, do_exec)` → Src/exec.c:5608
 ///   - `ensurefeature(modname, "b:", ...)` → Src/module.c:1654
 ///
-/// **NOT routed through fusevm.** This canonical port targets the
-/// tree-walker dispatcher; the fusevm bytecode VM uses
-/// `execcmd_compile_head` + `compile_simple` instead. No call
-/// site yet — the port closes the substrate gap so future
-/// wordcode-walker code can use it.
+/// Called from `execpline` (wordcode tree-walker). The fusevm bytecode
+/// VM uses `execcmd_compile_head` + `compile_simple` instead.
 #[allow(non_snake_case)]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::redundant_field_names)]
@@ -10881,10 +11134,7 @@ pub fn execcmd_exec(
     }
 
     // ====================================================================
-    // SUBSTRATE STUBS — same-named locals citing their home C file per
-    // [[feedback_no_shortcuts_in_porting]]. Each stub mirrors the C
-    // signature and returns a degenerate value that keeps the body
-    // executing while the real port lands.
+    // Helpers ported elsewhere in exec.rs, imported for the body below.
     // ====================================================================
     // save_params + restore_params — top-level ports in exec.rs
     // (c:4410 / c:4464). Both bridged via `use` below.
@@ -11330,9 +11580,8 @@ pub fn execcmd_exec(
                     }
                     if isset(XTRACE) {
                         // c:3397-3400 — `fputc('\n', xtrerr); fflush(xtrerr);`
-                        // xtrerr accessor is stub; rely on the existing
-                        // stderr writer in compile_zsh tracing path.
-                        eprintln!();
+                        crate::fusevm_bridge::xtrerr_fputs("\n");
+                        crate::fusevm_bridge::xtrerr_flush();
                     }
                     if forked != 0 {
                         crate::ported::builtin::_realexit(); // c:3401-3402
@@ -11720,7 +11969,7 @@ pub fn execcmd_exec(
                             .get()
                             .map(|jt| crate::ported::jobs::havefiles(&jt.lock().unwrap()))
                             .unwrap_or(false)
-                        || false/* fdtable_flocks — substrate stub */)))
+                        || crate::ported::utils::FDTABLE_FLOCKS.load(Ordering::Relaxed) != 0)))
         {
             // c:3660-3663
             let mut filelist_for_fork = filelist.clone();
@@ -11934,14 +12183,10 @@ pub fn execcmd_exec(
         } else {
             // c:3754 — non-pipe redir branch.
             let mut closed: i32; // c:3755
-                                 // c:3756-3757 — xpandredir glob/brace.
-            if fn_.typ != REDIR_HERESTR {
-                // Put fn_ back temporarily so xpandredir can mutate
-                // around it; not implemented identically — xpandredir
-                // signature in zshrs differs (takes &mut redir + ctx).
-                // c:3756 — `if (xpandredir(fn, redir)) continue;`
-                // Pragmatic: skip xpandredir (it handles brace/glob in
-                // redir paths — uncommon, ports to follow-up).
+            // c:3756-3757 — `if (fn->type != REDIR_HERESTR && xpandredir(fn, redir)) continue;`
+            if fn_.typ != REDIR_HERESTR && crate::ported::glob::xpandredir(&mut fn_, redir_list) != 0
+            {
+                continue;
             }
             if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                 // c:3758

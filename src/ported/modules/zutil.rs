@@ -1171,13 +1171,8 @@ pub fn testforstyle(ctxt: &str, style: &str) -> i32 {
 /// C body (c:490-952): switch over -L/-l/-d/-s/-b/-t/-T/-m/-a/-g/-e
 /// flags + per-mode handlers.
 ///
-/// **Status**: structural port — the no-flag display path
-/// (matches all zstyle entries) and -L/-l listing path are wired
-/// against the canonical zstyletab walks; -s/-b/-t/-T/-m/-a/-g/-e
-/// per-context lookups depend on the lookupstyle helper which
-/// currently returns Vec::new() (the per-style-flavour matching
-/// engine in zutil.c hasn't landed). Without it, the lookups all
-/// return "no match" (ret=1).
+/// The per-context lookups (-s/-b/-t/-T/-m/-a/-g/-e) go through
+/// `lookupstyle`/`testforstyle` over the global `zstyletab`.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zstyle(
     nam: &str,
@@ -2674,9 +2669,7 @@ pub fn bin_zregexparse(
     pushheap(); // c:1499
 
     // c:1500 — `if (setjmp(rparseerr) || rparsealt(&result, &rparseerr) ||
-    // *rparseargs)`. rparsealt is a stub here (the alternation parser
-    // is open work); without it the parse always succeeds vacuously
-    // and we fall straight to rmatch. The `*rparseargs` check is the
+    // *rparseargs)`. The `*rparseargs` check is the
     // "trailing-args-after-regex" error.
     let mut ret;
     // c:1495-1499 — pushheap(); rparsestates = newlinklist();
@@ -2702,16 +2695,8 @@ pub fn bin_zregexparse(
         //   else
         //       zwarnnam(nam, "not enough regex arguments");
         //
-        // Prior Rust port always emitted "invalid regex : <args.last()>"
-        // — wrong on two counts:
-        //   1. "not enough regex arguments" was unreachable; partial
-        //      parses where rparsealt bailed mid-stream (no leftover
-        //      tokens) reported as "invalid regex" with an empty token.
-        //   2. The token shown was args.last() (the original tail of
-        //      argv), not the first unparsed token from rparseargs.
-        //
-        // Read the actual front-of-queue from RPARSEARGS so the
-        // diagnostic points at the failing token the way C does.
+        // Read the front-of-queue from RPARSEARGS so the diagnostic
+        // points at the first unparsed token the way C does.
         let leftover_first: Option<String> = RPARSEARGS.with(|q| q.borrow().front().cloned());
         match leftover_first {
             Some(tok) => zwarnnam(nam, &format!("invalid regex : {}", tok)), // c:1502
@@ -3080,12 +3065,8 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
         //
         // Route through the canonical `paramtab_hashed_storage` view
         // — the IndexMap iteration order matches C's hashtable walk
-        // order (insertion-stable for assoc params). Prior port
-        // deferred this with a TODO and left aval empty, so
-        // `zparseopts -K -A myhash ... existing-key=oldvalue` produced
-        // an output assoc that DROPPED the existing entries instead
-        // of preserving them — the `-K` ("keep") flag's documented
-        // contract was a no-op.
+        // order (insertion-stable for assoc params), so `-K -A myhash`
+        // keeps the existing entries ahead of the newly parsed ones.
         let store = crate::ported::params::paramtab_hashed_storage();
         if let Ok(s) = store.lock() {
             if let Some(m) = s.get(assoc) {

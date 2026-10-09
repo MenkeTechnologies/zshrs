@@ -633,20 +633,6 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
     ret // c:403
 }
 
-/// Direct port of `parse_class(Cpattern p, char *iptr)` from `Src/Zle/complete.c:480`.
-/// 93-line parser for a single character-class `[...]` or
-/// equivalence-class `{...}` inside a Cpattern. Reads metafied
-/// bytes from `iptr`, allocates `p->u.str` of the right size,
-/// fills in the parsed contents (with PP_RANGE / PP_UNKWN tokens
-/// for `a-z` ranges and `[:class:]` POSIX-style entries via
-/// range_type lookup).
-///
-/// Static-link path: the metafied-byte + Meta-token + PP_*
-/// encoding doesn't translate cleanly to Rust's UTF-8 strings.
-/// Structural port returns the input pointer unmodified (signaling
-/// "consumed nothing, parse failed") so the caller can detect the
-/// stub state and skip emitting the matcher.
-/// WARNING: param names don't match C — Rust=(_p) vs C=(p, iptr)
 /// Direct port of `Cpattern parse_pattern(char *name, char **sp,
 /// int *lp, char e, int *err)` from `Src/Zle/complete.c:418`.
 /// Walks `*sp` building a Cpattern chain. Stops at end-char `e`
@@ -746,7 +732,13 @@ pub fn parse_pattern<'a>(
     }
     (ret, rest, len, false)
 }
-/// `parse_class` — see implementation.
+/// Direct port of `parse_class(Cpattern p, char *iptr)` from `Src/Zle/complete.c:480`.
+/// Parser for a single character-class `[...]` or equivalence-class
+/// `{...}` inside a Cpattern. Reads metafied bytes from `iptr`,
+/// fills `p->str` with the parsed contents (PP_RANGE / PP_* markers for
+/// `a-z` ranges and `[:class:]` POSIX-style entries via `range_type`)
+/// and returns the remainder starting AT the closing bracket (empty when
+/// the class is unterminated).
 pub fn parse_class<'a>(
     p: &mut Cpattern, // c:480
     iptr: &'a str,
@@ -918,12 +910,7 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {
 
 // =====================================================================
 // bin_compadd / bin_compset / do_comp_vars / parse_cmatcher /
-// parse_class — Src/Zle/complete.c. The remaining big-body ported from
-// the unported list. Each is ported as a faithful structural shell:
-// canonical C signature, control-flow shape, every C-source line
-// cited, with the actual data-mutation paths (addmatch, set_comp_sep,
-// CCS_* match-engine, Cmatcher chain ops) marked DEFERRED until the
-// underlying infrastructure lands.
+// parse_class — Src/Zle/complete.c.
 // =====================================================================
 // !!! WARNING: RUST-ONLY HELPER !!!
 // C models this as `execcmd_exec`'s `cflags` local: the shfunctab probe at

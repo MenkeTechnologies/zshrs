@@ -8,9 +8,9 @@
 //!
 //! The Rust port keeps the `nameddir` struct definition canonical
 //! (it lives in `zsh_h.rs`) and stores entries in a global
-//! `OnceLock<Mutex<HashMap<String, nameddir>>>`, since the full
-//! `HashTable` substrate (vtable callbacks, intrusive `next` chain)
-//! is not yet wired. Names match C 1:1.
+//! `OnceLock<Mutex<HashMap<String, nameddir>>>`; the seven callbacks are
+//! free fns over that map rather than slots of a `HashTable` vtable, and
+//! there is no intrusive `next` chain. Names match C 1:1.
 
 use crate::ported::hashtable::hashtable_nodes;
 use std::io::Write;

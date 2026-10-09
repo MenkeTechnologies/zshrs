@@ -28,7 +28,7 @@ use crate::glob::matchpat;
 use crate::ported::lex::untokenize;
 use crate::ported::math::mathevali;
 use crate::ported::options::{optlookup, optlookupc};
-use crate::ported::params::{setaparam, setiparam, setsparam};
+use crate::ported::params::setaparam;
 use crate::ported::subst::singsub;
 use crate::ported::utils::{has_token, privasserted, unmeta, zwarn, zwarnnam};
 use crate::ported::zsh_h::{
@@ -949,19 +949,10 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
     // `matchpat(str, p, ...)` which passed text as pattern AND
     // pattern as text — silently mis-routing every `[[ a = pat ]]`
     // glob test against the wrong side. Pass in Rust order.
-    let matched = matchpat(&p, str, extended, case_sensitive); // c:557
-                                                               // c:Src/pattern.c GF_MATCHREF / GF_BACKREF — (#m) writes the
-                                                               // matched substring to $MATCH; (#b) writes capture groups to
-                                                               // $match[]. In `==` cond context the pattern matches the whole
-                                                               // string, so on success $MATCH = str. Capture-group support
-                                                               // (real (#b) parens) is deferred — (#m) covers the high-traffic
-                                                               // case (zinit's plugin-name matching uses it).
-    if matched && extended && p.contains("(#m)") {
-        setsparam("MATCH", str);
-        setiparam("MBEGIN", 1);
-        setiparam("MEND", str.chars().count() as i64);
-    }
-    matched
+    // (#m) / (#b) publish $MATCH, $MBEGIN, $MEND, $match, $mbegin and
+    // $mend inside pattryrefs (c:Src/pattern.c:2526-2621), which matchpat
+    // reaches through pattry.
+    matchpat(&p, str, extended, case_sensitive) // c:557
 }
 
 /// Port of `tracemodcond(char *name, char **args, int inf)` from Src/cond.c:563 — `xtrace`-mode

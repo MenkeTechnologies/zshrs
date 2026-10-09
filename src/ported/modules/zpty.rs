@@ -626,12 +626,8 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
 /// stdout (c:696-701). Returns `0` on success-with-data,
 /// `cmd->fin + 1` (1/2) otherwise (c:704).
 ///
-/// Deferred (separate port iteration): the `cmd->old` / `cmd->read`
-/// pre-buffer machinery at c:572-588, c:683-694 — these fields
-/// don't exist on the Rust `ptycmd` struct yet; without them the
-/// nblock-EWOULDBLOCK-stash path at c:682-694 falls through to
-/// the standard exit (still correct return value, just slower
-/// next-call because the unmatched prefix isn't carried).
+/// The `cmd->old` / `cmd->read` pre-buffer machinery at c:572-588 and
+/// c:683-694 is carried by `ptycmd::old` / `ptycmd::read_buf`.
 pub fn ptyread(nam: &str, cmd: &mut ptycmd, args: &[&str], noblock: bool, mustmatch: bool) -> i32 {
     // c:550
     let mut used: usize = 0;
@@ -706,10 +702,27 @@ pub fn ptyread(nam: &str, cmd: &mut ptycmd, args: &[&str], noblock: bool, mustma
             if pollret == 0 {
                 break;
             }
-            // c:612-625 — when pollret < 0, C tries setblock_fd + 1-byte
-            // read and stashes the byte to cmd->read. Skip: setblock_fd
-            // isn't ported (mode-save/restore on fd 0); next iteration's
-            // checkptycmd does the equivalent stash anyway via c:543-544.
+            if pollret < 0 {
+                // c:612-628 — last despairing effort to poll: attempt to
+                // set nonblocking I/O and actually read the character.
+                // `cmd->read` stores the character read.
+                let mut pollret: isize = -1;
+                let (changed, mode) = crate::ported::utils::setblock_fd(false, cmd.master_fd); // c:621
+                if changed {
+                    let mut c: u8 = 0;
+                    pollret = unsafe { libc::read(cmd.master_fd, &mut c as *mut u8 as *mut _, 1) }
+                        as isize; // c:622
+                    if pollret == 1 {
+                        cmd.read_buf = Some(c); // c:624
+                    }
+                }
+                if mode != -1 {
+                    unsafe { libc::fcntl(cmd.master_fd, libc::F_SETFL, mode) }; // c:627
+                }
+                if pollret == 0 {
+                    break; // c:630
+                }
+            }
         }
         // c:629-633 — refresh fin-state on every loop iteration when
         // we haven't read anything yet this round.

@@ -477,9 +477,9 @@ pub fn parseopts(
         // (`-x`, `-v`, `-xv`, `+x`). Each char maps via `optlookupc` to a
         // (possibly negated, for inverted-sense letters like `f`) option
         // number; `dosetopt` applies it with the sign as the action.
-        // OPT_INVALID letters are skipped (deferred to the front-end)
-        // rather than erroring as C does at c:517 — zshrs accepts some
-        // non-zsh single-dash flags the C table doesn't know.
+        // OPT_INVALID letters are skipped rather than erroring as C does
+        // at c:517 — zshrs accepts some non-zsh single-dash flags the C
+        // table doesn't know.
         if emulate_required {
             parseopts_setemulate(_nam, flags); // c:516-519
             emulate_required = false;
@@ -1460,8 +1460,14 @@ fn setupshin(runscript: Option<&str>) {
         if std::path::Path::new(&funmeta).is_file() {
             // c:1350-1352
             sfname = Some(script.to_string()); // c:1353
+        } else if crate::ported::zsh_h::isset(crate::ported::zsh_h::PATHSCRIPT)
+            && !script.contains('/')
+        {
+            // c:1354-1360 — with PATHSCRIPT, search $PATH when the script
+            // name has no directory part.
+            sfname = crate::ported::utils::pathprog(script)
+                .map(|p| p.to_string_lossy().into_owned()); // c:1359
         }
-        // PATHSCRIPT search omitted (depends on opts[PATHSCRIPT])           // c:1354-1360
         if sfname.is_none() {
             // c:1361
             crate::ported::utils::zerr(&format!(
@@ -1480,8 +1486,8 @@ fn setupshin(runscript: Option<&str>) {
 pub fn init_signals() {
     // c:1394
     // c:1398-1399 — `sigtrapped = hcalloc(TRAPCOUNT * sizeof(int));`
-    // and `siglists = hcalloc(TRAPCOUNT * sizeof(Eprog));`. Trap
-    // table globals not modeled in zshrs static link path.
+    // and `siglists = hcalloc(TRAPCOUNT * sizeof(Eprog));`. Both tables
+    // are statics in signals.rs, sized at their declaration.
 
     // c:1401-1406 — `if (interact) { signal_setmask(signal_mask(0));
     // for (i=0; i<NSIG; ++i) signal_default(i); }`. Reset to default

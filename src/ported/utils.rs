@@ -2913,12 +2913,10 @@ static ADJUSTWINSIZE_IN_ZLE: std::sync::atomic::AtomicBool =
 /// C semantics: GROW the `fdtable` array so it can index `fd`, then
 /// update `max_zsh_fd`. Returns void.
 ///
-/// The Rust port keeps the same signature for name-parity but the
-/// fdtable global isn't yet modeled — so this is a no-op shim. The
-/// previous Rust impl was an `fcntl(F_GETFD)` validity check —
-/// COMPLETELY DIFFERENT SEMANTICS from C (which doesn't validate
-/// the fd at all, just grows the table). Fixed to no-op + bool
-/// return for caller compatibility (no live callers).
+/// The fdtable global is `fdtable_lock()`; the body grows it with
+/// `Vec::resize` and updates `MAX_ZSH_FD`. It does not validate the fd
+/// (C does not either); the bool result is Rust-only and is false for a
+/// negative `fd` beyond the current maximum.
 pub fn check_fd_table(fd: i32) -> bool {
     // c:1969
     // c:1971-1972 — `if (fd <= max_zsh_fd) return;`
@@ -3008,9 +3006,7 @@ pub fn movefd(fd: i32) -> i32 {
 /// when `x == y`, no-op (return `y`); otherwise `dup2(x, y)` +
 /// `close(x)`.
 ///
-/// C body fdtable updates (c:2053-2063) that the previous Rust port
-/// SKIPPED with a stale "fdtable global not yet ported" comment —
-/// fdtable IS now ported and these updates are load-bearing:
+/// C body fdtable updates (c:2053-2063), which are load-bearing:
 ///   * `fdtable[y] = fdtable[x]` — the new fd inherits the old fd's
 ///     ownership category (FDT_INTERNAL / FDT_MODULE / etc.).
 ///   * If the inherited type is `FDT_FLOCK` / `FDT_FLOCK_EXEC`, promote
@@ -3018,8 +3014,8 @@ pub fn movefd(fd: i32) -> i32 {
 ///   * If `fdtable[x] == FDT_FLOCK`, decrement `fdtable_flocks` (the
 ///     original lock-holding fd is about to be closed).
 ///
-/// Without these updates, redup'd fds had stale `FDT_UNUSED` ownership
-/// and `closeallelse(FDT_EXTERNAL)` etc. couldn't classify them.
+/// Without these updates, redup'd fds would carry stale `FDT_UNUSED`
+/// ownership and `closeallelse(FDT_EXTERNAL)` etc. could not classify them.
 pub fn redup(x: i32, y: i32) -> i32 {
     // c:2021
     let mut ret = y; // c:2023
@@ -4452,9 +4448,8 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
     let mut d: i32;
     let mut nl: i32 = 0;
     // c:3017 — `int isem = !strcmp(term, "emacs");`
-    // Stub: `term` is the $TERM environment global, declared in
-    // `Src/init.c` (extern in zsh.h). Local stub reads $TERM from
-    // paramtab; absent → empty string.
+    // `term` is the $TERM global declared in `Src/init.c`; its value is the
+    // TERM parameter, read from paramtab (absent → empty string).
     let term: String = getsparam("TERM").unwrap_or_default();
     let isem: bool = term == "emacs";
     // c:3018 — `struct ttyinfo ti;`
@@ -4487,13 +4482,10 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
 
     // c:3039 — `if (noquery(purge))`
     if noquery(purge != 0) != 0 {
-        // Stub: `shttyinfo` is the canonical saved-TTY-state global,
-        // declared in `Src/init.c` (extern in zsh.h:1856). Without the
-        // global tracked here we re-fetch current termios as a degraded
-        // best-effort restore.
         if !isem {
             // c:3040
-            if let Some(saved) = gettyinfo() {
+            let saved = SHTTYINFO.lock().ok().and_then(|g| *g);
+            if let Some(saved) = saved {
                 // c:3041 settyinfo(&shttyinfo)
                 settyinfo(&saved);
             }
@@ -4602,9 +4594,8 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
     }
 
     // c:3101 — `settyinfo(&shttyinfo);` — restore saved TTY state.
-    // Stub-degraded path: refetch current termios. The proper port
-    // requires wiring an `shttyinfo` global in init.rs.
-    if let Some(saved) = gettyinfo() {
+    let saved = SHTTYINFO.lock().ok().and_then(|g| *g);
+    if let Some(saved) = saved {
         settyinfo(&saved);
     }
 
@@ -4691,10 +4682,9 @@ fn spscan(name: &str) {
 /// (`ask=0` auto-accepts), replace `*s` in place with the corrected
 /// form and (if `hist!=0`) rewrite the history entry too.
 ///
-/// Faithful 1:1 line-by-line port. Interactive prompting (c:3273-3287)
-/// is stubbed to auto-accept when `ask=1` since `getquery` /
-/// `promptexpand` / `shout` / `zbeep` aren't yet wired in zshrs —
-/// flagged with WARNING at the prompt site.
+/// Faithful 1:1 line-by-line port, including the interactive prompt
+/// (c:3273-3287) that runs `SPROMPT` through `promptexpand` and reads
+/// the answer with `getquery("nyae")`.
 ///
 /// Caller updates: previous Rust signature `(word, candidates[], threshold)
 /// → Option<String>` is gone — `lex.rs` builds candidate lists itself,
@@ -5054,7 +5044,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     }
     // c:3252 — `if (best && strlen(best) > 1 && strcmp(best, guess))`.
     let best = SPCK_BEST.with(|b| b.borrow().clone());
-    let guess = SPCK_GUESS.with(|g| g.borrow().clone()).unwrap_or_default();
+    let mut guess = SPCK_GUESS.with(|g| g.borrow().clone()).unwrap_or_default();
     let Some(mut best) = best else {
         return;
     };
@@ -5104,29 +5094,47 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
             bb[0] = token_char as u8;
             best = String::from_utf8_lossy(&bb).into_owned();
         }
+        guess = s.clone(); // c:3270 `guess = *s;`
     }
     // c:3273-3289 — interactive prompt (`ask`) or auto-accept.
     let x: char;
     if ask != 0 {
         // c:3273
-        // WARNING — DIVERGENCE: `noquery()`, `shout`, `promptexpand`,
-        // `zputs(stream)`, `zbeep`, `getquery("nyae", 0)` aren't yet
-        // wired in zshrs (interactive ZLE prompt machinery). Default
-        // to 'n' (decline) when ask=1 — preserves the C behavior of
-        // declining when shout is NULL (c:3286-3287). Re-enable the
-        // interactive flow when promptexpand/getquery land.
-        x = 'n';
+        if noquery(false) != 0 {
+            // c:3274
+            x = 'n'; // c:3275
+        } else if *crate::ported::init::shout.lock().unwrap() != 0 {
+            // c:3276 `else if (shout)`
+            // c:3278 — `pptbuf = promptexpand(sprompt, 0, NULL, best, guess);`
+            // rs/Rs reach the expansion through PROMPT_RS_STRINGS (see there).
+            crate::ported::prompt::PROMPT_RS_STRINGS
+                .with(|c| c.set((Some(best.clone()), Some(guess.clone()))));
+            let sprompt = getsparam("SPROMPT").unwrap_or_default();
+            let (pptbuf, _, _) = crate::ported::prompt::promptexpand(&sprompt, 0, None);
+            let mut shout_buf: Vec<u8> = Vec::new();
+            zputs(&pptbuf, &mut shout_buf); // c:3279
+            crate::shout::write(&shout_buf);
+            crate::shout::flush(); // c:3281 fflush(shout)
+            zbeep(); // c:3282
+            let q = getquery(Some("nyae"), 0); // c:3283
+            x = if q < 0 { 'n' } else { q as u8 as char };
+            if cmd != 0 && x == 'n' {
+                // c:3284
+                pathchecked.store(0, std::sync::atomic::Ordering::Relaxed); // c:3285 `pathchecked = path;`
+            }
+        } else {
+            x = 'n'; // c:3287
+        }
     } else {
         x = 'y'; // c:3289
     }
     // c:3290-3300 — apply chosen action.
     if x == 'y' {
         // c:3290
-        *s = best; // c:3291 `*s = dupstring(best);`
+        *s = best.clone(); // c:3291 `*s = dupstring(best);`
         if hist != 0 {
             // c:3292
-            // c:3293 — `hwrep(best);` (history rewrite). Stubbed: hist
-            // rewrite plumbing isn't yet hooked into the lex caller.
+            crate::ported::hist::hwrep(&best); // c:3293
         }
     } else if x == 'a' {
         // c:3294
@@ -10663,10 +10671,9 @@ pub fn init_dirsav() -> dirsav {
 ///
 /// zshrs targets macOS/Linux, so the live C arms are HAVE_LSTAT +
 /// HAVE_FCHDIR; the no-lstat / no-fchdir fallbacks (which never compile
-/// on our platforms) are elided. C restores `errno = err` before each
-/// non-zero return so the caller can read the break-reason; that errno
-/// propagation is elided here (no current caller inspects errno — the
-/// -1/-2/0 return is the contract).
+/// on our platforms) are not ported. C restores `errno = err` before each
+/// non-zero return so the caller can read the break-reason; the same
+/// restore is done here with the per-platform errno setter.
 /// WARNING: param names match C — (path, d, hard).
 #[cfg(unix)]
 pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
@@ -10863,7 +10870,14 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
             unsafe { libc::close(d.dirfd) };
             d.dirfd = -1;
         }
-        let _ = err; // c:7546 `errno = err;` propagation elided (see doc).
+        #[cfg(target_os = "macos")]
+        unsafe {
+            *libc::__error() = err; // c:7546
+        }
+        #[cfg(target_os = "linux")]
+        unsafe {
+            *libc::__errno_location() = err; // c:7546
+        }
         return -2; // c:7547
     }
     // c:7549-7558 — descent failed but the saved directory was restored.
@@ -10871,13 +10885,20 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
         unsafe { libc::close(d.dirfd) };
         d.dirfd = -1;
     }
-    let _ = err; // c:7557 `errno = err;` propagation elided (see doc).
+    #[cfg(target_os = "macos")]
+    unsafe {
+        *libc::__error() = err; // c:7557
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        *libc::__errno_location() = err;
+    }
     -1 // c:7558
 }
 
 /// Port of `lchdir()` from `Src/utils.c:7400`.
 ///
-/// Non-unix stub: lchdir's symlink-safe descent is built on POSIX
+/// Non-unix build: lchdir's symlink-safe descent is built on POSIX
 /// `lstat`/`fchdir`/`chdir`, which have no Windows equivalent here.
 #[cfg(not(unix))]
 pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {

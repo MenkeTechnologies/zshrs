@@ -513,9 +513,9 @@ pub fn handle_sub(jobtab: &mut [job], super_idx: usize, fg: bool) -> i32 {
             *cj = super_idx as i32; // c:336
         }
         // c:337 — printjob(jn, !!isset(LONGLISTJOBS), 1);
-        //         printjob takes a snapshot signature here that requires
-        //         cur_job/prev_job indices; defer the print to the caller
-        //         (jobs.rs's jobs-builtin scanner) which has those handy.
+        // NOT PORTED: handle_sub() does not call printjob(); the Rust
+        // printjob() returns the text and needs the cur_job/prev_job
+        // indices from the caller.
         return 1; // c:338
     }
     0 // c:340
@@ -745,10 +745,10 @@ pub fn update_job(job: &mut job) -> bool {
                                                        //              mark super CHANGED|STOPPED. Without a job-index-
                                                        //              from-job reverse lookup wired here (we'd need
                                                        //              the JOBTAB position, but Rust callers usually
-                                                       //              hold the &mut job by &mut [job][i]), defer the
-                                                       //              SIGTSTP to whoever owns the jobtab.
-                                                       // Documented gap — the caller in fusevm_bridge that does the
-                                                       // wait3 dispatch knows the index and handles the super hop.
+                                                       //              hold the &mut job by &mut [job][i]).
+                                                       // NOT PORTED: update_job() receives a bare `&mut job`, so
+                                                       // the super_job() lookup and the killpg(SIGTSTP) hop are
+                                                       // not performed.
             return true;
         }
         if (job.stat & stat::STOPPED) != 0 {
@@ -769,8 +769,9 @@ pub fn update_job(job: &mut job) -> bool {
     // c:550-555 — `if (jn->stat & STAT_CURSH) inforeground = 1;
     //               else if (job == thisjob) { lastval = val; inforeground = 2; }`
     //              Drives the c:565 "deadpgrp" path and the MONITOR foreground
-    //              cascade. Mark via _inforeground for the trace; signal cascade
-    //              skipped (interactive substrate).
+    //              cascade. NOT PORTED: the c:557-620 MONITOR block (tty
+    //              pgrp attach, errbrk_saved) and the c:660-690 SIGINT/SIGQUIT
+    //              pseudo-delivery; update_job() has no jobtab index or thisjob.
     let _inforeground: i32 = if (job.stat & stat::CURSH) != 0 {
         1
     } else {
@@ -1642,12 +1643,11 @@ pub fn cleanfilelists(jobtab: &mut [job]) {
 /// The previous Rust port was missing the `pwd`/`ty`/`other`/
 /// `stty_in_env` field resets — leaked saved-tty state into the
 /// next job reuse of the slot. Now resets all fields per C. The
-/// STAT_WASSUPER recursive delete (c:1480-1488) requires jobtab
-/// access and is left as a doc comment until the caller wires it.
+/// STAT_WASSUPER recursive delete (c:1480-1488) reaches the
+/// partner slot through the global `JOBTAB`.
 pub fn freejob(jn: &mut job, deleting: bool) {
     // c:1457
-    let _ = deleting; // STAT_WASSUPER recursive path not yet wired.
-                      // c:1461-1466 — `procs = NULL; free each`. Rust Drop on Vec covers.
+    // c:1461-1466 — `procs = NULL; free each`. Rust Drop on Vec covers.
     jn.procs.clear();
     // c:1468-1473 — `auxprocs = NULL; free each`.
     jn.auxprocs.clear();
@@ -1655,9 +1655,24 @@ pub fn freejob(jn: &mut job, deleting: bool) {
     jn.ty = None;
     // c:1477-1479 — `if (jn->pwd) zsfree(jn->pwd); jn->pwd = NULL;`.
     jn.pwd = None;
-    // c:1480-1488 — STAT_WASSUPER recursive delete: requires
-    // jobtab[] access not in scope here. Doc-pin so a future caller
-    // wiring the table can detect and dispatch.
+    // c:1480-1488 — `if (jn->stat & STAT_WASSUPER) { int job = jn -
+    // jobtab; if (deleting) deletejob(jobtab + jn->other, 0); else
+    // freejob(jobtab + jn->other, 0); jn = jobtab + job; }`. try_lock:
+    // a caller that already holds the JOBTAB guard owns the partner
+    // slot through that guard and cannot be re-entered here.
+    if (jn.stat & stat::WASSUPER) != 0 {
+        if let Some(tab) = JOBTAB.get() {
+            if let Ok(mut jobs) = tab.try_lock() {
+                if let Some(jno) = jobs.get_mut(jn.other as usize) {
+                    if deleting {
+                        deletejob(jno, false); // c:1484
+                    } else {
+                        freejob(jno, false); // c:1486
+                    }
+                }
+            }
+        }
+    }
     // c:1489 — `jn->gleader = jn->other = 0;`.
     jn.gleader = 0;
     jn.other = 0;
@@ -1690,8 +1705,7 @@ pub fn freejob(jn: &mut job, deleting: bool) {
 /// without calling `freejob` — meant `pwd`/`ty`/`other`/`stty_in_env`
 /// stayed populated even after the job was "deleted", silently
 /// corrupting the next slot reuse. The STAT_ATTACH (attachtty) and
-/// STAT_SUPERJOB recursive cleanup paths require substrate not yet
-/// wired (mypgrp, jobtab[] reference); doc-pinned for follow-up.
+/// STAT_SUPERJOB orphan-marking paths are implemented below.
 pub fn deletejob(jn: &mut job, disowning: bool) {
     // c:1512
     // c:1514 — `deletefilelist(jn->filelist, disowning);`. When
@@ -1909,7 +1923,10 @@ pub fn zwaitjob(job: &mut job, wait_cmd: i32) -> Option<i32> {
 
     // c:1682 — `jn->stat |= STAT_LOCKED;`
     job.stat |= crate::ported::zsh_h::STAT_LOCKED;
-    // c:1683-1684 — STAT_CHANGED → printjob (deferred — needs jobtab index).
+    // c:1683-1684 — `if (jn->stat & STAT_CHANGED) printjob(jn, !!isset(LONGLISTJOBS), 1);`
+    // NOT PORTED: Rust printjob() needs the job's table index for the
+    // `[N]` column, and this fn receives a bare `&mut job` (waitonejob
+    // callers pass jobs that are not in JOBTAB), so there is no index.
     // c:1685-1697 — pipecleanfilelist for proc-subst fds.
     if !job.filelist.is_empty() {
         crate::ported::jobs::pipecleanfilelist(job, false);
@@ -1967,8 +1984,9 @@ pub fn zwaitjob(job: &mut job, wait_cmd: i32) -> Option<i32> {
                 }
             }
         }
-        // c:1731-1733 — STAT_SUPERJOB handle_sub deferred (sub-job
-        // dispatch is jobtab-index-keyed; needs the live jobtab access).
+        // c:1731-1733 — `if (jn->stat & STAT_SUPERJOB) if (handle_sub(jn - jobtab, 1)) break;`
+        // NOT PORTED: handle_sub() is keyed by jobtab index and this fn
+        // receives a bare `&mut job` with no index (see c:1683 above).
         // Re-block before next suspend so SIGCHLD pump isn't lost.
         crate::ported::signals_h::child_block();
     }
@@ -2935,9 +2953,9 @@ pub static hackspace: std::sync::atomic::AtomicUsize = std::sync::atomic::Atomic
 /// `MAXJOBS_ALLOC` empty `job` slots so `expandjobtab` doesn't
 /// need to grow until index 50+ is reached.
 ///
-/// `jobs -Z` (argv overwrite) is not yet ported; the argv/envp
-/// scan from C lines 2185-2210 is omitted — that's a separate
-/// init.rs concern when `setproctitle()` lands.
+/// The `-Z` hackspace scan (c:2185-2210) is performed below and stored
+/// in `hackspace`; `bin_fg -Z` renames the process via prctl /
+/// pthread_setname_np instead of overwriting argv.
 /// C body (c:2168-2210): allocates the `jobtab[]` array sized to
 /// MAXJOBS_ALLOC entries via `zalloc`, zero-fills via `memset`,
 /// then (non-HAVE_SETPROCTITLE) walks argv + envp to compute the
@@ -2959,13 +2977,10 @@ pub static hackspace: std::sync::atomic::AtomicUsize = std::sync::atomic::Atomic
 pub fn init_jobs(argv: &[String], envp: &[String]) -> JobTable {
     // c:2164
     let table = JobTable::new(); // c:2164 zalloc
-                                 // c:2185-2210 — `-Z` hackspace scan: locate contiguous argv+envp
-                                 // space. Static-link path: we don't yet keep `hackzero` /
-                                 // `hackspace` globals (the bin_fg -Z arm uses prctl directly on
-                                 // Linux + pthread_setname_np on macOS, both bypassing the argv
-                                 // overwrite trick). The scan computes the byte-distance only;
-                                 // record it in `hackspace` so a future setproctitle fallback
-                                 // can read it.
+                                 // c:2185-2210 — `-Z` hackspace scan: sum of the argv+envp
+                                 // string bytes, stored in `hackspace`. The bin_fg -Z arm
+                                 // renames via prctl / pthread_setname_np and does not
+                                 // consume it.
     if !argv.is_empty() {
         // c:2187 hackzero = *argv
         let zero = argv[0].as_str();
@@ -3099,13 +3114,10 @@ pub fn addbgstatus(pid: i32, status_val: i32) {
 ///     other platforms emit a warning
 ///   ✓ no-job-control refusal for fg/bg under !jobbing (c:2461-2465)
 ///   ✓ jobs -l/-p/-d listing-format selection (c:2454-2459)
-///   ⚠ jobspec parsing + per-job dispatch (c:2467-2733) DEFERRED —
-///     depends on getjob (parses %N/%?str specifiers), the global
-///     jobtab + oldjobtab, deletejob/printjob/makerunning, lastval2,
-///     errflag, signal queueing for fg's tcsetpgrp dance, and the
-///     STAT_* / STAT_SUPERJOB / STAT_DISOWN flag tracking. None of
-///     those are fully ported yet; structural shape preserved so the
-///     C signature lands and future port work can fill the body.
+///   ✓ jobspec parsing + per-job dispatch (c:2467-2733) — getjob
+///     specifier lookup, the fg/bg/jobs/wait/disown arms, makerunning,
+///     deletejob/printjob, STAT_SUPERJOB/STAT_DISOWN handling and the
+///     lastval2 / tcsetpgrp handling are all in the body below.
 pub fn bin_fg(
     name: &str,
     argv: &[String], // c:2421

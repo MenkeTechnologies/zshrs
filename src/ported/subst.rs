@@ -5221,9 +5221,9 @@ pub fn paramsubst(
         // c:1708 — `char *val = NULL, **aval = NULL;` (handled via
         // local `value: String` / `split_parts: Option<Vec<String>>`).
 
-        // c:1713-1714 — `struct value vbuf; Value v = NULL;` (vbuf/v
-        // fetchvalue path not yet wired; reads route through paramtab
-        // directly until LinkList rewrite lands).
+        // c:1713-1714 — `struct value vbuf; Value v = NULL;`. No local
+        // Value is held; each c:2800 fetchvalue site below resolves the
+        // parameter through paramtab on demand.
 
         // c:1720 — `int flags = 0;` SUB_* match flag bitmask.
         let mut sub_flags_bits: i32 = 0; // c:1720
@@ -20390,15 +20390,12 @@ pub fn paramsubst(
                         None => {
                             if match_only {
                                 // No match under SUB_MATCH: empty result.
-                                // c:glob.c:2895 — getmatch SUB_MATCH no-match
-                                // arm clears *sp to "". Note: C's getmatcharr
-                                // additionally FILTERS out such empties from
-                                // arrays (c:2735-2738 while-igetmatch loop) —
-                                // not yet ported because doing so breaks `(@M)`
-                                // subscript shape parity (zsh keeps 3 elements
-                                // for `("${(@M)arr[@]#foo}")`, drops to 2 for
-                                // `(${(M)arr#foo})`). Both need distinct
-                                // codepaths to differentiate.
+                                // c:glob.c:3546-3547 — igetmatch's no-match arm
+                                // munges to "" and returns 1 (0 only under SUB_RETFAIL), so
+                                // getmatcharr (c:2735-2738) keeps the empty element: zsh
+                                // keeps 3 elements for `("${(@M)arr[@]#foo}")`; the unquoted
+                                // form drops the empties later through ordinary empty-word
+                                // removal.
                                 String::new()
                             } else {
                                 val.to_string()
@@ -24462,13 +24459,8 @@ pub fn paramsubst(
         // elements before splitting them, and `${(zq)arr}` split before
         // quoting (`b ar` → two words instead of the one word `b\ ar`).
         // (z)/(Z:cCn:) — shell-tokenize the value into a list of
-        // words. Direct port of subst.c:2439 LEXFLAGS_ACTIVE +
-        // sub-flags. Simplified port: use whitespace splitting
-        // that respects single/double-bslashquote spans and backslash
-        // escapes, plus optional comment handling. The full lexer
-        // reentry is deferred — this covers the common idioms
-        // \${(z)cmdline} (split a command into words) and
-        // \${(Zn)multiline} (newlines act like spaces).
+        // words, with the LEXFLAGS_* sub-flags parsed at c:2206-2237. The
+        // split below runs the real lexer through bufferwords.
         // c:Src/subst.c:3906 — `if (shsplit)`, i.e. ANY bit, not just
         // LEXFLAGS_ACTIVE. C's `(Z)` arm (c:2206-2237) only ORs the
         // sub-flag bits and never sets LEXFLAGS_ACTIVE, so `${(Z::)v}`
@@ -30328,9 +30320,7 @@ mod tests {
     // Each assertion cites the exact C source line that defines the
     // behavior so subst_port stays anchored to upstream zsh.
     //
-    // Tests that currently FAIL because subst_port's port diverges
-    // from the C source are tagged `#[ignore]` with a TODO; removing
-    // the `ignore` is the unit-of-work for fixing each bug.
+    // A failing test here means subst_port diverges from the C source.
     // ─────────────────────────────────────────────────────────────────
 
     // ─── casemodify (Src/hist.c:2192-2253) ──────────────────────────
@@ -30596,9 +30586,7 @@ mod tests {
     //   ~/.zinit/bin/zinit.zsh
     //   ~/.zinit/plugins/romkatv---powerlevel10k/internal/p10k.zsh
     // Each truth value was verified live via `/bin/zsh -f -c '<expr>'`
-    // before being written here. Tests that subst_port can't yet
-    // satisfy are tagged `#[ignore]` with a TODO citing which
-    // C-source feature is missing.
+    // before being written here.
     // ─────────────────────────────────────────────────────────────────
 
     // ─── zinit.zsh:32 — ${ZERO:-${${0:#$ZSH_ARGZERO}:-${(%):-%N}}} ─
@@ -31741,10 +31729,8 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     // ── ${arr[@]:#pat} — filter, keep elements NOT matching pat ─────
-    // KNOWN ZSHRS BUG (surfaced 2026-05-23): the :#pat filter on arrays
-    // is not implemented — zshrs returns the unfiltered array. Real zsh
-    // 5.9 removes matching elements. Tests pinned to zsh; #[ignore]'d
-    // so CI stays green. Remove the #[ignore] once the filter lands.
+    // The :#pat filter on arrays removes matching elements. Tests pinned to
+    // zsh 5.9 output.
 
     /// `${mix[@]:#bar}` where mix=(foo bar baz qux) → `foo baz qux`
     /// (the matched element "bar" is REMOVED, not kept).
@@ -31902,8 +31888,8 @@ mod tests {
     /// `${(oj/-/)arr}` in real zsh 5.9 returns `charlie-alpha-bravo`
     /// (joined with `-` but NOT sorted) — flag order/context defeats
     /// the sort. If zshrs returns the sorted form, that's a divergence.
-    /// Pin zsh's observed behavior; mark #[ignore] since the behavior
-    /// itself is counter-intuitive and we want to flag it explicitly.
+    /// Pin zsh's observed behavior; it is counter-intuitive, so the
+    /// expectation is stated explicitly.
     #[test]
     fn paramsubst_arr_compound_oj_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
@@ -32463,10 +32449,8 @@ mod tests {
     // zsh test corpus pin tests — Test/D04parameter.ztst:1249-2358.
     // Anchored to zsh's documented `Parameters associated with
     // backreferences` + `(#m) flag` test cases. Each test cites the
-    // ztst line range it pins. Tests that fail under current Rust
-    // port get `#[ignore = "ZSHRS BUG: ..."]` per established
-    // practice; the assertion + expected output stay in tree so
-    // when the Rust port catches up the marker can be flipped.
+    // ztst line range it pins. A failing test marks a divergence of the Rust
+    // port; the assertion + expected output stay in tree.
     // ═══════════════════════════════════════════════════════════════════
 
     /// `Test/D04parameter.ztst:1249-1258` — `${string%%(#b)(match)*}`

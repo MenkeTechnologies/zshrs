@@ -4228,13 +4228,60 @@ pub fn complistmatches(
 pub static ONLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:1992
 
 /// Port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)` from Src/Zle/complist.c:2127.
-pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {
+/// `tabp` / `grp` are indices into `mtab` / `mgtab` (C's pointers into
+/// those arrays); `grp` is `None` for C's NULL. Moves `mcol` to the
+/// nearest unmarked, non-empty cell of the row; returns 1 when the row
+/// has none.
+pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: Option<&mut i32>) -> i32 {
     // c:2127
-    // C body c:2129-2170 — clamps mcol to nearest valid column when
-    //                      moving across rows of variable-width matches.
-    //                      Without the mtab[][] matrix we just clamp
-    //                      to a non-negative column.
-    wish.max(0)
+    let mcols = MCOLS.load(Ordering::SeqCst);
+    let mcol = MCOL.load(Ordering::SeqCst);
+    // `!matchtab[i] || mmarked(matchtab[i])` — c:1766/1822 mark exactly the
+    // CMF_DUMMY cells; an empty cell reads as NULL.
+    let skipcell = |i: i32| -> bool {
+        if i < 0 {
+            return true;
+        }
+        match MTAB.lock().unwrap().get(i as usize).cloned().flatten() {
+            None => true,
+            Some(a) => (a.flags & crate::ported::zle::comp_h::CMF_DUMMY) != 0,
+        }
+    };
+    let matchtab = *tabp - mcol; // c:2131 matchtab -= mcol
+
+    let mut p = wish; // c:2133
+    while p >= 0 && skipcell(matchtab + p) {
+        p -= 1;
+    }
+    let mut n = wish; // c:2134
+    while n < mcols && skipcell(matchtab + n) {
+        n += 1;
+    }
+    if n == mcols {
+        n = -1; // c:2135-2136
+    }
+
+    let c;
+    if p < 0 {
+        // c:2138
+        if n < 0 {
+            return 1; // c:2139-2140
+        }
+        c = n; // c:2141
+    } else if n < 0 {
+        c = p; // c:2143
+    } else {
+        c = if (mcol - p) < (n - mcol) { p } else { n }; // c:2145
+    }
+
+    *tabp = matchtab + c; // c:2147
+    if let Some(g) = grp {
+        *g = *g + c - mcol; // c:2149
+    }
+
+    MCOL.store(c, Ordering::SeqCst); // c:2151
+
+    0 // c:2153
 }
 
 /// Port of `struct menustack` from `Src/Zle/complist.c:2159`. Saved
@@ -4493,13 +4540,19 @@ pub fn setmstatus(
 }
 
 /// Port of `msearchpush(Cmatch **p, int back)` from Src/Zle/complist.c:2266.
-/// WARNING: param names don't match C — Rust=() vs C=(p, back)
-pub fn msearchpush() -> i32 {
+/// `p` is the index of the current cell in `mtab`.
+pub fn msearchpush(p: i32, back: i32) {
     // c:2266
-    // C body c:2268-2280 — pushes current mline/mcol/msearchstr onto
-    //                      msearchstack so msearchpop can restore.
-    //                      No msearchstack substrate: no-op.
-    0
+    // c:2268-2278 — push the current search string, line, column,
+    // direction, state and cell onto `msearchstack`.
+    MSEARCHSTACK.lock().unwrap().push(menusearch {
+        str: MSEARCHSTR.lock().unwrap().clone(),   // c:2272
+        line: MLINE.load(Ordering::SeqCst),        // c:2273
+        col: MCOL.load(Ordering::SeqCst),          // c:2274
+        back,                                      // c:2275
+        state: MSEARCHSTATE.load(Ordering::SeqCst), // c:2276
+        ptr: p.max(0) as usize,                    // c:2277
+    });
 }
 
 /// Direct port of `int *msearchpop(int *backp)` from
@@ -4525,146 +4578,107 @@ pub fn msearchpop() -> i32 {
     popped.back
 }
 
-/// Port of `msearch(Cmatch **ptr, char *ins, int back, int rep, int *wrapp)` from Src/Zle/complist.c:2302.
-/// WARNING: param names don't match C — Rust=() vs C=(ptr, ins, back, rep, wrapp)
-/// Port of `static Cmatch *msearch(Cmatch **ptr, char *ins, int back,
+/// Port of `static Cmatch **msearch(Cmatch **ptr, char *ins, int back,
 /// int rep, int *wrapp)` from `Src/Zle/complist.c:2302`. Walks the
 /// `mtab[][]` matrix forward (or backward when `back`) from the
 /// current cursor, looking for a Cmatch whose display string
-/// contains `msearchstr`. Returns the matrix index of the match,
-/// wrapping around when the end is reached.
-/// ```c
-/// static Cmatch *
-/// msearch(Cmatch **ptr, char *ins, int back, int rep, int *wrapp)
-/// {
-///     Cmatch **p, *l = NULL, m;
-///     int x = mcol, y = mline;
-///     int ex, ey, wrap = 0, owrap = (msearchstate & MS_WRAPPED);
-///     msearchpush(ptr, back);
-///     if (ins) msearchstr = dyncat(msearchstr, ins);
-///     if (back) { ex = mcols - 1; ey = -1; }
-///     else { ex = 0; ey = listdat.nlines; }
-///     p = mtab + (mline * mcols) + mcol;
-///     if (rep) l = *p;
-///     while (1) {
-///         if (!rep && mtunmark(*p) && *p != l) {
-///             l = *p; m = *mtunmark(*p);
-///             if (strstr((m->disp ? m->disp : m->str), msearchstr)) {
-///                 mcol = x; mline = y; return p;
-///             }
-///         }
-///         rep = 0;
-///         /* advance x/y per back direction */
-///         if (x == ex && y == ey) {
-///             /* wrap once; fail on second exhaustion */
-///             if (wrap) { msearchstate = MS_FAILED | owrap; break; }
-///             msearchstate |= MS_WRAPPED; wrap = 1; *wrapp = 1;
-///         }
-///     }
-///     return NULL;
-/// }
-/// ```
-/// Returns the linear index of the matched cell in `mtab`, or `-1`
-/// on failure. Param shape adapted from `Cmatch **` out-pointer to
-/// the canonical Rust Result-like discriminant.
-pub fn msearch() -> i32 {
+/// contains `msearchstr`. Returns the `mtab` index of the match
+/// (C's `Cmatch **`), or -1 for NULL, wrapping around once when the
+/// end is reached.
+pub fn msearch(ptr: i32, ins: Option<&str>, back: i32, rep: i32, wrapp: &mut i32) -> i32 {
     // c:2302
-
-    let mut x = MCOL.load(Ordering::SeqCst);
-    let mut y = MLINE.load(Ordering::SeqCst);
     let mcols = MCOLS.load(Ordering::SeqCst);
-    let listdat_nlines = listdat
+    let mut x = MCOL.load(Ordering::SeqCst); // c:2305
+    let mut y = MLINE.load(Ordering::SeqCst); // c:2305
+    let mut wrap = 0i32; // c:2306
+    let owrap = MSEARCHSTATE.load(Ordering::SeqCst) & MS_WRAPPED; // c:2306
+    let nlines = listdat
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
-    let mut wrap = 0i32;
-    let owrap = MSEARCHSTATE.load(Ordering::SeqCst) & MS_WRAPPED; // c:2306
-
-    // c:2308 — msearchpush(ptr, back). Stack management deferred.
-
-    let back = 0i32; // c:2305 default forward
-    let (mut ex, mut ey) = if back != 0 {
-        // c:2312
-        (mcols - 1, -1i32)
-    } else {
-        // c:2315
-        (0i32, listdat_nlines)
+    // `mtab[i]` — out-of-range cells read as NULL.
+    let cell = |i: i32| -> Option<Cmatch> {
+        if i < 0 {
+            return None;
+        }
+        MTAB.lock().unwrap().get(i as usize).cloned().flatten()
     };
 
-    let mut p = (y * mcols + x).max(0) as usize; // c:2319
+    msearchpush(ptr, back); // c:2308
 
+    if let Some(s) = ins {
+        MSEARCHSTR.lock().unwrap().push_str(s); // c:2310 dyncat
+    }
+    let (mut ex, mut ey) = if back != 0 {
+        (mcols - 1, -1) // c:2312-2313
+    } else {
+        (0, nlines) // c:2315-2316
+    };
+    let mut p = ptr; // c:2318 p = mtab + (mline * mcols) + mcol
+    let mut l_gnum: Option<i32> = None; // c:2303 l = NULL
+    let mut rep = rep != 0;
+    if rep {
+        l_gnum = cell(p).map(|c| c.gnum); // c:2320 l = *p
+    }
     let needle = MSEARCHSTR.lock().unwrap().clone();
-    let mtab_snapshot: Vec<Option<Cmatch>> = MTAB.lock().unwrap().clone();
-
     loop {
         // c:2322
-        // c:2323-2333 — probe current cell
-        if let Some(Some(m)) = mtab_snapshot.get(p) {
-            // c:2323
-            let hay = m
-                .disp
-                .as_deref()
-                .unwrap_or_else(|| m.str.as_deref().unwrap_or(""));
-            if !needle.is_empty() && hay.contains(needle.as_str()) {
-                // c:2327
-                MCOL.store(x, Ordering::SeqCst); // c:2328
-                MLINE.store(y, Ordering::SeqCst); // c:2329
-                return p as i32; // c:2331
+        if !rep {
+            if let Some(m) = cell(p) {
+                // c:2323 mtunmark(*p) && *p != l
+                if l_gnum != Some(m.gnum) {
+                    l_gnum = Some(m.gnum); // c:2324
+                    let hay = m
+                        .disp
+                        .as_deref()
+                        .unwrap_or_else(|| m.str.as_deref().unwrap_or("")); // c:2327
+                    if hay.contains(needle.as_str()) {
+                        MCOL.store(x, Ordering::SeqCst); // c:2328
+                        MLINE.store(y, Ordering::SeqCst); // c:2329
+                        return p; // c:2331
+                    }
+                }
             }
         }
-
-        // c:2336-2348 — advance.
+        rep = false; // c:2336
         if back != 0 {
-            if p == 0 {
-                p = mtab_snapshot.len().saturating_sub(1);
-            } else {
-                p -= 1;
-            }
+            // c:2338-2342
+            p -= 1;
             x -= 1;
             if x < 0 {
-                // c:2338
-                x = mcols - 1; // c:2339
-                y -= 1; // c:2340
+                x = mcols - 1;
+                y -= 1;
             }
         } else {
-            p += 1; // c:2343
+            // c:2343-2348
+            p += 1;
             x += 1;
             if x == mcols {
-                // c:2344
-                x = 0; // c:2345
-                y += 1; // c:2346
+                x = 0;
+                y += 1;
             }
         }
-
-        // c:2349 — `if (x == ex && y == ey)` — hit boundary.
         if x == ex && y == ey {
-            // c:2349
-            // c:2351-2358 — restart from the opposite corner.
+            // c:2350
             if back != 0 {
-                // c:2351
-                x = mcols - 1; // c:2352
-                y = listdat_nlines - 1; // c:2353
-                p = (y * mcols + x).max(0) as usize; // c:2354
+                x = mcols - 1;
+                y = nlines - 1;
+                p = y * mcols + x; // c:2352-2354
             } else {
                 x = 0;
-                y = 0; // c:2356
-                p = 0; // c:2357
+                y = 0;
+                p = 0; // c:2356-2357
             }
             ex = MCOL.load(Ordering::SeqCst); // c:2359
             ey = MLINE.load(Ordering::SeqCst); // c:2360
-
-            // c:2362-2365 — second exhaustion: fail.
             if wrap != 0 || (x == ex && y == ey) {
                 // c:2362
                 MSEARCHSTATE.store(MS_FAILED | owrap, Ordering::SeqCst); // c:2363
                 break; // c:2364
             }
-
             MSEARCHSTATE.fetch_or(MS_WRAPPED, Ordering::SeqCst); // c:2367
             wrap = 1; // c:2368
-        }
-        if p >= mtab_snapshot.len() {
-            break;
+            *wrapp = 1; // c:2369
         }
     }
     -1 // c:2372 NULL
@@ -5209,39 +5223,12 @@ pub fn domenuselect(
             _ => false,
         }
     };
-    // Direct port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)`
-    // (complist.c:2127) — inlined so the mtab-walking body runs (the
-    // module-level adjust_mcol is a clamp-only stub). Mutates `mcol` and
-    // returns `(new_p, ret)` where ret==1 means "row is empty".
+    // `adjust_mcol(wish, &p, NULL)` (complist.c:2127) adapted to
+    // `(new_p, ret)`; ret==1 means "row is empty".
     let adjust_mcol = |wish: i32, pin: i32| -> (i32, i32) {
-        let mc = MCOLS.load(Ordering::SeqCst);
-        let mcol = MCOL.load(Ordering::SeqCst);
-        let base = pin - mcol; // matchtab -= mcol
-        let mut pp = wish;
-        while pp >= 0 && skipcell(base + pp) {
-            pp -= 1;
-        } // c:2133
-        let mut n = wish;
-        while n < mc && skipcell(base + n) {
-            n += 1;
-        } // c:2134
-        if n == mc {
-            n = -1;
-        } // c:2135-2136
-        let c;
-        if pp < 0 {
-            // c:2138
-            if n < 0 {
-                return (pin, 1);
-            } // c:2139-2140
-            c = n; // c:2141
-        } else if n < 0 {
-            c = pp; // c:2143
-        } else {
-            c = if (mcol - pp) < (n - mcol) { pp } else { n }; // c:2145
-        }
-        MCOL.store(c, Ordering::SeqCst); // c:2151
-        (base + c, 0) // c:2147 *tabp = matchtab + c
+        let mut tab = pin;
+        let ret = crate::ported::zle::complist::adjust_mcol(wish, &mut tab, None);
+        (tab, ret)
     };
     // minfo.cur->gnum helper.
     let cur_gnum = || -> i32 {
@@ -5290,106 +5277,12 @@ pub fn domenuselect(
             push_line_to_editor();
         }
     };
-    // Direct port of `msearch(Cmatch **ptr, char *ins, int back, int rep,
-    // int *wrapp)` (complist.c:2302), inlined so the `ins`/`back`/`rep`
-    // parameters that the module-level `msearch()` stub drops are honoured.
-    // Returns `(Some(index)|None, wrap)`.
+    // `msearch(ptr, ins, back, rep, &wrap)` (complist.c:2302) adapted to
+    // `(Option<index>, wrap)`.
     let msearch_fn = |pin: i32, ins: Option<&str>, back: bool, rep0: bool| -> (Option<i32>, i32) {
-        let mc = MCOLS.load(Ordering::SeqCst);
-        let mut x = MCOL.load(Ordering::SeqCst); // c:2305
-        let mut y = MLINE.load(Ordering::SeqCst);
         let mut wrap = 0i32;
-        let owrap = MSEARCHSTATE.load(Ordering::SeqCst) & MS_WRAPPED; // c:2306
-                                                                      // c:2308 msearchpush(ptr, back).
-        {
-            let mut st = MSEARCHSTACK.lock().unwrap();
-            st.push(menusearch {
-                str: MSEARCHSTR.lock().unwrap().clone(),
-                line: MLINE.load(Ordering::SeqCst),
-                col: MCOL.load(Ordering::SeqCst),
-                back: if back { 1 } else { 0 },
-                state: MSEARCHSTATE.load(Ordering::SeqCst),
-                ptr: pin.max(0) as usize,
-            });
-        }
-        if let Some(s) = ins {
-            MSEARCHSTR.lock().unwrap().push_str(s); // c:2310 dyncat
-        }
-        let nlines = listdat
-            .get()
-            .and_then(|m| m.lock().ok().map(|g| g.nlines))
-            .unwrap_or(0);
-        let (mut ex, mut ey) = if back {
-            (mc - 1, -1) // c:2312-2313
-        } else {
-            (0, nlines) // c:2315-2316
-        };
-        let mut pp = pin; // c:2318 p = mtab + mline*mcols + mcol
-        let mut l_gnum: Option<i32> = None;
-        let mut rep = rep0;
-        if rep {
-            l_gnum = cell(pp).map(|c| c.gnum); // c:2320
-        }
-        let needle = MSEARCHSTR.lock().unwrap().clone();
-        loop {
-            // c:2323-2333
-            if !rep {
-                if let Some(m) = cell(pp) {
-                    if l_gnum != Some(m.gnum) {
-                        l_gnum = Some(m.gnum);
-                        let hay = m
-                            .disp
-                            .as_deref()
-                            .unwrap_or_else(|| m.str.as_deref().unwrap_or(""));
-                        if hay.contains(needle.as_str()) {
-                            MCOL.store(x, Ordering::SeqCst); // c:2328
-                            MLINE.store(y, Ordering::SeqCst); // c:2329
-                            return (Some(pp), wrap); // c:2331
-                        }
-                    }
-                }
-            }
-            rep = false; // c:2336
-            if back {
-                // c:2338-2342
-                pp -= 1;
-                x -= 1;
-                if x < 0 {
-                    x = mc - 1;
-                    y -= 1;
-                }
-            } else {
-                // c:2343-2348
-                pp += 1;
-                x += 1;
-                if x == mc {
-                    x = 0;
-                    y += 1;
-                }
-            }
-            if x == ex && y == ey {
-                // c:2350
-                if back {
-                    x = mc - 1;
-                    y = nlines - 1;
-                    pp = y * mc + x; // c:2352-2354
-                } else {
-                    x = 0;
-                    y = 0;
-                    pp = 0; // c:2356-2357
-                }
-                ex = MCOL.load(Ordering::SeqCst); // c:2359
-                ey = MLINE.load(Ordering::SeqCst); // c:2360
-                if wrap != 0 || (x == ex && y == ey) {
-                    // c:2362
-                    MSEARCHSTATE.store(MS_FAILED | owrap, Ordering::SeqCst); // c:2363
-                    break;
-                }
-                MSEARCHSTATE.fetch_or(MS_WRAPPED, Ordering::SeqCst); // c:2367
-                wrap = 1; // c:2368
-            }
-        }
-        (None, wrap) // c:2372
+        let r = msearch(pin, ins, back as i32, rep0 as i32, &mut wrap);
+        ((r >= 0).then_some(r), wrap)
     };
 
     NOSELECT.store(1, Ordering::SeqCst); // c:2471 `noselect = 1;`
@@ -8475,11 +8368,24 @@ mod tests {
         let _: i32 = complistmatches(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
-    /// c:2647 — `msearchpush` returns i32.
+    /// c:2266 — `msearchpush` records the current search state and
+    /// `msearchpop` restores it, returning the saved direction.
     #[test]
-    fn msearchpush_returns_i32_type() {
+    fn msearchpush_then_pop_restores_state() {
         let _g = crate::test_util::global_state_lock();
-        let _: i32 = msearchpush();
+        MSEARCHSTACK.lock().unwrap().clear();
+        *MSEARCHSTR.lock().unwrap() = "ab".to_string();
+        MLINE.store(3, Ordering::SeqCst);
+        MCOL.store(4, Ordering::SeqCst);
+        msearchpush(7, 1);
+        *MSEARCHSTR.lock().unwrap() = "abc".to_string();
+        MLINE.store(0, Ordering::SeqCst);
+        MCOL.store(0, Ordering::SeqCst);
+        assert_eq!(msearchpop(), 1);
+        assert_eq!(*MSEARCHSTR.lock().unwrap(), "ab");
+        assert_eq!(MLINE.load(Ordering::SeqCst), 3);
+        assert_eq!(MCOL.load(Ordering::SeqCst), 4);
+        MSEARCHSTACK.lock().unwrap().clear();
     }
 
     /// c:2662 — `msearchpop` returns i32.

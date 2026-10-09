@@ -387,7 +387,7 @@ pub fn execbuiltin(
         // c:264
         // c:265 — DPUTS(1, "Missing builtin detected too late")
         DPUTS!(true, "Missing builtin detected too late"); // c:265
-                                                           // c:266 — deletebuiltin(bn->node.nam) — not yet ported here.
+        crate::ported::module::deletebuiltin(&name); // c:266
         return 1; // c:267
     }
 
@@ -3526,7 +3526,6 @@ pub fn fcsubs(sp: &mut String, sub: &[(String, String)]) -> i32 {
 /// Rust signature: takes the output writer as a closure so callers
 /// can route to stdout, a FILE*, or an in-memory buffer (the
 /// `is_command` caller in `bin_fc` collects to a heredoc string).
-/// Was a 5-line stub returning 0; now actually emits the range.
 #[allow(clippy::too_many_arguments)]
 /// Port of `fclist()` from `Src/builtin.c:1750`. — C decl `fclist(FILE *f, Options ops, zlong first, zlong last,`
 pub fn fclist(
@@ -3951,7 +3950,9 @@ pub fn typeset_single(
         {
             // c:2034 — pm = resolve_nameref(pm)
             //          pname = pm->node.nam (when resolved)
-            // resolve_nameref not yet ported; skip the rewrite.
+            // The chain walk (`resolve_nameref_name`) and the `pname`
+            // rewrite already ran in bin_typeset's per-arg loop before
+            // this fn is entered, so only the c:2036-2048 checks remain.
             let unresolved_flags = pm_r.node.flags as u32;
             let extra_on_mask = !(PM_NAMEREF | PM_LOCAL | PM_READONLY) as i32;
             if (pm_flags & PM_NAMEREF) != 0
@@ -5800,10 +5801,8 @@ pub fn bin_typeset(
             tied_name_count += 1;
             if tied_name_count > 2 {
                 // Separator / extra args — don't run name
-                // validation or createparam against them. Full
-                // -T body (createparam SCALAR_TIED + array tie
-                // backref) is deferred per the comment above on
-                // the typeset_single dispatch.
+                // validation or createparam against them. The scalar/array
+                // pair itself was installed by the `tied_mode` block above.
                 continue;
             }
         }
@@ -12997,9 +12996,19 @@ pub fn bin_print(
     let dest_fd: Option<fs::File> = if OPT_HASARG(ops, b'u') {
         // c:4826
         let argptr = OPT_ARG(ops, b'u').unwrap_or("");
-        // c:4827-4828 — undocumented `-up` aliases to coprocout.
-        // Rust skip: coprocout isn't wired yet; document the gap.
-        match argptr.parse::<i32>() {
+        // c:4827-4835 — undocumented `-up` aliases to coprocout.
+        let parsed: Result<i32, ()> = if argptr == "p" {
+            let cout =
+                crate::ported::modules::clone::coprocout.load(std::sync::atomic::Ordering::Relaxed);
+            if cout < 0 {
+                zwarnnam(name, "-p: no coprocess"); // c:4830
+                return 1; // c:4831
+            }
+            Ok(cout) // c:4828
+        } else {
+            argptr.parse::<i32>().map_err(|_| ())
+        };
+        match parsed {
             // c:4835 zstrtol
             Ok(fdarg) => {
                 // DELIBERATE DEVIATION from c:4843-4851, which has no
@@ -13029,7 +13038,7 @@ pub fn bin_print(
                 // one of 0/1/2 (c:Src/init.c:1900) and is unaffected, and
                 // anything past `max_zsh_fd` is left alone per
                 // c:Src/exec.c:3886-3891.
-                let shell_owned = fdarg > 9 && {
+                let shell_owned = argptr != "p" && fdarg > 9 && {
                     let max_fd = crate::ported::utils::MAX_ZSH_FD
                         .load(std::sync::atomic::Ordering::Relaxed);
                     fdarg <= max_fd && {
@@ -13791,7 +13800,25 @@ pub fn bin_print(
                                                                        // ring here so the gethistent lookup in fc/history sees it.
                                                                        // Without this, `print -s X; fc -l` reported "no such event: 1"
                                                                        // even though the histtab had the entry.
-        let ent = crate::ported::hist::make_histent(event_id, body.clone());
+        let mut ent = crate::ported::hist::make_histent(event_id, body.clone());
+        // c:5032-5058 — record the word boundaries so `!!`, `!$` and `!:N`
+        // can pick words out of the entry. `-S` splits its single argument
+        // with `histsplitwords`; `-s` takes each argument as one word.
+        let spans: Vec<(usize, usize)> = if OPT_ISSET(ops, b'S') && !processed_args.is_empty() {
+            crate::ported::hist::histsplitwords(&processed_args[0], true) // c:5049
+        } else {
+            let mut nlen = 0usize;
+            processed_args
+                .iter()
+                .map(|arg| {
+                    let span = (nlen, nlen + arg.len()); // c:5060-5062
+                    nlen += arg.len() + 1;
+                    span
+                })
+                .collect()
+        };
+        ent.words = spans.iter().flat_map(|&(b, e)| [b as i16, e as i16]).collect();
+        ent.nwords = spans.len() as i32; // c:5054, c:5058
         if let Ok(mut ring) = crate::ported::hist::hist_ring.lock() {
             ring.insert(0, ent);
             crate::ported::hist::histlinect.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -16263,7 +16290,7 @@ pub fn bin_read(
         if zsh_mode {
             return crate::ported::init::fallback_compctlread(name);
         }
-        return compctlread(name, &args[argi..]);
+        return crate::ported::zle::compctl::compctlread(name, &args[argi..], ops, &reply);
     }
 
     // Optional explicit input FD via -u, or coprocin via -p. When

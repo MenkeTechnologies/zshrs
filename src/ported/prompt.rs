@@ -177,7 +177,9 @@ pub(crate) mod prompt_tls {
 
 /// `struct buf_vars` from `Src/prompt.c:76-121`. `dontcount` is C `%{`/`%}`
 /// nesting; `in_escape` holds readline `\x01`/`\x02` glue only.
-/// `last` pointer / full trunc `bp1` realloc: TODO.
+/// C's `last` pointer is the Rust call stack: a nested expansion builds its
+/// own `buf_vars`. `bp1` is an index into `buf`, so growing the buffer needs
+/// no pointer fix-up.
 #[allow(non_camel_case_types)]
 pub struct buf_vars {
     // c:Src/prompt.c:76
@@ -390,8 +392,9 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
 /// wrapped in Inpar/Outpar and prepended to the output when the
 /// prompt source is non-empty (c:226-230). C's `rs`/`Rs` are NOT
 /// offset out-params — they are INPUT strings for the `%r`/`%R`
-/// escapes of the spelling-correction prompt (c:218-219, 881-888),
-/// unported here and unrepresented in this signature. The two
+/// escapes of the spelling-correction prompt (c:218-219, 881-888);
+/// they reach `expand_prompt` through `PROMPT_RS_STRINGS` because this
+/// signature has no slot for them. The two
 /// trailing tuple slots have no C counterpart and are always None
 /// (see body). Rust returns `(expanded, None, None)`.
 /// WARNING: signature diverges from C — Rust=(s, ns, _marker) drops
@@ -458,9 +461,8 @@ pub fn promptexpand(
     // trailing tuple slots therefore have no C counterpart to compute
     // and are reported as None (the prior `s.find("%E")` values were a
     // fabrication with no basis in the spec and were ignored by every
-    // caller). Faithfully wiring %r/%R would require threading rstring/
-    // Rstring into expand_prompt + putpromptchar, which is outside the
-    // "edit only promptexpand" scope of this change.
+    // caller). `%r` / `%R` are fed through `PROMPT_RS_STRINGS` (see
+    // expand_prompt).
     (expanded, None, None)
 }
 
@@ -509,8 +511,8 @@ pub fn zattrescape(attrs: zattr) -> String {
 /// CITATION NOTE: despite the name, this is NOT a port of C
 /// `parsehighlight` (`Src/prompt.c:285`) — that function is the
 /// `.zle.hlgroups` group RESOLVER (it looks up a named highlight group in
-/// the `.zle.hlgroups` hash and delegates to `match_highlight`). It is
-/// unported, blocked on the `.zle.hlgroups` hash-parameter substrate. This
+/// the `.zle.hlgroups` hash and delegates to `match_highlight`); its
+/// logic is inlined in the `hl=` arm of `match_highlight`. This
 /// Rust function actually implements the attribute-parsing core of C
 /// `match_highlight` (`c:2031`). It also drops the explicit `setmask`
 /// (the caller derives one), 24-bit `#rrggbb` colours, faint/italic, and
@@ -596,15 +598,41 @@ pub fn parsecolorchar(bv: &mut buf_vars, arg: zattr, is_fg: bool) -> zattr {
             // which is the *previous* segment's colour — the observed
             // colour bleed across p10k segments.
             //
-            // C additionally runs `promptexpand()` over the content
-            // (c:334) so `%F{%vNAME}` can resolve; that round-trip is
-            // still unported — a `%` inside the braces is passed through
-            // to `match_colour` verbatim and fails the same way C would
-            // fail on an unexpandable name.
+            // c:325-336 — the content is run through `promptexpand()` first
+            // so `%F{%vNAME}` can resolve, with PROMPTPERCENT on and
+            // PROMPTSUBST / PROMPTBANG off. Content without a `%` expands to
+            // itself under those options, so the nested expansion is skipped.
+            let content = bv.fm[bv.fm_pos..ep].to_string();
+            let col = if content.contains('%') {
+                let ops = crate::ported::options::opt_state_get("promptsubst"); // c:327
+                let opb = crate::ported::options::opt_state_get("promptbang");
+                let opp = crate::ported::options::opt_state_get("promptpercent");
+                crate::ported::options::opt_state_set("promptpercent", true); // c:329
+                crate::ported::options::opt_state_set("promptsubst", false);
+                crate::ported::options::opt_state_set("promptbang", false);
+                // The nested expansion resets the SGR attribute globals on
+                // entry (see expand_prompt); keep the enclosing prompt's.
+                let cur = *current_attrs_lock().lock().expect("current_attrs poisoned");
+                let pend = *pending_attrs_lock().lock().expect("pending_attrs poisoned");
+                let (col, _, _) = promptexpand(&content, 0, None); // c:334
+                *current_attrs_lock().lock().expect("current_attrs poisoned") = cur;
+                *pending_attrs_lock().lock().expect("pending_attrs poisoned") = pend;
+                if let Some(v) = ops {
+                    crate::ported::options::opt_state_set("promptsubst", v); // c:341
+                }
+                if let Some(v) = opb {
+                    crate::ported::options::opt_state_set("promptbang", v);
+                }
+                if let Some(v) = opp {
+                    crate::ported::options::opt_state_set("promptpercent", v);
+                }
+                col
+            } else {
+                content
+            };
             let atr = {
-                let content = &bv.fm[bv.fm_pos..ep];
                 let mut cursor = 0usize;
-                match_colour(Some(&mut cursor), content, is_fg, 0)
+                match_colour(Some(&mut cursor), &col, is_fg, 0) // c:335
             };
             // c:338 — `bv->fm = ep;` — leave the cursor on the `}`; the
             // caller's `fm++` steps past it.
@@ -1657,6 +1685,18 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let s = promptpath(&nam, arg as usize, false, "");
                     stradd(bv, &s);
                 }
+                // c:Src/prompt.c:881-883 — `%r`: `if (bv->rstring) stradd(bv->rstring);`
+                b'r' => {
+                    if let Some(r) = bv.rstring.clone() {
+                        stradd(bv, &r);
+                    }
+                }
+                // c:Src/prompt.c:885-887 — `%R`: `if (bv->Rstring) stradd(bv->Rstring);`
+                b'R' => {
+                    if let Some(r) = bv.Rstring.clone() {
+                        stradd(bv, &r);
+                    }
+                }
                 // c:Src/prompt.c:889-900 — `%e` (function-stack depth):
                 //   int depth = 0;
                 //   Funcstack fsptr = funcstack;
@@ -2262,9 +2302,21 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
                              // per-byte callback appends into the prompt buffer,
                              // so the `$<n>` delay specs are stripped here too.
             out.push_str(&String::from_utf8_lossy(&crate::shout::tputs(&cap_str))); // c:1099
-                                                                                    // c:1101-1106 — glitch detection (sg / ug termcap nums).
-                                                                                    // tgetnum() not yet ported as a free fn; assume 0 (no glitch)
-                                                                                    // which matches modern terminals.
+            // c:1101-1106 — glitch detection (sg / ug termcap nums).
+            let mut glitch: i32 = 0; // c:1101
+            if cap == crate::ported::zsh_h::TCSTANDOUTBEG || cap == crate::ported::zsh_h::TCSTANDOUTEND {
+                glitch = crate::terminfo_db::tgetnum("sg"); // c:1104
+            } else if cap == crate::ported::zsh_h::TCUNDERLINEBEG
+                || cap == crate::ported::zsh_h::TCUNDERLINEEND
+            {
+                glitch = crate::terminfo_db::tgetnum("ug"); // c:1106
+            }
+            if glitch < 0 {
+                glitch = 0; // c:1108
+            }
+            for _ in 0..glitch {
+                out.push(Nularg); // c:1111
+            }
             out.push(Outpar); // c:1112 Outpar marker
         }
         _ => {
@@ -3666,9 +3718,7 @@ pub const HIGHLIGHTS: [(&str, zattr, zattr); 6] = [
 /// fields), and the unconsumed tail (C's return value).
 ///
 /// The `hl=GROUP` word (c:2041-2046) resolves `GROUP` through
-/// `.zle.hlgroups` via C's `parsehighlight` (c:285); that resolver is not
-/// ported (the Rust `parsehighlight` is a different function), so `hl=`
-/// stops the scan like any unknown word.
+/// `.zle.hlgroups` with C's `parsehighlight` (c:285) inlined.
 /// WARNING: param names don't match C — Rust=(teststr, layer) vs C=(teststr, on_var, setmask, layer)
 pub fn match_highlight<'a>(teststr: &'a str, mut layer: Option<&mut i32>) -> (zattr, zattr, &'a str) {
     let bytes = teststr.as_bytes();
@@ -3693,7 +3743,65 @@ pub fn match_highlight<'a>(teststr: &'a str, mut layer: Option<&mut i32>) -> (za
         // c:2037
         found = false; // c:2041
         let rest = &teststr[pos..];
-        if rest.starts_with("fg=") || rest.starts_with("bg=") {
+        if rest.starts_with("hl=") {
+            // c:2041-2046 — `teststr = parsehighlight(teststr, ',', &atr, &mask);`
+            // with parsehighlight (c:285-314) inlined: resolve the group name
+            // through `.zle.hlgroups` and parse its value with match_highlight.
+            thread_local! {
+                static ENTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; // c:287
+            }
+            pos += 3;
+            let arg_all = &teststr[pos..];
+            let (arg, consumed) = match arg_all.find(',') {
+                Some(i) => (&arg_all[..i], i + 1), // c:293 `*ep = '\0'`, c:310 `*ep++ = endchar`
+                None => (arg_all, arg_all.len()),  // c:312
+            };
+            let mut atr: zattr = 0;
+            // c:295-296 — `!entered && (v = getvalue(&vbuf, &var, 0)) &&
+            // PM_TYPE(v->pm->node.flags) == PM_HASHED`
+            let group: Option<String> = if ENTERED.with(|e| e.get()) {
+                None
+            } else {
+                let is_hash = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get(".zle.hlgroups")
+                            .map(|pm| {
+                                crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
+                                    == crate::ported::zsh_h::PM_HASHED
+                            })
+                    })
+                    .unwrap_or(false);
+                if is_hash {
+                    // c:299-300 — `ht->getnode(ht, arg)`
+                    crate::ported::params::paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .and_then(|s| s.get(".zle.hlgroups").and_then(|m| m.get(arg).cloned()))
+                } else {
+                    None
+                }
+            };
+            match group {
+                Some(attrs) => {
+                    ENTERED.with(|e| e.set(true)); // c:302
+                    let (a, m, r) = match_highlight(&attrs, None); // c:303
+                    atr = a;
+                    mask = m;
+                    if r.len() == attrs.len() {
+                        atr = TXT_ERROR; // c:304
+                    }
+                }
+                None => atr = TXT_ERROR, // c:305-308
+            }
+            ENTERED.with(|e| e.set(false)); // c:313
+            pos += consumed;
+            if atr != TXT_ERROR {
+                on_var = atr; // c:2045
+            }
+            found = true; // c:2046
+        } else if rest.starts_with("fg=") || rest.starts_with("bg=") {
             // c:2047-2063
             let is_fg = bytes[pos] == b'f';
             pos += 3;
@@ -4517,10 +4625,8 @@ fn zattr_set_fg_palette(attrs: zattr, idx: u8) -> zattr {
     cleared | TXTFGCOLOUR | ((idx as zattr) << TXT_ATTR_FG_COL_SHIFT)
 }
 
-/// Return the currently-active palette FG color, if any. Used by
-/// `%b` (bold off) to re-emit the FG color after the full
-/// `\e[0m` reset that zsh emits. Returns None for 24-bit RGB
-/// colors (those need a different re-emit path that's deferred)
+/// Return the currently-active palette FG color index, if any.
+/// Returns None for 24-bit RGB colors (they have no palette index)
 /// or when no FG color is set.
 fn zattr_fg_palette(attrs: zattr) -> Option<u8> {
     if (attrs & TXTFGCOLOUR) == 0 || (attrs & TXT_ATTR_FG_24BIT) != 0 {
@@ -4544,6 +4650,16 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
     let cleared = attrs & !TXT_ATTR_BG_MASK;
     let rgb = ((r as zattr) << 16) | ((g as zattr) << 8) | (b as zattr);
     cleared | TXTBGCOLOUR | TXT_ATTR_BG_24BIT | (rgb << TXT_ATTR_BG_COL_SHIFT)
+}
+
+thread_local! {
+    /// !!! RUST-ONLY !!! The `rs` / `Rs` arguments of C `promptexpand`
+    /// (`Src/prompt.c:182`), used by `%r` / `%R` of the spelling-correction
+    /// prompt (`Src/utils.c:3278`). The Rust `promptexpand` signature has no
+    /// slot for them, so `spckword` stores them here and the next
+    /// `expand_prompt` consumes them.
+    pub static PROMPT_RS_STRINGS: std::cell::Cell<(Option<String>, Option<String>)> =
+        const { std::cell::Cell::new((None, None)) };
 }
 
 /// Expand a prompt string by calling the canonical `putpromptchar`
@@ -4636,6 +4752,10 @@ pub fn expand_prompt(s: &str) -> String {
     // cross-call state bleed.
     *current_attrs_lock().lock().expect("current_attrs poisoned") = 0;
     *pending_attrs_lock().lock().expect("pending_attrs poisoned") = 0;
+    // c:218-219 — `bv->rstring = rs; bv->Rstring = Rs;`. promptexpand's
+    // signature carries no rs/Rs, so the spelling prompt hands them over
+    // through PROMPT_RS_STRINGS; they are consumed by this expansion only.
+    let (rs, Rs) = PROMPT_RS_STRINGS.with(|c| c.take());
     let mut bv = buf_vars {
         // c:1286-1299 — `new_vars` init in promptexpand.
         buf: vec![0u8; 256],
@@ -4648,8 +4768,8 @@ pub fn expand_prompt(s: &str) -> String {
         truncwidth: 0,
         dontcount: 0,
         trunccount: 0,
-        rstring: None,
-        Rstring: None,
+        rstring: rs,
+        Rstring: Rs,
         attrs: 0,
         in_escape: false,
     };
@@ -4851,7 +4971,7 @@ pub fn right_prompt_padding(
 // option, which is implemented in the redisplay path (zle_refresh.c
 // re-renders the line without the rprompt after accept-line), not as a
 // prompt-string transform. The real feature lands in zle_refresh when
-// that path is ported; this stub only masked its absence.
+// that path is ported.
 
 fn color_name(c: Color) -> String {
     if let Some((r, g, b)) = color_get_rgb(c) {

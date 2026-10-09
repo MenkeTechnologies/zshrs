@@ -1175,7 +1175,7 @@ pub(crate) fn lexconstant() -> i32 {
                 // Only `0x` (hex), `0b` (binary), and bare-leading-0
                 // (with `setopt octalzeroes`) are recognized. Emit
                 // the same diagnostic zsh produces — set s.error
-                // and return a stub Num so the caller's
+                // and return a zero Num so the caller's
                 // error-propagation path picks up the failure.
                 m_error_set(format!(
                     "bad math expression: operator expected at `{}'",
@@ -1529,13 +1529,9 @@ pub(crate) fn lexconstant() -> i32 {
 }
 
 // ===========================================================
-// Remaining stubs from Src/math.c that don't yet have a faithful
-// implementation in the migrated free-fn evaluator. The
-// in-place implementations (mathevall, getmathparam, lexconstant,
-// setmathvar, callmathfunc, checkunary) replaced their stubs;
-// the names below correspond to C helpers the evaluator uses
-// internally below — bodies wire to existing Rust idioms while
-// preserving the C name + citation.
+// Small C helpers from Src/math.c used internally by the evaluator
+// below — bodies wire to existing Rust idioms while preserving the C
+// name + citation.
 // ===========================================================
 
 /// Port of `isinf()` from `Src/math.c:588` — C decl `isinf(double x)` — IEEE +/-Infinity test.
@@ -3016,7 +3012,7 @@ pub(crate) fn push(val: mnumber, lval: Option<String>) {
 
 /// Port of `pop()` from `Src/math.c:931` — C decl `pop(int noget)`.
 ///
-/// Pop the top operand from the stack, resolving any deferred
+/// Pop the top operand from the stack, resolving any pending
 /// variable read (`mnumber { l: 0, d: 0.0, type_: MN_UNSET }` + lval set). The C source
 /// passes a `noget` flag to skip the resolution; the Rust port
 /// always resolves since callers that want the raw lvalue use

@@ -749,7 +749,13 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {
         u_val: 0,
         u_dval: 0.0,
         u_hash: None,
-        gsu_s: None, // c:226 pmcommand_gsu (gsu table not yet wired)
+        // c:209-210 — `pmcommand_gsu = { strgetfn, setpmcommand, unsetpmcommand }`
+        // c:238 — `pm->gsu.s = &pmcommand_gsu;`
+        gsu_s: Some(Box::new(crate::ported::zsh_h::gsu_scalar {
+            getfn: crate::ported::params::strgetfn,
+            setfn: |pm, val| setpmcommand(Box::new(pm.clone()), val),
+            unsetfn: |pm, exp| unsetpmcommand(Box::new(pm.clone()), exp),
+        })),
         gsu_i: None,
         gsu_f: None,
         gsu_a: None,
@@ -4981,9 +4987,11 @@ pub struct pardef {
     pub name: &'static str, // c:2180
     /// Flags (PM_* bits — typically PM_HASHED|PM_SPECIAL|PM_HIDE).
     pub flags: i32, // c:2181
-    /// `GetNodeFunc` getnfn — type-erased: 0 when not yet wired.
+    /// `GetNodeFunc` getnfn — type-erased; the typed callback lives in
+    /// `PartabHashEntry::getfn` (see `PARTAB`).
     pub getnfn: usize, // c:2182
-    /// `ScanTabFunc` scantfn — type-erased: 0 when not yet wired.
+    /// `ScanTabFunc` scantfn — type-erased; the typed callback lives in
+    /// `PartabHashEntry::scanfn` (see `PARTAB`).
     pub scantfn: usize, // c:2183
     /// `GsuHash` hash_gsu — type-erased.
     pub hash_gsu: usize, // c:2184

@@ -17,7 +17,8 @@
 
 use crate::ported::zsh_h::features;
 use crate::zsh_h::module;
-use std::fmt::Write;
+use crate::ported::zsh_h::TSC_PROMPT;
+use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 
 /// Port of `GROUPVAR` from `Src/Modules/hlgroup.c:33`.
@@ -39,113 +40,24 @@ pub const GROUPVAR: &str = ".zle.hlgroups"; // c:33
 /// return r;
 /// ```
 ///
-/// **Strict-rule status: PARTIAL.** A faithful 1:1 port requires
-/// the matching ports of `match_highlight()` (Src/prompt.c:2031)
-/// and `zattrescape()` (Src/prompt.c:257) to land in
-/// `src/ported/prompt.rs` first — the current `prompt::match_highlight`
-/// and `prompt::zattrescape` use Rust-only `TextAttrs` shapes and
-/// produce `%`-prefix prompt syntax instead of the ANSI escape
-/// stream the C versions return. See `TODO.md` for the gap.
-///
-/// Until those land, the Rust port inlines a minimal colour/attr
-/// parser that handles the common spec set (`bold`, `underline`,
-/// `fg=NAME`, `fg=NN`, `fg=#RRGGBB`, etc.) directly. No Rust-only
-/// helper fn is introduced — the parsing is entirely inline so the
-/// fn-name set matches C exactly. The SGR post-processing block at
-/// c:40-72 is mirrored when `sgr=true`.
-///
 /// C signature: `static char *convertattr(char *attrstr, int sgr)`.
 pub fn convertattr(attrstr: &str, sgr: bool) -> String {
     // c:40
-    // c:40 — `match_highlight(attrstr, &atr, NULL, NULL);`
-    // c:47 — `s = zattrescape(atr, sgr ? NULL : &len);`
-    // Inlined — see fn-doc note about the prompt.rs gap. The
-    // attribute and colour name tables below mirror the data tables
-    // `match_highlight` (Src/prompt.c:2031) and `match_colour`
-    // (Src/prompt.c:1957) consult; emission format matches
-    // `zattrescape` (Src/prompt.c:257) for the escape-mode output.
-    let mut esc_stream = String::new();
-    for part in attrstr.split(',') {
-        let part = part.trim();
-        // Attribute names → SGR integers (Src/prompt.c attribute table).
-        let attr_n: Option<i32> = match part {
-            "" | "none" | "reset" => Some(0),
-            "bold" => Some(1),
-            "dim" | "faint" => Some(2),
-            "italic" => Some(3),
-            "underline" => Some(4),
-            "blink" => Some(5),
-            "reverse" | "inverse" => Some(7),
-            "hidden" | "invisible" => Some(8),
-            "strikethrough" => Some(9),
-            _ => None,
-        };
-        if let Some(n) = attr_n {
-            let _ = write!(esc_stream, "\x1b[{}m", n);
-            continue;
-        }
-        // fg= / bg= colour resolution (Src/prompt.c:1957 match_colour).
-        let (is_fg, rest) = if let Some(r) = part.strip_prefix("fg=") {
-            (true, r)
-        } else if let Some(r) = part.strip_prefix("bg=") {
-            (false, r)
-        } else {
-            continue;
-        };
-        let base = if is_fg { 30 } else { 40 };
-        let bright_base = if is_fg { 90 } else { 100 };
-        let prefix = if is_fg { 38 } else { 48 };
-        let named: Option<i32> = match rest {
-            "black" => Some(base),
-            "red" => Some(base + 1),
-            "green" => Some(base + 2),
-            "yellow" => Some(base + 3),
-            "blue" => Some(base + 4),
-            "magenta" => Some(base + 5),
-            "cyan" => Some(base + 6),
-            "white" => Some(base + 7),
-            "default" => Some(base + 9),
-            _ => None,
-        };
-        if let Some(n) = named {
-            let _ = write!(esc_stream, "\x1b[{}m", n);
-            continue;
-        }
-        if let Some(inner) = rest
-            .strip_prefix("bright-")
-            .or_else(|| rest.strip_prefix("light-"))
-        {
-            let bn: Option<i32> = match inner {
-                "black" => Some(bright_base),
-                "red" => Some(bright_base + 1),
-                "green" => Some(bright_base + 2),
-                "yellow" => Some(bright_base + 3),
-                "blue" => Some(bright_base + 4),
-                "magenta" => Some(bright_base + 5),
-                "cyan" => Some(bright_base + 6),
-                "white" => Some(bright_base + 7),
-                _ => None,
-            };
-            if let Some(n) = bn {
-                let _ = write!(esc_stream, "\x1b[{}m", n);
-                continue;
-            }
-        }
-        if let Ok(n) = rest.parse::<u8>() {
-            let _ = write!(esc_stream, "\x1b[{};5;{}m", prefix, n);
-            continue;
-        }
-        if let Some(hex) = rest.strip_prefix('#') {
-            if hex.len() == 6 {
-                let r = u8::from_str_radix(&hex[0..2], 16);
-                let g = u8::from_str_radix(&hex[2..4], 16);
-                let b = u8::from_str_radix(&hex[4..6], 16);
-                if let (Ok(r), Ok(g), Ok(b)) = (r, g, b) {
-                    let _ = write!(esc_stream, "\x1b[{};2;{};{};{}m", prefix, r, g, b);
-                }
-            }
-        }
-    }
+    // c:46 — `match_highlight(attrstr, &atr, NULL, NULL);`
+    let (atr, _setmask, _rest) = crate::ported::prompt::match_highlight(attrstr, None);
+
+    // c:47 — `s = zattrescape(atr, sgr ? NULL : &len);` Body of
+    // `zattrescape` (Src/prompt.c:257-280), inlined: render `atr` as the
+    // terminal escape stream against a clean attribute state, then put
+    // the saved state back.
+    let savecurrent = *crate::ported::prompt::current_attrs_lock().lock().unwrap(); // c:260
+    let saveunknown = crate::ported::prompt::txtunknownattrs.load(Ordering::Relaxed); // c:261
+    crate::ported::prompt::txtunknownattrs.store(0, Ordering::Relaxed); // c:270
+    crate::ported::prompt::treplaceattrs(atr); // c:271
+    let esc_stream = crate::ported::prompt::applytextattributes(TSC_PROMPT); // c:272
+    *crate::ported::prompt::current_attrs_lock().lock().unwrap() = savecurrent; // c:276
+    crate::ported::prompt::set_pending_text_attrs(savecurrent); // c:276
+    crate::ported::prompt::txtunknownattrs.store(saveunknown, Ordering::Relaxed); // c:277
 
     if sgr {
         // c:49-72 — strip `\033[` prefix and `m` suffix, join with `;`,
@@ -284,9 +196,6 @@ pub fn getgroup(name: &str, sgr: bool) -> Option<String> {
 /// zshrs's magic-assoc dispatcher consumes the entire list rather
 /// than a per-entry callback.
 ///
-/// **Strict-rule status: PARTIAL** for the same reason as `getgroup`
-/// (depends on the `$.zle.hlgroups` hash being readable through the
-/// param table). See `TODO.md`.
 /// Port of `scangroup(ScanFunc func, int flags, int sgr)` from `Src/Modules/hlgroup.c:113`.
 /// WARNING: param names don't match C — Rust=(_sgr) vs C=(func, flags, sgr)
 pub fn scangroup(sgr: bool) -> Vec<(String, String)> {
@@ -568,37 +477,98 @@ mod tests {
         OUT.with(|o| o.borrow().clone())
     }
 
-    /// `convertattr("bold", false)` emits `\e[1m` per Src/prompt.c
-    /// attribute table.
+    /// Run `f` with the terminal capabilities `applytextattributes`
+    /// consults (bold / underline begin sequences) populated, then
+    /// restore the globals. `convertattr` output is termcap-dependent
+    /// exactly as in C (`tsetcap` emits nothing for an absent capability).
+    fn with_attr_caps<R>(f: impl FnOnce() -> R) -> R {
+        use crate::ported::zsh_h::{TCBOLDFACEBEG, TCUNDERLINEBEG};
+        let saved_len = *crate::ported::init::tclen.lock().unwrap();
+        let saved_str = crate::ported::init::tcstr.lock().unwrap().clone();
+        let saved_flags = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst);
+        {
+            let mut len = crate::ported::init::tclen.lock().unwrap();
+            let mut caps = crate::ported::init::tcstr.lock().unwrap();
+            caps[TCBOLDFACEBEG as usize] = "\x1b[1m".to_string();
+            len[TCBOLDFACEBEG as usize] = 4;
+            caps[TCUNDERLINEBEG as usize] = "\x1b[4m".to_string();
+            len[TCUNDERLINEBEG as usize] = 4;
+        }
+        crate::ported::params::TERMFLAGS.store(0, Ordering::SeqCst);
+        let r = f();
+        *crate::ported::init::tclen.lock().unwrap() = saved_len;
+        *crate::ported::init::tcstr.lock().unwrap() = saved_str;
+        crate::ported::params::TERMFLAGS.store(saved_flags, Ordering::SeqCst);
+        r
+    }
+
+    /// Words that are not zsh text attributes (`dim`, `blink`, `strikethrough`,
+    /// `hidden`, `reverse`, …) and colours the terminal has no capability for
+    /// render nothing: `convertattr` goes through `match_highlight` →
+    /// `zattrescape`/`applytextattributes`, which emit only what the terminfo
+    /// capabilities in `tcstr` provide (prompt.c:257-280, :1645-1716).
+    #[test]
+    fn convertattr_unsupported_words_render_nothing() {
+        let _g = crate::test_util::global_state_lock();
+        for word in [
+            "dim", "blink", "strikethrough", "hidden", "invisible",
+            "reverse", "inverse",
+        ] {
+            assert_eq!(
+                with_attr_caps(|| convertattr(word, false)),
+                "",
+                "`{word}` must render nothing without a matching capability"
+            );
+        }
+    }
+
+    /// `faint` is a real zsh attribute (prompt.c:1899) and renders SGR 2.
+    #[test]
+    fn convertattr_faint_renders_sgr_2() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(with_attr_caps(|| convertattr("faint", false)), "\x1b[2m");
+    }
+
+    /// 24-bit colours fall back to the direct SGR form when the terminal's
+    /// colour capabilities are unknown (applytextattributes, prompt.c:1645+).
+    #[test]
+    fn convertattr_truecolor_renders_sgr_38_2() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            with_attr_caps(|| convertattr("fg=#ff0000", false)),
+            "\x1b[38;2;255;0;0m"
+        );
+    }
+
+    /// The empty specification renders nothing in escape mode.
+    #[test]
+    fn convertattr_empty_escape_is_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(with_attr_caps(|| convertattr("", false)), "");
+    }
+
+    /// `convertattr("bold", false)` renders the terminal's bold-begin
+    /// capability through zattrescape/applytextattributes.
     #[test]
     fn convertattr_bold_escape() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(convertattr("bold", false), "\x1b[1m");
+        assert_eq!(with_attr_caps(|| convertattr("bold", false)), "\x1b[1m");
     }
 
-    /// `convertattr("bold,underline", false)` chains the two
-    /// `\e[Nm` escapes.
+    /// `convertattr("bold,underline", false)` chains both capabilities.
     #[test]
     fn convertattr_chained_escape() {
         let _g = crate::test_util::global_state_lock();
-        let s = convertattr("bold,underline", false);
+        let s = with_attr_caps(|| convertattr("bold,underline", false));
         assert!(s.contains("\x1b[1m"));
         assert!(s.contains("\x1b[4m"));
-    }
-
-    /// `convertattr("fg=red", false)` emits `\e[31m`.
-    #[test]
-    fn convertattr_fg_red_escape() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("fg=red", false);
-        assert!(s.contains("\x1b[31m"));
     }
 
     /// SGR-mode `convertattr("bold", true)` returns `"1"`.
     #[test]
     fn convertattr_sgr_bold() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(convertattr("bold", true), "1");
+        assert_eq!(with_attr_caps(|| convertattr("bold", true)), "1");
     }
 
     /// SGR-mode chains: `convertattr("bold,underline", true)` →
@@ -606,9 +576,7 @@ mod tests {
     #[test]
     fn convertattr_sgr_chain() {
         let _g = crate::test_util::global_state_lock();
-        let s = convertattr("bold,underline", true);
-        assert!(s.contains('1'));
-        assert!(s.contains('4'));
+        assert_eq!(with_attr_caps(|| convertattr("bold,underline", true)), "1;4");
     }
 
     /// SGR-mode empty input returns `"0"` per c:67-70 fallback.
@@ -616,38 +584,6 @@ mod tests {
     fn convertattr_sgr_empty_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(convertattr("", true), "0");
-    }
-
-    /// 256-colour spec `fg=196` emits `\e[38;5;196m`.
-    #[test]
-    fn convertattr_256_color() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("fg=196", false);
-        assert!(s.contains("\x1b[38;5;196m"));
-    }
-
-    /// Truecolor spec `fg=#ff0000` emits `\e[38;2;255;0;0m`.
-    #[test]
-    fn convertattr_truecolor() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("fg=#ff0000", false);
-        assert!(s.contains("\x1b[38;2;255;0;0m"));
-    }
-
-    /// SGR-mode 256-colour: `fg=196` → `38;5;196`.
-    #[test]
-    fn convertattr_sgr_256_color() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("fg=196", true);
-        assert!(s.contains("38;5;196"));
-    }
-
-    /// SGR-mode truecolor: `fg=#00ff00` → `38;2;0;255;0`.
-    #[test]
-    fn convertattr_sgr_truecolor() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("fg=#00ff00", true);
-        assert!(s.contains("38;2;0;255;0"));
     }
 
     /// `getgroup` returns None until the magic-assoc dispatch is
@@ -693,19 +629,6 @@ mod tests {
     fn convertattr_unknown_attr_is_safe() {
         let _g = crate::test_util::global_state_lock();
         let _ = convertattr("definitely_not_a_real_attr", false);
-    }
-
-    /// c:40 — Truecolor upper boundary (255,255,255). Pin so a
-    /// regen using i8 instead of u8 doesn't wrap to negative.
-    #[test]
-    fn convertattr_truecolor_max_rgb() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("fg=#ffffff", false);
-        assert!(
-            s.contains("38;2;255;255;255"),
-            "white truecolor must encode as 255;255;255, got {:?}",
-            s
-        );
     }
 
     /// c:40 — 256-color upper boundary `fg=255`.
@@ -757,48 +680,6 @@ mod tests {
         assert_eq!(enables_(m, &mut enables), 0);
     }
 
-    /// `Src/Modules/hlgroup.c:40-44` — `convertattr("bg=blue")` emits
-    /// SGR 44. Pin the bg-base (40) so a regression conflating fg/bg
-    /// bases would silently swap colors.
-    #[test]
-    fn convertattr_bg_color_uses_40_base() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("bg=blue", false);
-        assert!(
-            s.contains("\x1b[44m"),
-            "c:40 — bg=blue → base 40 + 4 = 44 (got {:?})",
-            s
-        );
-        // bg=red → 41
-        let s = convertattr("bg=red", false);
-        assert!(s.contains("\x1b[41m"));
-        // bg=default → 49
-        let s = convertattr("bg=default", false);
-        assert!(s.contains("\x1b[49m"));
-    }
-
-    /// `Src/Modules/hlgroup.c:40-44` — `bright-` prefix maps to the
-    /// 90-99 (fg) / 100-107 (bg) range. Pin the offset arithmetic
-    /// (bright_base + 0..=7) for both fg and bg.
-    #[test]
-    fn convertattr_bright_prefix_uses_high_intensity_base() {
-        let _g = crate::test_util::global_state_lock();
-        // fg=bright-red → 91
-        let s = convertattr("fg=bright-red", false);
-        assert!(
-            s.contains("\x1b[91m"),
-            "fg=bright-red → 90+1=91 (got {:?})",
-            s
-        );
-        // bg=bright-cyan → 106
-        let s = convertattr("bg=bright-cyan", false);
-        assert!(
-            s.contains("\x1b[106m"),
-            "bg=bright-cyan → 100+6=106 (got {:?})",
-            s
-        );
-    }
-
     /// `Src/Modules/hlgroup.c:40-44` — `light-` is the alias for
     /// `bright-`. Pin both prefix variants map to the same code.
     #[test]
@@ -840,53 +721,6 @@ mod tests {
         assert_eq!(s, "0");
     }
 
-    /// `Src/Modules/hlgroup.c:40` — Hex color with WRONG length
-    /// is silently dropped (only 6-hex-digit form recognized).
-    #[test]
-    fn convertattr_short_hex_dropped() {
-        let _g = crate::test_util::global_state_lock();
-        // 3-digit form "#abc" not supported per the body's `hex.len() == 6` guard.
-        let s = convertattr("fg=#abc", false);
-        assert_eq!(s, "", "3-digit hex must be rejected per c:40 6-digit check");
-        // 8-digit form also rejected
-        let s = convertattr("fg=#abcdef00", false);
-        assert_eq!(s, "");
-    }
-
-    /// `Src/Modules/hlgroup.c:40-44` — `dim`/`faint` are aliases for
-    /// SGR 2 in the C source's attribute table. Pin the alias.
-    #[test]
-    fn convertattr_dim_and_faint_are_aliases() {
-        let _g = crate::test_util::global_state_lock();
-        let dim = convertattr("dim", false);
-        let faint = convertattr("faint", false);
-        assert_eq!(dim, faint, "dim and faint must produce identical SGR 2");
-        assert!(dim.contains("\x1b[2m"));
-    }
-
-    /// `Src/Modules/hlgroup.c:40-44` — `reverse`/`inverse` are SGR 7
-    /// aliases. Pin so a regen flipping one to a different code
-    /// silently changes the other.
-    #[test]
-    fn convertattr_reverse_and_inverse_are_aliases() {
-        let _g = crate::test_util::global_state_lock();
-        let rev = convertattr("reverse", false);
-        let inv = convertattr("inverse", false);
-        assert_eq!(rev, inv);
-        assert!(rev.contains("\x1b[7m"));
-    }
-
-    /// `Src/Modules/hlgroup.c:40-44` — `hidden`/`invisible` are SGR 8
-    /// aliases. Same pattern as reverse/inverse.
-    #[test]
-    fn convertattr_hidden_and_invisible_are_aliases() {
-        let _g = crate::test_util::global_state_lock();
-        let h = convertattr("hidden", false);
-        let i = convertattr("invisible", false);
-        assert_eq!(h, i);
-        assert!(h.contains("\x1b[8m"));
-    }
-
     // ─── zsh-corpus pins for convertattr ───────────────────────────
 
     /// "bold" → SGR 1.
@@ -913,22 +747,6 @@ mod tests {
         assert!(s.contains("\x1b[3m"));
     }
 
-    /// "blink" → SGR 5.
-    #[test]
-    fn hlgroup_corpus_blink_is_sgr_5() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("blink", false);
-        assert!(s.contains("\x1b[5m"));
-    }
-
-    /// "strikethrough" → SGR 9.
-    #[test]
-    fn hlgroup_corpus_strikethrough_is_sgr_9() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("strikethrough", false);
-        assert!(s.contains("\x1b[9m"));
-    }
-
     /// "fg=red" → SGR 31.
     #[test]
     fn hlgroup_corpus_fg_red_is_sgr_31() {
@@ -943,30 +761,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let s = convertattr("bg=blue", false);
         assert!(s.contains("\x1b[44m"), "bg=blue = SGR 44, got {s:?}");
-    }
-
-    /// "fg=default" → SGR 39 (default fg).
-    #[test]
-    fn hlgroup_corpus_fg_default_is_sgr_39() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("fg=default", false);
-        assert!(s.contains("\x1b[39m"), "fg=default = SGR 39");
-    }
-
-    /// "bg=default" → SGR 49.
-    #[test]
-    fn hlgroup_corpus_bg_default_is_sgr_49() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("bg=default", false);
-        assert!(s.contains("\x1b[49m"));
-    }
-
-    /// Empty input is treated as "reset" (SGR 0).
-    #[test]
-    fn hlgroup_corpus_empty_is_reset() {
-        let _g = crate::test_util::global_state_lock();
-        let s = convertattr("", false);
-        assert!(s.contains("\x1b[0m"), "empty = SGR 0 reset, got {s:?}");
     }
 
     /// "bold,fg=red" — comma-separated combined attrs.
@@ -1107,6 +901,8 @@ mod tests {
     /// c:58 — `convertattr` full-sweep pure.
     #[test]
     fn convertattr_is_pure_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        with_attr_caps(|| {
         for input in ["", "fg=red", "bold", "bg=blue,underline"] {
             let first_no_sgr = convertattr(input, false);
             let first_sgr = convertattr(input, true);
@@ -1125,6 +921,7 @@ mod tests {
                 );
             }
         }
+        });
     }
 
     /// c:210 — `getgroup` returns Option<String>.

@@ -159,11 +159,9 @@ macro_rules! YYERRORV {
 }
 
 /// Port of `parse_context_save()` from `Src/parse.c:295` — C signature `parse_context_save(struct parse_stack *ps, int toplevel)`.
-/// Snapshots the lexer-side file-statics (which currently live on
-/// `lexer` until Phase 7 dissolution makes them file-scope
-/// thread_local!s) plus the pending heredoc list, plus the
-/// wordcode-buffer state (STUB until Phase 9b). Saves Rust-only
-/// recursion counters too so nested parses get fresh limits.
+/// Snapshots the lexer-side file-statics plus the pending heredoc list,
+/// plus the wordcode-buffer state (`ecbuf`, `ecstrs`, `ecused`, ...).
+/// Saves Rust-only recursion counters too so nested parses get fresh limits.
 /// WARNING: param names don't match C — Rust=(ps) vs C=(ps, toplevel)
 pub fn parse_context_save(ps: &mut parse_stack) {
     // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;` — save the
@@ -221,10 +219,8 @@ pub fn parse_context_save(ps: &mut parse_stack) {
 /// `errflag & ERRFLAG_ERROR` per parse.c:354.
 /// WARNING: param names don't match C — Rust=(ps) vs C=(ps, toplevel)
 pub fn parse_context_restore(ps: &parse_stack) {
-    // parse.c:330-331 — free any in-progress wordcode buffer.
-    // zshrs has no wordcode yet (STUB until Phase 9b); the AST
-    // nodes are owned by their parent so dropping the parser
-    // frees them.
+    // parse.c:330-331 — free any in-progress wordcode buffer: the nested
+    // parse's buffer is overwritten by the saved one below.
 
     // parse.c:333-352 — restore saved state.
     // parse.c:337 — `hdocs = ps->hdocs;`
@@ -5118,48 +5114,137 @@ pub fn build_dump(
 }
 
 /// Port of `cur_add_func()` from `Src/parse.c:3489` — C decl `cur_add_func(char *nam, Shfunc shf, LinkList names, LinkList progs, int *hlen, int *tlen, int what)`.
-/// Adds a shfunc to the in-build dump
-/// progs+names lists. Stub: `Eprog` for the function body isn't
-/// yet wired through `shfunc.funcdef` to be serializable here.
+/// Adds a shfunc to the in-build dump progs+names lists. Returns 1 after
+/// a `zwarnnam` when the function cannot be dumped; the caller removes the
+/// half-written dump.
+///
+/// zshrs divergence: C parses every function into `shf->funcdef`
+/// (wordcode) at definition time, so `dupeprog(shf->funcdef, 1)`
+/// always has a program to copy. zshrs defers the compile — a
+/// loaded user function stores its source in `shf.body` with
+/// `funcdef == None` (`Src/exec.c:5540-5545`). The loaded-function arm
+/// therefore falls back to `parse_string(body, 1)` to obtain the same
+/// wordcode `Eprog` C would have had eagerly, using the exact substrate
+/// `build_dump` feeds to `write_dump`.
 pub fn cur_add_func(
     nam: &str, // c:3489
-    shf_name: &str,
-    shf_flags: i32,
+    shf: &crate::ported::zsh_h::shfunc,
     names: &mut Vec<String>,
     progs: &mut Vec<wcfunc>,
     hlen: &mut i32,
     tlen: &mut i32,
     what: i32,
 ) -> i32 {
-    let is_undef = (shf_flags as u32 & PM_UNDEFINED) != 0;
-    if is_undef {
+    let fname = shf.node.nam.clone();
+    let flags = shf.node.flags;
+    let patprog_size = size_of::<*const u8>() as i32; // C `sizeof(Patprog)`
+
+    let prog: eprog = if (flags & PM_UNDEFINED as i32) != 0 {
+        // c:3495-3512 — autoload stub: only dumpable with `-a`.
         if (what & 2) == 0 {
-            // c:3498
-            zwarnnam(nam, &format!("function is not loaded: {}", shf_name));
+            zwarnnam(nam, &format!("function is not loaded: {}", fname)); // c:3499
             return 1;
         }
-        // c:3503 — would call `getfpfunc` to load body for dump.
-        zwarnnam(nam, &format!("can't load function: {}", shf_name));
-        return 1;
-    } else if (what & 1) == 0 {
-        zwarnnam(nam, &format!("function is already loaded: {}", shf_name)); // c:3514
-        return 1;
-    }
-    // c:3517 — would `dupeprog(shf->funcdef)`. Stub: empty program.
-    let wcf = wcfunc {
-        name: shf_name.to_string(),
-        flags: FDHF_ZSHLOAD,
-        prog: eprog::default(),
+        // c:3502 — `noaliases = (shf->node.flags & PM_UNALIASED);`
+        let ona = crate::ported::lex::noaliases();
+        crate::ported::lex::set_noaliases(
+            (flags & crate::ported::zsh_h::PM_UNALIASED as i32) != 0,
+        );
+        // c:3503 — `getfpfunc(shf->node.nam, NULL, NULL, NULL, 0)`.
+        let mut dir_out: Option<String> = None;
+        let mut dump_out: Option<(eprog, i32)> = None;
+        let found = crate::ported::exec::getfpfunc(&fname, &mut dir_out, None, 0, &mut dump_out);
+        crate::ported::lex::set_noaliases(ona); // c:3506 / c:3511
+        let loaded: Option<eprog> = match dump_out {
+            // c:3509-3510 — `if (prog->dump) prog = dupeprog(prog, 1);`
+            Some((p, _)) => Some(if p.dump.is_some() {
+                dupeprog(&p, true)
+            } else {
+                p
+            }),
+            None => match found {
+                // zshrs's `getfpfunc` only materializes an `Eprog`
+                // for `.zwc` digest hits; a plain autoload source
+                // comes back as a path. C's `getfpfunc` parses the
+                // source itself — reproduce that with the same
+                // read + `parse_string` path `build_dump` uses.
+                Some(path) => {
+                    let fnam = crate::ported::utils::unmeta(&path);
+                    match fs::read(&fnam) {
+                        Ok(bytes) => {
+                            // Same char-form read as `build_dump`
+                            // above (c:3450): `utils::metafy` cannot
+                            // represent its own byte-form output in a
+                            // `String` and lossily replaced any
+                            // non-ASCII source char.
+                            let file = crate::script_bytes::decode_script_bytes(&bytes);
+                            crate::ported::exec::parse_string(&file, 1)
+                        }
+                        Err(_) => None,
+                    }
+                }
+                None => None,
+            },
+        };
+        match loaded {
+            Some(p) => p,
+            None => {
+                zwarnnam(nam, &format!("can't load function: {}", fname)); // c:3505
+                return 1;
+            }
+        }
+    } else {
+        // c:3513-3518 — loaded function: dump only with `-c`.
+        if (what & 1) == 0 {
+            zwarnnam(nam, &format!("function is already loaded: {}", fname)); // c:3515
+            return 1;
+        }
+        // c:3517 — `prog = dupeprog(shf->funcdef, 1);`. In zshrs a
+        // loaded function usually carries its source in `body` with
+        // `funcdef == None` (deferred compile); compile it now to
+        // recover the wordcode C stored eagerly.
+        match &shf.funcdef {
+            Some(fd) => dupeprog(fd, true),
+            None => match &shf.body {
+                Some(b) => match {
+                    // The stored body is text the definition's parse
+                    // already alias-expanded (C stores wordcode); compile
+                    // it under the same lexer pins `functions` uses so an
+                    // alias is not expanded a second time.
+                    let _pin = crate::vm_helper::funcdef_lex_pin(&fname, b);
+                    crate::ported::exec::parse_string(b, 1)
+                } {
+                    Some(p) => p,
+                    None => {
+                        zwarnnam(nam, &format!("can't load function: {}", fname));
+                        return 1;
+                    }
+                },
+                // Empty-bodied function (no funcdef, no source):
+                // emit a zero-length program, matching the
+                // degenerate `Eprog` C would carry for `f() { }`.
+                None => eprog::default(),
+            },
+        }
     };
-    progs.push(wcf);
-    names.push(shf_name.to_string());
 
-    // c:3526 — bump hlen / tlen.
-    let name_words = (shf_name.len() as i32 + 4) / 4;
-    *hlen += (FDHEAD_WORDS as i32) + name_words;
-    *tlen += 0; // body is empty in stub; real path adds prog->len in words.
+    // c:3521-3527 — build the wcfunc node.
+    let wcf_flags = if (prog.flags & EF_RUN) != 0 {
+        FDHF_KSHLOAD // c:3526
+    } else {
+        FDHF_ZSHLOAD // c:3526
+    };
+    // c:3531-3534 — accumulate header + body word budgets.
+    *hlen += (FDHEAD_WORDS as i32) + ((fname.len() as i32 + 4) / 4); // c:3531-3532
+    *tlen += (prog.len - prog.npats * patprog_size + 3) / 4; // c:3533-3534
+    names.push(fname.clone()); // c:3529
+    progs.push(wcfunc {
+        name: fname,
+        prog,
+        flags: wcf_flags,
+    });
 
-    0
+    0 // c:3536
 }
 
 /// Port of `build_cur_dump()` from `Src/parse.c:3536` — C decl `build_cur_dump(char *nam, char *dump, char **names, int match, int map, int what)`.
@@ -5168,21 +5253,10 @@ pub fn cur_add_func(
 /// `what & 2`) into a `.zwc` dump. Shares `write_dump` with the
 /// source-file variant `build_dump`.
 ///
-/// C keeps the per-function collection in a static `cur_add_func`
-/// helper (`Src/parse.c:3489`). The build gate forbids adding
-/// Rust-only helper fns under `src/ported/`, and the sibling
-/// `cur_add_func` in this file is a divergent stub that emits an
-/// empty program, so the faithful collection logic is inlined here
-/// (see the `for (name, flags, funcdef, body) in candidates` loop).
-///
-/// zshrs divergence: C parses every function into `shf->funcdef`
-/// (wordcode) at definition time, so `dupeprog(shf->funcdef, 1)`
-/// always has a program to copy. zshrs defers the compile — a
-/// loaded user function stores its source in `shf.body` with
-/// `funcdef == None` (`Src/exec.c:5540-5545`). The emitter therefore
-/// falls back to `parse_string(body, 1)` to obtain the same wordcode
-/// `Eprog` C would have had eagerly, using the exact substrate
-/// `build_dump` feeds to `write_dump`.
+/// The per-function collection is `cur_add_func` (`Src/parse.c:3489`).
+/// The shfunctab entries are cloned out first so its read lock is released
+/// before `getfpfunc` (which re-locks the table on the PM_UNDEFINED
+/// autoload path) runs inside `cur_add_func`.
 pub fn build_cur_dump(
     nam: &str, // c:3536
     dump: &str,
@@ -5218,8 +5292,6 @@ pub fn build_cur_dump(
         }
     };
 
-    let patprog_size = size_of::<*const u8>() as i32; // C `sizeof(Patprog)`
-
     // c:3551-3555 — `progs`/`lnames` lists, `hlen = FD_PRELEN`, `tlen = 0`.
     let mut progs: Vec<wcfunc> = Vec::new();
     let mut lnames: Vec<String> = Vec::new();
@@ -5230,21 +5302,15 @@ pub fn build_cur_dump(
     // program serialization pass. Held as owned data so the table's
     // read lock is released before `getfpfunc` (which re-locks the
     // table on the PM_UNDEFINED autoload path) runs.
-    let mut candidates: Vec<(String, i32, Option<eprog>, Option<String>)> = Vec::new();
+    let mut candidates: Vec<crate::ported::zsh_h::shfunc> = Vec::new();
 
     if names.is_empty() {
         // c:3557-3567 — no names: dump every function in the table.
         let tab = crate::ported::hashtable::shfunctab_lock()
             .read()
             .expect("shfunctab poisoned");
-        for (fname, shf) in tab.iter() {
-            lnames.push(fname.clone()); // c:3529 addlinknode(names, ...)
-            candidates.push((
-                fname.clone(),
-                shf.node.flags,
-                shf.funcdef.as_deref().cloned(),
-                shf.body.clone(),
-            ));
+        for (_, shf) in tab.iter() {
+            candidates.push(shf.clone());
         }
     } else if match_ != 0 {
         // c:3568-3597 — pattern match against the whole table per arg.
@@ -5272,14 +5338,10 @@ pub fn build_cur_dump(
             // matches the pattern, add it. `lnames` is the dedup list
             // (C: `!linknodebydatum(lnames, hn->nam)`).
             for (fname, shf) in tab.iter() {
-                if !lnames.contains(fname) && crate::ported::pattern::pattry(&pprog, fname) {
-                    lnames.push(fname.clone());
-                    candidates.push((
-                        fname.clone(),
-                        shf.node.flags,
-                        shf.funcdef.as_deref().cloned(),
-                        shf.body.clone(),
-                    ));
+                if !candidates.iter().any(|c| c.node.nam == *fname)
+                    && crate::ported::pattern::pattry(&pprog, fname)
+                {
+                    candidates.push(shf.clone());
                 }
             }
             drop(tab);
@@ -5294,13 +5356,7 @@ pub fn build_cur_dump(
             match (errored, tab.get(fname)) {
                 // c:3600-3601 — `if (errflag || !(shf = getnode(*names)))`.
                 (false, Some(shf)) => {
-                    lnames.push(fname.clone());
-                    candidates.push((
-                        fname.clone(),
-                        shf.node.flags,
-                        shf.funcdef.as_deref().cloned(),
-                        shf.body.clone(),
-                    ));
+                    candidates.push(shf.clone());
                 }
                 _ => {
                     drop(tab);
@@ -5313,122 +5369,13 @@ pub fn build_cur_dump(
         }
     }
 
-    // c:3489-3534 — `cur_add_func` inlined: resolve each candidate to a
-    // wordcode `Eprog` and accumulate the header/body length budgets.
-    for (fname, flags, funcdef, body) in candidates {
-        let prog: eprog = if (flags & PM_UNDEFINED as i32) != 0 {
-            // c:3495-3512 — autoload stub: only dumpable with `-a`.
-            if (what & 2) == 0 {
-                zwarnnam(nam, &format!("function is not loaded: {}", fname)); // c:3499
-                errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                let _ = fs::remove_file(&dump);
-                return 1;
-            }
-            // c:3502 — `noaliases = (shf->node.flags & PM_UNALIASED);`
-            let ona = crate::ported::lex::noaliases();
-            crate::ported::lex::set_noaliases(
-                (flags & crate::ported::zsh_h::PM_UNALIASED as i32) != 0,
-            );
-            // c:3503 — `getfpfunc(shf->node.nam, NULL, NULL, NULL, 0)`.
-            let mut dir_out: Option<String> = None;
-            let mut dump_out: Option<(eprog, i32)> = None;
-            let found =
-                crate::ported::exec::getfpfunc(&fname, &mut dir_out, None, 0, &mut dump_out);
-            crate::ported::lex::set_noaliases(ona); // c:3506 / c:3511
-            let loaded: Option<eprog> = match dump_out {
-                // c:3509-3510 — `if (prog->dump) prog = dupeprog(prog, 1);`
-                Some((p, _)) => Some(if p.dump.is_some() {
-                    dupeprog(&p, true)
-                } else {
-                    p
-                }),
-                None => match found {
-                    // zshrs's `getfpfunc` only materializes an `Eprog`
-                    // for `.zwc` digest hits; a plain autoload source
-                    // comes back as a path. C's `getfpfunc` parses the
-                    // source itself — reproduce that with the same
-                    // read + `parse_string` path `build_dump` uses.
-                    Some(path) => {
-                        let fnam = crate::ported::utils::unmeta(&path);
-                        match fs::read(&fnam) {
-                            Ok(bytes) => {
-                                // Same char-form read as `build_dump`
-                                // above (c:3450): `utils::metafy` cannot
-                                // represent its own byte-form output in a
-                                // `String` and lossily replaced any
-                                // non-ASCII source char.
-                                let file =
-                                    crate::script_bytes::decode_script_bytes(&bytes);
-                                crate::ported::exec::parse_string(&file, 1)
-                            }
-                            Err(_) => None,
-                        }
-                    }
-                    None => None,
-                },
-            };
-            match loaded {
-                Some(p) => p,
-                None => {
-                    zwarnnam(nam, &format!("can't load function: {}", fname)); // c:3505
-                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                    let _ = fs::remove_file(&dump);
-                    return 1;
-                }
-            }
-        } else {
-            // c:3513-3518 — loaded function: dump only with `-c`.
-            if (what & 1) == 0 {
-                zwarnnam(nam, &format!("function is already loaded: {}", fname)); // c:3515
-                errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                let _ = fs::remove_file(&dump);
-                return 1;
-            }
-            // c:3517 — `prog = dupeprog(shf->funcdef, 1);`. In zshrs a
-            // loaded function usually carries its source in `body` with
-            // `funcdef == None` (deferred compile); compile it now to
-            // recover the wordcode C stored eagerly.
-            match funcdef {
-                Some(fd) => dupeprog(&fd, true),
-                None => match body {
-                    Some(b) => match {
-                        // The stored body is text the definition's parse
-                        // already alias-expanded (C stores wordcode); compile
-                        // it under the same lexer pins `functions` uses so an
-                        // alias is not expanded a second time.
-                        let _pin = crate::vm_helper::funcdef_lex_pin(&fname, &b);
-                        crate::ported::exec::parse_string(&b, 1)
-                    } {
-                        Some(p) => p,
-                        None => {
-                            zwarnnam(nam, &format!("can't load function: {}", fname));
-                            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                            let _ = fs::remove_file(&dump);
-                            return 1;
-                        }
-                    },
-                    // Empty-bodied function (no funcdef, no source):
-                    // emit a zero-length program, matching the
-                    // degenerate `Eprog` C would carry for `f() { }`.
-                    None => eprog::default(),
-                },
-            }
-        };
-
-        // c:3521-3527 — build the wcfunc node.
-        let wcf_flags = if (prog.flags & EF_RUN) != 0 {
-            FDHF_KSHLOAD // c:3526
-        } else {
-            FDHF_ZSHLOAD // c:3526
-        };
-        // c:3531-3534 — accumulate header + body word budgets.
-        hlen += (FDHEAD_WORDS as i32) + ((fname.len() as i32 + 4) / 4); // c:3531-3532
-        tlen += (prog.len - prog.npats * patprog_size + 3) / 4; // c:3533-3534
-        progs.push(wcfunc {
-            name: fname,
-            prog,
-            flags: wcf_flags,
-        });
+    for shf in &candidates {
+        // c:3541-3617 — `cur_add_func(nam, shf, lnames, progs, &hlen, &tlen, what)`.
+        if cur_add_func(nam, shf, &mut lnames, &mut progs, &mut hlen, &mut tlen, what) != 0 {
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+            let _ = fs::remove_file(&dump);
+            return 1;
+        }
     }
 
     // c:3619-3625 — `if (empty(progs)) { zwarnnam(nam, "no functions"); ... }`
@@ -5980,11 +5927,10 @@ const MAX_RECURSION_DEPTH: usize = 500;
 ///
 /// A second port of `struct parse_stack` exists at
 /// `crate::ported::zsh_h::parse_stack` (zsh.h:1066) using canonical
-/// Wordcode / Eccstr / `struct heredocs` types — that port is unused
-/// today and will become authoritative when Phase 9b (PORT_PLAN.md)
-/// wires wordcode emission. This local version uses the working-set
-/// shapes (`Vec<HereDoc>`, stubbed wordcode fields) suited to zshrs's
-/// pre-wordcode AST architecture; the consolidation happens in P9b.
+/// Wordcode / Eccstr / `struct heredocs` types. This local version is the
+/// one `parse_context_save` / `parse_context_restore` use; it holds the
+/// wordcode-buffer state as the thread-local shapes (`Vec`, maps)
+/// the emitter keeps.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Default, Clone)]
 pub struct parse_stack {
@@ -9866,7 +9812,7 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
             let n = tokstr().unwrap_or_default();
             // c:2244-2245 — restore incmdpos / nocorrect right after
             // the redir target word is confirmed, BEFORE the trailing
-            // zshlex advances past it. The advance itself is deferred
+            // zshlex advances past it. The advance itself happens
             // below so REDIR_HEREDOC[DASH] can push onto HDOCS first
             // (matching the wordcode variant at parse.rs:6894-6908) —
             // otherwise the NEWLIN drained by that zshlex sees an

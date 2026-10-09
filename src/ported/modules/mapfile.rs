@@ -441,7 +441,19 @@ pub fn getpmmapfile(
         u_val: 0,
         u_dval: 0.0,
         u_hash: None,
-        gsu_s: None, // c:223 — `pm->gsu.s = &mapfile_gsu;` (mapfile_gsu not yet wired)
+        // c:208-209 — `mapfile_gsu = { strgetfn, setpmmapfile, unsetpmmapfile }`
+        // c:223 — `pm->gsu.s = &mapfile_gsu;`
+        gsu_s: Some(Box::new(crate::ported::zsh_h::gsu_scalar {
+            getfn: crate::ported::params::strgetfn,
+            setfn: |pm, val| {
+                let ro = (pm.node.flags & crate::ported::zsh_h::PM_READONLY as i32) != 0;
+                setpmmapfile(&pm.node.nam, &val, ro)
+            },
+            unsetfn: |pm, _exp| {
+                let ro = (pm.node.flags & crate::ported::zsh_h::PM_READONLY as i32) != 0;
+                unsetpmmapfile(&pm.node.nam, ro)
+            },
+        })),
         gsu_i: None,
         gsu_f: None,
         gsu_a: None,
