@@ -653,9 +653,6 @@ pub fn downhistory() -> i32 {
 /// and the dual zlinecmp/strcmp tests, calling [`zle_setline`] on the
 /// `zmult`-th hit.
 pub fn historysearchbackward() -> i32 {
-    use crate::ported::hist::{movehistent, quietgethist};
-    use crate::ported::zsh_h::{HISTFINDNODUPS, HIST_DUP};
-
     // c:460 — `int n = zmult;`
     let n_save = ZMOD.lock().unwrap().mult;
     // c:464-470 — zmult<0 redirect.
@@ -706,46 +703,49 @@ pub fn historysearchbackward() -> i32 {
         }
     };
 
-    // c:488 — `if (!(he = quietgethist(histline))) return 1;`
-    let start = histline.load(Ordering::SeqCst) as i64;
-    if quietgethist(start).is_none() {
-        return 1;
-    }
-
-    let skip_flags = history().lock().unwrap().hist_skip_flags;
+    // c:488-509 — walk older entries from the current position; the
+    //              `zmult`-th entry with `str_pat` as a proper prefix that
+    //              differs from the buffer wins.
     let current_buf: String = ZLELINE.lock().unwrap().iter().collect();
-
-    let mut cur_ev = start;
-    let mut remaining = n_save;
-    // c:491 — `while ((he = movehistent(he, -1, hist_skip_flags))) { ... }`
-    while let Some(next_ev) = movehistent(cur_ev, -1, skip_flags) {
-        cur_ev = next_ev;
-        let he = match quietgethist(cur_ev) {
-            Some(h) => h,
-            None => break,
-        };
-        // c:492-493 — HISTFINDNODUPS filter.
-        if isset(HISTFINDNODUPS) && (he.node.flags as u32 & HIST_DUP) != 0 {
-            continue;
-        }
-        let zt: String = he.zle_text.clone().unwrap_or(he.node.nam.clone()); // c:494 GETZLETEXT
-                                                                             // c:495-496 — `zlinecmp(zt, str) < 0 && (*args || strcmp(zt, zlemetaline) != 0)`
-                                                                             //              We never have args in the free-fn caller path, so
-                                                                             //              strcmp must be non-zero (zt ≠ current buffer).
-        if zlinecmp(&zt, &str_pat) < 0 && zt != current_buf {
-            remaining -= 1; // c:497
-            if remaining <= 0 {
-                // c:498-503 — `unmetafy_line(); zle_setline(he); srch_hl
-                //              = histline; srch_cs = zlecs; return 0;`
-                history().lock().unwrap().cursor = cur_ev as usize;
-                let _ = zle_setline();
-                SRCH_HL.store(cur_ev as i32, Ordering::SeqCst);
-                SRCH_CS.store(ZLECS.load(Ordering::SeqCst) as i32, Ordering::SeqCst);
-                return 0;
+    // Walk `history().entries` from `cursor` (`cursor == len` is the live line, text in
+    // `saved_line`) in place of C's `movehistent(he, -1, hist_skip_flags)` ring walk.
+    let off = {
+        let h = history().lock().unwrap();
+        let len = h.entries.len() as i32;
+        let start = (h.cursor as i32).min(len);
+        let (mut i, mut left) = (start, n_save);
+        loop {
+            i += -1;
+            if i < 0 || i > len {
+                break None;
+            }
+            let zt: String = {
+                let e = &h.entries[i as usize];
+                if isset(crate::ported::zsh_h::HISTFINDNODUPS)
+                    && crate::ported::hist::quietgethist(e.num)
+                        .is_some_and(|he| he.node.flags as u32 & crate::ported::zsh_h::HIST_DUP != 0)
+                {
+                    continue;
+                }
+                e.line.clone()
+            };
+            let zt = zt.as_str();
+            if zlinecmp(zt, &str_pat) < 0 && zt != current_buf {
+                // c:495-496
+                left -= 1;
+                if left <= 0 {
+                    break Some(i - start);
+                }
             }
         }
-    }
-    1 // c:509
+    };
+    let Some(off) = off else {
+        return 1; // c:509
+    };
+    zle_goto_hist(off, false); // c:498-503 zle_setline(he)
+    SRCH_HL.store(history().lock().unwrap().cursor as i32, Ordering::SeqCst); // c:500
+    SRCH_CS.store(ZLECS.load(Ordering::SeqCst) as i32, Ordering::SeqCst); // c:501
+    0
 }
 
 /// Port of `historysearchforward(char **args)` from Src/Zle/zle_hist.c:516.
@@ -754,9 +754,6 @@ pub fn historysearchbackward() -> i32 {
 /// c:516-572 — same zmult<0 redirect, same cached-prefix computation,
 /// same dual-comparison walk via `movehistent(+1)`.
 pub fn historysearchforward() -> i32 {
-    use crate::ported::hist::{movehistent, quietgethist};
-    use crate::ported::zsh_h::{HISTFINDNODUPS, HIST_DUP};
-
     // c:519 — `int n = zmult;`
     let n_save = ZMOD.lock().unwrap().mult;
     if n_save < 0 {
@@ -801,36 +798,54 @@ pub fn historysearchforward() -> i32 {
             SRCH_STR.lock().unwrap().clone().unwrap_or_default()
         }
     };
-    let start = histline.load(Ordering::SeqCst) as i64;
-    if quietgethist(start).is_none() {
-        return 1;
-    }
-    let skip_flags = history().lock().unwrap().hist_skip_flags;
+    // c:550-572 — walk newer entries; the live line (C's `curhist` entry)
+    //              matches on `zlinecmp <= 0`, every other entry on `< 0`.
     let current_buf: String = ZLELINE.lock().unwrap().iter().collect();
-    let mut cur_ev = start;
-    let mut remaining = n_save;
-    while let Some(next_ev) = movehistent(cur_ev, 1, skip_flags) {
-        cur_ev = next_ev;
-        let he = match quietgethist(cur_ev) {
-            Some(h) => h,
-            None => break,
-        };
-        if isset(HISTFINDNODUPS) && (he.node.flags as u32 & HIST_DUP) != 0 {
-            continue;
-        }
-        let zt: String = he.zle_text.clone().unwrap_or(he.node.nam.clone());
-        if zlinecmp(&zt, &str_pat) < 0 && zt != current_buf {
-            remaining -= 1;
-            if remaining <= 0 {
-                history().lock().unwrap().cursor = cur_ev as usize;
-                let _ = zle_setline();
-                SRCH_HL.store(cur_ev as i32, Ordering::SeqCst);
-                SRCH_CS.store(ZLECS.load(Ordering::SeqCst) as i32, Ordering::SeqCst);
-                return 0;
+    // Walk `history().entries` from `cursor` (`cursor == len` is the live line, text in
+    // `saved_line`) in place of C's `movehistent(he, 1, hist_skip_flags)` ring walk.
+    let off = {
+        let h = history().lock().unwrap();
+        let len = h.entries.len() as i32;
+        let start = (h.cursor as i32).min(len);
+        let (mut i, mut left) = (start, n_save);
+        loop {
+            i += 1;
+            if i < 0 || i > len {
+                break None;
+            }
+            let at_curhist = i == len;
+            let zt: String = if at_curhist {
+                match h.saved_line.as_ref() {
+                    Some(l) => l.iter().collect(),
+                    None => break None,
+                }
+            } else {
+                let e = &h.entries[i as usize];
+                if isset(crate::ported::zsh_h::HISTFINDNODUPS)
+                    && crate::ported::hist::quietgethist(e.num)
+                        .is_some_and(|he| he.node.flags as u32 & crate::ported::zsh_h::HIST_DUP != 0)
+                {
+                    continue;
+                }
+                e.line.clone()
+            };
+            let zt = zt.as_str();
+            if zlinecmp(zt, &str_pat) < at_curhist as i32 && zt != current_buf {
+                // c:555-556
+                left -= 1;
+                if left <= 0 {
+                    break Some(i - start);
+                }
             }
         }
-    }
-    1
+    };
+    let Some(off) = off else {
+        return 1; // c:572
+    };
+    zle_goto_hist(off, false); // c:558-563 zle_setline(he)
+    SRCH_HL.store(history().lock().unwrap().cursor as i32, Ordering::SeqCst); // c:560
+    SRCH_CS.store(ZLECS.load(Ordering::SeqCst) as i32, Ordering::SeqCst); // c:561
+    0
 }
 
 /// Port of `static char *srch_str` from Src/Zle/zle_hist.c:454. Cache
@@ -2732,9 +2747,6 @@ pub fn virevrepeatsearch() -> i32 {
 /// to-cursor via [`zlinecmp`], and on the `zmult`-th match restores the
 /// cursor position the C source preserves at c:2057.
 pub fn historybeginningsearchbackward() -> i32 {
-    use crate::ported::hist::{movehistent, quietgethist};
-    use crate::ported::zsh_h::{HISTFINDNODUPS, HIST_DUP};
-
     // c:2042 — `int cpos = zlecs;`
     let cpos = ZLECS.load(Ordering::SeqCst);
     // c:2043 — `int n = zmult;`
@@ -2748,48 +2760,48 @@ pub fn historybeginningsearchbackward() -> i32 {
         return ret;
     }
 
-    // c:2052 — `if (!(he = quietgethist(histline))) return 1;`
-    let start = histline.load(Ordering::SeqCst) as i64;
-    if quietgethist(start).is_none() {
-        return 1;
-    }
-
+    // c:2052-2073 — walk older entries; a hit has the text up to the cursor
+    //                as a proper prefix and is not identical to the whole buffer.
     let prefix: String = ZLELINE.lock().unwrap()[..cpos].iter().collect();
-    let skip_flags = history().lock().unwrap().hist_skip_flags;
-
-    let mut cur_ev = start;
-    let mut remaining = n_save;
-    // c:2054 — `while ((he = movehistent(he, -1, hist_skip_flags))) { ... }`
-    while let Some(next_ev) = movehistent(cur_ev, -1, skip_flags) {
-        cur_ev = next_ev;
-        let he = match quietgethist(cur_ev) {
-            Some(h) => h,
-            None => break,
-        };
-        // c:2057-2058 — `if (isset(HISTFINDNODUPS) && he->node.flags & HIST_DUP) continue;`
-        if isset(HISTFINDNODUPS) && (he.node.flags as u32 & HIST_DUP) != 0 {
-            continue;
-        }
-        let zt: String = he.zle_text.clone().unwrap_or(he.node.nam.clone()); // c:2059 GETZLETEXT
-                                                                             // c:2060-2064 — compare prefix (zlemetaline truncated at zlemetacs)
-                                                                             //               against zt; require tst < 0 (he ≠ buffer prefix)
-                                                                             //               AND zlinecmp(zt, full-buffer-prefix) non-zero
-                                                                             //               (i.e. he is not exactly the current prefix either).
-        let buf_prefix: String = prefix.clone();
-        let tst = zlinecmp(&zt, &buf_prefix);
-        if tst < 0 && zlinecmp(&zt, &buf_prefix) != 0 {
-            remaining -= 1; // c:2065
-            if remaining <= 0 {
-                // c:2066-2069 — `unmetafy_line(); zle_setline(he); zlecs = cpos; CCRIGHT(); return 0;`
-                history().lock().unwrap().cursor = cur_ev as usize;
-                let _ = zle_setline();
-                ZLECS.store(cpos, Ordering::SeqCst);
-                return 0;
+    let full_line: String = ZLELINE.lock().unwrap().iter().collect();
+    // Walk `history().entries` from `cursor` (`cursor == len` is the live line, text in
+    // `saved_line`) in place of C's `movehistent(he, -1, hist_skip_flags)` ring walk.
+    let off = {
+        let h = history().lock().unwrap();
+        let len = h.entries.len() as i32;
+        let start = (h.cursor as i32).min(len);
+        let (mut i, mut left) = (start, n_save);
+        loop {
+            i += -1;
+            if i < 0 || i > len {
+                break None;
+            }
+            let zt: String = {
+                let e = &h.entries[i as usize];
+                if isset(crate::ported::zsh_h::HISTFINDNODUPS)
+                    && crate::ported::hist::quietgethist(e.num)
+                        .is_some_and(|he| he.node.flags as u32 & crate::ported::zsh_h::HIST_DUP != 0)
+                {
+                    continue;
+                }
+                e.line.clone()
+            };
+            let zt = zt.as_str();
+            if zlinecmp(zt, &prefix) < 0 && zlinecmp(zt, &full_line) != 0 {
+                // c:2063-2064
+                left -= 1;
+                if left <= 0 {
+                    break Some(i - start);
+                }
             }
         }
-    }
-    // c:2073 — `unmetafy_line(); return 1;`
-    1
+    };
+    let Some(off) = off else {
+        return 1; // c:2073
+    };
+    zle_goto_hist(off, false); // c:2067 zle_setline(he)
+    ZLECS.store(cpos.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst); // c:2068-2069
+    0
 }
 
 /// Port of `historybeginningsearchforward(char **args)` from Src/Zle/zle_hist.c:2085.
@@ -2800,9 +2812,6 @@ pub fn historybeginningsearchbackward() -> i32 {
 /// with `zlinecmp`, and on the `zmult`-th hit invokes `zle_setline`
 /// and restores the cursor position.
 pub fn historybeginningsearchforward() -> i32 {
-    use crate::ported::hist::{movehistent, quietgethist};
-    use crate::ported::zsh_h::{HISTFINDNODUPS, HIST_DUP};
-
     // c:2088 — `int cpos = zlecs;`
     let cpos = ZLECS.load(Ordering::SeqCst);
     // c:2089 — `int n = zmult;`
@@ -2816,45 +2825,54 @@ pub fn historybeginningsearchforward() -> i32 {
         return ret;
     }
 
-    // c:2098 — `if (!(he = quietgethist(histline))) return 1;`
-    let start = histline.load(Ordering::SeqCst) as i64;
-    if quietgethist(start).is_none() {
-        return 1;
-    }
-
+    // c:2098-2117 — walk newer entries; the live line (C's `curhist` entry)
+    //                matches on `zlinecmp <= 0`, every other entry on `< 0`.
     let prefix: String = ZLELINE.lock().unwrap()[..cpos].iter().collect();
-    let skip_flags = history().lock().unwrap().hist_skip_flags;
-
-    let mut cur_ev = start;
-    let mut remaining = n_save;
-    // c:2100 — `while ((he = movehistent(he, +1, hist_skip_flags))) { ... }`
-    while let Some(next_ev) = movehistent(cur_ev, 1, skip_flags) {
-        cur_ev = next_ev;
-        let he = match quietgethist(cur_ev) {
-            Some(h) => h,
-            None => break,
-        };
-        // c:2103-2104 — skip duplicates if HISTFINDNODUPS is set
-        if isset(HISTFINDNODUPS) && (he.node.flags as u32 & HIST_DUP) != 0 {
-            continue;
-        }
-        let zt: String = he.zle_text.clone().unwrap_or(he.node.nam.clone()); // c:2105 GETZLETEXT
-                                                                             // c:2106-2110 — `tst < 0 && zlinecmp(zt, buf_prefix) != 0`
-        let buf_prefix: String = prefix.clone();
-        let tst = zlinecmp(&zt, &buf_prefix);
-        if tst < 0 && zlinecmp(&zt, &buf_prefix) != 0 {
-            remaining -= 1; // c:2111
-            if remaining <= 0 {
-                // c:2112-2115
-                history().lock().unwrap().cursor = cur_ev as usize;
-                let _ = zle_setline();
-                ZLECS.store(cpos, Ordering::SeqCst);
-                return 0;
+    let full_line: String = ZLELINE.lock().unwrap().iter().collect();
+    // Walk `history().entries` from `cursor` (`cursor == len` is the live line, text in
+    // `saved_line`) in place of C's `movehistent(he, 1, hist_skip_flags)` ring walk.
+    let off = {
+        let h = history().lock().unwrap();
+        let len = h.entries.len() as i32;
+        let start = (h.cursor as i32).min(len);
+        let (mut i, mut left) = (start, n_save);
+        loop {
+            i += 1;
+            if i < 0 || i > len {
+                break None;
+            }
+            let at_curhist = i == len;
+            let zt: String = if at_curhist {
+                match h.saved_line.as_ref() {
+                    Some(l) => l.iter().collect(),
+                    None => break None,
+                }
+            } else {
+                let e = &h.entries[i as usize];
+                if isset(crate::ported::zsh_h::HISTFINDNODUPS)
+                    && crate::ported::hist::quietgethist(e.num)
+                        .is_some_and(|he| he.node.flags as u32 & crate::ported::zsh_h::HIST_DUP != 0)
+                {
+                    continue;
+                }
+                e.line.clone()
+            };
+            let zt = zt.as_str();
+            if zlinecmp(zt, &prefix) < at_curhist as i32 && zlinecmp(zt, &full_line) != 0 {
+                // c:2108-2109
+                left -= 1;
+                if left <= 0 {
+                    break Some(i - start);
+                }
             }
         }
-    }
-    // c:2117
-    1
+    };
+    let Some(off) = off else {
+        return 1; // c:2117
+    };
+    zle_goto_hist(off, false); // c:2112 zle_setline(he)
+    ZLECS.store(cpos.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst); // c:2113-2114
+    0
 }
 /// `ISEARCH_ACTIVE` static.
 pub static ISEARCH_ACTIVE: AtomicI32 = AtomicI32::new(0); // c:1078

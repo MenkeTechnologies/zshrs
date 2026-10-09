@@ -1,4 +1,4 @@
-//! zshrs - The most powerful shell ever created
+//! zshrs - Rust rewrite of zsh
 //!
 //! A drop-in zsh replacement that combines:
 //! - Full bash/zsh script compatibility  

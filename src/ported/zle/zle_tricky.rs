@@ -5112,18 +5112,29 @@ pub fn fixmagicspace() {
 /// Port of `magicspace(char **args)` from Src/Zle/zle_tricky.c:2882.
 pub fn magicspace() -> i32 {
     // c:2882
-    // C body c:2891 — `fixmagicspace()` then expandhistory; on success
-    //                  insert a literal space.
     fixmagicspace(); // c:2891
-    let ret = expandhistory();
-    if ret != 0 {
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(Ordering::SeqCst), ' ');
-        ZLECS.fetch_add(1, Ordering::SeqCst);
+
+    // c:2905-2910 — find a `!"` quote-bang pair at line start or after a
+    //               backslash; history expansion is suppressed before it.
+    let bangq_off: i32 = {
+        let line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+        let bang = crate::ported::hist::bangchar.load(Ordering::SeqCst) as u8 as char;
+        (0..line.len())
+            .find(|&i| {
+                line[i] == bang
+                    && line.get(i + 1) == Some(&'"')
+                    && (i == 0 || line[i - 1] == '\\')
+            })
+            .map_or(-1, |i| i as i32)
+    };
+
+    // c:2916 — `if (!(ret = selfinsert(args)) && (bangq_off < 0 || bangq_off + 2 > zlecs)) doexpandhist();`
+    let ret = crate::ported::zle::zle_misc::selfinsert(&[]);
+    let zlecs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+    if ret == 0 && (bangq_off < 0 || bangq_off + 2 > zlecs) {
+        doexpandhist();
     }
-    ret
+    ret // c:2918
 }
 
 /// Port of `expandhistory(UNUSED(char **args))` from Src/Zle/zle_tricky.c:2921.
