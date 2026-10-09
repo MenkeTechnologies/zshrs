@@ -68,11 +68,29 @@ pub fn help_dir() -> Option<PathBuf> {
     Some(base_dir()?.join("help"))
 }
 
-/// True when the tree is absent or holds a different bundle.
+/// `(major, minor, patch)` of a stamp written by [`stamp_value`]
+/// (`<version>-<hash>`).
+fn stamp_version(stamp: &str) -> Option<(u64, u64, u64)> {
+    let version = stamp.rsplit_once('-')?.0;
+    let mut parts = version.split('.').map(|p| p.parse::<u64>().ok());
+    Some((parts.next()??, parts.next()??, parts.next()??))
+}
+
+/// True when the tree is absent or holds a different bundle from an equal or
+/// older zshrs. A tree stamped by a NEWER zshrs is left alone: an older binary
+/// sharing the same `$HOME` must not downgrade the pages on its next start.
 fn needs_write(base: &Path) -> bool {
-    match std::fs::read_to_string(base.join(STAMP)) {
-        Ok(s) => s.trim() != stamp_value(),
-        Err(_) => true,
+    let Ok(on_disk) = std::fs::read_to_string(base.join(STAMP)) else {
+        return true;
+    };
+    let on_disk = on_disk.trim();
+    let ours = stamp_value();
+    if on_disk == ours {
+        return false;
+    }
+    match (stamp_version(on_disk), stamp_version(&ours)) {
+        (Some(theirs), Some(mine)) => theirs <= mine,
+        _ => true,
     }
 }
 
@@ -306,4 +324,22 @@ pub fn publish_into(env: &mut Vec<(String, String)>) {
     }
     // `HELPDIR` is deliberately absent: it is a shell parameter, not an
     // environment entry — see [`seed_helpdir_param`].
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stamp_version;
+
+    #[test]
+    fn stamp_version_parses_version_and_ignores_hash() {
+        assert_eq!(stamp_version("0.13.19-ed24bc013fc546e4"), Some((0, 13, 19)));
+        assert!(stamp_version("0.13.9-aa") < stamp_version("0.13.10-bb"));
+    }
+
+    #[test]
+    fn stamp_version_rejects_malformed_stamps() {
+        assert_eq!(stamp_version(""), None);
+        assert_eq!(stamp_version("garbage"), None);
+        assert_eq!(stamp_version("0.13-ed24"), None);
+    }
 }
