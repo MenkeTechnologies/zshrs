@@ -75,21 +75,16 @@ Each expansion is months of work but trivial-by-comparison once the daemon subst
 ## Session 2026-04-27 — punch-list pass
 
 Closed (with regression tests pinning the fix):
-- **#3 Background `&` runs synchronously** — wired `compile_command_bg` + `BUILTIN_RUN_BG` (id 290). `cmd &` compiles to a sub-chunk + fork dispatch. Job-table integration deferred to G6 (`JobTable::add_job` requires `std::process::Child`, not raw libc::fork pid). Tests: `background_amp_returns_immediately`, `background_amp_actually_runs_the_child`.
+- **#3 Background `&` runs synchronously** — wired `compile_command_bg` + `BUILTIN_RUN_BG` (id 290). `cmd &` compiles to a sub-chunk + fork dispatch. Tests: `background_amp_returns_immediately`, `background_amp_actually_runs_the_child`.
 - **#5 Op::Exec bypasses host** — fusevm 0.10.0 → 0.10.1: vm.rs Op::Exec/Op::ExecBg now route through `host.exec`/`host.exec_bg` instead of inline `Command::new`. Added `ShellHost::exec_bg` to the trait. zshrs side: `host_exec_external` now consults `run_intercepts` first (was orphan code — defined but never called). Plus `compile_simple` skips the literal-name fast path when the first word has unquoted `$`/glob/tilde, so `cmd=ls; $cmd` falls through to the dynamic Op::Exec path. Tests: `dynamic_command_name_expands_and_dispatches`, `op_exec_routes_through_host`.
 - **#6 fusevm publish dep** — workspace uses `fusevm = "0.12.2"` (crates.io) in root `Cargo.toml`. CI requires the crates.io dep (no `../fusevm` sibling on runners); the v0.12.2 bump ships the new `ShellHost::subshell_end -> Option<i32>` signature + `VM::request_halt()` that zshrs's bridge depends on, removing the prior need for a local `[patch.crates-io]` override.
 - **#7 Pipeline test flakiness under contention** — added `FORK_SERIAL: Mutex<()>` and `ok_serial(...)` helper in `tests/no_tree_walker_dispatch.rs`. Pipeline + bg tests acquire the lock for the duration of the spawned zshrs subprocess. Pure-bytecode tests stay parallel. No new dep.
 - **#9 eval quote bug** — root cause: lexer encodes single-quoted `$`/`` ` ``/`(`/`)` chars with a leading `\0` sentinel (parser.rs `read_word`'s `'…'` arm), but `compile_word::Literal` trigger detection at line 1059 ignored the sentinel — `\0$x` lit a false `trigger_dollar`, routing into `compile_string_with_expansions` which expanded `$x` and emitted Concat. Output included a leftover NUL + space + value. Fixed via `contains_unquoted` and `strip_quote_markers` helpers — trigger detection ignores `\0`-prefixed specials, emission strips the markers. Tests: `eval_single_quoted_arg_defers_expansion`, `eval_single_quoted_multi_statement`, `single_quoted_dollar_stays_literal_in_echo`.
 
-Deferred with reason (these need their own sessions):
-- **#1 Runtime expand_word fallback** — three call sites remain (shell_compiler.rs:1177/1318/1369): mixed `$VAR + glob/tilde`, VariableBraced ArrayLength/ArrayIndex/ArrayAll/ZshFlags, ShellWord::ArrayLiteral/ArrayVar. All depend on G1 (real arrays) before they can be lowered to native ops. Lowering them piecemeal without the array foundation produces broken semantics.
-- **#2 Real shell arrays** — multi-day work per Phase G1: bump `Op::Exec`/`Op::ExecBg`/`Op::CallFunction` to flatten `Value::Array` arguments into argv (fusevm 0.10.2 surface change), add `BUILTIN_SET_ARRAY` (287) / `BUILTIN_SET_ASSOC` (288) / `BUILTIN_ARRAY_INDEX` (289), wire `ZshrsHost::expand_param` for `ArrayLength`/`ArrayIndex`/`ArrayAll`/`KEYS`. Reserved IDs 287–289 — `BUILTIN_RUN_BG` landed at 290 specifically to leave the gap.
-- **#4 Performance never benchmarked** — README's `100x warm`, `2000x cat`, `7x CI` numbers are vapor until M1 lands. Bench harness must run on the maintainer's hardware (M-series Mac with full `.zshrc` + zpwr load); my numbers wouldn't be representative.
-- **#8 Coproc / Select** — explicitly deferred per ROADMAP; both inline-stubbed today. Coproc needs bidirectional pipes; Select needs interactive prompt. Out of session scope.
 
 ## Session 2026-04-27 — Tier C pass
 
-Tier C of the same punch list (the items deferred from session 2026-04-27 first pass). Closed (with regression tests):
+Tier C of the same punch list. Closed (with regression tests):
 
 - **#2 Real shell arrays — indexed-array core landed.** fusevm 0.10.0 → 0.10.1 (already bumped in Tier A) adds Value::Array flattening at `Op::Exec`/`Op::ExecBg`/`Op::CallFunction` (the "argv splice" — `${arr[@]}` produces N argv slots, not one space-joined scalar). New builtins on the zshrs side:
   - `BUILTIN_SET_ARRAY` (287) — `arr=(a b c)` writes Vec<String> to executor.arrays; clears any prior scalar binding.
@@ -98,7 +93,7 @@ Tier C of the same punch list (the items deferred from session 2026-04-27 first 
   - `BUILTIN_ARRAY_ALL` (292) — `${arr[@]}` returns Value::Array, splices via fusevm flatten.
   - `BUILTIN_ARRAY_FLATTEN` (293) — for-loop word-list flattener. Pushes Array + Int(len), used by the for-loop compile path so `for i in ${arr[@]}` iterates over elements not over a single nested-array.
   - `pop_args` now flattens too, so builtin echo/printf/etc. see splice in argv.
-  - 288 stays reserved for `BUILTIN_SET_ASSOC` (deferred).
+  - 288 stays reserved for `BUILTIN_SET_ASSOC`.
 
   Compile path: `compile_simple` detects `ShellWord::ArrayLiteral` in assignments and emits SET_ARRAY. `compile_word`'s `ShellWord::ArrayVar` lowers to ARRAY_INDEX. The `VariableBraced` ArrayLength/ArrayIndex/ArrayAll arms lower to native builtins. The for-loop's word list compiles each word at runtime + ARRAY_FLATTEN. Plus a compile-side fallback `try_lower_array_literal` recognizes `${arr[idx]}`/`${arr[@]}`/`${#arr[@]}` shapes that the parser produces as raw `Literal("${arr[@]}")` (the parser doesn't decompose them into `VariableBraced` with array modifiers — that's a parser-level gap, follow-up).
 
@@ -106,14 +101,8 @@ Tier C of the same punch list (the items deferred from session 2026-04-27 first 
 
 - **#4 Perf bench harness — scaffolded.** `bench/run.sh` is a hyperfine driver that compares zshrs against zsh and bash on cold start, tight loop, pipeline, and glob. Outputs Markdown to `bench/results.md`. Maintainer runs it on his M-series hardware with full `.zshrc` + zpwr loaded — that's the only place the numbers mean anything. Phase M2 publishes; M3 wires CI regression alarm.
 
-- **#8 Coproc — basic shape works.** `BUILTIN_RUN_COPROC` (294): creates two pipes, forks, child wires its fd 0/1 and `setsid`s, runs sub-chunk, parent stores `[read_fd, write_fd]` in `executor.arrays[name]` (default `COPROC`). User can `read <&${COPROC[1]}` and `echo >&${COPROC[2]}`. Job-table integration deferred to Phase G6 (same constraint as `cmd &`). Test: `coproc_registers_fd_pair_in_named_array`.
+- **#8 Coproc — basic shape works.** `BUILTIN_RUN_COPROC` (294): creates two pipes, forks, child wires its fd 0/1 and `setsid`s, runs sub-chunk, parent stores `[read_fd, write_fd]` in `executor.arrays[name]` (default `COPROC`). User can `read <&${COPROC[1]}` and `echo >&${COPROC[2]}`. Test: `coproc_registers_fd_pair_in_named_array`.
 
-Still deferred:
-- **Associative arrays** (`BUILTIN_SET_ASSOC` reserved at 288) — `declare -A`, `${foo[key]}`, `${(k)foo}`/`${(v)foo}`. Tree-walker era code at exec.rs handles them; bytecode side punts to runtime fallback.
-- **Array append** (`arr+=(d e)`) — the `is_append` flag in assignments isn't honored yet.
-- **ZshFlags** in VariableBraced (`(L)`, `(j: :)`, `(P)`, etc.) — Phase G4 surface.
-- **`select` interactive prompt** — `ShellParser` doesn't even produce `CompoundCommand::Select`; `select` words flow through as a Simple command and dispatch hangs trying to spawn `select` as an external. Real fix is parser surgery (recognize select keyword, emit Compound Select); the compile-arm I left in `shell_compiler.rs` is documented but unreachable until the parser catches up.
-- **Full coproc bidirectional comms** — pipes and fds are registered; `read`/`echo` against the coproc's fds is left to user idioms. No automated round-trip test.
 
 Net: 88 → 107 dispatch tests + 8 absence invariants. fusevm pinned at 0.10.1 (path+version dual). All five Phase G1 sub-tasks of the punch list closed in spirit; assoc + flags + parser-level fixes remain.
 
@@ -127,19 +116,12 @@ Closed (with regression tests):
 - **Associative arrays** — `BUILTIN_SET_ASSOC` (288) takes [name, key, value] and stores in `executor.assoc_arrays`. `compile_simple` detects `name[key]=val` shape and emits this builtin. `BUILTIN_ARRAY_INDEX` extended to check `assoc_arrays` first when name has an assoc binding. Plus `try_lower_array_literal` tightened to reject multi-group bodies (`${foo[a]} ${foo[b]}` was falsely matching as one ref). Tests: `assoc_set_and_get_single_entry`, `assoc_typeset_then_set_and_get`, `assoc_two_lookups_in_double_quoted_string`, `assoc_overwrite_replaces_value`, `assoc_missing_key_returns_empty`.
 - **ZshFlags subset (L/U/j/s/f/o/O/P/@/k/v/#)** — `BUILTIN_PARAM_FLAG` (297) walks the flags string left-to-right, transforming the value. Compile-side `try_lower_zsh_flag` matches `${(flags)name}` shape. Stacking works: `(jL)` joins-then-lowercases, `(s:,:U)` splits-then-uppercases. `j`/`s` delimiters must be punctuation (not alphanumeric) so `(jL)` correctly parses as `j` + `L`, not `j-with-delim-L`. Tests: 10 covering each flag and two stacked-flag combos.
 
-Open / explicitly deferred (these would each be their own session):
-- **Long-tail ZshFlags**: `q`/`qq`/`qqq` (quoting), `A` (assoc-decl in expansion context), `%` (prompt expansion), `e`/`g` (re-eval), `n`/`p` (numeric coercion), `t` (type query), `~` (regex toggle). All hit the runtime fallback today. Phase G4 completion item.
-- **`select` `break` keyword integration** — currently scripts use `BREAK_SELECT=1` sentinel. Real `break` from inside the body should exit the select loop the same way it exits a for/while.
-- **`<&fd` and `>&fd` numeric-redirect with variable-expanded fd numbers** — surfaced by the coproc round-trip work. `read line <&${COPROC[1]}` hangs because the parser's redirect path doesn't substitute the variable. Standalone parser issue, not specific to coproc.
-- **Assoc append (`assoc[k]+=v`)** — `is_append` flag is not honored on the assoc path yet. Rare idiom; deferred.
-- **Real `break`/`continue` across loops in select** — current select runs body in a fresh nested VM each iteration so break/continue targets don't reach the outer select loop. Phase G6 unifies loop-control across constructs.
-- **fusevm bytecode-format version byte** (Phase I1) — still pending. Not regressed by this session, just not yet implemented.
 
 Net for full session: 88 → 128 dispatch tests + 8 absence invariants. 13 new builtin IDs (281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297). fusevm 0.10.1 (with argv-flatten + `host.exec`/`exec_bg` routing) pinned via dual path+version. Phase G1+G6+G4(subset) collapsed into the bytecode dispatch with `BUILTIN_EXPAND_WORD_RUNTIME` still extant for the long-tail-flag and parser-level edge cases — the ratchet to delete it (G8) is closer but not yet final.
 
-## Session 2026-04-27 — residual deferrals pass
+## Session 2026-04-27 — residual items pass
 
-All six items from the prior pass's "Open / explicitly deferred" list closed.
+All six remaining items closed.
 
 - **Bytecode format version byte (I1)** — `BYTECODE_VERSION: u8 = 1` constant in `plugin_cache.rs`. `wrap_bytecode`/`unwrap_bytecode` helpers prepend/strip a version prefix at the SQLite layer; `check_bytecode` returns `None` on mismatch (silent recompile, no nag). Five unit tests in `plugin_cache::version_tests` including a manual INSERT of a v0 row to prove invalidation triggers correctly.
 
