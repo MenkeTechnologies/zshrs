@@ -14,31 +14,29 @@
 //! prompt escapes. The `_p9k_cache_get`/`_p9k_cache_set` template cache
 //! (p10k:615/834) is therefore unnecessary and omitted.
 //!
-//! Phase-1 simplifications (each marked TODO at the code site):
-//!   - the `p10k display` toggle layer (`${_p9k__<i>l-...}` wrappers)
-//!     and instant prompt are not ported;
-//!   - CONTENT_EXPANSION / VISUAL_IDENTIFIER_EXPANSION: default
-//!     passthrough, empty (hide), and literal glyphs are honored;
-//!     arbitrary `${...}` templates route through expansion.rs's
-//!     singsub path (a zsh FUNCTION body like the user's
-//!     `my_git_formatter` VCS formatter is still not evaluated —
-//!     VCS falls back to p10k's default git format);
+//! Notes on the eager model:
+//!   - the `p10k display` layer (`${_p9k__<i>l-...}` wrappers) is applied
+//!     while assembling: hidden lines, left/right sides, frames, gaps
+//!     and individual segments (`api.rs`); instant prompt does not
+//!     exist in this engine — the first paint is the full prompt;
+//!   - CONTENT_EXPANSION / VISUAL_IDENTIFIER_EXPANSION templates (and
+//!     the user's `my_git_formatter`-style VCS formatter) are
+//!     evaluated by expansion.rs through the shell expander;
 //!   - joined segments (`is_joined_name`, separator "case 2") join only
 //!     within their own prompt LINE (p10k's `_p9k_left_join`,
 //!     p10k:8414-8433, is built over the concatenated multi-line list,
 //!     but a line always opens with `bg=NONE` so cross-line joins can
 //!     only matter through skipped-anchor chains); SELF_JOINED
-//!     (p10k:697-704) is not honored — each Segment renders once so the
-//!     multi-sub-segment case it exists for cannot arise;
+//!     (p10k:705) joins adjacent sub-segments of one element
+//!     (`self_joined`);
 //!   - non-last-line right prompts are gap-aligned per
-//!     `_p9k_build_gap_post` (gap char, gap fg/bg styling,
-//!     ZLE_RPROMPT_INDENT, drop-right-on-overflow); only
-//!     MULTILINE_*_PROMPT_GAP_EXPANSION (default passthrough), the
-//!     `p10k display */gap` toggles and the `_p9k_prompt_overflow_bug`
-//!     terminator variant (p10k:8055) are unported.
+//!     `_p9k_build_gap_post` (gap char, gap fg/bg styling, GAP_EXPANSION,
+//!     ZLE_RPROMPT_INDENT, drop-right-on-overflow).
 
+use crate::extensions::p10k::api;
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
+use crate::extensions::p10k::segments_core::DirUnique;
 use crate::ported::params::{getiparam, getsparam};
 use crate::ported::utils::getkeystring;
 use crate::ported::zsh_h::WCWIDTH;
@@ -85,7 +83,7 @@ pub fn is_joined_name(name: &str) -> (&str, bool) {
 /// to 3 digits, `#hex` is lowercased, names go through the
 /// `__p9k_colors` table (p10k:59-110) after stripping `bg-`/`fg-`/`br`
 /// prefixes. Unknown names translate to "" (zsh empty-subscript miss).
-fn translate_color(c: &str) -> String {
+pub(crate) fn translate_color(c: &str) -> String {
     if !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()) {
         // p10k:534 — ${(l.3..0.)1}: pad to width 3 with zeros.
         format!("{c:0>3}")
@@ -263,11 +261,20 @@ fn seg_param(seg: &Segment, param: &str, default: &str) -> String {
     p9k_param(&seg.name, seg.state.as_deref(), param, default)
 }
 
+/// p10k:752 verbatim: expand `s` followed by `%1(l.1.0)` (1 when at
+/// least one character precedes) and test the last character.
+fn expands_nonempty(s: &str) -> bool {
+    let (expanded, _, _) =
+        crate::ported::prompt::promptexpand(&format!("{s}%1(l.1.0)"), 0, None);
+    expanded.ends_with('1')
+}
+
 /// p10k:752 — `${${(%):-$_p9k__c%1(l.1.0)}[-1]}`: "does this string
-/// have prompt-expanded width >= 1?". Eager approximation: skip the
-/// zero-width prompt escapes (`%F{..} %K{..} %f %k %b %B %u %U %s %S
-/// %E %{...%}`) and report whether anything visible remains. `%%` is a
-/// literal percent and counts as visible.
+/// expand to at least one character?". Plain characters and the
+/// zero-width escapes (`%F{..} %K{..} %f %k %b %B %u %U %s %S %E
+/// %{...%}`) are decided by a scan; any other escape (`%%`, `%n`,
+/// `%~`, `%1(l.…)`, …) goes to the real prompt expander with the same
+/// `%1(l.1.0)` probe.
 fn visibly_nonempty(s: &str) -> bool {
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
@@ -294,9 +301,8 @@ fn visibly_nonempty(s: &str) -> bool {
                 }
                 i = j + 2;
             }
-            // %% literal percent, or an escape we don't model
-            // (%1(l.…), %n, %~, …) — conservatively visible.
-            _ => return true,
+            // %%, %n, %~, %1(l.…), … — ask the prompt expander.
+            _ => return expands_nonempty(s),
         }
     }
     false
@@ -561,6 +567,19 @@ fn render_left_segment(seg: &Segment, joined: bool, st: &mut LeftState, out: &mu
     true
 }
 
+/// p10k:705-712 / 936 — `POWERLEVEL9K_<SEG>_SELF_JOINED=true`: a segment
+/// that emits several sub-segments (asdf, `p10k segment` calls) joins
+/// each to the previous one of the SAME element. Sub-segments of one
+/// element are adjacent and share the segment name.
+fn self_joined(segs: &[Segment], i: usize, last_rendered: Option<usize>) -> bool {
+    let Some(li) = last_rendered else { return false };
+    let seg = &segs[i];
+    let base = is_joined_name(&seg.name).0;
+    li + 1 == i
+        && is_joined_name(&segs[li].name).0 == base
+        && p9k_param(base, seg.state.as_deref(), "SELF_JOINED", "false") == "true"
+}
+
 /// Render one full LEFT prompt line (segments + closing separator).
 /// Line prefix state per p10k:7958 (`bg=NONE`, default `sss`); line
 /// suffix per p10k:7959 (`%b%k$_p9k__sss%b%k%f`).
@@ -595,7 +614,8 @@ fn render_left_line(segs: &[Segment]) -> String {
         if !is_joined_name(&seg.name).1 {
             group_start = i;
         }
-        let joined = last_rendered.is_some_and(|li| li >= group_start);
+        let joined = last_rendered.is_some_and(|li| li >= group_start)
+            || self_joined(segs, i, last_rendered);
         if render_left_segment(seg, joined, &mut st, &mut body) {
             last_rendered = Some(i);
         }
@@ -818,6 +838,14 @@ fn render_right_segment(
 /// Render one full RIGHT prompt line; "" when nothing rendered
 /// (p10k:5871 — `right=` stays empty unless the side produced output).
 fn render_right_line(segs: &[Segment]) -> String {
+    render_right_line_with(segs, "")
+}
+
+/// [`render_right_line`] with `_p9k_line_never_empty_right` support
+/// (p10k:8240-8247, 6073): a non-empty `empty_sym`
+/// (EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL) keeps an
+/// otherwise empty right line alive as `$sss%b%k%f`.
+fn render_right_line_with(segs: &[Segment], empty_sym: &str) -> String {
     let mut st = RightState {
         bg: None,
         w: String::new(),
@@ -831,16 +859,19 @@ fn render_right_line(segs: &[Segment]) -> String {
         if !is_joined_name(&seg.name).1 {
             group_start = i;
         }
-        let joined = last_rendered.is_some_and(|li| li >= group_start);
+        let joined = last_rendered.is_some_and(|li| li >= group_start)
+            || self_joined(segs, i, last_rendered);
         if render_right_segment(seg, joined, &mut st, &mut body) {
             last_rendered = Some(i);
         }
     }
     if body.is_empty() {
-        // TODO(phase-1): _p9k_line_never_empty_right (p10k:7962) —
-        // EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL forcing a
-        // non-empty right line is not wired.
-        return String::new();
+        if empty_sym.is_empty() {
+            return String::new();
+        }
+        // p10k:8241-8243 + 6073 — prefix_right sets sss to the symbol;
+        // suffix_right emits `$sss%b%k%f`.
+        return format!("{empty_sym}%b%k%f");
     }
     let body = fix_backspace_hack(&body); // p10k:5869
                                           // p10k:7964 — '$_p9k__sss%b%k%f'
@@ -907,6 +938,11 @@ fn prompt_visible_width(s: &str) -> usize {
         .sum()
 }
 
+/// p10k:8240 — `${(g::)_POWERLEVEL9K_EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL}`.
+fn empty_line_right_symbol() -> String {
+    getkeystring(&p9k_global("EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL", "")).0
+}
+
 /// p10k:8126 — `_p9k__ind::=${${ZLE_RPROMPT_INDENT:-1}/#-*/0}`:
 /// ZLE_RPROMPT_INDENT, unset/empty → 1, leading `-` (negative) → 0.
 /// (The `_p9k_emulate_zero_rprompt_indent` branch at p10k:8111-8124 is
@@ -945,11 +981,9 @@ fn rprompt_indent() -> usize {
 /// and the terminator is `_p9k_t[1+!_p9k__ind]` (p10k:8054 —
 /// `_p9k_t=($'\n' $'%{\n%}' '')`: the newline is zero-width-marked
 /// when ind==0 because the right side then ends in the terminal's
-/// last column). Unported: MULTILINE_*_PROMPT_GAP_EXPANSION
-/// (p10k:7900-7910, default passthrough only), the `p10k display
-/// */gap` toggles (`_p9k__g`/`_p9k__<i>g`), and the
-/// `_p9k_prompt_overflow_bug` `%{%G\n%}` terminator variant
-/// (p10k:8055). `measure` is injectable so tests need no live shell
+/// last column). The `_p9k_prompt_overflow_bug`
+/// `%{%G\n%}` terminator variant (p10k:8055) applies only to zsh
+/// 5.5-5.7.1 (p10k:7197-7201); zshrs reports 5.9, so it never applies. `measure` is injectable so tests need no live shell
 /// state.
 fn align_line(
     left: &str,
@@ -957,6 +991,19 @@ fn align_line(
     line: usize,
     columns: usize,
     measure: &dyn Fn(&str) -> usize,
+) -> String {
+    align_line_ex(left, right, line, columns, measure, false)
+}
+
+/// [`align_line`] honoring `p10k display N/gap=hide` (p10k:8185: the
+/// gap becomes plain spaces instead of the gap character).
+fn align_line_ex(
+    left: &str,
+    right: &str,
+    line: usize,
+    columns: usize,
+    measure: &dyn Fn(&str) -> usize,
+    gap_hidden: bool,
 ) -> String {
     if right.is_empty() {
         // p10k:5959-5960 — `[[ -n $right ]] || _p9k__prompt+=$'\n'`:
@@ -989,7 +1036,7 @@ fn align_line(
     if !fgc.is_empty() {
         style.push_str(&fg_seq(&fgc));
     }
-    let reset = if style.is_empty() { "" } else { "%b%k%f" }; // p10k:7918
+    let mut reset = if style.is_empty() { "" } else { "%b%k%f" }; // p10k:7918
     let ind = rprompt_indent();
     // p10k:8094 — _p9k__m = _p9k__clm - x - _p9k__ind - 1.
     let m = columns as i64 - (measure(left) + measure(right)) as i64 - ind as i64 - 1;
@@ -1000,10 +1047,23 @@ fn align_line(
     }
     // p10k:8054/8060 — terminator `_p9k_t[1+!_p9k__ind]`.
     let term = if ind == 0 { "%{\n%}" } else { "\n" };
-    format!(
-        "{left}{style}{}{right}{term}{reset}",
-        ch.repeat(m as usize + 1) // p10k:7907 — ${(pl.$((_p9k__m+1))..<char>.)}
-    )
+    // p10k:7907 — ${(pl.$((_p9k__m+1))..<char>.)}; hidden gap = spaces.
+    let fill = if gap_hidden {
+        " ".repeat(m as usize + 1)
+    } else {
+        ch.repeat(m as usize + 1)
+    };
+    // p10k:7899-7915 — MULTILINE_{FIRST,NEWLINE}_PROMPT_GAP_EXPANSION
+    // template with P9K_GAP set; a custom template forces the reset.
+    let (fill, custom) = if gap_hidden {
+        (fill, false)
+    } else {
+        crate::p10k::expansion::apply_gap_expansion(kind, &fill)
+    };
+    if custom {
+        reset = "%b%k%f";
+    }
+    format!("{left}{style}{fill}{right}{term}{reset}")
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,6 +1115,133 @@ fn right_frame_suffix(line: usize, num_lines: usize) -> String {
         "MULTILINE_NEWLINE_PROMPT_SUFFIX"
     };
     get_icon(None, key, "")
+}
+
+/// p10k:8453-8480 — the ruler line. A transparent ruler of `' '` is just
+/// a newline; otherwise `%b<bg><fg>` + (COLUMNS - indent) copies of
+/// RULER_CHAR + `%k%f` + the line terminator (`_p9k_t[1+!_p9k__ind]`).
+fn ruler_line(columns: usize) -> String {
+    let mut ch = get_icon(None, "RULER_CHAR", "");
+    // p10k:8456-8458 — must be a single column wide, else ' '.
+    if ch.chars().count() != 1 || ch.chars().next().map(WCWIDTH) != Some(1) {
+        ch = " ".to_string();
+    }
+    let bg = translate_color(&p9k_param("ruler", None, "BACKGROUND", ""));
+    if bg.is_empty() && ch == " " {
+        return "\n".to_string(); // p10k:8461
+    }
+    let fg = translate_color(&p9k_param("ruler", None, "FOREGROUND", ""));
+    let ind = rprompt_indent();
+    let width = columns.saturating_sub(ind);
+    let term = if ind == 0 { "%{\n%}" } else { "\n" };
+    format!("%b{}{}{}%k%f{term}", bg_seq(&bg), fg_seq(&fg), ch.repeat(width))
+}
+
+/// Resolve `truncate_to_unique` dir segments on one left line (p10k:6121-6145
+/// + dir template p10k:1948-1952). The FIRST dir of the prompt gets the
+/// budget `_p9k__d = _p9k__m - _p9k__h`, where `_p9k__m` is the free
+/// width with the dir fully expanded (`clm - x - ind - 1`, p10k:8094)
+/// and `_p9k__h` the columns reserved for typing
+/// (DIR_MIN_COMMAND_COLUMNS[_PCT] on the last line) raised by
+/// DIR_MAX_LENGTH. Components shorten left to right while the budget is
+/// negative, each step adding the columns it saves. Every later dir gets
+/// `_p9k__d = -1024`, i.e. fully shortened (p10k:2160).
+fn fit_unique_dirs(
+    lsegs: &[Segment],
+    plans: &[DirUnique],
+    budget_used: &mut bool,
+    line_of: &dyn Fn(&[Segment]) -> String,
+    right: &str,
+    columns: usize,
+    last_line: bool,
+) -> Vec<Segment> {
+    let mut segs = lsegs.to_vec();
+    let mut first: Option<(usize, usize)> = None;
+    for si in 0..segs.len() {
+        if is_joined_name(&segs[si].name).0 != "dir" {
+            continue;
+        }
+        let Some(pi) = plans.iter().position(|p| p.variants[0] == segs[si].content) else {
+            continue;
+        };
+        if !*budget_used && first.is_none() {
+            first = Some((si, pi));
+            *budget_used = true;
+        } else if let Some(shortest) = plans[pi].variants.last() {
+            segs[si].content = shortest.clone();
+        }
+    }
+    let Some((si, pi)) = first else {
+        return segs;
+    };
+    let plan = &plans[pi];
+    let clm = columns as f64;
+    // p10k:8094 — _p9k__m = _p9k__clm - x - _p9k__ind - 1.
+    let m = columns as i64
+        - (prompt_visible_width(&line_of(&segs)) + prompt_visible_width(right)) as i64
+        - rprompt_indent() as i64
+        - 1;
+    // p10k:6124-6130 — columns kept free for typing (last line only).
+    let a = p9k_global("DIR_MIN_COMMAND_COLUMNS", "40").trim().parse::<i64>().unwrap_or(0);
+    let pct = p9k_global("DIR_MIN_COMMAND_COLUMNS_PCT", "50").trim().parse::<f64>().unwrap_or(0.0);
+    let mut h: i64 = 0;
+    if last_line && (a > 0 || pct > 0.0) {
+        let f = 0.01 * pct * clm;
+        h = (if (a as f64) < f { f } else { a as f64 }) as i64;
+    }
+    // p10k:6131-6142 — DIR_MAX_LENGTH: absolute columns or `N%` of the width.
+    let dir_len = prompt_visible_width(&plan.variants[0]) as f64;
+    let max_len = p9k_global("DIR_MAX_LENGTH", "0");
+    let (num, is_pct) = match max_len.strip_suffix('%') {
+        Some(n) => (n, true),
+        None => (max_len.as_str(), false),
+    };
+    if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) {
+        let v = num.parse::<f64>().unwrap_or(0.0);
+        let lim = if is_pct {
+            Some(dir_len - 0.01 * v * clm)
+        } else {
+            let l = dir_len - v;
+            (l > 0.0).then_some(l)
+        };
+        if let Some(lim) = lim {
+            let floor = m as f64 + lim;
+            if (h as f64) < floor {
+                h = floor as i64;
+            }
+        }
+    }
+    // p10k:6143 — _p9k__d::=$((_p9k__m-_p9k__h)).
+    let mut d = m - h;
+    let mut k = 0;
+    while d < 0 && k < plan.saved.len() {
+        d += plan.saved[k];
+        k += 1;
+    }
+    segs[si].content = plan.variants[k].clone();
+    segs
+}
+
+/// p10k:7932-7944 — align per-side line lists to a common count: a
+/// shorter left side is padded with empty lines on TOP; a shorter right
+/// side at the BOTTOM (on top under RPROMPT_ON_NEWLINE). `render_prompt`
+/// applies the same rule through `line_pair`; `p10k display` addresses
+/// parts by these aligned line numbers.
+pub fn align_lines<T: Clone>(left: Vec<Vec<T>>, right: Vec<Vec<T>>) -> (Vec<Vec<T>>, Vec<Vec<T>>) {
+    let n = left.len().max(right.len()).max(1);
+    let rprompt_on_newline = p9k_global("RPROMPT_ON_NEWLINE", "") == "true";
+    let pad = |mut v: Vec<Vec<T>>, leading: bool| -> Vec<Vec<T>> {
+        let missing = n - v.len();
+        if leading {
+            let mut out: Vec<Vec<T>> = (0..missing).map(|_| Vec::new()).collect();
+            out.extend(v);
+            out
+        } else {
+            v.extend((0..missing).map(|_| Vec::new()));
+            v
+        }
+    };
+    (pad(left, true), pad(right, rprompt_on_newline))
 }
 
 /// Assemble PROMPT and RPROMPT from per-line segment lists.
@@ -1112,9 +1299,10 @@ pub fn render_prompt(
     prompt.push_str("%b%k%f");
 
     // p10k:8137-8146 + 6134 — empty line(s) before the prompt when
-    // PROMPT_ADD_NEWLINE is on; count from PROMPT_ADD_NEWLINE_COUNT
-    // (default 1, declared at p10k:7237).
-    if p9k_global("PROMPT_ADD_NEWLINE", "") == "true" {
+    // PROMPT_ADD_NEWLINE is on (hidden on the first prompt of a new tty,
+    // or by `p10k display empty_line=hide`); count from
+    // PROMPT_ADD_NEWLINE_COUNT (default 1, declared at p10k:7237).
+    if p9k_global("PROMPT_ADD_NEWLINE", "") == "true" && api::part_state("empty_line") != "hide" {
         let count = p9k_global("PROMPT_ADD_NEWLINE_COUNT", "1")
             .parse::<i64>()
             .unwrap_or(1)
@@ -1122,6 +1310,16 @@ pub fn render_prompt(
         for _ in 0..count {
             prompt.push('\n');
         }
+    }
+
+    // p10k:8453-8480 — the ruler (SHOW_RULER, default off): a full-width
+    // line of RULER_CHAR in the ruler colours above the prompt.
+    let columns_for_ruler = match getiparam("COLUMNS") {
+        c if c > 0 => c as usize,
+        _ => 80,
+    };
+    if p9k_global("SHOW_RULER", "") == "true" && api::part_state("ruler") != "hide" {
+        prompt.push_str(&ruler_line(columns_for_ruler));
     }
 
     // p10k:8097 — `_p9k__clm::=$COLUMNS` snapshot feeding the gap math
@@ -1148,24 +1346,93 @@ pub fn render_prompt(
     };
     let end_sep = get_icon(None, "LEFT_SEGMENT_END_SEPARATOR", "");
 
-    let mut rprompt = String::new();
-    for i in 0..num_lines {
-        let (lsegs, rsegs) = line_pair(i);
-        let right = if disable_rprompt {
+    // p10k:7998/8008/8035 — frame prefix goes BEFORE the line body.
+    let line_of = |segs: &[Segment], i: usize| -> String {
+        let n = i + 1;
+        // `p10k display N/left=hide`: the whole left side (end separator
+        // included) is empty (p10k:8231-8236 `${_p9k__Nl-…}`).
+        if api::is_hidden(&format!("{n}/left")) {
+            return if api::is_hidden(&format!("{n}/left_frame")) {
+                String::new()
+            } else {
+                left_frame_prefix(i, num_lines)
+            };
+        }
+        let mut line = if api::is_hidden(&format!("{n}/left_frame")) {
             String::new()
         } else {
-            render_right_line(rsegs)
+            left_frame_prefix(i, num_lines)
         };
-        let frame_suffix = right_frame_suffix(i, num_lines);
-
-        // p10k:7998/8008/8035 — frame prefix goes BEFORE the line body.
-        let mut line = left_frame_prefix(i, num_lines);
-        line.push_str(&render_left_line(lsegs));
+        line.push_str(&render_left_line(segs));
         if i == end_sep_line {
             // p10k:7974 — `_p9k__ret+=%b%k%f` after the icon.
             line.push_str(&end_sep);
             line.push_str("%b%k%f");
         }
+        line
+    };
+    let dir_plans = crate::extensions::p10k::segments_core::take_dir_unique();
+    let mut dir_budget_used = false;
+
+    let mut rprompt = String::new();
+    for i in 0..num_lines {
+        let n = i + 1;
+        // `p10k display N=hide` drops the whole line.
+        if api::is_hidden(&n.to_string()) {
+            continue;
+        }
+        let (lsegs, rsegs) = line_pair(i);
+        // `p10k display N/{left,right}/S=hide` drops segment S.
+        let visible = |segs: &Vec<Segment>, side: &str| -> Vec<Segment> {
+            segs.iter()
+                .filter(|s| !api::is_hidden(&format!("{n}/{side}/{}", is_joined_name(&s.name).0)))
+                .cloned()
+                .collect()
+        };
+        let lvis = visible(lsegs, "left");
+        let rvis = visible(rsegs, "right");
+        let (lsegs, rsegs) = (&lvis, &rvis);
+        let right = if disable_rprompt || api::is_hidden(&format!("{n}/right")) {
+            String::new()
+        } else {
+            // p10k:8240-8247 — never-empty symbol; on the last line it
+            // counts only when it has display width.
+            let never_empty = empty_line_right_symbol();
+            let never_empty = if i + 1 == num_lines && prompt_visible_width(&never_empty) == 0 {
+                String::new()
+            } else {
+                never_empty
+            };
+            render_right_line_with(rsegs, &never_empty)
+        };
+        let frame_suffix = if api::is_hidden(&format!("{n}/right_frame")) {
+            String::new()
+        } else {
+            right_frame_suffix(i, num_lines)
+        };
+
+        // p10k:6143 — truncate_to_unique dirs shorten only as far as the
+        // line's width budget demands.
+        let fitted;
+        let lsegs: &[Segment] = if dir_plans.is_empty() {
+            lsegs
+        } else {
+            fitted = fit_unique_dirs(
+                lsegs,
+                &dir_plans,
+                &mut dir_budget_used,
+                &|segs: &[Segment]| line_of(segs, i),
+                &if i + 1 == num_lines {
+                    right.clone()
+                } else {
+                    format!("{right}{frame_suffix}")
+                },
+                columns,
+                i + 1 == num_lines,
+            );
+            &fitted[..]
+        };
+        let line = line_of(lsegs, i);
 
         if i + 1 == num_lines {
             prompt.push_str(&line);
@@ -1183,12 +1450,13 @@ pub fn render_prompt(
             // frame connector rides with the right content, as in
             // p10k's `_p9k_line_suffix_right` (p10k:8015/8044).
             let right_full = format!("{right}{frame_suffix}");
-            prompt.push_str(&align_line(
+            prompt.push_str(&align_line_ex(
                 &line,
                 &right_full,
                 i,
                 columns,
                 &prompt_visible_width,
+                api::is_hidden(&format!("{n}/gap")),
             ));
         }
     }

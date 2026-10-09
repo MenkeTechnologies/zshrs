@@ -1,25 +1,20 @@
-//! powerlevel10k icon table — port of internal/icons.zsh, nerdfont-complete mode.
+//! powerlevel10k icon tables — port of internal/icons.zsh.
 //!
-//! Spec: /Users/wizard/forkedRepos/powerlevel10k/internal/icons.zsh
-//!       (nerdfont-complete branch, icons.zsh:420-551, plus the
-//!       ICON_PADDING post-processing at icons.zsh:832-841) and
-//!       internal/p10k.zsh:510-530 (_p9k_get_icon override order).
+//! Spec: internal/icons.zsh (mode tables, the flat/compatible overrides
+//! and the ICON_PADDING post-processing at icons.zsh:1131-1142) and
+//! internal/p10k.zsh:510-530 (_p9k_get_icon override order).
 //!
-//! icons.zsh:4 — mode defaults to ascii only when POWERLEVEL9K_MODE is unset
-//! AND the locale is not UTF-8; the user's config pins MODE=nerdfont-complete,
-//! which is the only mode table ported here. If POWERLEVEL9K_MODE names a
-//! different mode we still serve the nerdfont-complete table (logged once per
-//! miss at debug level) — other mode tables are out of scope.
-//!
-//! icons.zsh:8-14 — LEGACY_ICON_SPACING swaps the $s/$q suffixes:
-//!   non-legacy (default): s=' '  q=''
-//!   legacy:               s=''   q=' '
-//! The table below is baked with the NON-legacy expansion; each entry that
-//! used $s or $q in the zsh source carries a `$s`/`$q` note in its comment.
-//! Under POWERLEVEL9K_ICON_PADDING=none (the user's setting, icons.zsh:832
-//! strips ALL trailing spaces) legacy and non-legacy collapse to identical
-//! values, so legacy spacing only diverges when padding != none — that
-//! combination is logged and served with non-legacy values.
+//! Mode selection follows icons.zsh:3-4: POWERLEVEL9K_MODE when set,
+//! else the default (`*`) table in a UTF-8 locale, else `ascii`.
+//!   - nerdfont-complete / nerdfont-fontconfig (the common mode) is
+//!     baked in below (`icon_raw`), with the NON-legacy `$s`/`$q`
+//!     expansion (s=' ', q=''); under ICON_PADDING=none legacy and
+//!     non-legacy spacing collapse to identical values.
+//!   - every other mode, and legacy spacing with padding, is read from
+//!     the theme's own `internal/icons.zsh` (under the p10k install
+//!     root captured when the theme was sourced) by `theme_icons`, so
+//!     the tables never drift from upstream. If that file cannot be
+//!     read the baked nerdfont-complete table answers.
 
 use crate::ported::params::getsparam;
 
@@ -123,6 +118,18 @@ fn icon_raw(name: &str) -> Option<&'static str> {
         "VCS_GIT_GITHUB_ICON" => "\u{F113} ",       // icons.zsh:501 ' '
         "VCS_GIT_BITBUCKET_ICON" => "\u{E703} ",    // icons.zsh:502 ' '
         "VCS_GIT_GITLAB_ICON" => "\u{F296} ",       // icons.zsh:503 ' '
+        "VCS_GIT_AZURE_ICON" => "\u{FD03} ",       // icons.zsh:740
+        "VCS_GIT_ARCHLINUX_ICON" => "\u{F303} ",   // icons.zsh:741
+        "VCS_GIT_CODEBERG_ICON" => "\u{F1D3} ",    // icons.zsh:742
+        "VCS_GIT_DEBIAN_ICON" => "\u{F306} ",      // icons.zsh:743
+        "VCS_GIT_FREEBSD_ICON" => "\u{F30C} ",     // icons.zsh:744
+        "VCS_GIT_FREEDESKTOP_ICON" => "\u{F296} ", // icons.zsh:745
+        "VCS_GIT_GNOME_ICON" => "\u{F296} ",       // icons.zsh:746
+        "VCS_GIT_GNU_ICON" => "\u{E779} ",         // icons.zsh:747
+        "VCS_GIT_KDE_ICON" => "\u{F296} ",         // icons.zsh:748
+        "VCS_GIT_LINUX_ICON" => "\u{F17C} ",       // icons.zsh:749
+        "VCS_GIT_GITEA_ICON" => "\u{F1D3} ",       // icons.zsh:750
+        "VCS_GIT_SOURCEHUT_ICON" => "\u{F1DB} ",   // icons.zsh:751
         "VCS_HG_ICON" => "\u{F0C3} ",               // icons.zsh:504 ' '
         "VCS_SVN_ICON" => "\u{E72D}",               // icons.zsh:505 ''$q
         "RUST_ICON" => "\u{E7A8}",                  // icons.zsh:506 ''$q
@@ -183,9 +190,234 @@ fn icon_padding_none() -> bool {
     getsparam("POWERLEVEL9K_ICON_PADDING").as_deref() == Some("none")
 }
 
-/// Table lookup by icon key with the ICON_PADDING=none post-processing
-/// applied (icons.zsh:832-841). Returns "" for unknown keys.
+/// icons.zsh:3-4 — `[[ -n ${POWERLEVEL9K_MODE-} || CODESET == utf8 ]] ||
+/// MODE=ascii`: the effective mode name; "" selects the default table.
+fn icon_mode() -> String {
+    match getsparam("POWERLEVEL9K_MODE") {
+        Some(m) if !m.is_empty() => m,
+        _ if codeset_is_utf8() => String::new(),
+        _ => "ascii".to_string(),
+    }
+}
+
+/// `${langinfo[CODESET]} == (utf|UTF)(-|)8`.
+fn codeset_is_utf8() -> bool {
+    // SAFETY: nl_langinfo returns a pointer into static libc storage.
+    let c = unsafe { std::ffi::CStr::from_ptr(libc::nl_langinfo(libc::CODESET)) };
+    let name = c.to_string_lossy().to_ascii_lowercase();
+    name == "utf-8" || name == "utf8"
+}
+
+/// `$name` → env/param value (the font maps awesome-mapped-fontconfig
+/// reads are plain exported parameters).
+fn codepoint_var(name: &str) -> String {
+    getsparam(name).unwrap_or_default()
+}
+
+/// One icons.zsh value: a run of `'…'`, `"…${VAR:+…}…"` and `$s`/`$q`
+/// words ending at an optional `#` comment. Returns the DECODED glyph
+/// string (`(g::)`-style escapes resolved).
+fn parse_icon_value(rest: &str, s: &str, q: &str) -> Option<String> {
+    let chars: Vec<char> = rest.chars().collect();
+    let mut i = 0;
+    let mut raw = String::new();
+    while i < chars.len() {
+        match chars[i] {
+            '\'' => {
+                let j = chars[i + 1..].iter().position(|&c| c == '\'')? + i + 1;
+                raw.extend(&chars[i + 1..j]);
+                i = j + 1;
+            }
+            '"' => {
+                let j = chars[i + 1..].iter().position(|&c| c == '"')? + i + 1;
+                let body: String = chars[i + 1..j].iter().collect();
+                raw.push_str(&expand_dq(&body, s, q));
+                i = j + 1;
+            }
+            '$' => {
+                match chars.get(i + 1) {
+                    Some('s') => raw.push_str(s),
+                    Some('q') => raw.push_str(q),
+                    _ => return None,
+                }
+                i += 2;
+            }
+            '#' => break,
+            c if c.is_whitespace() => i += 1,
+            _ => return None,
+        }
+    }
+    Some(unescape_g(&raw))
+}
+
+/// The double-quoted form icons.zsh uses for awesome-mapped-fontconfig:
+/// `${CODEPOINT_OF_X:+\\u$CODEPOINT_OF_X$s}` — empty unless the font
+/// map variable is set.
+fn expand_dq(body: &str, s: &str, q: &str) -> String {
+    let mut out = String::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else { break };
+        let inner = &after[..end];
+        if let Some((name, tail)) = inner.split_once(":+") {
+            let val = codepoint_var(name);
+            if !val.is_empty() {
+                let tail = tail
+                    .replace("\\\\", "\\")
+                    .replace(&format!("${name}"), &val)
+                    .replace("$s", s)
+                    .replace("$q", q);
+                out.push_str(&tail);
+            }
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `[start, end)` line range of the branch of the `case $POWERLEVEL9K_MODE
+/// in` starting at line `case_at` that selects `mode`; the `*)` branch
+/// when none names it.
+fn mode_branch(lines: &[&str], case_at: usize, mode: &str) -> Option<(usize, usize)> {
+    let end = case_at + lines[case_at..].iter().position(|l| l.trim() == "esac")?;
+    let mut chosen = None;
+    let mut default = None;
+    let mut i = case_at + 1;
+    while i < end {
+        let l = lines[i];
+        if l.starts_with("    ") && !l.starts_with("     ") && l.trim_end().ends_with(')') {
+            let mut j = i + 1;
+            while j < end && lines[j].trim() != ";;" {
+                j += 1;
+            }
+            let pats = l.trim().trim_end_matches(')');
+            if pats.trim() == "*" {
+                default = Some((i + 1, j));
+            } else if pats.split('|').any(|p| p.trim().trim_matches('\'') == mode) {
+                chosen = Some((i + 1, j));
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    chosen.or(default)
+}
+
+/// Read the active mode's table out of the theme's icons.zsh, apply the
+/// flat/compatible overrides and the ICON_PADDING=none post-processing
+/// (icons.zsh:1115-1142).
+fn load_theme_icons(mode: &str, legacy: bool, padding_none: bool) -> Option<std::collections::HashMap<String, String>> {
+    let root = crate::p10k::p10k_root_dir()?;
+    let text = std::fs::read_to_string(format!("{root}/internal/icons.zsh")).ok()?;
+    let lines: Vec<&str> = text.lines().collect();
+    let (s, q) = if legacy { ("", " ") } else { (" ", "") }; // icons.zsh:8-14
+    let cases: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim() == "case $POWERLEVEL9K_MODE in")
+        .map(|(i, _)| i)
+        .collect();
+    let (a, b) = mode_branch(&lines, *cases.first()?, mode)?;
+    let mut map = std::collections::HashMap::new();
+    let mut in_table = false;
+    for l in &lines[a..b] {
+        let t = l.trim();
+        if t.starts_with("icons=(") {
+            in_table = true;
+        } else if in_table && t == ")" {
+            break;
+        } else if in_table && !t.is_empty() && !t.starts_with('#') {
+            let Some((key, rest)) = t.split_once(char::is_whitespace) else {
+                continue;
+            };
+            if let Some(v) = parse_icon_value(rest, s, q) {
+                map.insert(key.to_string(), v);
+            }
+        }
+    }
+    if map.is_empty() {
+        return None;
+    }
+    // icons.zsh:1115-1129 — second `case`: the flat / compatible overrides.
+    if let Some(&second) = cases.get(1) {
+        if let Some((a, b)) = mode_branch(&lines, second, mode) {
+            for l in &lines[a..b] {
+                let t = l.trim();
+                if let Some(body) = t.strip_prefix("icons[") {
+                    if let Some((key, val)) = body.split_once("]=") {
+                        if let Some(v) = parse_icon_value(val, s, q) {
+                            map.insert(key.to_string(), v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // icons.zsh:1131-1142 — ICON_PADDING=none (not ascii): strip trailing
+    // spaces everywhere, then give seven keys one back.
+    if padding_none && mode != "ascii" {
+        for v in map.values_mut() {
+            *v = v.trim_end_matches(' ').to_string();
+        }
+        for key in PADDED_KEYS {
+            map.entry(key.to_string()).or_default().push(' ');
+        }
+    }
+    Some(map)
+}
+
+/// The theme-derived table for the current mode/spacing/padding, parsed
+/// once per combination (leaked: a handful of tables per process).
+fn theme_icons() -> Option<&'static std::collections::HashMap<String, String>> {
+    use std::sync::{Mutex, OnceLock};
+    type Cache = Mutex<std::collections::HashMap<String, Option<&'static std::collections::HashMap<String, String>>>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let mode = icon_mode();
+    let legacy = getsparam("POWERLEVEL9K_LEGACY_ICON_SPACING").as_deref() == Some("true");
+    let padding_none = icon_padding_none();
+    let sig = format!("{mode}/{legacy}/{padding_none}");
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(&sig).copied()) {
+        return hit;
+    }
+    let table = load_theme_icons(&mode, legacy, padding_none).map(|m| &*Box::leak(Box::new(m)));
+    if table.is_none() {
+        tracing::debug!("p10k icons: cannot read internal/icons.zsh for mode {mode:?}");
+    }
+    if let Ok(mut c) = cache.lock() {
+        c.insert(sig, table);
+    }
+    table
+}
+
+/// Table lookup by icon key (icons.zsh tables incl. the ICON_PADDING=none
+/// post-processing). Returns "" for unknown keys.
 pub fn icon(name: &str) -> &'static str {
+    let mode = icon_mode();
+    let legacy = getsparam("POWERLEVEL9K_LEGACY_ICON_SPACING").as_deref() == Some("true");
+    let baked = matches!(mode.as_str(), "nerdfont-complete" | "nerdfont-fontconfig")
+        && (!legacy || icon_padding_none());
+    if !baked {
+        if let Some(table) = theme_icons() {
+            return match table.get(name) {
+                Some(v) => v.as_str(),
+                None => {
+                    tracing::debug!("p10k icons: unknown icon key {name}");
+                    ""
+                }
+            };
+        }
+    }
+    baked_icon(name)
+}
+
+/// The baked nerdfont-complete table with the ICON_PADDING=none
+/// post-processing applied (icons.zsh:1131-1142).
+fn baked_icon(name: &str) -> &'static str {
     let raw = match icon_raw(name) {
         Some(r) => r,
         None => {
@@ -193,24 +425,16 @@ pub fn icon(name: &str) -> &'static str {
             return "";
         }
     };
-    // icons.zsh:8-14 — legacy spacing only diverges from this table when
-    // padding != none (see module doc); surface that unported combination.
     if !icon_padding_none() {
-        if getsparam("POWERLEVEL9K_LEGACY_ICON_SPACING").as_deref() == Some("true") {
-            tracing::debug!(
-                "p10k icons: LEGACY_ICON_SPACING=true with ICON_PADDING!=none not ported; using default spacing for {name}"
-            );
-        }
         return raw; // padding != none — table value kept verbatim
     }
     if PADDED_KEYS.contains(&name) {
-        // icons.zsh:833-840 — `%% #` strip then `+=' '`; each of these keys
-        // has exactly one trailing space in the raw table, so the raw
-        // literal IS the post-transform value.
+        // `%% #` strip then `+=' '`; each of these keys has exactly one
+        // trailing space in the raw table, so the raw literal IS the
+        // post-transform value.
         raw
     } else {
-        // icons.zsh:833 — icons=("${(@kv)icons%% #}") strips every trailing
-        // space run. A subslice of a &'static str stays 'static.
+        // icons=("${(@kv)icons%% #}") strips every trailing space run.
         raw.trim_end_matches(' ')
     }
 }

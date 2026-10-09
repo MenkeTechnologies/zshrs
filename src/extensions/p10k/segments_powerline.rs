@@ -33,15 +33,14 @@
 //!   vcs.py:18-40) via the tool CLI instead of python lib bindings.
 //! - git is deliberately NOT handled here — git.rs owns it.
 //!
-//! Shared-helper duplication: color1/env_or_param/esc_pct/
-//! decode_g/seg_icon/make_segment/cmd_on_path/cwd/upfind/cached_ttl/
-//! run_tool_budget mirror segments_sys.rs / segments_extra.rs (private
-//! there; this module may not edit other files). Hoisting them into a
-//! shared submodule is a follow-up for the orchestrator.
+//! Scheme colours, typed `POWERLEVEL9K_*` reads, icon resolution and the
+//! segment constructor come from shared.rs; the caches and probes below
+//! are specific to this module.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::{color1, env_or_param, global_int, esc_pct, decode_g, seg_icon, apply_visual_identifier, apply_content_expansion, make_segment};
 use crate::ported::params::getsparam;
 use crate::ported::utils::getkeystring;
 use std::collections::HashMap;
@@ -71,154 +70,17 @@ pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
 }
 
 // ---------------------------------------------------------------------
-// Shared helpers (mirror segments_sys.rs / segments_extra.rs — module doc)
+// Module helpers
 // ---------------------------------------------------------------------
 
-/// p10k:8390-8396 — `[[ $_POWERLEVEL9K_COLOR_SCHEME == light ]] &&
-/// _p9k_color1=7 || _p9k_color1=0`.
-fn color1() -> &'static str {
-    if p9k_global("COLOR_SCHEME", "dark") == "light" {
-        "7"
-    } else {
-        "0"
-    }
-}
 
-/// Read a parameter, falling back to the process environment (covers
-/// early-startup renders before exports land in the paramtab).
-fn env_or_param(name: &str) -> String {
-    if let Some(v) = getsparam(name) {
-        return v;
-    }
-    std::env::var(name).unwrap_or_default()
-}
 
-/// `_p9k_declare -i` read: unset/empty/unparseable → default.
-fn global_int(name: &str, default: i64) -> i64 {
-    getsparam(&format!("POWERLEVEL9K_{name}"))
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .unwrap_or(default)
-}
 
-/// Escape `%` for prompt-expansion contexts — p10k's ubiquitous
-/// `${x//\%/%%}`.
-fn esc_pct(s: &str) -> String {
-    s.replace('%', "%%")
-}
 
-/// zsh `${(g::)x}` echo-style escape decoding, as p10k applies to
-/// user-supplied icons/templates (p10k:524 and every `_p9k_declare -e`).
-fn decode_g(s: &str) -> String {
-    getkeystring(s).0
-}
 
-/// Port of `_p9k_get_icon $1 $2` (p10k:511-530) — identical to
-/// segments_core::seg_icon: probe the user-param chain for `<KEY>`; on
-/// a hit apply `(g::)` decoding (p10k:524) plus the backspace-wrap
-/// quirk (p10k:525); on a whole-chain miss the mode icon table answers.
-fn seg_icon(segment: &str, state: Option<&str>, key: &str) -> String {
-    let probed = p9k_param(segment, state, key, "\u{1}");
-    if probed == "\u{1}" {
-        return icons::icon(key).to_string();
-    }
-    let decoded = decode_g(&probed);
-    // p10k:525 — [[ $ret != $'\b'? ]] || ret="%{$ret%}"
-    let mut ch = decoded.chars();
-    if ch.next() == Some('\u{8}') && ch.next().is_some() && ch.next().is_none() {
-        return format!("%{{{decoded}%}}");
-    }
-    decoded
-}
 
-/// VISUAL_IDENTIFIER_EXPANSION hook (p10k:720/951) — identical to
-/// segments_core::apply_visual_identifier.
-fn apply_visual_identifier(segment: &str, state: Option<&str>, icon: String) -> Option<String> {
-    let exp = p9k_param(
-        segment,
-        state,
-        "VISUAL_IDENTIFIER_EXPANSION",
-        "${P9K_VISUAL_IDENTIFIER}",
-    );
-    let resolved = if exp == "${P9K_VISUAL_IDENTIFIER}" {
-        icon
-    } else if !exp.contains('$') {
-        exp
-    } else {
-        tracing::debug!(
-            target: "p10k",
-            segment,
-            ?state,
-            %exp,
-            "dynamic VISUAL_IDENTIFIER_EXPANSION unported — using resolved icon"
-        );
-        icon
-    };
-    if resolved.is_empty() {
-        None
-    } else {
-        Some(resolved)
-    }
-}
 
-/// CONTENT_EXPANSION hook (p10k:724/955) — identical to
-/// segments_core::apply_content_expansion.
-fn apply_content_expansion(segment: &str, state: Option<&str>, content: String) -> String {
-    let exp = p9k_param(segment, state, "CONTENT_EXPANSION", "${P9K_CONTENT}");
-    if exp == "${P9K_CONTENT}" {
-        return content;
-    }
-    if !exp.contains('$') {
-        return exp;
-    }
-    if exp.contains("${P9K_CONTENT}") {
-        let out = exp.replace("${P9K_CONTENT}", &content);
-        if out.contains('$') {
-            tracing::debug!(
-                target: "p10k",
-                segment, ?state, %exp,
-                "CONTENT_EXPANSION has unevaluated expansions beyond ${{P9K_CONTENT}}"
-            );
-        }
-        return out;
-    }
-    tracing::debug!(
-        target: "p10k",
-        segment, ?state, %exp,
-        "dynamic CONTENT_EXPANSION unported — using segment content"
-    );
-    content
-}
 
-/// Common constructor mirroring `_p9k_prompt_segment name bg fg icon
-/// expand cond content` — identical to segments_core::make_segment
-/// (p10k:1101 + the color/icon/expansion hooks of
-/// _p9k_left_prompt_segment).
-fn make_segment(
-    name: &str,
-    state: Option<&str>,
-    default_bg: &str,
-    default_fg: &str,
-    icon_key: &str,
-    content: String,
-) -> Segment {
-    let bg = p9k_param(name, state, "BACKGROUND", default_bg);
-    let fg = p9k_param(name, state, "FOREGROUND", default_fg);
-    let icon_glyph = if icon_key.is_empty() {
-        String::new()
-    } else {
-        seg_icon(name, state, icon_key)
-    };
-    let icon = apply_visual_identifier(name, state, icon_glyph);
-    let content = apply_content_expansion(name, state, content);
-    Segment {
-        name: name.to_string(),
-        state: state.map(|s| s.to_string()),
-        content,
-        icon,
-        fg,
-        bg,
-    }
-}
 
 /// `$commands[name]` — locate an executable on $PATH (uncached; every
 /// caller sits behind a TTL cache or a cheap short-circuit). Mirrors

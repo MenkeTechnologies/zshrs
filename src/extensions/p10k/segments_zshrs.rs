@@ -23,7 +23,7 @@
 //!   jit.rs:7055) resolves the on-disk native-code cache; the `*.fjit`
 //!   blob scan runs behind a TTL. No tier/compile-counter stats API is
 //!   exported by fusevm (VM keeps its JIT state private) — the segment
-//!   shows the DISK-cache state only; counters are a fusevm follow-up.
+//!   shows the DISK-cache state only.
 //! - zshrs_cache: rkyv shard files under `$ZSHRS_HOME` (default
 //!   `~/.zshrs`) — `autoloads.rkyv` (autoload_cache.rs:491-500),
 //!   `scripts.rkyv` (script_cache.rs:3), plus the daemon's
@@ -32,19 +32,19 @@
 //!   (history.rs:114-116, root at :137-145); entry count via
 //!   `HistoryEngine::count()` (history.rs:492-495) through
 //!   `with_session_engine` (history.rs:575-583), long TTL.
-//! - stryke: ALWAYS HIDDEN. The `@`-prefix stryke hook exists
-//!   (lib.rs:393-408) but `STRYKE_HANDLER` is a private `OnceLock`
-//!   with no is-registered probe, and `try_stryke_dispatch` EXECUTES
-//!   the handler — not callable from prompt render. Hidden rather
-//!   than faked until lib.rs grows a read-only registration query.
+//! - stryke: hidden. Whether a handler is registered lives in
+//!   lib.rs `STRYKE_HANDLER`, a private `OnceLock` with no read-only
+//!   accessor; `try_stryke_dispatch` would EXECUTE the handler, which
+//!   prompt render must not do. The segment name and its
+//!   `POWERLEVEL9K_STRYKE_*` params are claimed.
 //!
-//! Shared-helper duplication: color1/decode_g/apply_visual_identifier/
-//! apply_content_expansion/cached_ttl mirror segments_sys.rs (private
-//! there; this module may not edit other files). Hoisting them into a
-//! shared submodule is a follow-up for the orchestrator.
+//! Scheme colours, typed `POWERLEVEL9K_*` reads, icon resolution and the
+//! segment constructor come from shared.rs; the caches and probes below
+//! are specific to this module.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::{color1, decode_g, apply_visual_identifier, apply_content_expansion};
 use crate::ported::utils::getkeystring;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -89,24 +89,10 @@ pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
 }
 
 // ---------------------------------------------------------------------
-// Shared helpers (mirror segments_sys.rs — see module doc)
+// Module helpers
 // ---------------------------------------------------------------------
 
-/// p10k:8390-8396 — `[[ $_POWERLEVEL9K_COLOR_SCHEME == light ]] &&
-/// _p9k_color1=7 || _p9k_color1=0`.
-fn color1() -> &'static str {
-    if p9k_global("COLOR_SCHEME", "dark") == "light" {
-        "7"
-    } else {
-        "0"
-    }
-}
 
-/// zsh `${(g::)x}` echo-style escape decoding, as p10k applies to
-/// user-supplied icons/templates (p10k:524 and every `_p9k_declare -e`).
-fn decode_g(s: &str) -> String {
-    getkeystring(s).0
-}
 
 /// Icon resolution for zshrs-native keys: probe the user-param chain
 /// for `<KEY>` (same chain `_p9k_get_icon` walks, p10k:511-530); on a
@@ -129,64 +115,7 @@ fn seg_icon_or(segment: &str, state: Option<&str>, key: &str, default_glyph: &st
     decoded
 }
 
-/// VISUAL_IDENTIFIER_EXPANSION hook (p10k:720/951) — identical to
-/// segments_sys::apply_visual_identifier.
-fn apply_visual_identifier(segment: &str, state: Option<&str>, icon: String) -> Option<String> {
-    let exp = p9k_param(
-        segment,
-        state,
-        "VISUAL_IDENTIFIER_EXPANSION",
-        "${P9K_VISUAL_IDENTIFIER}",
-    );
-    let resolved = if exp == "${P9K_VISUAL_IDENTIFIER}" {
-        icon
-    } else if !exp.contains('$') {
-        exp
-    } else {
-        tracing::debug!(
-            target: "p10k",
-            segment,
-            ?state,
-            %exp,
-            "dynamic VISUAL_IDENTIFIER_EXPANSION unported — using resolved icon"
-        );
-        icon
-    };
-    if resolved.is_empty() {
-        None
-    } else {
-        Some(resolved)
-    }
-}
 
-/// CONTENT_EXPANSION hook (p10k:724/955) — identical to
-/// segments_sys::apply_content_expansion.
-fn apply_content_expansion(segment: &str, state: Option<&str>, content: String) -> String {
-    let exp = p9k_param(segment, state, "CONTENT_EXPANSION", "${P9K_CONTENT}");
-    if exp == "${P9K_CONTENT}" {
-        return content;
-    }
-    if !exp.contains('$') {
-        return exp;
-    }
-    if exp.contains("${P9K_CONTENT}") {
-        let out = exp.replace("${P9K_CONTENT}", &content);
-        if out.contains('$') {
-            tracing::debug!(
-                target: "p10k",
-                segment, ?state, %exp,
-                "CONTENT_EXPANSION has unevaluated expansions beyond ${{P9K_CONTENT}}"
-            );
-        }
-        return out;
-    }
-    tracing::debug!(
-        target: "p10k",
-        segment, ?state, %exp,
-        "dynamic CONTENT_EXPANSION unported — using segment content"
-    );
-    content
-}
 
 /// Common constructor mirroring segments_sys::make_segment, with a
 /// literal default glyph instead of an icons.rs table key (see
@@ -309,18 +238,10 @@ fn jit_content(count: usize, bytes: u64) -> String {
 }
 
 /// `$ZSHRS_HOME` else `~/.zshrs` — the single directory every zshrs
-/// artifact lives under. Mirrors autoload_cache.rs:491-500 /
-/// history.rs:137-145 / daemon CachePaths::resolve
-/// (daemon/paths.rs:190-200); duplicated because those roots are
-/// module-private and this module may not edit other files.
+/// artifact lives under (autoload_cache.rs:491-500, history.rs:137-145,
+/// daemon CachePaths::resolve daemon/paths.rs:190-200).
 fn zshrs_root() -> PathBuf {
-    if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
-        PathBuf::from(custom)
-    } else {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".zshrs")
-    }
+    crate::extensions::p10k::zshrs_home()
 }
 
 /// True in the modes where zshrs-introspection segments are
@@ -580,9 +501,8 @@ fn zshrs_history_segments() -> Vec<Segment> {
 /// private with no read-only "is a handler registered?" accessor, and
 /// `try_stryke_dispatch` would EXECUTE the handler — running foreign
 /// code from prompt render is not an option. No version constant is
-/// linked into this crate either. Hidden rather than faked; the
-/// segment name is claimed so the wiring (POWERLEVEL9K_STRYKE_*
-/// params) is ready the moment lib.rs exposes a probe.
+/// linked into this crate either. The segment name is claimed so its
+/// POWERLEVEL9K_STRYKE_* params resolve.
 fn stryke_segments() -> Vec<Segment> {
     tracing::debug!(
         target: "p10k",
@@ -808,20 +728,9 @@ fn lang_cache_segments(segname: &str) -> Vec<Segment> {
     )]
 }
 
-/// Minimal `$PATH` walk (mirrors segments_sys::cmd_on_path — private
-/// there; this module may not edit other files).
+/// `$commands[tool]` through the shared cached `$PATH` lookup.
 fn path_lookup(tool: &str) -> Option<PathBuf> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        if dir.is_empty() {
-            continue;
-        }
-        let cand = std::path::Path::new(dir).join(tool);
-        if cand.is_file() {
-            return Some(cand);
-        }
-    }
-    None
+    crate::extensions::p10k::segments_sys::cmd_on_path(tool)
 }
 
 /// `<bin> --version`, stdin/stderr nulled, blocking (called only on

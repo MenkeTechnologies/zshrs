@@ -7,25 +7,20 @@
 //! layer), so there are no C-port constraints — but segment SEMANTICS
 //! (states, colors, content, hide rules) mirror the zsh theme exactly.
 //!
-//! Phase-1 scope notes (each TODO is also traced at the call site):
-//! - dir: SHORTEN_STRATEGY values truncate_absolute(_chars),
-//!   truncate_middle, truncate_from_right, truncate_to_last,
-//!   truncate_to_first_and_last and the default strategy are ported.
-//!   truncate_to_unique / truncate_with_folder_marker /
-//!   truncate_with_package_name (p10k:1837-1865,1897-2007) fall back to
-//!   the default strategy with a debug log. The user's live config sets
-//!   NO SHORTEN_STRATEGY (~/.zpwr/env/.p10k.zsh:242 commented out), so
-//!   the default (no-truncation) path is what actually runs.
-//! - prompt_char: keymap is VIINS always; live VICMD/VIVIS/VIOWR keymap
-//!   tracking needs a ZLE hook (TODO).
-//! - vcs: renders p10k's own gitstatus format (p10k:3926-4005). The
-//!   user's `my_git_formatter` CONTENT_EXPANSION (a zsh function) is not
-//!   evaluated; states/counts/icons come from the same underlying data.
+//! Notes:
+//! - dir: every SHORTEN_STRATEGY (p10k:1815-2018) is ported, including
+//!   the filesystem-anchored truncate_to_unique (width-driven, resolved
+//!   in render.rs), truncate_with_folder_marker and
+//!   truncate_with_package_name (jq).
+//! - vcs: renders p10k's own gitstatus format (p10k:3926-4005) or, with
+//!   VCS_DISABLE_GITSTATUS_FORMATTING, publishes VCS_STATUS_* for the
+//!   user's CONTENT_EXPANSION formatter.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_global_arr, p9k_param};
 use crate::extensions::p10k::git;
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::{color1, color2, env_or_param, global_bool, global_int, esc_pct, decode_g, seg_icon, apply_visual_identifier, apply_content_expansion, make_segment};
 use crate::ported::params::{getsparam, pipestatgetfn};
 use crate::ported::utils::getkeystring;
 use std::path::Path;
@@ -36,7 +31,7 @@ use std::sync::atomic::Ordering;
 const MARK_ELIDE: char = '\u{1}';
 // $'\2' — trailing anchor marker (kept-component highlighting).
 const MARK_ANCHOR: char = '\u{2}';
-// $'\3' — truncate_to_unique bracket marker (strategy unported; stripped).
+// $'\3' — truncate_to_unique bracket marker (stripped at assembly).
 const MARK_UNIQ: char = '\u{3}';
 
 // ---------------------------------------------------------------------
@@ -71,64 +66,6 @@ pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
 // Shared helpers
 // ---------------------------------------------------------------------
 
-/// p10k:8390-8396 — `[[ $_POWERLEVEL9K_COLOR_SCHEME == light ]] &&
-/// _p9k_color1=7 || _p9k_color1=0`.
-fn color1() -> &'static str {
-    if p9k_global("COLOR_SCHEME", "dark") == "light" {
-        "7"
-    } else {
-        "0"
-    }
-}
-
-/// p10k:8392/8395 — `_p9k_color2`: the inverse of color1.
-fn color2() -> &'static str {
-    if p9k_global("COLOR_SCHEME", "dark") == "light" {
-        "0"
-    } else {
-        "7"
-    }
-}
-
-/// Read a parameter, falling back to the process environment. Exported
-/// env (SSH_CONNECTION, SUDO_COMMAND, …) normally lives in the paramtab
-/// already; the env fallback covers early-startup renders.
-fn env_or_param(name: &str) -> String {
-    if let Some(v) = getsparam(name) {
-        return v;
-    }
-    std::env::var(name).unwrap_or_default()
-}
-
-/// `_p9k_declare -b POWERLEVEL9K_<name> <default>` read semantics
-/// (p10k:141-151): ONLY the literal string `true` is truthy; unset uses
-/// the declared default.
-fn global_bool(name: &str, default: bool) -> bool {
-    match getsparam(&format!("POWERLEVEL9K_{name}")) {
-        Some(v) => v == "true",
-        None => default,
-    }
-}
-
-/// `_p9k_declare -i` read: unset/empty/unparseable → default.
-fn global_int(name: &str, default: i64) -> i64 {
-    getsparam(&format!("POWERLEVEL9K_{name}"))
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .unwrap_or(default)
-}
-
-/// Escape `%` for prompt-expansion contexts — p10k's ubiquitous
-/// `${x//\%/%%}`.
-fn esc_pct(s: &str) -> String {
-    s.replace('%', "%%")
-}
-
-/// zsh `${(g::)x}` echo-style escape decoding (\uNNNN, \e, \n, …) as
-/// p10k applies to user-supplied icons/templates (p10k:524, 1602, 2135).
-fn decode_g(s: &str) -> String {
-    getkeystring(s).0
-}
-
 /// p10k:585-587 `_p9k_background` — empty color means "default bg".
 fn bgesc(c: &str) -> String {
     if c.is_empty() {
@@ -144,138 +81,6 @@ fn fgesc(c: &str) -> String {
         "%f".to_string()
     } else {
         format!("%F{{{c}}}")
-    }
-}
-
-/// Port of `_p9k_get_icon $1 $2` (p10k:511-530): probe the user-param
-/// chain for `<KEY>` (e.g. POWERLEVEL9K_VCS_CLEAN_VCS_BRANCH_ICON →
-/// POWERLEVEL9K_VCS_VCS_BRANCH_ICON → POWERLEVEL9K_VCS_BRANCH_ICON); on
-/// a hit the value gets `(g::)` decoding (p10k:524) plus the
-/// backspace-wrap quirk (p10k:525 — "penance for past sins"); on a
-/// whole-chain miss the mode icon table answers (p10k:521 —
-/// `${icons[$2]-...}`).
-fn seg_icon(segment: &str, state: Option<&str>, key: &str) -> String {
-    // \x01 sentinel mirrors p10k's own $'\1' "raw glyph" marker trick.
-    let probed = p9k_param(segment, state, key, "\u{1}");
-    if probed == "\u{1}" {
-        return icons::icon(key).to_string();
-    }
-    let decoded = decode_g(&probed);
-    // p10k:525 — [[ $ret != $'\b'? ]] || ret="%{$ret%}"
-    let mut ch = decoded.chars();
-    if ch.next() == Some('\u{8}') && ch.next().is_some() && ch.next().is_none() {
-        return format!("%{{{decoded}%}}");
-    }
-    decoded
-}
-
-/// VISUAL_IDENTIFIER_EXPANSION hook (p10k:720/951) applied to a
-/// resolved icon. Default `'${P9K_VISUAL_IDENTIFIER}'` = the icon
-/// itself. Literal user values ('✔', '⭐') replace it; expansions that
-/// reference other shell state are unported (debug log, keep icon).
-fn apply_visual_identifier(segment: &str, state: Option<&str>, icon: String) -> Option<String> {
-    let exp = p9k_param(
-        segment,
-        state,
-        "VISUAL_IDENTIFIER_EXPANSION",
-        "${P9K_VISUAL_IDENTIFIER}",
-    );
-    let resolved = if exp == "${P9K_VISUAL_IDENTIFIER}" {
-        icon
-    } else if !exp.contains('$') {
-        exp // literal override, e.g. STATUS_OK_VISUAL_IDENTIFIER_EXPANSION='✔'
-    } else {
-        tracing::debug!(
-            target: "p10k",
-            segment,
-            ?state,
-            %exp,
-            "dynamic VISUAL_IDENTIFIER_EXPANSION unported — using resolved icon"
-        );
-        icon
-    };
-    if resolved.is_empty() {
-        None
-    } else {
-        Some(resolved)
-    }
-}
-
-/// CONTENT_EXPANSION hook (p10k:724/955). Default `'${P9K_CONTENT}'` =
-/// segment-computed content. Literal user values replace it; templates
-/// embedding `${P9K_CONTENT}` are substituted; anything needing live
-/// zsh evaluation (e.g. the user's `my_git_formatter`) is unported.
-fn apply_content_expansion(segment: &str, state: Option<&str>, content: String) -> String {
-    let exp = p9k_param(segment, state, "CONTENT_EXPANSION", "${P9K_CONTENT}");
-    if exp == "${P9K_CONTENT}" {
-        return content;
-    }
-    if !exp.contains('$') {
-        return exp;
-    }
-    if exp.contains("${P9K_CONTENT}") {
-        let out = exp.replace("${P9K_CONTENT}", &content);
-        if out.contains('$') {
-            tracing::debug!(
-                target: "p10k",
-                segment, ?state, %exp,
-                "CONTENT_EXPANSION has unevaluated expansions beyond ${{P9K_CONTENT}}"
-            );
-        }
-        return out;
-    }
-    tracing::debug!(
-        target: "p10k",
-        segment, ?state, %exp,
-        "dynamic CONTENT_EXPANSION unported — using segment content"
-    );
-    content
-}
-
-/// The style-name used for parameter probing. `prompt_char` is the one
-/// segment whose zsh style name is `prompt_prompt_char` (p10k:3313 —
-/// `$0_ERROR_VIINS` with $0=prompt_prompt_char); passing the bare name
-/// would make config.rs treat "prompt_" as the style prefix and probe
-/// POWERLEVEL9K_CHAR_* instead of POWERLEVEL9K_PROMPT_CHAR_*.
-fn param_seg(name: &str) -> &str {
-    if name == "prompt_char" {
-        "prompt_prompt_char"
-    } else {
-        name
-    }
-}
-
-/// Common constructor mirroring what `_p9k_prompt_segment
-/// name bg fg icon expand cond content` resolves per-segment
-/// (p10k:1101 + the color/icon/expansion hooks in
-/// _p9k_left_prompt_segment): BACKGROUND/FOREGROUND via the param
-/// chain, icon via _p9k_get_icon + VISUAL_IDENTIFIER_EXPANSION, content
-/// via CONTENT_EXPANSION.
-fn make_segment(
-    name: &str,
-    state: Option<&str>,
-    default_bg: &str,
-    default_fg: &str,
-    icon_key: &str,
-    content: String,
-) -> Segment {
-    let seg = param_seg(name);
-    let bg = p9k_param(seg, state, "BACKGROUND", default_bg);
-    let fg = p9k_param(seg, state, "FOREGROUND", default_fg);
-    let icon_glyph = if icon_key.is_empty() {
-        String::new()
-    } else {
-        seg_icon(seg, state, icon_key)
-    };
-    let icon = apply_visual_identifier(seg, state, icon_glyph);
-    let content = apply_content_expansion(seg, state, content);
-    Segment {
-        name: name.to_string(),
-        state: state.map(|s| s.to_string()),
-        content,
-        icon,
-        fg,
-        bg,
     }
 }
 
@@ -295,13 +100,60 @@ fn home_dir() -> String {
     env_or_param("HOME")
 }
 
-/// p10k:8211-8214 — `[[ -n $SSH_CLIENT || -n $SSH_TTY ||
-/// -n $SSH_CONNECTION ]] && P9K_SSH=1`. The `who`-based fallback for
-/// su-after-ssh (p10k:8216-8233) is unported (needs a fork).
-fn is_ssh() -> bool {
-    !env_or_param("SSH_CLIENT").is_empty()
+/// p10k:8498-8520 `_p9k_init_ssh` — `P9K_SSH=1` when SSH_CLIENT /
+/// SSH_TTY / SSH_CONNECTION is set; otherwise (a user switched with su
+/// on a remote host loses them) the login line of `who` is inspected
+/// once for a remote address (computed once, like the init-time probe).
+pub(crate) fn is_ssh() -> bool {
+    if !env_or_param("SSH_CLIENT").is_empty()
         || !env_or_param("SSH_TTY").is_empty()
         || !env_or_param("SSH_CONNECTION").is_empty()
+    {
+        return true;
+    }
+    static VIA_WHO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VIA_WHO.get_or_init(ssh_via_who)
+}
+
+/// p10k:8508-8520 — remote address (IPv4, IPv6 or a hostname with two
+/// non-consecutive dots) at the end of the `who -m` line, or of the
+/// `who` line for this tty when `who -m` fails.
+fn ssh_via_who() -> bool {
+    use std::process::{Command, Stdio};
+    if crate::extensions::p10k::segments_sys::cmd_on_path("who").is_none() {
+        return false;
+    }
+    let who = |args: &[&str]| {
+        Command::new("who")
+            .args(args)
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    let w = match who(&["-m"]) {
+        Some(out) => out.trim_end_matches('\n').to_string(),
+        None => {
+            let tty = env_or_param("TTY");
+            let tty = tty.strip_prefix("/dev/").unwrap_or(&tty).to_string();
+            who(&[])
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| {
+                    // `*[[:space:]]$tty[[:space:]]*`
+                    let f: Vec<&str> = l.split_whitespace().collect();
+                    f.len() > 2 && f[1..f.len() - 1].contains(&tty.as_str())
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    };
+    let ipv6 = "(([0-9a-fA-F]+:)|:){2,}[0-9a-fA-F]+";
+    let ipv4 = r"([0-9]{1,3}\.){3}[0-9]+";
+    let hostname = r"([.][^. ]+){2}";
+    regex::Regex::new(&format!(r"\(?({ipv4}|{ipv6}|{hostname})\)?$"))
+        .is_ok_and(|re| re.is_match(&w))
 }
 
 fn is_root() -> bool {
@@ -585,29 +437,33 @@ fn prompt_char_segments() -> Vec<Segment> {
     //   p10k:3336 VIINS — `${_p9k__keymap:#(vicmd|vivis|vivli)}` ❯
     //   p10k:3338 VICMD — `:#vicmd0` (vicmd + region INactive) ❮
     //   p10k:3339 VIVIS — `:#(vicmd1|vivis?|vivli?)` (visual) Ⅴ
-    //   p10k:3333 VIOWR — `$_p9k__zle_state` contains `overwrite` ▶
-    //     (only under PROMPT_CHAR_OVERWRITE_STATE; TODO — needs the
-    //     ZLE insert-mode flag surfaced; state defaults off).
-    // The native engine reads the live ZLE keymap directly. At
-    // preprompt time a fresh line starts in the insert keymap; the
-    // mid-line keymap-select repaint is TODO (needs a native
-    // zle-keymap-select hook to re-render). Region can't be active at
-    // a fresh prompt, so vicmd → VICMD without the region check.
+    //   p10k:3333 VIOWR — `$_p9k__zle_state` lacks `insert` ▶
+    //     (only under PROMPT_CHAR_OVERWRITE_STATE; VIINS then also
+    //     requires the state to lack `overwrite`).
+    // The native engine reads the live ZLE keymap, region and insert
+    // mode directly (the engine re-renders from zle_keymap.rs on a
+    // keymap switch).
     let keymap_name = crate::ported::zle::zle_keymap::curkeymapname().clone();
+    // p10k:7886 `_p9k_check_visual_mode` — `${${REGION_ACTIVE:-0}/2/1}`.
+    let region_active = crate::ported::zle::zle_main::REGION_ACTIVE.load(Ordering::Relaxed) != 0;
+    let overwrite = crate::ported::zle::zle_main::INSMODE.load(Ordering::Relaxed) == 0;
     let keymap = match keymap_name.as_str() {
-        "vicmd" => "VICMD",           // p10k:3338
-        "vivis" | "vivli" => "VIVIS", // p10k:3339
-        _ => "VIINS",                 // p10k:3336
+        "vicmd" if region_active => "VIVIS", // p10k:3339 vicmd1
+        "vicmd" => "VICMD",                  // p10k:3338 vicmd0
+        "vivis" | "vivli" => "VIVIS",        // p10k:3339
+        _ if overwrite && global_bool("PROMPT_CHAR_OVERWRITE_STATE", false) => "VIOWR", // p10k:3333
+        _ => "VIINS",                        // p10k:3336
     };
     let state = format!("{}_{}", if ok { "OK" } else { "ERROR" }, keymap);
     // p10k:3348 — `$0_OK_VIINS "$_p9k_color1" 76 '' … '❯'`
     // p10k:3336 — `$0_ERROR_VIINS "$_p9k_color1" 196 '' … '❯'`
     let default_fg = if ok { "76" } else { "196" };
     // Glyph per state: ❯ VIINS (p10k:3336), ❮ VICMD (p10k:3338),
-    // Ⅴ VIVIS (p10k:3339).
+    // Ⅴ VIVIS (p10k:3339), ▶ VIOWR (p10k:3333).
     let glyph = match keymap {
         "VICMD" => "\u{276E}", // ❮
         "VIVIS" => "\u{2164}", // Ⅴ
+        "VIOWR" => "\u{25B6}", // ▶
         _ => "\u{276F}",       // ❯
     };
     vec![make_segment(
@@ -1032,6 +888,8 @@ fn publish_vcs_status(gs: &git::GitStatus) {
         ("VCS_STATUS_REMOTE_BRANCH", gs.remote_branch.clone()),
         ("VCS_STATUS_TAG", gs.tag.clone()),
         ("VCS_STATUS_COMMIT", gs.commit.clone()),
+        ("VCS_STATUS_REMOTE_URL", gs.remote_url.clone()),
+        ("VCS_STATUS_WORKDIR", gs.workdir.clone()),
         ("VCS_STATUS_ACTION", gs.action.clone()),
         ("VCS_STATUS_COMMITS_AHEAD", gs.ahead.to_string()),
         ("VCS_STATUS_COMMITS_BEHIND", gs.behind.to_string()),
@@ -1054,6 +912,88 @@ fn publish_vcs_status(gs: &git::GitStatus) {
     }
 }
 
+/// Default `POWERLEVEL9K_VCS_GIT_REMOTE_ICONS` domain table (p10k:7481-7497).
+const VCS_REMOTE_DOMAINS: [(&str, &str); 15] = [
+    ("archlinux.org", "VCS_GIT_ARCHLINUX_ICON"),
+    ("dev.azure.com|visualstudio.com", "VCS_GIT_AZURE_ICON"),
+    ("bitbucket.org", "VCS_GIT_BITBUCKET_ICON"),
+    ("codeberg.org", "VCS_GIT_CODEBERG_ICON"),
+    ("debian.org", "VCS_GIT_DEBIAN_ICON"),
+    ("freebsd.org", "VCS_GIT_FREEBSD_ICON"),
+    ("freedesktop.org", "VCS_GIT_FREEDESKTOP_ICON"),
+    ("gitea.com|gitea.io", "VCS_GIT_GITEA_ICON"),
+    ("github.com", "VCS_GIT_GITHUB_ICON"),
+    ("gitlab.com", "VCS_GIT_GITLAB_ICON"),
+    ("gnome.org", "VCS_GIT_GNOME_ICON"),
+    ("gnu.org", "VCS_GIT_GNU_ICON"),
+    ("kde.org", "VCS_GIT_KDE_ICON"),
+    ("kernel.org", "VCS_GIT_LINUX_ICON"),
+    ("sr.ht", "VCS_GIT_SOURCEHUT_ICON"),
+];
+
+/// Native evaluation of the default per-domain pattern (p10k:7499)
+/// `(|[A-Za-z0-9][A-Za-z0-9+.-]#://)(|[^:/?#]#[.@])((#i)DOMAIN)(|[/:?#]*)`
+/// against `url`: optional scheme, optional host prefix ending in `.` or
+/// `@` (no `:/?#` inside), case-insensitive domain alternative, then end
+/// of string or one of `/:?#`.
+fn remote_url_matches_domain(url: &str, domains: &str) -> bool {
+    let url = url.to_lowercase();
+    let mut bases: Vec<&str> = vec![url.as_str()];
+    if let Some((scheme, rest)) = url.split_once("://") {
+        let mut sc = scheme.chars();
+        let ok = sc.next().is_some_and(|c| c.is_ascii_alphanumeric())
+            && sc.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
+        if ok {
+            bases.push(rest);
+        }
+    }
+    bases.iter().any(|base| {
+        let mut starts = vec![0usize];
+        for (i, c) in base.char_indices() {
+            if matches!(c, ':' | '/' | '?' | '#') {
+                break;
+            }
+            if c == '.' || c == '@' {
+                starts.push(i + 1);
+            }
+        }
+        starts.into_iter().any(|st| {
+            domains.split('|').any(|d| {
+                base[st..]
+                    .strip_prefix(d)
+                    .is_some_and(|tail| tail.is_empty() || tail.starts_with(['/', ':', '?', '#']))
+            })
+        })
+    })
+}
+
+/// Port of `_p9k_vcs_icon` (p10k:3867-3876): walk
+/// `POWERLEVEL9K_VCS_GIT_REMOTE_ICONS` (pattern/icon-key pairs; an odd
+/// trailing pattern gets an empty icon, p10k:7479) and return the icon
+/// key of the first match, "" when none. Unset array = the default
+/// domain table followed by `* VCS_GIT_ICON` (p10k:7498-7500).
+fn vcs_remote_icon_key(url: &str) -> String {
+    let user = p9k_global_arr("VCS_GIT_REMOTE_ICONS");
+    if user.is_empty() {
+        for (domains, key) in VCS_REMOTE_DOMAINS {
+            if remote_url_matches_domain(url, domains) {
+                return key.to_string();
+            }
+        }
+        return "VCS_GIT_ICON".to_string();
+    }
+    for pair in user.chunks(2) {
+        let mut pat = pair[0].clone();
+        crate::ported::glob::tokenize(&mut pat);
+        if let Some(prog) = crate::ported::pattern::patcompile(&pat, 0, None) {
+            if crate::ported::pattern::pattry(&prog, url) {
+                return pair.get(1).cloned().unwrap_or_default();
+            }
+        }
+    }
+    String::new()
+}
+
 fn vcs_segments() -> Vec<Segment> {
     // p10k:4137 — configured backends; only git is ported.
     let mut backends = p9k_global_arr("VCS_BACKENDS");
@@ -1067,21 +1007,18 @@ fn vcs_segments() -> Vec<Segment> {
 
     let cwd = cwd();
 
-    // p10k:4014-4017 _p9k_maybe_ignore_git_repo — repos whose workdir
-    // matches VCS_DISABLED_WORKDIR_PATTERN are treated as no-repo.
-    // GitStatus does not expose the workdir, so the cwd is matched
-    // instead: exact for `~` (the user's live value); repos rooted at a
-    // matching dir but entered from a subdir diverge (TODO: needs
-    // workdir on GitStatus).
-    let disabled = getsparam("POWERLEVEL9K_VCS_DISABLED_WORKDIR_PATTERN").unwrap_or_default();
-    if !disabled.is_empty() && glob_match(&disabled, &cwd, &home_dir()) {
-        return vec![];
-    }
-
     let mut gs = match git::git_status_for(Path::new(&cwd)) {
         Some(g) => g,
         None => return vec![], // p10k:3850-3851 — no repo, no segment
     };
+
+    // p10k:4053-4057 _p9k_maybe_ignore_git_repo — repos whose
+    // $VCS_STATUS_WORKDIR matches VCS_DISABLED_WORKDIR_PATTERN are
+    // treated as no-repo.
+    let disabled = getsparam("POWERLEVEL9K_VCS_DISABLED_WORKDIR_PATTERN").unwrap_or_default();
+    if !disabled.is_empty() && glob_match(&disabled, &gs.workdir, &home_dir()) {
+        return vec![];
+    }
 
     // p10k:3871-3875 — VCS_GIT_HOOKS gate individual data sources.
     let hooks = {
@@ -1138,6 +1075,15 @@ fn vcs_segments() -> Vec<Segment> {
     // default path); the empty-content segment is only for the
     // formatting-disabled case.
     publish_vcs_status(&gs);
+    // p10k:3867-3876 _p9k_vcs_icon — first matching remote-URL pattern
+    // picks the icon key; computed only under the vcs-detect-changes
+    // hook (p10k:3957-3960; the formatting-disabled arm p10k:3905 too).
+    let icon = if hook("vcs-detect-changes") {
+        let icon_key = vcs_remote_icon_key(&gs.remote_url);
+        apply_visual_identifier("vcs", Some(state), seg_icon("vcs", Some(state), &icon_key))
+    } else {
+        None
+    };
     if global_bool("VCS_DISABLE_GITSTATUS_FORMATTING", false) {
         // Empty content → P9K_CONTENT="" reaches the formatter, which
         // then formats from VCS_STATUS_*. Icon (VCS_GIT_ICON) and
@@ -1149,11 +1095,6 @@ fn vcs_segments() -> Vec<Segment> {
             vcs_state_default_bg(state),
         );
         let fg = p9k_param("vcs", Some(state), "FOREGROUND", color1());
-        let icon = apply_visual_identifier(
-            "vcs",
-            Some(state),
-            seg_icon("vcs", Some(state), "VCS_GIT_ICON"),
-        );
         return vec![Segment {
             name: "vcs".to_string(),
             state: Some(state.to_string()),
@@ -1287,16 +1228,6 @@ fn vcs_segments() -> Vec<Segment> {
         parts.iter().map(|(_, t)| t.as_str()).collect::<String>()
     };
 
-    // p10k:3829-3837 _p9k_vcs_icon — remote-URL-specific icons
-    // (github/gitlab/bitbucket) need GitStatus.remote_url, which the
-    // phase-1 git backend does not expose. TODO(phase-2). Generic git
-    // icon meanwhile.
-    let icon = apply_visual_identifier(
-        "vcs",
-        Some(state),
-        seg_icon("vcs", Some(state), "VCS_GIT_ICON"),
-    );
-
     vec![Segment {
         name: "vcs".to_string(),
         state: Some(state.to_string()),
@@ -1311,9 +1242,9 @@ fn vcs_segments() -> Vec<Segment> {
 // dir (p10k:1768-2171)
 // ---------------------------------------------------------------------
 
-/// `${(%):-%~}` HOME-only contraction. Named dirs / auto_name_dirs /
-/// zsh_directory_name (p10k:1772-1800) are unported (TODO); the `~[…]`
-/// dance there exists solely for dynamic named dirs.
+/// HOME-only contraction (`auto_name_dirs` branch, p10k:1771-1773:
+/// `${cwd/#(#b)$HOME(|\/*)/'~'$match[1]}`); also the no-live-shell
+/// fallback shape of `%~`.
 fn contract_home(cwd: &str, home: &str) -> String {
     if home.is_empty() || home == "/" {
         return cwd.to_string();
@@ -1548,39 +1479,443 @@ fn dir_classes() -> Vec<(String, String, String)> {
     ]
 }
 
+/// Candidate renderings of a `truncate_to_unique` dir segment. p10k
+/// shortens the shortenable components left to right ONLY while the
+/// prompt does not fit (`${_p9k__d:#-*}`, p10k:1948-1952, budget set at
+/// p10k:6143); `variants[k]` is the content with the first `k` of them
+/// shortened and `saved[k]` the columns that step reclaims. render.rs
+/// picks the variant (`render::fit_unique_dirs`).
+#[derive(Debug, Clone)]
+pub struct DirUnique {
+    pub variants: Vec<String>,
+    pub saved: Vec<i64>,
+}
+
+thread_local! {
+    static DIR_UNIQUE: std::cell::RefCell<Vec<DirUnique>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Drain the plans registered by this frame's dir segments.
+pub fn take_dir_unique() -> Vec<DirUnique> {
+    DIR_UNIQUE.with(|d| std::mem::take(&mut *d.borrow_mut()))
+}
+
+/// p10k:8578 — `[[ $VTE_VERSION != (<1-4602>|4801) ]]`: terminals other
+/// than old VTE support OSC 8 hyperlinks.
+fn term_has_href() -> bool {
+    match getsparam("VTE_VERSION").and_then(|v| v.parse::<i64>().ok()) {
+        Some(v) => !((1..=4602).contains(&v) || v == 4801),
+        None => true,
+    }
+}
+
+/// p10k:1759-1763 `_p9k_url_escape`: every byte outside
+/// `[a-zA-Z0-9/:_.-!'()~]` becomes `%%XX` (the percent is doubled
+/// because the result is prompt-expanded).
+fn url_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"/:_.-!'()~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// p10k:1779-1794 — recover the `~[name]` head of a dynamic named dir:
+/// the first of `zsh_directory_name` / `$zsh_directory_name_functions`
+/// whose `d $cwd` reply reproduces the head of `p` supplies the first
+/// component; the remainder is split on `/` dropping empties
+/// (`${(s:/:)${p#$parts[1]}}`).
+fn dynamic_named_parts(p: &str, cwd: &str) -> Option<Vec<String>> {
+    let mut funcs = vec!["zsh_directory_name".to_string()];
+    funcs.extend(crate::ported::params::getaparam("zsh_directory_name_functions").unwrap_or_default());
+    for func in funcs {
+        if crate::ported::utils::getshfunc(&func).is_none() {
+            continue;
+        }
+        let Some(reply) = crate::ported::utils::subst_string_by_func(&func, Some("d"), cwd) else {
+            continue;
+        };
+        let Some(name) = reply.first() else { continue };
+        let head = format!("~[{name}]");
+        if let Some(rest) = p.strip_prefix(&head) {
+            let mut parts = vec![head.clone()];
+            parts.extend(rest.split('/').filter(|c| !c.is_empty()).map(String::from));
+            return Some(parts);
+        }
+    }
+    None
+}
+
+/// `-n $dir/${~pat}(#qN)`: does any entry of `dir` match `pat`?
+fn dir_has_entry_matching(dir: &str, pat: &str) -> bool {
+    let mut t = pat.to_string();
+    crate::ported::glob::tokenize(&mut t);
+    let Some(prog) = crate::ported::pattern::patcompile(&t, 0, None) else {
+        return false;
+    };
+    std::fs::read_dir(dir).is_ok_and(|rd| {
+        rd.flatten()
+            .any(|e| crate::ported::pattern::pattry(&prog, &e.file_name().to_string_lossy()))
+    })
+}
+
+/// `${dir:h}` — parent directory ("/" stays "/", relative bottoms out at ".").
+fn dir_head(dir: &str) -> String {
+    match dir.rfind('/') {
+        Some(0) => "/".to_string(),
+        Some(i) => dir[..i].to_string(),
+        None => ".".to_string(),
+    }
+}
+
+/// p10k:7585-7597 default `POWERLEVEL9K_SHORTEN_FOLDER_MARKER`.
+const DEFAULT_FOLDER_MARKER: &str = "(.bzr|.citc|.git|.hg|.node-version|.python-version|.ruby-version|.shorten_folder_marker|.svn|.terraform|CVS|Cargo.toml|composer.json|go.mod|package.json)";
+
+/// truncate_with_folder_marker (p10k:1993-2007): runs of directories
+/// between two marker-bearing ancestors (more than one component apart)
+/// collapse into one elision mark.
+fn shorten_folder_marker(parts: &mut Vec<String>, cwd: &str) {
+    let marker = p9k_global("SHORTEN_FOLDER_MARKER", DEFAULT_FOLDER_MARKER);
+    if marker.is_empty() {
+        return;
+    }
+    let mut dir = cwd.to_string();
+    let mut m: Vec<usize> = Vec::new(); // 1-based indices, descending
+    let mut i = parts.len().saturating_sub(1);
+    while i > 1 {
+        dir = dir_head(&dir);
+        if dir_has_entry_matching(&dir, &marker) {
+            m.push(i);
+        }
+        i -= 1;
+    }
+    m.push(1);
+    for k in 0..m.len() - 1 {
+        // p10k:2002 — (( m[i] - m[i+1] > 2 )) && parts[m[i+1]+1,m[i]-1]=($'\1')
+        if m[k] - m[k + 1] > 2 {
+            parts.splice(m[k + 1]..m[k] - 1, [MARK_ELIDE.to_string()]);
+        }
+    }
+}
+
+/// p10k:1838-1865 — nearest ancestor (cwd upward) holding one of
+/// `POWERLEVEL9K_DIR_PACKAGE_FILES` whose `jq .name` is non-empty.
+/// Returns (number of leading components it replaces, package name).
+fn dir_package_name(cwd: &str, nparts: usize) -> Option<(usize, String)> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, (std::time::SystemTime, String)>>> =
+        OnceLock::new();
+    // p10k:1839 — `$+commands[jq] == 1 && $#_POWERLEVEL9K_DIR_PACKAGE_FILES > 0`.
+    crate::extensions::p10k::segments_sys::cmd_on_path("jq")?;
+    let pats = match crate::ported::params::getaparam("POWERLEVEL9K_DIR_PACKAGE_FILES") {
+        Some(v) => v,
+        None => match getsparam("POWERLEVEL9K_DIR_PACKAGE_FILES") {
+            Some(s) => vec![s],
+            None => vec!["package.json".to_string(), "composer.json".to_string()],
+        },
+    };
+    if pats.is_empty() {
+        return None;
+    }
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let mut dir = cwd.to_string();
+    for levels in (1..=nparts).rev() {
+        for pat in &pats {
+            let mut t = pat.clone();
+            crate::ported::glob::tokenize(&mut t);
+            let Some(prog) = crate::ported::pattern::patcompile(&t, 0, None) else {
+                continue;
+            };
+            let mut names: Vec<String> = std::fs::read_dir(&dir)
+                .map(|rd| {
+                    rd.flatten()
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .filter(|n| crate::ported::pattern::pattry(&prog, n))
+                        .collect()
+                })
+                .unwrap_or_default();
+            names.sort();
+            for n in names {
+                let file = format!("{dir}/{n}");
+                let Ok(mtime) = std::fs::metadata(&file).and_then(|m| m.modified()) else {
+                    continue;
+                };
+                let hit = cache.lock().ok().and_then(|c| match c.get(&file) {
+                    Some((t, name)) if *t == mtime => Some(name.clone()),
+                    _ => None,
+                });
+                let name = match hit {
+                    Some(name) => name,
+                    None => {
+                        // p10k:1853 — jq -j '.name | select(. != null)' <$pkg_file
+                        let name = std::fs::File::open(&file)
+                            .ok()
+                            .and_then(|f| {
+                                std::process::Command::new("jq")
+                                    .args(["-j", ".name | select(. != null)"])
+                                    .stdin(f)
+                                    .stderr(std::process::Stdio::null())
+                                    .output()
+                                    .ok()
+                            })
+                            .filter(|o| o.status.success())
+                            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                            .unwrap_or_default();
+                        if let Ok(mut c) = cache.lock() {
+                            c.insert(file.clone(), (mtime, name.clone()));
+                        }
+                        name
+                    }
+                };
+                if !name.is_empty() {
+                    return Some((levels, name));
+                }
+            }
+        }
+        dir = dir_head(&dir);
+    }
+    None
+}
+
+/// Is `prefix` the start of exactly one sub-directory of `parent`?
+/// (`$parent/$prefix*/(N)` yields one match, p10k:1938-1941.)
+fn unique_dir_prefix(parent: &str, prefix: &str) -> bool {
+    let Ok(rd) = std::fs::read_dir(if parent.is_empty() { "/" } else { parent }) else {
+        return false;
+    };
+    let mut n = 0;
+    for e in rd.flatten() {
+        if !e.file_name().to_string_lossy().starts_with(prefix) {
+            continue;
+        }
+        // The trailing `/` in the glob follows symlinks to directories.
+        if std::fs::metadata(e.path()).is_ok_and(|m| m.is_dir()) {
+            n += 1;
+            if n > 1 {
+                return false;
+            }
+        }
+    }
+    n == 1
+}
+
+/// Shortest unique prefix length (1-based char count `j`) of `rsub`
+/// among the sub-directories of `parent` (p10k:1936-1941), cached per
+/// (parent, name) against the parent's mtime like p10k's
+/// `_p9k__dir_stat_cache` (p10k:1930-1958).
+fn unique_prefix_len(parent: &str, rsub: &str, d: usize) -> usize {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, (std::time::SystemTime, usize)>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let key = format!("{parent}\0{rsub}\0{d}");
+    let mtime = std::fs::metadata(if parent.is_empty() { "/" } else { parent })
+        .and_then(|m| m.modified())
+        .ok();
+    if let Some(mt) = mtime {
+        if let Some((t, j)) = cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
+            if t == mt {
+                return j;
+            }
+        }
+    }
+    let chars: Vec<char> = rsub.chars().collect();
+    // p10k:1936 — `local -i j=$rsub[(i)[^.]]`: first non-dot (len+1 if none).
+    let mut j = chars.iter().position(|&c| c != '.').map_or(chars.len() + 1, |i| i + 1);
+    // p10k:1937-1941 — `for (( ; j + d < $#rsub; ++j ))`.
+    while j + d < chars.len() {
+        let prefix: String = chars[..j].iter().collect();
+        if unique_dir_prefix(parent, &prefix) {
+            break;
+        }
+        j += 1;
+    }
+    if let (Some(mt), Ok(mut c)) = (mtime, cache.lock()) {
+        c.insert(key, (mt, j));
+    }
+    j
+}
+
+/// truncate_to_unique (p10k:1896-1992). Marks anchors (`\2`) and returns
+/// the shortenable components as `(index into parts, shortened text,
+/// columns saved)`, plus fake_first.
+fn shorten_to_unique(parts: &mut Vec<String>, p: &str, cwd: &str) -> (Vec<(usize, String, i64)>, bool) {
+    // p10k:1898-1901 — delimiter defaults to '*' here; length >= 0 else 1.
+    let delim = match getsparam("POWERLEVEL9K_SHORTEN_DELIMITER") {
+        Some(d) => decode_g(&d),
+        None => "*".to_string(),
+    };
+    let mut shortenlen = match getsparam("POWERLEVEL9K_SHORTEN_DIR_LENGTH") {
+        Some(v) if !v.is_empty() => v.trim().parse::<i64>().unwrap_or(0),
+        _ => 1,
+    };
+    if shortenlen < 0 {
+        shortenlen = 1;
+    }
+    let sl = shortenlen as usize;
+    // p10k:7570-7575 — TRUNCATE_BEFORE_MARKER validation.
+    let mut tbm = p9k_global("DIR_TRUNCATE_BEFORE_MARKER", "");
+    if tbm == "first" || tbm == "last" {
+        tbm.push_str(":0");
+    }
+    let tbm_ok = tbm.split_once(':').is_some_and(|(w, n)| {
+        (w == "first" || w == "last")
+            && n.strip_prefix('-').unwrap_or(n).chars().all(|c| c.is_ascii_digit())
+            && !n.strip_prefix('-').unwrap_or(n).is_empty()
+    });
+    let folder_marker = p9k_global("SHORTEN_FOLDER_MARKER", DEFAULT_FOLDER_MARKER);
+    if !tbm_ok || folder_marker.is_empty() {
+        tbm.clear(); // p10k:7569/7576
+    }
+
+    let n = parts.len();
+    let mut i = 2usize; // 1-based
+    let mut e = n as i64 - shortenlen;
+    let mut orig: Vec<String> = Vec::new();
+    if !tbm.is_empty() {
+        e += shortenlen;
+        orig.push(parts.get(1).cloned().unwrap_or_default()); // p10k:1911
+        let take = sl.min(n);
+        orig.extend(parts[n - take..].iter().cloned());
+    } else if p.starts_with('/') {
+        i += 1; // p10k:1914
+    }
+
+    // p10k:1925-1932 — `$cwd[1,-2-$#rtail]`: the real path above component i.
+    let rtail_len = if i <= n {
+        parts[i - 1..].join("/").chars().count()
+    } else {
+        0
+    };
+    let cwd_chars: Vec<char> = cwd.chars().collect();
+    let keep = cwd_chars.len().saturating_sub(rtail_len + 1);
+    let mut parent: String = cwd_chars[..keep].iter().collect();
+
+    // p10k:1937 — [[ -n $parts[i-1] ]] && parts[i-1]+=$'\2'
+    if i >= 2 && i - 2 < n && !parts[i - 2].is_empty() {
+        parts[i - 2].push(MARK_ANCHOR);
+    }
+    let d = shorten_delim_len(&delim);
+    let mut steps: Vec<(usize, String, i64)> = Vec::new();
+    while (i as i64) <= e && i <= n {
+        let sub = parts[i - 1].clone();
+        let dir = format!("{parent}/{sub}");
+        if !folder_marker.is_empty() && dir_has_entry_matching(&dir, &folder_marker) {
+            parts[i - 1].push(MARK_ANCHOR); // p10k:1944-1946
+        } else {
+            let j = unique_prefix_len(&parent, &sub, d);
+            let chars: Vec<char> = sub.chars().collect();
+            let tail: String = chars.iter().skip(j).collect();
+            let saved = str_width(&tail) as i64 - d as i64; // p10k:1955
+            if saved > 0 {
+                let prefix: String = chars.iter().take(j).collect();
+                steps.push((i - 1, format!("{MARK_UNIQ}{prefix}{MARK_ELIDE}{MARK_UNIQ}"), saved));
+            }
+        }
+        parent.push('/');
+        parent.push_str(&sub);
+        i += 1;
+    }
+
+    let mut fake_first = false;
+    if !tbm.is_empty() {
+        // p10k:1970-1992 — truncate before the marker anchor.
+        let (which, off) = tbm.split_once(':').unwrap_or(("first", "0"));
+        let off: i64 = off.parse().unwrap_or(0);
+        let is_anchor = |s: &String| s.ends_with(MARK_ANCHOR);
+        let e2 = if which == "last" {
+            parts.iter().rposition(is_anchor).map_or(0, |x| x as i64 + 1) + off
+        } else {
+            parts.iter().skip(1).position(is_anchor).map_or(parts.len() as i64 + 1, |x| x as i64 + 2) + off
+        };
+        if e2 > 1 && e2 as usize <= parts.len() {
+            let cut = e2 as usize - 1;
+            parts.drain(0..cut);
+            steps.retain_mut(|(idx, _, _)| {
+                if *idx < cut {
+                    false
+                } else {
+                    *idx -= cut;
+                    true
+                }
+            });
+            fake_first = true;
+        } else if p.starts_with('/') && p.len() > 1 && parts.len() > 1 {
+            parts[1] = format!("{}{MARK_ANCHOR}", orig[0]);
+            steps.retain(|(idx, _, _)| *idx != 1);
+        }
+        // p10k:1990-1998 — the kept tail reverts to its original names.
+        let cnt = parts.len().min(sl);
+        for back in (1..=cnt).rev() {
+            if back > orig.len() {
+                continue;
+            }
+            let at = parts.len() - back;
+            parts[at] = format!("{}{MARK_ANCHOR}", orig[orig.len() - back]);
+            steps.retain(|(idx, _, _)| *idx != at);
+        }
+    } else {
+        // p10k:2000-2004 — the unshortened tail are anchors.
+        for part in parts.iter_mut().skip(i - 1) {
+            part.push(MARK_ANCHOR);
+        }
+    }
+    (steps, fake_first)
+}
+
+/// Display width of a string (`(m)` flag semantics: wide chars count 2).
+fn str_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| crate::ported::zsh_h::WCWIDTH(c).max(0) as usize)
+        .sum()
+}
+
 fn dir_segments() -> Vec<Segment> {
     let cwd = cwd();
     let home = home_dir();
 
-    // p10k:1769-1778 — path text. DIR_PATH_ABSOLUTE skips contraction;
-    // otherwise `local p=${(%):-%~}` — zsh's %~, which abbreviates
-    // against $HOME AND `hash -d` named dirs (finddir picks the best
-    // diff, so ~ZPWR beats ~/.zpwr). Routed through the faithful
-    // promptpath port (Src/prompt.c:134); contract_home stays as the
-    // no-live-shell test fallback inside promptpath. The dynamic
-    // named-dir `~[…]` disambiguation dance (p10k:1779-1798) needs
-    // zsh_directory_name functions and falls back to the absolute
-    // path when no function matches (p10k:1795-1796) — matched here
-    // by falling back to the raw cwd on a `~[` result.
+    // p10k:1768-1801 — path text. DIR_PATH_ABSOLUTE skips contraction;
+    // auto_name_dirs contracts HOME only (p10k:1771-1773); otherwise
+    // `local p=${(%):-%~}` — zsh's %~, which abbreviates against $HOME
+    // AND `hash -d` named dirs (finddir picks the best diff, so ~ZPWR
+    // beats ~/.zpwr), routed through the faithful promptpath port
+    // (Src/prompt.c:134). A dynamic named dir `~[name]/…` (zsh_directory_name
+    // hook) keeps its `~[name]` head as ONE component (p10k:1779-1794);
+    // when no hook function reproduces that head the path is split from
+    // the absolute cwd (p10k:1795-1796).
+    let mut dynamic_parts: Option<Vec<String>> = None;
     let p = if global_bool("DIR_PATH_ABSOLUTE", false) {
         cwd.clone()
+    } else if crate::ported::options::opt_state_get("autonamedirs").unwrap_or(false) {
+        contract_home(&cwd, &home)
     } else {
         let abbrev = crate::ported::prompt::promptpath(&cwd, 0, true, &home);
         if abbrev.starts_with("~[") {
-            cwd.clone() // p10k:1795-1796 — parts=(${(s:/:)${(V)_p9k__cwd}})
+            dynamic_parts = dynamic_named_parts(&abbrev, &cwd);
+            if dynamic_parts.is_some() {
+                abbrev
+            } else {
+                cwd.clone() // p10k:1795-1796
+            }
         } else {
             abbrev
         }
     };
     // p10k:1799 — parts=("${(s:/:)p}") (quoted split keeps empties).
-    let mut parts: Vec<String> = p.split('/').map(String::from).collect();
+    let mut parts: Vec<String> = dynamic_parts.unwrap_or_else(|| p.split('/').map(String::from).collect());
 
     let mut fake_first = false; // p10k:1803
+    let mut unique_steps: Vec<(usize, String, i64)> = Vec::new();
     let shortenlen = global_int("SHORTEN_DIR_LENGTH", -1); // p10k:1803 `:--1`
 
     // p10k:1805-1813 — delimiter: SHORTEN_DELIMITER if SET (even
     // empty), else '…' (UTF-8 assumed; the '..' arm is non-UTF-8 only).
-    let delim = match getsparam("POWERLEVEL9K_SHORTEN_DELIMITER") {
+    let mut delim = match getsparam("POWERLEVEL9K_SHORTEN_DELIMITER") {
         Some(d) => decode_g(&d),
         None => "\u{2026}".to_string(),
     };
@@ -1593,11 +1928,11 @@ fn dir_segments() -> Vec<Segment> {
         }
         "truncate_with_package_name" | "truncate_middle" | "truncate_from_right" => {
             if strategy == "truncate_with_package_name" {
-                // p10k:1838-1865 — needs jq + package.json stat cache.
-                tracing::debug!(
-                    target: "p10k",
-                    "truncate_with_package_name package lookup unported; length squeeze only"
-                );
+                // p10k:1836-1865 — nearest package file with a name wins.
+                if let Some((levels, name)) = dir_package_name(&cwd, parts.len()) {
+                    parts.splice(0..levels, [name]); // p10k:1858
+                    fake_first = true; // p10k:1859
+                }
             }
             shorten_middle_or_right(
                 &mut parts,
@@ -1612,10 +1947,20 @@ fn dir_segments() -> Vec<Segment> {
         "truncate_to_first_and_last" => {
             shorten_first_and_last(&mut parts, &p, shortenlen); // p10k:1888
         }
-        "truncate_to_unique" | "truncate_with_folder_marker" => {
-            // p10k:1897-2007 — filesystem-anchored uniqueness scan;
-            // TODO(phase-2). Falls back to full path (no truncation).
-            tracing::debug!(target: "p10k", %strategy, "dir shorten strategy unported — showing full path");
+        "truncate_to_unique" => {
+            // p10k:1896-1992 — filesystem-anchored uniqueness scan; the
+            // shortenable components are recorded as steps so the final
+            // prompt assembly can apply them left to right only as far as
+            // the available width demands (`_p9k__d`, p10k:6143).
+            if getsparam("POWERLEVEL9K_SHORTEN_DELIMITER").is_none() {
+                delim = "*".to_string(); // p10k:1898 `${..SHORTEN_DELIMITER-'*'}`
+            }
+            let (st, ff) = shorten_to_unique(&mut parts, &p, &cwd);
+            unique_steps = st;
+            fake_first = ff;
+        }
+        "truncate_with_folder_marker" => {
+            shorten_folder_marker(&mut parts, &cwd); // p10k:1993-2007
         }
         _ => shorten_default(&mut parts, shortenlen), // p10k:2009-2017
     }
@@ -1669,6 +2014,7 @@ fn dir_segments() -> Vec<Segment> {
     let fg = p9k_param("dir", state_ref, "FOREGROUND", color1()); // p10k:2054
     let style = format!("%b{}{}", bgesc(&bg), fgesc(&fg)); // p10k:2050-2056
 
+    let format_parts = |mut parts: Vec<String>| -> String {
     // p10k:2062 — escape %.
     for part in parts.iter_mut() {
         *part = esc_pct(part);
@@ -1789,12 +2135,37 @@ fn dir_segments() -> Vec<Segment> {
 
     // p10k:2141 — content = parts joined on the separator.
     let content = parts.join(&sep);
-    // p10k:2142-2153 — DIR_HYPERLINK OSC-8 wrapping unported (the
-    // user's config sets it false).
-    if global_bool("DIR_HYPERLINK", false) {
-        tracing::debug!(target: "p10k", "DIR_HYPERLINK unported — plain dir content");
+    // p10k:2141-2153 — DIR_HYPERLINK: OSC 8 file:// link around the path
+    // when the terminal supports hyperlinks and cwd is absolute.
+    if global_bool("DIR_HYPERLINK", false) && term_has_href() && cwd.starts_with('/') {
+        return format!(
+            "%{{\u{1b}]8;;file://{}\u{7}%}}{content}%{{\u{1b}]8;;\u{7}%}}",
+            url_escape(&cwd)
+        );
     }
+    content
+};
 
+    let content = format_parts(parts.clone());
+    if !unique_steps.is_empty() {
+        // p10k:6143 — every prefix of the step list is a candidate
+        // rendering; render.rs picks the shortest-needed one.
+        let mut variants = vec![content.clone()];
+        let mut saved = Vec::new();
+        let mut cur = parts.clone();
+        for (idx, short, sv) in &unique_steps {
+            cur[*idx] = short.clone();
+            variants.push(format_parts(cur.clone()));
+            saved.push(*sv);
+        }
+        DIR_UNIQUE.with(|d| {
+            let mut d = d.borrow_mut();
+            if d.len() >= 8 {
+                d.clear(); // never rendered (no render_prompt) — drop stale plans
+            }
+            d.push(DirUnique { variants, saved });
+        });
+    }
     // p10k:2168 — final segment; VISUAL_IDENTIFIER / CONTENT expansion
     // hooks apply as in _p9k_prompt_segment.
     let seg_state = state.clone();

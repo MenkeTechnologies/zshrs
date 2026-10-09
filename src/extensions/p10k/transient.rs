@@ -4,45 +4,22 @@
 //! and the condense decision inside `_p9k_on_widget_zle-line-finish`
 //! (p10k.zsh:7623-7658).
 //!
-//! This file is PURE config + render — it wires no hook.
+//! The accept-time hook is [`transient_swap_for_accept`], called from
+//! zle_main.rs right before the final `trashzle()` repaint. It mirrors
+//! `_p9k_on_widget_zle-line-finish` (p10k:7897-7933):
 //!
-//! # Integration contract (for the accept-line / zle-line-finish site)
-//!
-//! What zsh p10k does at line finish (p10k:7634-7653): when a transient
-//! prompt is configured and the condense condition holds, it runs
-//! `RPROMPT= PROMPT=$_p9k_transient_prompt _p9k_reset_prompt` — i.e.
-//! `zle .reset-prompt` repaints the WHOLE just-accepted prompt block
-//! (every PROMPT line plus the right prompt, not just the last line)
-//! with the one-line transient string; the accepted command text stays
-//! on that line and command output begins below it.
-//!
-//! The native site must therefore, at accept time and BEFORE any
-//! command output:
-//!
-//! 1. `let Some(mode) = transient_enabled() else { return }` —
-//!    engine active and mode != off (p10k:7634 `-n $_p9k_transient_prompt`).
-//! 2. `should_condense(&recorded_pwd, &cwd, mode)` where `recorded_pwd`
-//!    is the integration's own `_p9k__last_prompt_pwd` slot
-//!    (p10k:7180, starts empty → first accept never condenses under
-//!    same-dir). When it returns FALSE under SameDir, store `cwd` into
-//!    the slot (p10k:7639 `_p9k__last_prompt_pwd=$_p9k__cwd`); when it
-//!    returns TRUE the slot is left untouched (p10k:7636-7637 only set
-//!    `optimized=1`, no pwd write).
-//! 3. On TRUE: `let (left, right) = render_transient();` — `right` is
-//!    always "" (p10k:7653 `RPROMPT=`). Repaint in place: the previous
-//!    live refresh left the cursor on the prompt's LAST physical row
-//!    and recorded the block height in
-//!    `crate::ported::zle::zle_refresh::LAST_PAINT_ROWS`
-//!    (zle_refresh.rs:4998, stored at zle_refresh.rs:1247). Move the
-//!    cursor up `LAST_PAINT_ROWS - 1` rows, `\r`, clear to end of
-//!    screen (`\x1b[J`), then print the prompt-expanded `left` followed
-//!    by the accepted buffer — exactly the repaint-anchor dance the
-//!    live refresh does at zle_refresh.rs:1242-1247, with `left` in
-//!    place of PROMPT.
-//! 4. Reentrancy: p10k:7625 guards with `_p9k__line_finished` so a
-//!    second line-finish for the same line is a no-op — the integration
-//!    needs the same one-shot latch per accepted line (send-break also
-//!    funnels here, p10k:7660-7662).
+//! 1. the user's `p10k-on-post-prompt` runs and the line is marked
+//!    finished (p10k:7901/7933);
+//! 2. with a transient prompt configured ([`transient_enabled`],
+//!    p10k:7909), [`should_condense`] decides against the recorded
+//!    `_p9k__last_prompt_pwd` slot (p10k:7404 — empty at start, so the
+//!    first accept never condenses under `same-dir`; written on a
+//!    non-condensing accept, left alone on a condensing one);
+//! 3. on condense the pair from [`render_transient`] replaces the
+//!    prompt buffers (`RPROMPT` always empty, p10k:7926);
+//! 4. otherwise, when a segment renders differently once the line is
+//!    finished (TIME_UPDATE_ON_COMMAND), the prompt is re-rendered and
+//!    that pair is returned.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::ported::params::getsparam;
@@ -101,22 +78,9 @@ pub fn should_condense(pwd_at_accept: &Path, pwd_now: &Path, mode: TransientMode
     }
 }
 
-/// p10k:532-541 (`_p9k_translate_color`) — minimal local translation:
-/// decimal codes are zero-padded to 3 digits (p10k:534
-/// `${(l.3..0.)1}`), `#hex` is lowercased (p10k:536); everything else
-/// passes through unchanged. The full `__p9k_colors` name table lives
-/// privately in render.rs; prompt_char foregrounds are numeric in
-/// every stock config (76/196), and the zsh prompt expander resolves
-/// basic color NAMES in `%F{...}` natively, so the table is not
-/// duplicated here.
+/// p10k:532-541 `_p9k_translate_color` — render.rs owns the table.
 fn translate_color_min(c: &str) -> String {
-    if !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()) {
-        format!("{c:0>3}")
-    } else if c.len() > 1 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit()) {
-        c.to_ascii_lowercase()
-    } else {
-        c.to_string()
-    }
+    crate::extensions::p10k::render::translate_color(c)
 }
 
 /// One `%(?...)` branch of the transient string (p10k:8316-8328): the
@@ -128,10 +92,9 @@ fn translate_color_min(c: &str) -> String {
 ///
 /// p10k:8319/8326 — content is `${${P9K_CONTENT::="❯"}+}` (assign, emit
 /// nothing) followed by the CONTENT_EXPANSION param (default
-/// `'${P9K_CONTENT}'`, p10k:8320/8327) wrapped in `${:-"..."}`. Same
-/// phase-1 CONTENT_EXPANSION policy as render.rs: default passthrough
-/// → the glyph, empty → hide; any other custom zsh expansion is logged
-/// and rendered as the default glyph.
+/// `'${P9K_CONTENT}'`, p10k:8320/8327) wrapped in `${:-"..."}`; the
+/// template is evaluated by expansion.rs exactly as for the live
+/// prompt_char segment.
 fn transient_char(state: &str, default_fg: &str) -> String {
     // p10k:3313 — the prompt_char segment's style name is
     // `prompt_prompt_char` (segment "prompt_char" under the
@@ -149,21 +112,14 @@ fn transient_char(state: &str, default_fg: &str) -> String {
     } else {
         format!("%F{{{fg}}}")
     };
-    let ce = p9k_param(
+    // p10k:8319/8327 — `${${P9K_CONTENT::="❯"}+}` assigns the glyph, the
+    // CONTENT_EXPANSION template (default `${P9K_CONTENT}`) then expands
+    // around it.
+    let glyph = crate::p10k::expansion::apply_content_expansion(
         "prompt_char",
         Some(state),
-        "CONTENT_EXPANSION",
-        "${P9K_CONTENT}",
+        "\u{276F}",
     );
-    let glyph = match ce.as_str() {
-        "" => "", // empty expansion hides the char (render.rs policy)
-        "${P9K_CONTENT}" | "$P9K_CONTENT" => "\u{276F}", // ❯ (p10k:8319)
-        other => {
-            tracing::debug!(target: "p10k", state, expansion = %other,
-                "custom prompt_char CONTENT_EXPANSION not evaluated in transient prompt — default glyph used");
-            "\u{276F}"
-        }
-    };
     format!("{fg_seq}{glyph}")
 }
 
@@ -202,7 +158,8 @@ pub fn render_transient() -> (String, String) {
         || getsparam("ITERM_SHELL_INTEGRATION_INSTALLED").as_deref() == Some("Yes");
     if shell_integration {
         // p10k:8330-8331 — wrap in OSC 133 prompt-start/end marks. The
-        // z4h/tmux DCS variant (p10k:8332-8334) is z4h-only, unported.
+        // The z4h/tmux DCS variant (p10k:8332-8334) applies only inside
+        // z4h, which this engine replaces.
         left = format!("%{{\u{1b}]133;A\u{7}%}}{left}%{{\u{1b}]133;B\u{7}%}}");
     }
     (left, String::new())
@@ -269,16 +226,52 @@ mod tests {
         assert_eq!(translate_color_min("76"), "076");
         assert_eq!(translate_color_min("196"), "196");
         assert_eq!(translate_color_min("#FFAA00"), "#ffaa00");
-        assert_eq!(translate_color_min("green"), "green");
+        assert_eq!(translate_color_min("green"), "002");
         assert_eq!(translate_color_min(""), "");
     }
 }
 
-// !!! PLACEHOLDER STUB — the concurrent p10k session owns this file and is
-// writing the real body (zle_main.rs:1273 already calls it). `None` =
-// transient prompt disabled this accept. Replace wholesale. !!!
+/// `_p9k__last_prompt_pwd` (p10k:7180) — cwd recorded at the previous
+/// non-condensed accept; starts empty so the first accept never
+/// condenses under `same-dir`.
+static LAST_PROMPT_PWD: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Accept-time hook (`_p9k_on_widget_zle-line-finish`, p10k:7897-7933).
 /// Returns the (PROMPT, RPROMPT) template pair to repaint the accepted
-/// line with, when the transient prompt is enabled.
+/// line with: the condensed transient pair, or — when the prompt holds
+/// content that updates on command (time with
+/// TIME_UPDATE_ON_COMMAND, `_p9k_reset_on_line_finish`) — the freshly
+/// re-rendered prompt. `None` = repaint nothing. One call per accepted
+/// line, which is the `_p9k__line_finished` latch (p10k:7898).
 pub fn transient_swap_for_accept() -> Option<(String, String)> {
+    if !crate::p10k::engine_active() {
+        return None;
+    }
+    crate::p10k::run_post_prompt_hook(); // p10k:7901
+    crate::p10k::mark_line_finished(); // p10k:7933
+    if let Some(mode) = transient_enabled() {
+        // p10k:7909-7914 — transient prompt configured.
+        let cwd = std::path::PathBuf::from(getsparam("PWD").filter(|p| !p.is_empty()).unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        }));
+        let mut slot = LAST_PROMPT_PWD.lock().unwrap();
+        if should_condense(Path::new(slot.as_str()), &cwd, mode) {
+            // p10k:7910-7911 + 7926 — condense; slot untouched.
+            return Some(render_transient());
+        }
+        // p10k:7913 — `_p9k__last_prompt_pwd=$_p9k__cwd`.
+        *slot = cwd.to_string_lossy().into_owned();
+    }
+    // p10k:7924-7925 — plain `_p9k_reset_prompt` repaint, needed only
+    // when a segment renders differently once the line is finished.
+    if p9k_global("TIME_UPDATE_ON_COMMAND", "") == "true" {
+        crate::p10k::preprompt_render();
+        return Some((
+            getsparam("PROMPT").unwrap_or_default(),
+            getsparam("RPROMPT").unwrap_or_default(),
+        ));
+    }
     None
 }

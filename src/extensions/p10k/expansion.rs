@@ -84,6 +84,30 @@ pub fn apply_visual_identifier_expansion(segment: &str, state: Option<&str>, ico
     )
 }
 
+/// p10k:7899-7915 — `POWERLEVEL9K_MULTILINE_{FIRST,NEWLINE}_PROMPT_GAP_EXPANSION`
+/// (`kind` is `FIRST` or `NEWLINE`): a template evaluated with `P9K_GAP`
+/// set to the gap fill. Returns the expanded gap and whether a custom
+/// template ran (the caller then closes the line with `%b%k%f`). Unset
+/// or the default `${P9K_GAP}` passes the fill through.
+pub fn apply_gap_expansion(kind: &str, gap: &str) -> (String, bool) {
+    let Some(template) = getsparam(&format!("POWERLEVEL9K_MULTILINE_{kind}_PROMPT_GAP_EXPANSION"))
+    else {
+        return (gap.to_string(), false);
+    };
+    if template == "${P9K_GAP}" {
+        return (gap.to_string(), false);
+    }
+    setsparam("P9K_GAP", gap);
+    // p10k:7911 — `${:-"$exp"}`: the template is evaluated inside quotes.
+    match eval_template(&format!("${{:-\"{template}\"}}")) {
+        Some(expanded) => (expanded, true),
+        None => {
+            tracing::debug!(target: "p10k", %template, "gap expansion failed — using the plain gap");
+            (gap.to_string(), false)
+        }
+    }
+}
+
 /// Shared body of the two expansion entry points. `var_name` is the
 /// `P9K_*` parameter the template reads; `value` is what the segment
 /// computed (content or icon).

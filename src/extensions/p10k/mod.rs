@@ -30,6 +30,7 @@ pub mod segments_extra;
 pub mod segments_powerline;
 pub mod segments_sys;
 pub mod segments_zshrs;
+pub mod shared;
 pub mod transient;
 pub mod wizard;
 
@@ -52,6 +53,71 @@ pub fn p10k_root_dir() -> Option<String> {
 
 pub fn engine_active() -> bool {
     ENGINE_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// `_p9k__line_finished` (p10k:7933): set when the accepted line is
+/// being finished (the finishing repaint), cleared by the next precmd
+/// render (p10k:7072).
+static LINE_FINISHED: AtomicBool = AtomicBool::new(false);
+
+/// True between the accept-time repaint and the next precmd.
+pub fn line_finished() -> bool {
+    LINE_FINISHED.load(Ordering::Relaxed)
+}
+
+/// Mark the line finished (accept-time hook, transient.rs).
+pub(crate) fn mark_line_finished() {
+    LINE_FINISHED.store(true, Ordering::Relaxed);
+}
+
+/// `P9K_TTY` (p10k:6889-6899, 7064-7066): `new` for the first prompt of
+/// a terminal whose tty device was created less than
+/// POWERLEVEL9K_NEW_TTY_MAX_AGE_SECONDS (default 5; negative = always)
+/// ago, `old` from the next precmd on. A new tty suppresses the blank
+/// line / ruler that PROMPT_ADD_NEWLINE / SHOW_RULER put above the
+/// prompt. (tty tracked, new?, a prompt was already rendered)
+static TTY_STATE: std::sync::Mutex<(String, bool, bool)> =
+    std::sync::Mutex::new((String::new(), false, false));
+
+/// Advance `P9K_TTY` for a precmd render.
+fn update_tty_state() {
+    let tty = crate::ported::params::getsparam("TTY").unwrap_or_default();
+    let mut st = TTY_STATE.lock().unwrap();
+    if st.0.is_empty() || (!st.1 && st.0 != tty) {
+        // p10k:6889 — first render, or `old` and the tty changed.
+        let max_age = config::p9k_global("NEW_TTY_MAX_AGE_SECONDS", "5")
+            .trim()
+            .parse::<f64>()
+            .unwrap_or(5.0);
+        st.1 = if max_age < 0.0 {
+            true
+        } else {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&tty).is_ok_and(|m| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                now - m.ctime() as f64 - (m.ctime_nsec() as f64 / 1e9) < max_age
+            })
+        };
+        st.0 = tty;
+    } else if st.1 && st.2 {
+        st.1 = false; // p10k:7065-7066 — `new` lasts one prompt.
+    }
+    st.2 = true;
+}
+
+/// True while `P9K_TTY` is `new`.
+pub fn tty_is_new() -> bool {
+    TTY_STATE.lock().unwrap().1
+}
+
+/// `$_p9k__refresh_reason == precmd` (p10k:7085): the render runs from
+/// the precmd path, i.e. outside ZLE. Re-renders triggered while ZLE is
+/// editing (keymap switch, display toggles) are not precmd refreshes.
+pub fn refresh_is_precmd() -> bool {
+    crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0
 }
 
 /// Monotonic start-of-command stamp (millis since an arbitrary epoch),
@@ -114,11 +180,16 @@ static LAST_STATUS: AtomicI64 = AtomicI64::new(0);
 /// every `_p9k_[^_]*` parameter for the next shell to source):
 /// `$ZSHRS_HOME/NAME`, else `~/.zshrs/NAME`.
 pub(crate) fn state_file(name: &str) -> std::path::PathBuf {
+    zshrs_home().join(name)
+}
+
+/// `$ZSHRS_HOME` else `~/.zshrs` — the one directory every zshrs
+/// artifact lives under.
+pub(crate) fn zshrs_home() -> std::path::PathBuf {
     std::env::var_os("ZSHRS_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".zshrs")))
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(name)
 }
 
 /// Write `bytes` to `path` through a per-process temporary and a rename,
@@ -416,6 +487,7 @@ fn p10k_display(rest: &[String]) -> i32 {
         crate::ported::exec::set_array("reply", pairs);
         if reset {
             preprompt_render(); // p10k:9067-9069 reset
+            zle_refresh_if_editing();
         }
         return 0;
     }
@@ -423,6 +495,7 @@ fn p10k_display(rest: &[String]) -> i32 {
         // p10k:9046-9051 + 9106-9108 — bare `-r` redisplays.
         api::display_reset();
         preprompt_render();
+        zle_refresh_if_editing();
         return 0;
     }
     // p10k:9074-9105 — apply each `pattern=state-list` toggle.
@@ -440,8 +513,16 @@ fn p10k_display(rest: &[String]) -> i32 {
     // p10k:9106-9108 — refresh the prompt if anything changed.
     if changed {
         preprompt_render();
+        zle_refresh_if_editing();
     }
     0
+}
+
+/// "If called from zle, the current prompt is refreshed" (`p10k display`).
+fn zle_refresh_if_editing() {
+    if !refresh_is_precmd() {
+        crate::ported::zle::zle_main::zle_resetprompt();
+    }
 }
 
 /// Run a user-defined `prompt_<name>` shell function as a segment
@@ -467,6 +548,133 @@ fn run_user_segment_fn(base: &str) -> Option<Vec<render::Segment>> {
         s.name = base.to_string();
     }
     Some(segs)
+}
+
+/// Elements currently shown by SHOW_ON_COMMAND (`_p9k_display_segment …
+/// show`, p10k:7993-7998). Empty at every precmd.
+static SHOWN_BY_COMMAND: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// ZLE state the rendered prompt depends on: `(keymap, region, overwrite,
+/// shown-by-command)`. A change while editing needs a repaint.
+static ZLE_SIGNATURE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// `POWERLEVEL9K_<ELEM>_SHOW_ON_COMMAND` name for a segment base name
+/// (p10k:8588 — `${${(U)elem}//İ/I}`, dashes folded to underscores).
+fn show_on_command_param(base: &str) -> String {
+    format!("{}_SHOW_ON_COMMAND", base.replace('-', "_").to_ascii_uppercase())
+}
+
+fn has_show_on_command(base: &str) -> bool {
+    let name = format!("POWERLEVEL9K_{}", show_on_command_param(base));
+    crate::ported::params::getsparam(&name).is_some() || crate::ported::params::getaparam(&name).is_some()
+}
+
+/// `p10k-on-init`, `p10k-on-pre-prompt`, `p10k-on-post-prompt`,
+/// `p10k-on-post-widget`: user hook functions p10k calls at fixed
+/// points (p10k:6943-6970, 7901, 7987).
+fn run_user_hook(name: &str) {
+    if crate::ported::utils::getshfunc(name).is_some() {
+        let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script(name));
+    }
+}
+
+/// Hook for the accepted line (`p10k-on-post-prompt`, p10k:7901).
+pub(crate) fn run_post_prompt_hook() {
+    run_user_hook("p10k-on-post-prompt");
+}
+
+/// p10k internal/parser.zsh `_p9k_parse_buffer`: the commands in an edit
+/// buffer, via the theme's own parser run in the shell (its
+/// `__p9k_intro` option set is installed first; the parser is sourced
+/// once). Cached for the last buffer.
+fn parse_commands(buffer: &str) -> Vec<String> {
+    static LAST: std::sync::Mutex<Option<(String, Vec<String>)>> = std::sync::Mutex::new(None);
+    if let Some((b, c)) = LAST.lock().unwrap().as_ref() {
+        if b == buffer {
+            return c.clone();
+        }
+    }
+    let Some(root) = p10k_root_dir() else {
+        return Vec::new();
+    };
+    let quote = |t: &str| format!("'{}'", t.replace('\'', "'\\''"));
+    let max = config::p9k_global("COMMANDS_MAX_TOKEN_COUNT", "64");
+    let script = format!(
+        "(( $+__p9k_intro )) || typeset -g __p9k_intro='emulate -L zsh -o no_hist_expand -o extended_glob -o no_prompt_bang -o prompt_percent -o no_prompt_subst -o no_aliases -o no_bg_nice -o typeset_silent -o no_rematch_pcre; local -a match mbegin mend reply; local -i MBEGIN MEND OPTIND; local MATCH REPLY OPTARG'\n\
+         (( $+functions[_p9k_parse_buffer] )) || source {}\n\
+         _p9k_parse_buffer {} {}",
+        quote(&format!("{root}/internal/parser.zsh")),
+        quote(buffer),
+        max.trim().parse::<u64>().unwrap_or(64)
+    );
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script(&script));
+    let cmds = crate::ported::params::getaparam("P9K_COMMANDS").unwrap_or_default();
+    *LAST.lock().unwrap() = Some((buffer.to_string(), cmds.clone()));
+    cmds
+}
+
+fn zle_signature(shown: &std::collections::HashSet<String>) -> String {
+    use crate::ported::zle::zle_main::{INSMODE, REGION_ACTIVE};
+    let mut names: Vec<&String> = shown.iter().collect();
+    names.sort();
+    format!(
+        "{}/{}/{}/{}",
+        crate::ported::zle::zle_keymap::curkeymapname(),
+        REGION_ACTIVE.load(Ordering::Relaxed) != 0,
+        INSMODE.load(Ordering::Relaxed),
+        names.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(",")
+    )
+}
+
+/// ZLE redraw hook (`zle-line-pre-redraw`, p10k:8020-8050 +
+/// `_p9k_widget_hook` p10k:7967-8004): after every editing step, re-derive
+/// what the prompt depends on — the keymap, the visual-mode region, the
+/// overwrite mode, and which SHOW_ON_COMMAND segments match the commands
+/// now in the buffer — and repaint only when that changed. Calls the
+/// user's `p10k-on-post-widget` with `P9K_COMMANDS` set.
+pub fn on_zle_redraw() {
+    use crate::ported::params::{getsparam, setaparam};
+    if !engine_active() {
+        return;
+    }
+    let mut elems = config::p9k_global_arr("LEFT_PROMPT_ELEMENTS");
+    elems.extend(config::p9k_global_arr("RIGHT_PROMPT_ELEMENTS"));
+    let bases: Vec<String> = elems
+        .iter()
+        .map(|e| render::is_joined_name(e).0.to_string())
+        .filter(|b| has_show_on_command(b))
+        .collect();
+    let has_post_widget = crate::ported::utils::getshfunc("p10k-on-post-widget").is_some();
+    let mut shown = std::collections::HashSet::new();
+    if !bases.is_empty() || has_post_widget {
+        let buffer = format!(
+            "{}{}",
+            getsparam("PREBUFFER").unwrap_or_default(),
+            getsparam("BUFFER").unwrap_or_default()
+        );
+        let cmds = if buffer.is_empty() { Vec::new() } else { parse_commands(&buffer) };
+        for base in &bases {
+            // p10k:8588 — `(|*[/\0])(<cmd>|<cmd>…)` against each command.
+            let alt = config::p9k_global_arr(&show_on_command_param(base)).join("|");
+            let pat = format!("(|*[/])({alt})");
+            if cmds.iter().any(|c| shared::glob_name_matches(&pat, c)) {
+                shown.insert(base.clone());
+            }
+        }
+        if has_post_widget {
+            setaparam("P9K_COMMANDS", cmds);
+            run_user_hook("p10k-on-post-widget");
+        }
+    }
+    let sig = zle_signature(&shown);
+    if *ZLE_SIGNATURE.lock().unwrap() == sig {
+        return;
+    }
+    *ZLE_SIGNATURE.lock().unwrap() = sig;
+    *SHOWN_BY_COMMAND.lock().unwrap() = shown.into_iter().collect();
+    preprompt_render();
+    crate::ported::zle::zle_main::zle_resetprompt();
 }
 
 /// Build and install PROMPT/RPROMPT. Called from `preprompt()` after
@@ -510,6 +718,19 @@ pub fn preprompt_render() {
         }
     }
     let _t = RenderTimer(render_t0);
+    if refresh_is_precmd() {
+        LINE_FINISHED.store(false, Ordering::Relaxed); // p10k:7072
+        update_tty_state();
+        // p10k:6946-6954 — user hooks before the first/every prompt; the
+        // SHOW_ON_COMMAND elements start hidden (empty buffer).
+        static INIT_DONE: AtomicBool = AtomicBool::new(false);
+        if !INIT_DONE.swap(true, Ordering::Relaxed) {
+            run_user_hook("p10k-on-init");
+        }
+        SHOWN_BY_COMMAND.lock().unwrap().clear();
+        run_user_hook("p10k-on-pre-prompt");
+        *ZLE_SIGNATURE.lock().unwrap() = zle_signature(&Default::default());
+    }
     let left_elems = config::p9k_global_arr("LEFT_PROMPT_ELEMENTS");
     let right_elems = config::p9k_global_arr("RIGHT_PROMPT_ELEMENTS");
 
@@ -531,25 +752,11 @@ pub fn preprompt_render() {
             let (base, joined) = render::is_joined_name(name);
             // p10k:8290-8310 — an element with
             // POWERLEVEL9K_<ELEM>_SHOW_ON_COMMAND set is registered in
-            // `_p9k_show_on_command`; p10k:7697-7726 — on every widget
-            // it is shown only while the edit buffer holds a matching
-            // command, and `_p9k_on_expand` hides it before each prompt
-            // (p10k:6733-6736). A freshly painted prompt has an empty
-            // buffer, so the paint-time state is always HIDDEN; the
-            // show-while-typing re-render is not ported.
-            let soc = format!(
-                "POWERLEVEL9K_{}_SHOW_ON_COMMAND",
-                base.replace('-', "_").to_ascii_uppercase()
-            );
-            if crate::ported::params::getsparam(&soc).is_some()
-                || crate::ported::params::getaparam(&soc).is_some()
-            {
-                tracing::debug!(target: "p10k", %name, "SHOW_ON_COMMAND segment hidden at prompt paint");
-                continue;
-            }
-            // p10k:9090-9097 — `p10k display '<part>'=hide` toggle.
-            if api::is_hidden(base) {
-                tracing::debug!(target: "p10k", %name, "hidden by p10k display toggle");
+            // `_p9k_show_on_command`: hidden before each prompt
+            // (p10k:6946) and shown while the edit buffer holds a
+            // matching command (`on_zle_redraw`, p10k:7993-7998).
+            if has_show_on_command(base) && !SHOWN_BY_COMMAND.lock().unwrap().contains(base) {
+                tracing::debug!(target: "p10k", %name, "SHOW_ON_COMMAND: no matching command — hidden");
                 continue;
             }
             // p10k:833-840 — SHOW_ON_UPGLOB: with a pattern configured
@@ -599,6 +806,23 @@ pub fn preprompt_render() {
 
     let left_lines = split_lines(&left_elems);
     let right_lines = split_lines(&right_elems);
+    // p10k:8337-8359 — the parts `p10k display` addresses.
+    let element_names = |elems: &[String]| -> Vec<Vec<String>> {
+        let mut lines: Vec<Vec<String>> = vec![Vec::new()];
+        for name in elems {
+            if name == "newline" {
+                lines.push(Vec::new());
+            } else {
+                lines
+                    .last_mut()
+                    .expect("lines never empty")
+                    .push(render::is_joined_name(name).0.to_string());
+            }
+        }
+        lines
+    };
+    let (left_names, right_names) = render::align_lines(element_names(&left_elems), element_names(&right_elems));
+    api::set_layout(left_names, right_names);
     let (prompt, rprompt) = render::render_prompt(&left_lines, &right_lines);
 
     crate::ported::params::setsparam("PROMPT", &prompt);

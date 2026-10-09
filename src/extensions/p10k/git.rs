@@ -1,6 +1,6 @@
 //! p10k git status backend — native replacement for gitstatusd.
 //!
-//! Phase-2 implementation strategy (native `.git` reader, subprocess gated):
+//! Implementation strategy (native `.git` reader, subprocess gated):
 //! - Repo discovery + branch/commit/action come from reading `.git` directly:
 //!   `.git` may be a file containing `gitdir: <path>` (worktrees/submodules);
 //!   `HEAD` is either a symbolic ref (`ref: refs/heads/<branch>`) or a detached
@@ -24,21 +24,19 @@
 //!     (gitstatus repo.cc:127-243 does `git_diff_tree_to_index`); reading the
 //!     HEAD tree needs the object store (zlib-inflated loose objects and
 //!     packfiles) and no inflate impl exists in-tree (Cargo.toml has zstd,
-//!     not zlib). Not faked natively.
+//!     not zlib), so it comes from the porcelain subprocess.
 //!   * untracked — requires a faithful .gitignore engine (nested .gitignore,
 //!     info/exclude, core.excludesFile, negations, dir-only patterns, `**`),
-//!     which is out of scope for this file. Not faked natively.
+//!     so it comes from the porcelain subprocess as well.
 //!   * ahead/behind when the branch and upstream tips DIVERGE — the commit
 //!     count needs an object-store commit walk (same zlib wall as staged);
 //!     `# branch.ab` from the porcelain fallback is kept for this case only.
 //!   * everything, when the native index parse fails (unsupported version,
 //!     sparse-index tree entries, oversized index, corrupt data).
-//! - Tag lookup gap: loose ANNOTATED tags (a `refs/tags/x` file holding a tag
-//!   object id, not the commit id) cannot be peeled without the object store
-//!   and are skipped natively; packed-refs `^<oid>` peel lines cover annotated
-//!   tags in the normal (packed) case. gitstatus peels via libgit2
-//!   (tag_db.cc:295-330 TagHasTarget); this is a documented divergence, not
-//!   an approximation.
+//! - Tag lookup: loose ANNOTATED tags are peeled through one memoised
+//!   `git cat-file --batch-check` (the object store needs zlib); packed
+//!   tags use the `^<oid>` peel lines (gitstatus peels via libgit2,
+//!   tag_db.cc:295-330 TagHasTarget).
 //! - Caches: two, with different lifetimes.
 //!   * `cache()` — the combined snapshot, per-gitdir, ~2s TTL, additionally
 //!     invalidated when `.git/index` or `.git/HEAD` mtime changes. A hit is
@@ -103,6 +101,12 @@ pub struct GitStatus {
     pub stashes: i64,
     pub tag: String,
     pub remote_branch: String,
+    /// `VCS_STATUS_REMOTE_URL` — configured URL of the upstream's remote
+    /// (gitstatus git.cc:215 `git_remote_url`); "" with no upstream or a
+    /// local-branch upstream (`remote = .`).
+    pub remote_url: String,
+    /// `VCS_STATUS_WORKDIR` — top-level working directory.
+    pub workdir: String,
 }
 
 /// Cache TTL. gitstatusd recomputed on every prompt but kept the repo open;
@@ -251,6 +255,7 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
     // -------- native layer (no subprocess) --------
     let mut status = GitStatus::default();
     read_head(&repo, &mut status);
+    status.workdir = repo.work_dir.to_string_lossy().into_owned();
     status.action = repo_action(&repo.git_dir); // gitstatus git.cc:43-110 RepoState
 
     let cfg = GitConfig::load(&repo.common_dir.join("config"));
@@ -270,7 +275,16 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
                 } else {
                     format!("refs/remotes/{remote}/{up_branch}")
                 };
-                match resolve_ref(&repo.common_dir, &up_ref) {
+                let up_tip = resolve_ref(&repo.common_dir, &up_ref);
+                // gitstatus git.cc:204-215 — the URL is reported only when
+                // the upstream ref resolves.
+                if remote != "." && up_tip.is_some() {
+                    status.remote_url = cfg
+                        .get("remote", &remote, "url")
+                        .unwrap_or_default()
+                        .to_string();
+                }
+                match up_tip {
                     Some(tip) if tip == status.commit => {
                         // Tips equal ⇒ ahead=behind=0 without any object walk.
                         ab_native = true;
@@ -1032,15 +1046,76 @@ fn stash_count(common_dir: &Path) -> Option<i64> {
 // Tag — port of gitstatus TagDb::TagForCommit (tag_db.cc:119-148)
 // ---------------------------------------------------------------------------
 
+/// Fully peeled target (`<oid>^{}`) of each object id. Objects are
+/// immutable, so results are memoised for the process; unseen ids are
+/// resolved by ONE `git cat-file --batch-check` (the object store needs
+/// zlib, which this crate does not link). Ids git cannot resolve map to
+/// themselves.
+fn peel_objects<'a>(
+    common_dir: &Path,
+    oids: impl Iterator<Item = &'a str>,
+) -> HashMap<String, String> {
+    use std::io::Write;
+    static MEMO: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(Default::default);
+    let wanted: Vec<&str> = oids.collect();
+    let unseen: Vec<&str> = {
+        let m = memo.lock().unwrap();
+        let mut u: Vec<&str> = wanted.iter().copied().filter(|o| !m.contains_key(*o)).collect();
+        u.sort_unstable();
+        u.dedup();
+        u
+    };
+    if !unseen.is_empty() {
+        let child = Command::new("git")
+            .arg(format!("--git-dir={}", common_dir.display()))
+            .args(["cat-file", "--batch-check=%(objectname)"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+        let mut answers: Vec<String> = Vec::new();
+        if let Ok(mut child) = child {
+            if let Some(mut stdin) = child.stdin.take() {
+                let input: String = unseen.iter().map(|o| format!("{o}^{{}}\n")).collect();
+                let _ = stdin.write_all(input.as_bytes());
+            }
+            if let Ok(out) = child.wait_with_output() {
+                answers = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .map(str::to_string)
+                    .collect();
+            }
+        }
+        let mut m = memo.lock().unwrap();
+        for (i, oid) in unseen.iter().enumerate() {
+            // `<input> missing` lines never equal a 40/64-hex id.
+            let peeled = answers
+                .get(i)
+                .filter(|a| !a.contains(' '))
+                .cloned()
+                .unwrap_or_else(|| (*oid).to_string());
+            m.insert((*oid).to_string(), peeled);
+        }
+    }
+    let m = memo.lock().unwrap();
+    wanted
+        .iter()
+        .filter_map(|o| m.get(*o).map(|p| ((*o).to_string(), p.clone())))
+        .collect()
+}
+
 /// The tag p10k shows for HEAD: the lexicographically GREATEST tag name whose
 /// (peeled) target equals the HEAD commit (tag_db.cc:130 `if (res < tag ...)`
 /// and :143 — max over loose and packed matches). "" when no tag points at
 /// HEAD. Loose tags shadow same-named packed tags (tag_db.cc:135,143
-/// IsLooseTag). Loose ANNOTATED tags (file holds a tag object id) cannot be
-/// peeled without the object store and are skipped — see module doc.
+/// IsLooseTag). Loose ANNOTATED tags (file holds a tag object id) are
+/// peeled with [`peel_objects`].
 fn tag_for_commit(common_dir: &Path, commit: &str) -> String {
     let mut best = String::new();
     let mut loose_names: Vec<String> = Vec::new();
+    let mut loose_candidates: Vec<(String, String)> = Vec::new();
 
     // Loose tags: flat scan of refs/tags, mirroring tag_db.cc:150-162
     // ReadLooseTags (non-recursive; nested names like refs/tags/foo/bar are
@@ -1055,14 +1130,30 @@ fn tag_for_commit(common_dir: &Path, commit: &str) -> String {
                 continue;
             };
             if let Ok(oid) = fs::read_to_string(entry.path()) {
-                // Lightweight tag: the file IS the commit id. An annotated
-                // tag's file holds the tag object id ⇒ no match here (skipped
-                // per module doc).
-                if oid.trim() == commit && best < name {
-                    best = name.clone();
+                let oid = oid.trim();
+                // Lightweight tag: the file IS the commit id.
+                if oid == commit {
+                    if best < name {
+                        best = name.clone();
+                    }
+                } else if !oid.is_empty() {
+                    // Possibly an annotated tag (the file holds the tag
+                    // object id): peeled below.
+                    loose_candidates.push((name.clone(), oid.to_string()));
                 }
             }
             loose_names.push(name);
+        }
+    }
+
+    // Loose ANNOTATED tags (tag_db.cc:295-330 TagHasTarget peels through
+    // libgit2): the tag object's final target, memoised per object id.
+    if !loose_candidates.is_empty() {
+        let peeled = peel_objects(common_dir, loose_candidates.iter().map(|(_, o)| o.as_str()));
+        for (name, oid) in &loose_candidates {
+            if peeled.get(oid).is_some_and(|t| t == commit) && best < *name {
+                best = name.clone();
+            }
         }
     }
 

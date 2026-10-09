@@ -952,12 +952,10 @@ fn segment_rust_version() -> Option<Vec<Segment>> {
         let _ = unsetparam("P9K_RUST_VERSION");
         return hidden();
     }
-    // p10k:3163-3187 — toolchain: $RUSTUP_TOOLCHAIN, else the nearest
-    // rust-toolchain file. (`rustup override list` consultation —
-    // p10k:3169-3179 — is not ported: it shells out per settings
-    // change to enumerate overrides that RUSTUP_TOOLCHAIN or
-    // rust-toolchain cover in typical setups; the toolchain only
-    // feeds the cache key here.)
+    // p10k:3230-3245 — `rustc --version` runs in the current directory,
+    // so rustup applies its own directory overrides / rust-toolchain
+    // file. The toolchain name below only keys the stat cache:
+    // $RUSTUP_TOOLCHAIN, else the nearest rust-toolchain file.
     let toolchain = envv("RUSTUP_TOOLCHAIN")
         .or_else(|| upfind("rust-toolchain").and_then(|d| read_word(&d.join("rust-toolchain"))));
     // p10k:3160-3162 — rustup settings are cache witnesses
@@ -2188,11 +2186,10 @@ fn segment_azure() -> Option<Vec<Segment>> {
     ))
 }
 
-/// p10k:4608-4661 — prompt_gcloud + `_p9k_gcloud_prefetch`. The async
-/// project-NAME fetch (`gcloud projects describe`, worker-based,
-/// p10k:4663-4692) is not ported: in zsh the PARTIAL form
-/// (account:project_id) is what renders until the worker answers; it
-/// renders here always.
+/// p10k:4608-4661 — prompt_gcloud + `_p9k_gcloud_prefetch`. The
+/// project NAME arrives from a background `gcloud projects describe`
+/// (see [`gcloud_project_name`]); the PARTIAL form
+/// (account:project_id) renders until it lands.
 fn segment_gcloud() -> Option<Vec<Segment>> {
     if have_cmd("gcloud").is_none() {
         return hidden(); // p10k:4623 / init cond p10k:4658
@@ -2257,17 +2254,109 @@ fn segment_gcloud() -> Option<Vec<Segment>> {
     if account.is_empty() && project_id.is_empty() {
         return hidden();
     }
+    // p10k:4639-4658 — project NAME: fetched in the background
+    // (`gcloud projects describe`), PARTIAL until it lands, then COMPLETE.
+    let name = gcloud_project_name(&configuration, &account, &project_id);
     // p10k:4610-4614 — blue bg, white fg, GCLOUD_ICON, content
     // '${P9K_GCLOUD_ACCOUNT//\%/%%}:${P9K_GCLOUD_PROJECT_ID//\%/%%}'
     let content = format!("{}:{}", esc(&account), esc(&project_id));
+    let state = if name.is_empty() {
+        let _ = unsetparam("P9K_GCLOUD_PROJECT_NAME");
+        "PARTIAL"
+    } else {
+        let _ = setsparam("P9K_GCLOUD_PROJECT_NAME", &name);
+        "COMPLETE"
+    };
     one(seg(
         "gcloud",
-        Some("PARTIAL"),
+        Some(state),
         "blue",
         "white",
         "GCLOUD_ICON",
         content,
     ))
+}
+
+/// p10k:4639-4692 `_p9k_gcloud_prefetch` / `_p9k_prompt_gcloud_async`:
+/// the project NAME for (configuration, account, project id). A fetch
+/// (`gcloud projects describe $id --configuration=$cfg --account=$acct
+/// --format=value(name)`) runs on a helper thread, at most one at a
+/// time, and re-runs after GCLOUD_REFRESH_PROJECT_NAME_SECONDS (default
+/// 60; negative = never). Until it answers the name is empty, which is
+/// the PARTIAL rendering — as with p10k's worker.
+fn gcloud_project_name(configuration: &str, account: &str, project_id: &str) -> String {
+    struct State {
+        key: (String, String, String),
+        name: String,
+        last_fetch: Option<std::time::Instant>,
+        inflight: bool,
+    }
+    static STATE: Mutex<Option<State>> = Mutex::new(None);
+    let key = (
+        configuration.to_string(),
+        account.to_string(),
+        project_id.to_string(),
+    );
+    let mut guard = STATE.lock().unwrap();
+    let st = guard.get_or_insert_with(|| State {
+        key: key.clone(),
+        name: String::new(),
+        last_fetch: None,
+        inflight: false,
+    });
+    if st.key != key {
+        // p10k:4650-4654 — a different configuration/account/project
+        // forgets the cached name.
+        st.key = key.clone();
+        st.name.clear();
+        st.last_fetch = None;
+    }
+    let refresh = p9k_global("GCLOUD_REFRESH_PROJECT_NAME_SECONDS", "60")
+        .trim()
+        .parse::<i64>()
+        .unwrap_or(60);
+    let fresh = st.last_fetch.is_some_and(|t| {
+        refresh < 0 || t.elapsed() < std::time::Duration::from_secs(refresh as u64)
+    });
+    // p10k:4655 — all three must be known to ask gcloud.
+    if fresh || st.inflight || configuration.is_empty() || account.is_empty() || project_id.is_empty()
+    {
+        return st.name.clone();
+    }
+    let Some(gcloud) = have_cmd("gcloud") else {
+        return st.name.clone();
+    };
+    st.last_fetch = Some(std::time::Instant::now());
+    st.inflight = true;
+    let name = st.name.clone();
+    drop(guard);
+    crate::signal_thread::spawn(move || {
+        let out = run_cmd(
+            &gcloud,
+            &[
+                "projects",
+                "describe",
+                &key.2,
+                &format!("--configuration={}", key.0),
+                &format!("--account={}", key.1),
+                "--format=value(name)",
+            ],
+            false,
+            &[],
+        )
+        .filter(|(ok, _)| *ok)
+        .map(|(_, text)| text)
+        .unwrap_or_default();
+        if let Ok(mut g) = STATE.lock() {
+            if let Some(st) = g.as_mut() {
+                st.inflight = false;
+                if st.key == key {
+                    st.name = out; // p10k:_p9k_prompt_gcloud_update
+                }
+            }
+        }
+    });
+    name
 }
 
 /// p10k:4695-4721 — prompt_google_app_cred. p10k requires jq (init
@@ -2340,25 +2429,12 @@ fn segment_google_app_cred() -> Option<Vec<Segment>> {
     ))
 }
 
-/// p10k:4833-4855 — prompt_nordvpn (Linux only). The status probe
-/// speaks raw gRPC over /run/nordvpn/nordvpnd.sock
-/// (`_p9k_fetch_nordvpn_status`, p10k:4744-4831 — byte-exact HTTP/2
-/// frames + protobuf varint decoding); not ported. The zsh gate is:
-/// no socket, no segment — the permanent state on macOS. On a Linux
-/// box with the daemon running this hides instead of showing status;
-/// logged so the gap is visible.
+/// prompt_nordvpn. The pinned upstream disables the segment outright —
+/// its body starts with `return` ("This prompt segment is broken. See
+/// https://github.com/romkatv/powerlevel10k/issues/2860. It is disabled
+/// until it is fixed.", internal/p10k.zsh `prompt_nordvpn`) — so the
+/// segment never renders, whether or not the daemon socket exists.
 fn segment_nordvpn() -> Option<Vec<Segment>> {
-    if have_cmd("nordvpn").is_none() {
-        return hidden(); // init cond p10k:4858 — `'$commands[nordvpn]'`
-    }
-    // p10k:4835 — `[[ -e /run/nordvpn/nordvpnd.sock ]] || return`
-    if !Path::new("/run/nordvpn/nordvpnd.sock").exists() {
-        return hidden();
-    }
-    tracing::debug!(
-        target: "p10k",
-        "nordvpn daemon socket present but the raw-gRPC status probe is not ported; segment hidden"
-    );
     hidden()
 }
 
@@ -2393,12 +2469,100 @@ fn segment_nnn() -> Option<Vec<Segment>> {
 // asdf
 // ---------------------------------------------------------------------------
 
-/// p10k:5479-5570 — prompt_asdf. Emits one segment per plugin with a
-/// resolved version. Legacy version files (.asdfrc
-/// `legacy_version_file = yes` + per-plugin list-legacy-filenames
-/// scripts, p10k:5300-5378 / 5385-5409) are not ported — they require
-/// executing plugin scripts per prompt-context; .tool-versions (the
-/// asdf-native path) is complete.
+/// Is `p` an executable regular file (`[[ -x p ]]`)?
+fn is_exec_file(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// p10k:5489-5508 — asdf's own config parser quirk: legacy version
+/// files are on only when EXACTLY ONE `legacy_version_file =` line
+/// exists and its second `=`-separated field is `yes`.
+fn asdf_legacy_enabled(config: &str) -> bool {
+    let lines: Vec<&str> = config
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| {
+            l.trim_start()
+                .strip_prefix("legacy_version_file")
+                .is_some_and(|r| r.trim_start().starts_with('='))
+        })
+        .collect();
+    // `${(s:=:)line}[2]` — unquoted split drops empty fields.
+    lines.len() == 1
+        && lines[0]
+            .split('=')
+            .filter(|f| !f.is_empty())
+            .nth(1)
+            .is_some_and(|f| f.trim() == "yes")
+}
+
+/// p10k:5510-5538 — legacy file name → [(plugin, has parse-legacy-file)],
+/// from every plugin's `bin/list-legacy-filenames`. Cached against the
+/// config, the plugin tree and each plugin's bin scripts.
+fn asdf_legacy_file_info(
+    root: &Path,
+    cfg: &Path,
+    plugin_names: &[String],
+) -> std::collections::BTreeMap<String, Vec<(String, bool)>> {
+    let plugins_dir = root.join("plugins");
+    let mut witness = vec![cfg.to_path_buf(), plugins_dir.clone()];
+    for plugin in plugin_names {
+        let bin = plugins_dir.join(plugin).join("bin");
+        witness.push(root.join("installs").join(plugin));
+        witness.push(bin.clone());
+        witness.push(bin.join("list-legacy-filenames"));
+        witness.push(bin.join("parse-legacy-file"));
+    }
+    let key = format!("asdf_legacy {}", root.display());
+    let lines = match cache_get(&key, &witness) {
+        Some(v) => v,
+        None => {
+            let mut lines = Vec::new();
+            for plugin in plugin_names {
+                let bin = plugins_dir.join(plugin).join("bin");
+                if !bin.exists() {
+                    continue; // p10k:5520
+                }
+                let list_names = bin.join("list-legacy-filenames");
+                if !is_exec_file(&list_names) {
+                    continue; // p10k:5524
+                }
+                let has_parse = is_exec_file(&bin.join("parse-legacy-file"));
+                let out = run_cmd(&list_names, &[], false, &[])
+                    .map(|(_, text)| text)
+                    .unwrap_or_default();
+                for name in out.split_whitespace() {
+                    let name = name.trim_end_matches('\r');
+                    // p10k:5531 — [[ $name == (*/*|.tool-versions) ]] && continue
+                    if name.is_empty() || name.contains('/') || name == ".tool-versions" {
+                        continue;
+                    }
+                    lines.push(format!("{name}\u{1}{plugin}\u{1}{}", u8::from(has_parse)));
+                }
+            }
+            cache_set(&key, &witness, lines)
+        }
+    };
+    let mut info: std::collections::BTreeMap<String, Vec<(String, bool)>> = Default::default();
+    for l in lines {
+        let mut f = l.splitn(3, '\u{1}');
+        if let (Some(name), Some(plugin), Some(has)) = (f.next(), f.next(), f.next()) {
+            info.entry(name.to_string())
+                .or_default()
+                .push((plugin.to_string(), has == "1"));
+        }
+    }
+    info
+}
+
+/// p10k:5480-5700 — prompt_asdf. Emits one segment per plugin with a
+/// resolved version, from `.tool-versions` files and — when
+/// `legacy_version_file = yes` in the asdf config — the legacy files
+/// each plugin names through `bin/list-legacy-filenames` (parsed with
+/// its `bin/parse-legacy-file` when present).
 fn segment_asdf() -> Option<Vec<Segment>> {
     // p10k:5330-5335 — plugins under ${ASDF_DATA_DIR:-~/.asdf}/plugins,
     // installed versions under installs/<plugin>/ (+ implicit "system")
@@ -2433,6 +2597,20 @@ fn segment_asdf() -> Option<Vec<Segment>> {
     if plugins.is_empty() {
         return hidden();
     }
+    // p10k:5489-5538 — legacy version files (opt-in through the asdf config).
+    let cfg = envv("ASDF_CONFIG_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".asdfrc"));
+    let legacy_info = if fs::read_to_string(&cfg)
+        .map(|t| asdf_legacy_enabled(&t))
+        .unwrap_or(false)
+    {
+        let mut names: Vec<String> = plugins.keys().cloned().collect();
+        names.sort();
+        asdf_legacy_file_info(&root, &cfg, &names)
+    } else {
+        Default::default()
+    };
 
     // p10k:5410-5434 — parse one .tool-versions file into a
     // set-if-unset version map: `plugin version...`, comments
@@ -2465,6 +2643,51 @@ fn segment_asdf() -> Option<Vec<Segment>> {
         }
     };
 
+    // p10k:5568-5594 — one legacy file: each plugin that claims its
+    // name contributes the first listed version that is installed
+    // (else the first), set-if-unset.
+    let parse_legacy = |file: &Path, versions: &mut HashMap<String, String>| {
+        let Some(claims) = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| legacy_info.get(n))
+        else {
+            return;
+        };
+        for (plugin, has_parse) in claims {
+            let key = format!("asdf_lv {plugin}:{}", file.display());
+            let files = vec![file.to_path_buf()];
+            let v = match cache_get(&key, &files) {
+                Some(v) => v.into_iter().next().unwrap_or_default(),
+                None => {
+                    let text = if *has_parse {
+                        let parse = root.join("plugins").join(plugin).join("bin/parse-legacy-file");
+                        let arg = file.to_string_lossy();
+                        run_cmd(&parse, &[&*arg], false, &[]).map(|(_, t)| t)
+                    } else {
+                        fs::read_to_string(file).ok()
+                    }
+                    .unwrap_or_default();
+                    let words: Vec<&str> = text
+                        .split_whitespace()
+                        .map(|w| w.trim_end_matches('\r'))
+                        .collect();
+                    let installed = plugins.get(plugin);
+                    let v = words
+                        .iter()
+                        .find(|w| installed.is_some_and(|i| i.iter().any(|x| x == **w)))
+                        .or(words.first())
+                        .map(|w| w.to_string())
+                        .unwrap_or_default();
+                    cache_set(&key, &files, vec![v]).into_iter().next().unwrap_or_default()
+                }
+            };
+            if !v.is_empty() {
+                versions.entry(plugin.clone()).or_insert(v);
+            }
+        }
+    };
+
     // p10k:5484-5493 — walk cwd→root; the home dir is the local/global
     // boundary (files at/above ~ feed the global map, p10k:5502-5507)
     let mut dirs: Vec<PathBuf> = Vec::new();
@@ -2493,6 +2716,13 @@ fn segment_asdf() -> Option<Vec<Segment>> {
         let tv = dir.join(".tool-versions");
         if tv.is_file() {
             parse_tool_versions(&tv, &mut versions);
+        }
+        // p10k:5496 — `$dir/${(k)^_p9k_asdf_file_info}(N)`
+        for name in legacy_info.keys() {
+            let f = dir.join(name);
+            if f.exists() {
+                parse_legacy(&f, &mut versions);
+            }
         }
     }
     if !has_global {

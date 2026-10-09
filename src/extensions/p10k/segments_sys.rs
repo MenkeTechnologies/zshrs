@@ -11,33 +11,28 @@
 //! that fork (vm_stat, pmset, todo.sh); taskwarrior keeps p10k's own
 //! file-signature cache, persisted across shells.
 //!
-//! Phase-1 scope notes (each also traced at the call site):
+//! Per-segment notes:
 //! - battery: macOS `pmset -g batt` (p10k:1381-1406) and the Linux
 //!   /sys/class/power_supply reader (p10k:1409-1459) are both ported.
 //! - wifi: the Linux arm (/proc/net/wireless + `iw dev <iface> link`,
-//!   p10k:5230-5286) is ported behind a 10s TTL. On macOS the segment
-//!   stays hidden: Apple removed the private airport CLI p10k shells
-//!   out to (p10k:5213-5224), and every replacement measured on this
-//!   box fails — `system_profiler SPAirPortDataType` takes ~17s wall
-//!   (16.9s measured; `-detailLevel mini` is equally slow AND drops
-//!   the Signal/Transmit fields), `wdutil info` requires sudo, and
-//!   `ipconfig getsummary` redacts the SSID and has no RSSI. TODO:
-//!   CoreWLAN-equivalent data source. Hidden rather than faked.
+//!   p10k:5230-5286) runs behind a 10s TTL. On macOS the segment
+//!   reads the airport CLI while it exists (p10k:5213-5228) and
+//!   CoreWLAN through the Objective-C runtime otherwise.
 //! - vi_mode: zshrs has no `vivis`/`vivli` keymaps (zsh core doesn't
 //!   either); VISUAL is detected as vicmd + region_active, exactly the
 //!   `vicmd1` arm of p10k:4203-4204.
-//! - todo: the todo-file discovery subshell (p10k:8656-8672) is
-//!   unported; presence of the todo.sh/todo-txt binary gates the
-//!   segment and a failed `-p ls` parse hides it.
+//! - todo: the todo file is discovered by sourcing the todo.txt config
+//!   in bash (p10k:8996-9017); the count is re-read when the file's
+//!   mtime changes.
 //!
-//! Shared-helper duplication: color1/esc_pct/decode_g/seg_icon/
-//! make_segment mirror segments_core.rs (private there; this module
-//! may not edit other files). Hoisting them into a shared submodule is
-//! a follow-up for the orchestrator.
+//! Scheme colours, typed `POWERLEVEL9K_*` reads, icon resolution and the
+//! segment constructor come from shared.rs; the caches and probes below
+//! are specific to this module.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::{color1, color2, env_or_param, global_bool, global_int, global_float, esc_pct, decode_g, seg_icon, apply_visual_identifier, apply_content_expansion, make_segment};
 use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::utils::getkeystring;
 use std::collections::HashMap;
@@ -75,180 +70,20 @@ pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
 }
 
 // ---------------------------------------------------------------------
-// Shared helpers (mirror segments_core.rs — see module doc)
+// Module helpers
 // ---------------------------------------------------------------------
 
-/// p10k:8390-8396 — `[[ $_POWERLEVEL9K_COLOR_SCHEME == light ]] &&
-/// _p9k_color1=7 || _p9k_color1=0`.
-fn color1() -> &'static str {
-    if p9k_global("COLOR_SCHEME", "dark") == "light" {
-        "7"
-    } else {
-        "0"
-    }
-}
 
-/// p10k:8392/8395 — `_p9k_color2`: the inverse of color1.
-fn color2() -> &'static str {
-    if p9k_global("COLOR_SCHEME", "dark") == "light" {
-        "0"
-    } else {
-        "7"
-    }
-}
 
-/// Read a parameter, falling back to the process environment (covers
-/// early-startup renders before exports land in the paramtab).
-fn env_or_param(name: &str) -> String {
-    if let Some(v) = getsparam(name) {
-        return v;
-    }
-    std::env::var(name).unwrap_or_default()
-}
 
-/// `_p9k_declare -b` read semantics (p10k:141-151): ONLY the literal
-/// string `true` is truthy; unset uses the declared default.
-fn global_bool(name: &str, default: bool) -> bool {
-    match getsparam(&format!("POWERLEVEL9K_{name}")) {
-        Some(v) => v == "true",
-        None => default,
-    }
-}
 
-/// `_p9k_declare -i` read: unset/empty/unparseable → default.
-fn global_int(name: &str, default: i64) -> i64 {
-    getsparam(&format!("POWERLEVEL9K_{name}"))
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .unwrap_or(default)
-}
 
-/// `_p9k_declare -F` read: unset/empty/unparseable → default.
-fn global_float(name: &str, default: f64) -> f64 {
-    getsparam(&format!("POWERLEVEL9K_{name}"))
-        .and_then(|v| v.trim().parse::<f64>().ok())
-        .unwrap_or(default)
-}
 
-/// Escape `%` for prompt-expansion contexts — p10k's ubiquitous
-/// `${x//\%/%%}`.
-fn esc_pct(s: &str) -> String {
-    s.replace('%', "%%")
-}
 
-/// zsh `${(g::)x}` echo-style escape decoding, as p10k applies to
-/// user-supplied icons/templates/mode strings (p10k:524 and every
-/// `_p9k_declare -e`).
-fn decode_g(s: &str) -> String {
-    getkeystring(s).0
-}
 
-/// Port of `_p9k_get_icon $1 $2` (p10k:511-530) — identical to
-/// segments_core::seg_icon: probe the user-param chain for `<KEY>`; on
-/// a hit apply `(g::)` decoding (p10k:524) plus the backspace-wrap
-/// quirk (p10k:525); on a whole-chain miss the mode icon table answers.
-fn seg_icon(segment: &str, state: Option<&str>, key: &str) -> String {
-    let probed = p9k_param(segment, state, key, "\u{1}");
-    if probed == "\u{1}" {
-        return icons::icon(key).to_string();
-    }
-    let decoded = decode_g(&probed);
-    // p10k:525 — [[ $ret != $'\b'? ]] || ret="%{$ret%}"
-    let mut ch = decoded.chars();
-    if ch.next() == Some('\u{8}') && ch.next().is_some() && ch.next().is_none() {
-        return format!("%{{{decoded}%}}");
-    }
-    decoded
-}
 
-/// VISUAL_IDENTIFIER_EXPANSION hook (p10k:720/951) — identical to
-/// segments_core::apply_visual_identifier.
-fn apply_visual_identifier(segment: &str, state: Option<&str>, icon: String) -> Option<String> {
-    let exp = p9k_param(
-        segment,
-        state,
-        "VISUAL_IDENTIFIER_EXPANSION",
-        "${P9K_VISUAL_IDENTIFIER}",
-    );
-    let resolved = if exp == "${P9K_VISUAL_IDENTIFIER}" {
-        icon
-    } else if !exp.contains('$') {
-        exp
-    } else {
-        tracing::debug!(
-            target: "p10k",
-            segment,
-            ?state,
-            %exp,
-            "dynamic VISUAL_IDENTIFIER_EXPANSION unported — using resolved icon"
-        );
-        icon
-    };
-    if resolved.is_empty() {
-        None
-    } else {
-        Some(resolved)
-    }
-}
 
-/// CONTENT_EXPANSION hook (p10k:724/955) — identical to
-/// segments_core::apply_content_expansion.
-fn apply_content_expansion(segment: &str, state: Option<&str>, content: String) -> String {
-    let exp = p9k_param(segment, state, "CONTENT_EXPANSION", "${P9K_CONTENT}");
-    if exp == "${P9K_CONTENT}" {
-        return content;
-    }
-    if !exp.contains('$') {
-        return exp;
-    }
-    if exp.contains("${P9K_CONTENT}") {
-        let out = exp.replace("${P9K_CONTENT}", &content);
-        if out.contains('$') {
-            tracing::debug!(
-                target: "p10k",
-                segment, ?state, %exp,
-                "CONTENT_EXPANSION has unevaluated expansions beyond ${{P9K_CONTENT}}"
-            );
-        }
-        return out;
-    }
-    tracing::debug!(
-        target: "p10k",
-        segment, ?state, %exp,
-        "dynamic CONTENT_EXPANSION unported — using segment content"
-    );
-    content
-}
 
-/// Common constructor mirroring `_p9k_prompt_segment name bg fg icon
-/// expand cond content` — identical to segments_core::make_segment
-/// (p10k:1101 + the color/icon/expansion hooks of
-/// _p9k_left_prompt_segment).
-fn make_segment(
-    name: &str,
-    state: Option<&str>,
-    default_bg: &str,
-    default_fg: &str,
-    icon_key: &str,
-    content: String,
-) -> Segment {
-    let bg = p9k_param(name, state, "BACKGROUND", default_bg);
-    let fg = p9k_param(name, state, "FOREGROUND", default_fg);
-    let icon_glyph = if icon_key.is_empty() {
-        String::new()
-    } else {
-        seg_icon(name, state, icon_key)
-    };
-    let icon = apply_visual_identifier(name, state, icon_glyph);
-    let content = apply_content_expansion(name, state, content);
-    Segment {
-        name: name.to_string(),
-        state: state.map(|s| s.to_string()),
-        content,
-        icon,
-        fg,
-        bg,
-    }
-}
 
 /// `$commands[name]` — locate an executable on $PATH (uncached; every
 /// caller sits behind a TTL cache or a cheap-file short-circuit).
@@ -452,23 +287,36 @@ fn human_readable_duration(seconds: f64, precision: usize, format: &str) -> Stri
 fn time_segments() -> Vec<Segment> {
     // p10k:7556 — _p9k_declare -e POWERLEVEL9K_TIME_FORMAT "%D{%H:%M:%S}".
     let fmt = decode_g(&p9k_global("TIME_FORMAT", "%D{%H:%M:%S}"));
-    // p10k:3453 (REALTIME) and p10k:3456-3459 (precmd ${(%)...}) both
-    // reduce to "let the prompt expander render the format": this
-    // engine rebuilds PROMPT every precmd, so passing the escape
-    // through IS the precmd-snapshot behavior. TIME_UPDATE_ON_COMMAND
-    // (p10k:3461-3465, default 0 per p10k:7560) needs the
-    // line-finished redraw hook and is unported.
-    if global_bool("TIME_UPDATE_ON_COMMAND", false) {
-        tracing::debug!(target: "p10k", "TIME_UPDATE_ON_COMMAND unported — static time per prompt");
-    }
-    // p10k:3453/3465 — `$0 "$_p9k_color2" "$_p9k_color1" "TIME_ICON" …`
+    // p10k:3498 — EXPERIMENTAL_TIME_REALTIME hands the raw format to the
+    // prompt expander, so every repaint shows the current time.
+    let content = if global_bool("EXPERIMENTAL_TIME_REALTIME", false) {
+        fmt
+    } else {
+        // p10k:3502-3508 — `_p9k__time` is snapshotted on precmd only
+        // (`${${(%)fmt}//\%/%%}`); other re-renders reuse it.
+        static SNAPSHOT: Mutex<String> = Mutex::new(String::new());
+        let mut snap = SNAPSHOT.lock().unwrap();
+        if crate::p10k::refresh_is_precmd() || snap.is_empty() {
+            let (expanded, _, _) = crate::ported::prompt::promptexpand(&fmt, 0, None);
+            *snap = expanded.replace('%', "%%");
+        }
+        // p10k:3509-3514 — TIME_UPDATE_ON_COMMAND (default 0, p10k:7560):
+        // once the line is finished the format itself is emitted so the
+        // finishing repaint shows the time the command was run.
+        if global_bool("TIME_UPDATE_ON_COMMAND", false) && crate::p10k::line_finished() {
+            fmt
+        } else {
+            snap.clone()
+        }
+    };
+    // p10k:3516 — `$0 "$_p9k_color2" "$_p9k_color1" "TIME_ICON" …`
     vec![make_segment(
         "time",
         None,
         color2(),
         color1(),
         "TIME_ICON",
-        fmt,
+        content,
     )]
 }
 
@@ -1173,7 +1021,6 @@ fn parse_iw_link(out: &str) -> Option<(String, String)> {
 }
 
 /// p10k:5275-5286 — signal bars from the SNR margin (rssi - noise).
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn wifi_bars(snr_margin: i64) -> i64 {
     // p10k:5273-5274 — speedguide.net / wireless-nets.com SNR ratings.
     if snr_margin >= 40 {
@@ -1189,17 +1036,146 @@ fn wifi_bars(snr_margin: i64) -> i64 {
     }
 }
 
-/// macOS wifi probe: none. p10k:5213-5224 shells out to the private
-/// Apple80211 `airport` CLI, removed in macOS 14.4+. Every measured
-/// replacement fails: `system_profiler SPAirPortDataType` = 16.9s wall
-/// (`-detailLevel mini` equally slow and drops Signal/Transmit),
-/// `wdutil info` = sudo-only, `ipconfig getsummary` redacts SSID and
-/// has no RSSI. A 17s synchronous stall is a hang at any TTL. TODO:
-/// CoreWLAN-equivalent data source. Hidden rather than faked.
+/// p10k:5213 — the private Apple80211 `airport` CLI (present through
+/// macOS 14.3; removed afterwards).
+#[cfg(target_os = "macos")]
+const AIRPORT: &str =
+    "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+
+/// p10k:5214-5227 — `airport -I` parse. Requires `state: running` and
+/// numeric rssi/noise (p10k:5228). Returns (ssid, last_tx_rate, rssi, noise).
+#[cfg(target_os = "macos")]
+fn parse_airport(out: &str) -> Option<(String, String, String, String)> {
+    let (mut ssid, mut rate, mut rssi, mut noise, mut state) =
+        (String::new(), String::new(), String::new(), String::new(), String::new());
+    for line in out.lines() {
+        // p10k:5216-5218 — `v=${line#*: }`; key = text before that `: `.
+        let Some((k, v)) = line.trim().split_once(": ") else {
+            continue;
+        };
+        match k {
+            "agrCtlRSSI" => rssi = v.to_string(),
+            "agrCtlNoise" => noise = v.to_string(),
+            "state" => state = v.to_string(),
+            "lastTxRate" => rate = v.to_string(),
+            "SSID" => ssid = v.to_string(),
+            _ => {}
+        }
+    }
+    let zero_or_neg = |s: &str| {
+        s == "0"
+            || (s.len() > 1 && s.starts_with('-') && s[1..].bytes().all(|b| b.is_ascii_digit()))
+    };
+    (state == "running" && zero_or_neg(&rssi) && zero_or_neg(&noise))
+        .then_some((ssid, rate, rssi, noise))
+}
+
+/// CoreWLAN reader for macOS releases without the airport CLI. Talks to
+/// the Objective-C runtime directly (no extra crates): the shared
+/// `CWWiFiClient`'s default `CWInterface` supplies rssiValue,
+/// noiseMeasurement and transmitRate synchronously. The SSID is
+/// returned only when the process is location-authorized; macOS
+/// withholds it otherwise, and p10k's airport path does not require
+/// it either (p10k:5228 gates on state/rssi/noise only).
+#[cfg(target_os = "macos")]
+mod corewlan {
+    use std::ffi::{c_char, c_void, CStr};
+
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *mut c_void;
+        fn sel_registerName(name: *const c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+    #[link(name = "Foundation", kind = "framework")]
+    extern "C" {}
+    #[link(name = "CoreWLAN", kind = "framework")]
+    extern "C" {}
+
+    type Obj = *mut c_void;
+    type MsgObj = unsafe extern "C" fn(Obj, Obj) -> Obj;
+    type MsgInt = unsafe extern "C" fn(Obj, Obj) -> isize;
+    type MsgDbl = unsafe extern "C" fn(Obj, Obj) -> f64;
+
+    unsafe fn sel(name: &CStr) -> Obj {
+        sel_registerName(name.as_ptr())
+    }
+    unsafe fn msg_obj(o: Obj, name: &CStr) -> Obj {
+        let f: MsgObj = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        f(o, sel(name))
+    }
+    unsafe fn msg_int(o: Obj, name: &CStr) -> isize {
+        let f: MsgInt = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        f(o, sel(name))
+    }
+    unsafe fn msg_dbl(o: Obj, name: &CStr) -> f64 {
+        let f: MsgDbl = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        f(o, sel(name))
+    }
+
+    /// (ssid, last_tx_rate Mbps, rssi, noise) of the associated default
+    /// Wi-Fi interface; None when there is no interface or no link.
+    pub fn status() -> Option<(String, String, String, String)> {
+        unsafe {
+            let pool = msg_obj(msg_obj(objc_getClass(c"NSAutoreleasePool".as_ptr()), c"alloc"), c"init");
+            let out = (|| {
+                let cls = objc_getClass(c"CWWiFiClient".as_ptr());
+                if cls.is_null() {
+                    return None;
+                }
+                let client = msg_obj(cls, c"sharedWiFiClient");
+                if client.is_null() {
+                    return None;
+                }
+                let iface = msg_obj(client, c"interface");
+                if iface.is_null() {
+                    return None;
+                }
+                let rate = msg_dbl(iface, c"transmitRate");
+                if rate <= 0.0 {
+                    return None; // not associated
+                }
+                let rssi = msg_int(iface, c"rssiValue");
+                let noise = msg_int(iface, c"noiseMeasurement");
+                let ssid_ns = msg_obj(iface, c"ssid");
+                let ssid = if ssid_ns.is_null() {
+                    String::new()
+                } else {
+                    let c = msg_obj(ssid_ns, c"UTF8String") as *const c_char;
+                    if c.is_null() {
+                        String::new()
+                    } else {
+                        CStr::from_ptr(c).to_string_lossy().into_owned()
+                    }
+                };
+                Some((ssid, format!("{}", rate as i64), rssi.to_string(), noise.to_string()))
+            })();
+            if !pool.is_null() {
+                msg_obj(pool, c"drain");
+            }
+            out
+        }
+    }
+}
+
+/// macOS wifi probe: the airport CLI when it still exists (p10k:5213),
+/// else CoreWLAN. Behind the same 10s TTL as the Linux arm.
 #[cfg(target_os = "macos")]
 fn wifi_status() -> Option<(String, String, String, String, String)> {
-    tracing::debug!(target: "p10k", "wifi: no viable macOS data source (airport CLI removed) — hidden");
-    None
+    let joined = cached_ttl("wifi.macos", Duration::from_secs(10), || {
+        let airport = std::path::Path::new(AIRPORT);
+        let (ssid, rate, rssi, noise) = if airport.exists() {
+            parse_airport(&run_tool(airport, &["-I"])?)?
+        } else {
+            corewlan::status()?
+        };
+        // p10k:5273-5286 — bars from the SNR margin.
+        let snr = rssi.parse::<i64>().ok()? - noise.parse::<i64>().ok()?;
+        let bars = wifi_bars(snr);
+        Some(format!("{ssid}\u{1f}{rate}\u{1f}{rssi}\u{1f}{noise}\u{1f}{bars}"))
+    })?;
+    let mut f = joined.split('\u{1f}').map(str::to_string);
+    Some((f.next()?, f.next()?, f.next()?, f.next()?, f.next()?))
 }
 
 /// Linux wifi probe (p10k:5230-5269): /proc/net/wireless names the
@@ -1312,19 +1288,71 @@ fn proxy_segments() -> Vec<Segment> {
 // todo (p10k:3520-3543)
 // ---------------------------------------------------------------------
 
+/// p10k:8996-9017 — (todo command, todo file): `todo.sh` else
+/// `todo-txt`, and the `$TODO_FILE` its config defines, found by
+/// sourcing the first existing of the candidate config files in bash.
+/// Computed once, like the theme's init-time probe.
+fn todo_command_and_file() -> Option<&'static (PathBuf, PathBuf)> {
+    static TODO: OnceLock<Option<(PathBuf, PathBuf)>> = OnceLock::new();
+    TODO.get_or_init(|| {
+        let (cmd, global) = match cmd_on_path("todo.sh") {
+            Some(c) => (c, "/etc/todo/config"),
+            None => (cmd_on_path("todo-txt")?, "/etc/todo-txt/config"),
+        };
+        let dir = cmd.parent().map(|d| d.display().to_string()).unwrap_or_default();
+        // p10k:9004-9015 — `exec -a $cmd bash -c '…'` with the file name
+        // printed on fd 3; stdout/stderr of the sourced config are
+        // discarded, so the name is printed on stdout here instead.
+        let script = format!(
+            "[ -e \"$TODOTXT_CFG_FILE\" ] || TODOTXT_CFG_FILE=$HOME/.todo/config\n\
+             [ -e \"$TODOTXT_CFG_FILE\" ] || TODOTXT_CFG_FILE=$HOME/todo.cfg\n\
+             [ -e \"$TODOTXT_CFG_FILE\" ] || TODOTXT_CFG_FILE=$HOME/.todo.cfg\n\
+             [ -e \"$TODOTXT_CFG_FILE\" ] || TODOTXT_CFG_FILE=${{XDG_CONFIG_HOME:-$HOME/.config}}/todo/config\n\
+             [ -e \"$TODOTXT_CFG_FILE\" ] || TODOTXT_CFG_FILE='{dir}/todo.cfg'\n\
+             [ -e \"$TODOTXT_CFG_FILE\" ] || TODOTXT_CFG_FILE=${{TODOTXT_GLOBAL_CFG_FILE:-'{global}'}}\n\
+             [ -r \"$TODOTXT_CFG_FILE\" ] || exit\n\
+             {{ source \"$TODOTXT_CFG_FILE\"; }} >/dev/null 2>&1\n\
+             printf '%s' \"$TODO_FILE\""
+        );
+        use std::os::unix::process::CommandExt;
+        let bash = cmd_on_path("bash")?;
+        let out = std::process::Command::new(&bash)
+            .arg0(&cmd)
+            .args(["-c", &script])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let file = String::from_utf8_lossy(&out.stdout).into_owned();
+        (!file.is_empty()).then(|| (cmd, PathBuf::from(file)))
+    })
+    .as_ref()
+}
+
 fn todo_segments() -> Vec<Segment> {
-    // p10k:8656-8659 — todo.sh, then todo-txt. The config-sourcing
-    // subshell that locates $TODO_FILE (p10k:8662-8671) is unported;
-    // a missing todo file makes the count parse fail → hidden.
-    let Some(bin) = cmd_on_path("todo.sh").or_else(|| cmd_on_path("todo-txt")) else {
-        return vec![]; // p10k:3546 cond '$_p9k__todo_file'
+    // p10k:3571 — `[[ -r $_p9k__todo_file && -x $_p9k__todo_command ]]`.
+    let Some((bin, file)) = todo_command_and_file() else {
+        return vec![]; // p10k:3595 cond '$_p9k__todo_file'
     };
-    // p10k:3524 — `$_p9k__todo_command -p ls | command tail -1`; the
-    // todo-file mtime cache (p10k:3523) becomes a 30s TTL.
-    let Some(last) = cached_ttl("todo.count", Duration::from_secs(30), || {
-        let out = run_tool(&bin, &["-p", "ls"])?;
-        out.lines().last().map(str::to_string)
-    }) else {
+    let Ok(mtime) = std::fs::metadata(file).and_then(|m| m.modified()) else {
+        return vec![];
+    };
+    // p10k:3572-3578 — `_p9k_cache_stat_get`: the count is recomputed
+    // only when the todo file's stat signature changes.
+    static COUNT: Mutex<Option<(PathBuf, std::time::SystemTime, Option<String>)>> = Mutex::new(None);
+    let last = {
+        let mut g = COUNT.lock().unwrap();
+        match &*g {
+            Some((f, t, v)) if f == file && *t == mtime => v.clone(),
+            _ => {
+                // p10k:3573 — `$todo_command -p ls | command tail -1`.
+                let v = run_tool(bin, &["-p", "ls"]).and_then(|o| o.lines().last().map(str::to_string));
+                *g = Some((file.clone(), mtime, v.clone()));
+                v
+            }
+        }
+    };
+    let Some(last) = last else {
         return vec![];
     };
     // p10k:3525 — 'TODO: '<filtered>' of '<total>' '*.
