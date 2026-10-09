@@ -1787,7 +1787,7 @@ See
 for option-by-option semantics; all upstream options are recognised
 and behave identically.
 .SH "ZLE \(em ZSH LINE EDITOR"
-All 193 widgets from upstream
+Every widget from upstream
 .B Src/Zle/iwidgets.list
 are ported. Widgets are bound with
 .B "bindkey \-K KEYMAP SEQ WIDGET"
@@ -1975,9 +1975,12 @@ completion functions from
 .B $fpath
 and installs them via
 .B compdef
-on the relevant command names. zshrs ships
-.B zsh-more-completions
-(27,387+ files) preconfigured; the corpus loads unchanged.
+on the relevant command names. zshrs bundles zsh's stock completion
+functions and its own additions inside the binary; any other corpus on
+.B $fpath
+(for example
+.BR zsh\-more\-completions )
+loads unchanged.
 .SS "Authoring helpers"
 .B _arguments
 declares per-command argspecs.
@@ -2364,7 +2367,7 @@ fusevm bytecode is the only executor.
 .B no_tree_walker_dispatch
 \(em no Rust call-site re-introduces an
 .BR execlist / execpline / execcmd
-shape; pinned at 160 tests.
+shape; pinned by tests.
 .IP "" 4
 .B port_purity
 \(em every
