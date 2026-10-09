@@ -14,9 +14,11 @@
 //! bzr/cdv/cvs/darcs/fossil/mtn/p4/svk/tla live in `vcs_backends.rs`;
 //! the hook runner (`VCS_INFO_hook`) is `vcs_hooks.rs`.
 //!
-//! Effective `vcs_info` configuration (`_p9k_vcs_info_init`), supplied as
-//! DEFAULTS behind the zstyle table ([`p10k_style_default`]) so a zstyle
-//! the user set takes precedence:
+//! Effective `vcs_info` configuration (`_p9k_vcs_info_init`), installed into
+//! the global zstyle table by [`theme_styles`] / `sync_global_styles` the
+//! way the theme's own `zstyle` calls land: `setstypat` replaces an
+//! identical pattern and otherwise ranks by specificity, so a user's more
+//! specific pattern beats the theme's and a less specific one loses:
 //! - `formats`          `<prefix>%b%c%u%m` (svn: `<prefix>%c%u`);
 //!   `<prefix>` = `VCS_COMMIT_ICON%0.<CHANGESET_HASH_LENGTH>i ` when
 //!   `SHOW_CHANGESET`.
@@ -35,9 +37,11 @@
 //! else `VCS_WORKDIR_HALF_DIRTY` -> UNTRACKED, else CLEAN; an empty
 //! message (e.g. a clean svn tree) hides the segment.
 //!
-//! Not implemented: the quilt add-on/standalone mode (`VCS_INFO_quilt`;
-//! `quilt-mode` is never enabled by the theme), and `max-exports` > 1 only
-//! matters to user formats because the segment shows `vcs_info_msg_0_`.
+//! The quilt add-on and standalone modes (`VCS_INFO_quilt`) are in
+//! `vcs_quilt.rs`; they stay off unless the user enables the `use-quilt`
+//! style. `max-exports` bounds the messages like `VCS_INFO_formats` does,
+//! and every message is exported as `vcs_info_msg_<N>_` (`VCS_INFO_set`),
+//! though the segment shows `vcs_info_msg_0_`.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::render::Segment;
@@ -47,10 +51,11 @@ use crate::extensions::p10k::shared::{
     apply_visual_identifier, color1, global_bool, global_int, seg_icon,
 };
 use crate::extensions::p10k::vcs_hooks::{
-    call_shell_function, pattern_matches, run_hook, style_context, zsh_tail, Assoc, HookHost,
-    HookState, Specs,
+    any_matches_joined, call_shell_function, read_shell_param, run_hook, style_context,
+    subst_pattern_matches, zsh_tail, Assoc, HookHost, HookState, ParamValue, Specs,
 };
-use crate::ported::params::{getaparam, getsparam};
+use crate::ported::modules::zutil::{lookupstyle, style_table, zstyletab};
+use crate::ported::params::{getaparam, getsparam, setsparam};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -162,14 +167,15 @@ pub(crate) fn tool_bin(cmd: &str) -> Option<PathBuf> {
 
 /// Walk from `start` towards `/` (exclusive) for a directory holding
 /// `dirname/` that contains at least one of `need` — the
-/// `vcs_comm[detect_need_file]` form of `VCS_INFO_bydir_detect`. An
+/// `vcs_comm[detect_need_file]` form of `VCS_INFO_bydir_detect`; an empty
+/// `need` accepts any such directory (no `detect_need_file`). An
 /// unreadable ancestor aborts the walk. Returns the repo base directory.
 pub(crate) fn bydir_detect(start: &Path, dirname: &str, need: &[&str]) -> Option<PathBuf> {
     let mut base = start.to_path_buf();
     while base != Path::new("/") {
         std::fs::read_dir(&base).ok()?; // `[[ -r ${basedir} ]] || return 1`
         let marker = base.join(dirname);
-        if marker.is_dir() && need.iter().any(|f| marker.join(f).exists()) {
+        if marker.is_dir() && (need.is_empty() || need.iter().any(|f| marker.join(f).exists())) {
             return Some(base);
         }
         base = base.parent()?.to_path_buf();
@@ -222,6 +228,7 @@ pub(crate) struct P10kCfg {
     pub hash_len: usize,
     pub hide_branch_icon: bool,
     pub action_fg: String,
+    pub git_hooks: Vec<String>,
     pub hg_hooks: Vec<String>,
     pub svn_hooks: Vec<String>,
 }
@@ -243,6 +250,17 @@ impl P10kCfg {
             hash_len: global_int("CHANGESET_HASH_LENGTH", 8).max(0) as usize,
             hide_branch_icon: global_bool("HIDE_BRANCH_ICON", false),
             action_fg: p9k_global("VCS_ACTIONFORMAT_FOREGROUND", "1"),
+            git_hooks: hook_list(
+                "VCS_GIT_HOOKS",
+                &[
+                    "vcs-detect-changes",
+                    "git-untracked",
+                    "git-aheadbehind",
+                    "git-stash",
+                    "git-remotebranch",
+                    "git-tagname",
+                ],
+            ),
             hg_hooks: hook_list("VCS_HG_HOOKS", &["vcs-detect-changes"]),
             svn_hooks: hook_list("VCS_SVN_HOOKS", &["vcs-detect-changes", "svn-detect-changes"]),
         }
@@ -258,43 +276,68 @@ impl P10kCfg {
     }
 }
 
-/// The `hook` part of a `:vcs_info:<vcs>+<hook>:...` context.
-fn hook_of_context(ctx: &str) -> Option<&str> {
-    let rest = ctx.strip_prefix(":vcs_info:")?;
-    let vcs_hook = rest.split(':').next()?;
-    vcs_hook.split_once('+').map(|(_, h)| h)
-}
+/// One `zstyle <pattern> <style> <values...>` call of the theme.
+pub(crate) type ThemeStyle = (&'static str, &'static str, Vec<String>);
 
-/// The zstyle values `_p9k_vcs_info_init` would have set for `style` in
-/// `ctx` (`vcs` is the current backend name; the theme's patterns are
-/// `:vcs_info:*`, `:vcs_info:hg*:*`, `:vcs_info:svn*:*` and the hook
-/// contexts). Empty when the theme sets nothing.
-pub(crate) fn p10k_style_default(cfg: &P10kCfg, vcs: &str, ctx: &str, style: &str) -> Vec<String> {
-    let hg = vcs.starts_with("hg");
-    let svn = vcs.starts_with("svn");
+/// The `zstyle` calls of `_p9k_vcs_info_init` (p10k:3774-3807), in order.
+pub(crate) fn theme_styles(cfg: &P10kCfg) -> Vec<ThemeStyle> {
     let one = |s: String| vec![s];
     let fg = &cfg.action_fg;
-    match style {
-        "check-for-changes" => one("true".into()),
-        "formats" if svn => one(format!("{}%c%u", cfg.prefix())),
-        "formats" => one(format!("{}%b%c%u%m", cfg.prefix())),
-        "actionformats" if svn => one(format!("{}%c%u %F{{{fg}}}| %a%f", cfg.prefix())),
-        "actionformats" => one(format!("%b %F{{{fg}}}| %a%f")),
-        "stagedstr" => one(format!(" {}", cfg.icons.staged)),
-        "unstagedstr" => one(format!(" {}", cfg.icons.unstaged)),
-        "branchformat" if hg && cfg.hide_branch_icon => one("%b".into()),
-        "branchformat" if hg => one(format!("{}%b", cfg.icons.branch)),
-        "get-revision" if hg => one("true".into()),
-        "get-revision" => one(cfg.show_changeset.to_string()),
-        "get-bookmarks" if hg => one("true".into()),
-        "hooks" => match hook_of_context(ctx) {
-            Some("set-message") if hg => cfg.hg_hooks.clone(),
-            Some("set-message") if svn => cfg.svn_hooks.clone(),
-            Some("gen-hg-bookmark-string") if hg => one("hg-bookmarks".into()),
-            _ => Vec::new(),
-        },
-        _ => Vec::new(),
+    let prefix = cfg.prefix();
+    let branchformat = if cfg.hide_branch_icon {
+        "%b".to_string()
+    } else {
+        format!("{}%b", cfg.icons.branch)
+    };
+    vec![
+        (":vcs_info:*", "check-for-changes", one("true".into())),
+        (":vcs_info:*", "formats", one(format!("{prefix}%b%c%u%m"))),
+        (":vcs_info:*", "actionformats", one(format!("%b %F{{{fg}}}| %a%f"))),
+        (":vcs_info:*", "stagedstr", one(format!(" {}", cfg.icons.staged))),
+        (":vcs_info:*", "unstagedstr", one(format!(" {}", cfg.icons.unstaged))),
+        (":vcs_info:git*+set-message:*", "hooks", cfg.git_hooks.clone()),
+        (":vcs_info:hg*+set-message:*", "hooks", cfg.hg_hooks.clone()),
+        (":vcs_info:svn*+set-message:*", "hooks", cfg.svn_hooks.clone()),
+        (":vcs_info:hg*:*", "branchformat", one(branchformat)),
+        (":vcs_info:hg*:*", "get-revision", one("true".into())),
+        (":vcs_info:hg*:*", "get-bookmarks", one("true".into())),
+        (":vcs_info:hg*+gen-hg-bookmark-string:*", "hooks", one("hg-bookmarks".into())),
+        (":vcs_info:svn*:*", "formats", one(format!("{prefix}%c%u"))),
+        (
+            ":vcs_info:svn*:*",
+            "actionformats",
+            one(format!("{prefix}%c%u %F{{{fg}}}| %a%f")),
+        ),
+        (":vcs_info:*", "get-revision", one(cfg.show_changeset.to_string())),
+    ]
+}
+
+/// `zstyle` each of `styles` into `table`. `setstypat` replaces an
+/// identical pattern and otherwise ranks by specificity, exactly as for
+/// a user's own `zstyle` calls.
+pub(crate) fn install_theme_styles(table: &mut style_table, styles: &[ThemeStyle]) {
+    for (pattern, style, values) in styles {
+        table.set(pattern, style, values.clone(), None);
     }
+}
+
+/// The styles last installed into the global table.
+static INSTALLED_STYLES: Mutex<Option<Vec<ThemeStyle>>> = Mutex::new(None);
+
+/// `_p9k_vcs_info_init` + the per-prompt `zstyle ':vcs_info:*' enable
+/// ${backends}` (p10k:4185) against the global `zstyle` table. The init
+/// calls repeat only when the configuration they derive from changes (what
+/// `p10k reload` does), so a `zstyle` the user runs afterwards is not
+/// overwritten on every prompt.
+fn sync_global_styles(cfg: &P10kCfg, backends: &[String]) {
+    let styles = theme_styles(cfg);
+    let Ok(mut installed) = INSTALLED_STYLES.lock() else { return };
+    let Ok(mut table) = zstyletab.lock() else { return };
+    if installed.as_ref() != Some(&styles) {
+        install_theme_styles(&mut table, &styles);
+        *installed = Some(styles);
+    }
+    table.set(":vcs_info:*", "enable", backends.to_vec(), None);
 }
 
 // ---------------------------------------------------------------------
@@ -304,8 +347,8 @@ pub(crate) fn p10k_style_default(cfg: &P10kCfg, vcs: &str, ctx: &str, style: &st
 pub(crate) struct PromptHost {
     pub cfg: P10kCfg,
     pub cwd: PathBuf,
-    /// `lookupstyle` — a field so tests do not depend on the global table.
-    pub lookup: fn(&str, &str) -> Vec<String>,
+    /// A private zstyle table, for tests; `None` reads the global one.
+    pub table: Option<style_table>,
     /// Canned `svn status` output, for tests; `None` runs the real tool.
     pub svn_status: Option<String>,
 }
@@ -340,12 +383,11 @@ impl PromptHost {
 }
 
 impl HookHost for PromptHost {
-    fn style(&self, vcs: &str, ctx: &str, style: &str) -> Vec<String> {
-        let set = (self.lookup)(ctx, style);
-        if set.is_empty() {
-            p10k_style_default(&self.cfg, vcs, ctx, style)
-        } else {
-            set
+    /// `zstyle -a`: the theme's styles and the user's share one table.
+    fn style(&self, ctx: &str, style: &str) -> Vec<String> {
+        match &self.table {
+            Some(t) => t.get_match(ctx, style).map(|(vals, _)| vals).unwrap_or_default(),
+            None => lookupstyle(ctx, style),
         }
     }
 
@@ -399,6 +441,10 @@ impl HookHost for PromptHost {
     fn call_user_function(&self, func: &str, args: &[String], st: &mut HookState) -> i32 {
         call_shell_function(func, args, st)
     }
+
+    fn param(&self, name: &str) -> ParamValue {
+        read_shell_param(name, true)
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -413,6 +459,21 @@ pub(crate) struct Message {
     pub half_dirty: bool,
     /// `vcs_visual_identifier`: an icon key such as `VCS_HG_ICON`.
     pub icon_key: Option<String>,
+    /// What `VCS_INFO_set` writes to the `vcs_info_msg_<N>_` globals.
+    pub exports: Exports,
+}
+
+/// The state `VCS_INFO_set` publishes as `vcs_info_msg_<N>_`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Exports {
+    /// `msgs`, index `N` being `vcs_info_msg_<N>_`.
+    pub msgs: Vec<String>,
+    /// `maxexports` at the time.
+    pub maxexports: usize,
+    /// `VCS_INFO_set --nvcs`: every message is cleared first.
+    pub nvcs: bool,
+    /// `vcs_info` returned without calling `VCS_INFO_set`.
+    pub kept: bool,
 }
 
 /// One `vcs_info` invocation.
@@ -423,6 +484,8 @@ pub(crate) struct Run<'a> {
     pub cwd: PathBuf,
     /// `$PWD`
     pub pwd: String,
+    /// `VCS_INFO_set --nvcs` ran.
+    pub nvcs: bool,
 }
 
 /// `zformat -f` with single-character specs.
@@ -444,7 +507,7 @@ pub(crate) fn reposub(base: &str, cwd: &Path) -> String {
 
 impl<'a> Run<'a> {
     pub(crate) fn new(host: &'a dyn HookHost, cwd: PathBuf, pwd: String) -> Self {
-        Run { host, st: HookState::new(), cwd, pwd }
+        Run { host, st: HookState::new(), cwd, pwd, nvcs: false }
     }
 
     fn ctx(&self) -> String {
@@ -452,19 +515,19 @@ impl<'a> Run<'a> {
     }
 
     pub(crate) fn style_a(&self, style: &str) -> Vec<String> {
-        self.host.style(&self.st.vars.vcs, &self.ctx(), style)
+        self.host.style(&self.ctx(), style)
     }
 
     pub(crate) fn style_s(&self, style: &str) -> Option<String> {
-        self.host.style_s(&self.st.vars.vcs, &self.ctx(), style)
+        self.host.style_s(&self.ctx(), style)
     }
 
     pub(crate) fn style_t(&self, style: &str) -> bool {
-        self.host.style_t(&self.st.vars.vcs, &self.ctx(), style)
+        self.host.style_t(&self.ctx(), style)
     }
 
     pub(crate) fn style_tt(&self, style: &str) -> bool {
-        self.host.style_tt(&self.st.vars.vcs, &self.ctx(), style)
+        self.host.style_tt(&self.ctx(), style)
     }
 
     /// `VCS_INFO_hook`.
@@ -548,7 +611,32 @@ impl<'a> Run<'a> {
         unapplied: &[String],
         extra: &Assoc,
     ) -> String {
-        self.st.hook_com.clear();
+        let ctx = self.ctx();
+        self.set_patch_format_in(applied, unapplied, &ctx, extra, &Assoc::default(), &|st| {
+            vec![
+                ('g', st.hook_com.get("guards").to_string()),
+                ('G', st.array("mqguards").len().to_string()),
+            ]
+        })
+    }
+
+    /// `VCS_INFO_set-patch-format applied-array applied-string
+    /// unapplied-array unapplied-string ctx fmt-var set_extra reply_fn
+    /// gen_extra`, with the arrays passed directly. `ctx` is the context
+    /// the `patch-format` / `nopatch-format` styles are read from;
+    /// `gen_extra` joins `hook_com` for the `gen-*-string` hooks and
+    /// `set_extra` for `set-patch-format`; `reply` is the `$8` function —
+    /// it runs after the hook and yields the extra `zformat` specs.
+    pub(crate) fn set_patch_format_in(
+        &mut self,
+        applied: &[String],
+        unapplied: &[String],
+        ctx: &str,
+        set_extra: &Assoc,
+        gen_extra: &Assoc,
+        reply: &dyn Fn(&HookState) -> Vec<(char, String)>,
+    ) -> String {
+        self.st.hook_com = gen_extra.clone();
         let mut applied_escape = false;
         let applied_string = if self.hook("gen-applied-string", applied) == 0 {
             applied_escape = true;
@@ -556,7 +644,7 @@ impl<'a> Run<'a> {
         } else {
             self.st.hook_com.get("applied-string").to_string()
         };
-        self.st.hook_com.clear();
+        self.st.hook_com = gen_extra.clone();
         let mut unapplied_escape = false;
         let unapplied_string = if self.hook("gen-unapplied-string", unapplied) == 0 {
             unapplied_escape = true;
@@ -567,9 +655,9 @@ impl<'a> Run<'a> {
         self.st.hook_com.clear();
 
         let fmt = if applied.is_empty() {
-            self.style_s("nopatch-format").unwrap_or_else(|| "no patch applied".into())
+            self.host.style_s(ctx, "nopatch-format").unwrap_or_else(|| "no patch applied".into())
         } else {
-            self.style_s("patch-format").unwrap_or_else(|| "%p (%n applied)".into())
+            self.host.style_s(ctx, "patch-format").unwrap_or_else(|| "%p (%n applied)".into())
         };
         let (an, un) = (applied.len(), unapplied.len());
         let init = Assoc::from_pairs(&[
@@ -580,7 +668,7 @@ impl<'a> Run<'a> {
             ("all-n", (an + un).to_string().as_str()),
         ]);
         self.st.hook_com = init;
-        for (k, v) in extra.pairs() {
+        for (k, v) in set_extra.pairs() {
             self.st.hook_com.set(k, v.as_str());
         }
         let out = if self.hook("set-patch-format", &[fmt.clone()]) == 0 {
@@ -593,19 +681,16 @@ impl<'a> Run<'a> {
                 self.st.hook_com.set("unapplied", v);
             }
             let hc = &self.st.hook_com;
-            let guards_n = self.st.array("mqguards").len().to_string();
-            zformat(
-                &fmt,
-                &[
-                    ('p', hc.get("applied")),
-                    ('u', hc.get("unapplied")),
-                    ('n', hc.get("applied-n")),
-                    ('c', hc.get("unapplied-n")),
-                    ('a', hc.get("all-n")),
-                    ('g', hc.get("guards")),
-                    ('G', guards_n.as_str()),
-                ],
-            )
+            let extra_specs = reply(&self.st);
+            let mut specs: Vec<(char, &str)> = vec![
+                ('p', hc.get("applied")),
+                ('u', hc.get("unapplied")),
+                ('n', hc.get("applied-n")),
+                ('c', hc.get("unapplied-n")),
+                ('a', hc.get("all-n")),
+            ];
+            specs.extend(extra_specs.iter().map(|(c, v)| (*c, v.as_str())));
+            zformat(&fmt, &specs)
         } else {
             self.st.hook_com.get("patch-replace").to_string()
         };
@@ -668,12 +753,15 @@ impl<'a> Run<'a> {
                 self.st.hook_com.set(key, s.unwrap_or_else(|| default.to_string()));
             }
         }
-        // VCS_INFO_quilt addon needs `quilt-mode`, which is never enabled,
-        // so `hook_com[quilt]` is empty; standalone mode shows `misc`.
-        let quilt = if self.st.vars.quiltmode == "standalone" {
+        // `if quiltmode != standalone && VCS_INFO_hook pre-addon-quilt; then
+        // addon; elif quiltmode == standalone; then quilt=misc; fi` — a
+        // vetoed add-on leaves `hook_com[quilt]` empty.
+        let standalone = self.st.vars.quiltmode == "standalone";
+        let quilt = if !standalone && self.hook("pre-addon-quilt", &[]) == 0 {
+            self.quilt("addon").1
+        } else if standalone {
             self.st.hook_com.get("misc").to_string()
         } else {
-            self.hook("pre-addon-quilt", &[]);
             String::new()
         };
         self.st.hook_com.set("quilt", quilt);
@@ -715,6 +803,7 @@ impl<'a> Run<'a> {
     /// `VCS_INFO_set --nvcs`: the `nvcsformats` messages and the `no-vcs`
     /// hook (`VCS_INFO_nvcsformats` keeps `maxexports - 1` entries).
     fn set_nvcs(&mut self) {
+        self.nvcs = true;
         let mut msgs = self.style_a("nvcsformats");
         let max = self.st.vars.maxexports;
         if msgs.len() > max {
@@ -731,6 +820,12 @@ impl<'a> Run<'a> {
             dirty: self.st.flags.dirty,
             half_dirty: self.st.flags.half_dirty,
             icon_key: Some(self.st.flags.visual_identifier.clone()).filter(|k| !k.is_empty()),
+            exports: Exports {
+                msgs: self.st.msgs.clone(),
+                maxexports: self.st.vars.maxexports,
+                nvcs: self.nvcs,
+                kept: false,
+            },
         }
     }
 }
@@ -798,12 +893,6 @@ fn parse_mq_guards(file: &str) -> Vec<String> {
     v
 }
 
-/// `[[ guard == (pat1|pat2|...) ]]` for any active guard.
-fn any_guard_matches(active: &[String], pats: &[String]) -> bool {
-    let alt = format!("({})", pats.join("|"));
-    active.iter().any(|g| pattern_matches(&alt, g))
-}
-
 /// Patches of the series file that are neither applied nor excluded by
 /// guards (get_data_hg, the `get-unapplied` loop).
 fn parse_mq_unapplied(series: &str, applied: &[String], active: &[String]) -> Vec<String> {
@@ -826,11 +915,11 @@ fn parse_mq_unapplied(series: &str, applied: &[String], active: &[String]) -> Ve
                 .collect()
         };
         let (neg, pos) = (strip("#-"), strip("#+"));
-        if !neg.is_empty() && any_guard_matches(active, &neg) {
+        if !neg.is_empty() && any_matches_joined(active, &neg) {
             continue;
         }
         if !pos.is_empty() {
-            if any_guard_matches(active, &pos) {
+            if any_matches_joined(active, &pos) {
                 out.push(patch.to_string());
             }
             continue;
@@ -1203,7 +1292,12 @@ fn previous_message() -> Option<Message> {
         .lock()
         .ok()
         .and_then(|g| g.clone())
-        .map(|m| Message { dirty: false, half_dirty: false, ..m })
+        .map(|m| Message {
+            dirty: false,
+            half_dirty: false,
+            exports: Exports { kept: true, ..m.exports },
+            ..m
+        })
 }
 
 /// Backends that have a detect + get_data pair.
@@ -1241,9 +1335,9 @@ fn get_data(run: &mut Run, vcs: &str) -> bool {
     }
 }
 
-/// `vcs_info` over `backends` (zstyle `enable`), the first detected
+/// `vcs_info`: the zstyle `enable` backends in order, the first detected
 /// backend wins (vcs_info:105-114).
-pub(crate) fn vcs_info(host: &dyn HookHost, backends: &[String], cwd: PathBuf, pwd: String) -> Option<Message> {
+pub(crate) fn vcs_info(host: &dyn HookHost, cwd: PathBuf, pwd: String) -> Option<Message> {
     let mut run = Run::new(host, cwd, pwd);
     run.st.vars.maxexports = 0;
 
@@ -1257,19 +1351,23 @@ pub(crate) fn vcs_info(host: &dyn HookHost, backends: &[String], cwd: PathBuf, p
         }
         _ => {}
     }
-    let eq = |b: &String, w: &str| b.eq_ignore_ascii_case(w);
-    if backends.iter().any(|b| eq(b, "none")) {
-        return remember(None);
+    let mut enabled = run.style_a("enable");
+    if enabled.is_empty() {
+        enabled.push("all".to_string());
     }
-    let mut enabled: Vec<String> = backends.to_vec();
+    let eq = |b: &String, w: &str| b.eq_ignore_ascii_case(w);
+    if enabled.iter().any(|b| eq(b, "none")) {
+        return remember(run.nvcs_if_shown());
+    }
     let mut disabled: Vec<String> = Vec::new();
-    if backends.iter().any(|b| eq(b, "all")) {
+    if enabled.iter().any(|b| eq(b, "all")) {
         enabled = BACKENDS.iter().filter(|b| **b != "git").map(|b| b.to_string()).collect();
         disabled = run.style_a("disable");
     }
     for pat in run.style_a("disable-patterns") {
-        if pattern_matches(&pat, &run.pwd) {
-            return remember(None);
+        if subst_pattern_matches(&pat, &run.pwd) {
+            run.read_maxexports();
+            return remember(run.nvcs_if_shown());
         }
     }
     run.read_maxexports();
@@ -1292,9 +1390,13 @@ pub(crate) fn vcs_info(host: &dyn HookHost, backends: &[String], cwd: PathBuf, p
         }
     }
     if !found {
+        // `vcs='-quilt-'; quiltmode='standalone'; VCS_INFO_quilt standalone
+        // || VCS_INFO_set --nvcs`
         run.st.vars.vcs = "-quilt-".into();
         run.st.vars.quiltmode = "standalone".into();
-        run.set_nvcs();
+        if run.quilt("standalone").0 != 0 {
+            run.set_nvcs();
+        }
         return remember(Some(run.message()));
     }
 
@@ -1314,17 +1416,55 @@ pub(crate) fn vcs_info(host: &dyn HookHost, backends: &[String], cwd: PathBuf, p
     remember(Some(run.message()))
 }
 
-/// Backends from `POWERLEVEL9K_VCS_BACKENDS` other than git -> segment.
+impl Run<'_> {
+    /// `[[ -n ${vcs_info_msg_0_} ]] && VCS_INFO_set --nvcs`: the early
+    /// exits clear a message that is still showing.
+    fn nvcs_if_shown(&mut self) -> Option<Message> {
+        let showing = getsparam("vcs_info_msg_0_").is_some_and(|m| !m.is_empty());
+        showing.then(|| {
+            self.set_nvcs();
+            self.message()
+        })
+    }
+}
+
+/// `VCS_INFO_set`: publish `msgs` as the `vcs_info_msg_<N>_` globals.
+fn export_messages(e: &Exports) {
+    if e.kept {
+        return;
+    }
+    let name = |i: usize| format!("vcs_info_msg_{i}_");
+    let current = |i: usize| getsparam(&name(i)).unwrap_or_default();
+    if e.nvcs {
+        for i in 0..e.maxexports.max(1) {
+            setsparam(&name(i), "");
+        }
+    }
+    if e.msgs.is_empty() {
+        return;
+    }
+    for (i, msg) in e.msgs.iter().enumerate() {
+        setsparam(&name(i), msg);
+    }
+    for j in e.msgs.len()..=e.maxexports {
+        if !current(j).is_empty() {
+            setsparam(&name(j), "");
+        }
+    }
+}
+
+/// Non-git backends from `POWERLEVEL9K_VCS_BACKENDS` -> segment.
 pub(crate) fn vcs_info_segments(backends: &[String]) -> Vec<Segment> {
     let cwd = physical_cwd();
-    let host = PromptHost {
-        cfg: P10kCfg::load(),
-        cwd: cwd.clone(),
-        lookup: crate::ported::modules::zutil::lookupstyle,
-        svn_status: None,
-    };
+    let cfg = P10kCfg::load();
+    // p10k:4185 `zstyle ':vcs_info:*' enable ${backends}`, with the init
+    // styles it depends on.
+    sync_global_styles(&cfg, backends);
+    let host = PromptHost { cfg, cwd: cwd.clone(), table: None, svn_status: None };
     let pwd = getsparam("PWD").unwrap_or_else(|| cwd.to_string_lossy().into_owned());
-    vcs_info(&host, backends, cwd, pwd).map(build_segment).unwrap_or_default()
+    let Some(msg) = vcs_info(&host, cwd, pwd) else { return Vec::new() };
+    export_messages(&msg.exports);
+    build_segment(msg)
 }
 
 /// `prompt_vcs` tail (p10k:4193-4207): state from the dirty flags, segment
@@ -1377,20 +1517,25 @@ mod tests {
             hash_len: 8,
             hide_branch_icon: false,
             action_fg: "1".into(),
+            git_hooks: vec!["vcs-detect-changes".into(), "git-untracked".into()],
             hg_hooks: vec!["vcs-detect-changes".into()],
             svn_hooks: vec!["vcs-detect-changes".into(), "svn-detect-changes".into()],
         }
     }
 
-    fn no_styles(_: &str, _: &str) -> Vec<String> {
-        Vec::new()
+    /// A zstyle table holding only the theme's styles.
+    fn themed(cfg: &P10kCfg) -> style_table {
+        let mut table = style_table::new();
+        install_theme_styles(&mut table, &theme_styles(cfg));
+        table
     }
 
     fn host(show_changeset: bool, svn_status: &str) -> PromptHost {
+        let cfg = cfg(show_changeset);
         PromptHost {
-            cfg: cfg(show_changeset),
+            table: Some(themed(&cfg)),
+            cfg,
             cwd: PathBuf::from("/work/proj/sub"),
-            lookup: no_styles,
             svn_status: Some(svn_status.to_string()),
         }
     }
@@ -1490,15 +1635,10 @@ mod tests {
     fn hg_clean_and_dirty_messages() {
         let h = host(false, "");
         let m = hg_run(&h, hg_facts());
-        assert_eq!(
-            m,
-            Message {
-                text: "B:default".into(),
-                dirty: false,
-                half_dirty: false,
-                icon_key: Some("VCS_HG_ICON".into())
-            }
-        );
+        assert_eq!(m.text, "B:default");
+        assert!(!m.dirty && !m.half_dirty);
+        assert_eq!(m.icon_key.as_deref(), Some("VCS_HG_ICON"));
+        assert_eq!(m.exports.msgs, vec!["B:default"]);
         let m = hg_run(&h, HgFacts { lrev: "142+".into(), csetid: "5f3a9c1e7b20+".into(), ..hg_facts() });
         assert_eq!(m.text, "B:default U");
         assert!(m.dirty);
@@ -1652,40 +1792,108 @@ mod tests {
         assert_eq!(r.message().text, "C:? ");
     }
 
+    fn lookup(t: &style_table, ctx: &str, style: &str) -> Vec<String> {
+        t.get_match(ctx, style).map(|(vals, _)| vals).unwrap_or_default()
+    }
+
     #[test]
-    fn style_defaults_match_vcs_info_init() {
-        let c = cfg(true);
-        let d = |vcs: &str, ctx: &str, style: &str| p10k_style_default(&c, vcs, ctx, style);
-        assert_eq!(d("hg", "", "formats"), vec!["C:%0.8i %b%c%u%m"]);
-        assert_eq!(d("svn", "", "formats"), vec!["C:%0.8i %c%u"]);
-        assert_eq!(d("bzr", "", "actionformats"), vec!["%b %F{1}| %a%f"]);
-        assert_eq!(d("svn", "", "actionformats"), vec!["C:%0.8i %c%u %F{1}| %a%f"]);
-        assert_eq!(d("bzr", "", "stagedstr"), vec![" S"]);
-        assert_eq!(d("hg-git", "", "branchformat"), vec!["B:%b"]);
-        assert!(d("bzr", "", "branchformat").is_empty());
-        assert_eq!(d("hg", "", "get-revision"), vec!["true"]);
-        assert_eq!(d("bzr", "", "get-revision"), vec!["true"]); // SHOW_CHANGESET
-        assert_eq!(cfg(false).show_changeset.to_string(), "false");
-        assert_eq!(d("bzr", "", "check-for-changes"), vec!["true"]);
+    fn theme_styles_match_vcs_info_init() {
+        let t = themed(&cfg(true));
+        let d = |ctx: &str, style: &str| lookup(&t, ctx, style);
+        assert_eq!(d(":vcs_info:hg:default:r", "formats"), vec!["C:%0.8i %b%c%u%m"]);
+        assert_eq!(d(":vcs_info:svn:default:r", "formats"), vec!["C:%0.8i %c%u"]);
+        assert_eq!(d(":vcs_info:bzr:default:r", "actionformats"), vec!["%b %F{1}| %a%f"]);
         assert_eq!(
-            d("hg", ":vcs_info:hg+set-message:default:r", "hooks"),
+            d(":vcs_info:svn:default:r", "actionformats"),
+            vec!["C:%0.8i %c%u %F{1}| %a%f"]
+        );
+        assert_eq!(d(":vcs_info:bzr:default:r", "stagedstr"), vec![" S"]);
+        assert_eq!(d(":vcs_info:hg-git:default:r", "branchformat"), vec!["B:%b"]);
+        assert!(d(":vcs_info:bzr:default:r", "branchformat").is_empty());
+        assert_eq!(d(":vcs_info:hg:default:r", "get-revision"), vec!["true"]);
+        assert_eq!(d(":vcs_info:bzr:default:r", "get-revision"), vec!["true"]); // SHOW_CHANGESET
+        assert_eq!(d(":vcs_info:bzr:default:r", "check-for-changes"), vec!["true"]);
+        assert_eq!(
+            d(":vcs_info:hg+set-message:default:r", "hooks"),
             vec!["vcs-detect-changes"]
         );
         assert_eq!(
-            d("svn", ":vcs_info:svn+set-message:default:r", "hooks"),
+            d(":vcs_info:svn+set-message:default:r", "hooks"),
             vec!["vcs-detect-changes", "svn-detect-changes"]
         );
         assert_eq!(
-            d("hg", ":vcs_info:hg+gen-hg-bookmark-string:default:r", "hooks"),
+            d(":vcs_info:git+set-message:default:r", "hooks"),
+            vec!["vcs-detect-changes", "git-untracked"]
+        );
+        assert_eq!(
+            d(":vcs_info:hg+gen-hg-bookmark-string:default:r", "hooks"),
             vec!["hg-bookmarks"]
         );
-        assert!(d("bzr", ":vcs_info:bzr+set-message:default:r", "hooks").is_empty());
-        assert!(d("hg", ":vcs_info-static_hooks:set-message", "hooks").is_empty());
+        assert!(d(":vcs_info:bzr+set-message:default:r", "hooks").is_empty());
+        assert!(d(":vcs_info-static_hooks:set-message", "hooks").is_empty());
         let mut hidden = cfg(false);
         hidden.hide_branch_icon = true;
-        assert_eq!(p10k_style_default(&hidden, "hg", "", "branchformat"), vec!["%b"]);
-        assert_eq!(p10k_style_default(&hidden, "hg", "", "get-revision"), vec!["true"]);
-        assert_eq!(p10k_style_default(&hidden, "bzr", "", "get-revision"), vec!["false"]);
+        let t = themed(&hidden);
+        assert_eq!(lookup(&t, ":vcs_info:hg:default:r", "branchformat"), vec!["%b"]);
+        assert_eq!(lookup(&t, ":vcs_info:bzr:default:r", "get-revision"), vec!["false"]);
+    }
+
+    #[test]
+    fn a_set_but_empty_theme_hook_list_still_overrides_less_specific_styles() {
+        let mut c = cfg(false);
+        c.hg_hooks = Vec::new();
+        let mut t = style_table::new();
+        t.set(":vcs_info:*", "hooks", vec!["user-hook".into()], None);
+        install_theme_styles(&mut t, &theme_styles(&c));
+        // `hg*+set-message:*` has more colon components than `:vcs_info:*`
+        assert!(lookup(&t, ":vcs_info:hg+set-message:default:r", "hooks").is_empty());
+        assert_eq!(lookup(&t, ":vcs_info:bzr+set-message:default:r", "hooks"), vec!["user-hook"]);
+    }
+
+    #[test]
+    fn user_and_theme_styles_rank_by_zstyle_specificity() {
+        let c = cfg(false);
+        let mut t = style_table::new();
+        // set before the theme's init: an identical pattern is replaced
+        t.set(":vcs_info:*", "formats", vec!["user-all".into()], None);
+        // fewer colon components than the theme's `hg*:*`: loses on hg
+        t.set(":vcs_info:*", "branchformat", vec!["user-branch".into()], None);
+        // equal weight to the theme's `svn*:*` (`s*` and `svn*` both score
+        // 1) and set first: stays ahead of it
+        t.set(":vcs_info:s*:*", "actionformats", vec!["user-early".into()], None);
+        install_theme_styles(&mut t, &theme_styles(&c));
+        // more specific than the theme's `svn*:*` (`svn` scores 2): wins
+        t.set(":vcs_info:svn:*", "unstagedstr", vec!["user-svn".into()], None);
+
+        let svn = ":vcs_info:svn:default:r";
+        let bzr = ":vcs_info:bzr:default:r";
+        assert_eq!(lookup(&t, bzr, "formats"), vec!["%b%c%u%m"], "same pattern: theme replaces");
+        assert_eq!(lookup(&t, svn, "formats"), vec!["%c%u"]);
+        assert_eq!(lookup(&t, ":vcs_info:hg:default:r", "branchformat"), vec!["B:%b"]);
+        assert_eq!(lookup(&t, bzr, "branchformat"), vec!["user-branch"]);
+        assert_eq!(lookup(&t, svn, "actionformats"), vec!["user-early"]);
+        assert_eq!(lookup(&t, svn, "unstagedstr"), vec!["user-svn"]);
+        assert_eq!(lookup(&t, bzr, "unstagedstr"), vec![" U"]);
+    }
+
+    #[test]
+    fn a_user_style_set_after_init_replaces_the_themes_identical_pattern() {
+        let mut t = themed(&cfg(false));
+        t.set(":vcs_info:*", "formats", vec!["later".into()], None);
+        assert_eq!(lookup(&t, ":vcs_info:bzr:default:r", "formats"), vec!["later"]);
+    }
+
+    #[test]
+    fn exports_publish_every_message_and_clear_stale_ones() {
+        let e = Exports { msgs: vec!["a".into(), "b".into()], maxexports: 3, nvcs: false, kept: false };
+        assert_eq!(e.msgs.len(), 2);
+        let h = host(false, "");
+        let mut m = Run::new(&h, PathBuf::from("/w"), "/w".into());
+        m.st.vars.maxexports = 3;
+        m.st.msgs = vec!["a".into(), "b".into()];
+        assert_eq!(m.message().exports, e);
+        m.set_nvcs();
+        assert!(m.message().exports.nvcs);
     }
 
     #[test]
@@ -1829,7 +2037,13 @@ mod tests {
 
     #[test]
     fn build_segment_state_and_hiding() {
-        let m = |dirty, half| Message { text: "x".into(), dirty, half_dirty: half, icon_key: None };
+        let m = |dirty, half| Message {
+            text: "x".into(),
+            dirty,
+            half_dirty: half,
+            icon_key: None,
+            exports: Exports::default(),
+        };
         assert_eq!(build_segment(m(true, true))[0].state.as_deref(), Some("MODIFIED"));
         assert_eq!(build_segment(m(false, true))[0].state.as_deref(), Some("UNTRACKED"));
         assert_eq!(build_segment(m(false, false))[0].state.as_deref(), Some("CLEAN"));

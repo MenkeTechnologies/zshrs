@@ -557,36 +557,23 @@ fn term_size() -> (usize, usize) {
     (cols, lines)
 }
 
-/// The header timestamp `%Y-%m-%d at %H:%M %Z`, from wall-clock.
+/// The header timestamp, wizard:1935 `${(%):-%D{%Y-%m-%d at %H:%M %Z}}`:
+/// local time with the zone abbreviation.
 fn timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Minimal UTC breakdown (no chrono dep); good enough for a header.
-    let days = secs / 86400;
-    let (y, m, d) = civil_from_days(days as i64);
-    let sod = secs % 86400;
-    format!(
-        "{y:04}-{m:02}-{d:02} at {:02}:{:02} UTC",
-        sod / 3600,
-        (sod % 3600) / 60
-    )
+    strftime_now("%Y-%m-%d at %H:%M %Z")
 }
 
-/// days-since-epoch → (year, month, day) — Howard Hinnant's algorithm.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
+/// `strftime(3)` of the current local time.
+fn strftime_now(format: &str) -> String {
+    let Ok(fmt) = std::ffi::CString::new(format) else { return String::new() };
+    let mut buf = [0u8; 128];
+    let n = unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&now, &mut tm);
+        libc::strftime(buf.as_mut_ptr().cast(), buf.len(), fmt.as_ptr(), &tm)
+    };
+    String::from_utf8_lossy(&buf[..n]).into_owned()
 }
 
 // A tiny unused import guard so std::io::Read stays referenced.

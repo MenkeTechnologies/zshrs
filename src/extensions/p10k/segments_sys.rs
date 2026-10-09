@@ -1702,9 +1702,16 @@ impl TaskwarriorState {
 // ---------------------------------------------------------------------
 
 fn nix_shell_segments() -> Vec<Segment> {
-    // p10k:4930 — init cond '${IN_NIX_SHELL:#0}'.
+    // p10k:7832-7837 — cond '${IN_NIX_SHELL:#0}' plus, with
+    // NIX_SHELL_INFER_FROM_PATH (default 0), '${path[(r)/nix/store/*]}'.
     let v = env_or_param("IN_NIX_SHELL");
-    if v.is_empty() || v == "0" {
+    let in_nix_shell = !v.is_empty() && v != "0";
+    let on_path = || {
+        env_or_param("PATH")
+            .split(':')
+            .any(|p| p.starts_with("/nix/store/"))
+    };
+    if !in_nix_shell && !(global_bool("NIX_SHELL_INFER_FROM_PATH", false) && on_path()) {
         return vec![];
     }
     // p10k:4926 — content ${(M)IN_NIX_SHELL:#(pure|impure)}.

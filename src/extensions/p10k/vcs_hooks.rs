@@ -11,7 +11,9 @@
 //!    appended after the static ones;
 //! 3. no hooks -> return 0; otherwise `ret=0` and each name `N` is run as
 //!    `+vi-N <args>` (unknown functions are skipped); the first hook whose
-//!    exit status is non-zero ends the loop; the result is `$ret`.
+//!    exit status is non-zero ends the loop; the result is `$ret`. A hook
+//!    that fails to run at all (parse error, aborted function) exits
+//!    non-zero like any failing function, so it ends the loop too.
 //!
 //! Three hook names are implemented natively by the host (the theme's own
 //! `+vi-vcs-detect-changes`, `+vi-svn-detect-changes`, `+vi-hg-bookmarks`);
@@ -182,8 +184,7 @@ impl HookState {
 /// substitute canned values.
 pub(crate) trait HookHost {
     /// `zstyle -a <ctx> <style>` — the style's values, empty when unset.
-    /// `vcs` is the current `$vcs`, for the theme's own per-backend defaults.
-    fn style(&self, vcs: &str, ctx: &str, style: &str) -> Vec<String>;
+    fn style(&self, ctx: &str, style: &str) -> Vec<String>;
 
     /// A hook implemented natively. `None`: not a native hook name.
     fn native_hook(&self, name: &str, args: &[String], st: &mut HookState) -> Option<i32>;
@@ -194,22 +195,39 @@ pub(crate) trait HookHost {
     /// Call the user function; the return value is its exit status.
     fn call_user_function(&self, func: &str, args: &[String], st: &mut HookState) -> i32;
 
+    /// The type and value of the shell parameter `name` (`${(Pt)name}`,
+    /// `${(P)name}`, `${(kvP)name}`), as `VCS_INFO_quilt-standalone-detect`
+    /// reads it: an array parameter is made unique in place on the way.
+    fn param(&self, _name: &str) -> ParamValue {
+        ParamValue::Unset
+    }
+
     /// `zstyle -s` — the values joined with a space; `None` when unset.
-    fn style_s(&self, vcs: &str, ctx: &str, style: &str) -> Option<String> {
-        let v = self.style(vcs, ctx, style);
+    fn style_s(&self, ctx: &str, style: &str) -> Option<String> {
+        let v = self.style(ctx, style);
         (!v.is_empty()).then(|| v.join(" "))
     }
 
     /// `zstyle -t` — true only when set and the first value is a true word.
-    fn style_t(&self, vcs: &str, ctx: &str, style: &str) -> bool {
-        style_is_true(&self.style(vcs, ctx, style))
+    fn style_t(&self, ctx: &str, style: &str) -> bool {
+        style_is_true(&self.style(ctx, style))
     }
 
     /// `zstyle -T` — like `-t` but an unset style counts as true.
-    fn style_tt(&self, vcs: &str, ctx: &str, style: &str) -> bool {
-        let v = self.style(vcs, ctx, style);
+    fn style_tt(&self, ctx: &str, style: &str) -> bool {
+        let v = self.style(ctx, style);
         v.is_empty() || style_is_true(&v)
     }
+}
+
+/// A shell parameter as `${(Pt)name}` reports it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ParamValue {
+    Unset,
+    Scalar(String),
+    Array(Vec<String>),
+    /// Key/value pairs in `${(kv)name}` order.
+    Assoc(Vec<(String, String)>),
 }
 
 /// zutil.c `zstyle -t`: `yes`, `true`, `1`, `on` as the first value.
@@ -235,8 +253,8 @@ pub(crate) fn static_context(hook_name: &str) -> String {
 /// The ordered hook names for `hook_name`: static hooks first, context
 /// hooks after them.
 pub(crate) fn resolve_hooks(host: &dyn HookHost, v: &Vars, hook_name: &str) -> Vec<String> {
-    let mut hooks = host.style(&v.vcs, &static_context(hook_name), "hooks");
-    hooks.extend(host.style(&v.vcs, &hook_context(v, hook_name), "hooks"));
+    let mut hooks = host.style(&static_context(hook_name), "hooks");
+    hooks.extend(host.style(&hook_context(v, hook_name), "hooks"));
     hooks
 }
 
@@ -338,6 +356,9 @@ pub(crate) fn build_hook_script(func: &str, args: &[String], st: &HookState) -> 
     for (name, vals) in &st.arrays {
         s.push_str(&format!("{name}=( {} )\n", array_literal(vals)));
     }
+    // VCS_INFO_hook: `typeset -g -r vcs rrn usercontext maxexports msgs vcs_comm`
+    // — a hook assigning to one of them fails like any readonly write.
+    s.push_str("typeset -r vcs rrn usercontext maxexports msgs vcs_comm\n");
     s.push_str(&format!("VCS_WORKDIR_DIRTY={}\n", bool_word(st.flags.dirty)));
     s.push_str(&format!("VCS_WORKDIR_HALF_DIRTY={}\n", bool_word(st.flags.half_dirty)));
     s.push_str(&format!(
@@ -407,13 +428,14 @@ pub(crate) fn apply_hook_out(st: &mut HookState, out: HookOut) -> i32 {
 }
 
 /// Run `func` in the embedded shell. A failure to execute leaves `st`
-/// untouched and counts as exit status 0 (the hook did nothing).
+/// untouched and returns exit status 1: `VCS_INFO_hook` breaks out of its
+/// loop on any non-zero `$?`, and a function that cannot run fails.
 pub(crate) fn call_shell_function(func: &str, args: &[String], st: &mut HookState) -> i32 {
     use crate::ported::params::{getaparam, getsparam, unsetparam};
     let script = build_hook_script(func, args, st);
     if let Err(e) = crate::ported::exec::execute_script(&script) {
         tracing::warn!(target: "p10k", func, error = %e, "vcs_info hook function failed");
-        return 0;
+        return 1;
     }
     let take = |name: &str| {
         let v = getaparam(name).unwrap_or_default();
@@ -491,6 +513,63 @@ pub(crate) fn pattern_matches(pat: &str, s: &str) -> bool {
     }
 }
 
+/// `[[ s == ${~pat} ]]`: `pat` comes from a parameter expansion with
+/// `GLOB_SUBST` semantics (`shtokenize`), as `disable-patterns` entries do.
+pub(crate) fn subst_pattern_matches(pat: &str, s: &str) -> bool {
+    let mut tokenized = pat.to_string();
+    crate::ported::glob::shtokenize(&mut tokenized);
+    match crate::ported::pattern::patcompile(&tokenized, 0, None) {
+        Some(prog) => crate::ported::pattern::pattry(&prog, s),
+        None => false,
+    }
+}
+
+/// `${#${(@M)items:#${(~j,|,)pats}}} -gt 0`: join `pats` with `|`, let the
+/// `~` flag make the joined text a pattern, and test whether any of
+/// `items` matches it as a whole.
+pub(crate) fn any_matches_joined(items: &[String], pats: &[String]) -> bool {
+    let joined = pats.join("|");
+    items.iter().any(|item| subst_pattern_matches(&joined, item))
+}
+
+/// Read the parameter `name` as `VCS_INFO_quilt-standalone-detect` does,
+/// through the embedded shell. With `uniq_arrays`, an array parameter is
+/// first made unique in place (`typeset -gU name`), a side effect the
+/// original has.
+pub(crate) fn read_shell_param(name: &str, uniq_arrays: bool) -> ParamValue {
+    use crate::ported::params::{getaparam, unsetparam};
+    const OUT: &str = "__p10k_vi_param";
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return ParamValue::Unset;
+    }
+    let uniq = if uniq_arrays { format!("typeset -gU {name}\n") } else { String::new() };
+    let script = format!(
+        "() {{\nemulate -L zsh\nsetopt extendedglob\nlocal __n={name}\ntypeset -ga {OUT}\n\
+         case ${{(Pt)__n}} in\n\
+         *association*) {OUT}=( assoc \"${{(@kvP)__n}}\" );;\n\
+         *array*) {uniq}{OUT}=( array \"${{(@P)__n}}\" );;\n\
+         *scalar*) {OUT}=( scalar \"${{(P)__n}}\" );;\n\
+         *) {OUT}=( unset );;\n\
+         esac\n}}\n"
+    );
+    if crate::ported::exec::execute_script(&script).is_err() {
+        return ParamValue::Unset;
+    }
+    let v = getaparam(OUT).unwrap_or_default();
+    unsetparam(OUT);
+    let rest = v.get(1..).unwrap_or(&[]);
+    match v.first().map(String::as_str) {
+        Some("assoc") => ParamValue::Assoc(
+            rest.chunks(2)
+                .map(|kv| (kv[0].clone(), kv.get(1).cloned().unwrap_or_default()))
+                .collect(),
+        ),
+        Some("array") => ParamValue::Array(rest.to_vec()),
+        Some("scalar") => ParamValue::Scalar(rest.first().cloned().unwrap_or_default()),
+        _ => ParamValue::Unset,
+    }
+}
+
 /// Count of `key`s in a `HashMap` is not needed; this keeps `HashMap`
 /// available to the zformat spec builders in callers.
 pub(crate) type Specs = HashMap<char, String>;
@@ -511,6 +590,8 @@ pub(crate) mod test_host {
         pub calls: RefCell<Vec<(String, Vec<String>)>>,
         /// Per function: mutate the state, return the exit status.
         pub behaviour: HashMap<String, fn(&mut HookState) -> i32>,
+        /// Shell parameters visible to `param`.
+        pub params: HashMap<String, ParamValue>,
     }
 
     impl MockHost {
@@ -524,7 +605,7 @@ pub(crate) mod test_host {
     }
 
     impl HookHost for MockHost {
-        fn style(&self, _vcs: &str, ctx: &str, style: &str) -> Vec<String> {
+        fn style(&self, ctx: &str, style: &str) -> Vec<String> {
             self.styles
                 .get(&(ctx.to_string(), style.to_string()))
                 .cloned()
@@ -540,6 +621,10 @@ pub(crate) mod test_host {
 
         fn user_function_exists(&self, func: &str) -> bool {
             self.functions.iter().any(|f| f == func)
+        }
+
+        fn param(&self, name: &str) -> ParamValue {
+            self.params.get(name).cloned().unwrap_or(ParamValue::Unset)
         }
 
         fn call_user_function(&self, func: &str, args: &[String], st: &mut HookState) -> i32 {
@@ -662,10 +747,10 @@ mod tests {
         assert!(t(&["true"]) && t(&["yes"]) && t(&["on"]) && t(&["1"]));
         assert!(!t(&["false"]) && !t(&["0"]) && !t(&[]));
         let host = MockHost::default().with_style(":c", "x", &["false"]);
-        assert!(!host.style_tt("v", ":c", "x"));
-        assert!(host.style_tt("v", ":c", "unset-style"));
-        assert!(!host.style_t("v", ":c", "unset-style"));
-        assert_eq!(host.style_s("v", ":c", "x").as_deref(), Some("false"));
+        assert!(!host.style_tt(":c", "x"));
+        assert!(host.style_tt(":c", "unset-style"));
+        assert!(!host.style_t(":c", "unset-style"));
+        assert_eq!(host.style_s(":c", "x").as_deref(), Some("false"));
     }
 
     #[test]

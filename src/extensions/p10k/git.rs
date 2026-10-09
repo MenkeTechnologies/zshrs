@@ -74,6 +74,7 @@
 //! (p10k:3959-3961) is gitstatus's EXACT match of a tag to the HEAD commit
 //! (tag_db.cc:119-148 TagForCommit), not a `git describe` nearest-tag.
 
+use crate::extensions::p10k::gitconfig::GitConfig;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
@@ -107,6 +108,102 @@ pub struct GitStatus {
     pub remote_url: String,
     /// `VCS_STATUS_WORKDIR` — top-level working directory.
     pub workdir: String,
+    /// `VCS_STATUS_REMOTE_NAME` — the tracking remote (`.` for a local
+    /// upstream branch); "" without a resolvable upstream.
+    pub remote_name: String,
+    /// `VCS_STATUS_PUSH_REMOTE_NAME` / `_URL` — `branch.<b>.pushRemote`, else
+    /// `remote.pushDefault`; "" when it or its tracking ref cannot be
+    /// resolved (gitstatus git.cc GetPushRemote).
+    pub push_remote_name: String,
+    pub push_remote_url: String,
+    /// `VCS_STATUS_PUSH_COMMITS_AHEAD` / `_BEHIND` against that ref.
+    pub push_ahead: i64,
+    pub push_behind: i64,
+    /// `VCS_STATUS_INDEX_SIZE` — entries in the index.
+    pub index_size: i64,
+    /// `VCS_STATUS_NUM_SKIP_WORKTREE` / `_NUM_ASSUME_UNCHANGED`.
+    pub skip_worktree: i64,
+    pub assume_unchanged: i64,
+    /// `VCS_STATUS_NUM_STAGED_NEW` / `_STAGED_DELETED` / `_UNSTAGED_DELETED`,
+    /// each at most the matching staged/unstaged count.
+    pub staged_new: i64,
+    pub staged_deleted: i64,
+    pub unstaged_deleted: i64,
+    /// `VCS_STATUS_HAS_*` is `-1` (unknown) when the index is larger than
+    /// `POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY`.
+    pub dirty_unknown: bool,
+}
+
+/// The reporting limits p10k hands gitstatusd (`-s -u -d -c -m -e`,
+/// p10k:8866-8890): at most this many changes of each kind (negative:
+/// unlimited), the index size above which unstaged/untracked are not
+/// computed (negative: never), and whether untracked directories are
+/// counted file by file.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GitLimits {
+    pub max_staged: i64,
+    pub max_unstaged: i64,
+    pub max_untracked: i64,
+    pub max_conflicted: i64,
+    pub dirty_max_index_size: i64,
+    pub recurse_untracked_dirs: bool,
+}
+
+impl Default for GitLimits {
+    /// gitstatusd's defaults (options.cc).
+    fn default() -> Self {
+        GitLimits {
+            max_staged: 1,
+            max_unstaged: 1,
+            max_untracked: 1,
+            max_conflicted: 1,
+            dirty_max_index_size: -1,
+            recurse_untracked_dirs: false,
+        }
+    }
+}
+
+impl GitLimits {
+    /// The `POWERLEVEL9K_VCS_*` parameters, with p10k's defaults.
+    pub fn from_params() -> Self {
+        use crate::extensions::p10k::shared::{global_bool, global_int};
+        GitLimits {
+            max_staged: global_int("VCS_STAGED_MAX_NUM", 1),
+            max_unstaged: global_int("VCS_UNSTAGED_MAX_NUM", 1),
+            max_untracked: global_int("VCS_UNTRACKED_MAX_NUM", 1),
+            max_conflicted: global_int("VCS_CONFLICTED_MAX_NUM", 1),
+            dirty_max_index_size: global_int("VCS_MAX_INDEX_SIZE_DIRTY", -1),
+            recurse_untracked_dirs: global_bool("VCS_RECURSE_UNTRACKED_DIRS", false),
+        }
+    }
+
+    /// `std::min(count, limit)` with a negative limit meaning no limit.
+    fn clamp(count: i64, limit: i64) -> i64 {
+        if limit < 0 {
+            count
+        } else {
+            count.min(limit)
+        }
+    }
+
+    /// The part of `GetIndexStats` that follows the scans (repo.cc:205-237):
+    /// zero the dirty counts of an oversized index, then apply the maxima.
+    fn apply(&self, s: &mut GitStatus, index_size: i64) {
+        let too_large = self.dirty_max_index_size >= 0 && index_size > self.dirty_max_index_size;
+        if too_large {
+            s.unstaged = 0;
+            s.untracked = 0;
+            s.unstaged_deleted = 0;
+        }
+        s.dirty_unknown = too_large;
+        s.staged = Self::clamp(s.staged, self.max_staged);
+        s.unstaged = Self::clamp(s.unstaged, self.max_unstaged);
+        s.conflicted = Self::clamp(s.conflicted, self.max_conflicted);
+        s.untracked = Self::clamp(s.untracked, self.max_untracked);
+        s.staged_new = s.staged_new.min(s.staged);
+        s.staged_deleted = s.staged_deleted.min(s.staged);
+        s.unstaged_deleted = s.unstaged_deleted.min(s.unstaged);
+    }
 }
 
 /// Cache TTL. gitstatusd recomputed on every prompt but kept the repo open;
@@ -132,6 +229,7 @@ struct CacheEntry {
     at: Instant,
     head_mtime: Option<SystemTime>,
     index_mtime: Option<SystemTime>,
+    limits: GitLimits,
     status: GitStatus,
 }
 
@@ -147,7 +245,26 @@ fn cache() -> &'static Mutex<HashMap<PathBuf, CacheEntry>> {
 /// ever read (module doc); the rest is recomputed natively every time.
 struct SubEntry {
     at: Instant,
+    mode: UntrackedMode,
     status: GitStatus,
+}
+
+/// `git status --untracked-files=<mode>`: how untracked files are counted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum UntrackedMode {
+    No,
+    Normal,
+    All,
+}
+
+impl UntrackedMode {
+    fn arg(self) -> &'static str {
+        match self {
+            UntrackedMode::No => "--untracked-files=no",
+            UntrackedMode::Normal => "--untracked-files=normal",
+            UntrackedMode::All => "--untracked-files=all",
+        }
+    }
 }
 
 fn sub_cache() -> &'static Mutex<HashMap<PathBuf, SubEntry>> {
@@ -180,7 +297,11 @@ const CACHE_CAP: usize = 64;
 /// before, threw away every answer in any repo where `git status` is slower
 /// than the budget — so the snapshot never appeared at all, and the full
 /// cost was paid again on the very next prompt.
-fn refresh_porcelain(repo: &Repo, wait: Option<Duration>) -> Option<GitStatus> {
+fn refresh_porcelain(
+    repo: &Repo,
+    mode: UntrackedMode,
+    wait: Option<Duration>,
+) -> Option<GitStatus> {
     {
         let mut set = sub_inflight().lock().ok()?;
         if !set.insert(repo.git_dir.clone()) {
@@ -192,7 +313,7 @@ fn refresh_porcelain(repo: &Repo, wait: Option<Duration>) -> Option<GitStatus> {
     let git_dir = repo.git_dir.clone();
     let (tx, rx) = mpsc::channel();
     crate::signal_thread::spawn(move || {
-        let out = run_porcelain(&work_dir);
+        let out = run_porcelain(&work_dir, mode);
         if let Some(out) = out {
             let mut sub = GitStatus::default();
             parse_porcelain_v2(&out, &mut sub);
@@ -204,6 +325,7 @@ fn refresh_porcelain(repo: &Repo, wait: Option<Duration>) -> Option<GitStatus> {
                     git_dir.clone(),
                     SubEntry {
                         at: Instant::now(),
+                        mode,
                         status: sub.clone(),
                     },
                 );
@@ -236,6 +358,11 @@ fn evict_oldest<V>(map: &mut HashMap<PathBuf, V>, at: impl Fn(&V) -> Instant) {
 /// the repo is discovered by walking up. None when not inside a git repo, or
 /// when the first-ever status of a repo exceeds the latency budget.
 pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
+    git_status_with(dir, &GitLimits::from_params())
+}
+
+/// [`git_status_for`] under explicit reporting limits.
+pub fn git_status_with(dir: &Path, limits: &GitLimits) -> Option<GitStatus> {
     let repo = discover_repo(dir)?;
     let head_mtime = mtime_of(&repo.git_dir.join("HEAD"));
     let index_mtime = mtime_of(&repo.git_dir.join("index"));
@@ -244,6 +371,7 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
     if let Ok(map) = cache().lock() {
         if let Some(e) = map.get(&repo.git_dir) {
             if e.at.elapsed() < CACHE_TTL
+                && e.limits == *limits
                 && e.head_mtime == head_mtime
                 && e.index_mtime == index_mtime
             {
@@ -258,50 +386,68 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
     status.workdir = repo.work_dir.to_string_lossy().into_owned();
     status.action = repo_action(&repo.git_dir); // gitstatus git.cc:43-110 RepoState
 
-    let cfg = GitConfig::load(&repo.common_dir.join("config"));
+    // libgit2's view of the configuration: system, XDG, global, the repo's
+    // own file and (with extensions.worktreeConfig) config.worktree, with
+    // include / includeIf followed.
+    let cfg = GitConfig::load_stack(
+        &repo.common_dir,
+        &repo.git_dir,
+        Some(status.branch.as_str()).filter(|b| !b.is_empty()),
+    );
     let caps = RepoCaps::from_config(&cfg);
+
+    // Git options gitstatusd honours on top of the -s/-u/-d/-c limits
+    // (repo.cc:116-145): a repo that turns untracked or dirty reporting off.
+    let mut lim = *limits;
+    let off = |section: &str, key: &str| cfg.bool_value(section, key) == Some(false);
+    if off("status", "showuntrackedfiles") || off("bash", "showuntrackedfiles") {
+        lim.max_untracked = 0;
+    }
+    if off("bash", "showdirtystate") {
+        lim.max_staged = 0;
+        lim.max_unstaged = 0;
+        lim.max_conflicted = 0;
+    }
+    let untracked_mode = if lim.max_untracked == 0 {
+        UntrackedMode::No
+    } else if lim.recurse_untracked_dirs {
+        UntrackedMode::All
+    } else {
+        UntrackedMode::Normal
+    };
 
     // Upstream from branch.<name>.remote / branch.<name>.merge. REMOTE_BRANCH
     // is the branch-only name (gitstatus.plugin.zsh:39 `VCS_STATUS_REMOTE_BRANCH=master`),
     // which is what p10k compares against the local branch (p10k:3967-3968).
     let mut ab_native = false;
     if !status.branch.is_empty() {
-        match upstream_of(&cfg, &status.branch) {
-            Some((remote, up_branch)) => {
-                status.remote_branch = up_branch.clone();
-                // `remote = .` means the upstream is a local branch.
-                let up_ref = if remote == "." {
-                    format!("refs/heads/{up_branch}")
-                } else {
-                    format!("refs/remotes/{remote}/{up_branch}")
-                };
-                let up_tip = resolve_ref(&repo.common_dir, &up_ref);
-                // gitstatus git.cc:204-215 — the URL is reported only when
-                // the upstream ref resolves.
-                if remote != "." && up_tip.is_some() {
-                    status.remote_url = cfg
-                        .get("remote", &remote, "url")
-                        .unwrap_or_default()
-                        .to_string();
+        match tracking_of(&cfg, &repo.common_dir, &status.branch) {
+            Some(t) => {
+                status.remote_branch = t.branch;
+                status.remote_name = t.remote.clone();
+                // gitstatus git.cc:204-215 — the URL of a real remote.
+                if t.remote != "." {
+                    status.remote_url =
+                        cfg.get("remote", &t.remote, "url").unwrap_or_default().to_string();
                 }
-                match up_tip {
-                    Some(tip) if tip == status.commit => {
-                        // Tips equal ⇒ ahead=behind=0 without any object walk.
-                        ab_native = true;
-                    }
-                    Some(_) => {
-                        // Diverged: counting commits needs an object-store
-                        // walk (zlib) — keep `# branch.ab` from the porcelain
-                        // fallback for this case only (see module doc).
-                    }
-                    None => {
-                        // Upstream configured but its ref is gone (deleted
-                        // remote branch). gitstatusd reports 0/0 here.
-                        ab_native = true;
-                    }
+                if t.tip == status.commit {
+                    // Tips equal ⇒ ahead=behind=0 without any object walk;
+                    // diverged tips take the counts from porcelain.
+                    ab_native = true;
                 }
             }
-            None => ab_native = true, // no upstream ⇒ 0/0, matches gitstatusd
+            // No upstream, or its ref is gone: gitstatusd reports 0/0.
+            None => ab_native = true,
+        }
+        if let Some(p) = push_target_of(&cfg, &repo.common_dir, &status.branch) {
+            status.push_remote_name = p.remote;
+            status.push_remote_url = p.url;
+            if p.tip != status.commit {
+                if let Some((ahead, behind)) = rev_list_counts(&repo.common_dir, &status.commit, &p.refname) {
+                    status.push_ahead = ahead;
+                    status.push_behind = behind;
+                }
+            }
         }
     } else {
         ab_native = true; // detached HEAD has no upstream
@@ -320,10 +466,14 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
     }
 
     // Index scan: unstaged + conflicted natively.
+    let index_size = index_entry_count(&repo.git_dir);
+    status.index_size = index_size;
     let native_counts = read_index_counts(&repo, &caps);
     if let Some(ic) = &native_counts {
         status.unstaged = ic.unstaged;
         status.conflicted = ic.conflicted;
+        status.skip_worktree = ic.skip_worktree;
+        status.assume_unchanged = ic.assume_unchanged;
     }
 
     // -------- subprocess fields (staged/untracked always; the rest only
@@ -337,16 +487,20 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
     let prev_sub = sub_cache()
         .lock()
         .ok()
-        .and_then(|m| m.get(&repo.git_dir).map(|e| e.status.clone()));
+        .and_then(|m| {
+            m.get(&repo.git_dir)
+                .filter(|e| e.mode == untracked_mode)
+                .map(|e| e.status.clone())
+        });
     let sub = match prev_sub {
         Some(s) => {
             // Have something to render: never block, just kick the refresh.
-            refresh_porcelain(&repo, None);
+            refresh_porcelain(&repo, untracked_mode, None);
             Some(s)
         }
         // Nothing cached yet — wait out the budget so a first paint in a
         // fast repo is already complete.
-        None => refresh_porcelain(&repo, Some(SUBPROCESS_BUDGET)),
+        None => refresh_porcelain(&repo, untracked_mode, Some(SUBPROCESS_BUDGET)),
     };
 
     let sub = match sub {
@@ -360,6 +514,9 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
 
     status.staged = sub.staged;
     status.untracked = sub.untracked;
+    status.staged_new = sub.staged_new;
+    status.staged_deleted = sub.staged_deleted;
+    status.unstaged_deleted = sub.unstaged_deleted;
     if native_counts.is_none() {
         status.unstaged = sub.unstaged;
         status.conflicted = sub.conflicted;
@@ -386,6 +543,8 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
         };
     }
 
+    lim.apply(&mut status, index_size);
+
     if let Ok(mut map) = cache().lock() {
         // Bound the cache: one entry per repo visited; a long-lived shell
         // hopping across many repos must not grow this without limit.
@@ -398,6 +557,7 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
                 at: Instant::now(),
                 head_mtime,
                 index_mtime,
+                limits: *limits,
                 status: status.clone(),
             },
         );
@@ -600,100 +760,115 @@ fn repo_action(git_dir: &Path) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// .git/config (minimal parser: sections, subsections, key=value)
-// ---------------------------------------------------------------------------
-
-/// Minimal `.git/config` reader for `branch.<name>.remote/merge`,
-/// `core.filemode/symlinks`, and `extensions.objectformat`. Sections and key
-/// names are case-insensitive, subsections case-sensitive (git-config(1)).
-/// Not supported (all rare for these keys; missing keys degrade to defaults
-/// or to the porcelain fallback): `include.path`/`includeIf`, multi-line
-/// quoted values, `\n`-escapes inside values.
-struct GitConfig {
-    /// key = "<section-lower>\0<subsection-verbatim>\0<key-lower>"
-    map: HashMap<String, String>,
-}
-
-impl GitConfig {
-    fn load(path: &Path) -> GitConfig {
-        let text = fs::read_to_string(path).unwrap_or_default();
-        GitConfig::parse(&text)
-    }
-
-    fn parse(text: &str) -> GitConfig {
-        let mut map = HashMap::new();
-        let mut sect = String::new();
-        let mut sub = String::new();
-        for raw in text.lines() {
-            let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-                continue;
-            }
-            if let Some(body) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                // `[section]` or `[section "sub\"section"]`
-                match body.split_once(char::is_whitespace) {
-                    Some((s, rest)) => {
-                        sect = s.to_ascii_lowercase();
-                        let rest = rest.trim();
-                        sub = rest
-                            .strip_prefix('"')
-                            .and_then(|r| r.strip_suffix('"'))
-                            .map(|r| r.replace("\\\\", "\\").replace("\\\"", "\""))
-                            .unwrap_or_else(|| rest.to_string());
-                    }
-                    None => {
-                        sect = body.to_ascii_lowercase();
-                        sub = String::new();
-                    }
-                }
-                continue;
-            }
-            // `key = value`, or bare `key` (implicit boolean true).
-            let (key, mut val) = match line.split_once('=') {
-                Some((k, v)) => (k.trim().to_ascii_lowercase(), v.trim().to_string()),
-                None => (line.to_ascii_lowercase(), "true".to_string()),
-            };
-            // Strip an unquoted trailing comment, then surrounding quotes.
-            if !val.starts_with('"') {
-                if let Some(i) = val.find(['#', ';']) {
-                    val.truncate(i);
-                    val = val.trim_end().to_string();
-                }
-            } else if let Some(stripped) = val.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
-                val = stripped.replace("\\\\", "\\").replace("\\\"", "\"");
-            }
-            map.insert(format!("{sect}\0{sub}\0{key}"), val);
+/// git_refspec_transform: map `refname` through one fetch refspec
+/// (`[+]<src>[*]:<dst>[*]`); `None` when its source does not match.
+fn refspec_transform(spec: &str, refname: &str) -> Option<String> {
+    let spec = spec.strip_prefix('+').unwrap_or(spec);
+    let (src, dst) = spec.split_once(':')?;
+    match src.split_once('*') {
+        Some((pre, post)) => {
+            let middle = refname.strip_prefix(pre)?.strip_suffix(post)?;
+            let (dst_pre, dst_post) = dst.split_once('*')?;
+            Some(format!("{dst_pre}{middle}{dst_post}"))
         }
-        GitConfig { map }
-    }
-
-    fn get(&self, section: &str, subsection: &str, key: &str) -> Option<&str> {
-        self.map
-            .get(&format!("{section}\0{subsection}\0{key}"))
-            .map(String::as_str)
-    }
-
-    fn get_bool(&self, section: &str, key: &str, default: bool) -> bool {
-        match self.get(section, "", key) {
-            Some(v) => matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"),
-            None => default,
-        }
+        None => (src == refname).then(|| dst.to_string()),
     }
 }
 
-/// `branch.<name>.remote` + `branch.<name>.merge` → (remote, upstream branch
-/// name). The merge value is a full ref (`refs/heads/main`); the returned
-/// name is branch-only, matching gitstatusd's VCS_STATUS_REMOTE_BRANCH shape
-/// (gitstatus.plugin.zsh:39,97).
-fn upstream_of(cfg: &GitConfig, branch: &str) -> Option<(String, String)> {
-    let remote = cfg.get("branch", branch, "remote")?;
-    let merge = cfg.get("branch", branch, "merge")?;
-    let name = merge.strip_prefix("refs/heads/").unwrap_or(merge);
-    if remote.is_empty() || name.is_empty() {
+/// `refname` as the tracking ref of `remote` (the first fetch refspec of
+/// the remote that matches it). `None` when the remote is not configured.
+fn remote_tracking_ref(cfg: &GitConfig, remote: &str, refname: &str) -> Option<String> {
+    if !cfg.has_group("remote", remote) {
         return None;
     }
-    Some((remote.to_string(), name.to_string()))
+    cfg.get_all("remote", remote, "fetch")
+        .iter()
+        .find_map(|spec| refspec_transform(spec, refname))
+}
+
+/// The upstream of a branch, as gitstatus git.cc GetRemote resolves it.
+struct Tracking {
+    /// `origin`, or `.` for a local upstream branch.
+    remote: String,
+    /// The upstream's short name without the remote (`main`).
+    branch: String,
+    /// The commit its ref points at.
+    tip: String,
+}
+
+/// `branch.<name>.remote` + `branch.<name>.merge`, mapped to a tracking ref
+/// through the remote's fetch refspecs (`.` keeps the merge ref). `None`
+/// unless that ref exists (git.cc:203-204 `git_reference_lookup`).
+fn tracking_of(cfg: &GitConfig, common_dir: &Path, branch: &str) -> Option<Tracking> {
+    let remote = cfg.get("branch", branch, "remote").filter(|r| !r.is_empty())?;
+    let merge = cfg.get("branch", branch, "merge").filter(|m| !m.is_empty())?;
+    let refname = if remote == "." {
+        merge.to_string()
+    } else {
+        remote_tracking_ref(cfg, remote, merge)?
+    };
+    let tip = resolve_ref(common_dir, &refname)?;
+    let short = refname
+        .strip_prefix("refs/heads/")
+        .or_else(|| refname.strip_prefix("refs/remotes/"))
+        .unwrap_or(&refname);
+    let name = if remote == "." {
+        short
+    } else {
+        short.strip_prefix(remote).and_then(|s| s.strip_prefix('/')).unwrap_or(short)
+    };
+    Some(Tracking { remote: remote.to_string(), branch: name.to_string(), tip })
+}
+
+/// Where a branch is pushed, as git.cc GetPushRemote resolves it.
+struct PushTarget {
+    remote: String,
+    url: String,
+    refname: String,
+    tip: String,
+}
+
+/// `branch.<name>.pushRemote`, else `remote.pushDefault`; the ref is the
+/// branch itself mapped through that remote's fetch refspecs. `None` when
+/// there is no such remote or its ref does not exist.
+fn push_target_of(cfg: &GitConfig, common_dir: &Path, branch: &str) -> Option<PushTarget> {
+    let remote = cfg
+        .get("branch", branch, "pushremote")
+        .or_else(|| cfg.get("remote", "", "pushdefault"))
+        .filter(|r| !r.is_empty())?;
+    let local = format!("refs/heads/{branch}");
+    let refname = if remote == "." {
+        local
+    } else {
+        remote_tracking_ref(cfg, remote, &local)?
+    };
+    let tip = resolve_ref(common_dir, &refname)?;
+    let url = if remote == "." {
+        String::new()
+    } else {
+        cfg.get("remote", remote, "url").unwrap_or_default().to_string()
+    };
+    Some(PushTarget { remote: remote.to_string(), url, refname, tip })
+}
+
+/// `(commits in head not in other, commits in other not in head)` — the
+/// two `CountRange` walks of gitstatus (`other..HEAD`, `HEAD..other`).
+fn rev_list_counts(common_dir: &Path, head: &str, other: &str) -> Option<(i64, i64)> {
+    let out = Command::new("git")
+        .arg(format!("--git-dir={}", common_dir.display()))
+        .args(["rev-list", "--left-right", "--count"])
+        .arg(format!("{head}...{other}"))
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut it = text.split_whitespace().map(|n| n.parse::<i64>());
+    match (it.next(), it.next()) {
+        (Some(Ok(a)), Some(Ok(b))) => Some((a, b)),
+        _ => None,
+    }
 }
 
 /// Port of gitstatus RepoCaps (index.cc:308-318): repository capabilities
@@ -726,6 +901,22 @@ impl RepoCaps {
 struct IndexCounts {
     unstaged: i64,
     conflicted: i64,
+    /// Entries with the skip-worktree / assume-valid ("assume unchanged")
+    /// bit set (gitstatus index.cc).
+    skip_worktree: i64,
+    assume_unchanged: i64,
+}
+
+/// The entry count in the `.git/index` header (`VCS_STATUS_INDEX_SIZE`);
+/// 0 when there is no readable index.
+fn index_entry_count(git_dir: &Path) -> i64 {
+    use std::io::Read as _;
+    let mut head = [0u8; 12];
+    let read = fs::File::open(git_dir.join("index")).and_then(|mut f| f.read_exact(&mut head));
+    match read {
+        Ok(()) if &head[0..4] == b"DIRC" => i64::from(u32::from_be_bytes([head[8], head[9], head[10], head[11]])),
+        _ => 0,
+    }
 }
 
 fn be32(data: &[u8], pos: usize) -> Option<u32> {
@@ -908,6 +1099,7 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
     let mut last_conflict: Vec<u8> = Vec::new();
     let mut unstaged = 0i64;
     let mut conflicted = 0i64;
+    let (mut skip_count, mut assume_count) = (0i64, 0i64);
     // Entries whose worktree file must be lstat'ed, collected here and
     // scanned in parallel once the (inherently serial) parse is done.
     let mut to_stat: Vec<(EntryStat, PathBuf)> = Vec::with_capacity(nentries);
@@ -986,6 +1178,8 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
             }
             continue;
         }
+        skip_count += i64::from(skip_worktree);
+        assume_count += i64::from(assume_valid);
         if skip_worktree || assume_valid {
             // git status ignores skip-worktree entries; assume-valid
             // (`git update-index --assume-unchanged`) means "trust the index"
@@ -1019,6 +1213,8 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
     Some(IndexCounts {
         unstaged,
         conflicted,
+        skip_worktree: skip_count,
+        assume_unchanged: assume_count,
     })
 }
 
@@ -1203,6 +1399,98 @@ fn tag_for_commit(common_dir: &Path, commit: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Commit message — VCS_STATUS_COMMIT_ENCODING / VCS_STATUS_COMMIT_SUMMARY
+// ---------------------------------------------------------------------------
+
+/// `Truncate(msg.summary, opts.max_commit_summary_length)`; gitstatusd's
+/// `-z` default.
+const MAX_COMMIT_SUMMARY_LEN: usize = 256;
+
+/// libgit2 `git_commit_summary`: the first paragraph of the message with
+/// each run of whitespace containing a newline collapsed to one space and
+/// trailing whitespace dropped.
+fn commit_summary_of(message: &str) -> String {
+    let msg = message.trim_start_matches('\n').as_bytes();
+    let mut out: Vec<u8> = Vec::new();
+    let mut space: Option<usize> = None;
+    let mut space_has_newline = false;
+    for (i, &c) in msg.iter().enumerate() {
+        if c == b'\n' {
+            // End of the first paragraph: the message ends, a blank line
+            // follows, or the next line holds only whitespace.
+            let rest = &msg[i + 1..];
+            let next_blank = rest
+                .iter()
+                .find(|&&b| b == b'\n' || !b.is_ascii_whitespace())
+                .is_none_or(|&b| b == b'\n');
+            if next_blank {
+                break;
+            }
+        }
+        if c.is_ascii_whitespace() {
+            if space.is_none() {
+                space = Some(i);
+                space_has_newline = false;
+            }
+            space_has_newline |= c == b'\n';
+        } else {
+            if let Some(start) = space.take() {
+                if space_has_newline {
+                    out.push(b' ');
+                } else {
+                    out.extend_from_slice(&msg[start..i]);
+                }
+            }
+            out.push(c);
+        }
+    }
+    out.truncate(MAX_COMMIT_SUMMARY_LEN);
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `(encoding, summary)` of `commit` in the repository at `workdir`; both
+/// empty for an unreadable commit. Memoised per object id (commits are
+/// immutable): one `git cat-file commit` the first time a HEAD is seen.
+pub fn commit_message(workdir: &Path, commit: &str) -> (String, String) {
+    static MEMO: OnceLock<Mutex<HashMap<String, (String, String)>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(Default::default);
+    if commit.is_empty() {
+        return Default::default();
+    }
+    if let Some(hit) = memo.lock().ok().and_then(|m| m.get(commit).cloned()) {
+        return hit;
+    }
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(workdir)
+        .args(["cat-file", "commit", commit])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let result = match out {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout).into_owned();
+            let (headers, message) = raw.split_once("\n\n").unwrap_or((raw.as_str(), ""));
+            let encoding = headers
+                .lines()
+                .find_map(|l| l.strip_prefix("encoding "))
+                .unwrap_or_default()
+                .to_string();
+            (encoding, commit_summary_of(message))
+        }
+        _ => Default::default(),
+    };
+    if let Ok(mut m) = memo.lock() {
+        if m.len() > 256 {
+            m.clear();
+        }
+        m.insert(commit.to_string(), result.clone());
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
 // Gated subprocess: `git status --porcelain=v2` for staged / untracked
 // (+ ahead-behind on divergence, + everything on native-parse failure)
 // ---------------------------------------------------------------------------
@@ -1211,11 +1499,12 @@ fn tag_for_commit(common_dir: &Path, commit: &str) -> String {
 /// dirty tree can't deadlock on a full pipe; the caller waits at most
 /// SUBPROCESS_BUDGET. Returns None on spawn failure or timeout (child is
 /// killed and reaped).
-fn run_porcelain(work_dir: &Path) -> Option<String> {
+fn run_porcelain(work_dir: &Path, mode: UntrackedMode) -> Option<String> {
     let mut child = match Command::new("git")
         .arg("-C")
         .arg(work_dir)
         .args(["status", "--porcelain=v2", "--branch", "--show-stash"])
+        .arg(mode.arg())
         // Match gitstatusd: never take optional locks / touch the index
         // from a prompt-driven read.
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -1294,6 +1583,16 @@ fn parse_porcelain_v2(out: &str, status: &mut GitStatus) {
                 }
                 if bytes[3] != b'.' {
                     status.unstaged += 1;
+                }
+                // X = A: staged new file; X = D / Y = D: deleted.
+                if bytes[2] == b'A' {
+                    status.staged_new += 1;
+                }
+                if bytes[2] == b'D' {
+                    status.staged_deleted += 1;
+                }
+                if bytes[3] == b'D' {
+                    status.unstaged_deleted += 1;
                 }
             }
         } else if line.starts_with("u ") {
@@ -1612,32 +1911,152 @@ u UU N... 100644 100644 100644 100644 aaaa bbbb cccc conflict.rs
     }
 
     #[test]
-    fn config_upstream_and_caps() {
+    fn config_caps_and_tracking_through_fetch_refspecs() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let common = td.path();
+        let ref_file = |name: &str, oid: &str| {
+            let p = common.join(name);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, format!("{oid}\n")).unwrap();
+        };
+        ref_file("refs/remotes/origin/feature/x", &"a".repeat(40));
+        ref_file("refs/remotes/mirror/feature/x", &"b".repeat(40));
+        ref_file("refs/heads/main", &"c".repeat(40));
         let cfg = GitConfig::parse(
             "[core]\n\
              \tfilemode = false\n\
              \tsymlinks = true\n\
              [extensions]\n\
              \tobjectformat = sha256\n\
+             [remote \"origin\"]\n\
+             \turl = git@example.com:o.git\n\
+             \tfetch = +refs/heads/*:refs/remotes/origin/*\n\
+             [remote \"mirror\"]\n\
+             \turl = git@example.com:m.git\n\
+             \tfetch = +refs/heads/feature/*:refs/remotes/mirror/feature/*\n\
+             [remote \"nofetch\"]\n\
+             \turl = x\n\
+             [remote]\n\
+             \tpushDefault = mirror\n\
              [branch \"feature/x\"]\n\
              \tremote = origin\n\
              \tmerge = refs/heads/feature/x\n\
              [branch \"local\"]\n\
              \tremote = .\n\
-             \tmerge = refs/heads/main\n",
+             \tmerge = refs/heads/main\n\
+             [branch \"gone\"]\n\
+             \tremote = origin\n\
+             \tmerge = refs/heads/gone\n\
+             [branch \"nofetch\"]\n\
+             \tremote = nofetch\n\
+             \tmerge = refs/heads/nofetch\n\
+             [branch \"pushed\"]\n\
+             \tremote = origin\n\
+             \tmerge = refs/heads/pushed\n\
+             \tpushRemote = origin\n",
         );
-        assert_eq!(
-            upstream_of(&cfg, "feature/x"),
-            Some(("origin".to_string(), "feature/x".to_string()))
-        );
-        assert_eq!(
-            upstream_of(&cfg, "local"),
-            Some((".".to_string(), "main".to_string()))
-        );
-        assert_eq!(upstream_of(&cfg, "nope"), None);
+        let t = tracking_of(&cfg, common, "feature/x").expect("tracking");
+        assert_eq!((t.remote.as_str(), t.branch.as_str()), ("origin", "feature/x"));
+        assert_eq!(t.tip, "a".repeat(40));
+        let l = tracking_of(&cfg, common, "local").expect("local upstream");
+        assert_eq!((l.remote.as_str(), l.branch.as_str()), (".", "main"));
+        // upstream ref missing / remote without a fetch refspec / no config
+        assert!(tracking_of(&cfg, common, "gone").is_none());
+        assert!(tracking_of(&cfg, common, "nofetch").is_none());
+        assert!(tracking_of(&cfg, common, "nope").is_none());
+
+        // remote.pushDefault applies when the branch has no pushRemote, and
+        // the branch maps through THAT remote's refspec
+        let p = push_target_of(&cfg, common, "feature/x").expect("push target");
+        assert_eq!(p.remote, "mirror");
+        assert_eq!(p.url, "git@example.com:m.git");
+        assert_eq!(p.refname, "refs/remotes/mirror/feature/x");
+        assert_eq!(p.tip, "b".repeat(40));
+        // the mirror refspec only covers feature/*
+        assert!(push_target_of(&cfg, common, "other").is_none());
+        // its tracking ref is absent
+        assert!(push_target_of(&cfg, common, "pushed").is_none());
+
         let caps = RepoCaps::from_config(&cfg);
         assert!(!caps.trust_filemode);
         assert!(caps.has_symlinks);
         assert_eq!(caps.hash_len, 32);
+    }
+
+    #[test]
+    fn refspec_transform_handles_globs_and_exact_names() {
+        assert_eq!(
+            refspec_transform("+refs/heads/*:refs/remotes/o/*", "refs/heads/a/b").as_deref(),
+            Some("refs/remotes/o/a/b")
+        );
+        assert_eq!(
+            refspec_transform("refs/heads/main:refs/remotes/o/trunk", "refs/heads/main").as_deref(),
+            Some("refs/remotes/o/trunk")
+        );
+        assert_eq!(refspec_transform("refs/heads/main:x", "refs/heads/other"), None);
+        assert_eq!(refspec_transform("refs/tags/*:refs/tags/*", "refs/heads/a"), None);
+    }
+
+    #[test]
+    fn limits_zero_oversized_index_and_clamp_counts() {
+        let mut s = GitStatus {
+            staged: 5,
+            unstaged: 4,
+            untracked: 9,
+            conflicted: 3,
+            staged_new: 4,
+            staged_deleted: 2,
+            unstaged_deleted: 4,
+            ..Default::default()
+        };
+        // the defaults report at most one of each
+        GitLimits::default().apply(&mut s, 100);
+        assert_eq!((s.staged, s.unstaged, s.untracked, s.conflicted), (1, 1, 1, 1));
+        assert_eq!((s.staged_new, s.staged_deleted, s.unstaged_deleted), (1, 1, 1));
+        assert!(!s.dirty_unknown);
+
+        let mut s = GitStatus { staged: 5, unstaged: 4, untracked: 9, conflicted: 3, ..Default::default() };
+        let lim = GitLimits {
+            max_staged: -1,
+            max_unstaged: 3,
+            max_untracked: -1,
+            max_conflicted: 0,
+            dirty_max_index_size: 50,
+            recurse_untracked_dirs: false,
+        };
+        lim.apply(&mut s, 49);
+        assert_eq!((s.staged, s.unstaged, s.untracked, s.conflicted), (5, 3, 9, 0));
+        // over the dirty index size: unstaged and untracked are zeroed, staged stays
+        let mut s = GitStatus { staged: 5, unstaged: 4, untracked: 9, conflicted: 0, ..Default::default() };
+        lim.apply(&mut s, 51);
+        assert_eq!((s.staged, s.unstaged, s.untracked), (5, 0, 0));
+        assert!(s.dirty_unknown);
+    }
+
+    #[test]
+    fn porcelain_classifies_new_and_deleted() {
+        let mut s = GitStatus::default();
+        parse_porcelain_v2(
+            "1 A. N... 000000 100644 100644 a b new.rs\n\
+             1 D. N... 100644 000000 000000 a b gone.rs\n\
+             1 .D N... 100644 100644 000000 a b removed.rs\n\
+             1 MM N... 100644 100644 100644 a b both.rs\n",
+            &mut s,
+        );
+        assert_eq!((s.staged, s.staged_new, s.staged_deleted), (3, 1, 1));
+        assert_eq!((s.unstaged, s.unstaged_deleted), (2, 1));
+    }
+    #[test]
+    fn commit_summary_is_the_collapsed_first_paragraph() {
+        assert_eq!(commit_summary_of("fix the thing\n\nlong body\n"), "fix the thing");
+        assert_eq!(commit_summary_of("\n\nleading blanks\n"), "leading blanks");
+        assert_eq!(
+            commit_summary_of("wrapped\nsubject  line\nthird\n\nbody"),
+            "wrapped subject  line third"
+        );
+        // a whitespace-only line ends the paragraph; trailing space is dropped
+        assert_eq!(commit_summary_of("a b  \n   \nbody"), "a b");
+        assert_eq!(commit_summary_of(&"x".repeat(400)).len(), MAX_COMMIT_SUMMARY_LEN);
+        assert_eq!(commit_summary_of(""), "");
     }
 }

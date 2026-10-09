@@ -398,22 +398,11 @@ fn one(s: Segment) -> Option<Vec<Segment>> {
     Some(vec![s])
 }
 
-/// Minimal zsh-glob matcher for `*`-only patterns — enough for the
-/// _CLASSES tables in real configs (`'*prod*' PROD`, `'*' DEFAULT`).
-/// Other zsh glob operators are not supported; a pattern using them
-/// simply won't match.
+/// `[[ $text == ${~pat} ]]` for the _CLASSES tables and generic-name lists:
+/// the pattern goes through the ported zsh pattern engine, so every glob
+/// operator works (`*prod*`, `(a|b)*`, `[0-9]`, `?`, ...).
 fn glob_match(pat: &str, text: &str) -> bool {
-    fn inner(p: &[u8], t: &[u8]) -> bool {
-        if p.is_empty() {
-            return t.is_empty();
-        }
-        if p[0] == b'*' {
-            (0..=t.len()).any(|i| inner(&p[1..], &t[i..]))
-        } else {
-            !t.is_empty() && p[0] == t[0] && inner(&p[1..], &t[1..])
-        }
-    }
-    inner(pat.as_bytes(), text.as_bytes())
+    crate::extensions::p10k::vcs_hooks::subst_pattern_matches(pat, text)
 }
 
 /// Port of the `for pat class in $_POWERLEVEL9K_<SEG>_CLASSES` loop
@@ -2860,6 +2849,11 @@ mod tests {
         assert!(glob_match("*", ""));
         assert!(!glob_match("*prod*", "staging"));
         assert!(glob_match("gke_*", "gke_acct_zone_cluster"));
+        // operators beyond `*`
+        assert!(glob_match("(prod|stage)-*", "stage-eu"));
+        assert!(!glob_match("(prod|stage)-*", "dev-eu"));
+        assert!(glob_match("?x", "ax"));
+        assert!(!glob_match("?x", "abx"));
     }
 
     #[test]

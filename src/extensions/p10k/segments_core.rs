@@ -883,6 +883,10 @@ fn shorten_branch(branch: &str) -> String {
 /// from these rather than echoing a pre-formatted string.
 fn publish_vcs_status(gs: &git::GitStatus) {
     let has = |n: i64| if n > 0 { 1 } else { 0 };
+    // gitstatus.plugin.zsh:352-364 — an index over VCS_MAX_INDEX_SIZE_DIRTY
+    // leaves the dirty facts unknown (-1).
+    let has_dirty = |n: i64| if gs.dirty_unknown { -1 } else { has(n) };
+    let (encoding, summary) = git::commit_message(Path::new(&gs.workdir), &gs.commit);
     for (k, v) in [
         ("VCS_STATUS_LOCAL_BRANCH", gs.branch.clone()),
         ("VCS_STATUS_REMOTE_BRANCH", gs.remote_branch.clone()),
@@ -893,20 +897,28 @@ fn publish_vcs_status(gs: &git::GitStatus) {
         ("VCS_STATUS_ACTION", gs.action.clone()),
         ("VCS_STATUS_COMMITS_AHEAD", gs.ahead.to_string()),
         ("VCS_STATUS_COMMITS_BEHIND", gs.behind.to_string()),
-        // GitStatus has no separate push-remote tracking; report 0.
-        ("VCS_STATUS_PUSH_COMMITS_AHEAD", "0".to_string()),
-        ("VCS_STATUS_PUSH_COMMITS_BEHIND", "0".to_string()),
+        ("VCS_STATUS_REMOTE_NAME", gs.remote_name.clone()),
+        ("VCS_STATUS_PUSH_REMOTE_NAME", gs.push_remote_name.clone()),
+        ("VCS_STATUS_PUSH_REMOTE_URL", gs.push_remote_url.clone()),
+        ("VCS_STATUS_PUSH_COMMITS_AHEAD", gs.push_ahead.to_string()),
+        ("VCS_STATUS_PUSH_COMMITS_BEHIND", gs.push_behind.to_string()),
+        ("VCS_STATUS_INDEX_SIZE", gs.index_size.to_string()),
+        ("VCS_STATUS_NUM_STAGED_NEW", gs.staged_new.to_string()),
+        ("VCS_STATUS_NUM_STAGED_DELETED", gs.staged_deleted.to_string()),
+        ("VCS_STATUS_NUM_UNSTAGED_DELETED", gs.unstaged_deleted.to_string()),
+        ("VCS_STATUS_NUM_SKIP_WORKTREE", gs.skip_worktree.to_string()),
+        ("VCS_STATUS_NUM_ASSUME_UNCHANGED", gs.assume_unchanged.to_string()),
+        ("VCS_STATUS_COMMIT_ENCODING", encoding),
+        ("VCS_STATUS_COMMIT_SUMMARY", summary),
         ("VCS_STATUS_STASHES", gs.stashes.to_string()),
         ("VCS_STATUS_NUM_STAGED", gs.staged.to_string()),
         ("VCS_STATUS_NUM_UNSTAGED", gs.unstaged.to_string()),
         ("VCS_STATUS_NUM_UNTRACKED", gs.untracked.to_string()),
         ("VCS_STATUS_NUM_CONFLICTED", gs.conflicted.to_string()),
-        // HAS_* are 1/0 (never -1 "unknown" here — the native backend
-        // always has the full count).
         ("VCS_STATUS_HAS_STAGED", has(gs.staged).to_string()),
-        ("VCS_STATUS_HAS_UNSTAGED", has(gs.unstaged).to_string()),
-        ("VCS_STATUS_HAS_UNTRACKED", has(gs.untracked).to_string()),
-        ("VCS_STATUS_HAS_CONFLICTED", has(gs.conflicted).to_string()),
+        ("VCS_STATUS_HAS_UNSTAGED", has_dirty(gs.unstaged).to_string()),
+        ("VCS_STATUS_HAS_UNTRACKED", has_dirty(gs.untracked).to_string()),
+        ("VCS_STATUS_HAS_CONFLICTED", has_dirty(gs.conflicted).to_string()),
     ] {
         let _ = crate::ported::params::setsparam(k, &v);
     }

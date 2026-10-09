@@ -61,6 +61,10 @@ pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
         "dropbox" => Some(dropbox_segments()),                 // p10k:4540
         "openfoam" => Some(openfoam_segments()),               // p10k:4411
         "chruby" => Some(chruby_segments()),                   // p10k:3121
+        "perlbrew" => Some(perlbrew_segments()),               // p10k:3162
+        "chezmoi_shell" => Some(chezmoi_shell_segments()),     // p10k:4257
+        "cpu_arch" => Some(cpu_arch_segments()),               // p10k:5763
+        "per_directory_history" => Some(per_directory_history_segments()), // p10k:5800
         "dotnet_version" => Some(dotnet_version_segments()),   // p10k:2649
         "php_version" => Some(php_version_segments()),         // p10k:2673
         "swift_version" => Some(swift_version_segments()),     // p10k:4425
@@ -1040,8 +1044,18 @@ fn chruby_segments() -> Vec<Segment> {
     if engine.is_empty() {
         return vec![];
     }
-    // p10k:3123 + 7464 — SHOW_ENGINE default 1.
-    let mut v = if global_bool("CHRUBY_SHOW_ENGINE", true) {
+    // p10k:3181 — `v=${(M)RUBY_ENGINE:#$~SHOW_ENGINE_PATTERN}`: the engine
+    // survives only when it matches the pattern. p10k:7723-7726 — the
+    // pattern defaults to `*` when SHOW_ENGINE (default 1) is on, else it
+    // is empty and matches only an empty engine.
+    let pattern = getsparam("POWERLEVEL9K_CHRUBY_SHOW_ENGINE_PATTERN").unwrap_or_else(|| {
+        if global_bool("CHRUBY_SHOW_ENGINE", true) {
+            "*".to_string()
+        } else {
+            String::new()
+        }
+    });
+    let mut v = if super::vcs_hooks::subst_pattern_matches(&pattern, &engine) {
         engine
     } else {
         String::new()
@@ -1063,6 +1077,133 @@ fn chruby_segments() -> Vec<Segment> {
         "RUBY_ICON",
         esc_pct(&v),
     )]
+}
+
+// ---------------------------------------------------------------------
+// perlbrew (p10k:3162-3175)
+// ---------------------------------------------------------------------
+
+fn perlbrew_segments() -> Vec<Segment> {
+    // p10k:3163 + 7672 — PROJECT_ONLY default 1.
+    if global_bool("PERLBREW_PROJECT_ONLY", true) {
+        // p10k:3164 — upglob 'cpanfile|.perltidyrc|(|MY)META.(yml|json)|
+        // (Makefile|Build).PL|*.(pl|pm|t|pod)' -. (regular files).
+        let found = upfind_pred(&|dir| {
+            let is_file = |n: &str| dir.join(n).is_file();
+            ["cpanfile", ".perltidyrc", "META.yml", "META.json", "MYMETA.yml", "MYMETA.json", "Makefile.PL", "Build.PL"]
+                .iter()
+                .any(|n| is_file(n))
+                || dir_has_ext(dir, &["pl", "pm", "t", "pod"])
+        });
+        if found.is_none() {
+            return vec![];
+        }
+    }
+    // p10k:3167-3169 — `v=$PERLBREW_PERL`; without SHOW_PREFIX (default 0)
+    // `v=${v#*-}`; hidden when empty.
+    let perl = env_or_param("PERLBREW_PERL");
+    let v = if global_bool("PERLBREW_SHOW_PREFIX", false) {
+        perl
+    } else {
+        perl.split_once('-').map_or(perl.clone(), |(_, rest)| rest.to_string())
+    };
+    if v.is_empty() {
+        return vec![];
+    }
+    // p10k:3170 — `"$0" "blue" "$_p9k_color1" 'PERL_ICON' 0 '' "${v//\%/%%}"`
+    vec![make_segment("perlbrew", None, "blue", color1(), "PERL_ICON", esc_pct(&v))]
+}
+
+// ---------------------------------------------------------------------
+// chezmoi_shell (p10k:4257-4263)
+// ---------------------------------------------------------------------
+
+fn chezmoi_shell_segments() -> Vec<Segment> {
+    // p10k:4262 — cond '$CHEZMOI'.
+    if env_or_param("CHEZMOI").is_empty() {
+        return vec![];
+    }
+    // p10k:4258 — `$0 blue $_p9k_color1 CHEZMOI_ICON 0 '' ''`
+    vec![make_segment("chezmoi_shell", None, "blue", color1(), "CHEZMOI_ICON", String::new())]
+}
+
+// ---------------------------------------------------------------------
+// cpu_arch (p10k:5763-5792)
+// ---------------------------------------------------------------------
+
+/// The CPU architecture name, probed once per process (p10k's
+/// `_p9k_cache_ephemeral`): /proc/sys/kernel/arch where readable, else the
+/// first of `machine` / `arch` that prints a plain identifier.
+fn cpu_arch_text() -> &'static str {
+    static ARCH: OnceLock<String> = OnceLock::new();
+    ARCH.get_or_init(|| {
+        if let Ok(s) = std::fs::read_to_string("/proc/sys/kernel/arch") {
+            return s.trim_end_matches('\n').to_string();
+        }
+        for cmd in ["machine", "arch"] {
+            if let Some(out) = cached_cmd(cmd, &[]) {
+                let mut chars = out.chars();
+                let ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+                if ok {
+                    return out;
+                }
+            }
+        }
+        String::new()
+    })
+}
+
+fn cpu_arch_segments() -> Vec<Segment> {
+    // p10k:5794 — cond '$commands[machine]$commands[arch]'.
+    if cmd_on_path("machine").is_none() && cmd_on_path("arch").is_none() {
+        return vec![];
+    }
+    let text = cpu_arch_text();
+    if text.is_empty() {
+        return vec![];
+    }
+    // p10k:5782 — state=_${(U)text}; segment "$0$state" "yellow" color1 ARCH_ICON.
+    let state = text.to_uppercase();
+    vec![make_segment(
+        "cpu_arch",
+        Some(&state),
+        "yellow",
+        color1(),
+        "ARCH_ICON",
+        text.to_string(),
+    )]
+}
+
+// ---------------------------------------------------------------------
+// per_directory_history (p10k:5800-5806)
+// ---------------------------------------------------------------------
+
+fn per_directory_history_segments() -> Vec<Segment> {
+    // p10k:5822 — cond '$PER_DIRECTORY_HISTORY_TOGGLE'.
+    if env_or_param("PER_DIRECTORY_HISTORY_TOGGLE").is_empty() {
+        return vec![];
+    }
+    // p10k:5801-5805 — GLOBAL (bg 3) / LOCAL (bg 5), HISTORY_ICON.
+    if env_or_param("_per_directory_history_is_global") == "true" {
+        vec![make_segment(
+            "per_directory_history",
+            Some("GLOBAL"),
+            "3",
+            color1(),
+            "HISTORY_ICON",
+            "global".to_string(),
+        )]
+    } else {
+        vec![make_segment(
+            "per_directory_history",
+            Some("LOCAL"),
+            "5",
+            color1(),
+            "HISTORY_ICON",
+            "local".to_string(),
+        )]
+    }
 }
 
 // ---------------------------------------------------------------------

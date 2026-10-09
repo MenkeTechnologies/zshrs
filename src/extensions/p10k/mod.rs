@@ -22,6 +22,7 @@ pub mod api;
 pub mod config;
 pub mod expansion;
 pub mod git;
+pub mod gitconfig;
 pub mod icons;
 pub mod render;
 pub mod segments_core;
@@ -35,6 +36,7 @@ pub mod transient;
 pub mod vcs_backends;
 pub mod vcs_hooks;
 pub mod vcs_other;
+pub mod vcs_quilt;
 pub mod wizard;
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};

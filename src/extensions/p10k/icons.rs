@@ -69,6 +69,17 @@ fn icon_raw(name: &str) -> Option<&'static str> {
         "FREEBSD_ICON" => "\u{F30C} ",              // icons.zsh:452 '\UF30C '
         "ANDROID_ICON" => "\u{F17B}",               // icons.zsh:453 ''
         "LINUX_ARCH_ICON" => "\u{F303}",            // icons.zsh:454 ''
+        "LINUX_KALI_ICON" => "\u{F17C}",           // icons.zsh:705 (nerdfont-complete block)
+        "LINUX_ENDEAVOUROS_ICON" => "\u{F17C}",    // icons.zsh:708
+        "LINUX_ROCKY_ICON" => "\u{F17C}",         // icons.zsh:709
+        "LINUX_ALMALINUX_ICON" => "\u{F17C}",     // icons.zsh:710
+        "LINUX_GUIX_ICON" => "\u{F325} ",         // icons.zsh:711 '\uF325'$s
+        "LINUX_NEON_ICON" => "\u{F17C}",          // icons.zsh:712
+        "CHEZMOI_ICON" => "\u{F015} ",            // icons.zsh:756 '\uF015'$s
+        "YAZI_ICON" => "\u{F00B} ",               // icons.zsh:773 '\uF00b '
+        "LF_ICON" => "lf",                         // icons.zsh:787
+        "ARCH_ICON" => "\u{E266}",                // icons.zsh:802
+        "HISTORY_ICON" => "\u{F1DA} ",            // icons.zsh:803 '\uF1DA'$s
         "LINUX_CENTOS_ICON" => "\u{F304} ",         // icons.zsh:455 ''$s
         "LINUX_COREOS_ICON" => "\u{F305} ",         // icons.zsh:456 ''$s
         "LINUX_DEBIAN_ICON" => "\u{F306}",          // icons.zsh:457 ''
