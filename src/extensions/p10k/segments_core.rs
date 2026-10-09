@@ -817,7 +817,7 @@ fn custom_segments(name: &str) -> Vec<Segment> {
 // ---------------------------------------------------------------------
 
 /// p10k:3554-3560 — `__p9k_vcs_states` default backgrounds.
-fn vcs_state_default_bg(state: &str) -> &'static str {
+pub(super) fn vcs_state_default_bg(state: &str) -> &'static str {
     match state {
         "CLEAN" | "UNTRACKED" => "2",
         "MODIFIED" | "CONFLICTED" => "3",
@@ -995,21 +995,25 @@ fn vcs_remote_icon_key(url: &str) -> String {
 }
 
 fn vcs_segments() -> Vec<Segment> {
-    // p10k:4137 — configured backends; only git is ported.
+    // p10k:4176 — configured backends. git renders through the gitstatus
+    // port below; every other backend goes to the native vcs_info
+    // equivalent (vcs_other.rs, p10k:4181-4207).
     let mut backends = p9k_global_arr("VCS_BACKENDS");
     if backends.is_empty() {
         backends.push("git".to_string()); // p10k:7480 default (git)
     }
+    let others: Vec<String> = backends.iter().filter(|b| *b != "git").cloned().collect();
     if !backends.iter().any(|b| b == "git") {
-        tracing::debug!(target: "p10k", ?backends, "non-git VCS backends unported");
-        return vec![];
+        return super::vcs_other::vcs_info_segments(&others);
     }
 
     let cwd = cwd();
 
     let mut gs = match git::git_status_for(Path::new(&cwd)) {
         Some(g) => g,
-        None => return vec![], // p10k:3850-3851 — no repo, no segment
+        // p10k:4180-4181 — no git repo: `backends=(${backends:#git})`
+        // falls through to vcs_info for the remaining backends.
+        None => return super::vcs_other::vcs_info_segments(&others),
     };
 
     // p10k:4053-4057 _p9k_maybe_ignore_git_repo — repos whose
@@ -1017,7 +1021,7 @@ fn vcs_segments() -> Vec<Segment> {
     // treated as no-repo.
     let disabled = getsparam("POWERLEVEL9K_VCS_DISABLED_WORKDIR_PATTERN").unwrap_or_default();
     if !disabled.is_empty() && glob_match(&disabled, &gs.workdir, &home_dir()) {
-        return vec![];
+        return super::vcs_other::vcs_info_segments(&others);
     }
 
     // p10k:3871-3875 — VCS_GIT_HOOKS gate individual data sources.

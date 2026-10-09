@@ -32,6 +32,7 @@ pub mod segments_sys;
 pub mod segments_zshrs;
 pub mod shared;
 pub mod transient;
+pub mod vcs_other;
 pub mod wizard;
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -102,6 +103,8 @@ fn update_tty_state() {
             })
         };
         st.0 = tty;
+    } else if is_clear_or_reset(&PREEXEC_CMD.lock().unwrap()) && last_status() == 0 {
+        st.1 = true; // p10k:7062-7064 — `clear` / `reset` succeeded: new tty.
     } else if st.1 && st.2 {
         st.1 = false; // p10k:7065-7066 — `new` lasts one prompt.
     }
@@ -137,11 +140,42 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Called from the preexec dispatch site right before a foreground
-/// command runs (init.rs).
-pub fn note_exec_start() {
+/// Command text of the last preexec — `_p9k__preexec_cmd=$2`
+/// (p10k:5832). Read at the next precmd by the new-tty check.
+static PREEXEC_CMD: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Called from the preexec dispatch site (`run_preexec_hook`) right
+/// before a foreground command runs. `cmd` is the command text
+/// (`_p9k_preexec2`'s `$2`); `None` stores an empty command.
+/// Also sets `P9K_TTY=old` (p10k:5834).
+pub fn note_exec_start(cmd: Option<&str>) {
     if engine_active() {
         EXEC_START_MS.store(now_ms(), Ordering::Relaxed);
+        *PREEXEC_CMD.lock().unwrap() = cmd.unwrap_or("").to_string();
+        TTY_STATE.lock().unwrap().1 = false;
+    }
+}
+
+/// Is `cmd` exactly `clear [-x] [-T<term>]...` or `reset`, with optional
+/// surrounding whitespace? Port of the glob at p10k:7062
+/// `[[:space:]]#(clear([[:space:]]##-(|x)(|T[a-zA-Z0-9-_\'\"]#))#|reset)[[:space:]]#`.
+fn is_clear_or_reset(cmd: &str) -> bool {
+    let mut words = cmd.split_whitespace();
+    match words.next() {
+        Some("reset") => words.next().is_none(),
+        Some("clear") => words.all(|w| {
+            let Some(rest) = w.strip_prefix('-') else {
+                return false;
+            };
+            let rest = rest.strip_prefix('x').unwrap_or(rest);
+            match rest.strip_prefix('T') {
+                None => rest.is_empty(),
+                Some(t) => t
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '\'' | '"')),
+            }
+        }),
+        _ => false,
     }
 }
 
@@ -827,4 +861,25 @@ pub fn preprompt_render() {
 
     crate::ported::params::setsparam("PROMPT", &prompt);
     crate::ported::params::setsparam("RPROMPT", &rprompt);
+}
+
+#[cfg(test)]
+mod tty_tests {
+    use super::is_clear_or_reset;
+
+    #[test]
+    fn clear_and_reset_forms_match() {
+        for cmd in ["clear", "  clear  ", "reset", "clear -x", "clear -T xterm", "clear -Txterm-256color", "clear -xTvt100 -x"] {
+            // `-T xterm` has a detached operand: not part of the glob.
+            let expect = cmd != "clear -T xterm";
+            assert_eq!(is_clear_or_reset(cmd), expect, "{cmd:?}");
+        }
+    }
+
+    #[test]
+    fn other_commands_do_not_match() {
+        for cmd in ["", "clearx", "clear foo", "reset now", "clear -y", "echo clear", "clear;ls", "clear -T'a b'"] {
+            assert!(!is_clear_or_reset(cmd), "{cmd:?}");
+        }
+    }
 }

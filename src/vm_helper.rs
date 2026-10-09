@@ -117,7 +117,7 @@ pub fn run_preexec_hook(event_src: Option<&str>) {
     use crate::ported::zsh_h::{interact, isset, INTERACTIVECOMMENTS, SHINSTDIN};
     // Native p10k engine command timer (src/extensions/p10k): stamp the
     // command start for command_execution_time, with or without a user hook.
-    crate::p10k::note_exec_start();
+    crate::p10k::note_exec_start(event_src);
     let preexec_fn = crate::ported::utils::getshfunc("preexec"); // c:181
     let preexec_hook = crate::ported::params::paramtab()
         .read()

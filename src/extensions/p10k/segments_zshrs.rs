@@ -19,11 +19,16 @@
 //!   probe itself at :423-489).
 //! - zshrs_workers: `ShellExecutor.worker_pool` (vm_helper.rs:510) —
 //!   `WorkerPool::size()` / `queue_depth()` (worker.rs:215-224).
-//! - zshrs_jit: `fusevm::JitCompiler::jit_cache_dir()` (fusevm-0.14.5
-//!   jit.rs:7055) resolves the on-disk native-code cache; the `*.fjit`
-//!   blob scan runs behind a TTL. No tier/compile-counter stats API is
-//!   exported by fusevm (VM keeps its JIT state private) — the segment
-//!   shows the DISK-cache state only.
+//! - zshrs_jit: `fusevm::JitCompiler::jit_cache_dir()` (fusevm-0.26.7
+//!   jit.rs:8232) resolves the on-disk native-code cache; the `*.fjit`
+//!   blob scan runs behind a TTL. fusevm 0.26.7 exports no JIT counters
+//!   (compile / cache-hit / trace totals): its caches are thread-local
+//!   maps (`LINEAR_CACHE_TLS`, jit.rs:3080) with no counting, and the
+//!   only queries are per-chunk (`block_jit_is_compiled`,
+//!   `trace_is_compiled`). The segment shows the DISK-cache state only;
+//!   live counters need a fusevm API addition (process-global atomics
+//!   at the cache hit / compile / disk-load sites plus a `jit::stats()`
+//!   snapshot).
 //! - zshrs_cache: rkyv shard files under `$ZSHRS_HOME` (default
 //!   `~/.zshrs`) — `autoloads.rkyv` (autoload_cache.rs:491-500),
 //!   `scripts.rkyv` (script_cache.rs:3), plus the daemon's
@@ -32,11 +37,10 @@
 //!   (history.rs:114-116, root at :137-145); entry count via
 //!   `HistoryEngine::count()` (history.rs:492-495) through
 //!   `with_session_engine` (history.rs:575-583), long TTL.
-//! - stryke: hidden. Whether a handler is registered lives in
-//!   lib.rs `STRYKE_HANDLER`, a private `OnceLock` with no read-only
-//!   accessor; `try_stryke_dispatch` would EXECUTE the handler, which
-//!   prompt render must not do. The segment name and its
-//!   `POWERLEVEL9K_STRYKE_*` params are claimed.
+//! - stryke: shown when a stryke handler is registered
+//!   (`crate::stryke_handler_registered`, read-only) or `stryke` is an
+//!   enabled native command; version from `stryke --version` (TTL),
+//!   static `stryke` tag when no binary is on `$PATH`.
 //!
 //! Scheme colours, typed `POWERLEVEL9K_*` reads, icon resolution and the
 //! segment constructor come from shared.rs; the caches and probes below
@@ -344,10 +348,10 @@ fn zshrs_workers_segments() -> Vec<Segment> {
 /// fusevm JIT disk-cache state: `.fjit` native-blob count + total
 /// size, e.g. `42 1.3M`; a fresh (empty) cache shows the static `jit`
 /// tag. Hidden when disk caching is disabled
-/// (`FUSEVM_JIT_CACHE_DIR=off` → `jit_cache_dir()` None, fusevm-0.14.5
-/// jit.rs:7055) and in parity/compat modes. Live tier / block / trace
-/// compile counters are NOT exported by fusevm's public API (verified
-/// against fusevm-0.14.5 lib.rs exports — VM JIT state is private);
+/// (`FUSEVM_JIT_CACHE_DIR=off` → `jit_cache_dir()` None, fusevm-0.26.7
+/// jit.rs:8232) and in parity/compat modes. Live tier / block / trace
+/// compile counters are NOT exported by fusevm 0.26.7 (no counter
+/// statics or stats accessor in jit.rs / vm.rs; lib.rs exports none);
 /// only the on-disk state is shown. 15s TTL on the directory scan.
 ///
 /// Defaults: bg `color1`, fg `magenta`, icon `\u{F0E7}` (bolt).
@@ -357,13 +361,13 @@ fn zshrs_jit_segments() -> Vec<Segment> {
         return vec![];
     }
     let Some(joined) = cached_ttl("zshrs_jit.scan", Duration::from_secs(15), || {
-        // fusevm-0.14.5 jit.rs:7055 — resolution order: programmatic
+        // fusevm-0.26.7 jit.rs:8232 — resolution order: programmatic
         // override, $FUSEVM_JIT_CACHE_DIR (off-sentinel disables),
         // default ~/.cache/fusevm-jit. None = disk caching disabled.
         // JitCompiler::new() is an empty-Vec constructor (jit.rs) —
         // the method is effectively static.
         let dir = fusevm::JitCompiler::new().jit_cache_dir()?;
-        // Same *.fjit filter as jit_cache_size_bytes (jit.rs:7062);
+        // Same *.fjit filter as jit_cache_size_bytes (jit.rs:8239);
         // one pass yields count AND bytes. Missing dir = enabled but
         // never populated — real state, count 0.
         let (mut count, mut bytes) = (0usize, 0u64);
@@ -495,20 +499,38 @@ fn zshrs_history_segments() -> Vec<Segment> {
 // stryke
 // ---------------------------------------------------------------------
 
-/// Embedded stryke language state — ALWAYS HIDDEN today (module doc):
-/// the fat-binary registration hook exists (lib.rs:393-408
-/// `set_stryke_handler` / `STRYKE_HANDLER`), but the OnceLock is
-/// private with no read-only "is a handler registered?" accessor, and
-/// `try_stryke_dispatch` would EXECUTE the handler — running foreign
-/// code from prompt render is not an option. No version constant is
-/// linked into this crate either. The segment name is claimed so its
-/// POWERLEVEL9K_STRYKE_* params resolve.
+/// Embedded stryke language state: shown when the host runs with stryke
+/// linked in — a handler registered through `set_stryke_handler`
+/// (`crate::stryke_handler_registered`, a read-only probe; the handler is
+/// never invoked from prompt render) or a `stryke` native command
+/// (`native_cmds::is_enabled`, false after `disable stryke`). Content is
+/// the version token of `stryke --version` (same probe and 5-minute TTL as
+/// `stryke_version`); with no `stryke` binary on `$PATH` the embedded
+/// runtime has no in-process version accessor, so the static tag
+/// `stryke` is shown. Hidden in a thin build and in parity/compat modes.
+///
+/// Defaults: bg `color1`, fg `yellow`, icon `\u{26A1}`.
+/// Override via POWERLEVEL9K_STRYKE_*.
 fn stryke_segments() -> Vec<Segment> {
-    tracing::debug!(
-        target: "p10k",
-        "stryke segment: no registration probe in lib.rs (STRYKE_HANDLER private) — hidden"
-    );
-    vec![]
+    if introspection_irrelevant() {
+        return vec![];
+    }
+    if !crate::stryke_handler_registered() && !crate::native_cmds::is_enabled("stryke") {
+        return vec![];
+    }
+    let version = cached_ttl("stryke_version", Duration::from_secs(300), || {
+        let bin = path_lookup("stryke")?;
+        parse_version_token(&run_version(&bin)?)
+    });
+    vec![make_segment(
+        "stryke",
+        None,
+        color1(),
+        "yellow",
+        "STRYKE_ICON",
+        "\u{26A1}",
+        version.unwrap_or_else(|| "stryke".to_string()),
+    )]
 }
 
 // ---------------------------------------------------------------------

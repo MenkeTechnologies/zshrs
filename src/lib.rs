@@ -570,6 +570,12 @@ pub fn try_stryke_dispatch(code: &str) -> Option<i32> {
     STRYKE_HANDLER.get().map(|f| f(code))
 }
 
+/// Whether a stryke handler is registered (fat build). Read-only probe for
+/// the p10k `stryke` segment; unlike [`try_stryke_dispatch`] it runs nothing.
+pub(crate) fn stryke_handler_registered() -> bool {
+    STRYKE_HANDLER.get().is_some()
+}
+
 /// Run an interactive `@ <code>` line through the registered stryke handler.
 ///
 /// Called by `inputline` on each line it reads, before the lexer sees it:
