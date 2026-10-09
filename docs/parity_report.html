@@ -230,21 +230,21 @@
 <div class="note">The curated nine-way corpus (<code>cargo test --test emulation_parity</code>) passed 54 of 54 tests.</div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>DAILY DRIVER</h2>
-<div class="note cyan">Measured 2026-10-03 on v0.13.3; not re-run. Both shells started interactively in a pty with the real <code>~/.zshrc</code> (zpwr, zinit turbo) and probed through a sourced file once the prompt settled.</div>
+<div class="note cyan">Measured 2026-10-09 on v0.13.18, zshrs run twice with identical results. Both shells started interactively in a pty with the real <code>~/.zshrc</code> (zpwr, zinit turbo) and probed through a sourced file once the prompt settled.</div>
 <div class="tbl"><table class="fn-table">
   <thead><tr><th>Check</th><th class="num">zsh</th><th class="num">zshrs</th><th>Status</th><th>Reading</th></tr></thead>
   <tbody>
-    <tr><td><code>$#_comps</code>, no key pressed</td><td class="num">51,735</td><td class="num">51,795</td><td><span class="pill pass">match</span></td><td>zinit turbo drains while the prompt sits idle, 3 of 3 runs. It did not on 0.13.1.</td></tr>
-    <tr><td><code>$#fpath</code></td><td class="num">49</td><td class="num">52</td><td><span class="pill tag">expected</span></td><td>zshrs adds its bundled function directories</td></tr>
+    <tr><td><code>$#_comps</code>, no key pressed</td><td class="num">51,795</td><td class="num">51,836</td><td><span class="pill pass">match</span></td><td>zinit turbo drains while the prompt sits idle; the probe ran after a 30 s settle.</td></tr>
+    <tr><td><code>$#fpath</code></td><td class="num">52</td><td class="num">52</td><td><span class="pill pass">match</span></td><td>same count in this run</td></tr>
     <tr><td>zstyles defined</td><td class="num">204</td><td class="num">190</td><td><span class="pill tag">by design</span></td><td>.zshrc skips fast-syntax-highlighting and the p10k theme code under zshrs (<code>ZPWR_NATIVE_ZLE</code>), dropping their vcs_info and theme styles</td></tr>
     <tr><td>3 commands typed in one burst</td><td class="num">3/3</td><td class="num">3/3</td><td><span class="pill pass">match</span></td><td>no type-ahead lost</td></tr>
-    <tr><td>Fast-typed <code>$(</code> <code>[</code> <code>'</code> <code>${</code> lines</td><td class="num">varies</td><td class="num">5/5</td><td><span class="pill pass">match</span></td><td>zsh's own result varied between runs while its turbo plugins were still loading</td></tr>
+    <tr><td>Fast-typed <code>$(</code> <code>[</code> <code>'</code> <code>${</code> lines</td><td class="num">5/5</td><td class="num">5/5</td><td><span class="pill pass">match</span></td><td>lines: <code>$(echo a)</code>, quote mix, <code>${HOME:t}</code>, <code>$((1+2))</code>, <code>"x y"</code>; typed after the prompt settled</td></tr>
   </tbody>
 </table></div>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>METHOD</h2>
 <ul class="body-txt">
-  <li>zshrs built from tag v0.13.18 (<code>git archive</code> into a scratch directory, debug profile), so other work in the shared tree could not change it mid-run. Every figure below except the daily-driver table comes from that one build.</li>
+  <li>zshrs built from tag v0.13.18 (<code>git archive</code> into a scratch directory, debug profile), so other work in the shared tree could not change it mid-run. Every figure on this page comes from that one build.</li>
   <li>Oracle: zsh 5.9.2 built from the <code>zsh-5.9.2</code> tag with <code>--enable-unicode9</code>. <code>scripts/ztst_compsys.py</code> ran the suite once with zsh as baseline and once with zshrs as the shell under test (<code>--core</code> for the non-Y files, default mode for Y01&ndash;Y03). The 5.9.2 tree holds no Y04&ndash;Y06.</li>
   <li>This zsh build has no gdbm and cannot load <code>zsh/param/private</code>, and P01privileged needs root. Those assertions are excluded from both sides.</li>
   <li>X04zlehighlight hangs under zshrs and is killed at 180 s; its 12 assertions count as missed.</li>
@@ -252,7 +252,7 @@
   <li>cargo parity: <code>cargo test --test parity</code> in the same snapshot; the reference shell is the development-tree oracle build resolved by <code>tests/parity/oracle.rs</code>. Failures re-run alone with <code>--test-threads=1</code>.</li>
   <li>Surface and fuzz checks compare against the host zsh 5.9.2 and the reference shells named in each table.</li>
   <li>C port coverage is read from the published port report (generated 2026-10-06), not regenerated for this page.</li>
-  <li>The daily-driver table was not re-measured: its figures are from 2026-10-03 on v0.13.3.</li>
+  <li>Daily driver: a pty harness started each shell with <code>-i</code> and the real <code>~/.zshrc</code>, waited 30 s, then sourced a probe file and typed the burst and quote lines.</li>
 </ul>
 </main>
 </div>
