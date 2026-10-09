@@ -75,6 +75,8 @@ pub mod token_char;
 pub mod zlong_cast;
 /// `host_libc` submodule (Rust-only): host-libc behaviours C zsh inherits by calling libc.
 pub mod host_libc;
+/// `fork_safe_pool` submodule (Rust-only): a rayon pool that survives `fork()`.
+pub mod fork_safe_pool;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
 /// `test_util` submodule.

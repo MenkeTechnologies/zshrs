@@ -2584,3 +2584,52 @@ fn korn_dropin_matches_an_anchored_empty_replacement_pattern() {
         assert_eq!(out, "[Xabc]\n", "{mode} must keep the empty-pattern match");
     }
 }
+
+// A recursive glob fans out over a worker pool. `$(...)` forks, and a forked
+// child inherits that pool's handles without its threads, so the same glob run
+// inside the substitution waited on workers that did not exist. The script
+// below hung forever before the pool was made per-process.
+#[test]
+fn recursive_glob_inside_command_substitution_after_a_parent_glob_does_not_hang() {
+    let Some(bin) = zshrs_bin() else {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    };
+    let tree = tempfile::tempdir().expect("tempdir");
+    for dir in ["src/a", "src/b", "docs"] {
+        std::fs::create_dir_all(tree.path().join(dir)).unwrap();
+    }
+    for file in ["src/a/main.rs", "src/b/util.rs", "docs/guide.md"] {
+        std::fs::write(tree.path().join(file), "").unwrap();
+    }
+    let script = format!(
+        "t={}; for f in $t/**/*(N); do :; done; n=$(for f in $t/**/*(N); do print -r -- $f; done | wc -l); print $n",
+        tree.path().display()
+    );
+    let mut child = Command::new(&bin)
+        .args(["--zsh", "-f", "-c", &script])
+        .env_remove("ZSHRS_CACHE")
+        .env_remove("ZDOTDIR")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn zshrs");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait") {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("glob inside $(...) hung after a parent glob");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(status.success());
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut out).unwrap();
+    // docs, docs/guide.md, src, src/a, src/a/main.rs, src/b, src/b/util.rs
+    assert_eq!(out.trim(), "7");
+}

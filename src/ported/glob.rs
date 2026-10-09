@@ -651,7 +651,10 @@ fn scanner(state: &mut globdata, q: Option<&complist>, shortcircuit: i32, in_clo
                 // option snapshot this glob started with.
                 let snap = GLOB_OPTS_TLS.with_borrow(|g| *g);
                 let shared: &globdata = state;
-                let results: Vec<(Vec<gmatch>, i32)> = subdirs
+                // The process's own pool, not rayon's global one: a forked child
+                // (`$(...)`, a pipeline stage) inherits the global pool's handles
+                // without its threads, and `par_iter` there never returns.
+                let results: Option<Vec<(Vec<gmatch>, i32)>> = crate::fork_safe_pool::pool().map(|pool| pool.install(|| subdirs
                     .par_iter()
                     .map(|name| {
                         let mut child = globdata::new();
@@ -673,12 +676,14 @@ fn scanner(state: &mut globdata, q: Option<&complist>, shortcircuit: i32, in_clo
                         GLOB_OPTS_TLS.with_borrow_mut(|g| *g = prev);
                         (child.matches, child.matchct)
                     })
-                    .collect();
-                for (matches, matchct) in results {
-                    state.matches.extend(matches);
-                    state.matchct += matchct;
+                    .collect()));
+                if let Some(results) = results {
+                    for (matches, matchct) in results {
+                        state.matches.extend(matches);
+                        state.matchct += matchct;
+                    }
+                    subdirs.clear();
                 }
-                subdirs.clear();
             }
             for name in subdirs {
                 addpath(&mut state.pathbuf, &name);
