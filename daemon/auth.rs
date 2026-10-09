@@ -172,8 +172,8 @@ pub fn op_scope(op: &str) -> &'static str {
         "definitions_emit" => "defs.write",
 
         // ---- snapshot.* ----
-        "snapshot_list" | "snapshot_diff" | "snapshot_verify" | "snapshot_pubkey" => "snapshot.read",
-        "snapshot_save" | "snapshot_load" | "snapshot_sign" | "snapshot_publish" => "snapshot.write",
+        "snapshot_list" | "snapshot_diff" | "snapshot_bisect" | "snapshot_verify" | "snapshot_pubkey" => "snapshot.read",
+        "snapshot_save" | "snapshot_load" | "snapshot_sign" | "snapshot_publish" | "snapshot_pull" => "snapshot.write",
 
         // ---- artifact.* ----
         "artifact_get" | "artifact_get_by_digest" | "artifact_list" => "artifact.read",
@@ -319,6 +319,8 @@ mod tests {
         assert_eq!(op_scope("snapshot_publish"), "snapshot.write");
         assert_eq!(op_scope("snapshot_verify"), "snapshot.read");
         assert_eq!(op_scope("snapshot_pubkey"), "snapshot.read");
+        assert_eq!(op_scope("snapshot_bisect"), "snapshot.read");
+        assert_eq!(op_scope("snapshot_pull"), "snapshot.write");
         assert_eq!(op_scope("watch_subscribe"), "watch.write");
         assert_eq!(op_scope("recorder_ingest"), "recorder.write");
         assert_eq!(op_scope("info"), "meta.read");

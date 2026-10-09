@@ -821,7 +821,7 @@ fn cmd_defs(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
 fn cmd_snapshot(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
     let sub = rest
         .first()
-        .ok_or("usage: zd snapshot <save|list|load|diff|sign|verify|publish|pubkey> ...")?;
+        .ok_or("usage: zd snapshot <save|list|load|diff|sign|verify|publish|pubkey|bisect|pull> ...")?;
     match sub.as_str() {
         "save" => {
             let tag = rest
@@ -902,6 +902,30 @@ fn cmd_artifact(t: &mut dyn Transport, rest: &[String]) -> Result<String, String
             t.post("snapshot_publish", body)
         }
         "pubkey" => t.post("snapshot_pubkey", json!({})),
+        "bisect" => {
+            let good = rest.get(1).ok_or("usage: zd snapshot bisect GOOD [BAD]")?;
+            let mut body = json!({"good": good});
+            if let Some(bad) = rest.get(2) {
+                body["bad"] = json!(bad);
+            }
+            t.post("snapshot_bisect", body)
+        }
+        "pull" => {
+            let tag = rest
+                .get(1)
+                .ok_or("usage: zd snapshot pull TAG [--registry R] [--public-key HEX] [--force]")?;
+            let mut body = json!({"tag": tag});
+            if let Some(pos) = rest.iter().position(|a| a == "--registry") {
+                body["registry"] = json!(rest.get(pos + 1).ok_or("--registry requires VALUE")?);
+            }
+            if let Some(pos) = rest.iter().position(|a| a == "--public-key") {
+                body["public_key"] = json!(rest.get(pos + 1).ok_or("--public-key requires VALUE")?);
+            }
+            if rest.iter().any(|a| a == "--force") {
+                body["force"] = json!(true);
+            }
+            t.post("snapshot_pull", body)
+        }
         .ok_or("usage: zd artifact <put|get|list|gc> ...")?;
     match sub.as_str() {
         "put" => {

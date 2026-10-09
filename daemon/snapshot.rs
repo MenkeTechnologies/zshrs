@@ -32,6 +32,19 @@
 //! | `snapshot_sign`   | `{tag}`           | `{tag, sha256, bytes, public_key, sig_path}` |
 //! | `snapshot_verify` | `{tag, public_key?, registry?}` | `{ok, tag, sha256, public_key, trusted}` or error `snapshot_verify_failed` |
 //! | `snapshot_publish`| `{tag, registry?}` | `{tag, registry, sha256, files}`          |
+//! | `snapshot_pull`   | `{tag, registry?, public_key?, force?}` | `{tag, registry, sha256, bytes, path, trusted, public_key}` |
+//! | `snapshot_bisect` | `{good, bad?}`    | `{diverged, first, good_records, bad_records, added, removed, changed}` |
+//!
+//! `snapshot_pull` is the inverse of publish: it fetches
+//! `<registry>/<tag>/{snapshot.rkyv,snapshot.rkyv.sig}`, verifies the
+//! signature against `public_key` (else the local key), validates the
+//! rkyv archive, and writes snapshot + signature atomically into the
+//! local store. An existing local tag is refused unless `force` is true.
+//!
+//! `snapshot_bisect` flattens each snapshot into ordered
+//! `(kind, key) -> value` records and merge-walks both sides, returning
+//! the first record (in `(kind, key)` order) that differs. `bad`
+//! omitted compares against the live in-process canonical state.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -70,10 +83,15 @@ const SUBSYSTEMS: &[&str] = &[
 ];
 
 fn tag_arg(args: &Value) -> std::result::Result<String, ErrPayload> {
+    tag_field(args, "tag")
+}
+
+/// Validated snapshot tag taken from the named argument.
+fn tag_field(args: &Value, field: &str) -> std::result::Result<String, ErrPayload> {
     let tag = args
-        .get("tag")
+        .get(field)
         .and_then(Value::as_str)
-        .ok_or_else(|| ErrPayload::new("bad_args", "missing `tag`"))?;
+        .ok_or_else(|| ErrPayload::new("bad_args", format!("missing `{field}`")))?;
     if tag.is_empty()
         || tag.starts_with('.')
         || !tag
@@ -784,16 +802,17 @@ pub async fn op_snapshot_sign(state: &Arc<DaemonState>, args: Value) -> OpResult
     }))
 }
 
-/// `op_snapshot_verify` — verify the local snapshot (or, with
-/// `registry`, its published copy) against `public_key` or the local key.
-/// A mismatch or tamper is the error `snapshot_verify_failed`.
-pub async fn op_snapshot_verify(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    let tag = tag_arg(&args)?;
-    let (trusted, trusted_src) = match args.get("public_key").and_then(Value::as_str) {
-        Some(hex) => (
+/// Trusted verifier key: the `public_key` arg (hex), else the existing
+/// local signing key. Never creates a key.
+fn trusted_key(
+    state: &DaemonState,
+    args: &Value,
+) -> Result<(VerifyingKey, &'static str), ErrPayload> {
+    match args.get("public_key").and_then(Value::as_str) {
+        Some(hex) => Ok((
             parse_public_key(hex).map_err(|m| ErrPayload::new("bad_args", m))?,
             "supplied",
-        ),
+        )),
         None => {
             let path = key_path(state);
             if std::fs::symlink_metadata(&path).is_err() {
@@ -802,9 +821,17 @@ pub async fn op_snapshot_verify(state: &Arc<DaemonState>, args: Value) -> OpResu
                     "no local signing key and no `public_key` supplied",
                 ));
             }
-            (load_or_create_key(&path)?.verifying_key(), "local")
+            Ok((load_or_create_key(&path)?.verifying_key(), "local"))
         }
-    };
+    }
+}
+
+/// `op_snapshot_verify` — verify the local snapshot (or, with
+/// `registry`, its published copy) against `public_key` or the local key.
+/// A mismatch or tamper is the error `snapshot_verify_failed`.
+pub async fn op_snapshot_verify(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let tag = tag_arg(&args)?;
+    let (trusted, trusted_src) = trusted_key(state, &args)?;
     let registry = resolve_registry_if_requested(state, &args)?;
     let (data, doc) = match registry {
         Some(reg) => {
@@ -904,6 +931,211 @@ pub async fn op_snapshot_publish(state: &Arc<DaemonState>, args: Value) -> OpRes
         "sha256": sha,
         "files": [REG_SNAPSHOT, REG_SIGNATURE, REG_MANIFEST],
     }))
+}
+
+/// `op_snapshot_pull` — fetch `<registry>/<tag>`, verify its signature
+/// against `public_key` (else the local key), validate the archive, and
+/// install snapshot + signature atomically. Refuses to replace an
+/// existing local tag unless `force` is true; nothing is written when
+/// verification fails.
+pub async fn op_snapshot_pull(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let tag = tag_arg(&args)?;
+    let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+    let dest = snapshot_path(state, &tag);
+    if dest.exists() && !force {
+        return Err(ErrPayload::new(
+            "snapshot_exists",
+            format!("snapshot `{tag}` already exists locally; pass force=true to replace it"),
+        ));
+    }
+    let (trusted, trusted_src) = trusted_key(state, &args)?;
+    let reg = resolve_registry(state, &args)?.ok_or_else(|| {
+        ErrPayload::new(
+            "no_registry",
+            "no `registry` arg and no [snapshot] registry in zshrs-daemon.toml",
+        )
+    })?;
+    let label = reg.label();
+    let t = tag.clone();
+    let (data, doc) = tokio::task::spawn_blocking(move || registry_get(&reg, &t))
+        .await
+        .map_err(join_err)?
+        .map_err(|m| ErrPayload::new("snapshot_read", m))?;
+    verify_sig_doc(&data, &doc, &trusted).map_err(|m| {
+        ErrPayload::new(
+            "snapshot_verify_failed",
+            format!("refusing to pull `{tag}`: {m}"),
+        )
+    })?;
+    rkyv::check_archived_root::<super::shard::CanonicalShard>(&data).map_err(|e| {
+        ErrPayload::new("snapshot_read", format!("pulled `{tag}` is not a valid snapshot: {e}"))
+    })?;
+    std::fs::create_dir_all(&state.paths.snapshots_dir)
+        .map_err(|e| ErrPayload::new("snapshot_write", e.to_string()))?;
+    let sig_body = serde_json::to_vec_pretty(&doc)
+        .map_err(|e| ErrPayload::new("snapshot_write", e.to_string()))?;
+    atomic_write(&dest, &data, 0o600)
+        .map_err(|e| ErrPayload::new("snapshot_write", format!("{}: {e}", dest.display())))?;
+    atomic_write(&sig_path(state, &tag), &sig_body, 0o600)
+        .map_err(|e| ErrPayload::new("snapshot_write", e.to_string()))?;
+    Ok(json!({
+        "tag": tag,
+        "registry": label,
+        "sha256": sha256_hex(&data),
+        "bytes": data.len(),
+        "path": dest.display().to_string(),
+        "trusted": trusted_src,
+        "public_key": hex_encode(trusted.as_bytes()),
+    }))
+}
+
+/// Flattened snapshot: `(kind, key) -> value`, ordered by `(kind, key)`.
+type Records = std::collections::BTreeMap<(String, String), String>;
+
+/// Flatten every record of a shard into one ordered map. List-shaped
+/// subsystems are keyed by zero-padded position so list order is part of
+/// the comparison.
+fn records(s: &super::shard::CanonicalShard) -> Records {
+    use std::collections::HashMap;
+    let mut out = Records::new();
+    let maps: [(&str, &HashMap<String, String>); 10] = [
+        ("alias", &s.aliases),
+        ("galias", &s.global_aliases),
+        ("salias", &s.suffix_aliases),
+        ("function", &s.functions),
+        ("function_autoload", &s.autoload_functions),
+        ("env", &s.env_exports),
+        ("params", &s.params),
+        ("bindkey", &s.bindkeys),
+        ("compdef", &s.compdef),
+        ("named_dir", &s.named_dirs),
+    ];
+    for (kind, map) in maps {
+        for (k, v) in map {
+            out.insert((kind.to_string(), k.clone()), v.clone());
+        }
+    }
+    for (sub, table) in &s.extras {
+        for (k, v) in table {
+            out.insert((format!("extra.{sub}"), k.clone()), v.clone());
+        }
+    }
+    let lists: [(&str, &Vec<String>); 4] = [
+        ("path", &s.path),
+        ("fpath", &s.fpath),
+        ("manpath", &s.manpath),
+        ("source", &s.sourced_files),
+    ];
+    for (kind, list) in lists {
+        for (i, item) in list.iter().enumerate() {
+            out.insert((kind.to_string(), format!("{i:08}")), item.clone());
+        }
+    }
+    for m in &s.zmodload {
+        out.insert(("zmodload".into(), m.clone()), String::new());
+    }
+    for o in &s.setopts {
+        out.insert(("setopt".into(), o.clone()), "on".into());
+    }
+    for o in &s.unsetopts {
+        out.insert(("unsetopt".into(), o.clone()), "off".into());
+    }
+    for (i, (pattern, rule)) in s.zstyle.iter().enumerate() {
+        out.insert(("zstyle".into(), format!("{i:08}:{pattern}")), rule.clone());
+    }
+    for (i, (manager, name)) in s.plugins.iter().enumerate() {
+        out.insert(("plugin".into(), format!("{i:08}:{manager}")), name.clone());
+    }
+    out
+}
+
+/// Digest, size, and a bounded preview of one record value.
+fn value_summary(v: &str) -> Value {
+    json!({
+        "sha256": sha256_hex(v.as_bytes()),
+        "bytes": v.len(),
+        "value": v.chars().take(200).collect::<String>(),
+    })
+}
+
+/// Merge-walk two ordered record sets; report the first record (in
+/// `(kind, key)` order) present on one side only or with differing
+/// values, plus totals over the whole walk.
+fn bisect_records(good: &Records, bad: &Records) -> Value {
+    use std::cmp::Ordering;
+    let mut gi = good.iter().peekable();
+    let mut bi = bad.iter().peekable();
+    let (mut added, mut removed, mut changed) = (0usize, 0usize, 0usize);
+    let mut first: Option<Value> = None;
+    loop {
+        let order = match (gi.peek(), bi.peek()) {
+            (None, None) => break,
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (Some((gk, _)), Some((bk, _))) => (*gk).cmp(*bk),
+        };
+        let (change, g, b) = match order {
+            Ordering::Less => {
+                removed += 1;
+                ("removed", gi.next(), None)
+            }
+            Ordering::Greater => {
+                added += 1;
+                ("added", None, bi.next())
+            }
+            Ordering::Equal => {
+                let (g, b) = (gi.next(), bi.next());
+                if g.map(|r| r.1) == b.map(|r| r.1) {
+                    continue;
+                }
+                changed += 1;
+                ("changed", g, b)
+            }
+        };
+        if first.is_none() {
+            let (kind, key) = g.or(b).map(|r| r.0.clone()).unwrap_or_default();
+            first = Some(json!({
+                "kind": kind,
+                "key": key,
+                "change": change,
+                "good": g.map(|r| value_summary(r.1)),
+                "bad": b.map(|r| value_summary(r.1)),
+            }));
+        }
+    }
+    json!({
+        "diverged": first.is_some(),
+        "first": first,
+        "good_records": good.len(),
+        "bad_records": bad.len(),
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    })
+}
+
+/// `op_snapshot_bisect` — first diverging record between snapshot
+/// `good` and snapshot `bad` (or the live canonical state when `bad` is
+/// omitted). `added` = only in bad, `removed` = only in good.
+pub async fn op_snapshot_bisect(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let good_tag = tag_field(&args, "good")?;
+    let load = |tag: &str| {
+        super::shard::read_canonical_shard(&snapshot_path(state, tag))
+            .map_err(|e| ErrPayload::new("snapshot_read", format!("read `{tag}`: {e}")))
+    };
+    let good = records(&load(&good_tag)?);
+    let (bad_label, bad) = if args.get("bad").is_some_and(|v| !v.is_null()) {
+        let tag = tag_field(&args, "bad")?;
+        let recs = records(&load(&tag)?);
+        (tag, recs)
+    } else {
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+        ("live".to_string(), records(&state.canonical.snapshot_shard(now)))
+    };
+    let mut out = bisect_records(&good, &bad);
+    out["good"] = json!(good_tag);
+    out["bad"] = json!(bad_label);
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1056,6 +1288,199 @@ mod signing_tests {
         let e = op_snapshot_verify(&state, json!({"tag": "s1", "public_key": other_pub}))
             .await
             .unwrap_err();
+        assert_eq!(e.code, "snapshot_verify_failed");
+    }
+}
+
+#[cfg(test)]
+mod pull_bisect_tests {
+    use super::*;
+    use super::super::shard::CanonicalShard;
+
+    fn new_state(root: &Path) -> Arc<DaemonState> {
+        let paths = super::super::paths::CachePaths::with_root(root.to_path_buf());
+        paths.ensure_dirs().unwrap();
+        DaemonState::new(paths).unwrap()
+    }
+
+    fn shard_with(aliases: &[(&str, &str)]) -> CanonicalShard {
+        let mut s = CanonicalShard::default();
+        for (k, v) in aliases {
+            s.aliases.insert(k.to_string(), v.to_string());
+        }
+        s
+    }
+
+    #[test]
+    fn bisect_identical_has_no_divergence() {
+        let a = records(&shard_with(&[("ll", "ls -l"), ("gs", "git status")]));
+        let out = bisect_records(&a, &a.clone());
+        assert_eq!(out["diverged"], false);
+        assert!(out["first"].is_null());
+        assert_eq!(out["good_records"], 2);
+        assert_eq!((out["added"].as_u64(), out["removed"].as_u64(), out["changed"].as_u64()),
+                   (Some(0), Some(0), Some(0)));
+    }
+
+    #[test]
+    fn bisect_reports_first_changed_record_in_key_order() {
+        let good = records(&shard_with(&[("aa", "1"), ("bb", "2"), ("cc", "3")]));
+        let bad = records(&shard_with(&[("aa", "1"), ("bb", "two"), ("cc", "THREE")]));
+        let out = bisect_records(&good, &bad);
+        assert_eq!(out["diverged"], true);
+        assert_eq!(out["first"]["kind"], "alias");
+        assert_eq!(out["first"]["key"], "bb");
+        assert_eq!(out["first"]["change"], "changed");
+        assert_eq!(out["first"]["good"]["value"], "2");
+        assert_eq!(out["first"]["bad"]["value"], "two");
+        assert_eq!(out["first"]["good"]["sha256"], sha256_hex(b"2"));
+        assert_eq!(out["changed"], 2);
+    }
+
+    #[test]
+    fn bisect_reports_added_and_removed_records() {
+        let base = shard_with(&[("bb", "2")]);
+        let with_extra = shard_with(&[("aa", "1"), ("bb", "2")]);
+        let out = bisect_records(&records(&base), &records(&with_extra));
+        assert_eq!(out["first"]["key"], "aa");
+        assert_eq!(out["first"]["change"], "added");
+        assert!(out["first"]["good"].is_null());
+        assert_eq!(out["added"], 1);
+
+        let out = bisect_records(&records(&with_extra), &records(&base));
+        assert_eq!(out["first"]["key"], "aa");
+        assert_eq!(out["first"]["change"], "removed");
+        assert!(out["first"]["bad"].is_null());
+        assert_eq!(out["removed"], 1);
+    }
+
+    #[test]
+    fn records_cover_lists_and_extras_in_order() {
+        let mut s = CanonicalShard::default();
+        s.path = vec!["/a".into(), "/b".into()];
+        s.setopts = vec!["extendedglob".into()];
+        s.extras
+            .entry("service".into())
+            .or_default()
+            .insert("k".into(), "v".into());
+        let r = records(&s);
+        assert_eq!(r[&("path".to_string(), "00000001".to_string())], "/b");
+        assert_eq!(r[&("setopt".to_string(), "extendedglob".to_string())], "on");
+        assert_eq!(r[&("extra.service".to_string(), "k".to_string())], "v");
+
+        // Reordering a list is a divergence at the first moved position.
+        let mut t = s.clone();
+        t.path = vec!["/b".into(), "/a".into()];
+        let out = bisect_records(&r, &records(&t));
+        assert_eq!(out["first"]["kind"], "path");
+        assert_eq!(out["first"]["key"], "00000000");
+    }
+
+    #[tokio::test]
+    async fn bisect_op_against_snapshots_and_live_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = new_state(&dir.path().join("zshrs"));
+        op_snapshot_save(&state, json!({"tag": "g1"})).await.unwrap();
+        op_snapshot_save(&state, json!({"tag": "g2"})).await.unwrap();
+        let same = op_snapshot_bisect(&state, json!({"good": "g1", "bad": "g2"})).await.unwrap();
+        assert_eq!(same["diverged"], false);
+        let live = op_snapshot_bisect(&state, json!({"good": "g1"})).await.unwrap();
+        assert_eq!(live["bad"], "live");
+        assert_eq!(live["diverged"], false);
+        let e = op_snapshot_bisect(&state, json!({"good": "nope"})).await.unwrap_err();
+        assert_eq!(e.code, "snapshot_read");
+        let e = op_snapshot_bisect(&state, json!({"good": "../x"})).await.unwrap_err();
+        assert_eq!(e.code, "bad_args");
+    }
+
+    #[tokio::test]
+    async fn publish_pull_round_trip_tamper_and_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = new_state(&dir.path().join("src"));
+        let dst = new_state(&dir.path().join("dst"));
+        let reg_dir = dir.path().join("registry");
+        let reg = reg_dir.display().to_string();
+
+        op_snapshot_save(&src, json!({"tag": "rel"})).await.unwrap();
+        let published = op_snapshot_publish(&src, json!({"tag": "rel", "registry": reg}))
+            .await
+            .unwrap();
+        let pubkey = op_snapshot_pubkey(&src, json!({})).await.unwrap()["public_key"].clone();
+
+        // Fresh store has no key and no snapshot: pull needs an explicit key.
+        let e = op_snapshot_pull(&dst, json!({"tag": "rel", "registry": reg}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "snapshot_key");
+
+        let pulled = op_snapshot_pull(
+            &dst,
+            json!({"tag": "rel", "registry": reg, "public_key": pubkey}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(pulled["sha256"], published["sha256"]);
+        assert_eq!(
+            std::fs::read(snapshot_path(&src, "rel")).unwrap(),
+            std::fs::read(snapshot_path(&dst, "rel")).unwrap()
+        );
+        // Pulled signature verifies locally against the supplied key.
+        op_snapshot_verify(&dst, json!({"tag": "rel", "public_key": pubkey}))
+            .await
+            .unwrap();
+
+        // Overwrite refused without force, accepted with it.
+        let e = op_snapshot_pull(
+            &dst,
+            json!({"tag": "rel", "registry": reg, "public_key": pubkey}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, "snapshot_exists");
+        op_snapshot_pull(
+            &dst,
+            json!({"tag": "rel", "registry": reg, "public_key": pubkey, "force": true}),
+        )
+        .await
+        .unwrap();
+
+        // Tampered registry copy is rejected and nothing is installed.
+        let mut bytes = std::fs::read(reg_dir.join("rel").join(REG_SNAPSHOT)).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
+        std::fs::write(reg_dir.join("rel").join(REG_SNAPSHOT), bytes).unwrap();
+        let e = op_snapshot_pull(
+            &dst,
+            json!({"tag": "fresh", "registry": reg, "public_key": pubkey}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, "snapshot_read"); // no such tag in registry
+        std::fs::rename(reg_dir.join("rel"), reg_dir.join("fresh")).unwrap();
+        let e = op_snapshot_pull(
+            &dst,
+            json!({"tag": "fresh", "registry": reg, "public_key": pubkey}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, "snapshot_verify_failed");
+        assert!(!snapshot_path(&dst, "fresh").exists());
+
+        // A different trusted key is rejected too.
+        let other = tempfile::tempdir().unwrap();
+        let other_pub = hex_encode(
+            load_or_create_key(&other.path().join(KEY_FILE))
+                .unwrap()
+                .verifying_key()
+                .as_bytes(),
+        );
+        std::fs::rename(reg_dir.join("fresh"), reg_dir.join("rel")).unwrap();
+        let e = op_snapshot_pull(
+            &dst,
+            json!({"tag": "rel", "registry": reg, "public_key": other_pub, "force": true}),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e.code, "snapshot_verify_failed");
     }
 }

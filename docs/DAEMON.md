@@ -672,8 +672,8 @@ HTTP-surfaced contract per op.
 | job      | `job_submit` / `job_status` / `job_output` / `job_list` / `job_kill` / `job_cancel` / `job_wait` / `job_input` / `job_resize` | tokio task queue (`job_input` writes to PTY master fd; `job_resize` propagates TIOCSWINSZ) |
 | schedule | `schedule_add` / `schedule_add_once` / `schedule_remove` / `schedule_list` | cron-equivalent |
 | lock     | `lock_acquire` / `lock_try_acquire` / `lock_release` / `lock_list` | named cross-process mutex |
-| snapshot | `snapshot_save` / `snapshot_list` / `snapshot_load` / `snapshot_diff` | tag-based canonical state captures |
-| snapshot | `snapshot_sign` / `snapshot_verify` / `snapshot_publish` / `snapshot_pubkey` | ed25519 detached signatures, verification, registry publish (see "Snapshot signing and registry") |
+| snapshot | `snapshot_save` / `snapshot_list` / `snapshot_load` / `snapshot_diff` / `snapshot_bisect` | tag-based canonical state captures |
+| snapshot | `snapshot_sign` / `snapshot_verify` / `snapshot_publish` / `snapshot_pull` / `snapshot_pubkey` | ed25519 detached signatures, verification, registry publish and pull (see "Snapshot signing and registry") |
 | source   | `source_resolve` | bytecode-cache lookup for `source FILE` / `. FILE` |
 | source   | `load_script` | cold-load `zshrs FILE` |
 | source   | `import_zwc` / `import_zcompdump` / `import_history` / `import_catalog` / `import_shard` / `import_all` | user-explicit legacy / backup ingest |
@@ -1282,6 +1282,8 @@ Snapshots (`<state root>/snapshots/<tag>.rkyv`) can be signed, verified, and pub
 - **`snapshot_sign {tag}`** writes `<tag>.rkyv.sig` beside the snapshot: a JSON document with the sha256 digest, the signer public key, and an ed25519 signature over the exact snapshot bytes.
 - **`snapshot_verify {tag, public_key?, registry?}`** checks the digest and signature against `public_key` (hex) or, if omitted, the local key. With `registry`, the published copy is verified instead of the local file. Digest mismatch, tampering, or a different signer returns the error `snapshot_verify_failed`.
 - **`snapshot_publish {tag, registry?}`** verifies the snapshot (signing it first if no signature exists; an invalid existing signature aborts), then writes `<registry>/<tag>/{snapshot.rkyv,snapshot.rkyv.sig,manifest.json}` with the manifest last. All local writes are tmp + rename.
+- **`snapshot_pull {tag, registry?, public_key?, force?}`** is the inverse of publish: fetches `<registry>/<tag>/{snapshot.rkyv,snapshot.rkyv.sig}` (directory, `file://`, or `http(s)://` GET), verifies the signature against `public_key` (hex) or, if omitted, the local key, validates the rkyv archive, and installs snapshot + signature with tmp + rename. Unsigned, tampered, or wrong-signer copies return `snapshot_verify_failed` and nothing is written. An existing local tag is refused with `snapshot_exists` unless `force` is true.
+- **`snapshot_bisect {good, bad?}`** flattens both snapshots into `(kind, key) -> value` records ordered by kind then key (list-shaped subsystems keyed by zero-padded position) and merge-walks them. Returns `diverged`, `first` (`kind`, `key`, `change` = `added`\|`removed`\|`changed`, and `good`/`bad` summaries with `sha256`, `bytes`, and a value preview), plus `good_records`, `bad_records`, `added`, `removed`, `changed`. `added` means present only in `bad`. Omitting `bad` compares against the live in-process canonical state.
 - **Registry.** A directory (absolute path or `file://` URL; needs no network) or an `http(s)://` base URL (each file is sent with PUT, and fetched with GET for verify). The `registry` argument overrides the config default:
 
 ```toml
@@ -1291,4 +1293,4 @@ registry = "/srv/zshrs-registry"        # or "https://registry.example.com/zshrs
 registry_token = "..."                    # optional; sent as a bearer token over HTTP
 ```
 
-Scopes: `snapshot_sign` and `snapshot_publish` need `snapshot.write`; `snapshot_verify` and `snapshot_pubkey` need `snapshot.read`.
+Scopes: `snapshot_sign`, `snapshot_publish` and `snapshot_pull` need `snapshot.write`; `snapshot_verify`, `snapshot_pubkey` and `snapshot_bisect` need `snapshot.read`.

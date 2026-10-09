@@ -183,7 +183,7 @@ return `UnknownOp`.
 | Jobs | `job_submit` `job_list` `job_status` `job_output` `job_kill` `job_cancel` `job_wait` `job_input` `job_resize` |
 | Locks | `lock_acquire` `lock_try_acquire` `lock_release` `lock_list` |
 | Artifacts | `artifact_put` `artifact_get` `artifact_get_by_digest` `artifact_list` `artifact_gc` |
-| Snapshots | `snapshot_save` `snapshot_list` `snapshot_load` `snapshot_diff` |
+| Snapshots | `snapshot_save` `snapshot_list` `snapshot_load` `snapshot_diff` `snapshot_bisect` `snapshot_sign` `snapshot_verify` `snapshot_publish` `snapshot_pull` `snapshot_pubkey` |
 | Schedule | `schedule_add` `schedule_add_once` `schedule_remove` `schedule_list` |
 | Definitions | `definitions_query` `definitions_kinds` `definitions_emit` `definitions_diff` `definitions_subscribe` `definitions_unsubscribe` |
 | Ask (cross-shell prompts) | `ask_ask` `ask_pending` `ask_take` `ask_dismiss` `ask_response` |
