@@ -131,6 +131,7 @@ _zd_ops() {
 local -a cmds
 cmds=(
     'health:daemon liveness probe'
+    'daemon:control the local daemon (status, start, stop, restart)'
     'ops:list every op the daemon accepts'
     'info:daemon snapshot'
     'ping:round-trip latency (optional echo words)'
@@ -526,6 +527,15 @@ case $state in
                 ;;
             ping)
                 _message 'echo words' && return 0
+                ;;
+            daemon)
+                sub=(
+                    'status:running state (default; exit 1 when stopped)'
+                    'start:spawn the daemon if it is down'
+                    'stop:shut it down and wait for the socket to vanish'
+                    'restart:stop, then start'
+                )
+                (( CURRENT == 2 )) && _describe -t commands 'daemon verb' sub && return 0
                 ;;
         esac
         ;;
