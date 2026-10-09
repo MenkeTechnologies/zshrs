@@ -10440,6 +10440,19 @@ pub fn bin_unset(
         match subscript {
             // c:3886
             Some(key) => {
+                // c:3891-3895 — `unsetparam(subscript)` against the table
+                // `pm->gsu.h->getfn(pm)` returns; `unsetparam` runs the key's
+                // own unsetfn when that table owns its element Params.
+                if paramtab().read().ok().is_some_and(|t| {
+                    t.get(nm)
+                        .and_then(|pm| pm.u_hash.as_ref())
+                        .is_some_and(|h| !h.parnodes.is_empty())
+                }) {
+                    if unsetparam(&format!("{}[{}]", nm, key)) != 0 {
+                        returnval = 1; // c:3953
+                    }
+                    continue;
+                }
                 // c:Src/Modules/mapfile.c:126 unsetpmmapfile — unsetting
                 // an element of the special $mapfile assoc UNLINKS the
                 // file named by the key. It is not a regular assoc, so

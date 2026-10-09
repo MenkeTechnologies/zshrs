@@ -784,6 +784,8 @@ pub struct hashtable {
     pub ct: i32,                            // c:1203
     pub nodes: Vec<Option<HashNode>>,       // c:1204
     pub tmpdata: usize,                     // c:1205
+    /// !!! RUST-ONLY FIELD !!! In C a param table's `nodes[]` chains ARE `struct param`s (HashNode is the first member of Param, so the table casts between them). Rust cannot cast a `hashnode` header to its enclosing `param`, so the Param payload of a param table that owns its elements (a special hash such as `compstate`, whose element Params carry their own gsu) lives here, in table order, keyed by `node.nam`.
+    pub parnodes: indexmap::IndexMap<String, Param>,
     pub hash: Option<HashFunc>,             // c:1208
     pub emptytable: Option<TableFunc>,      // c:1209
     pub filltable: Option<TableFunc>,       // c:1210

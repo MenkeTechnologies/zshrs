@@ -2447,6 +2447,7 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
                     ct: 0,
                     nodes: Vec::new(),
                     tmpdata: 0,
+                    parnodes: Default::default(),
                     hash: None,
                     emptytable: None,
                     filltable: None,

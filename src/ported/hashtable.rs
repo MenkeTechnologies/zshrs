@@ -381,6 +381,7 @@ pub fn newhashtable(size: i32, name: &str) -> HashTable {
         ct: 0,       // c:123
         nodes,       // c:121
         tmpdata: 0,
+        parnodes: Default::default(),
         hash: None,
         emptytable: None,
         filltable: None,

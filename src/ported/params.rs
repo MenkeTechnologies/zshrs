@@ -362,6 +362,7 @@ pub fn newparamtable(size: i32, name: &str) -> Option<HashTable> {
         ct: 0,
         nodes,
         tmpdata: 0,
+        parnodes: Default::default(),
         hash: None,
         emptytable: None,
         filltable: None,
@@ -3104,6 +3105,7 @@ pub fn createspecialhash(name: &str, flags: i32) -> Option<Param> {
         ct: 0,
         nodes: Vec::new(),
         tmpdata: 0,
+        parnodes: Default::default(),
         hash: None,
         emptytable: None,
         filltable: None,
@@ -3186,6 +3188,7 @@ pub fn copyparam(
             tpm.u_str = Some(if let Some(getfn) = getfn_ptr {
                 getfn(pm)
             } else {
+                // c:2380 — `pm->gsu.s->getfn(pm)`.
                 strgetfn(pm)
             });
         }
@@ -4504,6 +4507,29 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                     nameref_resolution::Target { name: t_, .. } => t_,
                     _ => name.clone(),
                 };
+                // c:1585 — a special hash whose table owns its element Params
+                // (`compstate`, complete.c:1360): `ht->getnode(ht, s)` is a plain
+                // lookup of the key's own Param, whose gsu getfn — not stored
+                // text — answers the read (c:2380 `pm->gsu.s->getfn`).
+                if let Some(elem) = v
+                    .pm
+                    .as_ref()
+                    .and_then(|p| p.u_hash.as_ref())
+                    .filter(|h| !h.parnodes.is_empty())
+                    .map(|h| h.parnodes.get(pat).cloned())
+                {
+                    v.pm = Some(elem.unwrap_or_else(|| {
+                        let mut miss = param::default(); // c:1588
+                        miss.node.nam = pat.to_string();
+                        miss.node.flags = (PM_SCALAR | PM_UNSET) as i32;
+                        Box::new(miss)
+                    }));
+                    v.scanflags = 0; // c:1591
+                    v.start = 0; // c:1592
+                    v.end = -1; // c:1594
+                    *pptr = past_bracket; // c:2164
+                    return 0; // c:2166
+                }
                 let entry = if paramtab_hashed_storage()
                     .lock()
                     .map_or(true, |st| st.contains_key(hname.as_str()))
@@ -5113,7 +5139,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
             10
         };
         convbase_underscore(
-            intgetfn(pm),
+            pm.gsu_i.as_ref().map_or_else(|| intgetfn(pm), |g| (g.getfn)(pm)), // c:2373 pm->gsu.i->getfn
             base,
             pm.width, // c:2373 pm->width for underscore grouping
         )
@@ -5132,8 +5158,8 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         // an old float value through getstrvalue.
         convfloat(floatgetfn(pm), pm.base, pm.node.flags as u32)
     } else if t == PM_SCALAR || t == PM_NAMEREF {
-        // c:2380
-        strgetfn(pm)
+        // c:2380 — `pm->gsu.s->getfn(pm)`.
+        pm.gsu_s.as_ref().map_or_else(|| strgetfn(pm), |g| (g.getfn)(pm))
     } else {
         // c:2384
         DPUTS!(true, "BUG: param node without valid type"); // c:2385
@@ -5445,7 +5471,7 @@ pub fn getintvalue(v: Option<&mut value>) -> i64 {
         None => return 0,
     };
     if PM_TYPE(pm.node.flags as u32) == PM_INTEGER {
-        return intgetfn(pm);
+        return pm.gsu_i.as_ref().map_or_else(|| intgetfn(pm), |g| (g.getfn)(pm)); // c:2612 pm->gsu.i->getfn
     }
     if (pm.node.flags as u32 & (PM_EFLOAT | PM_FFLOAT)) != 0 {
         return floatgetfn(pm) as i64;
@@ -5456,8 +5482,7 @@ pub fn getintvalue(v: Option<&mut value>) -> i64 {
     // value side (e.g. `typeset x="1+2"; ((y = x))` would yield
     // y=0 instead of 3). Route through `math::mathevali` to
     // match C's arithmetic-expression evaluation.
-    let pm = v.pm.as_mut().unwrap();
-    let s = strgetfn(pm);
+    let s = getstrvalue(Some(&mut *v));
     mathevali(&s).unwrap_or(0) // c:2618 mathevali(...)
 }
 
@@ -5538,7 +5563,7 @@ pub fn getnumvalue(v: Option<&mut value>) -> mnumber {
     let t = PM_TYPE(pm.node.flags as u32);
     if t == PM_INTEGER {
         return mnumber {
-            l: intgetfn(pm),
+            l: pm.gsu_i.as_ref().map_or_else(|| intgetfn(pm), |g| (g.getfn)(pm)), // c:2631
             d: 0.0,
             type_: MN_INTEGER,
         };
@@ -7096,6 +7121,34 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
     if hidden_ {
         return None;
     }
+    // c:3118 — `paramvalarr(pm->gsu.h->getfn(pm), SCANPM_WANTVALS)` over a
+    // table that owns its element Params (`compstate`): every node is
+    // read through its own gsu (c:665-670 `getstrvalue(&v)`), and a
+    // PM_UNSET node is skipped by the scan (c:699 `scanhashtable(ht, 0, 0,
+    // PM_UNSET, ...)`).
+    if let Some(ht) = paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).and_then(|p| p.u_hash.clone()))
+        .filter(|h| !h.parnodes.is_empty())
+    {
+        return Some(
+            ht.parnodes
+                .values()
+                .filter(|e| (e.node.flags as u32 & PM_UNSET) == 0)
+                .map(|e| {
+                    getstrvalue(Some(&mut value {
+                        pm: Some(e.clone()),
+                        arr: Vec::new(),
+                        scanflags: 0,
+                        valflags: 0,
+                        start: 0,
+                        end: -1,
+                    }))
+                })
+                .collect(),
+        );
+    }
     {
         {
             if is_hashed_ {
@@ -7209,6 +7262,23 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
                 .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED) // c:3137
         })
         .unwrap_or(false);
+    // c:3138 — `paramvalarr(pm->gsu.h->getfn(pm), SCANPM_WANTKEYS)` over a
+    // table that owns its element Params: the keys of every node that is
+    // not PM_UNSET (c:699 `scanhashtable(ht, 0, 0, PM_UNSET, ...)`).
+    if let Some(ht) = paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).and_then(|p| p.u_hash.clone()))
+        .filter(|h| !h.parnodes.is_empty())
+    {
+        return Some(
+            ht.parnodes
+                .values()
+                .filter(|e| (e.node.flags as u32 & PM_UNSET) == 0)
+                .map(|e| e.node.nam.clone())
+                .collect(),
+        );
+    }
     {
         {
             if is_hashed_ {
@@ -8805,6 +8875,73 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     pm.u_str = None;
                 }
             }
+        } else if (pm.node.flags as u32 & PM_HASHED) != 0
+            && pm.u_hash.as_ref().is_some_and(|h| !h.parnodes.is_empty())
+        {
+            // c:3251 + c:3343 — `getvalue` rebinds `v->pm` to the key's own
+            // Param (`ht->getnode(ht, s)`, c:1585); a key the table lacks gets
+            // a fresh PM_SCALAR|PM_UNSET one (c:1588) that `assignstrvalue`
+            // then fills. The write goes through that Param's gsu setfn
+            // (c:2841 `foundparam->gsu.s->setfn`, c:2859 `gsu.i`), so a key
+            // bound to a C global lands in the global, not in the table.
+            let mut elem: Param = match pm.u_hash.as_ref().unwrap().parnodes.get(key) {
+                Some(e) => e.clone(),
+                None => {
+                    let mut e: Param = Box::new(param::default());
+                    e.node.nam = key.to_string();
+                    e.node.flags = (PM_SCALAR | PM_UNSET | PM_HASHELEM) as i32; // c:1588
+                    assigngetset(&mut e);
+                    e
+                }
+            };
+            // The table lock is released before any gsu runs: a setfn is
+            // free to read parameters (zerr -> trashzle -> zrefresh does).
+            drop(tab);
+            // c:3216-3217 — `if (v->pm->node.flags & PM_READONLY)`.
+            if (elem.node.flags as u32 & PM_READONLY) != 0 {
+                zerr(&format!("read-only variable: {}", elem.node.nam)); // c:3217
+                unqueue_signals(); // c:3220
+                return None; // c:3221
+            }
+            let is_int = PM_TYPE(elem.node.flags as u32) == PM_INTEGER;
+            let newval: String = if (flags & ASSPM_AUGMENT) != 0 && !is_int {
+                // c:3270-3276 — a scalar `+=` appends to the current value.
+                format!(
+                    "{}{}",
+                    getstrvalue(Some(&mut value {
+                        pm: Some(elem.clone()),
+                        arr: Vec::new(),
+                        scanflags: 0,
+                        valflags: 0,
+                        start: 0,
+                        end: -1,
+                    })),
+                    val
+                )
+            } else {
+                val.to_string()
+            };
+            if is_int {
+                // c:2859 — `v->pm->gsu.i->setfn(v->pm, mathevali(val))`.
+                let x = mathevali(&newval).unwrap_or(0);
+                match elem.gsu_i.as_ref().map(|g| g.setfn) {
+                    Some(sf) => sf(&mut elem, x),
+                    None => elem.u_val = x,
+                }
+            } else {
+                match elem.gsu_s.as_ref().map(|g| g.setfn) {
+                    Some(sf) => sf(&mut elem, newval),
+                    None => elem.u_str = Some(newval),
+                }
+            }
+            elem.node.flags &= !(PM_UNSET as i32); // c:2864
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(ht) = tab.get_mut(name).and_then(|p| p.u_hash.as_mut()) {
+                    ht.parnodes.insert(key.to_string(), elem);
+                }
+            }
+            unqueue_signals();
+            return paramtab().read().ok().and_then(|t| t.get(name).cloned());
         } else if (pm.node.flags as u32 & PM_HASHED) != 0 {
             // c:3251 + c:3343 — `getvalue(&vbuf, &t, 1)` re-reads the
             // FULL `name[subscript]` text so `getindex` can resolve the
@@ -10742,6 +10879,16 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     };
     // ---- guard released ----
     arrhashsetfn(&mut staged, val, 0); // c:3651 via setarrvalue c:2920
+    // A table that owns its element Params is mutated in place by its setfn
+    // (set_compstate clears PM_UNSET on every key it copied, complete.c:1401),
+    // and `staged` is a detached clone: publish the table back.
+    if staged.u_hash.as_ref().is_some_and(|h| !h.parnodes.is_empty()) {
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(real) = tab.get_mut(name) {
+                real.u_hash = staged.u_hash.clone();
+            }
+        }
+    }
 
     // c:3652-3653 — `unqueue_signals(); return v->pm;` — C returns
     // the param even when arrhashsetfn errored; the failure travels
@@ -11320,6 +11467,62 @@ pub fn unsetparam(name: &str) -> i32 {
         "watch" => Some("WATCH"),
         _ => None,
     };
+    // c:Src/builtin.c:3891-3895 — `unset 'h[k]'` on a PM_HASHED param runs
+    // `unsetparam(subscript)` against the table `pm->gsu.h->getfn(pm)` hands
+    // back. For a table that owns its element Params (`compstate`) that is
+    // `unsetparam_pm` on the KEY's Param: the readonly gate (c:3786), then the
+    // key's own gsu unsetfn (c:3800 `compunsetfn(pm, 1)` — clears the bound
+    // variable), then — the key being PM_SPECIAL|PM_REMOVABLE or an ordinary
+    // member — the node is dropped from the table (c:3874 removenode).
+    if let Some((base, key)) = name.strip_suffix(']').and_then(|n| n.split_once('[')) {
+        let owns = paramtab().read().ok().is_some_and(|t| {
+            t.get(base)
+                .and_then(|p| p.u_hash.as_ref())
+                .is_some_and(|h| !h.parnodes.is_empty())
+        });
+        if owns {
+            let elem: Option<Param> = paramtab().read().ok().and_then(|t| {
+                t.get(base)
+                    .and_then(|p| p.u_hash.as_ref())
+                    .and_then(|h| h.parnodes.get(key).cloned())
+            });
+            let Some(mut elem) = elem else {
+                return 0; // c:3826 — no such key, nothing to unset
+            };
+            if (elem.node.flags as u32 & PM_READONLY) != 0
+                && elem.level <= locallevel.load(Ordering::Relaxed)
+            {
+                zerr(&format!("read-only variable: {}", elem.node.nam)); // c:3787
+                return 1; // c:3790
+            }
+            elem.node.flags &= !(PM_DECLARED as i32); // c:3798
+            if (elem.node.flags as u32 & PM_UNSET) == 0
+                || (elem.node.flags as u32 & PM_REMOVABLE) != 0
+            {
+                // c:3799-3800 — `pm->gsu.s->unsetfn(pm, exp)` (exp = 1).
+                match PM_TYPE(elem.node.flags as u32) {
+                    t if t == PM_INTEGER => match elem.gsu_i.as_ref().map(|g| g.unsetfn) {
+                        Some(f) => f(&mut elem, 1),
+                        None => stdunsetfn(&mut elem, 1),
+                    },
+                    t if t == PM_ARRAY => match elem.gsu_a.as_ref().map(|g| g.unsetfn) {
+                        Some(f) => f(&mut elem, 1),
+                        None => stdunsetfn(&mut elem, 1),
+                    },
+                    _ => match elem.gsu_s.as_ref().map(|g| g.unsetfn) {
+                        Some(f) => f(&mut elem, 1),
+                        None => stdunsetfn(&mut elem, 1),
+                    },
+                }
+            }
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(ht) = tab.get_mut(base).and_then(|p| p.u_hash.as_mut()) {
+                    ht.parnodes.shift_remove(key); // c:3874
+                }
+            }
+            return 0;
+        }
+    }
     queue_signals(); // c:3825
                      // c:3826-3831 — `if ((pm = ... getnode2 ...) && !(pm->node.flags
                      // & PM_NAMEREF)) unsetparam_pm(pm, 0, 1);`.
@@ -12024,7 +12227,9 @@ pub fn arrhashsetfn(
     // c:4135-4139 — ASSPM_AUGMENT starts from the existing hash
     // (`ht = paramtab = pm->gsu.h->getfn(pm)`); otherwise a fresh
     // table (`newparamtable(17, pm->node.nam)`).
-    let mut map: IndexMap<String, String> = if (flags & ASSPM_AUGMENT) != 0 {
+    let mut map: IndexMap<String, String> = if (flags & ASSPM_AUGMENT) != 0
+        && !pm.u_hash.as_ref().is_some_and(|h| !h.parnodes.is_empty())
+    {
         paramtab_hashed_storage()
             .lock()
             .unwrap()
@@ -12063,6 +12268,27 @@ pub fn arrhashsetfn(
         }
     }
 
+    // c:4156-4169 — a table that owns its element Params (`compstate`):
+    // C builds a fresh table of `createparam(k, PM_SCALAR|PM_UNSET)` nodes
+    // holding the assigned strings and hands it to `pm->gsu.h->setfn`, which
+    // for `compstate` is `set_compstate` (complete.c:1374) copying each
+    // recognised key into its variable.
+    if pm.u_hash.as_ref().is_some_and(|h| !h.parnodes.is_empty()) {
+        if let Some(mut tht) = newparamtable(17, &pm.node.nam) {
+            for (k, v) in map {
+                let mut e: Param = Box::new(param::default());
+                e.node.nam = k.clone();
+                e.node.flags = PM_SCALAR as i32; // c:4160
+                e.u_str = Some(v);
+                assigngetset(&mut e);
+                tht.parnodes.insert(k, e);
+            }
+            if let Some(g) = pm.gsu_h.clone() {
+                (g.setfn)(pm, tht); // c:4169
+            }
+        }
+        return;
+    }
     // c:4168-4169 — `pm->gsu.h->setfn(pm, ht)` installs the table.
     paramtab_hashed_storage()
         .lock()
@@ -18278,6 +18504,203 @@ mod tests {
 
     fn gsu_a_test_set(_pm: &mut param, val: Vec<String>) {
         *GSU_A_BACKING.lock().unwrap() = val;
+    }
+
+    static SPH_SCALAR: Mutex<String> = Mutex::new(String::new());
+    static SPH_INT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+    fn sph_get(_pm: &param) -> String {
+        SPH_SCALAR.lock().unwrap().clone()
+    }
+
+    fn sph_set(_pm: &mut param, v: String) {
+        *SPH_SCALAR.lock().unwrap() = v;
+    }
+
+    fn sph_unset(_pm: &mut param, _exp: i32) {
+        SPH_SCALAR.lock().unwrap().clear();
+    }
+
+    fn sph_iget(_pm: &param) -> i64 {
+        SPH_INT.load(Ordering::Relaxed)
+    }
+
+    fn sph_iset(_pm: &mut param, v: i64) {
+        SPH_INT.store(v, Ordering::Relaxed);
+    }
+
+    fn sph_hashset(pm: &mut param, ht: HashTable) {
+        for (k, e) in ht.parnodes.iter() {
+            if let Some(slot) = pm.u_hash.as_mut().and_then(|h| h.parnodes.get_mut(k)) {
+                if k == "s" {
+                    *SPH_SCALAR.lock().unwrap() = e.u_str.clone().unwrap_or_default();
+                    slot.node.flags &= !(PM_UNSET as i32);
+                }
+            }
+        }
+    }
+
+    /// Install a special hash `sph` whose keys are gsu-bound: `s` (scalar,
+    /// backed by SPH_SCALAR), `n` (read-only integer, backed by SPH_INT) and
+    /// `u` (a key flagged PM_UNSET, skipped by every scan).
+    fn sph_install() {
+        let mut ht = newparamtable(31, "sph").unwrap();
+        let mut s: Param = Box::new(param::default());
+        s.node.nam = "s".to_string();
+        s.node.flags = (PM_SCALAR | PM_SPECIAL | PM_REMOVABLE) as i32;
+        s.gsu_s = Some(Box::new(gsu_scalar {
+            getfn: sph_get,
+            setfn: sph_set,
+            unsetfn: sph_unset,
+        }));
+        ht.parnodes.insert("s".to_string(), s);
+        let mut n: Param = Box::new(param::default());
+        n.node.nam = "n".to_string();
+        n.node.flags = (PM_INTEGER | PM_READONLY | PM_SPECIAL) as i32;
+        n.base = 10;
+        n.gsu_i = Some(Box::new(gsu_integer {
+            getfn: sph_iget,
+            setfn: sph_iset,
+            unsetfn: stdunsetfn,
+        }));
+        ht.parnodes.insert("n".to_string(), n);
+        let mut u: Param = Box::new(param::default());
+        u.node.nam = "u".to_string();
+        u.node.flags = (PM_SCALAR | PM_UNSET) as i32;
+        assigngetset(&mut u);
+        ht.parnodes.insert("u".to_string(), u);
+        let mut h: Param = Box::new(param::default());
+        h.node.nam = "sph".to_string();
+        h.node.flags = (PM_HASHED | PM_SPECIAL | PM_REMOVABLE) as i32;
+        h.gsu_h = Some(Box::new(gsu_hash {
+            getfn: hashgetfn,
+            setfn: sph_hashset,
+            unsetfn: stdunsetfn,
+        }));
+        h.u_hash = Some(ht);
+        paramtab().write().unwrap().insert("sph".to_string(), h);
+    }
+
+    /// A hash whose table owns its element Params answers every read through
+    /// the key's own gsu (c:1585 getnode + c:2380 gsu.s->getfn), recomputed per
+    /// read: the backing variable moving is visible without any republish, an
+    /// integer key reads through gsu.i, and a PM_UNSET key is absent from the
+    /// key and value scans.
+    #[test]
+    fn special_hash_reads_go_through_the_element_gsu() {
+        let _g = crate::test_util::global_state_lock();
+        sph_install();
+        *SPH_SCALAR.lock().unwrap() = "one".to_string();
+        SPH_INT.store(7, Ordering::Relaxed);
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "s"),
+            Some((true, Some("one".to_string())))
+        );
+        *SPH_SCALAR.lock().unwrap() = "two".to_string();
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "s"),
+            Some((true, Some("two".to_string()))),
+            "a read must see the moved backing variable"
+        );
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "n"),
+            Some((true, Some("7".to_string())))
+        );
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "u"),
+            Some((false, None)),
+            "PM_UNSET key is a miss"
+        );
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "zz"),
+            Some((false, None))
+        );
+        assert_eq!(gethkparam("sph"), Some(vec!["s".to_string(), "n".to_string()]));
+        assert_eq!(
+            gethparam("sph"),
+            Some(vec!["two".to_string(), "7".to_string()])
+        );
+        let m = crate::ported::subst::assoc_get("sph").unwrap();
+        assert_eq!(m.get("s").map(String::as_str), Some("two"));
+        assert_eq!(m.get("n").map(String::as_str), Some("7"));
+        assert!(!m.contains_key("u"));
+        paramtab().write().unwrap().remove("sph");
+    }
+
+    /// The expansion front end sees the same element Params: `${h[k]}`,
+    /// `${(k)h}`, `${(kv)h}`, `${#h}`, `${+h[k]}` and arithmetic `h[k]`.
+    #[test]
+    fn special_hash_expansions_see_element_gsu() {
+        let _g = crate::test_util::global_state_lock();
+        sph_install();
+        *SPH_SCALAR.lock().unwrap() = "val".to_string();
+        SPH_INT.store(41, Ordering::Relaxed);
+        let exp = |s: &str| crate::ported::subst::singsub(s);
+        assert_eq!(exp("${sph[s]}"), "val");
+        assert_eq!(exp("${sph[n]}"), "41");
+        // Visit order is the zsh hash-bucket order, so compare as sets.
+        let sorted = |s: String| {
+            let mut w: Vec<String> = s.split(' ').map(String::from).collect();
+            w.sort();
+            w
+        };
+        assert_eq!(sorted(exp("${(k)sph}")), vec!["n", "s"]);
+        assert_eq!(sorted(exp("${(v)sph}")), vec!["41", "val"]);
+        assert_eq!(sorted(exp("${(kv)sph}")), vec!["41", "n", "s", "val"]);
+        assert_eq!(exp("${#sph}"), "2");
+        assert_eq!(exp("${+sph[s]}"), "1");
+        assert_eq!(exp("${+sph[u]}"), "0");
+        assert_eq!(exp("${+sph[nokey]}"), "0");
+        assert_eq!(crate::ported::math::mathevali("sph[n] + 1"), Ok(42));
+        paramtab().write().unwrap().remove("sph");
+    }
+
+    /// `h[k]=v` runs the key's gsu setfn (c:2841), a read-only key is rejected
+    /// with `read-only variable: <key>` (c:3217), a new key becomes a plain
+    /// scalar member, `h=(k v)` goes through the hash gsu setfn (c:4169), and
+    /// `unset 'h[k]'` runs the key's unsetfn and drops the node (c:3800/3874).
+    #[test]
+    fn special_hash_writes_and_unsets_go_through_the_element_gsu() {
+        let _g = crate::test_util::global_state_lock();
+        sph_install();
+        assert!(assignsparam("sph[s]", "hello", 0).is_some());
+        assert_eq!(*SPH_SCALAR.lock().unwrap(), "hello", "setfn wrote the variable");
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "s"),
+            Some((true, Some("hello".to_string())))
+        );
+        assert!(assignsparam("sph[s]", "+x", ASSPM_AUGMENT).is_some());
+        assert_eq!(*SPH_SCALAR.lock().unwrap(), "hello+x");
+
+        SPH_INT.store(3, Ordering::Relaxed);
+        assert!(assignsparam("sph[n]", "9", 0).is_none(), "read-only key rejected");
+        assert_eq!(SPH_INT.load(Ordering::Relaxed), 3);
+
+        // PM_UNSET cleared by the first assignment to the key (c:2864).
+        assert!(assignsparam("sph[u]", "val", 0).is_some());
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "u"),
+            Some((true, Some("val".to_string())))
+        );
+        // A brand-new key is an ordinary member.
+        assert!(assignsparam("sph[fresh]", "f", 0).is_some());
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "fresh"),
+            Some((true, Some("f".to_string())))
+        );
+
+        // Whole-hash assignment reaches the hash gsu setfn.
+        assert!(sethparam("sph", vec!["s".to_string(), "whole".to_string()]).is_some());
+        assert_eq!(*SPH_SCALAR.lock().unwrap(), "whole");
+
+        // unset 'sph[s]': the key's unsetfn clears the variable, node dropped.
+        assert_eq!(unsetparam("sph[s]"), 0);
+        assert_eq!(*SPH_SCALAR.lock().unwrap(), "");
+        assert_eq!(
+            crate::vm_helper::assoc_key_hit("sph", "s"),
+            Some((false, None))
+        );
+        paramtab().write().unwrap().remove("sph");
     }
 
     /// An array whose `gsu_a` carries a non-standard getfn/setfn is served

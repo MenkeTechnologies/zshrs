@@ -213,33 +213,34 @@ pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
     if magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return None;
     }
-    // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a LIVE gsu
-    // integer (`get_nmatches` = `permmatches(0) ? 0 : nmatches`), not stored
-    // data, so the hashed store never held it and every shell-side read
-    // returned the EMPTY string. `_parameters` (`local -i nm=$compstate[
-    // nmatches]` … `(( compstate[nmatches] > nm ))`) therefore always
-    // reported "added nothing" and returned 1 — `unset <TAB>` offered 197
-    // names against zsh's 496 — and the same idiom in `_alternative`,
-    // `_describe` and `_arguments` mis-fired the same way.
-    // The same applies to the other NINE gsu-backed rows
-    // (c:complete.c:1261-1300): list_lines, list_max, unambiguous,
-    // unambiguous_cursor, unambiguous_positions, insert_positions, vared,
-    // all_quotes, ignored. Only `nmatches` was served live here, so
-    // `$compstate[list_lines]` and friends read empty from shell code
-    // where zsh reports a value.
-    if resolved == "compstate" && crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS.contains(&key) {
-        return Some((
-            true,
-            Some(
-                crate::ported::zle::compcore::get_compstate_str(key).unwrap_or_else(|| {
-                    if key == "nmatches" {
-                        "0".to_string()
-                    } else {
-                        String::new()
-                    }
-                }),
+    // c:1585 — `ht->getnode(ht, s)` on a table that owns its element Params
+    // (`compstate`, Src/Zle/complete.c:1360): the key's own Param answers,
+    // through its gsu getfn (c:2380 `pm->gsu.s->getfn`, c:2373 `gsu.i`) — the
+    // value is recomputed on every read, never stored. A key absent from the
+    // table, or present but PM_UNSET (comp_setunset, complete.c:1557), is a
+    // miss.
+    if let Some(ht) = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(resolved.as_str()).and_then(|p| p.u_hash.clone()))
+        .filter(|h| !h.parnodes.is_empty())
+    {
+        return Some(match ht.parnodes.get(key) {
+            Some(e) if (e.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0 => (
+                true,
+                Some(crate::ported::params::getstrvalue(Some(
+                    &mut crate::ported::zsh_h::value {
+                        pm: Some(e.clone()),
+                        arr: Vec::new(),
+                        scanflags: 0,
+                        valflags: 0,
+                        start: 0,
+                        end: -1,
+                    },
+                ))),
             ),
-        ));
+            _ => (false, None),
+        });
     }
     crate::ported::params::paramtab_hashed_storage()
         .lock()
@@ -1907,6 +1908,16 @@ impl ShellExecutor {
                 return None;
             }
         }
+        // A table that owns its element Params (`compstate`) is read through
+        // each element's gsu (c:3118 `paramvalarr(pm->gsu.h->getfn(pm), …)`).
+        if crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(resolved.as_str()).and_then(|p| p.u_hash.as_ref().map(|h| !h.parnodes.is_empty())))
+            .unwrap_or(false)
+        {
+            return crate::ported::subst::assoc_get(resolved.as_str());
+        }
         paramtab_hashed_storage()
             .lock()
             .ok()
@@ -1970,6 +1981,14 @@ impl ShellExecutor {
             if (flags & PM_HASHED) == 0 {
                 return false;
             }
+        }
+        if crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(resolved.as_str()).and_then(|p| p.u_hash.as_ref().map(|h| !h.parnodes.is_empty())))
+            .unwrap_or(false)
+        {
+            return true; // a table that owns its element Params
         }
         paramtab_hashed_storage()
             .lock()

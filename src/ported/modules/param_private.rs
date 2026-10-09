@@ -442,6 +442,7 @@ pub fn bin_private(
             ct: 0,
             nodes: Vec::new(),
             tmpdata: 0,
+            parnodes: Default::default(),
             hash: None,
             emptytable: None,
             filltable: None,

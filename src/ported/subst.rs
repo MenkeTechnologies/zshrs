@@ -9976,46 +9976,11 @@ pub fn paramsubst(
                     crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
                     _ => var_name.clone(),
                 };
-                // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a
-                // LIVE gsu integer (`get_nmatches` = `permmatches(0) ? 0 :
-                // nmatches`), not stored data. zshrs keeps `$compstate` in the
-                // hashed store, which never held this key, so every shell-side
-                // completer read got the EMPTY string: `_parameters`'s
-                // `local -i nm=$compstate[nmatches]` … `(( compstate[nmatches]
-                // > nm ))` always reported "added nothing" and returned 1
-                // (`unset <TAB>` offered 197 names where zsh offers 496), and
-                // the same idiom in `_alternative`/`_describe`/`_arguments`
-                // silently mis-fired. Serve it live, exactly as C's getter.
-                // c:complete.c:1261-1300 — TEN compstate keys carry a gsu
-                // vtable rather than stored data, so C recomputes each on
-                // every read. Only `nmatches` was served live here; the
-                // other nine came back from the hashed store, which never
-                // held them, so a subscripted read got the empty string —
-                // `$compstate[list_lines]` read empty where zsh reports a
-                // line count, and the same for `unambiguous`,
-                // `unambiguous_cursor`, `unambiguous_positions`,
-                // `insert_positions`, `list_max`, `vared`, `all_quotes`
-                // and `ignored`. The whole-hash paths (gethparam /
-                // gethkparam, params.rs:6004/6108) already refresh all
-                // ten; this is the same contract for `$compstate[KEY]`.
-                let v = if resolved == "compstate"
-                    && crate::ported::zle::compcore::LIVE_COMPSTATE_KEYS.contains(&sub)
-                {
-                    Some(
-                        crate::ported::zle::compcore::get_compstate_str(sub).unwrap_or_else(|| {
-                            if sub == "nmatches" {
-                                "0".into()
-                            } else {
-                                String::new()
-                            }
-                        }),
-                    )
-                } else {
-                    paramtab_hashed_storage()
-                        .lock()
-                        .ok()
-                        .and_then(|s| s.get(resolved.as_str()).and_then(|m| m.get(sub).cloned()))
-                };
+                // c:1585 + c:2380 — the key's Param answers through its own
+                // gsu getfn when the table owns its element Params
+                // (`compstate`, complete.c:1360); `assoc_key_hit` dispatches
+                // that, and reads the hashed store otherwise.
+                let v = crate::vm_helper::assoc_key_hit(&resolved, sub).and_then(|(_, val)| val);
                 match v {
                     Some(val) => {
                         if want_key {
@@ -10117,13 +10082,17 @@ pub fn paramsubst(
                 if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
                     return None;
                 }
-                // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a
-                // live gsu integer spliced into the map BEFORE its bucket order
-                // is taken, so it keeps going through `assoc_get`; likewise the
-                // `zsh/parameter` magic PM_HASHED specials, whose values only
-                // exist once their getfn has run. Both are handled there, and
-                // both are small next to a user assoc.
-                if resolved != "compstate" {
+                // A table that owns its element Params (`compstate`) answers
+                // through each node's gsu getfn, and so do the `zsh/parameter`
+                // magic PM_HASHED specials, whose values only exist once their
+                // getfn has run. Both are handled in `assoc_get`, and both are
+                // small next to a user assoc.
+                let owns_elems = paramtab().read().ok().is_some_and(|tab| {
+                    tab.get(resolved.as_str())
+                        .and_then(|pm| pm.u_hash.as_ref())
+                        .is_some_and(|h| !h.parnodes.is_empty())
+                });
+                if !owns_elems {
                     if let Some(store) = paramtab_hashed_storage().lock().ok() {
                         if let Some(m) = store.get(resolved.as_str()) {
                             // Same hash-bucket order as `assoc_get` (see there
@@ -29725,32 +29694,35 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
     if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return None;
     }
-    // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
-    // integer, never stored data; splice the current value in so whole-map
-    // reads (`${(kv)compstate}`, `${compstate[@]}`) see it like C's getter.
-    // Taken BEFORE the store lock so the getter can never re-enter it.
-    let live_nmatches = if resolved == "compstate" {
-        Some(
-            crate::ported::zle::compcore::get_compstate_str("nmatches")
-                .unwrap_or_else(|| "0".to_string()),
-        )
-    } else {
-        None
-    };
+    // c:Src/params.c:3118 `paramvalarr(pm->gsu.h->getfn(pm), …)` over a table
+    // that owns its element Params (`compstate`): each node answers through
+    // its own gsu (c:694 `getstrvalue(&v)`), PM_UNSET nodes are skipped
+    // (c:699 `scanhashtable(ht, 0, 0, PM_UNSET, …)`). Built BEFORE the store
+    // lock so a getter can never re-enter it.
+    let special: Option<indexmap::IndexMap<String, String>> = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(resolved.as_str()).and_then(|p| p.u_hash.clone()))
+        .filter(|h| !h.parnodes.is_empty())
+        .map(|h| {
+            h.parnodes
+                .values()
+                .filter(|e| (e.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0)
+                .map(|e| {
+                    let v = crate::ported::params::getstrvalue(Some(&mut crate::ported::zsh_h::value {
+                        pm: Some(e.clone()),
+                        arr: Vec::new(),
+                        scanflags: 0,
+                        valflags: 0,
+                        start: 0,
+                        end: -1,
+                    }));
+                    (e.node.nam.clone(), v)
+                })
+                .collect()
+        });
     if let Some(store) = paramtab_hashed_storage().lock().ok() {
-        if let Some(stored) = store.get(resolved.as_str()) {
-            // Only `compstate` needs a mutated copy; every other assoc is
-            // read straight out of the store with no whole-map clone.
-            let spliced;
-            let m: &indexmap::IndexMap<String, String> = match live_nmatches {
-                Some(v) => {
-                    let mut t = stored.clone();
-                    t.insert("nmatches".to_string(), v);
-                    spliced = t;
-                    &spliced
-                }
-                None => stored,
-            };
+        if let Some(m) = special.as_ref().or_else(|| store.get(resolved.as_str())) {
             // c:Src/hashtable.c scanhashtable — an associative array
             // enumerates in zsh hash-bucket order, not insertion order. The
             // store keeps an insertion-ordered IndexMap, so rebuild zsh's
@@ -29949,31 +29921,23 @@ pub(crate) fn assoc_keys(name: &str) -> Option<Vec<String>> {
     if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return None;
     }
-    // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
-    // integer, never stored data, so the store has no key for it. `assoc_get`
-    // splices it in; do the same here or the two siblings disagree on
-    // `compstate`'s key set (and `${#compstate}`, which counts through this
-    // one, would come out one short of `${(kv)compstate}`).
-    let live_nmatches = if resolved == "compstate" {
-        Some(
-            crate::ported::zle::compcore::get_compstate_str("nmatches")
-                .unwrap_or_else(|| "0".to_string()),
-        )
-    } else {
-        None
-    };
+    // c:3138 — `paramvalarr(pm->gsu.h->getfn(pm), SCANPM_WANTKEYS)` over a
+    // table that owns its element Params: the keys of the nodes that are not
+    // PM_UNSET, with no getfn run (keys-only, as for the magic rows below).
+    let special: Option<indexmap::IndexMap<String, String>> = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(resolved.as_str()).and_then(|p| p.u_hash.clone()))
+        .filter(|h| !h.parnodes.is_empty())
+        .map(|h| {
+            h.parnodes
+                .values()
+                .filter(|e| (e.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0)
+                .map(|e| (e.node.nam.clone(), String::new()))
+                .collect()
+        });
     if let Some(store) = paramtab_hashed_storage().lock().ok() {
-        if let Some(stored) = store.get(resolved.as_str()) {
-            let spliced;
-            let m: &indexmap::IndexMap<String, String> = match live_nmatches {
-                Some(v) => {
-                    let mut t = stored.clone();
-                    t.insert("nmatches".to_string(), v);
-                    spliced = t;
-                    &spliced
-                }
-                None => stored,
-            };
+        if let Some(m) = special.as_ref().or_else(|| store.get(resolved.as_str())) {
             // Same hash-bucket reorder as assoc_get (see there for the C
             // provenance: c:217 front insert, c:457 ×4 growth, c:426 walk),
             // but collect only keys.
@@ -30146,6 +30110,13 @@ fn assoc_contains(name: &str) -> bool {
         })
     }) {
         return false;
+    }
+    if paramtab().read().ok().is_some_and(|tab| {
+        tab.get(resolved.as_str())
+            .and_then(|pm| pm.u_hash.as_ref())
+            .is_some_and(|h| !h.parnodes.is_empty())
+    }) {
+        return true; // a table that owns its element Params
     }
     if paramtab_hashed_storage()
         .lock()
