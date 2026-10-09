@@ -590,14 +590,17 @@ In addition to the standard zsh-recognised variables
 .BR RPROMPT ),
 zshrs reads:
 .TP
+.B ZSHRS_HOME
+State root for caches, databases, logs and the daemon socket (default
+.IR $HOME/.zshrs ).
+.TP
 .B ZSHRS_CACHE
-Directory for rkyv bytecode images (default
-.IR $HOME/.cache/zshrs ).
+Set to \fB0\fR to disable the caches and the daemon.
 .TP
 .B ZSHRS_LOG
 .BR tracing -style
 filter for the structured log written to
-.IR $HOME/.cache/zshrs/zshrs.log
+.IR $HOME/.zshrs/zshrs.log
 .RB "(default " info ).
 .TP
 .B ZSHRS_LONG_CMD_PRE_THRESHOLD
@@ -655,7 +658,7 @@ and ad-hoc queries \(em never consulted for cache hit/miss),
 (when the daemon is running), and
 .BR zshrs.log .
 .TP
-.I ~/.config/zshrs/zshrs-daemon.toml
+.I ~/.zshrs/zshrs-daemon.toml
 Optional daemon configuration. See
 .BR zd (1).
 .TP

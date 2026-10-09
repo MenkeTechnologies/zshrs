@@ -78,7 +78,7 @@ and
 (see
 .BR zshrs (1)).
 Resulting bytecode is cached as rkyv shards under
-.IR ~/.cache/zshrs/ .
+.IR ~/.zshrs/ .
 .SH INVOCATION
 .B zshrs
 accepts the same argument grammar as
@@ -2031,7 +2031,7 @@ keys include
 .BR old_insert .
 .SS "Caching"
 zshrs caches the compiled completion graph as rkyv shards under
-.IR ~/.cache/zshrs/ ;
+.IR ~/.zshrs/ ;
 the daemon invalidates them when any file in
 .B $fpath
 changes. First-time
@@ -2142,7 +2142,7 @@ When run in full mode (no parity flag), zshrs cooperates with a
 singleton coordinator process,
 .BR zshrs-daemon ,
 addressed via
-.IR ~/.cache/zshrs/daemon.sock .
+.IR ~/.zshrs/daemon.sock .
 The daemon owns ALL mutation:
 .IP \fBfsnotify\fR 8
 watches
@@ -2247,9 +2247,13 @@ Extended with \fI~/.zshrs/man\fR and \fI~/.zshrs/info\fR plus an empty trailing
 entry, so the bundled zsh and zshrs pages (\fBman zshall\fR, \fBman zshrsall\fR)
 resolve without hiding the system's own. Not set under \fB\-\-zsh\fR.
 .TP
+.B ZSHRS_HOME
+Override the state root (caches, databases, logs, daemon socket). Default:
+.IR ~/.zshrs/ .
+.TP
 .B ZSHRS_CACHE
-Override the cache root. Default:
-.IR ~/.cache/zshrs/ .
+Set to \fB0\fR to disable the caches and the daemon. The parity modes
+(\fB\-\-zsh\fR, \fB\-\-bash\fR, \fB\-\-ksh\fR, \fB\-\-sh\fR, \fB\-\-csh\fR, \fB\-\-posix\fR) set it.
 .TP
 .B ZSHRS_LOG
 .BR tracing -style filter for the structured log. Examples:
@@ -2294,15 +2298,27 @@ prompt that no
 mock matches an error instead of a live call.
 .SH "FILES"
 .TP
-.I ~/.cache/zshrs/
-Cache root. Sharded as
-.IB {hash8} - {slug} .rkyv
-per source root, plus
-.BR catalog.db ,
-.BR daemon.sock ,
-.BR zshrs.log .
+.I ~/.zshrs/
+State root (\fB\\fR). Holds the rkyv caches
+.RB ( autoloads.rkyv ,
+.BR scripts.rkyv ,
+.BR deparse.rkyv ),
+the SQLite databases
+.RB ( catalog.db ,
+.BR history.db ,
+.BR plugins.db ,
+.BR compsys.db ),
+the daemon files
+.BR daemon.sock " and " daemon.pid ,
+the logs
+.RB ( zshrs.log ,
+.BR zshrs-daemon.log ),
+and the configuration files
+.RB ( zshrs.toml ,
+.BR zshrs-daemon.toml ,
+.BR zshrs-recorder.toml ).
 .TP
-.I ~/.config/zshrs/zshrs-daemon.toml
+.I ~/.zshrs/zshrs-daemon.toml
 Optional daemon config; see
 .BR zd (1).
 .TP
@@ -2369,7 +2385,7 @@ Errors take the form
 .BI "zshrs: " command ": " reason
 on stderr. Informational chatter (init, indexing, autoload pre-warm,
 plugin compile) goes to
-.IR ~/.cache/zshrs/zshrs.log
+.IR ~/.zshrs/zshrs.log
 via
 .BR tracing ;
 it is never printed to the terminal. No startup banner. No deprecation
