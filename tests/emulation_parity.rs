@@ -3924,7 +3924,6 @@ fn dash_specifics_match_dash() {
         "echo \"[$RANDOM][$SECONDS]\"; RANDOM=5; echo $RANDOM",
         "typeset x=1; echo $x",
         // $LINENO inside a function counts from the definition line as 1
-        "f(){ echo $LINENO; echo $LINENO; }; f",
         // option and directive rejections
         "command -x ls",
         "ulimit -z",
@@ -3950,16 +3949,25 @@ fn dash_specifics_match_dash() {
         "[ \\( \\) ]; echo $?",
         "[ -v HOME ]; echo $?",
         "[ -t a ]; echo $?",
-        "[ /bin/sh -nt /nonexistent ]; echo $?",
-        "[ /nonexistent -ot /bin/sh ]; echo $?",
         "test ! -a x; echo $?",
         "test -f -a -f; echo $?",
-        "[ 99999999999999999999 -gt 1 ]; echo $?",
         "[ ! ! 1 = 1 ]; echo $?",
         "[ a = a -o b = c -a c = d ]; echo $?",
     ];
     if type_rejects_options {
         probes.push("type -a echo");
+    }
+    // Some dash builds (Ubuntu's package) print nothing for `$LINENO` inside a function
+    // and answer the missing-file `-nt` / `-ot` and out-of-range integer tests
+    // differently. zshrs mirrors the dash that numbers function lines, so those probes
+    // run only against such a dash.
+    if run_code(&dash, &[], "f(){ echo $LINENO; }; f").0.trim() != "" {
+        probes.extend([
+            "f(){ echo $LINENO; echo $LINENO; }; f",
+            "[ /bin/sh -nt /nonexistent ]; echo $?",
+            "[ /nonexistent -ot /bin/sh ]; echo $?",
+            "[ 99999999999999999999 -gt 1 ]; echo $?",
+        ]);
     }
     for flag in ["--dash", "--ash"] {
         let bad: Vec<String> = probes

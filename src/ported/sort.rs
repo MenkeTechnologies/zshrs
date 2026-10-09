@@ -988,14 +988,17 @@ mod tests {
         );
     }
 
-    /// Default mode: case-sensitive — "ABC" < "abc" (ASCII).
+    /// Default mode: case-sensitive — "ABC" < "abc" (ASCII). The order is
+    /// `strcoll`'s (c:134), so it holds in the C locale; a UTF-8 locale collates
+    /// the lowercase form first. Pin LC_COLLATE for the assertion and put the
+    /// startup choice back.
     #[test]
     fn zstrcmp_default_case_sensitive() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32),
-            Ordering::Less
-        );
+        unsafe { libc::setlocale(libc::LC_COLLATE, c"C".as_ptr()) };
+        let got = zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32);
+        unsafe { libc::setlocale(libc::LC_COLLATE, c"".as_ptr()) };
+        assert_eq!(got, Ordering::Less);
     }
 
     /// IGNORING_CASE on zstrcmp directly is a NO-OP per C semantics:
