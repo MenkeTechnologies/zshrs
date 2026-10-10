@@ -1,7 +1,9 @@
 #compdef dbview
 
 # Browse the zshrs SQLite caches without SQL: `dbview` lists the caches,
-# `dbview TABLE [FILTER] [--count|-c]` dumps or filters one table.
+# `dbview TABLE [FILTER] [--count|-c]` dumps or filters one table. The tables
+# are the ones builtin_dbview's `match table` accepts: autoloads, comps,
+# executables, history, plugins, scripts.
 #
 # zshrs builtin. builtin_dbview (src/extensions/ext_builtins.rs) takes no
 # options before the table: argv[0] is always the table, argv[1] the
@@ -25,6 +27,7 @@ case $state in
             'executables:compsys.db PATH executables cache'
             'history:history.db recent entries, or a search'
             'plugins:plugins.db plugin and cached-function counts'
+            'scripts:scripts.rkyv compiled sourced scripts: cached time, size, version, path'
         )
         _describe -t tables 'table' tables && return 0
         ;;
@@ -62,6 +65,10 @@ case $state in
             history)
                 # FTS5 prefix-phrase search (HistoryEngine::search).
                 _message -e patterns "history search text"
+                ;;
+            scripts)
+                # Substring match on the script path (list_scripts, 200 rows).
+                _message -e patterns "script path substring"
                 ;;
         esac
         ;;
