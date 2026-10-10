@@ -12,6 +12,8 @@ pub fn logical_lines(src: &str) -> Vec<String> {
     let mut chars = src.chars().peekable();
     while let Some(c) = chars.next() {
         match (quote, c) {
+            // `\"` inside "…" is not an escape in csh: it ends the string
+            (Some('"'), '\\') if chars.peek() == Some(&'"') => cur.push('\\'),
             (_, '\\') => match chars.next() {
                 // inside "…" the newline stays (the word translator drops
                 // the backslash); elsewhere it is a blank

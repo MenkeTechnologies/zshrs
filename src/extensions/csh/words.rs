@@ -154,7 +154,15 @@ pub fn zsh_var_name(name: &str) -> &str {
 /// `${?v}`, `$x:h`, `~user`, …). Input is one word from
 /// [`super::lex::split_words`].
 pub fn translate_word(word: &str) -> String {
-    translate(word, false)
+    translate(word, false, false)
+}
+
+/// [`translate_word`] for the words of a command: an unquoted variable value
+/// is globbed only when it holds a glob character, as tcsh does (a value
+/// such as `|` or `(y)` stays text). Without the error guards of the checked
+/// form, which the command layer adds itself.
+pub fn translate_word_globbed(word: &str) -> String {
+    translate(word, false, true)
 }
 
 
@@ -168,10 +176,10 @@ pub fn translate_word(word: &str) -> String {
 /// separate entry point; callers that need only the argument vector (type
 /// sniffing, `plain_param`-style rewrites) keep calling [`translate_word`].
 pub fn translate_word_checked(word: &str) -> String {
-    translate(word, true)
+    translate(word, true, true)
 }
 
-fn translate(word: &str, checked: bool) -> String {
+fn translate(word: &str, checked: bool, glob: bool) -> String {
     let chars: Vec<char> = word.chars().collect();
     if chars == ['{', '}'] {
         return "{}".to_string();
@@ -179,6 +187,7 @@ fn translate(word: &str, checked: bool) -> String {
     let mut out = String::new();
     let cx = Cx {
         checked,
+        glob,
         in_brace: false,
     };
     if checked {
@@ -215,8 +224,10 @@ enum Ctx {
 /// Translation settings that travel down the recursive-descent helpers.
 #[derive(Clone, Copy)]
 struct Cx {
-    /// emit the tcsh error guards and glob unquoted values
+    /// emit the tcsh error guards
     checked: bool,
+    /// glob unquoted values that hold a glob character
+    glob: bool,
     /// inside a `{…}` alternative, where tcsh rejects a multi-word `$x`
     in_brace: bool,
 }
@@ -794,9 +805,10 @@ fn render(r: &Reference, ctx: Ctx, cx: Cx, out: &mut String) {
                 // tcsh answers 1 for every positional index, set or not
                 out.push('1');
             } else if r.name == "prompt" {
-                // tcsh defines `$prompt` only in an interactive shell; zsh
+                // tcsh defines `$prompt` only in an interactive shell (or one reading
+                // commands from stdin); zsh
                 // always has the tied PS1, so ask the shell instead.
-                out.push_str("${${${options[interactive]:#off}:+1}:-0}");
+                out.push_str("${${${options[interactive]:#off}:+1}:-${${${options[shinstdin]:#off}:+1}:-0}}");
             } else {
                 out.push_str(&format!("${{+{name}}}"));
             }
@@ -827,7 +839,7 @@ fn count(r: &Reference, name: &str, ctx: Ctx, cx: Cx) -> String {
     let kind = format!("${{(t){name}}}");
     let array = format!("${{${{(M){kind}:#array*}}:+${{#{name}}}}}");
     let value = match ctx {
-        Ctx::Bare => split_words(name, cx.checked),
+        Ctx::Bare => split_words(name, cx.glob),
         Ctx::Quoted => format!("${{{name}}}"),
     };
     let scalar = format!("${{${{{kind}:#array*}}:+{value}}}");
@@ -863,7 +875,10 @@ fn render_value(r: &Reference, name: &str, ctx: Ctx, cx: Cx, out: &mut String) {
     }
     let split = ctx == Ctx::Bare && !r.quote;
     let scalar_special = name == "?";
-    let glob = cx.checked && !r.no_glob;
+    // values that are paths or numbers the shell itself maintains are not
+    // worth the glob wrapper (it is a few hundred characters)
+    let plain_special = matches!(name, "PWD" | "HOME" | "USER" | "TERM" | "UID" | "EUID" | "GID" | "?");
+    let glob = cx.glob && !r.no_glob && !plain_special;
     let base = base_text(name, &r.sub);
     let wrap = |expr: &str| {
         if split {
@@ -1214,8 +1229,8 @@ mod tests {
 
     #[test]
     fn prompt_is_set_only_in_an_interactive_shell() {
-        assert_eq!(t("$?prompt"), "${${${options[interactive]:#off}:+1}:-0}");
-        assert_eq!(t("${?prompt}"), "${${${options[interactive]:#off}:+1}:-0}");
+        assert_eq!(t("$?prompt"), "${${${options[interactive]:#off}:+1}:-${${${options[shinstdin]:#off}:+1}:-0}}");
+        assert_eq!(t("${?prompt}"), "${${${options[interactive]:#off}:+1}:-${${${options[shinstdin]:#off}:+1}:-0}}");
     }
 
     #[test]

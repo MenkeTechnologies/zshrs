@@ -38,7 +38,7 @@
 
 use super::expr::translate_at;
 use super::lex::split_words;
-use super::words::translate_word;
+use super::words::{translate_word, translate_word_globbed};
 
 const NULL_COMMAND: &str = "Invalid null command.";
 const MISSING_NAME: &str = "Missing name for redirect.";
@@ -122,7 +122,7 @@ fn translate_cmds(line: &str) -> Result<String, String> {
             conns.push(sep);
             continue;
         }
-        pipes.push(render_pipeline(&pipeline, &conns)?);
+        pipes.push(render_pipeline(&pipeline, &conns, sep == Sep::Bg)?);
         pipeline.clear();
         conns.clear();
         match sep {
@@ -328,7 +328,16 @@ fn parse(line: &str) -> Result<Vec<(Simple, Sep)>, String> {
                     if d == c {
                         break;
                     }
+                    // `\"` does not escape the quote inside "…" in csh
+                    if d == '\\' && c == '"' && cs.get(i) == Some(&'"') {
+                        continue;
+                    }
                     if d == '\\' && c != '\'' {
+                        // tcsh has no nested backquotes: an escaped one
+                        // inside `…` leaves the first unmatched
+                        if c == '`' && cs.get(i) == Some(&'`') {
+                            return Err("Unmatched '`'.".to_string());
+                        }
                         if let Some(&e) = cs.get(i) {
                             p.word.push(e);
                             i += 1;
@@ -425,7 +434,9 @@ fn parse(line: &str) -> Result<Vec<(Simple, Sep)>, String> {
 /// Check redirections against pipeline position (csh rejects an output
 /// redirect on a non-final stage and an input redirect on a non-first one)
 /// and render the stages joined by `|` / `|&`.
-fn render_pipeline(stages: &[Simple], conns: &[Sep]) -> Result<String, String> {
+/// `background` marks a pipeline that ends in `&`: its stages run in forked
+/// children, where an expression error in `@` only fails that stage.
+fn render_pipeline(stages: &[Simple], conns: &[Sep], background: bool) -> Result<String, String> {
     let last = stages.len() - 1;
     for (k, s) in stages.iter().enumerate() {
         if s.outs.len() > 1 || (!s.outs.is_empty() && k < last) {
@@ -440,7 +451,16 @@ fn render_pipeline(stages: &[Simple], conns: &[Sep]) -> Result<String, String> {
         if k > 0 {
             out.push_str(if conns[k - 1] == Sep::PipeErr { " |& " } else { " | " });
         }
-        out.push_str(&render_simple(s, stages.len() > 1)?);
+        let forked = stages.len() > 1 || background;
+        match render_simple(s, stages.len() > 1) {
+            Ok(text) => out.push_str(&text),
+            // tcsh runs `@ i |= 8` as the pipe `@ i | = 8`: the error comes
+            // from a child and the script goes on
+            Err(msg) if forked && s.words.first().is_some_and(|w| w == "@") => {
+                out.push_str(&format!("{{ print -u2 -r -- {}; false; }}", sq(&msg)));
+            }
+            Err(msg) => return Err(msg),
+        }
     }
     Ok(out)
 }
@@ -885,7 +905,7 @@ fn map_special_vars(word: &str) -> String {
 /// an unclosed `[` made literal (csh keeps `echo [a` as `[a`; zsh calls it a
 /// bad pattern).
 fn tw(word: &str) -> String {
-    translate_word(&escape_unclosed_brackets(&map_special_vars(word)))
+    translate_word_globbed(&escape_unclosed_brackets(&map_special_vars(word)))
 }
 
 /// Backslash every unquoted `[` that has no `]` after it, outside `$x[…]`
@@ -1036,6 +1056,10 @@ fn render_cmd(words: &[String]) -> Result<String, String> {
     if !allows_parens && words.iter().any(|w| w.starts_with('(')) {
         return Err(BADLY_PLACED.to_string());
     }
+    // a word with an alias is that alias's function, whatever builtin it names
+    if !matches!(head, "alias" | "unalias") && STATE.with(|st| st.borrow().aliases.contains(head)) {
+        return Ok(generic(head, args));
+    }
     match head {
         "set" => cmd_set(args),
         "unset" => cmd_unset(args),
@@ -1059,7 +1083,15 @@ fn render_cmd(words: &[String]) -> Result<String, String> {
         "pushd" => Ok(cmd_pushd(args)),
         "popd" => Ok(cmd_popd(args)),
         "echo" => Ok(cmd_echo(args)),
-        "hashstat" | "unhash" => Ok(":".to_string()),
+        "hashstat" => Ok(cmd_hashstat()),
+        "unhash" => {
+            STATE.with(|st| st.borrow_mut().hashed = false);
+            Ok(":".to_string())
+        }
+        "rehash" => {
+            STATE.with(|st| st.borrow_mut().hashed = true);
+            Ok(generic("rehash", args))
+        }
         "chdir" | "cd" if args.len() > 1 => Ok(fatal(&format!("{head}: Too many arguments."))),
         "chdir" => Ok(generic("cd", args)),
         "jobs" => Ok(cmd_jobs(args)),
@@ -1148,6 +1180,9 @@ fn cmd_set(args: &[String]) -> Result<String, String> {
         let w = args[i].as_str();
         i += 1;
         let (name, sub, rest) = split_set_name(w)?;
+        if name == "path" {
+            STATE.with(|st| st.borrow_mut().hashed = true);
+        }
         let val = set_value(args, &mut i, rest);
         // a nested group is where tcsh expects the next variable name
         if matches!(&val, Val::List(inner) if inner.contains('(')) {
@@ -1361,7 +1396,20 @@ fn check_env_name(name: &str, cmd: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `hashstat`: tcsh reports the hash table geometry once a command hash
+/// exists, and nothing before.
+fn cmd_hashstat() -> String {
+    if STATE.with(|st| st.borrow().hashed) {
+        "print -r -- '512 hash buckets of 8 bits each'".to_string()
+    } else {
+        ":".to_string()
+    }
+}
+
 fn cmd_setenv(args: &[String]) -> Result<String, String> {
+    if args.first().is_some_and(|n| n == "PATH") {
+        STATE.with(|st| st.borrow_mut().hashed = true);
+    }
     match args {
         [] => Ok("printenv".to_string()),
         [name] => {
@@ -1420,6 +1468,9 @@ fn cmd_alias(args: &[String]) -> Result<String, String> {
     let body = body_words.iter().map(|w| dequote_alias_word(w)).collect::<Vec<_>>().join(" ");
     let listing = if body_words.len() > 1 { format!("({body})") } else { body.clone() };
 
+    // the body is translated as if the name were not an alias (an alias
+    // of `echo` that runs `echo` means the builtin)
+    STATE.with(|st| st.borrow_mut().aliases.remove(&name));
     let (mut csh_body, reps, needed) = alias_refs(&body);
     if name != "echo" && csh_body.split_whitespace().next() == Some(name.as_str()) {
         let kw = if SELF_ALIAS_BUILTINS.contains(&name.as_str()) { "builtin" } else { "command" };
@@ -1454,6 +1505,7 @@ fn cmd_alias(args: &[String]) -> Result<String, String> {
     if !safe {
         return Ok(format!("alias -- {}={}", sq(&name), sq(&body)));
     }
+    STATE.with(|st| st.borrow_mut().aliases.insert(name.clone()));
     Ok(format!(
         "{{ typeset -gA _csh_alias _csh_alias_ls; {name}() {{ {zbody}; }}; \
 _csh_alias[{name}]={}; _csh_alias_ls[{name}]={}; {ALIAS_LOOP_CHECK} {}; }}",
@@ -1664,6 +1716,17 @@ fn cmd_unalias(args: &[String]) -> Result<String, String> {
     if args.is_empty() {
         return Err("unalias: Too few arguments.".to_string());
     }
+    STATE.with(|st| {
+        let mut st = st.borrow_mut();
+        for w in args {
+            let pat = dequote(w);
+            if pat.contains(['*', '?', '[']) {
+                st.aliases.clear();
+            } else {
+                st.aliases.remove(&pat);
+            }
+        }
+    });
     let pats: Vec<String> = args.iter().map(|w| sq(&dequote(w))).collect();
     Ok(format!(
         "() {{ local _k _p; for _p; do for _k in ${{(k)_csh_alias[(I)$_p]}}; do unset -f -- $_k; \
@@ -1787,7 +1850,15 @@ fn cmd_repeat(args: &[String]) -> Result<String, String> {
         return Err("repeat: Badly formed number.".to_string());
     }
     let body = render_cmd(&args[1..])?;
-    Ok(format!("repeat {}; do {body}; done", tw(&args[0])))
+    // An arithmetic `for`, not `repeat`: under the drop-in's sh-style
+    // emulation `repeat` is not a reserved word (c:builtin.c:214), so the
+    // zsh loop would be a parse error when read line by line. A nested
+    // repeat gets its own counter.
+    let var = format!("_csh_r{}", body.matches("_csh_r").count());
+    Ok(format!(
+        "for (( {var} = {}; {var} > 0; {var}-- )); do {body}; done",
+        tw(&args[0])
+    ))
 }
 
 // --- which / where / umask / history / echo / directory stack ----------------
@@ -1847,7 +1918,8 @@ fn cmd_history(args: &[String]) -> String {
         }
     }
     let range = count.map_or("1".to_string(), |n| format!("-{n}"));
-    format!("fc -l{flags} {range}")
+    // an empty history lists nothing (zsh's `fc` would say "no such event")
+    format!("{{ (( HISTCMD > 1 )) && fc -l{flags} {range}; true; }}")
 }
 
 /// The directory stack line tcsh prints: entries separated by spaces with a
@@ -1931,6 +2003,12 @@ struct ShellState {
     echo_style: EchoStyle,
     /// Names declared `set -r`: later `set` / `unset` of them is an error.
     readonly: std::collections::BTreeSet<String>,
+    /// The command hash exists (`rehash`, `set path`, `setenv PATH`): only
+    /// then does `hashstat` have anything to report.
+    hashed: bool,
+    /// Names currently aliased: a call to one goes to its function, even
+    /// when the word is also a builtin this translator renders inline.
+    aliases: std::collections::BTreeSet<String>,
 }
 
 thread_local! {
@@ -1968,11 +2046,14 @@ fn cmd_echo(args: &[String]) -> String {
     match args.first() {
         Some(a) if dash_n && dequote(a) == "-n" => generic(&print(true), &args[1..]),
         Some(a) if dash_n && may_expand_to_dash_n(a) && map_special_vars(a) == *a => {
+            // The words go through an array assignment, not `() { … } args`:
+            // the arguments of an anonymous call are not filename-generated,
+            // so an unquoted `$pat` holding `a*` would stay unexpanded.
             format!(
-                "() {{ if [[ ${{1-}} == -n ]]; then shift; {} \"$@\"; else {} \"$@\"; fi; }} {}",
+                "{{ _csh_ea=({}); if [[ ${{_csh_ea[1]-}} == -n ]]; then {} \"${{(@)_csh_ea[2,-1]}}\"; else {} \"${{(@)_csh_ea}}\"; fi; }}",
+                args.iter().map(|w| tw(w)).collect::<Vec<_>>().join(" "),
                 print(true),
-                print(false),
-                args.iter().map(|w| tw(w)).collect::<Vec<_>>().join(" ")
+                print(false)
             )
         }
         _ => generic(&print(false), args),
@@ -2549,10 +2630,19 @@ mod tests {
 
     #[test]
     fn repeat_forms() {
-        assert_eq!(tr("repeat 3 echo hi"), "repeat 3; do print -r -- hi; done");
+        assert_eq!(
+            tr("repeat 3 echo hi"),
+            "for (( _csh_r0 = 3; _csh_r0 > 0; _csh_r0-- )); do print -r -- hi; done"
+        );
         // redirect applies around the whole loop, pipe/list bind to the loop
-        assert!(guarded("repeat 2 echo a > f", "repeat 2; do print -r -- a; done > f"));
-        assert_eq!(tr("repeat 2 echo a | wc -l"), "repeat 2; do print -r -- a; done | wc -l");
+        assert!(guarded(
+            "repeat 2 echo a > f",
+            "for (( _csh_r0 = 2; _csh_r0 > 0; _csh_r0-- )); do print -r -- a; done > f"
+        ));
+        assert_eq!(
+            tr("repeat 2 echo a | wc -l"),
+            "for (( _csh_r0 = 2; _csh_r0 > 0; _csh_r0-- )); do print -r -- a; done | wc -l"
+        );
         assert_eq!(err("repeat"), "repeat: Too few arguments.");
         assert_eq!(err("repeat 3"), "repeat: Too few arguments.");
         assert_eq!(err("repeat a echo"), "repeat: Badly formed number.");
@@ -2597,8 +2687,8 @@ mod tests {
         assert_eq!(tr("nohup"), "trap '' HUP");
         assert_eq!(tr("nohup sleep 1"), "nohup sleep 1");
         assert_eq!(tr("limit cputime 10"), "limit cputime 10");
-        assert_eq!(tr("history 3"), "fc -l -3");
-        assert_eq!(tr("history -h"), "fc -ln 1");
+        assert_eq!(tr("history 3"), "{ (( HISTCMD > 1 )) && fc -l -3; true; }");
+        assert_eq!(tr("history -h"), "{ (( HISTCMD > 1 )) && fc -ln 1; true; }");
         assert_eq!(tr("chdir /usr"), "cd /usr");
         assert!(tr("which ls").ends_with("} ls"));
         assert!(tr("where ls nope").ends_with("} ls nope"));

@@ -704,7 +704,8 @@ pub fn single_quote(value: &str) -> String {
 /// "error only if no word of the list matched" glob rule, `extendedglob`
 /// backs the `:gu`/`:gl` modifiers, `pipefail` gives a pipeline csh's
 /// any-stage-failed status.
-const CSH_OPTIONS: &str = "setopt cshnullglob extendedglob pipefail\nunsetopt badpattern\n";
+const CSH_OPTIONS: &str =
+    "setopt cshnullglob extendedglob pipefail\nunsetopt badpattern globsubst\n";
 
 /// Shell variables and functions a csh script expects to find, installed
 /// once per process ahead of the first translated input:
@@ -722,6 +723,7 @@ fn csh_preamble() -> String {
         "{CSH_OPTIONS}{}\n\
          OSTYPE=${{OSTYPE%%[0-9.]*}}\n\
          tcsh=6.21.00\n\
+         [[ -n ${{SHELL-}} ]] || SHELL=/bin/csh\n\
          version='tcsh 6.21.00 (Astron) 2019-05-08 ({}-apple-darwin) options wide,nls,dl,bye,al,kan,sm,rh,color,filec'\n\
          [[ $OSTYPE == darwin ]] && HOSTTYPE=unknown MACHTYPE=unknown\n\
          source() {{ local __csh_f=$1; shift; builtin eval \"$('{exe}' --csh-translate -- \"$__csh_f\")\"; }}\n\
@@ -745,7 +747,8 @@ pub fn csh_input(
     }
     let text = translate(src)?;
     if CSH_PREAMBLE_SENT.swap(true, Ordering::Relaxed) {
-        Ok(format!("{CSH_OPTIONS}{text}"))
+        // (the options persist; re-running `setopt` would also reset `$?`)
+        Ok(text)
     } else {
         Ok(format!("{}{text}", csh_preamble()))
     }
@@ -771,6 +774,10 @@ pub fn csh_line(line: &str) -> Option<String> {
             pending.push('\n');
         }
         pending.push_str(line);
+        // a line ending in a backslash continues on the next one
+        if line.chars().rev().take_while(|&c| c == '\\').count() % 2 == 1 {
+            return None;
+        }
         match csh_input(&pending, crate::csh::translate_partial) {
             Ok(text) => {
                 pending.clear();
@@ -780,6 +787,10 @@ pub fn csh_line(line: &str) -> Option<String> {
             Err(msg) => {
                 pending.clear();
                 eprintln!("{msg}");
+                // a script read from stdin ends at the first error, as a file does
+                if !crate::ported::zsh_h::interact() {
+                    crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL);
+                }
                 None
             }
         }
@@ -802,7 +813,67 @@ pub fn csh_report_unset(name: &str, message: &str) -> bool {
     } else {
         eprintln!("{name}: {message}");
     }
+    // tcsh ends a script on these errors, wherever in it they were raised
+    // (an `eval`, a function body); zsh would only unwind that construct.
+    if !crate::ported::zsh_h::interact() {
+        crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL);
+    }
     true
+}
+
+static CSH_SLURPED: AtomicBool = AtomicBool::new(false);
+
+/// `--csh` reading a script from a non-terminal stdin: the first line plus
+/// every line `more` still yields, translated as one script (the same text a
+/// file would give). Only the first call does it; `None` afterwards and when
+/// a block is already being collected line by line.
+pub fn csh_slurp(first: &str, mut more: impl FnMut() -> String) -> Option<String> {
+    if personality() != Personality::Csh
+        || CSH_PENDING.with(|p| !p.borrow().is_empty())
+        || CSH_SLURPED.swap(true, Ordering::Relaxed)
+    {
+        return None;
+    }
+    let mut src = first.to_string();
+    loop {
+        let line = more();
+        if line.is_empty() {
+            break;
+        }
+        src.push('\n');
+        src.push_str(line.strip_suffix('\n').unwrap_or(&line));
+    }
+    match csh_input(&src, crate::csh::translate) {
+        Ok(text) => Some(text),
+        Err(msg) => {
+            eprintln!("{msg}");
+            crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL);
+            None
+        }
+    }
+}
+
+/// At end of input: the unfinished block a `--csh` prompt/stdin reader was
+/// still holding, translated with end-of-file semantics (the reached body
+/// runs). `None` when nothing is pending.
+pub fn csh_flush_pending() -> Option<String> {
+    if personality() != Personality::Csh {
+        return None;
+    }
+    CSH_PENDING.with(|p| {
+        let mut pending = p.borrow_mut();
+        if pending.is_empty() {
+            return None;
+        }
+        let src = std::mem::take(&mut *pending);
+        match csh_input(&src, crate::csh::translate) {
+            Ok(text) => Some(text),
+            Err(msg) => {
+                eprintln!("{msg}");
+                None
+            }
+        }
+    })
 }
 
 /// Source one startup/logout file. `--csh` files are csh text, so they are

@@ -3613,7 +3613,7 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
             // drop-in stands in for) keeps a hex colour 24-bit unless the
             // user loads zsh/nearcolor themselves.
             if colour_hook == -1
-                && !crate::extensions::emulation_startup::emulating_592()
+                && !crate::extensions::emulation_startup::emulating()
                 && !truecolor_terminal()
                 && crate::ported::module::MODULESTAB
                     .lock()

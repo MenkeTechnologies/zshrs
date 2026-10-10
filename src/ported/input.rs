@@ -698,6 +698,20 @@ pub fn inputline() -> i32 {
     };
     // c:425-427 — `if (!ingetcline) { ... return lexstop = 1; }`.
     // shingetline returns "" only at real EOF (a blank line is "\n").
+    // !!! RUST-ONLY — NO C COUNTERPART !!! `--csh` at end of input: a block
+    // still open (`if … then` without `endif`) runs as tcsh runs it.
+    let mut csh_flushed = false;
+    let line = if line.is_empty() {
+        match crate::emulation_startup::csh_flush_pending() {
+            Some(text) => {
+                csh_flushed = true;
+                text
+            }
+            None => line,
+        }
+    } else {
+        line
+    };
     if line.is_empty() {
         lexstop.with(|c| c.set(true)); // c:426 lexstop = 1
         return 1;
@@ -725,11 +739,27 @@ pub fn inputline() -> i32 {
     // `--csh` input is csh text. The prompt and stdin loops read it here, so
     // translate it before the lexer sees it; a line that opens a block
     // (`foreach` … `end`) is held back and an empty line stands in for it.
+    // A here-document body (read while `stophist` is raised, c:lex.c:286) is
+    // literal text and passes untouched.
+    let in_heredoc = crate::ported::hist::stophist.load(std::sync::atomic::Ordering::SeqCst)
+        >= crate::ported::zsh_h::STOPHIST_DELTA;
     let line = if crate::emulation_startup::personality()
         == crate::emulation_startup::Personality::Csh
+        && !in_heredoc
+        && !csh_flushed
     {
         let raw = line.strip_suffix('\n').unwrap_or(&line);
-        match crate::emulation_startup::csh_line(raw) {
+        // A script piped on stdin is read whole, as a file is: `goto` can
+        // then jump to a label anywhere in it and an error ends it at the
+        // same place.
+        let whole = if crate::ported::zsh_h::interact() {
+            None
+        } else {
+            crate::emulation_startup::csh_slurp(raw, || {
+                crate::ported::input::shingetline()
+            })
+        };
+        match whole.or_else(|| crate::emulation_startup::csh_line(raw)) {
             Some(mut text) => {
                 if !text.ends_with('\n') {
                     text.push('\n');

@@ -2697,6 +2697,17 @@ pub fn restore_oldpwd_global(val: Option<String>) {
     *OLDPWD_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()) = val;
 }
 
+/// The `oldpwd` global as a value, for a subshell to put back on exit
+/// (C's forked child owns its own copy; the in-process stand-in must restore it).
+pub fn oldpwd_global_get() -> Option<String> {
+    OLDPWD_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Put the `oldpwd` global back to a value read by [`oldpwd_global_get`].
+pub fn oldpwd_global_put(val: Option<String>) {
+    *OLDPWD_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()) = val;
+}
+
 /// What `cd -` / `~-` resolve to. zsh reads the `oldpwd` global; the real
 /// POSIX-family shells (dash, ksh93, bash) read `$OLDPWD` itself, so an
 /// assignment to it redirects `cd -` there.

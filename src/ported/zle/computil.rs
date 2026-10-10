@@ -4083,12 +4083,6 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             // option parsing at a bare `-`.
             if cur != compcur
                 && state.actopts != 0
-                // c:2128 (upstream 7a43a20cdf) — a word that is an
-                // option's argument is never a terminator.
-                && !(state.def.is_some()
-                    && state.inopt != 0
-                    // 5.9.2 has no c:2128 guard (upstream 54889 is later).
-                    && !crate::extensions::emulation_startup::emulating_592())
                 && (((d.flags & CDF_SEP) != 0 && line == "--")
                     || ((d.flags & CDF_ZSEP) != 0 && line == "-"))
             {
@@ -4165,14 +4159,16 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     // assign unconditionally; this was the only miss.
                     let next = state.def.as_deref().and_then(|d| d.next.clone());
                     state.def = next; // c:2149 — the assignment, always
+                    // c:2150-2153 (5.9.2 and dev alike) — NO `goto cont` here: the
+                    // word that was just taken as an option argument is still run
+                    // through the option detection below, so in
+                    // `_arguments '-a:arg' -b '(-b)-c'` the `-c` of `tst -a -c -`
+                    // is also seen as the option `-c` and excludes `-b`
+                    // (Y03arguments "exclusion with option argument that looks
+                    // like an option" — zsh documents its own output as wrong).
                     if state.def.is_some() {
                         state.argbeg = cur;
                         state.argend = argend_init;
-                        // c:2158 `goto cont` is upstream 54889 (7a43a20cdf),
-                        // after 5.9.2: a zsh drop-in falls through and parses
-                        // the optarg as an option too, as 5.9.2 does
-                        // (Y03arguments #83's "current behaviour is wrong").
-                        goto_cont = !crate::extensions::emulation_startup::emulating_592();
                     } else if let Some(s) = sopts.first().cloned() {
                         // c:2128 — pop a queued single-letter opt arg.
                         sopts.remove(0);
@@ -4196,9 +4192,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         goto_cont = true; // c:2162 goto cont
                     } else {
                         state.curopt = None;
-                        state.opt = 1;
-                        // c:2173 `goto cont` — see c:2158 above.
-                        goto_cont = !crate::extensions::emulation_startup::emulating_592();
+                        state.opt = 1; // c:2166-2167 — and no `goto cont`, as above
                     }
                 }
             } else {

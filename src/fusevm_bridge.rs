@@ -8427,7 +8427,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // to `Some(vec![])` above and never reaches here, so it
                             // still splats to nothing without erroring — matching zsh.
                             if opt_state_get("nounset").unwrap_or(false) {
-                                crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+                                if !crate::extensions::emulation_startup::csh_report_unset(&name, "Undefined variable.") {
+                                    crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+                                }
                                 crate::ported::utils::errflag.fetch_or(
                                     crate::ported::zsh_h::ERRFLAG_ERROR,
                                     std::sync::atomic::Ordering::Relaxed,
@@ -9271,7 +9273,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `nounset` is the negated alias of UNSET (c:Src/options.c optns), so
         // this is C's `unset(UNSET)`: one atomic load, not a name lookup.
         if !is_known && !isset(crate::ported::zsh_h::UNSET) {
-            crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+            if !crate::extensions::emulation_startup::csh_report_unset(&name, "Undefined variable.") {
+                crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+            }
             crate::ported::utils::errflag.fetch_or(
                 crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,

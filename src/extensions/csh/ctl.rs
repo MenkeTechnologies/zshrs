@@ -894,7 +894,13 @@ impl Translator {
         }
         let (head, tail) = cut_list(cmd);
         let body = self.simple_command(head.trim())?;
-        let text = format!("repeat {}; do {body}; done", words::translate_word(count));
+        // arithmetic `for`: `repeat` is no reserved word under the drop-in's
+        // sh-style emulation (see `cmds::cmd_repeat`)
+        let var = format!("_csh_r{}", body.matches("_csh_r").count());
+        let text = format!(
+            "for (( {var} = {}; {var} > 0; {var}-- )); do {body}; done",
+            words::translate_word(count)
+        );
         self.attach_tail(text, tail)
     }
 
@@ -1144,6 +1150,16 @@ impl Translator {
         if rest.is_empty() {
             self.emit_stub(out, "if: Too few arguments.");
             return Ok(());
+        }
+        // an expression that does not open with `(` still has its parentheses
+        // counted: `if 1) echo x` is `Too many )'s.`
+        if !rest.starts_with('(') {
+            let opens = rest.matches('(').count();
+            let closes = rest.matches(')').count();
+            if closes > opens {
+                self.emit_stub(out, "Too many )'s.");
+                return Ok(());
+            }
         }
         let (inner, after) = match if_parts(rest) {
             Ok(g) => g,

@@ -26,7 +26,11 @@
 //!     [`translate`] returns the earlier lines followed by the error as a
 //!     run-time `print -u2; exit 1`, because tcsh has already executed them
 //!     when it reports the error;
-//!   * a quote does not span lines (only `\<newline>` inside `"…"` does).
+//!   * a quote does not span lines (only `\<newline>` inside `"…"` does);
+//!   * a script piped on stdin is read whole (`emulation_startup::csh_slurp`)
+//!     and translated like a file, so `goto`, here-documents and the point
+//!     where an error ends the script are the same as for a file; only a
+//!     terminal is read line by line.
 
 /// zsh-side helpers the translated output relies on (`cd`/`pushd`/`popd`
 /// with tcsh's error text, `printenv`, the command-not-found handler).

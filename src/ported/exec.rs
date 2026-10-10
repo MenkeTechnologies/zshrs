@@ -5376,6 +5376,8 @@ pub struct SubshForkCopy {
     cwd_fd: SubshCwdFd,
     /// `$PWD` on entry — the fallback when `cwd_fd` could not be opened.
     pwd: Option<String>,
+    /// The `oldpwd` global `cd -` / `~-` read (Src/builtin.c:1239).
+    oldpwd_global: Option<String>,
     /// `dirstack` (`Src/builtin.c:744`) — `pushd` / `popd`.
     dirstack: Vec<String>,
     /// The file-creation mask — `umask` (`Src/builtin.c:7483`).
@@ -5460,6 +5462,7 @@ impl SubshForkCopy {
             cwd_fd: SubshCwdFd::open(),
             oldpwd: crate::dash_mode::oldpwd_global(),
             pwd: getsparam("PWD"),
+            oldpwd_global: crate::extensions::dash_mode::oldpwd_global_get(),
             dirstack: crate::ported::modules::parameter::DIRSTACK
                 .lock()
                 .map(|d| d.clone())
@@ -5605,6 +5608,7 @@ impl SubshForkCopy {
                 }
             }
         }
+        crate::extensions::dash_mode::oldpwd_global_put(self.oldpwd_global);
         if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
             *d = self.dirstack;
         }

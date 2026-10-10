@@ -63,7 +63,7 @@ fn csh_stdin_matches_tcsh() {
     use std::io::Write;
     use std::process::Stdio;
     let Some(reference) = tcsh() else { return };
-    let script = "set x = 5\necho $x $?x\nforeach i (a b)\necho $i\nend\nif ($x == 5) echo yes\n";
+let script = "set x = 5\necho $x $?x\nforeach i (a b)\necho $i\nend\nif ($x == 5) echo yes\nrepeat 2 echo r\nset n = 0\nagain:\n@ n++\nif ($n < 3) goto again\necho n=$n\nif (1) then\necho open-block\n";
     let run_stdin = |bin: &str, extra: &[&str]| {
         let mut child = Command::new(bin)
             .args(extra)
@@ -125,7 +125,18 @@ fn csh_error_and_literal_text_paths_match_tcsh() {
         ("newline in double quotes", "echo \"a\\\nb\"\n"),
         ("foreach with no match", "echo before\nforeach i (/nonexistent_zz*)\necho $i\nend\necho never\n"),
         ("prompt is unset in a script", "echo $?prompt\n"),
-        ("background job notice shape", "echo a & wait\necho b\n"),
+        ("background job notice shape", "sleep 0 &\nwait\necho b\n"),
+        ("hashstat needs a command hash", "hashstat\nrehash\nhashstat\nunhash\nhashstat\n"),
+        ("alias of a builtin name is called", "alias echo 'echo [pre]'\necho hi\necho never\n"),
+        ("backslash does not escape a double quote", "echo before\necho \"He said \\\"hi\\\"\"\necho never\n"),
+        ("| and & after @ are operators", "set i = 1\n@ i |= 8\necho $i\n@ i ^= 5\necho $i\n"),
+        ("echo of a variable holding a glob", "mkdir -p /tmp/_cp_g && cd /tmp/_cp_g && touch a1 a2\nset pat = 'a*'\necho $pat\ncd /tmp && rm -rf /tmp/_cp_g\n"),
+        ("modifiers on a foreach variable", "foreach f (/a/b/c.txt /d/e.csh)\necho $f:t $f:h/x $f:r\nend\n"),
+        ("variable value with a lone pipe", "set c = 'echo a | cat'\n/bin/echo $c\neval $c\n"),
+        ("$shell is set", "echo $?shell\n"),
+        ("repeat counts", "set n = 2\nrepeat $n echo x\nrepeat 0 echo never\n"),
+        ("eval ends the script on an undefined variable", "echo before\neval \"echo $nope\"\necho never\n"),
+        ("if with an unbalanced paren", "echo before\nif 1) echo x\necho never\n"),
     ];
     let dir = std::env::temp_dir().join(format!("zshrs-csh-status-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
