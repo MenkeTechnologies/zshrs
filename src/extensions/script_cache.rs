@@ -114,6 +114,11 @@ pub struct MmappedShard {
     _mmap: Mmap,
     /// `archived` field.
     archived: *const ArchivedScriptShard,
+    /// `(inode, len, mtime_ns)` of the file this mapping was taken from. The
+    /// shard is replaced by atomic rename, so another process's write leaves
+    /// this mapping on the OLD inode; comparing against the path's current
+    /// identity is how a long-lived shell notices.
+    identity: (u64, u64, i64),
 }
 
 // SAFETY: the pointer aliases an immutable mmap that lives as long as Self.
@@ -125,12 +130,14 @@ impl MmappedShard {
     /// `open` — see implementation.
     pub fn open(path: &Path) -> Option<Self> {
         let file = File::open(path).ok()?;
+        let identity = file_identity(&file.metadata().ok()?);
         let mmap = unsafe { Mmap::map(&file).ok()? };
         let archived = rkyv::check_archived_root::<ScriptShard>(&mmap[..]).ok()?;
         let archived_ptr = archived as *const ArchivedScriptShard;
         Some(Self {
             _mmap: mmap,
             archived: archived_ptr,
+            identity,
         })
     }
 
@@ -191,6 +198,19 @@ impl ScriptCache {
 
     fn ensure_mmap(&self) {
         let mut guard = self.mmap.lock();
+        // One `stat`: remap when another process replaced the shard (or it
+        // vanished) since this mapping was taken. `put` and `clear` in THIS
+        // process invalidate directly; a write from a script run elsewhere
+        // only shows up here.
+        let on_disk = std::fs::metadata(&self.path).ok().map(|m| file_identity(&m));
+        let stale = match (guard.as_ref(), on_disk) {
+            (Some(m), Some(id)) => m.identity != id,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if stale {
+            *guard = None;
+        }
         if guard.is_none() {
             *guard = MmappedShard::open(&self.path);
         }
@@ -362,6 +382,12 @@ impl ScriptCache {
         self.invalidate_mmap();
         res
     }
+}
+
+/// `(inode, len, mtime_ns)` — what distinguishes one atomically-renamed shard
+/// from the next.
+fn file_identity(m: &std::fs::Metadata) -> (u64, u64, i64) {
+    (m.ino(), m.len(), m.mtime() * 1_000_000_000 + m.mtime_nsec())
 }
 
 fn acquire_lock(path: &Path) -> Option<nix::fcntl::Flock<File>> {
@@ -549,6 +575,34 @@ mod tests {
 
         let (count, _bytes) = cache.stats();
         assert_eq!(count, 1);
+    }
+
+    /// `dbview scripts` in a long-lived shell reads through a mapping taken
+    /// earlier. A script run by ANOTHER process replaces the shard by rename,
+    /// which this process's mapping never sees on its own: the listing froze
+    /// at whatever the shard held when it was first read.
+    #[test]
+    fn a_write_from_another_process_shows_up_in_a_mapped_reader() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache_path = dir.path().join("scripts.rkyv");
+        let reader = ScriptCache::open(&cache_path).unwrap();
+        let writer = ScriptCache::open(&cache_path).unwrap();
+
+        let first = dir.path().join("first.zsh");
+        let second = dir.path().join("second.zsh");
+        std::fs::write(&first, "echo 1").unwrap();
+        std::fs::write(&second, "echo 2").unwrap();
+        let (s1, n1) = file_mtime(&first).unwrap();
+        let (s2, n2) = file_mtime(&second).unwrap();
+
+        writer.put(&first.to_string_lossy(), s1, n1, vec![1]).unwrap();
+        assert_eq!(reader.list_scripts().len(), 1, "reader maps the shard");
+
+        writer.put(&second.to_string_lossy(), s2, n2, vec![2]).unwrap();
+        let rows = reader.list_scripts();
+        assert_eq!(rows.len(), 2, "the replaced shard must be remapped: {rows:?}");
+        assert_eq!(reader.stats().0, 2);
     }
 
     #[test]
