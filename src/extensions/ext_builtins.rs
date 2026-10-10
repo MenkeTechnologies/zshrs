@@ -1174,13 +1174,13 @@ impl ShellExecutor {
     ///
     /// Usage:
     ///   dbview                      — list all tables and row counts
-    ///   dbview autoloads             — dump autoloads table (name, source, body len, ast len)
+    ///   dbview autoloads             — dump the compsys.db autoloads mirror (name, source, body len)
     ///   dbview autoloads _git        — show single row by name
     ///   dbview comps                 — dump comps table
     ///   dbview history               — recent history entries
     ///   dbview history <pattern>     — search history
-    ///   dbview plugins               — plugin cache entries
-    ///   dbview executables            — PATH executables cache
+    ///   dbview plugins               — plugin cache entries (plugins.db)
+    ///   dbview executables            — PATH executables (daemon catalog `command` rows)
     ///   dbview <table> --count       — just the count
     pub(crate) fn builtin_dbview(&self, args: &[String]) -> i32 {
         let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
@@ -1191,50 +1191,83 @@ impl ShellExecutor {
 
         if args.is_empty() {
             // List all tables with row counts
-            println!("{}", bold("zshrs SQLite caches"));
+            println!("{}", bold("zshrs caches"));
             println!();
 
+            // Bytecode lives in the rkyv shards; the SQLite files are a
+            // read-only mirror (and, for history/catalog, the daemon's own
+            // stores). Each line names the store it was read from.
+            if let Some((n, bytes)) = crate::autoload_cache::stats() {
+                println!("  {} {}", bold("autoloads.rkyv"), dim("(compiled autoload bytecode)"));
+                println!("    compiled:     {:>6} entries  ({} bytes)", n, bytes);
+                println!();
+            }
+
+            if let Some((n, bytes)) = crate::script_cache::stats() {
+                println!("  {} {}", bold("scripts.rkyv"), dim("(compiled sourced scripts)"));
+                println!("    scripts:      {:>6} entries  ({} bytes)", n, bytes);
+                println!();
+            }
+
             if let Some(cache) = self.compsys_cache() {
-                println!("  {} {}", bold("compsys.db"), dim("(completion cache)"));
-                if let Ok(n) = cache.count_table("autoloads") {
-                    let bc_count = cache
-                        .count_table_where("autoloads", "bytecode IS NOT NULL")
-                        .unwrap_or(0);
-                    println!("    autoloads:    {:>6} rows  ({} compiled)", n, bc_count);
-                }
-                if let Ok(n) = cache.count_table("comps") {
-                    println!("    comps:        {:>6} rows", n);
-                }
-                if let Ok(n) = cache.count_table("services") {
-                    println!("    services:     {:>6} rows", n);
-                }
-                if let Ok(n) = cache.count_table("patcomps") {
-                    println!("    patcomps:     {:>6} rows", n);
-                }
-                if let Ok(n) = cache.count_table("executables") {
-                    println!("    executables:  {:>6} rows", n);
-                }
-                if let Ok(n) = cache.count_table("zstyles") {
-                    println!("    zstyles:      {:>6} rows", n);
+                println!("  {} {}", bold("compsys.db"), dim("(completion mirror)"));
+                for table in ["autoloads", "comps", "services", "patcomps"] {
+                    if let Ok(n) = cache.count_table(table) {
+                        println!("    {:<13} {:>6} rows", format!("{table}:"), n);
+                    }
                 }
                 println!();
             }
 
-            if let Some(engine) = self.history() {
-                println!("  {} {}", bold("history.db"), dim("(command history)"));
-                if let Ok(n) = engine.count() {
-                    println!("    entries:      {:>6} rows", n);
-                }
-                println!();
-            }
+            let zstyles = crate::ported::modules::zutil::zstyletab
+                .lock()
+                .map(|t| t.list(None).len())
+                .unwrap_or(0);
+            println!("  {} {}", bold("zstyles"), dim("(live zstyle table)"));
+            println!("    styles:       {:>6} entries", zstyles);
+            println!();
 
             if let Some(ref cache) = self.plugin_cache {
                 let (plugins, functions) = cache.stats();
-                println!("  {} {}", bold("plugins.db"), dim("(plugin source cache)"));
+                println!("  {} {}", bold("plugins.db"), dim("(recorded plugin sources; daemon-ingested)"));
                 println!("    plugins:      {:>6} rows", plugins);
                 println!("    functions:    {:>6} rows", functions);
                 println!();
             }
+
+            if let Ok(paths) = crate::daemon::paths::CachePaths::resolve() {
+                let read_only = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+                if let Ok(conn) = rusqlite::Connection::open_with_flags(&paths.catalog_db, read_only) {
+                    println!("  {} {}", bold("catalog.db"), dim("(daemon catalog)"));
+                    if let Ok(mut stmt) = conn
+                        .prepare("SELECT kind, COUNT(*) FROM entries GROUP BY kind ORDER BY 2 DESC")
+                    {
+                        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)));
+                        if let Ok(rows) = rows {
+                            for (kind, n) in rows.flatten() {
+                                println!("    {:<13} {:>6} rows", format!("{kind}:"), n);
+                            }
+                        }
+                    }
+                    println!();
+                }
+            }
+
+            println!("  {}", bold("history"));
+            if let Some(engine) = self.history() {
+                if let Ok(n) = engine.count() {
+                    println!("    session:      {:>6} rows  {}", n, dim("(zshrs_history.db)"));
+                }
+            }
+            if let Ok(paths) = crate::daemon::paths::CachePaths::resolve() {
+                let read_only = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+                if let Ok(conn) = rusqlite::Connection::open_with_flags(&paths.history_db, read_only) {
+                    if let Ok(n) = conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get::<_, i64>(0)) {
+                        println!("    daemon:       {:>6} rows  {}", n, dim("(history.db)"));
+                    }
+                }
+            }
+            println!();
 
             println!("  Usage: {} <table> [name] [--count]", cyan("dbview"));
             return 0;
@@ -1293,48 +1326,49 @@ impl ShellExecutor {
                     return 0;
                 }
 
-                // Dump all autoloads
+                // Dump all autoloads. Bytecode is not a column: it is the
+                // autoloads.rkyv shard, so "compiled" is a membership test.
+                let compiled = crate::autoload_cache::cached_names();
                 let conn = &cache.conn();
-                match conn.prepare("SELECT name, source, length(body), length(bytecode) FROM autoloads ORDER BY name LIMIT 200") {
-                    Ok(mut stmt) => {
-                        let rows = stmt.query_map([], |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, Option<i64>>(2)?,
-                                row.get::<_, Option<i64>>(3)?,
-                            ))
-                        });
-                        if let Ok(rows) = rows {
-                            println!("{:<40} {:>8} {:>8}  {}", bold("NAME"), bold("BODY"), bold("BYTECODE"), bold("SOURCE"));
-                            let mut count = 0;
-                            for row in rows.flatten() {
-                                let (name, source, body_len, ast_len) = row;
-                                let ast_str = match ast_len {
-                                    Some(n) => green(&format!("{:>8}", n)),
-                                    None => yellow(&format!("{:>8}", "NULL")),
-                                };
-                                let body_str = match body_len {
-                                    Some(n) => format!("{:>8}", n),
-                                    None => dim("NULL").to_string(),
-                                };
-                                // Truncate source path for display
-                                let src_short = if source.len() > 50 {
-                                    format!("...{}", &source[source.len() - 47..])
-                                } else {
-                                    source
-                                };
-                                println!("{:<40} {} {}  {}", name, body_str, ast_str, dim(&src_short));
-                                count += 1;
-                            }
-                            println!("\n{} rows shown (LIMIT 200)", count);
-                        }
-                    }
+                let mut stmt = match conn.prepare(
+                    "SELECT name, source, length(body) FROM autoloads ORDER BY name LIMIT 200",
+                ) {
+                    Ok(s) => s,
                     Err(e) => {
                         eprintln!("zshrs:dbview:1: query failed: {}", e);
                         return 1;
                     }
+                };
+                let rows: Vec<(String, String, Option<i64>)> = stmt
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                    .map(|it| it.flatten().collect())
+                    .unwrap_or_default();
+                println!(
+                    "{:<40} {:>8} {:>8}  {}",
+                    bold("NAME"),
+                    bold("BODY"),
+                    bold("COMPILED"),
+                    bold("SOURCE")
+                );
+                for (name, source, body_len) in &rows {
+                    let body_str = match body_len {
+                        Some(n) => format!("{:>8}", n),
+                        None => dim(&format!("{:>8}", "NULL")),
+                    };
+                    let compiled_str = if compiled.contains(name) {
+                        green(&format!("{:>8}", "yes"))
+                    } else {
+                        yellow(&format!("{:>8}", "no"))
+                    };
+                    // Truncate source path for display
+                    let src_short = if source.len() > 50 {
+                        format!("...{}", &source[source.len() - 47..])
+                    } else {
+                        source.clone()
+                    };
+                    println!("{:<40} {} {}  {}", name, body_str, compiled_str, dim(&src_short));
                 }
+                println!("\n{} rows shown (LIMIT 200)", rows.len());
             }
 
             "comps" => {
@@ -1372,36 +1406,45 @@ impl ShellExecutor {
             }
 
             "executables" => {
-                let Some(cache) = self.compsys_cache() else {
-                    eprintln!("zshrs:dbview:1: no compsys cache");
+                // PATH executables are the daemon catalog's `command` rows;
+                // compsys.db's `executables` table has no writer.
+                let Ok(paths) = crate::daemon::paths::CachePaths::resolve() else {
+                    eprintln!("zshrs:dbview:1: cannot resolve state root");
                     return 1;
                 };
+                let read_only = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+                let conn = match rusqlite::Connection::open_with_flags(&paths.catalog_db, read_only) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("zshrs:dbview:1: {}: {}", paths.catalog_db.display(), e);
+                        return 1;
+                    }
+                };
                 if count_only {
-                    println!("{}", cache.count_table("executables").unwrap_or(0));
+                    let n: i64 = conn
+                        .query_row("SELECT COUNT(*) FROM entries WHERE kind = 'command'", [], |r| r.get(0))
+                        .unwrap_or(0);
+                    println!("{}", n);
                     return 0;
                 }
-                let conn = cache.conn();
-                let query = if let Some(pat) = filter {
-                    format!("SELECT name, path FROM executables WHERE name LIKE '%{}%' ORDER BY name LIMIT 100", pat)
-                } else {
-                    "SELECT name, path FROM executables ORDER BY name LIMIT 100".to_string()
-                };
-                match conn.prepare(&query) {
-                    Ok(mut stmt) => {
-                        println!("{:<30} {}", bold("NAME"), bold("PATH"));
-                        let rows = stmt.query_map([], |row| {
-                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                        });
-                        if let Ok(rows) = rows {
-                            for row in rows.flatten() {
-                                println!("{:<30} {}", row.0, dim(&row.1));
-                            }
-                        }
-                    }
+                let like = format!("%{}%", filter.unwrap_or(""));
+                let mut stmt = match conn.prepare(
+                    "SELECT fq_name, COALESCE(source_loc, '') FROM entries \
+                     WHERE kind = 'command' AND fq_name LIKE ?1 ORDER BY fq_name LIMIT 100",
+                ) {
+                    Ok(s) => s,
                     Err(e) => {
                         eprintln!("zshrs:dbview:1: {}", e);
                         return 1;
                     }
+                };
+                println!("{:<30} {}", bold("NAME"), bold("SOURCE"));
+                let rows: Vec<(String, String)> = stmt
+                    .query_map([&like], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map(|it| it.flatten().collect())
+                    .unwrap_or_default();
+                for (name, src) in rows {
+                    println!("{:<30} {}", name, dim(&src));
                 }
             }
 
