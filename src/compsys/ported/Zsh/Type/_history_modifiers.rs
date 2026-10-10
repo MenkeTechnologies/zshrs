@@ -195,6 +195,7 @@ pub fn _history_modifiers_impl(args: &[String]) -> i32 {
             // sh:61-65  top-level modifier list
             list = vec![
                 "s:substitute string".to_string(),
+                "S:substitute pattern".to_string(),
                 "&:repeat substitution".to_string(),
             ];
             // sh:66  if (( ! global )); then
@@ -268,10 +269,11 @@ mod tests {
         let _ = crate::ported::params::setsparam("PREFIX", "");
         let _ = _history_modifiers_impl(&["h".to_string()]);
         let list = crate::ported::params::getaparam("list").unwrap_or_default();
-        // s, & (always) + 12 non-global + p, x (type=h) + q (type=[hp]).
-        assert_eq!(list.len(), 17);
+        // s, S, & (always) + 12 non-global + p, x (type=h) + q (type=[hp]).
+        assert_eq!(list.len(), 18);
         assert_eq!(list[0], "s:substitute string");
-        assert_eq!(list[1], "&:repeat substitution");
+        assert_eq!(list[1], "S:substitute pattern");
+        assert_eq!(list[2], "&:repeat substitution");
         assert!(list.contains(&"p:print without executing".to_string()));
         assert!(list.contains(&"q:quote to escape further substitutions".to_string()));
     }
@@ -284,7 +286,7 @@ mod tests {
         let _ = crate::ported::params::setsparam("PREFIX", "");
         let _ = _history_modifiers_impl(&["q".to_string()]);
         let list = crate::ported::params::getaparam("list").unwrap_or_default();
-        assert_eq!(list.len(), 14);
+        assert_eq!(list.len(), 15);
         assert!(!list.contains(&"p:print without executing".to_string()));
         assert!(!list.contains(&"q:quote to escape further substitutions".to_string()));
     }

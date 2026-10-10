@@ -94,6 +94,7 @@ const QUALS: &[&str] = &[
     "P:prepend word",
     "Y:+ at most ARG matches",
     "[:+ range of files",
+    ",:logical OR",
     "):end of qualifiers",
     "\\::modifier",
 ];
@@ -518,12 +519,14 @@ mod tests {
 
     #[test]
     fn publishes_full_quals_catalogue() {
-        // sh:225-273 — the catalogue has 47 entries verbatim.
+        // sh:225-273 — the catalogue has 48 entries verbatim, `,` (logical
+        // OR) included: a missing entry shows as one fewer line in the list.
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "");
         let _ = _globquals();
         let q = getaparam("quals").unwrap_or_default();
-        assert_eq!(q.len(), 47);
+        assert_eq!(q.len(), 48);
+        assert!(q.iter().any(|e| e == ",:logical OR"));
         assert!(q.iter().any(|e| e == "=:sockets"));
         assert!(q.iter().any(|e| e == "p:named pipes (FIFOs)"));
         assert!(q.iter().any(|e| e == "):end of qualifiers"));
