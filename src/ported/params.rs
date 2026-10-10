@@ -9210,7 +9210,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             // enclosing scope, so c:3234 createparam runs and its c:1045-1052
             // RO_BY_DESIGN check (getnode2 is NULL too) rejects the write.
             drop(tab); // zerr redraws ZLE, which reads paramtab
-            zerr(&format!("{}: can't modify read-only parameter", name)); // c:1049
+            zerr(&format!("{}: can't change parameter attribute", name)); // 5.9.2 c:1019
             unqueue_signals(); // c:3241
             return None; // c:3242
         }
@@ -10166,7 +10166,8 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         // outer-scope private hidden by scopeprivate) errors, and the c:3368
         // re-fetch then finds nothing: return NULL.
         if (prior_flags as u32 & PM_RO_BY_DESIGN) != 0 {
-            zerr(&format!("{}: can't modify read-only parameter", name));
+            // 5.9.2 params.c:1019 wording.
+            zerr(&format!("{}: can't change parameter attribute", name));
             return None;
         }
         if let Ok(mut tab) = paramtab().write() {
