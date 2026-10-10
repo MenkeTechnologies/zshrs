@@ -4702,6 +4702,8 @@ mod tests {
         *COMPQIPREFIX.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "q".into();
         *lock_vec(&COMPWORDS).lock().unwrap() = vec!["ls".into(), "x".into()];
         COMPCURRENT.store(2, Ordering::Relaxed);
+        let present = |n: &str| paramtab().read().unwrap().get(n).is_some();
+        let (words_before, compstate_before) = (present("words"), present("compstate"));
         comp_scope_enter();
         assert_eq!(getsparam("PREFIX").as_deref(), Some("ab"));
         assert_eq!(getsparam("QIPREFIX").as_deref(), Some("q"));
@@ -4732,8 +4734,10 @@ mod tests {
         // is that the scope view is gone, i.e. no longer tracks the global.
         *COMPPREFIX.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "after-scope".into();
         assert_ne!(getsparam("PREFIX").as_deref(), Some("after-scope"));
-        assert!(paramtab().read().unwrap().get("words").is_none());
-        assert!(paramtab().read().unwrap().get("compstate").is_none());
+        // Unrelated tests may leave plain params of these names; the scope must
+        // restore exactly what existed before it.
+        assert_eq!(present("words"), words_before);
+        assert_eq!(present("compstate"), compstate_before);
     }
 
     /// `$( … )` is a forked child in C, so writes to the completion params

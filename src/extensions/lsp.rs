@@ -2300,6 +2300,14 @@ fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
     if cfg!(test) {
         return None;
     }
+    // Unit tests of this crate run in one process, in parallel, over the same
+    // process-wide shell state the compsys shell thread mutates while it
+    // bootstraps and serves requests. They exercise the hand tables; the
+    // compsys path has its own hermetic integration test
+    // (tests/lsp_compsys_editor.rs), which links the library without cfg(test).
+    if cfg!(test) {
+        return None;
+    }
     let uri = params["textDocument"]["uri"].as_str()?;
     let pos = &params["position"];
     let text = state.docs.get(uri)?;

@@ -8211,6 +8211,12 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(4, Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, Ordering::SeqCst);
 
+        // Other tests may legitimately leave a plain BUFFER/WIDGET/LBUFFER param; the
+        // scope must restore exactly what existed before it.
+        let zle_before: Vec<Option<String>> = ["BUFFER", "WIDGET", "LBUFFER"]
+            .iter()
+            .map(|n| crate::ported::params::getsparam(n))
+            .collect();
         OFFS.store(1, Ordering::Relaxed);
         callcompfunc("-", "_test_fn");
         let _ = crate::ported::params::setiparam("FUNCNEST", funcnest_save);
@@ -8220,10 +8226,10 @@ mod tests {
             Some("fc -|fc -"),
             "c:820 makezleparams(1) never ran, so the completion function saw no ZLE parameters"
         );
-        for name in ["BUFFER", "WIDGET", "LBUFFER"] {
+        for (name, before) in ["BUFFER", "WIDGET", "LBUFFER"].iter().zip(zle_before) {
             assert_eq!(
                 crate::ported::params::getsparam(name),
-                None,
+                before,
                 "${name} outlived the completion scope — c:838 endparamscope must \
                  unset every PM_LOCAL zleparam, or the name leaks into the \
                  interactive shell after the first TAB"
