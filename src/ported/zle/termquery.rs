@@ -594,8 +594,34 @@ const MODEVAR: &str = ".term.mode"; // c:136
 /// corresponding `$.term.fg`/`.bg`/`.cursor` param to the RGB
 /// hex string and (for bg) sets `$.term.mode` to `light`/`dark`
 /// based on Rec.709 lightness.
+/// Suspends POSIXIDENTIFIERS while the terminal probe stores its `.term.*`
+/// parameters. Under `--bash`/`--sh` the option makes `isident` reject the
+/// leading-dot namespace, so each store failed with `not an identifier:
+/// .term.extensions`, set errflag, and the unread probe replies were then
+/// typed into the line editor. These are shell-internal names, not user input.
+struct TermNamespaceIdents(bool);
+
+impl TermNamespaceIdents {
+    fn enter() -> Self {
+        let was = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXIDENTIFIERS);
+        if was {
+            crate::ported::options::opt_state_set("posixidentifiers", false);
+        }
+        Self(was)
+    }
+}
+
+impl Drop for TermNamespaceIdents {
+    fn drop(&mut self) {
+        if self.0 {
+            crate::ported::options::opt_state_set("posixidentifiers", true);
+        }
+    }
+}
+
 pub fn handle_color(bg: i32, red: i32, green: i32, blue: i32) -> i32 {
     // c:438
+    let _ns = TermNamespaceIdents::enter();
     use crate::ported::zsh_h::{
         TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT,
         TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK,
@@ -679,6 +705,7 @@ pub fn handle_query(
     _output: &mut ProbeOutput,
 ) {
     // c:474
+    let _ns = TermNamespaceIdents::enter();
     // `ztrduppfx(capture, clen)` — the first `clen` bytes of the capture.
     let captured = || -> String {
         let n = (clen.max(0) as usize).min(capture.len());
@@ -1972,6 +1999,24 @@ mod tests {
             0,
             "AID must be nonzero after first call regardless of inputs"
         );
+    }
+
+    /// `--bash` / `--sh` set POSIXIDENTIFIERS, which makes `isident` reject the
+    /// `.term.` namespace; the probe handlers must still store their results
+    /// and put the option back.
+    #[test]
+    fn probe_results_are_stored_under_posixidentifiers() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::params::unsetparam(".term.extensions");
+        crate::ported::options::opt_state_set("posixidentifiers", true);
+        handle_query(3, &[], 0, &[], 0, &mut None);
+        let stored = crate::ported::params::getaparam(".term.extensions");
+        let restored = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXIDENTIFIERS);
+        crate::ported::options::opt_state_set("posixidentifiers", false);
+        crate::ported::params::unsetparam(".term.extensions");
+        assert_eq!(stored, Some(vec!["truecolor".to_string()]));
+        assert!(restored, "POSIXIDENTIFIERS must be restored");
     }
 
     #[test]
