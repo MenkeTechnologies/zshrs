@@ -17290,3 +17290,15 @@ fn test_ksh93_echo_and_positional_defaults_follow_ksh93() {
     let (_, mksh, _) = run_zshrs_with_args(&["--mksh", "-c", script]);
     assert_eq!(mksh, "a\tb\nx\na\tb\n<it><><foo>\n[ x][ x][p]\n[x ]\n");
 }
+
+#[test]
+fn test_arith_increment_does_not_inherit_previous_evaluation_base() {
+    // c:Src/math.c:367 resets `lastbase` at the head of every evaluation, so a
+    // base-8 literal read by one `$(( ))` must not become the display base of an
+    // integer that the next `$(( j-- ))` / `$(( j++ ))` assigns.
+    let script = "integer j=-3; print -r -- \"$(( 8#34 ))\"; print -r -- \"$(( j-- ))\"; \
+                  print -r -- \"[$j]\"; print -r -- \"$(( 2#101 ))\"; print -r -- \"$(( ++j ))\"; \
+                  print -r -- \"[$j]\"";
+    let (_, out, _) = run_zshrs(script);
+    assert_eq!(out, "28\n-3\n[-4]\n5\n-3\n[-3]\n");
+}
