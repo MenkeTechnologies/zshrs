@@ -965,7 +965,8 @@ scripts/ztst_compsys.py --zsh-build <built zsh tree> --core --baseline # zsh
 Against zsh 5.9.2 built from the `zsh-5.9.2` tag, `main` at `431cc21de5` passes 2,068 of
 the 2,068 assertions zsh passes (core suite 1,890 of 1,890, completion suite
 `Y01`-`Y03` 178 of 178). The cargo, TAB, surface
-and fuzz measurements (v0.13.18) are in
+and `--zsh` fuzz measurements (49,300 cargo parity tests pass, 468 of 488
+TAB screens match, 1,275 of 1,289 names match) are in
 [`docs/parity_report.html`](docs/parity_report.html).
 
 **Upstream ztst corpus, in-tree runner** -- the `.ztst` files copied into this
