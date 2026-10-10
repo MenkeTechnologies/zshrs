@@ -70,7 +70,7 @@ together (see the Compatibility measurement section in `README.md`):
 - **Differential fuzz** (`bins/parity-fuzz.rs`) — 22,200 generated cases
   against real zsh, 27 divergences across 71-of-74 clean modes.
 - **zsh's own test suite** (`scripts/ztst_compsys.py --core`, oracle zsh
-  5.9.2 from the `zsh-5.9.2` tag) — `main` at `ea21689246` passes 2,052 of the 2,068
+  5.9.2 from the `zsh-5.9.2` tag) — `main` at `790c04658a` plus `74c4a48ef2` passes 2,056 of the 2,068
   assertions zsh passes. Detail in `docs/parity_report.html`.
 - **In-tree ztst corpus** (`tests/ztst_runner.rs`, no oracle) — 2,625 of
   2,796 chunks pass at `17bf07d5ed`; see `README.md` for what the failures are.
