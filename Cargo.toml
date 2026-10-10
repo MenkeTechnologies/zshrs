@@ -324,3 +324,11 @@ strip = true
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+# chrono's `Local` asks `iana_time_zone::get_timezone()` for the zone name, and
+# the upstream macOS backend links CoreFoundation, which dyld then loads and
+# initialises in every zshrs process. The stub reads `/etc/localtime` instead;
+# with no CF symbols left, build.rs's `-dead_strip_dylibs` drops the framework.
+# Ignored when this crate is built from crates.io (patches do not publish).
+[patch.crates-io]
+iana-time-zone = { path = "patches/iana-time-zone" }

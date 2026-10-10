@@ -1,0 +1,10 @@
+[package]
+name = "iana-time-zone"
+version = "0.1.65"
+edition = "2021"
+description = "Drop-in replacement for the iana-time-zone crate: reads the system zone from /etc/localtime. The upstream macOS backend links CoreFoundation, which costs every zshrs process start."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[features]
+fallback = []

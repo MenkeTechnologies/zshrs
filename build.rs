@@ -95,6 +95,13 @@ fn main() {
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,0x10000000");
 
+    // Drop dylibs nothing references after dead-stripping. The daemon crate's
+    // fsnotify code links CoreServices/CoreFoundation, but the shell never
+    // reaches it; without this dyld still loads and initialises both on every
+    // process start (~3.5M cycles of a ~20M-cycle `-f -c :`).
+    #[cfg(target_os = "macos")]
+    println!("cargo:rustc-link-arg-bins=-Wl,-dead_strip_dylibs");
+
     // Emit the `config.h` values that C's ./configure derives on the
     // build host rather than hard-codes. See `emit_config_h_env`.
     emit_config_h_env();
