@@ -67,6 +67,12 @@ pub fn set_session_pool(pool: Arc<crate::worker::WorkerPool>) {
     let _ = SESSION_POOL.set(pool);
 }
 
+/// The session pool, for callers with no executor context (the p10k
+/// render runs from `preprompt()`, between commands).
+pub fn session_pool() -> Option<Arc<crate::worker::WorkerPool>> {
+    SESSION_POOL.get().map(Arc::clone)
+}
+
 /// Where the current batch is. Debounce: while it is not [`IDLE`], the next
 /// prompt skips its round rather than pile up overlapping runs of the same
 /// hooks.

@@ -715,6 +715,75 @@ pub fn on_zle_redraw() {
     crate::ported::zle::zle_main::zle_resetprompt();
 }
 
+/// A frame's pool-built segments, keyed by element index:
+/// `(segments, build ms)` per job.
+type Inflight = std::collections::HashMap<
+    usize,
+    crossbeam_channel::Receiver<(Option<Vec<render::Segment>>, u128)>,
+>;
+
+/// Segments that must be built on the render thread: they reach the
+/// executor through thread-locals (`$()` capture, zshrs introspection)
+/// or write the per-frame `dir` plan list (a thread-local drained by
+/// `render_prompt`).
+fn needs_main_thread(base: &str) -> bool {
+    base == "dir"
+        || base.starts_with("custom_")
+        || ["zshrs_", "stryke", "vimlrs_", "elisprs_", "awkrs_"]
+            .iter()
+            .any(|p| base.starts_with(p))
+}
+
+/// Built-in segment dispatch (everything but user `prompt_<name>`
+/// functions).
+fn build_builtin(base: &str) -> Option<Vec<render::Segment>> {
+    segments_core::build_segment(base)
+        .or_else(|| segments_env::build_segment(base))
+        .or_else(|| segments_sys::build_segment(base))
+        .or_else(|| segments_extra::build_segment(base))
+        // Beyond the p10k spec: powerline-catalog segments
+        // (weather/uptime/now_playing/network_load/hg/svn/bzr/fossil)
+        // and the zshrs-native introspection family
+        // (zshrs_daemon/zshrs_workers/zshrs_jit/zshrs_cache/
+        // zshrs_history/stryke).
+        .or_else(|| segments_powerline::build_segment(base))
+        .or_else(|| segments_zshrs::build_segment(base))
+}
+
+/// Submit every visible, thread-safe element of `elems` to the pool.
+/// The SHOW_ON_COMMAND / SHOW_ON_UPGLOB gates match the build loop's.
+fn dispatch_segments(pool: Option<&crate::worker::WorkerPool>, elems: &[String]) -> Inflight {
+    let mut inflight = Inflight::new();
+    let Some(pool) = pool else {
+        return inflight;
+    };
+    for (idx, name) in elems.iter().enumerate() {
+        if name == "newline" {
+            continue;
+        }
+        let base = render::is_joined_name(name).0;
+        if needs_main_thread(base) {
+            continue;
+        }
+        if has_show_on_command(base) && !SHOWN_BY_COMMAND.lock().unwrap().contains(base) {
+            continue;
+        }
+        if !expansion::show_on_upglob(base) {
+            continue;
+        }
+        let base = base.to_string();
+        inflight.insert(
+            idx,
+            pool.submit_with_result(move || {
+                let t0 = std::time::Instant::now();
+                let built = build_builtin(&base);
+                (built, t0.elapsed().as_millis())
+            }),
+        );
+    }
+    inflight
+}
+
 /// Build and install PROMPT/RPROMPT. Called from `preprompt()` after
 /// the `precmd` hook has run. No-op when the engine is inactive.
 ///
@@ -772,23 +841,21 @@ pub fn preprompt_render() {
     let left_elems = config::p9k_global_arr("LEFT_PROMPT_ELEMENTS");
     let right_elems = config::p9k_global_arr("RIGHT_PROMPT_ELEMENTS");
 
-    // Run the independent probe segments concurrently: the build loop
-    // below is serial (segments share paramtab and the `$()` machinery),
-    // so without this the frame cost is the SUM of every probe.
-    std::thread::scope(|s| {
-        for name in left_elems.iter().chain(right_elems.iter()) {
-            let base = render::is_joined_name(name).0;
-            if matches!(base, "ram" | "battery" | "wifi") {
-                s.spawn(move || segments_sys::prefetch(base));
-            }
-        }
-    });
+    // Every segment that does not need the main thread is built on the
+    // session worker pool, concurrently; the main-thread-only ones (the
+    // `$()` machinery, executor-bound code, the dir plan list) run inline
+    // below while those jobs execute, and results are collected in
+    // element order. Skipped when the pool already has queued work, so a
+    // busy pool can never delay a paint.
+    let pool = crate::async_precmd::session_pool().filter(|p| p.queue_depth() == 0);
+    let mut left_inflight = dispatch_segments(pool.as_deref(), &left_elems);
+    let mut right_inflight = dispatch_segments(pool.as_deref(), &right_elems);
 
     // p10k:5815+ — "newline" pseudo-elements split the element list
     // into prompt lines.
-    let split_lines = |elems: &[String]| -> Vec<Vec<render::Segment>> {
+    let split_lines = |elems: &[String], inflight: &mut Inflight| -> Vec<Vec<render::Segment>> {
         let mut lines: Vec<Vec<render::Segment>> = vec![Vec::new()];
-        for name in elems {
+        for (idx, name) in elems.iter().enumerate() {
             if name == "newline" {
                 lines.push(Vec::new());
                 continue;
@@ -817,26 +884,18 @@ pub fn preprompt_render() {
                 continue;
             }
             let seg_t0 = std::time::Instant::now();
-            let built = segments_core::build_segment(base)
-                .or_else(|| segments_env::build_segment(base))
-                .or_else(|| segments_sys::build_segment(base))
-                .or_else(|| segments_extra::build_segment(base))
-                // Beyond the p10k spec: powerline-catalog segments
-                // (weather/uptime/now_playing/network_load/hg/svn/bzr/
-                // fossil) and the zshrs-native introspection family
-                // (zshrs_daemon/zshrs_workers/zshrs_jit/zshrs_cache/
-                // zshrs_history/stryke).
-                .or_else(|| segments_powerline::build_segment(base))
-                .or_else(|| segments_zshrs::build_segment(base))
-                // p10k:8600+ user-defined segments: a shell function
-                // `prompt_<name>` emits content by calling `p10k
-                // segment -t … -f …` (routed through the
-                // zshrs-p10k-api bridge into USER_SEGMENT_SINK).
-                .or_else(|| run_user_segment_fn(base));
-            SEG_MS.with(|v| {
-                v.borrow_mut()
-                    .push((base.to_string(), seg_t0.elapsed().as_millis()))
-            });
+            // p10k:8600+ user-defined segments: a shell function
+            // `prompt_<name>` emits content by calling `p10k segment …`
+            // (routed through the zshrs-p10k-api bridge into
+            // USER_SEGMENT_SINK). Main thread only.
+            let (built, ms) = match inflight.remove(&idx).map(|rx| rx.recv()) {
+                Some(Ok((built, ms))) => (built.or_else(|| run_user_segment_fn(base)), ms),
+                _ => {
+                    let built = build_builtin(base).or_else(|| run_user_segment_fn(base));
+                    (built, seg_t0.elapsed().as_millis())
+                }
+            };
+            SEG_MS.with(|v| v.borrow_mut().push((base.to_string(), ms)));
             match built {
                 Some(mut segs) => {
                     if joined {
@@ -854,8 +913,8 @@ pub fn preprompt_render() {
         lines
     };
 
-    let left_lines = split_lines(&left_elems);
-    let right_lines = split_lines(&right_elems);
+    let left_lines = split_lines(&left_elems, &mut left_inflight);
+    let right_lines = split_lines(&right_elems, &mut right_inflight);
     // p10k:8337-8359 — the parts `p10k display` addresses.
     let element_names = |elems: &[String]| -> Vec<Vec<String>> {
         let mut lines: Vec<Vec<String>> = vec![Vec::new()];

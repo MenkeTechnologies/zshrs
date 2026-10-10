@@ -46,20 +46,6 @@ use std::time::{Duration, Instant};
 // Dispatch
 // ---------------------------------------------------------------------
 
-/// Warm the probe behind `base` so the serial build loop finds a fresh
-/// cache entry. Pure subprocess / OS reads only — never touches shell
-/// state beyond `$PATH` — so the render calls these concurrently.
-/// Returns false for segments without a probe.
-pub(super) fn prefetch(base: &str) -> bool {
-    match base {
-        "ram" => drop(ram_free_bytes()),
-        "battery" => drop(battery_status()),
-        "wifi" => drop(wifi_status()),
-        _ => return false,
-    }
-    true
-}
-
 /// Segment dispatch per the p10k module contract. `None` = not handled
 /// by this module; `Some(vec![])` = handled but hidden this prompt.
 pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
