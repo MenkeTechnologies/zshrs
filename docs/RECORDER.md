@@ -1,6 +1,6 @@
 # RECORDER.md — Plugin-Framework-Agnostic State-Modification Recorder (PFA-SMR)
 
-**Status:** design  
+**Status:** design. Shipped: `zshrs-recorder` with `--file`, `--output`, `--shell-id`, `--quiet`, `--json`, `--dry-run`, `--no-prewarm`, and `zwhere KIND NAME` / `--prefix` / `--kinds` / `--shell-id` / `--limit`. Not implemented: `zshrs-recorder --tag/--command/--env`, `zwhere -m`, and the `zwhere snapshot` subcommands described below.  
 **Owner:** MenkeTechnologies  
 **Layer:** runtime AOP intercept + daemon catalog + query builtin  
 **Codename:** the *recorder*  

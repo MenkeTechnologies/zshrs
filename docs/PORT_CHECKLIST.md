@@ -89,7 +89,7 @@ isn't ticked until ALL of them pass.
 
 **Codebase metrics** (regenerate via `find src/ported -name '*.rs' | xargs wc -l`
 and `grep -c '// c:' src/ported/<file>.rs`):
-- `src/ported/`: 379,287 lines, 106 files (`find src/ported -name '*.rs'`)
+- `src/ported/`: 106 files (`find src/ported -name '*.rs'`)
 - `// c:NNN` citations: subst.rs (2882), builtin.rs (2998), zsh_h.rs (794), module.rs (1114)
 - `/// Port of` citations: params.rs (183), zsh_h.rs (124), utils.rs (194)
 
