@@ -503,6 +503,109 @@ pub fn zle_free_highlight() {
     crate::ported::prompt::free_colour_buffer(); // c:417
 }
 
+// =====================================================================
+// 5.9.2 text-attribute output (Src/Zle/zle_refresh.c:575-690, 945-965).
+//
+// !!! WARNING: RUST-ONLY GATE — NO C COUNTERPART !!!
+// This port's `zwcputc` / `tcoutclear` follow the development tree, which
+// diffs a pending attribute set against the current one
+// (`treplaceattrs` + `applytextattributes`) and so switches a single
+// attribute off with `\e[0m` and defers the off to the next cell. zsh 5.9.2
+// instead puts explicit "off" bits on the LAST cell of a highlighted run and
+// writes each attribute's own off capability straight after that cell
+// (`settextattributes(c->atr & TXT_ATTR_OFF_MASK)`). A zsh drop-in
+// (`emulating()`) uses the 5.9.2 form; native zshrs keeps the dev engine.
+// The helpers are macros: build.rs admits only fns that exist in the
+// snapshotted (development-tree) C source.
+// =====================================================================
+
+/// The "on" attribute flags that have a 5.9.2 off counterpart.
+const ATTR_ON_FLAGS: zattr = crate::ported::zsh_h::TXTBOLDFACE
+    | crate::ported::zsh_h::TXTSTANDOUT
+    | crate::ported::zsh_h::TXTUNDERLINE
+    | crate::ported::zsh_h::TXTFGCOLOUR
+    | crate::ported::zsh_h::TXTBGCOLOUR;
+
+/// `static zattr lastatr` (zle_refresh.c:575): the attributes this module
+/// switched on and has not yet switched off.
+static LASTATR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// zwcwrite's `curatr` (zle_refresh.c:681): the attributes of the cell
+/// written just before, so a run of identical cells emits them once.
+static ZWCWRITE_CURATR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// True while `zwcwrite` is running, i.e. `zwcputc` got a non-NULL `curatrp`.
+static IN_ZWCWRITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `TXT_ATTR_OFF_FROM_ON(atr)` (zsh.h 5.9.2): the off bit for each on bit.
+macro_rules! TXT_ATTR_OFF_FROM_ON {
+    ($atr:expr) => {{
+        let a: zattr = $atr;
+        crate::ported::zsh_h::TXT_ATTR_OFF_ON_PAIRS
+            .iter()
+            .filter(|(on, _)| a & on != 0)
+            .fold(0, |acc, (_, off)| acc | off)
+    }};
+}
+
+/// `(atr & TXT_ATTR_OFF_MASK) >> TXT_ATTR_OFF_ON_SHIFT`: the on bit for each
+/// off bit.
+macro_rules! TXT_ATTR_ON_FROM_OFF {
+    ($atr:expr) => {{
+        let a: zattr = $atr;
+        crate::ported::zsh_h::TXT_ATTR_OFF_ON_PAIRS
+            .iter()
+            .filter(|(_, off)| a & off != 0)
+            .fold(0, |acc, (on, _)| acc | on)
+    }};
+}
+
+/// Port of `static void settextattributes(zattr atr)` from
+/// `Src/Zle/zle_refresh.c:945-961`.
+macro_rules! settextattributes {
+    ($atr_in:expr) => {{
+        use crate::ported::prompt::{set_colour_attribute, tsetcap};
+        use crate::ported::zsh_h::{
+            COL_SEQ_BG, COL_SEQ_FG, TCALLATTRSOFF, TCBOLDFACEBEG, TCSTANDOUTBEG, TCSTANDOUTEND,
+            TCUNDERLINEBEG, TCUNDERLINEEND, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTNOBGCOLOUR,
+            TXTNOBOLDFACE, TXTNOFGCOLOUR, TXTNOSTANDOUT, TXTNOUNDERLINE, TXTSTANDOUT, TXTUNDERLINE,
+        };
+        let atr: zattr = $atr_in;
+        if atr & TXTNOBOLDFACE != 0 {
+            tsetcap(TCALLATTRSOFF, 0);
+        }
+        if atr & TXTNOSTANDOUT != 0 {
+            tsetcap(TCSTANDOUTEND, 0);
+        }
+        if atr & TXTNOUNDERLINE != 0 {
+            tsetcap(TCUNDERLINEEND, 0);
+        }
+        if atr & TXTBOLDFACE != 0 {
+            tsetcap(TCBOLDFACEBEG, 0);
+        }
+        if atr & TXTSTANDOUT != 0 {
+            tsetcap(TCSTANDOUTBEG, 0);
+        }
+        if atr & TXTUNDERLINE != 0 {
+            tsetcap(TCUNDERLINEBEG, 0);
+        }
+        if atr & (TXTFGCOLOUR | TXTNOFGCOLOUR) != 0 {
+            crate::shout::write(set_colour_attribute(atr, COL_SEQ_FG, 0).as_bytes());
+        }
+        if atr & (TXTBGCOLOUR | TXTNOBGCOLOUR) != 0 {
+            crate::shout::write(set_colour_attribute(atr, COL_SEQ_BG, 0).as_bytes());
+        }
+    }};
+}
+
+/// Port of `static void clearattributes(void)` (zle_refresh.c:582-589).
+macro_rules! clearattributes {
+    () => {{
+        let last = LASTATR.swap(0, Ordering::SeqCst);
+        if last != 0 {
+            settextattributes!(TXT_ATTR_OFF_FROM_ON!(last));
+        }
+    }};
+}
+
 /// Port of `static void tcoutclear(int cap)` from
 /// `Src/Zle/zle_refresh.c:606-612`:
 /// ```c
@@ -518,6 +621,12 @@ pub fn zle_free_highlight() {
 /// to mess up the display" — a clear to end of line keeps the prompt's
 /// attributes, so the cleared cells take the prompt's colour.
 pub fn tcoutclear(cap: i32) {
+    if crate::extensions::emulation_startup::emulating() {
+        // c:596-600 (5.9.2) — `clearattributes(); tcout(cap);`
+        clearattributes!();
+        tcout(cap);
+        return;
+    }
     let atr = if cap == TCCLEAREOL {
         PROMPT_ATTR.load(Ordering::SeqCst)
     } else {
@@ -542,9 +651,30 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
 
     let _ = *MB_LOCALE_READY; // see `MB_LOCALE_READY` — locale-driven encode
 
-    // c:630-631 — `treplaceattrs(c->atr); applytextattributes(0);`
-    crate::ported::prompt::treplaceattrs(c.atr);
-    let mut out: Vec<u8> = crate::ported::prompt::applytextattributes(0).into_bytes();
+    let attrs592 = crate::extensions::emulation_startup::emulating() && c.atr != TXT_ERROR;
+    let mut out: Vec<u8> = Vec::new();
+    if attrs592 {
+        use crate::ported::zsh_h::TXT_ATTR_ON_VALUES_MASK;
+        // c:627-631 — switch off what was on and this cell no longer wants.
+        let last = LASTATR.load(Ordering::SeqCst);
+        if last & !c.atr != 0 {
+            settextattributes!(TXT_ATTR_OFF_FROM_ON!(last & !c.atr));
+            LASTATR.store(0, Ordering::SeqCst);
+        }
+        // c:638-646 — on attributes, unless the cell before had the same.
+        let cur = ZWCWRITE_CURATR.load(Ordering::SeqCst);
+        if c.atr & ATTR_ON_FLAGS != 0
+            && (!IN_ZWCWRITE.load(Ordering::SeqCst)
+                || cur & TXT_ATTR_ON_VALUES_MASK != c.atr & TXT_ATTR_ON_VALUES_MASK)
+        {
+            LASTATR.store(c.atr & ATTR_ON_FLAGS, Ordering::SeqCst);
+            settextattributes!(c.atr & TXT_ATTR_ON_VALUES_MASK);
+        }
+    } else {
+        // c:630-631 — `treplaceattrs(c->atr); applytextattributes(0);`
+        crate::ported::prompt::treplaceattrs(c.atr);
+        out = crate::ported::prompt::applytextattributes(0).into_bytes();
+    }
 
     // c:637-641 / c:643-646 — `memset(&mbstate, 0, ...); i = wcrtomb(mbtmp,
     // wc, &mbstate); if (i > 0) fwrite(mbtmp, i, 1, shout);`. The encode is
@@ -599,6 +729,21 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
     if !out.is_empty() {
         crate::shout::write(&out);
     }
+    if attrs592 {
+        use crate::ported::zsh_h::{TXT_ATTR_OFF_MASK, TXT_ATTR_ON_VALUES_MASK};
+        // c:672-675 — off attributes always go out right after the cell.
+        if c.atr & TXT_ATTR_OFF_MASK != 0 {
+            settextattributes!(c.atr & TXT_ATTR_OFF_MASK);
+            LASTATR.fetch_and(!TXT_ATTR_ON_FROM_OFF!(c.atr), Ordering::SeqCst);
+        }
+        // c:677-685 — remember what is on, less what was just turned off.
+        if IN_ZWCWRITE.load(Ordering::SeqCst) {
+            ZWCWRITE_CURATR.store(
+                c.atr & TXT_ATTR_ON_VALUES_MASK & !TXT_ATTR_ON_FROM_OFF!(c.atr),
+                Ordering::SeqCst,
+            );
+        }
+    }
 }
 
 /// Port of `static int zwcwrite(const REFRESH_STRING s, size_t i)` from
@@ -607,9 +752,12 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
 /// `zwcwrite(a, b)`.
 pub fn zwcwrite(s: &[REFRESH_ELEMENT], i: usize) -> usize {
     let n = i.min(s.len());
+    ZWCWRITE_CURATR.store(0, Ordering::SeqCst); // c:659 `zattr curatr = 0`
+    IN_ZWCWRITE.store(true, Ordering::SeqCst);
     for cell in &s[..n] {
         zwcputc(cell); // c:659
     }
+    IN_ZWCWRITE.store(false, Ordering::SeqCst);
     n // c:661 `return i;`
 }
 
@@ -2176,6 +2324,26 @@ pub fn zrefresh() {
         let nlnct = rpms.ln + 1;
         NBUF.lock().unwrap().truncate(nlnct as usize);
         NLNCT.store(nlnct, Ordering::SeqCst);
+        if crate::extensions::emulation_startup::emulating() {
+            // Puts the 5.9.2 "off" bits on the last cell of every highlighted
+            // run (zle_refresh.c:1413-1417 / c:1469 `all_atr_off`, which C
+            // writes while it lays the cells out; this port lays them out
+            // without them). Region ends inside the text are marked in
+            // compute_render_attrs.
+            let mut nbuf = NBUF.lock().unwrap();
+            for row in nbuf.iter_mut() {
+                for i in 0..row.len() {
+                    let here = row[i].atr & ATTR_ON_FLAGS;
+                    if here == 0 || row[i].atr == TXT_ERROR {
+                        continue;
+                    }
+                    let next = row.get(i + 1).map_or(0, |c| c.atr & ATTR_ON_FLAGS);
+                    if next == 0 {
+                        row[i].atr |= TXT_ATTR_OFF_FROM_ON!(here);
+                    }
+                }
+            }
+        }
 
         // c:1557-1596 — "...>" indicator at the end of the last visible line
         // when there is more text past the bottom of the screen (more_end,
@@ -2392,6 +2560,13 @@ pub fn zrefresh() {
         // (c:2399). With `zle -T tc` blanking every tcout cap, zsh still
         // emits this reset.
         crate::ported::prompt::tsetcap(crate::ported::zsh_h::TCALLATTRSOFF, 0); // c:1137
+        if crate::extensions::emulation_startup::emulating() {
+            // 5.9.2 c:1196-1198 — `tsetcap(TCSTANDOUTEND, 0);
+            // tsetcap(TCUNDERLINEEND, 0);` after the all-off.
+            crate::ported::prompt::tsetcap(crate::ported::zsh_h::TCSTANDOUTEND, 0);
+            crate::ported::prompt::tsetcap(crate::ported::zsh_h::TCUNDERLINEEND, 0);
+            LASTATR.store(0, Ordering::SeqCst);
+        }
         *crate::ported::prompt::current_attrs_lock().lock().unwrap() = 0; // c:1138
         crate::ported::prompt::set_pending_text_attrs(0); // c:1138
         crate::ported::prompt::txtunknownattrs.store(0, Ordering::Relaxed); // c:1138
@@ -5291,6 +5466,18 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
             }
         }
         attrs.push((base_attr, all_attr));
+    }
+    // 5.9.2 c:1285-1304 — `base_atr_off |= TXT_ATTR_OFF_FROM_ON(rhp->atr)` for
+    // every region that ends at this position: the cell before it carries the
+    // off bits, even when another region starts right there.
+    if crate::extensions::emulation_startup::emulating() {
+        for &(start, end, atr, _mask, _layer) in &entries {
+            if start >= 0 && end > start && end as usize <= attrs.len() {
+                let off = TXT_ATTR_OFF_FROM_ON!(atr & ATTR_ON_FLAGS);
+                attrs[end as usize - 1].0 |= off;
+                attrs[end as usize - 1].1 |= off;
+            }
+        }
     }
     attrs
 }

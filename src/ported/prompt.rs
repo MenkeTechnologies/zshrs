@@ -3609,7 +3609,11 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
             // (upstream 3085b88a64, "53379, 53380: autoload nearcolor based
             // on truecolor detection"): unless `$.term.extensions` says
             // truecolor, the hex colour is quantized through zsh/nearcolor.
+            // ZSHRS-ONLY gate: that autoload is post-5.9.2; 5.9.2 (what a zsh
+            // drop-in stands in for) keeps a hex colour 24-bit unless the
+            // user loads zsh/nearcolor themselves.
             if colour_hook == -1
+                && !crate::extensions::emulation_startup::emulating()
                 && !truecolor_terminal()
                 && crate::ported::module::MODULESTAB
                     .lock()
