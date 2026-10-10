@@ -5365,6 +5365,10 @@ pub struct SubshForkCopy {
     /// `cd`, `pushd` and `popd` in the body move it for the whole
     /// process; `restore` compares and moves back only if they did.
     cwd: Option<(u64, u64)>,
+    /// The `oldpwd` global (`Src/builtin.c`) — a `cd` in the body sets it in
+    /// the child only; run in-process it leaked, so `$(cd ../x; print $PWD)`
+    /// in a completion function (`_cd`) made the parent's next `cd -` a no-op.
+    oldpwd: Option<String>,
     /// An fd open on the entry directory itself. `restore` goes back
     /// through it, so a body that renames the directory out from under
     /// the parent (`( cd .. && mv foo bar )` run from `foo`) still returns
@@ -5454,6 +5458,7 @@ impl SubshForkCopy {
             environ: crate::ported::params::environ_image::save(),
             cwd: std::fs::metadata(".").ok().map(|m| (m.dev(), m.ino())),
             cwd_fd: SubshCwdFd::open(),
+            oldpwd: crate::dash_mode::oldpwd_global(),
             pwd: getsparam("PWD"),
             dirstack: crate::ported::modules::parameter::DIRSTACK
                 .lock()
@@ -5571,6 +5576,7 @@ impl SubshForkCopy {
             *t = self.shtimer;
         }
         DONETRAP.store(self.donetrap, Ordering::Relaxed);
+        crate::dash_mode::restore_oldpwd_global(self.oldpwd.clone());
         crate::ported::pattern::restorepatterndisables(self.pattern_disables); // c:4258
         if let Ok(mut t) = crate::ported::hashtable::aliastab_lock().write() {
             t.restore(self.aliastab);

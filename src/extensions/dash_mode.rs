@@ -2685,6 +2685,18 @@ pub fn set_oldpwd_global(val: &str) {
     *OLDPWD_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()) = Some(val.to_string());
 }
 
+/// The `oldpwd` global as it stands, for a subshell snapshot.
+pub fn oldpwd_global() -> Option<String> {
+    OLDPWD_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Puts the `oldpwd` global back to what [`oldpwd_global`] returned. C forks
+/// for `(...)` / `$(...)`, so a `cd` in there never reaches the parent's
+/// `oldpwd`; zshrs runs them in-process and restores it by hand.
+pub fn restore_oldpwd_global(val: Option<String>) {
+    *OLDPWD_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()) = val;
+}
+
 /// What `cd -` / `~-` resolve to. zsh reads the `oldpwd` global; the real
 /// POSIX-family shells (dash, ksh93, bash) read `$OLDPWD` itself, so an
 /// assignment to it redirects `cd -` there.
