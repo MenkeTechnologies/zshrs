@@ -16917,7 +16917,10 @@ fn test_nofork_stdout_capture_is_the_c_command() {
     // "ignored braces, part 4").
     let (code, output, err) = run_zshrs("print -r -- ${ .zsh.cmdsubst=x }; print after");
     assert_eq!((code, output.as_str()), (1, ""));
-    assert!(err.ends_with(":2: .zsh.cmdsubst: can't modify read-only parameter\n"), "{err}");
+    // The reserved name is PM_RO_BY_DESIGN: master's createparam says "can't modify
+    // read-only parameter" (params.c:1071), 5.9.2's "can't change parameter attribute"
+    // (params.c:1019); zshrs reports 5.9.2 and says the latter for every such write.
+    assert!(err.ends_with(":2: .zsh.cmdsubst: can't change parameter attribute\n"), "{err}");
     let (code, _, err) = run_zshrs("setopt ignorebraces\nprint ${ { echo nested } } DONE");
     assert_eq!(code, 1);
     assert!(err.ends_with(":4: parse error near `}'\n"), "{err}");
