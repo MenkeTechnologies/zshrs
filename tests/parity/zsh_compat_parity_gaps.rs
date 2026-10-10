@@ -339,7 +339,6 @@ mod typeset_and_dump {
         #[ignore = "the default $fpath is the host's: zsh's is its install prefix, zshrs's is the host's site-functions plus its bundled tree"]
         typeset_p_fpath_line => (r#"typeset -p fpath"#, r#"typeset -p fpath"#);
         typeset_p1_scalar_form => (r#"typeset -p1 PWD"#, r#"typeset -p1 PWD"#);
-        set_plus_o_full_dump => (r#"set +o"#, r#"set +o"#);
         // __CF_USER_TEXT_ENCODING is excluded: zshrs links
         // CoreFoundation via a dependency and CF's dyld initializer
         // (which runs before main, unbeatable in-process) rewrites
@@ -471,7 +470,6 @@ mod expansion_eval_arithmetic {
         sysparams_pid_subscript => (r#"sysparams[pid]"#, r#"print -r "pid=<${sysparams[pid]}>""#);
         arithmetic_hex_output_form => (r#"$(( [##16] )) output"#, r#"print $(( [##16] 255 ))"#);
         nomatch_when_nonomatch_unset => (r#"nomatch glob"#, r#"unsetopt nonomatch; print nonexist_glob_gap999*(.) 2>&1; print ex:$?"#);
-        let_division_by_zero => (r#"let 1/0"#, r#"let x_gap=1/0 2>&1; print ex:$?"#);
         let_no_expression => (r#"let bare"#, r#"let 2>&1; print ex:$?"#);
         param_Q_flag_quoted_form => (r#"param (Q) quoting"#, r#"print -r "${(Q)HOME:-}""#);
         brace_join_flag_j_dot => (r#"${(j.:.) brace}"#, r#"print -r "${(j.:.){a,b,c}}""#);
@@ -683,7 +681,6 @@ mod corpus_behavior_expansion_c {
         // implementations. The sorted form pins the real invariant
         // (the option-NAME SET must be identical); verified both
         // shells emit identical `${(ok)options}` output.
-        options_assoc_keys_sorted => (r#"(ok)options"#, r#"print ${(ok)options}"#);
         param_uas_upper_segments => (r#"(UAs) per segment"#, r#"s=hi; print ${(UAs)s}"#);
         param_las_lower_segments => (r#"(LAs) per segment"#, r#"s=hi; print ${(LAs)s}"#);
         param_j_dot_join_brace => (r#"(j.S.) brace"#, r#"print ${(j.S.){a,b}}"#);
@@ -786,8 +783,6 @@ mod corpus_dash_fc_surface_extra {
         colon_noop_then_print => (r#": ; print"#, r#":; print after_colon"#);
         printf_one_line => (r#"printf line"#, r#"printf '%s\n' gap_pf"#);
         logcheck_scalar => (r#"LOGCHECK"#, r#"print $LOGCHECK"#);
-        break_outside_loop => (r#"break top-level"#, r#"break 2>&1; print -r "ex=$?""#);
-        continue_outside_loop => (r#"continue top-level"#, r#"continue 2>&1; print -r "ex=$?""#);
         return_outside_function => (r#"return top-level"#, r#"return 1 2>&1; print -r "ex=$?""#);
         zparseopts_capital_d_split => (r#"zparseopts D=del"#, r#"zparseopts D=del -- -d one two 2>&1; print -r "del=$del""#);
         print_minus_l_multiline => (r#"print -l 3 words"#, r#"print -l one two three"#);
@@ -1441,7 +1436,6 @@ mod corpus_dash_fc_bulk_f {
         bulk_f_nested_arith_parens => (r#"(( (1+2)*3 ))"#, r#"print $(( (1 + 2) * 3 ))"#);
         bulk_f_boolean_true_false_params => (r#"$true $false"#, r##"print -r "$true $false""##);
         bulk_f_commands_assoc_echo => (r#"$commands[echo]"#, r#"print ${commands[echo]:-no_path_echo}"#);
-        bulk_f_options_associative_count => (r#"${#options}"#, r#"print ${#options}"#);
         bulk_f_parameters_plus => (r#"$+parameters"#, r#"print $+parameters"#);
         bulk_f_galiases_table_plus => (r#"$+galiases"#, r#"print $+galiases"#);
         bulk_f_modules_array_first => (r#"modules[1]"#, r#"print ${modules[1]:-no_mod1}"#);
@@ -1451,7 +1445,6 @@ mod corpus_dash_fc_bulk_f {
         bulk_f_opt_emacs => (r#"options[emacs]"#, r#"print $options[emacs]"#);
         bulk_f_opt_vi => (r#"options[vi]"#, r#"print $options[vi]"#);
         bulk_f_opt_privileged => (r#"options[privileged]"#, r#"print $options[privileged]"#);
-        bulk_f_opt_restricted => (r#"options[restricted]"#, r#"print $options[restricted]"#);
         bulk_f_opt_posixbuiltins => (r#"options[posixbuiltins]"#, r#"print $options[posixbuiltins]"#);
         bulk_f_opt_posixcd => (r#"options[posixcd]"#, r#"print $options[posixcd]"#);
         bulk_f_opt_posixstrings => (r#"options[posixstrings]"#, r#"print $options[posixstrings]"#);
@@ -48325,5 +48318,23 @@ mod release_identity {
         bulk_e_print_zsh_name_version => (r#"ZSH_NAME"#, r##"print -r "$ZSH_NAME $ZSH_VERSION""##);
         bulk_i_param_ZSH_PATCHLEVEL => (r#"ZSH_PATCHLEVEL"#, r#"print $ZSH_PATCHLEVEL"#);
         bulk_ab_fc_zsh_patchlevel_or_nil => (r#"ZSH_PATCHLEVEL"#, r##"print -r "${ZSH_PATCHLEVEL:-nil}""##);
+    }
+}
+
+/// Rows where the 5.9.2 release and the development tree differ and zshrs follows the
+/// release: `restricted` is still an option (dropped upstream, 54181), `let` after a math
+/// error returns 1 (2 on master, builtin.c:7479), and `break`/`continue` outside a loop do
+/// not name `for` (added upstream, 55061).
+mod release_behaviour {
+    use super::*;
+
+    parity_release_tests! {
+        set_plus_o_full_dump => (r#"set +o"#, r#"set +o"#);
+        let_division_by_zero => (r#"let 1/0"#, r#"let x_gap=1/0 2>&1; print ex:$?"#);
+        options_assoc_keys_sorted => (r#"(ok)options"#, r#"print ${(ok)options}"#);
+        break_outside_loop => (r#"break top-level"#, r#"break 2>&1; print -r "ex=$?""#);
+        continue_outside_loop => (r#"continue top-level"#, r#"continue 2>&1; print -r "ex=$?""#);
+        bulk_f_options_associative_count => (r#"${#options}"#, r#"print ${#options}"#);
+        bulk_f_opt_restricted => (r#"options[restricted]"#, r#"print $options[restricted]"#);
     }
 }

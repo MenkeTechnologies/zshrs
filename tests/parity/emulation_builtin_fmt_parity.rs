@@ -460,8 +460,10 @@ fn bash_compound_function_body_layout_matches_bash() {
 /// no line number (`argzero` is set at c:282, before parseargs).
 #[test]
 fn emulate_option_is_zsh_running_emulate() {
-    let Some(zshbin) = zsh() else {
-        panic!("zsh is not installed — the reference cannot run");
+    // 5.9.2 lists `restricted` in `setopt`; the development tree dropped it (54181).
+    let Some(zshbin) = crate::oracle::release_zsh_path().map(String::from) else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
     };
     let zbin = zshrs_bin();
     let z = zbin.to_str().expect("zshrs path is UTF-8");

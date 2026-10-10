@@ -96,22 +96,35 @@ fn find_shell(candidates: &[&str]) -> Option<String> {
     None
 }
 
-/// The binary that defines a leg's output. The zsh leg follows the same
-/// reference the parity suite uses (`tests/parity/oracle.rs`): the zsh
-/// development tree the port tracks, via `$ZSHRS_ORACLE_ZSH` or the build
-/// `scripts/build_zsh_oracle.sh` installs, and only then a released zsh.
-/// Rows where the tree and 5.9.2 differ (`set -o` no longer lists
-/// `restricted`, upstream 54181; `trap -l` is an error, upstream 54013)
-/// would otherwise compare against the wrong shell.
-fn reference_shell(leg: &Leg) -> Option<String> {
+/// Which zsh the zsh leg compares against.
+#[derive(Clone, Copy)]
+enum Zsh {
+    /// The development tree the port tracks (`tests/parity/oracle.rs`): via
+    /// `$ZSHRS_ORACLE_ZSH` or the build `scripts/build_zsh_oracle.sh` installs, and
+    /// only then a released zsh. For rows where zshrs follows the tree
+    /// (`trap -l` is an error, upstream 54013).
+    Tree,
+    /// The release zshrs reports as its own version (5.9.2): via
+    /// `$ZSHRS_RELEASE_ZSH` or the 5.9.2 build, and only then a system zsh. For rows
+    /// whose answer is the release's (`set -o` still lists `restricted`; upstream
+    /// master dropped it, 54181).
+    Release,
+}
+
+/// The binary that defines a leg's output.
+fn reference_shell(leg: &Leg, zsh: Zsh) -> Option<String> {
     if leg.name == "zsh" {
-        if let Ok(p) = std::env::var("ZSHRS_ORACLE_ZSH") {
+        let (var, built) = match zsh {
+            Zsh::Tree => ("ZSHRS_ORACLE_ZSH", ".cache/zshrs/zsh-oracle/bin/zsh"),
+            Zsh::Release => ("ZSHRS_RELEASE_ZSH", ".cache/zshrs/zsh-5.9.2/bin/zsh"),
+        };
+        if let Ok(p) = std::env::var(var) {
             if Path::new(&p).exists() {
                 return Some(p);
             }
         }
         if let Some(home) = std::env::var_os("HOME") {
-            let built = Path::new(&home).join(".cache/zshrs/zsh-oracle/bin/zsh");
+            let built = Path::new(&home).join(built);
             if built.exists() {
                 return Some(built.to_string_lossy().into_owned());
             }
@@ -159,12 +172,17 @@ fn mask_digits(s: &str) -> String {
 
 /// Drive one script across every leg and report the divergences.
 fn compare(what: &str, script: &str, mask: bool, sort_lines: bool) {
+    compare_with(Zsh::Tree, what, script, mask, sort_lines);
+}
+
+/// [`compare`] with the zsh leg's reference chosen by `zsh`.
+fn compare_with(zsh: Zsh, what: &str, script: &str, mask: bool, sort_lines: bool) {
     let mut mismatches = Vec::new();
     let mut tested = 0usize;
     let mut missing = Vec::new();
 
     for leg in LEGS {
-        let Some(refbin) = reference_shell(leg) else {
+        let Some(refbin) = reference_shell(leg, zsh) else {
             if !leg.optional {
                 missing.push(leg.name);
             }
@@ -251,7 +269,7 @@ fn hash_listing_matches_each_shell() {
 /// zsh has `noclobber` off).
 #[test]
 fn set_o_listing_matches_each_shell() {
-    compare("set -o", "set -o", false, false);
+    compare_with(Zsh::Release, "set -o", "set -o", false, false);
 }
 
 /// `set +o` — the reusable form. bash and dash emit one `set -o NAME` /
@@ -262,8 +280,8 @@ fn set_o_listing_matches_each_shell() {
 /// with `set -e`, which is what pins the default sets.
 #[test]
 fn set_plus_o_listing_matches_each_shell() {
-    compare("set +o", "set +o", false, false);
-    compare("set +o after set -e", "set -e; set +o", false, false);
+    compare_with(Zsh::Release, "set +o", "set +o", false, false);
+    compare_with(Zsh::Release, "set +o after set -e", "set -e; set +o", false, false);
 }
 
 /// `trap -l` is bash's spelling of `kill -l`. The Korn and Bourne shells
