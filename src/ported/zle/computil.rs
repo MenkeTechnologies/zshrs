@@ -4088,7 +4088,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 && !(state.def.is_some()
                     && state.inopt != 0
                     // 5.9.2 has no c:2128 guard (upstream 54889 is later).
-                    && !crate::extensions::emulation_startup::emulating())
+                    && !crate::extensions::emulation_startup::emulating_592())
                 && (((d.flags & CDF_SEP) != 0 && line == "--")
                     || ((d.flags & CDF_ZSEP) != 0 && line == "-"))
             {
@@ -4172,7 +4172,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         // after 5.9.2: a zsh drop-in falls through and parses
                         // the optarg as an option too, as 5.9.2 does
                         // (Y03arguments #83's "current behaviour is wrong").
-                        goto_cont = !crate::extensions::emulation_startup::emulating();
+                        goto_cont = !crate::extensions::emulation_startup::emulating_592();
                     } else if let Some(s) = sopts.first().cloned() {
                         // c:2128 — pop a queued single-letter opt arg.
                         sopts.remove(0);
@@ -4198,7 +4198,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         state.curopt = None;
                         state.opt = 1;
                         // c:2173 `goto cont` — see c:2158 above.
-                        goto_cont = !crate::extensions::emulation_startup::emulating();
+                        goto_cont = !crate::extensions::emulation_startup::emulating_592();
                     }
                 }
             } else {

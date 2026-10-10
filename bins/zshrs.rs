@@ -1868,6 +1868,7 @@ pub fn zshrs_main() {
     // the command line where bash prints plain text. `--zsh` counts too —
     // real zsh has no ghost text either.
     zsh::emulation_startup::set_emulating(parity_mode_selected);
+    zsh::emulation_startup::set_argv0_zsh(argv0_basename == "zsh");
 
     if parity_mode_selected {
         // Use the process-local AtomicBool override instead of

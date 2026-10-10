@@ -171,6 +171,26 @@ pub fn emulating() -> bool {
     EMULATING.load(Ordering::Relaxed)
 }
 
+/// True once the binary was started under the name `zsh` (argv[0]).
+static ARGV0_ZSH: AtomicBool = AtomicBool::new(false);
+
+/// Record that argv[0] is `zsh`. Called once from the binary's CLI mode
+/// application.
+pub fn set_argv0_zsh(on: bool) {
+    ARGV0_ZSH.store(on, Ordering::Relaxed);
+}
+
+/// True when this process stands in for zsh 5.9.2 itself — a drop-in
+/// installed under the name `zsh`. Behaviour that upstream changed after
+/// 5.9.2 and that the development-tree oracle of the cargo parity suite
+/// exercises through `zshrs --zsh` is gated on this, not on [`emulating`], so
+/// each oracle keeps its own answer: 5.9.2's ztst suite through `zsh`, the
+/// development tree through `--zsh`.
+#[inline]
+pub fn emulating_592() -> bool {
+    emulating() && ARGV0_ZSH.load(Ordering::Relaxed)
+}
+
 /// The selected drop-in, defaulting to [`Personality::Zsh`].
 pub fn personality() -> Personality {
     match PERSONALITY.load(Ordering::Relaxed) {
