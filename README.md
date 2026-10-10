@@ -2,6 +2,16 @@
   <img src="https://raw.githubusercontent.com/MenkeTechnologies/zshrs/main/docs/logo.svg" alt="zshrs" width="600">
 </p>
 
+```
+ ███████╗███████╗██╗  ██╗██████╗ ███████╗
+ ╚══███╔╝██╔════╝██║  ██║██╔══██╗██╔════╝
+   ███╔╝ ███████╗███████║██████╔╝███████╗
+  ███╔╝  ╚════██║██╔══██║██╔══██╗╚════██║
+ ███████╗███████║██║  ██║██║  ██║███████║
+ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+```
+
+
 [![CI](https://github.com/MenkeTechnologies/zshrs/actions/workflows/ci.yml/badge.svg)](https://github.com/MenkeTechnologies/zshrs/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/zshrs.svg)](https://crates.io/crates/zshrs)
 [![Downloads](https://img.shields.io/crates/d/zshrs.svg)](https://crates.io/crates/zshrs)
