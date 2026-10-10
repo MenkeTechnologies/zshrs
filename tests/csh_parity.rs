@@ -174,3 +174,51 @@ fn csh_error_and_literal_text_paths_match_tcsh() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(bad.is_empty(), "csh divergences:\n{}", bad.join("\n"));
 }
+
+/// tcsh exits 1 when it reaches the script's last line — a block closer with
+/// no newline after it — by SKIPPING forward to it: the rest of a chain after
+/// a taken branch, the body of a false test with no `else`, the remainder of
+/// a `switch` after `breaksw` or with no matching label, a `break` out of a
+/// loop. Reached normally, or followed by a newline, the status is 0.
+#[test]
+fn csh_exit_status_after_skipping_to_an_unterminated_closer_matches_tcsh() {
+    let Some(reference) = tcsh() else { return };
+    let cases: &[(&str, &str)] = &[
+        ("taken branch skips the else", "if (1) then\n  echo a\nelse\n  echo b\nendif"),
+        ("else branch reached normally", "if (0) then\n  echo a\nelse\n  echo b\nendif"),
+        ("false test, no else", "if (0) then\n  echo a\nendif"),
+        ("true test, no else", "if (1) then\n  echo a\nendif"),
+        ("else-if chain, first taken", "if (1) then\n echo a\nelse if (0) then\n echo b\nelse\n echo c\nendif"),
+        ("else-if chain, second taken", "if (0) then\n echo a\nelse if (1) then\n echo b\nelse\n echo c\nendif"),
+        ("else-if chain, last else", "if (0) then\n echo a\nelse if (0) then\n echo b\nelse\n echo c\nendif"),
+        ("else-if chain, all false, no else", "if (0) then\n echo a\nelse if (0) then\n echo b\nendif"),
+        ("closer followed by a newline", "if (1) then\n  echo a\nelse\n  echo b\nendif\n"),
+        ("closer is not the last line", "if (1) then\n  echo a\nelse\n  echo b\nendif\necho z"),
+        ("inner skip lands before the closer", "if (1) then\n if (1) then\n  echo a\n else\n  echo b\n endif\nendif"),
+        ("outer skip over a nested block", "if (1) then\n echo a\nelse\n if (1) then\n  echo b\n endif\nendif"),
+        ("breaksw skips to endsw", "switch (a)\ncase a:\n echo a\n breaksw\ncase b:\n echo b\n breaksw\nendsw"),
+        ("no label matches", "switch (z)\ncase a:\n echo a\n breaksw\nendsw"),
+        ("default reached normally", "switch (z)\ncase a:\n echo a\n breaksw\ndefault:\n echo d\nendsw"),
+        ("last case falls into endsw", "switch (a)\ncase a:\n echo a\nendsw"),
+        ("break skips to end", "foreach i (1 2)\n echo $i\n break\nend"),
+        ("loop runs out", "foreach i (1 2)\n echo $i\nend"),
+        ("only the last top-level block counts", "if (1) then\n echo a\nelse\n echo b\nendif\nif (0) then\n echo c\nelse\n echo d\nendif"),
+        ("an earlier block skips, the last is plain", "if (0) then\n echo a\nelse\n echo b\nendif\nif (1) then\n echo c\nendif"),
+        ("closer with trailing blanks", "if (1) then\n echo a\nelse if (1) then\n echo b\nendif  "),
+        ("status kept when nothing skipped", "if (0) then\n echo a\nelse\n false\nendif"),
+    ];
+    let dir = std::env::temp_dir().join(format!("zshrs-csh-eofskip-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut bad = Vec::new();
+    for (i, (name, script)) in cases.iter().enumerate() {
+        let file = dir.join(format!("case{i}.csh"));
+        std::fs::write(&file, script).unwrap();
+        let want = run_status(&reference, &[], &file);
+        let got = run_status(env!("CARGO_BIN_EXE_zshrs"), &["--csh"], &file);
+        if want != got {
+            bad.push(format!("{name}\n  tcsh : {want:?}\n  zshrs: {got:?}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(bad.is_empty(), "csh divergences:\n{}", bad.join("\n"));
+}

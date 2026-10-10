@@ -198,6 +198,10 @@ struct Modes {
     status: bool,
     /// Give label-bearing bodies their own dispatcher (needs `PassInfo`).
     regions: bool,
+    /// The input ends in a block closer with no newline after it, and that
+    /// closer ends the Nth top-level block (see [`eof_skip_target`]). tcsh
+    /// exits 1 when it reached that closer by SKIPPING forward to it.
+    eof_skip: Option<usize>,
 }
 
 /// Facts one pass learns and a later pass consumes.
@@ -277,6 +281,10 @@ pub struct Translator {
     seen_goto: bool,
     seen_status: bool,
     last_closer: bool,
+    /// Top-level blocks opened so far, and the `bid` of the one that the
+    /// final unterminated closer ends (`Modes::eof_skip`).
+    top_seen: usize,
+    eof_bid: Option<usize>,
     /// `cmd |` waiting for the `while`/`foreach` it feeds (`cmd | while (…)`)
     pipe_prefix: Option<String>,
 }
@@ -288,6 +296,7 @@ impl Translator {
                 goto: false,
                 status: false,
                 regions: false,
+                eof_skip: None,
             },
             PassInfo::default(),
         )
@@ -311,8 +320,16 @@ impl Translator {
             seen_goto: false,
             seen_status: false,
             last_closer: false,
+            top_seen: 0,
+            eof_bid: None,
             pipe_prefix: None,
         }
+    }
+
+    /// Declare that the input's last line is a block closer without a
+    /// newline, closing the `ordinal`th top-level block ([`eof_skip_target`]).
+    pub fn set_eof_skip(&mut self, ordinal: Option<usize>) {
+        self.modes.eof_skip = ordinal;
     }
 
     /// Translate one logical line (comments stripped, continuations joined,
@@ -420,6 +437,7 @@ impl Translator {
             goto: self.seen_goto,
             status: self.seen_status,
             regions: false,
+            eof_skip: self.modes.eof_skip,
         }
     }
 
@@ -487,7 +505,14 @@ impl Translator {
         }
         // tcsh leaves status 0 after a block closer; zsh keeps the last
         // body status, which would become the script's exit status.
-        if self.last_closer {
+        if self.eof_bid.is_some() {
+            // The input's last line is the closer of one top-level block.
+            // tcsh exits 1 when it arrived there by skipping (a taken
+            // branch passing an `else`, `breaksw`, `break`, a false test
+            // with no `else`); status 0 otherwise.
+            self.line(out, 0, "(( ! ${__csh_eskip:-0} ))");
+            self.last_closer = false;
+        } else if self.last_closer {
             self.line(out, 0, ":");
             self.last_closer = false;
         }
@@ -597,8 +622,19 @@ impl Translator {
 
     fn alloc_bid(&mut self) -> usize {
         self.next_bid += 1;
-        self.next_bid - 1
+        let bid = self.next_bid - 1;
+        if self.stack.is_empty() {
+            if self.modes.eof_skip == Some(self.top_seen) {
+                self.eof_bid = Some(bid);
+            }
+            self.top_seen += 1;
+        }
+        bid
     }
+
+    /// Text that records "tcsh would skip to the final closer here". Only
+    /// the block that closer ends counts; see `Modes::eof_skip`.
+    const EOF_SKIP_SET: &'static str = "__csh_eskip=1";
 
     fn alloc_rid(&mut self) -> usize {
         self.next_rid += 1;
@@ -939,6 +975,9 @@ impl Translator {
                     if kw == "break" && self.open_at_eof(*bid) {
                         return stub("break: end not found.");
                     }
+                    if kw == "break" && self.eof_bid == Some(*bid) {
+                        return format!("{}; {}", Self::EOF_SKIP_SET, jump(kw, skipped + d + 1));
+                    }
                     return jump(kw, skipped + d + 1);
                 }
                 Frame::Switch { .. } => skipped += 1 + d,
@@ -959,6 +998,13 @@ impl Translator {
                 Frame::Switch { bid, .. } => {
                     if self.open_at_eof(*bid) {
                         return stub("breaksw: endsw not found.");
+                    }
+                    if self.eof_bid == Some(*bid) {
+                        return format!(
+                            "{}; {}",
+                            Self::EOF_SKIP_SET,
+                            jump("break", skipped + d + 1)
+                        );
                     }
                     return jump("break", skipped + d + 1);
                 }
@@ -1248,6 +1294,11 @@ impl Translator {
             Some(Frame::If { has_else, bid, .. }) => (*has_else, *bid, self.depth() - 1),
             _ => return Ok(()),
         };
+        // The branch that just finished was taken: tcsh now skips to the
+        // `endif`, which for the final block is the unterminated last line.
+        if self.eof_bid == Some(bid) {
+            self.line(out, level + 1, Self::EOF_SKIP_SET);
+        }
         // A taken `then` branch that reaches `else` makes tcsh skip to an
         // `endif`; when the input ends first that is an error.
         if !has_else && self.open_at_eof(bid) {
@@ -1317,11 +1368,22 @@ impl Translator {
         }
         if matches!(self.stack.last(), Some(Frame::If { .. })) {
             self.close_region(out);
-            let extra = match self.stack.last() {
-                Some(Frame::If { extra_fi, .. }) => *extra_fi,
-                _ => 0,
+            let (extra, no_else, ends_input) = match self.stack.last() {
+                Some(Frame::If {
+                    extra_fi,
+                    has_else,
+                    bid,
+                    ..
+                }) => (*extra_fi, !*has_else, self.eof_bid == Some(*bid)),
+                _ => (0, false, false),
             };
             let level = self.depth() - 1;
+            // Every test false and no `else`: tcsh skips the last body to
+            // this `endif`.
+            if ends_input && no_else {
+                self.line(out, level, "else");
+                self.line(out, level + 1, Self::EOF_SKIP_SET);
+            }
             for _ in 0..=extra {
                 self.line(out, level, "fi");
             }
@@ -1578,6 +1640,7 @@ impl Translator {
         // tcsh tests labels in source order and `default` matches the moment
         // it is reached, so labels after the first `default` are only
         // reachable by fallthrough.
+        let mut has_default = false;
         for (i, l) in labels.iter().enumerate() {
             match l {
                 Label::Pat(p) => {
@@ -1585,10 +1648,16 @@ impl Translator {
                 }
                 Label::Default => {
                     self.line(out, level + 1, &format!("(*) {m}={};;", i + 1));
+                    has_default = true;
                     break;
                 }
                 Label::Bad => {}
             }
+        }
+        // No label matched and there is no `default`: tcsh skips to the
+        // `endsw`, the unterminated last line when this switch ends the input.
+        if !has_default && self.eof_bid == Some(b.bid) {
+            self.line(out, level + 1, &format!("(*) {};;", Self::EOF_SKIP_SET));
         }
         self.line(out, level + 1, "esac");
         self.stack.push(Frame::Switch {
@@ -1699,6 +1768,54 @@ impl Default for Translator {
 // ---- free helpers ---------------------------------------------------------
 
 /// Single-quote `s` for zsh.
+/// For a script whose last line is a block closer with no newline after it:
+/// the 0-based ordinal, among the top-level blocks in source order, of the
+/// block that closer ends. `None` when the input ends in a newline, the last
+/// line is not a closer, or block nesting does not return to the top level
+/// exactly there (the translator then keeps its ordinary status).
+///
+/// tcsh exits 1 in that situation when it reached the closer by skipping
+/// forward to it — see `Modes::eof_skip`. Only line-leading keywords are
+/// considered, which is how tcsh finds block structure too.
+pub fn eof_skip_target(src: &str, lines: &[String]) -> Option<usize> {
+    if src.ends_with('\n') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut ordinal = 0usize;
+    let mut current = None;
+    for (i, raw) in lines.iter().enumerate() {
+        if raw.starts_with(super::lex::HEREDOC_RAW) {
+            continue;
+        }
+        let line = raw.trim();
+        let word = line.split_whitespace().next().unwrap_or("");
+        let word = word.split(['(', ';']).next().unwrap_or(word);
+        let opens = match word {
+            "foreach" | "while" | "switch" => true,
+            "if" => line.ends_with("then"),
+            _ => false,
+        };
+        let closes = matches!(word, "endif" | "end" | "endsw") && line == word;
+        if opens {
+            if depth == 0 {
+                current = Some(ordinal);
+                ordinal += 1;
+            }
+            depth += 1;
+        } else if closes {
+            if depth == 0 {
+                return None;
+            }
+            depth -= 1;
+            if depth == 0 && i + 1 == lines.len() {
+                return current;
+            }
+        }
+    }
+    None
+}
+
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }

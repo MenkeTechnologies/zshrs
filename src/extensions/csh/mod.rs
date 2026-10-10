@@ -63,6 +63,7 @@ pub mod words;
 pub fn translate(src: &str) -> Result<String, String> {
     let lines = lex::script_lines(src);
     let mut t = ctl::Translator::new();
+    t.set_eof_skip(ctl::eof_skip_target(src, &lines));
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
         if let Err(msg) = t.feed(line, &mut out) {
