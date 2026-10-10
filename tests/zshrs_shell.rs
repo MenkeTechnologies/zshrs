@@ -17233,3 +17233,20 @@ fn test_unquoted_star_after_a_quoted_at_keeps_dropping_edge_whitespace() {
     );
     assert_eq!(output, "<a><b>\n<a><b>\n<a><b>\n");
 }
+
+#[test]
+fn test_bash_and_mksh_tilde_expand_the_value_of_an_assignment_shaped_argument() {
+    // bash and mksh tilde-expand `name=~/dir` ARGUMENT words with no option set
+    // (zsh needs MAGIC_EQUAL_SUBST). bash needs a valid name before the `=` and
+    // also expands after each `:`; mksh takes any head but only the tilde right
+    // after the first `=`.
+    let script = "HOME=/h; s() { for a in \"$@\"; do printf '<%s>' \"$a\"; done; echo; }; \
+                  s x=~/y; s x=a:~:b; s 1=~; s -x=~; s x='~'";
+    let (_, bash, _) = run_zshrs_with_args(&["--bash", "-c", script]);
+    assert_eq!(bash, "<x=/h/y>\n<x=a:/h:b>\n<1=~>\n<-x=~>\n<x=~>\n");
+    let (_, mksh, _) = run_zshrs_with_args(&["--mksh", "-c", script]);
+    assert_eq!(mksh, "<x=/h/y>\n<x=a:~:b>\n<1=/h>\n<-x=/h>\n<x=~>\n");
+    // ksh93 and dash do not.
+    let (_, ksh, _) = run_zshrs_with_args(&["--ksh", "-c", script]);
+    assert_eq!(ksh, "<x=~/y>\n<x=a:~:b>\n<1=~>\n<-x=~>\n<x=~>\n");
+}

@@ -12259,7 +12259,12 @@ fn expand_dialect(t: ShellTarget) -> Option<ExpandDialect> {
 /// The one helper every probe goes through: prints each argument in `<…>`
 /// brackets, so the FIELD boundaries an expansion produced are visible
 /// (an unquoted `$v` that splits into three words prints `<a><b><c>`).
-const EXPAND_PRELUDE: &str = r#"s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; HOME=/h"#;
+///
+/// `HOME` is NOT assigned here: bash 5.3 expands `~` from the passwd entry and
+/// ignores an in-script `HOME=…`, so setting it made every tilde probe diverge
+/// for a reason that is the reference's, not zshrs's. Both shells inherit the
+/// same `HOME` from the harness.
+const EXPAND_PRELUDE: &str = r#"s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }"#;
 
 /// Values chosen to separate the rules: empty, whitespace at either end, runs
 /// of blanks, IFS-looking punctuation, glob metacharacters, a leading dash,
@@ -12374,7 +12379,7 @@ fn expand_one(rng: &mut StdRng, d: ExpandDialect) -> String {
         23 => "s {a,b}{1,2} {1..4} {a..c} x{,y} {1..10..3} \"{a,b}\" {a}".to_string(),
         24 => format!("v={v}; n=v; s \"${{!n}}\"; pre_a=1; pre_b=2; s ${{!pre_@}} ${{!pre_*}}"),
         25 => "s $'a\\tb' $'\\x41' $'\\u00e9' $'it\\'s' $\"plain\" \"$'x'\"".to_string(),
-        _ => format!("declare -A m=([k]={v} [j]=2); s \"${{m[k]}}\" \"${{#m[@]}}\" \"${{m[zz]:-d}}\"; s \"${{!m[@]}}\" | tr -d '\\n' | wc -c | tr -d ' '"),
+        _ => format!("declare -A am=([k]={v} [j]=2); s \"${{am[k]}}\" \"${{#am[@]}}\" \"${{am[zz]:-d}}\"; s \"${{!am[@]}}\" | tr -d '\\n' | wc -c | tr -d ' '"),
     }
 }
 

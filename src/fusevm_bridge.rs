@@ -15527,6 +15527,54 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                             globbed
                         } else if has_nonleading_equals
+                            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
+                            && (crate::dash_mode::bash_mode() || crate::dash_mode::pdksh_family())
+                        {
+                            // !!! BASH / MKSH GATE (no C counterpart) !!! These
+                            // shells tilde-expand the value of an assignment-SHAPED
+                            // ARGUMENT word (`s x=~` -> `x=/home/u`) without any
+                            // option, which in zsh is MAGIC_EQUAL_SUBST. The two
+                            // spell it differently, so neither is simply that option:
+                            //   bash  needs a valid `name`, `name[sub]` or `name+`
+                            //         before the `=` (`1=~`, `-x=~`, `"x"=~` stay)
+                            //         and expands after every `:` too;
+                            //   mksh  takes ANY head (`1=~`, `-x=~` expand) but only
+                            //         the tilde that follows the first `=`
+                            //         (`x=a:~:b` and `x=~:~` keep their later ones).
+                            let eq = s_tok
+                                .chars()
+                                .position(|c| c == crate::ported::zsh_h::Equals)
+                                .unwrap_or(0);
+                            let chars: Vec<char> = s_tok.chars().collect();
+                            let head: String = chars[..eq].iter().collect();
+                            let tail: String = chars[eq + 1..].iter().collect();
+                            if crate::dash_mode::bash_mode() {
+                                let name = head.strip_suffix('+').unwrap_or(&head);
+                                let (base, sub) = match name.find('[') {
+                                    Some(b) if name.ends_with(']') => (&name[..b], true),
+                                    _ => (name, false),
+                                };
+                                let ident = base.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                                    && base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+                                let _ = sub;
+                                if ident {
+                                    let exp = crate::ported::subst::filesub(
+                                        &s_tok,
+                                        crate::ported::zsh_h::PREFORK_TYPESET,
+                                    );
+                                    vec![crate::lex::untokenize(&exp).to_string()]
+                                } else {
+                                    vec![s]
+                                }
+                            } else {
+                                let exp_tail = crate::ported::subst::filesub(&tail, 0);
+                                vec![format!(
+                                    "{}={}",
+                                    crate::lex::untokenize(&head),
+                                    crate::lex::untokenize(&exp_tail)
+                                )]
+                            }
+                        } else if has_nonleading_equals
                             && crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
                         {
                             // c:Src/exec.c:3353 — when MAGIC_EQUAL_SUBST is set
