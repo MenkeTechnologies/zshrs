@@ -6926,16 +6926,6 @@ pub fn doshfunc(
     mut body_runner: impl FnMut() -> i32, // (Rust-only — body delegate)
 ) -> i32 {
     use crate::ported::builtin::{BREAKS, CONTFLAG, LASTVAL, LOOPS, RETFLAG};
-    // TEMP-INSTRUMENTATION (remove before commit): shell-function invocation
-    // volume, to tell "few slow calls" from "very many cheap calls".
-    {
-        use std::sync::atomic::{AtomicU64, Ordering as O};
-        static CALLS: AtomicU64 = AtomicU64::new(0);
-        let n = CALLS.fetch_add(1, O::Relaxed) + 1;
-        if n % 5000 == 0 {
-            tracing::info!(target: "fncount", calls = n, "doshfunc cumulative");
-        }
-    }
     use crate::ported::jobs::{NUMPIPESTATS, PIPESTATS};
     use crate::ported::modules::parameter::FUNCSTACK;
     use crate::ported::params::endparamscope;
