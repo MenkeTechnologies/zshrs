@@ -5227,9 +5227,10 @@ mod tests {
     }
 
     #[test]
-    fn opt_size_at_185() {
+    fn opt_size_at_186() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(OPT_SIZE, 185);
+        // 185 options plus RESTRICTED, which 5.9.2 still has (dev tree removed it).
+        assert_eq!(OPT_SIZE, 186);
     }
 
     #[test]

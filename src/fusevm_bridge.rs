@@ -23536,6 +23536,11 @@ pub(crate) fn arith_pow(
 /// `BUILTIN_STMT_PROLOGUE_FAST` can perform the same write without a
 /// second indirect call. c:Src/exec.c:1355/1451/2056 `lineno = code - 1`.
 pub(crate) fn set_lineno_impl(n: i64) -> fusevm::Value {
+    // A statement boundary holds no lock: reap and run any signal `zhandler` deferred
+    // because the previous statement was inside the parameter or job table.
+    if crate::ported::signals::queueing_enabled.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        crate::ported::signals_h::run_queued_signals();
+    }
     // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash numbers a function body
     // from the line of its definition as 1; zsh (c:Src/exec.c:1355 `lineno =
     // code - 1`, function-relative) leaves that line at 0.

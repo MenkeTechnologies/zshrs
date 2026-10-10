@@ -77,6 +77,8 @@ pub mod zlong_cast;
 pub mod host_libc;
 /// `fork_safe_pool` submodule (Rust-only): a rayon pool that survives `fork()`.
 pub mod fork_safe_pool;
+/// `signal_queue_guard` submodule (Rust-only): a scope guard for `queue_signals()` / `unqueue_signals()`.
+pub mod signal_queue_guard;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
 /// `test_util` submodule.

@@ -403,8 +403,24 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
         return;
     }
 
+    // !!! RUST-ONLY (no C counterpart) !!! The handler runs on the thread it interrupted.
+    // C is protected by `queue_signals()` around every critical section; this port holds
+    // its state in locks (`paramtab`, `JOBTAB`), and the dispatch below reads and writes
+    // both (`update_bg_job` -> `printjob_delete_tail` -> `getsparam` / `storepipestats`).
+    // If the interrupted code is inside one of those locks, the thread would wait on
+    // itself for ever (`repeat 200 { (exit 1) & }; wait` did, in `set_lineno_impl` and in
+    // `assignaparam`). A busy table therefore defers the signal exactly as `queueing_enabled`
+    // does; the queue is drained at the next safe point (`zwaitjob`'s loop, the per-statement
+    // `$LINENO` update, `unqueue_signals`). A poisoned lock is not busy.
+    let tables_busy = matches!(
+        crate::ported::params::paramtab().try_write(),
+        Err(std::sync::TryLockError::WouldBlock)
+    ) || crate::ported::jobs::JOBTAB
+        .get()
+        .is_some_and(|jt| matches!(jt.try_lock(), Err(std::sync::TryLockError::WouldBlock)));
+
     // c:410-424 — `if (queueing_enabled) { ... return; }`
-    if queueing_enabled.load(Ordering::SeqCst) != 0 {
+    if queueing_enabled.load(Ordering::SeqCst) != 0 || tables_busy {
         let temp_rear = (queue_rear.load(Ordering::SeqCst) + 1) % MAX_QUEUE_SIZE;
         if temp_rear != queue_front.load(Ordering::SeqCst) {
             queue_rear.store(temp_rear, Ordering::SeqCst);
