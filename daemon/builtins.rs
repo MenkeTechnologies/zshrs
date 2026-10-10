@@ -1227,9 +1227,30 @@ fn zlog_path() -> i32 {
     0
 }
 
+/// The three log families `zlog` knows, as `(selector, file-name prefix)`.
+const LOG_KINDS: [(&str, &str); 3] = [
+    ("shell", "zshrs.log"),
+    ("daemon", "zshrs-daemon.log"),
+    ("recorder", "zshrs-recorder.log"),
+];
+
+/// Selector for a log file name (`zshrs-daemon.log.2` -> `daemon`).
+fn log_kind(path: &std::path::Path) -> Option<&'static str> {
+    let name = path.file_name()?.to_str()?;
+    LOG_KINDS
+        .iter()
+        .find(|(_, prefix)| name.starts_with(prefix))
+        .map(|(kind, _)| *kind)
+}
+
+/// `zlog tail [-n N] [-f] [shell|daemon|recorder ...]` — the last N lines of
+/// each selected log family (all three by default). With more than one family
+/// selected every section, and every followed chunk, is headed `==> kind <==`
+/// as `tail` does for several files.
 fn zlog_tail(args: &[String]) -> i32 {
     let mut lines: usize = 100;
     let mut follow = false;
+    let mut kinds: Vec<&'static str> = Vec::new();
     let mut iter = args.iter();
     while let Some(a) = iter.next() {
         match a.as_str() {
@@ -1241,62 +1262,91 @@ fn zlog_tail(args: &[String]) -> i32 {
             other if other.starts_with('-') => {
                 return err_exit("zlog tail", &format!("unknown flag `{}`", other));
             }
-            _ => {}
+            "all" => kinds.extend(LOG_KINDS.iter().map(|(k, _)| *k)),
+            other => match LOG_KINDS.iter().find(|(k, _)| *k == other) {
+                Some((k, _)) => kinds.push(k),
+                None => {
+                    return err_exit(
+                        "zlog tail",
+                        &format!("unknown log `{}` (shell|daemon|recorder|all)", other),
+                    )
+                }
+            },
         }
     }
+    if kinds.is_empty() {
+        kinds.extend(LOG_KINDS.iter().map(|(k, _)| *k));
+    }
+    kinds.dedup();
+    let headed = kinds.len() > 1;
 
     let paths = match CachePaths::resolve() {
         Ok(p) => p,
         Err(e) => return err_exit("zlog tail", &e.to_string()),
     };
-    // Newest file first: the last N lines almost always live in the current
-    // log, so the rotated generations (megabytes each) are only read when the
-    // newer ones hold fewer than N lines between them.
-    let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-    for f in log_files(&paths) {
-        if tail.len() >= lines {
-            break;
+    let files = log_files(&paths); // newest first
+    for (n, kind) in kinds.iter().enumerate() {
+        if headed {
+            println!("{}==> {} <==", if n == 0 { "" } else { "\n" }, kind);
         }
-        let Ok(content) = std::fs::read_to_string(&f) else {
-            continue;
-        };
-        let want = lines - tail.len();
-        let mut chunk: Vec<&str> = content.lines().rev().take(want).collect();
-        chunk.reverse();
-        for line in chunk.into_iter().rev() {
-            tail.push_front(line.to_string());
+        // Newest file first: the last N lines almost always live in the
+        // current log, so rotated generations (megabytes each) are only read
+        // when the newer ones hold fewer than N lines between them.
+        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        for f in files.iter().filter(|f| log_kind(f) == Some(*kind)) {
+            if tail.len() >= lines {
+                break;
+            }
+            let Ok(content) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            let want = lines - tail.len();
+            let mut chunk: Vec<&str> = content.lines().rev().take(want).collect();
+            chunk.reverse();
+            for line in chunk.into_iter().rev() {
+                tail.push_front(line.to_string());
+            }
         }
-    }
-    for line in tail {
-        println!("{}", line);
+        for line in tail {
+            println!("{}", line);
+        }
     }
     if follow {
-        return zlog_follow(&paths);
+        return zlog_follow(&paths, &kinds, headed);
     }
     0
 }
 
-/// `zlog tail -f` loop: poll every log file for growth and copy new bytes to
-/// stdout. Files are tracked by (device, inode), so a rotation — the live log
-/// renamed to `.1`, a fresh one created at the old path — resumes the renamed
-/// file where it left off and reads the new file from its start. A file that
-/// shrinks was truncated and is re-read from the start. Runs until the shell
-/// is interrupted (Ctrl-C) or stdout closes.
-fn zlog_follow(paths: &CachePaths) -> i32 {
+/// `zlog tail -f` loop: poll every selected log file for growth and copy new
+/// bytes to stdout. Files are tracked by (device, inode), so a rotation — the
+/// live log renamed to `.1`, a fresh one created at the old path — resumes
+/// the renamed file where it left off and reads the new file from its start.
+/// A file that shrinks was truncated and is re-read from the start. With
+/// `headed`, a `==> kind <==` line precedes a chunk whenever the source log
+/// family changes. Runs until the shell is interrupted (Ctrl-C) or stdout
+/// closes.
+fn zlog_follow(paths: &CachePaths, kinds: &[&'static str], headed: bool) -> i32 {
+    use std::collections::HashMap;
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::unix::fs::MetadataExt;
-    use std::collections::HashMap;
 
+    let selected = |paths: &CachePaths| -> Vec<std::path::PathBuf> {
+        log_files(paths)
+            .into_iter()
+            .filter(|f| log_kind(f).is_some_and(|k| kinds.contains(&k)))
+            .collect()
+    };
     // (dev, ino) -> bytes already shown.
     let mut offsets: HashMap<(u64, u64), u64> = HashMap::new();
-    for path in log_files(paths) {
+    for path in selected(paths) {
         if let Ok(m) = std::fs::metadata(&path) {
             offsets.insert((m.dev(), m.ino()), m.len());
         }
     }
+    let mut last_kind: Option<&str> = None;
     while !interrupted() {
         std::thread::sleep(std::time::Duration::from_millis(250));
-        for path in log_files(paths) {
+        for path in selected(paths) {
             let Ok(meta) = std::fs::metadata(&path) else {
                 continue;
             };
@@ -1318,8 +1368,17 @@ fn zlog_follow(paths: &CachePaths) -> i32 {
                 continue;
             }
             *pos += buf.len() as u64;
+            let kind = log_kind(&path);
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
+            if headed && kind != last_kind {
+                if let Some(k) = kind {
+                    if writeln!(out, "\n==> {} <==", k).is_err() {
+                        return 1;
+                    }
+                }
+                last_kind = kind;
+            }
             if out.write_all(&buf).and_then(|_| out.flush()).is_err() {
                 return 1;
             }

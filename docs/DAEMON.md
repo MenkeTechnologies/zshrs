@@ -878,7 +878,7 @@ zsync pull <subsystem>              # opt-in mid-session refresh from canonical 
 
 # Daemon log inspection
 zlog                                # default: live tail of ~/.zshrs/zshrs.log
-zlog tail [-n N] [--follow]
+zlog tail [-n N] [-f|--follow] [shell|daemon|recorder|all]
 zlog grep <pattern> [--rotated]
 zlog level [<new_level>] [<module=level>…]
 zlog clear
@@ -1208,7 +1208,7 @@ Daemon is fully observable via `~/.zshrs/zshrs.log`. Every action it takes — e
 
 ```
 zlog                                # default: zlog tail --follow (live tail of current log)
-zlog tail [-n N] [-f]                # tail of the logs (default: last 100 lines); -f streams until Ctrl-C
+zlog tail [-n N] [-f] [shell|daemon|recorder|all]   # last lines of each log (default: all three, headed); -f streams until Ctrl-C
 zlog tail --follow                  # live tail, streams new entries as daemon writes
 zlog grep <pattern> [--rotated]     # ripgrep current log; --rotated includes .1-.4 archives
 zlog level [<new_level>]            # show or set runtime log level (no daemon restart)

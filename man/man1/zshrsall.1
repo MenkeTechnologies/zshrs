@@ -1544,7 +1544,7 @@ Read and write the daemon's cross\-shell history store (history.db). \fBzhistory
 Named cross\-process locks held by the daemon; a lock is released when its holder dies. \fBzlock try NAME\fR, \fBzlock acquire NAME [\-\-timeout S]\fR, \fBzlock release NAME TOKEN\fR, \fBzlock list\fR.
 .TP
 .B zlog
-Inspect and manage the zshrs log files under ~/.zshrs. \fBzlog\fR (newest log path), \fBzlog tail [\-n N] [\-f]\fR, \fBzlog grep REGEX\fR, \fBzlog clear\fR, \fBzlog stats\fR, \fBzlog level DIRECTIVE\fR, \fBzlog rotate\fR.
+Inspect and manage the zshrs log files under ~/.zshrs. \fBzlog\fR (newest log path), \fBzlog tail [\-n N] [\-f] [shell|daemon|recorder]\fR, \fBzlog grep REGEX\fR, \fBzlog clear\fR, \fBzlog stats\fR, \fBzlog level DIRECTIVE\fR, \fBzlog rotate\fR.
 .TP
 .B zpublish
 Publish an event on the daemon's pub/sub bus from this shell's scope. \fBzpublish TOPIC [DATA | \-\-json JSON]\fR; subscribers receive it via \fBzsubscribe\fR.
