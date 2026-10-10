@@ -6872,7 +6872,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if crate::dash_mode::dash_faithful()
                     && with_executor(|exec| exec.scalar("IFS")).as_deref() == Some("")
                 {
-                    return Value::Array(items);
+                    // Exactly one TRAILING empty field goes (dash's ifsbreakup drops the
+                    // empty field it would start after the last separator).
+                    //   set -- '' a ''; IFS=; printf '<%s>' $*   is   <><a>
+                    let mut kept: Vec<Value> = items.iter().cloned().collect();
+                    if kept.last().is_some_and(|x| x.to_str().is_empty()) {
+                        kept.pop();
+                    }
+                    return Value::array(kept);
                 }
                 if argc & (WORD_DROP_KEEPS_FIRST | WORD_DROP_KEEPS_LAST) != 0 && plan9_active() {
                     // c:4341 — under plan9 the quoted-empty affix is glued to

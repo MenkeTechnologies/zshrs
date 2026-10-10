@@ -17268,6 +17268,8 @@ fn test_dash_keeps_empty_positionals_of_unquoted_star_under_empty_ifs() {
                   for x in $@; do printf '<%s>' \"$x\"; done; echo";
     let (_, dash, _) = run_zshrs_with_args(&["--dash", "-c", script]);
     assert_eq!(dash, "<><a><b>\n<><a><b>\n");
+    let (_, dash_trail, _) = run_zshrs_with_args(&["--dash", "-c", "set -- '' a ''; IFS=; printf '<%s>' $*; echo"]);
+    assert_eq!(dash_trail, "<><a>\n");
     let (_, bash, _) = run_zshrs_with_args(&["--bash", "-c", script]);
     assert_eq!(bash, "<a><b>\n<a><b>\n");
 }
