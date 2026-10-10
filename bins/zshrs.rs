@@ -1129,7 +1129,18 @@ mod initial_env {
     }
 }
 
-fn main() {
+/// Process-entry setup: everything that has to happen once, before any
+/// dispatch path forks off, and that the C shell does in `zsh_main`/`main`
+/// before it looks at argv — the `$SECONDS` stamp, `$$`/`$PPID`, the
+/// panic log hook, the cache flush at exit, the process-entry environment,
+/// bundled docs on `MANPATH`, default SIGPIPE.
+///
+/// Run from [`zshrs_main`], not from `main`: the fat `zshrs-native` binary
+/// registers its builtins and then calls `zshrs_main` directly, so setup
+/// that lived in `main` never ran there (no atexit flush: a script run as
+/// `zshrs FILE` left the process through `std::process::exit` and its
+/// compiled program was never written to `scripts.rkyv`).
+fn process_entry_init() {
     // c:Src/init.c:1121 — `zgettime_monotonic_if_available(&shtimer);
     // /* init $SECONDS */`. C stamps `shtimer` once, at shell start.
     // zshrs's analog is a lazily-primed OnceLock
@@ -1301,6 +1312,9 @@ fn main() {
     // at link time via `-stack_size` (see build.rs). That lets recursion
     // up to FUNCNEST (default 500) complete and lets the guard turn true
     // runaways into a zsh-matching error instead of a crash.
+}
+
+fn main() {
     zshrs_main();
 }
 
@@ -1322,6 +1336,9 @@ fn argv_strings() -> Vec<String> {
 /// Main entry point — extracted so the fat binary can call it after
 /// registering the stryke handler.
 pub fn zshrs_main() {
+    // Once per process; see `process_entry_init`.
+    static ENTRY_INIT: std::sync::Once = std::sync::Once::new();
+    ENTRY_INIT.call_once(process_entry_init);
     // Initialize logging first — everything after this can use tracing macros.
     let startup_t0 = Instant::now();
     zsh::startup_trace::init(startup_t0);
