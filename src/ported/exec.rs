@@ -9386,7 +9386,6 @@ impl EvalContextFrame {
         if !crate::thread_shell_state::is_shell_thread() {
             return;
         }
-        let joined = stack.join(":");
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             // C writes through the one global `zsh_eval_context` the SPECIAL
             // points at. `typeset -h` / `local -h` over a special leaves a
@@ -9406,11 +9405,22 @@ impl EvalContextFrame {
                 None
             }
             if let Some(pm) = special_of(tab.get_mut("zsh_eval_context").map(|p| &mut **p)) {
-                pm.u_arr = Some(stack.to_vec());
+                // Rebuilt in place: every `$(( ))` pushes and pops a frame, so
+                // reusing the previous publish's buffers saves the allocations.
+                let arr = pm.u_arr.get_or_insert_with(Vec::new);
+                arr.clear();
+                arr.extend_from_slice(stack);
                 pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
             }
             if let Some(pm) = special_of(tab.get_mut("ZSH_EVAL_CONTEXT").map(|p| &mut **p)) {
-                pm.u_str = Some(joined);
+                let joined = pm.u_str.get_or_insert_with(String::new);
+                joined.clear();
+                for (i, frame) in stack.iter().enumerate() {
+                    if i > 0 {
+                        joined.push(':');
+                    }
+                    joined.push_str(frame);
+                }
                 pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
             }
         }
