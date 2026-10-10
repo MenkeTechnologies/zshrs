@@ -42,7 +42,11 @@ struct R {
     exit: i32,
 }
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path())
+    run_zsh_at(zsh_path(), s)
+}
+/// [`run_zsh`] against an explicit reference binary.
+fn run_zsh_at(zsh: &str, s: &str) -> R {
+    let o = Command::new(zsh)
         .args(["-fc", s])
         .output()
         .expect("zsh");
@@ -67,7 +71,19 @@ fn assert_parity(s: &str) {
     if !zsh_available() {
         return;
     }
-    let z = run_zsh(s);
+    assert_parity_at(zsh_path(), s);
+}
+/// [`assert_parity`] against the release zshrs reports as its own version, for rows
+/// whose answer moved on master. Skips when none is installed.
+fn assert_parity_release(s: &str) {
+    let Some(zsh) = crate::oracle::release_zsh_path() else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
+    };
+    assert_parity_at(zsh, s);
+}
+fn assert_parity_at(zsh: &str, s: &str) {
+    let z = run_zsh_at(zsh, s);
     let r = run_zshrs(s);
     assert_eq!(
         z.stdout, r.stdout,
@@ -4672,11 +4688,12 @@ y=$(exit 3) exec; print -n $? ""; y=$(exit 4) noglob; print $?"#,
 
     /// c:Src/exec.c WC_SUBSH forks, so `break`/`continue` inside `( … )`
     /// only end the child's list; the parent's loop runs on.
-    /// zsh: `1 2` / `1 2` / `1a 1b 2a 2b` / `1 2` (the child counts the parent's
-    /// loop, so `break 2` also ends the subshell's own list).
+    /// zsh 5.9.2: `1 2` / `1 2` / `1a 1b 2a 2b` / `1 2` (the child counts the parent's
+    /// loop, so `break 2` also ends the subshell's own list). The development tree
+    /// resets `loops` in the child (55061) and reports each of these as an error.
     #[test]
     fn break_inside_subshell_does_not_end_parent_loop() {
-        assert_parity(
+        assert_parity_release(
             r#"for i in 1 2; do (break); print -n "$i "; done; print
 for i in 1 2; do (continue; print no); print -n "$i "; done; print
 for i in 1 2; do for j in a b; do (break 2); print -n "$i$j "; done; done; print

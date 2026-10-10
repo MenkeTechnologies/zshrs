@@ -17897,11 +17897,6 @@ fn forked_child_subsh_levels() {
         crate::ported::params::locallevel.load(Ordering::Relaxed),
         Ordering::Relaxed,
     ); // c:1221
-    // c:Src/exec.c:1263-1264 (55061) — `ancestor_loops += loops; loops = 0;`
-    crate::ported::builtin::ANCESTOR_LOOPS.fetch_add(
-        crate::ported::builtin::LOOPS.swap(0, Ordering::Relaxed),
-        Ordering::Relaxed,
-    );
     crate::ported::builtin::SUBSHELL_DEPTH.store(0, Ordering::Relaxed);
     // !!! RUST-ONLY: a forked child is no longer inside the in-process
     // `$( … )` it was forked from; its signal traps print to its own fd 1,
@@ -20793,17 +20788,8 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::builtin::LOOPS.load(SeqCst),
                     crate::ported::builtin::BREAKS.load(SeqCst),
                     crate::ported::builtin::CONTFLAG.load(SeqCst),
-                    crate::ported::builtin::ANCESTOR_LOOPS.load(SeqCst),
                 )
             };
-            // c:Src/exec.c:1263-1264 (55061) — entersubsh's `ancestor_loops
-            // += loops; loops = 0;`: a `break` in `( … )` has no loop of its
-            // own to leave.
-            {
-                use std::sync::atomic::Ordering::SeqCst;
-                crate::ported::builtin::ANCESTOR_LOOPS
-                    .fetch_add(crate::ported::builtin::LOOPS.swap(0, SeqCst), SeqCst);
-            }
             exec.subshell_snapshots.push(SubshellSnapshot {
                 comp_globals: crate::vm_helper::CompGlobalsSnap::save(),
                 // c:Src/utils.c:2111 `addlockfd` — the fds carrying
@@ -21089,8 +21075,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // SubshellSnapshot::loop_flags.
                 {
                     use std::sync::atomic::Ordering::SeqCst;
-                    let (loops, breaks, contflag, ancestor_loops) = snap.loop_flags;
-                    crate::ported::builtin::ANCESTOR_LOOPS.store(ancestor_loops, SeqCst);
+                    let (loops, breaks, contflag) = snap.loop_flags;
                     crate::ported::builtin::LOOPS.store(loops, SeqCst);
                     crate::ported::builtin::BREAKS.store(breaks, SeqCst);
                     crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);
@@ -22127,6 +22112,17 @@ impl ShellExecutor {
         }
         // c:2478 — `if (!forked && save[fd1] == -2)`.
         if redir_scope_forked(self.redirect_scope_stack.len()) {
+            // A splitter already running on this scope (`>&2 2>&1`, `>f 2>&1`
+            // on a pipeline stage) holds its write end on every fd later
+            // dup'd from the stream. C's tee is a separate process that
+            // ends when the child exits; the in-process splitter is joined at
+            // scope end, so a -1 slot closes this fd there or the join
+            // waits forever for an EOF the dup keeps from arriving.
+            if self.multios_scope_stack.last().is_some_and(|s| !s.is_empty()) {
+                if let Some(top) = self.redirect_scope_stack.last_mut() {
+                    top.push((fd, -1));
+                }
+            }
             return;
         }
         // c:2425 `movefd(fd1)` — zshrs keeps the original fd open and

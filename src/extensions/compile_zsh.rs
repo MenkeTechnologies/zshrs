@@ -16248,6 +16248,12 @@ fn ksh_funsub_body(t: &str) -> Option<(String, String, i64)> {
     let rest = t.strip_prefix("${")?;
     let rest = rest.strip_suffix('}')?;
     let first = rest.chars().next()?;
+    // c:Src/subst.c:1966 — `if (slen > 1)`: the blank or `|` alone, with no
+    // command after it (`${ }`, `${|}`), is not a substitution; paramsubst
+    // rejects it as a bad substitution.
+    if (first == '|' || first.is_whitespace()) && rest.chars().count() <= 1 {
+        return None;
+    }
     // c:Src/subst.c:1924/1930 — the character right after `${` selects the
     // form: `|` (or the Bar token) → the REPLY form, a blank → the
     // stdout-capture form, `{` → the named-variable form `${{VAR} cmd }`.
