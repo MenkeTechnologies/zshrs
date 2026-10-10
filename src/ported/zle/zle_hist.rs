@@ -1232,7 +1232,10 @@ pub fn zle_goto_hist(n: i32, skipdups: bool) -> bool {
         };
         ZLECS.store(new_cs, Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-        LASTCOL.store(-1, Ordering::SeqCst);
+        // `lastcol` is NOT touched: C's zle_setline() (zle_hist.c) never assigns it. A
+        // widget without ZLE_LASTCOL has it reset at dispatch (zle_main.c:1476); the
+        // line-move widgets keep it, so `k` after a recall aims for the column the
+        // user was on, not for wherever the recalled line left the cursor.
         // c:786-787 — C reaches the line replacement through
         // `zle_setline()`, which ends with `setlastline(); clearlist = 1;`.
         // This port inlines the replacement instead of calling it, so both

@@ -631,3 +631,71 @@ sleep 1
     );
     assert_same_dump(&driver, "X02 #44: repeat initial edit with overstrike set");
 }
+
+// ── A multi-line entry recalled FROM HISTORY ──────────────────────────
+//
+// The cases above build their buffer with `o`. The user-visible form of
+// the same widget is a multi-line command recalled with `k`: once the entry
+// is back, a further `k` must walk UP its lines (`upline` succeeds and
+// `uplineorhistory` returns before `uphistory`, Src/Zle/zle_hist.c:285-297)
+// instead of jumping on to the entry before it, and it must aim for the
+// column the user was on (`lastcol`), which a history recall must not reset
+// (`zle_setline` never touches it).
+
+/// A vi session whose history ends `older`, the three-line entry, and then the
+/// `print -s` command line that created the entry: that line is the newest
+/// item, so the entry is the SECOND `k`.
+fn recalled_three_line_entry(keys: &str) -> String {
+    format!(
+        r#"{OPEN}
+zpty -w w 'bindkey -v'
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
+zpty -w w "print -s older"
+zpty -w w "print -s \$'one\\ntwo\\nthree'"
+sleep 1
+{DUMP_WIDGET}
+sleep 1
+zpty -w -n w $'\e'
+sleep 1
+{keys}
+{DUMP_KEY}
+{DRAIN}
+"#
+    )
+}
+
+/// `n` presses of `k`, one second apart.
+fn k(n: usize) -> String {
+    "zpty -w -n w 'k'\nsleep 1\n".repeat(n)
+}
+
+/// The command line that made the entry is `k` number one; number two
+/// recalls the entry itself — the control for the cases below.
+#[test]
+fn k_recalls_a_multiline_history_entry() {
+    assert_same_dump(
+        &recalled_three_line_entry(&k(2)),
+        "vicmd k twice: the second recalls the three-line entry",
+    );
+}
+
+/// The third `k` moves up a line inside the recalled entry; it must not
+/// replace it with the entry before it, and it lands on the column the
+/// cursor was on when the walk started.
+#[test]
+fn k_after_the_recall_walks_up_inside_the_entry() {
+    assert_same_dump(
+        &recalled_three_line_entry(&k(3)),
+        "vicmd k three times: the third moves up a line of the recalled entry",
+    );
+}
+
+/// Both remaining lines of the entry, then the top edge: the fifth `k`
+/// leaves the entry for the previous history item.
+#[test]
+fn k_past_the_top_line_of_the_entry_goes_to_history() {
+    assert_same_dump(
+        &recalled_three_line_entry(&k(5)),
+        "vicmd k five times: two lines up inside the entry, then history",
+    );
+}
