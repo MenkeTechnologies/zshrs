@@ -7238,16 +7238,32 @@ impl ShellExecutor {
                 // in-process and snapshot/restore manually. Same
                 // snapshot shape used by host_subshell_begin/end for
                 // the `(...)` subshell form.
-                let paramtab_snap = crate::ported::params::paramtab()
-                    .read()
+                // Lock-wait diagnostics: a trivial `$(…)` that takes
+                // 100ms+ is a thread holding one of these, not the
+                // command. Logged (never printed) past 5ms.
+                let wait_t0 = std::time::Instant::now();
+                let paramtab_guard = crate::ported::params::paramtab().read();
+                let paramtab_wait = wait_t0.elapsed();
+                let paramtab_snap = paramtab_guard
                     .ok()
                     .map(|t| t.clone())
                     .unwrap_or_default();
-                let paramtab_hashed_snap = crate::ported::params::paramtab_hashed_storage()
-                    .lock()
+                let wait_t1 = std::time::Instant::now();
+                let hashed_guard = crate::ported::params::paramtab_hashed_storage().lock();
+                let hashed_wait = wait_t1.elapsed();
+                let paramtab_hashed_snap = hashed_guard
                     .ok()
                     .map(|m| m.clone())
                     .unwrap_or_default();
+                if paramtab_wait.as_millis() > 5 || hashed_wait.as_millis() > 5 {
+                    tracing::info!(
+                        target: "lockwait",
+                        paramtab_ms = paramtab_wait.as_millis() as u64,
+                        hashed_ms = hashed_wait.as_millis() as u64,
+                        cmd = %cmd_str.chars().take(60).collect::<String>(),
+                        "command substitution waited on a shell-state lock"
+                    );
+                }
                 let pparams_snap = self.pparams();
                 // c:Src/exec.c:4783 — the forked child owns private copies of
                 // the completion globals `$PREFIX`/`$words`/`$compstate[…]` view.
