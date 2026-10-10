@@ -96,6 +96,7 @@ enum ShellTarget {
     Mksh,
     Pdksh,
     Ash,
+    Csh,
 }
 
 /// Which grammar the generator emits for a target.
@@ -109,6 +110,8 @@ enum GenKind {
     Posix,
     /// POSIX + bash extensions (`a=(…)`, `${!a[@]}`, `${v:o:l}`, `${v^^}`).
     Bash,
+    /// csh/tcsh (`set`, `@`, `if (…) then`, `foreach`, `switch`, `$#x`, `$x[n]`).
+    Csh,
 }
 
 /// How to invoke the reference (oracle) for a target.
@@ -215,11 +218,20 @@ fn target_cfg(t: ShellTarget) -> TargetCfg {
             refk: RefKind::Real(&["ash", "/opt/homebrew/bin/ash", "/bin/ash", "/usr/bin/ash"]),
             gen: GenKind::Posix,
         },
+        // macOS `/bin/csh` is tcsh. The script runs as a FILE on both sides
+        // (see `csh_script_file`): `tcsh -c` executes only the first line of a
+        // multi-line string, which would hide every block construct.
+        Csh => TargetCfg {
+            name: "csh",
+            flags: &["--csh"],
+            refk: RefKind::Real(&["/bin/tcsh", "tcsh", "/opt/homebrew/bin/tcsh", "/bin/csh", "csh"]),
+            gen: GenKind::Csh,
+        },
     }
 }
 
-/// All 10 targets, for `--matrix` enumeration.
-const ALL_TARGETS: [ShellTarget; 10] = [
+/// All targets, for `--matrix` enumeration.
+const ALL_TARGETS: [ShellTarget; 11] = [
     ShellTarget::Zsh,
     ShellTarget::Bash,
     ShellTarget::Ksh,
@@ -230,6 +242,7 @@ const ALL_TARGETS: [ShellTarget; 10] = [
     ShellTarget::Mksh,
     ShellTarget::Pdksh,
     ShellTarget::Ash,
+    ShellTarget::Csh,
 ];
 
 fn target_from_name(s: &str) -> Option<ShellTarget> {
@@ -244,6 +257,7 @@ fn target_from_name(s: &str) -> Option<ShellTarget> {
         "mksh" => ShellTarget::Mksh,
         "pdksh" => ShellTarget::Pdksh,
         "ash" => ShellTarget::Ash,
+        "csh" | "tcsh" => ShellTarget::Csh,
         _ => return None,
     })
 }
@@ -495,6 +509,20 @@ fn stdin_mode() -> bool {
     *STDIN_MODE.get().unwrap_or(&false)
 }
 
+/// Write `script` to a unique temp file and return its path (csh target: both
+/// shells run the script as a FILE, because `tcsh -c` stops after the first
+/// line). The caller removes it.
+fn csh_script_file(script: &str) -> PathBuf {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "parity-fuzz-csh-{}-{n}.csh",
+        std::process::id()
+    ));
+    let _ = std::fs::write(&path, script);
+    path
+}
+
 /// Run the reference (oracle) for the current target on `script`.
 fn run_zsh(script: &str, timeout: Duration) -> RunOut {
     let t = shell_target();
@@ -550,12 +578,20 @@ fn run_zsh(script: &str, timeout: Duration) -> RunOut {
             // user rc perturbs the deterministic run.
             let bin = reference_bin(t).unwrap_or_else(|| cfg.name.to_string());
             let mut cmd = Command::new(bin);
-            cmd.args(["-c", script]);
+            let file = (t == ShellTarget::Csh).then(|| csh_script_file(script));
+            match &file {
+                Some(path) => cmd.arg("-f").arg(path),
+                None => cmd.args(["-c", script]),
+            };
             cmd.env_remove("ENV");
             if let Some(dir) = FIXTURE_CWD.get() {
                 cmd.current_dir(dir);
             }
-            run_with_timeout_stdin(cmd, timeout, None)
+            let out = run_with_timeout_stdin(cmd, timeout, None);
+            if let Some(path) = file {
+                let _ = std::fs::remove_file(path);
+            }
+            out
         }
     }
 }
@@ -566,8 +602,11 @@ fn run_zshrs(script: &str, bin: &Path, timeout: Duration) -> RunOut {
     let mut cmd = Command::new(bin);
     // Only the real-zsh target carries the Shinstdin (stdin) mode.
     let stdin = matches!(cfg.refk, RefKind::Zsh) && stdin_mode();
+    let file = (shell_target() == ShellTarget::Csh).then(|| csh_script_file(script));
     if stdin {
         cmd.args(cfg.flags).arg("-f");
+    } else if let Some(path) = &file {
+        cmd.args(cfg.flags).arg("-f").arg(path);
     } else {
         cmd.args(cfg.flags).args(["-f", "-c", script]);
     }
@@ -576,7 +615,11 @@ fn run_zshrs(script: &str, bin: &Path, timeout: Duration) -> RunOut {
     if let Some(dir) = FIXTURE_CWD.get() {
         cmd.current_dir(dir);
     }
-    run_with_timeout_stdin(cmd, timeout, stdin.then_some(script))
+    let out = run_with_timeout_stdin(cmd, timeout, stdin.then_some(script));
+    if let Some(path) = file {
+        let _ = std::fs::remove_file(path);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -12116,6 +12159,71 @@ fn gen_bash(seed: u64) -> Vec<String> {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// csh / tcsh grammar (`--shell csh`)
+// ---------------------------------------------------------------------------
+
+/// Variables every csh program starts with. Fixed names, deterministic values.
+const CSH_PREAMBLE: &str = "set s = Hello_World\n\
+set t = (a b c d)\n\
+set n = 42\n\
+set e = ()\n\
+set p = /usr/local/bin/zsh.tar\n\
+setenv E env_value";
+
+/// One csh statement (possibly a multi-line block). Every construct was checked
+/// against tcsh before it was added: the generator emits only deterministic
+/// output — no `$$`, dates, or directory-order globs.
+fn csh_one(rng: &mut StdRng) -> String {
+    let scalar = *pick(rng, &["s", "n", "p", "E"]);
+    let arr = *pick(rng, &["t", "e"]);
+    let idx = *pick(rng, &["1", "2", "4", "$#t", "1-2", "2-", "*"]);
+    let num = rng.gen_range(0..20);
+    let num2 = rng.gen_range(1..9);
+    let cmp = *pick(rng, &["==", "!=", "<", ">", "<=", ">="]);
+    let arith = *pick(rng, &["+", "-", "*", "/", "%"]);
+    let word = *pick(rng, &["a", "b", "Hello_World", "42", "x y", ""]);
+    let modi = *pick(rng, &["h", "t", "r", "e", "u", "l", "q", "gh", "gt"]);
+    match rng.gen_range(0..28) {
+        0 => format!("echo ${scalar} $#{arr} ${arr}"),
+        1 => format!("echo ${arr}[{idx}]"),
+        2 => format!("echo ${{?{}}} ${{?nope}}", scalar),
+        3 => format!("echo $p:{modi}"),
+        4 => format!("@ k = {num} {arith} {num2}\necho $k"),
+        5 => format!("@ k = {num}\n@ k {}= {num2}\necho $k", *pick(rng, &["+", "-", "*"])),
+        6 => format!("@ k = {num}\n@ k{}\necho $k", *pick(rng, &["++", "--"])),
+        7 => format!("if ({num} {cmp} {num2}) echo yes"),
+        8 => format!("if (\"${scalar}\" {} \"{word}\") then\n  echo eq\nelse\n  echo ne\nendif", *pick(rng, &["==", "!=", "=~", "!~"])),
+        9 => format!("if ({num} > {num2}) then\n  echo big\nelse if ({num} == {num2}) then\n  echo same\nelse\n  echo small\nendif"),
+        10 => "foreach i ($t)\n  echo item $i\nend".to_string(),
+        11 => format!("foreach i (1 2 3)\n  if ($i == {}) continue\n  echo $i\nend", rng.gen_range(1..4)),
+        12 => format!("set i = 0\nwhile ($i < {})\n  @ i++\n  echo $i\nend", rng.gen_range(1..5)),
+        13 => format!("switch (${scalar})\ncase Hello*:\n  echo hello\n  breaksw\ncase 4?:\n  echo fortyish\n  breaksw\ndefault:\n  echo other\nendsw"),
+        14 => format!("set x = ({word} b c)\necho $#x $x"),
+        15 => "set x = (a b c d)\nshift x\necho $#x $x".to_string(),
+        16 => format!("set x = {word}\necho \"[$x]\" $?x\nunset x\necho $?x"),
+        17 => format!("echo {word} | cat\necho $status"),
+        18 => "echo out > /dev/null\necho $status".to_string(),
+        19 => format!("repeat {num2} echo r"),
+        20 => "alias f 'echo got \\!*'\nf 1 2".to_string(),
+        21 => "echo `echo inner`".to_string(),
+        22 => format!("if (-e /etc/passwd && {num} {cmp} {num2}) echo ok"),
+        23 => format!("setenv V {word}\necho $V\nunsetenv V\necho ${{?V}}"),
+        24 => "set l = (3 1 2)\n@ sum = 0\nforeach v ($l)\n  @ sum += $v\nend\necho $sum".to_string(),
+        25 => format!("echo \"${scalar}\" '${scalar}' \\${scalar}"),
+        26 => format!("if (${{?{scalar}}}) then\n  echo set\nendif"),
+        _ => format!("set x = ({word} {word})\necho \"$x\" $x:q"),
+    }
+}
+
+/// csh program generator (`--shell csh`).
+fn gen_csh(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![CSH_PREAMBLE.to_string()];
+    stmts.extend((0..rng.gen_range(2..=5)).map(|_| csh_one(&mut rng)));
+    stmts
+}
+
 /// Generate the statement list for a seed in the selected mode.
 fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
     // Non-zsh targets ignore the zsh-feature Mode and use a grammar their shell
@@ -12125,6 +12233,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         GenKind::Ksh => return gen_ksh(seed),
         GenKind::Posix => return gen_posix(seed),
         GenKind::Bash => return gen_bash(seed),
+        GenKind::Csh => return gen_csh(seed),
     }
     match mode {
         Mode::Stateful => gen_program(seed),
@@ -12443,9 +12552,9 @@ fn parse_args() -> Args {
                     }
                 }
             }
-            // `--shell <name>` — one of the 10 differential targets (default
+            // `--shell <name>` — one of the differential targets (default
             // zsh): zsh, bash, ksh, sh, dash, sh/zsh-style, ksh/zsh-style,
-            // mksh, pdksh, ash.
+            // mksh, pdksh, ash, csh.
             "--shell" => {
                 i += 1;
                 match argv.get(i).and_then(|s| target_from_name(s)) {
@@ -12459,7 +12568,7 @@ fn parse_args() -> Args {
                     }
                 }
             }
-            // `--matrix` — sweep all 10 targets in one run.
+            // `--matrix` — sweep every target in one run.
             "--matrix" => matrix = true,
             // `--<target>` shorthand for `--shell <target>` (e.g. `--pdksh`,
             // `--bash`). Only real target names; falls through otherwise.
@@ -12633,8 +12742,10 @@ fn run_matrix(args: &Args) {
         }
     };
     println!(
-        "═══ parity-fuzz 10-way matrix — {} cases/target, seed {} ═══",
-        args.count, args.base_seed
+        "═══ parity-fuzz {}-way matrix — {} cases/target, seed {} ═══",
+        ALL_TARGETS.len(),
+        args.count,
+        args.base_seed
     );
     for t in ALL_TARGETS {
         let cfg = target_cfg(t);

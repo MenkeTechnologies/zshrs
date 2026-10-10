@@ -64,7 +64,7 @@ zshrs replaces `fork + exec` with a persistent worker thread pool, compiles ever
                  └──────────────────────────────────────┘
 ```
 
-The **8 Bourne-family dialects** are the emulation drop-ins `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash` (the C-shell `--csh` mode is separate: csh syntax is translated to zsh text by `src/extensions/csh/` and run by the same engine). All eight compile through the same fusevm core, and each is verified against its **real reference shell** by the parity matrix in [`tests/emulation_parity.rs`](tests/emulation_parity.rs). zsh mode is additionally cross-checked against real `zsh` by a **differential fuzz harness** ([`bins/parity-fuzz.rs`](bins/parity-fuzz.rs)) that runs thousands of grammar-driven, seed-replayable snippets through both shells and flags any stdout/exit divergence.
+The **8 Bourne-family dialects** are the emulation drop-ins `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash` (the C-shell `--csh` mode is separate: csh syntax is translated to zsh text by `src/extensions/csh/` and run by the same engine, and is checked against tcsh by `tests/csh_parity.rs` and `parity-fuzz --shell csh`). All eight compile through the same fusevm core, and each is verified against its **real reference shell** by the parity matrix in [`tests/emulation_parity.rs`](tests/emulation_parity.rs). zsh mode is additionally cross-checked against real `zsh` by a **differential fuzz harness** ([`bins/parity-fuzz.rs`](bins/parity-fuzz.rs)) that runs thousands of grammar-driven, seed-replayable snippets through both shells and flags any stdout/exit divergence.
 
 ---
 
@@ -898,6 +898,7 @@ so a single load-induced flake cannot register as a divergence.
 
 ```
 parity-fuzz --mode <mode> --count 300 --verify 3 --timeout-ms 20000
+parity-fuzz --shell csh --count 300 --verify 3     # zshrs --csh vs tcsh, csh grammar
 ```
 
 | | zsh oracle | emulation targets |
