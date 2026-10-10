@@ -308,7 +308,7 @@ This is not a contested design tradeoff. It's a design choice that lost in the h
 
 The zshrs answer is the split your gut already drew:
 
-- **Library functions** (`_arguments`, `_path_files`, `_complete`, `_dispatch`, `_describe`, …) → reimplemented in Rust in the `compsys/` crate (27 source files, 23k+ lines of Rust per `compsys/README.md`). Typed function pointers, real call stack, bytecode-via-fusevm where dynamic, Cranelift JIT for hot paths.
+- **Library functions** (`_arguments`, `_path_files`, `_complete`, `_dispatch`, `_describe`, …) → reimplemented in Rust under `src/compsys/` inside the `zshrs` crate (compsys is a module of the runtime crate, not a separate package). Typed function pointers, real call stack, bytecode-via-fusevm where dynamic, Cranelift JIT for hot paths.
 - **End-completion files** (`_git`, `_apt`, `_docker`, …) → stay as data, but get compiled to rkyv-mmap'd bytecode chunks at install time (the "completion cache" per `compsys/README.md` overview). No shell-script interpreter dispatch at Tab time.
 
 One language for infrastructure, one cache format for end data, no 11,656-line shell interpretation per keystroke. Extensibility happens through stryke/AOP intercepts — a typed, JIT-compiled extension surface — not a 105,050-line interpreted library.

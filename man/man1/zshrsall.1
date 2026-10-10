@@ -25,15 +25,25 @@ is a strict 1:1 port of the Z shell
 into Rust, plus a non-port
 .I extensions
 layer that adds features zsh does not have. The runtime is a
-four-crate workspace:
+four-package Cargo workspace:
 .IP \fBzshrs\fR 8
-the runtime binary
-.IP \fBcompsys\fR 8
-completion-system subcrate
+the runtime library and binary; the completion system lives inside it, under
+.B src/compsys/
+(it is not a separate crate)
 .IP \fBzshrs-daemon\fR 8
 singleton coordinator
-.IP \fBzshrs-recorder\fR 8
-optional shell-session recorder
+.IP \fBznative\fR 8
+stable C-ABI SDK for native plugins loaded with
+.B zmodload \-R
+.IP \fBzshrs-runtime\fR 8
+static runtime archive
+.RB ( libzsh.a )
+for AOT-linked objects
+.PP
+The optional shell-session recorder is the
+.B zshrs-recorder
+binary of the root package, built only with
+.BR "--features recorder" .
 .PP
 .B src/ported/
 holds the strict 1:1 ports (every function maps to a real
