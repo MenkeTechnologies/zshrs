@@ -1,10 +1,10 @@
 #compdef dircolors
 
 # zshrs builtin (coreutils dircolors): print the LS_COLORS assignment for the
-# built-in colour database. A database FILE is accepted and ignored.
+# colour database, or one parsed from FILE (`-` reads stdin). -p takes no FILE.
 
 _arguments -s \
     '(-c --csh --c-shell -p --print-database)'{-b,--sh,--bourne-shell}'[output Bourne shell code to set LS_COLORS]' \
     '(-b --sh --bourne-shell -p --print-database)'{-c,--csh,--c-shell}'[output C shell code to set LS_COLORS]' \
-    '(-b --sh --bourne-shell -c --csh --c-shell)'{-p,--print-database}'[print the built-in database]' \
-    '1:database file:_files'
+    '(-b --sh --bourne-shell -c --csh --c-shell 1)'{-p,--print-database}'[print the built-in database]' \
+    '(-p --print-database)1::database file:_files'

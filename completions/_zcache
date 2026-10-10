@@ -227,15 +227,25 @@ case $state in
                 if (( CURRENT == 2 )); then
                     _describe -t commands 'log verb' lverbs && return 0
                 elif [[ $words[2] == tail ]]; then
-                    local -a tflags
+                    local -a tflags tlogs
                     tflags=(
                         '-n:number of lines (default 100)'
                         '--lines:number of lines (default 100)'
+                        '-f:keep printing appended lines'
+                        '--follow:keep printing appended lines'
+                    )
+                    tlogs=(
+                        'shell:zshrs.log'
+                        'daemon:zshrs-daemon.log'
+                        'recorder:zshrs-recorder.log'
+                        'all:every log (the default)'
                     )
                     if [[ $words[CURRENT-1] == (-n|--lines) ]]; then
                         _message 'number of lines' && return 0
-                    else
+                    elif [[ $PREFIX == -* ]]; then
                         _describe -t options 'option' tflags && return 0
+                    else
+                        _describe -t logs 'log' tlogs && return 0
                     fi
                 elif [[ $words[2] == level && CURRENT -eq 3 ]]; then
                     _message 'directive (e.g. info, debug, info,fsnotify=trace)' && return 0

@@ -369,6 +369,7 @@ _values
 _wanted
 _widgets
 `
+ai
 alias
 aliases
 aliasfuncdef
@@ -790,6 +791,7 @@ zassert_ne
 zassert_near
 zassert_ok
 zassert_true
+zbanner
 zbuild
 zcache
 zcmd-result
@@ -830,6 +832,7 @@ zregexparse
 zselect
 zsend
 zsetattr
+zsleep
 zsocket
 zsource
 zstat

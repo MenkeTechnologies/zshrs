@@ -1,6 +1,21 @@
 #compdef comptags
 
 # comptags: tag bookkeeping for _tags/_requested/_next_label; not meant to be
-# typed interactively.
+# typed interactively. The operation (accepted set in bin_comptags,
+# Src/Zle/computil.c) may carry a trailing `-' to act on the enclosing level.
 
+local -a ops
+ops=(
+    '-i:register the context and the tags in use'
+    '-C:store the current context in a parameter'
+    '-T:test whether tag sets are registered'
+    '-N:advance to the next tag set'
+    '-R:test whether the tag is requested in the current set'
+    '-S:store the current tag set in a parameter'
+    '-A:test a tag against the current set, storing the matched tag and spec'
+)
+if (( CURRENT == 2 )); then
+    _describe -t options 'comptags operation' ops
+    return
+fi
 _default

@@ -182,8 +182,12 @@ case $state in
                 fi
                 ;;
             dismiss)
-                flags=( '--reason:reason text' )
-                if (( CURRENT == 2 )); then
+                # dismiss_payload: REQUEST_ID or --all, never both.
+                flags=(
+                    '--reason:reason text'
+                    '--all:drop every queued request instead of one id'
+                )
+                if (( CURRENT == 2 )) && [[ $PREFIX != -* ]]; then
                     _message 'request id' && return 0
                 elif [[ $prev == --reason ]]; then
                     _message 'reason' && return 0

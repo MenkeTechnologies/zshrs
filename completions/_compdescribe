@@ -1,13 +1,17 @@
 #compdef compdescribe
 
-# compdescribe: builds the match displays for _describe. First call with -i
-# (no descriptions) or -I SEPARATOR (with descriptions), then repeatedly with
-# -g and four parameter names.
+# compdescribe: builds the match displays for _describe (Src/Zle/computil.c
+# bin_compdescribe). Initialise with
+#   -i HIDE MLEN SPEC ...
+#   -I HIDE MLEN SEPARATOR OPTARRAY SPEC ...
+# (-I shows descriptions), then call repeatedly with
+#   -g LIST OPTS MATCHES DISPLAYS
+# naming four parameters to set.
 
 local -a ops
 ops=(
     '-i:initialize, displaying matches without descriptions'
-    '-I:initialize, displaying descriptions (separator follows)'
+    '-I:initialize, displaying descriptions (separator and options array follow)'
     '-g:step to the next set of matches and store its parts in four parameters'
 )
 if (( CURRENT == 2 )); then

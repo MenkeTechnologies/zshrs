@@ -29,7 +29,7 @@ case $state in
             'complete:a daemon job finished (job scope)'
         )
         # Live shells: parse the `zls` table (ID PID TTY UPTIME TAGS CWD,
-        # print_shells_table in daemon/builtins.rs). Silent when the
+        # format_shells_table in daemon/builtins.rs). Silent when the
         # daemon is down.
         if [[ -S $zhome/daemon.sock ]]; then
             for row in ${${(f)"$(zls 2>/dev/null)"}[2,-1]}; do

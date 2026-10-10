@@ -9,4 +9,7 @@ _arguments -s -S \
     '(-s --strip --no-symlinks -L --logical -P --physical)'{-s,--strip,--no-symlinks}'[do not expand symlinks]' \
     '(-s --strip --no-symlinks -L --logical -P --physical)'{-L,--logical}'[resolve .. components before symlinks]' \
     '(-s --strip --no-symlinks -L --logical -P --physical)'{-P,--physical}'[resolve symlinks as encountered]' \
+    '(-z --zero)'{-z,--zero}'[end each output line with NUL, not newline]' \
+    '--relative-to=[print the path relative to DIR]:directory:_files -/' \
+    '--relative-base=[print relative paths only beneath DIR]:directory:_files -/' \
     '*:path:_files'

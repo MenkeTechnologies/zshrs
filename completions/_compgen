@@ -7,9 +7,9 @@
 # Parsers: builtin_compgen and builtin_complete in
 # src/extensions/ext_builtins.rs; keep in sync.
 #
-# Both parsers match whole words: every flag is its own word, nothing
-# bundles (`-ab` is a bad option to compgen), and a value is always the
-# NEXT word. Flags below are exactly the ones each parser matches.
+# compgen parses like bash getopt: letters cluster (`-fd`), a value is
+# glued or the next word, `--` ends options. complete matches whole words
+# only: every flag is its own word and a value is the NEXT word.
 #
 # `complete` shares this file because a `_complete` file would shadow
 # compsys's own `_complete` completer.
@@ -20,29 +20,31 @@ typeset -A opt_args
 
 case $service in
   compgen)
-    # Only -a -b -d -f -v generate words; -c -e -j -k -u are accepted
-    # into the action list but have no generator. -A takes the long name
-    # of one of those actions. -D -E -I -r are no-ops that take NO value;
-    # -F -C -S -P -X -o swallow one value and ignore it. The last non-option word is the prefix filter.
-    _arguments -C \
+    # Letter flags and -A NAME select the generated actions; -D -E -I -r
+    # are no-ops that take no value. -F runs a function and collects
+    # COMPREPLY, -C runs a command, -X filters, -P/-S wrap each result.
+    # The last non-option word is the prefix filter.
+    _arguments -C -s \
       '-W[split a word list on whitespace and add the words]:word list: ' \
-      '-G[add files globbed as PREFIX* (the pattern value is ignored)]:glob pattern: ' \
+      '-G[add files matching this glob pattern]:glob pattern: ' \
       '-a[alias names]' \
       '-b[builtin names, including zshrs extension builtins]' \
-      '-c[command names (accepted, generates nothing)]' \
+      '-c[command names]' \
       '-d[directories in the current directory]' \
-      '-e[exported variables (accepted, generates nothing)]' \
+      '-e[exported variables]' \
       '-f[files in the current directory]' \
-      '-j[job names (accepted, generates nothing)]' \
-      '-k[reserved words (accepted, generates nothing)]' \
-      '-u[user names (accepted, generates nothing)]' \
+      '-j[job names (generates nothing)]' \
+      '-k[reserved words]' \
+      '-g[group names]' \
+      '-s[service names]' \
+      '-u[user names]' \
       '-v[scalar parameters and environment variables]' \
-      '-F[completion function (accepted and ignored)]:function:->function' \
-      '-C[command (accepted and ignored)]:command:_command_names' \
-      '-S[suffix (accepted and ignored)]:suffix: ' \
-      '-P[prefix (accepted and ignored)]:prefix: ' \
-      '-X[filter pattern (accepted and ignored)]:filter pattern: ' \
-      '-o[bash comp-option (accepted and ignored)]:comp-option:->compopt' \
+      '-F[completion function whose COMPREPLY supplies words]:function:->function' \
+      '-C[command whose output lines supply words]:command:_command_names' \
+      '-S[suffix added to each word]:suffix: ' \
+      '-P[prefix added to each word]:prefix: ' \
+      '-X[filter pattern]:filter pattern: ' \
+      '-o[bash comp-option (plusdirs, dirnames, default, bashdefault act)]:comp-option:->compopt' \
       '-A[action by name]:action:->action' \
       '-D[no-op]' \
       '-E[no-op]' \
@@ -72,6 +74,7 @@ case $service in
       '-A[action by name]:action:->action' \
       '-o[bash comp-option (accepted and ignored)]:comp-option:->compopt' \
       '-X[filter pattern (accepted and ignored)]:filter pattern: ' \
+      '(- *)-p[print the specs of the named commands, or all]:*:registered command:->registered' \
       '(- *)-r[remove the specs of the named commands]:*:registered command:->registered' \
       '*:command:_command_names' && ret=0
     ;;
@@ -89,7 +92,10 @@ case $state in
     # the a b c d e f j letters for complete).
     local -a actions
     actions=( alias builtin command directory export file job )
-    [[ $service == compgen ]] && actions+=( keyword user variable )
+    [[ $service == compgen ]] && actions+=(
+        arrayvar disabled enabled function group helptopic keyword
+        service setopt shopt signal user variable
+    )
     _wanted actions expl 'action' compadd -a actions && ret=0
     ;;
   compopt)

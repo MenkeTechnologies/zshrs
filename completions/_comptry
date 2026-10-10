@@ -1,5 +1,9 @@
 #compdef comptry
 
-# comptry: tag-set iteration for _tags; not meant to be typed interactively.
+# comptry [-m] TAG ...: tag-set iteration for _tags; not meant to be typed
+# interactively. -m treats the arguments as patterns matched against the
+# registered tags.
 
-_default
+_arguments -s \
+    '-m[match the arguments as patterns against the registered tags]' \
+    '*:tag: '

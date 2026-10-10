@@ -1,13 +1,16 @@
 #compdef compfiles
 
-# compfiles: filename generation helper used by _path_files.
+# compfiles: filename generation helper used by _path_files (Src/Zle/computil.c
+# bin_compfiles). -p and -P also accept a trailing `-' (-p-, -P-).
 
 local -a ops
 ops=(
     '-p:build the glob patterns, including the paths already handled'
-    '-P:build the glob patterns, for a prefix'
+    '-P:build the glob patterns for a prefix (no pattern list)'
+    '-p-:as -p'
+    '-P-:as -P'
     '-i:do the directory tests for the ignore-parents style'
-    '-r:remove matches when a component equals the string on the line'
+    '-r:remove other matches if a component of a match equals the string on the line'
 )
 if (( CURRENT == 2 )); then
     _describe -t options 'compfiles operation' ops

@@ -1,6 +1,23 @@
 #compdef compvalues
 
 # compvalues: value parsing used by _values, like comparguments for
-# comma-separated option values.
+# comma-separated option values (accepted set in bin_compvalues,
+# Src/Zle/computil.c).
 
+local -a ops
+ops=(
+    '-i:parse the current word against the value specs'
+    '-D:set the description and action parameters for the current value'
+    '-C:set the parameter to the context of the current value'
+    '-V:set the parameters for the no-argument, argument and option value sets'
+    '-s:set the parameter to the value separator, if any'
+    '-S:set the parameter to the argument separator'
+    '-d:set the parameter to the description of the current value'
+    '-L:set the description and action parameters for a named value'
+    '-v:set the parameter to the array of values already given'
+)
+if (( CURRENT == 2 )); then
+    _describe -t options 'compvalues operation' ops
+    return
+fi
 _default

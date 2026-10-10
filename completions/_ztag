@@ -12,7 +12,7 @@
 # Offer the tags already in use so a shell can join an existing group;
 # any new word is accepted too.
 # Live shells: parse the `zls` table (ID PID TTY UPTIME TAGS CWD,
-# print_shells_table in daemon/builtins.rs). Silent when the daemon is down.
+# format_shells_table in daemon/builtins.rs). Silent when the daemon is down.
 local zhome=${ZSHRS_HOME:-$HOME/.zshrs} row expl
 local -a cols shells tags
 if [[ -S $zhome/daemon.sock ]]; then
