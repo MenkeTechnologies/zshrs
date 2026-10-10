@@ -962,9 +962,9 @@ scripts/ztst_compsys.py --zsh-build <built zsh tree> --core            # zshrs
 scripts/ztst_compsys.py --zsh-build <built zsh tree> --core --baseline # zsh
 ```
 
-Against zsh 5.9.2 built from the `zsh-5.9.2` tag, `main` at `790c04658a` plus `74c4a48ef2` passes 2,056 of
-the 2,068 assertions zsh passes (core suite 1,881 of 1,890, completion suite
-`Y01`-`Y03` 175 of 178). The misses, with causes, and the cargo, TAB, surface
+Against zsh 5.9.2 built from the `zsh-5.9.2` tag, `main` at `431cc21de5` passes 2,068 of
+the 2,068 assertions zsh passes (core suite 1,890 of 1,890, completion suite
+`Y01`-`Y03` 178 of 178). The cargo, TAB, surface
 and fuzz measurements (v0.13.18) are in
 [`docs/parity_report.html`](docs/parity_report.html).
 
