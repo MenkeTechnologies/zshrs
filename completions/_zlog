@@ -28,8 +28,9 @@ case $state in
     rest)
         case $words[1] in
             tail)
-                # zlog_tail: only -n/--lines; other words are ignored.
+                # zlog_tail: -n/--lines and -f/--follow.
                 _arguments \
+                    '(-f --follow)'{-f,--follow}'[stream new log lines until interrupted]' \
                     '(-n --lines)'{-n,--lines}'[number of lines to print (default 100)]:line count: ' \
                     && return 0
                 ;;

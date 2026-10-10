@@ -118,6 +118,23 @@ impl ErrflagCell {
         })
     }
 
+    /// The shell thread's flag, read from ANY thread. For observers that run
+    /// on a worker but must see the shell's interrupt state — a streaming
+    /// builtin polling for Ctrl-C.
+    #[inline]
+    pub fn shell_load(&self, order: Ordering) -> i32 {
+        self.shell.load(order)
+    }
+
+    /// `fetch_or` on the shell thread's flag from ANY thread. A signal handler
+    /// uses this: the kernel may deliver the signal on a pool thread, but the
+    /// interrupt belongs to the shell, so it must not land in that thread's
+    /// private copy where the shell thread never sees it.
+    #[inline]
+    pub fn shell_fetch_or(&self, val: i32, order: Ordering) -> i32 {
+        self.shell.fetch_or(val, order)
+    }
+
     /// Mirrors `AtomicI32::fetch_and`, returning the previous value.
     #[inline]
     pub fn fetch_and(&self, val: i32, order: Ordering) -> i32 {

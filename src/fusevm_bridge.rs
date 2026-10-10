@@ -1193,14 +1193,21 @@ fn run_daemon_builtin(name: &str, rest: &[String]) -> Option<i32> {
     // Streaming builtins (`zlog tail -f`) poll this between waits so Ctrl-C
     // ends them; the daemon crate cannot see the shell's `errflag`.
     let _ = crate::daemon::builtins::INTERRUPT_CHECK.set(|| {
-        crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+        crate::ported::utils::errflag.shell_load(std::sync::atomic::Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_INT
             != 0
     });
     let argv: Vec<String> = std::iter::once(name.to_string())
         .chain(rest.iter().cloned())
         .collect();
-    Some(crate::daemon::builtins::try_dispatch(name, &argv).unwrap_or(1))
+    // c:Src/exec.c:4231 `dont_queue_signals()` — a builtin runs with signals
+    // delivered, not queued, so Ctrl-C reaches a streaming builtin while it
+    // runs. Some resolvers reach here without `dispatch_builtin`'s bracket.
+    let q = crate::ported::signals_h::queue_signal_level();
+    crate::ported::signals_h::dont_queue_signals();
+    let status = crate::daemon::builtins::try_dispatch(name, &argv).unwrap_or(1);
+    crate::ported::signals_h::restore_queue_signals(q);
+    Some(status)
 }
 
 /// Dispatch a zshrs-ORIGINAL builtin by NAME, argv-style. These are

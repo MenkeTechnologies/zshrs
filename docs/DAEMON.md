@@ -1208,7 +1208,7 @@ Daemon is fully observable via `~/.zshrs/zshrs.log`. Every action it takes — e
 
 ```
 zlog                                # default: zlog tail --follow (live tail of current log)
-zlog tail [-n N]                    # tail of current log (default: last 100 lines)
+zlog tail [-n N] [-f]                # tail of the logs (default: last 100 lines); -f streams until Ctrl-C
 zlog tail --follow                  # live tail, streams new entries as daemon writes
 zlog grep <pattern> [--rotated]     # ripgrep current log; --rotated includes .1-.4 archives
 zlog level [<new_level>]            # show or set runtime log level (no daemon restart)
