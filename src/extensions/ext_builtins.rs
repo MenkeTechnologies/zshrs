@@ -1180,6 +1180,7 @@ impl ShellExecutor {
     ///   dbview history               — recent history entries
     ///   dbview history <pattern>     — search history
     ///   dbview plugins               — plugin cache entries (plugins.db)
+    ///   dbview scripts [pattern]     — compiled sourced scripts (scripts.rkyv): cached-at, KB, version, path
     ///   dbview executables            — PATH executables (daemon catalog `command` rows)
     ///   dbview <table> --count       — just the count
     pub(crate) fn builtin_dbview(&self, args: &[String]) -> i32 {
@@ -1480,6 +1481,28 @@ impl ShellExecutor {
                 }
             }
 
+            "scripts" => {
+                let Some(cache) = crate::script_cache::CACHE.as_ref() else {
+                    eprintln!("zshrs:dbview:1: no script cache");
+                    return 1;
+                };
+                if count_only {
+                    println!("{}", cache.stats().0);
+                    return 0;
+                }
+                let pat = filter.unwrap_or("");
+                let rows: Vec<_> = cache
+                    .list_scripts()
+                    .into_iter()
+                    .filter(|(path, ..)| path.contains(pat))
+                    .collect();
+                println!("{}", bold(&format!("{:<19} {:>9} {:<10} {}", "CACHED", "KB", "VERSION", "PATH")));
+                for (path, kb, version, cached_at) in rows.iter().take(200) {
+                    println!("{:<19} {:>9.1} {:<10} {}", cached_at, kb, version, cyan(path));
+                }
+                println!("\n{} of {} rows shown (LIMIT 200)", rows.len().min(200), rows.len());
+            }
+
             "plugins" => {
                 let Some(ref cache) = self.plugin_cache else {
                     eprintln!("zshrs:dbview:1: no plugin cache");
@@ -1490,7 +1513,7 @@ impl ShellExecutor {
             }
 
             _ => {
-                eprintln!("zshrs:dbview:1: unknown table '{}'. Available: autoloads, comps, executables, history, plugins", table);
+                eprintln!("zshrs:dbview:1: unknown table '{}'. Available: autoloads, comps, executables, history, plugins, scripts", table);
                 return 1;
             }
         }

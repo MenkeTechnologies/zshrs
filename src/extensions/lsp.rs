@@ -6217,7 +6217,7 @@ const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
     ("compopt", "Bash-compatible `compopt` — modify completion options at runtime."),
     ("cut", "Extract fields or character ranges. `-d':' -f1,3` / `-c5-10`. coreutils drop-in."),
     ("date", "Print or set the system date. `+%FORMAT` strftime; `-d 'rel'` parse relative; `-u` UTC. coreutils drop-in."),
-    ("dbview", "Dump the local zshrs SQLite mirror tables (autoload bodies, completion mirror, history FTS). Mirrors only &mdash; the authoritative cache is the rkyv-mmap'd shard set; SQLite is hydrated read-only for SQL/`dbview` inspection. `dbview --table autoloads` filters by table."),
+    ("dbview", "Dump the local zshrs SQLite mirror tables (autoload bodies, completion mirror, history FTS). Mirrors only &mdash; the authoritative cache is the rkyv-mmap'd shard set; SQLite is hydrated read-only for SQL/`dbview` inspection. `dbview scripts [pattern]` lists compiled sourced scripts from `scripts.rkyv`."),
     ("dircolors", "Emit `LS_COLORS` from a `.dircolors` file. coreutils drop-in."),
     ("dirname", "Strip the last path component. `dirname /a/b/c` → `/a/b`. coreutils drop-in."),
     ("doctor", "Diagnostic report of shell health — cache stats, autoload coverage, fpath sanity, daemon presence, memory footprint, recent error summary. zshrs-only."),

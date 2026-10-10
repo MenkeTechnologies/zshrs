@@ -380,6 +380,7 @@ dbview                        # list tables + row counts
 dbview autoloads _git         # single function: source, body, bytecode status
 dbview comps git              # search completions
 dbview history docker         # search history
+dbview scripts                 # compiled sourced scripts (scripts.rkyv); optional path substring
 ```
 
 ---
@@ -403,7 +404,7 @@ dbview history docker         # search history
 | `intercept` | AOP before/after/around advice on any command |
 | `intercept_proceed` | Call original from around advice |
 | `doctor` | Full diagnostic: pool metrics, cache stats, bytecode coverage |
-| `dbview` | Read-only browse of SQLite **mirrors** (not the rkyv cache) |
+| `dbview` | Read-only browse of SQLite **mirrors**; `dbview scripts` lists the compiled-script rkyv shard entries |
 | `profile` | In-process command profiling with nanosecond accuracy |
 | `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them, each stamped with file, line and wall clock; shell functions carry the same chain ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
 | `zbanner` | ZSHRS logo, a box with the version and builtin totals, and a live line: daemon socket status plus this shell's function, alias, parameter and job counts. `zshrs --banner` prints it from outside a shell, daemon status only |
