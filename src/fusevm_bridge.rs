@@ -8920,6 +8920,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:1817 — carry the Option: an UNSET `$IFS` (`!ifs`) joins on
                 // " " and splits at c:3919-3925 (`(!ifs && isarr < 0)`), unlike an
                 // EMPTY one. `join_c3914` encodes both arms.
+                // !!! KSH93 GATE (no C counterpart) !!! ksh93u+m splits each positional of an
+                // unquoted `$*` / `$@` on its own and drops the ones that are entirely
+                // empty, whatever `IFS` holds (`set -- a '' b; IFS=:; printf '<%s>' $*` is
+                // `<a><b>`; bash and mksh keep the empty field).
+                if crate::dash_mode::ksh93_mode() {
+                    let mut parts: Vec<String> = pp
+                        .iter()
+                        .filter(|e| !e.is_empty())
+                        .flat_map(|e| crate::ported::utils::sepsplit(e, None, false))
+                        .collect();
+                    // `$@` (not `$*`) keeps ONE empty field when the last positional is
+                    // empty: `set -- a '' ''; printf '<%s>' $@` is `<a><>`.
+                    let keeps_trailing = name == "@"
+                        && !parts.is_empty()
+                        && pp.last().is_some_and(|e| e.is_empty());
+                    if keeps_trailing {
+                        parts.push(String::new());
+                    }
+                    // The end-of-word drop must let that one empty field through.
+                    note_quoted_splice_elems(if keeps_trailing { parts.len() } else { 0 });
+                    return Value::array(parts.into_iter().map(Value::str).collect());
+                }
                 let ifs_opt = with_executor(|exec| exec.scalar("IFS"));
                 if let JoinC3914::Joined(joined) = join_c3914(pp.clone(), ifs_opt.as_deref()) {
                     // c:3919 `sepsplit(val, spsep, 0, 1)` with spsep NULL →

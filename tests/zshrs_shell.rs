@@ -17273,3 +17273,20 @@ fn test_dash_keeps_empty_positionals_of_unquoted_star_under_empty_ifs() {
     let (_, bash, _) = run_zshrs_with_args(&["--bash", "-c", script]);
     assert_eq!(bash, "<a><b>\n<a><b>\n");
 }
+
+#[test]
+fn test_ksh93_echo_and_positional_defaults_follow_ksh93() {
+    // ksh93u+m (measured 1.0.10): `echo` takes `-n` and `-e` only and prints
+    // `\t` literally without `-e`; an unquoted `$*` splits each positional on its
+    // own and drops the empty ones under any IFS; `${@:-w}` / `${*:-w}` /
+    // `${@:+w}` are null whenever `$1` is empty.
+    let script = "echo 'a\\tb'; echo -E x; echo -e 'a\\tb'; \
+                  set -- it '' foo; IFS=:; printf '<%s>' $*; echo; unset IFS; \
+                  set -- '' x; echo \"[${@:-d}][${*:-d}][${@:+p}]\"; \
+                  set -- x ''; echo \"[${@:-d}]\"";
+    let (_, ksh, _) = run_zshrs_with_args(&["--ksh", "-c", script]);
+    assert_eq!(ksh, "a\\tb\n-E x\na\tb\n<it><foo>\n[d][d][]\n[x ]\n");
+    // mksh and bash differ on every one of these.
+    let (_, mksh, _) = run_zshrs_with_args(&["--mksh", "-c", script]);
+    assert_eq!(mksh, "a\tb\nx\na\tb\n<it><><foo>\n[ x][ x][p]\n[x ]\n");
+}

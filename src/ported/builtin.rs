@@ -412,6 +412,11 @@ pub fn execbuiltin(
         if crate::dash_mode::dash_strict() && name == "echo" {
             optstr_bytes = b"n".to_vec();
         }
+        // !!! KSH93-ONLY (no C counterpart) !!! ksh93u+m's `echo` takes `-n` and `-e`
+        // and nothing else: `echo -E x` and `echo -nE x` print the flag as text.
+        if crate::dash_mode::ksh93_mode() && name == "echo" {
+            optstr_bytes = b"ne".to_vec();
+        }
         // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's narrower option
         // sets: `read` knows only `-r` (and `-p`), `local` takes no options, and
         // `unalias` only `-a`; everything else is "Illegal option".
@@ -13492,13 +13497,20 @@ pub fn bin_print(
     // requires `-e`, which is what BSDECHO already gives it. The `--X --zsh`
     // zsh-STYLE legs clear posix_faithful, so they keep zsh's BSDECHO
     // behavior and stay byte-identical to `zsh -c 'emulate sh; …'`.
-    let posix_faithful_echo = crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode();
+    // ksh93u+m (measured 1.0.10) is the other exception: its `echo` prints `\t` and
+    // friends literally unless `-e` is given, as bash does; mksh and the sh family
+    // interpret by default.
+    let posix_faithful_echo = crate::dash_mode::posix_faithful()
+        && !crate::dash_mode::bash_mode()
+        && !crate::dash_mode::ksh93_mode();
     let bsd_echo_active =
         echo_mode && isset(BSDECHO) && !crate::dash_mode::dash_strict() && !posix_faithful_echo;
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
         || (echo_mode && OPT_ISSET(ops, b'E'))
-        || (bsd_echo_active && !dash_e);
+        || (bsd_echo_active && !dash_e)
+        // ksh93u+m: escapes only with `-e` (zsh's `emulate ksh` leaves BSD_ECHO unset).
+        || (echo_mode && crate::dash_mode::ksh93_mode() && !dash_e);
     let mut backslash_c_truncated = false;
     if !suppress_escapes || dash_e {
         // c:builtin.c:4754-4760 — `-b` (bindkey escapes) takes precedence,

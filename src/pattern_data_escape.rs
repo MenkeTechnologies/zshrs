@@ -670,3 +670,15 @@ pub fn escape_quoted_splice(s: &str, from: usize, to: usize) -> (String, usize) 
     }
     (out, added)
 }
+
+/// ksh93u+m's NULL test for `${@:-w}` / `${*:-w}` / `${@:+w}` / `${*:+w}`: the
+/// expansion is null whenever `$1` is empty, whatever follows it
+/// (`set -- '' x; echo "${@:-d}"` is `d`; bash, mksh and zsh give ` x`). Only the
+/// bare `--ksh` drop-in has it.
+///
+/// !!! RUST-ONLY HELPER !!! — no C counterpart.
+pub fn ksh93_at_star_null(name: &str) -> bool {
+    matches!(name, "@" | "*")
+        && crate::dash_mode::ksh93_mode()
+        && crate::ported::params::getsparam("1").unwrap_or_default().is_empty()
+}

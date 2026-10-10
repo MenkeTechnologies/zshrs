@@ -16632,12 +16632,14 @@ pub fn paramsubst(
                 // null when `$@` expands to a single EMPTY field, so `set -- ''; ${@:-d}`
                 // is `d` in dash, bash, ksh93 and mksh. zsh's `!*aval` (c:3189) calls that
                 // one-element array non-null, and zsh mode keeps it.
-                let bourne_at_null = var_name == "@"
+                let bourne_at_null = (var_name == "@"
                     && raw_value.is_empty()
                     && (crate::dash_mode::bash_mode()
                         || crate::dash_mode::korn_mode()
-                        || crate::dash_mode::dash_faithful());
+                        || crate::dash_mode::dash_faithful()))
+                    || crate::pattern_data_escape::ksh93_at_star_null(&var_name);
                 let vunset = !is_set
+                    || crate::pattern_data_escape::ksh93_at_star_null(&var_name)
                     || if let Some(v) = ksh_special_hash_val.as_ref() {
                         v.is_empty() // c:3189 `!*val`
                     } else if isarr != 0 && !single_index_sub_c2175 {
@@ -17479,7 +17481,9 @@ pub fn paramsubst(
                     && crate::vm_helper::partab_array_get(&var_name).is_none()
                     && crate::vm_helper::partab_scan_keys(&var_name).is_some())
                 .then(|| crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default());
-                let colon_null = if let Some(v) = ksh_special_hash_val.as_ref() {
+                let colon_null = if crate::pattern_data_escape::ksh93_at_star_null(&var_name) {
+                    true
+                } else if let Some(v) = ksh_special_hash_val.as_ref() {
                     v.is_empty() // c:3189 `!*val`
                 } else if isarr != 0 && !single_index_sub_c2175 {
                     array_is_empty // c:3189 `!*aval`
