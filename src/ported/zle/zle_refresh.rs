@@ -4917,16 +4917,30 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     WINPROMPT.store(winprompt, Ordering::SeqCst); // c:2588
 
     // c:2653-2697 — re-emit the visible fragment of the left prompt when the
-    // line has scrolled (winpos != owinpos). The fragment OUTPUT itself is
-    // still stubbed: it walks `lpromptbuf` honouring the Inpar/Outpar `%{..%}`
-    // markers via MB_METACHARLENCONV — none of which are ported yet. We do the
-    // singmoveto(0) (c:2661) so the cursor is homed; the per-char prompt emit
-    // (c:2662-2696) is deferred until lpromptbuf lands.
+    // line has scrolled (winpos != owinpos). This is also what paints the
+    // prompt on the first frame of a single-line display: resetvideo leaves
+    // `winpos = -1` (c:736), so the first frame always differs from it.
+    //
+    // Skip the first `winpos` characters of the prompt, but still output
+    // every character marked with `%{...%}` (the 0x01/0x02 markers
+    // expand_prompt leaves for C's Inpar/Outpar).
     if winpos != owinpos && winprompt != 0 {
-        // c:2661
-        singmoveto(0);
-        // c:2697 — `vcs = winprompt;` would be set after the fragment output.
-        VCS.store(winprompt, Ordering::SeqCst);
+        singmoveto(0); // c:2661
+        let fd = SHTTY.load(Ordering::Relaxed);
+        let out_fd = if fd >= 0 { fd } else { 1 };
+        let mut skipping = false; // c:2659
+        let mut skipchars = winpos; // c:2659
+        let mut frag = String::new();
+        for c in crate::ported::zle::zle_main::prompt().chars() {
+            match c {
+                '\u{1}' => skipping = true,  // c:2665 Inpar
+                '\u{2}' => skipping = false, // c:2668 Outpar
+                _ if skipping || skipchars == 0 => frag.push(c), // c:2674-2693
+                _ => skipchars -= 1, // c:2695
+            }
+        }
+        let _ = write_loop(out_fd, frag.as_bytes());
+        VCS.store(winprompt, Ordering::SeqCst); // c:2697
     }
 
     // c:2700-2738 — display the visible portion of the line: diff nbuf[0]
