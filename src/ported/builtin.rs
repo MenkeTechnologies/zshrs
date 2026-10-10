@@ -14474,14 +14474,10 @@ pub fn bin_break(
             }
             if loops == 0 {
                 // c:5800 — break/continue only permitted in loops
-                zerrnam(
-                    name,
-                    if ANCESTOR_LOOPS.load(Relaxed) != 0 {
-                        "not in same subshell as first enclosing loop" // c:5802
-                    } else {
-                        "not in while, until, select, or repeat loop" // c:5803 (5.9.2; the dev tree adds "for")
-                    },
-                );
+                // 5.9.2 inherits `loops` into a subshell, so there is no "loop is in a
+                // parent process" case to tell apart (the dev tree's `ancestor_loops`, 55061,
+                // adds "not in same subshell as first enclosing loop" and "for" here).
+                zerrnam(name, "not in while, until, select, or repeat loop"); // c:5803
                 return 1; // c:5804
             }
             CONTFLAG.store((func == BIN_CONTINUE) as i32, Relaxed); // c:5806
@@ -20475,11 +20471,6 @@ pub static INEVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 // `loops` / `breaks` / `contflag` / `retflag` / `locallevel` / `sourcelevel`
 // globals from Src/loop.c + Src/init.c — control-flow state consulted by
 // the bin_break dispatcher.
-/// Port of `int ancestor_loops;` from `Src/loop.c:36` (55061) — the
-/// number of nested loops started in ANCESTOR subshells; `entersubsh`
-/// moves `loops` here (c:Src/exec.c:1263-1264) so `break`/`continue`
-/// can tell "not in a loop" from "loop is in a parent process".
-pub static ANCESTOR_LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 /// `LOOPS` static — `int loops;` (`Src/loop.c:41`), loops started in the
 /// current subshell.
 pub static LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
