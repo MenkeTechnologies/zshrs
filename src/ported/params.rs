@@ -9865,6 +9865,10 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         zerr(&format!("{}: restricted", name));
         return None;
     }
+    // c:3314 `queue_signals();` — held until the function returns. Without it a SIGCHLD
+    // landing mid-write runs `update_job` -> `getsparam` on this thread and waits for
+    // the parameter-table lock this thread already holds (`wait` after many `&` jobs).
+    let _queued = crate::signal_queue_guard::QueuedSignals::enter();
     // !!! RUST-ONLY: provenance tap (see assignsparam). An array write
     // records the joined element list as the value summary — the same
     // shape `${arr}` would produce — so a lineage that flows through
@@ -10955,6 +10959,8 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
     if unset(EXECOPT) {
         return None;
     }
+    // c:3619 `queue_signals();` — see assignaparam.
+    let _queued = crate::signal_queue_guard::QueuedSignals::enter();
     let mut vbuf = value {
         pm: None,
         arr: Vec::new(),

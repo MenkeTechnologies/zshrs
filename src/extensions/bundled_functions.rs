@@ -40,6 +40,10 @@ static BUNDLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zsh_functions.z
 /// refreshes it instead of leaving a stale one from an older build.
 const STAMP: &str = ".zshrs-bundle-version";
 
+/// Held exclusively while the bundle is being written. A dot-file: the `_*` scan
+/// and function lookup never open it.
+const INSTALL_LOCK: &str = ".zshrs-bundle-install.lock";
+
 include!(concat!(env!("OUT_DIR"), "/zsh_functions_id.rs"));
 
 /// What [`STAMP`] holds: crate version plus the bundle's content hash.
@@ -88,6 +92,12 @@ fn needs_write(dir: &Path) -> bool {
 fn write_atomically(dir: &Path, name: &str, body: &[u8]) -> bool {
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     let dest = dir.join(name);
+    // Already the right bytes (most of the tree is unchanged from one release to the
+    // next): leave the file, and its mtime, alone. Three metadata operations per file
+    // across 1.2k files is seconds on a busy disk.
+    if std::fs::read(&dest).is_ok_and(|have| have == body) {
+        return true;
+    }
     let ok = std::fs::File::create(&tmp)
         .and_then(|mut f| f.write_all(body))
         .and_then(|()| std::fs::rename(&tmp, &dest))
@@ -110,6 +120,20 @@ pub fn ensure_installed() -> Option<usize> {
         return Some(0);
     }
     std::fs::create_dir_all(&dir).ok()?;
+    // One installer at a time. Shells that start together all see a missing or stale
+    // stamp, and each used to rewrite all ~1.2k files; on a busy disk that is seconds per
+    // shell and the others read the half-installed tree meanwhile. The first takes the
+    // lock and installs; the rest wait, find the stamp current and return.
+    let _installing = std::fs::File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(INSTALL_LOCK))
+        .ok()
+        .and_then(|f| nix::fcntl::Flock::lock(f, nix::fcntl::FlockArg::LockExclusive).ok());
+    if !needs_write(&dir) {
+        return Some(0);
+    }
     let raw = zstd::decode_all(BUNDLE).ok()?;
     let mut n = 0usize;
     let mut i = 0usize;
@@ -149,22 +173,26 @@ mod tests {
 
     /// A reader polling a file while another process rewrites it must only ever
     /// see a complete body. `fs::write` (truncate, then fill) fails this within a
-    /// few hundred iterations; rename-into-place never does.
+    /// few hundred iterations; rename-into-place never does. The two bodies differ
+    /// (an identical rewrite is skipped) and have one length, so a short read is
+    /// always a torn one.
     #[test]
     fn a_reader_never_sees_a_partly_written_file() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let body = vec![b'x'; 256 * 1024];
-        assert!(write_atomically(dir.path(), "_probe", &body));
+        let (a, b) = (vec![b'a'; 32 * 1024], vec![b'b'; 32 * 1024]);
+        assert!(write_atomically(dir.path(), "_probe", &a));
         let path = dir.path().join("_probe");
 
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reader = {
-            let (path, stop, len) = (path.clone(), stop.clone(), body.len());
+            let (path, stop, len) = (path.clone(), stop.clone(), a.len());
             std::thread::spawn(move || {
                 let mut torn = 0usize;
                 while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                     if let Ok(read) = std::fs::read(&path) {
-                        if read.len() != len {
+                        let whole = read.len() == len
+                            && (read.iter().all(|&c| c == b'a') || read.iter().all(|&c| c == b'b'));
+                        if !whole {
                             torn += 1;
                         }
                     }
@@ -172,11 +200,24 @@ mod tests {
                 torn
             })
         };
-        for _ in 0..400 {
-            assert!(write_atomically(dir.path(), "_probe", &body));
+        for round in 0..200 {
+            assert!(write_atomically(dir.path(), "_probe", if round % 2 == 0 { &b } else { &a }));
         }
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(reader.join().expect("reader"), 0, "a read saw a truncated or partial file");
+    }
+
+    #[test]
+    fn an_unchanged_file_is_left_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(write_atomically(dir.path(), "_same", b"#compdef same\n"));
+        let first = std::fs::metadata(dir.path().join("_same")).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(write_atomically(dir.path(), "_same", b"#compdef same\n"));
+        let second = std::fs::metadata(dir.path().join("_same")).unwrap().modified().unwrap();
+        assert_eq!(first, second, "identical content must not be rewritten");
+        assert!(write_atomically(dir.path(), "_same", b"#compdef other\n"));
+        assert_eq!(std::fs::read(dir.path().join("_same")).unwrap(), b"#compdef other\n");
     }
 
     #[test]

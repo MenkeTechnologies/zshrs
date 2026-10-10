@@ -2181,6 +2181,10 @@ pub fn zwaitjob(job: usize, wait_cmd: i32) -> Option<i32> {
     // c:1706-1710 — main wait loop.
     let interact = isset(INTERACTIVE);
     loop {
+        // !!! RUST-ONLY !!! A SIGCHLD that arrived while this thread held the parameter
+        // or job table was deferred by `zhandler`; reap it before testing the job, or the
+        // `signal_suspend` below sleeps for a signal that has already come and gone.
+        crate::ported::signals_h::run_queued_signals();
         let jstat = table
             .lock()
             .unwrap_or_else(|e| e.into_inner())
