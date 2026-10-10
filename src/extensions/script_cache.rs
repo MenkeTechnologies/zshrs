@@ -462,6 +462,129 @@ impl ScriptCache {
             .collect()
     }
 
+    /// `scripts.db`, the read-only SQLite mirror kept beside the shard. Never
+    /// read on a cache lookup or while running code — `dbview` only.
+    fn mirror_path(&self) -> PathBuf {
+        self.path.with_file_name("scripts.db")
+    }
+
+    /// Bring `scripts.db` in line with the shard. The mirror is derived data:
+    /// it is rebuilt whole whenever the shard's identity (inode, length, mtime)
+    /// differs from the one recorded in its `meta` table, so writers of the
+    /// shard never touch SQLite and a missing or stale file heals itself.
+    fn refresh_mirror(&self, conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+        use rusqlite::OptionalExtension;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS scripts (
+                 path               TEXT PRIMARY KEY,
+                 kind               TEXT NOT NULL,
+                 events             INTEGER NOT NULL,
+                 bytes              INTEGER NOT NULL,
+                 version            TEXT NOT NULL,
+                 cached_at          INTEGER NOT NULL,
+                 source_mtime_secs  INTEGER NOT NULL,
+                 source_mtime_nsecs INTEGER NOT NULL,
+                 env_fingerprint    TEXT NOT NULL,
+                 binary_len         INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS scripts_cached_at ON scripts(cached_at DESC);",
+        )?;
+        let on_disk = std::fs::metadata(&self.path).ok().map(|m| {
+            let (ino, len, mtime_ns) = file_identity(&m);
+            format!("{ino}:{len}:{mtime_ns}")
+        });
+        let recorded: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key = 'shard'", [], |r| r.get(0))
+            .optional()?;
+        if recorded == on_disk {
+            return Ok(());
+        }
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM scripts", [])?;
+        if let Some(shard) = read_owned_shard(&self.path) {
+            let mut insert = tx.prepare(
+                "INSERT OR REPLACE INTO scripts
+                 (path, kind, events, bytes, version, cached_at,
+                  source_mtime_secs, source_mtime_nsecs, env_fingerprint, binary_len)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?;
+            for (path, e) in &shard.entries {
+                let (kind, events) = match e.chunk_blob.first() {
+                    // bincode of a `Vec<Chunk>` opens with its u64 length.
+                    Some(1) if e.chunk_blob.len() >= 9 => {
+                        let n = u64::from_le_bytes(e.chunk_blob[1..9].try_into().unwrap());
+                        ("events", n as i64)
+                    }
+                    Some(0) => ("script", 1),
+                    _ => ("unknown", 0),
+                };
+                insert.execute(rusqlite::params![
+                    path,
+                    kind,
+                    events,
+                    e.chunk_blob.len() as i64,
+                    shard.header.zshrs_version,
+                    e.cached_at_secs,
+                    e.mtime_secs,
+                    e.mtime_nsecs,
+                    format!("{:016x}", e.env_fingerprint),
+                    e.binary_len_at_cache as i64,
+                ])?;
+            }
+        }
+        match on_disk {
+            Some(id) => tx.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('shard', ?1)", [id])?,
+            None => tx.execute("DELETE FROM meta WHERE key = 'shard'", [])?,
+        };
+        tx.commit()
+    }
+
+    /// `(path, chunk_kb, version, cached_at_localstr)` for every cached script
+    /// whose path contains `pattern`, newest first — read from `scripts.db`
+    /// after refreshing it, plus entries still buffered in this process.
+    /// `None` when the mirror cannot be opened; callers fall back to
+    /// [`Self::list_scripts`].
+    pub fn mirror_rows(&self, pattern: &str) -> Option<Vec<(String, f64, String, String)>> {
+        let _lowfd = crate::lowfd::LowFdGuard::new();
+        let conn = rusqlite::Connection::open(self.mirror_path()).ok()?;
+        conn.busy_timeout(std::time::Duration::from_secs(5)).ok()?;
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        crate::lowfd::register_internal_fds();
+        self.refresh_mirror(&conn).ok()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT path, bytes, version, cached_at FROM scripts
+                 WHERE instr(path, ?1) > 0 ORDER BY cached_at DESC, path",
+            )
+            .ok()?;
+        let mut out: Vec<(String, f64, String, String, i64)> = stmt
+            .query_map([pattern], |r| {
+                let path: String = r.get(0)?;
+                let bytes: i64 = r.get(1)?;
+                let version: String = r.get(2)?;
+                let cached_at: i64 = r.get(3)?;
+                Ok((path, bytes as f64 / 1024.0, version, format_local_ts(cached_at), cached_at))
+            })
+            .ok()?
+            .filter_map(Result::ok)
+            .collect();
+        // Buffered, not yet in the shard (see `list_scripts`).
+        let now = now_secs();
+        for p in PENDING.lock().iter().filter(|p| p.path.contains(pattern)) {
+            out.retain(|row| row.0 != p.path);
+            out.push((
+                p.path.clone(),
+                p.blob.len() as f64 / 1024.0,
+                env!("CARGO_PKG_VERSION").to_string(),
+                format_local_ts(now),
+                now,
+            ));
+        }
+        out.sort_by_key(|x| std::cmp::Reverse(x.4));
+        Some(out.into_iter().map(|(p, kb, v, ts, _)| (p, kb, v, ts)).collect())
+    }
+
     /// Drop entries whose source file vanished or whose mtime changed.
     pub fn evict_stale(&self) -> usize {
         let _lock = match acquire_lock(&self.lock_path) {
@@ -952,6 +1075,39 @@ mod tests {
         let rows = reader.list_scripts();
         assert_eq!(rows.len(), 2, "the replaced shard must be remapped: {rows:?}");
         assert_eq!(reader.stats().0, 2);
+    }
+
+    /// `dbview scripts` reads `scripts.db`, which is derived from the shard and
+    /// rebuilt whenever the shard's identity moved: new entries appear, a
+    /// replaced entry shows its new state, and a deleted shard empties it.
+    #[test]
+    fn the_sqlite_mirror_follows_the_shard() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache = ScriptCache::open(&dir.path().join("scripts.rkyv")).unwrap();
+        let one = dir.path().join("one.zsh");
+        let two = dir.path().join("two.zsh");
+        std::fs::write(&one, "echo 1").unwrap();
+        std::fs::write(&two, "echo 2").unwrap();
+        let (s1, n1) = file_mtime(&one).unwrap();
+        let (s2, n2) = file_mtime(&two).unwrap();
+
+        assert_eq!(cache.mirror_rows("").unwrap().len(), 0, "empty before any write");
+
+        cache.put(&one.to_string_lossy(), s1, n1, 0, vec![1u8]).unwrap();
+        let rows = cache.mirror_rows("").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].0.ends_with("one.zsh"));
+        assert!(dir.path().join("scripts.db").is_file());
+
+        cache.put(&two.to_string_lossy(), s2, n2, 0, vec![2u8; 4096]).unwrap();
+        assert_eq!(cache.mirror_rows("").unwrap().len(), 2);
+        let only_two = cache.mirror_rows("two.zsh").unwrap();
+        assert_eq!(only_two.len(), 1);
+        assert!(only_two[0].1 > 3.9, "kb is the blob size: {only_two:?}");
+
+        cache.clear().unwrap();
+        assert_eq!(cache.mirror_rows("").unwrap().len(), 0, "deleted shard empties the mirror");
     }
 
     #[test]

@@ -796,6 +796,13 @@ impl ShellExecutor {
             Some(n) => println!("  plugins:     {} plugins  {}", n, dim("mirror")),
             None => println!("  plugins:     {}", yellow("no mirror")),
         }
+        match crate::script_cache::CACHE
+            .as_ref()
+            .and_then(|c| c.mirror_rows(""))
+        {
+            Some(rows) => println!("  scripts:     {} scripts  {}", rows.len(), dim("mirror (scripts.db)")),
+            None => println!("  scripts:     {}", yellow("no mirror")),
+        }
         println!();
 
         // --- History ---
@@ -1488,16 +1495,22 @@ impl ShellExecutor {
                     eprintln!("zshrs:dbview:1: no script cache");
                     return 1;
                 };
+                let pat = filter.unwrap_or("");
+                // Read through scripts.db, the SQLite mirror beside the shard (the
+                // other tables are read the same way); refreshed from the shard
+                // when the shard changed. The shard itself is only the fallback
+                // for a mirror that cannot be opened.
+                let rows = cache.mirror_rows(pat).unwrap_or_else(|| {
+                    cache
+                        .list_scripts()
+                        .into_iter()
+                        .filter(|(path, ..)| path.contains(pat))
+                        .collect()
+                });
                 if count_only {
-                    println!("{}", cache.stats().0);
+                    println!("{}", rows.len());
                     return 0;
                 }
-                let pat = filter.unwrap_or("");
-                let rows: Vec<_> = cache
-                    .list_scripts()
-                    .into_iter()
-                    .filter(|(path, ..)| path.contains(pat))
-                    .collect();
                 println!("{}", bold(&format!("{:<19} {:>9} {:<10} {}", "CACHED", "KB", "VERSION", "PATH")));
                 for (path, kb, version, cached_at) in rows.iter().take(200) {
                     println!("{:<19} {:>9.1} {:<10} {}", cached_at, kb, version, cyan(path));
