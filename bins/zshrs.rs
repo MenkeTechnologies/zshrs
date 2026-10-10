@@ -4361,13 +4361,14 @@ fn csh_preamble() -> String {
         .map(|p| p.to_string_lossy().replace('\'', "'\\''"))
         .unwrap_or_else(|_| "zshrs".to_string());
     format!(
-        "{CSH_OPTIONS}\
+        "{CSH_OPTIONS}{}\n\
          OSTYPE=${{OSTYPE%%[0-9.]*}}\n\
          tcsh=6.21.00\n\
          version='tcsh 6.21.00 (Astron) 2019-05-08 ({}-apple-darwin) options wide,nls,dl,bye,al,kan,sm,rh,color,filec'\n\
          [[ $OSTYPE == darwin ]] && HOSTTYPE=unknown MACHTYPE=unknown\n\
          source() {{ local __csh_f=$1; shift; builtin eval \"$('{exe}' --csh-translate -- \"$__csh_f\")\"; }}\n\
          eval() {{ builtin eval \"$(print -r -- \"$*\" | '{exe}' --csh-translate -)\"; }}\n",
+        zsh::csh::PREAMBLE,
         "unknown"
     )
 }

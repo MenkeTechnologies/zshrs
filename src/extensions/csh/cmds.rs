@@ -16,6 +16,25 @@
 //!   * shell variables that tcsh mirrors into the environment or special
 //!     parameters (`home` `user` `term` `cwd` `prompt` `prompt2` `prompt3`)
 //!     are renamed to their zsh parameter on both read and write.
+//!
+//! # Errors that end a script
+//!
+//! tcsh stops a script on an error raised in the shell process itself and
+//! only fails the command on an error raised in a forked child. Verified
+//! against tcsh 6.21 (`/bin/tcsh -f script`):
+//!
+//! | error | builtin in the shell | external / pipeline stage |
+//! |-------|----------------------|----------------------------|
+//! | `x: Undefined variable.` | script ends, status 1 | script ends, status 1 |
+//! | `f: File exists.` (noclobber), `f: No such file or directory.`, `f: Permission denied.`, `f: Is a directory.` on a redirect | script ends | message, status 1, script continues |
+//! | `cmd: No match.` (every glob word empty) | script ends | message, status 1, script continues |
+//! | `cmd: Command not found.` | n/a | message, status 1, script continues |
+//! | `Unknown user: u.` for `~u` | script ends | message, status 1, script continues |
+//! | `EVENT: Event not found.` for a `!` word | the whole line is dropped and the script ends | |
+//!
+//! "Script ends" is emitted as [`ABORT`]: `exit 1` in a script, only the
+//! failed command in an interactive shell. The conditions are checked by
+//! self-contained zsh text wrapped around the command (see [`guard_command`]).
 
 use super::expr::translate_at;
 use super::lex::split_words;
@@ -27,16 +46,56 @@ const AMBIGUOUS_OUT: &str = "Ambiguous output redirect.";
 const AMBIGUOUS_IN: &str = "Ambiguous input redirect.";
 const BADLY_PLACED: &str = "Badly placed ()'s.";
 
+/// Ends the script after an error tcsh treats as fatal. An interactive
+/// shell only abandons the failed command.
+const ABORT: &str = "{ [[ -o interactive ]] || exit 1; false; }";
+
+/// [`ABORT`] for the body of a zsh function.
+const ABORT_RET: &str = "{ [[ -o interactive ]] || exit 1; return 1; }";
+
+/// Print `msg` on stderr and end the script (see [`ABORT`]).
+fn fatal(msg: &str) -> String {
+    format!("{{ print -u2 -r -- {}; {ABORT}; }}", sq(msg))
+}
+
+/// The builtins of tcsh 6.21 (`builtins` output). They run inside the shell
+/// process, so their errors end a script; every other command is forked.
+const TCSH_BUILTINS: &[&str] = &[
+    ":", "@", "alias", "alloc", "bg", "bindkey", "break", "breaksw", "builtins", "bye", "case",
+    "cd", "chdir", "complete", "continue", "default", "dirs", "echo", "echotc", "else", "end",
+    "endif", "endsw", "eval", "exec", "exit", "fg", "filetest", "foreach", "glob", "goto",
+    "hashstat", "history", "hup", "if", "jobs", "kill", "limit", "login", "logout", "ls-F", "nice",
+    "nohup", "notify", "onintr", "popd", "printenv", "pushd", "rehash", "repeat", "sched", "set",
+    "setenv", "settc", "setty", "shift", "source", "stop", "suspend", "switch", "telltc",
+    "termname", "time", "umask", "unalias", "uncomplete", "unhash", "unlimit", "unset",
+    "unsetenv", "wait", "watchlog", "where", "which", "while",
+];
+
 /// Translate a command line that may hold lists (`;` `&&` `||`), pipes
 /// (`|` `|&`), background `&`, redirections (`>&` `>!` `>>&` `>>!` `<<`),
 /// parenthesised subshells, and the builtins whose syntax differs from zsh
 /// (`set` `unset` `setenv` `unsetenv` `alias` `unalias` `shift` `exit`
-/// `source` `@` `limit` `unlimit` `rehash` `hashstat` `which` …).
+/// `source` `@` `limit` `unlimit` `jobs` `kill` `wait` `nice` `hup` `glob`
+/// `dirs` `pushd` `popd` `which` `where` …).
 /// Words go through [`super::words::translate_word`].
+///
+/// Commands are wrapped in the checks that reproduce tcsh's fatal errors
+/// (see the module docs), so a line is usually `if CHECKS; then CMD; else
+/// FAIL; fi`. A few translations depend on what earlier lines of the same
+/// script set (`set -r`, `set echo_style`); a script is translated in order.
 ///
 /// An empty line yields an empty string. Errors carry tcsh's message text
 /// (`Invalid null command.`, `Ambiguous output redirect.`, …).
 pub fn translate_line(line: &str) -> Result<String, String> {
+    if let Some(event) = history_event(line) {
+        return Ok(fatal(&format!("{event}: Event not found.")));
+    }
+    translate_cmds(line)
+}
+
+/// [`translate_line`] without history-substitution checking (alias bodies
+/// carry `!` text that is only a history reference at invocation time).
+fn translate_cmds(line: &str) -> Result<String, String> {
     let cmds = parse(line)?;
     let mut segments: Vec<(String, Sep)> = Vec::new();
     let mut pipes: Vec<String> = Vec::new();
@@ -367,7 +426,7 @@ fn render_pipeline(stages: &[Simple], conns: &[Sep]) -> Result<String, String> {
         if k > 0 {
             out.push_str(if conns[k - 1] == Sep::PipeErr { " |& " } else { " | " });
         }
-        out.push_str(&render_simple(s)?);
+        out.push_str(&render_simple(s, stages.len() > 1)?);
     }
     Ok(out)
 }
@@ -399,13 +458,13 @@ fn render_and_or(pipes: &[String], ops: &[Sep]) -> String {
     rendered.join(" || ")
 }
 
-fn render_simple(s: &Simple) -> Result<String, String> {
+fn render_simple(s: &Simple, in_pipe: bool) -> Result<String, String> {
     let mut text = match &s.sub {
         Some(inner) => {
             if inner.trim().is_empty() {
                 return Err(NULL_COMMAND.to_string());
             }
-            format!("( {} )", translate_line(inner)?)
+            format!("( {} )", translate_cmds(inner)?)
         }
         None => render_cmd(&s.words)?,
     };
@@ -413,7 +472,7 @@ fn render_simple(s: &Simple) -> Result<String, String> {
         text.push(' ');
         text.push_str(&render_redirect(r));
     }
-    Ok(text)
+    Ok(guard_command(s, text, in_pipe))
 }
 
 /// One redirection in zsh syntax. `>&` splits into `> f 2>&1`; `>!` is zsh's
@@ -440,6 +499,293 @@ fn render_redirect(r: &Redir) -> String {
             format!("{op} {}{dup}", tw(target))
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Error guards
+// ---------------------------------------------------------------------------
+
+/// Shell variables tcsh defines at startup (or whose zsh counterpart is
+/// always set); a reference to one is never an `Undefined variable.` error.
+const ALWAYS_DEFINED: &[&str] = &[
+    "_", "addsuffix", "argv", "autologout", "command", "cwd", "dirstack", "echo_style", "edit",
+    "euid", "gid", "group", "histchars", "history", "home", "host", "HOST", "hostname", "HOSTTYPE",
+    "loginsh", "MACHTYPE", "OSTYPE", "owd", "path", "prompt", "prompt2", "prompt3", "savehist",
+    "shell", "shlvl", "status", "term", "tcsh", "tty", "uid", "user", "VENDOR", "version",
+    // environment tcsh exports itself at startup
+    "GROUP", "HOME", "LOGNAME", "PATH", "PWD", "SHELL", "SHLVL", "TERM", "USER",
+];
+
+/// The event text of the first history reference (`!x`, `a!b`, `!!`, …) in
+/// `line`, which tcsh rejects with `EVENT: Event not found.` because a
+/// script has no history. `\!` is literal; `!` before a blank, `=`, `~`,
+/// `(`, a closing bracket or an operator is literal too (verified against
+/// tcsh). Single quotes do not protect a `!`.
+fn history_event(line: &str) -> Option<String> {
+    let cs: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        match cs[i] {
+            '\\' => i += 1,
+            '!' => {
+                let rest = &cs[i + 1..];
+                let Some(&next) = rest.first() else { break };
+                match next {
+                    ' ' | '\t' | '=' | '~' | '(' | ')' | '}' | ';' | '&' | '|' | '<' | '>' | '\'' | '"'
+                    | '`' | '#' => {}
+                    ':' | '*' | '^' | '$' | '%' | '!' => return Some("0".to_string()),
+                    '-' if rest.get(1).is_some_and(|c| c.is_ascii_digit()) => return Some("0".to_string()),
+                    '?' | '{' => {
+                        let close = if next == '?' { '?' } else { '}' };
+                        let text: String = rest[1..].iter().take_while(|&&c| c != close).collect();
+                        return Some(text);
+                    }
+                    _ => {
+                        let stop = [' ', '\t', ':', ';', '&', '|', '<', '>', '(', ')', '\'', '"', '`'];
+                        let text: String = rest.iter().take_while(|c| !stop.contains(c)).collect();
+                        return Some(text);
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Names of the variables a word dereferences (`$x`, `${x}`, `$#x`, `$x[1]`)
+/// outside single quotes and backslash escapes; `$?x`, `$1`, `$$`, `$<` and
+/// the always-defined variables are not listed.
+fn variable_refs(word: &str) -> Vec<String> {
+    let cs: Vec<char> = word.chars().collect();
+    let mut names: Vec<String> = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        i += 1;
+        match (quote, c) {
+            (Some(q), _) if c == q => quote = None,
+            (None, '\'' | '"') => quote = Some(c),
+            (Some('\''), _) => {}
+            (_, '\\') => i += 1,
+            (_, '$') => {
+                let braced = cs.get(i) == Some(&'{');
+                if braced {
+                    i += 1;
+                }
+                if cs.get(i) == Some(&'#') {
+                    i += 1;
+                }
+                let start = i;
+                while i < cs.len() && (cs[i].is_ascii_alphanumeric() || cs[i] == '_') {
+                    i += 1;
+                }
+                let name: String = cs[start..i].iter().collect();
+                let ident = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+                if ident && !ALWAYS_DEFINED.contains(&name.as_str()) && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// True when `word` holds a pattern tcsh expands: `*`, `?` or a `[…]` class
+/// outside quotes, backslash escapes and `$…` references (`$x[2]` is a
+/// subscript, not a class).
+fn is_glob_word(word: &str) -> bool {
+    let cs: Vec<char> = word.chars().collect();
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        i += 1;
+        match (quote, c) {
+            (Some(q), _) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '\'' | '"' | '`') => quote = Some(c),
+            (None, '\\') => i += 1,
+            (None, '$') => {
+                if cs.get(i) == Some(&'{') {
+                    while i < cs.len() && cs[i] != '}' {
+                        i += 1;
+                    }
+                    i += 1;
+                } else {
+                    while i < cs.len() && (cs[i].is_ascii_alphanumeric() || matches!(cs[i], '_' | '?' | '#')) {
+                        i += 1;
+                    }
+                }
+                if cs.get(i) == Some(&'[') {
+                    while i < cs.len() && cs[i] != ']' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            (None, '*' | '?') => return true,
+            (None, '[') if cs[i..].contains(&']') => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Probe text for an input redirection: prints tcsh's message and fails when
+/// `target` cannot be read.
+fn input_probe(target: &str) -> String {
+    format!(
+        "() {{ if [[ ! -e $1 ]]; then print -u2 -r -- \"$1: No such file or directory.\"; \
+elif [[ ! -r $1 ]]; then print -u2 -r -- \"$1: Permission denied.\"; else return 0; fi; return 1; }} {target}"
+    )
+}
+
+/// Probe text for an output redirection, including tcsh's `noclobber`
+/// rules: `>` onto an existing file (not a character device) is
+/// `File exists.`, `>>` onto a missing file is `No such file or directory.`;
+/// `>!` and `>>!` ignore `noclobber`.
+fn output_probe(target: &str, append: bool, force: bool) -> String {
+    let mut conds: Vec<(&str, &str)> = Vec::new();
+    if !force && !append {
+        conds.push(("-o noclobber && -e $1 && ! -c $1", "File exists."));
+    }
+    if !force && append {
+        conds.push(("-o noclobber && ! -e $1", "No such file or directory."));
+    }
+    conds.push(("-d $1", "Is a directory."));
+    conds.push(("-e $1 && ! -w $1", "Permission denied."));
+    conds.push(("! -e $1 && ! -d ${1:h}", "No such file or directory."));
+    conds.push(("! -e $1 && ! -w ${1:h}", "Permission denied."));
+    let chain: String = conds
+        .iter()
+        .enumerate()
+        .map(|(k, (cond, msg))| {
+            format!("{} [[ {cond} ]]; then _m={}; ", if k == 0 { "if" } else { "elif" }, sq(msg))
+        })
+        .collect();
+    format!(
+        "() {{ local _m; {chain}else return 0; fi; print -u2 -r -- \"$1: $_m\"; return 1; }} {target}"
+    )
+}
+
+/// Guard for a command word containing `/`: tcsh reports
+/// `p: Command not found.` for a missing path and `p: Permission denied.`
+/// for a directory or a file without the execute bit (zsh says
+/// `no such file or directory` with status 127).
+fn path_command_probe(word: &str) -> String {
+    format!(
+        "() {{ if [[ ! -e $1 ]]; then print -u2 -r -- \"$1: Command not found.\"; \
+elif [[ -d $1 || ! -x $1 ]]; then print -u2 -r -- \"$1: Permission denied.\"; else return 0; fi; return 1; }} {word}"
+    )
+}
+
+/// `~name` with an unknown user is `Unknown user: name.`; zsh fails the
+/// expansion of the word, which a silenced `:` observes.
+fn tilde_probe(name: &str) -> String {
+    format!("( : ~{name} ) 2>/dev/null || {{ print -u2 -r -- 'Unknown user: {name}.'; false; }}")
+}
+
+/// `${+x}` check for one variable reference.
+fn defined_probe(name: &str) -> String {
+    format!("(( ${{+{name}}} )) || {{ print -u2 -r -- '{name}: Undefined variable.'; false; }}")
+}
+
+/// The user name of an unquoted `~name` word, if it is one.
+fn tilde_user(word: &str) -> Option<&str> {
+    let name = word.strip_prefix('~')?;
+    let end = name.find('/').unwrap_or(name.len());
+    let name = &name[..end];
+    let ok = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    ok.then_some(name)
+}
+
+/// Heads whose arguments are patterns or expressions, not filename words:
+/// no `No match.` check applies.
+fn skips_glob_check(head: &str) -> bool {
+    matches!(head, "unset" | "unsetenv" | "unalias" | "set" | "setenv" | "@" | "eval" | "repeat" | "if")
+}
+
+/// Wrap `text` (one rendered simple command, redirections included) in the
+/// checks tcsh performs before running it, so that the failures print tcsh's
+/// message and end or continue the script exactly as tcsh does (module
+/// docs). `in_pipe` marks a pipeline stage, which tcsh forks.
+fn guard_command(s: &Simple, text: String, in_pipe: bool) -> String {
+    let head = s.words.first().map(String::as_str);
+    let in_shell = !in_pipe && head.is_some_and(|h| TCSH_BUILTINS.contains(&h));
+
+    // Failures that end the script wherever the command runs.
+    let mut always: Vec<String> = Vec::new();
+    if head != Some("eval") {
+        for w in &s.words {
+            for name in variable_refs(w) {
+                let probe = defined_probe(&name);
+                if !always.contains(&probe) {
+                    always.push(probe);
+                }
+            }
+        }
+    }
+
+    // Failures that end the script only for a builtin.
+    let mut local: Vec<String> = Vec::new();
+    let skip_dev = |t: &str| t.starts_with("/dev/") || is_glob_word(t) || t.contains('`');
+    for r in &s.ins {
+        if let Redir::In(t) = r {
+            if !skip_dev(t) {
+                local.push(input_probe(&tw(t)));
+            }
+        }
+    }
+    for r in &s.outs {
+        if let Redir::Out { target, append, force, .. } = r {
+            if !skip_dev(target) {
+                local.push(output_probe(&tw(target), *append, *force));
+            }
+        }
+    }
+    if let Some(h) = head {
+        let plain = !h.contains(['$', '`', '*', '?', '[', '\'', '"', '\\']);
+        if h.contains('/') && plain && !TCSH_BUILTINS.contains(&h) {
+            local.push(path_command_probe(&tw(h)));
+        }
+        for w in &s.words[1..] {
+            if let Some(name) = tilde_user(w) {
+                local.push(tilde_probe(name));
+            }
+        }
+        let globs: Vec<String> = s.words[1..].iter().filter(|w| is_glob_word(w)).map(|w| tw(w)).collect();
+        if plain && !globs.is_empty() && !skips_glob_check(h) {
+            local.push(format!(
+                "{{ () {{ setopt localoptions nullglob; local -a _g; _g=({}); (( $#_g )); }} || \
+{{ print -u2 -r -- {}; false; }}; }}",
+                globs.join(" "),
+                sq(&format!("{h}: No match."))
+            ));
+        }
+    }
+
+    if local.is_empty() && always.is_empty() {
+        return text;
+    }
+    // The checks overwrite `$?`; a command that reads it (`$status`) gets
+    // the value from before them back.
+    let keeps_status = text.contains("$?");
+    let mut out = if keeps_status { format!("() {{ return $1; }} $_csh_s; {text}") } else { text };
+    if !local.is_empty() {
+        let fail = if in_shell { ABORT } else { "false" };
+        out = format!("if {}; then {out}; else {fail}; fi", local.join(" && "));
+    }
+    if !always.is_empty() {
+        out = format!("if {}; then {out}; else {ABORT}; fi", always.join(" && "));
+    }
+    if keeps_status {
+        out = out.replacen("if ", "if _csh_s=$? && ", 1);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -507,9 +853,60 @@ fn map_special_vars(word: &str) -> String {
     out
 }
 
-/// csh word → zsh word, with the mirrored variable names applied first.
+/// csh word → zsh word, with the mirrored variable names applied first and
+/// an unclosed `[` made literal (csh keeps `echo [a` as `[a`; zsh calls it a
+/// bad pattern).
 fn tw(word: &str) -> String {
-    translate_word(&map_special_vars(word))
+    translate_word(&escape_unclosed_brackets(&map_special_vars(word)))
+}
+
+/// Backslash every unquoted `[` that has no `]` after it, outside `$x[…]`
+/// subscripts.
+fn escape_unclosed_brackets(word: &str) -> String {
+    if !word.contains('[') {
+        return word.to_string();
+    }
+    let cs: Vec<char> = word.chars().collect();
+    let mut out = String::with_capacity(word.len() + 2);
+    let mut quote: Option<char> = None;
+    let mut after_var = false;
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        match (quote, c) {
+            (Some(q), _) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '\'' | '"' | '`') => quote = Some(c),
+            (None, '\\') => {
+                out.push(c);
+                if let Some(&d) = cs.get(i + 1) {
+                    out.push(d);
+                }
+                i += 2;
+                after_var = false;
+                continue;
+            }
+            (None, '[') if !after_var && !cs[i + 1..].contains(&']') => {
+                out.push('\\');
+            }
+            _ => {}
+        }
+        after_var = quote.is_none() && (c == '}' || is_var_name_tail(&cs[..=i]));
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// True when `prefix` ends in `$name` (a variable reference whose `[` starts
+/// a subscript).
+fn is_var_name_tail(prefix: &[char]) -> bool {
+    let end = prefix.len();
+    let start = prefix
+        .iter()
+        .rposition(|c| !(c.is_ascii_alphanumeric() || *c == '_'))
+        .map_or(0, |p| p + 1);
+    start < end && start > 0 && prefix[start - 1] == '$'
 }
 
 /// csh quote removal: `'…'` literal, `"…"` contents, `\c` → `c`.
@@ -607,7 +1004,7 @@ fn paren_inner(word: &str) -> Option<&str> {
 fn render_cmd(words: &[String]) -> Result<String, String> {
     let head = words[0].as_str();
     let args = &words[1..];
-    let allows_parens = matches!(head, "set" | "@" | "alias" | "exit");
+    let allows_parens = matches!(head, "set" | "@" | "exit");
     if !allows_parens && words.iter().any(|w| w.starts_with('(')) {
         return Err(BADLY_PLACED.to_string());
     }
@@ -635,7 +1032,33 @@ fn render_cmd(words: &[String]) -> Result<String, String> {
         "popd" => Ok(cmd_popd(args)),
         "echo" => Ok(cmd_echo(args)),
         "hashstat" | "unhash" => Ok(":".to_string()),
+        "chdir" | "cd" if args.len() > 1 => Ok(fatal(&format!("{head}: Too many arguments."))),
         "chdir" => Ok(generic("cd", args)),
+        "jobs" => Ok(cmd_jobs(args)),
+        "fg" | "bg" => Ok(cmd_fg_bg(head, args)),
+        "kill" => Ok(cmd_kill(args)),
+        "wait" => Ok(WAIT.to_string()),
+        "time" => cmd_time(args),
+        "nice" => cmd_nice(args),
+        "hup" => cmd_hup(args),
+        "glob" => Ok(generic("() { print -rn -- \"${(pj:\\0:)@}\"; }", args)),
+        "limit" => cmd_limit(args),
+        "unlimit" => cmd_unlimit(args),
+        "termname" => Ok("print -r -- \"$TERM\"".to_string()),
+        "stop" if args.is_empty() => Ok(fatal("stop: Too few arguments.")),
+        "stop" => Ok(format!("{{ [[ -o monitor ]] && {}; true; }}", generic("kill -STOP", args))),
+        "suspend" => Ok("{ [[ -o monitor ]] && suspend; true; }".to_string()),
+        "notify" if args.is_empty() => {
+            Ok(format!("if (( ${{#jobstates}} )); then :; else {}; fi", fatal("notify: No current job.")))
+        }
+        "notify" => Ok(":".to_string()),
+        "builtins" => Ok(format!("print -rl -- {}", TCSH_BUILTINS.iter().map(|b| sq(b)).collect::<Vec<_>>().join(" "))),
+        "watchlog" => Ok(generic("log", args)),
+        "newgrp" => Ok(generic("exec newgrp", args)),
+        "ls-F" => Ok(generic(LS_F, args)),
+        "printenv" => cmd_printenv(args),
+        "login" | "logout" => Ok(fatal("Not a login shell.")),
+        "bye" => Ok("exit 0".to_string()),
         _ => Ok(generic(&tw(head), args)),
     }
 }
@@ -698,7 +1121,17 @@ fn cmd_set(args: &[String]) -> Result<String, String> {
         i += 1;
         let (name, sub, rest) = split_set_name(w)?;
         let val = set_value(args, &mut i, rest);
-        stmts.extend(set_statements(name, sub, val, readonly)?);
+        if name == "echo_style" && sub.is_none() {
+            if let Val::Word(v) = &val {
+                record_echo_style(&dequote(v));
+            }
+        }
+        let assigned = seq(set_statements(name, sub, val, readonly)?);
+        let known_readonly = STATE.with(|st| st.borrow().readonly.contains(name));
+        if readonly {
+            STATE.with(|st| st.borrow_mut().readonly.insert(name.to_string()));
+        }
+        stmts.push(if known_readonly { guard_readonly("set", name, assigned) } else { assigned });
     }
     Ok(seq(stmts))
 }
@@ -813,6 +1246,27 @@ elif (( {idx} > ${{#{name}}} )); then print -u2 -r -- 'set: Subscript out of ran
     Ok(out)
 }
 
+/// `if` that refuses to change a variable declared `set -r`: tcsh reports
+/// `CMD: $NAME is read-only.` and ends the script.
+fn guard_readonly(cmd: &str, name: &str, action: String) -> String {
+    format!(
+        "if [[ ${{parameters[{name}]}} == *readonly* ]]; then {}; else {action}; fi",
+        fatal(&format!("{cmd}: ${name} is read-only."))
+    )
+}
+
+/// Remember a `set echo_style = …` for the `echo` lines that follow.
+fn record_echo_style(value: &str) {
+    let style = match value {
+        "bsd" => EchoStyle::Bsd,
+        "sysv" => EchoStyle::Sysv,
+        "both" => EchoStyle::Both,
+        "none" => EchoStyle::None,
+        _ => return,
+    };
+    STATE.with(|st| st.borrow_mut().echo_style = style);
+}
+
 /// Unset every parameter whose name matches one of the shell patterns and
 /// whose export flag equals `exported`. csh keeps shell variables and the
 /// environment apart (`unset` touches the first, `unsetenv` the second);
@@ -841,8 +1295,16 @@ fn cmd_unset(args: &[String]) -> Result<String, String> {
         if let Some((opt, inverted)) = option_var(&name) {
             stmts.push(format!("{} {opt}", if inverted { "setopt" } else { "unsetopt" }));
         }
+        if name == "echo_style" {
+            record_echo_style("bsd");
+        }
+        let known_readonly = STATE.with(|st| st.borrow().readonly.contains(&name));
         match mirrored_name(&name) {
             Some(z) => stmts.push(format!("unset {z}")),
+            None if known_readonly => {
+                let plain = format!("unset -- {name}");
+                stmts.push(guard_readonly("unset", &name, plain));
+            }
             None => pats.push(name),
         }
     }
@@ -922,15 +1384,32 @@ fn cmd_alias(args: &[String]) -> Result<String, String> {
     let body = body_words.iter().map(|w| dequote_alias_word(w)).collect::<Vec<_>>().join(" ");
     let listing = if body_words.len() > 1 { format!("({body})") } else { body.clone() };
 
-    let (mut csh_body, reps) = alias_refs(&body);
+    let (mut csh_body, reps, needed) = alias_refs(&body);
     if name != "echo" && csh_body.split_whitespace().next() == Some(name.as_str()) {
         let kw = if SELF_ALIAS_BUILTINS.contains(&name.as_str()) { "builtin" } else { "command" };
         csh_body = format!("{kw} {csh_body}");
     }
-    let mut zbody = if csh_body.trim().is_empty() { ":".to_string() } else { translate_line(&csh_body)? };
-    zbody = restore_refs(&zbody, &reps);
-    if reps.is_empty() {
-        zbody.push_str(" \"$@\"");
+    if csh_body.trim().is_empty() {
+        csh_body = ":".to_string();
+    }
+    let subshell = parse(&csh_body)?.last().is_some_and(|(c, _)| c.sub.is_some());
+    // Without a history reference tcsh appends the call's arguments to the
+    // body; the mark travels through translation as one more word so that
+    // it lands inside whatever the last command was wrapped into.
+    let append_args = reps.is_empty() && !subshell;
+    let source = if append_args { format!("{csh_body} {ARGS_MARK}") } else { csh_body };
+    let mut zbody = restore_refs(&translate_cmds(&source)?, &reps).replace(ARGS_MARK, "\"$@\"");
+    if subshell {
+        // arguments cannot follow a `( … )` group
+        zbody = format!(
+            "if (( $# )); then print -u2 -r -- {}; {ABORT_RET}; else {zbody}; fi",
+            sq(BADLY_PLACED)
+        );
+    }
+    if needed > 0 {
+        zbody = format!(
+            "if (( $# < {needed} )); then print -u2 -r -- 'Bad ! arg selector.'; {ABORT_RET}; fi; {zbody}"
+        );
     }
 
     let safe = name
@@ -941,19 +1420,29 @@ fn cmd_alias(args: &[String]) -> Result<String, String> {
     }
     Ok(format!(
         "{{ typeset -gA _csh_alias _csh_alias_ls; {name}() {{ {zbody}; }}; \
-_csh_alias[{name}]={}; _csh_alias_ls[{name}]={}; }}",
+_csh_alias[{name}]={}; _csh_alias_ls[{name}]={}; {ALIAS_LOOP_CHECK} {}; }}",
         sq(&body),
-        sq(&listing)
+        sq(&listing),
+        sq(&name)
     ))
 }
 
-/// Quote removal for one alias word: a wholly quoted word loses its quotes,
-/// and `\!` (the csh way to keep a history reference for invocation time)
-/// becomes `!`. Anything else is kept verbatim for the later re-parse.
+/// Run after each alias definition. tcsh follows the first word of an alias
+/// through other aliases; a chain that comes back to an alias already seen
+/// (other than an alias naming itself, which refers to the real command)
+/// is `Alias loop.` when any member is invoked, and ends the script.
+/// Members of a loop are redefined to print that error.
+const ALIAS_LOOP_CHECK: &str = "() { local _n=$1 _m; local -a _c _w; while (( ${+_csh_alias[$_n]} )); do \
+_c+=($_n); _m=\"${${_csh_alias[$_n]}%% *}\"; [[ $_m == $_n ]] && return; \
+if (( ${_c[(Ie)$_m]} )); then for _m in $_c; do functions[$_m]='print -u2 -r -- \"Alias loop.\"; \
+{ [[ -o interactive ]] || exit 1; return 1; }'; done; return; fi; _n=$_m; done; }";
+
+/// Quote removal for one alias word. tcsh stores the alias value as plain
+/// text (quotes and backslashes removed) and lexes it again when the alias
+/// is used, so `\|` is a pipe, `\*` a glob and `\!` (the way to keep a
+/// history reference for invocation time) a plain `!`.
 fn dequote_alias_word(w: &str) -> String {
-    let whole = |q: char| w.len() >= 2 && w.starts_with(q) && w.ends_with(q) && !w[1..w.len() - 1].contains(q);
-    let inner = if whole('\'') || whole('"') { &w[1..w.len() - 1] } else { w };
-    inner.replace("\\!", "!")
+    dequote(w).replace("\\!", "!")
 }
 
 /// Which words of the alias invocation a `!` reference selects.
@@ -1052,16 +1541,31 @@ fn ref_expansion(sel: &Sel, mods: &str, ctx: Ctx) -> String {
     }
 }
 
+/// Stands for the alias call's arguments while the body is translated.
+const ARGS_MARK: char = '\u{E002}';
 const REF_OPEN: char = '\u{E000}';
 const REF_CLOSE: char = '\u{E001}';
+
+/// Fewest alias arguments for which tcsh accepts the selector; fewer is
+/// `Bad ! arg selector.` (verified: `:N` needs N, `:N-M` needs M, `:N-` needs
+/// N+1, `*` `:N*` `$` never fail).
+fn min_args(sel: &Sel) -> usize {
+    match *sel {
+        Sel::All | Sel::Last | Sel::From(_) => 0,
+        Sel::Arg(n) => n,
+        Sel::Range(_, m) => m,
+        Sel::ToPenultimate(n) => n + 1,
+    }
+}
 
 /// Replace every `!` argument reference in an alias body with a sentinel
 /// (so the line translator never sees it) and collect the zsh text each
 /// sentinel stands for, chosen by the quote context it appeared in.
-fn alias_refs(body: &str) -> (String, Vec<String>) {
+fn alias_refs(body: &str) -> (String, Vec<String>, usize) {
     let cs: Vec<char> = body.chars().collect();
     let mut out = String::new();
     let mut reps = Vec::new();
+    let mut needed = 0usize;
     let (mut in_sq, mut in_dq) = (false, false);
     let mut i = 0;
     while i < cs.len() {
@@ -1086,6 +1590,7 @@ fn alias_refs(body: &str) -> (String, Vec<String>) {
                     } else {
                         Ctx::Bare
                     };
+                    needed = needed.max(min_args(&sel));
                     out.push(REF_OPEN);
                     out.push_str(&reps.len().to_string());
                     out.push(REF_CLOSE);
@@ -1099,7 +1604,7 @@ fn alias_refs(body: &str) -> (String, Vec<String>) {
         out.push(c);
         i += 1;
     }
-    (out, reps)
+    (out, reps, needed)
 }
 
 /// Inverse of the sentinel substitution done by [`alias_refs`].
@@ -1134,7 +1639,8 @@ unset \"_csh_alias[$_k]\" \"_csh_alias_ls[$_k]\"; done; done; }} {}",
 // --- shift / exit / source / eval / repeat -----------------------------------
 
 fn cmd_shift(args: &[String]) -> Result<String, String> {
-    const NO_MORE: &str = "print -u2 -r -- 'shift: No more words.'; false";
+    const NO_MORE: &str =
+        "print -u2 -r -- 'shift: No more words.'; { [[ -o interactive ]] || exit 1; false; }";
     match args {
         [] => Ok(format!("{{ if (( $# )); then shift; else {NO_MORE}; fi; }}")),
         [v] => {
@@ -1144,7 +1650,7 @@ fn cmd_shift(args: &[String]) -> Result<String, String> {
                 return cmd_shift(&[]);
             }
             Ok(format!(
-                "{{ if (( ! ${{+{name}}} )); then print -u2 -r -- '{name}: Undefined variable.'; false; \
+                "{{ if (( ! ${{+{name}}} )); then print -u2 -r -- '{name}: Undefined variable.'; {ABORT}; \
 elif (( ! ${{#{name}}} )); then {NO_MORE}; else {name}=(\"${{(@){name}[2,-1]}}\"); fi; }}"
             ))
         }
@@ -1180,13 +1686,15 @@ fn cmd_exit(args: &[String]) -> Result<String, String> {
     Err("exit: Expression Syntax.".to_string())
 }
 
-/// `source [-h] file`. tcsh ignores extra arguments; `-h` only loads history.
-/// The sourced file is csh text: the engine must translate it on load.
+/// `source [-h] file [args]`. `-h` only loads history (no-op). The sourced
+/// file is csh text and the arguments become its `argv`: both are handled by
+/// the `source` function the driver preamble defines, so the call is
+/// emitted unchanged and only a missing file operand is an error here.
 fn cmd_source(args: &[String]) -> Result<String, String> {
     match args.first().map(String::as_str) {
         None => Err("source: Too few arguments.".to_string()),
         Some("-h") => Ok(":".to_string()),
-        Some(file) => Ok(format!("source {}", tw(file))),
+        Some(_) => Ok(generic("source", args)),
     }
 }
 
@@ -1222,14 +1730,15 @@ fn cmd_repeat(args: &[String]) -> Result<String, String> {
 
 // --- which / where / umask / history / echo / directory stack ----------------
 
-/// `which` in tcsh wording: builtins as `NAME: shell built-in command.`,
+/// `which` in tcsh wording: builtins (and the zsh functions that stand in for them
+/// in `--csh` mode: `cd`, `pushd`, `popd`) as `NAME: shell built-in command.`,
 /// aliases as `NAME: <tab> aliased to VALUE`, misses as
 /// `NAME: Command not found.` with status 1.
 fn cmd_which(args: &[String]) -> String {
     let body = "() { local _c _r=0; for _c; do if (( ${+_csh_alias[$_c]} )); then \
 print -r -- \"$_c: \"$'\\t'\" aliased to ${_csh_alias[$_c]}\"; else \
 case \"$(whence -w -- $_c)\" in \
-*\": builtin\"|*\": reserved\") print -r -- \"$_c: shell built-in command.\";; \
+*\": builtin\"|*\": reserved\"|*\": function\") print -r -- \"$_c: shell built-in command.\";; \
 *\": none\") print -r -- \"$_c: Command not found.\"; _r=1;; \
 *) whence -p -- $_c;; esac; fi; done; return $_r; }";
     generic(body, args)
@@ -1240,7 +1749,8 @@ fn cmd_where(args: &[String]) -> String {
     let body = "() { local _c _p _r=1; for _c; do if (( ${+_csh_alias[$_c]} )); then \
 print -r -- \"$_c is aliased to ${_csh_alias[$_c]}\"; _r=0; fi; \
 case \"$(whence -w -- $_c)\" in \
-*\": builtin\"|*\": reserved\") print -r -- \"$_c is a shell built-in\"; _r=0;; esac; \
+*\": builtin\"|*\": reserved\") print -r -- \"$_c is a shell built-in\"; _r=0;; \
+*\": function\") (( ${+_csh_alias[$_c]} )) || { print -r -- \"$_c is a shell built-in\"; _r=0; };; esac; \
 for _p in ${(f)\"$(whence -pa -- $_c)\"}; do print -r -- $_p; _r=0; done; done; return $_r; }";
     generic(body, args)
 }
@@ -1282,16 +1792,33 @@ fn cmd_history(args: &[String]) -> String {
 /// trailing space.
 const STACK_LINE: &str = "print -r -- \"$(dirs) \"";
 
+/// `dirs`: `-n` and `-p` print the same single line as bare `dirs`, `-l`
+/// expands `~`, `-S` / `-L` (save/load) are not supported and ignored, an
+/// unknown flag is tcsh's usage error.
 fn cmd_dirs(args: &[String]) -> String {
-    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        [] => STACK_LINE.to_string(),
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    match words.as_slice() {
+        [] | ["-n"] | ["-p"] => STACK_LINE.to_string(),
         ["-l"] => "print -r -- \"$(dirs -l) \"".to_string(),
+        ["-S"] | ["-L"] => ":".to_string(),
+        [flag, ..] if flag.starts_with('-') && !flag[1..].chars().all(|c| "plvnSLc".contains(c)) => {
+            fatal("Usage: dirs [-plvnSLc].")
+        }
         _ => generic("dirs", args),
     }
 }
 
+/// The `+N` operand of `pushd` / `popd`, when `args` is exactly that.
+fn stack_index(args: &[String]) -> Option<&str> {
+    match args {
+        [a] => a.strip_prefix('+').filter(|n| is_digits(n)),
+        _ => None,
+    }
+}
+
 /// `pushd`: csh always prints the stack afterwards; bare `pushd` with an
-/// empty stack is "No other directory.".
+/// empty stack is "No other directory.", `pushd +N` past the end is
+/// "Directory stack not that deep.".
 fn cmd_pushd(args: &[String]) -> String {
     if args.is_empty() {
         return format!(
@@ -1299,20 +1826,367 @@ fn cmd_pushd(args: &[String]) -> String {
 print -u2 -r -- 'pushd: No other directory.'; false; fi; }}"
         );
     }
+    if let Some(n) = stack_index(args) {
+        return format!(
+            "if (( {n} > $#dirstack )); then {}; else {{ pushd -q +{n} && {STACK_LINE}; }}; fi",
+            fatal("pushd: Directory stack not that deep.")
+        );
+    }
     format!("{{ {} && {STACK_LINE}; }}", generic("pushd -q", args))
 }
 
+/// `popd`: prints the stack afterwards; `popd +N` past the end is
+/// "Directory stack not that deep.".
 fn cmd_popd(args: &[String]) -> String {
+    if let Some(n) = stack_index(args) {
+        return format!(
+            "if (( {n} > $#dirstack )); then {}; else {{ popd -q +{n} && {STACK_LINE}; }}; fi",
+            fatal("popd: Directory stack not that deep.")
+        );
+    }
     format!("{{ {} && {STACK_LINE}; }}", generic("popd -q", args))
 }
 
-/// tcsh `echo` (default `echo_style bsd`) honours only a leading `-n` and
-/// never interprets backslash escapes; zsh `echo` does, so use `print -r`.
+/// How the tcsh `echo_style` variable shapes `echo`.
+#[derive(Clone, Copy, PartialEq, Default)]
+enum EchoStyle {
+    /// `bsd` (default): `-n` suppresses the newline, no escapes.
+    #[default]
+    Bsd,
+    /// `sysv`: backslash escapes, `-n` is an ordinary word.
+    Sysv,
+    /// `both`: `-n` and backslash escapes.
+    Both,
+    /// `none`: neither.
+    None,
+}
+
+/// Translation-time state of the shell variables whose value changes how
+/// later lines are translated. A script is translated in execution order,
+/// so a `set` seen earlier decides the lines after it.
+#[derive(Default)]
+struct ShellState {
+    echo_style: EchoStyle,
+    /// Names declared `set -r`: later `set` / `unset` of them is an error.
+    readonly: std::collections::BTreeSet<String>,
+}
+
+thread_local! {
+    static STATE: std::cell::RefCell<ShellState> = std::cell::RefCell::new(ShellState::default());
+}
+
+/// True when `word` is an expansion that could yield `-n` as a whole: it
+/// starts with `$` or a backquote, or is `-` followed by one.
+fn may_expand_to_dash_n(word: &str) -> bool {
+    let w = word.strip_prefix('-').unwrap_or(word);
+    w.starts_with(['$', '`'])
+}
+
+/// tcsh `echo` under the current `echo_style` (default `bsd`: only a leading
+/// `-n` is an option and backslashes are never interpreted, unlike zsh
+/// `echo`, so `print` is used). When the first word comes from an expansion
+/// its value is only known at run time and `-n` is tested there, as tcsh
+/// does after expansion.
 fn cmd_echo(args: &[String]) -> String {
+    let (raw, dash_n) = match STATE.with(|s| s.borrow().echo_style) {
+        EchoStyle::Bsd => (true, true),
+        EchoStyle::Sysv => (false, false),
+        EchoStyle::Both => (false, true),
+        EchoStyle::None => (true, false),
+    };
+    let print = |n: bool| -> String {
+        match (raw, n) {
+            (true, true) => "print -rn --",
+            (true, false) => "print -r --",
+            (false, true) => "print -n --",
+            (false, false) => "print --",
+        }
+        .to_string()
+    };
     match args.first() {
-        Some(a) if dequote(a) == "-n" => generic("print -rn --", &args[1..]),
-        _ => generic("print -r --", args),
+        Some(a) if dash_n && dequote(a) == "-n" => generic(&print(true), &args[1..]),
+        Some(a) if dash_n && may_expand_to_dash_n(a) && map_special_vars(a) == *a => {
+            format!(
+                "() {{ if [[ ${{1-}} == -n ]]; then shift; {} \"$@\"; else {} \"$@\"; fi; }} {}",
+                print(true),
+                print(false),
+                args.iter().map(|w| tw(w)).collect::<Vec<_>>().join(" ")
+            )
+        }
+        _ => generic(&print(false), args),
     }
+}
+
+/// `ls-F`: `ls -F`, with tcsh's error for a missing operand (the script
+/// ends). Not reproduced: its per-directory headers and column layout.
+const LS_F: &str = "() { local _a; for _a; do [[ $_a == -* || -e $_a || -L $_a ]] || \
+{ print -u2 -r -- \"$_a: No such file or directory.\"; { [[ -o interactive ]] || exit 1; return 1; }; }; done; \
+command ls -F \"$@\"; }";
+
+/// `printenv [NAME]`: tcsh's builtin prints the environment or the value of
+/// one exported variable, status 1 when it is not in the environment.
+fn cmd_printenv(args: &[String]) -> Result<String, String> {
+    match args {
+        [] => Ok("env".to_string()),
+        [_] => Ok(generic(
+            "() { if [[ ${parameters[$1]} == *export* ]]; then print -r -- ${(P)1}; else return 1; fi; }",
+            args,
+        )),
+        _ => Err("printenv: Too many arguments.".to_string()),
+    }
+}
+
+// --- job control, signals, time ----------------------------------------------
+
+/// tcsh's job line: `[N]  M STATE-padded-to-29 TEXT` with `M` `+` for the
+/// oldest job, `-` for the next and blank otherwise; `jobs -l` puts the pid
+/// before the state.
+fn cmd_jobs(args: &[String]) -> String {
+    let long = args.iter().any(|a| a == "-l");
+    format!(
+        "() {{ local _n _s _p _k; local -a _f; local _i=0; for _n in ${{(onk)jobstates}}; do \
+_f=(${{(s.:.)jobstates[$_n]}}); _s=$_f[1]; _p=${{_f[3]%%=*}}; \
+case $_s in running) _s=Running;; suspended*) _s=Suspended;; done) _s=Done;; esac; \
+_k=' '; (( _i == 0 )) && _k='+'; (( _i == 1 )) && _k='-'; _i=$(( _i + 1 )); \
+printf '[%d]  %s %s%-29s %s\\n' $_n \"$_k\" \"{}\" \"$_s\" \"$jobtexts[$_n]\"; done; }}",
+        if long { "${_p} " } else { "" }
+    )
+}
+
+/// `wait`: block for every background job and report each on stderr the way
+/// tcsh does (`Done`, `Exit N`, or the terminating signal).
+const WAIT: &str = "() { local _n _s _f _t _k; local _i=0; for _n in ${(onk)jobstates}; do \
+_t=$jobtexts[$_n]; wait %$_n; _s=$?; \
+case $_s in 0) _f=Done;; 129) _f=Hangup;; 130) _f=Interrupt;; 137) _f=Killed;; 143) _f=Terminated;; \
+*) _f=\"Exit $_s\";; esac; _k=' '; (( _i == 0 )) && _k='+'; _i=$(( _i + 1 )); \
+printf '[%d]  %s %-29s %s\\n' $_n \"$_k\" \"$_f\" \"$_t\" >&2; done; true; }";
+
+/// `fg` / `bg`: a script has no job control (`No job control in this
+/// shell.`, script ends); an interactive shell passes them through.
+fn cmd_fg_bg(head: &str, args: &[String]) -> String {
+    format!(
+        "if [[ -o monitor ]]; then {}; else {}; fi",
+        generic(head, args),
+        fatal("No job control in this shell.")
+    )
+}
+
+/// `kill -l`: tcsh prints an empty line, then each signal name followed by a
+/// space on its own line.
+const KILL_LIST: &str = "() { local _s; print -r -- ''; for _s in ${(@)signals[2,-3]}; do print -r -- \"$_s \"; done; }";
+
+/// `kill [-sig] id…`: an unknown signal is `SIG: Unknown signal; kill -l
+/// lists signals.` and a failing target `ID: No such process` (or
+/// `Operation not permitted`; tcsh prints these two on stdout), both ending
+/// the script.
+const KILL_FN: &str = "() { local _a _s; if [[ $1 == -<-> || $1 == -[A-Za-z]* ]]; then _s=${${1#-}#SIG}; \
+[[ $_s == <-> ]] || (( ${signals[(Ie)${_s:u}]} )) || { print -u2 -r -- \"$_s: Unknown signal; kill -l lists signals.\"; \
+{ [[ -o interactive ]] || exit 1; return 1; }; }; fi; builtin kill \"$@\" 2>/dev/null && return 0; \
+for _a in ${@:#-*}; do builtin kill -0 -- $_a 2>/dev/null && continue; \
+if ps -p $_a >/dev/null 2>&1; then print -r -- \"$_a: Operation not permitted\"; \
+else print -r -- \"$_a: No such process\"; fi; { [[ -o interactive ]] || exit 1; return 1; }; done; return 1; }";
+
+fn cmd_kill(args: &[String]) -> String {
+    match args.first().map(|a| dequote(a)) {
+        None => fatal("kill: Too few arguments."),
+        Some(a) if a == "-l" => KILL_LIST.to_string(),
+        Some(_) => generic(KILL_FN, args),
+    }
+}
+
+/// tcsh `time cmd` reports `0.000u 0.000s 0:00.01 0.0%<TAB>0+0k 0+0io 0pf+0w`
+/// by default; zsh's reserved word takes the same fields from `TIMEFMT`.
+const TIME_FMT: &str = "$'%*Uu %*Ss 0:%*E %P\\t0+0k 0+0io %Fpf+%Ww'";
+
+fn cmd_time(args: &[String]) -> Result<String, String> {
+    if args.is_empty() {
+        return Ok("times".to_string());
+    }
+    Ok(format!("{{ TIMEFMT={TIME_FMT}; time {}; }}", render_cmd(args)?))
+}
+
+/// `nice [+N|-N] cmd`: the increment is added to the shell's (default 4).
+/// The external `nice -n` takes it; a builtin runs as is, since tcsh
+/// applies priority to forked children only.
+fn cmd_nice(args: &[String]) -> Result<String, String> {
+    let Some(first) = args.first() else {
+        return Ok(":".to_string());
+    };
+    let spec = dequote(first);
+    let digits = spec.strip_prefix(['+', '-']).unwrap_or("");
+    let (inc, rest) = if is_digits(digits) {
+        (spec.trim_start_matches('+').to_string(), &args[1..])
+    } else {
+        ("4".to_string(), args)
+    };
+    if rest.is_empty() {
+        return Ok(":".to_string());
+    }
+    let inner = render_cmd(rest)?;
+    if TCSH_BUILTINS.contains(&rest[0].as_str()) {
+        Ok(inner)
+    } else {
+        Ok(format!("command nice -n {inc} {inner}"))
+    }
+}
+
+/// `hup cmd`: run `cmd` with SIGHUP ignored; bare `hup` ignores it in the
+/// shell itself.
+fn cmd_hup(args: &[String]) -> Result<String, String> {
+    if args.is_empty() {
+        return Ok("trap '' HUP".to_string());
+    }
+    Ok(format!("( trap '' HUP; {} )", render_cmd(args)?))
+}
+
+// --- limit / unlimit --------------------------------------------------------
+
+/// tcsh resource name, zsh `ulimit` flag and the unit the flag works in
+/// (`s` seconds, `b` 512-byte blocks, `k` kilobytes, `n` a count).
+const RESOURCES: &[(&str, char, char)] = &[
+    ("cputime", 't', 's'),
+    ("filesize", 'f', 'b'),
+    ("datasize", 'd', 'k'),
+    ("stacksize", 's', 'k'),
+    ("coredumpsize", 'c', 'b'),
+    ("memoryuse", 'm', 'k'),
+    ("descriptors", 'n', 'n'),
+    ("memorylocked", 'l', 'k'),
+    ("maxproc", 'u', 'n'),
+];
+
+/// zsh text that prints one resource as tcsh does: `unlimited`, `M:SS` /
+/// `H:MM:SS`, `N kbytes`, or a bare count with a trailing blank. `scope` is
+/// `-S` (soft) or `-H` (hard).
+fn limit_line(name: &str, flag: char, unit: char, scope: &str) -> String {
+    let shown = match unit {
+        's' => "(( _v >= 3600 )) && _v=\"$(( _v / 3600 )):${(l:2::0:)$(( _v % 3600 / 60 ))}:${(l:2::0:)$(( _v % 60 ))}\" \
+|| _v=\"$(( _v / 60 )):${(l:2::0:)$(( _v % 60 ))}\"",
+        'b' => "_v=\"$(( _v / 2 )) kbytes\"",
+        'k' => "_v=\"$_v kbytes\"",
+        _ => "_v=\"$_v \"",
+    };
+    format!(
+        "_v=$(ulimit {scope} -{flag} 2>/dev/null) || _v=unlimited; [[ $_v == unlimited ]] || {{ {shown}; }}; printf '%-12s %s\\n' {name} \"$_v\""
+    )
+}
+
+/// Resolve a (possibly abbreviated) tcsh resource name; the error is tcsh's
+/// message for an unknown or ambiguous prefix.
+fn find_resource(name: &str, cmd: &str) -> Result<(&'static str, char, char), String> {
+    if let Some(exact) = RESOURCES.iter().find(|(n, _, _)| *n == name) {
+        return Ok(*exact);
+    }
+    let hits: Vec<_> = RESOURCES
+        .iter()
+        .filter(|(n, _, _)| !name.is_empty() && n.starts_with(name))
+        .collect();
+    match hits.as_slice() {
+        [one] => Ok(**one),
+        [] => Err(format!("{cmd}: No such limit.")),
+        _ => Err(format!("{cmd}: Ambiguous.")),
+    }
+}
+
+/// Size or time operand of `limit` in the resource's unit, or `None` when it
+/// is not a literal tcsh accepts. Sizes take `k` `m` `g` (kbytes by default),
+/// times `s` `m` `h` or `M:SS`.
+fn limit_value(text: &str, unit: char) -> Option<String> {
+    if text == "unlimited" {
+        return Some("unlimited".to_string());
+    }
+    let (num, suffix) = match text.find(|c: char| !c.is_ascii_digit() && c != ':') {
+        Some(i) => text.split_at(i),
+        None => (text, ""),
+    };
+    if num.is_empty() {
+        return None;
+    }
+    let n = |s: &str| s.parse::<u64>().ok();
+    match unit {
+        's' => {
+            if let Some((m, s)) = num.split_once(':') {
+                return Some((n(m)? * 60 + n(s)?).to_string());
+            }
+            let mult = match suffix {
+                "" | "s" => 1,
+                "m" => 60,
+                "h" => 3600,
+                _ => return None,
+            };
+            Some((n(num)? * mult).to_string())
+        }
+        'b' | 'k' => {
+            let kb = match suffix {
+                "" | "k" => n(num)?,
+                "m" => n(num)? * 1024,
+                "g" => n(num)? * 1024 * 1024,
+                _ => return None,
+            };
+            Some(kb.to_string())
+        }
+        _ if suffix.is_empty() => Some(num.to_string()),
+        _ => None,
+    }
+}
+
+/// `limit [-h] [resource [value]]` onto `ulimit`.
+fn cmd_limit(args: &[String]) -> Result<String, String> {
+    let hard = args.first().is_some_and(|a| a == "-h");
+    let args = if hard { &args[1..] } else { args };
+    let scope = if hard { "-H" } else { "-S" };
+    match args {
+        [] => {
+            let lines: Vec<String> =
+                RESOURCES.iter().map(|(n, f, u)| limit_line(n, *f, *u, scope)).collect();
+            Ok(format!("() {{ local _v; {}; }}", lines.join("; ")))
+        }
+        [name] => Ok(match find_resource(&dequote(name), "limit") {
+            Ok((n, f, u)) => format!("() {{ local _v; {}; }}", limit_line(n, f, u, scope)),
+            Err(e) => fatal(&e),
+        }),
+        [name, value] => {
+            let (n, f, u) = match find_resource(&dequote(name), "limit") {
+                Ok(r) => r,
+                Err(e) => return Ok(fatal(&e)),
+            };
+            let raw = dequote(value);
+            let Some(v) = limit_value(&raw, u) else {
+                return Ok(fatal("limit: Improper or unknown scale factor."));
+            };
+            // zsh's own `limit` reads the same time and size operands
+            // (`1:30`, `2h`, `4m`); it has no `memoryuse`.
+            let h = if hard { "-h " } else { "" };
+            if n == "memoryuse" {
+                Ok(format!("ulimit {scope} -{f} {v}"))
+            } else {
+                Ok(format!("limit {h}{n} {raw}"))
+            }
+        }
+        _ => Err("limit: Too many arguments.".to_string()),
+    }
+}
+
+/// `unlimit [-h] [resource…]`: raise each (all, when none is named) to
+/// `unlimited`; failures to do so are silent.
+fn cmd_unlimit(args: &[String]) -> Result<String, String> {
+    let hard = args.first().is_some_and(|a| a == "-h");
+    let args = if hard { &args[1..] } else { args };
+    let scope = if hard { "-H" } else { "-S" };
+    let mut flags: Vec<char> = Vec::new();
+    if args.is_empty() {
+        flags.extend(RESOURCES.iter().map(|(_, f, _)| *f));
+    }
+    for a in args {
+        match find_resource(&dequote(a), "unlimit") {
+            Ok((_, f, _)) => flags.push(f),
+            Err(e) => return Ok(fatal(&e)),
+        }
+    }
+    let mut stmts: Vec<String> =
+        flags.iter().map(|f| format!("ulimit {scope} -{f} unlimited 2>/dev/null")).collect();
+    stmts.push("true".to_string());
+    Ok(format!("{{ {}; }}", stmts.join("; ")))
 }
 
 #[cfg(test)]
@@ -1325,6 +2199,15 @@ mod tests {
 
     fn err(line: &str) -> String {
         translate_line(line).expect_err(line)
+    }
+
+    /// True when `line` translates to `cmd` wrapped by the redirection
+    /// probes (`if PROBE; then cmd; else FAIL; fi`).
+    fn guarded(line: &str, cmd: &str) -> bool {
+        let z = tr(line);
+        z.contains("if () {")
+            && (z.ends_with(&format!("then {cmd}; else false; fi"))
+                || z.ends_with(&format!("then {cmd}; else {ABORT}; fi")))
     }
 
     #[test]
@@ -1362,8 +2245,9 @@ mod tests {
         assert_eq!(err("echo a >& f | cat"), "Ambiguous output redirect.");
         assert_eq!(err("cat < f < f"), "Ambiguous input redirect.");
         assert_eq!(err("cat | cat < f"), "Ambiguous input redirect.");
-        assert_eq!(tr("echo a | cat > f"), "print -r -- a | cat > f");
-        assert_eq!(tr("cat < f | cat"), "cat < f | cat");
+        // a redirect to a file is probed first; the command itself is unchanged
+        assert!(guarded("echo a | cat > f", "cat > f"));
+        assert!(tr("cat < f | cat").ends_with("then cat < f; else false; fi | cat"));
     }
 
     #[test]
@@ -1380,18 +2264,18 @@ mod tests {
 
     #[test]
     fn redirect_operators() {
-        assert_eq!(tr("ls >! f"), "ls >| f");
-        assert_eq!(tr("ls >> f"), "ls >> f");
-        assert_eq!(tr("ls >>! f"), "ls >>| f");
-        assert_eq!(tr("ls >& f"), "ls > f 2>&1");
-        assert_eq!(tr("ls >>& f"), "ls >> f 2>&1");
-        assert_eq!(tr("ls >&! f"), "ls >| f 2>&1");
+        assert!(guarded("ls >! f", "ls >| f"));
+        assert!(guarded("ls >> f", "ls >> f"));
+        assert!(guarded("ls >>! f", "ls >>| f"));
+        assert!(guarded("ls >& f", "ls > f 2>&1"));
+        assert!(guarded("ls >>& f", "ls >> f 2>&1"));
+        assert!(guarded("ls >&! f", "ls >| f 2>&1"));
         assert_eq!(tr("ls |& cat"), "ls |& cat");
         // redirect glued to words, and an fd-looking word stays a word
-        assert_eq!(tr("echo a>f"), "print -r -- a > f");
-        assert_eq!(tr("ls /x 2> f"), "ls /x 2 > f");
+        assert!(guarded("echo a>f", "print -r -- a > f"));
+        assert!(guarded("ls /x 2> f", "ls /x 2 > f"));
         // redirect target may precede the arguments
-        assert_eq!(tr("echo > f a b"), "print -r -- a b > f");
+        assert!(guarded("echo > f a b", "print -r -- a b > f"));
     }
 
     #[test]
@@ -1399,7 +2283,7 @@ mod tests {
         assert_eq!(tr("cat <<EOF"), "cat <<EOF");
         assert_eq!(tr("cat << EOF"), "cat <<EOF");
         assert_eq!(tr("cat <<'EOF'"), "cat <<''\\''EOF'\\'''");
-        assert_eq!(tr("cat <<EOF > f"), "cat <<EOF > f");
+        assert!(guarded("cat <<EOF > f", "cat <<EOF > f"));
     }
 
     #[test]
@@ -1410,7 +2294,7 @@ mod tests {
         assert_eq!(tr("echo a && echo b &"), "print -r -- a && print -r -- b &");
         assert_eq!(tr("(cd /usr; pwd)"), "( cd /usr; pwd )");
         assert_eq!(tr("(echo a; echo b) &"), "( print -r -- a; print -r -- b ) &");
-        assert_eq!(tr("(echo a) > f"), "( print -r -- a ) > f");
+        assert!(guarded("(echo a) > f", "( print -r -- a ) > f"));
         assert_eq!(tr("(echo a) | (cat)"), "( print -r -- a ) | ( cat )");
     }
 
@@ -1580,7 +2464,7 @@ mod tests {
     #[test]
     fn source_forms() {
         assert_eq!(tr("source f.csh"), "source f.csh");
-        assert_eq!(tr("source f.csh a b"), "source f.csh");
+        assert_eq!(tr("source f.csh a b"), "source f.csh a b");
         assert_eq!(tr("source -h f"), ":");
         assert_eq!(err("source"), "source: Too few arguments.");
     }
@@ -1605,7 +2489,7 @@ mod tests {
     fn repeat_forms() {
         assert_eq!(tr("repeat 3 echo hi"), "repeat 3; do print -r -- hi; done");
         // redirect applies around the whole loop, pipe/list bind to the loop
-        assert_eq!(tr("repeat 2 echo a > f"), "repeat 2; do print -r -- a; done > f");
+        assert!(guarded("repeat 2 echo a > f", "repeat 2; do print -r -- a; done > f"));
         assert_eq!(tr("repeat 2 echo a | wc -l"), "repeat 2; do print -r -- a; done | wc -l");
         assert_eq!(err("repeat"), "repeat: Too few arguments.");
         assert_eq!(err("repeat 3"), "repeat: Too few arguments.");
@@ -1657,4 +2541,409 @@ mod tests {
         assert!(tr("which ls").ends_with("} ls"));
         assert!(tr("where ls nope").ends_with("} ls nope"));
     }
+    // --- behaviour under zsh, expectations taken from `/bin/tcsh -f` ---------
+
+    /// Translate each line and run the result under `/bin/zsh -f` with the
+    /// driver's `cshnullglob`, in an empty scratch directory. `None` when no
+    /// zsh is installed.
+    fn run(name: &str, lines: &[&str]) -> Option<(String, String, i32)> {
+        let zsh = ["/bin/zsh", "/usr/bin/zsh", "/usr/local/bin/zsh", "/opt/homebrew/bin/zsh"]
+            .into_iter()
+            .find(|p| std::path::Path::new(p).exists())?;
+        let dir = std::env::temp_dir().join(format!("csh_cmds_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).ok()?;
+        let mut code = String::from("setopt cshnullglob extendedglob\n");
+        for l in lines {
+            code.push_str(&tr(l));
+            code.push('\n');
+        }
+        let o = std::process::Command::new(zsh)
+            .args(["-f", "-c", &code])
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let _ = std::fs::remove_dir_all(&dir);
+        Some((
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+            o.status.code().unwrap_or(-1),
+        ))
+    }
+
+    /// Assert stdout, stderr and exit status of the translated lines.
+    fn expect(name: &str, lines: &[&str], out: &str, err: &str, rc: i32) {
+        if let Some((o, e, r)) = run(name, lines) {
+            assert_eq!((o.as_str(), e.as_str(), r), (out, err, rc), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn failed_redirect_of_a_builtin_ends_the_script() {
+        expect(
+            "redir_builtin",
+            &["echo ok", "echo a > /nonexistent_zz/f", "echo not-reached"],
+            "ok\n",
+            "/nonexistent_zz/f: No such file or directory.\n",
+            1,
+        );
+    }
+
+    #[test]
+    fn failed_redirect_of_an_external_command_continues() {
+        expect(
+            "redir_external",
+            &["ls > /nonexistent_zz/f", "echo st=$status", "echo b > /nonexistent_zz/f || echo alt"],
+            "st=1\n",
+            "/nonexistent_zz/f: No such file or directory.\n/nonexistent_zz/f: No such file or directory.\n",
+            1,
+        );
+    }
+
+    #[test]
+    fn noclobber_refuses_to_overwrite_and_a_forced_redirect_does_not() {
+        expect(
+            "noclobber",
+            &["set noclobber", "echo a > f1", "echo b >! f1", "cat f1", "echo c > f1", "echo not-reached"],
+            "b\n",
+            "f1: File exists.\n",
+            1,
+        );
+        // `>>` onto a missing file is refused under noclobber
+        expect(
+            "noclobber_append",
+            &["set noclobber", "echo c >> nofile_zz", "echo not-reached"],
+            "",
+            "nofile_zz: No such file or directory.\n",
+            1,
+        );
+    }
+
+    #[test]
+    fn missing_input_file_ends_a_builtin_but_not_an_external_command() {
+        expect(
+            "input_redirect",
+            &["cat < nofile_zz", "echo st=$status", "echo a < nofile_zz", "echo not-reached"],
+            "st=1\n",
+            "nofile_zz: No such file or directory.\nnofile_zz: No such file or directory.\n",
+            1,
+        );
+    }
+
+    #[test]
+    fn no_match_is_fatal_for_a_builtin_and_status_one_for_an_external_command() {
+        expect(
+            "no_match",
+            &["ls *.nomatch_zz", "echo st=$status", "echo a *.nomatch_zz", "echo not-reached"],
+            "st=1\n",
+            "ls: No match.\necho: No match.\n",
+            1,
+        );
+        // one matching pattern is enough
+        expect("one_match", &["touch f1.c", "echo *.zz *.c"], "f1.c\n", "", 0);
+    }
+
+    #[test]
+    fn undefined_variable_ends_the_script_even_for_an_external_command() {
+        expect(
+            "undefined",
+            &["echo ok", "ls $undef_zz", "echo not-reached"],
+            "ok\n",
+            "undef_zz: Undefined variable.\n",
+            1,
+        );
+        expect("defined", &["set x = a", "echo $x $#x $?undef_zz $status"], "a 1 0 0\n", "", 0);
+    }
+
+    #[test]
+    fn history_reference_drops_the_whole_line_and_ends_the_script() {
+        expect(
+            "history",
+            &["echo ok", "echo a; echo b!c", "echo not-reached"],
+            "ok\n",
+            "c: Event not found.\n",
+            1,
+        );
+        expect("history_bang_bang", &["echo !!"], "", "0: Event not found.\n", 1);
+        // an escaped or blank-followed `!` is literal
+        expect("history_literal", &["echo a\\!b \\!x ! x a!=b"], "a!b !x ! x a!=b\n", "", 0);
+    }
+
+    #[test]
+    fn history_event_text_follows_tcsh() {
+        assert_eq!(history_event("echo a!b"), Some("b".to_string()));
+        assert_eq!(history_event("echo !5"), Some("5".to_string()));
+        assert_eq!(history_event("echo !-1"), Some("0".to_string()));
+        assert_eq!(history_event("echo !?foo?"), Some("foo".to_string()));
+        assert_eq!(history_event("echo !foo:2"), Some("foo".to_string()));
+        assert_eq!(history_event("echo 'a!b'"), Some("b".to_string()));
+        assert_eq!(history_event("echo a!~b !(x) a!"), None);
+        assert_eq!(history_event("echo a;b !; !& !| !> !<"), None);
+    }
+
+    #[test]
+    fn status_survives_the_guards() {
+        expect(
+            "status",
+            &["sh -c \"exit 3\" >& /dev/null", "echo st=$status", "sh -c \"exit 4\"", "echo $status > f1", "cat f1"],
+            "st=3\n4\n",
+            "",
+            0,
+        );
+    }
+
+    #[test]
+    fn command_path_errors() {
+        expect(
+            "path_command",
+            &["./nosuch_zz", "echo st=$status", "/tmp", "echo st=$status"],
+            "st=1\nst=1\n",
+            "./nosuch_zz: Command not found.\n/tmp: Permission denied.\n",
+            0,
+        );
+    }
+
+    #[test]
+    fn unknown_user_follows_the_builtin_rule() {
+        expect(
+            "tilde",
+            &["ls ~nosuchuser_zz", "echo st=$status", "echo ~nosuchuser_zz", "echo not-reached"],
+            "st=1\n",
+            "Unknown user: nosuchuser_zz.\nUnknown user: nosuchuser_zz.\n",
+            1,
+        );
+    }
+
+    #[test]
+    fn glob_words_ignore_subscripts_and_unclosed_brackets() {
+        assert!(is_glob_word("*.c") && is_glob_word("a?") && is_glob_word("[a-z]x"));
+        assert!(!is_glob_word("$x[2]") && !is_glob_word("${x}[1]") && !is_glob_word("[a"));
+        assert!(!is_glob_word("'*'") && !is_glob_word("\"a?\"") && !is_glob_word("\\*"));
+        assert!(!is_glob_word("$?x") && !is_glob_word("$#x"));
+        expect("bracket_literal", &["echo [a"], "[a\n", "", 0);
+        expect("class_without_match", &["echo [a x[1]"], "", "echo: No match.\n", 1);
+    }
+
+    #[test]
+    fn variable_refs_skip_specials_and_single_quotes() {
+        assert_eq!(variable_refs("$a ${b} $#c $d[1] \"$e\" '$f' \\$g $?h $1 $$ $status $argv"),
+            vec!["a", "b", "c", "d", "e"]);
+    }
+
+    #[test]
+    fn alias_value_is_relexed_text() {
+        // `\|` is stored as `|` and runs as a pipe when the alias is used
+        let d = tr("alias a3 echo hi \\| tr h H");
+        assert!(d.contains("a3() { print -r -- hi | tr h H \"$@\"; }"), "{d}");
+        assert!(d.contains("_csh_alias_ls[a3]='(echo hi | tr h H)'"), "{d}");
+        expect("alias_pipe", &["alias a3 echo hi \\| tr h H", "a3"], "Hi\n", "", 0);
+    }
+
+    #[test]
+    fn alias_loops_end_the_script_when_invoked() {
+        expect(
+            "alias_loop",
+            &["alias x1 y1", "alias y1 x1", "echo before", "x1", "echo not-reached"],
+            "before\n",
+            "Alias loop.\n",
+            1,
+        );
+        // an alias naming itself runs the real command, a chain does not loop
+        expect(
+            "alias_chain",
+            &["alias a1 b1", "alias b1 c1", "alias c1 echo end", "a1 hi", "alias ls ls -F", "alias ls"],
+            "end hi\nls -F\n",
+            "",
+            0,
+        );
+    }
+
+    #[test]
+    fn alias_argument_selectors_need_enough_arguments() {
+        expect(
+            "alias_selector",
+            &["alias a1 \"echo \\!:1\"", "a1 x", "a1", "echo not-reached"],
+            "x\n",
+            "Bad ! arg selector.\n",
+            1,
+        );
+        assert_eq!(min_args(&Sel::Arg(2)), 2);
+        assert_eq!(min_args(&Sel::Range(1, 3)), 3);
+        assert_eq!(min_args(&Sel::ToPenultimate(2)), 3);
+        assert_eq!(min_args(&Sel::From(5)), 0);
+        assert_eq!(min_args(&Sel::All), 0);
+    }
+
+    #[test]
+    fn alias_body_that_is_a_subshell_takes_no_arguments() {
+        expect(
+            "alias_subshell",
+            &["alias r \"(echo a; echo b)\"", "r", "r x", "echo not-reached"],
+            "a\nb\n",
+            "Badly placed ()'s.\n",
+            1,
+        );
+        assert_eq!(err("alias q (p)"), "Badly placed ()'s.");
+    }
+
+    #[test]
+    fn alias_with_unquoted_history_glob_is_no_match() {
+        // `\!*` is a pattern for tcsh: no file named `!…` means `alias: No match.`
+        expect("alias_glob", &["alias h echo \\!:1 end \\!*", "echo not-reached"], "", "alias: No match.\n", 1);
+    }
+
+    #[test]
+    fn alias_with_semicolon_ends_at_the_semicolon() {
+        expect(
+            "alias_semicolon",
+            &["alias a1 echo one; echo two", "alias a1", "a1 x"],
+            "two\necho one\none x\n",
+            "",
+            0,
+        );
+    }
+
+    #[test]
+    fn readonly_variables_reject_set_and_unset() {
+        expect(
+            "readonly",
+            &["set -r rr = 1", "echo $rr", "set rr = 2", "echo not-reached"],
+            "1\n",
+            "set: $rr is read-only.\n",
+            1,
+        );
+        expect(
+            "readonly_unset",
+            &["set -r rr = 1", "unset rr", "echo not-reached"],
+            "",
+            "unset: $rr is read-only.\n",
+            1,
+        );
+    }
+
+    #[test]
+    fn echo_reads_dash_n_after_expansion_and_honours_echo_style() {
+        expect("echo_expanded_n", &["set o = -n", "echo $o x", "echo y"], "xy\n", "", 0);
+        expect("echo_empty_first", &["set e = ''", "echo $e -n y"], "y", "", 0);
+        expect(
+            "echo_style_none",
+            &["set echo_style = none", "echo -n a", "echo \"\"", "echo \"x\\ty\""],
+            "-n a\n\nx\\ty\n",
+            "",
+            0,
+        );
+        expect(
+            "echo_style_both",
+            &["set echo_style = both", "echo \"a\\tb\"", "echo -n c", "echo", "unset echo_style", "echo \"a\\tb\""],
+            "a\tb\nc\na\\tb\n",
+            "",
+            0,
+        );
+    }
+
+    #[test]
+    fn kill_errors() {
+        expect(
+            "kill_signal",
+            &["kill -FOO 99999999", "echo not-reached"],
+            "",
+            "FOO: Unknown signal; kill -l lists signals.\n",
+            1,
+        );
+        // a missing process is reported on stdout, without a period
+        expect("kill_pid", &["kill 99999999", "echo not-reached"], "99999999: No such process\n", "", 1);
+        expect("kill_none", &["kill", "echo not-reached"], "", "kill: Too few arguments.\n", 1);
+    }
+
+    #[test]
+    fn job_control_builtins_in_a_script() {
+        expect("fg", &["fg", "echo not-reached"], "", "No job control in this shell.\n", 1);
+        expect("bg", &["bg", "echo not-reached"], "", "No job control in this shell.\n", 1);
+        expect("stop", &["stop", "echo not-reached"], "", "stop: Too few arguments.\n", 1);
+        expect("notify", &["notify", "echo not-reached"], "", "notify: No current job.\n", 1);
+        expect("suspend", &["suspend", "echo ok"], "ok\n", "", 0);
+    }
+
+    #[test]
+    fn login_builtins_in_a_non_login_shell() {
+        expect("logout", &["logout", "echo not-reached"], "", "Not a login shell.\n", 1);
+        expect("login", &["login", "echo not-reached"], "", "Not a login shell.\n", 1);
+        expect("bye", &["echo ok", "bye", "echo not-reached"], "ok\n", "", 0);
+    }
+
+    #[test]
+    fn glob_builtin_separates_with_nul_and_no_newline() {
+        expect("glob", &["touch ga gb", "glob g?", "echo", "glob nomatch_zz*", "echo not-reached"],
+            "ga\0gb\n", "glob: No match.\n", 1);
+    }
+
+    #[test]
+    fn dirs_flags() {
+        expect("dirs_usage", &["dirs -x", "echo not-reached"], "", "Usage: dirs [-plvnSLc].\n", 1);
+        assert_eq!(tr("dirs -S"), ":");
+        assert_eq!(tr("dirs -n"), "print -r -- \"$(dirs) \"");
+        assert!(tr("popd +2").contains("popd: Directory stack not that deep."));
+        assert!(tr("pushd +2").contains("pushd: Directory stack not that deep."));
+    }
+
+    #[test]
+    fn cd_with_two_operands_is_an_error() {
+        expect("cd_args", &["cd /usr /tmp", "echo not-reached"], "", "cd: Too many arguments.\n", 1);
+    }
+
+    #[test]
+    fn printenv_prints_exported_values_only() {
+        expect(
+            "printenv",
+            &["setenv ZZ_A 1", "printenv ZZ_A", "printenv ZZ_NOPE", "echo st=$status"],
+            "1\nst=1\n",
+            "",
+            0,
+        );
+    }
+
+    #[test]
+    fn limit_forms() {
+        // listing: `name`, padding to 12, a blank, the value; counts keep a
+        // trailing blank, sizes are `N kbytes`, times `M:SS`
+        let z = tr("limit");
+        assert!(z.contains("printf '%-12s %s\\n' cputime"), "{z}");
+        assert!(z.contains("printf '%-12s %s\\n' descriptors"), "{z}");
+        assert_eq!(tr("limit cputime 10"), "limit cputime 10");
+        assert_eq!(tr("limit -h stacksize 4m"), "limit -h stacksize 4m");
+        assert_eq!(tr("limit nosuch 1"), fatal("limit: No such limit."));
+        assert_eq!(tr("limit c"), fatal("limit: Ambiguous."));
+        assert_eq!(tr("limit cputime 1x"), fatal("limit: Improper or unknown scale factor."));
+        assert_eq!(tr("unlimit nosuch"), fatal("unlimit: No such limit."));
+        assert_eq!(limit_value("1:30", 's').as_deref(), Some("90"));
+        assert_eq!(limit_value("2h", 's').as_deref(), Some("7200"));
+        assert_eq!(limit_value("4m", 'k').as_deref(), Some("4096"));
+        assert_eq!(limit_value("1x", 'k'), None);
+    }
+
+    #[test]
+    fn nice_and_hup() {
+        assert_eq!(tr("nice"), ":");
+        assert_eq!(tr("nice ls"), "command nice -n 4 ls");
+        assert_eq!(tr("nice +7 ls -l"), "command nice -n 7 ls -l");
+        assert_eq!(tr("nice -3 ls"), "command nice -n -3 ls");
+        assert_eq!(tr("nice echo hi"), "print -r -- hi");
+        assert_eq!(tr("hup"), "trap '' HUP");
+        assert_eq!(tr("hup sleep 1"), "( trap '' HUP; sleep 1 )");
+    }
+
+    #[test]
+    fn builtins_lists_the_tcsh_builtins() {
+        let z = tr("builtins");
+        assert!(z.starts_with("print -rl -- ':' '@' 'alias'"), "{z}");
+        assert!(TCSH_BUILTINS.windows(2).all(|w| w[0] <= w[1]), "sorted as tcsh prints it");
+    }
+
+    #[test]
+    fn source_passes_every_operand_through() {
+        assert_eq!(tr("source ~/.cshrc.local a b"), format!("source {} a b", tw("~/.cshrc.local")));
+        assert_eq!(err("source"), "source: Too few arguments.");
+    }
+
 }

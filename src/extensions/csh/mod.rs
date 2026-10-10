@@ -17,6 +17,11 @@
 //!   * [`cmds`]  — one command line (lists, pipes, redirections, builtins)
 //!   * [`ctl`]   — control structures with block nesting
 
+/// zsh-side helpers the translated output relies on (`cd`/`pushd`/`popd`
+/// with tcsh's error text, `printenv`, the command-not-found handler).
+/// Installed once, ahead of the first translated input.
+pub const PREAMBLE: &str = include_str!("preamble.zsh");
+
 pub mod cmds;
 pub mod ctl;
 pub mod expr;
