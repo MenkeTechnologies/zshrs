@@ -2321,6 +2321,18 @@ fn optno_by_name(name: &str) -> Option<i32> {
 /// canonical option's runtime state.
 pub fn opt_state_get(name: &str) -> Option<bool> {
     let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
+    // A canonical spelling names its own slot: `optlookup` would return that
+    // same option number (no alias, no negation), so skip its normalisation
+    // pass and read the flat store by index. Every `isset`-by-name check on
+    // the statement path (`xtrace`, `nounset`, `multios`, ...) lands here.
+    if let Some(o) = optno_by_name(name) {
+        if o > 0 && o < OPT_SIZE {
+            return m.read().ok().and_then(|g| match g.flat[o as usize] {
+                -1 => None,
+                v => Some(v == 1),
+            });
+        }
+    }
     // Route through optlookup for canonicalisation. If the name
     // resolves to a different canonical, read THAT slot.
     let optno = optlookup(name);

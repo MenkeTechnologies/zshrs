@@ -12218,7 +12218,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // carry their own BUILTIN_NOEXEC_CMD_GATE, so noexec must not
         // skip them here.
         let gated_in_command = vm.pop().to_int() != 0;
-        if !gated_in_command && opt_state_get("noexec").unwrap_or(false) {
+        if !gated_in_command && !opt_state_get("exec").unwrap_or(true) {
             return Value::Int(1);
         }
         // c:Src/exec.c:1390 — execlist's list-loop gate:
@@ -12240,7 +12240,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     // See BUILTIN_NOEXEC_CMD_GATE.
     vm.register_builtin(BUILTIN_NOEXEC_CMD_GATE, |vm, _argc| {
-        if !opt_state_get("noexec").unwrap_or(false) {
+        if opt_state_get("exec").unwrap_or(true) {
             return Value::Int(0);
         }
         // c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }`
@@ -12338,7 +12338,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         donetrap_reset_impl(); // c:1455
         // c:1390 — `set -n`, and execlist's own `!errflag` list gate.
-        if opt_state_get("noexec").unwrap_or(false)
+        if !opt_state_get("exec").unwrap_or(true)
             || (crate::ported::utils::errflag.load(Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_ERROR)
                 != 0

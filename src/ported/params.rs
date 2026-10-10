@@ -9496,6 +9496,49 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // Fix: clone the Param into the value struct so the original
     // stays in the table during mathevali's identifier lookup,
     // then overwrite the table entry with the mutated clone.
+    // !!! RUST-ONLY FAST PATH (no C counterpart) !!! A plain, set-or-unset
+    // scalar with no attribute that changes how the text is stored and no GSU
+    // vtable: c:3343's assignstrvalue then reduces to `flags &= ~PM_UNSET;
+    // strsetfn` (c:3995 `pm->u.str = x`). Writing the node under the guard we
+    // already hold avoids cloning the whole `param` (name, value, `old`
+    // chain) into a `value`, running the dispatch on the copy, and storing it
+    // back over the live node — three allocations each way per assignment.
+    // Anything with a setfn that may re-enter the table (specials, tied,
+    // integer, readonly, case/width attributes, AUTONAMEDIRS) keeps the
+    // original path below.
+    let fast = (flags & ASSPM_AUGMENT) == 0
+        && isset(EXECOPT)
+        && !isset(AUTONAMEDIRS)
+        && tab.get(name).is_some_and(|pm| {
+            let f = pm.node.flags as u32;
+            PM_TYPE(f) == PM_SCALAR
+                && f & (PM_READONLY
+                    | crate::ported::zsh_h::PM_RESTRICTED
+                    | PM_NAMEREF
+                    | PM_SPECIAL
+                    | PM_TIED
+                    | PM_LEFT
+                    | PM_RIGHT_B
+                    | PM_RIGHT_Z
+                    | PM_NAMEDDIR
+                    | PM_HASHELEM)
+                    == 0
+                && pm.gsu_s.is_none()
+        });
+    let cloned: Option<Param> = if fast {
+        let pm = tab.get_mut(name).unwrap();
+        pm.node.flags &= !(PM_UNSET as i32);
+        match pm.u_str.as_mut() {
+            Some(s) => {
+                s.clear();
+                s.push_str(val);
+            }
+            None => pm.u_str = Some(val.to_string()),
+        }
+        let c = Some(pm.clone());
+        drop(tab);
+        c
+    } else {
     let pm_clone = tab.get(name).unwrap().clone(); // c:3343
     drop(tab); // release write lock — assignstrvalue may take it
     let mut v = value {
@@ -9522,6 +9565,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             } // c:3343
         }
     } // c:3343
+    cloned
+    };
       // c:Src/params.c pathsetfn / fpathsetfn / manpathsetfn /
       // cdpathsetfn — when the SCALAR side of a tied colon-array
       // pair is assigned, the canonical setfn split-rebuilds the
