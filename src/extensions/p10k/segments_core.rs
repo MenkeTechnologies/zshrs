@@ -119,6 +119,26 @@ pub(crate) fn is_ssh() -> bool {
 /// non-consecutive dots) at the end of the `who -m` line, or of the
 /// `who` line for this tty when `who -m` fails.
 fn ssh_via_who() -> bool {
+    #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+    {
+        // `who -m` is the utmp record of the tty on stdin; `$TTY` stands in
+        // when stdin is not one (the `who` fallback below matches on it).
+        let tty = unsafe {
+            let p = libc::ttyname(libc::STDIN_FILENO);
+            (!p.is_null()).then(|| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+        }
+        .unwrap_or_else(|| env_or_param("TTY"));
+        let tty = tty.strip_prefix("/dev/").unwrap_or(&tty);
+        return utmpx_host_for_tty(tty).is_some_and(|h| looks_remote(&h));
+    }
+    #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+    ssh_via_who_subprocess()
+}
+
+/// The `who` / `who -m` subprocess form of the probe, for targets
+/// without a utmpx reader.
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+fn ssh_via_who_subprocess() -> bool {
     use std::process::{Command, Stdio};
     if crate::extensions::p10k::segments_sys::cmd_on_path("who").is_none() {
         return false;
@@ -149,11 +169,49 @@ fn ssh_via_who() -> bool {
                 .join(" ")
         }
     };
+    looks_remote(&w)
+}
+
+/// p10k:8514-8519 — does `w` end in a remote address: IPv4, IPv6 or a
+/// hostname with two non-consecutive dots, optionally parenthesised?
+fn looks_remote(w: &str) -> bool {
     let ipv6 = "(([0-9a-fA-F]+:)|:){2,}[0-9a-fA-F]+";
     let ipv4 = r"([0-9]{1,3}\.){3}[0-9]+";
     let hostname = r"([.][^. ]+){2}";
     regex::Regex::new(&format!(r"\(?({ipv4}|{ipv6}|{hostname})\)?$"))
-        .is_ok_and(|re| re.is_match(&w))
+        .is_ok_and(|re| re.is_match(w))
+}
+
+/// The `ut_host` of this tty's login record, read from the utmpx
+/// database in-process — what `who -m` prints in parentheses, without
+/// a fork+exec (`who` took ~90-120ms under load, paid by the first
+/// prompt of every shell). `None` when the tty has no login record.
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+fn utmpx_host_for_tty(tty: &str) -> Option<String> {
+    let c_str = |buf: &[libc::c_char]| -> String {
+        let bytes: Vec<u8> = buf.iter().map(|&c| c as u8).take_while(|&b| b != 0).collect();
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    let mut host = None;
+    // SAFETY: getutxent returns a pointer into libc's static buffer, valid
+    // until the next getutxent call; it is read and copied out before that.
+    // Called once per process (OnceLock in `is_ssh`).
+    unsafe {
+        libc::setutxent();
+        loop {
+            let ent = libc::getutxent();
+            if ent.is_null() {
+                break;
+            }
+            let e = &*ent;
+            if e.ut_type == libc::USER_PROCESS && c_str(&e.ut_line) == tty {
+                host = Some(c_str(&e.ut_host));
+                break;
+            }
+        }
+        libc::endutxent();
+    }
+    host
 }
 
 fn is_root() -> bool {
@@ -2396,5 +2454,26 @@ mod tests {
         let mut parts: Vec<String> = p.split('/').map(String::from).collect();
         shorten_absolute(&mut parts, p, 6, "\u{2026}");
         assert_eq!(parts, vec![format!("{MARK_ELIDE}al"), "bin".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod remote_host_tests {
+    use super::looks_remote;
+
+    #[test]
+    fn remote_addresses_and_hostnames() {
+        assert!(looks_remote("10.0.0.5"));
+        assert!(looks_remote("(10.0.0.5)"));
+        assert!(looks_remote("fe80::1ff:fe23:4567:890a"));
+        assert!(looks_remote("build.example.com"));
+    }
+
+    #[test]
+    fn local_logins_are_not_remote() {
+        assert!(!looks_remote(""));
+        assert!(!looks_remote("localhost"));
+        assert!(!looks_remote(":0"));
+        assert!(!looks_remote("console"));
     }
 }
