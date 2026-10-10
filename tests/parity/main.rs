@@ -156,6 +156,7 @@ mod read_parity;
 mod real_world_idioms_parity;
 mod recent_ports_parity;
 mod redirection_parity;
+mod redirect_dup_and_subst_gate_parity;
 mod regex_match_parity;
 mod repeat_select_parity;
 mod runtime_context_parity;

@@ -5798,7 +5798,14 @@ pub fn paramsubst(
                         } else {
                             match crate::ported::math::mathevali(&expanded) {
                                 Ok(v) => v.abs(), // c:1451-1452 `if (ret < 0) ret = -ret`
-                                Err(_) => 0,
+                                Err(msg) => {
+                                    // c:1448-1449 `if (errflag) return -1;` →
+                                    // c:2329-2330 `goto flagerr`, whose own zerr
+                                    // is dropped because errflag is already set.
+                                    zerr(&msg);
+                                    errflag_set_error();
+                                    return (String::new(), new_pos, vec![]);
+                                }
                             }
                         };
                         // c:1441 — `*s = t + arglen` advances PAST the
@@ -7836,6 +7843,25 @@ pub fn paramsubst(
             && (body_chars[idx] == Snull || body_chars[idx] == Dnull)
         {
             idx += 1;
+        }
+        // c:Src/subst.c:2994-3004 — past the name or the nested subexpression
+        // only a closing brace, a postmodifier or a subscript may follow;
+        // anything else is `zerr("bad substitution")`. The two shapes that
+        // reached the downstream operator handling unrejected: a blank where
+        // the name should be (`${ }`, which has no command to run as the
+        // c:1966 `slen > 1` gate wants) and a nested `${…}` / `$(…)` glued to
+        // an identifier character or a blank (`${${a}b}`).
+        if idx < body_chars.len() {
+            let nx = body_chars[idx];
+            let blank = matches!(nx, ' ' | '\t' | '\n');
+            let bar_name = idx == name_start && (nx == '|' || nx == crate::ported::zsh_h::Bar);
+            let after_subexp = (subexp_value.is_some() || subexp_array_temp.is_some())
+                && (nx.is_ascii_alphanumeric() || nx == '_');
+            if (blank && idx == name_start) || bar_name || (blank && subexp_value.is_some()) || after_subexp {
+                zerr("bad substitution"); // c:3002
+                errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+                return (String::new(), new_pos, Vec::new()); // c:3003
+            }
         }
         // If the subexp produced an array (multsub path above), bind
         // var_name to the temp slot in state.arrays so the rest of
@@ -23521,77 +23547,6 @@ pub fn paramsubst(
             opt_state_set(opt_name(PROMPTPERCENT), save_percent);
         } // c:2405
 
-        // (D) dir-magic — the `mods` bit-1 half of c:4149-4167:
-        //     if (isarr) { for (ap = aval; *ap; ap++) {
-        //         if (mods & 1) *ap = substnamedir(*ap);
-        //         if (mods & 2) *ap = nicedupstring(*ap); } }
-        //     else { if (mods & 1) val = substnamedir(val);
-        //            if (mods & 2) val = nicedupstring(val); }
-        // Common idiom: `${(D)PWD}` → `~/projects/foo`.
-        //
-        // This dispatches to the substnamedir PORT (utils.rs, c:utils.c:1053)
-        // rather than re-deriving the tilde contraction here. It previously
-        // had its own inline finddir walk, which left the real port with ZERO
-        // callers and drifted from it in the one way that matters: C's
-        // substnamedir does not just contract the prefix, it QUOTES —
-        //     if (!d) return quotestring(s, QT_BACKSLASH);
-        //     return zhtricat("~", d->node.nam,
-        //                     quotestring(s + strlen(d->dir), QT_BACKSLASH));
-        // so a no-match returns the WHOLE string backslash-quoted and a match
-        // quotes only the residue after the matched dir. The inline copy
-        // returned both unquoted, so every (D) result carrying a shell-special
-        // character came out wrong while the plain paths that get tested by
-        // hand looked fine:
-        //     ${(D)v}  v='x y'        → zsh `x\ y`      was `x y`
-        //     ${(D)v}  v="$HOME/a b"  → zsh `~/a\ b`    was `~/a b`
-        //     ${(D)v}  v='a*b'        → zsh `a\*b`      was `a*b`
-        // The bit-2 half below already calls the nicedupstring port directly;
-        // this is now symmetric with it.
-        if (mods & 1) != 0 {
-            // c:4155/4163 — `substnamedir(...)`.
-            let dir_one = |s: &str| -> String { crate::ported::utils::substnamedir(s) };
-            // c:4150 — `if (isarr) { for (ap = aval; ...) } else { val = ... }`.
-            // The per-element walk is gated on isarr, NOT on "is there an array
-            // named var_name": by this point a double-quoted `"${(D)a}"` has
-            // already JOINED the array down to a scalar and cleared isarr, and C
-            // then quotes that joined string as a whole. Re-fetching the array
-            // from paramtab here ignored the join and quoted each element
-            // separately, so the spaces the join itself introduced went
-            // unquoted — `a=(one two three); "${(D)a}"` gave `one two three`
-            // where zsh gives `one\ two\ three`. Unquoted `${(D)a[@]}` keeps
-            // isarr set and still maps per element.
-            if isarr != 0 {
-                if let Some(parts) = split_parts.clone() {
-                    let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
-                    value = new_parts.join(" ");
-                    split_parts = Some(new_parts);
-                } else if let Some(arr) = arrays_get(&var_name) {
-                    let new_arr: Vec<String> = arr.iter().map(|s| dir_one(s)).collect();
-                    value = new_arr.join(" ");
-                    split_parts = Some(new_arr);
-                } else {
-                    value = dir_one(&value); // c:4163
-                }
-            } else {
-                // c:4163 — the scalar half. `val` is now the ONLY live value:
-                // c:3033-3034's double-quote collapse already ran
-                // `val = sepjoin(aval, sep, 1); isarr = 0;`, and from there C
-                // never reads aval again.
-                //
-                // This port keeps re-deriving the value list from the paramtab
-                // (`arrays_get(&var_name)`) further down, so for an array
-                // parameter the final splat (c:3960) would hand back the
-                // ORIGINAL elements and silently discard what was just
-                // computed here — `"${(D)a}"` produced `one two three` even
-                // though this block had already built `one\ two\ three`.
-                // Publishing the collapsed scalar as the value list is what
-                // makes the splat see it, and is what the (V) half below gets
-                // for free by always writing split_parts.
-                value = dir_one(&value);
-                split_parts = Some(vec![value.clone()]);
-            }
-        } // c:4167
-
         // (b) backslash-bslashquote pattern metachars — output is safe to
         // feed back into a glob/regex context as a literal.
         //
@@ -23892,6 +23847,80 @@ pub fn paramsubst(
                 value = unquote_one(&value);
             }
         }
+
+        // c:Src/subst.c:4041-4147 runs the (Q) unquote BEFORE c:4149-4167's
+        // (D) `substnamedir`, so `${(QD)v}` unquotes first and the contraction
+        // then backslash-quotes the result: this block sits after the Q arm.
+        // (D) dir-magic — the `mods` bit-1 half of c:4149-4167:
+        //     if (isarr) { for (ap = aval; *ap; ap++) {
+        //         if (mods & 1) *ap = substnamedir(*ap);
+        //         if (mods & 2) *ap = nicedupstring(*ap); } }
+        //     else { if (mods & 1) val = substnamedir(val);
+        //            if (mods & 2) val = nicedupstring(val); }
+        // Common idiom: `${(D)PWD}` → `~/projects/foo`.
+        //
+        // This dispatches to the substnamedir PORT (utils.rs, c:utils.c:1053)
+        // rather than re-deriving the tilde contraction here. It previously
+        // had its own inline finddir walk, which left the real port with ZERO
+        // callers and drifted from it in the one way that matters: C's
+        // substnamedir does not just contract the prefix, it QUOTES —
+        //     if (!d) return quotestring(s, QT_BACKSLASH);
+        //     return zhtricat("~", d->node.nam,
+        //                     quotestring(s + strlen(d->dir), QT_BACKSLASH));
+        // so a no-match returns the WHOLE string backslash-quoted and a match
+        // quotes only the residue after the matched dir. The inline copy
+        // returned both unquoted, so every (D) result carrying a shell-special
+        // character came out wrong while the plain paths that get tested by
+        // hand looked fine:
+        //     ${(D)v}  v='x y'        → zsh `x\ y`      was `x y`
+        //     ${(D)v}  v="$HOME/a b"  → zsh `~/a\ b`    was `~/a b`
+        //     ${(D)v}  v='a*b'        → zsh `a\*b`      was `a*b`
+        // The bit-2 half below already calls the nicedupstring port directly;
+        // this is now symmetric with it.
+        if (mods & 1) != 0 {
+            // c:4155/4163 — `substnamedir(...)`.
+            let dir_one = |s: &str| -> String { crate::ported::utils::substnamedir(s) };
+            // c:4150 — `if (isarr) { for (ap = aval; ...) } else { val = ... }`.
+            // The per-element walk is gated on isarr, NOT on "is there an array
+            // named var_name": by this point a double-quoted `"${(D)a}"` has
+            // already JOINED the array down to a scalar and cleared isarr, and C
+            // then quotes that joined string as a whole. Re-fetching the array
+            // from paramtab here ignored the join and quoted each element
+            // separately, so the spaces the join itself introduced went
+            // unquoted — `a=(one two three); "${(D)a}"` gave `one two three`
+            // where zsh gives `one\ two\ three`. Unquoted `${(D)a[@]}` keeps
+            // isarr set and still maps per element.
+            if isarr != 0 {
+                if let Some(parts) = split_parts.clone() {
+                    let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
+                    value = new_parts.join(" ");
+                    split_parts = Some(new_parts);
+                } else if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| dir_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = dir_one(&value); // c:4163
+                }
+            } else {
+                // c:4163 — the scalar half. `val` is now the ONLY live value:
+                // c:3033-3034's double-quote collapse already ran
+                // `val = sepjoin(aval, sep, 1); isarr = 0;`, and from there C
+                // never reads aval again.
+                //
+                // This port keeps re-deriving the value list from the paramtab
+                // (`arrays_get(&var_name)`) further down, so for an array
+                // parameter the final splat (c:3960) would hand back the
+                // ORIGINAL elements and silently discard what was just
+                // computed here — `"${(D)a}"` produced `one two three` even
+                // though this block had already built `one\ two\ three`.
+                // Publishing the collapsed scalar as the value list is what
+                // makes the splat see it, and is what the (V) half below gets
+                // for free by always writing split_parts.
+                value = dir_one(&value);
+                split_parts = Some(vec![value.clone()]);
+            }
+        } // c:4167
 
         // c:Src/subst.c:1689 — under NO_UNSET (`setopt nounset` /
         // `set -u`), expanding an unset parameter aborts with

@@ -22127,6 +22127,17 @@ impl ShellExecutor {
         }
         // c:2478 — `if (!forked && save[fd1] == -2)`.
         if redir_scope_forked(self.redirect_scope_stack.len()) {
+            // A splitter already running on this scope (`>&2 2>&1`, `>f 2>&1`
+            // on a pipeline stage) holds its write end on every fd later
+            // dup'd from the stream. C's tee is a separate process that
+            // ends when the child exits; the in-process splitter is joined at
+            // scope end, so a -1 slot closes this fd there or the join
+            // waits forever for an EOF the dup keeps from arriving.
+            if self.multios_scope_stack.last().is_some_and(|s| !s.is_empty()) {
+                if let Some(top) = self.redirect_scope_stack.last_mut() {
+                    top.push((fd, -1));
+                }
+            }
             return;
         }
         // c:2425 `movefd(fd1)` — zshrs keeps the original fd open and
