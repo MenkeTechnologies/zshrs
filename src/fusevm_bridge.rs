@@ -1190,6 +1190,13 @@ fn run_daemon_builtin(name: &str, rest: &[String]) -> Option<i32> {
     if !crate::daemon::builtins::is_zshrs_builtin(name) {
         return None;
     }
+    // Streaming builtins (`zlog tail -f`) poll this between waits so Ctrl-C
+    // ends them; the daemon crate cannot see the shell's `errflag`.
+    let _ = crate::daemon::builtins::INTERRUPT_CHECK.set(|| {
+        crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_INT
+            != 0
+    });
     let argv: Vec<String> = std::iter::once(name.to_string())
         .chain(rest.iter().cloned())
         .collect();

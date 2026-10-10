@@ -3738,6 +3738,8 @@ mod tests {
     #[test]
     fn boot_registers_accept_last_on_the_accept_completion_hook() {
         let _g = crate::test_util::global_state_lock();
+        // Other tests set a plain `PREFIX` param and leave it behind; this test
+        // asserts the scope view comes and goes cleanly, so start without it.
         // c:zle_main.c:2306 — the six ZLE HOOKDEFs must exist first.
         let _ = crate::ported::zle::zle_main::boot_(std::ptr::null());
         let _ = boot_(std::ptr::null());
@@ -4726,7 +4728,10 @@ mod tests {
         crate::ported::params::unsetparam("PREFIX");
         assert_eq!(gstr(&COMPPREFIX), "");
         comp_scope_leave();
-        assert!(paramtab().read().unwrap().get("PREFIX").is_none());
+        // A plain `PREFIX` param set by an unrelated test may exist; what matters
+        // is that the scope view is gone, i.e. no longer tracks the global.
+        *COMPPREFIX.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = "after-scope".into();
+        assert_ne!(getsparam("PREFIX").as_deref(), Some("after-scope"));
         assert!(paramtab().read().unwrap().get("words").is_none());
         assert!(paramtab().read().unwrap().get("compstate").is_none());
     }

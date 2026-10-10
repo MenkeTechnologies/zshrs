@@ -124,6 +124,16 @@ fn print_pretty(v: &Value) {
     }
 }
 
+/// Whether the user interrupted the running builtin (Ctrl-C). The hosting
+/// shell installs the probe — this crate cannot see the shell's `errflag` —
+/// and a streaming builtin polls it between waits. Unset (standalone
+/// daemon binaries) means never interrupted.
+pub static INTERRUPT_CHECK: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
+
+fn interrupted() -> bool {
+    INTERRUPT_CHECK.get().is_some_and(|probe| probe())
+}
+
 fn err_exit(code: &str, msg: &str) -> i32 {
     eprintln!("zshrs: {}: {}", code, msg);
     1
@@ -1219,9 +1229,11 @@ fn zlog_path() -> i32 {
 
 fn zlog_tail(args: &[String]) -> i32 {
     let mut lines: usize = 100;
+    let mut follow = false;
     let mut iter = args.iter();
     while let Some(a) = iter.next() {
         match a.as_str() {
+            "-f" | "--follow" => follow = true,
             "-n" | "--lines" => match iter.next().and_then(|s| s.parse::<usize>().ok()) {
                 Some(n) => lines = n,
                 None => return err_exit("zlog tail", "-n requires an integer"),
@@ -1237,25 +1249,83 @@ fn zlog_tail(args: &[String]) -> i32 {
         Ok(p) => p,
         Err(e) => return err_exit("zlog tail", &e.to_string()),
     };
-    let files = log_files(&paths);
-    let mut buf: std::collections::VecDeque<String> =
-        std::collections::VecDeque::with_capacity(lines);
-    for f in files.iter().rev() {
-        let content = match std::fs::read_to_string(f) {
-            Ok(s) => s,
-            Err(_) => continue,
+    // Newest file first: the last N lines almost always live in the current
+    // log, so the rotated generations (megabytes each) are only read when the
+    // newer ones hold fewer than N lines between them.
+    let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    for f in log_files(&paths) {
+        if tail.len() >= lines {
+            break;
+        }
+        let Ok(content) = std::fs::read_to_string(&f) else {
+            continue;
         };
-        for line in content.lines() {
-            if buf.len() == lines {
-                buf.pop_front();
-            }
-            buf.push_back(line.to_string());
+        let want = lines - tail.len();
+        let mut chunk: Vec<&str> = content.lines().rev().take(want).collect();
+        chunk.reverse();
+        for line in chunk.into_iter().rev() {
+            tail.push_front(line.to_string());
         }
     }
-    for line in buf {
+    for line in tail {
         println!("{}", line);
     }
+    if follow {
+        return zlog_follow(&paths);
+    }
     0
+}
+
+/// `zlog tail -f` loop: poll every log file for growth and copy new bytes to
+/// stdout. Files are tracked by (device, inode), so a rotation — the live log
+/// renamed to `.1`, a fresh one created at the old path — resumes the renamed
+/// file where it left off and reads the new file from its start. A file that
+/// shrinks was truncated and is re-read from the start. Runs until the shell
+/// is interrupted (Ctrl-C) or stdout closes.
+fn zlog_follow(paths: &CachePaths) -> i32 {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::unix::fs::MetadataExt;
+    use std::collections::HashMap;
+
+    // (dev, ino) -> bytes already shown.
+    let mut offsets: HashMap<(u64, u64), u64> = HashMap::new();
+    for path in log_files(paths) {
+        if let Ok(m) = std::fs::metadata(&path) {
+            offsets.insert((m.dev(), m.ino()), m.len());
+        }
+    }
+    while !interrupted() {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        for path in log_files(paths) {
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
+            let pos = offsets.entry((meta.dev(), meta.ino())).or_insert(0);
+            if meta.len() < *pos {
+                *pos = 0;
+            }
+            if meta.len() == *pos {
+                continue;
+            }
+            let Ok(mut f) = std::fs::File::open(&path) else {
+                continue;
+            };
+            if f.seek(SeekFrom::Start(*pos)).is_err() {
+                continue;
+            }
+            let mut buf = Vec::new();
+            if f.read_to_end(&mut buf).is_err() {
+                continue;
+            }
+            *pos += buf.len() as u64;
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            if out.write_all(&buf).and_then(|_| out.flush()).is_err() {
+                return 1;
+            }
+        }
+    }
+    130
 }
 
 fn zlog_grep(args: &[String]) -> i32 {
