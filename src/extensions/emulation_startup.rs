@@ -680,6 +680,82 @@ pub fn single_quote(value: &str) -> String {
     out
 }
 
+/// Options the csh translator's output relies on: `cshnullglob` is tcsh's
+/// "error only if no word of the list matched" glob rule, `extendedglob`
+/// backs the `:gu`/`:gl` modifiers, `pipefail` gives a pipeline csh's
+/// any-stage-failed status.
+const CSH_OPTIONS: &str = "setopt cshnullglob extendedglob pipefail\n";
+
+/// Shell variables and functions a csh script expects to find, installed
+/// once per process ahead of the first translated input:
+///   * `tcsh` / `version` / `OSTYPE` / `HOSTTYPE` / `MACHTYPE` — what
+///     `/bin/tcsh` on the same OS reports (`$?tcsh` is the idiom that picks
+///     the tcsh branch of an rc file);
+///   * `source` and `eval` — csh text, so they translate their argument at
+///     run time through `zshrs --csh-translate`. `source` runs the file with
+///     its remaining arguments as `$argv`.
+fn csh_preamble() -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().replace('\'', "'\\''"))
+        .unwrap_or_else(|_| "zshrs".to_string());
+    format!(
+        "{CSH_OPTIONS}{}\n\
+         OSTYPE=${{OSTYPE%%[0-9.]*}}\n\
+         tcsh=6.21.00\n\
+         version='tcsh 6.21.00 (Astron) 2019-05-08 ({}-apple-darwin) options wide,nls,dl,bye,al,kan,sm,rh,color,filec'\n\
+         [[ $OSTYPE == darwin ]] && HOSTTYPE=unknown MACHTYPE=unknown\n\
+         source() {{ local __csh_f=$1; shift; builtin eval \"$('{exe}' --csh-translate -- \"$__csh_f\")\"; }}\n\
+         eval() {{ builtin eval \"$(print -r -- \"$*\" | '{exe}' --csh-translate -)\"; }}\n",
+        crate::csh::PREAMBLE,
+        "unknown"
+    )
+}
+
+static CSH_PREAMBLE_SENT: AtomicBool = AtomicBool::new(false);
+
+/// The `--csh` input boundary: csh text in, zsh text out, with the preamble
+/// ahead of the first input. Every other personality passes its input
+/// through untouched.
+pub fn csh_input(
+    src: &str,
+    translate: fn(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    if personality() != Personality::Csh {
+        return Ok(src.to_string());
+    }
+    let text = translate(src)?;
+    if CSH_PREAMBLE_SENT.swap(true, Ordering::Relaxed) {
+        Ok(format!("{CSH_OPTIONS}{text}"))
+    } else {
+        Ok(format!("{}{text}", csh_preamble()))
+    }
+}
+
+/// Source one startup/logout file. `--csh` files are csh text, so they are
+/// translated first; handing them to `init::source` raw made an interactive
+/// `zshrs --csh` print `parse error near` for every rc file. Other
+/// personalities source the file as is.
+fn source_startup_file(path: &Path) {
+    if personality() != Personality::Csh {
+        let _ = crate::ported::init::source(&path.to_string_lossy());
+        return;
+    }
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(text) = csh_input(&contents, crate::csh::translate) else {
+        return;
+    };
+    let name = path.to_string_lossy().into_owned();
+    let old_name = crate::ported::utils::scriptname_get();
+    let old_file = crate::ported::utils::scriptfilename_get();
+    crate::ported::utils::set_scriptname(Some(name.clone()));
+    crate::ported::utils::set_scriptfilename(Some(name));
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(&text);
+    crate::ported::utils::set_scriptname(old_name);
+    crate::ported::utils::set_scriptfilename(old_file);
+}
+
 /// True when this drop-in owns its own startup files, i.e. the faithful
 /// `run_init_scripts` port must NOT run for it.
 pub fn overrides_zsh_startup() -> bool {
@@ -700,7 +776,7 @@ pub fn run_init_scripts() {
         crate::ported::zsh_h::isset(crate::ported::zsh_h::PRIVILEGED),
     );
     for f in files {
-        let _ = crate::ported::init::source(&f.to_string_lossy());
+        source_startup_file(&f);
     }
 }
 
@@ -714,7 +790,7 @@ pub fn run_logout_scripts() {
         return;
     }
     for f in logout_files(crate::ported::zsh_h::interact()) {
-        let _ = crate::ported::init::source(&f.to_string_lossy());
+        source_startup_file(&f);
     }
 }
 
