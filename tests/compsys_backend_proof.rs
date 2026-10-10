@@ -2,7 +2,7 @@
 //! `_NAME` calls to the Rust port (`src/compsys/ported/*`) vs the
 //! upstream shell function (autoloaded via `fpath`).
 //!
-//! Strategy: empty `$fpath` and call `_setup` — a name the Rust tree
+//! Strategy: empty `$fpath` and call `_comp_locale` — a name the Rust tree
 //! ports and nothing else then defines — and `echo $?`:
 //!
 //! - **backend = "rust"**  → router returns `Some(rust_fn)` → the port
@@ -64,11 +64,11 @@ struct R {
 /// Every probe below runs with `$fpath` emptied first.
 ///
 /// Without it the child inherits the developer's exported `FPATH` (50
-/// entries on this host), so `_setup` — a STOCK `Completion/Base/Utility`
+/// entries on this host), so `_comp_locale` — a STOCK `Completion/Base/Utility`
 /// name — is autoloadable from disk and `backend = "shell"` resolves it
 /// instead of reporting `command not found`. That made the shell-vs-rust
 /// observable depend on whose machine the suite ran on:
-/// `FPATH=<real> zshrs --zsh -f -c '_setup default; echo $?'` prints `1`
+/// `FPATH=<real> zshrs --zsh -f -c '_comp_locale; echo $?'` prints `1`
 /// under the shell backend, `FPATH= …` prints `127`. Emptying `$fpath` in
 /// the script pins the "nothing on disk defines this name" premise that
 /// the backend split is read against.
@@ -92,18 +92,18 @@ fn run_with_backend(backend: &str, script: &str) -> R {
 }
 
 /// The observable that separates the two backends, with no user
-/// definition of `_setup` anywhere: under `rust` the router hands the
+/// definition of `_comp_locale` anywhere: under `rust` the router hands the
 /// call to `compsys::ported::Base::Core::_setup` and it succeeds; under
 /// `shell` the router stands down, nothing defines the name, and the
 /// shell reports `command not found` (rc 127).
 ///
-/// `_setup`'s status is its last statement, the `force-list` `&&` chain
-/// (Completion/Base/Core/_setup), which is 1 when the style is unset. The
-/// probe sets `force-list always` so a `_setup` that ran ends on the
-/// `_comp_force_list=always` assignment and returns 0.
-const SETUP_PROBE: &str = r#"
-    zstyle ':completion:*' force-list always
-    _setup default
+/// `_comp_locale` is used rather than `_setup`: `_setup` assigns
+/// `compstate[...]`, which exists only inside a completion, so outside one the
+/// stock function stops with `compstate: assignment to invalid subscript range`
+/// (zsh 5.9.2 does the same). `_comp_locale` needs no completion context and
+/// returns 0 in zsh 5.9.2 and in the port.
+const PORT_PROBE: &str = r#"
+    _comp_locale
     echo "RC=$?"
 "#;
 
@@ -111,7 +111,7 @@ const SETUP_PROBE: &str = r#"
 
 /// PROOF #1 — backend=shell: user-defined `_setup` fires.
 ///
-/// `_setup` HAS a Rust port at `src/compsys/router.rs::rust_compsys_lookup`,
+/// `_comp_locale` HAS a Rust port at `src/compsys/router.rs::rust_compsys_lookup`,
 /// so it's the perfect probe: under `rust` the router intercepts, under
 /// `shell` the router returns None and the standard shfunc lookup
 /// finds our test-defined `_setup` shfunc.
@@ -134,7 +134,7 @@ fn shell_backend_runs_user_setup_shfunc() {
     );
 }
 
-/// PROOF #2 — backend=rust: the router answers `_setup` itself.
+/// PROOF #2 — backend=rust: the router answers `_comp_locale` itself.
 ///
 /// This proof used to define a user `_setup()` shfunc and assert the Rust
 /// port SHADOWED it. That premise was deliberately inverted by commit
@@ -150,24 +150,24 @@ fn shell_backend_runs_user_setup_shfunc() {
 /// in .zshrc (no PM_LOADDIR) must win over the port".
 ///
 /// So the backend split is read WITHOUT a user definition. With `$fpath`
-/// emptied nothing on disk defines `_setup` either, and the only thing
+/// emptied nothing on disk defines `_comp_locale` either, and the only thing
 /// that can answer the call is the router:
 /// * `backend = rust`  → port runs → `RC=0`, no diagnostic;
 /// * `backend = shell` → router returns `None` → `command not found`.
 #[test]
 fn rust_backend_supplies_setup_when_nothing_else_defines_it() {
-    let r = run_with_backend("rust", SETUP_PROBE);
+    let r = run_with_backend("rust", PORT_PROBE);
     assert_eq!(r.exit, 0, "exit nonzero; stdout=`{}`", r.stdout);
     assert!(
         r.stdout.contains("RC=0"),
-        "rust backend MUST route `_setup` to the Rust port when no shfunc \
+        "rust backend MUST route `_comp_locale` to the Rust port when no shfunc \
          and no `$fpath` file define it; got stdout=`{}` stderr=`{}`",
         r.stdout,
         r.stderr,
     );
     assert!(
         !r.stderr.contains("command not found"),
-        "rust backend must not leave `_setup` unresolved; stderr=`{}`",
+        "rust backend must not leave `_comp_locale` unresolved; stderr=`{}`",
         r.stderr,
     );
 }
@@ -261,29 +261,29 @@ fn router_only_intercepts_underscore_prefix_names() {
 /// pass under one backend.
 #[test]
 fn distinct_backends_produce_distinct_observable_results() {
-    let shell_run = run_with_backend("shell", SETUP_PROBE);
-    let rust_run = run_with_backend("rust", SETUP_PROBE);
+    let shell_run = run_with_backend("shell", PORT_PROBE);
+    let rust_run = run_with_backend("rust", PORT_PROBE);
     assert!(
         shell_run.stdout.contains("RC=127"),
-        "shell backend must leave `_setup` to ordinary lookup, which finds \
+        "shell backend must leave `_comp_locale` to ordinary lookup, which finds \
          nothing with `$fpath` empty → `command not found` (rc 127); \
          got stdout=`{}` stderr=`{}`",
         shell_run.stdout,
         shell_run.stderr,
     );
     assert!(
-        shell_run.stderr.contains("command not found: _setup"),
+        shell_run.stderr.contains("command not found: _comp_locale"),
         "shell backend must report the unresolved name on stderr; got `{}`",
         shell_run.stderr,
     );
     assert!(
         rust_run.stdout.contains("RC=0"),
-        "rust backend must answer `_setup` from the port; got `{}`",
+        "rust backend must answer `_comp_locale` from the port; got `{}`",
         rust_run.stdout,
     );
     assert_ne!(
         shell_run.stdout, rust_run.stdout,
-        "shell and rust backend stdouts MUST differ for `_setup` \
+        "shell and rust backend stdouts MUST differ for `_comp_locale` \
          (they share the script that differentiates the two paths); \
          got identical=`{}` → backend switch is a no-op",
         shell_run.stdout,
@@ -301,7 +301,7 @@ fn missing_config_file_defaults_to_rust_backend() {
     let dir = tempfile::tempdir().expect("tempdir");
     // No zshrs.toml — config loader returns ZshrsConfig::default().
     let o = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", &format!("{NO_FPATH}{SETUP_PROBE}")])
+        .args(["--zsh", "-f", "-c", &format!("{NO_FPATH}{PORT_PROBE}")])
         .env("ZSHRS_HOME", dir.path())
         .env_remove("EDITOR")
         .env_remove("VISUAL")
@@ -314,7 +314,7 @@ fn missing_config_file_defaults_to_rust_backend() {
     assert!(
         stdout.contains("RC=0") && !stderr.contains("command not found"),
         "default backend must be `rust` (CompsysBackend::default()) \
-         → the router must answer `_setup` from the port; \
+         → the router must answer `_comp_locale` from the port; \
          got stdout=`{}` stderr=`{}`",
         stdout,
         stderr,
@@ -336,7 +336,7 @@ fn unknown_backend_value_falls_back_to_default_rust() {
     )
     .expect("write toml");
     let o = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", &format!("{NO_FPATH}{SETUP_PROBE}")])
+        .args(["--zsh", "-f", "-c", &format!("{NO_FPATH}{PORT_PROBE}")])
         .env("ZSHRS_HOME", dir.path())
         .env_remove("EDITOR")
         .env_remove("VISUAL")
@@ -349,7 +349,7 @@ fn unknown_backend_value_falls_back_to_default_rust() {
     assert!(
         stdout.contains("RC=0") && !stderr.contains("command not found"),
         "bogus backend value should leave config at defaults \
-         (= rust); the router must still answer `_setup` from the port; \
+         (= rust); the router must still answer `_comp_locale` from the port; \
          got stdout=`{}` stderr=`{}`",
         stdout,
         stderr,
@@ -414,7 +414,7 @@ fn function_body_sees_own_positionals_under_both_backends() {
 fn zshrs_home_overrides_global_config_path() {
     let dir_shell = fresh_zshrs_home("shell");
     let dir_rust = fresh_zshrs_home("rust");
-    let script = format!("{NO_FPATH}{SETUP_PROBE}");
+    let script = format!("{NO_FPATH}{PORT_PROBE}");
     let out_shell = Command::new(zshrs_bin())
         .args(["--zsh", "-f", "-c", &script])
         .env("ZSHRS_HOME", dir_shell.path())
@@ -438,7 +438,7 @@ fn zshrs_home_overrides_global_config_path() {
     assert!(
         shell_out.contains("RC=127") && rust_out.contains("RC=0"),
         "and they must differ in the DIRECTION the two configs name — \
-         shell backend leaves `_setup` unresolved, rust backend answers it; \
+         shell backend leaves `_comp_locale` unresolved, rust backend answers it; \
          got shell=`{}` rust=`{}`",
         shell_out,
         rust_out,
