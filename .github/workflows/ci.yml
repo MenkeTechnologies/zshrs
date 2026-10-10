@@ -554,10 +554,6 @@ jobs:
       - name: Fuzz — cmdsub
         run: ./target/debug/parity-fuzz --mode cmdsub --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/cmdsub.txt --out target/parity-fuzz/ci-cmdsub.txt
       - name: Fuzz — loop
-        # bin_break's "not in for, while, until, select, or repeat loop"
-        # is upstream 55061's wording; 5.9.2 still omits `for`.
-        env:
-          ZSHRS_FUZZ_ZSH: ${{ steps.oracle.outputs.zsh }}
         run: ./target/debug/parity-fuzz --mode loop --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/loop.txt --out target/parity-fuzz/ci-loop.txt
       # datetime / alias / stat reach surface no other mode does — zsh/datetime's
       # strftime format specifiers, lexer-level alias expansion (parse-time
