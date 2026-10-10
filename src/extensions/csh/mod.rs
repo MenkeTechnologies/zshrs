@@ -37,6 +37,18 @@
 /// Installed once, ahead of the first translated input.
 pub const PREAMBLE: &str = include_str!("preamble.zsh");
 
+/// Set for `zshrs --csh-translate --source`: the text is a sourced file, so
+/// `exit` in it only ends that file (`return` in the `source` function).
+static SOURCE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_source_mode(on: bool) {
+    SOURCE_MODE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn source_mode() -> bool {
+    SOURCE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub mod cmds;
 pub mod ctl;
 pub mod expr;

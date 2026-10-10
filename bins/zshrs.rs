@@ -1974,7 +1974,14 @@ pub fn zshrs_main() {
     // `--csh-translate [--] FILE|-`: print the zsh translation of a csh
     // script. Used by the `source` / `eval` functions the csh preamble defines.
     if args.len() >= 3 && args[1] == "--csh-translate" {
-        let operand = if args[2] == "--" { args.get(3) } else { args.get(2) };
+        // `--source` marks text that a csh `source` will run inside a
+        // function: its `exit` leaves only the sourced file.
+        let rest: Vec<&String> = args[2..].iter().filter(|a| a.as_str() != "--").collect();
+        if rest.first().is_some_and(|a| a.as_str() == "--source") {
+            zsh::csh::set_source_mode(true);
+        }
+        let operand = rest.iter().find(|a| a.as_str() != "--source").map(|a| (*a).clone());
+        let operand = operand.as_ref();
         let src = match operand.map(String::as_str) {
             Some("-") | None => {
                 let mut s = String::new();
@@ -1984,7 +1991,13 @@ pub fn zshrs_main() {
             Some(path) => match std::fs::read_to_string(path) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("{path}: {e}");
+                    // tcsh: `file: No such file or directory.`
+                    let why = match e.kind() {
+                        std::io::ErrorKind::NotFound => "No such file or directory".to_string(),
+                        std::io::ErrorKind::PermissionDenied => "Permission denied".to_string(),
+                        _ => e.to_string(),
+                    };
+                    eprintln!("{path}: {why}.");
                     std::process::exit(1);
                 }
             },

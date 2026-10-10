@@ -879,7 +879,11 @@ fn render_value(r: &Reference, name: &str, ctx: Ctx, cx: Cx, out: &mut String) {
     // worth the glob wrapper (it is a few hundred characters)
     let plain_special = matches!(name, "PWD" | "HOME" | "USER" | "TERM" | "UID" | "EUID" | "GID" | "?");
     let glob = cx.glob && !r.no_glob && !plain_special;
-    let base = base_text(name, &r.sub);
+    let mut base = base_text(name, &r.sub);
+    // `$4` past the last argument is empty in tcsh, not an unset parameter
+    if r.sub.is_none() && r.modifiers.is_empty() && !name.is_empty() && name != "0" && name.chars().all(|c| c.is_ascii_digit()) {
+        base.push('-');
+    }
     let wrap = |expr: &str| {
         if split {
             split_words(expr, glob)
@@ -1285,10 +1289,10 @@ mod tests {
 
     #[test]
     fn positional_and_special_parameters() {
-        assert_eq!(t("$1"), "${=1}");
+        assert_eq!(t("$1"), "${=1-}");
         // tcsh: `$1abc` is $1 followed by abc; `$10` is the tenth argument
-        assert_eq!(t("$1abc"), "${=1}abc");
-        assert_eq!(t("$10"), "${=10}");
+        assert_eq!(t("$1abc"), "${=1-}abc");
+        assert_eq!(t("$10"), "${=10-}");
         assert_eq!(t("$argv[2]"), "${=argv[2]}");
         // a positional parameter is one string: no first-word split
         assert_eq!(t("$1:r"), "${=${1:r}}");
@@ -1591,7 +1595,7 @@ mod tests {
     fn positional_names_take_no_subscript() {
         // tcsh, argv=(a b): `echo $1[2]` and `echo $*[3]` are `No match.`:
         // the value followed by the glob text `[2]`.
-        assert_eq!(t("$1[2]"), "${=1}[2]");
+        assert_eq!(t("$1[2]"), "${=1-}[2]");
         assert_eq!(t("$*[3]"), "${=argv}[3]");
         // `$argv[2]` is a real subscript
         assert_eq!(t("$argv[2]"), "${=argv[2]}");

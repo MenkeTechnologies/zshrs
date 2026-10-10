@@ -724,9 +724,11 @@ fn csh_preamble() -> String {
          OSTYPE=${{OSTYPE%%[0-9.]*}}\n\
          tcsh=6.21.00\n\
          [[ -n ${{SHELL-}} ]] || SHELL=/bin/csh\n\
+         shlvl=(1)\n\
+         tty=(${{${{TTY-}}:t}})\n\
          version='tcsh 6.21.00 (Astron) 2019-05-08 ({}-apple-darwin) options wide,nls,dl,bye,al,kan,sm,rh,color,filec'\n\
          [[ $OSTYPE == darwin ]] && HOSTTYPE=unknown MACHTYPE=unknown\n\
-         source() {{ local __csh_f=$1; shift; builtin eval \"$('{exe}' --csh-translate -- \"$__csh_f\")\"; }}\n\
+         source() {{ local __csh_f=$1 __csh_t; shift; __csh_t=$('{exe}' --csh-translate --source -- \"$__csh_f\") || {{ [[ -o interactive ]] || exit 1; return 1; }}; builtin eval \"$__csh_t\"; }}\n\
          eval() {{ builtin eval \"$(print -r -- \"$*\" | '{exe}' --csh-translate -)\"; }}\n",
         crate::csh::PREAMBLE,
         "unknown"

@@ -802,7 +802,7 @@ fn guard_command(s: &Simple, text: String, in_pipe: bool) -> String {
         let globs: Vec<String> = s.words[1..].iter().filter(|w| is_glob_word(w)).map(|w| tw(w)).collect();
         if plain && !globs.is_empty() && !skips_glob_check(h) {
             local.push(format!(
-                "{{ [[ ! -o cshnullglob ]] || () {{ setopt localoptions nullglob; local -a _g; _g=({}); (( $#_g )); }} || \
+                "{{ [[ ! -o cshnullglob ]] || () {{ setopt localoptions nullglob; local -a _g; _g=({}); (( $#_g )); }} \"$@\" || \
 {{ print -u2 -r -- {}; false; }}; }}",
                 globs.join(" "),
                 sq(&format!("{h}: No match."))
@@ -1083,6 +1083,15 @@ fn render_cmd(words: &[String]) -> Result<String, String> {
         "pushd" => Ok(cmd_pushd(args)),
         "popd" => Ok(cmd_popd(args)),
         "echo" => Ok(cmd_echo(args)),
+        // programmable completion and terminal capabilities have no effect
+        // in a script, but an argument-less `uncomplete`/`settc`/`filetest`
+        // is tcsh's usage error
+        "complete" => Ok(":".to_string()),
+        "uncomplete" | "settc" | "filetest" if args.is_empty() => {
+            Ok(fatal(&format!("{head}: Too few arguments.")))
+        }
+        "uncomplete" | "settc" => Ok(":".to_string()),
+        "filetest" => Ok(cmd_filetest(args)),
         "hashstat" => Ok(cmd_hashstat()),
         "unhash" => {
             STATE.with(|st| st.borrow_mut().hashed = false);
@@ -1184,6 +1193,15 @@ fn cmd_set(args: &[String]) -> Result<String, String> {
             STATE.with(|st| st.borrow_mut().hashed = true);
         }
         let val = set_value(args, &mut i, rest);
+        // `set status = n` sets the exit status the next `$status` reads
+        if name == "status" && sub.is_none() {
+            let n = match &val {
+                Val::Word(w) => tw(w),
+                _ => "0".to_string(),
+            };
+            stmts.push(format!("() {{ return {n}; }}"));
+            continue;
+        }
         // a nested group is where tcsh expects the next variable name
         if matches!(&val, Val::List(inner) if inner.contains('(')) {
             return Err("set: Variable name must begin with a letter.".to_string());
@@ -1321,7 +1339,7 @@ elif (( {idx} > ${{#{name}}} )); then print -u2 -r -- 'set: Subscript out of ran
 /// `CMD: $NAME is read-only.` and ends the script.
 fn guard_readonly(cmd: &str, name: &str, action: String) -> String {
     format!(
-        "if [[ ${{parameters[{name}]}} == *readonly* ]]; then {}; else {action}; fi",
+        "if [[ ${{parameters[{name}]-}} == *readonly* ]]; then {}; else {action}; fi",
         fatal(&format!("{cmd}: ${name} is read-only."))
     )
 }
@@ -1479,13 +1497,27 @@ fn cmd_alias(args: &[String]) -> Result<String, String> {
     if csh_body.trim().is_empty() {
         csh_body = ":".to_string();
     }
-    let subshell = parse(&csh_body)?.last().is_some_and(|(c, _)| c.sub.is_some());
+    // (a body ending in a redirect operator takes its target from the call)
+    let subshell = parse(&csh_body)
+        .or_else(|_| parse(&format!("{csh_body} {ARGS_MARK}")))?
+        .last()
+        .is_some_and(|(c, _)| c.sub.is_some());
     // Without a history reference tcsh appends the call's arguments to the
     // body; the mark travels through translation as one more word so that
     // it lands inside whatever the last command was wrapped into.
     let append_args = reps.is_empty() && !subshell;
+    // a body that opens with a control keyword is a whole statement
+    let control = matches!(
+        csh_body.split_whitespace().next(),
+        Some("if" | "while" | "foreach" | "switch")
+    );
     let source = if append_args { format!("{csh_body} {ARGS_MARK}") } else { csh_body };
-    let mut zbody = restore_refs(&translate_cmds(&source)?, &reps).replace(ARGS_MARK, "\"$@\"");
+    let translated = if control {
+        super::translate(&source)?.trim_end().to_string()
+    } else {
+        translate_cmds(&source)?
+    };
+    let mut zbody = restore_refs(&translated, &reps).replace(ARGS_MARK, "\"$@\"");
     if subshell {
         // arguments cannot follow a `( … )` group
         zbody = format!(
@@ -1761,6 +1793,15 @@ elif (( ! ${{#{name}}} )); then {NO_MORE}; else {name}=(\"${{(@){name}[2,-1]}}\"
 /// evaluate expressions (`exit (1+2)` is "Badly formed number." in tcsh).
 /// Without an argument tcsh exits 0 (verified: it ignores `$status`).
 fn cmd_exit(args: &[String]) -> Result<String, String> {
+    let text = cmd_exit_text(args)?;
+    // in a sourced file `exit` only leaves that file
+    Ok(match text.strip_prefix("exit") {
+        Some(rest) if super::source_mode() => format!("return{rest}"),
+        _ => text,
+    })
+}
+
+fn cmd_exit_text(args: &[String]) -> Result<String, String> {
     if args.len() > 1 {
         return Err("exit: Expression Syntax.".to_string());
     }
@@ -2140,6 +2181,19 @@ fn cmd_kill(args: &[String]) -> String {
 /// tcsh `time cmd` reports `0.000u 0.000s 0:00.01 0.0%<TAB>0+0k 0+0io 0pf+0w`
 /// by default; zsh's reserved word takes the same fields from `TIMEFMT`.
 const TIME_FMT: &str = "$'%*Uu %*Ss 0:%*E %P\\t0+0k 0+0io %Fpf+%Ww'";
+
+/// `filetest -op file…`: a `1` or `0` per file on one line, as the matching\n/// `if (-op f)` would answer.
+fn cmd_filetest(args: &[String]) -> String {
+    let op = dequote(&args[0]);
+    let letter = op.strip_prefix('-').and_then(|s| s.chars().next());
+    match letter {
+        Some(l) if "edfrwxzslbcpSugko".contains(l) && args.len() > 1 => format!(
+            "() {{ local _f; local -a _o; for _f; do [[ -{l} $_f ]] && _o+=1 || _o+=0; done; print -r -- \"${{(j: :)_o}}\"; }} {}",
+            args[1..].iter().map(|w| tw(w)).collect::<Vec<_>>().join(" ")
+        ),
+        _ => fatal("filetest: Too few arguments."),
+    }
+}
 
 fn cmd_time(args: &[String]) -> Result<String, String> {
     if args.is_empty() {

@@ -137,6 +137,16 @@ fn csh_error_and_literal_text_paths_match_tcsh() {
         ("repeat counts", "set n = 2\nrepeat $n echo x\nrepeat 0 echo never\n"),
         ("eval ends the script on an undefined variable", "echo before\neval \"echo $nope\"\necho never\n"),
         ("if with an unbalanced paren", "echo before\nif 1) echo x\necho never\n"),
+        ("alias whose body is an if", "alias t 'if (1) echo yes'\nt\n"),
+        ("alias ending in a redirect", "alias to 'echo hi >'\nto /tmp/_cp_ar\ncat /tmp/_cp_ar\nrm -f /tmp/_cp_ar\n"),
+        ("exit inside a sourced file", "echo 'exit 3' > /tmp/_cp_se\nsource /tmp/_cp_se\necho after\nrm -f /tmp/_cp_se\n"),
+        ("source of a missing file", "echo before\nsource /nonexistent_zz\necho never\n"),
+        ("set status", "set status = 5\necho $status\ntrue\necho $status\n"),
+        ("positional past the end", "set argv = (a b c)\necho $1 $2 $3 $4\n"),
+        ("shlvl and tty exist", "echo $shlvl\necho $?tty\n"),
+        ("if followed by a group", "if (1) (echo in-group)\n"),
+        ("filetest", "filetest -e /tmp /nonexistent_zz\nfiletest -d /tmp\n"),
+        ("readonly variable in a goto loop", "set -r MAX = 3\nset c = 0\nloop:\n@ c++\necho $c\nif ($c < $MAX) goto loop\n"),
     ];
     let dir = std::env::temp_dir().join(format!("zshrs-csh-status-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

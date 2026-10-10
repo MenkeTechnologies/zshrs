@@ -1190,6 +1190,13 @@ impl Translator {
             self.emit(out, &format!("if {c}; then"));
             self.stack.push(Frame::Wrap);
             self.piece(after, out)?;
+        } else if after.starts_with('(') {
+            // tcsh takes the `(` of `if (c) (cmd)` for a command name
+            let c = expr::translate_condition(&inner)?;
+            self.emit(
+                out,
+                &format!("if {c}; then print -u2 -r -- '(: Command not found.'; false; fi"),
+            );
         } else {
             let text = self.if_oneline_text(&inner, after)?;
             self.emit(out, &text);
@@ -1829,6 +1836,11 @@ fn split_stmts(line: &str) -> Vec<&str> {
 /// operator is the one pipeline the `if`/`repeat` governs.
 fn cut_list(cmd: &str) -> (&str, Option<(&'static str, &str)>) {
     for (pos, c) in top_level(cmd) {
+        // (top_level yields every character; only these two are ASCII
+        // operators, so `pos + 1` is a boundary only for them)
+        if c != '&' && c != '|' {
+            continue;
+        }
         let after = &cmd[pos + 1..];
         match c {
             '&' if after.starts_with('&') => return (&cmd[..pos], Some(("&&", &after[1..]))),
