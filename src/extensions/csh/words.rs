@@ -40,36 +40,90 @@
 //!   split at newlines only, one word per non-empty line (`"x`cmd`y"` glues
 //!   `x` to the first line and `y` to the last).
 //!
+//! # Checked translation
+//!
+//! [`translate_word_checked`] is [`translate_word`] plus the run-time
+//! behaviour of tcsh that has no zsh spelling at the word level without a
+//! guard. Each guard is a `${…}` that expands to nothing unless tcsh would
+//! have failed. A failing guard aborts with status 1 and the tcsh text as
+//! the end of the stderr line (zsh puts `<script>:<line>: __csh: ` or, for a
+//! variable, `<script>:<line>: ` in front); a non-interactive shell exits,
+//! an interactive one returns to the prompt.
+//!
+//! * `x: Undefined variable.` for `$x`, `${x}`, `$x[n]`, `$#x`, `$%x`,
+//!   `$x:h`, inside `"…"` and for a variable used as a subscript bound.
+//!   `$?x`, `$1`…`$9` (empty when absent) and the variables tcsh itself
+//!   defines (`argv status cwd owd user shell uid euid gid tcsh version
+//!   tty shlvl group HOST HOSTTYPE OSTYPE MACHTYPE VENDOR`) are exempt.
+//!   `$home`/`$term` are tested through `HOME`/`TERM` and reported under
+//!   the csh name.
+//! * `x: Subscript out of range.`: the bounds of `$x[n]`/`$x[n-m]` are
+//!   `lo`..`hi` (`n-` ends at the size, `-m` starts at 1). tcsh aborts when
+//!   `hi` is past the size or when `lo` is 0 and `hi` is not; `lo > hi`,
+//!   `$x[0]`, `$x[0-0]`, `$x[n-]` past the end and `$x[*]` are empty.
+//!   `$1[2]` and `$*[2]` take no subscript in tcsh (the `[2]` is glob
+//!   text) and are translated that way in both entry points.
+//! * `Unknown user: u.` for a word starting `~u`. zsh aborts on its own
+//!   (`no such user or named directory`) before any guard in the word can
+//!   run, so the lookup is a subshell probe and the directory a quoted
+//!   `$(print -r -- ~u)`.
+//! * `Missing '}'.` for an unquoted `$v` (or `$v:q`) that is more than one
+//!   word inside `{…}`.
+//! * An unquoted variable value is globbed. tcsh passes the words of the
+//!   value to the glob stage: `set x = '*.c'; echo $x` lists files, a
+//!   leading `~` expands, `[ab]` and `?` match. `( ) | < > & ^ #` stay
+//!   literal. The words are left untouched unless one of them has a glob
+//!   character (`* ? [ {`) or a leading `~`; only then is the whole list
+//!   passed through `${~…}` with `( ) | < > ^ #` and a non-leading `~`
+//!   backslash-quoted. `"$x"`, `$x:q` and `$x:x` are never globbed.
+//! * A whole-word `"`cmd`"` yields no word for empty or newline-only
+//!   output (zsh would keep one empty word).
+//! * `$#E` on a `setenv` variable is the value of `$E` (tcsh has no count
+//!   for an environment variable); on a name that holds an array at run
+//!   time it is the element count. `$#home`, `$#cwd` and the other mapped
+//!   specials are 1, like any one-word csh list.
+//!
+//! The checked output needs `setopt cshnullglob extendedglob` (the driver
+//! preamble already sets both; `extendedglob` is used by the `(#m)`/`(#b)`
+//! flags of the escaping and of `:gu`/`:gl`).
+//!
 //! # Not representable (the translation is best effort, noted for callers)
 //!
-//! * **Undefined variable / subscript out of range**: tcsh aborts the
-//!   command with `x: Undefined variable.` / `x: Subscript out of range.`;
-//!   zsh expands to nothing (or clamps the range).
-//! * **Globbing of variable values**: tcsh globs the words produced by
-//!   `$x` (`set x = '*.c'; echo $x` lists files). zsh `${~x}` would also
-//!   activate `( ) | < >`, so `set m = "done (ok)"; echo $m` would break;
-//!   values are therefore left unglobbed.
-//! * **`no match`**: tcsh errors only when *every* glob word of a command
-//!   matched nothing, and silently drops the unmatched ones otherwise. That
-//!   is zsh `setopt cshnullglob`; the driver preamble must set it.
-//! * **`~user`** with an unknown user is a tcsh error; zsh keeps it literal.
+//! * **Error scope**: `Unknown user`, `Missing '}'.` and `No match.`
+//!   abort only the command in tcsh when it is an external program (the
+//!   script goes on with status 1); zsh ends the script for all three.
+//!   For a builtin both shells end the script.
+//! * **Backquote bodies** are translated by [`super::cmds`], which calls
+//!   [`translate_word`]: `` `echo $nosuch` `` is not guarded and the output
+//!   of an unquoted backquote is not globbed (tcsh globs it).
+//! * **Brace expansion of values**: tcsh brace-expands the words of a
+//!   value (`set x = '{a,b}.c'; echo $x` is `a.c b.c`); zsh keeps the
+//!   braces.
+//! * **A mixed list** (`set x = ('*.c' '(par)')`) is globbed as a whole;
+//!   the elements without glob characters but with `( ) | < > ^ #` keep
+//!   the quoting backslashes.
+//! * **`$E[n]`** on a `setenv` variable is the value followed by the glob
+//!   text `[n]` in tcsh; an upper-case name is still subscripted here
+//!   because a csh array may have an upper-case name too.
+//! * **Two adjacent quoted backquotes** (`"`a``b`"`) are not merged into
+//!   one word list.
+//! * **`no match`** text: tcsh prints `cmd: No match.` and errors only when
+//!   *every* glob word of a command matched nothing, silently dropping the
+//!   unmatched ones otherwise. That is zsh `setopt cshnullglob`; the driver
+//!   preamble must set it. zsh's message is `no match`.
 //! * **History**: `!` in a csh script triggers history substitution
 //!   (`a!b` → `b: Event not found.`). zsh scripts do not; `\!` and `"\!"`
 //!   translate to a plain `!`.
-//! * **Blank-only backquote output** in `"…"` (`"`printf '\n\n'`"`): tcsh
-//!   yields no word, zsh yields one empty word. No output at all is one
-//!   empty word in both.
 //! * **Modifier `:s`** operands are literal strings (no `&`, no `\` escape in
 //!   tcsh). Operands holding `/ \ } $ ` " '` or blanks have no safe zsh
 //!   spelling here and the modifier is dropped.
 //! * **`:gu` / `:gl`** (and `:u`/`:l` chained with another modifier) rewrite
 //!   every element with a `(#b)` pattern; that needs `setopt extendedglob`
 //!   in the driver preamble.
-//! * **`$#E` on a `setenv` variable**: tcsh prints the value; translated to
-//!   `${#E}` (string length).
 //! * Nested backquotes, `$x:` followed by a non-modifier (tcsh: `Bad :
-//!   modifier in $`) and other tcsh syntax errors are passed through
-//!   leniently instead of being diagnosed.
+//!   modifier in $`), `$x[$list]` with a multi-word bound (tcsh: `Missing
+//!   '-'.`) and other tcsh syntax errors are passed through leniently
+//!   instead of being diagnosed.
 
 use super::cmds;
 
@@ -100,13 +154,54 @@ pub fn zsh_var_name(name: &str) -> &str {
 /// `${?v}`, `$x:h`, `~user`, …). Input is one word from
 /// [`super::lex::split_words`].
 pub fn translate_word(word: &str) -> String {
+    translate(word, false)
+}
+
+/// [`translate_word`] plus the tcsh run-time behaviour a plain
+/// translation cannot have (see "Checked translation" at the top of this
+/// file): the word aborts the command like tcsh for an undefined variable,
+/// an out-of-range subscript, an unknown `~user` or a multi-word expansion
+/// inside `{…}`, and unquoted variable values are globbed.
+///
+/// The result is longer and uses `extendedglob` pattern syntax, so it is a
+/// separate entry point; callers that need only the argument vector (type
+/// sniffing, `plain_param`-style rewrites) keep calling [`translate_word`].
+pub fn translate_word_checked(word: &str) -> String {
+    translate(word, true)
+}
+
+fn translate(word: &str, checked: bool) -> String {
     let chars: Vec<char> = word.chars().collect();
     if chars == ['{', '}'] {
         return "{}".to_string();
     }
     let mut out = String::new();
-    bare(&chars, &mut out, true);
+    let cx = Cx {
+        checked,
+        in_brace: false,
+    };
+    if checked {
+        if let Some(lines) = whole_word_backquote(&chars) {
+            return lines;
+        }
+    }
+    bare(&chars, &mut out, true, cx);
     out
+}
+
+/// `"`cmd`"` as a whole word. tcsh yields one word per non-empty output
+/// line and no word at all for empty or newline-only output, where a
+/// quoted zsh array expansion would leave one empty word. The expansion is
+/// therefore left unquoted (array elements are not re-split or globbed).
+fn whole_word_backquote(c: &[char]) -> Option<String> {
+    let inner = c.strip_prefix(&['"'])?.strip_suffix(&['"'])?;
+    let body = inner.strip_prefix(&['`'])?.strip_suffix(&['`'])?;
+    if body.contains(&'`') || body.contains(&'"') {
+        return None;
+    }
+    let src: String = body.iter().collect();
+    let zsh = cmds::translate_line(&src).unwrap_or(src);
+    Some(format!("${{(@)${{(@f)\"$({})\"}}:#}}", zsh.trim()))
 }
 
 /// Where a `$…` expansion sits: in an unquoted word or inside `"…"`.
@@ -116,10 +211,19 @@ enum Ctx {
     Quoted,
 }
 
+/// Translation settings that travel down the recursive-descent helpers.
+#[derive(Clone, Copy)]
+struct Cx {
+    /// emit the tcsh error guards and glob unquoted values
+    checked: bool,
+    /// inside a `{…}` alternative, where tcsh rejects a multi-word `$x`
+    in_brace: bool,
+}
+
 /// Translate unquoted csh text. `word_start` is true when `c` begins a
 /// word (or a brace alternative at the start of a word), which is where
 /// `~` expands and a leading `=` must be protected from zsh's `=cmd`.
-fn bare(c: &[char], out: &mut String, word_start: bool) {
+fn bare(c: &[char], out: &mut String, word_start: bool, cx: Cx) {
     let mut i = 0;
     while i < c.len() {
         let ch = c[i];
@@ -149,13 +253,19 @@ fn bare(c: &[char], out: &mut String, word_start: bool) {
                     i = c.len();
                 }
             },
-            '"' => i = dquoted(c, i + 1, out),
+            '"' => i = dquoted(c, i + 1, out, cx),
             '`' => i = backquote(c, i, Ctx::Bare, out),
-            '$' => i = dollar(c, i + 1, Ctx::Bare, out),
-            '{' => i = brace(c, i, word_start && i == 0, out),
+            '$' => i = dollar(c, i + 1, Ctx::Bare, cx, out),
+            '{' => i = brace(c, i, word_start && i == 0, cx, out),
             '~' if word_start && i == 0 => {
-                out.push('~');
-                i += 1;
+                let user: String = c[1..].iter().take_while(|&&x| is_user_char(x)).collect();
+                if cx.checked && !user.is_empty() {
+                    out.push_str(&known_user(&user));
+                    i += 1 + user.chars().count();
+                } else {
+                    out.push('~');
+                    i += 1;
+                }
             }
             '~' | '=' | '}' => {
                 // `=cmd`, mid-word `~` and a stray `}` are inert in csh but
@@ -177,7 +287,7 @@ fn bare(c: &[char], out: &mut String, word_start: bool) {
 
 /// Translate the body of `"…"` starting after the opening quote; returns
 /// the index after the closing quote (or the end of input when unclosed).
-fn dquoted(c: &[char], mut i: usize, out: &mut String) -> usize {
+fn dquoted(c: &[char], mut i: usize, out: &mut String, cx: Cx) -> usize {
     out.push('"');
     while i < c.len() {
         match c[i] {
@@ -202,7 +312,7 @@ fn dquoted(c: &[char], mut i: usize, out: &mut String) -> usize {
                     i += 1;
                 }
             },
-            '$' => i = dollar(c, i + 1, Ctx::Quoted, out),
+            '$' => i = dollar(c, i + 1, Ctx::Quoted, cx, out),
             '`' => i = backquote(c, i, Ctx::Quoted, out),
             ch => {
                 out.push(ch);
@@ -286,23 +396,24 @@ fn split_alternatives(c: &[char]) -> Vec<&[char]> {
 /// Brace group at `c[open]`. csh drops the braces of a group without a
 /// comma, drops an empty `{}` inside a longer word, and errors on an
 /// unclosed `{` (kept here as a literal).
-fn brace(c: &[char], open: usize, word_start: bool, out: &mut String) -> usize {
+fn brace(c: &[char], open: usize, word_start: bool, cx: Cx, out: &mut String) -> usize {
     let Some(end) = find_brace_end(c, open) else {
         out.push_str("\\{");
         return open + 1;
     };
     let alternatives = split_alternatives(&c[open + 1..end]);
+    let inner = Cx { in_brace: true, ..cx };
     if alternatives.len() > 1 {
         out.push('{');
         for (n, alt) in alternatives.iter().enumerate() {
             if n > 0 {
                 out.push(',');
             }
-            bare(alt, out, word_start);
+            bare(alt, out, word_start, inner);
         }
         out.push('}');
     } else {
-        bare(alternatives[0], out, word_start);
+        bare(alternatives[0], out, word_start, inner);
     }
     end + 1
 }
@@ -346,10 +457,14 @@ struct Reference {
     global: bool,
     /// `:q` seen: words are not re-split
     quote: bool,
+    /// `:q` or `:x` seen: the words are not globbed
+    no_glob: bool,
+    /// csh names of the variables read by subscript bounds (`$x[$i-$#y]`)
+    bound_names: Vec<String>,
 }
 
 /// `$…` with `i` just past the `$`. Returns the index after the reference.
-fn dollar(c: &[char], i: usize, ctx: Ctx, out: &mut String) -> usize {
+fn dollar(c: &[char], i: usize, ctx: Ctx, cx: Cx, out: &mut String) -> usize {
     match c.get(i) {
         None => {
             out.push_str("\\$");
@@ -370,7 +485,7 @@ fn dollar(c: &[char], i: usize, ctx: Ctx, out: &mut String) -> usize {
             let parsed = end.and_then(|e| parse_reference(&c[i + 1..e]).map(|(r, used)| (r, used, e)));
             match parsed {
                 Some((r, used, e)) if used == e - i - 1 => {
-                    render(&r, ctx, out);
+                    render(&r, ctx, cx, out);
                     e + 1
                 }
                 _ => {
@@ -381,7 +496,7 @@ fn dollar(c: &[char], i: usize, ctx: Ctx, out: &mut String) -> usize {
         }
         Some(_) => match parse_reference(&c[i..]) {
             Some((r, used)) => {
-                render(&r, ctx, out);
+                render(&r, ctx, cx, out);
                 i + used
             }
             None => {
@@ -413,6 +528,8 @@ fn parse_reference(c: &[char]) -> Option<(Reference, usize)> {
         modifiers: Vec::new(),
         global: false,
         quote: false,
+        no_glob: false,
+        bound_names: Vec::new(),
     };
     if r.name.is_empty() {
         // bare `$#` (= $#argv) and `$?` (= $status) are the only nameless forms
@@ -425,9 +542,14 @@ fn parse_reference(c: &[char]) -> Option<(Reference, usize)> {
         return None; // tcsh: `$#<num> is not allowed.`
     }
     p = np;
-    if matches!(kind, Kind::Value | Kind::Length) && c.get(p) == Some(&'[') {
-        if let Some((sub, used)) = parse_subscript(&c[p..]) {
+    // tcsh takes no subscript on `$1` or `$*`: `$1[2]` is the value of `$1`
+    // followed by the glob text `[2]`.
+    let positional = r.name == "*" || r.name.chars().all(|ch| ch.is_ascii_digit());
+    if matches!(kind, Kind::Value | Kind::Length) && !positional && c.get(p) == Some(&'[') {
+        let mut names = Vec::new();
+        if let Some((sub, used)) = parse_subscript(&c[p..], &mut names) {
             r.sub = Some(sub);
+            r.bound_names = names;
             p += used;
         }
     }
@@ -462,7 +584,7 @@ fn parse_name(c: &[char], p: usize) -> (String, usize) {
 /// `[*]`, `[n]`, `[n-m]`, `[n-]`, `[-m]`, `[-]` where each bound is digits
 /// or a `$` reference. Returns the subscript and the chars consumed
 /// (brackets included).
-fn parse_subscript(c: &[char]) -> Option<(Sub, usize)> {
+fn parse_subscript(c: &[char], bound_names: &mut Vec<String>) -> Option<(Sub, usize)> {
     let close = c.iter().position(|&x| x == ']')?;
     let inner = &c[1..close];
     if inner == ['*'] {
@@ -478,14 +600,14 @@ fn parse_subscript(c: &[char]) -> Option<(Sub, usize)> {
     let mut dashes = 0;
     for &ch in inner {
         if ch == '-' {
-            bounds.push(bound(&cur)?);
+            bounds.push(bound(&cur, bound_names)?);
             cur.clear();
             dashes += 1;
         } else {
             cur.push(ch);
         }
     }
-    bounds.push(bound(&cur)?);
+    bounds.push(bound(&cur, bound_names)?);
     let sub = match (dashes, bounds.as_slice()) {
         (0, [n]) if !n.is_empty() => Sub::One(n.clone()),
         (1, [lo, hi]) => match (lo.is_empty(), hi.is_empty()) {
@@ -501,7 +623,7 @@ fn parse_subscript(c: &[char]) -> Option<(Sub, usize)> {
 
 /// A subscript bound: empty, digits, `$name`, `${name}` or `$#name`,
 /// spelled for use inside a zsh subscript.
-fn bound(c: &[char]) -> Option<String> {
+fn bound(c: &[char], bound_names: &mut Vec<String>) -> Option<String> {
     if c.iter().all(|ch| ch.is_ascii_digit()) {
         return Some(c.iter().collect());
     }
@@ -511,6 +633,7 @@ fn bound(c: &[char]) -> Option<String> {
     let (r, used) = parse_reference(text)?;
     (used == text.len() && matches!(r.kind, Kind::Value | Kind::Count) && r.sub.is_none())
         .then(|| {
+            bound_names.push(r.name.clone());
             let name = zsh_var_name(&r.name);
             match r.kind {
                 Kind::Count => format!("${{#{name}}}"),
@@ -543,6 +666,7 @@ fn parse_modifiers(c: &[char], r: &mut Reference) -> usize {
             }),
             'q' | 'x' => {
                 r.quote |= letter == 'q';
+                r.no_glob = true;
             }
             's' => {
                 let Some((subst, used)) = parse_substitution(&c[q + 1..]) else { break };
@@ -595,14 +719,16 @@ fn parse_substitution(c: &[char]) -> Option<(Option<(String, String)>, usize)> {
     Some((Some((pattern, rhs)), used))
 }
 
-/// Emit the zsh spelling of `r`.
-fn render(r: &Reference, ctx: Ctx, out: &mut String) {
+/// Emit the zsh spelling of `r`. In checked mode the tcsh error guards
+/// come first: each is a `${…}` that expands to nothing unless tcsh would
+/// have aborted the command.
+fn render(r: &Reference, ctx: Ctx, cx: Cx, out: &mut String) {
+    if cx.checked {
+        out.push_str(&guards(r, ctx, cx));
+    }
     let name = zsh_var_name(if r.name == "status" { "?" } else { &r.name });
     match r.kind {
-        Kind::Count => {
-            let target = if r.name.is_empty() { "argv" } else { name };
-            out.push_str(&format!("${{#{target}}}"));
-        }
+        Kind::Count => out.push_str(&count(r, name, ctx, cx)),
         Kind::IsSet => {
             if r.name.is_empty() {
                 out.push_str("$?");
@@ -611,6 +737,10 @@ fn render(r: &Reference, ctx: Ctx, out: &mut String) {
             } else if r.name.chars().all(|ch| ch.is_ascii_digit()) {
                 // tcsh answers 1 for every positional index, set or not
                 out.push('1');
+            } else if r.name == "prompt" {
+                // tcsh defines `$prompt` only in an interactive shell; zsh
+                // always has the tied PS1, so ask the shell instead.
+                out.push_str("${${${options[interactive]:#off}:+1}:-0}");
             } else {
                 out.push_str(&format!("${{+{name}}}"));
             }
@@ -619,7 +749,43 @@ fn render(r: &Reference, ctx: Ctx, out: &mut String) {
             let base = base_text(name, &r.sub);
             out.push_str(&format!("${{#${{(j::){base}}}}}"));
         }
-        Kind::Value => render_value(r, name, ctx, out),
+        Kind::Value => render_value(r, name, ctx, cx, out),
+    }
+}
+
+/// `$#x`. A csh shell variable is a list, so this is the element count.
+/// The mapped specials (`$#home`, `$#cwd`) are one-word lists. A `setenv`
+/// variable has no `#` form in tcsh: `$#E` is just the value of `$E`;
+/// the name is not known to be an array or a scalar until run time, so
+/// the test is `${(t)E}`.
+fn count(r: &Reference, name: &str, ctx: Ctx, cx: Cx) -> String {
+    if r.name.is_empty() {
+        return "${#argv}".to_string();
+    }
+    if name != r.name || r.name == "status" {
+        return "1".to_string();
+    }
+    if !r.name.chars().any(|ch| ch.is_ascii_uppercase()) {
+        return format!("${{#{name}}}");
+    }
+    let kind = format!("${{(t){name}}}");
+    let array = format!("${{${{(M){kind}:#array*}}:+${{#{name}}}}}");
+    let value = match ctx {
+        Ctx::Bare => split_words(name, cx.checked),
+        Ctx::Quoted => format!("${{{name}}}"),
+    };
+    let scalar = format!("${{${{{kind}:#array*}}:+{value}}}");
+    format!("{array}{scalar}")
+}
+
+/// `${=expr}`: `expr` split at whitespace, and in checked mode globbed like
+/// tcsh globs the words of an unquoted `$x`.
+fn split_words(expr: &str, glob: bool) -> String {
+    let words = format!("${{={expr}}}");
+    if glob {
+        glob_wrap(&words)
+    } else {
+        words
     }
 }
 
@@ -632,13 +798,14 @@ fn base_text(name: &str, sub: &Option<Sub>) -> String {
     }
 }
 
-fn render_value(r: &Reference, name: &str, ctx: Ctx, out: &mut String) {
+fn render_value(r: &Reference, name: &str, ctx: Ctx, cx: Cx, out: &mut String) {
     let split = ctx == Ctx::Bare && !r.quote;
     let scalar_special = name == "?";
+    let glob = cx.checked && !r.no_glob;
     let base = base_text(name, &r.sub);
     let wrap = |expr: &str| {
         if split {
-            format!("${{={expr}}}")
+            split_words(expr, glob)
         } else {
             expr.to_string()
         }
@@ -647,7 +814,7 @@ fn render_value(r: &Reference, name: &str, ctx: Ctx, out: &mut String) {
         if scalar_special {
             out.push_str("$?");
         } else if split {
-            out.push_str(&format!("${{={base}}}"));
+            out.push_str(&split_words(&base, glob));
         } else {
             out.push_str(&format!("${{{base}}}"));
         }
@@ -684,6 +851,149 @@ fn render_value(r: &Reference, name: &str, ctx: Ctx, out: &mut String) {
         Ctx::Bare => out.push_str(&format!("{} {}", wrap(&first), wrap(&rest))),
         Ctx::Quoted => out.push_str(&format!("{first}${{{rest_inner}:+ {rest}}}")),
     }
+}
+
+// ---- checked translation -------------------------------------------------
+
+/// Abort the command with `msg` on stderr and status 1 (a non-interactive
+/// zsh exits, an interactive one returns to the prompt like tcsh) by
+/// expanding `${__csh?msg}` on a parameter that is never set. zsh prefixes
+/// the text with `<script>:<line>: __csh: `; the tcsh text is the suffix.
+/// Single quotes keep a `}` in `msg` from closing the expansion.
+fn abort(msg: &str) -> String {
+    format!("${{__csh?{msg}}}")
+}
+
+/// Expand to `then` when the zsh arithmetic expression `cond` is true and
+/// to nothing otherwise. Only the taken branch is evaluated.
+fn when(cond: &str, then: &str) -> String {
+    format!("${{${{${{:-$(({cond}))}}#0}}:+{then}}}")
+}
+
+/// Variables tcsh defines itself that zsh lacks (or fills in later), plus
+/// the positional forms, which are empty rather than undefined.
+fn always_defined(name: &str) -> bool {
+    const NAMES: [&str; 20] = [
+        "argv", "status", "tcsh", "version", "tty", "shlvl", "owd", "cwd", "user", "shell", "uid",
+        "euid", "gid", "group", "HOST", "HOSTTYPE", "OSTYPE", "MACHTYPE", "VENDOR", "*",
+    ];
+    NAMES.contains(&name) || name.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// `x: Undefined variable.` guard for a read of csh variable `name`.
+/// A mapped special (`home` → `HOME`) is tested through its zsh name but
+/// reported under the csh name.
+fn undefined_guard(name: &str) -> String {
+    if name.is_empty() || always_defined(name) {
+        return String::new();
+    }
+    let msg = "Undefined variable.";
+    let zname = zsh_var_name(name);
+    if zname == name {
+        format!("${{${{{name}?{msg}}}:+}}")
+    } else {
+        format!("${{${{{zname}-${{{name}?{msg}}}}}:+}}")
+    }
+}
+
+/// `x: Subscript out of range.` guard. tcsh numbers the bounds `lo`..`hi`
+/// (`$x[n]` is `n`..`n`, `$x[n-]` ends at the size, `$x[-m]` starts at 1)
+/// and aborts when `hi` is past the size, or when `lo` is 0 and `hi` is
+/// not. `lo > hi` is an empty result, not an error; `$x[0]` is empty.
+fn range_guard(name: &str, sub: &Sub) -> String {
+    let size = format!("${{#{}}}", zsh_var_name(name));
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|ch| ch.is_ascii_digit());
+    let is_zero = |s: &str| digits(s) && s.chars().all(|ch| ch == '0');
+    let nonzero = |s: &str| digits(s) && !is_zero(s);
+    let cond = match sub {
+        Sub::All => return String::new(),
+        Sub::One(n) if is_zero(n) => return String::new(),
+        Sub::One(n) => format!("{n} > {size}"),
+        Sub::Range(lo, hi) if hi == "-1" => {
+            if nonzero(lo) {
+                return String::new();
+            }
+            if is_zero(lo) {
+                format!("{size} != 0")
+            } else {
+                format!("{lo} == 0 && {size} != 0")
+            }
+        }
+        Sub::Range(lo, hi) => {
+            let over = format!("{hi} > {size}");
+            if nonzero(lo) {
+                over
+            } else if is_zero(lo) {
+                format!("{hi} != 0")
+            } else {
+                format!("{over} || ({lo} == 0 && {hi} != 0)")
+            }
+        }
+    };
+    when(&cond, &abort(&format!("{name}: Subscript out of range.")))
+}
+
+/// All guards for one `$` reference, in tcsh's check order: undefined
+/// variables (the subject and any variable in a subscript bound), then the
+/// subscript range, then the `{…}` word-count rule.
+fn guards(r: &Reference, ctx: Ctx, cx: Cx) -> String {
+    let mut g = String::new();
+    if matches!(r.kind, Kind::Value | Kind::Count | Kind::Length) {
+        g.push_str(&undefined_guard(&r.name));
+    }
+    for bound in &r.bound_names {
+        g.push_str(&undefined_guard(bound));
+    }
+    if matches!(r.kind, Kind::Value | Kind::Length) {
+        if let Some(sub) = &r.sub {
+            g.push_str(&range_guard(&r.name, sub));
+        }
+    }
+    // tcsh rebuilds the word around the expansion before it matches the
+    // braces, so `{$v,z}` with two words in `$v` is `Missing '}'.`
+    if cx.in_brace && ctx == Ctx::Bare && r.kind == Kind::Value && r.name != "status" {
+        let base = base_text(zsh_var_name(&r.name), &r.sub);
+        // `:q` keeps each element one word; otherwise the value is split
+        let elements = if r.quote {
+            format!("${{(@){base}}}")
+        } else {
+            format!("${{={base}}}")
+        };
+        let words = format!("${{#{elements}}}");
+        g.push_str(&when(&format!("{words} > 1"), &abort("Missing '}'.")));
+    }
+    g
+}
+
+fn is_user_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.')
+}
+
+/// `~user` at the start of a word. zsh aborts on an unknown user with its
+/// own text before any expansion in the word runs, so the lookup is made in
+/// a subshell and reported with tcsh's `Unknown user: u.`; the directory
+/// itself comes from a quoted command substitution (it may hold blanks).
+fn known_user(user: &str) -> String {
+    let probe = format!("$({{ : ~{user}; }} 2>/dev/null && print known)");
+    let unknown = abort(&format!("Unknown user: {user}."));
+    format!("${{${{{probe}:-{unknown}}}:+}}\"$(print -r -- ~{user})\"")
+}
+
+/// Words tcsh hands to the glob stage: any with `* ? [ {`, or a leading `~`.
+const GLOB_WORD: &str = "(\\~*|*[*?\\[\\{]*)";
+
+/// Glob the words of `words` (an array-valued `${=…}` expression) like
+/// tcsh does for an unquoted variable. tcsh leaves a value with only
+/// `( ) | < > ^ #` alone, so the words are left alone unless one of them
+/// has a glob character; then every word is globbed with those characters
+/// and any `~` past the first column backslash-quoted.
+fn glob_wrap(words: &str) -> String {
+    let count = format!("${{#${{(M){words}:#{GLOB_WORD}}}}}");
+    let quoted = format!("${{(@){words}//(#m)[()|<>^#]/\\\\$MATCH}}");
+    let escaped = format!("${{(@){quoted}//(#b)([^~])~/${{match[1]}}\\\\~}}");
+    let globbed = format!("${{${{{count}:#0}}:+${{~{escaped}}}}}");
+    let plain = format!("${{${{(M){count}:#0}}:+{words}}}");
+    format!("{globbed}{plain}")
 }
 
 /// Names holding an upper-case letter are zsh scalars: `setenv` variables
@@ -773,6 +1083,12 @@ mod tests {
     fn braced_variable_ends_modifier_scope() {
         // tcsh: `echo ${x}:h` with x=a.b prints `a.b:h`
         assert_eq!(t("${x}:h"), "${=x}:h");
+    }
+
+    #[test]
+    fn prompt_is_set_only_in_an_interactive_shell() {
+        assert_eq!(t("$?prompt"), "${${${options[interactive]:#off}:+1}:-0}");
+        assert_eq!(t("${?prompt}"), "${${${options[interactive]:#off}:+1}:-0}");
     }
 
     #[test]
@@ -1057,5 +1373,147 @@ mod tests {
     fn trailing_unterminated_quote_is_closed() {
         assert_eq!(t("\"abc"), "\"abc\"");
         assert_eq!(t("'abc"), "'abc'");
+    }
+
+    fn c(w: &str) -> String {
+        translate_word_checked(w)
+    }
+
+    #[test]
+    fn checked_leaves_variable_free_words_alone() {
+        for w in ["*.c", "a\\ b", "'$x'", "\"abc\"", "{a,b}c", "x{b}y", "~", "~/x", "=ls"] {
+            assert_eq!(c(w), t(w), "{w}");
+        }
+    }
+
+    #[test]
+    fn checked_undefined_variable_guard() {
+        // tcsh -f: `echo $x`, `echo ${x}`, `echo "$x"`, `echo $#x`,
+        // `echo $%x`, `echo $x:h`, `echo $x[1]` all print
+        // `x: Undefined variable.` and end the script with status 1.
+        assert_eq!(c("\"$x\""), "\"${${x?Undefined variable.}:+}${x}\"");
+        assert_eq!(c("$#x"), "${${x?Undefined variable.}:+}${#x}");
+        for w in ["${x}", "$%x", "$x:h", "$x[1]", "\"a${x}b\""] {
+            assert!(c(w).contains("${${x?Undefined variable.}:+}"), "{w}");
+        }
+        // tcsh: `$?x` is 0, `$1` with no argument is an empty word
+        assert_eq!(c("$?x"), "${+x}");
+        assert!(!c("$1").contains("Undefined"));
+        assert!(!c("$argv").contains("Undefined"));
+        assert!(!c("$status").contains("Undefined"));
+    }
+
+    #[test]
+    fn checked_mapped_special_reports_the_csh_name() {
+        // tcsh with HOME unset: `$home` is `home: Undefined variable.`
+        assert!(c("$home").starts_with("${${HOME-${home?Undefined variable.}}:+}"));
+        assert!(c("$term").starts_with("${${TERM-${term?Undefined variable.}}:+}"));
+        // tcsh always defines these
+        assert!(!c("$user").contains("Undefined"));
+        assert!(!c("$cwd").contains("Undefined"));
+    }
+
+    #[test]
+    fn checked_subscript_range_guard() {
+        // tcsh, x=(a b c): `$x[4]`, `$x[3-4]`, `$x[0-2]`, `$x[-4]` and
+        // `$x[4-4]` abort with `x: Subscript out of range.`
+        let msg = "${__csh?x: Subscript out of range.}";
+        assert!(c("$x[4]").contains(&format!("${{${{${{:-$((4 > ${{#x}}))}}#0}}:+{msg}}}")));
+        assert!(c("$x[3-4]").contains("$((4 > ${#x}))"));
+        assert!(c("$x[-4]").contains("$((4 > ${#x}))"));
+        assert!(c("$x[0-2]").contains("$((2 != 0))"));
+        // `$x[0]`, `$x[4-]`, `$x[3-1]`, `$x[-]`, `$x[*]`, `$x[2-3]` never
+        // abort on a size check beyond the upper bound
+        assert!(!c("$x[0]").contains("Subscript"));
+        assert!(!c("$x[4-]").contains("Subscript"));
+        assert!(!c("$x[-]").contains("Subscript"));
+        assert!(!c("$x[*]").contains("Subscript"));
+        // tcsh, x=(a b c): `$x[0-]` aborts, `$e[0-]` with e=() does not
+        assert!(c("$x[0-]").contains("$((${#x} != 0))"));
+    }
+
+    #[test]
+    fn checked_subscript_bounds_from_variables() {
+        // tcsh, x=(a b c): i=4 aborts, i=0 gives an empty word, i unset is
+        // `i: Undefined variable.`
+        let out = c("$x[$i]");
+        assert!(out.contains("${${i?Undefined variable.}:+}"));
+        assert!(out.contains("$((${i} > ${#x}))"));
+        let out = c("$x[$i-$j]");
+        assert!(out.contains("${${j?Undefined variable.}:+}"));
+        assert!(out.contains("$((${j} > ${#x} || (${i} == 0 && ${j} != 0)))"));
+    }
+
+    #[test]
+    fn positional_names_take_no_subscript() {
+        // tcsh, argv=(a b): `echo $1[2]` and `echo $*[3]` are `No match.`:
+        // the value followed by the glob text `[2]`.
+        assert_eq!(t("$1[2]"), "${=1}[2]");
+        assert_eq!(t("$*[3]"), "${=argv}[3]");
+        // `$argv[2]` is a real subscript
+        assert_eq!(t("$argv[2]"), "${=argv[2]}");
+    }
+
+    #[test]
+    fn count_of_environment_variable_is_its_value() {
+        // tcsh: `setenv E 'a b'; echo $#E` prints `a b` (two words);
+        // `set E = (a b c); echo $#E` prints 3.
+        let out = t("$#E");
+        assert!(out.contains("${${(M)${(t)E}:#array*}:+${#E}}"));
+        assert!(out.contains("${${${(t)E}:#array*}:+${=E}}"));
+        assert_eq!(t("\"$#E\""), "\"${${(M)${(t)E}:#array*}:+${#E}}${${${(t)E}:#array*}:+${E}}\"");
+        // lower-case names are csh lists: plain element count
+        assert_eq!(t("$#x"), "${#x}");
+        // the mapped specials are one-word lists
+        assert_eq!(t("$#home"), "1");
+        assert_eq!(t("$#cwd"), "1");
+    }
+
+    #[test]
+    fn checked_unknown_user() {
+        // tcsh: `echo ~nouser/x` is `Unknown user: nouser.`
+        let out = c("~nouser/x");
+        assert!(out.contains("${__csh?Unknown user: nouser.}"));
+        assert!(out.ends_with("\"$(print -r -- ~nouser)\"/x"));
+        // the user probe runs before the directory is expanded
+        assert!(out.starts_with("${${$({ : ~nouser; } 2>/dev/null && print known):-"));
+        // bare `~`, `~/x` and a quoted `~nouser` are not lookups
+        assert_eq!(c("~/x"), "~/x");
+        assert_eq!(c("\"~nouser\""), "\"~nouser\"");
+    }
+
+    #[test]
+    fn checked_brace_with_multi_word_variable() {
+        // tcsh, v=(a b): `{$v,z}`, `x{$v}y` and `{$v:q,z}` are
+        // `Missing '}'.`; `{"$v",z}` and `"{$v,z}"` are fine.
+        for w in ["{$v,z}", "x{$v}y", "{$v:q,z}"] {
+            assert!(c(w).contains("${__csh?Missing '}'.}"), "{w}");
+        }
+        assert!(!c("{\"$v\",z}").contains("Missing"));
+        assert!(!c("\"{$v,z}\"").contains("Missing"));
+    }
+
+    #[test]
+    fn checked_globs_unquoted_values_only() {
+        // tcsh: `set x = '*.c'; echo $x` lists the files; `"$x"`, `$x:q`
+        // and `$x:x` print `*.c`.
+        let out = c("$x");
+        assert!(out.contains("${~${(@)"));
+        assert!(out.contains("(\\~*|*[*?\\[\\{]*)"));
+        for w in ["\"$x\"", "$x:q", "$x:x"] {
+            assert!(!c(w).contains("${~"), "{w}");
+        }
+        // the plain entry point never globs
+        assert_eq!(t("$x"), "${=x}");
+    }
+
+    #[test]
+    fn checked_whole_word_backquote_in_quotes() {
+        // tcsh: `printf '<%s>' A "`printf ''`" B` is <A><B>; zsh keeps one
+        // empty word for the quoted expansion, so it is left unquoted.
+        assert_eq!(c("\"`ls`\""), "${(@)${(@f)\"$(ls)\"}:#}");
+        // glued to other text it must stay quoted: tcsh `"x`printf ''`y"` is xy
+        assert_eq!(c("\"x`ls`y\""), "\"x${(@)${(@f)\"$(ls)\"}:#}y\"");
+        assert_eq!(t("\"`ls`\""), "\"${(@)${(@f)\"$(ls)\"}:#}\"");
     }
 }

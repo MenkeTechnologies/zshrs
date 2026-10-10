@@ -1970,6 +1970,34 @@ pub fn zshrs_main() {
     }
 
     // Handle --dump-zwc for debugging .zwc files
+    // `--csh-translate [--] FILE|-`: print the zsh translation of a csh
+    // script. Used by the `source` / `eval` functions `csh_preamble` defines.
+    if args.len() >= 3 && args[1] == "--csh-translate" {
+        let operand = if args[2] == "--" { args.get(3) } else { args.get(2) };
+        let src = match operand.map(String::as_str) {
+            Some("-") | None => {
+                let mut s = String::new();
+                let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut s);
+                s
+            }
+            Some(path) => match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("{path}: {e}");
+                    std::process::exit(1);
+                }
+            },
+        };
+        match zsh::csh::translate(&src) {
+            Ok(text) => print!("{text}"),
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(1);
+            }
+        }
+        std::process::exit(0);
+    }
+
     if args.len() >= 3 && args[1] == "--dump-zwc" {
         if args.len() >= 4 {
             // Dump specific function
@@ -4318,7 +4346,33 @@ fn process_line(line: &str, executor: &mut ShellExecutor) {
 /// "error only if no word of the list matched" glob rule, `extendedglob`
 /// backs the `:gu`/`:gl` modifiers, `pipefail` gives a pipeline csh's
 /// any-stage-failed status.
-const CSH_PREAMBLE: &str = "setopt cshnullglob extendedglob pipefail\n";
+const CSH_OPTIONS: &str = "setopt cshnullglob extendedglob pipefail\n";
+
+/// Shell variables and functions a csh script expects to find, installed
+/// once per process ahead of the first translated input:
+///   * `tcsh` / `version` / `OSTYPE` / `HOSTTYPE` / `MACHTYPE` — what
+///     `/bin/tcsh` on the same OS reports (`$?tcsh` is the idiom that picks
+///     the tcsh branch of an rc file);
+///   * `source` and `eval` — csh text, so they translate their argument at
+///     run time through `zshrs --csh-translate`. `source` runs the file with
+///     its remaining arguments as `$argv`.
+fn csh_preamble() -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().replace('\'', "'\\''"))
+        .unwrap_or_else(|_| "zshrs".to_string());
+    format!(
+        "{CSH_OPTIONS}\
+         OSTYPE=${{OSTYPE%%[0-9.]*}}\n\
+         tcsh=6.21.00\n\
+         version='tcsh 6.21.00 (Astron) 2019-05-08 ({}-apple-darwin) options wide,nls,dl,bye,al,kan,sm,rh,color,filec'\n\
+         [[ $OSTYPE == darwin ]] && HOSTTYPE=unknown MACHTYPE=unknown\n\
+         source() {{ local __csh_f=$1; shift; builtin eval \"$('{exe}' --csh-translate -- \"$__csh_f\")\"; }}\n\
+         eval() {{ builtin eval \"$(print -r -- \"$*\" | '{exe}' --csh-translate -)\"; }}\n",
+        "unknown"
+    )
+}
+
+static CSH_PREAMBLE_SENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The `--csh` input boundary: csh text in, zsh text out. Every other
 /// personality passes its input through untouched. Errors carry the text
@@ -4327,7 +4381,12 @@ fn csh_input(src: &str) -> Result<String, String> {
     if zsh::emulation_startup::personality() != zsh::emulation_startup::Personality::Csh {
         return Ok(src.to_string());
     }
-    Ok(format!("{CSH_PREAMBLE}{}", zsh::csh::translate(src)?))
+    let text = zsh::csh::translate(src)?;
+    if CSH_PREAMBLE_SENT.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        Ok(format!("{CSH_OPTIONS}{text}"))
+    } else {
+        Ok(format!("{}{text}", csh_preamble()))
+    }
 }
 
 thread_local! {
