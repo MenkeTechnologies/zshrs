@@ -22968,7 +22968,8 @@ mod tests {
             "c:7482 — last expr zero → return 1 (failure)"
         );
 
-        // 3. Bad-syntax arg → return 2 AND clear ERRFLAG_ERROR.
+        // 3. Math error → return 1 (zsh 5.9.2; the dev tree returns 2, builtin.c:7479)
+        //    AND clear ERRFLAG_ERROR.
         // Pre-set errflag manually to simulate matheval failure side
         // effect (since exact bad-syntax behavior of the matheval port
         // is implementation-dependent — what we're pinning is the
@@ -22978,7 +22979,7 @@ mod tests {
         // is already set from a prior step.
         let argv = vec!["1".to_string()];
         let rc = bin_let("let", &argv, &ops, 0);
-        assert_eq!(rc, 2, "c:7479 — `return 2;` after a math error");
+        assert_eq!(rc, 1, "zsh 5.9.2 returns 1 after a math error (dev tree: c:7479 `return 2;`)");
         // c:7478 — `errflag &= ~ERRFLAG_ERROR` must have run.
         assert_eq!(
             errflag.load(Relaxed) & ERRFLAG_ERROR,
