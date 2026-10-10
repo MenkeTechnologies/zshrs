@@ -4378,10 +4378,17 @@ static CSH_PREAMBLE_SENT: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 /// personality passes its input through untouched. Errors carry the text
 /// tcsh prints for the same mistake.
 fn csh_input(src: &str) -> Result<String, String> {
+    csh_input_with(src, zsh::csh::translate)
+}
+
+fn csh_input_with(
+    src: &str,
+    translate: fn(&str) -> Result<String, String>,
+) -> Result<String, String> {
     if zsh::emulation_startup::personality() != zsh::emulation_startup::Personality::Csh {
         return Ok(src.to_string());
     }
-    let text = zsh::csh::translate(src)?;
+    let text = translate(src)?;
     if CSH_PREAMBLE_SENT.swap(true, std::sync::atomic::Ordering::Relaxed) {
         Ok(format!("{CSH_OPTIONS}{text}"))
     } else {
@@ -4409,7 +4416,7 @@ fn csh_line(line: &str) -> Option<String> {
             pending.push('\n');
         }
         pending.push_str(line);
-        match csh_input(&pending) {
+        match csh_input_with(&pending, zsh::csh::translate_partial) {
             Ok(text) => {
                 pending.clear();
                 Some(text)

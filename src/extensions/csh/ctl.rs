@@ -12,6 +12,10 @@
 //!   * `if (e) cmd` → `if c; then cmd; fi`. `cmd` is one pipeline: it ends
 //!     at `;`, `&&`, `||` or `&`, and the operator then applies to the whole
 //!     `if` (tcsh: `if (0) echo a && echo c` prints `c`).
+//!   * `if e cmd` (no parentheses) → the same. The expression is the
+//!     longest run of `operand (binary-op operand)*` words, with `!`, `~`
+//!     and `-X` file tests as prefixes; the first word that cannot extend it
+//!     starts the command (`if 1 == 1 echo a`, `if -e f echo a`).
 //!   * `foreach v (w...)` / `end` → `for v in w...; do` / `done`
 //!   * `while (e)` / `end` → `while c; do` / `done`
 //!   * `repeat N cmd` → `repeat N; do cmd; done`
@@ -21,13 +25,30 @@
 //!     fallthrough); each label then opens a guard
 //!     `if (( m && m <= k ))`, which gives csh fallthrough, and `breaksw`
 //!     is `break`. The whole switch is buffered until its `endsw` because
-//!     the dispatch needs every label.
-//!   * `break` / `continue` count the `switch` loops between the statement
-//!     and the csh loop (`break 2`).
-//!   * `goto` / `label:` — labels at top level become `case` arms of a
-//!     dispatcher loop with `;&` fallthrough; `goto` assigns the label and
-//!     `continue`s the dispatcher. This needs the whole input, so `finish`
-//!     re-translates the retained lines when a `goto` was seen.
+//!     the dispatch needs every label. The switch word is globbed like any
+//!     csh word: several matches give `W: Ambiguous.`, none `W: No match.`,
+//!     an unquoted `{a,b}` list `W: Ambiguous.`, more than one word
+//!     `Syntax Error.`.
+//!   * `break` / `continue` count the `switch` loops and goto dispatchers
+//!     between the statement and the csh loop (`break 2`).
+//!   * `goto` / `label:` — the whole input becomes a dispatcher loop whose
+//!     `case` arms are the labels (`;&` fallthrough); `goto` assigns the
+//!     arm and `continue`s the dispatcher. Needs the whole input, so
+//!     `finish` re-translates the retained lines when a `goto` or
+//!     `onintr label` was seen. A block whose body holds a label gets its
+//!     own dispatcher around that body (`foreach`/`while`/`if` branches and
+//!     `case` bodies), so a `goto` from inside the body, or from a nested
+//!     block, to a label of an enclosing body works, forward and backward
+//!     (`goto next` to a `next:` later in the same `foreach` body). A label
+//!     in an `if` branch can also be reached from outside the `if`, like
+//!     tcsh: the branch is entered as if its condition had held and a later
+//!     `else` skips to `endif` (`__csh_in<n>` forces the branch, `__blk<n>`
+//!     is the entry arm in front of the `if`). `goto $var` is a `case` over
+//!     the labels inside blocks, then the top-level dispatcher.
+//!   * `label:` resets `$status` to 0, with or without a `goto`.
+//!   * `onintr label` → `trap '__csh_pc=label; continue 1000' INT`:
+//!     `continue 1000` unwinds to the outermost loop, which is the goto
+//!     dispatcher. `onintr -` ignores INT, bare `onintr` restores it.
 //!   * `$status`: tcsh resets it to 0 on entering any branch, loop body and
 //!     after `endif`/`end`/`endsw`. When the input mentions `status`,
 //!     `finish` re-translates with `:` inserted at those points.
@@ -36,26 +57,83 @@
 //! `if: Empty if.`, …) become a runtime stub (`print -ru2 -- msg; exit 1`)
 //! so output produced before the line still happens, like tcsh.
 //!
-//! Not supported: `onintr label` (Err), `goto` into a label that sits inside
-//! a block (Err), `if expr cmd` without parentheses (stub, tcsh accepts it),
-//! the tcsh quirk where `if (0) foreach …` / `if (0) if (1) then` run the
-//! following block lines unconditionally (here the block nests under the
-//! outer `if`).
+//! End of input inside an open block. `finish` returns `Err` with tcsh's
+//! text (`then: then/endif not found.`, `foreach: end not found.`,
+//! `while: end not found.`, `switch: endsw not found.`, `else: endif not
+//! found.`, every one ending in `not found.`) so a prompt reader can keep
+//! collecting lines (`super::translate` and the prompt reader in
+//! `bins/zshrs.rs` use `finish`). `finish_eof` is for input that really
+//! ended (a script file, a `-c` string): it reproduces what tcsh does — it
+//! runs the body that was reached and fails only when it must skip forward
+//! over the missing closer:
+//!   * `if (1) then` … EOF runs silently; false with no `else` fails with
+//!     `then: then/endif not found.`; a taken `then` branch that reaches
+//!     `else`/`else if` fails with `else: endif not found.`.
+//!   * `foreach`/`while` … EOF runs the first iteration, then the script
+//!     ends (status of the last command); `continue` starts the next
+//!     iteration, and after the last one fails with `continue: end not
+//!     found.` (`while: end not found.` for `while`); an empty `foreach`
+//!     list or a false `while` fails with `foreach: end not found.` /
+//!     `while: end not found.`; `break` fails with `break: end not found.`.
+//!   * `switch` … EOF runs the matched (or default) case silently; no match
+//!     fails with `switch: endsw not found.`; `breaksw` fails with
+//!     `breaksw: endsw not found.`.
+//!
+//! Not reproduced:
+//!   * `goto` to a label inside a `foreach`/`while`/`switch` body from
+//!     outside that body: tcsh runs the rest of the body and then fails at
+//!     `end` with `end: Not in while/foreach.` (a `foreach` variable is
+//!     `i: Undefined variable.`; a switch body runs to `breaksw` and skips
+//!     to `endsw`). Becomes a runtime `goto: L: jumping into a block is not
+//!     supported` error, exit 1; `onintr` naming a label inside a block is
+//!     the same error when the `onintr` runs.
+//!   * `onintr` (no argument) followed by a real SIGINT: tcsh exits 1, zsh
+//!     is killed by the signal (130).
+//!   * `if (0) foreach …` / `if (0) while …` / `if (0) switch …`: tcsh
+//!     skips only the opener, so the body lines run unconditionally and
+//!     `end` fails with `end: Not in while/foreach.` (`foreach` body:
+//!     `i: Undefined variable.`; a `switch` body runs every case); here the
+//!     block nests under the `if`. `if (0) if (1) then` IS reproduced (the
+//!     body runs unconditionally).
+//!   * The switch word checks (`Ambiguous.`, `No match.`, `Syntax Error.`)
+//!     cover a literal word and a bare `$name`; a glob or list that only
+//!     appears after variable expansion is not checked.
+
+use std::collections::{HashMap, HashSet};
 
 use super::lex::split_words;
 use super::{cmds, expr, words};
 
-/// Open block on the translation stack.
+/// Region id of the top level (the outermost goto dispatcher).
+const TOP_REGION: usize = 0;
+/// Region id of code a `goto` can never target: a switch body before its
+/// first label, the dead part after a second `else`.
+const NO_REGION: usize = usize::MAX;
+
+/// Open block on the translation stack. `bid` numbers blocks in source
+/// order (stable across passes); `rid` is the region (branch body) the
+/// frame is currently inside, see [`Region`].
 enum Frame {
     /// zsh `if`; `extra_fi` counts dead `if false; then` nests opened by
     /// repeated `else` (tcsh skips everything after a second `else`).
-    If { has_else: bool, extra_fi: usize },
+    If {
+        has_else: bool,
+        extra_fi: usize,
+        bid: usize,
+        rid: usize,
+    },
     /// zsh `for`/`while` from csh `foreach`/`while`; `kw` names it in the
     /// "end not found" error.
-    Loop { kw: &'static str },
+    Loop {
+        kw: &'static str,
+        bid: usize,
+        rid: usize,
+    },
     /// One-iteration `for` carrying a csh `switch`.
     Switch {
         id: usize,
+        bid: usize,
+        rid: usize,
         labels_seen: usize,
         body_open: bool,
         body_empty: bool,
@@ -65,11 +143,52 @@ enum Frame {
     Wrap,
 }
 
+impl Frame {
+    fn bid(&self) -> Option<usize> {
+        match self {
+            Frame::If { bid, .. } | Frame::Loop { bid, .. } | Frame::Switch { bid, .. } => {
+                Some(*bid)
+            }
+            Frame::Wrap => None,
+        }
+    }
+
+    fn rid(&self) -> Option<usize> {
+        match self {
+            Frame::If { rid, .. } | Frame::Loop { rid, .. } | Frame::Switch { rid, .. } => {
+                Some(*rid)
+            }
+            Frame::Wrap => None,
+        }
+    }
+
+    fn set_rid(&mut self, new: usize) {
+        match self {
+            Frame::If { rid, .. } | Frame::Loop { rid, .. } | Frame::Switch { rid, .. } => {
+                *rid = new;
+            }
+            Frame::Wrap => {}
+        }
+    }
+}
+
+/// A body that contains goto labels and therefore runs inside its own
+/// dispatcher: `pcN=''; while :; do case "$pcN" in ('') … ;& (label) … esac;
+/// break; done`. `owner` is the stack index of the frame whose current
+/// branch the body is.
+struct Region {
+    rid: usize,
+    owner: usize,
+}
+
 /// A `switch` collected up to its `endsw`.
 struct Buffered {
     word: String,
+    /// Statements that precede the switch loop (glob check of the word).
+    pre: Vec<String>,
     pieces: Vec<String>,
     nest: usize,
+    bid: usize,
 }
 
 /// Which extra translation features a pass has enabled.
@@ -77,6 +196,57 @@ struct Buffered {
 struct Modes {
     goto: bool,
     status: bool,
+    /// Give label-bearing bodies their own dispatcher (needs `PassInfo`).
+    regions: bool,
+}
+
+/// Facts one pass learns and a later pass consumes.
+#[derive(Clone, Default)]
+struct PassInfo {
+    /// Region of the first occurrence of each label.
+    label_region: HashMap<String, usize>,
+    /// Regions from the top level down to each label's body, as
+    /// `(region, bid of the owning `if`)`; the top level is first.
+    label_path: HashMap<String, Vec<(usize, Option<usize>)>>,
+    /// Regions that get a dispatcher.
+    bearing: HashSet<usize>,
+    /// For an `if` (by bid): the branch bodies a `goto` from outside the
+    /// `if` can enter.
+    entry: HashMap<usize, HashSet<usize>>,
+    /// `Some(bids)` when the input ends inside these blocks and the pass
+    /// must reproduce tcsh's end-of-file behaviour.
+    eof_open: Option<HashSet<usize>>,
+}
+
+impl PassInfo {
+    /// Decide which bodies get a dispatcher and which `if` branches can be
+    /// entered from outside. A label's own body always gets one; when the
+    /// body is a chain of `if` branches up from the enclosing body, each
+    /// branch is enterable and its parent body needs an entry arm too.
+    /// Returns false when no body holds a label.
+    fn plan_regions(&mut self) -> bool {
+        for path in self.label_path.values() {
+            if path.iter().any(|&(r, _)| r == NO_REGION) {
+                continue;
+            }
+            let Some(&(last, _)) = path.last() else {
+                continue;
+            };
+            if last == TOP_REGION {
+                continue;
+            }
+            self.bearing.insert(last);
+            for i in (1..path.len()).rev() {
+                let (rid, Some(bid)) = path[i] else {
+                    break;
+                };
+                self.entry.entry(bid).or_default().insert(rid);
+                self.bearing.insert(rid);
+                self.bearing.insert(path[i - 1].0);
+            }
+        }
+        !self.bearing.is_empty()
+    }
 }
 
 /// A `case`/`default` label found by the switch pre-scan.
@@ -92,45 +262,53 @@ enum Label {
 /// closer.
 pub struct Translator {
     stack: Vec<Frame>,
+    regions: Vec<Region>,
     buf: Option<Buffered>,
     modes: Modes,
+    info: PassInfo,
     is_retry: bool,
     base_indent: usize,
     raw: Vec<String>,
     start: Option<usize>,
     end: usize,
     next_id: usize,
+    next_bid: usize,
+    next_rid: usize,
     seen_goto: bool,
     seen_status: bool,
     last_closer: bool,
-    goto_targets: Vec<String>,
-    inner_labels: Vec<String>,
 }
 
 impl Translator {
     pub fn new() -> Self {
-        Self::with_modes(Modes {
-            goto: false,
-            status: false,
-        })
+        Self::with_modes(
+            Modes {
+                goto: false,
+                status: false,
+                regions: false,
+            },
+            PassInfo::default(),
+        )
     }
 
-    fn with_modes(modes: Modes) -> Self {
+    fn with_modes(modes: Modes, info: PassInfo) -> Self {
         Self {
             stack: Vec::new(),
+            regions: Vec::new(),
             buf: None,
             modes,
+            info,
             is_retry: false,
             base_indent: if modes.goto { 2 } else { 0 },
             raw: Vec::new(),
             start: None,
             end: 0,
             next_id: 0,
+            next_bid: 0,
+            next_rid: TOP_REGION + 1,
             seen_goto: false,
             seen_status: false,
             last_closer: false,
-            goto_targets: Vec::new(),
-            inner_labels: Vec::new(),
         }
     }
 
@@ -163,45 +341,116 @@ impl Translator {
         Ok(())
     }
 
-    /// Called at end of input; errors for unterminated blocks with tcsh's
-    /// text (`then/endif not found.`, `end not found.`, `endsw not found.`).
-    /// When a `goto` or a `status` mention was seen, the first-pass output is
-    /// replaced by a second pass with the matching feature enabled.
+    /// Called when a prompt reader asks whether the input is complete: an
+    /// unterminated block is an `Err` with tcsh's text (`then:
+    /// then/endif not found.`, `foreach: end not found.`, …), always ending
+    /// in `not found.`, so the caller keeps reading lines. When a `goto`,
+    /// `onintr label` or a `status` mention was seen, the first-pass output
+    /// is replaced by a pass with the matching feature enabled.
     pub fn finish(&mut self, out: &mut String) -> Result<(), String> {
-        let intact = out.len() == self.end && self.start.is_some_and(|s| s <= out.len());
+        let intact = self.output_intact(out);
         self.finish_pass(out)?;
-        let want = Modes {
-            goto: self.seen_goto,
-            status: self.seen_status,
-        };
+        let want = self.wanted_modes();
         if self.is_retry || want == self.modes || !intact {
             return Ok(());
         }
-        let mut sub = Self::with_modes(want);
-        sub.is_retry = true;
-        let mut text = String::new();
+        self.retranslate(out, None)
+    }
+
+    /// Called when the input really ended (script file, `-c` string). A
+    /// block still open is translated the way tcsh runs it: the reached
+    /// body executes and an error is raised only where tcsh has to skip
+    /// forward over the missing `endif`/`end`/`endsw` (see the module
+    /// docs). Without an open block this is `finish`.
+    pub fn finish_eof(&mut self, out: &mut String) -> Result<(), String> {
+        let mut open: HashSet<usize> = self.stack.iter().filter_map(Frame::bid).collect();
+        if let Some(b) = &self.buf {
+            open.insert(b.bid);
+        }
+        if open.is_empty() {
+            return self.finish(out);
+        }
+        if self.is_retry || !self.output_intact(out) {
+            return self.finish_pass(out);
+        }
+        self.retranslate(out, Some(open))
+    }
+
+    /// `out` still ends exactly where the last `feed` left it, so the text
+    /// this translator produced can be replaced.
+    fn output_intact(&self, out: &String) -> bool {
+        out.len() == self.end && self.start.is_some_and(|s| s <= out.len())
+    }
+
+    fn wanted_modes(&self) -> Modes {
+        Modes {
+            goto: self.seen_goto,
+            status: self.seen_status,
+            regions: false,
+        }
+    }
+
+    /// Replace this translator's output by a translation of the retained
+    /// lines with the features the first pass found a need for. A goto
+    /// pass that finds labels inside blocks is followed by a pass that
+    /// gives those blocks their dispatchers.
+    fn retranslate(
+        &mut self,
+        out: &mut String,
+        eof_open: Option<HashSet<usize>>,
+    ) -> Result<(), String> {
+        let raw = std::mem::take(&mut self.raw);
+        let want = self.wanted_modes();
+        let info = PassInfo {
+            eof_open,
+            ..PassInfo::default()
+        };
+        let (mut text, mut info) = Self::run_pass(&raw, want, info)?;
         if want.goto {
-            text.push_str("__csh_pc='#start'\nwhile :; do\n  case $__csh_pc in\n  ('#start')\n");
+            if info.plan_regions() {
+                let with_regions = Modes {
+                    regions: true,
+                    ..want
+                };
+                text = Self::run_pass(&raw, with_regions, info)?.0;
+            }
         }
-        for line in std::mem::take(&mut self.raw) {
-            sub.feed(&line, &mut text)?;
-        }
-        sub.finish_pass(&mut text)?;
         out.truncate(self.start.unwrap_or(0));
         out.push_str(&text);
         Ok(())
     }
 
+    /// Translate `raw` once with `modes`; returns the text and what the
+    /// pass learned.
+    fn run_pass(
+        raw: &[String],
+        modes: Modes,
+        info: PassInfo,
+    ) -> Result<(String, PassInfo), String> {
+        let mut sub = Self::with_modes(modes, info);
+        sub.is_retry = true;
+        let mut text = String::new();
+        if modes.goto {
+            text.push_str("__csh_pc='#start'\nwhile :; do\n  case $__csh_pc in\n  ('#start')\n");
+        }
+        for line in raw {
+            sub.feed(line, &mut text)?;
+        }
+        sub.finish_pass(&mut text)?;
+        Ok((text, sub.info))
+    }
+
     /// End-of-input checks and trailers for this pass.
     fn finish_pass(&mut self, out: &mut String) -> Result<(), String> {
-        if self.buf.is_some() {
-            return Err("switch: endsw not found.".to_string());
-        }
-        if let Some(msg) = self.open_block_error() {
-            return Err(msg.to_string());
-        }
-        if let Some(t) = self.goto_targets.iter().find(|t| self.inner_labels.contains(t)) {
-            return Err(format!("goto: label {t}: inside a block is not supported"));
+        if self.info.eof_open.is_some() {
+            self.close_open_blocks(out)?;
+        } else {
+            if self.buf.is_some() {
+                return Err("switch: endsw not found.".to_string());
+            }
+            if let Some(msg) = self.open_block_error() {
+                return Err(msg.to_string());
+            }
         }
         // tcsh leaves status 0 after a block closer; zsh keeps the last
         // body status, which would become the script's exit status.
@@ -222,11 +471,17 @@ impl Translator {
         self.stack.iter().rev().find_map(|f| match f {
             Frame::If { has_else: true, .. } => Some("else: endif not found."),
             Frame::If { .. } => Some("then: then/endif not found."),
-            Frame::Loop { kw: "while" } => Some("while: end not found."),
+            Frame::Loop { kw: "while", .. } => Some("while: end not found."),
             Frame::Loop { .. } => Some("foreach: end not found."),
             Frame::Switch { .. } => Some("switch: endsw not found."),
             Frame::Wrap => None,
         })
+    }
+
+    /// True when the block `bid` is still open at the end of the input
+    /// (only known in an end-of-file pass).
+    fn open_at_eof(&self, bid: usize) -> bool {
+        self.info.eof_open.as_ref().is_some_and(|s| s.contains(&bid))
     }
 
     // ---- output helpers -------------------------------------------------
@@ -239,12 +494,15 @@ impl Translator {
     }
 
     /// Indent level of statements inside the innermost frame: one per open
-    /// block, two per `switch` (its loop and the label guard).
+    /// block, two per `switch` (its loop and the label guard), two per
+    /// active goto dispatcher (its `while` and `case`).
     fn depth(&self) -> usize {
-        self.stack
+        let frames: usize = self
+            .stack
             .iter()
             .map(|f| if matches!(f, Frame::Switch { .. }) { 2 } else { 1 })
-            .sum()
+            .sum();
+        frames + 2 * self.regions.len()
     }
 
     fn body_level(&self) -> usize {
@@ -299,6 +557,214 @@ impl Translator {
         }
     }
 
+    // ---- regions ---------------------------------------------------------
+
+    fn alloc_bid(&mut self) -> usize {
+        self.next_bid += 1;
+        self.next_bid - 1
+    }
+
+    fn alloc_rid(&mut self) -> usize {
+        self.next_rid += 1;
+        self.next_rid - 1
+    }
+
+    /// Region the next statement belongs to.
+    fn cur_rid(&self) -> usize {
+        self.stack
+            .iter()
+            .rev()
+            .find_map(Frame::rid)
+            .unwrap_or(TOP_REGION)
+    }
+
+    /// Start a new branch body in the innermost frame (`rid` fresh) and
+    /// give it a dispatcher when a label lives in it.
+    fn enter_branch(&mut self, out: &mut String, rid: usize) {
+        if let Some(f) = self.stack.last_mut() {
+            f.set_rid(rid);
+        }
+        self.open_region(out);
+    }
+
+    /// Open the dispatcher of the current branch body when it holds a
+    /// label (second pass only). Statements of the body then sit one
+    /// `while`/`case` deeper.
+    fn open_region(&mut self, out: &mut String) {
+        let rid = self.cur_rid();
+        if !self.modes.regions || !self.info.bearing.contains(&rid) {
+            return;
+        }
+        let level = self.depth();
+        let var = pc_var(rid);
+        // A body entered by a `goto` from outside already holds its label.
+        match self.entry_flag(rid) {
+            Some(flag) => {
+                self.line(out, level, &format!("[[ -n ${flag} ]] || {var}=''"));
+                self.line(out, level, &format!("{flag}=''"));
+            }
+            None => self.line(out, level, &format!("{var}=''")),
+        }
+        self.line(out, level, "while :; do");
+        self.line(out, level + 1, &format!("case \"${var}\" in"));
+        self.line(out, level + 1, "('')");
+        self.regions.push(Region {
+            rid,
+            owner: self.stack.len().saturating_sub(1),
+        });
+    }
+
+    /// Close the dispatcher of the innermost frame's current branch body,
+    /// if it has one.
+    fn close_region(&mut self, out: &mut String) {
+        let owner = self.stack.len().saturating_sub(1);
+        if self.regions.last().map(|r| r.owner) != Some(owner) || self.stack.is_empty() {
+            return;
+        }
+        self.regions.pop();
+        let level = self.depth();
+        self.line(out, level + 2, ";;");
+        self.line(out, level + 1, "esac");
+        self.line(out, level + 1, "break");
+        self.line(out, level, "done");
+    }
+
+    /// Variable that forces the branch `rid` of its `if` (set by a `goto`
+    /// from outside), when that branch can be entered that way.
+    fn entry_flag(&self, rid: usize) -> Option<String> {
+        match self.stack.last() {
+            Some(Frame::If { bid, .. })
+                if self.info.entry.get(bid).is_some_and(|s| s.contains(&rid)) =>
+            {
+                Some(format!("__csh_in{bid}"))
+            }
+            _ => None,
+        }
+    }
+
+    /// Condition of branch `rid` of the `if` numbered `bid`. A `goto` into
+    /// the `if` sets `__csh_in<bid>` to the branch to run: that branch is
+    /// taken without evaluating anything and every other condition fails.
+    fn branch_cond(&self, bid: usize, rid: usize, cond: &str) -> String {
+        let Some(entry) = self.info.entry.get(&bid) else {
+            return cond.to_string();
+        };
+        let flag = format!("__csh_in{bid}");
+        let plain = format!("[[ -z ${flag} ]] && {{ {cond}; }}");
+        if entry.contains(&rid) {
+            format!("{{ [[ ${flag} == {rid} ]] || {{ {plain}; }}; }}")
+        } else {
+            format!("{{ {plain}; }}")
+        }
+    }
+
+    /// `;&` plus the case arm `(name)` at the current body level of a
+    /// dispatcher: statements that follow are reached by a `goto name`.
+    fn emit_arm(&mut self, out: &mut String, name: &str) {
+        let level = self.base_indent + self.depth();
+        out.push_str(&"  ".repeat(level));
+        out.push_str(";&\n");
+        out.push_str(&"  ".repeat(level - 1));
+        out.push_str(&format!("({})\n", sh_quote(name)));
+        self.last_closer = false;
+    }
+
+    /// True when the current body runs inside a dispatcher.
+    fn in_dispatcher(&self) -> bool {
+        let rid = self.cur_rid();
+        rid == TOP_REGION
+            || (self.modes.regions && self.regions.last().is_some_and(|r| r.rid == rid))
+    }
+
+    /// Dispatcher loops (and open frames' own loops) that sit between a
+    /// statement and the dispatcher of the frame at stack index `owner`
+    /// (`None`: the top-level dispatcher).
+    fn loops_inside(&self, owner: Option<usize>) -> usize {
+        let from = owner.map_or(0, |o| o + 1);
+        let frames = self.stack[from..]
+            .iter()
+            .filter(|f| matches!(f, Frame::Loop { .. } | Frame::Switch { .. }))
+            .count();
+        let regions = self.regions.iter().filter(|r| r.owner >= from).count();
+        frames + regions
+    }
+
+    /// Number of active dispatchers owned by frame `k`.
+    fn regions_of(&self, k: usize) -> usize {
+        self.regions.iter().filter(|r| r.owner == k).count()
+    }
+
+    // ---- end of input inside open blocks ----------------------------------
+
+    /// Close every block still open at the end of the input the way tcsh
+    /// ends the script (module docs, "End of input inside an open block").
+    fn close_open_blocks(&mut self, out: &mut String) -> Result<(), String> {
+        if let Some(b) = self.buf.take() {
+            self.emit_switch(b, out)?;
+        }
+        while let Some(frame) = self.stack.last() {
+            match frame {
+                Frame::Wrap => {
+                    self.stack.pop();
+                    let level = self.depth();
+                    self.line(out, level, "fi");
+                }
+                Frame::If { .. } => self.eof_close_if(out),
+                Frame::Loop { .. } => self.eof_close_loop(out),
+                Frame::Switch { .. } => self.close_switch(out, true),
+            }
+        }
+        Ok(())
+    }
+
+    /// An `if` that ends with the input: a branch that was taken just
+    /// ends; nothing taken is tcsh skipping to an `endif` that is not there.
+    fn eof_close_if(&mut self, out: &mut String) {
+        self.close_region(out);
+        let Some(Frame::If {
+            has_else, extra_fi, ..
+        }) = self.stack.last()
+        else {
+            return;
+        };
+        let (has_else, extra) = (*has_else, *extra_fi);
+        let level = self.depth() - 1;
+        if !has_else {
+            self.line(out, level, "else");
+            self.line(out, level + 1, &stub("then: then/endif not found."));
+        }
+        for _ in 0..=extra {
+            self.line(out, level, "fi");
+        }
+        self.stack.pop();
+    }
+
+    /// A loop that ends with the input: falling off the end of the first
+    /// iteration ends the script; `continue` reaches the next iteration, and
+    /// running out of iterations is tcsh skipping to a missing `end`.
+    fn eof_close_loop(&mut self, out: &mut String) {
+        self.close_region(out);
+        let Some(Frame::Loop { kw, bid, .. }) = self.stack.last() else {
+            return;
+        };
+        let (kw, bid) = (*kw, *bid);
+        let level = self.depth() - 1;
+        self.line(out, level + 1, "exit $?");
+        self.line(out, level, "done");
+        self.stack.pop();
+        if kw == "while" {
+            self.emit_stub(out, "while: end not found.");
+        } else {
+            let ran = format!("__csh_ran{bid}");
+            let level = self.body_level();
+            self.line(out, level, &format!("if (( {ran} )); then"));
+            self.line(out, level + 1, &stub("continue: end not found."));
+            self.line(out, level, "else");
+            self.line(out, level + 1, &stub("foreach: end not found."));
+            self.line(out, level, "fi");
+        }
+    }
+
     // ---- statement dispatch --------------------------------------------
 
     fn piece(&mut self, stmt: &str, out: &mut String) -> Result<(), String> {
@@ -343,30 +809,21 @@ impl Translator {
                 Ok(self.switch_break())
             }
             "goto" => self.goto_text(rest),
-            "onintr" => match rest {
-                "" => Ok("trap - INT".to_string()),
-                "-" => Ok("trap '' INT".to_string()),
-                _ => Err("onintr: interrupt handler label is not supported".to_string()),
-            },
+            "onintr" => self.onintr_text(rest),
             "repeat" => self.repeat_text(rest),
-            "if" => {
-                if !rest.starts_with('(') {
-                    return Ok(stub("if: Expression Syntax."));
-                }
-                match paren_group(rest) {
-                    Err(m) => Ok(stub(m)),
-                    Ok((inner, after)) => {
-                        let after = after.trim();
-                        if after.is_empty() {
-                            Ok(stub("if: Empty if."))
-                        } else if after == "then" || starts_with_word(after, "then") {
-                            Ok(stub("if: Improper then."))
-                        } else {
-                            self.if_oneline_text(inner, after)
-                        }
+            "if" => match if_parts(rest) {
+                Err(m) => Ok(stub(m)),
+                Ok((inner, after)) => {
+                    let after = after.trim();
+                    if after.is_empty() {
+                        Ok(stub("if: Empty if."))
+                    } else if after == "then" || starts_with_word(after, "then") {
+                        Ok(stub("if: Improper then."))
+                    } else {
+                        self.if_oneline_text(&inner, after)
                     }
                 }
-            }
+            },
             _ => cmds::translate_line(stmt),
         }
     }
@@ -422,29 +879,45 @@ impl Translator {
 
     // ---- break / continue / breaksw / goto -----------------------------
 
-    /// `break`/`continue` for the innermost csh loop; `switch` loops in
-    /// between are skipped with a count argument.
+    /// `break`/`continue` for the innermost csh loop; `switch` loops and
+    /// goto dispatchers in between are skipped with a count argument.
     fn loop_jump(&self, kw: &str) -> String {
-        let mut switches = 0;
-        for f in self.stack.iter().rev() {
+        let mut skipped = 0;
+        for (k, f) in self.stack.iter().enumerate().rev() {
+            let d = self.regions_of(k);
             match f {
-                Frame::Loop { .. } => return jump(kw, switches + 1),
-                Frame::Switch { .. } => switches += 1,
-                _ => {}
+                Frame::Loop { bid, .. } => {
+                    // The loop's closer never comes: tcsh skips to the end
+                    // of the input looking for it.
+                    if kw == "break" && self.open_at_eof(*bid) {
+                        return stub("break: end not found.");
+                    }
+                    return jump(kw, skipped + d + 1);
+                }
+                Frame::Switch { .. } => skipped += 1 + d,
+                Frame::If { .. } => skipped += d,
+                Frame::Wrap => {}
             }
         }
         stub(&format!("{kw}: Not in while/foreach."))
     }
 
     /// `breaksw`: leave the innermost switch loop, through any csh loops
-    /// opened inside the case body.
+    /// and dispatchers opened inside the case body.
     fn switch_break(&self) -> String {
-        let mut loops = 0;
-        for f in self.stack.iter().rev() {
+        let mut skipped = 0;
+        for (k, f) in self.stack.iter().enumerate().rev() {
+            let d = self.regions_of(k);
             match f {
-                Frame::Switch { .. } => return jump("break", loops + 1),
-                Frame::Loop { .. } => loops += 1,
-                _ => {}
+                Frame::Switch { bid, .. } => {
+                    if self.open_at_eof(*bid) {
+                        return stub("breaksw: endsw not found.");
+                    }
+                    return jump("break", skipped + d + 1);
+                }
+                Frame::Loop { .. } => skipped += 1 + d,
+                Frame::If { .. } => skipped += d,
+                Frame::Wrap => {}
             }
         }
         stub("breaksw: endsw not found.")
@@ -462,19 +935,137 @@ impl Translator {
             return Ok(stub("goto: not available in this pass"));
         }
         let word = &args[0];
+        if word.contains('$') || word.contains('`') {
+            return Ok(self.computed_goto(&words::translate_word(word)));
+        }
+        match self.goto_plan(word) {
+            Some((assign, depth)) => Ok(format!("{assign}; {}", jump("continue", depth + 1))),
+            None => Ok(stub(&format!(
+                "goto: {word}: jumping into a block is not supported"
+            ))),
+        }
+    }
+
+    /// `goto $var`: the label is known only at run time. Labels inside
+    /// blocks get a `case` arm each with the plan `goto_plan` computes for
+    /// this statement; anything else is handed to the top-level dispatcher.
+    fn computed_goto(&self, value: &str) -> String {
+        let top_depth = self.loops_inside(None);
+        let fallback = format!("__csh_pc={value}; {}", jump("continue", top_depth + 1));
+        if !self.modes.regions {
+            return fallback;
+        }
+        let mut labels: Vec<&String> = self
+            .info
+            .label_path
+            .iter()
+            .filter(|(_, p)| p.last().is_some_and(|&(r, _)| r != TOP_REGION))
+            .map(|(l, _)| l)
+            .collect();
+        labels.sort();
+        let mut text = format!("case {value} in");
+        for l in labels {
+            let arm = match self.goto_plan(l) {
+                Some((assign, depth)) => format!("{assign}; {}", jump("continue", depth + 1)),
+                None => stub(&format!("goto: {l}: jumping into a block is not supported")),
+            };
+            text.push_str(&format!(" ({}) {arm};;", sh_quote(l)));
+        }
+        text.push_str(&format!(" (*) {fallback};; esac"));
+        text
+    }
+
+    /// `(region, bid of the owning if)` for every body from the top level to
+    /// the current statement.
+    fn region_path(&self) -> Vec<(usize, Option<usize>)> {
+        let steps = self.stack.iter().filter_map(|f| match f {
+            Frame::If { rid, bid, .. } => Some((*rid, Some(*bid))),
+            Frame::Loop { rid, .. } | Frame::Switch { rid, .. } => Some((*rid, None)),
+            Frame::Wrap => None,
+        });
+        std::iter::once((TOP_REGION, None)).chain(steps).collect()
+    }
+
+    /// How a `goto label` reaches its label: the assignments that select
+    /// the arm in each dispatcher on the way, and the number of zsh loops
+    /// between the statement and the dispatcher to `continue`. `None` when
+    /// the label sits in a block this statement cannot enter.
+    ///
+    /// A label in an enclosing body just sets that body's variable. A label
+    /// in an `if` branch that does not enclose the statement is entered
+    /// from the nearest enclosing body: it jumps to the entry arm of the
+    /// outermost `if`, and each `if` on the way is told which branch to run
+    /// (`branch_cond`). Loop and switch bodies cannot be entered.
+    fn goto_plan(&self, label: &str) -> Option<(String, usize)> {
+        let top = || {
+            let assign = format!("__csh_pc={}", sh_quote(label));
+            Some((assign, self.loops_inside(None)))
+        };
+        let Some(path) = self.info.label_path.get(label) else {
+            return top();
+        };
+        let &(last, _) = path.last()?;
+        if last == TOP_REGION || !self.modes.regions {
+            // The first goto pass is replaced once the regions are known.
+            return top();
+        }
+        let active = |rid: usize| rid == TOP_REGION || self.regions.iter().any(|r| r.rid == rid);
+        let j = path.iter().rposition(|&(rid, _)| active(rid))?;
+        let owner = self.regions.iter().find(|r| r.rid == path[j].0).map(|r| r.owner);
+        let loops = self.loops_inside(owner);
+        // Bodies below `j` are entered through their `if`s; a loop or
+        // switch body cannot be.
+        let mut assigns = Vec::new();
+        for i in j + 1..path.len() {
+            let (rid, Some(bid)) = path[i] else {
+                return None;
+            };
+            assigns.push(format!("__csh_in{bid}={rid}"));
+        }
+        for i in j..path.len() {
+            let target = match path.get(i + 1) {
+                Some(&(_, Some(bid))) => sh_quote(&format!("__blk{bid}")),
+                _ => sh_quote(label),
+            };
+            assigns.push(format!("{}={target}", pc_var(path[i].0)));
+        }
+        Some((assigns.join("; "), loops))
+    }
+
+    /// `onintr`: `-` ignores INT, no argument restores it, a label jumps
+    /// to that label from wherever the signal arrives.
+    fn onintr_text(&mut self, rest: &str) -> Result<String, String> {
+        let args = split_words(rest);
+        match args.len() {
+            0 => return Ok("trap - INT".to_string()),
+            1 => {}
+            _ => return Ok(stub("onintr: Too many arguments.")),
+        }
+        let word = &args[0];
+        if word == "-" {
+            return Ok("trap '' INT".to_string());
+        }
+        self.seen_goto = true;
+        if !self.modes.goto {
+            return Ok(":".to_string());
+        }
         let value = if word.contains('$') || word.contains('`') {
             words::translate_word(word)
         } else {
-            self.goto_targets.push(word.clone());
+            match self.info.label_region.get(word.as_str()) {
+                None | Some(&TOP_REGION) => {}
+                Some(_) => {
+                    return Ok(stub(&format!(
+                        "onintr: {word}: jumping into a block is not supported"
+                    )));
+                }
+            }
             sh_quote(word)
         };
-        // Every csh loop and switch loop between here and the dispatcher.
-        let depth = self
-            .stack
-            .iter()
-            .filter(|f| matches!(f, Frame::Loop { .. } | Frame::Switch { .. }))
-            .count();
-        Ok(format!("__csh_pc={value}; {}", jump("continue", depth + 1)))
+        // `continue 1000` leaves every loop up to the outermost one, which
+        // is the goto dispatcher.
+        let handler = format!("__csh_pc={value}; continue 1000");
+        Ok(format!("trap {} INT", sh_quote(&handler)))
     }
 
     /// `label:` on a line of its own.
@@ -485,15 +1076,24 @@ impl Translator {
         }
         let name = &head[..head.len() - 1];
         if !self.modes.goto {
+            // No dispatcher, but the label line still resets `$status`.
+            if self.modes.status {
+                self.emit(out, ":");
+            }
             return Ok(());
         }
-        if !self.stack.is_empty() {
-            self.inner_labels.push(name.to_string());
-            return Ok(());
+        let rid = self.cur_rid();
+        let path = self.region_path();
+        self.info.label_region.entry(name.to_string()).or_insert(rid);
+        self.info.label_path.entry(name.to_string()).or_insert(path);
+        if self.in_dispatcher() {
+            self.emit_arm(out, name);
+            // A label line is a command that succeeds: it resets `$status`.
+            if self.modes.status {
+                let level = self.depth();
+                self.line(out, level, ":");
+            }
         }
-        out.push_str("    ;&\n");
-        out.push_str(&format!("  ({})\n", sh_quote(name)));
-        self.last_closer = false;
         Ok(())
     }
 
@@ -504,11 +1104,7 @@ impl Translator {
             self.emit_stub(out, "if: Too few arguments.");
             return Ok(());
         }
-        if !rest.starts_with('(') {
-            self.emit_stub(out, "if: Expression Syntax.");
-            return Ok(());
-        }
-        let (inner, after) = match paren_group(rest) {
+        let (inner, after) = match if_parts(rest) {
             Ok(g) => g,
             Err(m) => {
                 self.emit_stub(out, m);
@@ -519,24 +1115,46 @@ impl Translator {
         if after.is_empty() {
             self.emit_stub(out, "if: Empty if.");
         } else if after == "then" {
-            let c = expr::translate_condition(inner)?;
-            self.emit(out, &format!("if {c}; then"));
-            self.stack.push(Frame::If {
-                has_else: false,
-                extra_fi: 0,
-            });
+            let c = expr::translate_condition(&inner)?;
+            self.open_if(out, &c);
         } else if starts_with_word(after, "then") {
             self.emit_stub(out, "if: Improper then.");
+        } else if let Some(conds) = if_chain(&inner, after) {
+            // `if (c1) if (c2) then`: when c1 is false tcsh skips only the
+            // one-line `if`, so the body lines run unconditionally.
+            let mut text = String::new();
+            for c in &conds[..conds.len() - 1] {
+                text.push_str(&format!("! {{ {}; }} || ", expr::translate_condition(c)?));
+            }
+            text.push_str(&expr::translate_condition(&conds[conds.len() - 1])?);
+            self.open_if(out, &text);
         } else if self.opens_block(after) {
-            let c = expr::translate_condition(inner)?;
+            let c = expr::translate_condition(&inner)?;
             self.emit(out, &format!("if {c}; then"));
             self.stack.push(Frame::Wrap);
             self.piece(after, out)?;
         } else {
-            let text = self.if_oneline_text(inner, after)?;
+            let text = self.if_oneline_text(&inner, after)?;
             self.emit(out, &text);
         }
         Ok(())
+    }
+
+    /// Emit the opening `if … then` line and push its frame.
+    fn open_if(&mut self, out: &mut String, cond: &str) {
+        let (bid, rid) = (self.alloc_bid(), self.alloc_rid());
+        if self.info.entry.contains_key(&bid) && self.in_dispatcher() {
+            self.emit_arm(out, &format!("__blk{bid}"));
+        }
+        let cond = self.branch_cond(bid, rid, cond);
+        self.emit(out, &format!("if {cond}; then"));
+        self.stack.push(Frame::If {
+            has_else: false,
+            extra_fi: 0,
+            bid,
+            rid,
+        });
+        self.open_region(out);
     }
 
     /// True when `stmt` (the command of a one-line `if`) starts a block
@@ -545,7 +1163,7 @@ impl Translator {
         let (head, rest) = split_head(stmt);
         match head {
             "foreach" | "while" | "switch" => true,
-            "if" if rest.starts_with('(') => match paren_group(rest) {
+            "if" => match if_parts(rest) {
                 Ok((_, after)) => {
                     let after = after.trim();
                     after == "then" || (!after.is_empty() && self.opens_block(after))
@@ -557,25 +1175,38 @@ impl Translator {
     }
 
     fn kw_else(&mut self, rest: &str, out: &mut String) -> Result<(), String> {
-        let (has_else, level) = match self.stack.last() {
-            Some(Frame::If { has_else, .. }) => (*has_else, self.depth() - 1),
-            _ => {
-                self.emit_stub(out, "else: endif not found.");
-                return Ok(());
-            }
+        if !matches!(self.stack.last(), Some(Frame::If { .. })) {
+            self.emit_stub(out, "else: endif not found.");
+            return Ok(());
+        }
+        self.close_region(out);
+        let (has_else, bid, level) = match self.stack.last() {
+            Some(Frame::If { has_else, bid, .. }) => (*has_else, *bid, self.depth() - 1),
+            _ => return Ok(()),
         };
+        // A taken `then` branch that reaches `else` makes tcsh skip to an
+        // `endif`; when the input ends first that is an error.
+        if !has_else && self.open_at_eof(bid) {
+            self.line(out, level + 1, &stub("else: endif not found."));
+        }
         // `else if (c) then` continues the chain.
         let (head, r2) = split_head(rest);
-        if head == "if" && r2.starts_with('(') {
-            if let Ok((inner, after)) = paren_group(r2) {
+        if head == "if" {
+            if let Ok((inner, after)) = if_parts(r2) {
                 if after.trim() == "then" {
                     if has_else {
                         return self.dead_else(out);
                     }
-                    let c = expr::translate_condition(inner)?;
+                    let c = expr::translate_condition(&inner)?;
                     let c = if self.modes.status { format!(":; {c}") } else { c };
+                    let rid = self.alloc_rid();
+                    let c = match self.stack.last().and_then(Frame::bid) {
+                        Some(bid) => self.branch_cond(bid, rid, &c),
+                        None => c,
+                    };
                     self.line(out, level, &format!("elif {c}; then"));
                     self.last_closer = false;
+                    self.enter_branch(out, rid);
                     return Ok(());
                 }
             }
@@ -587,6 +1218,8 @@ impl Translator {
             if let Some(Frame::If { has_else, .. }) = self.stack.last_mut() {
                 *has_else = true;
             }
+            let rid = self.alloc_rid();
+            self.enter_branch(out, rid);
             if self.modes.status {
                 let l = self.body_level();
                 self.line(out, l, ":");
@@ -604,8 +1237,11 @@ impl Translator {
     fn dead_else(&mut self, out: &mut String) -> Result<(), String> {
         let level = self.depth();
         self.line(out, level, "if false; then");
-        if let Some(Frame::If { extra_fi, .. }) = self.stack.last_mut() {
-            *extra_fi += 1;
+        if let Some(f) = self.stack.last_mut() {
+            f.set_rid(NO_REGION);
+            if let Frame::If { extra_fi, .. } = f {
+                *extra_fi += 1;
+            }
         }
         Ok(())
     }
@@ -615,8 +1251,12 @@ impl Translator {
             self.emit_stub(out, "endif: Too many arguments.");
             return Ok(());
         }
-        if let Some(Frame::If { extra_fi, .. }) = self.stack.last() {
-            let extra = *extra_fi;
+        if matches!(self.stack.last(), Some(Frame::If { .. })) {
+            self.close_region(out);
+            let extra = match self.stack.last() {
+                Some(Frame::If { extra_fi, .. }) => *extra_fi,
+                _ => 0,
+            };
             let level = self.depth() - 1;
             for _ in 0..=extra {
                 self.line(out, level, "fi");
@@ -664,8 +1304,24 @@ impl Translator {
         } else {
             format!(" {}", items.join(" "))
         };
+        let (bid, rid) = (self.alloc_bid(), self.alloc_rid());
+        // An unterminated foreach tells "no iteration" from "ran out of
+        // iterations" through this flag (module docs).
+        let ran_flag = self.open_at_eof(bid).then(|| format!("__csh_ran{bid}"));
+        if let Some(flag) = &ran_flag {
+            self.emit(out, &format!("{flag}=0"));
+        }
         self.emit(out, &format!("for {var} in{words_text}; do"));
-        self.stack.push(Frame::Loop { kw: "foreach" });
+        self.stack.push(Frame::Loop {
+            kw: "foreach",
+            bid,
+            rid,
+        });
+        self.open_region(out);
+        if let Some(flag) = ran_flag {
+            let l = self.body_level();
+            self.line(out, l, &format!("{flag}=1"));
+        }
         if self.modes.status {
             let l = self.body_level();
             self.line(out, l, ":");
@@ -691,7 +1347,13 @@ impl Translator {
             Ok((inner, _)) => {
                 let c = expr::translate_condition(inner)?;
                 self.emit(out, &format!("while {c}; do"));
-                self.stack.push(Frame::Loop { kw: "while" });
+                let (bid, rid) = (self.alloc_bid(), self.alloc_rid());
+                self.stack.push(Frame::Loop {
+                    kw: "while",
+                    bid,
+                    rid,
+                });
+                self.open_region(out);
             }
         }
         Ok(())
@@ -703,6 +1365,7 @@ impl Translator {
             return Ok(());
         }
         if matches!(self.stack.last(), Some(Frame::Loop { .. })) {
+            self.close_region(out);
             let level = self.depth() - 1;
             self.line(out, level, "done");
             self.stack.pop();
@@ -737,20 +1400,60 @@ impl Translator {
             }
         };
         let args = split_words(inner);
+        let mut pre = Vec::new();
         let word = match args.len() {
             0 => "''".to_string(),
-            1 => words::translate_word(&args[0]),
+            1 => self.switch_word(&args[0], &mut pre),
             _ => {
                 self.emit_stub(out, "Syntax Error.");
                 return Ok(());
             }
         };
+        let bid = self.alloc_bid();
         self.buf = Some(Buffered {
             word,
+            pre,
             pieces: Vec::new(),
             nest: 0,
+            bid,
         });
         Ok(())
+    }
+
+    /// The zsh word a switch tests. tcsh globs it like any word: an
+    /// unquoted `{a,b}` list or several glob matches are `Ambiguous.`, no
+    /// match is `No match.`. The checks go to `pre`.
+    fn switch_word(&self, w: &str, pre: &mut Vec<String>) -> String {
+        let translated = words::translate_word(w);
+        if let Some(name) = bare_variable(w) {
+            // csh variables are lists: undefined is an error, more than one
+            // word is not a single switch word.
+            let z = words::zsh_var_name(name);
+            let undefined = stub(&format!("{name}: Undefined variable."));
+            pre.push(format!("(( ${{+{z}}} )) || {{ {undefined}; }}"));
+            // `"${(@)v}"` is one word per element for a list and exactly
+            // one for the scalar a `foreach` variable is.
+            pre.push(format!("__csh_g=(\"${{(@){z}}}\")"));
+            pre.push(format!("(( $#__csh_g > 1 )) && {{ {}; }}", stub("Syntax Error.")));
+            return translated;
+        }
+        if has_brace_list(w) {
+            pre.push(stub(&format!("{w}: Ambiguous.")));
+            return translated;
+        }
+        if !has_unquoted_glob(w) {
+            return translated;
+        }
+        pre.push(format!("__csh_g=({translated}(N))"));
+        pre.push(format!(
+            "(( $#__csh_g > 1 )) && {{ {}; }}",
+            stub(&format!("{w}: Ambiguous."))
+        ));
+        pre.push(format!(
+            "(( $#__csh_g )) || {{ {}; }}",
+            stub(&format!("{w}: No match."))
+        ));
+        "${__csh_g[1]}".to_string()
     }
 
     /// While a switch is buffered: collect statements until the matching
@@ -764,11 +1467,9 @@ impl Translator {
             "switch" => b.nest += 1,
             "endsw" if b.nest > 0 => b.nest -= 1,
             "endsw" => {
-                let b = self.buf.take().unwrap_or(Buffered {
-                    word: String::new(),
-                    pieces: Vec::new(),
-                    nest: 0,
-                });
+                let Some(b) = self.buf.take() else {
+                    return Ok(());
+                };
                 self.emit_switch(b, out)?;
                 return self.piece(stmt, out);
             }
@@ -784,6 +1485,9 @@ impl Translator {
         let id = self.next_id;
         self.next_id += 1;
         let m = format!("__csh_m{id}");
+        for text in &b.pre {
+            self.emit(out, text);
+        }
         let level = self.depth();
         self.emit(out, "for __csh_sw in 1; do");
         self.line(out, level + 1, &format!("{m}=0"));
@@ -806,6 +1510,8 @@ impl Translator {
         self.line(out, level + 1, "esac");
         self.stack.push(Frame::Switch {
             id,
+            bid: b.bid,
+            rid: NO_REGION,
             labels_seen: 0,
             body_open: false,
             body_empty: true,
@@ -819,27 +1525,33 @@ impl Translator {
     /// `case pat:` / `default:` — closes the previous label's guard and
     /// opens this one. Text after the colon is dropped, as tcsh does.
     fn kw_label(&mut self, out: &mut String) -> Result<(), String> {
-        let level = self.depth().saturating_sub(1);
-        if let Some(Frame::Switch {
-            id,
-            labels_seen,
-            body_open,
-            body_empty,
-        }) = self.stack.last_mut()
-        {
-            *labels_seen += 1;
-            let (m, k) = (format!("__csh_m{id}"), *labels_seen);
-            let (was_open, was_empty) = (*body_open, *body_empty);
-            *body_open = true;
-            *body_empty = true;
-            if was_open {
-                if was_empty {
-                    self.line(out, level + 1, ":");
+        if matches!(self.stack.last(), Some(Frame::Switch { .. })) {
+            self.close_region(out);
+            let level = self.depth().saturating_sub(1);
+            if let Some(Frame::Switch {
+                id,
+                labels_seen,
+                body_open,
+                body_empty,
+                ..
+            }) = self.stack.last_mut()
+            {
+                *labels_seen += 1;
+                let (m, k) = (format!("__csh_m{id}"), *labels_seen);
+                let (was_open, was_empty) = (*body_open, *body_empty);
+                *body_open = true;
+                *body_empty = true;
+                if was_open {
+                    if was_empty {
+                        self.line(out, level + 1, ":");
+                    }
+                    self.line(out, level, "fi");
                 }
-                self.line(out, level, "fi");
+                self.line(out, level, &format!("if (( {m} && {m} <= {k} )); then"));
+                self.last_closer = false;
             }
-            self.line(out, level, &format!("if (( {m} && {m} <= {k} )); then"));
-            self.last_closer = false;
+            let rid = self.alloc_rid();
+            self.enter_branch(out, rid);
             return Ok(());
         }
         // A label inside a nested block still occupies an index.
@@ -853,25 +1565,45 @@ impl Translator {
     }
 
     fn kw_endsw(&mut self, out: &mut String) -> Result<(), String> {
-        if let Some(Frame::Switch {
+        if matches!(self.stack.last(), Some(Frame::Switch { .. })) {
+            self.close_switch(out, false);
+            self.after_close(out);
+        }
+        Ok(())
+    }
+
+    /// Close the innermost switch's guard and loop. `at_eof`: the `endsw`
+    /// never came, so a switch that matched no label is tcsh skipping to a
+    /// missing `endsw`.
+    fn close_switch(&mut self, out: &mut String, at_eof: bool) {
+        self.close_region(out);
+        let Some(Frame::Switch {
+            id,
             body_open,
             body_empty,
             ..
         }) = self.stack.last()
-        {
-            let (open, empty) = (*body_open, *body_empty);
-            let level = self.depth() - 1;
-            if open {
-                if empty {
-                    self.line(out, level + 1, ":");
-                }
-                self.line(out, level, "fi");
+        else {
+            return;
+        };
+        let (id, open, empty) = (*id, *body_open, *body_empty);
+        let level = self.depth() - 1;
+        if open {
+            if empty {
+                self.line(out, level + 1, ":");
             }
-            self.line(out, level - 1, "done");
-            self.stack.pop();
-            self.after_close(out);
+            self.line(out, level, "fi");
         }
-        Ok(())
+        if at_eof {
+            let m = format!("__csh_m{id}");
+            self.line(
+                out,
+                level,
+                &format!("(( {m} )) || {{ {}; }}", stub("switch: endsw not found.")),
+            );
+        }
+        self.line(out, level - 1, "done");
+        self.stack.pop();
     }
 }
 
@@ -1039,14 +1771,14 @@ fn cut_list(cmd: &str) -> (&str, Option<(&'static str, &str)>) {
 
 /// Head keyword of a statement after peeling one-line `if (c)` prefixes.
 fn leading_kw(stmt: &str) -> String {
-    let mut s = stmt;
+    let mut cur = stmt.to_string();
     loop {
-        let (head, rest) = split_head(s);
-        if head == "if" && rest.starts_with('(') {
-            if let Ok((_, after)) = paren_group(rest) {
+        let (head, rest) = split_head(&cur);
+        if head == "if" {
+            if let Ok((_, after)) = if_parts(rest) {
                 let after = after.trim();
                 if !after.is_empty() && after != "then" {
-                    s = after;
+                    cur = after.to_string();
                     continue;
                 }
             }
@@ -1120,6 +1852,225 @@ fn case_pattern(pat: &str) -> String {
     } else {
         w
     }
+}
+
+
+/// True when `stmt` starts with a word this layer handles itself (block
+/// keywords, jumps, `repeat`, `onintr`, `label:`).
+fn is_control_head(stmt: &str) -> bool {
+    let (head, _) = split_head(stmt);
+    matches!(
+        head,
+        "if" | "else"
+            | "endif"
+            | "foreach"
+            | "while"
+            | "end"
+            | "switch"
+            | "case"
+            | "default"
+            | "default:"
+            | "endsw"
+            | "break"
+            | "continue"
+            | "breaksw"
+            | "goto"
+            | "onintr"
+            | "repeat"
+    ) || (head.len() > 1 && head.ends_with(':'))
+}
+
+/// Variable holding the label a `goto` selected for region `rid`.
+fn pc_var(rid: usize) -> String {
+    if rid == TOP_REGION {
+        "__csh_pc".to_string()
+    } else {
+        format!("__csh_pc{rid}")
+    }
+}
+
+/// Binary operators of a parenthesis-less `if` expression, as separate
+/// words. `&&`, `||`, `|` and `&` are absent: tcsh splits the line into a
+/// command list at them before `if` sees it (`if -f a && -r a echo x` is
+/// `if -f a` followed by a list, which fails with `if: Empty if.`). `<` and `>`
+/// (and `<=`, `>=`, `<<`, `>>`) are redirections wherever they stand.
+const BINARY_OPS: &[&str] = &[
+    "^", "==", "!=", "=~", "!~", "+", "-", "*", "/", "%",
+];
+
+/// Index just past one operand starting at word `i`: `!`/`~` prefixes,
+/// then an optional `-X` file test, then one word.
+fn operand_end(ws: &[String], mut i: usize) -> Option<usize> {
+    while i < ws.len() && matches!(ws[i].as_str(), "!" | "~") {
+        i += 1;
+    }
+    let is_file_test = |w: &str| {
+        let b = w.as_bytes();
+        b.len() == 2 && b[0] == b'-' && b[1].is_ascii_alphabetic()
+    };
+    if i < ws.len() && is_file_test(&ws[i]) {
+        i += 1;
+    }
+    (i < ws.len()).then_some(i + 1)
+}
+
+/// Number of leading words of `ws` that form one csh expression:
+/// `operand (binary-op operand)*`. The first word that cannot extend it
+/// belongs to the command of a parenthesis-less `if`.
+fn expr_word_count(ws: &[String]) -> usize {
+    let Some(mut i) = operand_end(ws, 0) else {
+        return 0;
+    };
+    while i < ws.len() && BINARY_OPS.contains(&ws[i].as_str()) {
+        match operand_end(ws, i + 1) {
+            Some(j) => i = j,
+            None => break,
+        }
+    }
+    i
+}
+
+/// Split the text after `if` into (expression, rest). `(e) rest` gives the
+/// parenthesised group; without a parenthesis the expression is found by
+/// [`expr_word_count`], like tcsh's `if 1 == 1 echo a`.
+fn if_parts(rest: &str) -> Result<(String, String), &'static str> {
+    if rest.starts_with('(') {
+        let (inner, after) = paren_group(rest)?;
+        return Ok((inner.to_string(), after.to_string()));
+    }
+    // Redirections may stand anywhere on the line; they belong to the command.
+    let mut ws = Vec::new();
+    let mut redirs: Vec<String> = Vec::new();
+    let mut it = split_words(rest).into_iter();
+    while let Some(w) = it.next() {
+        if w.starts_with(['<', '>']) {
+            let bare_op = w.chars().all(|c| matches!(c, '<' | '>' | '&' | '!'));
+            redirs.push(w);
+            if bare_op {
+                redirs.extend(it.next());
+            }
+        } else {
+            ws.push(w);
+        }
+    }
+    let n = expr_word_count(&ws);
+    if n == 0 {
+        return Err("if: Expression Syntax.");
+    }
+    let expr = ws[..n].join(" ");
+    let mut after = ws[n..].join(" ");
+    if after.starts_with(['&', '|']) {
+        // `&&`, `||`, `|`, `&` end the `if` command: nothing to run.
+        after.clear();
+    } else if !after.is_empty() && !redirs.is_empty() {
+        after.push(' ');
+        after.push_str(&redirs.join(" "));
+    }
+    Ok((expr, after))
+}
+
+/// For `if (c1) if (c2) … if (cN) then` the conditions c1..cN; `None` when
+/// the chain of one-line `if`s does not end in `then`.
+fn if_chain(inner: &str, after: &str) -> Option<Vec<String>> {
+    let mut conds = vec![inner.to_string()];
+    let mut cur = after.trim().to_string();
+    loop {
+        let (head, rest) = split_head(&cur);
+        if head != "if" {
+            return None;
+        }
+        let (c, a) = if_parts(rest).ok()?;
+        conds.push(c);
+        let a = a.trim().to_string();
+        if a == "then" {
+            return Some(conds);
+        }
+        if a.is_empty() {
+            return None;
+        }
+        cur = a;
+    }
+}
+
+/// An unquoted `{a,b}` list (a `{}` or `{a}` stays literal in csh).
+fn has_brace_list(w: &str) -> bool {
+    // 0: brace without comma, 1: with comma, 2: `${…}`.
+    let mut open: Vec<u8> = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut prev = ' ';
+    let mut chars = w.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            chars.next();
+            prev = c;
+            continue;
+        }
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' | '`' => quote = Some(c),
+                '{' => open.push(if prev == '$' { 2 } else { 0 }),
+                ',' => {
+                    if let Some(f) = open.last_mut().filter(|f| **f == 0) {
+                        *f = 1;
+                    }
+                }
+                '}' => {
+                    if open.pop() == Some(1) {
+                        return true;
+                    }
+                }
+                _ => {}
+            },
+        }
+        prev = c;
+    }
+    false
+}
+
+/// An unquoted `*`, `?` or `[` in a word without variable or command
+/// substitution.
+fn has_unquoted_glob(w: &str) -> bool {
+    if w.contains('$') || w.contains('`') {
+        return false;
+    }
+    let mut quote: Option<char> = None;
+    let mut chars = w.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            chars.next();
+            continue;
+        }
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' => quote = Some(c),
+                '*' | '?' | '[' => return true,
+                _ => {}
+            },
+        }
+    }
+    false
+}
+
+/// `name` of a word that is exactly `$name` or `${name}` for a plain
+/// identifier (not `$status`, not a subscript or `$#`/`$?` form).
+fn bare_variable(w: &str) -> Option<&str> {
+    let name = w
+        .strip_prefix("${")
+        .and_then(|r| r.strip_suffix('}'))
+        .or_else(|| w.strip_prefix('$'))?;
+    let ident = name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+    (ident && name != "status").then_some(name)
 }
 
 #[cfg(test)]
@@ -1332,7 +2283,7 @@ mod tests {
 
     #[test]
     fn unterminated_blocks_report_tcsh_text() {
-        let err = |src: &str| super::super::translate(src).unwrap_err();
+        let err = |src: &str| super::super::translate_partial(src).unwrap_err();
         assert_eq!(err("if (1) then\necho a"), "then: then/endif not found.");
         assert_eq!(err("if (1) then\necho a\nelse\necho b"), "else: endif not found.");
         assert_eq!(err("foreach i (1)\necho $i"), "foreach: end not found.");
@@ -1364,16 +2315,400 @@ mod tests {
     }
 
     #[test]
-    fn goto_into_a_block_is_rejected() {
-        let e = super::super::translate("if (1) then\nL:\necho a\nendif\ngoto L").unwrap_err();
-        assert!(e.contains("inside a block"), "{e}");
+    fn goto_to_a_label_in_an_enclosing_loop_body_keeps_the_loop() {
+        // tcsh: forward and backward jumps inside a foreach/while body leave
+        // the loop running.
+        check(
+            "foreach i (1 2 3)\nif ($i == 2) goto skip\necho body $i\nskip:\necho tail $i\nend\necho done",
+            "body 1\ntail 1\ntail 2\nbody 3\ntail 3\ndone\n",
+        );
+        check(
+            "set n = 0\nforeach i (1 2)\nagain:\n@ n++\necho i=$i n=$n\nif ($n < 3) goto again\nend\necho n=$n",
+            "i=1 n=1\ni=1 n=2\ni=1 n=3\ni=2 n=4\nn=4\n",
+        );
+        // From an inner loop to a label after it in the outer body.
+        check(
+            "foreach i (1 2)\nforeach j (a b)\nif ($j == b) goto nexti\necho $i$j\nend\nnexti:\necho -- $i\nend",
+            "1a\n-- 1\n2a\n-- 2\n",
+        );
+        check(
+            "set n = 0\nwhile ($n < 3)\n@ n++\nif ($n == 2) goto skip\necho n=$n\nskip:\nend\necho done",
+            "n=1\nn=3\ndone\n",
+        );
     }
 
     #[test]
-    fn onintr_forms() {
+    fn break_and_continue_count_the_goto_dispatchers_of_their_bodies() {
+        check(
+            "set i = 0\nwhile ($i < 6)\n@ i++\nif ($i == 2) continue\nmark:\nif ($i == 5) break\necho i=$i\nend\necho out=$i",
+            "i=1\ni=3\ni=4\nout=5\n",
+        );
+        check(
+            "foreach x (a b)\nswitch ($x)\ncase a:\necho a1\ngoto over\necho never\nover:\necho a2\nbreaksw\ncase b:\necho b\nbreaksw\nendsw\nend",
+            "a1\na2\nb\n",
+        );
+        // breaksw out of an if inside a case body that holds a label.
+        check(
+            "switch (a)\ncase a:\nif (1) then\nL:\necho in\nbreaksw\nendif\necho nr\nendsw\necho after",
+            "in\nafter\n",
+        );
+    }
+
+    #[test]
+    fn goto_into_an_if_branch_from_outside_runs_the_branch() {
+        // tcsh enters the branch as if its condition had held; reaching the
+        // following `else` then skips to `endif`.
+        check("echo a\ngoto L\nif (0) then\necho no\nL:\necho in\nendif\necho after", "a\nin\nafter\n");
+        check("goto L\nif (1) then\necho no\nelse\nL:\necho in\nendif\necho after", "in\nafter\n");
+        check(
+            "goto L\nif (0) then\necho no\nL:\necho in\nelse\necho else\nendif\necho after",
+            "in\nafter\n",
+        );
+        // From the else branch back into the then branch of the same if.
+        check(
+            "if (\"\") then\necho no\ninthen:\necho in-then\nelse\necho in-else\ngoto inthen\nendif\necho after",
+            "in-else\nin-then\nafter\n",
+        );
+        // Through two nested ifs.
+        check(
+            "goto L\nif (0) then\nif (0) then\nL:\necho deep\nendif\nendif\necho after",
+            "deep\nafter\n",
+        );
+    }
+
+    #[test]
+    fn goto_into_a_loop_or_switch_body_from_outside_is_a_runtime_error() {
+        // tcsh runs the body and then fails at `end`; not reproduced.
+        for body in [
+            "goto L\nforeach i (1)\nL:\necho in\nend",
+            "goto L\nwhile (0)\nL:\necho in\nend",
+            "goto L\nswitch (x)\ncase x:\nL:\necho in\nendsw",
+        ] {
+            if let Some((o, e, rc)) = run(&format!("echo pre\n{body}\necho post")) {
+                assert_eq!(o, "pre\n", "{body}");
+                assert!(e.contains("goto: L: jumping into a block is not supported"), "{body}: {e}");
+                assert_eq!(rc, 1, "{body}");
+            }
+        }
+        // The dead part of a goto to a label that exists nowhere still
+        // reports tcsh's text.
+        if let Some((_, e, rc)) = run("goto nolabel") {
+            assert!(e.contains("nolabel: label not found."), "{e}");
+            assert_eq!(rc, 1);
+        }
+    }
+
+    #[test]
+    fn computed_goto_reaches_labels_inside_bodies() {
+        check(
+            "foreach step (one two)\ngoto $step\none:\necho first\ngoto cont\ntwo:\necho second\ncont:\nend",
+            "first\nsecond\n",
+        );
+        check("set where = beta\ngoto $where\nalpha:\necho alpha\nbeta:\necho beta", "beta\n");
+    }
+
+    #[test]
+    fn label_resets_status() {
+        check("false\nL:\necho st=$status", "st=0\n");
+        check("set n = 0\nif (1) then\ntop:\n@ n++\nfalse\necho st=$status\nif ($n < 2) goto top\nendif\necho end=$status", "st=1\nst=1\nend=0\n");
+    }
+
+    #[test]
+    fn onintr_label_runs_the_handler_wherever_the_signal_lands() {
+        check("onintr cleanup\necho work\nkill -INT $$\necho never\ncleanup:\necho cleaned", "work\ncleaned\n");
+        // From inside nested loops and a switch.
+        check(
+            "onintr out\nforeach i (1 2 3)\nswitch ($i)\ncase 2:\nkill -INT $$\ndefault:\necho $i\nendsw\nend\necho never\nout:\necho stopped at $i",
+            "1\nstopped at 2\n",
+        );
+        if let Some((o, _, rc)) = run("onintr cleanup\necho a\nkill -INT $$\ncleanup:\necho c\nexit 5") {
+            assert_eq!((o.as_str(), rc), ("a\nc\n", 5));
+        }
+        // `onintr -` ignores the signal.
+        check("onintr -\nkill -INT $$\necho survived", "survived\n");
+        // A missing label fails like goto.
+        if let Some((_, e, rc)) = run("onintr nolabel\nkill -INT $$\nsleep 0") {
+            assert!(e.contains("nolabel: label not found."), "{e}");
+            assert_eq!(rc, 1);
+        }
+    }
+
+    #[test]
+    fn onintr_forms_translate_to_traps() {
         let z = tr("onintr -\nonintr");
         assert!(z.contains("trap '' INT") && z.contains("trap - INT"), "{z}");
-        assert!(super::super::translate("onintr cleanup").is_err());
+        let z = tr("onintr cleanup\ncleanup:\necho c");
+        assert!(z.contains("trap '__csh_pc='\\''cleanup'\\''; continue 1000' INT"), "{z}");
+    }
+
+    #[test]
+    fn if_without_parentheses_parses_the_longest_expression() {
+        check("if 1 echo a\necho post", "a\npost\n");
+        check("if 0 echo a\necho post", "post\n");
+        check("if 1 == 1 echo eq\nif 1 != 1 echo ne\nif ! 0 echo not", "eq\nnot\n");
+        check("set n = 5\nif $n == 5 then\necho five\nelse\necho other\nendif", "five\n");
+        check("set n = 5\nif $n == 1 then\necho one\nelse if $n =~ 5 then\necho m\nendif", "m\n");
+        check("if -e /usr echo usr\nif ! -e /nonexistent_zz echo missing", "usr\nmissing\n");
+        // `&&` ends the `if` command before the expression grows.
+        if let Some((o, e, rc)) = run("echo pre\nif -e /usr && -d /usr echo x\necho post") {
+            assert_eq!((o.as_str(), rc), ("pre\n", 1));
+            assert!(e.contains("if: Empty if."), "{e}");
+        }
+        // A redirection stands anywhere and applies to the command.
+        if let Some((o, _, _)) = run("set n = 1\nif $n > /dev/null echo hidden\necho shown") {
+            assert_eq!(o, "shown\n");
+        }
+    }
+
+    #[test]
+    fn expression_split_matches_the_grammar() {
+        let parts = |s: &str| if_parts(s).unwrap();
+        assert_eq!(parts("1 echo a"), ("1".to_string(), "echo a".to_string()));
+        assert_eq!(parts("$a == 1 echo a"), ("$a == 1".to_string(), "echo a".to_string()));
+        assert_eq!(parts("-e f echo a"), ("-e f".to_string(), "echo a".to_string()));
+        assert_eq!(parts("! -d f then"), ("! -d f".to_string(), "then".to_string()));
+        assert_eq!(parts("$a + 1 == 3 echo"), ("$a + 1 == 3".to_string(), "echo".to_string()));
+        assert_eq!(parts("1 && 1 echo"), ("1".to_string(), String::new()));
+        assert_eq!(parts("(a) echo"), ("a".to_string(), " echo".to_string()));
+        assert!(if_parts("").is_err());
+    }
+
+    #[test]
+    fn nested_one_line_ifs_ending_in_then_fold_their_conditions() {
+        // tcsh: with the first condition false only the one-line `if` is
+        // skipped, so the block lines run unconditionally.
+        check("if (\"\") if (1) then\necho ran\nendif\necho after", "ran\nafter\n");
+        check("if (1) if (\"\") then\necho no\nendif\necho after", "after\n");
+        check("if (1) if (1) then\necho both\nelse\necho no\nendif", "both\n");
+        check("if (1) if (1) if (\"\") then\necho no\nendif\necho z", "z\n");
+    }
+
+    #[test]
+    fn switch_word_is_globbed_and_checked_like_tcsh() {
+        let dir = std::env::temp_dir().join(format!("csh_ctl_sw_{}", std::process::id()));
+        let d = dir.display();
+        let pre = format!("rm -rf {d}\nmkdir -p {d}\ncd {d}\ntouch one.c two.c three.h\n");
+        check(&format!("{pre}switch (t*.h)\ncase three.h:\necho single\nendsw"), "single\n");
+        for (word, msg) in [("*.c", "*.c: Ambiguous."), ("zz*", "zz*: No match."), ("{a,b}", "{a,b}: Ambiguous.")] {
+            if let Some((o, e, rc)) = run(&format!("{pre}echo pre\nswitch ({word})\ncase x:\nendsw\necho post")) {
+                assert_eq!((o.as_str(), rc), ("pre\n", 1), "{word}");
+                assert!(e.contains(msg), "{word}: {e}");
+            }
+        }
+        // Quoted globs and `{a}` stay literal.
+        check("switch (\"*\")\ncase \"*\":\necho star\nendsw", "star\n");
+        check("switch ({a})\ncase {a}:\necho lit\nendsw", "lit\n");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn switch_on_a_variable_checks_definition_and_word_count() {
+        check("set v = ()\nswitch ($v)\ndefault:\necho empty\nendsw", "empty\n");
+        check("set v = (a b)\nswitch (\"$v\")\ncase \"a b\":\necho joined\nendsw", "joined\n");
+        check("set v = (a b)\nswitch ($v[2])\ncase b:\necho second\nendsw", "second\n");
+        for (src, msg) in [
+            ("set v = (a b)\nswitch ($v)\ndefault:\nendsw", "Syntax Error."),
+            ("switch ($nope)\ndefault:\nendsw", "nope: Undefined variable."),
+        ] {
+            if let Some((o, e, rc)) = run(&format!("echo pre\n{src}\necho post")) {
+                assert_eq!((o.as_str(), rc), ("pre\n", 1), "{src}");
+                assert!(e.contains(msg), "{src}: {e}");
+            }
+        }
+        // A foreach variable is a one-word scalar in zsh.
+        check("foreach f (a.c b.h)\nswitch ($f)\ncase *.c:\necho c\nbreaksw\ndefault:\necho other\nendsw\nend", "c\nother\n");
+    }
+
+    /// Translate with end-of-file semantics and run under `zsh -f`.
+    fn run_eof(src: &str) -> Option<(String, String, i32)> {
+        let zsh = ["/bin/zsh", "/usr/bin/zsh", "/usr/local/bin/zsh"]
+            .into_iter()
+            .find(|p| std::path::Path::new(p).exists())?;
+        let mut t = Translator::new();
+        let mut out = String::new();
+        for l in super::super::lex::logical_lines(src) {
+            t.feed(&l, &mut out).unwrap_or_else(|e| panic!("feed: {e}"));
+        }
+        t.finish_eof(&mut out).unwrap_or_else(|e| panic!("finish_eof: {e}"));
+        let o = std::process::Command::new(zsh)
+            .args(["-f", "-c", &out])
+            .output()
+            .ok()?;
+        Some((
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+            o.status.code().unwrap_or(-1),
+        ))
+    }
+
+    /// Expected (stdout, stderr fragment, status) of an input that ends in
+    /// an open block; every case was recorded from /bin/tcsh.
+    fn check_eof(src: &str, out: &str, err: &str, rc: i32) {
+        if let Some((o, e, r)) = run_eof(src) {
+            assert_eq!(o, out, "stdout of:\n{src}\nstderr: {e}");
+            assert!(e.contains(err), "stderr of:\n{src}\n{e}");
+            assert_eq!(r, rc, "status of:\n{src}\nstderr: {e}");
+        }
+    }
+
+    #[test]
+    fn if_open_at_eof() {
+        check_eof("echo pre\nif (1) then\necho yes", "pre\nyes\n", "", 0);
+        check_eof("echo pre\nif (0) then\necho no\necho post", "pre\n", "then: then/endif not found.", 1);
+        check_eof("echo pre\nif (0) then\necho a\nelse\necho b", "pre\nb\n", "", 0);
+        check_eof("echo pre\nif (0) then\necho a\nelse if (1) then\necho b", "pre\nb\n", "", 0);
+        check_eof("echo pre\nif (0) then\necho a\nelse if (0) then\necho b", "pre\n", "then: then/endif not found.", 1);
+        // A taken branch that reaches `else` must skip to the missing endif.
+        check_eof("echo pre\nif (1) then\necho a\nelse\necho b", "pre\na\n", "else: endif not found.", 1);
+        check_eof("echo pre\nif (1) then\necho a\nelse if (1) then\necho b", "pre\na\n", "else: endif not found.", 1);
+        // Closed inner if, open outer.
+        check_eof("if (1) then\nif (1) then\necho a\nelse\necho b\nendif\nexit 4", "a\n", "", 4);
+        // The last command's status is the script's.
+        check_eof("if (1) then\necho a\nfalse", "a\n", "", 1);
+    }
+
+    #[test]
+    fn loops_open_at_eof() {
+        // First iteration runs, then the input ends.
+        check_eof("echo pre\nforeach i (1 2)\necho $i", "pre\n1\n", "", 0);
+        check_eof("echo pre\nwhile (1)\necho w", "pre\nw\n", "", 0);
+        check_eof("foreach i (1 2)\necho $i\nfalse", "1\n", "", 1);
+        // continue runs the next iteration; past the last one tcsh fails.
+        check_eof("foreach i (1 2)\necho $i\ncontinue", "1\n2\n", "continue: end not found.", 1);
+        check_eof(
+            "foreach i (1 2)\necho $i\nif ($i == 1) continue\necho post $i",
+            "1\n2\npost 2\n",
+            "",
+            0,
+        );
+        check_eof(
+            "set n = 0\nwhile ($n < 2)\n@ n++\necho $n\ncontinue",
+            "1\n2\n",
+            "while: end not found.",
+            1,
+        );
+        // Nothing to run, or break: tcsh skips to the missing end.
+        check_eof("echo pre\nforeach i ()\necho body", "pre\n", "foreach: end not found.", 1);
+        check_eof("echo pre\nwhile (0)\necho x", "pre\n", "while: end not found.", 1);
+        check_eof("foreach i (1 2 3)\necho $i\nbreak", "1\n", "break: end not found.", 1);
+        check_eof("while (1)\nif (1) then\necho x\nbreak", "x\n", "break: end not found.", 1);
+        // A closed inner loop still iterates; the open outer one ends.
+        check_eof("foreach i (1 2)\nforeach j (a b)\necho $i$j\nend\necho o$i", "1a\n1b\no1\n", "", 0);
+        check_eof("foreach i (1 2)\nforeach j (a b)\necho $i$j\ncontinue", "1a\n1b\n", "continue: end not found.", 1);
+    }
+
+    #[test]
+    fn switch_open_at_eof() {
+        check_eof("echo pre\nswitch (a)\ncase a:\necho A", "pre\nA\n", "", 0);
+        check_eof("echo pre\nswitch (b)\ncase a:\necho A", "pre\n", "switch: endsw not found.", 1);
+        check_eof("switch (z)\ncase a:\necho A\ndefault:\necho D", "D\n", "", 0);
+        check_eof("switch (a)\ncase a:\necho A\ncase b:\necho B", "A\nB\n", "", 0);
+        check_eof("switch (a)\ncase a:\necho A\nbreaksw", "A\n", "breaksw: endsw not found.", 1);
+        check_eof("foreach i (1 2)\nswitch ($i)\ncase 1:\necho one", "one\n", "", 0);
+    }
+
+    #[test]
+    fn eof_semantics_combine_with_goto_and_status() {
+        check_eof(
+            "echo start\ngoto L\necho no\nL:\nforeach i (1 2)\necho $i",
+            "start\n1\n",
+            "",
+            0,
+        );
+        check_eof(
+            "false\nif (1) then\necho st=$status\nforeach i (a b)\necho $i $status\ncontinue",
+            "st=0\na 0\nb 0\n",
+            "continue: end not found.",
+            1,
+        );
+    }
+
+    #[test]
+    fn finish_eof_without_an_open_block_is_finish() {
+        let (mut a, mut b) = (String::new(), String::new());
+        let (mut ta, mut tb) = (Translator::new(), Translator::new());
+        for l in ["if (1) then", "echo a", "endif", "foreach i (1)", "false", "end"] {
+            ta.feed(l, &mut a).unwrap();
+            tb.feed(l, &mut b).unwrap();
+        }
+        ta.finish(&mut a).unwrap();
+        tb.finish_eof(&mut b).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn every_opener_left_open_is_a_not_found_error_until_closed() {
+        // `bins/zshrs.rs::csh_line` keeps reading while the error ends in
+        // "not found." and runs the text once it translates.
+        let blocks: [(&[&str], &str); 8] = [
+            (&["if (1) then", "echo a", "endif"], "then: then/endif not found."),
+            (&["if (1) then", "echo a", "else", "echo b", "endif"], "else: endif not found."),
+            (&["foreach i (1 2)", "echo $i", "end"], "foreach: end not found."),
+            (&["while (0)", "echo x", "end"], "while: end not found."),
+            (&["switch (a)", "case a:", "echo a", "breaksw", "endsw"], "switch: endsw not found."),
+            (&["if (1) foreach i (1 2)", "echo $i", "end"], "foreach: end not found."),
+            (&["foreach i (1)", "if (1) then", "echo x", "endif", "end"], "then: then/endif not found."),
+            (&["onintr c", "foreach i (1)", "echo $i", "end", "c:", "echo c"], "foreach: end not found."),
+        ];
+        for (lines, _) in blocks {
+            let whole = super::super::translate_partial(&lines.join("\n")).unwrap();
+            let mut seen_err = false;
+            for k in 1..lines.len() {
+                let prefix = lines[..k].join("\n");
+                match super::super::translate_partial(&prefix) {
+                    Ok(_) => {
+                        // Only closed prefixes translate (a label line or a
+                        // block that already ended).
+                        assert!(!prefix.ends_with("else"), "{prefix}");
+                    }
+                    Err(e) => {
+                        seen_err = true;
+                        assert!(e.ends_with("not found."), "{prefix}: {e}");
+                    }
+                }
+            }
+            assert!(seen_err, "{lines:?}");
+            assert!(!whole.is_empty());
+        }
+        // The message names the innermost open block.
+        let err = |src: &str| super::super::translate_partial(src).unwrap_err();
+        assert_eq!(err("if (1) then\necho a\nelse"), "else: endif not found.");
+        assert_eq!(err("if (1) then\nforeach i (1)\nif (1) then"), "then: then/endif not found.");
+        assert_eq!(err("while (1)\nswitch (a)\ncase a:"), "switch: endsw not found.");
+    }
+
+    #[test]
+    fn accumulated_lines_translate_to_the_same_text_once_closed() {
+        let lines = ["foreach i (1 2)", "if ($i == 1) then", "echo one", "else", "echo other", "endif", "end"];
+        let full = super::super::translate(&lines.join("\n")).unwrap();
+        let mut pending = String::new();
+        let mut text = None;
+        for l in lines {
+            if !pending.is_empty() {
+                pending.push('\n');
+            }
+            pending.push_str(l);
+            match super::super::translate(&pending) {
+                Ok(t) => text = Some(t),
+                Err(e) => assert!(e.ends_with("not found."), "{e}"),
+            }
+        }
+        assert_eq!(text.as_deref(), Some(full.as_str()));
+        check(&lines.join("\n"), "one\nother\n");
+    }
+
+    #[test]
+    fn same_variable_nesting_exit_and_brace_conditions() {
+        check("foreach i (a b)\nforeach i (1 2)\necho in $i\nend\necho out $i\nend", "in 1\nin 2\nout 2\nin 1\nin 2\nout 2\n");
+        if let Some((o, _, rc)) = run("foreach i (1 2 3)\nif ($i == 2) then\necho bye\nexit 7\nendif\necho $i\nend\necho never") {
+            assert_eq!((o.as_str(), rc), ("1\nbye\n", 7));
+        }
+        check(
+            "set n = 0\nwhile ({ test $n -lt 3 })\necho n=$n\n@ n++\nend\nif (! { false }) echo nf",
+            "n=0\nn=1\nn=2\nnf\n",
+        );
+        check("repeat 3 echo x > /dev/null\necho ok", "ok\n");
+        check("false | true\necho s1=$status\ntrue | false\necho s2=$status", "s1=0\ns2=1\n");
     }
 
     #[test]
@@ -1440,29 +2775,4 @@ mod tests {
         assert_eq!(split_head("if(1)then"), ("if", "(1)then"));
         assert_eq!(split_head("foreach  i (a)"), ("foreach", "i (a)"));
     }
-}
-
-/// True when `stmt` starts with a word this layer handles itself (block
-/// keywords, jumps, `repeat`, `onintr`, `label:`).
-fn is_control_head(stmt: &str) -> bool {
-    let (head, _) = split_head(stmt);
-    matches!(
-        head,
-        "if" | "else"
-            | "endif"
-            | "foreach"
-            | "while"
-            | "end"
-            | "switch"
-            | "case"
-            | "default"
-            | "default:"
-            | "endsw"
-            | "break"
-            | "continue"
-            | "breaksw"
-            | "goto"
-            | "onintr"
-            | "repeat"
-    ) || (head.len() > 1 && head.ends_with(':'))
 }

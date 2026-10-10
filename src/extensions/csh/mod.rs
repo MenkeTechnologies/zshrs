@@ -23,14 +23,31 @@ pub mod expr;
 pub mod lex;
 pub mod words;
 
-/// Translate a whole csh script to zsh. Errors carry the csh-side message
-/// text real tcsh prints (`if: Expression Syntax.`, `Too many ('s`, …).
+/// Translate a whole csh script (a file, a `-c` string) to zsh, with tcsh's
+/// end-of-input behaviour: a block left open still runs its body, and an
+/// error is raised only where tcsh has to skip over the missing closer.
+/// Errors carry the csh-side message text real tcsh prints
+/// (`if: Expression Syntax.`, `Too many ('s`, …).
 pub fn translate(src: &str) -> Result<String, String> {
+    run(src, ctl::Translator::finish_eof)
+}
+
+/// Translate input that may still be arriving (a prompt, stdin). A block
+/// left open is an `Err` whose text ends in `not found.`, which the caller
+/// treats as "keep reading lines".
+pub fn translate_partial(src: &str) -> Result<String, String> {
+    run(src, ctl::Translator::finish)
+}
+
+fn run(
+    src: &str,
+    finish: fn(&mut ctl::Translator, &mut String) -> Result<(), String>,
+) -> Result<String, String> {
     let mut t = ctl::Translator::new();
     let mut out = String::new();
     for line in lex::logical_lines(src) {
         t.feed(&line, &mut out)?;
     }
-    t.finish(&mut out)?;
+    finish(&mut t, &mut out)?;
     Ok(out)
 }
