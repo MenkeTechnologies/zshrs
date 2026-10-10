@@ -9511,10 +9511,16 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     let cloned = v.pm.as_ref().cloned(); // c:3345
     if let Some(pm_back) = v.pm {
         // c:3343
-        paramtab()
-            .write()
-            .unwrap()
-            .insert(name.to_string(), pm_back); // c:3343
+        // Overwrite the live node in place; `insert` re-hashes and allocates
+        // a key `String` on every scalar assignment, and the node is nearly
+        // always still there (assignstrvalue's setfn may have unset it).
+        let mut tab = paramtab().write().unwrap();
+        match tab.get_mut(name) {
+            Some(slot) => *slot = pm_back,
+            None => {
+                tab.insert(name.to_string(), pm_back);
+            } // c:3343
+        }
     } // c:3343
       // c:Src/params.c pathsetfn / fpathsetfn / manpathsetfn /
       // cdpathsetfn — when the SCALAR side of a tied colon-array
