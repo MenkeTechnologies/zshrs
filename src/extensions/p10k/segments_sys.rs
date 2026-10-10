@@ -1065,10 +1065,20 @@ mod corewlan {
         fn sel_registerName(name: *const c_char) -> *mut c_void;
         fn objc_msgSend();
     }
-    #[link(name = "Foundation", kind = "framework")]
-    extern "C" {}
-    #[link(name = "CoreWLAN", kind = "framework")]
-    extern "C" {}
+    // Foundation and CoreWLAN are dlopen'd on the first probe, not linked: a
+    // link-time dependency makes dyld map and initialise both on EVERY shell
+    // start, wifi segment or not.
+    fn load_frameworks() {
+        static LOAD: std::sync::Once = std::sync::Once::new();
+        LOAD.call_once(|| unsafe {
+            for path in [
+                c"/System/Library/Frameworks/Foundation.framework/Foundation",
+                c"/System/Library/Frameworks/CoreWLAN.framework/CoreWLAN",
+            ] {
+                libc::dlopen(path.as_ptr(), libc::RTLD_LAZY);
+            }
+        });
+    }
 
     type Obj = *mut c_void;
     type MsgObj = unsafe extern "C" fn(Obj, Obj) -> Obj;
@@ -1094,6 +1104,7 @@ mod corewlan {
     /// (ssid, last_tx_rate Mbps, rssi, noise) of the associated default
     /// Wi-Fi interface; None when there is no interface or no link.
     pub fn status() -> Option<(String, String, String, String)> {
+        load_frameworks();
         unsafe {
             let pool = msg_obj(msg_obj(objc_getClass(c"NSAutoreleasePool".as_ptr()), c"alloc"), c"init");
             let out = (|| {

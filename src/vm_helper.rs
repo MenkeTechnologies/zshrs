@@ -964,7 +964,7 @@ pub struct ShellExecutor {
     )>,
     // Plugin source cache — stores side effects of source/. in SQLite
     /// `plugin_cache` field.
-    pub plugin_cache: Option<crate::plugin_cache::PluginCache>,
+    pub plugin_cache: std::cell::OnceCell<Option<crate::plugin_cache::PluginCache>>,
     // cdreplay - deferred compdef calls for zinit turbo mode
     /// `deferred_compdefs` field.
     pub deferred_compdefs: Vec<Vec<String>>,
@@ -1846,6 +1846,81 @@ fn posix_spawn_argv(
     }
 }
 
+/// Open `plugins.db` on first use. Only `dbview` reads it, so a shell that never
+/// asks pays no SQLite open, WAL pragma or schema prepare at startup. A corrupt
+/// file is discarded and rebuilt once (see the arm below).
+pub fn open_plugin_cache() -> Option<crate::plugin_cache::PluginCache> {
+    let pc_path = crate::plugin_cache::default_cache_path();
+    if let Some(parent) = pc_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    match crate::plugin_cache::PluginCache::open(&pc_path) {
+        Ok(pc) => {
+            let (plugins, functions) = pc.stats();
+            tracing::info!(
+                plugins,
+                cached_functions = functions,
+                path = %pc_path.display(),
+                "plugin_cache: sqlite opened"
+            );
+            Some(pc)
+        }
+        Err(e) => {
+            // A corrupt cache file is not a permanent condition:
+            // `plugins.db` is derived data, rebuilt by the next
+            // plugin scan. SQLite answers a clobbered header with
+            // SQLITE_NOTADB ("file is not a database"), and the
+            // old behaviour logged that and moved on — so the
+            // cache stayed dead for every future shell too, with
+            // nothing but a log line to say why plugin lookups
+            // were slow. Discard the file and open once more;
+            // this is the same "drop it and rebuild silently"
+            // rule the shard cache already applies to a version
+            // mismatch. A second failure keeps the old
+            // behaviour, so a permissions problem still degrades
+            // instead of looping.
+            let corrupt = matches!(
+                e.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::NotADatabase)
+                    | Some(rusqlite::ErrorCode::DatabaseCorrupt)
+            );
+            if corrupt {
+                tracing::warn!(
+                    error = %e,
+                    path = %pc_path.display(),
+                    "plugin_cache: corrupt — discarding and rebuilding"
+                );
+                let _ = fs::remove_file(&pc_path);
+                // The -wal/-shm side files belong to the database
+                // that just went away; leaving them makes the
+                // fresh open inherit a journal for a file that no
+                // longer exists.
+                for side in ["-wal", "-shm"] {
+                    let mut p = pc_path.clone().into_os_string();
+                    p.push(side);
+                    let _ = fs::remove_file(PathBuf::from(p));
+                }
+                match crate::plugin_cache::PluginCache::open(&pc_path) {
+                    Ok(pc) => {
+                        tracing::info!(
+                            path = %pc_path.display(),
+                            "plugin_cache: rebuilt after corruption"
+                        );
+                        Some(pc)
+                    }
+                    Err(e2) => {
+                        tracing::warn!(error = %e2, "plugin_cache: reopen after discard failed");
+                        None
+                    }
+                }
+            } else {
+                tracing::warn!(error = %e, "plugin_cache: failed to open");
+                None
+            }
+        }
+    }
+}
+
 impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
     /// (`Src/params.c:3350 setsparam`). The single store.
@@ -2313,7 +2388,7 @@ impl ShellExecutor {
             profiling_enabled: false,
             compsys_cache: std::cell::OnceCell::from(None), // worker: no per-thread SQLite mirror
             compinit_pending: None,
-            plugin_cache: None, // worker: no per-thread plugin cache
+            plugin_cache: std::cell::OnceCell::from(None), // worker: no per-thread plugin cache
             deferred_compdefs: Vec::new(),
             returning: None,
             zsh_compat: false,
@@ -3133,77 +3208,7 @@ impl ShellExecutor {
             profiling_enabled: false,
             compsys_cache: std::cell::OnceCell::new(),
             compinit_pending: None, // (receiver, start_time)
-            plugin_cache: {
-                let pc_path = crate::plugin_cache::default_cache_path();
-                if let Some(parent) = pc_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                match crate::plugin_cache::PluginCache::open(&pc_path) {
-                    Ok(pc) => {
-                        let (plugins, functions) = pc.stats();
-                        tracing::info!(
-                            plugins,
-                            cached_functions = functions,
-                            path = %pc_path.display(),
-                            "plugin_cache: sqlite opened"
-                        );
-                        Some(pc)
-                    }
-                    Err(e) => {
-                        // A corrupt cache file is not a permanent condition:
-                        // `plugins.db` is derived data, rebuilt by the next
-                        // plugin scan. SQLite answers a clobbered header with
-                        // SQLITE_NOTADB ("file is not a database"), and the
-                        // old behaviour logged that and moved on — so the
-                        // cache stayed dead for every future shell too, with
-                        // nothing but a log line to say why plugin lookups
-                        // were slow. Discard the file and open once more;
-                        // this is the same "drop it and rebuild silently"
-                        // rule the shard cache already applies to a version
-                        // mismatch. A second failure keeps the old
-                        // behaviour, so a permissions problem still degrades
-                        // instead of looping.
-                        let corrupt = matches!(
-                            e.sqlite_error_code(),
-                            Some(rusqlite::ErrorCode::NotADatabase)
-                                | Some(rusqlite::ErrorCode::DatabaseCorrupt)
-                        );
-                        if corrupt {
-                            tracing::warn!(
-                                error = %e,
-                                path = %pc_path.display(),
-                                "plugin_cache: corrupt — discarding and rebuilding"
-                            );
-                            let _ = fs::remove_file(&pc_path);
-                            // The -wal/-shm side files belong to the database
-                            // that just went away; leaving them makes the
-                            // fresh open inherit a journal for a file that no
-                            // longer exists.
-                            for side in ["-wal", "-shm"] {
-                                let mut p = pc_path.clone().into_os_string();
-                                p.push(side);
-                                let _ = fs::remove_file(PathBuf::from(p));
-                            }
-                            match crate::plugin_cache::PluginCache::open(&pc_path) {
-                                Ok(pc) => {
-                                    tracing::info!(
-                                        path = %pc_path.display(),
-                                        "plugin_cache: rebuilt after corruption"
-                                    );
-                                    Some(pc)
-                                }
-                                Err(e2) => {
-                                    tracing::warn!(error = %e2, "plugin_cache: reopen after discard failed");
-                                    None
-                                }
-                            }
-                        } else {
-                            tracing::warn!(error = %e, "plugin_cache: failed to open");
-                            None
-                        }
-                    }
-                }
-            },
+            plugin_cache: std::cell::OnceCell::new(),
             deferred_compdefs: Vec::new(),
             returning: None,
             zsh_compat: false,
@@ -10217,7 +10222,7 @@ impl ShellExecutor {
     /// `enter_posix_mode` — see implementation.
     pub fn enter_posix_mode(&mut self) {
         self.posix_mode = true;
-        self.plugin_cache = None;
+        self.plugin_cache = std::cell::OnceCell::from(None);
         self.compsys_cache = std::cell::OnceCell::new();
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
@@ -10230,7 +10235,7 @@ impl ShellExecutor {
     }
     /// `enter_ksh_mode` — see implementation.
     pub fn enter_ksh_mode(&mut self) {
-        self.plugin_cache = None;
+        self.plugin_cache = std::cell::OnceCell::from(None);
         self.compsys_cache = std::cell::OnceCell::new();
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
@@ -10243,7 +10248,7 @@ impl ShellExecutor {
     /// `src/extensions/dash_mode.rs`.
     pub fn enter_dash_mode(&mut self) {
         self.posix_mode = true;
-        self.plugin_cache = None;
+        self.plugin_cache = std::cell::OnceCell::from(None);
         self.compsys_cache = std::cell::OnceCell::new();
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));

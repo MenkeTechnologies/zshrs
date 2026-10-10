@@ -1228,7 +1228,7 @@ impl ShellExecutor {
             println!("    styles:       {:>6} entries", zstyles);
             println!();
 
-            if let Some(ref cache) = self.plugin_cache {
+            if let Some(cache) = self.plugin_cache.get_or_init(crate::vm_helper::open_plugin_cache).as_ref() {
                 let (plugins, functions) = cache.stats();
                 println!("  {} {}", bold("plugins.db"), dim("(recorded plugin sources; daemon-ingested)"));
                 println!("    plugins:      {:>6} rows", plugins);
@@ -1504,7 +1504,7 @@ impl ShellExecutor {
             }
 
             "plugins" => {
-                let Some(ref cache) = self.plugin_cache else {
+                let Some(cache) = self.plugin_cache.get_or_init(crate::vm_helper::open_plugin_cache).as_ref() else {
                     eprintln!("zshrs:dbview:1: no plugin cache");
                     return 1;
                 };
