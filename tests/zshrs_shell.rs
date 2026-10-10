@@ -17250,3 +17250,24 @@ fn test_bash_and_mksh_tilde_expand_the_value_of_an_assignment_shaped_argument() 
     let (_, ksh, _) = run_zshrs_with_args(&["--ksh", "-c", script]);
     assert_eq!(ksh, "<x=~/y>\n<x=a:~:b>\n<1=~>\n<-x=~>\n<x=~>\n");
 }
+
+#[test]
+fn test_expansion_error_in_function_arguments_fails_the_command() {
+    // c:Src/exec.c:3523-3525 — an error raised while expanding a command's
+    // words ends the command before anything runs: the status is the previous
+    // one, or 1. A function call ran anyway and left the status at 0.
+    let (code, output, _) = run_zshrs("s() { print ran; }; s a $((1/0)); print after");
+    assert_eq!((code, output.as_str()), (1, ""));
+}
+
+#[test]
+fn test_dash_keeps_empty_positionals_of_unquoted_star_under_empty_ifs() {
+    // dash does no field splitting with IFS empty, so an unquoted `$*` / `$@`
+    // keeps its empty positionals as fields. bash, ksh93, mksh and zsh drop them.
+    let script = "set -- '' a b; IFS=; for x in $*; do printf '<%s>' \"$x\"; done; echo; \
+                  for x in $@; do printf '<%s>' \"$x\"; done; echo";
+    let (_, dash, _) = run_zshrs_with_args(&["--dash", "-c", script]);
+    assert_eq!(dash, "<><a><b>\n<><a><b>\n");
+    let (_, bash, _) = run_zshrs_with_args(&["--bash", "-c", script]);
+    assert_eq!(bash, "<a><b>\n<a><b>\n");
+}

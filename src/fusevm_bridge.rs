@@ -6864,6 +6864,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         match v {
             Value::Array(items) => {
+                // !!! DASH GATE (no C counterpart) !!! With `IFS` set but EMPTY dash does
+                // no field splitting at all and so has nothing to prune: an unquoted
+                // `$*` / `$@` keeps its empty positionals as their own fields
+                // (`set -- '' a; IFS=''; printf '<%s>' $*` is `<><a>`; bash, ksh93,
+                // mksh and zsh drop the empty one).
+                if crate::dash_mode::dash_faithful()
+                    && with_executor(|exec| exec.scalar("IFS")).as_deref() == Some("")
+                {
+                    return Value::Array(items);
+                }
                 if argc & (WORD_DROP_KEEPS_FIRST | WORD_DROP_KEEPS_LAST) != 0 && plan9_active() {
                     // c:4341 — under plan9 the quoted-empty affix is glued to
                     // every element, so no node of the word is empty.
@@ -21845,6 +21855,17 @@ impl fusevm::ShellHost for ZshrsHost {
                 with_executor(|exec| exec.set_last_status(1));
                 crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
                 return Some(1);
+            }
+            // c:Src/exec.c:3523-3525 — a SOFT error raised while expanding the words
+            // (`f $((1/0))`) ends the command before anything runs:
+            //     if (errflag) { if (!lastval) lastval = 1; … return; }
+            // so the function never starts and the status is the previous one, or 1.
+            // A builtin gets the same answer from its own dispatch; a function call
+            // fell through and ran with whatever arguments were left (status 0).
+            if live & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                let status = words_errflag_status();
+                with_executor(|exec| exec.set_last_status(status));
+                return Some(status);
             }
         }
         // Provenance: same argv record as `exec`, but ONLY when the name
