@@ -136,6 +136,13 @@ fn apply_latest(executor: &mut ShellExecutor, startup: bool) -> usize {
     // of the state is in place; every shell needs its own.
     let resources = if startup { argv_rows(&shard.extras, RESOURCE_FILES_EXTRA) } else { Vec::new() };
     let total = apply_shard(executor, shard);
+    // The shard is a snapshot: completers the bundle gained after it was
+    // recorded are in no `_comps` it carries. A bundle stamp newer than the
+    // shard is the signal, and the overlay only adds unclaimed commands.
+    if let Some(since) = startup.then(|| bundle_changed_since(&shard_path)).flatten() {
+        let added = crate::compsys::ported::compinit::register_bundled_missing(since);
+        tracing::info!(added, "canonical_apply: registered bundled completers newer than the shard");
+    }
     for path in &sourced {
         let _ = crate::p10k::maybe_intercept_theme_source(std::slice::from_ref(path));
     }
@@ -152,6 +159,15 @@ fn apply_latest(executor: &mut ShellExecutor, startup: bool) -> usize {
         "canonical state applied from rkyv shard (no IPC)"
     );
     total
+}
+
+/// When `shard` was written, if the bundled function tree was (re)installed
+/// after that. zshrs-original — no C counterpart.
+fn bundle_changed_since(shard: &std::path::Path) -> Option<std::time::SystemTime> {
+    let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let stamp = crate::bundled_functions::functions_dir().map(|d| d.join(".zshrs-bundle-version"));
+    let recorded = mtime(shard)?;
+    (stamp.as_deref().and_then(mtime)? > recorded).then_some(recorded)
 }
 
 /// Walk `~/.zshrs/images/` and return the newest

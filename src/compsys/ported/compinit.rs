@@ -1157,6 +1157,65 @@ pub fn dump_assoc_tables(path: &Path) -> Option<DumpTables> {
     Some(tables)
 }
 
+/// Register the bundled completers whose commands nothing claims yet.
+///
+/// A replayed recorder shard carries `_comps` as it stood when it was
+/// recorded, so a completer the bundle gained afterwards — `_znative`, say —
+/// is absent until the next recording: `znative <TAB>` fell back to file
+/// names while `compinit` in the same shell registered it. This is the
+/// replay-side counterpart of [`merge_bundled_registrations`], applied to the
+/// live `_comps` parameter instead of a dump's tables. `compdef -n` keeps every
+/// claim the shard already holds. Returns the number of commands registered.
+pub fn register_bundled_missing(since: std::time::SystemTime) -> usize {
+    let Some(dir) = crate::bundled_functions::functions_dir() else {
+        return 0;
+    };
+    // Only files written after `since` can be news to the snapshot. The bundle
+    // installer leaves an unchanged file (and its mtime) alone, so this is the
+    // handful that changed rather than the whole 1.3k-file tree.
+    let fresh: Vec<PathBuf> = fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.metadata()
+                        .and_then(|m| m.modified())
+                        .is_ok_and(|t| t > since)
+                })
+                .map(|e| e.path())
+                .filter(|p| p.is_file())
+                .collect()
+        })
+        .unwrap_or_default();
+    if fresh.is_empty() {
+        return 0;
+    }
+    // One snapshot of `_comps`: `assoc_get` copies the whole hash, and a key
+    // test per bundled command against a 50k-entry table is quadratic.
+    let claimed = crate::ported::subst::assoc_get("_comps").unwrap_or_default();
+    let mut registered = 0usize;
+    let mut stubs: Vec<String> = Vec::new();
+    for file in fresh.iter().filter_map(|p| scan_file(p)) {
+        let CompFileDef::CompDef(CompDef::Commands(cmds)) = &file.def else {
+            continue;
+        };
+        let missing: Vec<&String> = cmds
+            .iter()
+            .filter(|c| !claimed.contains_key(c.split('=').next().unwrap_or(c)))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let mut args = vec!["-n".to_string(), file.name.clone()];
+        args.extend(missing.iter().map(|c| (*c).clone()));
+        if compdef(&args) == 0 {
+            registered += missing.len();
+            stubs.push(file.name.clone());
+        }
+    }
+    register_autoload_stubs(stubs.iter().map(String::as_str));
+    registered
+}
+
 /// Overlay `~/.zshrs/functions`'s own registrations onto a dump that
 /// predates that tree — the zshrs-only half of sh:469-496.
 ///
@@ -3163,6 +3222,46 @@ pub fn snapshot_compdef_state() -> CompdefState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A replayed recorder shard carries `_comps` as recorded, so a completer
+    /// the bundle gained afterwards is unclaimed: `znative <TAB>` listed files.
+    /// The overlay registers the unclaimed commands of files written after the
+    /// shard, and leaves every claim the shard already holds.
+    #[test]
+    fn bundled_completers_newer_than_a_shard_are_registered_without_stealing_claims() {
+        let _g = crate::test_util::global_state_lock();
+        let home = tempfile::tempdir().expect("tempdir");
+        let fdir = home.path().join(".zshrs/functions");
+        std::fs::create_dir_all(&fdir).unwrap();
+        std::fs::write(fdir.join("_newcmd"), "#compdef newcmd\n:\n").unwrap();
+        std::fs::write(fdir.join("_held"), "#compdef held\n:\n").unwrap();
+        let prev_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", home.path());
+        reset_compdef_state();
+        crate::ported::params::sethparam(
+            "_comps",
+            vec!["held".to_string(), "_someoneelse".to_string()],
+        );
+
+        let added = register_bundled_missing(std::time::UNIX_EPOCH);
+
+        let comps = crate::ported::subst::assoc_get("_comps").unwrap_or_default();
+        match prev_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        assert_eq!(comps.get("newcmd").map(String::as_str), Some("_newcmd"));
+        assert_eq!(
+            comps.get("held").map(String::as_str),
+            Some("_someoneelse"),
+            "an existing claim must survive the overlay"
+        );
+        assert_eq!(added, 1);
+
+        // Nothing was written after this instant: nothing to register.
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        assert_eq!(register_bundled_missing(future), 0);
+    }
 
     #[test]
     fn test_parse_compdef_commands() {
