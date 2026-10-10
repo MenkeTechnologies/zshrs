@@ -511,6 +511,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zsh
       - id: oracle
         uses: ./.github/actions/zsh-oracle
+      # The fuzzer's reference is the release zshrs reports as its own version, not the
+      # distro's zsh (Ubuntu ships 5.9, whose `break` error text differs from 5.9.2's).
+      - uses: ./.github/actions/zsh-oracle
+        with:
+          commit: zsh-5.9.2
+          dir: zsh-5.9.2
+          env-var: ZSHRS_FUZZ_ZSH
       - name: Build zshrs + fuzzer
         run: |
           cargo build --locked
