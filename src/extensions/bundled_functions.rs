@@ -46,11 +46,15 @@ const INSTALL_LOCK: &str = ".zshrs-bundle-install.lock";
 
 include!(concat!(env!("OUT_DIR"), "/zsh_functions_id.rs"));
 
-/// What [`STAMP`] holds: crate version plus the bundle's content hash.
-/// The version alone is not enough -- the tree can change within a
-/// version, and then a version-only stamp never triggers a rewrite.
+/// What [`STAMP`] holds: the bundle's content hash. A crate version alone
+/// is not enough -- the tree can change within a version -- and the version
+/// adds nothing once the hash is there.
 fn stamp_value() -> String {
-    format!("{}-{}", env!("CARGO_PKG_VERSION"), BUNDLE_ID)
+    // Content hash only. The crate version is not part of the stamp: two builds
+    // with the same bundle must not rewrite each other's tree (and bump the
+    // stamp's mtime, which `compinit` reads to decide a dump is stale) every
+    // time shells of different versions start alternately.
+    BUNDLE_ID.to_string()
 }
 
 /// `~/.zshrs/functions`.
