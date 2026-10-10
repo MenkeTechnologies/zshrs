@@ -3258,6 +3258,18 @@ impl ShellExecutor {
                 compautos = tables.compautos.len(),
                 "compinit: association tables from dump"
             );
+            // The dump is the running shell's source of truth on this path
+            // and nothing here touched compsys.db, which a scan alone fills:
+            // it kept whichever partial scan last ran. Bring it in line.
+            let pairs = |m: &indexmap::IndexMap<String, String>| -> Vec<(String, String)> {
+                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            };
+            sync_compsys_mirror(
+                pairs(&tables.comps),
+                pairs(&tables.services),
+                pairs(&tables.patcomps),
+                pairs(&tables.postpatcomps),
+            );
             self.set_assoc("_comps".to_string(), tables.comps);
             self.set_assoc("_services".to_string(), tables.services);
             self.set_assoc("_patcomps".to_string(), tables.patcomps);
@@ -3641,6 +3653,46 @@ impl ShellExecutor {
     // canonical dispatch_builtin("zgetattr"/etc, args) which goes
     // through execbuiltin → BUILTINS entry (attr.c:NNN ports) with
     // optstr parsing built in.
+}
+
+/// Make compsys.db's `comps` / `services` / `patcomps` / `postpatcomps`
+/// tables hold the association tables the shell is actually running with.
+///
+/// The mirror exists for `dbview` and SQL inspection (the authoritative
+/// store is the dump / rkyv shards), so this runs on its own thread with its
+/// own connection and never delays a prompt. A table is rewritten only when
+/// its row count differs — the usual startup is a no-op.
+fn sync_compsys_mirror(
+    comps: Vec<(String, String)>,
+    services: Vec<(String, String)>,
+    patcomps: Vec<(String, String)>,
+    postpatcomps: Vec<(String, String)>,
+) {
+    let _ = std::thread::Builder::new()
+        .name("compsys-mirror".into())
+        .spawn(move || {
+            let Ok(mut cache) =
+                crate::compsys::cache::CompsysCache::open(crate::compsys::cache::default_cache_path())
+            else {
+                return;
+            };
+            if cache.count_table("comps").ok() != Some(comps.len()) {
+                let _ = cache.set_comps_bulk(&comps);
+            }
+            if cache.count_table("services").ok() != Some(services.len()) {
+                let _ = cache.set_services_bulk(&services);
+            }
+            if cache.count_table("patcomps").ok() != Some(patcomps.len()) {
+                for (pattern, function) in &patcomps {
+                    let _ = cache.set_patcomp(pattern, function);
+                }
+            }
+            if cache.count_table("postpatcomps").ok() != Some(postpatcomps.len()) {
+                for (pattern, function) in &postpatcomps {
+                    let _ = cache.set_postpatcomp(pattern, function);
+                }
+            }
+        });
 }
 
 impl ShellExecutor {
