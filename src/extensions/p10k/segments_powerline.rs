@@ -40,6 +40,7 @@
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::ttl_cached as cached_ttl;
 use crate::extensions::p10k::shared::{color1, env_or_param, global_int, esc_pct, decode_g, seg_icon, apply_visual_identifier, apply_content_expansion, make_segment};
 use crate::ported::params::getsparam;
 use crate::ported::utils::getkeystring;
@@ -130,32 +131,6 @@ fn upfind(name: &str) -> Option<PathBuf> {
 // Subprocess: TTL cache + budgeted runner
 // ---------------------------------------------------------------------
 
-/// segments_extra::cached_ttl mirror — String keys, producer-chosen TTL
-/// (weather caches successes 15 min but failures 60s; vcs keys on the
-/// repo root). Stored Instant is the EXPIRY. `None` results
-/// (spawn/parse failure) are cached too, so a broken tool can't fork
-/// on every prompt. This replaces powerline's background refresh
-/// thread (powerline:lib/threaded.py:35 — interval-driven update loop).
-static TTL_CACHE: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
-
-fn cached_ttl(key: &str, run: impl FnOnce() -> (Duration, Option<String>)) -> Option<String> {
-    let m = TTL_CACHE.get_or_init(Default::default);
-    if let Ok(guard) = m.lock() {
-        if let Some((expiry, val)) = guard.get(key) {
-            if Instant::now() < *expiry {
-                return val.clone();
-            }
-        }
-    }
-    let (ttl, val) = run();
-    let expiry = Instant::now()
-        .checked_add(ttl)
-        .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
-    if let Ok(mut guard) = m.lock() {
-        guard.insert(key.to_string(), (expiry, val.clone()));
-    }
-    val
-}
 
 /// Run a tool with a hard latency budget — the git.rs run_porcelain
 /// pattern (mirrors segments_extra::run_tool_budget): stdout drained on

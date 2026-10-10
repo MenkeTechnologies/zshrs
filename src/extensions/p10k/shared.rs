@@ -10,6 +10,9 @@ use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
 use crate::ported::params::getsparam;
 use crate::ported::utils::getkeystring;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// p10k:8390-8396 — `[[ $_POWERLEVEL9K_COLOR_SCHEME == light ]] &&
 /// _p9k_color1=7 || _p9k_color1=0`.
@@ -161,4 +164,199 @@ pub(crate) fn glob_name_matches(pattern: &str, name: &str) -> bool {
     crate::ported::glob::tokenize(&mut t);
     crate::ported::pattern::patcompile(&t, 0, None)
         .is_some_and(|prog| crate::ported::pattern::pattry(&prog, name))
+}
+
+// ---------------------------------------------------------------------
+// TTL cache for subprocess / filesystem probes (one store, two entry
+// points). Replaces the four per-module `cached_ttl` copies.
+// ---------------------------------------------------------------------
+
+/// One cached probe result. `None` values are cached too, so a broken
+/// tool cannot fork on every prompt.
+struct TtlEntry {
+    expiry: Instant,
+    val: Option<String>,
+    /// A background refresh is already running for this key.
+    refreshing: bool,
+}
+
+static TTL_STORE: OnceLock<Mutex<HashMap<String, TtlEntry>>> = OnceLock::new();
+
+fn ttl_store() -> &'static Mutex<HashMap<String, TtlEntry>> {
+    TTL_STORE.get_or_init(Default::default)
+}
+
+fn ttl_put(key: &str, ttl: Duration, val: Option<String>) {
+    let expiry = Instant::now()
+        .checked_add(ttl)
+        .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+    if let Ok(mut g) = ttl_store().lock() {
+        g.insert(key.to_string(), TtlEntry { expiry, val, refreshing: false });
+    }
+}
+
+/// `(fresh, value)` for a key present in the store.
+fn ttl_peek(key: &str) -> Option<(bool, Option<String>)> {
+    let g = ttl_store().lock().ok()?;
+    let e = g.get(key)?;
+    Some((Instant::now() < e.expiry, e.val.clone()))
+}
+
+/// Blocking TTL cache. `run` returns `(ttl, value)` — the producer picks
+/// the lifetime, so a failure can retry sooner than a success.
+pub(crate) fn ttl_cached(
+    key: &str,
+    run: impl FnOnce() -> (Duration, Option<String>),
+) -> Option<String> {
+    if let Some((true, val)) = ttl_peek(key) {
+        return val;
+    }
+    let (ttl, val) = run();
+    ttl_put(key, ttl, val.clone());
+    val
+}
+
+/// Stale-while-revalidate TTL cache: an expired entry is returned at
+/// once and refreshed on a background thread, so only the very first
+/// lookup of a key ever blocks a render. `run` must not touch shell
+/// state — resolve everything it needs before the call.
+pub(crate) fn ttl_cached_bg(
+    key: &str,
+    run: impl FnOnce() -> (Duration, Option<String>) + Send + 'static,
+) -> Option<String> {
+    match ttl_peek(key) {
+        Some((true, val)) => val,
+        Some((false, stale)) => {
+            let claimed = ttl_store()
+                .lock()
+                .ok()
+                .and_then(|mut g| {
+                    let e = g.get_mut(key)?;
+                    if e.refreshing {
+                        return None;
+                    }
+                    e.refreshing = true;
+                    Some(())
+                })
+                .is_some();
+            if claimed {
+                let owned = key.to_string();
+                let spawned = std::thread::Builder::new()
+                    .name("p10k-refresh".into())
+                    .spawn({
+                        let owned = owned.clone();
+                        move || {
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+                            match r {
+                                Ok((ttl, val)) => ttl_put(&owned, ttl, val),
+                                Err(_) => {
+                                    if let Ok(mut g) = ttl_store().lock() {
+                                        if let Some(e) = g.get_mut(&owned) {
+                                            e.refreshing = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                if spawned.is_err() {
+                    if let Ok(mut g) = ttl_store().lock() {
+                        if let Some(e) = g.get_mut(&owned) {
+                            e.refreshing = false;
+                        }
+                    }
+                }
+            }
+            stale
+        }
+        None => {
+            let (ttl, val) = run();
+            ttl_put(key, ttl, val.clone());
+            val
+        }
+    }
+}
+
+/// `ttl_cached` for a fixed lifetime.
+pub(crate) fn ttl_cached_fixed(
+    key: &str,
+    ttl: Duration,
+    run: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    ttl_cached(key, || (ttl, run()))
+}
+
+#[cfg(test)]
+mod ttl_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn blocking_cache_runs_producer_once_within_ttl() {
+        let runs = AtomicUsize::new(0);
+        let probe = || {
+            runs.fetch_add(1, Ordering::SeqCst);
+            (Duration::from_secs(60), Some("v".to_string()))
+        };
+        assert_eq!(ttl_cached("test.blocking_once", probe).as_deref(), Some("v"));
+        assert_eq!(ttl_cached("test.blocking_once", probe).as_deref(), Some("v"));
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn failure_is_cached_for_its_own_ttl() {
+        let runs = AtomicUsize::new(0);
+        let probe = || {
+            runs.fetch_add(1, Ordering::SeqCst);
+            (Duration::from_secs(60), None)
+        };
+        assert_eq!(ttl_cached("test.cached_none", probe), None);
+        assert_eq!(ttl_cached("test.cached_none", probe), None);
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn expired_entry_is_served_stale_while_refresh_runs_off_thread() {
+        let key = "test.swr_stale";
+        // Seed: expires immediately.
+        assert_eq!(
+            ttl_cached_bg(key, || (Duration::ZERO, Some("old".into()))).as_deref(),
+            Some("old")
+        );
+        // Expired: the slow refresh must NOT block the caller.
+        let t0 = Instant::now();
+        let got = ttl_cached_bg(key, || {
+            std::thread::sleep(Duration::from_millis(300));
+            (Duration::from_secs(60), Some("new".into()))
+        });
+        assert_eq!(got.as_deref(), Some("old"));
+        assert!(t0.elapsed() < Duration::from_millis(150), "caller blocked on refresh");
+        // The refresh lands.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some((true, Some(v))) = ttl_peek(key) {
+                assert_eq!(v, "new");
+                break;
+            }
+            assert!(Instant::now() < deadline, "refresh never landed");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn concurrent_expired_lookups_start_one_refresh() {
+        let key = "test.swr_single_flight";
+        ttl_cached_bg(key, || (Duration::ZERO, Some("old".into())));
+        let runs = std::sync::Arc::new(AtomicUsize::new(0));
+        for _ in 0..8 {
+            let runs = runs.clone();
+            ttl_cached_bg(key, move || {
+                runs.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(200));
+                (Duration::from_secs(60), Some("new".into()))
+            });
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
 }

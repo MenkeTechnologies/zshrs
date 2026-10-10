@@ -32,6 +32,7 @@
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::{ttl_cached_bg, ttl_cached_fixed as cached_ttl};
 use crate::extensions::p10k::shared::{color1, color2, env_or_param, global_bool, global_int, global_float, esc_pct, decode_g, seg_icon, apply_visual_identifier, apply_content_expansion, make_segment};
 use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::utils::getkeystring;
@@ -44,6 +45,20 @@ use std::time::{Duration, Instant};
 // ---------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------
+
+/// Warm the probe behind `base` so the serial build loop finds a fresh
+/// cache entry. Pure subprocess / OS reads only — never touches shell
+/// state beyond `$PATH` — so the render calls these concurrently.
+/// Returns false for segments without a probe.
+pub(super) fn prefetch(base: &str) -> bool {
+    match base {
+        "ram" => drop(ram_free_bytes()),
+        "battery" => drop(battery_status()),
+        "wifi" => drop(wifi_status()),
+        _ => return false,
+    }
+    true
+}
 
 /// Segment dispatch per the p10k module contract. `None` = not handled
 /// by this module; `Some(vec![])` = handled but hidden this prompt.
@@ -148,37 +163,8 @@ pub(crate) fn cmd_on_path(name: &str) -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------------
-// Subprocess + TTL cache
+// Subprocess runner (TTL cache: shared::ttl_cached*)
 // ---------------------------------------------------------------------
-
-/// Replacement for p10k's `_p9k_worker_invoke` async recompute loop
-/// (p10k:2704/1357/…): the zsh theme refreshes these values in a
-/// background worker; here the subprocess runs synchronously at most
-/// once per TTL. `None` results (spawn/parse failure) are cached too,
-/// so a broken tool can't fork on every prompt. Bounded by the number
-/// of `&'static str` keys (one per tool).
-static TTL_CACHE: OnceLock<Mutex<HashMap<&'static str, (Instant, Option<String>)>>> =
-    OnceLock::new();
-
-fn cached_ttl(
-    key: &'static str,
-    ttl: Duration,
-    run: impl FnOnce() -> Option<String>,
-) -> Option<String> {
-    let m = TTL_CACHE.get_or_init(Default::default);
-    if let Ok(guard) = m.lock() {
-        if let Some((at, val)) = guard.get(key) {
-            if at.elapsed() < ttl {
-                return val.clone();
-            }
-        }
-    }
-    let val = run();
-    if let Ok(mut guard) = m.lock() {
-        guard.insert(key, (Instant::now(), val.clone()));
-    }
-    val
-}
 
 /// Run an external command, stdout as a string (stderr dropped — the
 /// zsh originals all `2>/dev/null`). None on spawn failure or non-zero
@@ -485,8 +471,11 @@ fn load_segments() -> Vec<Segment> {
 /// (p10k:2715-2727), 10s TTL replacing the worker refresh loop.
 #[cfg(target_os = "macos")]
 fn ram_free_bytes() -> Option<f64> {
-    let out = cached_ttl("ram.vm_stat", Duration::from_secs(10), || {
-        run_tool(&cmd_on_path("vm_stat")?, &[])
+    // Binary resolved here: the refresh runs on a background thread
+    // and must not touch shell state.
+    let vm_stat = cmd_on_path("vm_stat");
+    let out = ttl_cached_bg("ram.vm_stat", move || {
+        (Duration::from_secs(10), vm_stat.and_then(|bin| run_tool(&bin, &[])))
     })?;
     fn pages(out: &str, key: &str) -> Option<f64> {
         // vm_stat lines: "Pages free:               123456."
@@ -677,10 +666,13 @@ fn battery_level_pick(arr: &[String], pct: i64) -> Option<String> {
 /// 30s TTL. Returns (state, percent, remain).
 #[cfg(target_os = "macos")]
 fn battery_status() -> Option<(&'static str, i64, String)> {
-    let raw = cached_ttl("battery.pmset", Duration::from_secs(30), || {
-        let out = run_tool(&cmd_on_path("pmset")?, &["-g", "batt"])?;
-        // p10k:1383 — ${${(Af)"$(pmset -g batt)"}[2]}: the second line.
-        out.lines().nth(1).map(str::to_string)
+    let pmset = cmd_on_path("pmset");
+    let raw = ttl_cached_bg("battery.pmset", move || {
+        let line = pmset.and_then(|bin| run_tool(&bin, &["-g", "batt"])).and_then(|out| {
+            // p10k:1383 — ${${(Af)"$(pmset -g batt)"}[2]}: the second line.
+            out.lines().nth(1).map(str::to_string)
+        });
+        (Duration::from_secs(30), line)
     })?;
     // p10k:1384 — [[ $raw_data == *InternalBattery* ]] || return
     if !raw.contains("InternalBattery") {
@@ -1162,7 +1154,8 @@ mod corewlan {
 /// else CoreWLAN. Behind the same 10s TTL as the Linux arm.
 #[cfg(target_os = "macos")]
 fn wifi_status() -> Option<(String, String, String, String, String)> {
-    let joined = cached_ttl("wifi.macos", Duration::from_secs(10), || {
+    let joined = ttl_cached_bg("wifi.macos", move || {
+        let probe = || -> Option<String> {
         let airport = std::path::Path::new(AIRPORT);
         let (ssid, rate, rssi, noise) = if airport.exists() {
             parse_airport(&run_tool(airport, &["-I"])?)?
@@ -1172,7 +1165,9 @@ fn wifi_status() -> Option<(String, String, String, String, String)> {
         // p10k:5273-5286 — bars from the SNR margin.
         let snr = rssi.parse::<i64>().ok()? - noise.parse::<i64>().ok()?;
         let bars = wifi_bars(snr);
-        Some(format!("{ssid}\u{1f}{rate}\u{1f}{rssi}\u{1f}{noise}\u{1f}{bars}"))
+            Some(format!("{ssid}\u{1f}{rate}\u{1f}{rssi}\u{1f}{noise}\u{1f}{bars}"))
+        };
+        (Duration::from_secs(10), probe())
     })?;
     let mut f = joined.split('\u{1f}').map(str::to_string);
     Some((f.next()?, f.next()?, f.next()?, f.next()?, f.next()?))
@@ -1185,9 +1180,12 @@ fn wifi_status() -> Option<(String, String, String, String, String)> {
 /// (ssid, last_tx_rate, rssi, noise, bars).
 #[cfg(not(target_os = "macos"))]
 fn wifi_status() -> Option<(String, String, String, String, String)> {
-    let joined = cached_ttl("wifi.iw", Duration::from_secs(10), || {
-        // p10k:5230 — [[ -r /proc/net/wireless && -n $commands[iw] ]]
-        let iw = cmd_on_path("iw")?;
+    // p10k:5230 — [[ -r /proc/net/wireless && -n $commands[iw] ]]; the
+    // binary is resolved here, the refresh runs off the render thread.
+    let iw = cmd_on_path("iw");
+    let joined = ttl_cached_bg("wifi.iw", move || {
+        let probe = || -> Option<String> {
+            let iw = iw?;
         let content = std::fs::read_to_string("/proc/net/wireless").ok()?;
         let (iface, rssi, noise) = parse_proc_wireless(&content)?;
         // p10k:5259 — lines=(${(f)"$(command iw dev $iface link)"})
@@ -1196,9 +1194,11 @@ fn wifi_status() -> Option<(String, String, String, String, String)> {
         // p10k:5275 — local -i snr_margin='rssi - noise'
         let snr = rssi.parse::<i64>().ok()? - noise.parse::<i64>().ok()?;
         let bars = wifi_bars(snr);
-        Some(format!(
-            "{ssid}\u{1f}{last_tx_rate}\u{1f}{rssi}\u{1f}{noise}\u{1f}{bars}"
-        ))
+            Some(format!(
+                "{ssid}\u{1f}{last_tx_rate}\u{1f}{rssi}\u{1f}{noise}\u{1f}{bars}"
+            ))
+        };
+        (Duration::from_secs(10), probe())
     })?;
     let mut f = joined.split('\u{1f}').map(str::to_string);
     Some((f.next()?, f.next()?, f.next()?, f.next()?, f.next()?))

@@ -48,6 +48,7 @@
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::ttl_cached_fixed as cached_ttl;
 use crate::extensions::p10k::shared::{color1, decode_g, apply_visual_identifier, apply_content_expansion};
 use crate::ported::utils::getkeystring;
 use std::collections::HashMap;
@@ -149,34 +150,8 @@ fn make_segment(
 }
 
 // ---------------------------------------------------------------------
-// TTL cache (mirror segments_sys.rs)
+// TTL cache: shared::ttl_cached_fixed (aliased as cached_ttl above)
 // ---------------------------------------------------------------------
-
-/// Disk / database probes run at most once per TTL (same shape as the
-/// segments_sys replacement for p10k's `_p9k_worker_invoke` loop).
-/// `None` results (scan/query failure) are cached too, so a broken
-/// source can't re-probe on every prompt. Bounded by the number of
-/// `&'static str` keys.
-// Owned keys: callers pass runtime segment names (`&str` from the
-// dispatch), not 'static strings. (Tree-unblock edit for the E0521 at
-// lang_version_segments — the p10k session may restructure.)
-static TTL_CACHE: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
-
-fn cached_ttl(key: &str, ttl: Duration, run: impl FnOnce() -> Option<String>) -> Option<String> {
-    let m = TTL_CACHE.get_or_init(Default::default);
-    if let Ok(guard) = m.lock() {
-        if let Some((at, val)) = guard.get(key) {
-            if at.elapsed() < ttl {
-                return val.clone();
-            }
-        }
-    }
-    let val = run();
-    if let Ok(mut guard) = m.lock() {
-        guard.insert(key.to_string(), (Instant::now(), val.clone()));
-    }
-    val
-}
 
 // ---------------------------------------------------------------------
 // Pure formatters (unit-tested below)

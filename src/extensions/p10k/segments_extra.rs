@@ -32,6 +32,7 @@
 use crate::extensions::p10k::config::{p9k_global, p9k_global_arr, p9k_param};
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
+use crate::extensions::p10k::shared::ttl_cached as cached_ttl;
 use crate::extensions::p10k::shared::{color1, color2, env_or_param, global_bool, global_float, esc_pct, decode_g, seg_icon, apply_visual_identifier, apply_content_expansion, make_segment};
 use crate::ported::params::getsparam;
 use crate::ported::utils::getkeystring;
@@ -216,32 +217,6 @@ fn match_interfaces(pattern: &str) -> Vec<(String, String)> {
 // Subprocess: TTL cache + budgeted runner + stat-keyed command cache
 // ---------------------------------------------------------------------
 
-/// segments_sys::cached_ttl variant with String keys and a
-/// producer-chosen TTL: public_ip caches successes for
-/// PUBLIC_IP_TIMEOUT but failures for only 5s (p10k:1526/1552), and
-/// dropbox keys on the cwd. Stored Instant is the EXPIRY. `None`
-/// results (spawn/parse failure) are cached too, so a broken tool
-/// can't fork on every prompt.
-static TTL_CACHE: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
-
-fn cached_ttl(key: &str, run: impl FnOnce() -> (Duration, Option<String>)) -> Option<String> {
-    let m = TTL_CACHE.get_or_init(Default::default);
-    if let Ok(guard) = m.lock() {
-        if let Some((expiry, val)) = guard.get(key) {
-            if Instant::now() < *expiry {
-                return val.clone();
-            }
-        }
-    }
-    let (ttl, val) = run();
-    let expiry = Instant::now()
-        .checked_add(ttl)
-        .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
-    if let Ok(mut guard) = m.lock() {
-        guard.insert(key.to_string(), (expiry, val.clone()));
-    }
-    val
-}
 
 /// Run a tool with a hard latency budget — the git.rs run_porcelain
 /// pattern (git.rs:349-391): stdout drained on a helper thread, child

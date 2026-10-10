@@ -772,6 +772,18 @@ pub fn preprompt_render() {
     let left_elems = config::p9k_global_arr("LEFT_PROMPT_ELEMENTS");
     let right_elems = config::p9k_global_arr("RIGHT_PROMPT_ELEMENTS");
 
+    // Run the independent probe segments concurrently: the build loop
+    // below is serial (segments share paramtab and the `$()` machinery),
+    // so without this the frame cost is the SUM of every probe.
+    std::thread::scope(|s| {
+        for name in left_elems.iter().chain(right_elems.iter()) {
+            let base = render::is_joined_name(name).0;
+            if matches!(base, "ram" | "battery" | "wifi") {
+                s.spawn(move || segments_sys::prefetch(base));
+            }
+        }
+    });
+
     // p10k:5815+ — "newline" pseudo-elements split the element list
     // into prompt lines.
     let split_lines = |elems: &[String]| -> Vec<Vec<render::Segment>> {
