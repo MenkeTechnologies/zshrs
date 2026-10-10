@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Cross-shell benchmark harness: zshrs vs zsh vs fish vs nushell (plus bash
-# when present). Each workload is expressed once per dialect (POSIX-ish for
-# zshrs/zsh/bash, fish, nushell) so every shell runs its own native idiom for
+# Cross-shell benchmark harness: zshrs vs zsh vs fish vs nushell (plus bash, ksh,
+# mksh, dash when present). Each workload is expressed once per dialect (POSIX-ish for
+# zshrs/zsh/bash/ksh/mksh/dash, fish, nushell) so every shell runs its own native idiom for
 # the same logical work. Runs hyperfine, writes a Markdown table per workload
 # to bench/results.md.
 #
@@ -24,7 +24,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RESULTS="${REPO_ROOT}/bench/results.md"
 WARMUP=3
 RUNS=10
-SHELL_NAMES=(zshrs zsh fish nu bash)
+SHELL_NAMES=(zshrs zsh fish nu bash ksh mksh dash)
 ONLY=()
 
 while [[ $# -gt 0 ]]; do
@@ -50,7 +50,11 @@ EXE[zsh]="$(command -v zsh || true)";   FLAGS[zsh]="-f -c"
 EXE[bash]="$(command -v bash || true)"; FLAGS[bash]="--norc --noprofile -c"
 EXE[fish]="$(command -v fish || true)"; FLAGS[fish]="--no-config -c"
 EXE[nu]="$(command -v nu || true)";     FLAGS[nu]="--no-config-file -c"
+EXE[ksh]="$(command -v ksh || true)";   FLAGS[ksh]="-c"
+EXE[mksh]="$(command -v mksh || true)"; FLAGS[mksh]="-c"
+EXE[dash]="$(command -v dash || true)"; FLAGS[dash]="-c"
 DIALECT[zshrs]=posix; DIALECT[zsh]=posix; DIALECT[bash]=posix
+DIALECT[ksh]=posix; DIALECT[mksh]=posix; DIALECT[dash]=posix
 DIALECT[fish]=fish;   DIALECT[nu]=nu
 
 ACTIVE=()
@@ -109,6 +113,15 @@ snippet() {
     esac
 }
 
+shell_version() {
+    local s="$1"
+    case "$s" in
+        mksh) "${EXE[$s]}" -c 'echo $KSH_VERSION' ;;
+        dash) echo "-" ;;
+        *)    "${EXE[$s]}" --version 2>&1 | head -1 ;;
+    esac
+}
+
 wanted() {
     [[ ${#ONLY[@]} -eq 0 ]] && return 0
     local w
@@ -124,7 +137,7 @@ wanted() {
     echo "| Shell | Binary | Version |"
     echo "|---|---|---|"
     for s in "${ACTIVE[@]}"; do
-        echo "| ${s} | \`${EXE[$s]}\` | $("${EXE[$s]}" --version 2>&1 | head -1) |"
+        echo "| ${s} | \`${EXE[$s]}\` | $(shell_version "$s") |"
     done
     echo
 } > "${RESULTS}"
