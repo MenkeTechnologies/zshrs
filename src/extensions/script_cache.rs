@@ -60,7 +60,9 @@ pub const SHARD_MAGIC: u32 = 0x5A525343;
 /// v2 added `ScriptEntry::binary_len_at_cache`; a v1 shard has no length to
 /// compare against, so it is rejected wholesale rather than half-validated.
 /// v3: token chars moved to the Private Use Area (crate::token_char).
-pub const SHARD_FORMAT_VERSION: u32 = 4;
+/// v5: `ScriptEntry::env_fingerprint`, and a one-byte kind tag in front of
+/// every `chunk_blob` (a script's single chunk vs a sourced file's events).
+pub const SHARD_FORMAT_VERSION: u32 = 5;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
@@ -94,6 +96,11 @@ pub struct ScriptEntry {
     pub binary_len_at_cache: u64,
     /// `cached_at_secs` field.
     pub cached_at_secs: i64,
+    /// Hash of the lexer-visible shell state (aliases, options, emulation) the
+    /// program was lexed and compiled under. The compiled chunks have alias
+    /// expansions and option-dependent code baked in, so an entry is served
+    /// only to a run that starts from the same state.
+    pub env_fingerprint: u64,
     /// `chunk_blob` field.
     pub chunk_blob: Vec<u8>,
 }
@@ -166,6 +173,24 @@ impl MmappedShard {
     }
 }
 
+/// One buffered write: what `try_save_bytes` queues until the next flush.
+#[derive(Clone)]
+pub struct PendingPut {
+    path: String,
+    mtime_secs: i64,
+    mtime_nsecs: i64,
+    env_fingerprint: u64,
+    /// Kind-tagged blob, as stored.
+    blob: Vec<u8>,
+}
+
+/// Writes buffered since the last flush; see [`try_flush_pending`].
+static PENDING: Mutex<Vec<PendingPut>> = Mutex::new(Vec::new());
+
+/// Past this many buffered entries `try_save_bytes` flushes by itself, so a
+/// long non-interactive run cannot hold an unbounded amount of bytecode.
+const PENDING_FLUSH_MAX: usize = 128;
+
 /// Shard cache keyed by canonical script path. One per shard file.
 pub struct ScriptCache {
     /// `path` field.
@@ -223,7 +248,13 @@ impl ScriptCache {
 
     /// Cache lookup. Returns `None` on miss, mtime mismatch, version drift, or
     /// zshrs binary newer than the cached entry.
-    pub fn get(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<Vec<u8>> {
+    pub fn get(
+        &self,
+        path: &str,
+        mtime_secs: i64,
+        mtime_nsecs: i64,
+        env_fingerprint: u64,
+    ) -> Option<Vec<u8>> {
         self.ensure_mmap();
         let guard = self.mmap.lock();
         let shard = guard.as_ref()?;
@@ -235,6 +266,10 @@ impl ScriptCache {
         let entry_mtime_s: i64 = entry.mtime_secs.into();
         let entry_mtime_ns: i64 = entry.mtime_nsecs.into();
         if entry_mtime_s != mtime_secs || entry_mtime_ns != mtime_nsecs {
+            return None;
+        }
+        let entry_fp: u64 = entry.env_fingerprint.into();
+        if entry_fp != env_fingerprint {
             return None;
         }
 
@@ -271,6 +306,7 @@ impl ScriptCache {
         path: &str,
         mtime_secs: i64,
         mtime_nsecs: i64,
+        env_fingerprint: u64,
         chunk_blob: Vec<u8>,
     ) -> Result<(), String> {
         let _lock = match acquire_lock(&self.lock_path) {
@@ -296,11 +332,55 @@ impl ScriptCache {
             binary_mtime_at_cache: bin_mtime,
             binary_len_at_cache: bin_len,
             cached_at_secs: now_secs(),
+            env_fingerprint,
             chunk_blob,
         };
         shard.entries.insert(path.to_string(), entry);
         shard.header.built_at_secs = now_secs() as u64;
 
+        write_shard_atomic(&self.path, &shard)?;
+        self.invalidate_mmap();
+        Ok(())
+    }
+
+    /// Insert / replace several entries with ONE lock, read and rewrite of the
+    /// shard. `put` costs a full shard rewrite and fsync per call, so a shell
+    /// that sources a hundred files for the first time would pay that a hundred
+    /// times; the sourced-file path buffers and flushes here instead.
+    pub fn put_many(&self, batch: Vec<PendingPut>) -> Result<(), String> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let _lock = match acquire_lock(&self.lock_path) {
+            Some(l) => l,
+            None => return Ok(()),
+        };
+        let mut shard = match read_owned_shard(&self.path) {
+            Some(s)
+                if s.header.zshrs_version == env!("CARGO_PKG_VERSION")
+                    && s.header.pointer_width as usize == std::mem::size_of::<usize>()
+                    && s.header.format_version == SHARD_FORMAT_VERSION =>
+            {
+                s
+            }
+            _ => fresh_shard(),
+        };
+        let (bin_mtime, bin_len) = current_binary_identity().unwrap_or((0, 0));
+        for p in batch {
+            shard.entries.insert(
+                p.path,
+                ScriptEntry {
+                    mtime_secs: p.mtime_secs,
+                    mtime_nsecs: p.mtime_nsecs,
+                    binary_mtime_at_cache: bin_mtime,
+                    binary_len_at_cache: bin_len,
+                    cached_at_secs: now_secs(),
+                    env_fingerprint: p.env_fingerprint,
+                    chunk_blob: p.blob,
+                },
+            );
+        }
+        shard.header.built_at_secs = now_secs() as u64;
         write_shard_atomic(&self.path, &shard)?;
         self.invalidate_mmap();
         Ok(())
@@ -507,19 +587,134 @@ pub static CACHE: once_cell::sync::Lazy<Option<ScriptCache>> = once_cell::sync::
     ScriptCache::open(&default_cache_path()).ok()
 });
 
-/// Try to load cached chunk-bytes by source path. Returns `None` on any miss.
-pub fn try_load_bytes(path: &Path) -> Option<Vec<u8>> {
+/// What a cached blob holds. A top-level script is one chunk; a sourced file is
+/// the sequence of per-event chunks the `loop()` of c:Src/init.c:155-220
+/// compiled, each lexed under the state the previous ones left behind.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BlobKind {
+    /// bincode of one `fusevm::Chunk`.
+    Script = 0,
+    /// bincode of a `Vec<fusevm::Chunk>`, one per executed event.
+    Events = 1,
+}
+
+/// Hash of everything the lexer and compiler read from the live shell: the
+/// alias tables, the option store and the emulation mode. Two runs that start
+/// from equal fingerprints lex the same bytes into the same chunks.
+///
+/// The alias tables are large and change rarely, so their hash is reused until
+/// `ALIAS_GEN` moves; the option store is a few hundred bytes and is hashed
+/// whenever `opts_cache::generation` moved since the last call.
+pub fn env_fingerprint() -> u64 {
+    use std::sync::atomic::Ordering;
+    static MEMO: Mutex<Option<(u64, u64, u64, u64)>> = Mutex::new(None);
+    let alias_gen = crate::ported::hashtable::ALIAS_GEN.load(Ordering::Relaxed);
+    let opt_gen = crate::opts_cache::generation();
+    let mut memo = MEMO.lock();
+    if let Some((ag, og, alias_hash, opt_hash)) = *memo {
+        if ag == alias_gen && og == opt_gen {
+            return fnv_mix(alias_hash, opt_hash);
+        }
+    }
+    let alias_hash = hash_alias_tables();
+    let opt_hash = hash_option_store();
+    *memo = Some((alias_gen, opt_gen, alias_hash, opt_hash));
+    fnv_mix(alias_hash, opt_hash)
+}
+
+/// `(ALIAS_GEN, option generation)` — compared before and after a run to learn
+/// whether the run itself changed lexer-visible state.
+pub fn env_generation() -> (u64, u64) {
+    (
+        crate::ported::hashtable::ALIAS_GEN.load(std::sync::atomic::Ordering::Relaxed),
+        crate::opts_cache::generation(),
+    )
+}
+
+fn fnv_mix(a: u64, b: u64) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in a.to_le_bytes().into_iter().chain(b.to_le_bytes()) {
+        h ^= u64::from(byte);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+fn fnv_bytes(mut h: u64, bytes: &[u8]) -> u64 {
+    for &byte in bytes {
+        h ^= u64::from(byte);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // Field separator, so ("ab","c") and ("a","bc") hash apart.
+    h ^= 0xff;
+    h.wrapping_mul(0x0000_0100_0000_01b3)
+}
+
+fn hash_alias_tables() -> u64 {
+    use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock};
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for table in [aliastab_lock(), sufaliastab_lock()] {
+        let Ok(t) = table.read() else { continue };
+        // Bucket order is deterministic for a given insertion history, but the
+        // fingerprint must not depend on history — sort by name.
+        let mut rows: Vec<(&String, &crate::ported::zsh_h::alias)> = t.iter().collect();
+        rows.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, a) in rows {
+            h = fnv_bytes(h, name.as_bytes());
+            h = fnv_bytes(h, a.text.as_bytes());
+            h = fnv_bytes(h, &a.node.flags.to_le_bytes());
+        }
+        h = fnv_bytes(h, b"|");
+    }
+    h
+}
+
+fn hash_option_store() -> u64 {
+    let mut rows: Vec<(String, bool)> = crate::ported::options::opt_state_snapshot()
+        .into_iter()
+        .collect();
+    rows.sort();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (name, on) in rows {
+        h = fnv_bytes(h, name.as_bytes());
+        h = fnv_bytes(h, &[on as u8]);
+    }
+    let emul = crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed);
+    fnv_bytes(h, &emul.to_le_bytes())
+}
+
+/// Try to load a cached program by source path. Returns `None` on any miss,
+/// including a different lexer-state fingerprint or a blob of another kind.
+pub fn try_load_bytes(path: &Path, kind: BlobKind, env_fp: u64) -> Option<Vec<u8>> {
     let cache = CACHE.as_ref()?;
     let canonical = path.canonicalize().ok()?;
     let path_str = canonical.to_string_lossy();
     let (mtime_s, mtime_ns) = file_mtime(&canonical)?;
-    cache.get(&path_str, mtime_s, mtime_ns)
+    // A file sourced twice in one session: the first run's entry is still
+    // buffered, and it is the newest word on the path.
+    let buffered = PENDING.lock().iter().rev().find_map(|p| {
+        (p.path == path_str && p.mtime_secs == mtime_s && p.mtime_nsecs == mtime_ns && p.env_fingerprint == env_fp)
+            .then(|| p.blob.clone())
+    });
+    let blob = match buffered {
+        Some(b) => b,
+        None => cache.get(&path_str, mtime_s, mtime_ns, env_fp)?,
+    };
+    let (tag, body) = blob.split_first()?;
+    (*tag == kind as u8).then(|| body.to_vec())
 }
 
-/// Store bincode-encoded `fusevm::Chunk` bytes for a script path. Best-effort —
-/// cache disabled / canonicalize failure / mtime stat failure all return
-/// `Ok(())` silently so the caller can fire-and-forget.
-pub fn try_save_bytes(path: &Path, chunk_blob: &[u8]) -> Result<(), String> {
+/// Store the bincode-encoded program for a script path. `env_fp` is the
+/// fingerprint taken BEFORE the run: the state the lexer started from, not the
+/// state the file left behind. Best-effort — cache disabled / canonicalize
+/// failure / mtime stat failure all return `Ok(())` silently so the caller can
+/// fire-and-forget.
+pub fn try_save_bytes(
+    path: &Path,
+    kind: BlobKind,
+    env_fp: u64,
+    chunk_blob: &[u8],
+) -> Result<(), String> {
     let Some(cache) = CACHE.as_ref() else {
         return Ok(());
     };
@@ -532,7 +727,37 @@ pub fn try_save_bytes(path: &Path, chunk_blob: &[u8]) -> Result<(), String> {
         Some(m) => m,
         None => return Ok(()),
     };
-    cache.put(&path_str, mtime_s, mtime_ns, chunk_blob.to_vec())
+    let mut tagged = Vec::with_capacity(chunk_blob.len() + 1);
+    tagged.push(kind as u8);
+    tagged.extend_from_slice(chunk_blob);
+    let over = {
+        let mut pending = PENDING.lock();
+        pending.push(PendingPut {
+            path: path_str.into_owned(),
+            mtime_secs: mtime_s,
+            mtime_nsecs: mtime_ns,
+            env_fingerprint: env_fp,
+            blob: tagged,
+        });
+        pending.len() >= PENDING_FLUSH_MAX
+    };
+    if over {
+        try_flush_pending();
+    }
+    Ok(())
+}
+
+/// Write out everything `try_save_bytes` buffered, in one shard rewrite. Called
+/// at the prompt, from `zexit` and from the `atexit` hook, alongside the
+/// autoload and deparse caches. Cheap when nothing is buffered.
+pub fn try_flush_pending() {
+    let batch = std::mem::take(&mut *PENDING.lock());
+    if batch.is_empty() {
+        return;
+    }
+    if let Some(cache) = CACHE.as_ref() {
+        let _ = cache.put_many(batch);
+    }
 }
 /// `stats` — see implementation.
 pub fn stats() -> Option<(i64, i64)> {
@@ -567,10 +792,10 @@ mod tests {
 
         let blob = vec![1u8, 2, 3, 4, 5];
         cache
-            .put(&path_str, mtime_s, mtime_ns, blob.clone())
+            .put(&path_str, mtime_s, mtime_ns, 0, blob.clone())
             .unwrap();
 
-        let loaded = cache.get(&path_str, mtime_s, mtime_ns).unwrap();
+        let loaded = cache.get(&path_str, mtime_s, mtime_ns, 0).unwrap();
         assert_eq!(loaded, blob);
 
         let (count, _bytes) = cache.stats();
@@ -596,10 +821,10 @@ mod tests {
         let (s1, n1) = file_mtime(&first).unwrap();
         let (s2, n2) = file_mtime(&second).unwrap();
 
-        writer.put(&first.to_string_lossy(), s1, n1, vec![1]).unwrap();
+        writer.put(&first.to_string_lossy(), s1, n1, 0, vec![1]).unwrap();
         assert_eq!(reader.list_scripts().len(), 1, "reader maps the shard");
 
-        writer.put(&second.to_string_lossy(), s2, n2, vec![2]).unwrap();
+        writer.put(&second.to_string_lossy(), s2, n2, 0, vec![2]).unwrap();
         let rows = reader.list_scripts();
         assert_eq!(rows.len(), 2, "the replaced shard must be remapped: {rows:?}");
         assert_eq!(reader.stats().0, 2);
@@ -617,9 +842,9 @@ mod tests {
 
         let (mtime_s, mtime_ns) = file_mtime(&script_path).unwrap();
         let path_str = script_path.to_string_lossy().to_string();
-        cache.put(&path_str, mtime_s, mtime_ns, vec![9u8]).unwrap();
+        cache.put(&path_str, mtime_s, mtime_ns, 0, vec![9u8]).unwrap();
 
-        assert!(cache.get(&path_str, mtime_s + 1, mtime_ns).is_none());
+        assert!(cache.get(&path_str, mtime_s + 1, mtime_ns, 0).is_none());
     }
 
     /// Bytecode is not portable between builds, so an entry must be refused
@@ -639,9 +864,9 @@ mod tests {
         std::fs::write(&script_path, "echo hi").unwrap();
         let (mtime_s, mtime_ns) = file_mtime(&script_path).unwrap();
         let path_str = script_path.to_string_lossy().to_string();
-        cache.put(&path_str, mtime_s, mtime_ns, vec![9u8]).unwrap();
+        cache.put(&path_str, mtime_s, mtime_ns, 0, vec![9u8]).unwrap();
         assert_eq!(
-            cache.get(&path_str, mtime_s, mtime_ns),
+            cache.get(&path_str, mtime_s, mtime_ns, 0),
             Some(vec![9u8]),
             "the emitting binary must hit its own entry",
         );
@@ -657,7 +882,7 @@ mod tests {
         write_shard_atomic(&cache_path, &shard).unwrap();
         let reopened = ScriptCache::open(&cache_path).unwrap();
         assert!(
-            reopened.get(&path_str, mtime_s, mtime_ns).is_none(),
+            reopened.get(&path_str, mtime_s, mtime_ns, 0).is_none(),
             "a chunk from a newer build was accepted",
         );
 
@@ -670,7 +895,7 @@ mod tests {
         write_shard_atomic(&cache_path, &shard).unwrap();
         let reopened = ScriptCache::open(&cache_path).unwrap();
         assert!(
-            reopened.get(&path_str, mtime_s, mtime_ns).is_none(),
+            reopened.get(&path_str, mtime_s, mtime_ns, 0).is_none(),
             "a chunk from a same-second build of a different size was accepted",
         );
     }
@@ -691,16 +916,16 @@ mod tests {
         let (m2s, m2n) = file_mtime(&p2).unwrap();
 
         cache
-            .put(&p1.to_string_lossy(), m1s, m1n, vec![1u8])
+            .put(&p1.to_string_lossy(), m1s, m1n, 0, vec![1u8])
             .unwrap();
         cache
-            .put(&p2.to_string_lossy(), m2s, m2n, vec![2u8])
+            .put(&p2.to_string_lossy(), m2s, m2n, 0, vec![2u8])
             .unwrap();
 
         let (count, _) = cache.stats();
         assert_eq!(count, 2);
-        assert!(cache.get(&p1.to_string_lossy(), m1s, m1n).is_some());
-        assert!(cache.get(&p2.to_string_lossy(), m2s, m2n).is_some());
+        assert!(cache.get(&p1.to_string_lossy(), m1s, m1n, 0).is_some());
+        assert!(cache.get(&p2.to_string_lossy(), m2s, m2n, 0).is_some());
     }
 
     #[test]
@@ -710,7 +935,7 @@ mod tests {
         let cache_path = dir.path().join("scripts.rkyv");
         std::fs::write(&cache_path, b"this is not a valid rkyv archive").unwrap();
         let cache = ScriptCache::open(&cache_path).unwrap();
-        assert!(cache.get("/nope", 0, 0).is_none());
+        assert!(cache.get("/nope", 0, 0, 0).is_none());
     }
 
     #[test]
@@ -724,7 +949,7 @@ mod tests {
         std::fs::write(&script_path, "echo hi").unwrap();
         let (mtime_s, mtime_ns) = file_mtime(&script_path).unwrap();
         cache
-            .put(&script_path.to_string_lossy(), mtime_s, mtime_ns, vec![7u8])
+            .put(&script_path.to_string_lossy(), mtime_s, mtime_ns, 0, vec![7u8])
             .unwrap();
         assert!(cache_path.exists());
 

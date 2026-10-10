@@ -1055,6 +1055,7 @@ extern "C" fn atexit_flush_pending() {
     let _ = std::panic::catch_unwind(try_flush_pending);
     // The deparse cache buffers the same way and exits by the same paths.
     let _ = std::panic::catch_unwind(crate::deparse_cache::try_flush_pending);
+    let _ = std::panic::catch_unwind(crate::script_cache::try_flush_pending);
 }
 
 /// Register [`atexit_flush_pending`]. Idempotent; call once from `main`.

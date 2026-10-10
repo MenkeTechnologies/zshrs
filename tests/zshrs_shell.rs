@@ -17302,3 +17302,44 @@ fn test_arith_increment_does_not_inherit_previous_evaluation_base() {
     let (_, out, _) = run_zshrs(script);
     assert_eq!(out, "28\n-3\n[-4]\n5\n-3\n[-3]\n");
 }
+
+/// `source` replays a sourced file's compiled events from `scripts.rkyv`, but
+/// only to a run that starts from the lexer-visible state the first run did:
+/// the chunks have alias expansions baked in. Changing the alias between two
+/// sources of an unchanged file must re-lex it, and a file that defines its
+/// own alias must never be stored (its later events were lexed under state a
+/// replay cannot re-derive). Also pins that `dbview scripts` lists the file.
+#[test]
+fn source_cache_replays_only_under_the_same_alias_state() {
+    let dir = tempdir_for_test();
+    let home = format!("{dir}/zhome");
+    std::fs::create_dir_all(&home).unwrap();
+    let a = format!("{dir}/a.zsh");
+    let b = format!("{dir}/b.zsh");
+    std::fs::write(&a, "foo one\nfA() { print fA $1 }\nfA two\n").unwrap();
+    std::fs::write(&b, "alias bar='print BAR'\nbar hi\n").unwrap();
+    let script = format!(
+        "alias foo='print A'\n\
+         source {a}\n\
+         source {a}\n\
+         alias foo='print B'\n\
+         source {a}\n\
+         source {b}\n\
+         source {b}\n\
+         print CACHED-A=$(dbview scripts | grep -c a.zsh) CACHED-B=$(dbview scripts | grep -c b.zsh)\n"
+    );
+    let out = Command::new(zshrs_bin())
+        .args(["-f", "-c", &script])
+        .env("ZSHRS_HOME", &home)
+        .env("TERM", "dumb")
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(
+        stdout,
+        "A one\nfA two\nA one\nfA two\nB one\nfA two\nBAR hi\nBAR hi\nCACHED-A=1 CACHED-B=0\n",
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

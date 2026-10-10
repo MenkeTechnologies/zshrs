@@ -14833,6 +14833,7 @@ pub fn zexit(val: i32, from_where: i32) {
     // this its compiles would never reach the cache at all.
     crate::autoload_cache::try_flush_pending();
     crate::deparse_cache::try_flush_pending();
+    crate::script_cache::try_flush_pending();
                                // c:6021-6024 — MONITOR → killrunjobs.
     if isset(MONITOR) {
         // c:6021
@@ -15379,7 +15380,9 @@ pub fn bin_dot(
             // with one legacy byte sourced to nothing at all.
             None => match crate::script_bytes::read_script_file(&path) {
                 // c:1626-1627 — `switch (loop(0, 0))`
-                Ok(src) => crate::fusevm_bridge::source_file_per_command(&src).unwrap_or(1),
+                Ok(src) => {
+                    crate::fusevm_bridge::source_file_per_command(&src, std::path::Path::new(&path)).unwrap_or(1)
+                }
                 // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
                 Err(_) => 128 - 2,
             },

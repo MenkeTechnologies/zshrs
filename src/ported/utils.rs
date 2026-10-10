@@ -1917,6 +1917,7 @@ pub fn preprompt() {
     // is buffered, which is the common case.
     crate::autoload_cache::try_flush_pending();
     crate::deparse_cache::try_flush_pending();
+    crate::script_cache::try_flush_pending();
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native p10k engine (src/extensions/p10k): snapshot `$?` and close
     // the command timer BEFORE the precmd hook runs, so precmd's own

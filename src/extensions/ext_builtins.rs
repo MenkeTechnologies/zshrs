@@ -1482,6 +1482,8 @@ impl ShellExecutor {
             }
 
             "scripts" => {
+                // Sourced files are buffered until the next prompt or exit; show them.
+                crate::script_cache::try_flush_pending();
                 let Some(cache) = crate::script_cache::CACHE.as_ref() else {
                     eprintln!("zshrs:dbview:1: no script cache");
                     return 1;

@@ -39,9 +39,21 @@ use crate::ported::zsh_h::{opt_name, OPT_SIZE};
 /// Indexed by option number, mirroring C's `char opts[OPT_SIZE]`.
 static OPTS_CACHE: [AtomicI8; OPT_SIZE as usize] = [const { AtomicI8::new(-1) }; OPT_SIZE as usize];
 
+/// Bumped on every option-store mutation (each one funnels through an
+/// invalidate below). Consumers that must know "did any option change since I
+/// last looked" — the script cache's lexer-state fingerprint — compare this
+/// instead of re-hashing the whole store. Not a count of changes, only of events.
+static OPT_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Current option-mutation generation; see [`OPT_GEN`].
+pub fn generation() -> u64 {
+    OPT_GEN.load(Ordering::Relaxed)
+}
+
 /// Drop the entire cache. Used when a wholesale option-store change makes
 /// per-slot tracking impossible (e.g. an unfiltered snapshot restore).
 pub fn invalidate_all() {
+    OPT_GEN.fetch_add(1, Ordering::Relaxed);
     for slot in OPTS_CACHE.iter() {
         slot.store(-1, Ordering::Relaxed);
     }
@@ -54,6 +66,7 @@ pub fn invalidate_all() {
 /// `optno` may be negative (a `no…` alias); the sign is dropped since the
 /// alias and its canonical share a slot.
 pub fn invalidate_one(optno: i32) {
+    OPT_GEN.fetch_add(1, Ordering::Relaxed);
     let idx = optno.unsigned_abs() as usize;
     if idx < OPT_SIZE as usize {
         OPTS_CACHE[idx].store(-1, Ordering::Relaxed);

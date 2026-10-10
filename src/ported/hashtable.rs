@@ -1366,6 +1366,13 @@ pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
     match_count
 }
 
+/// Bumped by every alias-table mutation (both tables). The script cache keys a
+/// sourced file's compiled events on the lexer-visible shell state, and hashing
+/// a table of thousands of aliases per `source` would cost more than the parse
+/// it saves; a change counter lets the hash be reused until something moves.
+/// !!! RUST-ONLY STATE — no C counterpart !!!
+pub static ALIAS_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl alias_table {
     /// `new` — `newhashtable(23, "aliastab", NULL)` +
     /// `createaliastable(aliastab)` (`Src/hashtable.c:1210-1212`),
@@ -1424,6 +1431,7 @@ impl alias_table {
     ///
     /// !!! RUST-ONLY METHOD — no C counterpart (C forks) !!!
     pub fn restore(&mut self, snap: alias_table) {
+        ALIAS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.table = snap.table;
     }
     /// `add` — `addhashnode2` (`Src/hashtable.c:168`). C's `addnode`
@@ -1433,6 +1441,7 @@ impl alias_table {
     /// it is `freealiasnode` (`c:1243`).
     pub fn add(&mut self, alias: alias) -> Option<alias> {
         // c:157 / c:168
+        ALIAS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nam = alias.node.nam.clone(); // c:177 — `hn->nam = nam`
         self.table.addhashnode2(&nam, alias)
     }
@@ -1453,16 +1462,19 @@ impl alias_table {
     /// mutates straight through the returned `HashNode` pointer.
     pub fn get_mut(&mut self, name: &str) -> Option<&mut alias> {
         // c:245
+        ALIAS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.table
             .get_mut(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
     /// `remove` — `removehashnode` (`Src/hashtable.c:275`).
     pub fn remove(&mut self, name: &str) -> Option<alias> {
+        ALIAS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.table.removehashnode(name) // c:275
     }
     /// `disable` — see implementation.
     pub fn disable(&mut self, name: &str) -> bool {
+        ALIAS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(alias) = self.table.get_mut(name) {
             alias.node.flags |= DISABLED as i32;
             true
@@ -1472,6 +1484,7 @@ impl alias_table {
     }
     /// `enable` — see implementation.
     pub fn enable(&mut self, name: &str) -> bool {
+        ALIAS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(alias) = self.table.get_mut(name) {
             alias.node.flags &= !(DISABLED as i32);
             true
@@ -1490,6 +1503,7 @@ impl alias_table {
     /// `clear` — `emptyhashtable` (`Src/hashtable.c:517`), which is
     /// `resizehashtable(ht, ht->hsize)`: every node freed, `hsize` kept.
     pub fn clear(&mut self) {
+        ALIAS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.table.emptyhashtable(); // c:517
     }
     /// `iter` — the unsorted `scanmatchtable` walk

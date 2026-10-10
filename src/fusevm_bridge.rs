@@ -733,8 +733,8 @@ pub fn drain_compinit_bg_hook() {
 /// session executor otherwise, for a `source` that runs before the main
 /// loop's first `execode` has entered a context. `Ok(0)` with neither,
 /// matching `exec::execute_script`'s no-executor return.
-pub fn source_file_per_command(src: &str) -> Result<i32, String> {
-    if let Some(r) = try_with_executor(|exec| exec.execute_script_per_command(src)) {
+pub fn source_file_per_command(src: &str, path: &std::path::Path) -> Result<i32, String> {
+    if let Some(r) = try_with_executor(|exec| exec.execute_script_per_command(src, Some(path))) {
         return r;
     }
     let ptr = SESSION_EXECUTOR_PTR.with(|c| c.get());
@@ -742,7 +742,7 @@ pub fn source_file_per_command(src: &str) -> Result<i32, String> {
         // SAFETY: per with_session_context.
         Some(ptr) => {
             let _ctx = ExecutorContext::enter(unsafe { &mut *ptr });
-            unsafe { (*ptr).execute_script_per_command(src) }
+            unsafe { (*ptr).execute_script_per_command(src, Some(path)) }
         }
         None => Ok(0),
     }

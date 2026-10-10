@@ -4180,7 +4180,10 @@ impl ShellExecutor {
         // `run_chunk` (the shared VM-execution helper); script-eval
         // path delegates to `execute_script_zsh_pipeline` so the
         // full parse/compile/cache-save/run flow stays in one place.
-        if let Some(bc_blob) = crate::script_cache::try_load_bytes(path) {
+        let env_fp = crate::script_cache::env_fingerprint();
+        if let Some(bc_blob) =
+            crate::script_cache::try_load_bytes(path, crate::script_cache::BlobKind::Script, env_fp)
+        {
             if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
                 if !chunk.ops.is_empty() {
                     tracing::trace!(
@@ -4212,7 +4215,7 @@ impl ShellExecutor {
         let mut events: Vec<crate::parse::ZshList> = Vec::new();
         // c:Src/init.c:1963 — zsh_main runs the script through `loop(1, 0)`:
         // toplevel.
-        let mut status = self.run_events_per_command(&content, Some(&mut events), true)?;
+        let mut status = self.run_events_per_command(&content, Some(&mut events), None, true)?;
         // c:Src/init.c:1969-1974 — `if (tok == LEXERR || errexit) { if
         // (!lastval) lastval = 1; stopmsg = 1; zexit(lastval, …); }`: a
         // parse error, or an error abort in a non-interactive shell, exits
@@ -4237,7 +4240,12 @@ impl ShellExecutor {
             let compiler = crate::compile_zsh::ZshCompiler::new();
             let chunk = compiler.compile(&program);
             if let Ok(blob) = bincode::serialize(&chunk) {
-                let _ = crate::script_cache::try_save_bytes(path, &blob);
+                let _ = crate::script_cache::try_save_bytes(
+                    path,
+                    crate::script_cache::BlobKind::Script,
+                    env_fp,
+                    &blob,
+                );
                 tracing::trace!(
                     path = %abs_path,
                     bytes = blob.len(),
@@ -4680,9 +4688,65 @@ impl ShellExecutor {
     ///
     /// Returns the file's `$?`. `Err` only for a VM error, as
     /// [`Self::run_chunk`] reports it.
-    pub fn execute_script_per_command(&mut self, script: &str) -> Result<i32, String> {
+    ///
+    /// `cache_path` names the file the text came from. Its executed events are
+    /// stored in `scripts.rkyv` as the chunks the loop compiled, and a later
+    /// `source` of an unchanged file replays them without lexing, parsing or
+    /// compiling. A hit needs the same lexer-visible state the first run started
+    /// from (see `script_cache::env_fingerprint`), and a file that itself
+    /// changed aliases or options is never stored: its later events were lexed
+    /// under state the earlier ones created, which a replay cannot re-derive.
+    pub fn execute_script_per_command(
+        &mut self,
+        script: &str,
+        cache_path: Option<&Path>,
+    ) -> Result<i32, String> {
+        use crate::script_cache::{self, BlobKind};
+        let env_fp = cache_path.map(|_| script_cache::env_fingerprint());
+        if let (Some(p), Some(fp)) = (cache_path, env_fp) {
+            if let Some(blob) = script_cache::try_load_bytes(p, BlobKind::Events, fp) {
+                if let Ok(chunks) = bincode::deserialize::<Vec<fusevm::Chunk>>(&blob) {
+                    if !chunks.is_empty() {
+                        tracing::trace!(path = %p.display(), events = chunks.len(), "source: bytecode cache hit");
+                        return self.replay_cached_events(chunks);
+                    }
+                }
+            }
+        }
+        let gens = script_cache::env_generation();
+        let mut chunks: Vec<fusevm::Chunk> = Vec::new();
         // c:Src/init.c:1626-1627 — source() runs `loop(0, 0)`: not toplevel.
-        self.run_events_per_command(script, None, false)
+        let status = self.run_events_per_command(
+            script,
+            None,
+            cache_path.map(|_| &mut chunks),
+            false,
+        )?;
+        if let (Some(p), Some(fp)) = (cache_path, env_fp) {
+            if !chunks.is_empty() && script_cache::env_generation() == gens {
+                if let Ok(blob) = bincode::serialize(&chunks) {
+                    let _ = script_cache::try_save_bytes(p, BlobKind::Events, fp, &blob);
+                }
+            }
+        }
+        Ok(status)
+    }
+
+    /// Run the per-event chunks of a cached sourced file, with the same
+    /// between-event checks `run_events_per_command` makes for a non-toplevel
+    /// loop: an error flag or a pending `return` ends the file (c:Src/init.c:235),
+    /// and so does a deferred `exit`.
+    fn replay_cached_events(&mut self, chunks: Vec<fusevm::Chunk>) -> Result<i32, String> {
+        for chunk in chunks {
+            self.run_chunk(chunk, "source:cached")?;
+            if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0
+                || crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) != 0
+                || crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) != 0
+            {
+                break;
+            }
+        }
+        Ok(self.last_status())
     }
 
     /// The `loop()` body shared by a sourced file and a script file.
@@ -4700,6 +4764,7 @@ impl ShellExecutor {
         &mut self,
         script: &str,
         mut events: Option<&mut Vec<crate::parse::ZshList>>,
+        mut chunks: Option<&mut Vec<fusevm::Chunk>>,
         toplevel: bool,
     ) -> Result<i32, String> {
         use crate::ported::lex::{
@@ -4809,6 +4874,9 @@ impl ShellExecutor {
             // and the NEXT event must be lexed from the line the file is
             // really on.
             let chunk = crate::compile_zsh::ZshCompiler::new().compile(&prog);
+            if let Some(out) = chunks.as_deref_mut() {
+                out.push(chunk.clone());
+            }
             let saved_lex_lineno = LEX_LINENO.get();
             let run = self.run_chunk(chunk, "source");
             LEX_LINENO.set(saved_lex_lineno);
@@ -4861,9 +4929,15 @@ impl ShellExecutor {
         // reads the flag itself (its c:1623-1624 + c:1663 block), so the bit
         // is put back after the restore instead.
         let err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0; // c:245
+        let incomplete = !drained || err || vm_error.is_some();
         if let Some(ev) = events {
-            if !drained || err || vm_error.is_some() {
+            if incomplete {
                 ev.clear();
+            }
+        }
+        if let Some(out) = chunks {
+            if incomplete {
+                out.clear();
             }
         }
 
