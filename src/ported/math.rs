@@ -4469,6 +4469,144 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     // canonical store — `setnparam` / `assignsparam` — on every
     // assignment; the map entry it also fills is only a within-
     // expression read cache (see setmathvar's `m_variables_insert`).
+    // !!! RUST-ONLY FAST PATH (no C counterpart) !!! A top-level expression of
+    // the shape `A`, `A op B`, with each operand a plain decimal literal or an
+    // existing plain integer / decimal-string parameter, and `op` one of
+    // `+ - * < > <= >= == != & | ^`. Loop headers and `i=$((i+1))` are all this
+    // shape, and the full path below spends most of its time on evaluator
+    // state setup (`new`), the zsh_eval_context frame and operator-precedence
+    // bookkeeping that a single operator cannot use. Anything else — a special
+    // or typed-float parameter, an unset name, a leading zero, a base prefix,
+    // `/` `%` `<<` `**`, assignment, a second operator, FORCEFLOAT — returns
+    // None and takes the full path, so errors and warnings are unchanged.
+    if M_LEVEL.with(|c| c.get()) == 0 && !crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT) {
+        let plain = |t: &str| -> Option<i64> {
+            let digits = t.strip_prefix('-').unwrap_or(t);
+            let ok = !digits.is_empty()
+                && digits.len() <= 18
+                && digits.bytes().all(|c| c.is_ascii_digit())
+                && (digits.len() == 1 || !digits.starts_with('0'));
+            if ok { t.parse().ok() } else { None }
+        };
+        let operand = |t: &str| -> Option<i64> {
+            let t = t.trim();
+            if let Some(n) = plain(t) {
+                return Some(n);
+            }
+            let mut chars = t.chars();
+            let first = chars.next()?;
+            if !(first.is_ascii_alphabetic() || first == '_')
+                || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                return None;
+            }
+            // c:Src/math.c:872 — `nan` / `inf` in any case is the IEEE
+            // constant, never the parameter of that name.
+            if t.eq_ignore_ascii_case("nan") || t.eq_ignore_ascii_case("inf") {
+                return None;
+            }
+            let tab = crate::ported::params::paramtab().read().ok()?;
+            let pm = tab.get(t)?;
+            let flags = pm.node.flags as u32;
+            let excluded = crate::ported::zsh_h::PM_SPECIAL
+                | crate::ported::zsh_h::PM_UNSET
+                | crate::ported::zsh_h::PM_TIED
+                | PM_ARRAY
+                | PM_HASHED
+                | PM_EFLOAT
+                | PM_FFLOAT
+                | crate::ported::zsh_h::PM_NAMEREF;
+            if flags & excluded != 0 {
+                return None;
+            }
+            match PM_TYPE(flags) {
+                PM_INTEGER => Some(pm.u_val),
+                crate::ported::zsh_h::PM_SCALAR => pm.u_str.as_deref().and_then(plain),
+                _ => None,
+            }
+        };
+        let fast = (|| -> Option<i64> {
+            // `NAME++` `NAME--` `++NAME` `--NAME`: the one assignment shape
+            // loop headers use. Same store setmathvar makes for an lvalue
+            // this expression already read (c:990 `setnumvalue`).
+            let t = s.trim();
+            let (name, delta, post) = if let Some(n) = t.strip_suffix("++") {
+                (n.trim_end(), 1i64, true)
+            } else if let Some(n) = t.strip_suffix("--") {
+                (n.trim_end(), -1, true)
+            } else if let Some(n) = t.strip_prefix("++") {
+                (n.trim_start(), 1, false)
+            } else if let Some(n) = t.strip_prefix("--") {
+                (n.trim_start(), -1, false)
+            } else {
+                ("", 0, false)
+            };
+            if delta != 0 {
+                let writable = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|tab| tab.get(name).map(|pm| pm.node.flags as u32 & crate::ported::zsh_h::PM_READONLY == 0))
+                    .unwrap_or(false);
+                if !writable || plain(name).is_some() {
+                    return None;
+                }
+                let old = operand(name)?;
+                let new = old.wrapping_add(delta);
+                let n = mnumber {
+                    l: new,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                };
+                let _ = crate::ported::params::assignnparam(name, n, 0);
+                return Some(if post { old } else { new });
+            }
+            let bytes = s.as_bytes();
+            let is_op = |b: u8| matches!(b, b'+' | b'-' | b'*' | b'<' | b'>' | b'=' | b'!' | b'&' | b'|' | b'^' | b'/' | b'%');
+            // The operator is the first run of operator bytes that is not a
+            // leading sign: skip one optional leading `-` on the left operand.
+            let start = usize::from(bytes.first() == Some(&b'-'));
+            let op_at = bytes[start..].iter().position(|&b| is_op(b)).map(|p| p + start);
+            let Some(p) = op_at else {
+                return operand(s);
+            };
+            let mut q = p;
+            while q < bytes.len() && is_op(bytes[q]) {
+                q += 1;
+            }
+            // A trailing `-` of the run is the sign of the right operand
+            // (`5 - -1` has a space; `5--1` is a decrement and falls out below).
+            let lhs = operand(&s[..p])?;
+            let rhs = operand(&s[q..])?;
+            Some(match &s[p..q] {
+                "+" => lhs.wrapping_add(rhs),
+                "-" => lhs.wrapping_sub(rhs),
+                "*" => lhs.wrapping_mul(rhs),
+                "<" => i64::from(lhs < rhs),
+                ">" => i64::from(lhs > rhs),
+                "<=" => i64::from(lhs <= rhs),
+                ">=" => i64::from(lhs >= rhs),
+                "==" => i64::from(lhs == rhs),
+                "!=" => i64::from(lhs != rhs),
+                "&" => lhs & rhs,
+                "|" => lhs | rhs,
+                "^" => lhs ^ rhs,
+                _ => return None,
+            })
+        })();
+        if let Some(l) = fast {
+            // The full path ends with `lastbase = -1` from `new()` and records
+            // the result for callmathfunc's MFF_USERFUNC branch.
+            m_lastbase_set(-1);
+            m_error_clear();
+            let n = mnumber {
+                l,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+            M_LASTMATHVAL.with(|c| c.set(n));
+            return Ok(n);
+        }
+    }
     let xvariables = M_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut())); // c:395 `xstack = stack;`
     let xstring_variables = M_STRING_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut()));
     new(s);
