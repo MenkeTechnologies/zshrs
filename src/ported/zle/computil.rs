@@ -4085,7 +4085,10 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 && state.actopts != 0
                 // c:2128 (upstream 7a43a20cdf) — a word that is an
                 // option's argument is never a terminator.
-                && !(state.def.is_some() && state.inopt != 0)
+                && !(state.def.is_some()
+                    && state.inopt != 0
+                    // 5.9.2 has no c:2128 guard (upstream 54889 is later).
+                    && !crate::extensions::emulation_startup::emulating())
                 && (((d.flags & CDF_SEP) != 0 && line == "--")
                     || ((d.flags & CDF_ZSEP) != 0 && line == "-"))
             {
@@ -4165,7 +4168,11 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     if state.def.is_some() {
                         state.argbeg = cur;
                         state.argend = argend_init;
-                        goto_cont = true; // c:2158 goto cont (7a43a20cdf)
+                        // c:2158 `goto cont` is upstream 54889 (7a43a20cdf),
+                        // after 5.9.2: a zsh drop-in falls through and parses
+                        // the optarg as an option too, as 5.9.2 does
+                        // (Y03arguments #83's "current behaviour is wrong").
+                        goto_cont = !crate::extensions::emulation_startup::emulating();
                     } else if let Some(s) = sopts.first().cloned() {
                         // c:2128 — pop a queued single-letter opt arg.
                         sopts.remove(0);
@@ -4190,7 +4197,8 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     } else {
                         state.curopt = None;
                         state.opt = 1;
-                        goto_cont = true; // c:2173 goto cont (7a43a20cdf)
+                        // c:2173 `goto cont` — see c:2158 above.
+                        goto_cont = !crate::extensions::emulation_startup::emulating();
                     }
                 }
             } else {
