@@ -14038,7 +14038,9 @@ pub fn paramsubst(
                     && !has_default_op
                     && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET)
                 {
-                    zerr(&format!("{}: parameter not set", idbeg)); // c:3617 (idbeg, c:2649)
+                    if !crate::extensions::emulation_startup::csh_report_unset(&idbeg, "Undefined variable.") {
+                        zerr(&format!("{}: parameter not set", idbeg)); // c:3617 (idbeg, c:2649)
+                    }
                     errflag_set_error();
                     // c:3614-3620 — no ERRFLAG_HARD here; see the note
                     // on the general nounset guard below. `${#var}`
@@ -17681,7 +17683,9 @@ pub fn paramsubst(
                         singsub(msg) // c:3193
                     }; // c:3193
                        // C: zerr("%s: %s", idbeg, msg) — Src/subst.c:3337
-                    zerr(&format!("{}: {}", idbeg, m)); // c:3346
+                    if !crate::extensions::emulation_startup::csh_report_unset(&idbeg, &m) {
+                        zerr(&format!("{}: {}", idbeg, m)); // c:3346
+                    }
                     errflag_set_error();
                     // c:Src/subst.c:3344 — `errflag |= ERRFLAG_HARD;`.
                     // `:?` is a FATAL error — non-interactive shell
@@ -17752,7 +17756,9 @@ pub fn paramsubst(
                         singsub(msg) // c:3193
                     }; // c:3193
                        // C: zerr("%s: parameter not set", idbeg) — Src/subst.c:3472
-                    zerr(&format!("{}: {}", idbeg, m)); // c:3348
+                    if !crate::extensions::emulation_startup::csh_report_unset(&idbeg, &m) {
+                        zerr(&format!("{}: {}", idbeg, m)); // c:3348
+                    }
                     errflag_set_error();
                     // c:Src/subst.c:3344 — `errflag |= ERRFLAG_HARD;`
                     // (same fatal-abort semantics as `:?`). Bug #193.
@@ -21362,7 +21368,9 @@ pub fn paramsubst(
                     // c:3481-3485 — `if (vunset > 0 && unset(UNSET))` errors
                     // under NO_UNSET; otherwise c:3486 `val = dupstring("")`.
                     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
-                        zerr(&format!("{}: parameter not set", idbeg)); // c:3483 (idbeg, c:2649)
+                        if !crate::extensions::emulation_startup::csh_report_unset(&idbeg, "Undefined variable.") {
+                            zerr(&format!("{}: parameter not set", idbeg)); // c:3483 (idbeg, c:2649)
+                        }
                         errflag_set_error();
                         return (String::new(), new_pos, vec![]);
                     }
@@ -21486,7 +21494,9 @@ pub fn paramsubst(
                         // LEFT operand survives as the array result while `val`
                         // is blanked.
                         if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
-                            zerr(&format!("{}: parameter not set", other_name)); // c:3527
+                            if !crate::extensions::emulation_startup::csh_report_unset(&other_name, "Undefined variable.") {
+                                zerr(&format!("{}: parameter not set", other_name)); // c:3527
+                            }
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
@@ -23945,7 +23955,9 @@ pub fn paramsubst(
                 Some('-') | Some('+') | Some('=') | Some('?')
             );
             if !op_handles_unset {
-                zerr(&format!("{}: parameter not set", idbeg)); // c:1689 (idbeg, c:2649)
+                if !crate::extensions::emulation_startup::csh_report_unset(&idbeg, "Undefined variable.") {
+                    zerr(&format!("{}: parameter not set", idbeg)); // c:1689 (idbeg, c:2649)
+                }
                 errflag_set_error();
                 // c:Src/subst.c:3479-3484 —
                 //     if (vunset) {

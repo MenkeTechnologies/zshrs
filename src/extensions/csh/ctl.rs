@@ -277,6 +277,8 @@ pub struct Translator {
     seen_goto: bool,
     seen_status: bool,
     last_closer: bool,
+    /// `cmd |` waiting for the `while`/`foreach` it feeds (`cmd | while (…)`)
+    pipe_prefix: Option<String>,
 }
 
 impl Translator {
@@ -309,6 +311,7 @@ impl Translator {
             seen_goto: false,
             seen_status: false,
             last_closer: false,
+            pipe_prefix: None,
         }
     }
 
@@ -319,8 +322,24 @@ impl Translator {
             self.start = Some(out.len());
         }
         self.raw.push(line.to_string());
+        if let Some(body) = line.strip_prefix(super::lex::HEREDOC_RAW) {
+            return self.heredoc_line(body, line, out);
+        }
         if line.contains("status") {
             self.seen_status = true;
+        }
+        if self.buf.is_none() {
+            let parts = super::lex::split_unquoted(line, '|');
+            if let [left, right] = &parts[..] {
+                let right = right.trim();
+                if starts_with_word(right, "while") || starts_with_word(right, "foreach") {
+                    let text = cmds::translate_line(left.trim())?;
+                    self.pipe_prefix = Some(format!("{text} | "));
+                    self.piece(right, out)?;
+                    self.end = out.len();
+                    return Ok(());
+                }
+            }
         }
         let stmts = split_stmts(line);
         if self.buf.is_none() && stmts.iter().all(|s| !is_control_head(s.trim())) {
@@ -336,6 +355,20 @@ impl Translator {
                     self.piece(stmt, out)?;
                 }
             }
+        }
+        self.end = out.len();
+        Ok(())
+    }
+
+    /// One here-document body line or terminator: literal text, so it goes out
+    /// at column 0 (a terminator must start its line) and is never parsed. A
+    /// switch being collected holds it with its other pieces.
+    fn heredoc_line(&mut self, body: &str, raw: &str, out: &mut String) -> Result<(), String> {
+        if let Some(b) = self.buf.as_mut() {
+            b.pieces.push(raw.to_string());
+        } else {
+            out.push_str(body);
+            out.push('\n');
         }
         self.end = out.len();
         Ok(())
@@ -531,7 +564,10 @@ impl Translator {
             self.line(out, level, "if false; then");
         }
         let level = self.body_level();
-        self.line(out, level, text);
+        match self.pipe_prefix.take() {
+            Some(prefix) => self.line(out, level, &format!("{prefix}{text}")),
+            None => self.line(out, level, text),
+        }
         self.last_closer = false;
     }
 
@@ -768,6 +804,11 @@ impl Translator {
     // ---- statement dispatch --------------------------------------------
 
     fn piece(&mut self, stmt: &str, out: &mut String) -> Result<(), String> {
+        if let Some(body) = stmt.strip_prefix(super::lex::HEREDOC_RAW) {
+            out.push_str(body);
+            out.push('\n');
+            return Ok(());
+        }
         if self.buf.is_some() {
             return self.buffer_piece(stmt, out);
         }
@@ -1297,13 +1338,28 @@ impl Translator {
         let inner = &list[1..list.len() - 1];
         let items: Vec<String> = split_words(inner)
             .iter()
-            .map(|w| words::translate_word(w))
+            .map(|w| words::translate_word_checked(w))
             .collect();
         let words_text = if items.is_empty() {
             String::new()
         } else {
             format!(" {}", items.join(" "))
         };
+        // tcsh expands the list first and ends the script with
+        // `foreach: No match.` when every pattern of it fails.
+        let globs: Vec<String> = split_words(inner)
+            .iter()
+            .filter(|w| super::cmds::is_glob_word(w))
+            .map(|w| words::translate_word(w))
+            .collect();
+        if !globs.is_empty() {
+            let probe = format!(
+                "{{ [[ ! -o cshnullglob ]] || () {{ setopt localoptions nullglob; local -a _g; _g=({}); (( $#_g )); }} \
+|| {{ print -u2 -r -- 'foreach: No match.'; [[ -o interactive ]] || exit 1; false; }}; }}",
+                globs.join(" ")
+            );
+            self.emit(out, &probe);
+        }
         let (bid, rid) = (self.alloc_bid(), self.alloc_rid());
         // An unterminated foreach tells "no iteration" from "ran out of
         // iterations" through this flag (module docs).
@@ -1322,6 +1378,10 @@ impl Translator {
             let l = self.body_level();
             self.line(out, l, &format!("{flag}=1"));
         }
+        // A csh variable is a list: the loop variable is a one-element array
+        // so that `$f[1]` and the `:h`/`:t` modifiers (which index it) work.
+        let l = self.body_level();
+        self.line(out, l, &format!("{var}=(\"${var}\")"));
         if self.modes.status {
             let l = self.body_level();
             self.line(out, l, ":");
@@ -1622,7 +1682,7 @@ fn sh_quote(s: &str) -> String {
 
 /// zsh text that prints a csh error to stderr and aborts, as tcsh does for
 /// an error raised while running a script.
-fn stub(msg: &str) -> String {
+pub(crate) fn stub(msg: &str) -> String {
     format!("print -ru2 -- {}; exit 1", sh_quote(msg))
 }
 

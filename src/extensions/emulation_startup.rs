@@ -704,7 +704,7 @@ pub fn single_quote(value: &str) -> String {
 /// "error only if no word of the list matched" glob rule, `extendedglob`
 /// backs the `:gu`/`:gl` modifiers, `pipefail` gives a pipeline csh's
 /// any-stage-failed status.
-const CSH_OPTIONS: &str = "setopt cshnullglob extendedglob pipefail\n";
+const CSH_OPTIONS: &str = "setopt cshnullglob extendedglob pipefail\nunsetopt badpattern\n";
 
 /// Shell variables and functions a csh script expects to find, installed
 /// once per process ahead of the first translated input:
@@ -784,6 +784,25 @@ pub fn csh_line(line: &str) -> Option<String> {
             }
         }
     })
+}
+
+/// Report a failed `${name?message}` the way tcsh reports its run-time
+/// errors, returning true when it did. The `--csh` translator spells those
+/// as `${__csh?text}` (the whole tcsh message) or `${name?Undefined
+/// variable.}`; tcsh prints them bare, without zsh's `file:line:` prefix.
+/// Outside `--csh` it returns false and zsh's own report applies.
+pub fn csh_report_unset(name: &str, message: &str) -> bool {
+    if personality() != Personality::Csh {
+        return false;
+    }
+    // inside "…" the translator's `\'` and `\}` keep their backslash
+    let message = message.replace("\\'", "'").replace("\\}", "}");
+    if name == "__csh" {
+        eprintln!("{message}");
+    } else {
+        eprintln!("{name}: {message}");
+    }
+    true
 }
 
 /// Source one startup/logout file. `--csh` files are csh text, so they are

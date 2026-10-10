@@ -4352,13 +4352,6 @@ fn csh_input(src: &str) -> Result<String, String> {
     zsh::emulation_startup::csh_input(src, zsh::csh::translate)
 }
 
-fn csh_input_with(
-    src: &str,
-    translate: fn(&str) -> Result<String, String>,
-) -> Result<String, String> {
-    zsh::emulation_startup::csh_input(src, translate)
-}
-
 /// One line of interactive or stdin input; see `emulation_startup::csh_line`.
 fn csh_line(line: &str) -> Option<String> {
     zsh::emulation_startup::csh_line(line)

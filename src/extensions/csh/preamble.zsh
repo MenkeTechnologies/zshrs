@@ -11,7 +11,7 @@ cd() {
   local _t=${1-$HOME} _p=
   (( $# > 1 )) && { _csh_die 'cd: Too many arguments.'; return }
   [[ $_t == - ]] && _t=$OLDPWD
-  [[ $1 == (/|./|../|~|-)* || -d $_t || $# == 0 ]] || _p=1
+  [[ ${1-} == (/|./|../|~|-)* || -d $_t || $# == 0 ]] || _p=1
   if [[ -n $_t ]] && builtin cd -- "$_t" >/dev/null 2>&1; then
     [[ -z $_p ]] || print -r -- "$(dirs) "
     return 0
@@ -32,7 +32,8 @@ popd() {
 }
 printenv() {
   if (( ! $# )); then command env; return; fi
-  [[ ${parameters[$1]} == *export* ]] || return 1
+  [[ ${parameters[$1]-} == *export* ]] || return 1
   print -r -- ${(P)1}
 }
 unset OLDPWD
+typeset -gA _csh_alias _csh_alias_ls

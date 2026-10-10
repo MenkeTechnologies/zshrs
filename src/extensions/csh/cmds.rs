@@ -138,6 +138,10 @@ fn translate_cmds(line: &str) -> Result<String, String> {
     Ok(group_background(&segments))
 }
 
+/// What tcsh prints on stdout after starting a background job, even in a
+/// script: `[job] pid`.
+const JOB_NOTICE: &str = "print -r -- \"[${#jobstates}] $!\";";
+
 /// Join `;`-separated segments. In csh `&` ends a whole `;` list: `a; b &`
 /// backgrounds both (job text `( a; b )`), unlike zsh where only `b` is
 /// backgrounded, so a multi-item list before `&` becomes `( a; b ) &`.
@@ -149,10 +153,12 @@ fn group_background(segments: &[(String, Sep)]) -> String {
         match sep {
             Sep::Bg if group.len() > 1 => {
                 parts.push(format!("( {} ) &", group.join("; ")));
+                parts.push(JOB_NOTICE.to_string());
                 group.clear();
             }
             Sep::Bg => {
                 parts.push(format!("{} &", group[0]));
+                parts.push(JOB_NOTICE.to_string());
                 group.clear();
             }
             _ => {}
@@ -328,6 +334,14 @@ fn parse(line: &str) -> Result<Vec<(Simple, Sep)>, String> {
                             i += 1;
                         }
                     }
+                }
+            }
+            ':' if p.word.contains('$') => {
+                p.word.push(c);
+                i += 1;
+                if let Some(end) = super::lex::subst_modifier_end(&cs, i) {
+                    p.word.extend(&cs[i..=end]);
+                    i = end + 1;
                 }
             }
             ' ' | '\t' => {
@@ -557,7 +571,7 @@ fn history_event(line: &str) -> Option<String> {
 /// Names of the variables a word dereferences (`$x`, `${x}`, `$#x`, `$x[1]`)
 /// outside single quotes and backslash escapes; `$?x`, `$1`, `$$`, `$<` and
 /// the always-defined variables are not listed.
-fn variable_refs(word: &str) -> Vec<String> {
+pub(crate) fn variable_refs(word: &str) -> Vec<String> {
     let cs: Vec<char> = word.chars().collect();
     let mut names: Vec<String> = Vec::new();
     let mut quote: Option<char> = None;
@@ -597,7 +611,7 @@ fn variable_refs(word: &str) -> Vec<String> {
 /// True when `word` holds a pattern tcsh expands: `*`, `?` or a `[…]` class
 /// outside quotes, backslash escapes and `$…` references (`$x[2]` is a
 /// subscript, not a class).
-fn is_glob_word(word: &str) -> bool {
+pub(crate) fn is_glob_word(word: &str) -> bool {
     let cs: Vec<char> = word.chars().collect();
     let mut quote: Option<char> = None;
     let mut i = 0;
@@ -615,6 +629,8 @@ fn is_glob_word(word: &str) -> bool {
                         i += 1;
                     }
                     i += 1;
+                } else if cs.get(i) == Some(&'*') {
+                    i += 1; // `$*` is a variable, not a pattern
                 } else {
                     while i < cs.len() && (cs[i].is_ascii_alphanumeric() || matches!(cs[i], '_' | '?' | '#')) {
                         i += 1;
@@ -628,7 +644,7 @@ fn is_glob_word(word: &str) -> bool {
                 }
             }
             (None, '*' | '?') => return true,
-            (None, '[') if cs[i..].contains(&']') => return true,
+            (None, '[') if cs[i..].iter().position(|&x| x == ']').is_some_and(|n| n > 0) => return true,
             _ => {}
         }
     }
@@ -691,7 +707,8 @@ fn tilde_probe(name: &str) -> String {
 
 /// `${+x}` check for one variable reference.
 fn defined_probe(name: &str) -> String {
-    format!("(( ${{+{name}}} )) || {{ print -u2 -r -- '{name}: Undefined variable.'; false; }}")
+    // braced so that several probes can be joined with `&&`
+    format!("{{ (( ${{+{name}}} )) || {{ print -u2 -r -- '{name}: Undefined variable.'; false; }}; }}")
 }
 
 /// The user name of an unquoted `~name` word, if it is one.
@@ -723,6 +740,11 @@ fn guard_command(s: &Simple, text: String, in_pipe: bool) -> String {
         for w in &s.words {
             for name in variable_refs(w) {
                 let probe = defined_probe(&name);
+                if !always.contains(&probe) {
+                    always.push(probe);
+                }
+            }
+            for probe in super::words::subscript_probes(w) {
                 if !always.contains(&probe) {
                     always.push(probe);
                 }
@@ -760,7 +782,7 @@ fn guard_command(s: &Simple, text: String, in_pipe: bool) -> String {
         let globs: Vec<String> = s.words[1..].iter().filter(|w| is_glob_word(w)).map(|w| tw(w)).collect();
         if plain && !globs.is_empty() && !skips_glob_check(h) {
             local.push(format!(
-                "{{ () {{ setopt localoptions nullglob; local -a _g; _g=({}); (( $#_g )); }} || \
+                "{{ [[ ! -o cshnullglob ]] || () {{ setopt localoptions nullglob; local -a _g; _g=({}); (( $#_g )); }} || \
 {{ print -u2 -r -- {}; false; }}; }}",
                 globs.join(" "),
                 sq(&format!("{h}: No match."))
@@ -831,8 +853,10 @@ fn map_special_vars(word: &str) -> String {
                 }
             }
             '$' if !in_sq => {
+                let mut is_set = false;
                 for pre in ['{', '?', '#'] {
                     if cs.get(i) == Some(&pre) {
+                        is_set |= pre == '?';
                         out.push(pre);
                         i += 1;
                     }
@@ -843,6 +867,10 @@ fn map_special_vars(word: &str) -> String {
                 }
                 let name: String = cs[start..i].iter().collect();
                 match mirrored_name(&name) {
+                    // `$?prompt` asks whether the shell is interactive (a
+                    // script has no prompt), which the word translator
+                    // answers; PROMPT itself always has a value.
+                    _ if is_set && name == "prompt" => out.push_str(&name),
                     Some(z) => out.push_str(z),
                     None => out.push_str(&name),
                 }
@@ -1079,7 +1107,7 @@ fn option_var(name: &str) -> Option<(&'static str, bool)> {
         "ignoreeof" => ("ignoreeof", false),
         "noglob" => ("noglob", false),
         "notify" => ("notify", false),
-        "nonomatch" => ("nomatch", true),
+        "nonomatch" => ("nomatch cshnullglob", true),
         _ => return None,
     })
 }
@@ -1121,6 +1149,10 @@ fn cmd_set(args: &[String]) -> Result<String, String> {
         i += 1;
         let (name, sub, rest) = split_set_name(w)?;
         let val = set_value(args, &mut i, rest);
+        // a nested group is where tcsh expects the next variable name
+        if matches!(&val, Val::List(inner) if inner.contains('(')) {
+            return Err("set: Variable name must begin with a letter.".to_string());
+        }
         if name == "echo_style" && sub.is_none() {
             if let Val::Word(v) = &val {
                 record_echo_style(&dequote(v));
@@ -1203,6 +1235,10 @@ fn set_statements(name: &str, sub: Option<&str>, val: Val, readonly: bool) -> Re
         Val::List(inner) => split_words(inner).iter().map(|w| tw(w)).collect(),
     };
     if let Some(s) = sub {
+        // a subscript is a number, or a `$` reference that expands to one
+        if !s.contains('$') && !s.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '*') {
+            return Err("set: Subscript error.".to_string());
+        }
         if s.contains('-') && s.chars().all(|c| c.is_ascii_digit() || c == '-') {
             return Err("set: Subscript error.".to_string());
         }
@@ -1673,6 +1709,10 @@ fn cmd_exit(args: &[String]) -> Result<String, String> {
     if value.is_empty() {
         return Ok("exit 0".to_string());
     }
+    // `exit (expr)`: the status is the value of the expression.
+    if paren_inner(raw).is_some() && value.contains(char::is_whitespace) {
+        return super::expr::translate_exit(inner);
+    }
     if value.contains('$') {
         return Ok(format!("exit {}", tw(inner)));
     }
@@ -1706,11 +1746,33 @@ fn cmd_eval(args: &[String]) -> Result<String, String> {
         return Ok("eval".to_string());
     }
     if args.iter().any(|w| has_expansion(w)) {
-        return Ok(generic("eval", args));
+        // The text is only known at run time and must reach `eval` as one
+        // blank-joined string: an unquoted value would be split and globbed
+        // first (a lone `|` would vanish), so each expanding word is passed
+        // as if double-quoted.
+        let words: Vec<String> = args
+            .iter()
+            .map(|w| {
+                let plain = !w.contains(['"', '\'', '`', '\\']);
+                if plain && has_expansion(w) {
+                    tw(&format!("\"{w}\""))
+                } else {
+                    tw(w)
+                }
+            })
+            .collect();
+        return Ok(format!("eval {}", words.join(" ")));
     }
     let text = args.iter().map(|w| dequote(w)).collect::<Vec<_>>().join(" ");
-    let inner = translate_line(&text)?;
-    Ok(format!("{{ {inner}; }}"))
+    // The text is a whole csh program (`if`/`foreach` blocks included), so it
+    // goes through the script translator, not the one-line command layer.
+    let inner = super::translate(&text)?;
+    let inner = inner.trim_end();
+    if inner.contains('\n') {
+        Ok(format!("{{ {inner}\n}}"))
+    } else {
+        Ok(format!("{{ {inner}; }}"))
+    }
 }
 
 /// `repeat N cmd`: `cmd` is one simple command; a redirection on the line is
@@ -1929,7 +1991,7 @@ fn cmd_printenv(args: &[String]) -> Result<String, String> {
     match args {
         [] => Ok("env".to_string()),
         [_] => Ok(generic(
-            "() { if [[ ${parameters[$1]} == *export* ]]; then print -r -- ${(P)1}; else return 1; fi; }",
+            "() { if [[ ${parameters[$1]-} == *export* ]]; then print -r -- ${(P)1}; else return 1; fi; }",
             args,
         )),
         _ => Err("printenv: Too many arguments.".to_string()),
@@ -1956,7 +2018,7 @@ printf '[%d]  %s %s%-29s %s\\n' $_n \"$_k\" \"{}\" \"$_s\" \"$jobtexts[$_n]\"; d
 /// `wait`: block for every background job and report each on stderr the way
 /// tcsh does (`Done`, `Exit N`, or the terminating signal).
 const WAIT: &str = "() { local _n _s _f _t _k; local _i=0; for _n in ${(onk)jobstates}; do \
-_t=$jobtexts[$_n]; wait %$_n; _s=$?; \
+_t=$jobtexts[$_n]; wait %$_n 2>/dev/null; _s=$?; (( _s == 127 )) && _s=0; \
 case $_s in 0) _f=Done;; 129) _f=Hangup;; 130) _f=Interrupt;; 137) _f=Killed;; 143) _f=Terminated;; \
 *) _f=\"Exit $_s\";; esac; _k=' '; (( _i == 0 )) && _k='+'; _i=$(( _i + 1 )); \
 printf '[%d]  %s %-29s %s\\n' $_n \"$_k\" \"$_f\" \"$_t\" >&2; done; true; }";
@@ -2225,7 +2287,7 @@ mod tests {
         assert_eq!(tr("&& echo a"), "print -r -- a");
         assert_eq!(tr("echo a ;; echo b"), "print -r -- a; print -r -- b");
         assert_eq!(tr("echo a;"), "print -r -- a");
-        assert_eq!(tr("echo a & ; echo b"), "print -r -- a & print -r -- b");
+        assert_eq!(tr("echo a & ; echo b"), "print -r -- a & print -r -- \"[${#jobstates}] $!\"; print -r -- b");
     }
 
     #[test]
@@ -2289,11 +2351,11 @@ mod tests {
     #[test]
     fn subshells_and_background() {
         // csh `&` ends a whole `;` list: `a; b &` backgrounds both.
-        assert_eq!(tr("echo a; echo b &"), "( print -r -- a; print -r -- b ) &");
-        assert_eq!(tr("echo a; echo b & echo c; echo d"), "( print -r -- a; print -r -- b ) & print -r -- c; print -r -- d");
-        assert_eq!(tr("echo a && echo b &"), "print -r -- a && print -r -- b &");
+        assert_eq!(tr("echo a; echo b &"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\";");
+        assert_eq!(tr("echo a; echo b & echo c; echo d"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\"; print -r -- c; print -r -- d");
+        assert_eq!(tr("echo a && echo b &"), "print -r -- a && print -r -- b & print -r -- \"[${#jobstates}] $!\";");
         assert_eq!(tr("(cd /usr; pwd)"), "( cd /usr; pwd )");
-        assert_eq!(tr("(echo a; echo b) &"), "( print -r -- a; print -r -- b ) &");
+        assert_eq!(tr("(echo a; echo b) &"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\";");
         assert!(guarded("(echo a) > f", "( print -r -- a ) > f"));
         assert_eq!(tr("(echo a) | (cat)"), "( print -r -- a ) | ( cat )");
     }
@@ -2353,7 +2415,7 @@ mod tests {
         assert_eq!(tr("set prompt2 = x"), "PROMPT2=x");
         assert_eq!(tr("set history = 50"), "HISTSIZE=50");
         assert_eq!(tr("set noclobber"), "{ setopt noclobber; noclobber=(''); }");
-        assert_eq!(tr("set nonomatch"), "{ unsetopt nomatch; nonomatch=(''); }");
+        assert_eq!(tr("set nonomatch"), "{ unsetopt nomatch cshnullglob; nonomatch=(''); }");
         assert!(tr("unset noclobber").starts_with("{ unsetopt noclobber; "));
         // names are rewritten before the word layer sees them; single quotes protect
         let w = |s: &str| translate_word(s);
@@ -2482,7 +2544,7 @@ mod tests {
         assert_eq!(tr("eval 'set x = (1 2)'"), "{ x=(1 2); }");
         assert_eq!(tr("eval \"echo a;echo b\""), "{ print -r -- a; print -r -- b; }");
         // a first-parse expansion means the text is only known at run time
-        assert_eq!(tr("eval $c"), format!("eval {}", translate_word("$c")));
+        assert_eq!(tr("eval $c"), format!("eval {}", translate_word("\"$c\"")));
     }
 
     #[test]

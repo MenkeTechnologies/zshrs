@@ -132,7 +132,40 @@ const FAIL_HEAD: &str = "print -ru2 -- '";
 /// it runs, with an `if: ` prefix that a `while` caller retargets by
 /// passing the returned text through [`for_command`].
 pub fn translate_condition(expr: &str) -> Result<String, String> {
-    translate_condition_inner(expr).map_err(|e| prefixed("if", e))
+    let cond = translate_condition_inner(expr).map_err(|e| prefixed("if", e))?;
+    Ok(with_reference_checks(expr, cond))
+}
+
+/// tcsh expands every `$x` of an expression before evaluating it, so an
+/// undefined variable (or an out-of-range subscript) ends the command with
+/// its message first. The operand layer sees an empty value instead, so the
+/// checks are run ahead of the condition `cond`.
+fn with_reference_checks(expr: &str, cond: String) -> String {
+    let mut probes: Vec<String> = Vec::new();
+    for word in expr.split_whitespace() {
+        for name in super::cmds::variable_refs(word) {
+            let probe = format!(
+                "{{ (( ${{+{name}}} )) || {{ print -u2 -r -- '{name}: Undefined variable.'; \
+[[ -o interactive ]] || exit 1; false; }}; }}"
+            );
+            if !probes.contains(&probe) {
+                probes.push(probe);
+            }
+        }
+        for probe in super::words::subscript_probes(word) {
+            if !probes.contains(&probe) {
+                probes.push(probe);
+            }
+        }
+    }
+    if probes.is_empty() {
+        return cond;
+    }
+    // the probes overwrite `$?`, which the condition may read (`$status`)
+    format!(
+        "{{ _csh_q=$?; {} && {{ () {{ return $1; }} $_csh_q; {cond}; }}; }}",
+        probes.join(" && ")
+    )
 }
 
 /// Translate the text after `@` (`n = 2 + 3`, `n++`, `x += 4`,
@@ -518,10 +551,11 @@ impl<'a> Parser<'a> {
     }
 
     /// The file word after `-e` etc.; a following operator (or nothing) is
-    /// `Missing file name.`.
+    /// `Missing file name.`. A lone `/` is a
+    /// file name (the root directory), not the division operator.
     fn file_operand(&mut self, inq: Inquiry) -> Result<Node, String> {
         match self.peek() {
-            Some(t) if t.kind == Kind::Word => {
+            Some(t) if t.kind == Kind::Word || (t.kind == Kind::Op && t.text == "/") => {
                 let (raw, idx) = (t.text.clone(), self.pos);
                 self.pos += 1;
                 let operand = self.word(raw, idx);
