@@ -17195,3 +17195,110 @@ fn restricted_option_blocks_the_operations_zsh_5_9_2_blocks() {
         "the restricted redirection created its file"
     );
 }
+
+#[test]
+fn test_fatal_param_error_in_a_function_argument_ends_a_subshell_with_status_1() {
+    // c:Src/subst.c:3337-3377 — `${u:?msg}` exits (`_exit(1)` in the forked
+    // subshell) from inside the expansion, so the function never runs and the
+    // subshell's status is 1. A function call used to report the status of the
+    // call that never started: 0.
+    let (_, output, _) = run_zshrs(
+        "f() { print ran; }; unset u; (f \"${u:?x}\") 2>/dev/null; print a=$?; \
+         (f ${u:?${w:-q}}) 2>/dev/null; print b=$?",
+    );
+    assert_eq!(output, "a=1\nb=1\n");
+}
+
+#[test]
+fn test_quoted_pattern_variable_stays_literal_under_globsubst() {
+    // A `"$p"` nested in the pattern operand is quoted: its value must not be
+    // tokenized by GLOB_SUBST (c:Src/subst.c:1669 consults `globsubst` only for
+    // an unquoted `$`), so `[ab]*` is five literal characters and nothing is
+    // stripped from `a`. This is every Bourne drop-in's default (sh/ksh/bash
+    // emulation sets GLOB_SUBST), where it printed an empty string.
+    let (_, output, _) = run_zshrs(
+        "setopt globsubst; v=a; p='[ab]*'; print -r -- \"${v%%\"$p\"}|${v#\"$p\"}|${v%\"$p\"}|${v##\"$p\"}\"; \
+         print -r -- \"${v%%$p}\"",
+    );
+    assert_eq!(output, "a|a|a|a\n\n");
+}
+
+#[test]
+fn test_unquoted_star_after_a_quoted_at_keeps_dropping_edge_whitespace() {
+    // A `"$@"` evaluated inside a function left the "quoted splice" bit set; the
+    // next unquoted `$*` (SH_WORD_SPLIT early return) never cleared it, so the
+    // end-of-word drop kept the IFS-whitespace edge fields: `<a><b><>`.
+    let (_, output, _) = run_zshrs(
+        "setopt shwordsplit; set -- 'a b '; f() { printf '<%s>' \"$@\"; echo; }; f $*; f $*; f $@",
+    );
+    assert_eq!(output, "<a><b>\n<a><b>\n<a><b>\n");
+}
+
+#[test]
+fn test_bash_and_mksh_tilde_expand_the_value_of_an_assignment_shaped_argument() {
+    // bash and mksh tilde-expand `name=~/dir` ARGUMENT words with no option set
+    // (zsh needs MAGIC_EQUAL_SUBST). bash needs a valid name before the `=` and
+    // also expands after each `:`; mksh takes any head but only the tilde right
+    // after the first `=`.
+    let script = "HOME=/h; s() { for a in \"$@\"; do printf '<%s>' \"$a\"; done; echo; }; \
+                  s x=~/y; s x=a:~:b; s 1=~; s -x=~; s x='~'";
+    let (_, bash, _) = run_zshrs_with_args(&["--bash", "-c", script]);
+    assert_eq!(bash, "<x=/h/y>\n<x=a:/h:b>\n<1=~>\n<-x=~>\n<x=~>\n");
+    let (_, mksh, _) = run_zshrs_with_args(&["--mksh", "-c", script]);
+    assert_eq!(mksh, "<x=/h/y>\n<x=a:~:b>\n<1=/h>\n<-x=/h>\n<x=~>\n");
+    // ksh93 and dash do not.
+    let (_, ksh, _) = run_zshrs_with_args(&["--ksh", "-c", script]);
+    assert_eq!(ksh, "<x=~/y>\n<x=a:~:b>\n<1=~>\n<-x=~>\n<x=~>\n");
+}
+
+#[test]
+fn test_expansion_error_in_function_arguments_fails_the_command() {
+    // c:Src/exec.c:3523-3525 — an error raised while expanding a command's
+    // words ends the command before anything runs: the status is the previous
+    // one, or 1. A function call ran anyway and left the status at 0.
+    let (code, output, _) = run_zshrs("s() { print ran; }; s a $((1/0)); print after");
+    assert_eq!((code, output.as_str()), (1, ""));
+}
+
+#[test]
+fn test_dash_keeps_empty_positionals_of_unquoted_star_under_empty_ifs() {
+    // dash does no field splitting with IFS empty, so an unquoted `$*` / `$@`
+    // keeps its empty positionals as fields. bash, ksh93, mksh and zsh drop them.
+    let script = "set -- '' a b; IFS=; for x in $*; do printf '<%s>' \"$x\"; done; echo; \
+                  for x in $@; do printf '<%s>' \"$x\"; done; echo";
+    let (_, dash, _) = run_zshrs_with_args(&["--dash", "-c", script]);
+    assert_eq!(dash, "<><a><b>\n<><a><b>\n");
+    let (_, dash_trail, _) = run_zshrs_with_args(&["--dash", "-c", "set -- '' a ''; IFS=; printf '<%s>' $*; echo"]);
+    assert_eq!(dash_trail, "<><a>\n");
+    let (_, bash, _) = run_zshrs_with_args(&["--bash", "-c", script]);
+    assert_eq!(bash, "<a><b>\n<a><b>\n");
+}
+
+#[test]
+fn test_ksh93_echo_and_positional_defaults_follow_ksh93() {
+    // ksh93u+m (measured 1.0.10): `echo` takes `-n` and `-e` only and prints
+    // `\t` literally without `-e`; an unquoted `$*` splits each positional on its
+    // own and drops the empty ones under any IFS; `${@:-w}` / `${*:-w}` /
+    // `${@:+w}` are null whenever `$1` is empty.
+    let script = "echo 'a\\tb'; echo -E x; echo -e 'a\\tb'; \
+                  set -- it '' foo; IFS=:; printf '<%s>' $*; echo; unset IFS; \
+                  set -- '' x; echo \"[${@:-d}][${*:-d}][${@:+p}]\"; \
+                  set -- x ''; echo \"[${@:-d}]\"";
+    let (_, ksh, _) = run_zshrs_with_args(&["--ksh", "-c", script]);
+    assert_eq!(ksh, "a\\tb\n-E x\na\tb\n<it><foo>\n[d][d][]\n[x ]\n");
+    // mksh and bash differ on every one of these.
+    let (_, mksh, _) = run_zshrs_with_args(&["--mksh", "-c", script]);
+    assert_eq!(mksh, "a\tb\nx\na\tb\n<it><><foo>\n[ x][ x][p]\n[x ]\n");
+}
+
+#[test]
+fn test_arith_increment_does_not_inherit_previous_evaluation_base() {
+    // c:Src/math.c:367 resets `lastbase` at the head of every evaluation, so a
+    // base-8 literal read by one `$(( ))` must not become the display base of an
+    // integer that the next `$(( j-- ))` / `$(( j++ ))` assigns.
+    let script = "integer j=-3; print -r -- \"$(( 8#34 ))\"; print -r -- \"$(( j-- ))\"; \
+                  print -r -- \"[$j]\"; print -r -- \"$(( 2#101 ))\"; print -r -- \"$(( ++j ))\"; \
+                  print -r -- \"[$j]\"";
+    let (_, out, _) = run_zshrs(script);
+    assert_eq!(out, "28\n-3\n[-4]\n5\n-3\n[-3]\n");
+}

@@ -464,6 +464,18 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
 // matched bit-for-bit but living in two places invited future drift.
 // c:zsh.h:159-224 + scan flags c:1953-1973
 
+thread_local! {
+    /// Set by `pat_operand` while it expands a `${v#pat}`-family operand under
+    /// GLOB_SUBST. A QUOTED splice (`"$p"` inside the pattern) must stay literal
+    /// there: C's `strcatsub` shtokenizes a value only for an unquoted `$`
+    /// (c:Src/subst.c:1669), and patcompile reads raw metacharacters as literal.
+    /// This port re-tokenizes the spliced string downstream, so the literalness has
+    /// to be spelled as a backslash escape on the quoted value.
+    ///
+    /// !!! RUST-ONLY CARRIER !!! — no C counterpart.
+    static PAT_OPERAND_ESCAPE_QUOTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 ///
 /// Implements `$'...'` ANSI-C-style quoted-string substitution. The
 /// C signature is `char *stringsubstquote(char *strstart, char **pstrdpos)`
@@ -1246,6 +1258,23 @@ fn stringsubst(
                     // c:237
                     return None; // c:237
                 } // c:237
+
+                // A quoted splice inside a pattern operand under GLOB_SUBST stays
+                // literal (see PAT_OPERAND_ESCAPE_QUOTED).
+                let mut new_pos = new_pos;
+                let mut new_nodes = new_nodes;
+                if qt && PAT_OPERAND_ESCAPE_QUOTED.with(|c| c.get()) {
+                    let n = new_nodes.len();
+                    for (i, node) in new_nodes.iter_mut().enumerate() {
+                        let from = if i == 0 { pos } else { 0 };
+                        let to = if i + 1 == n { new_pos } else { usize::MAX };
+                        let (escaped, added) = crate::pattern_data_escape::escape_quoted_splice(node, from, to);
+                        *node = escaped;
+                        if i + 1 == n {
+                            new_pos += added;
+                        }
+                    }
+                }
 
                 // Insert additional nodes if word splitting produced
                 // them. Empty new_nodes means the expansion produced
@@ -4599,7 +4628,9 @@ pub fn paramsubst(
     let pat_operand = |raw_pat: &str| -> String {
         let saved_globsubst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         let saved_carrier = TILDE_GLOBSUBST_CARRIER.with(|c| c.get());
+        let saved_escape = PAT_OPERAND_ESCAPE_QUOTED.with(|c| c.replace(saved_globsubst));
         let spliced = singsub(&pretokenize_src_pat(raw_pat)); // c:3412
+        PAT_OPERAND_ESCAPE_QUOTED.with(|c| c.set(saved_escape));
         // Read after `singsub`: a nested `${~…}` flips GLOBSUBST there, and
         // `literalize_spliced_metas` reads the same state.
         pat_operand_globsubst.set(crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST));
@@ -8872,7 +8903,16 @@ pub fn paramsubst(
                         i = end;
                         continue;
                     }
-                    out.push('$');
+                    // A substitution inside a `"…"` span is a QUOTED one (`Qstring`,
+                    // c:Src/lex.c:1519-1590): keep the token, so the splice of its
+                    // value is not tokenized under GLOB_SUBST (c:Src/subst.c:1669
+                    // `globsubst` is consulted only for an unquoted `$`). `fold`
+                    // spells it `$` again for the consumers that read plain text.
+                    let quoted = matches!(
+                        frames.last(),
+                        Some(RestFrame::Dquote) | Some(RestFrame::ChuckedDquote)
+                    );
+                    out.push(if quoted { Qstring } else { '$' });
                     i += 1;
                     match next {
                         Some(b) if b == Inbrace => {
@@ -16588,11 +16628,22 @@ pub fn paramsubst(
                     && crate::vm_helper::partab_array_get(&var_name).is_none()
                     && crate::vm_helper::partab_scan_keys(&var_name).is_some())
                 .then(|| crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default());
+                // !!! BOURNE DROP-IN GATE (no C counterpart) !!! POSIX 2.6.2: `${@:-w}` is
+                // null when `$@` expands to a single EMPTY field, so `set -- ''; ${@:-d}`
+                // is `d` in dash, bash, ksh93 and mksh. zsh's `!*aval` (c:3189) calls that
+                // one-element array non-null, and zsh mode keeps it.
+                let bourne_at_null = (var_name == "@"
+                    && raw_value.is_empty()
+                    && (crate::dash_mode::bash_mode()
+                        || crate::dash_mode::korn_mode()
+                        || crate::dash_mode::dash_faithful()))
+                    || crate::pattern_data_escape::ksh93_at_star_null(&var_name);
                 let vunset = !is_set
+                    || crate::pattern_data_escape::ksh93_at_star_null(&var_name)
                     || if let Some(v) = ksh_special_hash_val.as_ref() {
                         v.is_empty() // c:3189 `!*val`
                     } else if isarr != 0 && !single_index_sub_c2175 {
-                        array_is_empty // c:3189 `!*aval`
+                        array_is_empty || bourne_at_null // c:3189 `!*aval`
                     } else {
                         raw_value.is_empty() // c:3189 `!*val`
                     };
@@ -17430,7 +17481,9 @@ pub fn paramsubst(
                     && crate::vm_helper::partab_array_get(&var_name).is_none()
                     && crate::vm_helper::partab_scan_keys(&var_name).is_some())
                 .then(|| crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default());
-                let colon_null = if let Some(v) = ksh_special_hash_val.as_ref() {
+                let colon_null = if crate::pattern_data_escape::ksh93_at_star_null(&var_name) {
+                    true
+                } else if let Some(v) = ksh_special_hash_val.as_ref() {
                     v.is_empty() // c:3189 `!*val`
                 } else if isarr != 0 && !single_index_sub_c2175 {
                     array_is_empty // c:3189 `!*aval`

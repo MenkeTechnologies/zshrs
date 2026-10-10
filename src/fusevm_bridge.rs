@@ -6864,6 +6864,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         match v {
             Value::Array(items) => {
+                // !!! DASH GATE (no C counterpart) !!! With `IFS` set but EMPTY dash does
+                // no field splitting at all and so has nothing to prune: an unquoted
+                // `$*` / `$@` keeps its empty positionals as their own fields
+                // (`set -- '' a; IFS=''; printf '<%s>' $*` is `<><a>`; bash, ksh93,
+                // mksh and zsh drop the empty one).
+                if crate::dash_mode::dash_faithful()
+                    && with_executor(|exec| exec.scalar("IFS")).as_deref() == Some("")
+                {
+                    // Exactly one TRAILING empty field goes (dash's ifsbreakup drops the
+                    // empty field it would start after the last separator).
+                    //   set -- '' a ''; IFS=; printf '<%s>' $*   is   <><a>
+                    let mut kept: Vec<Value> = items.iter().cloned().collect();
+                    if kept.last().is_some_and(|x| x.to_str().is_empty()) {
+                        kept.pop();
+                    }
+                    return Value::array(kept);
+                }
                 if argc & (WORD_DROP_KEEPS_FIRST | WORD_DROP_KEEPS_LAST) != 0 && plan9_active() {
                     // c:4341 — under plan9 the quoted-empty affix is glued to
                     // every element, so no node of the word is empty.
@@ -8903,6 +8920,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:1817 — carry the Option: an UNSET `$IFS` (`!ifs`) joins on
                 // " " and splits at c:3919-3925 (`(!ifs && isarr < 0)`), unlike an
                 // EMPTY one. `join_c3914` encodes both arms.
+                // !!! KSH93 GATE (no C counterpart) !!! ksh93u+m splits each positional of an
+                // unquoted `$*` / `$@` on its own and drops the ones that are entirely
+                // empty, whatever `IFS` holds (`set -- a '' b; IFS=:; printf '<%s>' $*` is
+                // `<a><b>`; bash and mksh keep the empty field).
+                if crate::dash_mode::ksh93_mode() {
+                    let mut parts: Vec<String> = pp
+                        .iter()
+                        .filter(|e| !e.is_empty())
+                        .flat_map(|e| crate::ported::utils::sepsplit(e, None, false))
+                        .collect();
+                    // `$@` (not `$*`) keeps ONE empty field when the last positional is
+                    // empty: `set -- a '' ''; printf '<%s>' $@` is `<a><>`.
+                    let keeps_trailing = name == "@"
+                        && !parts.is_empty()
+                        && pp.last().is_some_and(|e| e.is_empty());
+                    if keeps_trailing {
+                        parts.push(String::new());
+                    }
+                    // The end-of-word drop must let that one empty field through.
+                    note_quoted_splice_elems(if keeps_trailing { parts.len() } else { 0 });
+                    return Value::array(parts.into_iter().map(Value::str).collect());
+                }
                 let ifs_opt = with_executor(|exec| exec.scalar("IFS"));
                 if let JoinC3914::Joined(joined) = join_c3914(pp.clone(), ifs_opt.as_deref()) {
                     // c:3919 `sepsplit(val, spsep, 0, 1)` with spsep NULL →
@@ -8921,6 +8960,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // outright and folded `nulstring` to "" (`IFS=:; set -- a::b;
                     // print -rl -- $@` lost its middle field).
                     let parts = crate::ported::utils::sepsplit(&joined, None, false); // c:3919, Nularg kept
+                    // An UNQUOTED read clears the quoted-splice bit, exactly as the
+                    // fall-through below does. Returning here without it left a
+                    // `"$@"` evaluated earlier (a function body's `printf '%s' "$@"`)
+                    // standing, and the next word's end-of-word drop then kept the
+                    // IFS-whitespace edge fields it must delete:
+                    //   setopt shwordsplit; set -- 'a b '; f() { printf '<%s>' "$@"; }
+                    //   f $*; f $*      zsh: <a><b> / <a><b>      was: <a><b> / <a><b><>
+                    note_quoted_splice_elems(0);
                     return Value::array(parts.into_iter().map(Value::str).collect());
                 }
             }
@@ -15542,6 +15589,54 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                             globbed
                         } else if has_nonleading_equals
+                            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
+                            && (crate::dash_mode::bash_mode() || crate::dash_mode::pdksh_family())
+                        {
+                            // !!! BASH / MKSH GATE (no C counterpart) !!! These
+                            // shells tilde-expand the value of an assignment-SHAPED
+                            // ARGUMENT word (`s x=~` -> `x=/home/u`) without any
+                            // option, which in zsh is MAGIC_EQUAL_SUBST. The two
+                            // spell it differently, so neither is simply that option:
+                            //   bash  needs a valid `name`, `name[sub]` or `name+`
+                            //         before the `=` (`1=~`, `-x=~`, `"x"=~` stay)
+                            //         and expands after every `:` too;
+                            //   mksh  takes ANY head (`1=~`, `-x=~` expand) but only
+                            //         the tilde that follows the first `=`
+                            //         (`x=a:~:b` and `x=~:~` keep their later ones).
+                            let eq = s_tok
+                                .chars()
+                                .position(|c| c == crate::ported::zsh_h::Equals)
+                                .unwrap_or(0);
+                            let chars: Vec<char> = s_tok.chars().collect();
+                            let head: String = chars[..eq].iter().collect();
+                            let tail: String = chars[eq + 1..].iter().collect();
+                            if crate::dash_mode::bash_mode() {
+                                let name = head.strip_suffix('+').unwrap_or(&head);
+                                let (base, sub) = match name.find('[') {
+                                    Some(b) if name.ends_with(']') => (&name[..b], true),
+                                    _ => (name, false),
+                                };
+                                let ident = base.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                                    && base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+                                let _ = sub;
+                                if ident {
+                                    let exp = crate::ported::subst::filesub(
+                                        &s_tok,
+                                        crate::ported::zsh_h::PREFORK_TYPESET,
+                                    );
+                                    vec![crate::lex::untokenize(&exp).to_string()]
+                                } else {
+                                    vec![s]
+                                }
+                            } else {
+                                let exp_tail = crate::ported::subst::filesub(&tail, 0);
+                                vec![format!(
+                                    "{}={}",
+                                    crate::lex::untokenize(&head),
+                                    crate::lex::untokenize(&exp_tail)
+                                )]
+                            }
+                        } else if has_nonleading_equals
                             && crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
                         {
                             // c:Src/exec.c:3353 — when MAGIC_EQUAL_SUBST is set
@@ -21802,6 +21897,34 @@ impl fusevm::ShellHost for ZshrsHost {
             with_executor(|exec| exec.set_last_status(1));
             crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             return Some(1);
+        }
+        // c:Src/subst.c:3337-3377 — `${name:?msg}` in a command's words ends the
+        // process (`_exit(1)` in a forked subshell) from inside the expansion, so
+        // the function never runs and the status is 1. The in-process subshell
+        // stands in for that child by unwinding on ERRFLAG_HARD, but a function
+        // call took the status of the (never started) call, 0:
+        //   unset u; f() { :; }; (f "${u:?x}") 2>/dev/null; print $?   zsh: 1
+        // A builtin already answers 1 from its own dispatch (c:3523-3525).
+        if with_executor(|exec| exec.function_exists(name)) {
+            use std::sync::atomic::Ordering;
+            let live = crate::ported::utils::errflag.load(Ordering::Relaxed);
+            let fatal = crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD;
+            if live & fatal == fatal {
+                with_executor(|exec| exec.set_last_status(1));
+                crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
+                return Some(1);
+            }
+            // c:Src/exec.c:3523-3525 — a SOFT error raised while expanding the words
+            // (`f $((1/0))`) ends the command before anything runs:
+            //     if (errflag) { if (!lastval) lastval = 1; … return; }
+            // so the function never starts and the status is the previous one, or 1.
+            // A builtin gets the same answer from its own dispatch; a function call
+            // fell through and ran with whatever arguments were left (status 0).
+            if live & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                let status = words_errflag_status();
+                with_executor(|exec| exec.set_last_status(status));
+                return Some(status);
+            }
         }
         // Provenance: same argv record as `exec`, but ONLY when the name
         // really resolves to a shell function — an external command

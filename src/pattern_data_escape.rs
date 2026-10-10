@@ -649,3 +649,36 @@ fn flush_range(out: &mut String, orig: &[char], cs: &[char], from: usize, to: us
         out.extend(&orig[from..to]);
     }
 }
+
+/// `s[from..to)` (char indices) with every glob metacharacter and backslash
+/// backslash-escaped; returns the new text and how many characters were added
+/// before `to`. See `PAT_OPERAND_ESCAPE_QUOTED` in `ported/subst.rs`.
+///
+/// !!! RUST-ONLY HELPER !!! — no C counterpart.
+pub fn escape_quoted_splice(s: &str, from: usize, to: usize) -> (String, usize) {
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut added = 0usize;
+    for (i, c) in s.chars().enumerate() {
+        if i >= from
+            && i < to
+            && matches!(c, '\\' | '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '^' | '#' | '~' | '!' | '-')
+        {
+            out.push('\\');
+            added += 1;
+        }
+        out.push(c);
+    }
+    (out, added)
+}
+
+/// ksh93u+m's NULL test for `${@:-w}` / `${*:-w}` / `${@:+w}` / `${*:+w}`: the
+/// expansion is null whenever `$1` is empty, whatever follows it
+/// (`set -- '' x; echo "${@:-d}"` is `d`; bash, mksh and zsh give ` x`). Only the
+/// bare `--ksh` drop-in has it.
+///
+/// !!! RUST-ONLY HELPER !!! — no C counterpart.
+pub fn ksh93_at_star_null(name: &str) -> bool {
+    matches!(name, "@" | "*")
+        && crate::dash_mode::ksh93_mode()
+        && crate::ported::params::getsparam("1").unwrap_or_default().is_empty()
+}

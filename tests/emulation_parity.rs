@@ -2674,13 +2674,18 @@ fn posix_faithful_echo_interprets_escapes() {
             .expect("spawn");
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
-    for mode in [["--sh"], ["--dash"], ["--ash"], ["--ksh"]] {
+    for mode in [["--sh"], ["--dash"], ["--ash"], ["--mksh"]] {
         assert_eq!(
             run(&mode, r#"echo "a\tb""#),
             "a\tb\n",
             "{mode:?} echo must interpret escapes like the real shell"
         );
     }
+    // ksh93 (the system 93u+ 2012 and Homebrew's 93u+m 1.0.10 alike) keeps escapes
+    // literal without -e and honours it; `-E` is not an option there, it is printed.
+    assert_eq!(run(&["--ksh"], r#"echo "a\tb""#), "a\\tb\n");
+    assert_eq!(run(&["--ksh"], r#"echo -e "a\tb""#), "a\tb\n");
+    assert_eq!(run(&["--ksh"], r#"echo -E x"#), "-E x\n");
     // bash keeps escapes literal without -e, and honours -e.
     assert_eq!(run(&["--bash"], r#"echo "a\tb""#), "a\\tb\n");
     assert_eq!(run(&["--bash"], r#"echo -e "a\tb""#), "a\tb\n");

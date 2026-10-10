@@ -10460,6 +10460,7 @@ enum Mode {
     Qjoin,
     Wordsplit,
     Reject,
+    Expand,
 }
 
 struct Args {
@@ -12224,8 +12225,181 @@ fn gen_csh(seed: u64) -> Vec<String> {
     stmts
 }
 
+// ---------------------------------------------------------------------------
+// `--mode expand` — expansion semantics across the Bourne family
+// ---------------------------------------------------------------------------
+
+/// Which expansion features a target's reference shell implements. Each level
+/// includes the one before it, so a divergence is a gap in a feature the shell
+/// actually has — never a syntax error on one side.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ExpandDialect {
+    /// POSIX.1: `${v:-w}`, `${v#p}`, `${#v}`, `$((…))`, `$(…)`, `"$@"`/`"$*"`,
+    /// IFS splitting, quoting, tilde. dash, ash, `/bin/sh`, `emulate sh`.
+    Posix,
+    /// + ksh: `${v:o:l}`, `${v/p/r}`, `set -A` arrays. ksh93, mksh, pdksh,
+    /// `emulate ksh` and zsh itself.
+    Ksh,
+    /// + bash: `a=(…)`, `${!a[@]}`, `${v^^}`, `${!v}`, brace expansion, `$'…'`.
+    Bash,
+}
+
+/// The expansion dialect for `t`, or `None` for the csh family (which has its
+/// own grammar and does not use `$((…))`/`${v:-w}` at all).
+fn expand_dialect(t: ShellTarget) -> Option<ExpandDialect> {
+    use ShellTarget::*;
+    Some(match t {
+        Sh | Dash | Ash | ShZsh => ExpandDialect::Posix,
+        Ksh | Mksh | Pdksh | KshZsh | Zsh => ExpandDialect::Ksh,
+        Bash => ExpandDialect::Bash,
+        Csh => return None,
+    })
+}
+
+/// The one helper every probe goes through: prints each argument in `<…>`
+/// brackets, so the FIELD boundaries an expansion produced are visible
+/// (an unquoted `$v` that splits into three words prints `<a><b><c>`).
+///
+/// `HOME` is NOT assigned here: bash 5.3 expands `~` from the passwd entry and
+/// ignores an in-script `HOME=…`, so setting it made every tilde probe diverge
+/// for a reason that is the reference's, not zshrs's. Both shells inherit the
+/// same `HOME` from the harness.
+const EXPAND_PRELUDE: &str = r#"s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }"#;
+
+/// Values chosen to separate the rules: empty, whitespace at either end, runs
+/// of blanks, IFS-looking punctuation, glob metacharacters, a leading dash,
+/// backslash, quote, digits.
+const EXPAND_VALUES: [&str; 14] = [
+    "", "a", "abc", "a b", " a b ", "a  b", "a:b:c", "foo.bar.baz", "x*y", "-n", "a\\b",
+    "it's", "12", "aXbXc",
+];
+
+/// Pattern operands for `#`/`%`/`/`: literal, `*`, `?`, bracket, escaped glob.
+const EXPAND_PATTERNS: [&str; 10] = ["a", "a*", "*c", "*", "?", "??", "[ab]*", "*[bc]", "a?c", "\\*"];
+
+/// `${v:-WORD}` operands: plain, empty, a field-splitting word, a quoted one,
+/// and nested expansions.
+const EXPAND_WORDS: [&str; 8] = ["D", "", "d e", "\"d e\"", "$w", "\"$w\"", "${w:-q}", "$(echo c d)"];
+
+const EXPAND_IFS: [&str; 8] = [":", " :", "a", " ", "", ", ", "xy", ":;"];
+
+/// `v='VALUE'`-safe quoting of `val`: single quotes, with `'` as `'\''`.
+fn sq_value(val: &str) -> String {
+    format!("'{}'", val.replace('\'', "'\\''"))
+}
+
+/// One self-contained expansion probe. `d` gates the features the target's
+/// shell has.
+fn expand_one(rng: &mut StdRng, d: ExpandDialect) -> String {
+    let v = sq_value(pick(rng, &EXPAND_VALUES));
+    let w = sq_value(pick(rng, &EXPAND_VALUES));
+    let pat = *pick(rng, &EXPAND_PATTERNS);
+    let word = *pick(rng, &EXPAND_WORDS);
+    let ifs = sq_value(pick(rng, &EXPAND_IFS));
+    let args = (0..rng.gen_range(0..=4))
+        .map(|_| sq_value(pick(rng, &EXPAND_VALUES)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let top = match d {
+        ExpandDialect::Posix => 17,
+        ExpandDialect::Ksh => 21,
+        ExpandDialect::Bash => 27,
+    };
+    // `set -A` is ksh/zsh syntax; bash spells the same probe `a=(…)` (arm 21).
+    let arm = match rng.gen_range(0..top) {
+        19 if d == ExpandDialect::Bash => 21,
+        n => n,
+    };
+    match arm {
+        // Field splitting of an unquoted expansion, and the quoted form.
+        0 => format!("v={v}; s $v; s \"$v\"; s $v$v; s \"$v\"x; s x$v"),
+        // IFS other than the default, through `$v`, `set --` and `"$*"`.
+        1 => format!(
+            "v={v}; IFS={ifs}; s $v; s \"$v\"; set -- $v; s \"$@\"; echo $#; IFS={ifs}; s \"$*\"; unset IFS"
+        ),
+        // Positional parameters, quoted and not, under the default and a custom IFS.
+        2 => format!(
+            "set -- {args}; s \"$@\"; s $@; s \"$*\"; s $*; echo $#; IFS={ifs}; s \"$*\"; s $*; s \"$@\"; unset IFS"
+        ),
+        // The `-`, `=`, `?`, `+` family with and without the colon.
+        3 => format!(
+            "v={v}; e=; unset u; s \"${{v:-{word}}}\" \"${{e:-{word}}}\" \"${{u:-{word}}}\"; s ${{v-{word}}} ${{e-{word}}} ${{u-{word}}}"
+        ),
+        4 => format!(
+            "v={v}; e=; unset u; w={w}; s \"${{v:+{word}}}\" \"${{e:+{word}}}\" \"${{u:+{word}}}\"; s ${{v+{word}}} ${{e+{word}}} ${{u+{word}}}"
+        ),
+        5 => format!(
+            "w={w}; unset u; s ${{u:={word}}}; s \"$u\"; e=; s \"${{e:={word}}}\"; s \"$e\"; unset u e"
+        ),
+        // `${v:?}` aborts a non-interactive shell; run it in a subshell, compare status.
+        6 => format!("w={w}; unset u; e=; (s ${{u:?{word}}}) 2>/dev/null; echo $?; (s ${{e:?{word}}}) 2>/dev/null; echo $?; (s ${{e?{word}}}) 2>/dev/null; echo $?"),
+        // Length and the four prefix/suffix strips.
+        7 => format!("v={v}; s \"${{#v}}\" \"${{v#{pat}}}\" \"${{v##{pat}}}\" \"${{v%{pat}}}\" \"${{v%%{pat}}}\""),
+        // A pattern held in a variable: unquoted is a pattern, quoted is literal.
+        8 => format!("v={v}; p={}; s \"${{v#$p}}\" \"${{v#\"$p\"}}\" \"${{v%%$p}}\" \"${{v%%\"$p\"}}\"", sq_value(pat)),
+        // Arithmetic expansion: operators, base prefixes, nesting, unset operands.
+        9 => {
+            let a = rng.gen_range(0..40);
+            let b = rng.gen_range(1..9);
+            let op = *pick(rng, &["+", "-", "*", "/", "%", "<<", ">>", "&", "|", "^", "<", ">", "==", "!=", "&&", "||"]);
+            format!("n={a}; m={b}; s $((n {op} m)) $((n{op}m)) \"$((m {op} n))\" $((-n)) $((~m)) $((n>m?n:m)) $((n+${{u:-1}}))")
+        }
+        // Command substitution: word splitting, trailing newline removal, nesting, backticks.
+        10 => format!(
+            "v={v}; s $(echo $v) \"$(echo \"$v\")\" \"$(printf 'a\\n\\n')\"; s `echo $v`; s \"$(echo a; echo b)\" $(echo a; echo b); s \"$(echo \"$(echo x)\")\""
+        ),
+        // Quote removal and backslash rules.
+        11 => "s \"a\\$b\" 'a\\b' \"a\\\\b\" \"a\\\"b\" a\\ b \"\\a\" \"a\\`b\" \"x\"'y'z \"\" '' a\"\"b".to_string(),
+        // Tilde: leading, after `=` and `:` in assignments, quoted, mid-word.
+        12 => "s ~ ~/x \"~\" x~ '~'; x=~/y; s \"$x\"; x=a:~:b; s \"$x\"; x=~:~; s \"$x\"; s x=~".to_string(),
+        // Contexts that do NOT split: assignment, case word, here-string-free `[`.
+        13 => format!(
+            "v={v}; x=$v; s \"$x\"; case $v in {pat}) echo m;; *) echo n;; esac; case \"$v\" in {pat}) echo m;; *) echo n;; esac; [ -n \"$v\" ]; echo $?; for i in $v; do s \"$i\"; done"
+        ),
+        // Nested expansions and quoting inside the word of an operator.
+        14 => format!(
+            "v={v}; w={w}; unset u; s \"${{u:-${{w:-x}}}}\" \"${{v:+\"$w\"}}\" ${{v:+$w}} \"${{v#\"${{w%?}}\"}}\" $((${{#v}}+1)) \"${{u:-$(echo q)}}\""
+        ),
+        // Special parameters and positional edge cases.
+        15 => format!(
+            "set -- {args}; s \"$#\" \"${{1:-x}}\" \"${{2-y}}\" \"${{@:-d}}\" \"${{*:-d}}\"; false; s \"$?\"; (exit 3); s \"$?\"; shift; s \"$#\"; shift 9 2>/dev/null; echo $?"
+        ),
+        // Pathname expansion switched off, and an unmatched pattern left alone.
+        16 => "set -f; s * \"*\" a?; set +f; s /no/such/dir/*; s \"/no/such\"/*".to_string(),
+        // ---- ksh and later ----
+        17 => format!("v={v}; s \"${{v:1}}\" \"${{v:1:2}}\" \"${{v:0:1}}\" \"${{v:${{#v}}}}\" \"${{v:0:0}}\""),
+        18 => format!("v={v}; s \"${{v/{pat}/X}}\" \"${{v//{pat}/X}}\" \"${{v/#{pat}/X}}\" \"${{v/%{pat}/X}}\" \"${{v/{pat}}}\""),
+        19 => format!(
+            "set -A a x {v} z; s \"${{a[1]}}\" \"${{a[@]}}\" ${{a[*]}} \"${{#a[@]}}\" \"${{#a[1]}}\" \"${{a[5]}}\"; a[7]=q; s \"${{#a[@]}}\" \"${{a[7]}}\""
+        ),
+        20 => format!("typeset -u U={v}; typeset -l L={v}; s \"$U\" \"$L\"; typeset -i I=2+3; s \"$I\"; I=I*2; s \"$I\""),
+        // ---- bash only ----
+        21 => format!("a=(x {v} z); s \"${{a[@]}}\" ${{a[@]}} \"${{a[*]}}\" \"${{#a[@]}}\" \"${{!a[@]}}\" \"${{a[@]:1:1}}\" \"${{a[@]:1}}\""),
+        22 => format!("v={v}; s \"${{v^}}\" \"${{v^^}}\" \"${{v,}}\" \"${{v,,}}\" \"${{v^^[ab]}}\" \"${{v@Q}}\""),
+        23 => "s {a,b}{1,2} {1..4} {a..c} x{,y} {1..10..3} \"{a,b}\" {a}".to_string(),
+        24 => format!("v={v}; n=v; s \"${{!n}}\"; pre_a=1; pre_b=2; s ${{!pre_@}} ${{!pre_*}}"),
+        25 => "s $'a\\tb' $'\\x41' $'\\u00e9' $'it\\'s' $\"plain\" \"$'x'\"".to_string(),
+        _ => format!("declare -A am=([k]={v} [j]=2); s \"${{am[k]}}\" \"${{#am[@]}}\" \"${{am[zz]:-d}}\"; s \"${{!am[@]}}\" | tr -d '\\n' | wc -c | tr -d ' '"),
+    }
+}
+
+/// `--mode expand` program: a short list of independent probes.
+fn gen_expand(seed: u64, d: ExpandDialect) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![EXPAND_PRELUDE.to_string()];
+    stmts.extend((0..rng.gen_range(2..=5)).map(|_| expand_one(&mut rng, d)));
+    stmts
+}
+
 /// Generate the statement list for a seed in the selected mode.
 fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
+    // `--mode expand` is an expansion-semantics probe every Bourne-family target
+    // runs, in the dialect its reference shell implements.
+    if mode == Mode::Expand {
+        if let Some(d) = expand_dialect(shell_target()) {
+            return gen_expand(seed, d);
+        }
+    }
     // Non-zsh targets ignore the zsh-feature Mode and use a grammar their shell
     // family actually implements.
     match target_cfg(shell_target()).gen {
@@ -12310,6 +12484,8 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Qjoin => gen_qjoin(seed),
         Mode::Wordsplit => gen_wordsplit(seed),
         Mode::Reject => gen_reject(seed),
+        // Targets without an expand dialect (csh) already returned above.
+        Mode::Expand => gen_posix(seed),
     }
 }
 
@@ -12390,6 +12566,7 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Qjoin => "qjoin",
         Mode::Wordsplit => "wordsplit",
         Mode::Reject => "reject",
+        Mode::Expand => "expand",
     }
 }
 
@@ -12470,6 +12647,7 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Qjoin,
         Mode::Wordsplit,
         Mode::Reject,
+        Mode::Expand,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -12612,7 +12790,11 @@ fn parse_args() -> Args {
                      whence, zstyle, atflag, subexp, replace, assign,\n\
                      gflag, select, bindkey, zmv, zcalc, rcexpand,\n\
                      cond, funclist, shinstdin, mbident, jobs, extglob,\n\
-                     flagorder, qjoin, wordsplit, reject\n\
+                     flagorder, qjoin, wordsplit, reject, expand\n\
+                     (expand fuzzes expansion semantics on EVERY non-csh\n\
+                     target: it picks a POSIX / ksh / bash dialect from\n\
+                     --shell, so `--matrix --mode expand` covers sh, dash,\n\
+                     ash, ksh, mksh, pdksh, bash and the zsh-style legs)\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --shell TARGET   zsh (default) | pdksh. pdksh differentials a\n\
                                       real pdksh/mksh/oksh vs `zshrs --pdksh` using\n\
