@@ -6519,6 +6519,32 @@ impl ZshCompiler {
     /// ops where possible. Words that hit no fast path fall through
     /// to a runtime expand call via BUILTIN_EXPAND_TEXT.
     fn compile_word_str(&mut self, s: &str) {
+        // c:Src/subst.c:178-181 — `prefork` runs `filesub` on the word AFTER
+        // `stringsubst`, so a default word that BEGINS with the lexer's Equals
+        // token (`${x:-=}ls`, `${x:-=ls}`) makes the expanded word `=ls`, which
+        // `filesubstr` (c:800) turns into the command's path. The native
+        // `${NAME:-word}` lowering and the segment split below both fold the
+        // token to a literal `=` and expand the pieces separately, so the
+        // word-initial `=` never meets its suffix as one word. Hand the whole
+        // TOKENIZED word to the text expansion, which keeps the token.
+        {
+            use crate::ported::zsh_h::{Dash, Dnull, Equals, Inbrace, Snull, Stringg};
+            let ch: Vec<char> = s.chars().collect();
+            let default_equals = ch.len() > 3
+                && ch[0] == Stringg
+                && ch[1] == Inbrace
+                && ch.windows(2).any(|w| (w[0] == Dash || w[0] == '-' || w[0] == '+') && w[1] == Equals)
+                && !ch.iter().any(|&c| c == Snull || c == Dnull);
+            if default_equals {
+                let text = self.builder.add_constant(Value::str(s));
+                self.builder.emit(Op::LoadConst(text), 0);
+                let mode = self.text_mode_for_context(self.text_base_mode(s));
+                self.builder.emit(Op::LoadInt(mode as i64), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+                return;
+            }
+        }
         // c:Src/subst.c:301-304 → stringsubstquote → getkeystring decodes a
         // `$'…'` span at EXPANSION time, and c:Src/utils.c:7283-7287 cuts
         // the string at an embedded NUL when POSIX_STRINGS is set. That is a
