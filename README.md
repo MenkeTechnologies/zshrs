@@ -258,6 +258,16 @@ Cold (cache miss):  717ms  — lex + parse + compile + cache write + execute
 Warm (cache hit):     7ms  — deserialize + execute
 ```
 
+**Cross-shell benchmarks (zshrs vs zsh vs fish vs nushell, bash when present):**
+
+```sh
+bench/run.sh                       # all workloads
+bench/run.sh --workload loop       # one workload
+ZSHRS_BIN=/path/to/zshrs bench/run.sh
+```
+
+Release binary only (`target/release/zshrs`); the script refuses to run without it. Workloads (startup, arithmetic loop, function calls, string append, command substitution, external spawn, pipeline, glob) are written once per dialect (POSIX, fish, nushell) so each shell runs its native idiom for the same work. User config is skipped (`-f`, `--no-config`, `--no-config-file`). Output is a hyperfine Markdown table per workload in `bench/results.md`.
+
 ---
 
 ## [0x04] CONCURRENT PRIMITIVES
