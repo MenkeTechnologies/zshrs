@@ -732,6 +732,13 @@ pub fn handle_query(
 /// `$.term.extensions`.
 pub fn query_terminal() {
     // c:505
+    // ZSHRS-ONLY gate. termquery.c is a development-tree file: zsh 5.9.2 sends no
+    // colour/version/DA1 probes at startup. A zsh drop-in (`--zsh`, argv[0]
+    // `zsh`) stands in for 5.9.2, and the probes' replies (or the wait for
+    // them) leak into a zpty-driven session, as X04zlehighlight shows.
+    if crate::extensions::emulation_startup::emulating() {
+        return;
+    }
     let mut tquery = String::new(); // c:506-507
     let flist = crate::ported::params::getaparam(EXTVAR).unwrap_or_default(); // c:510
     let envid = crate::ported::params::getsparam("TERM_PROGRAM"); // c:511
@@ -1318,6 +1325,11 @@ pub fn write_urlencoded(fd: i32, path_components: &str) {
 /// contains a `/` (otherwise the resulting URL would be malformed).
 pub fn notify_pwd() {
     // c:778
+    // ZSHRS-ONLY gate: the OSC 7 cwd report is dev-tree behaviour; 5.9.2 (what a
+    // drop-in stands in for) writes none.
+    if crate::extensions::emulation_startup::emulating() {
+        return;
+    }
     // c:783 — `extension_enabled("integration", "pwd", 11, 1)` gate.
     if !extension_enabled("integration", "pwd", true) {
         return;
