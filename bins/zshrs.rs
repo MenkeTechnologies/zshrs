@@ -4358,37 +4358,7 @@ fn csh_input_with(
     zsh::emulation_startup::csh_input(src, translate)
 }
 
-thread_local! {
-    /// Lines of an unfinished csh block (`foreach` … before `end`) read at
-    /// the prompt or from stdin.
-    static CSH_PENDING: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
-}
-
-/// One line of interactive or stdin input. Outside `--csh` it is returned
-/// as is. In `--csh` an unterminated block (`… not found.`) is held back
-/// until a later line closes it, so a `foreach` typed over several lines
-/// runs once at `end`.
+/// One line of interactive or stdin input; see `emulation_startup::csh_line`.
 fn csh_line(line: &str) -> Option<String> {
-    if zsh::emulation_startup::personality() != zsh::emulation_startup::Personality::Csh {
-        return Some(line.to_string());
-    }
-    CSH_PENDING.with(|p| {
-        let mut pending = p.borrow_mut();
-        if !pending.is_empty() {
-            pending.push('\n');
-        }
-        pending.push_str(line);
-        match csh_input_with(&pending, zsh::csh::translate_partial) {
-            Ok(text) => {
-                pending.clear();
-                Some(text)
-            }
-            Err(msg) if msg.ends_with("not found.") => None,
-            Err(msg) => {
-                pending.clear();
-                eprintln!("{msg}");
-                None
-            }
-        }
-    })
+    zsh::emulation_startup::csh_line(line)
 }

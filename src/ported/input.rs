@@ -721,6 +721,26 @@ pub fn inputline() -> i32 {
     // shell syntax (`1:10 |> sum` is a pipe into a redirect, `$_` would be
     // expanded), so parsing it as a command named `@` cannot work.
     let line = crate::stryke_line(line);
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // `--csh` input is csh text. The prompt and stdin loops read it here, so
+    // translate it before the lexer sees it; a line that opens a block
+    // (`foreach` … `end`) is held back and an empty line stands in for it.
+    let line = if crate::emulation_startup::personality()
+        == crate::emulation_startup::Personality::Csh
+    {
+        let raw = line.strip_suffix('\n').unwrap_or(&line);
+        match crate::emulation_startup::csh_line(raw) {
+            Some(mut text) => {
+                if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text
+            }
+            None => "\n".to_string(),
+        }
+    } else {
+        line
+    };
     // c:498-500 — install the line as the live input buffer.
     let len = line.chars().count() as i32; // c:500 inbufleft (char count — inbufpos/inbufct are char-based)
     inbuf.with(|b| *b.borrow_mut() = line);

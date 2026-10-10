@@ -55,3 +55,29 @@ fn csh_scripts_match_tcsh() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(bad.is_empty(), "csh divergences:\n{}", bad.join("\n"));
 }
+
+/// Input read from stdin (what the prompt loop reads too) is csh text and
+/// must be translated line by line, a `foreach` block held until `end`.
+#[test]
+fn csh_stdin_matches_tcsh() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let Some(reference) = tcsh() else { return };
+    let script = "set x = 5\necho $x $?x\nforeach i (a b)\necho $i\nend\nif ($x == 5) echo yes\n";
+    let run_stdin = |bin: &str, extra: &[&str]| {
+        let mut child = Command::new(bin)
+            .args(extra)
+            .arg("-f")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn shell");
+        child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let want = run_stdin(&reference, &[]);
+    let got = run_stdin(env!("CARGO_BIN_EXE_zshrs"), &["--csh"]);
+    assert_eq!(got, want, "stdin csh input diverges from tcsh");
+}
