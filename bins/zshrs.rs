@@ -2947,7 +2947,13 @@ pub fn zshrs_main() {
         }
         let start = Instant::now();
         // c:Src/init.c:1568 — `execstring(cmd, 0, 1, "cmdarg")`, exiting.
-        let result = executor.execute_cmdarg(code);
+        let result = match csh_input(code) {
+            Ok(text) => executor.execute_cmdarg(&text),
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(1);
+            }
+        };
         #[cfg(feature = "daemon")]
         completed_c.store(true, std::sync::atomic::Ordering::SeqCst);
         let duration_ns_total = start.elapsed().as_nanos() as i64;
@@ -3212,7 +3218,24 @@ pub fn zshrs_main() {
         // have resolved the name to a $path entry; that resolved path is
         // what SHIN was opened on, while `$0` / ZSH_SCRIPT / scriptname
         // above keep the verbatim operand (c:1402-1403).
-        match executor.execute_script_file(&runscript_open) {
+        let script_result = if zsh::emulation_startup::personality()
+            == zsh::emulation_startup::Personality::Csh
+        {
+            // csh text cannot take the bytecode-cache path: translate first.
+            match std::fs::read_to_string(&runscript_open) {
+                Ok(src) => match csh_input(&src) {
+                    Ok(text) => executor.execute_script(&text),
+                    Err(msg) => {
+                        eprintln!("{msg}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            executor.execute_script_file(&runscript_open)
+        };
+        match script_result {
             Err(e) => {
                 if e != "__SILENCED__" {
                     eprintln!("zshrs: {}: {}", args[1], e);
@@ -3770,6 +3793,9 @@ fn source_emulation_startup_files(
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
+        let Ok(contents) = csh_input(&contents) else {
+            continue;
+        };
         source_from_memory(executor, &path, &contents);
     }
 }
@@ -4277,9 +4303,64 @@ fn process_line(line: &str, executor: &mut ShellExecutor) {
         }
     }
 
-    if let Err(e) = executor.execute_script(line) {
+    let line = match csh_line(line) {
+        Some(text) => text,
+        None => return,
+    };
+    if let Err(e) = executor.execute_script(&line) {
         if e != "__SILENCED__" {
             eprintln!("zshrs: {}", e);
         }
     }
+}
+
+/// Options the csh translator's output relies on: `cshnullglob` is tcsh's
+/// "error only if no word of the list matched" glob rule, `extendedglob`
+/// backs the `:gu`/`:gl` modifiers, `pipefail` gives a pipeline csh's
+/// any-stage-failed status.
+const CSH_PREAMBLE: &str = "setopt cshnullglob extendedglob pipefail\n";
+
+/// The `--csh` input boundary: csh text in, zsh text out. Every other
+/// personality passes its input through untouched. Errors carry the text
+/// tcsh prints for the same mistake.
+fn csh_input(src: &str) -> Result<String, String> {
+    if zsh::emulation_startup::personality() != zsh::emulation_startup::Personality::Csh {
+        return Ok(src.to_string());
+    }
+    Ok(format!("{CSH_PREAMBLE}{}", zsh::csh::translate(src)?))
+}
+
+thread_local! {
+    /// Lines of an unfinished csh block (`foreach` … before `end`) read at
+    /// the prompt or from stdin.
+    static CSH_PENDING: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// One line of interactive or stdin input. Outside `--csh` it is returned
+/// as is. In `--csh` an unterminated block (`… not found.`) is held back
+/// until a later line closes it, so a `foreach` typed over several lines
+/// runs once at `end`.
+fn csh_line(line: &str) -> Option<String> {
+    if zsh::emulation_startup::personality() != zsh::emulation_startup::Personality::Csh {
+        return Some(line.to_string());
+    }
+    CSH_PENDING.with(|p| {
+        let mut pending = p.borrow_mut();
+        if !pending.is_empty() {
+            pending.push('\n');
+        }
+        pending.push_str(line);
+        match csh_input(&pending) {
+            Ok(text) => {
+                pending.clear();
+                Some(text)
+            }
+            Err(msg) if msg.ends_with("not found.") => None,
+            Err(msg) => {
+                pending.clear();
+                eprintln!("{msg}");
+                None
+            }
+        }
+    })
 }

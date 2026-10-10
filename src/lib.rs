@@ -265,6 +265,10 @@ pub mod bash_prompt;
 /// `emulation_output` submodule — per-shell builtin output formats (Rust-only).
 #[path = "extensions/emulation_output.rs"]
 pub mod emulation_output;
+/// csh/tcsh source → zsh source translator behind `zshrs --csh`
+/// (Rust-only; no zsh C counterpart).
+#[path = "extensions/csh/mod.rs"]
+pub mod csh;
 /// `emulation_startup` submodule — per-drop-in startup/logout files (Rust-only).
 #[path = "extensions/emulation_startup.rs"]
 pub mod emulation_startup;

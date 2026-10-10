@@ -144,10 +144,19 @@ impl Translator {
         if line.contains("status") {
             self.seen_status = true;
         }
-        for stmt in split_stmts(line) {
-            let stmt = stmt.trim();
-            if !stmt.is_empty() {
-                self.piece(stmt, out)?;
+        let stmts = split_stmts(line);
+        if self.buf.is_none() && stmts.iter().all(|s| !is_control_head(s.trim())) {
+            // No keyword anywhere: csh list semantics (`a; b &` backgrounds the
+            // whole list, `repeat`-free redirects) belong to `cmds`, which
+            // needs the line unsplit.
+            let text = cmds::translate_line(line.trim())?;
+            self.emit(out, &text);
+        } else {
+            for stmt in stmts {
+                let stmt = stmt.trim();
+                if !stmt.is_empty() {
+                    self.piece(stmt, out)?;
+                }
             }
         }
         self.end = out.len();
@@ -1431,4 +1440,29 @@ mod tests {
         assert_eq!(split_head("if(1)then"), ("if", "(1)then"));
         assert_eq!(split_head("foreach  i (a)"), ("foreach", "i (a)"));
     }
+}
+
+/// True when `stmt` starts with a word this layer handles itself (block
+/// keywords, jumps, `repeat`, `onintr`, `label:`).
+fn is_control_head(stmt: &str) -> bool {
+    let (head, _) = split_head(stmt);
+    matches!(
+        head,
+        "if" | "else"
+            | "endif"
+            | "foreach"
+            | "while"
+            | "end"
+            | "switch"
+            | "case"
+            | "default"
+            | "default:"
+            | "endsw"
+            | "break"
+            | "continue"
+            | "breaksw"
+            | "goto"
+            | "onintr"
+            | "repeat"
+    ) || (head.len() > 1 && head.ends_with(':'))
 }

@@ -64,7 +64,7 @@ zshrs replaces `fork + exec` with a persistent worker thread pool, compiles ever
                  └──────────────────────────────────────┘
 ```
 
-The **8 Bourne-family dialects** are the emulation drop-ins `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash` (the C-shell `--csh` mode is separate). All eight compile through the same fusevm core, and each is verified against its **real reference shell** by the parity matrix in [`tests/emulation_parity.rs`](tests/emulation_parity.rs). zsh mode is additionally cross-checked against real `zsh` by a **differential fuzz harness** ([`bins/parity-fuzz.rs`](bins/parity-fuzz.rs)) that runs thousands of grammar-driven, seed-replayable snippets through both shells and flags any stdout/exit divergence.
+The **8 Bourne-family dialects** are the emulation drop-ins `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash` (the C-shell `--csh` mode is separate: csh syntax is translated to zsh text by `src/extensions/csh/` and run by the same engine). All eight compile through the same fusevm core, and each is verified against its **real reference shell** by the parity matrix in [`tests/emulation_parity.rs`](tests/emulation_parity.rs). zsh mode is additionally cross-checked against real `zsh` by a **differential fuzz harness** ([`bins/parity-fuzz.rs`](bins/parity-fuzz.rs)) that runs thousands of grammar-driven, seed-replayable snippets through both shells and flags any stdout/exit divergence.
 
 ---
 
@@ -949,10 +949,10 @@ scripts/ztst_compsys.py --zsh-build <built zsh tree> --core            # zshrs
 scripts/ztst_compsys.py --zsh-build <built zsh tree> --core --baseline # zsh
 ```
 
-Against zsh 5.9.2 built from the `zsh-5.9.2` tag, v0.13.18 passes 2,038 of
-the 2,068 assertions zsh passes (core suite 1,863 of 1,890, completion suite
+Against zsh 5.9.2 built from the `zsh-5.9.2` tag, `main` at `ea21689246` passes 2,052 of
+the 2,068 assertions zsh passes (core suite 1,877 of 1,890, completion suite
 `Y01`-`Y03` 175 of 178). The misses, with causes, and the cargo, TAB, surface
-and fuzz measurements are in
+and fuzz measurements (v0.13.18) are in
 [`docs/parity_report.html`](docs/parity_report.html).
 
 **Upstream ztst corpus, in-tree runner** -- the `.ztst` files copied into this

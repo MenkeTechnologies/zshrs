@@ -1,7 +1,8 @@
 //! Quote-aware line handling shared by every translator layer.
 
 /// Split `src` into logical lines: a backslash-newline joins two physical
-/// lines; a `#` outside quotes starts a comment that runs to end of line;
+/// lines with a blank (tcsh: `a\<nl>b` echoes `a b`); a `#` outside quotes starts a comment that runs to end of line, except
+/// in the `$#x` and `${#x}` forms;
 /// blank lines are dropped. Quotes (`'`, `"`, `` ` ``) and backslash escapes
 /// are honoured so `echo '#x'` keeps its `#`.
 pub fn logical_lines(src: &str) -> Vec<String> {
@@ -12,7 +13,7 @@ pub fn logical_lines(src: &str) -> Vec<String> {
     while let Some(c) = chars.next() {
         match (quote, c) {
             (_, '\\') => match chars.next() {
-                Some('\n') => {}
+                Some('\n') => cur.push(' '),
                 Some(n) => {
                     cur.push('\\');
                     cur.push(n);
@@ -27,6 +28,7 @@ pub fn logical_lines(src: &str) -> Vec<String> {
                 quote = None;
                 cur.push(c);
             }
+            (None, '#') if cur.ends_with('$') || cur.ends_with("${") => cur.push(c),
             (None, '#') => {
                 for n in chars.by_ref() {
                     if n == '\n' {
@@ -144,8 +146,13 @@ mod tests {
 
     #[test]
     fn joins_continuations_and_strips_comments_outside_quotes() {
-        let got = logical_lines("echo a \\\nb # c\n\necho '#x'\n");
+        let got = logical_lines("echo a\\\nb # c\n\necho '#x'\n");
         assert_eq!(got, vec!["echo a b", "echo '#x'"]);
+    }
+
+    #[test]
+    fn hash_after_dollar_is_a_count_not_a_comment() {
+        assert_eq!(logical_lines("echo $#a ${#b} # c"), vec!["echo $#a ${#b}"]);
     }
 
     #[test]

@@ -137,9 +137,15 @@ are separate modes rather than aliases of
 .BR \-\-ksh .
 .TP
 .B \-\-csh
-Identical behaviour to
-.BR csh (1).
-Outside the Bourne family; provided so argv[0] dispatch is complete.
+csh/tcsh syntax: input (\fB\-c\fR strings, script files, startup files and
+prompt lines) is translated to zsh text and run by the same engine. Covers
+\fBset\fR/\fBsetenv\fR/\fB@\fR, \fBif\fR/\fBforeach\fR/\fBwhile\fR/\fBswitch\fR/\fBgoto\fR,
+\fB$#x\fR, \fB$x[n]\fR, \fB$?x\fR and the \fB:h :t :r :e\fR modifiers, \fB>&\fR,
+\fB>!\fR, \fB|&\fR, and aliases with history arguments. Checked against
+.BR tcsh (1).
+Not yet translated: \fBsource\fR of a csh file from inside a csh script,
+\fBonintr label\fR, \fBgoto\fR into a block, and csh's abort-on-error
+behaviour for undefined variables.
 .PP
 Eight Bourne-family dialects run on one bytecode core, and each is
 verified against its own reference shell rather than against zsh's

@@ -1,0 +1,57 @@
+//! `zshrs --csh` against the reference tcsh (macOS `/bin/csh`).
+//!
+//! Each script is written to a file and run by both shells with `-f` (no
+//! startup files); stdout must match byte for byte. A script FILE, not
+//! `-c`: tcsh's `-c` executes only the first line of a multi-line string.
+//! Skipped where `/bin/tcsh` and `tcsh` are both absent.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+fn tcsh() -> Option<String> {
+    ["/bin/tcsh", "/usr/bin/tcsh", "/opt/homebrew/bin/tcsh"]
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .map(|p| p.to_string())
+}
+
+fn run(bin: &str, extra: &[&str], file: &PathBuf) -> String {
+    let out = Command::new(bin)
+        .args(extra)
+        .arg("-f")
+        .arg(file)
+        .output()
+        .expect("spawn shell");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn csh_scripts_match_tcsh() {
+    let Some(reference) = tcsh() else { return };
+    let cases: &[(&str, &str)] = &[
+        ("array count, subscript, modifiers", "set a = (1 2 3)\necho $#a $a[2]\nset f = /a/b/c.txt\necho $f:h $f:t $f:r $f:e\n"),
+        ("setenv, isset, unsetenv", "echo ${?X}\nsetenv X 1\necho $X ${?X}\nunsetenv X\necho ${?X}\n"),
+        ("foreach with continue", "foreach i (1 2 3)\nif ($i == 2) continue\necho $i\nend\n"),
+        ("while with @ increment", "set i = 0\nwhile ($i < 3)\n@ i++\necho $i\nend\n"),
+        ("if / else, && in expression", "set s = 10\nif ($s == 10 && 3 > 2) then\necho big\nelse\necho small\nendif\n"),
+        ("switch with glob case and breaksw", "foreach x (a b c)\nswitch ($x)\ncase a:\necho first\nbreaksw\ncase [bc]:\necho later $x\nbreaksw\nendsw\nend\n"),
+        ("one-line if ends at the list operator", "if (0) echo a && echo c\necho z\n"),
+        ("alias with history args", "alias ll 'echo first \\!:1 last \\!$ all \\!*'\nll x y z\n"),
+        ("backslash-newline is a blank", "echo a\\\nb\n"),
+        ("$# is a count, not a comment", "set l = (a b c d)\necho $#l # trailing comment\n"),
+    ];
+    let dir = std::env::temp_dir().join(format!("zshrs-csh-parity-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut bad = Vec::new();
+    for (i, (name, script)) in cases.iter().enumerate() {
+        let file = dir.join(format!("case{i}.csh"));
+        std::fs::write(&file, script).unwrap();
+        let want = run(&reference, &[], &file);
+        let got = run(env!("CARGO_BIN_EXE_zshrs"), &["--csh"], &file);
+        if want != got {
+            bad.push(format!("{name}\n  tcsh : {want:?}\n  zshrs: {got:?}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(bad.is_empty(), "csh divergences:\n{}", bad.join("\n"));
+}
