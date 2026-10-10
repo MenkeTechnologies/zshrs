@@ -1183,7 +1183,7 @@ impl ShellExecutor {
     ///   dbview                      — list all tables and row counts
     ///   dbview autoloads             — dump the compsys.db autoloads mirror (name, source, body len)
     ///   dbview autoloads _git        — show single row by name
-    ///   dbview comps                 — dump comps table
+    ///   dbview comps [pattern]       — the live `_comps` table (command → completer)
     ///   dbview history               — recent history entries
     ///   dbview history <pattern>     — search history
     ///   dbview plugins               — plugin cache entries (plugins.db)
@@ -1224,6 +1224,10 @@ impl ShellExecutor {
                         println!("    {:<13} {:>6} rows", format!("{table}:"), n);
                     }
                 }
+                println!();
+                let live = self.assoc("_comps").map(|m| m.len()).unwrap_or(0);
+                println!("  {} {}", bold("_comps"), dim("(live; what `dbview comps` lists)"));
+                println!("    entries:      {:>6}", live);
                 println!();
             }
 
@@ -1380,37 +1384,45 @@ impl ShellExecutor {
             }
 
             "comps" => {
-                let Some(cache) = self.compsys_cache() else {
-                    eprintln!("zshrs:dbview:1: no compsys cache");
-                    return 1;
+                // The shell's own `_comps` (command -> completer, as `compdef`
+                // and `compinit` leave it) is the table completion reads. The
+                // compsys.db mirror is a copy a daemon fills in later and is
+                // usually a fraction of it, so list the live table; the mirror
+                // only answers when no `compinit` has run in this shell.
+                let live = self.assoc("_comps").unwrap_or_default();
+                let mut rows: Vec<(String, String)> = if live.is_empty() {
+                    let Some(cache) = self.compsys_cache() else {
+                        eprintln!("zshrs:dbview:1: no compsys cache");
+                        return 1;
+                    };
+                    let Ok(mut stmt) = cache
+                        .conn()
+                        .prepare("SELECT command, function FROM comps")
+                    else {
+                        eprintln!("zshrs:dbview:1: comps table unreadable");
+                        return 1;
+                    };
+                    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                        .map(|it| it.flatten().collect())
+                        .unwrap_or_default()
+                } else {
+                    live.into_iter().collect()
                 };
+                // `filter` is the raw second word, so `comps --count` would
+                // otherwise filter on the text "--count".
+                if let Some(pat) = filter.filter(|f| !f.starts_with('-')) {
+                    rows.retain(|(cmd, _)| cmd.contains(pat));
+                }
                 if count_only {
-                    println!("{}", cache.count_table("comps").unwrap_or(0));
+                    println!("{}", rows.len());
                     return 0;
                 }
-                let conn = cache.conn();
-                let query = if let Some(pat) = filter {
-                    format!("SELECT command, function FROM comps WHERE command LIKE '%{}%' ORDER BY command LIMIT 100", pat)
-                } else {
-                    "SELECT command, function FROM comps ORDER BY command LIMIT 100".to_string()
-                };
-                match conn.prepare(&query) {
-                    Ok(mut stmt) => {
-                        println!("{:<40} {}", bold("COMMAND"), bold("FUNCTION"));
-                        let rows = stmt.query_map([], |row| {
-                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                        });
-                        if let Ok(rows) = rows {
-                            for row in rows.flatten() {
-                                println!("{:<40} {}", row.0, cyan(&row.1));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("zshrs:dbview:1: {}", e);
-                        return 1;
-                    }
+                rows.sort();
+                println!("{:<40} {}", bold("COMMAND"), bold("FUNCTION"));
+                for (cmd, func) in &rows {
+                    println!("{:<40} {}", cmd, cyan(func));
                 }
+                println!("\n{} rows", rows.len());
             }
 
             "executables" => {
