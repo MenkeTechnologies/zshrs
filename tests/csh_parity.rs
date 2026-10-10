@@ -145,6 +145,8 @@ fn csh_error_and_literal_text_paths_match_tcsh() {
         ("positional past the end", "set argv = (a b c)\necho $1 $2 $3 $4\n"),
         ("shlvl and tty exist", "echo $shlvl\necho $?tty\n"),
         ("if followed by a group", "if (1) (echo in-group)\n"),
+        ("dot glob includes . and ..", "mkdir -p /tmp/_cp_dg && cd /tmp/_cp_dg && touch .h v\necho .*\ncd /tmp && rm -rf /tmp/_cp_dg\n"),
+        ("set listing shows the script's variables", "set zz = (a b)\nset one = x\nset | grep -E '^(one|zz)'\n"),
         ("filetest", "filetest -e /tmp /nonexistent_zz\nfiletest -d /tmp\n"),
         ("readonly variable in a goto loop", "set -r MAX = 3\nset c = 0\nloop:\n@ c++\necho $c\nif ($c < $MAX) goto loop\n"),
     ];

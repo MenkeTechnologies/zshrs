@@ -905,6 +905,12 @@ fn map_special_vars(word: &str) -> String {
 /// an unclosed `[` made literal (csh keeps `echo [a` as `[a`; zsh calls it a
 /// bad pattern).
 fn tw(word: &str) -> String {
+    // tcsh's `.*` also matches `.` and `..`; zsh's does not
+    if let Some(dir) = word.strip_suffix(".*") {
+        if dir.is_empty() || (dir.ends_with('/') && !dir.contains(['*', '?', '[', '$', '\\', '"', '\''])) {
+            return format!("{dir}. {dir}.. {dir}.*");
+        }
+    }
     translate_word_globbed(&escape_unclosed_brackets(&map_special_vars(word)))
 }
 
@@ -1162,9 +1168,31 @@ enum Val {
     List(String),
 }
 
-const SET_LISTING: &str = "() { local _n; for _n in ${(ok)parameters}; do case ${parameters[$_n]} in \
-array*) print -r -- \"$_n\"$'\\t'\"(${(P)_n})\";; \
-scalar*|integer*|float*) print -r -- \"$_n\"$'\\t'\"${(P)_n}\";; esac; done; }";
+/// `set` / `@` with no arguments: the variables tcsh itself defines, then the
+/// ones the script `set` (recorded in `_csh_vars`), sorted, one `name<TAB>value`
+/// per line; a list shows in parentheses, a one-word value bare.
+const SET_LISTING_HEAD: &str = "() { local _st=$1 _n _v; shift; local -a _a; local -A _l; \
+_l=(addsuffix '' anyerror '' argv \"(${(j: :)argv})\" cdtohome '' csubstnonl '' cwd \"$PWD\" \
+echo_style bsd euid \"$EUID\" euser \"${USERNAME-}\" gid \"$GID\" \
+group \"$(id -gn)\" history 100 home \"$HOME\" killring 30 owd \"${OLDPWD-}\" path \"(${(j: :)path})\" \
+shell \"${SHELL-/bin/csh}\" shlvl \"${shlvl[1]-1}\" status \"$_st\" tcsh \"${tcsh-}\" term \"${TERM-}\" \
+tty \"${(j: :)tty}\" uid \"$UID\" user \"${USER-}\" version \"${version-}\"); \
+_l[dirstack]=\"$PWD ${(j: :)${(@)dirstack}}\"; _l[dirstack]=\"${_l[dirstack]% }\"; \
+for _n in ";
+
+const SET_LISTING_TAIL: &str = "; do (( ${+parameters[$_n]} )) || continue; \
+if [[ ${parameters[$_n]} == array* ]]; then \
+_a=(\"${(@P)_n}\"); if (( $#_a == 1 )); then _v=\"$_a[1]\"; else _v=\"(${(j: :)_a})\"; fi; \
+else _v=\"${(P)_n}\"; fi; _l[$_n]=$_v; done; \
+for _n in ${(ok)_l}; do print -r -- \"$_n\"$'\\t'\"${_l[$_n]}\"; done; } $? \"$@\"";
+
+/// The listing for `set` / `@` with no arguments: the fixed text with the names the
+/// script has `set` so far (translation runs in execution order).
+fn set_listing() -> String {
+    let names: Vec<String> = STATE.with(|st| st.borrow().set_names.iter().cloned().collect());
+    let tail = SET_LISTING_TAIL;
+    format!("{SET_LISTING_HEAD}{}{tail}", names.join(" "))
+}
 
 /// `set` with csh's argument grammar (verified against tcsh): a sequence of
 /// `name`, `name = word`, `name=word`, `name = (list)`, `name[i] = word`.
@@ -1180,7 +1208,7 @@ fn cmd_set(args: &[String]) -> Result<String, String> {
         args = &args[1..];
     }
     if args.is_empty() {
-        return Ok(SET_LISTING.to_string());
+        return Ok(set_listing());
     }
 
     let mut stmts = Vec::new();
@@ -1211,6 +1239,7 @@ fn cmd_set(args: &[String]) -> Result<String, String> {
                 record_echo_style(&dequote(v));
             }
         }
+        STATE.with(|st| st.borrow_mut().set_names.insert(name.to_string()));
         let assigned = seq(set_statements(name, sub, val, readonly)?);
         let known_readonly = STATE.with(|st| st.borrow().readonly.contains(name));
         if readonly {
@@ -2047,6 +2076,8 @@ struct ShellState {
     /// The command hash exists (`rehash`, `set path`, `setenv PATH`): only
     /// then does `hashstat` have anything to report.
     hashed: bool,
+    /// Variables the script has `set`, for the argument-less `set` listing.
+    set_names: std::collections::BTreeSet<String>,
     /// Names currently aliased: a call to one goes to its function, even
     /// when the word is also a builtin this translator renders inline.
     aliases: std::collections::BTreeSet<String>,
@@ -2497,7 +2528,7 @@ mod tests {
 
     #[test]
     fn set_forms() {
-        assert_eq!(tr("set"), SET_LISTING);
+        assert_eq!(tr("set"), set_listing());
         assert_eq!(tr("set x"), "x=('')");
         assert_eq!(tr("set x = word"), "x=(word)");
         assert_eq!(tr("set x=val"), "x=(val)");
