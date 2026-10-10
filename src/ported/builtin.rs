@@ -17455,6 +17455,46 @@ pub fn bin_test(
     if crate::dash_mode::dash_faithful() {
         return crate::dash_mode::dash_test(name, argv);
     }
+    // !!! RUST-ONLY FAST PATH (no C counterpart) !!! `[ N -op M ]` with two
+    // plain decimal integers is the loop-condition shape; it skips the
+    // parse_cond/evalcond round trip below. At three words a binary-operator
+    // middle word takes priority over every other reading (c:7264-7265), so
+    // the result is the same comparison evalcond makes on two integer
+    // literals. Anything else (leading zeros, signs other than `-`, any
+    // non-digit) falls through to the full path.
+    {
+        let words = match (func == BIN_BRACKET, argv.last().map(|s| s.as_str())) {
+            (true, Some("]")) => &argv[..argv.len() - 1],
+            (true, _) => &argv[..0],
+            (false, _) => argv,
+        };
+        // Optionally `-`-prefixed run of at most 18 decimal digits with no
+        // leading zero; octal/base-prefixed spellings go to the full evaluator.
+        let plain_decimal = |s: &str| -> Option<i64> {
+            let digits = s.strip_prefix('-').unwrap_or(s);
+            let ok = !digits.is_empty()
+                && digits.len() <= 18
+                && digits.bytes().all(|c| c.is_ascii_digit())
+                && (digits.len() == 1 || !digits.starts_with('0'));
+            if ok { s.parse().ok() } else { None }
+        };
+        if let [a, op, b] = words {
+            if let (Some(a), Some(b)) = (plain_decimal(a), plain_decimal(b)) {
+                let cmp = match op.as_str() {
+                    "-eq" => Some(a == b),
+                    "-ne" => Some(a != b),
+                    "-lt" => Some(a < b),
+                    "-gt" => Some(a > b),
+                    "-le" => Some(a <= b),
+                    "-ge" => Some(a >= b),
+                    _ => None,
+                };
+                if let Some(t) = cmp {
+                    return if t { 0 } else { 1 };
+                }
+            }
+        }
+    }
     let mut argv = argv.to_vec();
     let mut sense = 0i32; // c:7236
 

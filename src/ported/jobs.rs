@@ -5423,16 +5423,26 @@ pub fn waitonejob(jn: i32) {
         // (`typeset -h +g pipestatus`) has no PM_SPECIAL and no GSU, so
         // the C writer cannot reach it — skip the mirror too, or the
         // shadow loses its PM_UNSET (B02typeset.ztst:37,38).
-        let shadowed = crate::ported::params::paramtab()
+        // Rust-only: every builtin and function lands here, so skip the
+        // write when the mirror already holds `(lastval)`. A rewrite of an
+        // identical one-element array costs a write lock, a queue_signals
+        // pair and two allocations per command.
+        let lastval_str = lastval.to_string();
+        let (shadowed, current) = crate::ported::params::paramtab()
             .read()
             .ok()
             .and_then(|t| {
-                t.get("pipestatus")
-                    .map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0)
+                t.get("pipestatus").map(|pm| {
+                    (
+                        (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0,
+                        (pm.node.flags & crate::ported::zsh_h::PM_UNSET as i32) == 0
+                            && pm.u_arr.as_deref() == Some(std::slice::from_ref(&lastval_str)),
+                    )
+                })
             })
-            .unwrap_or(false);
-        if !shadowed {
-            crate::ported::params::setaparam("pipestatus", vec![lastval.to_string()]);
+            .unwrap_or((false, false));
+        if !shadowed && !current {
+            crate::ported::params::setaparam("pipestatus", vec![lastval_str]);
         }
     }
 }

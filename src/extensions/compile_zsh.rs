@@ -1278,12 +1278,14 @@ impl ZshCompiler {
     /// A builtin therefore runs with SIGCHLD held: `exit` reaches zexit's
     /// killrunjobs and leaves before the SIGHUPed jobs can be reaped and
     /// reported, where zshrs used to print `[1]  + hangup  sleep 3` on the
-    /// way out. A word-less simple command (assignments only) is not a
-    /// `cmplx` sublist (c:Src/parse.c:1925 sets it per command word, c:1999
-    /// per redirection) and runs through execsimple, which takes no block.
-    fn compile_execpline(&mut self, pipe: &ZshPipe) {
-        let execsimple = pipe.next.is_none()
-            && matches!(&pipe.cmd, ZshCommand::Simple(s) if s.words.is_empty() && s.redirs.is_empty());
+    /// way out. A sublist that is not `cmplx` (c:Src/parse.c:1925 sets it per
+    /// command word, c:1999 per redirection, c:878 for `!`, c:906 for `|`)
+    /// runs through execsimple, which takes no block and opens no job:
+    /// assignments only, `[[ ]]`, `(( ))`, and any compound whose whole body
+    /// is likewise simple (see `command_is_cmplx`). `negated` is the
+    /// sublist's own `!`.
+    fn compile_execpline(&mut self, pipe: &ZshPipe, negated: bool) {
+        let execsimple = !negated && !pipe_is_cmplx(pipe);
         if execsimple {
             self.compile_pipe(pipe);
             return;
@@ -1405,7 +1407,7 @@ impl ZshCompiler {
                 if pipe_coprocs[i + 1] {
                     self.compile_coproc_pipe(pipes[i + 1]);
                 } else {
-                    self.compile_execpline(pipes[i + 1]);
+                    self.compile_execpline(pipes[i + 1], pipe_nots[i + 1]);
                 }
                 self.builder.patch_jump(skip, self.builder.current_pos());
             }
@@ -1466,7 +1468,7 @@ impl ZshCompiler {
             self.errexit_suppress_depth += 1;
             self.emit_noerrexit_suppress(); // c:1538
         }
-        self.compile_execpline(pipes[0]);
+        self.compile_execpline(pipes[0], pipe_nots[0]);
         // c:Src/exec.c:1489-1492 — the FIRST chain element's own
         // sublist code. Emitted before the `!` negation because C
         // applies WC_SUBLIST_NOT inside execpline AFTER waitonejob has
@@ -1540,7 +1542,7 @@ impl ZshCompiler {
                 // wait, so there is no per-element sublist finish.
                 self.compile_coproc_pipe(pipes[i + 1]);
             } else {
-                self.compile_execpline(pipes[i + 1]);
+                self.compile_execpline(pipes[i + 1], pipe_nots[i + 1]);
                 // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
                 // (WC_SUBLIST_OR) re-read WC_SUBLIST_SIMPLE per chain
                 // element, so each RHS gets its own sublist code — and,

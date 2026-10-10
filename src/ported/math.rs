@@ -4469,8 +4469,8 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     // canonical store — `setnparam` / `assignsparam` — on every
     // assignment; the map entry it also fills is only a within-
     // expression read cache (see setmathvar's `m_variables_insert`).
-    let xvariables = m_variables_clone(); // c:395 `xstack = stack;`
-    let xstring_variables = m_string_variables_clone();
+    let xvariables = M_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut())); // c:395 `xstack = stack;`
+    let xstring_variables = M_STRING_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut()));
     new(s);
     // c:1496-1498 (54603) — `zsh_eval_context_push("math"); x = mathevall(…);
     // zsh_eval_context_pop();`
@@ -4545,8 +4545,8 @@ pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
     // Same `stack = nstack` / `stack = xstack` cache lifetime as
     // `matheval` above (c:406 / c:455) — this entry point runs a full
     // evaluator frame too, so its value cache must not outlive it.
-    let xvariables = m_variables_clone();
-    let xstring_variables = m_string_variables_clone();
+    let xvariables = M_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    let xstring_variables = M_STRING_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut()));
     new(s_skip);
     m_noeval_set(1); // bump AFTER new() reset
     let result = mathevall(prec_type::MPREC_TOP);
@@ -4619,8 +4619,8 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {
     // on that EOI and let the c:1497 junk check say "illegal character: @".
     // The per-frame variable cache is scoped exactly as in `matheval` above
     // (c:395 `xstack = stack;` / c:455 `stack = xstack;`).
-    let xvariables = m_variables_clone();
-    let xstring_variables = m_string_variables_clone();
+    let xvariables = M_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    let xstring_variables = M_STRING_VARIABLES.with(|c| std::mem::take(&mut *c.borrow_mut()));
     new(s);
     let math_ctx = crate::ported::exec::EvalContextFrame::push("math"); // c:1540
     let result = mathevall(prec_type::MPREC_ARG); // c:1541
