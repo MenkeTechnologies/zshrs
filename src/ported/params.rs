@@ -14872,6 +14872,15 @@ impl environ_image {
 /// their buffer.
 /// WARNING: param names don't match C — Rust=(v, base) vs C=(s, v, base, ndigits)
 pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
+    // Plain decimal (base 10, or the 0/±1 values c:5586 maps to bare -10):
+    // no prefix, no emulation-dependent digit case. `(( i++ ))` and `$(( ))`
+    // store through here on every iteration, so skip the digit-count pass and
+    // the scratch buffer. `i64::MIN` formats identically (`-9223372036854775808`).
+    if matches!(base, 10 | -10 | -1..=1) {
+        let s = v.to_string();
+        let ndigits = s.len() as i32 - i32::from(v < 0);
+        return (s, ndigits);
+    }
     let mut s = String::new();
     let mut value = v;
     if value < 0 {
