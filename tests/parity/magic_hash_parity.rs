@@ -62,8 +62,22 @@ fn assert_parity(body: &str) {
         eprintln!("skip: zsh not found");
         return;
     }
+    assert_parity_at(zsh_path(), body);
+}
+
+/// [`assert_parity`] against the release zshrs reports as its own version, for rows
+/// whose answer moved on master. Skips when none is installed.
+fn assert_parity_release(body: &str) {
+    let Some(zsh) = crate::oracle::release_zsh_path() else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
+    };
+    assert_parity_at(zsh, body);
+}
+
+fn assert_parity_at(zsh: &str, body: &str) {
     let script = format!("zmodload zsh/parameter\n{body}");
-    let z = Command::new(zsh_path())
+    let z = Command::new(zsh)
         .args(["-f", "-c", &script])
         .output()
         .expect("invoke zsh");
@@ -178,10 +192,17 @@ mod scan_backing {
         assert_parity("print ${(k)reswords[(r)while]}");
     }
 
-    /// `options` / `parameters` are the other two big scans.
+    /// `options` / `parameters` are the other two big scans. The option table is
+    /// 5.9.2's (it still has `restricted`; master dropped it, 54181), so that count
+    /// is read against the release; the parameter table follows master.
     #[test]
-    fn options_and_parameters_enumerate() {
-        assert_parity("print ${#${(k)options}} ${options[interactive]} ${#${(k)parameters}}");
+    fn options_enumerate() {
+        assert_parity_release("print ${#${(k)options}} ${options[interactive]}");
+    }
+
+    #[test]
+    fn parameters_enumerate() {
+        assert_parity("print ${#${(k)parameters}}");
     }
 
     /// An empty magic hash must read as EMPTY, not as "missing" — the

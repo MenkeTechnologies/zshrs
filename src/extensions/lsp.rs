@@ -3518,6 +3518,16 @@ pub(crate) fn line_position_inside_uninterpolating_context(line: &str, end: usiz
     in_sq
 }
 
+/// Options zshrs still has because it reports zsh 5.9.2 but that the development tree's
+/// `Doc/Zsh/options.yo` (the source of `zsh_option_docs`) no longer documents. Text is
+/// 5.9.2's `Doc/Zsh/options.yo`.
+const RELEASE_ONLY_OPTION_DOCS: &[(&str, &str)] = &[(
+    "restricted",
+    "Enables restricted mode.  This option cannot be changed using `unsetopt`, and \
+setting it inside a function always changes it globally regardless of the \
+`LOCAL_OPTIONS` option.  See the Restricted Shell section of `man zshall`.",
+)];
+
 pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
     let bytes = line.as_bytes();
     let cap = end.min(bytes.len());
@@ -3677,6 +3687,9 @@ pub fn lookup_doc(name: &str) -> String {
     }
     if let Some((canon, body)) = crate::zsh_option_docs::lookup_option_doc(name) {
         return format!("**{}** — _zsh option_\n\n{}", canon, body);
+    }
+    if let Some(d) = RELEASE_ONLY_OPTION_DOCS.iter().find(|(k, _)| *k == name) {
+        return format!("**{}** — _zsh option_\n\n{}", d.0, d.1);
     }
     // Hand-curated table fallback for anything still uncovered.
     if let Some(d) = KEYWORD_DOCS.iter().find(|(k, _)| *k == name) {

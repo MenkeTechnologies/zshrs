@@ -35,7 +35,12 @@ struct ShellResult {
 }
 
 fn run_zsh(script: &str) -> ShellResult {
-    let out = Command::new(zsh_path())
+    run_zsh_at(zsh_path(), script)
+}
+
+/// [`run_zsh`] against an explicit reference binary.
+fn run_zsh_at(zsh: &str, script: &str) -> ShellResult {
+    let out = Command::new(zsh)
         .args(["-fc", script])
         .output()
         .expect("invoke zsh");
@@ -817,7 +822,21 @@ mod subscript_math_is_mathevalarg {
         if !zsh_available() {
             return;
         }
-        let z = run_zsh(script);
+        same_as(zsh_path(), script);
+    }
+
+    /// [`same`] against the release zshrs reports as its own version, for rows whose
+    /// answer moved on master (the "illegal character" wording became "invalid").
+    fn same_release(script: &str) {
+        let Some(zsh) = crate::oracle::release_zsh_path() else {
+            eprintln!("skip: no zsh reporting zshrs's version is installed");
+            return;
+        };
+        same_as(zsh, script);
+    }
+
+    fn same_as(zsh: &str, script: &str) {
+        let z = run_zsh_at(zsh, script);
         let r = run_zshrs(script);
         assert_eq!(
             (&z.stdout, &z.stderr, z.exit),
@@ -935,14 +954,14 @@ mod subscript_math_is_mathevalarg {
     }
 
     /// Top-level arithmetic is `matheval` (TOPPREC + junk check) and keeps
-    /// "illegal character".
+    /// "illegal character" — the 5.9.2 wording; master says "invalid character".
     #[test]
     fn top_level_arithmetic_keeps_illegal_character() {
-        same(r#"print -r -- $(( @ ))"#);
-        same(r#"print -r -- $(( 1@ ))"#);
-        same(r#"print -r -- $(( 1, @ ))"#);
-        same(r#"integer i; i=@"#);
-        same(r#"let @"#);
+        same_release(r#"print -r -- $(( @ ))"#);
+        same_release(r#"print -r -- $(( 1@ ))"#);
+        same_release(r#"print -r -- $(( 1, @ ))"#);
+        same_release(r#"integer i; i=@"#);
+        same_release(r#"let @"#);
     }
 }
 

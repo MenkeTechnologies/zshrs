@@ -146,7 +146,12 @@ fn run_deadlined(mut cmd: Command, who: &str) -> R {
 }
 
 fn run_zsh(s: &str) -> R {
-    let mut c = Command::new(zsh_path());
+    run_zsh_at(zsh_path(), s)
+}
+
+/// [`run_zsh`] against an explicit reference binary.
+fn run_zsh_at(zsh: &str, s: &str) -> R {
+    let mut c = Command::new(zsh);
     c.args(["-fc", s]);
     run_deadlined(c, "zsh")
 }
@@ -176,7 +181,21 @@ fn assert_parity(s: &str) {
     if !zsh_available() {
         return;
     }
-    let z = run_zsh(s);
+    assert_parity_at(zsh_path(), s);
+}
+
+/// [`assert_parity`] against the release zshrs reports as its own version, for rows
+/// whose answer moved on master. Skips when none is installed.
+fn assert_parity_release(s: &str) {
+    let Some(zsh) = crate::oracle::release_zsh_path() else {
+        eprintln!("skip: no zsh reporting zshrs's version is installed");
+        return;
+    };
+    assert_parity_at(zsh, s);
+}
+
+fn assert_parity_at(zsh: &str, s: &str) {
+    let z = run_zsh_at(zsh, s);
     let r = run_zshrs(s);
     assert_eq!(
         z.stdout, r.stdout,
@@ -369,9 +388,11 @@ fn subshell_disown_silently_eats_control_job() {
 
 #[test]
 fn subshell_bg_then_disown_no_current_job() {
-    // c:Src/jobs.c:1899-1901 — spawnjob promotes curjob in a subshell
-    // too (upstream 54584), so `(cmd & disown)` finds the job, rc 0.
-    assert_parity("(sleep 0.2 & disown); echo rc=$?");
+    // c:Src/jobs.c:1899-1901 — master's spawnjob promotes curjob in a subshell
+    // too (upstream 54584), so there `(cmd & disown)` finds the job, rc 0.
+    // 5.9.2 guards that with `!subsh`: no current job, `disown` fails, rc 1.
+    // zshrs reports 5.9.2, so it is read against the release.
+    assert_parity_release("(sleep 0.2 & disown); echo rc=$?");
 }
 
 #[test]
