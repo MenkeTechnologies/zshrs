@@ -12363,6 +12363,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Bool(!debug_in_table)
     });
 
+    // See BUILTIN_STMT_TAIL_FAST.
+    vm.register_builtin(BUILTIN_STMT_TAIL_FAST, |_vm, _argc| {
+        use std::sync::atomic::Ordering;
+        if crate::ported::builtin::BREAKS.load(Ordering::SeqCst) != 0 {
+            return Value::Bool(false);
+        }
+        // Both trap registries, as BUILTIN_DEBUG_TRAP consults them
+        // (`settrap` fills sigtrapped, `bin_trap` fills traps_table).
+        let sig_debug = crate::ported::signals_h::SIGDEBUG as usize;
+        let debug_trapped = crate::ported::signals::sigtrapped
+            .lock()
+            .map(|v| v.get(sig_debug).copied().unwrap_or(0))
+            .unwrap_or(1);
+        if debug_trapped != 0 {
+            return Value::Bool(false);
+        }
+        let debug_in_table = crate::ported::builtin::traps_table()
+            .lock()
+            .map(|t| t.contains_key("DEBUG"))
+            .unwrap_or(true);
+        Value::Bool(!debug_in_table)
+    });
+
     vm.register_builtin(BUILTIN_SUBLIST_FINISH, |vm, _argc| {
         // c:Src/jobs.c:1754 — `pipestats[0] = lastval;`. C has ONE
         // `lastval` global (c:Src/exec.c:120), so `waitonejob` reads
@@ -18811,6 +18834,12 @@ pub const BUILTIN_EXEC_DYNAMIC_REDIRS: u16 = 761;
 /// (c:Src/exec.c:3674-3682) marks the pipeline's job STAT_CURSH, plus
 /// STAT_NOPRINT while it has no processes. No args; pushes Int(0).
 pub const BUILTIN_MARK_CURSH: u16 = 762;
+/// End-of-list fast check: answers `true` when the post-sublist DEBUG arm
+/// (BUILTIN_DEBUG_TRAP mode 1) and the `breaks` escape (BUILTIN_BREAKS_PENDING)
+/// are both no-ops, so the emit side can jump over the two blocks with one
+/// op. A DEBUG trap registered in either registry, or a pending `break`,
+/// answers `false` and the original blocks run unchanged. No args.
+pub const BUILTIN_STMT_TAIL_FAST: u16 = 767;
 /// Opens the window in which the prefix assignments of `X=… cmd` expand.
 /// argc=1: the command word ("" when it is an expansion). Closed by
 /// BUILTIN_SEAL_INLINE_ENV. See PREFIX_ASSIGN_CMD.

@@ -1195,6 +1195,12 @@ impl ZshCompiler {
         // block off (c:1628), and the noexec skip lands past it too. Mode 1
         // makes BUILTIN_DEBUG_TRAP take that arm; it returns Int(1) only
         // when the trap forced a return (c:1639 `if (!retflag) …`).
+        // One op answers "no DEBUG trap, no pending break": both blocks below
+        // would be no-ops, so jump over them. The noexec / DEBUG-skip paths
+        // land on the break check as before and never reach this jump.
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_STMT_TAIL_FAST, 0), 0);
+        let tail_clear = self.builder.emit(Op::JumpIfTrue(0), 0);
         let after_txt = self.builder.add_constant(Value::str(""));
         self.builder.emit(Op::LoadConst(after_txt), 0);
         self.builder.emit(Op::LoadInt(1), 0);
@@ -1219,6 +1225,8 @@ impl ZshCompiler {
         // an `&&`/`||` chain is one sublist and is not interrupted
         // mid-chain.
         self.emit_break_escape_check();
+        let tail_end = self.builder.current_pos();
+        self.builder.patch_jump(tail_clear, tail_end);
     }
 
     /// A fresh compiler for a sub-chunk cut from THIS compiler's AST — a
