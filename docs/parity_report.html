@@ -135,7 +135,7 @@
         <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
       </nav>
       <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.8;">
-        zshrs on <code>main</code> (<code>ea21689246</code>) against zsh. Oracle: zsh-5.9.2's own <code>Test/*.ztst</code>, built from the <code>zsh-5.9.2</code> tag. The TAB, cargo, surface-name-diff and fuzz sections were measured on v0.13.18 and are labelled as such; the ztst, surface and METHOD figures are from <code>main</code>. Measured 2026-10-09, aarch64-apple-darwin.
+        zshrs on <code>main</code> (<code>790c04658a</code> plus the termquery gate of <code>74c4a48ef2</code>) against zsh. Oracle: zsh-5.9.2's own <code>Test/*.ztst</code>, built from the <code>zsh-5.9.2</code> tag. The TAB, cargo, surface-name-diff and fuzz sections were measured on v0.13.18 and are labelled as such; the ztst, surface and METHOD figures are from <code>main</code>. Measured 2026-10-09, aarch64-apple-darwin.
       </p>
     </div>
     <div class="tutorial-toolbar">
@@ -156,10 +156,10 @@
 
 <main class="tutorial-main">
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SUMMARY</h2>
-<p class="lede">On zsh's own regression suite, zshrs passes <b>2,052</b> of the <b>2,068</b> assertions that zsh 5.9.2 passes (<b>99.23%</b>). Every assertion it misses is listed below. Against the v0.13.18 run (2,038 of 2,068) the kill wording, math-error wording, <code>typeset</code> hide flag, <code>let</code> status, alias function-definition, RESTRICTED-option and subshell-job gaps are closed; the ZLE highlight file (it stalls on zshrs's startup terminal queries) and one expansion assertion remain.</p>
+<p class="lede">On zsh's own regression suite, zshrs passes <b>2,056</b> of the <b>2,068</b> assertions that zsh 5.9.2 passes (<b>99.42%</b>). Every assertion it misses is listed below. Against the v0.13.18 run (2,038 of 2,068) the kill wording, math-error wording, <code>typeset</code> hide flag, <code>let</code> status, alias function-definition, RESTRICTED-option and subshell-job gaps are closed; the ZLE highlight file no longer stalls (a zsh drop-in sends no startup terminal queries, as 5.9.2 does not) and 4 of its 12 assertions pass; the other 8 differ in the attribute-reset sequences, and one expansion assertion remains.</p>
 <div class="stat-grid">
-  <div class="stat-card"><div class="stat-val green">99.23%</div><div class="stat-label">zsh Test Suite</div><div class="stat-sub">2,052 / 2,068</div></div>
-  <div class="stat-card"><div class="stat-val red">16</div><div class="stat-label">ztst Divergences</div><div class="stat-sub">13 core &middot; 3 completion</div></div>
+  <div class="stat-card"><div class="stat-val green">99.42%</div><div class="stat-label">zsh Test Suite</div><div class="stat-sub">2,056 / 2,068</div></div>
+  <div class="stat-card"><div class="stat-val red">12</div><div class="stat-label">ztst Divergences</div><div class="stat-sub">9 core &middot; 3 completion</div></div>
   <div class="stat-card"><div class="stat-val yellow">175/178</div><div class="stat-label">Completion ztst</div><div class="stat-sub">Y01&ndash;Y03</div></div>
   <div class="stat-card"><div class="stat-val">468/488</div><div class="stat-label">TAB Screens</div><div class="stat-sub">byte-identical</div></div>
   <div class="stat-card"><div class="stat-val yellow">1,270</div><div class="stat-label">Names Matched</div><div class="stat-sub">14 missing of 1,284</div></div>
@@ -182,7 +182,7 @@
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>EVERY TEST FILE</h2>
 <div class="legend"><span>same result as zsh on every assertion</span><span class="d">zshrs misses an assertion zsh passes</span><span class="x">zsh passes nothing here in this build (root, gdbm, private module)</span></div>
 <div class="wall" id="wall"></div>
-<p class="body-txt">Tile figures: zshrs pass / zsh pass. Y04&ndash;Y06 exist only in the zsh development tree, not in 5.9.2, so they hold no assertions here. X04zlehighlight shows 0 / 12: zshrs hangs on its first assertion.</p>
+<p class="body-txt">Tile figures: zshrs pass / zsh pass. Y04&ndash;Y06 exist only in the zsh development tree, not in 5.9.2, so they hold no assertions here. X04zlehighlight shows 4 / 12: the other 8 differ in the attribute-reset sequences.</p>
 
 <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZTST DIVERGENCES</h2>
 <div class="tbl"><table class="fn-table">
@@ -248,7 +248,7 @@
   <li>ztst, surface and the divergence table: zshrs built from <code>main</code> at <code>ea21689246</code> (<code>git archive</code> into a scratch directory, debug profile). TAB screens, cargo parity and the emulation fuzz: the v0.13.18 build, not re-run.</li>
   <li>Oracle: zsh 5.9.2 built from the <code>zsh-5.9.2</code> tag with <code>--enable-unicode9</code>. <code>scripts/ztst_compsys.py</code> ran the suite once with zsh as baseline and once with zshrs as the shell under test (<code>--core</code> for the non-Y files, default mode for Y01&ndash;Y03). The 5.9.2 tree holds no Y04&ndash;Y06.</li>
   <li>This zsh build has no gdbm and cannot load <code>zsh/param/private</code>, and P01privileged needs root. Those assertions are excluded from both sides.</li>
-  <li>X04zlehighlight stalls under zshrs and is killed at 300 s; its 12 assertions count as missed.</li>
+  <li>X04zlehighlight runs to completion: the shell, invoked as <code>zsh</code>, sends no startup terminal queries or OSC 7 (5.9.2 sends none). 8 of its 12 assertions differ in the attribute-reset sequences (<code>\e[0m</code> alone against 5.9.2's <code>\e[0m\e[27m\e[24m</code> and colour defaults).</li>
   <li>TAB screens (v0.13.18): <code>scripts/comptab_parity.py --sequences tab1 --discover 300 --key-budget 30</code>, native mode, a pinned zsh-written compdump, reference Homebrew zsh 5.9.2.</li>
   <li>cargo parity (v0.13.18): <code>cargo test --test parity</code>; the reference shell is the development-tree oracle build resolved by <code>tests/parity/oracle.rs</code>, which lacks the <code>restricted</code> option and the subshell job-control guard that 5.9.2 has, so <code>main</code> differs from that oracle in a few cases it matched before. Failures re-run alone with <code>--test-threads=1</code>.</li>
   <li>Surface and fuzz checks compare against the host zsh 5.9.2 and the reference shells named in each table.</li>
@@ -261,7 +261,7 @@
 <script src="hud-theme.js"></script>
 <script>
 const METERS = [
-  ["zsh core ztst", "62 files: grammar, builtins, expansion, options, modules, jobs, ZLE", 1877, 1890, 0, "99.3%", "1,877 / 1,890"],
+  ["zsh core ztst", "62 files: grammar, builtins, expansion, options, modules, jobs, ZLE", 1881, 1890, 0, "99.5%", "1,881 / 1,890"],
   ["zsh completion ztst", "Y01–Y03: compsys, matching control, _arguments", 175, 178, 0, "98.3%", "175 / 178"],
   ["TAB screens", "490 cells, single TAB, byte-compared", 468, 488, 0, "95.9%", "468 / 488"],
   ["cargo parity", "cargo test --test parity, 26 ignored", 49254, 49303, 4, "99.90%", "45 fail · 4 timing"],
@@ -277,25 +277,21 @@ const CATS = [
   ["P", "Privileged", 1, 0, 0],
   ["V", "Modules", 14, 220, 220],
   ["W", "History & jobs", 3, 21, 21],
-  ["X", "ZLE", 3, 115, 103],
+  ["X", "ZLE", 3, 115, 107],
   ["Z", "Shell functions", 3, 20, 20],
   ["Y", "Completion", 6, 178, 175]
 ];
-const FILES = [["A01grammar",109,109],["A02alias",18,18],["A03quoting",11,11],["A04redirect",78,78],["A05execution",39,39],["A06assign",103,103],["A07control",17,17],["A09zwc",2,2],["B01cd",6,6],["B02typeset",79,79],["B03print",66,66],["B04read",16,16],["B05eval",4,4],["B06fc",4,4],["B07emulate",20,20],["B08shift",2,2],["B09hash",10,10],["B10getopts",20,20],["B11kill",8,8],["B12limit",2,2],["B13whence",3,3],["C01arith",73,73],["C02cond",59,59],["C03traps",75,75],["C04funcdef",52,52],["C05debug",8,8],["D01prompt",15,15],["D02glob",74,74],["D03procsubst",19,19],["D04parameter",244,243],["D05array",20,20],["D06subscript",36,36],["D07multibyte",51,51],["D08cmdsubst",26,26],["D09brace",28,28],["E01options",94,94],["E02xtrace",13,13],["E03posix",10,10],["P01privileged",0,0],["V01zmodload",34,34],["V02zregexparse",61,61],["V03mathfunc",11,11],["V04features",24,24],["V05styles",23,23],["V06parameter",5,5],["V07pcre",12,12],["V08zpty",2,2],["V09datetime",14,14],["V10private",0,0],["V11db_gdbm",0,0],["V12zparseopts",14,14],["V13zformat",6,6],["V14system",14,14],["W01history",7,7],["W02jobs",11,11],["W03jobparameters",3,3],["X02zlevi",94,94],["X03zlebindkey",9,9],["X04zlehighlight",12,0],["Z01is-at-least",2,2],["Z02zmathfunc",6,6],["Z03run-help",12,12],["Y01completion",30,28],["Y02compmatch",51,51],["Y03arguments",97,96],["Y04regexargs",0,0],["Y05describe",0,0],["Y06values",0,0]];
+const FILES = [["A01grammar",109,109],["A02alias",18,18],["A03quoting",11,11],["A04redirect",78,78],["A05execution",39,39],["A06assign",103,103],["A07control",17,17],["A09zwc",2,2],["B01cd",6,6],["B02typeset",79,79],["B03print",66,66],["B04read",16,16],["B05eval",4,4],["B06fc",4,4],["B07emulate",20,20],["B08shift",2,2],["B09hash",10,10],["B10getopts",20,20],["B11kill",8,8],["B12limit",2,2],["B13whence",3,3],["C01arith",73,73],["C02cond",59,59],["C03traps",75,75],["C04funcdef",52,52],["C05debug",8,8],["D01prompt",15,15],["D02glob",74,74],["D03procsubst",19,19],["D04parameter",244,243],["D05array",20,20],["D06subscript",36,36],["D07multibyte",51,51],["D08cmdsubst",26,26],["D09brace",28,28],["E01options",94,94],["E02xtrace",13,13],["E03posix",10,10],["P01privileged",0,0],["V01zmodload",34,34],["V02zregexparse",61,61],["V03mathfunc",11,11],["V04features",24,24],["V05styles",23,23],["V06parameter",5,5],["V07pcre",12,12],["V08zpty",2,2],["V09datetime",14,14],["V10private",0,0],["V11db_gdbm",0,0],["V12zparseopts",14,14],["V13zformat",6,6],["V14system",14,14],["W01history",7,7],["W02jobs",11,11],["W03jobparameters",3,3],["X02zlevi",94,94],["X03zlebindkey",9,9],["X04zlehighlight",12,4],["Z01is-at-least",2,2],["Z02zmathfunc",6,6],["Z03run-help",12,12],["Y01completion",30,28],["Y02compmatch",51,51],["Y03arguments",97,96],["Y04regexargs",0,0],["Y05describe",0,0],["Y06values",0,0]];
 const ZTFAIL = [
   ["D04parameter", 178, "regression: workers/54909, (q) etc tokenised chars", "stdout", "<code>${x:-=}ls</code>: zsh keeps the default word's <code>=</code> as an Equals token so the word expands to the command path; zshrs leaves <code>=ls</code> literal"],
-  ["X04zlehighlight", 1, "region highlight - standout overlapping on other region_highlight entry", "hang", "the shell sends terminal queries (OSC 10/11/12, DA) at startup and the harness never answers; the file is killed at 300 s"],
-  ["X04zlehighlight", 2, "basic region_highlight with 8 colors", "hang", "never ran"],
-  ["X04zlehighlight", 3, "region_highlight memo information round trips", "hang", "never ran"],
-  ["X04zlehighlight", 4, "region_highlight memo information forward compatibility, #1", "hang", "never ran"],
-  ["X04zlehighlight", 5, "region_highlight memo information forward compatibility, #2", "hang", "never ran"],
-  ["X04zlehighlight", 6, "region_highlight memo information forward compatibility, #3: NULs", "hang", "never ran"],
-  ["X04zlehighlight", 7, "basic region_highlight with true-color (hex-triplets)", "hang", "never ran"],
-  ["X04zlehighlight", 8, "basic region_highlight with near-color (hex-triplets at input)", "hang", "never ran"],
-  ["X04zlehighlight", 9, "overlapping region_highlight with 8 colors", "hang", "never ran"],
-  ["X04zlehighlight", 10, "overlapping region_highlight with true-color", "hang", "never ran"],
-  ["X04zlehighlight", 11, "overlapping region_highlight with near-color (hex-triplets at input)", "hang", "never ran"],
-  ["X04zlehighlight", 12, "zle $widgetname -f nolast", "hang", "never ran"],
+  ["X04zlehighlight", 1, "region highlight - standout overlapping on other region_highlight entry", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
+  ["X04zlehighlight", 2, "basic region_highlight with 8 colors", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
+  ["X04zlehighlight", 7, "basic region_highlight with true-color (hex-triplets)", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
+  ["X04zlehighlight", 8, "basic region_highlight with near-color (hex-triplets at input)", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
+  ["X04zlehighlight", 9, "overlapping region_highlight with 8 colors", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
+  ["X04zlehighlight", 10, "overlapping region_highlight with true-color", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
+  ["X04zlehighlight", 11, "overlapping region_highlight with near-color (hex-triplets at input)", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
+  ["X04zlehighlight", 12, "zle $widgetname -f nolast", "stdout", "attribute reset: zshrs emits <code>\e[0m</code> where 5.9.2 emits <code>\e[0m\e[27m\e[24m</code> and the colour default"],
   ["Y01completion", 20, "ignore backslashes when sorting completion matches", "output", "completion listing differs"],
   ["Y01completion", 26, "multiple envarrays", "output", "completion listing differs"],
   ["Y03arguments", 83, "exclusion with option argument that looks like an option", "output", "completion listing differs"]
