@@ -1345,7 +1345,7 @@ impl Translator {
                 self.emit_stub(out, "while: Expression Syntax.");
             }
             Ok((inner, _)) => {
-                let c = expr::translate_condition(inner)?;
+                let c = expr::for_command(&expr::translate_condition(inner)?, "while");
                 self.emit(out, &format!("while {c}; do"));
                 let (bid, rid) = (self.alloc_bid(), self.alloc_rid());
                 self.stack.push(Frame::Loop {
