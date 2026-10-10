@@ -20,6 +20,7 @@
 
 pub mod api;
 pub mod config;
+pub mod custom_fast;
 pub mod expansion;
 pub mod git;
 pub mod gitconfig;

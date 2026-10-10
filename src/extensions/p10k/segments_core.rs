@@ -759,13 +759,9 @@ fn background_jobs_segments() -> Vec<Segment> {
 // custom_* (p10k:1691-1701) — the ONLY segment that runs shell code
 // ---------------------------------------------------------------------
 
-fn custom_segments(name: &str) -> Vec<Segment> {
-    // p10k:1692-1694 — command string from POWERLEVEL9K_CUSTOM_<NAME:u>.
-    let upper = name.to_ascii_uppercase();
-    let cmd = match getsparam(&format!("POWERLEVEL9K_CUSTOM_{upper}")) {
-        Some(c) if !c.is_empty() => c,
-        _ => return vec![],
-    };
+/// p10k:1703 gate + p10k:1698 `content="$(eval $command)"`. `None` when
+/// the command's first word names nothing runnable.
+fn custom_command_output(cmd: &str) -> Option<String> {
     // p10k:1703 — `(( $+functions[$cmd] || $+commands[$cmd] )) || return`,
     // where `$cmd` is the first word of the command, dequoted
     // (p10k:1701-1702 `parts=("${(@z)command}")`, `cmd="${(Q)parts[1]}"`).
@@ -790,9 +786,28 @@ fn custom_segments(name: &str) -> Vec<Segment> {
         && crate::extensions::p10k::segments_sys::cmd_on_path(first_word).is_none()
         && !crate::ported::builtin::createbuiltintable().contains_key(first_word)
     {
-        return vec![];
+        return None;
     }
-    let content = crate::ported::exec::run_command_substitution(&cmd);
+    Some(crate::ported::exec::run_command_substitution(cmd))
+}
+
+fn custom_segments(name: &str) -> Vec<Segment> {
+    // p10k:1692-1694 — command string from POWERLEVEL9K_CUSTOM_<NAME:u>.
+    let upper = name.to_ascii_uppercase();
+    let cmd = match getsparam(&format!("POWERLEVEL9K_CUSTOM_{upper}")) {
+        Some(c) if !c.is_empty() => c,
+        _ => return vec![],
+    };
+    // `echo "…$VAR…$$…$(date +FMT)…"` is a pure function of parameters
+    // and the clock: evaluated in-process, never a `$()` (custom_fast.rs).
+    // Anything else takes the real command substitution below.
+    let content = match crate::extensions::p10k::custom_fast::eval(&cmd) {
+        Some(c) => c,
+        None => match custom_command_output(&cmd) {
+            Some(c) => c,
+            None => return vec![],
+        },
+    };
     let content = content.trim().to_string();
     // p10k:1699 — `[[ -n $content ]] || return`.
     if content.is_empty() {
