@@ -510,8 +510,9 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
                     zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }
                 // c:457 — `errflag |= ERRFLAG_INT;`
-                let cur = errflag.load(Ordering::Relaxed);
-                errflag.store(cur | ERRFLAG_INT, Ordering::Relaxed); // c:457
+                // The handler may run on a pool thread; the interrupt is the
+                // SHELL's, so it goes to the shell thread's flag.
+                errflag.shell_fetch_or(ERRFLAG_INT, Ordering::Relaxed); // c:457
                                                                      // c:458-462 — `if (list_pipe || chline || simple_pline)`:
                                                                      // an interactive SIGINT mid-pipeline must break loops,
                                                                      // flush pending input, and signal any cursh job.
