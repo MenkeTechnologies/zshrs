@@ -2197,16 +2197,31 @@ for daemon administration.
 .PP
 .B POSIX mode never spawns the daemon.
 .SH "AHEAD-OF-TIME COMPILATION"
-.B \-\-aot
-.RI ( script.zsh )
-emits a single self-contained executable that bundles
-.B fusevm
-with the script's compiled bytecode. The result has zero runtime
-dependency on the
+The
+.B zbuild
+builtin turns one or more scripts into a standalone executable:
+.B zbuild \-\-in
+.I script.zsh ...
+.B \-\-out
+.IR app .
+By default it appends the zstd\-compressed script source to a copy of the
+running
 .B zshrs
-binary and can be distributed as a standalone artifact. AOT and the
-daily-driver cache are two separate tracks: AOT for deploy binaries;
-the rkyv cache for the interactive shell.
+binary. At launch the embedded scripts run in input order as one program, so
+a single file ships and no zsh or zshrs install is needed; the scripts are
+still parsed and compiled at startup.
+.PP
+With
+.B \-\-native
+the scripts are compiled to a
+.B fusevm
+chunk, lowered to native machine code with Cranelift, and linked against
+.B libzsh.a
+into a standalone binary. The program's control flow is native; each shell
+operation calls into the linked zsh runtime.
+.PP
+AOT and the daily\-driver cache are two separate tracks: AOT for deploy
+binaries; the rkyv cache for the interactive shell.
 .SH "ASPECT-ORIENTED INTERCEPTS"
 .B zshrs
 supports
