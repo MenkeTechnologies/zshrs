@@ -8921,6 +8921,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // outright and folded `nulstring` to "" (`IFS=:; set -- a::b;
                     // print -rl -- $@` lost its middle field).
                     let parts = crate::ported::utils::sepsplit(&joined, None, false); // c:3919, Nularg kept
+                    // An UNQUOTED read clears the quoted-splice bit, exactly as the
+                    // fall-through below does. Returning here without it left a
+                    // `"$@"` evaluated earlier (a function body's `printf '%s' "$@"`)
+                    // standing, and the next word's end-of-word drop then kept the
+                    // IFS-whitespace edge fields it must delete:
+                    //   setopt shwordsplit; set -- 'a b '; f() { printf '<%s>' "$@"; }
+                    //   f $*; f $*      zsh: <a><b> / <a><b>      was: <a><b> / <a><b><>
+                    note_quoted_splice_elems(0);
                     return Value::array(parts.into_iter().map(Value::str).collect());
                 }
             }
@@ -21773,6 +21781,23 @@ impl fusevm::ShellHost for ZshrsHost {
             with_executor(|exec| exec.set_last_status(1));
             crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             return Some(1);
+        }
+        // c:Src/subst.c:3337-3377 — `${name:?msg}` in a command's words ends the
+        // process (`_exit(1)` in a forked subshell) from inside the expansion, so
+        // the function never runs and the status is 1. The in-process subshell
+        // stands in for that child by unwinding on ERRFLAG_HARD, but a function
+        // call took the status of the (never started) call, 0:
+        //   unset u; f() { :; }; (f "${u:?x}") 2>/dev/null; print $?   zsh: 1
+        // A builtin already answers 1 from its own dispatch (c:3523-3525).
+        if with_executor(|exec| exec.function_exists(name)) {
+            use std::sync::atomic::Ordering;
+            let live = crate::ported::utils::errflag.load(Ordering::Relaxed);
+            let fatal = crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD;
+            if live & fatal == fatal {
+                with_executor(|exec| exec.set_last_status(1));
+                crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
+                return Some(1);
+            }
         }
         // Provenance: same argv record as `exec`, but ONLY when the name
         // really resolves to a shell function — an external command

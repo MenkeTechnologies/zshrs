@@ -19415,6 +19415,31 @@ fn bare_subscript_with_suffix(s: &str) -> Option<(&str, &str, &str)> {
     Some((name, key, suffix))
 }
 
+/// Index just past the `}` that closes the `${` whose Inbrace token is at
+/// `chars[open]` (Inbrace `\u{e18f}` / Outbrace `\u{e190}`, nested pairs
+/// counted). Everything inside a `${…}` that opens in a double-quoted region is
+/// part of that quoted expansion: a `"` in its operand starts a nested quote
+/// (c:Src/lex.c dquote_parse, `bct` > 0) and must not flip the word's own
+/// quoting state back to "unquoted".
+fn skip_braced_body(chars: &[char], open: usize) -> usize {
+    let mut depth = 0i32;
+    let mut k = open;
+    while k < chars.len() {
+        match chars[k] {
+            '\u{e18f}' => depth += 1,
+            '\u{e190}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return k + 1;
+                }
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    chars.len()
+}
+
 /// Walk a raw zsh-tokenized word; return true if it has an unquoted
 /// command substitution (`$(...)` or backticks) at the top level.
 /// zsh field-splits these on IFS by default. Variable expansions
@@ -19445,6 +19470,10 @@ fn has_unquoted_param_or_subst(s: &str) -> bool {
         if c == '\u{e19e}' {
             in_dq = !in_dq;
             i += 1;
+            continue;
+        }
+        if in_dq && c == '\u{e18f}' {
+            i = skip_braced_body(&chars, i);
             continue;
         }
         if !in_dq && !in_sq {
@@ -19596,6 +19625,10 @@ fn has_unquoted_expansion(s: &str) -> bool {
         if c == '\u{e19e}' {
             in_dq = !in_dq;
             i += 1;
+            continue;
+        }
+        if in_dq && c == '\u{e18f}' {
+            i = skip_braced_body(&chars, i);
             continue;
         }
         if !in_dq && !in_sq {

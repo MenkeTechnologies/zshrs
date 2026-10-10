@@ -17195,3 +17195,41 @@ fn restricted_option_blocks_the_operations_zsh_5_9_2_blocks() {
         "the restricted redirection created its file"
     );
 }
+
+#[test]
+fn test_fatal_param_error_in_a_function_argument_ends_a_subshell_with_status_1() {
+    // c:Src/subst.c:3337-3377 — `${u:?msg}` exits (`_exit(1)` in the forked
+    // subshell) from inside the expansion, so the function never runs and the
+    // subshell's status is 1. A function call used to report the status of the
+    // call that never started: 0.
+    let (_, output, _) = run_zshrs(
+        "f() { print ran; }; unset u; (f \"${u:?x}\") 2>/dev/null; print a=$?; \
+         (f ${u:?${w:-q}}) 2>/dev/null; print b=$?",
+    );
+    assert_eq!(output, "a=1\nb=1\n");
+}
+
+#[test]
+fn test_quoted_pattern_variable_stays_literal_under_globsubst() {
+    // A `"$p"` nested in the pattern operand is quoted: its value must not be
+    // tokenized by GLOB_SUBST (c:Src/subst.c:1669 consults `globsubst` only for
+    // an unquoted `$`), so `[ab]*` is five literal characters and nothing is
+    // stripped from `a`. This is every Bourne drop-in's default (sh/ksh/bash
+    // emulation sets GLOB_SUBST), where it printed an empty string.
+    let (_, output, _) = run_zshrs(
+        "setopt globsubst; v=a; p='[ab]*'; print -r -- \"${v%%\"$p\"}|${v#\"$p\"}|${v%\"$p\"}|${v##\"$p\"}\"; \
+         print -r -- \"${v%%$p}\"",
+    );
+    assert_eq!(output, "a|a|a|a\n\n");
+}
+
+#[test]
+fn test_unquoted_star_after_a_quoted_at_keeps_dropping_edge_whitespace() {
+    // A `"$@"` evaluated inside a function left the "quoted splice" bit set; the
+    // next unquoted `$*` (SH_WORD_SPLIT early return) never cleared it, so the
+    // end-of-word drop kept the IFS-whitespace edge fields: `<a><b><>`.
+    let (_, output, _) = run_zshrs(
+        "setopt shwordsplit; set -- 'a b '; f() { printf '<%s>' \"$@\"; echo; }; f $*; f $*; f $@",
+    );
+    assert_eq!(output, "<a><b>\n<a><b>\n<a><b>\n");
+}
