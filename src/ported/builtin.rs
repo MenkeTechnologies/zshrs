@@ -14824,6 +14824,13 @@ pub fn zexit(val: i32, from_where: i32) {
     }
     // c:6014 — `shell_exiting = -1;`
     SHELL_EXITING.store(-1, Relaxed); // c:6014
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // A script or sourced file that ends in `exit` never returns to its event
+    // loop, so the recording of its compiled events is finished here. A forked
+    // subshell's copy of the frames is refused inside (pid check).
+    crate::script_cache::capture_commit_all_on_exit(
+        (crate::ported::utils::errflag.load(Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0,
+    );
                                       // c:6019 — `errflag = 0;`
     errflag.store(0, Relaxed); // c:6019
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!

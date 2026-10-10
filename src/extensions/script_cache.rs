@@ -187,6 +187,11 @@ pub struct PendingPut {
 /// Writes buffered since the last flush; see [`try_flush_pending`].
 static PENDING: Mutex<Vec<PendingPut>> = Mutex::new(Vec::new());
 
+/// Process that queued the newest entry. A forked child inherits its parent's
+/// buffer; only the process that queued an entry may write it, or every
+/// external command a shell spawns would rewrite the shard.
+static PENDING_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// Past this many buffered entries `try_save_bytes` flushes by itself, so a
 /// long non-interactive run cannot hold an unbounded amount of bytecode.
 const PENDING_FLUSH_MAX: usize = 128;
@@ -390,16 +395,26 @@ impl ScriptCache {
     pub fn stats(&self) -> (i64, i64) {
         self.ensure_mmap();
         let guard = self.mmap.lock();
-        let Some(shard) = guard.as_ref() else {
-            return (0, 0);
-        };
-        let count = shard.entry_count() as i64;
-        let bytes: i64 = shard
-            .shard()
-            .entries
-            .values()
-            .map(|e| e.chunk_blob.len() as i64)
-            .sum();
+        let (mut count, mut bytes) = guard.as_ref().map_or((0, 0), |shard| {
+            let bytes: i64 = shard
+                .shard()
+                .entries
+                .values()
+                .map(|e| e.chunk_blob.len() as i64)
+                .sum();
+            (shard.entry_count() as i64, bytes)
+        });
+        // Buffered, not yet in the shard (see `list_scripts`).
+        let mut seen = std::collections::HashSet::new();
+        for p in PENDING.lock().iter() {
+            let in_shard = guard
+                .as_ref()
+                .is_some_and(|s| s.shard().entries.get(p.path.as_str()).is_some());
+            if !in_shard && seen.insert(p.path.clone()) {
+                count += 1;
+                bytes += p.blob.len() as i64;
+            }
+        }
         (count, bytes)
     }
 
@@ -408,21 +423,39 @@ impl ScriptCache {
     pub fn list_scripts(&self) -> Vec<(String, f64, String, String)> {
         self.ensure_mmap();
         let guard = self.mmap.lock();
-        let Some(shard) = guard.as_ref() else {
-            return Vec::new();
-        };
-        let v = shard.shard().header.zshrs_version.as_str().to_string();
-        let mut out: Vec<(String, f64, String, String, i64)> = shard
-            .shard()
-            .entries
-            .iter()
-            .map(|(k, e)| {
-                let chunk_kb = e.chunk_blob.len() as f64 / 1024.0;
-                let cached_at: i64 = e.cached_at_secs.into();
-                let ts = format_local_ts(cached_at);
-                (k.as_str().to_string(), chunk_kb, v.clone(), ts, cached_at)
+        let v = guard
+            .as_ref()
+            .map(|s| s.shard().header.zshrs_version.as_str().to_string())
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        let mut out: Vec<(String, f64, String, String, i64)> = guard
+            .as_ref()
+            .map(|shard| {
+                shard
+                    .shard()
+                    .entries
+                    .iter()
+                    .map(|(k, e)| {
+                        let chunk_kb = e.chunk_blob.len() as f64 / 1024.0;
+                        let cached_at: i64 = e.cached_at_secs.into();
+                        let ts = format_local_ts(cached_at);
+                        (k.as_str().to_string(), chunk_kb, v.clone(), ts, cached_at)
+                    })
+                    .collect()
             })
-            .collect();
+            .unwrap_or_default();
+        // Entries buffered in this process (or inherited by a forked `$(...)`)
+        // are not in the shard yet; they are the newest word on their path.
+        let now = now_secs();
+        for p in PENDING.lock().iter() {
+            out.retain(|row| row.0 != p.path);
+            out.push((
+                p.path.clone(),
+                p.blob.len() as f64 / 1024.0,
+                v.clone(),
+                format_local_ts(now),
+                now,
+            ));
+        }
         out.sort_by_key(|x| std::cmp::Reverse(x.4));
         out.into_iter()
             .map(|(p, ck, ver, ts, _)| (p, ck, ver, ts))
@@ -587,6 +620,91 @@ pub static CACHE: once_cell::sync::Lazy<Option<ScriptCache>> = once_cell::sync::
     ScriptCache::open(&default_cache_path()).ok()
 });
 
+/// A program being recorded: the chunks of the events a file's loop has
+/// compiled so far. Lives in a thread-local stack (not in the loop's frame) so
+/// `zexit` can finish it — a script that ends in `exit` never returns to the
+/// loop, and used to leave no cache entry at all.
+struct Capture {
+    path: PathBuf,
+    env_fp: u64,
+    /// `env_generation()` when recording began.
+    gens: (u64, u64),
+    /// A script run by `zshrs FILE` starts from a fresh, deterministic state;
+    /// a sourced file runs inside whatever session sourced it.
+    toplevel: bool,
+    /// The process that began recording. A forked subshell that exits holds a
+    /// copy of its parent's frames; it must not store them as finished.
+    pid: u32,
+    chunks: Vec<fusevm::Chunk>,
+}
+
+thread_local! {
+    static CAPTURES: std::cell::RefCell<Vec<Capture>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Start recording the events of `path`, which the caller is about to run.
+pub fn capture_begin(path: &Path, env_fp: u64, toplevel: bool) {
+    let cap = Capture {
+        path: path.to_path_buf(),
+        env_fp,
+        gens: env_generation(),
+        toplevel,
+        pid: std::process::id(),
+        chunks: Vec::new(),
+    };
+    CAPTURES.with(|c| c.borrow_mut().push(cap));
+}
+
+/// Append the chunk of the event about to run to the innermost recording.
+/// Called BEFORE the event runs, so an `exit` inside it still finds it.
+pub fn capture_push(chunk: &fusevm::Chunk) {
+    CAPTURES.with(|c| {
+        if let Some(top) = c.borrow_mut().last_mut() {
+            top.chunks.push(chunk.clone());
+        }
+    });
+}
+
+/// Finish the innermost recording. `complete` is the caller's verdict that the
+/// file ran to its end or to a deliberate `return` / `exit` — not to a parse
+/// error or a failed event.
+pub fn capture_commit(complete: bool) {
+    let Some(cap) = CAPTURES.with(|c| c.borrow_mut().pop()) else {
+        return;
+    };
+    store_capture(cap, complete);
+}
+
+/// `zexit` is committed: every file still being recorded stops here, at the
+/// event that called `exit`, and a replay stops at the same event. Skipped in a
+/// forked child (see [`Capture::pid`]) and when an error flag is live.
+pub fn capture_commit_all_on_exit(errored: bool) {
+    let caps: Vec<Capture> = CAPTURES.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    for cap in caps.into_iter().rev() {
+        store_capture(cap, !errored);
+    }
+}
+
+fn store_capture(cap: Capture, complete: bool) {
+    // A sourced file that defines aliases itself is not stored: the commands
+    // after the `alias` were lexed with its expansion baked in, and whether
+    // that definition ran is a runtime fact a replay would not re-check (a
+    // conditional `alias`). Option changes are replayed as the events that
+    // make them, so they do not disqualify a file; neither does anything in a
+    // top-level script, which has always been stored whole.
+    let aliases_moved = env_generation().0 != cap.gens.0;
+    if !complete
+        || cap.chunks.is_empty()
+        || cap.pid != std::process::id()
+        || (!cap.toplevel && aliases_moved)
+    {
+        return;
+    }
+    if let Ok(blob) = bincode::serialize(&cap.chunks) {
+        let _ = try_save_bytes(&cap.path, BlobKind::Events, cap.env_fp, &blob);
+    }
+}
+
 /// What a cached blob holds. A top-level script is one chunk; a sourced file is
 /// the sequence of per-event chunks the `loop()` of c:Src/init.c:155-220
 /// compiled, each lexed under the state the previous ones left behind.
@@ -730,6 +848,7 @@ pub fn try_save_bytes(
     let mut tagged = Vec::with_capacity(chunk_blob.len() + 1);
     tagged.push(kind as u8);
     tagged.extend_from_slice(chunk_blob);
+    PENDING_PID.store(std::process::id(), std::sync::atomic::Ordering::Relaxed);
     let over = {
         let mut pending = PENDING.lock();
         pending.push(PendingPut {
@@ -751,6 +870,11 @@ pub fn try_save_bytes(
 /// at the prompt, from `zexit` and from the `atexit` hook, alongside the
 /// autoload and deparse caches. Cheap when nothing is buffered.
 pub fn try_flush_pending() {
+    // A forked child leaves its inherited copy alone: the parent writes it, and
+    // a `dbview scripts` in the child still lists it from the buffer.
+    if PENDING_PID.load(std::sync::atomic::Ordering::Relaxed) != std::process::id() {
+        return;
+    }
     let batch = std::mem::take(&mut *PENDING.lock());
     if batch.is_empty() {
         return;

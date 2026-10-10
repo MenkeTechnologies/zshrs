@@ -1806,6 +1806,11 @@ fn posix_spawn_argv(
     let sigmask = execute_sigmask();
     unsafe {
         if in_place {
+            // `exec` replaces this process, so neither `zexit` nor `atexit` runs:
+            // finish the recording of a script that ends in `exec` and write
+            // what is buffered. (A forked child is refused by the pid checks.)
+            crate::script_cache::capture_commit_all_on_exit(false);
+            crate::script_cache::try_flush_pending();
             for &sig in &sigdef {
                 libc::signal(sig, libc::SIG_DFL);
             }
@@ -4182,16 +4187,16 @@ impl ShellExecutor {
         // full parse/compile/cache-save/run flow stays in one place.
         let env_fp = crate::script_cache::env_fingerprint();
         if let Some(bc_blob) =
-            crate::script_cache::try_load_bytes(path, crate::script_cache::BlobKind::Script, env_fp)
+            crate::script_cache::try_load_bytes(path, crate::script_cache::BlobKind::Events, env_fp)
         {
-            if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
-                if !chunk.ops.is_empty() {
+            if let Ok(chunks) = bincode::deserialize::<Vec<fusevm::Chunk>>(&bc_blob) {
+                if !chunks.is_empty() {
                     tracing::trace!(
                         path = %abs_path,
-                        ops = chunk.ops.len(),
+                        events = chunks.len(),
                         "execute_script_file: bytecode cache hit"
                     );
-                    return self.run_chunk(chunk, &format!("execute_script_file:cache:{abs_path}"));
+                    return self.replay_cached_events(chunks);
                 }
             }
         }
@@ -4212,10 +4217,13 @@ impl ShellExecutor {
         // metafied (Src/utils.c:4856), never rejected for non-UTF-8.
         let content = crate::script_bytes::read_script_file(file_path)
             .map_err(|e| format!("{}: {}", file_path, e))?;
-        let mut events: Vec<crate::parse::ZshList> = Vec::new();
+        // Each event's chunk is recorded as the loop compiles it, so a script
+        // that ends in `exit` — which never returns to this frame — is stored
+        // by `zexit` (`script_cache::capture_commit_all_on_exit`).
+        crate::script_cache::capture_begin(path, env_fp, true);
         // c:Src/init.c:1963 — zsh_main runs the script through `loop(1, 0)`:
         // toplevel.
-        let mut status = self.run_events_per_command(&content, Some(&mut events), None, true)?;
+        let mut status = self.run_events_per_command(&content, true, true)?;
         // c:Src/init.c:1969-1974 — `if (tok == LEXERR || errexit) { if
         // (!lastval) lastval = 1; stopmsg = 1; zexit(lastval, …); }`: a
         // parse error, or an error abort in a non-interactive shell, exits
@@ -4230,29 +4238,6 @@ impl ShellExecutor {
             errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         }
         let status = self.fire_script_exit_hooks(status)?;
-
-        // Best-effort cache save — failures don't block execution. The
-        // cached program is the events exactly as the loop lexed them, so
-        // a hit replays what this run parsed; `events` is empty unless the
-        // loop drained the whole file without an error.
-        if !events.is_empty() {
-            let program = crate::parse::ZshProgram { lists: events };
-            let compiler = crate::compile_zsh::ZshCompiler::new();
-            let chunk = compiler.compile(&program);
-            if let Ok(blob) = bincode::serialize(&chunk) {
-                let _ = crate::script_cache::try_save_bytes(
-                    path,
-                    crate::script_cache::BlobKind::Script,
-                    env_fp,
-                    &blob,
-                );
-                tracing::trace!(
-                    path = %abs_path,
-                    bytes = blob.len(),
-                    "execute_script_file: bytecode cached"
-                );
-            }
-        }
 
         Ok(status)
     }
@@ -4713,23 +4698,15 @@ impl ShellExecutor {
                 }
             }
         }
-        let gens = script_cache::env_generation();
-        let mut chunks: Vec<fusevm::Chunk> = Vec::new();
-        // c:Src/init.c:1626-1627 — source() runs `loop(0, 0)`: not toplevel.
-        let status = self.run_events_per_command(
-            script,
-            None,
-            cache_path.map(|_| &mut chunks),
-            false,
-        )?;
-        if let (Some(p), Some(fp)) = (cache_path, env_fp) {
-            if !chunks.is_empty() && script_cache::env_generation() == gens {
-                if let Ok(blob) = bincode::serialize(&chunks) {
-                    let _ = script_cache::try_save_bytes(p, BlobKind::Events, fp, &blob);
-                }
+        let record = match (cache_path, env_fp) {
+            (Some(p), Some(fp)) => {
+                script_cache::capture_begin(p, fp, false);
+                true
             }
-        }
-        Ok(status)
+            _ => false,
+        };
+        // c:Src/init.c:1626-1627 — source() runs `loop(0, 0)`: not toplevel.
+        self.run_events_per_command(script, record, false)
     }
 
     /// Run the per-event chunks of a cached sourced file, with the same
@@ -4763,8 +4740,7 @@ impl ShellExecutor {
     fn run_events_per_command(
         &mut self,
         script: &str,
-        mut events: Option<&mut Vec<crate::parse::ZshList>>,
-        mut chunks: Option<&mut Vec<fusevm::Chunk>>,
+        record: bool,
         toplevel: bool,
     ) -> Result<i32, String> {
         use crate::ported::lex::{
@@ -4874,15 +4850,12 @@ impl ShellExecutor {
             // and the NEXT event must be lexed from the line the file is
             // really on.
             let chunk = crate::compile_zsh::ZshCompiler::new().compile(&prog);
-            if let Some(out) = chunks.as_deref_mut() {
-                out.push(chunk.clone());
+            if record {
+                crate::script_cache::capture_push(&chunk);
             }
             let saved_lex_lineno = LEX_LINENO.get();
             let run = self.run_chunk(chunk, "source");
             LEX_LINENO.set(saved_lex_lineno);
-            if let Some(ev) = events.as_deref_mut() {
-                ev.extend(prog.lists);
-            }
             if let Err(e) = run {
                 vm_error = Some(e);
                 break;
@@ -4929,16 +4902,17 @@ impl ShellExecutor {
         // reads the flag itself (its c:1623-1624 + c:1663 block), so the bit
         // is put back after the restore instead.
         let err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0; // c:245
-        let incomplete = !drained || err || vm_error.is_some();
-        if let Some(ev) = events {
-            if incomplete {
-                ev.clear();
-            }
-        }
-        if let Some(out) = chunks {
-            if incomplete {
-                out.clear();
-            }
+        // The file was consumed as far as it was going to run: to its end, or to a
+        // `return` / `exit` that stopped the loop (c:Src/init.c:235). Both are a
+        // complete program — a replay stops at the same event — where a parse
+        // error or a failed event is not. Scripts end in `exit` far more often
+        // than not, and used to be refused for it.
+        let stopped_deliberately = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) != 0
+            || crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) != 0;
+        if record {
+            crate::script_cache::capture_commit(
+                (drained || stopped_deliberately) && !err && vm_error.is_none(),
+            );
         }
 
         // c:246-249 — leave the loop's context exactly as it was found.

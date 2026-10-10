@@ -4463,6 +4463,12 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
         format!("{}/{}", getsparam("PWD").unwrap_or_default(), pth) // c:519
     };
     zputenv(&format!("_={}", pth_abs)); // c:520
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // `exec` replaces this process, so neither `zexit` nor `atexit` runs: finish
+    // the recording of a script that ends in `exec` and write what is buffered.
+    // In a forked child both are refused by their pid checks.
+    crate::script_cache::capture_commit_all_on_exit(false);
+    crate::script_cache::try_flush_pending();
     closedumps(); // c:522
     winch_unblock(); // c:527
     let cpth = match CString::new(pth) {

@@ -17343,3 +17343,47 @@ fn source_cache_replays_only_under_the_same_alias_state() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// A script that ends in `exit`, `return` or `exec` never returns to the event
+/// loop that recorded it, and was therefore never stored: `zshrs about.sh`
+/// left no `dbview scripts` row. `zexit` and the exec paths finish the
+/// recording. The second run must produce the same output and status.
+#[test]
+fn script_cache_stores_scripts_that_end_in_exit_return_or_exec() {
+    let dir = tempdir_for_test();
+    let home = format!("{dir}/zhome");
+    std::fs::create_dir_all(&home).unwrap();
+    let cases = [
+        ("exit.sh", "echo one\nexit 3\necho never\n", "one\n", 3),
+        ("ret.sh", "echo one\nreturn 4\necho never\n", "one\n", 4),
+        ("exec.sh", "echo one\nexec /bin/echo two\n", "one\ntwo\n", 0),
+    ];
+    for (name, body, _, _) in &cases {
+        std::fs::write(format!("{dir}/{name}"), body).unwrap();
+    }
+    let run = |args: &[&str]| {
+        Command::new(zshrs_bin())
+            .args(args)
+            .env("ZSHRS_HOME", &home)
+            .env("TERM", "dumb")
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn zshrs")
+    };
+    for pass in 0..2 {
+        for (name, _, want_out, want_rc) in &cases {
+            let out = run(&[&format!("{dir}/{name}")]);
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                *want_out,
+                "{name} pass {pass}"
+            );
+            assert_eq!(out.status.code(), Some(*want_rc), "{name} pass {pass}");
+        }
+    }
+    let listing = run(&["-f", "-c", "dbview scripts"]);
+    let listing = String::from_utf8_lossy(&listing.stdout);
+    for (name, ..) in &cases {
+        assert!(listing.contains(name), "{name} missing from dbview scripts:\n{listing}");
+    }
+}
