@@ -450,6 +450,16 @@ fn daemon_start(paths: &crate::paths::CachePaths, exe: &std::path::Path) -> Resu
     daemon_status(paths)
 }
 
+thread_local! {
+    /// Exit status a handler wants `dispatch` to return instead of 0, and
+    /// whether the handler already wrote its output to stdout. Handlers must
+    /// never call `std::process::exit`: `dispatch` also runs inside the shell
+    /// as the `zd` builtin, where that would end the whole shell, not the
+    /// command.
+    static HANDLER_STATUS: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+    static OUTPUT_WRITTEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Top-level dispatcher. Parses global flags, routes to the right
 /// `cmd_*` handler, prints the result. Returns process-exit-style
 /// status: 0 = success, 1 = transport/protocol error, 2 = usage error.
@@ -510,8 +520,10 @@ pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
 
     match result {
         Ok(v) => {
-            println!("{}", v);
-            0
+            if !OUTPUT_WRITTEN.with(|w| w.replace(false)) {
+                println!("{}", v);
+            }
+            HANDLER_STATUS.with(|c| c.take()).unwrap_or(0)
         }
         Err(e) => {
             eprintln!("zd: {e}");
@@ -1072,7 +1084,9 @@ fn cmd_export(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> 
         out.write_all(&bytes)
             .map_err(|e| format!("write stdout: {e}"))?;
         out.flush().ok();
-        std::process::exit(0);
+        // The bytes are the whole output: no trailing newline from dispatch.
+        OUTPUT_WRITTEN.with(|w| w.set(true));
+        return Ok(String::new());
     }
     if let Some(body) = parsed.get("body").and_then(Value::as_str) {
         // Strip a single trailing newline so we don't double up with
@@ -1182,14 +1196,11 @@ fn cmd_doctor(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> 
             if failed == 1 { "" } else { "s" }
         ));
     }
-    // Print + exit directly so the exit code reflects health (non-zero
-    // on failures — CI / monitoring scripts depend on this). Bypasses
-    // the dispatcher's Ok-prints-with-newline path.
-    use std::io::Write;
-    let mut w = std::io::stdout().lock();
-    let _ = writeln!(w, "{}", out);
-    let _ = w.flush();
-    std::process::exit(if failed == 0 { 0 } else { 1 });
+    // The exit status reflects health (non-zero on failures — CI /
+    // monitoring scripts depend on this). It travels back through
+    // `dispatch`; exiting here would end the shell when run as the builtin.
+    HANDLER_STATUS.with(|c| c.set(Some(if failed == 0 { 0 } else { 1 })));
+    Ok(out)
 }
 
 // ---- base64 helpers (avoid pulling the `base64` crate into the
@@ -1334,5 +1345,45 @@ mod tests {
         let ver = env!("CARGO_PKG_VERSION");
         assert!(USAGE.contains(&format!("CLIENT // v{ver} // FULL SPECTRUM")));
         assert_eq!(USAGE.matches(&format!("v{ver}")).count(), 2);
+    }
+}
+
+#[cfg(test)]
+mod handler_status_tests {
+    use super::*;
+
+    /// A transport whose `doctor` reply has a failing check.
+    struct Fake(&'static str);
+    impl Transport for Fake {
+        fn post(&mut self, _op: &str, _body: Value) -> Result<String, String> {
+            Ok(self.0.to_string())
+        }
+        fn get(&mut self, _path: &str) -> Result<String, String> {
+            Ok(self.0.to_string())
+        }
+        fn sse(&mut self, _path: &str) -> Result<String, String> {
+            Err("no sse".into())
+        }
+    }
+
+    const DOCTOR_FAIL: &str = r#"{"checks":[{"name":"a","ok":true,"detail":"x"},{"name":"b","ok":false,"detail":"y"}],"total":2,"passed":1,"failed":1}"#;
+    const DOCTOR_OK: &str = r#"{"checks":[{"name":"a","ok":true,"detail":"x"}],"total":1,"passed":1,"failed":0}"#;
+
+    #[test]
+    fn doctor_returns_its_health_status_instead_of_exiting_the_process() {
+        // Reaching the asserts at all is the point: the old handler called
+        // `std::process::exit`, which ended this test process (and, run as the
+        // `zd` builtin, the user's shell).
+        let args = vec!["doctor".to_string()];
+        assert_eq!(dispatch(&args, &mut Fake(DOCTOR_FAIL)), 1);
+        assert_eq!(dispatch(&args, &mut Fake(DOCTOR_OK)), 0);
+    }
+
+    #[test]
+    fn status_does_not_leak_into_the_next_command() {
+        let doctor = vec!["doctor".to_string()];
+        assert_eq!(dispatch(&doctor, &mut Fake(DOCTOR_FAIL)), 1);
+        let ping = vec!["ping".to_string()];
+        assert_eq!(dispatch(&ping, &mut Fake(r#"{"pong":true}"#)), 0);
     }
 }
