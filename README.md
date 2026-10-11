@@ -391,7 +391,7 @@ dbview                        # list tables + row counts
 dbview autoloads _git         # single function: source, body, bytecode status
 dbview comps git              # search completions
 dbview history docker         # search history
-dbview scripts                 # compiled sourced scripts (scripts.rkyv); optional path substring
+dbview scripts                 # compiled sourced scripts (scripts.rkyv); optional path substring; CACHED is the last run, hit or store
 ```
 
 ---

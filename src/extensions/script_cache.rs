@@ -35,6 +35,11 @@
 //!     write to `scripts.rkyv.tmp.<pid>.<nanos>`, fsync, atomic-rename.
 //!   - Drop the in-process `mmap` so the next read picks up the new shard.
 //!
+//! Run log: a cache hit never rewrites the shard. Its time is appended to
+//! `scripts.runs` (`unix_secs\tpath`, flushed with the pending puts) and
+//! overlaid on `dbview scripts`; the next shard write folds it into
+//! `cached_at_secs` and removes the log.
+//!
 //! Ported from `strykelang/strykelang/script_cache.rs` (the user's stryke
 //! language has the same caching pattern; this is the same shape with `ZRSC`
 //! magic, zshrs version pin, and a single `chunk_blob` per entry — zshrs has
@@ -192,6 +197,19 @@ static PENDING: Mutex<Vec<PendingPut>> = Mutex::new(Vec::new());
 /// external command a shell spawns would rewrite the shard.
 static PENDING_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// Cache hits since the last flush: `(path, unix_secs)`. A hit leaves the shard
+/// untouched (rewriting it per run would put a multi-megabyte write on every
+/// startup), so the time of the run is appended to `scripts.runs` instead and
+/// overlaid on the listing; see [`ScriptCache::overlay_runs`].
+static RAN: Mutex<Vec<(String, i64)>> = Mutex::new(Vec::new());
+
+/// Process that queued the newest entry of [`RAN`]; same fork rule as
+/// [`PENDING_PID`].
+static RAN_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// `scripts.runs` is rewritten deduplicated once it grows past this.
+const RUNS_COMPACT_BYTES: u64 = 64 * 1024;
+
 /// Past this many buffered entries `try_save_bytes` flushes by itself, so a
 /// long non-interactive run cannot hold an unbounded amount of bytecode.
 const PENDING_FLUSH_MAX: usize = 128;
@@ -330,6 +348,7 @@ impl ScriptCache {
             _ => fresh_shard(),
         };
 
+        self.fold_runs(&mut shard);
         let (bin_mtime, bin_len) = current_binary_identity().unwrap_or((0, 0));
         let entry = ScriptEntry {
             mtime_secs,
@@ -344,6 +363,7 @@ impl ScriptCache {
         shard.header.built_at_secs = now_secs() as u64;
 
         write_shard_atomic(&self.path, &shard)?;
+        let _ = std::fs::remove_file(self.runs_path());
         self.invalidate_mmap();
         Ok(())
     }
@@ -370,6 +390,7 @@ impl ScriptCache {
             }
             _ => fresh_shard(),
         };
+        self.fold_runs(&mut shard);
         let (bin_mtime, bin_len) = current_binary_identity().unwrap_or((0, 0));
         for p in batch {
             shard.entries.insert(
@@ -387,11 +408,12 @@ impl ScriptCache {
         }
         shard.header.built_at_secs = now_secs() as u64;
         write_shard_atomic(&self.path, &shard)?;
+        let _ = std::fs::remove_file(self.runs_path());
         self.invalidate_mmap();
         Ok(())
     }
 
-    /// `(count, total_blob_bytes)` snapshot.
+    /// `(count    /// `(count, total_blob_bytes)` snapshot.
     pub fn stats(&self) -> (i64, i64) {
         self.ensure_mmap();
         let guard = self.mmap.lock();
@@ -443,6 +465,7 @@ impl ScriptCache {
                     .collect()
             })
             .unwrap_or_default();
+        self.overlay_runs(&mut out);
         // Entries buffered in this process (or inherited by a forked `$(...)`)
         // are not in the shard yet; they are the newest word on their path.
         let now = now_secs();
@@ -460,6 +483,37 @@ impl ScriptCache {
         out.into_iter()
             .map(|(p, ck, ver, ts, _)| (p, ck, ver, ts))
             .collect()
+    }
+
+    /// `scripts.runs`, the append-only log of cache hits (`unix_secs\tpath`).
+    fn runs_path(&self) -> PathBuf {
+        self.path.with_file_name("scripts.runs")
+    }
+
+    /// Raise each row's time to the newest logged run of its path, so a script
+    /// replayed from the cache lists as run now rather than as stored then.
+    fn overlay_runs(&self, rows: &mut [(String, f64, String, String, i64)]) {
+        let mut ran = read_runs(&self.runs_path());
+        for (path, ts) in RAN.lock().iter() {
+            let t = ran.entry(path.clone()).or_insert(*ts);
+            *t = (*t).max(*ts);
+        }
+        for row in rows.iter_mut() {
+            if let Some(&ts) = ran.get(&row.0).filter(|&&ts| ts > row.4) {
+                row.3 = format_local_ts(ts);
+                row.4 = ts;
+            }
+        }
+    }
+
+    /// Carry logged runs into the entries about to be rewritten, so the log can
+    /// be dropped with the old shard. Called with the shard lock held.
+    fn fold_runs(&self, shard: &mut ScriptShard) {
+        for (path, ts) in read_runs(&self.runs_path()) {
+            if let Some(e) = shard.entries.get_mut(&path) {
+                e.cached_at_secs = e.cached_at_secs.max(ts);
+            }
+        }
     }
 
     /// `scripts.db`, the read-only SQLite mirror kept beside the shard. Never
@@ -569,6 +623,7 @@ impl ScriptCache {
             .ok()?
             .filter_map(Result::ok)
             .collect();
+        self.overlay_runs(&mut out);
         // Buffered, not yet in the shard (see `list_scripts`).
         let now = now_secs();
         for p in PENDING.lock().iter().filter(|p| p.path.contains(pattern)) {
@@ -615,6 +670,7 @@ impl ScriptCache {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e),
         };
+        let _ = std::fs::remove_file(self.runs_path());
         self.invalidate_mmap();
         res
     }
@@ -950,6 +1006,35 @@ fn hash_option_store() -> u64 {
     fnv_bytes(h, &emul.to_le_bytes())
 }
 
+/// Newest logged run time per path in `scripts.runs`; empty when absent.
+fn read_runs(path: &Path) -> HashMap<String, i64> {
+    let mut out = HashMap::new();
+    let text = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    for line in text.lines() {
+        let Some((ts, p)) = line.split_once('\t') else { continue };
+        let Ok(ts) = ts.parse::<i64>() else { continue };
+        let t = out.entry(p.to_string()).or_insert(ts);
+        *t = (*t).max(ts);
+    }
+    out
+}
+
+/// Append the buffered hits to `scripts.runs` in one write, then deduplicate
+/// the file when it has grown past [`RUNS_COMPACT_BYTES`].
+fn append_runs(path: &Path, batch: &[(String, i64)]) {
+    let lines: String = batch.iter().map(|(p, ts)| format!("{ts}\t{p}\n")).collect();
+    let appended = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| f.write_all(lines.as_bytes()));
+    if appended.is_err() || std::fs::metadata(path).map_or(0, |m| m.len()) < RUNS_COMPACT_BYTES {
+        return;
+    }
+    let deduped: String = read_runs(path).into_iter().map(|(p, ts)| format!("{ts}\t{p}\n")).collect();
+    let _ = crate::atomic_write::write_bytes_atomic(path, deduped.as_bytes());
+}
+
 /// Try to load a cached program by source path. Returns `None` on any miss,
 /// including a different lexer-state fingerprint or a blob of another kind.
 pub fn try_load_bytes(path: &Path, kind: BlobKind, env_fp: u64) -> Option<Vec<u8>> {
@@ -968,7 +1053,12 @@ pub fn try_load_bytes(path: &Path, kind: BlobKind, env_fp: u64) -> Option<Vec<u8
         None => cache.get(&path_str, mtime_s, mtime_ns, env_fp)?,
     };
     let (tag, body) = blob.split_first()?;
-    (*tag == kind as u8).then(|| body.to_vec())
+    if *tag != kind as u8 {
+        return None;
+    }
+    RAN_PID.store(std::process::id(), std::sync::atomic::Ordering::Relaxed);
+    RAN.lock().push((path_str.into_owned(), now_secs()));
+    Some(body.to_vec())
 }
 
 /// Store the bincode-encoded program for a script path. `env_fp` is the
@@ -1019,6 +1109,14 @@ pub fn try_save_bytes(
 /// at the prompt, from `zexit` and from the `atexit` hook, alongside the
 /// autoload and deparse caches. Cheap when nothing is buffered.
 pub fn try_flush_pending() {
+    // Hits first: they are logged beside the shard, never into it, so they
+    // need neither its lock nor a rewrite.
+    if RAN_PID.load(std::sync::atomic::Ordering::Relaxed) == std::process::id() {
+        let ran = std::mem::take(&mut *RAN.lock());
+        if let (false, Some(cache)) = (ran.is_empty(), CACHE.as_ref()) {
+            append_runs(&cache.runs_path(), &ran);
+        }
+    }
     // A forked child leaves its inherited copy alone: the parent writes it, and
     // a `dbview scripts` in the child still lists it from the buffer.
     if PENDING_PID.load(std::sync::atomic::Ordering::Relaxed) != std::process::id() {
@@ -1134,6 +1232,48 @@ mod tests {
 
         cache.clear().unwrap();
         assert_eq!(cache.mirror_rows("").unwrap().len(), 0, "deleted shard empties the mirror");
+    }
+
+    /// A script replayed from the cache is a hit, which leaves the shard
+    /// alone; `dbview scripts` must still list it as run at the hit's time,
+    /// and the log must be carried into the shard (not lost) when it is
+    /// next rewritten.
+    #[test]
+    fn a_cache_hit_moves_the_listed_time_and_survives_a_rewrite() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache = ScriptCache::open(&dir.path().join("scripts.rkyv")).unwrap();
+        let one = dir.path().join("one.zsh");
+        let two = dir.path().join("two.zsh");
+        std::fs::write(&one, "echo 1").unwrap();
+        std::fs::write(&two, "echo 2").unwrap();
+        let (s1, n1) = file_mtime(&one).unwrap();
+        let (s2, n2) = file_mtime(&two).unwrap();
+        let one_key = one.to_string_lossy().to_string();
+        cache.put(&one_key, s1, n1, 0, vec![1u8]).unwrap();
+        cache.put(&two.to_string_lossy(), s2, n2, 0, vec![2u8]).unwrap();
+
+        let ran_at = now_secs() + 1000;
+        append_runs(&cache.runs_path(), &[(one_key.clone(), ran_at)]);
+
+        let by_path = |rows: Vec<(String, f64, String, String)>| {
+            rows.into_iter().map(|r| (r.0, r.3)).collect::<Vec<_>>()
+        };
+        let listed = by_path(cache.list_scripts());
+        assert!(listed[0].0.ends_with("one.zsh"), "newest run first: {listed:?}");
+        assert_eq!(listed[0].1, format_local_ts(ran_at));
+        let mirrored = by_path(cache.mirror_rows("").unwrap());
+        assert_eq!(mirrored[0], listed[0]);
+
+        // A later store folds the logged run into the entry and drops the log.
+        let three = dir.path().join("three.zsh");
+        std::fs::write(&three, "echo 3").unwrap();
+        let (s3, n3) = file_mtime(&three).unwrap();
+        cache.put(&three.to_string_lossy(), s3, n3, 0, vec![3u8]).unwrap();
+        assert!(!cache.runs_path().exists());
+        let after = by_path(cache.list_scripts());
+        assert!(after[0].0.ends_with("one.zsh"), "{after:?}");
+        assert_eq!(after[0].1, format_local_ts(ran_at));
     }
 
     #[test]
