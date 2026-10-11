@@ -1358,6 +1358,12 @@ Full guide: [`docs/PLUGINS.md`](docs/PLUGINS.md); package manager: [`docs/ZNATIV
 
 MIT — Copyright (c) 2026 [MenkeTechnologies](https://github.com/MenkeTechnologies)
 
+zshrs's own code is MIT. `src/ported/` is a port of the zsh C source and
+`vendor/zsh/` is bundled from zsh, so those parts also carry zsh's licence
+(copyright the Zsh Development Group), and four bundled completion functions
+are GPL. The licence text and the file list are in [NOTICE.md](NOTICE.md),
+which ships with every distribution.
+
 Original-authorship record + portability stance:
 [CREATORS.md](CREATORS.md). Maintainer governance + protected
 invariants: [MAINTAINERS.md](MAINTAINERS.md).
