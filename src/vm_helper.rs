@@ -4187,16 +4187,20 @@ impl ShellExecutor {
         // full parse/compile/cache-save/run flow stays in one place.
         let env_fp = crate::script_cache::env_fingerprint();
         if let Some(bc_blob) =
-            crate::script_cache::try_load_bytes(path, crate::script_cache::BlobKind::Events, env_fp)
+            crate::script_cache::try_load_bytes(path, crate::script_cache::BlobKind::Guarded, env_fp)
         {
-            if let Ok(chunks) = bincode::deserialize::<Vec<fusevm::Chunk>>(&bc_blob) {
-                if !chunks.is_empty() {
+            if let Ok(events) =
+                bincode::deserialize::<Vec<crate::script_cache::GuardedEvent>>(&bc_blob)
+            {
+                if !events.is_empty() {
                     tracing::trace!(
                         path = %abs_path,
-                        events = chunks.len(),
+                        events = events.len(),
                         "execute_script_file: bytecode cache hit"
                     );
-                    return self.replay_cached_events(chunks);
+                    return self.replay_cached_events(events, true, || {
+                        crate::script_bytes::read_script_file(file_path).ok()
+                    });
                 }
             }
         }
@@ -4678,9 +4682,11 @@ impl ShellExecutor {
     /// stored in `scripts.rkyv` as the chunks the loop compiled, and a later
     /// `source` of an unchanged file replays them without lexing, parsing or
     /// compiling. A hit needs the same lexer-visible state the first run started
-    /// from (see `script_cache::env_fingerprint`), and a file that itself
-    /// changed aliases or options is never stored: its later events were lexed
-    /// under state the earlier ones created, which a replay cannot re-derive.
+    /// from (see `script_cache::env_fingerprint`). A file that defines aliases
+    /// is stored too: each event records how far the alias tables had moved
+    /// when it was lexed (`script_cache::GuardedEvent`), and a replay that
+    /// has moved them a different number of times finishes the file from
+    /// source, from that event on.
     pub fn execute_script_per_command(
         &mut self,
         script: &str,
@@ -4689,11 +4695,11 @@ impl ShellExecutor {
         use crate::script_cache::{self, BlobKind};
         let env_fp = cache_path.map(|_| script_cache::env_fingerprint());
         if let (Some(p), Some(fp)) = (cache_path, env_fp) {
-            if let Some(blob) = script_cache::try_load_bytes(p, BlobKind::Events, fp) {
-                if let Ok(chunks) = bincode::deserialize::<Vec<fusevm::Chunk>>(&blob) {
-                    if !chunks.is_empty() {
-                        tracing::trace!(path = %p.display(), events = chunks.len(), "source: bytecode cache hit");
-                        return self.replay_cached_events(chunks);
+            if let Some(blob) = script_cache::try_load_bytes(p, BlobKind::Guarded, fp) {
+                if let Ok(events) = bincode::deserialize::<Vec<script_cache::GuardedEvent>>(&blob) {
+                    if !events.is_empty() {
+                        tracing::trace!(path = %p.display(), events = events.len(), "source: bytecode cache hit");
+                        return self.replay_cached_events(events, false, || Some(script.to_string()));
                     }
                 }
             }
@@ -4713,9 +4719,34 @@ impl ShellExecutor {
     /// between-event checks `run_events_per_command` makes for a non-toplevel
     /// loop: an error flag or a pending `return` ends the file (c:Src/init.c:235),
     /// and so does a deferred `exit`.
-    fn replay_cached_events(&mut self, chunks: Vec<fusevm::Chunk>) -> Result<i32, String> {
-        for chunk in chunks {
-            self.run_chunk(chunk, "source:cached")?;
+    fn replay_cached_events(
+        &mut self,
+        events: Vec<crate::script_cache::GuardedEvent>,
+        toplevel: bool,
+        source: impl FnOnce() -> Option<String>,
+    ) -> Result<i32, String> {
+        let base = crate::script_cache::env_generation().0;
+        for ev in events {
+            // The chunk was lexed under the alias tables as the recorded run
+            // had left them. If this run's earlier events moved them a
+            // different number of times, the rest of the file may lex
+            // differently: stop replaying and read it from source, from
+            // this event on.
+            let moved = crate::script_cache::env_generation().0.wrapping_sub(base);
+            if moved != ev.alias_delta {
+                let Some(text) = source() else {
+                    return Err("script cache: source unreadable for the guarded tail".into());
+                };
+                let desugared = text
+                    .contains("rust")
+                    .then(|| crate::rust_ffi::desugar(&text));
+                let full: &str = desugared.as_deref().unwrap_or(&text);
+                let Some(rest) = full.get(ev.start as usize..) else {
+                    return Err("script cache: event offset outside the source".into());
+                };
+                return self.run_events_per_command(rest, false, toplevel);
+            }
+            self.run_chunk(ev.chunk, "source:cached")?;
             if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0
                 || crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) != 0
                 || crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) != 0
@@ -4793,6 +4824,12 @@ impl ShellExecutor {
             // it does NOT move the window, so the next event resumes where
             // the last one stopped.
             crate::ported::lex::lexinit(); // c:155
+            // Where this event begins in the text, for the script cache's
+            // alias guard: the read position less anything the lexer has
+            // pushed back.
+            let ev_start = LEX_POS.get().saturating_sub(
+                LEX_UNGET_BUF.with_borrow(|b| b.iter().map(|c| c.len_utf8()).sum::<usize>()),
+            );
             // Event source for preexec's `$2`/`$3` — see run_preexec_hook.
             let event_mark = toplevel.then(crate::funcdef_capture::body_mark_begin);
             let prog = crate::ported::parse::parse_event(ENDINPUT); // c:156
@@ -4851,7 +4888,7 @@ impl ShellExecutor {
             // really on.
             let chunk = crate::compile_zsh::ZshCompiler::new().compile(&prog);
             if record {
-                crate::script_cache::capture_push(&chunk);
+                crate::script_cache::capture_push(&chunk, ev_start);
             }
             let saved_lex_lineno = LEX_LINENO.get();
             let run = self.run_chunk(chunk, "source");

@@ -750,15 +750,34 @@ pub static CACHE: once_cell::sync::Lazy<Option<ScriptCache>> = once_cell::sync::
 struct Capture {
     path: PathBuf,
     env_fp: u64,
-    /// `env_generation()` when recording began.
-    gens: (u64, u64),
+    /// `ALIAS_GEN` when recording began: each event stores how far the alias
+    /// tables had moved from here when it was lexed (see [`GuardedEvent`]).
+    alias_base: u64,
     /// A script run by `zshrs FILE` starts from a fresh, deterministic state;
     /// a sourced file runs inside whatever session sourced it.
     toplevel: bool,
     /// The process that began recording. A forked subshell that exits holds a
     /// copy of its parent's frames; it must not store them as finished.
     pid: u32,
-    chunks: Vec<fusevm::Chunk>,
+    events: Vec<GuardedEvent>,
+}
+
+/// One executed event of a recorded file: its compiled chunk, plus what a
+/// replay needs to know that the chunk is still the program the lexer would
+/// produce now.
+///
+/// A chunk is lexed text, and lexing depends on the alias tables as the
+/// earlier events left them. `alias_delta` is how many alias-table mutations
+/// had happened since the file began when this event was lexed; a replay that
+/// has made a different number by the time it reaches the event (a conditional
+/// `alias` took the other branch) is no longer running the recorded program,
+/// and carries on from `start`, the byte offset of the event in the file, by
+/// lexing the rest of it afresh.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct GuardedEvent {
+    pub chunk: fusevm::Chunk,
+    pub alias_delta: u64,
+    pub start: u64,
 }
 
 thread_local! {
@@ -770,20 +789,27 @@ pub fn capture_begin(path: &Path, env_fp: u64, toplevel: bool) {
     let cap = Capture {
         path: path.to_path_buf(),
         env_fp,
-        gens: env_generation(),
+        alias_base: env_generation().0,
         toplevel,
         pid: std::process::id(),
-        chunks: Vec::new(),
+        events: Vec::new(),
     };
     CAPTURES.with(|c| c.borrow_mut().push(cap));
 }
 
 /// Append the chunk of the event about to run to the innermost recording.
-/// Called BEFORE the event runs, so an `exit` inside it still finds it.
-pub fn capture_push(chunk: &fusevm::Chunk) {
+/// `start` is the event's byte offset in the text the loop is reading. Called
+/// BEFORE the event runs, so an `exit` inside it still finds it, and with the
+/// alias tables exactly as the event was lexed under.
+pub fn capture_push(chunk: &fusevm::Chunk, start: usize) {
+    let now = env_generation().0;
     CAPTURES.with(|c| {
         if let Some(top) = c.borrow_mut().last_mut() {
-            top.chunks.push(chunk.clone());
+            top.events.push(GuardedEvent {
+                chunk: chunk.clone(),
+                alias_delta: now.wrapping_sub(top.alias_base),
+                start: start as u64,
+            });
         }
     });
 }
@@ -809,22 +835,16 @@ pub fn capture_commit_all_on_exit(errored: bool) {
 }
 
 fn store_capture(cap: Capture, complete: bool) {
-    // A sourced file that defines aliases itself is not stored: the commands
-    // after the `alias` were lexed with its expansion baked in, and whether
-    // that definition ran is a runtime fact a replay would not re-check (a
-    // conditional `alias`). Option changes are replayed as the events that
-    // make them, so they do not disqualify a file; neither does anything in a
-    // top-level script, which has always been stored whole.
-    let aliases_moved = env_generation().0 != cap.gens.0;
-    if !complete
-        || cap.chunks.is_empty()
-        || cap.pid != std::process::id()
-        || (!cap.toplevel && aliases_moved)
-    {
+    // A file that defines aliases is stored like any other: each event
+    // carries the alias-table position it was lexed under (`GuardedEvent`),
+    // and a replay that finds the tables elsewhere finishes the file from
+    // source. Option changes are replayed as the events that make them.
+    if !complete || cap.events.is_empty() || cap.pid != std::process::id() {
         return;
     }
-    if let Ok(blob) = bincode::serialize(&cap.chunks) {
-        let _ = try_save_bytes(&cap.path, BlobKind::Events, cap.env_fp, &blob);
+    let _ = cap.toplevel;
+    if let Ok(blob) = bincode::serialize(&cap.events) {
+        let _ = try_save_bytes(&cap.path, BlobKind::Guarded, cap.env_fp, &blob);
     }
 }
 
@@ -835,8 +855,12 @@ fn store_capture(cap: Capture, complete: bool) {
 pub enum BlobKind {
     /// bincode of one `fusevm::Chunk`.
     Script = 0,
-    /// bincode of a `Vec<fusevm::Chunk>`, one per executed event.
+    /// bincode of a `Vec<fusevm::Chunk>`, one per executed event. No longer
+    /// written; a stored blob of this kind is simply a miss.
     Events = 1,
+    /// bincode of a `Vec<GuardedEvent>`: the executed events with the
+    /// alias-table position each was lexed under and its offset in the file.
+    Guarded = 2,
 }
 
 /// Hash of everything the lexer and compiler read from the live shell: the
