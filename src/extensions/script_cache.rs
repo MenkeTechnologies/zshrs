@@ -786,8 +786,10 @@ thread_local! {
 
 /// Start recording the events of `path`, which the caller is about to run.
 pub fn capture_begin(path: &Path, env_fp: u64, toplevel: bool) {
+    // Resolved now, not at store time: a script that `cd`s leaves a relative
+    // `path` pointing nowhere, and the entry was silently dropped.
     let cap = Capture {
-        path: path.to_path_buf(),
+        path: path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
         env_fp,
         alias_base: env_generation().0,
         toplevel,

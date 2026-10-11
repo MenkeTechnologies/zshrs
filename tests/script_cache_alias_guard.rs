@@ -93,3 +93,22 @@ fn a_script_run_as_a_file_gets_the_same_guard() {
     assert_eq!(off, "end\n", "stale expansion replayed: {off:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_script_run_by_relative_path_that_changes_directory_is_still_stored() {
+    let dir = scratch("relcd");
+    std::fs::write(dir.join("walk.sh"), "cd /\necho walked\n").unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_zshrs"))
+        .args(["-f", "walk.sh"])
+        .current_dir(&dir)
+        .env("ZSHRS_HOME", &dir)
+        .env("HOME", &dir)
+        .output()
+        .expect("spawn zshrs");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "walked\n");
+
+    let (listing, _) = run(&dir, &["-f", "-c", "dbview scripts"], &[]);
+    assert!(listing.contains("walk.sh"), "a script that cd's is stored:\n{listing}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
