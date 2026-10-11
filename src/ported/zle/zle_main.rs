@@ -1767,7 +1767,19 @@ pub fn zleread(
     // `builtin zle "$@"`) printed "widgets can only be called when ZLE is
     // active" (zle_thingy.c:714) after every accepted command. The C gate is
     // also new here: an aborted (errflag) or exiting line skips the hook.
+    //
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // An `@ <code>` line is stryke source, not shell text: like text after
+    // a `#`, nothing in the shell may read or rewrite it. `zle-line-finish`
+    // hooks edit BUFFER (spacing around `|`/`>`, expansion), which turned
+    // `@ 5 |> p` into `5 |  > p` before `stryke_line` saw it, so the hook
+    // is skipped for such a line.
+    let stryke_line = {
+        let z = ZLELINE.lock().unwrap();
+        z.first() == Some(&'@') && z.get(1).map_or(true, |c| c.is_whitespace())
+    };
     if DONE.load(SeqCst) != 0
+        && !stryke_line
         && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
         && crate::utils::errflag.load(SeqCst) == 0
         && crate::ported::zle::zle_thingy::rthingy_nocreate(finish)
