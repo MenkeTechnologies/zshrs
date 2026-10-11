@@ -120,6 +120,17 @@ const FAIL_HEAD: &str = "print -ru2 -- '";
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Name of the variable a `{ cmd }` test records the command's status in.
+/// A condition text containing it must hand that status on when the test
+/// fails and nothing else sets `$status` (tcsh: `if ({ false }) echo a` exits
+/// 1; `if (0) echo a` leaves 0).
+pub const LEAVES_STATUS: &str = "_csh_bs";
+
+/// Whether a translated condition ran a `{ cmd }` (see [`LEAVES_STATUS`]).
+pub fn leaves_status(cond: &str) -> bool {
+    cond.contains(LEAVES_STATUS)
+}
+
 /// Translate the text between the outer parens of `if (...)` /
 /// `while (...)` / `else if (...)` into a zsh command whose exit status is
 /// the csh truth value (usable directly after `if ` / `while `).
@@ -1347,7 +1358,13 @@ impl Emitter {
             Node::Cmd(text) => {
                 self.ran_cmd = true;
                 let body = if text.is_empty() { "true".to_string() } else { translate_line(text)? };
-                Ok(Cond { text: format!("( {} )", body.trim()), simple: true })
+                // `_csh_bs` keeps the command's own exit status: when the test
+                // ends false tcsh leaves THAT in `$status` (see `LEAVES_STATUS`),
+                // not the 1 the condition reports.
+                Ok(Cond {
+                    text: format!("{{ ( {} ); _csh_bs=$?; (( ! _csh_bs )); }}", body.trim()),
+                    simple: true,
+                })
             }
             Node::File { inq, operand } if inq.value.is_none() => {
                 let mut pre = Vec::new();

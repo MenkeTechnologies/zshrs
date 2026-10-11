@@ -62,6 +62,7 @@ pub mod words;
 /// (`if: Expression Syntax.`, `Too many ('s`, …).
 pub fn translate(src: &str) -> Result<String, String> {
     let lines = lex::script_lines(src);
+    cmds::note_script_start(src);
     let mut t = ctl::Translator::new();
     t.set_eof_skip(ctl::eof_skip_target(src, &lines));
     let mut out = String::new();

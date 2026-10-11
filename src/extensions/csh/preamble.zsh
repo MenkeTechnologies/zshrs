@@ -37,3 +37,25 @@ printenv() {
 }
 unset OLDPWD
 typeset -gA _csh_alias _csh_alias_ls
+# `time cmd` / `time` report, tcsh's default $time format
+# `%Uu %Ss %E %P %X+%Dk %I+%Oio %Fpf+%Ww`, on STDOUT (zsh's goes to stderr).
+# Reads one line `user sys elapsed cpu% pagefaults swaps` — seconds as plain
+# numbers, `cpu%` with or without the `%`.
+_csh_time_fmt() {
+  local u s e p f w
+  local -i m
+  read -r u s e p f w
+  p=${p%\%}
+  m=$(( ${e%%.*} / 60 ))
+  printf '%.3fu %.3fs %d:%05.2f %.1f%%\t0+0k 0+0io %dpf+%dw\n' \
+    $u $s $m $(( e - m * 60 )) ${p:-0} ${f:-0} ${w:-0}
+}
+# bare `time`: the shell's own CPU time (from `times`) and wall time.
+_csh_time_self() {
+  local l=${${(f)"$(times)"}[1]} a b
+  a=${l%% *} b=${l##* }
+  local -F u s
+  u=$(( ${a%%m*} * 60 + ${${a#*m}%s} ))
+  s=$(( ${b%%m*} * 60 + ${${b#*m}%s} ))
+  print -r -- "$u $s $SECONDS 0 0 0" | _csh_time_fmt
+}

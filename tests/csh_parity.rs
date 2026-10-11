@@ -222,3 +222,104 @@ fn csh_exit_status_after_skipping_to_an_unterminated_closer_matches_tcsh() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(bad.is_empty(), "csh divergences:\n{}", bad.join("\n"));
 }
+
+/// Gaps found by running a hand-written battery of constructs against tcsh:
+/// the status a failed `{ cmd }` test leaves, the argument-less `@` / `set`
+/// listing (the `_` variable, names assigned by `@`), `$var:&`, and the
+/// `time` report (stdout, tcsh's format, run in a child).
+#[test]
+fn csh_brace_status_listing_modifier_and_time_match_tcsh() {
+    let Some(reference) = tcsh() else { return };
+    let cases: &[(&str, &str)] = &[
+        ("one-line if, brace fails", "if ({ false }) echo no\n"),
+        ("block if, brace fails", "if ({ false }) then\necho a\nendif\n"),
+        ("block if, brace fails, else runs", "if ({ false }) then\necho a\nelse\necho b\nendif\n"),
+        ("status read after a failed brace", "if ({ false }) echo a\necho $status\n"),
+        ("brace exit status is kept", "if ({ sh -c 'exit 3' }) echo a\necho $status\n"),
+        ("brace on the left of &&", "if ({ false } && 1) echo a\necho $status\n"),
+        ("brace on the left of ||", "if ({ false } || 0) echo a\necho $status\n"),
+        ("brace in an else-if", "if (0) then\necho a\nelse if ({ sh -c 'exit 4' }) then\necho b\nendif\necho $status\n"),
+        ("brace passes, body runs", "if ({ true }) echo ok\necho $status\n"),
+        ("while ends on a failed brace", "while ({ false })\necho a\nend\necho $status\n"),
+        ("plain false test leaves 0", "false\nif (0) echo a\necho $status\n"),
+        ("@ names appear in the listing", "@ q = 3\n@ | grep '^q'\n"),
+        ("listing carries _ after the first line", "# c\nset | head -1\n"),
+        ("listing has no _ on the first line", "set | head -1\n"),
+        ("$var:& is a bad modifier", "set p = a.b.c\necho $p:&\n"),
+        ("$var:s///:& is a bad modifier", "set p = a.b.c\necho $p:s/./-/:&\n"),
+        ("a trailing & still backgrounds", "sleep 0 &\nwait\necho w\n"),
+    ];
+    let dir = std::env::temp_dir().join(format!("zshrs-csh-brace-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut bad = Vec::new();
+    for (i, (name, script)) in cases.iter().enumerate() {
+        let file = dir.join(format!("case{i}.csh"));
+        std::fs::write(&file, script).unwrap();
+        let want = run_status(&reference, &[], &file);
+        let got = run_status(env!("CARGO_BIN_EXE_zshrs"), &["--csh"], &file);
+        // `[1] pid` carries a process id.
+        let norm = |(out, rc): (String, i32)| {
+            let out: Vec<String> = out
+                .lines()
+                .map(|l| if l.starts_with("[1] ") { "[1] PID".to_string() } else { l.to_string() })
+                .collect();
+            (out, rc)
+        };
+        let (want, got) = (norm(want), norm(got));
+        if want != got {
+            bad.push(format!("{name}\n  tcsh : {want:?}\n  zshrs: {got:?}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(bad.is_empty(), "csh divergences:\n{}", bad.join("\n"));
+}
+
+/// `time cmd` prints one line, on stdout, in tcsh's `%Uu %Ss %E %P %X+%Dk
+/// %I+%Oio %Fpf+%Ww` shape, and runs the command in a child (a `cd` or `set`
+/// under it does not stick). The numbers vary run to run, so only the shape
+/// and the effects are compared.
+#[test]
+fn csh_time_reports_on_stdout_in_tcsh_shape_and_forks() {
+    let Some(reference) = tcsh() else { return };
+    let dir = std::env::temp_dir().join(format!("zshrs-csh-time-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let shape = |s: &str| -> String {
+        s.lines()
+            .map(|l| {
+                let mut out = String::new();
+                let mut digits = false;
+                for c in l.chars() {
+                    if c.is_ascii_digit() {
+                        if !digits {
+                            out.push('#');
+                        }
+                        digits = true;
+                    } else {
+                        digits = false;
+                        out.push(c);
+                    }
+                }
+                out
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for (name, script) in [
+        ("simple command", "time true\n"),
+        ("output then report", "time echo hi\n"),
+        ("builtin runs in a child", "set x = 1\ntime set x = 2\necho $x\n"),
+        ("cd runs in a child", "cd /usr\ntime cd /tmp\npwd\n"),
+        ("status survives", "time false\necho $status\n"),
+    ] {
+        let file = dir.join("t.csh");
+        std::fs::write(&file, script).unwrap();
+        let want = run_status(&reference, &[], &file);
+        let got = run_status(env!("CARGO_BIN_EXE_zshrs"), &["--csh"], &file);
+        assert_eq!(
+            (shape(&want.0), want.1),
+            (shape(&got.0), got.1),
+            "{name}: tcsh {want:?} vs zshrs {got:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -96,6 +96,7 @@ pub fn translate_line(line: &str) -> Result<String, String> {
 /// [`translate_line`] without history-substitution checking (alias bodies
 /// carry `!` text that is only a history reference at invocation time).
 fn translate_cmds(line: &str) -> Result<String, String> {
+    STATE.with(|st| st.borrow_mut().commands += 1);
     let cmds = parse(line)?;
     let mut segments: Vec<(String, Sep)> = Vec::new();
     let mut pipes: Vec<String> = Vec::new();
@@ -359,6 +360,13 @@ fn parse(line: &str) -> Result<Vec<(Simple, Sep)>, String> {
             }
             ';' => {
                 p.end_command(Sep::Semi)?;
+                i += 1;
+            }
+            // `$var:&` — the `&` is the modifier character (and an unknown
+            // one: tcsh stops with `Bad : modifier in $ '&'.`), not a
+            // background operator.
+            '&' if p.word.ends_with(':') && p.word.contains('$') => {
+                p.word.push('&');
                 i += 1;
             }
             '&' if next == Some('&') => {
@@ -1076,7 +1084,10 @@ fn render_cmd(words: &[String]) -> Result<String, String> {
         "shift" => cmd_shift(args),
         "exit" => cmd_exit(args),
         "source" => cmd_source(args),
-        "@" => translate_at(&args.join(" ")),
+        "@" => {
+            record_at_target(&args);
+            translate_at(&args.join(" "))
+        }
         "eval" => cmd_eval(args),
         "repeat" => cmd_repeat(args),
         "nohup" if args.is_empty() => Ok("trap '' HUP".to_string()),
@@ -1171,7 +1182,7 @@ enum Val {
 /// `set` / `@` with no arguments: the variables tcsh itself defines, then the
 /// ones the script `set` (recorded in `_csh_vars`), sorted, one `name<TAB>value`
 /// per line; a list shows in parentheses, a one-word value bare.
-const SET_LISTING_HEAD: &str = "() { local _st=$1 _n _v; shift; local -a _a; local -A _l; \
+const SET_LISTING_HEAD: &str = "() { setopt localtraps; trap '' PIPE; local _st=$1 _n _v; shift; local -a _a; local -A _l; \
 _l=(addsuffix '' anyerror '' argv \"(${(j: :)argv})\" cdtohome '' csubstnonl '' cwd \"$PWD\" \
 echo_style bsd euid \"$EUID\" euser \"${USERNAME-}\" gid \"$GID\" \
 group \"$(id -gn)\" history 100 home \"$HOME\" killring 30 owd \"${OLDPWD-}\" path \"(${(j: :)path})\" \
@@ -1184,14 +1195,52 @@ const SET_LISTING_TAIL: &str = "; do (( ${+parameters[$_n]} )) || continue; \
 if [[ ${parameters[$_n]} == array* ]]; then \
 _a=(\"${(@P)_n}\"); if (( $#_a == 1 )); then _v=\"$_a[1]\"; else _v=\"(${(j: :)_a})\"; fi; \
 else _v=\"${(P)_n}\"; fi; _l[$_n]=$_v; done; \
-for _n in ${(ok)_l}; do print -r -- \"$_n\"$'\\t'\"${_l[$_n]}\"; done; } $? \"$@\"";
+{ for _n in ${(ok)_l}; do print -r -- \"$_n\"$'\\t'\"${_l[$_n]}\"; done; } 2>/dev/null; return 0; } $? \"$@\"";
+
+/// `@ name = …`, `@ name++`, `@ name[i] += …`: the variable the statement
+/// assigns joins the names the argument-less `set` / `@` listing shows, as a
+/// `set` does. A bare `@` (the listing) and an expression that starts with a
+/// non-name assigns nothing.
+fn record_at_target(args: &[String]) {
+    let text = args.join(" ");
+    let name: String = text
+        .trim_start()
+        .chars()
+        .enumerate()
+        .take_while(|(i, c)| c.is_ascii_alphabetic() || *c == '_' || (*i > 0 && c.is_ascii_digit()))
+        .map(|(_, c)| c)
+        .collect();
+    if !name.is_empty() {
+        STATE.with(|st| st.borrow_mut().set_names.insert(name));
+    }
+}
+
+/// Tell the translator how the script it is about to translate begins (see
+/// `ShellState::starts_with_filler`). Called once per whole-script
+/// translation, before the first line.
+pub fn note_script_start(src: &str) {
+    let first = src.split('\n').next().unwrap_or("").trim();
+    let filler = first.is_empty() || first.starts_with('#');
+    STATE.with(|st| st.borrow_mut().starts_with_filler = filler);
+}
 
 /// The listing for `set` / `@` with no arguments: the fixed text with the names the
 /// script has `set` so far (translation runs in execution order).
 fn set_listing() -> String {
-    let names: Vec<String> = STATE.with(|st| st.borrow().set_names.iter().cloned().collect());
+    let (names, commands, filler): (Vec<String>, usize, bool) = STATE.with(|st| {
+        let st = st.borrow();
+        (st.set_names.iter().cloned().collect(), st.commands, st.starts_with_filler)
+    });
+    // tcsh defines `_` (the previous command line; empty in a script) once a
+    // line has been read, so a listing on the very first line of a script is
+    // the only one without it. The listing is itself counted, hence 2.
+    let head = if commands >= 2 || filler {
+        SET_LISTING_HEAD.replacen("_l=(", "_l=(_ '' ", 1)
+    } else {
+        SET_LISTING_HEAD.to_string()
+    };
     let tail = SET_LISTING_TAIL;
-    format!("{SET_LISTING_HEAD}{}{tail}", names.join(" "))
+    format!("{head}{}{tail}", names.join(" "))
 }
 
 /// `set` with csh's argument grammar (verified against tcsh): a sequence of
@@ -2078,6 +2127,11 @@ struct ShellState {
     hashed: bool,
     /// Variables the script has `set`, for the argument-less `set` listing.
     set_names: std::collections::BTreeSet<String>,
+    /// Command lines translated so far, for the `_` variable of the listing.
+    commands: usize,
+    /// The script's first physical line is blank or a comment: tcsh has read
+    /// a line before the first command, so `_` already exists there.
+    starts_with_filler: bool,
     /// Names currently aliased: a call to one goes to its function, even
     /// when the word is also a builtin this translator renders inline.
     aliases: std::collections::BTreeSet<String>,
@@ -2209,9 +2263,6 @@ fn cmd_kill(args: &[String]) -> String {
     }
 }
 
-/// tcsh `time cmd` reports `0.000u 0.000s 0:00.01 0.0%<TAB>0+0k 0+0io 0pf+0w`
-/// by default; zsh's reserved word takes the same fields from `TIMEFMT`.
-const TIME_FMT: &str = "$'%*Uu %*Ss 0:%*E %P\\t0+0k 0+0io %Fpf+%Ww'";
 
 /// `filetest -op file…`: a `1` or `0` per file on one line, as the matching\n/// `if (-op f)` would answer.
 fn cmd_filetest(args: &[String]) -> String {
@@ -2228,9 +2279,20 @@ fn cmd_filetest(args: &[String]) -> String {
 
 fn cmd_time(args: &[String]) -> Result<String, String> {
     if args.is_empty() {
-        return Ok("times".to_string());
+        return Ok("_csh_time_self".to_string());
     }
-    Ok(format!("{{ TIMEFMT={TIME_FMT}; time {}; }}", render_cmd(args)?))
+    // zsh's `time` writes its report to the shell's stderr and cannot be
+    // pointed elsewhere, so the command's own stderr is parked on a spare
+    // descriptor and the report is collected from the shell's fd 2, then
+    // reprinted in tcsh's format on stdout. tcsh forks for the command (a
+    // `cd` or `set` under `time` does not stick), hence the subshell.
+    Ok(format!(
+        "{{ local _ctf=$(mktemp) _cfd _crc; exec {{_cfd}}>&2; \\
+TIMEFMT='%*U %*S %*E %P %F %W'; \\
+{{ time {{ ( {} ); }} 2>&$_cfd; }} 2>$_ctf; _crc=$?; \\
+_csh_time_fmt <$_ctf; exec {{_cfd}}>&-; rm -f $_ctf; (exit $_crc); }}",
+        render_cmd(args)?
+    ))
 }
 
 /// `nice [+N|-N] cmd`: the increment is added to the shell's (default 4).

@@ -121,6 +121,9 @@ enum Frame {
         extra_fi: usize,
         bid: usize,
         rid: usize,
+        /// A test in this chain ran a `{ cmd }`: when no branch runs the
+        /// block leaves that command's status (see `expr::LEAVES_STATUS`).
+        leaves: bool,
     },
     /// zsh `for`/`while` from csh `foreach`/`while`; `kw` names it in the
     /// "end not found" error.
@@ -128,6 +131,8 @@ enum Frame {
         kw: &'static str,
         bid: usize,
         rid: usize,
+        /// A `while` test ran a `{ cmd }`: the loop ends with that status.
+        leaves: bool,
     },
     /// One-iteration `for` carrying a csh `switch`.
     Switch {
@@ -285,6 +290,9 @@ pub struct Translator {
     /// final unterminated closer ends (`Modes::eof_skip`).
     top_seen: usize,
     eof_bid: Option<usize>,
+    /// The block just closed leaves a `{ cmd }` status: `after_close` and the
+    /// end-of-input trailer must not reset it to 0.
+    keep_status: bool,
     /// `cmd |` waiting for the `while`/`foreach` it feeds (`cmd | while (…)`)
     pipe_prefix: Option<String>,
 }
@@ -322,6 +330,7 @@ impl Translator {
             last_closer: false,
             top_seen: 0,
             eof_bid: None,
+            keep_status: false,
             pipe_prefix: None,
         }
     }
@@ -609,7 +618,10 @@ impl Translator {
             let level = self.depth();
             self.line(out, level, "fi");
         }
-        if self.modes.status {
+        if self.keep_status {
+            self.keep_status = false;
+            self.last_closer = false;
+        } else if self.modes.status {
             let level = self.body_level();
             self.line(out, level, ":");
             self.last_closer = false;
@@ -1263,6 +1275,7 @@ impl Translator {
             extra_fi: 0,
             bid,
             rid,
+            leaves: expr::leaves_status(&cond),
         });
         self.open_region(out);
     }
@@ -1314,6 +1327,9 @@ impl Translator {
                     }
                     let c = expr::translate_condition(&inner)?;
                     let c = if self.modes.status { format!(":; {c}") } else { c };
+                    if let Some(Frame::If { leaves, .. }) = self.stack.last_mut() {
+                        *leaves |= expr::leaves_status(&c);
+                    }
                     let rid = self.alloc_rid();
                     let c = match self.stack.last().and_then(Frame::bid) {
                         Some(bid) => self.branch_cond(bid, rid, &c),
@@ -1368,22 +1384,29 @@ impl Translator {
         }
         if matches!(self.stack.last(), Some(Frame::If { .. })) {
             self.close_region(out);
-            let (extra, no_else, ends_input) = match self.stack.last() {
+            let (extra, no_else, ends_input, leaves) = match self.stack.last() {
                 Some(Frame::If {
                     extra_fi,
                     has_else,
                     bid,
+                    leaves,
                     ..
-                }) => (*extra_fi, !*has_else, self.eof_bid == Some(*bid)),
-                _ => (0, false, false),
+                }) => (*extra_fi, !*has_else, self.eof_bid == Some(*bid), *leaves),
+                _ => (0, false, false, false),
             };
             let level = self.depth() - 1;
             // Every test false and no `else`: tcsh skips the last body to
-            // this `endif`.
-            if ends_input && no_else {
+            // this `endif`; and a failed `{ cmd }` test leaves its status.
+            if (ends_input || leaves) && no_else {
                 self.line(out, level, "else");
-                self.line(out, level + 1, Self::EOF_SKIP_SET);
+                if ends_input {
+                    self.line(out, level + 1, Self::EOF_SKIP_SET);
+                }
+                if leaves {
+                    self.line(out, level + 1, &format!("(exit ${})", expr::LEAVES_STATUS));
+                }
             }
+            self.keep_status = leaves && no_else;
             for _ in 0..=extra {
                 self.line(out, level, "fi");
             }
@@ -1457,6 +1480,7 @@ impl Translator {
             kw: "foreach",
             bid,
             rid,
+            leaves: false,
         });
         self.open_region(out);
         if let Some(flag) = ran_flag {
@@ -1497,6 +1521,7 @@ impl Translator {
                     kw: "while",
                     bid,
                     rid,
+                    leaves: expr::leaves_status(&c),
                 });
                 self.open_region(out);
             }
@@ -1513,7 +1538,13 @@ impl Translator {
             self.close_region(out);
             let level = self.depth() - 1;
             self.line(out, level, "done");
+            let leaves = matches!(self.stack.last(), Some(Frame::Loop { leaves: true, .. }));
+            if leaves {
+                // The test that ended the loop was a failed `{ cmd }`.
+                self.line(out, level, &format!("(exit ${{{}:-0}})", expr::LEAVES_STATUS));
+            }
             self.stack.pop();
+            self.keep_status = leaves;
             self.after_close(out);
         } else {
             self.emit_stub(out, "end: Not in while/foreach.");
@@ -1843,10 +1874,15 @@ fn starts_with_word(s: &str, word: &str) -> bool {
 
 /// `if c; then body; fi` on one line when `body` allows it.
 fn compose_if(cond: &str, body: &str) -> String {
+    // A failed `{ cmd }` test leaves that command's status behind.
+    let leave = format!("else (exit ${})", expr::LEAVES_STATUS);
+    let leaves = expr::leaves_status(cond);
     if body.contains('\n') || body.ends_with('&') || body.ends_with(';') {
-        format!("if {cond}; then\n  {body}\nfi")
+        let tail = if leaves { format!("{leave}\n") } else { String::new() };
+        format!("if {cond}; then\n  {body}\n{tail}fi")
     } else {
-        format!("if {cond}; then {body}; fi")
+        let tail = if leaves { format!("{leave}; ") } else { String::new() };
+        format!("if {cond}; then {body}; {tail}fi")
     }
 }
 
