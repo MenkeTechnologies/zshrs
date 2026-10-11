@@ -1239,11 +1239,24 @@ impl ShellExecutor {
             println!("    styles:       {:>6} entries", zstyles);
             println!();
 
+            // plugins.db tracks the plugin SOURCE FILES (path + mtime). Nothing
+            // fills its per-plugin function table any more — what a plugin
+            // defined is recorded in the recorder shard, listed next.
             if let Some(cache) = self.plugin_cache.get_or_init(crate::vm_helper::open_plugin_cache).as_ref() {
                 let (plugins, functions) = cache.stats();
-                println!("  {} {}", bold("plugins.db"), dim("(recorded plugin sources; daemon-ingested)"));
+                println!("  {} {}", bold("plugins.db"), dim("(plugin source files tracked)"));
                 println!("    plugins:      {:>6} rows", plugins);
-                println!("    functions:    {:>6} rows", functions);
+                if functions > 0 {
+                    println!("    functions:    {:>6} rows", functions);
+                }
+                println!();
+            }
+
+            if let Some((shard, counts)) = recorded_state_counts() {
+                println!("  {} {}", bold("recorded state"), dim(&format!("({shard}; what the recorder saw)")));
+                for (label, n) in counts {
+                    println!("    {:<14}{:>6}", format!("{label}:"), n);
+                }
                 println!();
             }
 
@@ -1536,7 +1549,12 @@ impl ShellExecutor {
                     return 1;
                 };
                 let (plugins, functions) = cache.stats();
-                println!("{} plugins, {} cached functions", plugins, functions);
+                let recorded = recorded_state_counts()
+                    .and_then(|(_, c)| c.into_iter().find(|(l, _)| *l == "functions").map(|(_, n)| n));
+                match recorded {
+                    Some(n) => println!("{plugins} plugins tracked, {n} functions recorded"),
+                    None => println!("{plugins} plugins tracked, {functions} cached functions"),
+                }
             }
 
             _ => {
