@@ -373,7 +373,7 @@ Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.zshrs/
 | **`index.rkyv`** | Top-level index: fq_name → shard id, generation, byte offset |
 | **`images/{hash8}-*.rkyv`** | Mmap-ready shards (system, completions, plugins, scripts, `.zshrc`, …) |
 | **`autoloads.rkyv`** | One compiled definition program per autoloaded function, keyed by name and stamped with the resolved fpath directory, a SHA-256 of the exact definition text, and the identity of the `zshrs` binary that compiled it. Each entry also records what the `$fpath` search found (the body it read and the state of the files it could have read there), so a later load is served by name with no `$fpath` search while the directory is still on `fpath` and those files are unchanged |
-| **`scripts.rkyv`** | A script run: one compiled chunk. A sourced file: the chunk of each event its loop executed, replayed without lexing. Keyed by path + mtime + build + the alias/option state the first run started from; a file that changes aliases or options itself is not stored |
+| **`scripts.rkyv`** | One compiled chunk per script file, keyed by path + mtime |
 | **`deparse.rkyv`** | Deparsed function bodies (the text `$functions` prints), keyed by a SHA-256 of the name, the body text and the option state the body is re-lexed under, and stamped with the identity of the `zshrs` binary that wrote them |
 
 **SQLite (read-only mirrors)** — same directory, different job: daemon-maintained copies you can query with SQL or `dbview`. They are **not** the bytecode cache and are **not** read when deciding cache hit/miss or when running compiled code.
@@ -911,16 +911,7 @@ so a single load-induced flake cannot register as a divergence.
 ```
 parity-fuzz --mode <mode> --count 300 --verify 3 --timeout-ms 20000
 parity-fuzz --shell csh --count 300 --verify 3     # zshrs --csh vs tcsh, csh grammar
-parity-fuzz --mode expand --shell dash --count 800 --verify 3   # expansion semantics vs a real Bourne shell
 ```
-
-`--mode expand` is the one mode every non-csh target runs: it generates expansion
-probes (field splitting under IFS variants, `"$@"` / `"$*"` and their unquoted forms,
-the `-` `=` `?` `+` operators, `#` `##` `%` `%%` with variable patterns, arithmetic,
-command substitution, quoting, tilde) in the dialect the `--shell` target's reference
-implements (POSIX, ksh, or bash). CI runs it against the zsh-referenced legs with an
-empty baseline; the real-shell legs are run by hand because their references differ
-by version between machines.
 
 | | zsh oracle | emulation targets |
 |---|---|---|

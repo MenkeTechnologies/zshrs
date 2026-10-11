@@ -98,8 +98,10 @@ pub fn translate_line(line: &str) -> Result<String, String> {
 fn translate_cmds(line: &str) -> Result<String, String> {
     STATE.with(|st| st.borrow_mut().commands += 1);
     let cmds = parse(line)?;
-    let mut segments: Vec<(String, Sep)> = Vec::new();
+    // each segment: its zsh text, its csh text (for the job notice), its separator
+    let mut segments: Vec<(String, String, Sep)> = Vec::new();
     let mut pipes: Vec<String> = Vec::new();
+    let mut csh_pipes: Vec<String> = Vec::new();
     let mut ops: Vec<Sep> = Vec::new();
     let mut pipeline: Vec<Simple> = Vec::new();
     let mut conns: Vec<Sep> = Vec::new();
@@ -124,13 +126,20 @@ fn translate_cmds(line: &str) -> Result<String, String> {
             continue;
         }
         pipes.push(render_pipeline(&pipeline, &conns, sep == Sep::Bg)?);
+        csh_pipes.push(csh_pipeline_text(&pipeline, &conns));
         pipeline.clear();
         conns.clear();
         match sep {
             Sep::And | Sep::Or => ops.push(sep),
             _ => {
-                segments.push((render_and_or(&pipes, &ops), sep));
+                let mut csh = csh_pipes[0].clone();
+                for (op, p) in ops.iter().zip(&csh_pipes[1..]) {
+                    csh.push_str(if *op == Sep::And { " && " } else { " || " });
+                    csh.push_str(p);
+                }
+                segments.push((render_and_or(&pipes, &ops), csh, sep));
                 pipes.clear();
+                csh_pipes.clear();
                 ops.clear();
             }
         }
@@ -140,27 +149,73 @@ fn translate_cmds(line: &str) -> Result<String, String> {
 }
 
 /// What tcsh prints on stdout after starting a background job, even in a
-/// script: `[job] pid`.
-const JOB_NOTICE: &str = "print -r -- \"[${#jobstates}] $!\";";
+/// script: `[job] pid`. The csh text of the job is kept for `wait`'s report.
+fn job_notice(text: &str) -> String {
+    format!(
+        "print -r -- \"[${{#jobstates}}] $!\"; _csh_jt[${{#jobstates}}]={};",
+        sq(text)
+    )
+}
+
+/// The csh spelling of one simple command, as a job report shows it.
+fn csh_simple_text(s: &Simple) -> String {
+    let mut out = match &s.sub {
+        Some(inner) => format!("( {} )", inner.trim()),
+        None => s.words.join(" "),
+    };
+    for r in s.ins.iter().chain(&s.outs) {
+        out.push(' ');
+        match r {
+            Redir::In(t) => out.push_str(&format!("< {t}")),
+            Redir::Here(d) => out.push_str(&format!("<< {d}")),
+            Redir::Out { target, append, err, force } => {
+                out.push_str(if *append { ">>" } else { ">" });
+                if *err {
+                    out.push('&');
+                }
+                if *force {
+                    out.push('!');
+                }
+                out.push_str(&format!(" {target}"));
+            }
+        }
+    }
+    out
+}
+
+fn csh_pipeline_text(stages: &[Simple], conns: &[Sep]) -> String {
+    let mut out = String::new();
+    for (k, s) in stages.iter().enumerate() {
+        if k > 0 {
+            out.push_str(if conns[k - 1] == Sep::PipeErr { " |& " } else { " | " });
+        }
+        out.push_str(&csh_simple_text(s));
+    }
+    out
+}
 
 /// Join `;`-separated segments. In csh `&` ends a whole `;` list: `a; b &`
 /// backgrounds both (job text `( a; b )`), unlike zsh where only `b` is
 /// backgrounded, so a multi-item list before `&` becomes `( a; b ) &`.
-fn group_background(segments: &[(String, Sep)]) -> String {
+fn group_background(segments: &[(String, String, Sep)]) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut group: Vec<&str> = Vec::new();
-    for (text, sep) in segments {
+    let mut csh_group: Vec<&str> = Vec::new();
+    for (text, csh, sep) in segments {
         group.push(text);
+        csh_group.push(csh);
         match sep {
             Sep::Bg if group.len() > 1 => {
                 parts.push(format!("( {} ) &", group.join("; ")));
-                parts.push(JOB_NOTICE.to_string());
+                parts.push(job_notice(&format!("( {} )", csh_group.join("; "))));
                 group.clear();
+                csh_group.clear();
             }
             Sep::Bg => {
                 parts.push(format!("{} &", group[0]));
-                parts.push(JOB_NOTICE.to_string());
+                parts.push(job_notice(csh_group[0]));
                 group.clear();
+                csh_group.clear();
             }
             _ => {}
         }
@@ -1197,6 +1252,15 @@ _a=(\"${(@P)_n}\"); if (( $#_a == 1 )); then _v=\"$_a[1]\"; else _v=\"(${(j: :)_
 else _v=\"${(P)_n}\"; fi; _l[$_n]=$_v; done; \
 { for _n in ${(ok)_l}; do print -r -- \"$_n\"$'\\t'\"${_l[$_n]}\"; done; } 2>/dev/null; return 0; } $? \"$@\"";
 
+/// Tell the translator how the script it is about to translate begins (see
+/// `ShellState::starts_with_filler`). Called once per whole-script
+/// translation, before the first line.
+pub fn note_script_start(src: &str) {
+    let first = src.split('\n').next().unwrap_or("").trim();
+    let filler = first.is_empty() || first.starts_with('#');
+    STATE.with(|st| st.borrow_mut().starts_with_filler = filler);
+}
+
 /// `@ name = …`, `@ name++`, `@ name[i] += …`: the variable the statement
 /// assigns joins the names the argument-less `set` / `@` listing shows, as a
 /// `set` does. A bare `@` (the listing) and an expression that starts with a
@@ -1215,25 +1279,17 @@ fn record_at_target(args: &[String]) {
     }
 }
 
-/// Tell the translator how the script it is about to translate begins (see
-/// `ShellState::starts_with_filler`). Called once per whole-script
-/// translation, before the first line.
-pub fn note_script_start(src: &str) {
-    let first = src.split('\n').next().unwrap_or("").trim();
-    let filler = first.is_empty() || first.starts_with('#');
-    STATE.with(|st| st.borrow_mut().starts_with_filler = filler);
-}
-
 /// The listing for `set` / `@` with no arguments: the fixed text with the names the
 /// script has `set` so far (translation runs in execution order).
 fn set_listing() -> String {
-    let (names, commands, filler): (Vec<String>, usize, bool) = STATE.with(|st| {
+    let (names, commands): (Vec<String>, usize) = STATE.with(|st| {
         let st = st.borrow();
-        (st.set_names.iter().cloned().collect(), st.commands, st.starts_with_filler)
+        (st.set_names.iter().cloned().collect(), st.commands)
     });
     // tcsh defines `_` (the previous command line; empty in a script) once a
-    // line has been read, so a listing on the very first line of a script is
-    // the only one without it. The listing is itself counted, hence 2.
+    // command has run, so the first command of a script lists without it. The
+    // listing is itself counted, hence 2.
+    let filler = STATE.with(|st| st.borrow().starts_with_filler);
     let head = if commands >= 2 || filler {
         SET_LISTING_HEAD.replacen("_l=(", "_l=(_ '' ", 1)
     } else {
@@ -2224,10 +2280,10 @@ printf '[%d]  %s %s%-29s %s\\n' $_n \"$_k\" \"{}\" \"$_s\" \"$jobtexts[$_n]\"; d
 
 /// `wait`: block for every background job and report each on stderr the way
 /// tcsh does (`Done`, `Exit N`, or the terminating signal).
-const WAIT: &str = "() { local _n _s _f _t _k; local _i=0; for _n in ${(onk)jobstates}; do \
-_t=$jobtexts[$_n]; wait %$_n 2>/dev/null; _s=$?; (( _s == 127 )) && _s=0; \
+const WAIT: &str = "() { local _n _s _f _t _k _c=${#jobstates}; local _i=0; for _n in ${(On)${(k)jobstates}}; do \
+_t=${_csh_jt[$_n]:-${jobtexts[$_n]}}; wait %$_n 2>/dev/null; _s=$?; (( _s == 127 )) && _s=0; \
 case $_s in 0) _f=Done;; 129) _f=Hangup;; 130) _f=Interrupt;; 137) _f=Killed;; 143) _f=Terminated;; \
-*) _f=\"Exit $_s\";; esac; _k=' '; (( _i == 0 )) && _k='+'; _i=$(( _i + 1 )); \
+*) _f=\"Exit $_s\";; esac; _k='+'; (( _i == 0 && _c % 2 == 1 )) && _k=' '; _i=$(( _i + 1 )); \
 printf '[%d]  %s %-29s %s\\n' $_n \"$_k\" \"$_f\" \"$_t\" >&2; done; true; }";
 
 /// `fg` / `bg`: a script has no job control (`No job control in this
@@ -2284,12 +2340,11 @@ fn cmd_time(args: &[String]) -> Result<String, String> {
     // zsh's `time` writes its report to the shell's stderr and cannot be
     // pointed elsewhere, so the command's own stderr is parked on a spare
     // descriptor and the report is collected from the shell's fd 2, then
-    // reprinted in tcsh's format on stdout. tcsh forks for the command (a
-    // `cd` or `set` under `time` does not stick), hence the subshell.
+    // reprinted in tcsh's format on stdout.
     Ok(format!(
-        "{{ local _ctf=$(mktemp) _cfd _crc; exec {{_cfd}}>&2; \\
-TIMEFMT='%*U %*S %*E %P %F %W'; \\
-{{ time {{ ( {} ); }} 2>&$_cfd; }} 2>$_ctf; _crc=$?; \\
+        "{{ local _ctf=$(mktemp) _cfd _crc; exec {{_cfd}}>&2; \
+TIMEFMT='%*U %*S %*E %P %F %W'; \
+{{ time {{ ( {} ); }} 2>&$_cfd; }} 2>$_ctf; _crc=$?; \
 _csh_time_fmt <$_ctf; exec {{_cfd}}>&-; rm -f $_ctf; (exit $_crc); }}",
         render_cmd(args)?
     ))
