@@ -12794,7 +12794,7 @@ pub fn bin_alias(
     let recorder_active = crate::recorder::is_enabled();
     #[cfg(feature = "recorder")]
     let recorder_ctx = if recorder_active {
-        Some(crate::recorder::recorder_ctx_global())
+        Some(crate::recorder::recorder_ctx_global_for("alias"))
     } else {
         None
     };

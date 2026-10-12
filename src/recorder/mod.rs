@@ -1181,6 +1181,62 @@ pub fn recorder_ctx_global() -> RecordCtx {
         fn_chain,
     }
 }
+/// `recorder_ctx_global` for a builtin that may have been reached through a
+/// user function shadowing its name (zinit: `functions[alias]=':zinit-tmp-subst-alias "$@";'`
+/// whose body ends in `builtin alias`). The position of the mutation is then
+/// the wrapper's own `builtin alias` line, which names the wrapper's file and
+/// not where the user wrote the alias. In that case the site is the call site
+/// of the innermost frame named `builtin`; `fn_chain` is left as is.
+pub fn recorder_ctx_global_for(builtin: &str) -> RecordCtx {
+    let mut ctx = recorder_ctx_global();
+    let stack = crate::ported::params::getaparam("funcstack").unwrap_or_default();
+    let trace = crate::ported::params::getaparam("funcfiletrace").unwrap_or_default();
+    if let Some((file, line)) = shadow_call_site(builtin, &stack, &trace) {
+        ctx.file = Some(file);
+        ctx.line = Some(line);
+    }
+    ctx
+}
+
+/// Call site (`file`, `line`) of the innermost `$funcstack` frame named
+/// `builtin`. `$funcfiletrace[i]` is the call site of `$funcstack[i]`, both
+/// innermost first.
+fn shadow_call_site(builtin: &str, stack: &[String], trace: &[String]) -> Option<(String, u32)> {
+    let i = stack.iter().position(|f| f == builtin)?;
+    let (file, line) = trace.get(i)?.rsplit_once(':')?;
+    if file.is_empty() {
+        return None;
+    }
+    Some((file.to_string(), line.parse().ok()?))
+}
+
+#[cfg(test)]
+mod shadow_call_site_tests {
+    use super::shadow_call_site;
+
+    fn v(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn shadowing_function_reports_its_caller_line() {
+        let stack = v(&[":zinit-tmp-subst-alias", "alias", "/p/.kubectl_aliases"]);
+        let trace = v(&["/z/zinit.zsh:818", "/p/.kubectl_aliases:42", "/p/plugin.zsh:7"]);
+        assert_eq!(
+            shadow_call_site("alias", &stack, &trace),
+            Some(("/p/.kubectl_aliases".to_string(), 42))
+        );
+    }
+
+    #[test]
+    fn no_shadowing_frame_or_empty_file_is_none() {
+        let stack = v(&["setup", "/p/rc"]);
+        assert_eq!(shadow_call_site("alias", &stack, &v(&["/p/rc:3", "/p/x:1"])), None);
+        let stack = v(&["alias"]);
+        assert_eq!(shadow_call_site("alias", &stack, &v(&[":1"])), None);
+    }
+}
+
 /// The source position of a mutation as a FILE line. Inside a function
 /// `$LINENO` counts from the function body's first line (zsh prints `1` for
 /// the statement right after `name() {`), so on its own it names the wrong
