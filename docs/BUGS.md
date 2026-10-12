@@ -61162,3 +61162,21 @@ zshrs (before)   thread 'main' panicked … env.rs:878
 
 **Root cause.** The drop-in mode probe added for bundled docs (`35c2c28394`) read
 `std::env::args()`, which panics on an argument that is not valid UTF-8. It now uses `args_os()`.
+
+## #1173 — `${h[k][(i)pat]}` (chained search subscript on a scalar element) answered the first character — fixed
+
+**Status:** `fixed` 2026-10-12.
+
+```console
+typeset -A h; h[k]=abcdef; print ${h[k][(i)c]} ${h[k][(r)c]}
+zsh 5.9.2        3 c
+zshrs (before)   a a
+```
+
+**Root cause.** The chained-subscript pass in `paramsubst` sent a flag group on a scalar to
+the character-index arm, which only knows numeric subscripts: `parse_idx` could not read
+`(i)c` and fell back to index 1. C reads the chained subscript with the same `getindex` /
+`getarg` as the first (c:Src/subst.c:2890-2900); the scalar search arm of `params::getarg`
+(c:Src/params.c:1798-1985) now serves the chain too. Visible consumer: zsh-async's
+`pos=${ASYNC_PROCESS_BUFFER[$worker][(i)$null]}` into an `integer` — spaceship-prompt failed
+every prompt with `async_process_results:16: bad math expression: illegal character:`.

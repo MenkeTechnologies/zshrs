@@ -2634,3 +2634,19 @@ fn recursive_glob_inside_command_substitution_after_a_parent_glob_does_not_hang(
     // docs, docs/guide.md, src, src/a, src/a/main.rs, src/b, src/b/util.rs
     assert_eq!(out.trim(), "7");
 }
+
+/// #1173 — a chained search subscript on a scalar element
+/// (`${h[k][(i)c]}`) was read as arithmetic and answered the first
+/// character. zsh-async's `async_process_results` does
+/// `pos=${BUF[$w][(i)$null]}`, so every spaceship prompt died with
+/// "bad math expression".
+#[test]
+fn bug_1173_chained_search_subscript_on_scalar_element() {
+    let script = r#"
+typeset -A h; h[k]=abcabc; s=$'ab\0cd'; h[z]=$s; n=$'\0'
+print ${h[k][(i)c]} ${h[k][(I)c]} ${h[k][(r)c]} ${h[k][(i)q]} ${h[k][(I)q]}
+integer -l pos; pos=${h[z][(i)$n]}; print $pos"#;
+    let (rc, out, err) = run_zshrs(script);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "3 6 c 7 0\n3\n");
+}

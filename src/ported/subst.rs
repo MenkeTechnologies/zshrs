@@ -13373,7 +13373,29 @@ pub fn paramsubst(
                     }
                 }
             } else {
-                let scalar_res: String = {
+                // c:Src/subst.c:2890-2900 — the chained subscript is read by the same
+                // `getindex`/`getarg` as a first subscript, so a SEARCH flag group
+                // (`${h[k][(i)c]}`, `${s[1,9][(r)x]}` on a scalar) searches the
+                // characters of `cur` instead of being parsed as arithmetic, where
+                // `parse_idx` fell back to index 1. `getarg`'s scalar arm is the one
+                // port of that search (c:1798-1985). A range keeps the two-bound path.
+                let scalar_search_hit: Option<String> = if s2.starts_with('(')
+                    && crate::subscript_escape::subscript_range_bounds(s2, &subscript_split)
+                        .is_none()
+                    && s2[1..]
+                        .find(')')
+                        .is_some_and(|cr| s2[1..1 + cr].contains(['r', 'R', 'i', 'I', 'k', 'K']))
+                {
+                    match crate::ported::params::getarg(s2, None, None, Some(&cur)) {
+                        Some(crate::ported::params::getarg_out::Value(v)) => Some(v.to_str()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let scalar_res: String = if let Some(hit) = scalar_search_hit {
+                    hit
+                } else {
                 // Slice form `M,P` or single index `M`. Negative indices
                 // count from the end (per zsh's 1-based-from-1 / -1-from-
                 // end convention).
