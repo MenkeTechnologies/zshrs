@@ -393,7 +393,8 @@ pub fn execbuiltin(
 
     // c:270-271 — `flags = bn->node.flags; optstr = bn->optstr;`
     flags = bn_ref.node.flags; // c:270
-    optstr = bn_ref.optstr.clone(); // c:271
+    // c:271 — `optstr = bn->optstr;` is read in place below; no per-call copy.
+    optstr = None;
 
     // c:275 — `argc = countlinknodes(args);` — total argv length.
     argc = args.len() as i32; // c:275
@@ -403,10 +404,9 @@ pub fn execbuiltin(
     let mut argv: usize = 0; // c:285 char **argv = argarr;
 
     // c:296-411 — option parser body.
-    if let Some(ref os) = optstr.clone() {
+    if let Some(os) = bn_ref.optstr.as_deref() {
         // c:296
-        let optstr_local = os.clone();
-        let mut optstr_bytes: Vec<u8> = optstr_local.into_bytes();
+        let mut optstr_bytes: Vec<u8> = os.as_bytes().to_vec();
         // !!! DASH-STRICT GATE (no C counterpart) !!! dash's `echo` recognises only
         // `-n`; `-e` / `-E` (and clusters like `-ne`) are printed as text.
         if crate::dash_mode::dash_strict() && name == "echo" {
@@ -953,9 +953,9 @@ pub fn execbuiltin(
     }
 
     // c:506 — `return (*(bn->handlerfunc))(name, argv, &ops, bn->funcid);`
-    let trimmed: Vec<String> = argarr[argv..].to_vec();
+    let trimmed: &[String] = &argarr[argv..];
     let handler = bn_ref.handlerfunc.expect("handlerfunc checked at c:264");
-    handler(&name, &trimmed, &ops, bn_ref.funcid) // c:506
+    handler(&name, trimmed, &ops, bn_ref.funcid) // c:506
 }
 
 /// Port of `bin_enable()` from `Src/builtin.c:517`.

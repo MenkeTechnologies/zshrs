@@ -17309,22 +17309,17 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
 }
 
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
-    let mut popped: Vec<Value> = Vec::with_capacity(argc as usize);
+    // The VM stack yields the last argument first. Words are converted in pop
+    // order and the vector reversed once, so an array argument's own element
+    // order must survive that reversal: its items are pushed back-to-front.
+    let mut args: Vec<String> = Vec::with_capacity(argc as usize);
     for _ in 0..argc {
-        popped.push(vm.pop());
-    }
-    popped.reverse();
-    let mut args: Vec<String> = Vec::with_capacity(popped.len());
-    for v in popped {
-        match v {
-            Value::Array(items) => {
-                for item in items.iter() {
-                    args.push(item.to_str());
-                }
-            }
+        match vm.pop() {
+            Value::Array(items) => args.extend(items.iter().rev().map(|item| item.to_str())),
             other => args.push(other.to_str()),
         }
     }
+    args.reverse();
     // `expand_glob` set the glob-failed cell when a no-match glob
     // triggered nomatch (c:Src/glob.c:1877). Signal the failure via
     // last_status + the per-command glob_failed cell; the dispatcher
