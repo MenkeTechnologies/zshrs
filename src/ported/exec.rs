@@ -7108,7 +7108,12 @@ pub fn doshfunc(
                                                                                     // zshrs keeps the counter in the $OPTIND param plus the ZOPTIND/
                                                                                     // OPTCIND trackers getopts syncs against; reset all three.
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) {
-        crate::ported::params::setiparam("OPTIND", 1); // c:5967 zoptind = 1
+        // Only a changed counter needs the parameter written: a store runs the
+        // whole assignment path (paramtab lock, special setfn), and the caller
+        // usually has OPTIND at 1 already.
+        if funcsave_optind.as_deref() != Some("1") {
+            crate::ported::params::setiparam("OPTIND", 1); // c:5967 zoptind = 1
+        }
         crate::ported::builtin::ZOPTIND.store(1, Ordering::Relaxed);
         crate::ported::builtin::OPTCIND.store(0, Ordering::Relaxed); // c:5968 optcind = 0
     }
@@ -7669,7 +7674,11 @@ pub fn doshfunc(
         if let Some(saved) = funcsave_optind {
             // c:6121 `zoptind = funcsave->zoptind;`
             if let Ok(n) = saved.parse::<i64>() {
-                crate::ported::params::setiparam("OPTIND", n);
+                // A body that left OPTIND as it found it (no `getopts`, no
+                // assignment) needs no write-back.
+                if crate::ported::params::getsparam("OPTIND").as_deref() != Some(saved.as_str()) {
+                    crate::ported::params::setiparam("OPTIND", n);
+                }
                 crate::ported::builtin::ZOPTIND.store(n as i32, Ordering::Relaxed);
             } else {
                 crate::ported::params::setsparam("OPTIND", &saved);
