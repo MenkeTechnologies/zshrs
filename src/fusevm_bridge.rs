@@ -17955,6 +17955,29 @@ fn execcmd_forked_level(is_subsh: bool, vm_addr: usize) {
     }
 }
 
+/// The child half of C's `getproc` (c:Src/exec.c:5095 / c:5148):
+/// `entersubsh(ESUB_ASYNC|ESUB_PGRP, NULL)` — with job control the child
+/// leads its own process group, so a consumer's `kill -TERM -$pid`
+/// (zsh-autosuggestions' async cancel) reaches it — and the interactive
+/// SIGPIPE disposition drops back to default (c:Src/exec.c:1228), so a
+/// reader that went away ends the child quietly instead of printing
+/// `write error: broken pipe`.
+///
+/// !!! WARNING: RUST-ONLY HELPER !!! The group is the child's own; C joins
+/// the enclosing job's leader when `jobtab[thisjob].gleader` is set, which the
+/// VM does not know at expansion time.
+fn procsub_child_enter_subsh() {
+    let monitor = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
+    crate::ported::exec::entersubsh(
+        crate::ported::exec::esub::ASYNC | crate::ported::exec::esub::PGRP,
+        None,
+    );
+    if monitor {
+        unsafe { libc::setpgid(0, 0) };
+    }
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+}
+
 fn forked_child_subsh_levels() {
     use std::sync::atomic::Ordering;
     crate::ported::exec::FORKLEVEL.store(
@@ -20615,6 +20638,7 @@ impl fusevm::ShellHost for ZshrsHost {
             }
             0 => {
                 forked_child_subsh_levels(); // c:Src/exec.c:1221
+                procsub_child_enter_subsh(); // c:Src/exec.c:5095
                 // c:Src/exec.c:5095 entersubsh → c:1200 `zsh_subshell++`.
                 std::mem::forget(CmdSubstSubshellBump::enter());
                 // Child: close read end, dup write end to stdout,
@@ -20658,6 +20682,12 @@ impl fusevm::ShellHost for ZshrsHost {
                 unsafe { libc::_exit(0) };
             }
             child_pid => {
+                // The child leads its own group (see procsub_child_enter_subsh);
+                // set it from this side too so `kill -TERM -$pid` cannot lose
+                // the race with the child's own setpgid.
+                if crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) {
+                    unsafe { libc::setpgid(child_pid, child_pid) };
+                }
                 // c:Src/exec.c:5092 `procsubstpid = pid;` — record the
                 // forked child's PID so `${sysparams[procsubstpid]}`
                 // returns it (was reading the never-updated atomic, so it
@@ -20751,6 +20781,7 @@ impl fusevm::ShellHost for ZshrsHost {
             }
             0 => {
                 forked_child_subsh_levels(); // c:Src/exec.c:1221
+                procsub_child_enter_subsh(); // c:Src/exec.c:5148
                 // c:Src/exec.c:5150 entersubsh → c:1200 `zsh_subshell++`.
                 std::mem::forget(CmdSubstSubshellBump::enter());
                 // Child: close the write end (c: closem after redup),
@@ -20793,6 +20824,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 unsafe { libc::_exit(0) };
             }
             child_pid => {
+                if crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) {
+                    unsafe { libc::setpgid(child_pid, child_pid) };
+                }
                 // c:Src/exec.c:5143 `procsubstpid = pid;` — same fix as
                 // the `<(cmd)` in-path above: record the forked child's
                 // PID for `${sysparams[procsubstpid]}` (was always 0).

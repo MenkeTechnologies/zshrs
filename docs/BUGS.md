@@ -61223,3 +61223,21 @@ precommand walk. C tries the null-exec first (c:3380-3392: `(cflags & BINF_EXEC)
 gates the error. zsh-autosuggestions' `_zsh_autosuggest_async_request` opens its suggestion pipe
 with `builtin exec {_ZSH_AUTOSUGGEST_ASYNC_FD}< <(…)`, so every keystroke raised the error and no
 suggestion ever arrived.
+
+## #1176 — process-substitution child did not lead its own process group — fixed
+
+**Status:** `fixed` 2026-10-12.
+
+```console
+zsh -f -i: exec {fd}< <(echo $sysparams[pid]; sleep 20); read -u $fd p; kill -TERM -$p; print $?
+zsh 5.9.2        0
+zshrs (before)   kill: kill -<pid> failed: no such process      1
+```
+
+**Root cause.** `getproc`'s child runs `entersubsh(ESUB_ASYNC|ESUB_PGRP)` (c:Src/exec.c:5095, c:5148);
+with MONITOR that makes it a process-group leader. The VM's two process-substitution forks skipped
+it, so the child stayed in the shell's group. zsh-autosuggestions cancels its async request with
+`kill -TERM -$_ZSH_AUTOSUGGEST_CHILD_PID` (MONITOR on); the kill failed, the child kept running,
+and its `echo -nE "$suggestion"` hit the closed pipe: `_zsh_autosuggest_async_request:36: write
+error: broken pipe`. Both fork arms now call `procsub_child_enter_subsh` (entersubsh, own group
+under MONITOR, SIGPIPE back to default) and the parent sets the same group.

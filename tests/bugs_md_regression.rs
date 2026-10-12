@@ -2710,3 +2710,98 @@ builtin exec {G}</dev/null; (( G >= 10 )); print "G_ok=$?"; builtin exec {G}<&-"
     assert_eq!(rc, 0, "stderr: {err}");
     assert_eq!(out, "rc=0 child=4242 got=[suggest]\nG_ok=0\n");
 }
+
+/// #1176 — an interactive process-substitution child leads its own process
+/// group (c:Src/exec.c:5095/5148 `entersubsh(ESUB_ASYNC|ESUB_PGRP)`), so
+/// `kill -TERM -$pid` reaches it. zsh-autosuggestions cancels its async request
+/// that way; with the child left in the shell's group the kill failed with
+/// `no such process`, the child kept running and wrote into the closed pipe:
+/// `_zsh_autosuggest_async_request:36: write error: broken pipe`.
+///
+/// Needs MONITOR, hence a pty.
+#[test]
+fn bug_1176_interactive_procsub_child_leads_its_own_group() {
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("zshrs_procsub_pg_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(dir.join(".zshrc"), "PS1='@ '\nzmodload zsh/system\n").expect("write rc");
+
+    let mut master: libc::c_int = 0;
+    let pid = unsafe {
+        libc::forkpty(
+            &mut master,
+            std::ptr::null_mut(),
+            std::ptr::null_mut::<libc::termios>(),
+            std::ptr::null_mut::<libc::winsize>(),
+        )
+    };
+    assert!(pid >= 0, "forkpty failed");
+    if pid == 0 {
+        let zdot = std::ffi::CString::new(dir.to_string_lossy().as_ref()).unwrap();
+        unsafe {
+            libc::setenv(c"TERM".as_ptr(), c"dumb".as_ptr(), 1);
+            libc::setenv(c"ZDOTDIR".as_ptr(), zdot.as_ptr(), 1);
+            libc::setenv(c"HOME".as_ptr(), zdot.as_ptr(), 1);
+        }
+        let bin =
+            std::ffi::CString::new(zshrs_bin().unwrap().to_string_lossy().as_ref()).unwrap();
+        let i = std::ffi::CString::new("-i").unwrap();
+        unsafe {
+            libc::execl(bin.as_ptr(), bin.as_ptr(), i.as_ptr(), std::ptr::null::<libc::c_char>());
+            libc::_exit(127);
+        }
+    }
+
+    let mut f = unsafe { std::fs::File::from_raw_fd(master) };
+    let mut out = Vec::new();
+    let mut buf = [0u8; 8192];
+    // Wait for the first prompt (`@ `) so the line is typed into a live editor.
+    let startup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < startup_deadline
+        && !String::from_utf8_lossy(&out).contains("@ ")
+    {
+        match f.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    out.clear();
+    let _ = f.write_all(
+        b"exec {fd}< <(echo $sysparams[pid]; sleep 20); read -u $fd p; \
+          kill -TERM -$p; print KILLRC=$?\n",
+    );
+    let _ = f.flush();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if String::from_utf8_lossy(&out).contains("KILLRC=") {
+            // the echo of the typed line contains the literal `KILLRC=$?`
+            let s = String::from_utf8_lossy(&out);
+            if s.matches("KILLRC=").count() >= 2 {
+                break;
+            }
+        }
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+            Err(_) => break,
+        }
+    }
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+        let mut st = 0;
+        libc::waitpid(pid, &mut st, 0);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out).replace('\r', "");
+    assert!(
+        text.contains("KILLRC=0"),
+        "kill -TERM -$pid on the procsub child failed; pty said: {text:?}"
+    );
+}
