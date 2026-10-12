@@ -61198,8 +61198,11 @@ disagreed with dispatch. They now share `ext_builtins::is_undefined_contrib_func
 spaceship-prompt's `if spaceship::exists compdef` guard (`command -v`) therefore passed and the
 following `compdef _spaceship spaceship` printed `command not found`.
 
-**Open, same session:** `[[ -n *.js(#qN^/) ]]` compiled before `setopt extendedglob` takes effect
-is globbed with the qualifier parser even when EXTENDED_GLOB is off at run time, printing
-`unknown file attribute: #` where zsh (c:Src/glob.c:1191, `checkglobqual` with `nobareglob = 1`)
-treats the word as literal. `compile_zsh.rs` `cond_operand_has_globqual` decides at compile time.
-spaceship's `spaceship_node` hits it.
+**Second half — also fixed.** `[[ -n *.js(#qN^/) ]]` was globbed with the qualifier parser even when
+EXTENDED_GLOB was off at run time, printing `unknown file attribute: #` where zsh treats the word as
+literal (c:Src/glob.c:1191 reads `(#q` only `isset(EXTENDEDGLOB)`, and `cond_subst` passes
+`nobareglob = 1`, c:Src/cond.c:44). `compile_zsh.rs` `cond_operand_has_globqual` decides at compile
+time, so a cond operand ending in a qualifier now compiles through `compile_cond_globqual_operand`:
+text mode 14 / `BUILTIN_COND_GLOB_EXPAND` glob only under run-time EXTENDED_GLOB, and the result is
+sepjoined into one word (c:Src/cond.c:51), which also fixes `-n` on a multi-match operand
+(`syntax error` status before). spaceship's `spaceship_node` hit both.

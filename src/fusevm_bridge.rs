@@ -7647,6 +7647,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // creates the literal file `*.txt`, and `wc -c < *.txt` errors
     // "no such file or directory: *.txt". Bug #36 follow-up in
     // docs/BUGS.md.
+    vm.register_builtin(BUILTIN_COND_GLOB_EXPAND, |vm, _argc| {
+        let raw = vm.pop();
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB) {
+            let text = match raw {
+                Value::Array(items) => items
+                    .iter()
+                    .map(|v| v.to_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                other => other.to_str(),
+            };
+            return Value::str(crate::ported::lex::untokenize(&text));
+        }
+        let noglob =
+            opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
+        glob_word_noting_errflag(raw, noglob)
+    });
     vm.register_builtin(BUILTIN_REDIR_GLOB_EXPAND, |vm, _argc| {
         let raw = vm.pop();
         let noglob =
@@ -15380,6 +15397,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // Mode 12 = the pattern-operand spelling of mode 9, so it
                     // owes the same "singsub never reaches globlist" rule.
                     || mode == 12
+                    // Mode 14 = a `[[ ]]` operand ending in a glob qualifier
+                    // (c:Src/cond.c:43-51). c:Src/glob.c:1191 reads `(#q` only
+                    // under EXTENDED_GLOB and cond_subst passes nobareglob = 1
+                    // (c:Src/cond.c:44), so with the option off at run time the
+                    // word is plain singsub output and never reaches zglob.
+                    || (mode == 14
+                        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB))
                     // Mode 11 = a segment of a larger word (see compile_zsh's
                     // text-expansion arm): c:Src/exec.c:3755-3757 globs the
                     // assembled word, so the segment itself is not globbed.
@@ -19169,6 +19193,13 @@ pub const BUILTIN_GLOB_EXPAND: u16 = 343;
 // last-registration-wins, so a duplicate id silently shadows the
 // earlier handler.
 pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 628;
+
+/// Filename generation for a `[[ ]]` operand that ends in a glob qualifier
+/// (c:Src/cond.c:43-51 `cond_subst`). c:Src/glob.c:1191 only recognises
+/// `(#q…)` when EXTENDED_GLOB is set at RUN time and `cond_subst` passes
+/// `nobareglob = 1`, so with the option off the word is plain `singsub`
+/// output: literal, untokenized. Same stack shape as BUILTIN_GLOB_EXPAND.
+pub const BUILTIN_COND_GLOB_EXPAND: u16 = 791;
 
 /// Reset the default-word glob-pending carrier at the START of a word
 /// whose source contains a glob metachar (so the flag never leaks from a

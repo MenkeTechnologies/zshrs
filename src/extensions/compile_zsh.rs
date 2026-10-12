@@ -351,6 +351,13 @@ pub struct ZshCompiler {
     /// wrote to the matches instead of creating the literal file
     /// `*.txt` (Bug #36 follow-up in docs/BUGS.md).
     pub redir_word_depth: i32,
+    /// > 0 while compiling a `[[ ]]` operand that ends in a glob qualifier
+    /// (c:Src/cond.c:43-51). `glob_expand_builtin` then picks
+    /// BUILTIN_COND_GLOB_EXPAND, which decides at RUN time whether the
+    /// qualifier is one: c:Src/glob.c:1191 reads `(#q` only
+    /// `isset(EXTENDEDGLOB)`, and cond_subst passes `nobareglob = 1`
+    /// (c:Src/cond.c:44), so with the option off the word is literal.
+    pub cond_qual_glob_depth: i32,
     /// Recursion guard for the default-word glob pass. `compile_word_str`
     /// recurses into each Expansion segment of a multi-segment word; only
     /// the OUTERMOST (depth 0) call brackets the whole assembled word
@@ -469,6 +476,7 @@ impl ZshCompiler {
             noexec_gates: Vec::new(),
             stage_fds_merge_stderr: false,
             redir_word_depth: 0,
+            cond_qual_glob_depth: 0,
             word_seg_depth: 0,
             assign_builtin_arg_depth: 0,
             word_emitted_glob: false,
@@ -487,6 +495,8 @@ impl ZshCompiler {
     fn glob_expand_builtin(&self) -> u16 {
         if self.redir_word_depth > 0 {
             crate::vm_helper::BUILTIN_REDIR_GLOB_EXPAND
+        } else if self.cond_qual_glob_depth > 0 {
+            crate::vm_helper::BUILTIN_COND_GLOB_EXPAND
         } else {
             crate::vm_helper::BUILTIN_GLOB_EXPAND
         }
@@ -536,6 +546,10 @@ impl ZshCompiler {
             }
         } else if base_mode == 0 && self.redir_word_depth > 0 {
             7
+        } else if base_mode == 0 && self.cond_qual_glob_depth > 0 {
+            // Default expansion, but glob only under run-time EXTENDED_GLOB —
+            // see `cond_qual_glob_depth`.
+            14
         } else {
             base_mode
         }
@@ -13121,10 +13135,7 @@ impl ZshCompiler {
                     if Self::cond_operand_has_globqual(arg) {
                         // c:Src/cond.c:43-51 — glob-qualifier operands take the
                         // `prefork(args, 0, NULL)` + `zglob` branch, not singsub.
-                        let saved = self.singsub_depth;
-                        self.singsub_depth = 0;
-                        self.compile_word_str(arg);
-                        self.singsub_depth = saved;
+                        self.compile_cond_globqual_operand(arg);
                     } else {
                         self.compile_singsub_word_noglob(arg);
                     }
@@ -13204,10 +13215,7 @@ impl ZshCompiler {
                             // c:Src/cond.c:43-51 — the glob-qualifier branch of
                             // `cond_subst` preforks with flags 0, NOT
                             // PREFORK_SINGLE, then runs `zglob` and sepjoins.
-                            let saved = self.singsub_depth;
-                            self.singsub_depth = 0;
-                            self.compile_word_str(op);
-                            self.singsub_depth = saved;
+                            self.compile_cond_globqual_operand(op);
                         } else {
                             self.compile_singsub_word_noglob(op);
                         }
@@ -13242,10 +13250,7 @@ impl ZshCompiler {
                     // and a qualifier that matches nothing is "no matches
                     // found". The right side of `=` / `==` / `!=` is a pattern
                     // and never reaches cond_subst (c:201-208).
-                    let saved = self.singsub_depth;
-                    self.singsub_depth = 0;
-                    self.compile_word_str(left);
-                    self.singsub_depth = saved;
+                    self.compile_cond_globqual_operand(left);
                 } else if left_has_unquoted_glob {
                     self.compile_singsub_word_noglob(left);
                 } else {
@@ -13727,6 +13732,22 @@ impl ZshCompiler {
             }
         };
         self.builder.emit(Op::TestFile(test_byte), 0);
+    }
+
+    /// Compile a `[[ ]]` operand that ends in a glob qualifier through the
+    /// `prefork(args, 0, NULL)` + `zglob` branch of `cond_subst`
+    /// (c:Src/cond.c:43-51), with the run-time EXTENDED_GLOB gate (see
+    /// `cond_qual_glob_depth`).
+    fn compile_cond_globqual_operand(&mut self, w: &str) {
+        let saved = self.singsub_depth;
+        self.singsub_depth = 0;
+        self.cond_qual_glob_depth += 1;
+        self.compile_word_str(w);
+        self.cond_qual_glob_depth -= 1;
+        self.singsub_depth = saved;
+        // c:Src/cond.c:51 `*strp = sepjoin(...)` — the operand is ONE word.
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN, 1), 0);
     }
 
     /// True when a `[[ … ]]` operand must be expanded with filesystem

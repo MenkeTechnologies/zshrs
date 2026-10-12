@@ -2666,3 +2666,24 @@ autoload -Uz compinit; command -v compinit; print d=$?"#;
     assert_eq!(rc, 0, "stderr: {err}");
     assert_eq!(out, "a=1\ncompinit: none\nb=1\nc=0\ncompinit\nd=0\n");
 }
+
+/// #1174 (second half) — a `[[ ]]` operand ending in `(#q…)` is globbed only
+/// when EXTENDED_GLOB is set at RUN time (c:Src/glob.c:1191, `cond_subst`
+/// passes nobareglob = 1); with it off the word is literal. zshrs decided at
+/// compile time and died with `unknown file attribute: #`. A multi-match
+/// operand is one sepjoined word (c:Src/cond.c:51), so `-n` is true.
+#[test]
+fn bug_1174_cond_globqual_operand_follows_runtime_extendedglob() {
+    let script = r#"
+f() { [[ -n *.nope(#qN^/) ]]; print off=$?; }
+f
+setopt extendedglob
+f
+d=$(mktemp -d); : > $d/a.x; : > $d/b.x
+[[ -n $d/*.x(#q.) ]]; print multi=$?
+[[ -z $d/*.y(#qN) ]]; print empty=$?
+command rm -rf -- $d"#;
+    let (rc, out, err) = run_zshrs(script);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "off=0\noff=1\nmulti=0\nempty=0\n");
+}
