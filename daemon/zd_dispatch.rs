@@ -434,6 +434,8 @@ fn daemon_start(paths: &crate::paths::CachePaths, exe: &std::path::Path) -> Resu
     // SAFETY: setsid is async-signal-safe and touches no Rust state.
     unsafe {
         cmd.pre_exec(|| {
+            // Do not hand the daemon the shell's (possibly SIGCHLD-blocking) mask.
+            let _ = nix::sys::signal::SigSet::empty().thread_set_mask();
             let _ = nix::unistd::setsid();
             Ok(())
         });

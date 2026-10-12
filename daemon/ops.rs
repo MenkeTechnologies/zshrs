@@ -3811,7 +3811,9 @@ fn spawn_replacement_daemon() -> std::io::Result<u32> {
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {
-            // Fully detach: setsid + close stdio.
+            // Fully detach: setsid + close stdio + clear the inherited
+            // signal mask (a blocked SIGCHLD stops the daemon reaping jobs).
+            let _ = nix::sys::signal::SigSet::empty().thread_set_mask();
             let _ = nix::unistd::setsid();
             for fd in 0..3 {
                 let _ = nix::unistd::close(fd);

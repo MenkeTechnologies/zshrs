@@ -163,6 +163,12 @@ impl DaemonError {
 /// Acquires the singleton lock, opens IPC socket, sets up logging, runs the accept loop
 /// until SIGTERM/SIGINT or a `daemon stop` IPC op.
 pub fn run() -> Result<()> {
+    // A daemon spawned from the shell inherits whatever signal mask the shell
+    // held at spawn time. A blocked SIGCHLD never reaches tokio's signal
+    // driver, so no job is ever reaped and every `zjob` stays `running`.
+    // Start from an empty mask regardless of the parent.
+    let _ = nix::sys::signal::SigSet::empty().thread_set_mask();
+
     let paths = paths::CachePaths::resolve()?;
     paths.ensure_dirs()?;
 
