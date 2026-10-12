@@ -7536,8 +7536,18 @@ pub(crate) const TIED_COLON_ARRAYS: &[(&str, &str)] = &[
     ("watch", "WATCH"),
 ];
 
+thread_local! {
+    /// !!! RUST-ONLY !!! Set by `fusevm_bridge::assignsparam_ok` for the very
+    /// next `assignsparam`: the caller only asks whether it succeeded, so the
+    /// plain-scalar fast path need not clone the whole stored `param` (name,
+    /// value, `old` chain) to hand back. Taken at entry, so a nested assignment
+    /// from a setfn never sees it.
+    pub static ASSIGN_RESULT_UNUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Port of `assignsparam()` from `Src/params.c:3193`.
 pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
+    let result_unused = ASSIGN_RESULT_UNUSED.replace(false);
     // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
         zerr(&format!("not an identifier: {}", s)); // c:3204
@@ -9535,7 +9545,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             }
             None => pm.u_str = Some(val.to_string()),
         }
-        let c = Some(pm.clone());
+        // A caller that only tests for success gets an empty node: nothing
+        // below reads the clone on this path (PM_SPECIAL/PM_TIED are excluded
+        // above, so the tied-colon-array split cannot apply).
+        let c = Some(if result_unused { Box::default() } else { pm.clone() });
         drop(tab);
         c
     } else {

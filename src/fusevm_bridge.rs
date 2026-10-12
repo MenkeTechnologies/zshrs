@@ -1306,6 +1306,18 @@ pub(crate) fn own_redirect_scope(exec: &ShellExecutor) -> bool {
     depth > 0 && REDIR_SCOPE_OPENED.with(|c| c.get()) == (SUBLIST_SERIAL.with(|c| c.get()), depth)
 }
 
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// `assignsparam` for a caller that tests only whether the assignment
+/// succeeded (C: `if (!assignsparam(...))`). Tells the plain-scalar fast path
+/// the stored node will not be read, so it skips cloning it.
+fn assignsparam_ok(name: &str, value: &str, flags: i32) -> bool {
+    crate::ported::params::ASSIGN_RESULT_UNUSED.set(true);
+    let ok = crate::ported::params::assignsparam(name, value, flags).is_some();
+    crate::ported::params::ASSIGN_RESULT_UNUSED.set(false);
+    ok
+}
+
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native p10k engine intercept (src/extensions/p10k): sourcing
@@ -9592,7 +9604,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if let Some(fusevm::Value::Int(i)) = value_raw {
                     crate::ported::params::assigniparam(&name, i, asg_flags);
                 } else {
-                    assign_failed = crate::ported::params::assignsparam(&name, &value, asg_flags).is_none();
+                    assign_failed = !assignsparam_ok(&name, &value, asg_flags);
                 }
             } else if float_assign {
                 if let Some(fusevm::Value::Float(f)) = value_raw {
@@ -9615,7 +9627,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         crate::ported::params::assignnparam(&name, mnval, asg_flags);
                     }
                 } else {
-                    assign_failed = crate::ported::params::assignsparam(&name, &value, asg_flags).is_none();
+                    assign_failed = !assignsparam_ok(&name, &value, asg_flags);
                 }
             } else {
                 // c:Src/exec.c:2554-2567 — GLOB_ASSIGN. When the
@@ -9665,7 +9677,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if matches.len() <= 1 {
                                 let v = matches.into_iter().next().unwrap_or_default();
                                 assign_failed =
-                                    crate::ported::params::assignsparam(&name, &v, asg_flags).is_none();
+                                    !assignsparam_ok(&name, &v, asg_flags);
                             } else {
                                 crate::ported::params::assignaparam(&name, matches, asg_flags);
                             }
@@ -9680,7 +9692,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // createparam refusal at c:1108-1118) fails the
                 // assignment with status 1.
                 if !globbed {
-                    assign_failed = crate::ported::params::assignsparam(&name, &value, asg_flags).is_none();
+                    assign_failed = !assignsparam_ok(&name, &value, asg_flags);
                 }
             }
             // PM_EXPORTED / allexport env mirror — read AFTER setsparam

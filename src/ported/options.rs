@@ -2291,10 +2291,11 @@ fn optno_by_name(name: &str) -> Option<i32> {
     // it made every option check O(OPT_SIZE) and dominated compinit
     // startup (~600k isset calls). The table is immutable (option
     // NUMBERS never change at runtime), so a OnceLock is safe.
-    static REV: std::sync::OnceLock<std::collections::HashMap<&'static str, i32>> =
+    static REV: std::sync::OnceLock<crate::fast_hash::FastMap<&'static str, i32>> =
         std::sync::OnceLock::new();
     let m = REV.get_or_init(|| {
-        let mut h = std::collections::HashMap::with_capacity(OPT_SIZE as usize);
+        let mut h =
+            crate::fast_hash::FastMap::with_capacity_and_hasher(OPT_SIZE as usize, Default::default());
         for idx in 1..OPT_SIZE {
             let n = opt_name(idx);
             if !n.is_empty() {
