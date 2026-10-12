@@ -1175,6 +1175,26 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
 
             // c:509 — `switch (*bv->fm)` — the real escape dispatch.
             let xc = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
+            // !!! RUST-ONLY: tcsh `prompt` count syntax, no zsh C counterpart.
+            // tcsh writes the count AFTER the directive (`%c3`, `%C2`, `%.2`);
+            // zsh writes it before (`%3c`), so under `--csh` the digits that
+            // follow `c`/`C`/`.` are the count instead of literal text. tcsh's
+            // `%c03` form (skipped-count marker) is not handled.
+            if arg == 0
+                && matches!(xc, b'c' | b'C' | b'.')
+                && crate::extensions::emulation_startup::personality()
+                    == crate::extensions::emulation_startup::Personality::Csh
+            {
+                let start = bv.fm_pos + 1;
+                let digits = bv.fm.as_bytes()[start..]
+                    .iter()
+                    .take_while(|b| idigit(**b))
+                    .count();
+                if digits > 0 {
+                    arg = bv.fm[start..start + digits].parse::<i32>().unwrap_or(0);
+                    bv.fm_pos += digits;
+                }
+            }
             // Numeric prefix N on `%/` / `%~` / `%d` / `%c` / `%C` (keep N
             // trailing components; Bug #96) is handled inside `promptpath`,
             // which all five path directives below now route through.

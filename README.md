@@ -799,6 +799,7 @@ Rules that differ per shell, each measured rather than assumed:
 | `-f` means | `noglob` | `noglob` | no-rcs | no-rcs |
 | suppress every startup file | `--norc --noprofile`, or `--no-rcs` | `--no-rcs` | `--no-rcs` | `-f` / `--no-rcs` |
 | `$PS1` escapes | backslash (`\u`, `\h`, `\w`, `\$`, …), plus `${var@P}` | literal text | literal text | `%` escapes |
+| `$prompt` trailing-component count | n/a | n/a | after the directive: `%c3`, `%C2`, `%.2` | before it: `%3c` |
 | bracketed paste (`\e[?2004h`) | yes | no | no | yes |
 | OSC 133 shell-integration marker | no | no | no | yes |
 | zsh partial-line `%` marker (`PROMPT_SP`) | no | no | no | yes |
