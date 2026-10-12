@@ -269,6 +269,19 @@ ZSHRS_BIN=/path/to/zshrs bench/run.sh
 
 Release binary only (`target/release/zshrs`); the script refuses to run without it. Workloads (startup, arithmetic loop, function calls, string append, command substitution, external spawn, pipeline, glob) are written once per dialect (POSIX, fish, nushell) so each shell runs its native idiom for the same work. User config is skipped (`-f`, `--no-config`, `--no-config-file`). Output is a hyperfine Markdown table per workload in `bench/results.md`.
 
+Mean wall time in milliseconds, lower is better. Release build of zshrs 0.13.27; hyperfine --warmup 3 --runs 15; Darwin 25.6.0 arm64; generated 2026-10-10 13:42:51 UTC. Source: `bench/results.md`.
+
+| Workload | zshrs | zsh | fish | nu | bash | ksh | mksh | dash |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Startup (no-op) | 7.4 | 4.6 | 5.9 | 11.0 | 6.5 | 5.5 | 2.3 | 2.3 |
+| Arithmetic loop (100000 iterations) | 178.4 | 122.3 | 1626.5 | 48.0 | 150.8 | 47.5 | 104.0 | 150.4 |
+| Function calls (20000) | 124.8 | 107.6 | 353.8 | 26.8 | 59.2 | 16.9 | 31.0 | 51.3 |
+| String append (5000) | 23.8 | 52.4 | 200.4 | 25.6 | 71.4 | 11.3 | 87.4 | 16.6 |
+| Command substitution (500) | 90.3 | 268.9 | 18.9 | 707.2 | 281.6 | 5.3 | 209.9 | 229.1 |
+| External command spawn (200 x /usr/bin/true) | 226.1 | 315.4 | 214.8 | 276.9 | 329.2 | 215.5 | 297.0 | 295.3 |
+| Pipeline (seq 200000 \| sort -n \| uniq \| wc -l) | 57.1 | 54.7 | 54.5 | 58.9 | 54.4 | 57.8 | 54.2 | 53.0 |
+| Glob (src/*/*.rs) | 7.0 | 3.9 | 3.5 | 7.7 | 4.5 | 3.9 | 1.9 | 2.0 |
+
 ---
 
 ## [0x04] CONCURRENT PRIMITIVES
