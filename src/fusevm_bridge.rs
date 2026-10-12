@@ -20094,7 +20094,14 @@ fn precmd_walk_ok(full: &[String]) -> bool {
     {
         return false; // c:3258/c:3276/c:3285 `zerr(...); … goto done`
     }
-    if walk.is_empty_command && !walk.has_command_vv {
+    // c:3380-3385 — `if ((cflags & BINF_EXEC) && last1) do_exec = 1;` then, for
+    // an empty command with redirections, `if (do_exec) { nullexec = 1; }`
+    // (c:3392) is tried BEFORE the c:3397 "redirection with no command" arm:
+    // `builtin exec {fd}<file` is the same null exec as `exec {fd}<file`.
+    if walk.is_empty_command
+        && !walk.has_command_vv
+        && (walk.cflags & crate::ported::zsh_h::BINF_EXEC as u32) == 0
+    {
         crate::ported::utils::zerr("redirection with no command"); // c:3397
         return false;
     }

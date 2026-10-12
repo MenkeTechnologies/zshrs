@@ -61206,3 +61206,20 @@ time, so a cond operand ending in a qualifier now compiles through `compile_cond
 text mode 14 / `BUILTIN_COND_GLOB_EXPAND` glob only under run-time EXTENDED_GLOB, and the result is
 sepjoined into one word (c:Src/cond.c:51), which also fixes `-n` on a multi-match operand
 (`syntax error` status before). spaceship's `spaceship_node` hit both.
+
+## #1175 — `builtin exec {fd}<file` died with `redirection with no command` — fixed
+
+**Status:** `fixed` 2026-10-12.
+
+```console
+zsh -fc 'builtin exec {fd}< <(echo x); print rc=$?'
+zsh 5.9.2        rc=0
+zshrs (before)   redirection with no command
+```
+
+**Root cause.** `precmd_walk_ok` raised c:Src/exec.c:3397 for every empty command left after the
+precommand walk. C tries the null-exec first (c:3380-3392: `(cflags & BINF_EXEC)` → `do_exec` →
+`nullexec = 1`), and `builtin` in front of `exec` does not change that. The walk's `cflags` now
+gates the error. zsh-autosuggestions' `_zsh_autosuggest_async_request` opens its suggestion pipe
+with `builtin exec {_ZSH_AUTOSUGGEST_ASYNC_FD}< <(…)`, so every keystroke raised the error and no
+suggestion ever arrived.

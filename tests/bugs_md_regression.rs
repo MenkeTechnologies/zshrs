@@ -2687,3 +2687,26 @@ command rm -rf -- $d"#;
     assert_eq!(rc, 0, "stderr: {err}");
     assert_eq!(out, "off=0\noff=1\nmulti=0\nempty=0\n");
 }
+
+/// #1175 — `builtin exec {fd}<file` / `builtin exec {fd}< <(…)` died with
+/// `redirection with no command`. c:Src/exec.c:3380-3392 tries the null-exec
+/// (`do_exec` → `nullexec = 1`) before the c:3397 error, and `builtin` does
+/// not change that. zsh-autosuggestions' `_zsh_autosuggest_async_request`
+/// opens its pipe with exactly this form.
+#[test]
+fn bug_1175_builtin_exec_with_only_redirections() {
+    let script = r#"
+f() {
+  typeset -g FD CHILD
+  builtin exec {FD}< <(echo 4242; echo -nE suggest)
+  read CHILD <&$FD
+  IFS='' read -rd '' -u $FD s
+  builtin exec {FD}<&-
+  print "rc=$? child=$CHILD got=[$s]"
+}
+f
+builtin exec {G}</dev/null; (( G >= 10 )); print "G_ok=$?"; builtin exec {G}<&-"#;
+    let (rc, out, err) = run_zshrs(script);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=0 child=4242 got=[suggest]\nG_ok=0\n");
+}
