@@ -777,6 +777,29 @@ fn copied_autoload_function_keeps_the_original_file() {
     assert_eq!(r.exit, z.exit);
 }
 
+/// c:Src/builtin.c:3450 — `functions -c OLD NEW` over an EXISTING NEW replaces
+/// it, and the next call runs the copied body. zshrs runs a function from a
+/// compiled chunk held apart from the function table, which the copy did not
+/// update: `_shadow`/`_unshadow` (used by `_approximate` around `compadd`)
+/// restore the shadowed function this way, and the shadow kept running.
+#[test]
+fn functions_copy_over_an_existing_function_runs_the_copied_body() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let script = "orig() { print -r -- orig }; saved() { print -r -- saved }; \
+                  call() { orig }; call; \
+                  functions -c orig kept; orig() { print -r -- shadow }; call; \
+                  unfunction orig; functions -c kept orig; call; orig; \
+                  functions -c saved orig; call";
+    let z = run_zsh_in(d.path(), script);
+    let r = run_zshrs_in(d.path(), script);
+    assert_eq!(z.stdout, "orig\nshadow\norig\norig\nsaved\n", "zsh sanity");
+    assert_eq!(r.stdout, z.stdout);
+    assert_eq!(r.exit, z.exit);
+}
+
 /// `promptinit` and `prompt` are shell functions (Functions/Prompts/
 /// promptinit), not builtins. promptinit scans `$^fpath/prompt_*_setup(N)`,
 /// so a theme the user ships in their own fpath directory is listed and

@@ -9579,11 +9579,17 @@ pub fn bin_functions(
                     .as_ref()
                     .map(|dir| format!("{}/{}", dir, (*src_ptr).node.nam)); // c:3426
             }
-            Box::into_raw(Box::new(copy))
+            copy
         };
-        if let Ok(mut t) = shfunctab_lock().write() {
-            t.addnode(newsh); // c:3450
-        }
+        // !!! RUST-ONLY: zshrs keeps one function in five stores (the
+        // shfunctab node plus the executor's compiled chunk, source, line
+        // base and definition file) and the chunk is what a call runs.
+        // Adding only the node left a function the copy REPLACED running its
+        // old body: `_unshadow` restores `compadd` with `functions -c`, and
+        // the `_approximate` shadow kept executing after it had returned.
+        let mut snap = crate::fusevm_bridge::snapshot_function(src_name);
+        snap.shf = Some(newsh);
+        crate::fusevm_bridge::restore_function(dst_name, snap); // c:3450
         return 0; // c:3451
     }
 
