@@ -2384,6 +2384,10 @@ fn zd(args: &[String]) -> i32 {
             // Same Client::call path the other z* builtins use.
             // Returns the JSON value; serialize so dispatch's caller
             // gets a String (matches HTTP transport's contract).
+            // Drop the 5s handshake read timeout: ops like `prewarm`
+            // compile the whole completer corpus and take far longer
+            // (the daemon enforces its own per-op timeout).
+            let _ = self.client.set_read_timeout(None);
             match self.client.call(op, body) {
                 Ok(v) => serde_json::to_string(&v).map_err(|e| format!("response serialize: {e}")),
                 Err(e) => Err(e.to_string()),
