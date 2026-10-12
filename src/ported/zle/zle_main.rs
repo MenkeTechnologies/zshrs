@@ -522,6 +522,7 @@ pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
             if selret < 0 {
                 let e = std::io::Error::last_os_error().raw_os_error();
                 if e == Some(libc::EINTR) {
+                    crate::signal_queue_guard::settle_deferred_signals(shtty);
                     continue;
                 }
                 // c:825 — `return selret`, negative: an error, not EOF.
@@ -677,6 +678,7 @@ pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
             {
                 // c:914 — `icnt = 0;`: a real interruption resets the count.
                 eintr_retries = if n == 0 { eintr_retries + 1 } else { 0 };
+                crate::signal_queue_guard::settle_deferred_signals(shtty);
                 continue; // c:917 — retry the interrupted read
             }
             // c:929-936 — EIO means the shell lost the terminal's foreground
@@ -791,6 +793,7 @@ pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
         {
             // c:914 — `icnt = 0;`: a real interruption resets the count.
             eintr_retries = if n == 0 { eintr_retries + 1 } else { 0 };
+            crate::signal_queue_guard::settle_deferred_signals(shtty);
             continue; // c:917 — retry the interrupted read
         }
         // c:929-936 — `else if (errno == EIO && !die) { ret = opts[MONITOR];

@@ -459,6 +459,15 @@ pub fn queue_signal_level() -> i32 {
 pub fn run_queued_signals() {
     // c:78
     loop {
+        // !!! RUST-ONLY !!! C reaches this macro only with queueing off
+        // (`unqueue_signals` and `dont_queue_signals` zero the level first).
+        // The Rust-only safe-point callers (`zwaitjob`'s loop, builtin
+        // dispatch) can arrive with the level raised, and `zhandler` then
+        // re-queues the very signal being replayed: the loop spins for ever,
+        // and a `SIGHUP` sitting in the queue is never acted on.
+        if queueing_enabled.load(Ordering::SeqCst) != 0 {
+            break;
+        }
         let f = queue_front.load(Ordering::SeqCst);
         let r = queue_rear.load(Ordering::SeqCst);
         if f == r {
