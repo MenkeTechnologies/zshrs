@@ -43,6 +43,54 @@
 // crate-wide.
 #![allow(clippy::all)]
 
+// Crate-wide replacements for std's print macros.
+//
+// Defined before any `mod` (textual scope), so these shadow
+// `std::{print,println,eprint,eprintln}` in every module below. The
+// `zshrs-daemon` crate carries an identical copy at the top of daemon/lib.rs.
+//
+// std's macros panic on a failed write. A shell hits that constantly and
+// legitimately: an interactive shell installs a SIGPIPE handler (C
+// init_signals, signals.c:1461), so `set | head -1` returns EPIPE from the
+// builtin's write instead of killing the process; a dead tty returns EIO.
+// C zsh does not check those stdio writes, so neither do we.
+
+macro_rules! print {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = ::std::io::stdout().write_fmt(format_args!($($arg)*));
+    }};
+}
+
+macro_rules! println {
+    () => {{
+        use ::std::io::Write as _;
+        let _ = ::std::io::stdout().write_all(b"\n");
+    }};
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = writeln!(::std::io::stdout(), $($arg)*);
+    }};
+}
+
+macro_rules! eprint {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = ::std::io::stderr().write_fmt(format_args!($($arg)*));
+    }};
+}
+
+macro_rules! eprintln {
+    () => {{
+        use ::std::io::Write as _;
+        let _ = ::std::io::stderr().write_all(b"\n");
+    }};
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = writeln!(::std::io::stderr(), $($arg)*);
+    }};
+}
+
 /// Runtime shell-mode flag set by the binary entrypoint (`bins/zshrs.rs`)
 /// at startup. The library can't directly read `bins/zshrs.rs::shell_mode()`
 /// (it lives in the binary crate), so the binary writes this atomic when
