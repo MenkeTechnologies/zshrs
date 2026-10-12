@@ -61180,3 +61180,26 @@ the character-index arm, which only knows numeric subscripts: `parse_idx` could 
 (c:Src/params.c:1798-1985) now serves the chain too. Visible consumer: zsh-async's
 `pos=${ASYNC_PROCESS_BUFFER[$worker][(i)$null]}` into an `integer` — spaceship-prompt failed
 every prompt with `async_process_results:16: bad math expression: illegal character:`.
+
+## #1174 — `command -v compdef` / `type compinit` named a builtin before the completion system was loaded — fixed
+
+**Status:** `fixed` 2026-10-12.
+
+```console
+zsh -f -c 'command -v compdef; print $?'
+zsh 5.9.2        1
+zshrs (before)   compdef 0   (and calling it: zsh:1: command not found: compdef)
+```
+
+**Root cause.** `compdef` and `compinit` are contrib functions; the dispatcher already answered
+127 until one existed (`BUILTIN_COMPDEF` / `BUILTIN_COMPINIT`), but `is_extension_builtin`,
+`builtin_in_builtintab` and `builtin_prefix_finds` still listed the names, so every name lookup
+disagreed with dispatch. They now share `ext_builtins::is_undefined_contrib_function`.
+spaceship-prompt's `if spaceship::exists compdef` guard (`command -v`) therefore passed and the
+following `compdef _spaceship spaceship` printed `command not found`.
+
+**Open, same session:** `[[ -n *.js(#qN^/) ]]` compiled before `setopt extendedglob` takes effect
+is globbed with the qualifier parser even when EXTENDED_GLOB is off at run time, printing
+`unknown file attribute: #` where zsh (c:Src/glob.c:1191, `checkglobqual` with `nobareglob = 1`)
+treats the word as literal. `compile_zsh.rs` `cond_operand_has_globqual` decides at compile time.
+spaceship's `spaceship_node` hits it.

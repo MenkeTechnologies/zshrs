@@ -206,6 +206,20 @@ pub fn module_builtin_available(name: &str) -> bool {
     }
 }
 
+/// `compdef` / `compinit` are contrib FUNCTIONS in zsh, never builtins: until
+/// the user autoloads or defines one, the dispatcher answers 127 (see
+/// BUILTIN_COMPDEF / BUILTIN_COMPINIT in fusevm_bridge.rs), so every name
+/// lookup (`command -v`, `type`, `${builtins}`) must agree. `command -v compdef`
+/// printing `compdef` made spaceship-prompt's `spaceship::exists compdef` guard
+/// pass and then call a `compdef` that was command-not-found.
+pub fn is_undefined_contrib_function(name: &str) -> bool {
+    matches!(name, "compdef" | "compinit")
+        && !crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .is_some_and(|t| t.get(name).is_some())
+}
+
 pub fn builtin_in_builtintab(name: &str) -> bool {
     // The gate used to apply ONLY under `hide_ext_builtins()`, on the theory
     // that default zshrs mode should show every statically-linked module
@@ -225,6 +239,9 @@ pub fn builtin_in_builtintab(name: &str) -> bool {
     // gate got this for free by asking `is_loaded("__zshrs_only")`, which is
     // false because no such module exists.
     if hide_ext_builtins() && matches!(builtin_owning_module(name), Some("__zshrs_only")) {
+        return false;
+    }
+    if is_undefined_contrib_function(name) {
         return false;
     }
     module_builtin_available(name)
@@ -12531,10 +12548,11 @@ pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::
 ///    like the rest, so they must classify the same way; the table is empty in
 ///    the thin shell, where this term is always false.
 pub fn is_extension_builtin(name: &str) -> bool {
-    fusevm::shell_builtins::is_builtin(name)
-        || LOCAL_ONLY_BUILTINS.contains(&name)
-        || crate::native_cmds::is_registered(name)
-        || extension_builtin_defs().any(|b| b.node.nam == name)
+    !is_undefined_contrib_function(name)
+        && (fusevm::shell_builtins::is_builtin(name)
+            || LOCAL_ONLY_BUILTINS.contains(&name)
+            || crate::native_cmds::is_registered(name)
+            || extension_builtin_defs().any(|b| b.node.nam == name))
 }
 
 /// zshrs builtins that `register_builtins` installs on the VM and

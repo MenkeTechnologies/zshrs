@@ -1171,6 +1171,9 @@ fn user_fn_shadows_builtin(name: &str) -> bool {
 /// builtin typeset` is "no such builtin"), plus the zshrs builtins that live
 /// outside it: the daemon `z*` family and the opcode builtins above.
 pub(crate) fn builtin_prefix_finds(name: &str) -> bool {
+    if crate::extensions::ext_builtins::is_undefined_contrib_function(name) {
+        return false;
+    }
     if crate::daemon::builtins::is_zshrs_builtin(name) {
         return true;
     }

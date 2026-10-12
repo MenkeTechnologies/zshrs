@@ -2650,3 +2650,19 @@ integer -l pos; pos=${h[z][(i)$n]}; print $pos"#;
     assert_eq!(rc, 0, "stderr: {err}");
     assert_eq!(out, "3 6 c 7 0\n3\n");
 }
+
+/// #1174 — `command -v compdef` / `type compinit` reported a builtin before
+/// the completion system was loaded, while calling it was command-not-found.
+/// spaceship-prompt guards `compdef _spaceship spaceship` with
+/// `command -v compdef`, so the guard passed and the call failed.
+#[test]
+fn bug_1174_compdef_not_a_builtin_before_compinit() {
+    let script = r#"
+command -v compdef; print a=$?
+whence -w compinit; print b=$?
+print c=${+builtins[compdef]}
+autoload -Uz compinit; command -v compinit; print d=$?"#;
+    let (rc, out, err) = run_zshrs(script);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "a=1\ncompinit: none\nb=1\nc=0\ncompinit\nd=0\n");
+}
