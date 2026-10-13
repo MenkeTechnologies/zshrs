@@ -4731,7 +4731,7 @@ pub fn expand_prompt(s: &str) -> String {
     //   #204 in docs/BUGS.md. Stash/restore errflag + lastval per C
     //   so prompt-subst errors don't propagate into the script exit
     //   status (preserve user-interrupt bit per c:210).
-    let s_owned: String;
+    let mut s_owned: String;
     let s = if crate::ported::zsh_h::isset(crate::ported::zsh_h::PROMPTSUBST) {
         let saved_errflag =
             crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
@@ -4750,6 +4750,13 @@ pub fn expand_prompt(s: &str) -> String {
             // C then uses that string as-is (no singsub).
             Err(_) => crate::ported::lex::untokenize(s),
         };
+        // c:200-204 — "We don't need the special Nularg hack here and
+        // we're going to be using Nularg for other things." An empty
+        // substitution result (`$(true)`) comes back as a lone Nularg;
+        // drop it, else it leaks into RPROMPT as U+E1A1 (issue #6).
+        if s_owned.chars().eq(std::iter::once(Nularg)) {
+            s_owned.clear();
+        }
         let cur = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
         crate::ported::utils::errflag.store(
             saved_errflag | (cur & crate::ported::zsh_h::ERRFLAG_INT),
@@ -5604,6 +5611,17 @@ mod tests {
     fn expand(s: &str) -> String {
         let _g = crate::test_util::global_state_lock();
         expand_prompt(s)
+    }
+
+    /// c:Src/prompt.c:203 — an empty PROMPT_SUBST result is a lone Nularg
+    /// and must be dropped, not rendered (issue #6: U+E1A1 in RPROMPT).
+    #[test]
+    fn promptexpand_promptsubst_empty_result_has_no_nularg() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("promptsubst", true);
+        let out = expand_prompt("${:-}");
+        crate::ported::options::opt_state_set("promptsubst", false);
+        assert_eq!(out, "");
     }
 
     // ── Literals ────────────────────────────────────────────────────
