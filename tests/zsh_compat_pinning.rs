@@ -276,17 +276,20 @@ mod small_language_surface {
 
 /// `${(t)…}` reports a type and never reads the elements: c:Src/subst.c:2808-2862
 /// ends the type arm with `v = NULL; isarr = 0;`, ahead of both c:2966's
-/// `getstrvalue` and c:3033's double-quote join.
+/// `getstrvalue` and c:3033's double-quote join. The arm sits inside c:2764's
+/// `if (!subexp || aspar)`, so a plain nested body (`${(t)${a}}`) is not typed
+/// and keeps its array shape.
 mod type_flag_skips_elements {
     use super::*;
 
     #[test]
     fn quoted_and_unquoted_forms_match_zsh() {
         assert_parity(
-            r#"a=(x y z); typeset -A h=(k v k2 v2); s=str; k=a; kh=h
+            r#"a=(x y z); typeset -A h=(k v k2 v2); s=str; k=a; kh=h; w="p q"
 for c in '${(t)a}' '${(t)h}' '${(t)s}' '${(Pt)k}' '${(Pt)kh}' '${(t)a:-D}' \
   '${(t)nosuch:-D}' '${(t)a:+P}' '${(t)a#a}' '${(@t)a}' '${(tj:,:)a}' \
-  '${(tU)a}' '${(t)a[1]}' '${(t)a[@]}' '${#${(t)a}}' '${(t)${(P)k}}'; do
+  '${(tU)a}' '${(t)a[1]}' '${(t)a[@]}' '${#${(t)a}}' '${(t)${(P)k}}' \
+  '${(t)${a}}' '${(t)${a[@]}}' '${(t)$(echo x y)}' '${(t)${=w}}' '${(t)${a}:-D}'; do
   eval "x=( $c ); y=( \"$c\" ); print -r -- \"\$c U\${#x}<\$x> Q\${#y}<\$y>\""
 done
 f() { local -a la=(1 2); print -r -- "${(t)la}" "${(Pt)1}" }; f la"#,

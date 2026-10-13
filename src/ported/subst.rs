@@ -9684,6 +9684,11 @@ pub fn paramsubst(
             || prefiltered_value.is_some()
             || subexp_arr_parts.is_some()
             || subexp_array_temp.is_some();
+        // c:2764 `if (!subexp || aspar)` — the `(t)` arm (c:2808-2862) lives inside
+        // that block, so it only runs, and only clears `isarr`, when the body is a
+        // parameter reference or a `(P)` splice. A plain nested body
+        // (`${(t)${a}}`, `${(t)$(cmd)}`) passes its value through with its shape.
+        let wantt_owns_value = wantt && !(used_subexp && subexp_aspar_name.is_none());
         // c:Src/subst.c:2801-2807 — C calls `fetchvalue()` exactly ONCE per
         // expansion, and BOTH the value and `vunset` come out of that single
         // `Value`:
@@ -15227,14 +15232,12 @@ pub fn paramsubst(
         // `isarr = 0`, so C never joins the parameter's elements under
         // `(t)`. zshrs runs its `(t)` arm further down (it resets `isarr`
         // there too), so skip the join here exactly when that arm will own
-        // the value: the same `!(used_subexp && subexp_aspar_name.is_none())`
-        // test as its passthrough guard (c:2764 `if (!subexp || aspar)`).
+        // the value (`wantt_owns_value`, c:2764).
         // Joining first was not just wasted: `"${(Pt)k}"` with k=history
         // materialized and joined every history entry (782k in a real
         // session) only to discard the result, per call — zbrowse's precmd
         // runs that test on every parameter and stalled each prompt for
         // 0.5-2.5s.
-        let wantt_owns_value = wantt && !(used_subexp && subexp_aspar_name.is_none());
         if isarr != 0 && !wantt_owns_value {
             // c:3029
             if nojoin != 0 {
@@ -25341,7 +25344,7 @@ pub fn paramsubst(
         //     same preservation through c:3032.
         // Bare array reads in DQ get isarr=0 at c:3034 (sepjoin'd),
         // and that's how they end up joined — exactly what we want.
-        // c:2883 — wantt clears `isarr = 0` so the (t) typeinfo
+        // c:2883 — wantt clears `isarr = 0` (only when it ran, c:2764) so the (t) typeinfo
         // result (a scalar string like "array") doesn't get re-
         // splat from the underlying array storage. Gate auto_splat
         // off when wantt fired, mirroring C's `if (isarr)` at
@@ -25400,7 +25403,7 @@ pub fn paramsubst(
                 isarr = 1;
             }
         }
-        let auto_splat = !wantt
+        let auto_splat = !wantt_owns_value
             // c:3885-3887 — the zero-element array already became the empty
             // SCALAR, so `if (isarr)` at c:4245 is false and the emit takes the
             // scalar branch at c:4437 (one word, elided later if it is still
