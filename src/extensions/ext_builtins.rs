@@ -12547,11 +12547,14 @@ pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::
 ///    zshrs-native build). They dispatch through `try_run_registered_builtin`
 ///    like the rest, so they must classify the same way; the table is empty in
 ///    the thin shell, where this term is always false.
+///  * commands a cdylib registered through `znative load` / `zmodload -R`
+///    (`extensions/plugin_host.rs`), which dispatch in-process by name.
 pub fn is_extension_builtin(name: &str) -> bool {
     !is_undefined_contrib_function(name)
         && (fusevm::shell_builtins::is_builtin(name)
             || LOCAL_ONLY_BUILTINS.contains(&name)
             || crate::native_cmds::is_registered(name)
+            || crate::plugin_host::is_plugin_command(name)
             || extension_builtin_defs().any(|b| b.node.nam == name))
 }
 

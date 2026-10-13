@@ -61270,7 +61270,7 @@ one-word result.
 (`a="${${:-~/..}%/}"`) still expands the `~`: the assignment path hands `paramsubst` the same
 `qt`/`PREFORK_SINGLE` pair whether or not the right-hand side was quoted.
 
-## #1178 — commands registered by `znative load` painted as unknown tokens — fixed
+## #1178 — commands registered by `znative load` were unknown to highlighting, completion and `whence` — fixed
 
 **Status:** `fixed` 2026-10-12.
 
@@ -61279,7 +61279,7 @@ znative load MenkeTechnologies/zshrs-zwire     # then type one of its builtins a
 zshrs (before)   command word styled `unknown-token` (red) although it runs
 ```
 
-**Root cause.** `syntax_highlight::builtin_word_available` asked four registries (the C builtin
+**Root cause.** The plugin host registry was missing from every "is this a builtin / which builtins exist" consumer, not only the highlighter: `${(k)builtins}` and command-position completion never listed the commands, and `whence -w` / `${+builtins[x]}` / `disable` answered none. `syntax_highlight::builtin_word_available` asked four registries (the C builtin
 table, `EXT_BUILTIN_NAMES`, the daemon `z*` family, `native_cmds`) and never the plugin host's
 registry, where `znative load` / `zmodload -R` put a cdylib's commands. `plugin_host::is_plugin_command`
 existed for exactly this question and had no caller. The predicate now asks it too; the test

@@ -5433,6 +5433,17 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                 ((*s).to_string(), AddmatchNode::Hash(hn))
             }));
         }
+        // Commands a cdylib registered via `znative load` / `zmodload -R`
+        // live only in the plugin host registry; offer them in command
+        // position like the extension builtins above.
+        builtins.extend(crate::plugin_host::command_names().into_iter().map(|n| {
+            let hn = crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: n.clone(),
+                flags: 0,
+            };
+            (n, AddmatchNode::Hash(hn))
+        }));
         dumphashtable(builtins, -3);
         // c:3655-3657 — external commands; HASHLISTALL (default on) bulk-
         // hashes $path first so every reachable command is offered.

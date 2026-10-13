@@ -631,6 +631,15 @@ pub fn list() -> Vec<(String, String, String)> {
     v
 }
 
+/// Names of every live plugin command, sorted. The registry is the only
+/// place `znative load` / `zmodload -R` commands exist, so completion and
+/// the `builtins` parameter enumerate them through here.
+pub fn command_names() -> Vec<String> {
+    let mut v: Vec<String> = registry().lock().unwrap().keys().cloned().collect();
+    v.sort();
+    v
+}
+
 /// True if `name` is a live plugin command. Used where callers want to
 /// know whether a name resolves to a plugin without invoking it.
 pub fn is_plugin_command(name: &str) -> bool {
@@ -713,4 +722,23 @@ fn expand_tilde(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod command_registry_tests {
+    use super::*;
+
+    /// A plugin command must be visible to every consumer that asks "is this
+    /// a builtin" or "which builtins exist": completion (`command_names`),
+    /// `whence`/`${+builtins[x]}` (`is_extension_builtin`).
+    #[test]
+    fn plugin_command_is_listed_and_classified_as_builtin() {
+        register_command_for_test("zshrs_plugin_registry_probe");
+        assert!(is_plugin_command("zshrs_plugin_registry_probe"));
+        assert!(command_names().iter().any(|n| n == "zshrs_plugin_registry_probe"));
+        assert!(crate::ext_builtins::is_extension_builtin(
+            "zshrs_plugin_registry_probe"
+        ));
+        assert!(!command_names().iter().any(|n| n == "zshrs_plugin_not_registered"));
+    }
 }

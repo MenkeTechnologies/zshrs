@@ -2333,6 +2333,26 @@ pub fn scanbuiltins(
                 pm.node.nam = n;
                 f(&pm, flags);
             }
+            // Commands a cdylib registered through `znative load` /
+            // `zmodload -R` — a FOURTH registry (`extensions/plugin_host.rs`),
+            // empty until a plugin loads. They dispatch in-process like the
+            // three above, so `${(k)builtins}` (and compsys's `_command_names`)
+            // must list them, same gating.
+            for n in crate::plugin_host::command_names() {
+                if disabled_set.contains(&n) {
+                    continue; // c:825 honor `disable`
+                }
+                if !emitted.insert(n.clone()) {
+                    continue;
+                }
+                pm.u_str = if want_val {
+                    Some("defined".to_string()) // c:846 — dispatches in-process
+                } else {
+                    None
+                };
+                pm.node.nam = n;
+                f(&pm, flags);
+            }
         }
     }
 }

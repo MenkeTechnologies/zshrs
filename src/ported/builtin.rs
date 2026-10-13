@@ -1092,6 +1092,7 @@ pub fn bin_enable(
                 // needed for `disable git` to fall the shell through to the
                 // `git` on `PATH`, and `enable git` to take it back.
                 if !in_builtintab(nm) && !crate::native_cmds::is_registered(nm)
+                    && !crate::plugin_host::is_plugin_command(nm)
                 {
                     return false;
                 }
