@@ -282,6 +282,25 @@ Mean wall time in milliseconds, lower is better. Release build of zshrs 0.13.27;
 | Pipeline (seq 200000 \| sort -n \| uniq \| wc -l) | 57.1 | 54.7 | 54.5 | 58.9 | 54.4 | 57.8 | 54.2 | 53.0 |
 | Glob (src/*/*.rs) | 7.0 | 3.9 | 3.5 | 7.7 | 4.5 | 3.9 | 1.9 | 2.0 |
 
+**Recursive glob: zsh vs zshrs parallel vs zshrs serial:**
+
+```sh
+bench/rglob.sh                     # writes bench/results_rglob.md
+bench/rglob.sh --warmup 5 --runs 30
+```
+
+`bench/rglob.sh` generates a directory tree, checks that each zshrs variant prints exactly the same sorted output as zsh, then times `print -rl -- <pattern>` under hyperfine. Only zsh and zshrs are compared: `**/` is zsh syntax and the other shells either lack it or give it different semantics. The serial row is zshrs with `[glob] recursive_parallel = false`, so the gap between the two zshrs rows is the parallel descent alone.
+
+Mean wall time in milliseconds, lower is better. Release build of zshrs 0.13.34; zsh 5.9.2; 30000 files in 1100 directories; 18 logical cores; hyperfine --warmup 3 --runs 15; Darwin 25.6.0 arm64; generated 2026-10-13 21:24:48 UTC. Source: `bench/results_rglob.md`.
+
+| Pattern | zsh | zshrs (parallel) | zshrs (serial) |
+|:---|---:|---:|---:|
+| `**/*` | 131.3 | 104.7 | 151.0 |
+| `**/*.rs` | 89.1 | 58.4 | 99.6 |
+| `**/*(.)` | 145.4 | 122.9 | 160.9 |
+
+Parallel descent is 1.2x to 1.5x faster than zsh on this tree. Serial zshrs is slower than zsh on every pattern here, so the win comes from the fan-out, not from the single-threaded walk.
+
 ---
 
 ## [0x04] CONCURRENT PRIMITIVES
