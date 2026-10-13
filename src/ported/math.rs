@@ -4525,12 +4525,25 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
                 _ => None,
             }
         };
+        // c:Src/math.c:367 — `mathevall` opens every evaluation with
+        // `lastbase = -1`, BEFORE any store: the `NAME++` arm below assigns
+        // through `assignnparam`, which inherits `lastbase` into a parameter
+        // with no base of its own (c:Src/params.c:2801). Resetting only after
+        // the store left the PREVIOUS evaluation's base in `j`: `$(( 8#34 ))`
+        // then `$(( j-- ))` printed `[-8#4]` where zsh prints `[-4]`.
+        m_lastbase_set(-1);
         let fast = (|| -> Option<i64> {
             // `NAME++` `NAME--` `++NAME` `--NAME`: the one assignment shape
             // loop headers use. Same store setmathvar makes for an lvalue
             // this expression already read (c:990 `setnumvalue`).
             let t = s.trim();
-            let (name, delta, post) = if let Some(n) = t.strip_suffix("++") {
+            // dash arithmetic has no `++` / `--` (`x=5; echo $((x++))` is
+            // "expecting primary"): under dash-strict they take the full
+            // path, where the lexer rejects them.
+            let incdec = !crate::dash_mode::dash_strict();
+            let (name, delta, post) = if !incdec {
+                ("", 0, false)
+            } else if let Some(n) = t.strip_suffix("++") {
                 (n.trim_end(), 1i64, true)
             } else if let Some(n) = t.strip_suffix("--") {
                 (n.trim_end(), -1, true)
