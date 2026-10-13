@@ -4703,6 +4703,34 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
         }
     }
     if body.starts_with('(') {
+        // c:2058-2114 on a SCALAR — `(i)`/`(I)` search the string and return
+        // the 1-based character position, which getindex turns into a
+        // single-element INV access exactly as for an array (c:2110-2114).
+        // Without this arm the flag group fell to the numeric path below,
+        // where `mathevalarg("(i)=")` raised "bad math expression" for
+        // `$(( arg[(i)=] + 1 ))` (zsh-syntax-highlighting's
+        // `local i=$(( arg[(i)=] + 1 ))`). The expansion pipeline never hit
+        // this: it calls getarg's scalar arm directly.
+        let pm_is_scalar = v
+            .pm
+            .as_ref()
+            .map_or(false, |p| PM_TYPE(p.node.flags as u32) == PM_SCALAR);
+        if pm_is_scalar {
+            let flag_part = &body[1..body.find(')').unwrap_or(1)];
+            if flag_part.contains('i') || flag_part.contains('I') {
+                let text = v.pm.as_ref().map(|p| strgetfn(p)).unwrap_or_default();
+                if let Some(getarg_out::Value(val)) = getarg(body, None, None, Some(&text)) {
+                    if let Ok(idx) = val.to_str().parse::<i64>() {
+                        v.valflags |= VALFLAG_INV;
+                        v.scanflags = 0;
+                        v.start = idx as i32;
+                        v.end = (idx + 1) as i32;
+                        *pptr = past_close;
+                        return 0;
+                    }
+                }
+            }
+        }
         let pm_is_array =
             v.pm.as_ref()
                 .map_or(false, |p| PM_TYPE(p.node.flags as u32) == PM_ARRAY);

@@ -88,6 +88,7 @@ mod export_unset_parity;
 mod extended_glob_parity;
 mod fd_redirect_parity;
 mod for_arith_store_parity;
+mod for_warn_subscript_parity;
 mod funcstack_trace_parity;
 mod function_parity;
 mod functions_hashtable_parity;

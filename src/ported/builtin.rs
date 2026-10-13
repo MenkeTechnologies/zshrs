@@ -7506,7 +7506,7 @@ pub fn bin_typeset(
                             explicit.insert(i);
                         }
                     }
-                    crate::ported::exec::set_array(n, dense.clone());
+                    crate::ported::params::assignaparam(n, dense.clone(), 0); // c:3019-3020 flags carry no ASSPM_WARN
                     crate::bash_arrays::clear(n);
                     crate::bash_arrays::note_holes_outside(n, &explicit, dense.len());
                 } else if elems.iter().any(|e| e.starts_with(crate::ported::zsh_h::Marker)) {
@@ -7550,7 +7550,7 @@ pub fn bin_typeset(
                     }
                 } else {
                     // c:2980-2995 — plain array.
-                    crate::ported::exec::set_array(n, elems.clone());
+                    crate::ported::params::assignaparam(n, elems.clone(), 0); // c:3019-3020 flags carry no ASSPM_WARN
                 }
                 // c:2357 — on a genuine type change (was NOT array/hashed), drop
                 // the old scalar padding flags; re-add only what THIS command's
@@ -7966,7 +7966,7 @@ pub fn bin_typeset(
                     } else {
                         vec![raw_v.to_string()] // c:2572 mkarray(ztrdup(...))
                     };
-                    crate::ported::exec::set_array(n, arrayval); // c:2578 assignaparam
+                    crate::ported::params::assignaparam(n, arrayval, 0); // c:2578 assignaparam
                 } else {
                     crate::ported::params::assignsparam(n, raw_v, 0); // c:2322
                 }
@@ -8185,7 +8185,11 @@ pub fn bin_typeset(
                     }
                 }
             } else if crate::ported::exec::array(arg).is_none() {
-                crate::ported::exec::set_array(arg, Vec::new());
+                // The empty array is a declaration, not an assignment: C's
+                // createparam (c:Src/builtin.c:2521) never reaches
+                // check_warn_pm (`typeset -ga ${name}` under
+                // WARN_CREATE_GLOBAL, as zsh-syntax-highlighting does).
+                crate::ported::params::assignaparam(arg, Vec::new(), 0);
             }
             // c:Src/params.c:4087 arrsetfn — when PM_UNIQUE is set on
             // an existing array, the canonical setfn applies
@@ -8204,7 +8208,7 @@ pub fn bin_typeset(
                         .filter(|x| seen.insert(x.clone()))
                         .collect::<Vec<_>>()
                 };
-                crate::ported::exec::set_array(arg, deduped);
+                crate::ported::params::assignaparam(arg, deduped, 0);
             }
             // Stamp attribute bits on paramtab entry — same set as
             // the `name=value` post-assign mask.

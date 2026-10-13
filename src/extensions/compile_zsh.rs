@@ -11309,40 +11309,9 @@ impl ZshCompiler {
         self.builder.emit(Op::NumLt, 0);
         let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-        let var_const = self.builder.add_constant(Value::str(var));
-        self.builder.emit(Op::LoadConst(var_const), 0);
-        self.builder.emit(Op::GetSlot(i_slot), 0);
-        self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
-        // c:Src/loop.c execfor → setloopvar (params.c:6362) — see
-        // compile_for_words for the nameref-rebind rationale.
-        self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2),
-            0,
-        );
-        let loop_var_abort = self.builder.emit(Op::JumpIfFalse(0), 0);
-        // c:Src/exec.c::execlist:28+292 — restore `lineno` to the
-        // for-statement's line before the per-iter trace; matches
-        // execlist's save/restore around each body. See compile_for_words
-        // for the equivalent fix on the named-list path.
-        self.builder.emit(Op::LoadInt(self.current_sublist_line), 0);
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
-        self.builder.emit(Op::Pop, 0);
-        // xtrace: emit `name=value\n` per iteration. Direct port of
-        // Src/loop.c:163-166. XTRACE_LINE no-ops when -x is off.
-        let assign_prefix = format!("{}=", var);
-        let prefix_const = self
-            .builder
-            .add_constant(Value::str(assign_prefix.as_str()));
-        self.builder.emit(Op::LoadConst(prefix_const), 0);
-        let var_const2 = self.builder.add_constant(Value::str(var));
-        self.builder.emit(Op::LoadConst(var_const2), 0);
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
-        self.builder.emit(Op::Concat, 0);
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
-        self.builder.emit(Op::Pop, 0);
+        // Multi-name `for 1 2 3; do` (the zsh-syntax-highlighting idiom
+        // for unpacking `$@` three at a time) binds N names per pass.
+        let (n, loop_var_abort_jumps) = self.emit_for_loop_binds(var, i_slot, arr_slot);
 
         self.open_loop_scope();
 
@@ -11359,15 +11328,103 @@ impl ZshCompiler {
             }
         }
 
-        self.builder.emit(Op::PreIncSlotVoid(i_slot), 0);
+        self.emit_for_loop_advance(i_slot, n);
         self.builder.emit(Op::Jump(loop_top), 0);
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
         self.builder.patch_jump(errflag_break, loop_exit);
-        self.builder.patch_jump(loop_var_abort, loop_exit);
+        for aj in loop_var_abort_jumps {
+            self.builder.patch_jump(aj, loop_exit);
+        }
 
         self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
+    }
+
+    /// Bind the loop variable(s) for one iteration of `for NAME… in/(…)/;`.
+    ///
+    /// `var` holds the names joined by spaces (`for k v in …`, and the
+    /// no-`in` form `for 1 2 3; do`). Port of the inner name loop at
+    /// c:Src/loop.c:155-170: each name takes the next element of the arg
+    /// array at `arr_slot` starting at `i_slot`; names past the end of the
+    /// array are bound to the empty string (c:157-162). Shared by the
+    /// `in WORDS` and positional-parameter forms so both bind identically.
+    ///
+    /// Returns the number of names (the per-iteration stride) and the
+    /// `JumpIfFalse` sites that abort the loop when `setloopvar` reports an
+    /// error (c:Src/loop.c execfor errflag check); the caller patches them
+    /// to the loop exit.
+    fn emit_for_loop_binds(&mut self, var: &str, i_slot: u16, arr_slot: u16) -> (i64, Vec<usize>) {
+        let names: Vec<&str> = var.split_whitespace().collect();
+        let mut loop_var_abort_jumps: Vec<usize> = Vec::new();
+        for (k, name) in names.iter().enumerate() {
+            let var_const = self.builder.add_constant(Value::str(*name));
+            self.builder.emit(Op::LoadConst(var_const), 0);
+            self.builder.emit(Op::GetSlot(i_slot), 0);
+            if k > 0 {
+                self.builder.emit(Op::LoadInt(k as i64), 0);
+                self.builder.emit(Op::Add, 0);
+            }
+            self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
+            // c:Src/loop.c execfor → setloopvar (params.c:6362): the
+            // loop var binds via SET_LOOP_VAR so PM_NAMEREF vars
+            // REBIND per iteration; Bool(false) return = zerr fired
+            // (invalid self reference / read-only reference) → abort
+            // the loop (C errflag check in execfor).
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2),
+                0,
+            );
+            let aj = self.builder.emit(Op::JumpIfFalse(0), 0);
+            loop_var_abort_jumps.push(aj);
+            // c:Src/exec.c::execlist:28+292 — restore `lineno` to
+            // the for-statement's line before the per-iter trace.
+            // execlist saves `oldlineno = lineno` at entry and
+            // restores it at exit; in our flat compile-time
+            // emission the body's SET_LINENO ops have advanced
+            // LINENO past the for-header, so on iter 2+ the
+            // `name=value` trace would emit with the body's last
+            // line. Reset to current_sublist_line (captured by
+            // compile_sublist) so each iter's trace shows the for
+            // line, matching zsh.
+            self.builder.emit(Op::LoadInt(self.current_sublist_line), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
+            self.builder.emit(Op::Pop, 0);
+            // xtrace: emit `name=value\n` per iteration. Direct port
+            // of Src/loop.c:163-166:
+            //   if (isset(XTRACE)) {
+            //     printprompt4();
+            //     fprintf(xtrerr, "%s=%s\n", name, str);
+            //   }
+            // XTRACE_LINE no-ops when -x is off, so cheap unconditionally.
+            let assign_prefix = format!("{}=", name);
+            let prefix_const = self
+                .builder
+                .add_constant(Value::str(assign_prefix.as_str()));
+            self.builder.emit(Op::LoadConst(prefix_const), 0);
+            let name_const2 = self.builder.add_constant(Value::str(*name));
+            self.builder.emit(Op::LoadConst(name_const2), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+            self.builder.emit(Op::Concat, 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
+        (names.len() as i64, loop_var_abort_jumps)
+    }
+
+    /// Advance the arg index by `n` names (one per iteration stride).
+    fn emit_for_loop_advance(&mut self, i_slot: u16, n: i64) {
+        if n == 1 {
+            self.builder.emit(Op::PreIncSlotVoid(i_slot), 0);
+        } else {
+            self.builder.emit(Op::GetSlot(i_slot), 0);
+            self.builder.emit(Op::LoadInt(n), 0);
+            self.builder.emit(Op::Add, 0);
+            self.builder.emit(Op::SetSlot(i_slot), 0);
+        }
     }
 
     fn compile_for_words(&mut self, var: &str, words: &[String], body: &crate::parse::ZshProgram) {
@@ -11499,71 +11556,7 @@ impl ZshCompiler {
         self.builder.emit(Op::NumLt, 0);
         let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-        // Multi-name `for k v in ...`: var holds names joined by spaces.
-        // For each iteration consume N elements (one per name); when fewer
-        // than N remain in the tail, fill missing names with empty strings
-        // (mirrors zsh's exec.c forexec). Single-name path (most common)
-        // keeps the original 2-byte SET_VAR shape.
-        let names: Vec<&str> = var.split_whitespace().collect();
-        let n = names.len() as i64;
-        let mut loop_var_abort_jumps: Vec<usize> = Vec::new();
-        for (k, name) in names.iter().enumerate() {
-            let var_const = self.builder.add_constant(Value::str(*name));
-            self.builder.emit(Op::LoadConst(var_const), 0);
-            if k == 0 {
-                self.builder.emit(Op::GetSlot(i_slot), 0);
-            } else {
-                self.builder.emit(Op::GetSlot(i_slot), 0);
-                self.builder.emit(Op::LoadInt(k as i64), 0);
-                self.builder.emit(Op::Add, 0);
-            }
-            self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
-            // c:Src/loop.c execfor → setloopvar (params.c:6362): the
-            // loop var binds via SET_LOOP_VAR so PM_NAMEREF vars
-            // REBIND per iteration; Bool(false) return = zerr fired
-            // (invalid self reference / read-only reference) → abort
-            // the loop (C errflag check in execfor).
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2),
-                0,
-            );
-            let aj = self.builder.emit(Op::JumpIfFalse(0), 0);
-            loop_var_abort_jumps.push(aj);
-            // c:Src/exec.c::execlist:28+292 — restore `lineno` to
-            // the for-statement's line before the per-iter trace.
-            // execlist saves `oldlineno = lineno` at entry and
-            // restores it at exit; in our flat compile-time
-            // emission the body's SET_LINENO ops have advanced
-            // LINENO past the for-header, so on iter 2+ the
-            // `name=value` trace would emit with the body's last
-            // line. Reset to current_sublist_line (captured by
-            // compile_sublist) so each iter's trace shows the for
-            // line, matching zsh.
-            self.builder.emit(Op::LoadInt(self.current_sublist_line), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
-            self.builder.emit(Op::Pop, 0);
-            // xtrace: emit `name=value\n` per iteration. Direct port
-            // of Src/loop.c:163-166:
-            //   if (isset(XTRACE)) {
-            //     printprompt4();
-            //     fprintf(xtrerr, "%s=%s\n", name, str);
-            //   }
-            // XTRACE_LINE no-ops when -x is off, so cheap unconditionally.
-            let assign_prefix = format!("{}=", name);
-            let prefix_const = self
-                .builder
-                .add_constant(Value::str(assign_prefix.as_str()));
-            self.builder.emit(Op::LoadConst(prefix_const), 0);
-            let name_const2 = self.builder.add_constant(Value::str(*name));
-            self.builder.emit(Op::LoadConst(name_const2), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
-            self.builder.emit(Op::Concat, 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
-            self.builder.emit(Op::Pop, 0);
-        }
+        let (n, loop_var_abort_jumps) = self.emit_for_loop_binds(var, i_slot, arr_slot);
 
         self.open_loop_scope();
 
@@ -11580,14 +11573,7 @@ impl ZshCompiler {
             }
         }
 
-        if n == 1 {
-            self.builder.emit(Op::PreIncSlotVoid(i_slot), 0);
-        } else {
-            self.builder.emit(Op::GetSlot(i_slot), 0);
-            self.builder.emit(Op::LoadInt(n), 0);
-            self.builder.emit(Op::Add, 0);
-            self.builder.emit(Op::SetSlot(i_slot), 0);
-        }
+        self.emit_for_loop_advance(i_slot, n);
         self.builder.emit(Op::Jump(loop_top), 0);
 
         let loop_exit = self.builder.current_pos();
