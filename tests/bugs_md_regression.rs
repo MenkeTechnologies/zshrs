@@ -2805,3 +2805,32 @@ fn bug_1176_interactive_procsub_child_leads_its_own_group() {
         "kill -TERM -$pid on the procsub child failed; pty said: {text:?}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1177 — `${name:-word}` default word: brace groups and `~`
+// Fix: src/ported/subst.rs (multsub_operand adapter, prefork brace loop)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug1177_default_word_brace_groups_expand() {
+    let (ec, stdout, _) = run_zshrs(
+        r#"x=(${:-{2..1}} ${:-{1..1}} ${:-{a,b}} ${u:-p{x,y}q} "${:-{a,b}}"); print -r -- ${(j:|:)x}"#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "exit 0");
+    assert_eq!(stdout.trim(), "2|1|1|a|b|pxq|pyq|{a,b}");
+}
+
+#[test]
+fn bug1177_default_word_tilde_expands_inside_nested_substitution() {
+    let (ec, stdout, _) = run_zshrs(
+        r#"HOME=/a/b/c; print -r -- ${${${:-~/..}:a}%/}/ ${${:-~/x}:h}; print -r -- "${:-~/x}""#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "exit 0");
+    assert_eq!(stdout, "/a/b/ /a/b/c\n~/x\n");
+}

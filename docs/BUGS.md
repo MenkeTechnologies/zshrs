@@ -61241,3 +61241,31 @@ it, so the child stayed in the shell's group. zsh-autosuggestions cancels its as
 and its `echo -nE "$suggestion"` hit the closed pipe: `_zsh_autosuggest_async_request:36: write
 error: broken pipe`. Both fork arms now call `procsub_child_enter_subsh` (entersubsh, own group
 under MONITOR, SIGPIPE back to default) and the parent sets the same group.
+
+## #1177 — `${name:-word}` default word kept `{a,b}` / `{N..M}` and a word-initial `~` literal — fixed
+
+**Status:** `fixed` 2026-10-12.
+
+```console
+zsh -f -c 'x=(${:-{2..1}} ${:-{a,b}}); print -r -- $x; HOME=/a/b/c; print -r -- ${${${:-~/..}:a}%/}/'
+zsh 5.9.2        2 1 a b
+                 /a/b/
+zshrs (before)   {2..1} {a,b}
+                 /Users/<cwd>/
+```
+
+**Root cause.** C's lexer turns a word's `{`, matching `}` and `,` into `Inbrace` / `Outbrace` /
+`Comma` and a word-initial `~` into `Tilde` before `paramsubst` runs (c:Src/lex.c:1545-1576), so
+`multsub` on the default word (c:Src/subst.c:3226) hands `prefork` tokens and its
+`hasbraces` / `xpandbraces` / `filesub` passes (c:173-181) fire. zshrs feeds that operand through
+as raw source, so none of them saw a token. `prefork` also dropped a brace expansion that yields
+exactly one word (`{1..1}` → `1`), because the loop read "one result" as "no change".
+powerlevel10k's `_p9k_fetch_cwd` hits both: `${${${:-~/..}:a}%/}/` resolved to the working
+directory, and `${:-{$#parts..1}}` with one path component raised
+`bad math expression: illegal character`. The operand adapter in `paramsubst` now re-tokenizes
+balanced unquoted brace groups and a leading `~`, and the `prefork` brace loop applies a
+one-word result.
+
+**Open.** A nested default word inside a double-quoted *assignment* right-hand side
+(`a="${${:-~/..}%/}"`) still expands the `~`: the assignment path hands `paramsubst` the same
+`qt`/`PREFORK_SINGLE` pair whether or not the right-hand side was quoted.

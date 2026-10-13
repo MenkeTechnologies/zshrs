@@ -82,7 +82,7 @@ use crate::ported::utils::{
 use crate::ported::zsh_h::PAT_HEAPDUP;
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
-    hashnode, isset, param, Bang, Bnull, Bnullkeep, Dash, Dnull, Equals, Hat, Inang, Inbrace,
+    hashnode, isset, param, Bang, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace,
     Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar,
     Outparmath, Param, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
     ALIAS_GLOBAL, ALIAS_SUFFIX, CASMOD_NONE, DISABLED, HASHED, HISTSUBSTPATTERN, IGNOREBRACES,
@@ -388,6 +388,15 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                             expanded
                         };
                         if expanded.len() <= 1 {
+                            // c:173-175 — `while (hasbraces) xpandbraces`: an
+                            // expansion that yields ONE word (`{1..1}` → `1`) still
+                            // replaces the node; only an unchanged string means C's
+                            // `hasbraces` is false.
+                            if expanded.len() == 1 && expanded[0] != cur {
+                                keep = true; // c:174
+                                list.setdata(node_idx, expanded[0].clone());
+                                continue;
+                            }
                             break;
                         } // c:170 (!hasbraces)
                         keep = true; // c:172
@@ -3784,6 +3793,63 @@ pub fn paramsubst(
     };
     let multsub_operand = |s: &str, pf_flags: i32| {
         let saved = PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.replace(0));
+        // !!! RUST-ONLY ADAPTER — NO C COUNTERPART !!!
+        // c:Src/lex.c:1545-1549 / c:1565-1576 — C's lexer turns every `{` and
+        // its matching `}` into `Inbrace` / `Outbrace` (and a `,` between them
+        // into `Comma`) before paramsubst sees the word, so `${:-{a,b}}` hands
+        // multsub (c:3226) TOKENS and prefork's `hasbraces` / `xpandbraces`
+        // (c:173-175) expand it. zshrs feeds this operand through as raw
+        // source, so those characters are still ASCII and `xpandbraces`, which
+        // keys on the tokens, never fired: `x=(${:-{2..1}})` stayed `{2..1}`.
+        // Re-tokenize only BALANCED, UNQUOTED groups outside `(…)` (a `$(…)`
+        // body is re-lexed on its own and must stay text). Quote markers
+        // arrive already tokenized and delimit the quoted spans. A lone `{` or
+        // `}` stays the ASCII byte.
+        // Inside double quotes the lexer leaves all of it ASCII (`qt`).
+        let in_dq = qt || NESTED_DQUOTED.with(|c| c.get());
+        let tokenized: String = if !in_dq && !isset(IGNOREBRACES) && pf_flags & PREFORK_SINGLE == 0 && s.contains('{') {
+            let mut chars: Vec<char> = s.chars().collect();
+            // Each open `{` keeps its `,` separator indices until it closes.
+            let mut open: Vec<(usize, Vec<usize>)> = Vec::new();
+            let (mut inq, mut parens, mut i) = (false, 0_i32, 0_usize);
+            while i < chars.len() {
+                match chars[i] {
+                    Dnull | Snull | Tick | Qtick => inq = !inq,
+                    Bnull | Bnullkeep => i += 1,
+                    '(' if !inq => parens += 1,
+                    ')' if !inq => parens -= 1,
+                    '{' if !inq && parens == 0 => open.push((i, Vec::new())),
+                    ',' if !inq && parens == 0 => {
+                        if let Some((_, commas)) = open.last_mut() {
+                            commas.push(i);
+                        }
+                    }
+                    '}' if !inq && parens == 0 => {
+                        if let Some((start, commas)) = open.pop() {
+                            chars[start] = Inbrace;
+                            chars[i] = Outbrace;
+                            for c in commas {
+                                chars[c] = Comma;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            chars.into_iter().collect()
+        } else {
+            s.to_string()
+        };
+        // c:Src/lex.c — the same lexer turns a word-initial `~` into `Tilde`,
+        // which is what prefork's `filesub` (c:178-181) acts on; the raw
+        // operand still carries the ASCII byte, so `${${:-~/..}%/}` kept the
+        // `~` literal where zsh expands it to `$HOME/..`.
+        let tokenized: String = match tokenized.strip_prefix('~') {
+            Some(rest) if !in_dq && !isset(SHFILEEXPANSION) => format!("{}{}", Tilde, rest),
+            _ => tokenized,
+        };
+        let s = tokenized.as_str();
         let result = multsub(s, pf_flags);
         PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(saved));
         result
@@ -7273,7 +7339,10 @@ pub fn paramsubst(
                 let (joined, arr_parts, isarr, _) = if aspar_arr.is_some() {
                     (String::new(), Vec::new(), false, 0)
                 } else {
-                    multsub_operand(&inner, PREFORK_SUBEXP)
+                    let saved_dq = NESTED_DQUOTED.with(|c| c.replace(c.get() || (qt && pf_flags & PREFORK_SINGLE == 0)));
+                    let nested = multsub_operand(&inner, PREFORK_SUBEXP);
+                    NESTED_DQUOTED.with(|c| c.set(saved_dq));
+                    nested
                 };
                 if let Some(saved) = __inner_gs {
                     gs_restore(saved);
@@ -29265,6 +29334,16 @@ thread_local! {
 thread_local! {
     /// `SKIP_FILESUB` static.
     pub static SKIP_FILESUB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+// !!! RUST-ONLY STATE — NO C COUNTERPART !!!
+// True while a nested `${${…}…}` body is being expanded inside a double-quoted
+// WORD. C's lexer leaves `~` and `{` ASCII in a quoted span and the quote pair
+// travels with the text; zshrs re-reads the nested body from raw text with the
+// pair stripped, so `multsub_operand` consults this instead of re-tokenizing
+// the operand's brace and tilde characters.
+thread_local! {
+    static NESTED_DQUOTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 // =====================================================================
