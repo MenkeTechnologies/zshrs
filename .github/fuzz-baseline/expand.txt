@@ -1,0 +1,5 @@
+# parity-fuzz --mode expand baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Empty on purpose: every target CI runs this mode against is clean, so any
+# divergence is a regression.
+# Regenerate: parity-fuzz --mode expand --shell <target> --count N --verify 3  (copy NEW-signature lines).

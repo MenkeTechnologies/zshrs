@@ -555,6 +555,18 @@ jobs:
         run: ./target/debug/parity-fuzz --mode cmdsub --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/cmdsub.txt --out target/parity-fuzz/ci-cmdsub.txt
       - name: Fuzz — loop
         run: ./target/debug/parity-fuzz --mode loop --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/loop.txt --out target/parity-fuzz/ci-loop.txt
+      # expand: expansion semantics (field splitting under IFS variants, "$@"/"$*",
+      # the - = ? + operators, # ## % %% with variable patterns, arithmetic,
+      # command substitution, quoting, tilde) through every Bourne-family leg whose
+      # reference is the 5.9.2 zsh built above. The empty baseline makes any
+      # divergence a regression. The real-shell legs (bash, dash, ksh93, mksh) are
+      # run by hand: their references differ by version from runner to runner.
+      - name: Fuzz — expand (zsh)
+        run: ./target/debug/parity-fuzz --mode expand --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/expand.txt --out target/parity-fuzz/ci-expand-zsh.txt
+      - name: Fuzz — expand (sh/zsh-style)
+        run: ./target/debug/parity-fuzz --mode expand --shell sh/zsh-style --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/expand.txt --out target/parity-fuzz/ci-expand-sh-zsh.txt
+      - name: Fuzz — expand (ksh/zsh-style)
+        run: ./target/debug/parity-fuzz --mode expand --shell ksh/zsh-style --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/expand.txt --out target/parity-fuzz/ci-expand-ksh-zsh.txt
       # datetime / alias / stat reach surface no other mode does — zsh/datetime's
       # strftime format specifiers, lexer-level alias expansion (parse-time
       # binding, global + suffix aliases), and zsh/stat's field/format matrix.
