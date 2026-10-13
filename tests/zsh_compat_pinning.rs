@@ -274,6 +274,44 @@ mod small_language_surface {
     }
 }
 
+/// `${(t)…}` reports a type and never reads the elements: c:Src/subst.c:2808-2862
+/// ends the type arm with `v = NULL; isarr = 0;`, ahead of both c:2966's
+/// `getstrvalue` and c:3033's double-quote join.
+mod type_flag_skips_elements {
+    use super::*;
+
+    #[test]
+    fn quoted_and_unquoted_forms_match_zsh() {
+        assert_parity(
+            r#"a=(x y z); typeset -A h=(k v k2 v2); s=str; k=a; kh=h
+for c in '${(t)a}' '${(t)h}' '${(t)s}' '${(Pt)k}' '${(Pt)kh}' '${(t)a:-D}' \
+  '${(t)nosuch:-D}' '${(t)a:+P}' '${(t)a#a}' '${(@t)a}' '${(tj:,:)a}' \
+  '${(tU)a}' '${(t)a[1]}' '${(t)a[@]}' '${#${(t)a}}' '${(t)${(P)k}}'; do
+  eval "x=( $c ); y=( \"$c\" ); print -r -- \"\$c U\${#x}<\$x> Q\${#y}<\$y>\""
+done
+f() { local -a la=(1 2); print -r -- "${(t)la}" "${(Pt)1}" }; f la"#,
+        );
+    }
+
+    /// zbrowse's precmd runs `[[ "${(Pt)name}" = *special* ]]` over every
+    /// parameter; with `(t)` reading elements, `history` (782k entries in a
+    /// real session) stalled every prompt by 0.5-2.5s. 1000 reads of a
+    /// 200k-element array and a 50k-key hash took ~45s in a debug build
+    /// before, ~0.05s after.
+    #[test]
+    fn cost_does_not_scale_with_element_count() {
+        let out = run_zshrs(
+            r#"zmodload zsh/datetime
+a=({1..200000}); typeset -A h; for x in {1..50000}; do h[$x]=$x; done; k=h
+integer n; t=$EPOCHREALTIME
+for ((n = 0; n < 1000; n++)); do : "${(t)a}" ${(t)a} "${(Pt)k}" ${(t)h}; done
+print $(( EPOCHREALTIME - t ))"#,
+        );
+        let secs: f64 = out.stdout.trim().parse().expect("elapsed seconds");
+        assert!(secs < 5.0, "1000 rounds of (t) reads took {secs}s");
+    }
+}
+
 mod zsh_compat_cli_alias {
     use super::*;
 

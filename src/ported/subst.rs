@@ -13085,7 +13085,17 @@ pub fn paramsubst(
             // in one place; subst.rs and the fuseVM bridge both
             // route through here so the lookup logic lives in
             // exactly one location.
-            exec_getsparam(&var_name)
+            //
+            // c:2808-2862 — under `(t)` the type arm ends with `v = NULL`, so
+            // c:2966's `getstrvalue(v)` never runs and C never reads an array
+            // or hash's elements. Reading them here joined every element only
+            // for the `(t)` arm to replace the result with the type tag:
+            // O(n) per `${(t)big}`. Scalars stay on the normal read (it is
+            // O(1) and the unset/declared tests below still need the name).
+            let wantt_skips_elements = wantt
+                && !used_subexp
+                && (arrays_contains(&var_name) || assoc_contains(&var_name));
+            (if wantt_skips_elements { Some(String::new()) } else { exec_getsparam(&var_name) })
                 .or_else(|| {
                     // Skip the whole-map assoc_get for magic assocs
                     // (functions/parameters/commands/aliases/…). Building
@@ -15212,7 +15222,20 @@ pub fn paramsubst(
         // unique/splat block is skipped (matches `if (isarr)` gate).
         // For `(@)arr`, nojoin=2 keeps isarr at -1 not 0, so the
         // block STILL fires and splats per the explicit @-override.
-        if isarr != 0 {
+        //
+        // c:2808-2862 — the `(t)` arm runs BEFORE this block and ends with
+        // `isarr = 0`, so C never joins the parameter's elements under
+        // `(t)`. zshrs runs its `(t)` arm further down (it resets `isarr`
+        // there too), so skip the join here exactly when that arm will own
+        // the value: the same `!(used_subexp && subexp_aspar_name.is_none())`
+        // test as its passthrough guard (c:2764 `if (!subexp || aspar)`).
+        // Joining first was not just wasted: `"${(Pt)k}"` with k=history
+        // materialized and joined every history entry (782k in a real
+        // session) only to discard the result, per call — zbrowse's precmd
+        // runs that test on every parameter and stalled each prompt for
+        // 0.5-2.5s.
+        let wantt_owns_value = wantt && !(used_subexp && subexp_aspar_name.is_none());
+        if isarr != 0 && !wantt_owns_value {
             // c:3029
             if nojoin != 0 {
                 // c:3030
