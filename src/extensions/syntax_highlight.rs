@@ -700,6 +700,9 @@ fn builtin_word_available(word: &str) -> bool {
             && crate::ext_builtins::builtin_in_builtintab(word))
         || crate::daemon::builtins::is_zshrs_builtin(word)
         || crate::native_cmds::is_enabled(word)
+        // `znative load <owner/repo>` / `zmodload -R` commands live in the
+        // plugin host registry, in none of the tables above.
+        || crate::plugin_host::is_plugin_command(word)
 }
 
 pub fn highlight_shell(
@@ -3558,6 +3561,12 @@ mod tests {
                 "daemon builtin {name} must not paint as an unknown token"
             );
         }
+        // `znative load` plugin commands live in the plugin host registry.
+        crate::plugin_host::register_command_for_test("zshrs_znative_probe_cmd");
+        assert!(
+            builtin_word_available("zshrs_znative_probe_cmd"),
+            "znative plugin command must not paint as an unknown token"
+        );
         // A name in none of the four registries stays unknown, or the
         // predicate is answering yes to everything and pins nothing.
         assert!(

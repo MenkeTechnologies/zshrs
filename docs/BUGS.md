@@ -61269,3 +61269,18 @@ one-word result.
 **Open.** A nested default word inside a double-quoted *assignment* right-hand side
 (`a="${${:-~/..}%/}"`) still expands the `~`: the assignment path hands `paramsubst` the same
 `qt`/`PREFORK_SINGLE` pair whether or not the right-hand side was quoted.
+
+## #1178 — commands registered by `znative load` painted as unknown tokens — fixed
+
+**Status:** `fixed` 2026-10-12.
+
+```console
+znative load MenkeTechnologies/zshrs-zwire     # then type one of its builtins at the prompt
+zshrs (before)   command word styled `unknown-token` (red) although it runs
+```
+
+**Root cause.** `syntax_highlight::builtin_word_available` asked four registries (the C builtin
+table, `EXT_BUILTIN_NAMES`, the daemon `z*` family, `native_cmds`) and never the plugin host's
+registry, where `znative load` / `zmodload -R` put a cdylib's commands. `plugin_host::is_plugin_command`
+existed for exactly this question and had no caller. The predicate now asks it too; the test
+registers a plugin command through a `#[cfg(test)]` seam and pins that it is a known command.

@@ -637,6 +637,23 @@ pub fn is_plugin_command(name: &str) -> bool {
     registry().lock().unwrap().contains_key(name)
 }
 
+/// Test seam: register `name` as a plugin command without a cdylib so
+/// callers of [`is_plugin_command`] can be exercised in-process.
+#[cfg(test)]
+pub(crate) fn register_command_for_test(name: &str) {
+    extern "C" fn noop(
+        _host: *const znative::HostApi,
+        _argc: usize,
+        _argv: *const *const std::os::raw::c_char,
+    ) -> std::os::raw::c_int {
+        0
+    }
+    registry()
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), BuiltinEntry { func: noop, _pad: () });
+}
+
 /// `zmodload -R` native-plugin management, dispatched from
 /// `crate::ported::module::bin_zmodload` (kept out of `src/ported/`
 /// because it is a zshrs extension, not a C port).
