@@ -7392,6 +7392,9 @@ pub fn bin_typeset(
                                 map.insert(t[1].clone(), t[2].clone());
                             }
                         }
+                        if !paramtab().read().unwrap().contains_key(n) {
+                            createparam(n, PM_HASHED as i32); // c:2521 typeset_single creates the hash first
+                        }
                         crate::ported::exec::set_assoc(n, map);
                     }
                 } else if is_hashed {
@@ -7472,6 +7475,9 @@ pub fn bin_typeset(
                                 let v = it.next().unwrap_or_default();
                                 map.insert(k, v); // c:2964 hashtab insert
                             }
+                        }
+                        if !paramtab().read().unwrap().contains_key(n) {
+                            createparam(n, PM_HASHED as i32); // c:2521 typeset_single creates the hash first
                         }
                         crate::ported::exec::set_assoc(n, map.clone());
                     }
@@ -8175,6 +8181,9 @@ pub fn bin_typeset(
                         .ok()
                         .and_then(|t| t.get(arg).map(|pm| pm.node.flags & PM_DEFAULTED as i32))
                         .unwrap_or(0);
+                    if !paramtab().read().unwrap().contains_key(arg) {
+                        createparam(arg, PM_HASHED as i32); // c:2521; sethparam then sees an existing param and does not warn
+                    }
                     crate::ported::exec::set_assoc(arg, IndexMap::new());
                     if defaulted != 0 {
                         if let Ok(mut t) = paramtab().write() {

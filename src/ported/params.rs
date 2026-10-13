@@ -4729,6 +4729,39 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                         return 0;
                     }
                 }
+            } else if flag_part.contains(|c| matches!(c, 'r' | 'R' | 'k' | 'K')) {
+                // c:1394-1431 — on a scalar `r`/`k` find the FIRST match and
+                // `R`/`K` the LAST (`keymatch = ishash` is 0), and the result
+                // is the character AT the match, which getnumvalue then
+                // evaluates: `s=12345; $(( s[(r)3] ))` is 3, a miss is the
+                // empty string (0). Search with the index flags (the same
+                // r->i / R->I mapping the array-bound evaluator uses) and cut
+                // that one character; a miss is the c:2141-2150 empty range.
+                let mapped: String = flag_part
+                    .chars()
+                    .map(|c| match c {
+                        'r' | 'k' => 'i',
+                        'R' | 'K' => 'I',
+                        other => other,
+                    })
+                    .collect();
+                let body_idx = format!("({}{}", mapped, &body[1 + flag_part.len()..]);
+                let text = v.pm.as_ref().map(|p| strgetfn(p)).unwrap_or_default();
+                if let Some(getarg_out::Value(val)) = getarg(&body_idx, None, None, Some(&text)) {
+                    if let Ok(idx) = val.to_str().parse::<i64>() {
+                        v.scanflags = 0;
+                        if idx >= 1 && idx <= text.chars().count() as i64 {
+                            v.start = (idx - 1) as i32;
+                            v.end = idx as i32;
+                        } else {
+                            v.valflags |= VALFLAG_EMPTY; // c:2147
+                            v.start = -1; // c:2148
+                            v.end = 0;
+                        }
+                        *pptr = past_close;
+                        return 0;
+                    }
+                }
             }
         }
         let pm_is_array =

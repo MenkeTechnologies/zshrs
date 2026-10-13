@@ -10,7 +10,6 @@
 //!   declares through createparam / assignaparam without `ASSPM_WARN`, so it
 //!   never warns. The plugin runs `typeset -ga ${cache_place}` with the
 //!   option on.
-//! * `$(( arg[(i)=] + 1 ))` — a `(i)`/`(I)` subscript flag on a SCALAR fell to
 //!   the numeric subscript path and failed `bad math expression`.
 
 use std::path::PathBuf;
@@ -135,6 +134,37 @@ mod typeset_global_under_warncreateglobal {
     }
 }
 
+mod typeset_assoc_declaration {
+    use super::*;
+
+    /// `typeset -gA NAME` declares through createparam: silent, and the type
+    /// must come out as an association (not an array).
+    #[test]
+    fn declaration_is_silent_and_hashed() {
+        assert_parity(
+            r#"f(){ setopt localoptions warncreateglobal; typeset -gA H1; H1[x]=1; local c=H6; typeset -gA ${c}; print ${(t)H1} ${(t)H6} ${H1[x]} }; f"#,
+        );
+    }
+
+    #[test]
+    fn declaration_with_value_is_silent_and_hashed() {
+        assert_parity(
+            r#"f(){ setopt localoptions warncreateglobal; typeset -gA H2=(a 1 b 2) H4=([k]=v); print ${(t)H2} ${(kv)H2} ${(kv)H4} }; f"#,
+        );
+    }
+
+    #[test]
+    fn top_level_typeset_a_keeps_the_hash_type() {
+        assert_parity(r#"typeset -A H=(a 1); print ${(t)H}; typeset -gA G; G=(x y); print ${(t)G} ${(kv)G}"#);
+    }
+
+    /// An implicit global hash assignment must still warn.
+    #[test]
+    fn plain_hash_assignment_still_warns() {
+        assert_parity(r#"f(){ setopt localoptions warncreateglobal; H7=(a 1) }; f"#);
+    }
+}
+
 mod scalar_subscript_flag_in_math {
     use super::*;
 
@@ -164,6 +194,23 @@ mod scalar_subscript_flag_in_math {
     #[test]
     fn flag_with_start_offset() {
         assert_parity(r#"arg=abcabc; print $(( arg[(ib:3:)b] ))"#);
+    }
+
+    /// `(r)`/`(R)`/`(k)`/`(K)` yield the character at the match, which math
+    /// then evaluates; a miss is empty, i.e. 0 (c:Src/params.c:1394-1431).
+    #[test]
+    fn reverse_subscript_flags_on_a_scalar() {
+        assert_parity(
+            r#"arg=12345; print $(( arg[(r)3] )) $(( arg[(R)4] )) $(( arg[(r)9] )) $(( arg[(r)3*] + 1 ))"#,
+        );
+    }
+
+    #[test]
+    fn reverse_flags_non_numeric_and_nth_match() {
+        assert_parity(
+            r#"arg=1a2a3; print $(( arg[(R)[0-9]] )) $(( arg[(r)[0-9]] )) $(( arg[(k)2] )) $(( arg[(K)1] )) $(( arg[(rn:2:)[0-9]] ))"#,
+        );
+        assert_parity(r#"arg=abc; print $(( arg[(r)b] )) $(( arg[(r)x] ))"#);
     }
 
     /// Plain numeric subscript on a scalar is unchanged.
