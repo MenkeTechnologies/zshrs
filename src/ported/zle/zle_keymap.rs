@@ -1082,8 +1082,7 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {
         // repaints the flipped arrow mid-edit. No-op when the engine is
         // inactive.
         if crate::p10k::engine_active() {
-            crate::p10k::preprompt_render();
-            crate::ported::zle::zle_main::zle_resetprompt();
+            crate::p10k::repaint_for_keymap();
         }
     }
     0 // c:527

@@ -716,6 +716,23 @@ pub fn on_zle_redraw() {
     crate::ported::zle::zle_main::zle_resetprompt();
 }
 
+/// Repaint for a keymap switch (`zlesetkeymap`: vi insert <-> command).
+///
+/// The keymap name is part of [`ZLE_SIGNATURE`], so [`on_zle_redraw`] would
+/// notice the same switch on the next redraw and repaint a second time. Each
+/// `zle_resetprompt` -> `redisplay` moves the cursor up `lprompth - 1` rows
+/// (c:Src/Zle/zle_refresh.c:2439), and the second one starts from the already
+/// moved-up row, so a two-row prompt erased one more line of output above it
+/// per mode switch, a three-row prompt two (issue #5). Record the signature
+/// here so exactly one repaint happens per switch.
+pub fn repaint_for_keymap() {
+    let shown: std::collections::HashSet<String> =
+        SHOWN_BY_COMMAND.lock().unwrap().iter().cloned().collect();
+    *ZLE_SIGNATURE.lock().unwrap() = zle_signature(&shown);
+    preprompt_render();
+    crate::ported::zle::zle_main::zle_resetprompt();
+}
+
 /// A frame's pool-built segments, keyed by element index:
 /// `(segments, build ms)` per job.
 type Inflight = std::collections::HashMap<
