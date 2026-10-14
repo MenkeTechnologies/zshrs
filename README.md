@@ -1141,7 +1141,14 @@ zshrs --dump-plugins         # JSON dump of the plugins the last recorded
                              # zplug); the daemon fills plugins.db from each
                              # recorder shard, so it is empty until one is
                              # ingested; feeds the IDE's External Libraries view
+zshrs --docs                 # the reference book: every reserved word,
+                             # operator, builtin, option and special
+                             # parameter, paged in the terminal (j/k,
+                             # ]/[ chapters, t contents, / search, ? keys)
 zshrs --docs <name>          # render the LSP hover card for <name>
+zshrs --docs --toc | --list | --search PAT | <page>
+                             # print the contents, the topics, the
+                             # matching topics, or one page of the book
 zshrs --fmt [-w] [-t] [-i N] [FILE…]
                              # format zsh source: block-structure
                              # reindent + idiomatic spacing (dedupe

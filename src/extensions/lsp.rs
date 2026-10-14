@@ -3729,7 +3729,7 @@ pub fn lookup_doc(name: &str) -> String {
 /// These don't have per-name `item(tt(X))` blocks in any yodl file —
 /// they're documented in section prose, so the gen script has nothing
 /// to extract. Hand-bodies are the only path to hover docs for them.
-const OPERATOR_DOCS: &[(&str, &str)] = &[
+pub(crate) const OPERATOR_DOCS: &[(&str, &str)] = &[
     // ── Pipelines ────────────────────────────────────────────────────
     ("|",   "Pipeline. `cmd1 | cmd2` connects `cmd1`'s stdout to `cmd2`'s stdin. Each stage runs in a separate process; exit status is the last stage's (unless `PIPE_FAIL` is set, in which case the first non-zero in the chain wins)."),
     ("|&",  "Pipeline merging stderr. `cmd1 |& cmd2` = `cmd1 2>&1 | cmd2`. Both stdout AND stderr of `cmd1` are piped to `cmd2`."),
@@ -5868,7 +5868,7 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     ("--lsp",      "Run the Language Server on stdio. Serves completion / hover / definition / references / rename / documentSymbol / foldingRange / semanticTokens / formatting / diagnostics. Consumed by the IntelliJ plugin, Helix, Neovim, VS Code, etc."),
     ("--dap",      "`--dap HOST:PORT` — Debug Adapter Protocol server. Connects back to the IDE's listener at HOST:PORT and drives breakpoints / step / variables / evaluate."),
     ("--dump-reflection", "Emit the JSON blob the IntelliJ \"zshrs\" reflection tool window consumes: builtins / keywords / options / special_vars, each tagged by category."),
-    ("--docs",     "`--docs NAME` — render the same hover card the LSP would return for NAME. Used by the IntelliJ tool window's docs popup; handy for previewing doc output from the CLI. Prints a coloured terminal card on a TTY (or under `--color always` / `$FORCE_COLOR` / `$CLICOLOR_FORCE`) and the raw markdown otherwise, so piping into a markdown renderer works."),
+    ("--docs",     "`--docs` — open the reference book: every reserved word, operator, builtin, option and special parameter, paged in the terminal (`?` lists the keys; `--toc`, `--list`, `--search PAT` and a page number print instead). `--docs NAME` — render the same hover card the LSP would return for NAME. Used by the IntelliJ tool window's docs popup; handy for previewing doc output from the CLI. Prints a coloured terminal card on a TTY (or under `--color always` / `$FORCE_COLOR` / `$CLICOLOR_FORCE`) and the raw markdown otherwise, so piping into a markdown renderer works."),
     // Parser / VM dumpers
     ("--dump-tokens",   "`--dump-tokens FILE|-` — one TOKNAME<tab>TOKSTR line per lexer token. Use `-` to read from stdin."),
     ("--dump-ast",      "`--dump-ast FILE|-` — parser AST as a canonical S-expression. Use `-` to read from stdin."),

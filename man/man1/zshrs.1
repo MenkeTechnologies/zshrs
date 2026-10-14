@@ -255,6 +255,37 @@ script. With a
 argument the adapter connects back to the client's listener; with no
 argument (or when the next word is not an address) it serves over stdio.
 .TP
+.BI \-\-docs " [TOPIC | PAGE | \-t | \-l | \-s " PAT ]
+With no argument, open the reference book: every reserved word, operator,
+builtin, zshrs builtin, option and special parameter, paged in the
+terminal by chapter.
+.B j
+/
+.B k
+turn pages,
+.B ]
+/
+.B [
+change chapter,
+.B t
+shows the contents,
+.B /
+searches,
+.B :
+jumps to a page,
+.B ?
+lists every key and
+.B q
+quits. With a
+.IR TOPIC ,
+print that entry (the LSP hover card: styled on a terminal, markdown
+otherwise). With a
+.IR PAGE ,
+.BR \-t " (contents), " \-l " (every topic) or " \-s " PAT (search),"
+print and exit. Without a terminal on stdin and stdout, or with
+.B ZSHRS_NO_TTY
+set, the book prints its first page instead of waiting for keys.
+.TP
 .BI \-\-fmt " [\-w] [\-t] [\-i " N ] " [FILE ...]"
 Format zsh source: block-structure reindent and idiomatic spacing per the
 zsh and Oh-My-Zsh style guides, heredoc bodies left verbatim, idempotent.
@@ -284,14 +315,11 @@ and the rest \(em plus
 .BR ztest_skip " and " ztest_run )
 are shell builtins, callable from any script with nothing installed.
 .TP
-.BI \-\-docs " NAME"
-Render the same documentation card the LSP returns on hover for
-.IR NAME ,
-formatted for a terminal.
 .B \-\-names
-lists every name it knows \(em builtins, keywords, options, special
-parameters, compsys functions and extensions \(em one per line, which is
-what drives
+List every name
+.B \-\-docs
+knows \(em builtins, keywords, options, special parameters, compsys
+functions and extensions \(em one per line, which is what drives
 .B "zshrs \-\-docs <TAB>" .
 .TP
 .B \-\-dump\-reflection

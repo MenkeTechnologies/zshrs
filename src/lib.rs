@@ -363,6 +363,9 @@ pub mod funcdef_capture;
 #[path = "extensions/global_rc.rs"]
 pub mod global_rc;
 /// `lsp` submodule.
+/// `docs_book` submodule — `zshrs --docs`: topic cards and the reference book.
+#[path = "extensions/docs_book.rs"]
+pub mod docs_book;
 #[path = "extensions/lsp.rs"]
 pub mod lsp;
 /// `lsp_symbols` submodule.

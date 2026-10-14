@@ -75,7 +75,7 @@ _arguments -S -s : \
   '--names[print every LSP-known canonical name, one per line]' \
   '--gen-docs[walk PATH for shell sources, emit Markdown module docs]:path:_directories' \
   '--out[output directory for --gen-docs (default `docs/`)]:dir:_directories' \
-  '--docs[render the LSP hover card for NAME]:name:->docnames' \
+  '--docs[open the reference book, or print the entry for a topic or page]::topic, page or book option:->docnames' \
   '--color[ANSI color in --docs output]:mode:(auto always never)' \
   '--lsp[run the in-process LSP server over stdio]' \
   '--dump-plugins[emit JSON for every sourced plugin, grouped by manager]' \
@@ -97,6 +97,14 @@ case $state in
     # (builtin / keyword / option / …) but we don't have the per-
     # entry kind at the shell level — `zshrs --names` is name-only
     # for speed. `_values` is fine for a flat list.
+    local -a book_opts
+    book_opts=(
+      '--toc:table of contents with the page of every topic'
+      '--list:every topic, one per line'
+      '--search:topics whose name or text contains a pattern'
+      '--help:usage and the keys of the book'
+    )
+    _describe -t book-options 'book option' book_opts
     _values 'zshrs doc name' "${_zshrs_doc_names_cache[@]}"
     ;;
   (args)
