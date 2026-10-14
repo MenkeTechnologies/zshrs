@@ -3845,6 +3845,9 @@ pub fn paramsubst(
                 match chars[i] {
                     Dnull | Snull | Tick | Qtick => inq = !inq,
                     Bnull | Bnullkeep => i += 1,
+                    // A raw `\{` / `\}` / `\,` is the lexer's Bnull + literal (c:Src/lex.c
+                    // gettokstr `case LX2_BKSLASH`, c:1261): never a brace token.
+                    '\\' if !inq => i += 1,
                     '(' if !inq => parens += 1,
                     ')' if !inq => parens -= 1,
                     '{' if !inq && parens == 0 => open.push((i, Vec::new())),
