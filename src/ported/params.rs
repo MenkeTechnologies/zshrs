@@ -9581,9 +9581,12 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // Anything with a setfn that may re-enter the table (specials, tied,
     // integer, readonly, case/width attributes, AUTONAMEDIRS) keeps the
     // original path below.
+    // So does an exported node or an ALLEXPORT shell: assignstrvalue's tail
+    // (c:2836-2841 `export_param`) marks and exports the parameter.
     let fast = (flags & ASSPM_AUGMENT) == 0
         && isset(EXECOPT)
         && !isset(AUTONAMEDIRS)
+        && !isset(ALLEXPORT)
         && tab.get(name).is_some_and(|pm| {
             let f = pm.node.flags as u32;
             PM_TYPE(f) == PM_SCALAR
@@ -9596,8 +9599,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     | PM_RIGHT_B
                     | PM_RIGHT_Z
                     | PM_NAMEDDIR
-                    | PM_HASHELEM)
+                    | PM_HASHELEM
+                    | PM_EXPORTED)
                     == 0
+                && pm.env.is_none()
                 && pm.gsu_s.is_none()
         });
     let cloned: Option<Param> = if fast {
