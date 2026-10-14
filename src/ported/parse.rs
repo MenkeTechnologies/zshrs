@@ -3221,8 +3221,11 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     // zwarn("defining function based on alias `%s'",
                     // hasalias); YYERROR(oecused); }`
                     //
-                    // 5.9.2 parse.c:2057-2061 is just `zwarn(...); YYERROR(oecused);` — no herrflush/errflag
-                    // (the dev tree adds them), so yyerror still reports `parse error near `()'` after the warning.
+                    // c:2064-2066 `herrflush(); if (noerrs != 2) errflag |=
+                    // ERRFLAG_ERROR;` — the raised errflag silences yyerror's
+                    // own `parse error near `()'` (zwarn returns early). 5.9.2
+                    // parse.c:2057-2061 is just `zwarn(...); YYERROR(oecused);`,
+                    // so a drop-in run as `zsh` still reports both lines.
                     if isset(EXECOPT)
                         && hasalias.is_some()
                         && !isset(ALIASFUNCDEF)
@@ -3230,10 +3233,18 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                         && hasalias != crate::ported::input::input_hasalias()
                     {
                         crate::ported::utils::zwarn(&format!(
-                            // c:2058
+                            // c:2063
                             "defining function based on alias `{}'",
                             hasalias.as_deref().unwrap_or("")
                         ));
+                        if !crate::extensions::emulation_startup::emulating_592() {
+                            crate::ported::hist::herrflush(); // c:2064
+                            if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+                                // c:2065-2066
+                                crate::ported::utils::errflag
+                                    .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
+                            }
+                        }
                         set_tok(LEXERR); // c:2067 YYERROR
                         return None;
                     }
@@ -3297,8 +3308,11 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // zwarn("defining function based on alias `%s'", hasalias);
                 // YYERROR(oecused); }`
                 //
-                // 5.9.2 parse.c:2057-2061 is just `zwarn(...); YYERROR(oecused);` — no herrflush/errflag
-                // (the dev tree adds them), so yyerror still reports `parse error near `()'` after the warning.
+                // c:2064-2066 `herrflush(); if (noerrs != 2) errflag |=
+                // ERRFLAG_ERROR;` — the raised errflag silences yyerror's own
+                // `parse error near `()'` (zwarn returns early, Src/utils.c).
+                // 5.9.2 parse.c:2057-2061 is just `zwarn(...); YYERROR(oecused);`,
+                // so a drop-in run as `zsh` still reports both lines.
                 if isset(EXECOPT)
                     && hasalias.is_some()
                     && !isset(ALIASFUNCDEF)
@@ -3306,10 +3320,18 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     && hasalias != crate::ported::input::input_hasalias()
                 {
                     crate::ported::utils::zwarn(&format!(
-                        // c:2058
+                        // c:2063
                         "defining function based on alias `{}'",
                         hasalias.as_deref().unwrap_or("")
                     ));
+                    if !crate::extensions::emulation_startup::emulating_592() {
+                        crate::ported::hist::herrflush(); // c:2064
+                        if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+                            // c:2065-2066
+                            crate::ported::utils::errflag
+                                .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
+                        }
+                    }
                     set_tok(LEXERR); // c:2067 YYERROR
                     return None;
                 }
@@ -9153,6 +9175,31 @@ fn parse_program() -> ZshProgram {
 /// nested-body parses pass false (multi-list to EOF / end token).
 fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> ZshProgram {
     let mut lists = Vec::new();
+    // c:670-682 — par_event's `if (!r)` arm, shared by every way the event
+    // can fail below: `tok = LEXERR;` then, unless an error is already
+    // flagged (`yyerror(0)` only), `yyerror(1); herrflush(); errflag |=
+    // ERRFLAG_ERROR;`. herrflush drains the rest of the input line, so the
+    // commands after the error on that line never run.
+    let event_error = || {
+        // c:Src/lex.c:1965 — `zshlextext = tokstrings[tok]` for punctuation
+        // tokens with no tokstr, so yyerror can name `)` / `;;` / `}`.
+        if crate::ported::lex::tokstr().is_none() {
+            let i = tok() as usize;
+            if let Some(Some(s)) = crate::ported::lex::tokstrings.get(i) {
+                crate::ported::lex::set_tokstr(Some(s.to_string()));
+            }
+        }
+        set_tok(LEXERR); // c:672
+        if errflag.load(Ordering::SeqCst) != 0 {
+            yyerror(0); // c:673-676
+            return;
+        }
+        yyerror(1); // c:677
+        crate::ported::hist::herrflush(); // c:678
+        if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+            errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst); // c:679-680
+        }
+    };
 
     loop {
         // Skip separators
@@ -9219,25 +9266,8 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                 // writes `parse error near \`<tok>'`; the Rust port
                 // was emitting a generic "orphan terminator" string.
                 // Bug #142, #413.
-                let name = match tok() {
-                    DONE => "done",
-                    FI => "fi",
-                    ESAC => "esac",
-                    DOLOOP => "do",
-                    // c:Src/parse.c:1184-1190 — `end` closes a loop
-                    // body ONLY under `csh || isset(CSHJUNKIELOOPS)`.
-                    // With the option off the short-loop form
-                    // (par_save_list1, c:1193) consumes one command
-                    // and leaves ZEND in command position, where
-                    // par_event errors. zshrs broke out silently, so
-                    // `unsetopt cshjunkieloops; for f in a b; print
-                    // $f; end` ran and exited 0 instead of the
-                    // expected "parse error near `end'" + status 1
-                    // (E01options.ztst:13).
-                    ZEND => "end",
-                    _ => "orphan terminator",
-                };
-                zerr(&format!("parse error near `{}'", name));
+                // yyerror names the terminator from zshlextext (`done`, `fi`, …).
+                event_error();
                 break;
             }
             DSEMI | SEMIAMP | SEMIBAR if end_tokens.is_none() => {
@@ -9246,13 +9276,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                 // parse error. zshrs's `break` silently accepted them
                 // at top level, truncating the rest of the script.
                 // Bug #141 in docs/BUGS.md.
-                let name = match tok() {
-                    DSEMI => ";;",
-                    SEMIAMP => ";&",
-                    SEMIBAR => ";|",
-                    _ => "case terminator",
-                };
-                zerr(&format!("parse error near `{}'", name));
+                event_error();
                 break;
             }
             OUTBRACE_TOK if end_tokens.is_none() => {
@@ -9261,7 +9285,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                 // generic break swallowed it silently, leaving the
                 // `echo a` in `echo a }` running and ignoring the
                 // stray brace. Bug #168 in docs/BUGS.md.
-                zerr("parse error near `}'");
+                event_error();
                 break;
             }
             OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND => break,
@@ -9485,29 +9509,9 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                             // deals with the token.
                             break;
                         }
-                        offending => {
-                            // Top level: C par_event yyerror(1) +
-                            // errflag, c:671-682. Same tokstr
-                            // injection as the None arm below so the
-                            // "near `X'" tail survives punctuation
-                            // tokens with no tokstr.
-                            if crate::ported::lex::tokstr().is_none() {
-                                let i = offending as usize;
-                                if i < crate::ported::lex::tokstrings.len() {
-                                    if let Some(s) = crate::ported::lex::tokstrings[i] {
-                                        crate::ported::lex::set_tokstr(Some(s.to_string()));
-                                    }
-                                }
-                            }
-                            set_tok(LEXERR); // c:672
-                            yyerror(1);
-                            let noerrs_v = *crate::ported::utils::noerrs_lock().lock().unwrap();
-                            if noerrs_v != 2 {
-                                errflag.fetch_or(
-                                    crate::ported::zsh_h::ERRFLAG_ERROR,
-                                    Ordering::SeqCst,
-                                );
-                            }
+                        _ => {
+                            // Top level: C par_event's `if (!r)` arm, c:670-682.
+                            event_error();
                             break;
                         }
                     }
@@ -9528,42 +9532,8 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                     break;
                 }
                 // c:Src/parse.c:671-680 par_event — par_sublist failed:
-                // emit the canonical yyerror with the "near `X'" tail
-                // derived from zshlextext/tokstr().
-                //
-                // c:Src/lex.c:1965 — `zshlextext = tokstrings[tok]`
-                // is set DURING zshlex, before set_tok(LEXERR) here.
-                // zshrs's zshlex doesn't update LEX_TOKSTR for
-                // single-char punctuation tokens (OUTPAR/INPAR/etc.),
-                // so by the time yyerror runs, tokstr() is None and
-                // the tail "near `)'" is lost. Inject the current
-                // tok's canonical text into LEX_TOKSTR here so the
-                // C-faithful yyerror lookup finds it. Mirrors the
-                // visible effect of C's zshlextext fallback.
-                let already_flagged =
-                    (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0;
-                let offending_tok = tok();
-                if crate::ported::lex::tokstr().is_none() {
-                    let i = offending_tok as usize;
-                    if i < crate::ported::lex::tokstrings.len() {
-                        if let Some(s) = crate::ported::lex::tokstrings[i] {
-                            crate::ported::lex::set_tokstr(Some(s.to_string()));
-                        }
-                    }
-                }
-                set_tok(LEXERR); // c:672
-                yyerror(if already_flagged { 0 } else { 1 });
-                // c:Src/parse.c:679-680 — `if (noerrs != 2) errflag |=
-                // ERRFLAG_ERROR;`. C sets errflag explicitly after the
-                // yyerror(1) print-only branch. Without this, the
-                // caller (`execute_script_zsh_pipeline` here, `bin_eval`
-                // for the parse_string path) can't distinguish "no
-                // parse error" from "parse error already printed", so
-                // $? stays at 0 after `eval ')foo'`.
-                let noerrs_v = *crate::ported::utils::noerrs_lock().lock().unwrap();
-                if noerrs_v != 2 {
-                    errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
-                }
+                // emit the canonical yyerror with the "near `X'" tail.
+                event_error();
                 break;
             }
         }

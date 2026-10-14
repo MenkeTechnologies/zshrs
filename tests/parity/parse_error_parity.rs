@@ -199,3 +199,45 @@ fn backquote_parse_error_reports_the_running_line() {
     assert_parity("f() {\n\n echo $LINENO; : `(`\n}\nf");
     assert_parity("\n\necho `(`");
 }
+
+/// (stdout, stderr, status) of `input` fed to the shell's standard input.
+fn run_stdin(cmd: &mut Command, input: &str) -> (String, String, i32) {
+    use std::io::Write;
+    let mut child = cmd
+        .env_remove("ZSHRS_CACHE")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn shell");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let out = child.wait_with_output().expect("wait shell");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+/// c:Src/parse.c:670-682 — par_event's error arm runs `herrflush()` (c:678),
+/// which drains the rest of the input line: nothing after the error on that
+/// line runs, not even what follows a `;`. A shell reading its standard input
+/// at top level then goes on with the next line (Src/init.c:171). Every
+/// orphan terminator and the alias funcdef refusal (c:2063-2066) take it.
+#[test]
+fn error_drops_the_rest_of_its_line_and_stdin_reads_on() {
+    if !zsh_available() {
+        return;
+    }
+    for input in [
+        "print a; ) ; print b\nprint c\n",
+        "print d; fi; print e\nprint f\n",
+        "echo g }; print h\nprint i\n",
+        "print j ;; print k\nprint l\n",
+        "alias al=print; al(){ : }; print m\nprint n\n",
+    ] {
+        let z = run_stdin(Command::new(zsh_path()).arg("-f"), input);
+        let r = run_stdin(Command::new(zshrs_bin()).args(["--zsh", "-f"]), input);
+        assert_eq!(z, r, "divergence on stdin:\n{input}\n(stdout, stderr, status)");
+    }
+}

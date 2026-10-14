@@ -16828,17 +16828,16 @@ fn test_colon_s_replacement_keeps_glob_tokens() {
 
 #[test]
 fn test_alias_func_def_warning_then_parse_error() {
-    // zsh 5.9.2 Src/parse.c:2057-2061 is `zwarn(...); YYERROR(oecused);` with no
-    // errflag set, so yyerror still reports `parse error near `()'` after the
-    // warning (A02alias.ztst "ALIAS_FUNC_DEF off by default").
+    // Src/parse.c:2063-2067 — the warning is followed by `herrflush(); errflag |=
+    // ERRFLAG_ERROR;`, so yyerror's `parse error near `()'` is silenced (zwarn
+    // returns early). zsh 5.9.2's parse.c:2057-2061 had no errflag and printed both
+    // lines (A02alias.ztst "ALIAS_FUNC_DEF off by default"); that form is kept only
+    // for a drop-in run as `zsh` (emulating_592).
     let (status, _, stderr) = run_zshrs_parity(
         "alias badalias=notacommand; eval 'badalias() { print no; }'",
     );
     assert_eq!(status, 1, "{stderr}");
-    assert_eq!(
-        stderr,
-        "(eval):1: defining function based on alias `badalias'\n(eval):1: parse error near `()'\n"
-    );
+    assert_eq!(stderr, "(eval):1: defining function based on alias `badalias'\n");
 }
 
 #[test]
