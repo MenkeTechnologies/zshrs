@@ -1146,7 +1146,9 @@ zshrs --docs                 # the reference book: the zshrs manual and
                              # builtin, option, parameter, expansion,
                              # widget, completion style, module), paged in
                              # the terminal (j/k pages, ]/[ chapters, }/{
-                             # parts, t contents, / search, ? keys)
+                             # parts, t contents, / search, ? keys); every screen
+                             # has the logo, a page / topics / chapter
+                             # status box and a key line, as `stryke docs`
 zshrs --docs <name>          # render the LSP hover card for <name>, or its
                              # manual entry (widgets, styles, flags, …)
 zshrs --docs --toc | --list | --search PAT | <page>

@@ -636,13 +636,15 @@ fn render_troff(lines: &[String], width: usize, t: &Theme) -> Vec<String> {
     out
 }
 
-/// A screenful of the book: its chapter, the lines shown, and the entries
-/// that start on it.
+/// A screenful of the book: its chapter, the lines shown, the entries that
+/// start on it, and every entry with text on it (a topic continued from the
+/// page before included).
 struct Page {
     part: String,
     chapter: String,
     lines: Vec<String>,
     starts: Vec<usize>,
+    shown: Vec<usize>,
 }
 
 /// Consecutive runs of `key(entry)` with their topic counts, in book order.
@@ -661,7 +663,8 @@ fn runs<'a>(entries: &'a [Entry], key: impl Fn(&'a Entry) -> &'a str) -> Vec<(&'
 /// Lay the rendered topics out on pages of `height` lines. A chapter always
 /// starts a page; a topic taller than a page continues on the next ones.
 fn build_pages(entries: &[Entry], height: usize, color: bool) -> Vec<Page> {
-    let empty = |part: String, chapter: String| Page { part, chapter, lines: Vec::new(), starts: Vec::new() };
+    let empty =
+        |part: String, chapter: String| Page { part, chapter, lines: Vec::new(), starts: Vec::new(), shown: Vec::new() };
     let mut pages: Vec<Page> = Vec::new();
     let mut cur = empty(String::new(), String::new());
     for (i, e) in entries.iter().enumerate() {
@@ -674,12 +677,14 @@ fn build_pages(entries: &[Entry], height: usize, color: bool) -> Vec<Page> {
         cur.part = e.part.clone();
         cur.chapter = e.chapter.clone();
         cur.starts.push(i);
+        cur.shown.push(i);
         if !cur.lines.is_empty() {
             cur.lines.push(String::new());
         }
         for line in text {
             if cur.lines.len() == height {
-                let next = empty(cur.part.clone(), cur.chapter.clone());
+                let mut next = empty(cur.part.clone(), cur.chapter.clone());
+                next.shown.push(i);
                 pages.push(std::mem::replace(&mut cur, next));
             }
             cur.lines.push(line);
@@ -691,24 +696,74 @@ fn build_pages(entries: &[Entry], height: usize, color: bool) -> Vec<Page> {
     pages
 }
 
+/// The keys the introduction lists, `/` separating alternatives.
 const KEYS: &[(&str, &str)] = &[
-    ("j  n  space  enter", "next page"),
-    ("k  p", "previous page"),
-    ("]  [", "next / previous chapter"),
-    ("}  {", "next / previous part"),
-    ("d  u", "forward / back 5 pages"),
-    ("g  G", "first / last page"),
+    ("j / n / space", "next page"),
+    ("k / p", "previous page"),
+    ("] / [", "next / previous chapter"),
+    ("} / {", "next / previous part"),
+    ("d / u", "forward / back 5 pages"),
+    ("g / G", "first / last page"),
     ("t", "table of contents"),
-    ("/", "search every topic"),
-    (":", "jump to a page number"),
+    ("/", "search all pages"),
+    (":", "jump to page number"),
     ("r", "random page"),
-    ("?", "this key list"),
-    ("q  esc", "quit"),
+    ("?", "full keybinding help"),
+    ("q", "quit"),
 ];
+
+/// Every key, grouped, for `?` and `--docs -h`.
+const HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Navigation",
+        &[
+            ("j n l space enter", "next page"),
+            ("k p h", "previous page"),
+            ("d", "forward 5 pages"),
+            ("u", "back 5 pages"),
+            ("g 0", "first page"),
+            ("G $", "last page"),
+            ("] [", "next / previous chapter"),
+            ("} {", "next / previous part"),
+        ],
+    ),
+    (
+        "Search & Jump",
+        &[
+            ("/", "search all pages"),
+            (":", "go to page number"),
+            ("t", "table of contents"),
+            ("r", "random page"),
+        ],
+    ),
+    ("Other", &[("?", "this help"), ("q esc", "quit")]),
+];
+
+/// The footer's key line, as (keys, what); trailing items are dropped on a
+/// terminal too narrow for them.
+const FOOTER_KEYS: &[(&str, &str)] = &[
+    ("j/n", "next"),
+    ("k/p", "prev"),
+    ("d/u", "±5"),
+    ("]/[", "chapter"),
+    ("t", "toc"),
+    ("/", "search"),
+    (":", "num"),
+    ("r", "rand"),
+    ("?", "help"),
+    ("q", "quit"),
+    ("}/{", "part"),
+];
+
+/// Rows of chrome around a page: a blank line, the logo and the status box
+/// above it; the rule, the key line and the `>>>` prompt below it.
+const HEADER_ROWS: usize = 10;
+const FOOTER_ROWS: usize = 3;
 
 struct Theme {
     c: &'static str,
     g: &'static str,
+    m: &'static str,
     i: &'static str,
     d: &'static str,
     b: &'static str,
@@ -718,39 +773,167 @@ struct Theme {
 impl Theme {
     fn new(color: bool) -> Self {
         if color {
-            Theme { c: "\x1b[36m", g: "\x1b[32m", i: "\x1b[3m", d: "\x1b[2m", b: "\x1b[1m", n: "\x1b[0m" }
+            Theme {
+                c: "\x1b[36m",
+                g: "\x1b[32m",
+                m: "\x1b[35m",
+                i: "\x1b[3m",
+                d: "\x1b[2m",
+                b: "\x1b[1m",
+                n: "\x1b[0m",
+            }
         } else {
-            Theme { c: "", g: "", i: "", d: "", b: "", n: "" }
+            Theme { c: "", g: "", m: "", i: "", d: "", b: "", n: "" }
         }
+    }
+
+    fn color(&self) -> bool {
+        !self.n.is_empty()
     }
 }
 
-/// The opening page: what the book holds, the keys, and its parts.
-fn intro_lines(entries: &[Entry], t: &Theme) -> Vec<String> {
+/// The status box's inner width: 74 columns, less on a narrow terminal.
+fn box_width() -> usize {
+    74.min(term_width().saturating_sub(4)).max(20)
+}
+
+/// `s` cut to `max` characters, the cut marked with `…`.
+fn clip(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else if max == 0 {
+        String::new()
+    } else {
+        s.chars().take(max - 1).collect::<String>() + "…"
+    }
+}
+
+/// The head of every screen: a blank line, the ZSHRS logo (`zbanner`'s), and
+/// `status` in a box.
+fn masthead(status: &str, t: &Theme) -> Vec<String> {
+    let w = box_width();
+    let mut out = vec![String::new()];
+    for (sgr, line) in crate::banner::LOGO {
+        out.push(if t.color() { format!("\x1b[{sgr}m{line}\x1b[0m") } else { line.to_string() });
+    }
+    let pad = " ".repeat(w.saturating_sub(visible_width(status)));
+    out.push(format!(" {}┌{}┐{}", t.d, "─".repeat(w), t.n));
+    out.push(format!(" {}│{}{status}{pad}{}│{}", t.d, t.n, t.d, t.n));
+    out.push(format!(" {}└{}┘{}", t.d, "─".repeat(w), t.n));
+    out
+}
+
+/// The status box's text: `left` in green, `middle` in cyan, `right` in
+/// magenta, `//` between them, cut to fit the box.
+fn status_line(left: &str, middle: &str, right: &str, t: &Theme) -> String {
+    let room = box_width().saturating_sub(left.chars().count() + 11);
+    let (m, r) = (middle.chars().count(), right.chars().count());
+    let right = if m + r <= room { right.to_string() } else { clip(right, r.min(room.saturating_sub(m).max(room / 2))) };
+    let middle = clip(middle, room.saturating_sub(right.chars().count()));
+    let Theme { c, g, m, d, n, .. } = t;
+    format!(" {g}{left}{n}  {d}//{n} {c}{middle}{n}  {d}//{n} {m}{right}{n}")
+}
+
+/// `── LABEL ───…` across the page.
+fn section_rule(label: &str, t: &Theme) -> String {
+    let trail = box_width().saturating_sub(2 + label.chars().count());
+    format!("  {}── {label} {}{}", t.d, "─".repeat(trail), t.n)
+}
+
+/// `j / n / space` with each key cyan and the separators plain.
+fn keycap(keys: &str, t: &Theme) -> String {
+    if keys.len() == 1 {
+        return format!("{}{keys}{}", t.c, t.n);
+    }
+    keys.split('/')
+        .map(|k| {
+            let (lead, k, trail) = (&k[..k.len() - k.trim_start().len()], k.trim(), &k[k.trim_end().len()..]);
+            format!("{lead}{}{k}{}{trail}", t.c, t.n)
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The two lines under every screen: a rule and the keys that fit.
+fn footer(t: &Theme) -> [String; 2] {
+    let room = term_width().saturating_sub(3);
+    let mut keys = String::new();
+    let mut used = 0usize;
+    for (k, what) in FOOTER_KEYS {
+        let item = if *k == ":" { format!("{}:{}{what}", t.c, t.n) } else { format!("{} {what}", keycap(k, t)) };
+        let w = visible_width(&item) + if used == 0 { 0 } else { 2 };
+        if used + w > room {
+            break;
+        }
+        if used > 0 {
+            keys.push_str("  ");
+        }
+        keys.push_str(&item);
+        used += w;
+    }
+    [format!("  {}{}{}", t.d, "─".repeat(box_width() + 2), t.n), format!("  {keys}")]
+}
+
+/// The `>>>` prompt on the last row.
+fn prompt(t: &Theme) -> String {
+    format!("  {}>>>{} ", t.d, t.n)
+}
+
+/// The opening page: what the book holds, the keys, and its parts. With
+/// `room`, the part list stops where the page would overflow and one line
+/// counts the rest; without it every part is listed.
+fn intro_lines(entries: &[Entry], t: &Theme, room: Option<usize>) -> Vec<String> {
     let Theme { c, g, d, b, n, .. } = t;
     let parts = runs(entries, |e| e.part.as_str());
     let chapters = runs(entries, |e| e.chapter.as_str()).len();
     let mut out = vec![
-        format!("  {d}>> THE ZSHRS REFERENCE // INTERACTIVE DOCUMENTATION <<{n}"),
+        format!("  {d}>> THE ZSHRS REFERENCE // INTERACTIVE REFERENCE SYSTEM <<{n}"),
         String::new(),
-        format!("  {b}The zshrs manual and the whole zsh manual, every builtin,{n}"),
-        format!("  {b}option, parameter, expansion, widget and completion style.{n}"),
+        format!("  {b}A comprehensive reference for zshrs and the whole zsh manual: every{n}"),
+        format!("  {b}builtin, option, parameter, expansion, widget and completion style.{n}"),
         format!(
-            "  {g}{}{n} {b}topics in {g}{chapters}{n} {b}chapters across {g}{}{n} {b}parts.{n}",
+            "  {g}{}{n} {b}topics across {g}{chapters}{n} {b}chapters in {g}{}{n} {b}parts.{n}",
             entries.len(),
             parts.len()
         ),
         String::new(),
-        format!("  {d}── KEYS ─────────────────────────────────────────────────{n}"),
+        section_rule("GETTING STARTED", t),
+        String::new(),
     ];
     for (k, what) in KEYS {
-        out.push(format!("  {c}{k:<20}{n} {what}"));
+        out.push(format!("  {}{}{what}", keycap(k, t), " ".repeat(21usize.saturating_sub(k.len()))));
     }
     out.push(String::new());
-    out.push(format!("  {d}── PARTS ────────────────────────────────────────────────{n}"));
-    for (i, (part, count)) in parts.iter().enumerate() {
-        out.push(format!("  {c}{:>2}.{n} {b}{part:<52}{n} {d}{count}{n}", i + 1));
+    out.push(section_rule("PARTS", t));
+    // The blank line and the closing line stay on the page.
+    let fit = room.map_or(usize::MAX, |r| r.saturating_sub(out.len() + 2));
+    let listed = if parts.len() <= fit { parts.len() } else { fit.saturating_sub(1) };
+    for (i, (part, count)) in parts.iter().take(listed).enumerate() {
+        out.push(format!("  {c}{:>2}.{n} {b}{:<52}{n} {d}{count} topics{n}", i + 1, clip(part, 52)));
     }
+    if listed < parts.len() {
+        let rest: usize = parts[listed..].iter().map(|(_, n)| n).sum();
+        let more = format!("+ {} more parts", parts.len() - listed);
+        out.push(format!("  {d}…{n}  {b}{more:<52}{n} {d}{rest} topics{n}"));
+    }
+    out.push(String::new());
+    out.push(format!("  {d}press {c}t{d} for full table of contents, {c}j{d} or {c}space{d} to begin >>>{n}"));
+    out
+}
+
+/// The `?` screen: every key, grouped.
+fn help_lines(t: &Theme) -> Vec<String> {
+    let Theme { c, d, b, n, .. } = t;
+    let mut out = vec![section_rule("KEYBINDINGS", t)];
+    for (group, keys) in HELP {
+        out.push(String::new());
+        out.push(format!("  {b}{group}{n}"));
+        for (k, what) in *keys {
+            out.push(format!("  {c}{k:<20}{n} {d}{what}{n}"));
+        }
+    }
+    out.push(String::new());
+    out.push(format!("  {d}press any key to return{n}"));
     out
 }
 
@@ -779,6 +962,11 @@ fn toc_lines(entries: &[Entry], pages: &[Page], t: &Theme, with_topics: bool) ->
     out
 }
 
+/// The status box over the table of contents.
+fn toc_status(entries: &[Entry], total: usize, t: &Theme) -> String {
+    status_line("TABLE OF CONTENTS", &format!("{} topics, {total} pages", entries.len()), "The zshrs Reference", t)
+}
+
 /// Topics whose name, chapter or text contains `pat` (case-insensitive), as
 /// (page number, topic name, chapter) — page 1 is the introduction.
 fn search(entries: &[Entry], pages: &[Page], pat: &str) -> Vec<(usize, String)> {
@@ -796,21 +984,37 @@ fn search(entries: &[Entry], pages: &[Page], pat: &str) -> Vec<(usize, String)> 
 }
 
 fn print_help(t: &Theme) {
-    let Theme { c, d, b, n, .. } = t;
-    println!("  {b}USAGE:{n} zshrs --docs {d}[OPTION | PAGE | TOPIC]{n}");
-    println!();
-    println!("  {c}(none){n}              open the book (interactive on a terminal)");
-    println!("  {c}TOPIC{n}               print TOPIC's entry (`zshrs --docs typeset`)");
-    println!("  {c}PAGE{n}                print page PAGE");
-    println!("  {c}-t, --toc{n}           table of contents with every topic's page");
-    println!("  {c}-l, --list{n}          every topic and its chapter, one per line");
-    println!("  {c}-s, --search PAT{n}    topics whose name or text contains PAT");
-    println!("  {c}-h, --help{n}          this message");
-    println!();
-    println!("  {d}Keys in the book:{n}");
-    for (k, what) in KEYS {
-        println!("  {c}{k:<20}{n} {what}");
+    let Theme { c, g, d, b, n, .. } = t;
+    let row = |k: &str, what: &str| println!("  {c}{k:<36}{n}{d}// {what}{n}");
+    for l in masthead(&status_line("STATUS: ONLINE", &format!("SIGNAL: {g}████████{d}░░"), "ZSHRS DOCS", t), t) {
+        println!("{l}");
     }
+    println!("  {d}>> THE ZSHRS REFERENCE // INTERACTIVE REFERENCE SYSTEM <<{n}");
+    println!();
+    println!("  {b}USAGE:{n} zshrs --docs {d}[OPTIONS] [PAGE|TOPIC]{n}");
+    println!();
+    println!("{}", section_rule("OPTIONS", t));
+    row("-h, --help", "Show this help");
+    row("-t, --toc", "Table of contents with every topic's page");
+    row("-s, --search <pattern>", "Topics whose name or text contains the pattern");
+    row("-l, --list", "Every topic and its chapter, one per line");
+    row("TOPIC", "Print a topic's entry (zshrs --docs typeset)");
+    row("PAGE", "Print a page");
+    println!();
+    println!("{}", section_rule("NAVIGATION (vim-style)", t));
+    for (_, keys) in HELP {
+        for (k, what) in *keys {
+            row(k, what);
+        }
+    }
+    println!();
+    println!("{}", section_rule("EXAMPLES", t));
+    row("zshrs --docs", "open the book at the introduction");
+    row("zshrs --docs --toc", "table of contents");
+    row("zshrs --docs 42", "print page 42");
+    row("zshrs --docs typeset", "the typeset entry");
+    row("zshrs --docs --search list-colors", "find list-colors");
+    println!();
 }
 
 /// `zshrs --docs [ARGS]`. `args` are the words after `--docs`; `color` is
@@ -836,12 +1040,16 @@ pub fn run(args: &[String], color: bool) -> i32 {
         return 0;
     }
     let (rows, _) = term_size();
-    let height = rows.saturating_sub(4).max(8);
+    let height = rows.saturating_sub(HEADER_ROWS + FOOTER_ROWS).max(4);
     let pages = build_pages(&entries, height, color);
     let total = pages.len() + 1; // + the introduction
 
     match first {
         Some("-t" | "--toc") => {
+            for l in masthead(&toc_status(&entries, total, &t), &t) {
+                println!("{l}");
+            }
+            println!();
             for l in toc_lines(&entries, &pages, &t, true) {
                 println!("{l}");
             }
@@ -869,18 +1077,18 @@ pub fn run(args: &[String], color: bool) -> i32 {
         }
         None => 0,
     };
-    let intro = intro_lines(&entries, &t);
     let interactive = first.is_none()
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
         && std::env::var_os("ZSHRS_NO_TTY").is_none();
     if !interactive {
-        let lines = if start == 0 { &intro } else { &pages[start - 1].lines };
+        let lines = if start == 0 { intro_lines(&entries, &t, None) } else { pages[start - 1].lines.clone() };
         for l in lines {
             println!("{l}");
         }
         return 0;
     }
+    let intro = intro_lines(&entries, &t, Some(height));
     match browse(&entries, &pages, &intro, start, height, &t) {
         Ok(()) => 0,
         Err(e) => {
@@ -966,34 +1174,34 @@ impl Drop for Screen {
     }
 }
 
-/// What the screen shows besides a numbered page.
+/// What the screen shows: a page of the book, or a list (the table of
+/// contents, search results, the keys) scrolled to `top`. `any_key` lists
+/// close on any key that does not scroll them; the others on q, Esc or Enter.
 enum View {
     Page(usize),
-    Toc,
-    Keys,
-    Results(String, Vec<(usize, String)>),
+    List { status: String, lines: Vec<String>, top: usize, any_key: bool },
 }
 
-fn draw(out: &mut impl Write, header: &str, body: &[String], status: &str, height: usize, t: &Theme) -> std::io::Result<()> {
-    let Theme { c, d, n, .. } = t;
+/// One screen: the masthead over `status`, `body` (at most `height` lines),
+/// and the footer pinned to the bottom rows, the cursor left at `>>>`.
+fn draw(out: &mut impl Write, status: &str, body: &[String], height: usize, t: &Theme) -> std::io::Result<()> {
     write!(out, "\x1b[H\x1b[2J")?;
-    write!(out, "{c}{header}{n}\r\n{d}{}{n}\r\n", "─".repeat(visible_width(header).max(20)))?;
-    for line in body.iter().take(height) {
+    for line in masthead(status, t).iter().chain(body.iter().take(height)) {
         write!(out, "{line}\r\n")?;
     }
-    for _ in body.len().min(height)..height {
-        write!(out, "\r\n")?;
-    }
-    write!(out, "{d}{status}{n}")?;
+    let rows = term_size().0.max(HEADER_ROWS + FOOTER_ROWS + 1);
+    let [rule, keys] = footer(t);
+    write!(out, "\x1b[{};1H{rule}\r\n{keys}\r\n{}", rows - 2, prompt(t))?;
     out.flush()
 }
 
-/// Read a line at the bottom row after `prompt`; None on Esc.
-fn read_line(out: &mut impl Write, prompt: &str, row: u16) -> std::io::Result<Option<String>> {
+/// Read a line after the `>>>` prompt and `lead` (`/` or `:`); None on Esc.
+fn read_line(out: &mut impl Write, lead: &str, t: &Theme) -> std::io::Result<Option<String>> {
     use crossterm::event::{read, Event, KeyCode, KeyEventKind};
+    let row = term_size().0.max(HEADER_ROWS + FOOTER_ROWS + 1);
     let mut s = String::new();
     loop {
-        write!(out, "\x1b[{};1H\x1b[2K{prompt}{s}", row + 1)?;
+        write!(out, "\x1b[{row};1H\x1b[2K{}{}{lead}{}{s}", prompt(t), t.c, t.n)?;
         out.flush()?;
         if let Event::Key(k) = read()? {
             if k.kind != KeyEventKind::Press {
@@ -1012,6 +1220,11 @@ fn read_line(out: &mut impl Write, prompt: &str, row: u16) -> std::io::Result<Op
     }
 }
 
+/// The page a `:N` answer names, 0-based; None for anything else.
+fn page_number(answer: Option<String>, total: usize) -> Option<usize> {
+    answer?.trim().parse::<usize>().ok().filter(|n| (1..=total).contains(n)).map(|n| n - 1)
+}
+
 fn browse(entries: &[Entry], pages: &[Page], intro: &[String], start: usize, height: usize, t: &Theme) -> std::io::Result<()> {
     use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
     let _screen = Screen::enter()?;
@@ -1019,36 +1232,57 @@ fn browse(entries: &[Entry], pages: &[Page], intro: &[String], start: usize, hei
     let total = pages.len() + 1;
     let mut cur = start;
     let mut view = View::Page(cur);
-    let toc = toc_lines(entries, pages, t, false);
-    let keys: Vec<String> = KEYS.iter().map(|(k, w)| format!("  {}{k:<20}{} {w}", t.c, t.n)).collect();
     // A chapter's first page; page 0 is the introduction.
     let chapter_of: fn(&Page) -> &str = |p| &p.chapter;
     let part_of: fn(&Page) -> &str = |p| &p.part;
     let next_run = |cur: usize, key: fn(&Page) -> &str| next_run(pages, cur, key);
     let prev_run = |cur: usize, key: fn(&Page) -> &str| prev_run(pages, cur, key);
     loop {
-        let (header, body): (String, Vec<String>) = match &view {
-            View::Page(0) => ("ZSHRS DOCS // introduction".into(), intro.to_vec()),
-            View::Page(p) => (
-                format!("ZSHRS DOCS // {} // page {}/{total}", pages[p - 1].chapter, p + 1),
-                pages[p - 1].lines.clone(),
-            ),
-            View::Toc => ("ZSHRS DOCS // table of contents".into(), toc.clone()),
-            View::Keys => ("ZSHRS DOCS // keys".into(), keys.clone()),
-            View::Results(pat, hits) => (
-                format!("ZSHRS DOCS // search: {pat} // {} topics", hits.len()),
-                hits.iter().map(|(p, name)| format!("  {}{p:>5}{}  {name}", t.c, t.n)).collect(),
-            ),
-        };
-        draw(&mut out, &header, &body, "q quit  ? keys  t contents  / search  :N page", height, t)?;
+        match &view {
+            View::Page(0) => draw(&mut out, &status_line(&format!("{:>3}/{total}", 1), "", "Introduction", t), intro, height, t)?,
+            View::Page(p) => {
+                let page = &pages[p - 1];
+                let names: Vec<&str> = page.shown.iter().map(|&i| entries[i].name.as_str()).collect();
+                let mut topics = names.iter().take(3).copied().collect::<Vec<_>>().join(", ");
+                if names.len() > 3 {
+                    topics += &format!(" +{}", names.len() - 3);
+                }
+                let status = status_line(&format!("{:>3}/{total}", p + 1), &topics, &page.chapter, t);
+                draw(&mut out, &status, &page.lines, height, t)?;
+            }
+            View::List { status, lines, top, .. } => draw(&mut out, status, &lines[*top..], height, t)?,
+        }
         let Event::Key(k) = read()? else { continue };
         if k.kind != KeyEventKind::Press {
             continue;
         }
+        if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
+            return Ok(());
+        }
+        if let View::List { lines, top, any_key, .. } = &mut view {
+            let bottom = lines.len().saturating_sub(height);
+            match k.code {
+                KeyCode::Char('j') | KeyCode::Down => *top = (*top + 1).min(bottom),
+                KeyCode::Char('k') | KeyCode::Up => *top = top.saturating_sub(1),
+                KeyCode::Char(' ' | 'd') | KeyCode::PageDown => *top = (*top + height).min(bottom),
+                KeyCode::Char('u') | KeyCode::PageUp => *top = top.saturating_sub(height),
+                KeyCode::Char('g') | KeyCode::Home => *top = 0,
+                KeyCode::Char('G') | KeyCode::End => *top = bottom,
+                KeyCode::Char(':') => {
+                    if let Some(p) = page_number(read_line(&mut out, ":", t)?, total) {
+                        cur = p;
+                        view = View::Page(cur);
+                    }
+                }
+                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter => view = View::Page(cur),
+                _ if *any_key => view = View::Page(cur),
+                _ => {}
+            }
+            continue;
+        }
         let page = |p: usize| View::Page(p.min(total - 1));
         view = match k.code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+            KeyCode::Char('q' | 'Q') | KeyCode::Esc => return Ok(()),
             KeyCode::Char('j' | 'n' | ' ' | 'l') | KeyCode::Enter | KeyCode::Down | KeyCode::PageDown | KeyCode::Right => {
                 cur = (cur + 1).min(total - 1);
                 page(cur)
@@ -1097,34 +1331,42 @@ fn browse(entries: &[Entry], pages: &[Page], intro: &[String], start: usize, hei
                 cur = 1 + nanos % (total - 1).max(1);
                 page(cur)
             }
-            KeyCode::Char('t') => View::Toc,
-            KeyCode::Char('?') => View::Keys,
-            KeyCode::Char('/') => match read_line(&mut out, "/", height as u16 + 2)? {
+            KeyCode::Char('t') => View::List {
+                status: toc_status(entries, total, t),
+                lines: toc_lines(entries, pages, t, false),
+                top: 0,
+                any_key: false,
+            },
+            KeyCode::Char('?') => View::List {
+                status: status_line("KEYBINDINGS", "vim-style", "The zshrs Reference", t),
+                lines: help_lines(t),
+                top: 0,
+                any_key: true,
+            },
+            KeyCode::Char('/') => match read_line(&mut out, "/", t)? {
                 Some(pat) if !pat.is_empty() => {
                     let hits = search(entries, pages, &pat);
                     if let [(p, _)] = hits.as_slice() {
                         cur = p - 1;
                         page(cur)
                     } else {
-                        View::Results(pat, hits)
+                        View::List {
+                            status: status_line("SEARCH", &pat, &format!("{} topics", hits.len()), t),
+                            lines: hits.iter().map(|(p, name)| format!("  {}{p:>5}{}  {name}", t.c, t.n)).collect(),
+                            top: 0,
+                            any_key: false,
+                        }
                     }
                 }
                 _ => page(cur),
             },
-            KeyCode::Char(':') => match read_line(&mut out, ":", height as u16 + 2)? {
-                Some(s) => match s.trim().parse::<usize>() {
-                    Ok(n) if (1..=total).contains(&n) => {
-                        cur = n - 1;
-                        page(cur)
-                    }
-                    _ => page(cur),
-                },
-                None => page(cur),
-            },
-            _ => match view {
-                View::Page(_) => page(cur),
-                other => other,
-            },
+            KeyCode::Char(':') => {
+                if let Some(p) = page_number(read_line(&mut out, ":", t)?, total) {
+                    cur = p;
+                }
+                page(cur)
+            }
+            _ => page(cur),
         };
     }
 }

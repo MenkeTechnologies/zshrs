@@ -23,7 +23,7 @@ use crate::ported::zsh_h::{DISABLED, PM_UNSET, STAT_NOPRINT};
 
 /// `figlet -f "ANSI Shadow" ZSHRS` — the README banner — as (SGR colour,
 /// line) pairs, graded cyan → magenta → red the way ztmux grades its own.
-const LOGO: [(&str, &str); 6] = [
+pub(crate) const LOGO: [(&str, &str); 6] = [
     ("36", " ███████╗███████╗██╗  ██╗██████╗ ███████╗"),
     ("36", " ╚══███╔╝██╔════╝██║  ██║██╔══██╗██╔════╝"),
     ("35", "   ███╔╝ ███████╗███████║██████╔╝███████╗"),
