@@ -22,8 +22,10 @@
 //! sh:21  _path_files "$@" -g $pat
 //! ```
 //!
-//! The `[[ -o autocd ]] || pat+='(#q^/)'` line is zsh workers/50307,
-//! which is on the dev branch only; zsh 5.9.1/5.9.2 do not have it.
+//! The dev tree (workers/50307, the bundled vendor/zsh/functions copy) adds
+//! `[[ -o autocd ]] || pat+='(#q^/)'` after sh:18 so a directory named
+//! `x.txt` is not offered unless AUTO_CD could run it; zsh 5.9.1/5.9.2 do
+//! not have that line, so a drop-in run as `zsh` (emulating_592) omits it.
 
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::getaparam;
@@ -55,11 +57,17 @@ pub fn _suffix_alias_files(args: &[String]) -> i32 {
     let quoted: Vec<String> = keys.iter().map(|k| quotestring(k, QT_BACKSLASH)).collect();
 
     // sh:9-18
-    let pat = if quoted.len() == 1 {
+    let mut pat = if quoted.len() == 1 {
         format!("*.{}", quoted[0]) // sh:10
     } else {
         format!("*.({})", quoted.join("|")) // sh:17
     };
+    // dev sh:19 — `[[ -o autocd ]] || pat+='(#q^/)'` (workers/50307).
+    if !crate::extensions::emulation_startup::emulating_592()
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::AUTOCD)
+    {
+        pat.push_str("(#q^/)");
+    }
 
     // sh:21
     let mut argv: Vec<String> = args.to_vec();
