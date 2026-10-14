@@ -103,24 +103,9 @@ pub fn ensure_installed() -> Option<usize> {
     if !needs_write(&base) {
         return Some(0);
     }
-    let raw = zstd::decode_all(BUNDLE).ok()?;
     let mut n = 0usize;
-    let mut i = 0usize;
-    while i + 4 <= raw.len() {
-        let nl = u32::from_le_bytes(raw[i..i + 4].try_into().ok()?) as usize;
-        i += 4;
-        if i + nl + 4 > raw.len() {
-            break;
-        }
-        let name = String::from_utf8_lossy(&raw[i..i + nl]).into_owned();
-        i += nl;
-        let bl = u32::from_le_bytes(raw[i..i + 4].try_into().ok()?) as usize;
-        i += 4;
-        if i + bl > raw.len() {
-            break;
-        }
-        let body = &raw[i..i + bl];
-        i += bl;
+    for (name, body) in entries() {
+        let body = &body[..];
         // The bundle is written by our own build.rs, but a relative name
         // is still the one field that could escape the directory.
         if name.is_empty() || name.starts_with('/') || name.contains("..") {
@@ -141,6 +126,29 @@ pub fn ensure_installed() -> Option<usize> {
     tracing::info!(target: "bundled_docs", written = n, dir = %base.display(),
                    "materialised bundled zsh man/info pages");
     Some(n)
+}
+
+/// The packed tree as (name, body) pairs — `man1/zshexpn.1`, `info/zsh.info`,
+/// … — decoded from the binary. Empty if the payload does not decode.
+pub fn entries() -> Vec<(String, Vec<u8>)> {
+    let Ok(raw) = zstd::decode_all(BUNDLE) else {
+        return Vec::new();
+    };
+    let u32_at = |i: usize| {
+        raw.get(i..i + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(nl) = u32_at(i) {
+        let Some(name) = raw.get(i + 4..i + 4 + nl) else { break };
+        let Some(bl) = u32_at(i + 4 + nl) else { break };
+        let start = i + 8 + nl;
+        let Some(body) = raw.get(start..start + bl) else { break };
+        out.push((String::from_utf8_lossy(name).into_owned(), body.to_vec()));
+        i = start + bl;
+    }
+    out
 }
 
 /// Prepend `dir` to a colon-separated search variable, keeping whatever

@@ -256,9 +256,10 @@ argument the adapter connects back to the client's listener; with no
 argument (or when the next word is not an address) it serves over stdio.
 .TP
 .BI \-\-docs " [TOPIC | PAGE | \-t | \-l | \-s " PAT ]
-With no argument, open the reference book: every reserved word, operator,
-builtin, zshrs builtin, option and special parameter, paged in the
-terminal by chapter.
+With no argument, open the reference book: zshrs's manual and guides, its
+builtins, and the whole zsh manual \(em every builtin, option, parameter,
+expansion, ZLE widget, completion style and module \(em paged in the
+terminal, one part per manual page and one chapter per section.
 .B j
 /
 .B k
@@ -267,6 +268,10 @@ turn pages,
 /
 .B [
 change chapter,
+.B }
+/
+.B {
+change part,
 .B t
 shows the contents,
 .B /
@@ -278,8 +283,9 @@ lists every key and
 .B q
 quits. With a
 .IR TOPIC ,
-print that entry (the LSP hover card: styled on a terminal, markdown
-otherwise). With a
+print that entry: the LSP hover card (styled on a terminal, markdown
+otherwise), or, for a name only the manual documents \(em a widget, a
+completion style, an expansion flag \(em its manual entry. With a
 .IR PAGE ,
 .BR \-t " (contents), " \-l " (every topic) or " \-s " PAT (search),"
 print and exit. Without a terminal on stdin and stdout, or with

@@ -1,13 +1,20 @@
 //! `zshrs --docs` — the reference book.
 //!
 //! zshrs-original. With a topic, `zshrs --docs NAME` prints the hover card
-//! the LSP returns for NAME (`lsp::lookup_doc`). Without one it opens the
-//! whole reference as a paged book in the terminal — the same interface as
-//! `stryke docs`: an introduction, chapters, a table of contents, search,
-//! and vim-style keys. The pages are not a second copy of the docs: every
-//! one is `lookup_doc`'s card for a name taken from the tables the LSP
-//! already serves (reserved words, operators, zsh builtins, zshrs builtins,
-//! options, special parameters), rendered by `render_doc_card`.
+//! the LSP returns for NAME (`lsp::lookup_doc`), or, for a name only the
+//! manual documents (a ZLE widget, a completion style, an expansion flag),
+//! that manual entry. Without one it opens the whole reference as a paged
+//! book in the terminal — the interface `stryke docs` has: an introduction,
+//! chapters, a table of contents, search and vim-style keys.
+//!
+//! The book is the manuals the binary already carries, not a second copy:
+//! zshrs's own pages (`man/man1/zshrs.1`, `zshrsall.1`) and every page of
+//! zsh's manual (`vendor/zsh/man1`), read from `bundled_docs` and laid out
+//! page by page in `zshall.1`'s order. Each man page is a part, each
+//! `.SH` / `.SS` section a chapter, and each `.TP` item a topic; a
+//! section's opening prose is a topic of its own. Two chapters come from
+//! the LSP tables because the manuals do not cover them: the zshrs
+//! extension builtins and the operators.
 //!
 //! The interactive book runs only when stdin and stdout are both terminals
 //! and `ZSHRS_NO_TTY` is unset; anything else prints and exits, so a pipe,
@@ -16,148 +23,664 @@
 use std::collections::HashSet;
 use std::io::{IsTerminal, Write};
 
-/// One documented topic: the chapter it sits in, its name, and the raw
-/// markdown card `lsp::lookup_doc` returns for it.
-pub struct Entry {
-    pub chapter: &'static str,
-    pub name: String,
-    pub card: String,
+/// What a topic's text is: an LSP hover card (markdown) or the troff lines
+/// of a man-page item, rendered when the pages are laid out.
+pub enum Body {
+    Card(String),
+    /// A man-page item: the full terms when they say more than the name
+    /// (`typeset [ {+|-}AHU… ]`, `vi-forward-word (unbound) (w)`), then its text.
+    Troff { synopsis: Vec<String>, lines: Vec<String> },
 }
 
-/// Every topic, in book order. A chapter lists the names of one doc table;
-/// a name whose card is empty, or identical to a card already placed (an
-/// alias such as `PATH` for `$path`), is skipped.
-pub fn entries() -> Vec<Entry> {
-    let mut chapters: Vec<(&'static str, Vec<String>)> = Vec::new();
+/// One documented topic: the part (man page) and chapter (section) it sits
+/// in, its name, and its text.
+pub struct Entry {
+    pub part: String,
+    pub chapter: String,
+    pub name: String,
+    pub body: Body,
+}
 
-    // Only names whose card IS a keyword card: RESWDS also holds the typeset
-    // family (`declare`, `export`, …), documented as builtins and placed in
-    // that chapter.
-    let mut words: Vec<String> = crate::ported::hashtable::RESWDS
-        .iter()
-        .map(|(n, _)| n.to_string())
-        .chain(crate::zsh_keyword_docs::KEYWORD_DOCS.iter().map(|(n, _)| topic_name(n).to_string()))
-        .filter(|n| crate::lsp::lookup_doc(doc_key(n)).contains("_zsh keyword_"))
+impl Entry {
+    /// The topic rendered for the terminal: a heading, then the text.
+    fn render(&self, color: bool) -> Vec<String> {
+        match &self.body {
+            Body::Card(card) => render_doc_card(&self.name, card, color).lines().map(str::to_string).collect(),
+            Body::Troff { synopsis, lines } => {
+                let t = Theme::new(color);
+                let mut out = vec![
+                    format!("  {}{}{}", t.c, self.name, t.n),
+                    format!("  {}{}{}", t.d, "─".repeat(self.name.chars().count().clamp(20, 60)), t.n),
+                    format!("  {}{}{}", t.d, self.chapter, t.n),
+                    String::new(),
+                ];
+                for s in synopsis {
+                    out.push(format!("  {}{s}{}", t.b, t.n));
+                }
+                if !synopsis.is_empty() {
+                    out.push(String::new());
+                }
+                out.extend(render_troff(lines, term_width().saturating_sub(2).max(40), &t));
+                out
+            }
+        }
+    }
+
+    /// Plain text for searching: the name, the chapter and the body.
+    fn text(&self) -> String {
+        let body = match &self.body {
+            Body::Card(card) => card.clone(),
+            Body::Troff { synopsis, lines } => {
+                synopsis.join("\n") + "\n" + &render_troff(lines, 1000, &Theme::new(false)).join("\n")
+            }
+        };
+        format!("{}\n{}\n{body}", self.name, self.chapter)
+    }
+}
+
+/// The man pages of the book, in reading order: zshrs's own, `zsh.1`, then
+/// every page `zshall.1` includes, in its `.so` order (zsh's own chapter
+/// order). Pages the bundle lacks are skipped.
+fn man_pages() -> Vec<(String, String)> {
+    let mut by_name: std::collections::HashMap<String, String> = crate::bundled_docs::entries()
+        .into_iter()
+        .filter_map(|(name, body)| {
+            let page = name.strip_prefix("man/man1/").or_else(|| name.strip_prefix("man1/"))?;
+            Some((page.to_string(), String::from_utf8_lossy(&body).into_owned()))
+        })
         .collect();
-    words.sort();
-    words.dedup();
-    chapters.push(("Reserved words", words));
+    let mut order: Vec<String> = ["zshrs.1", "zshrsall.1", "zsh.1"].iter().map(|s| s.to_string()).collect();
+    if let Some(all) = by_name.get("zshall.1") {
+        order.extend(all.lines().filter_map(|l| l.strip_prefix(".so man1/")).map(str::to_string));
+    }
+    order
+        .into_iter()
+        .filter_map(|p| by_name.remove(&p).map(|text| (p.trim_end_matches(".1").to_string(), text)))
+        .collect()
+}
 
-    chapters.push((
-        "Operators",
-        crate::lsp::OPERATOR_DOCS.iter().map(|(n, _)| n.to_string()).collect(),
-    ));
+/// Every topic, in book order.
+pub fn entries() -> Vec<Entry> {
+    let mut out = Vec::new();
+    let pages = man_pages();
+    let mut pages = pages.into_iter().peekable();
+    // zshrs's own pages first, then its guides and the LSP-only chapters,
+    // then zsh's manual.
+    while let Some((page, _)) = pages.peek() {
+        if !page.starts_with("zshrs") {
+            break;
+        }
+        let (page, text) = pages.next().unwrap();
+        out.extend(parse_man(&page, &text));
+    }
+    for (file, text) in GUIDES {
+        out.extend(parse_markdown(file, text));
+    }
+    out.extend(lsp_chapters());
+    for (page, text) in pages {
+        out.extend(parse_man(&page, &text));
+    }
+    out
+}
 
-    let extension: HashSet<&str> = crate::ext_builtins::EXT_BUILTIN_NAMES
+/// zshrs's user-facing guides, compiled in so the book always matches the
+/// build. The repository's porting notes, bug log and plans are not guides
+/// and stay out.
+const GUIDES: &[(&str, &str)] = &[
+    ("README", include_str!("../../README.md")),
+    ("INVENTIONS", include_str!("../../docs/INVENTIONS.md")),
+    ("DESIGN_GOALS", include_str!("../../docs/DESIGN_GOALS.md")),
+    ("DAEMON", include_str!("../../docs/DAEMON.md")),
+    ("DAEMON_AS_SERVICE", include_str!("../../docs/DAEMON_AS_SERVICE.md")),
+    ("SHELL_IDS", include_str!("../../docs/SHELL_IDS.md")),
+    ("RECORDER", include_str!("../../docs/RECORDER.md")),
+    ("RECORDER_PROTOCOL", include_str!("../../docs/RECORDER_PROTOCOL.md")),
+    ("PLUGINS", include_str!("../../docs/PLUGINS.md")),
+    ("PORTING_ZSH_PLUGIN", include_str!("../../docs/PORTING_ZSH_PLUGIN.md")),
+    ("ZNATIVE", include_str!("../../docs/ZNATIVE.md")),
+    ("COMPLETION_DISPATCH", include_str!("../../docs/COMPLETION_DISPATCH.md")),
+    ("IN_EDITOR_COMPSYS_COMPLETION", include_str!("../../docs/IN_EDITOR_COMPSYS_COMPLETION.md")),
+    ("hot_path_performance", include_str!("../../docs/hot_path_performance.md")),
+    ("RFC", include_str!("../../docs/RFC.md")),
+];
+
+/// Split a markdown guide into topics: the `#` title names the part, each
+/// `##` section is a chapter, and each `###` subsection a topic; the prose
+/// before a section's first `###` is a topic named after the section.
+/// Headings inside code fences are code, not structure.
+fn parse_markdown(file: &str, text: &str) -> Vec<Entry> {
+    // The first `# ` heading outside a code fence (a `# comment` in a shell
+    // example is not a title).
+    let mut in_fence = false;
+    let title = text
+        .lines()
+        .find_map(|l| {
+            if l.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+            }
+            l.strip_prefix("# ").filter(|_| !in_fence)
+        })
+        .map(|t| format!("{file} — {}", t.trim()))
+        .unwrap_or_else(|| file.to_string());
+    let mut out = Vec::new();
+    let mut chapter = String::new();
+    let mut name = String::new();
+    let mut body: Vec<&str> = Vec::new();
+    let mut fence = false;
+    let mut flush = |chapter: &str, name: &str, body: &mut Vec<&str>| {
+        let text = body.join("\n");
+        if !name.is_empty() && !text.trim().is_empty() {
+            out.push(Entry {
+                part: title.clone(),
+                chapter: format!("{file}: {}", if chapter.is_empty() { "introduction" } else { chapter }),
+                name: name.to_string(),
+                body: Body::Card(format!("**{name}** — _{file}: {chapter}_\n\n{}", text.trim())),
+            });
+        }
+        body.clear();
+    };
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fence = !fence;
+        }
+        let heading = (!fence).then(|| line.strip_prefix("## ").or_else(|| line.strip_prefix("### ")));
+        match heading.flatten() {
+            Some(h) => {
+                flush(&chapter, &name, &mut body);
+                if line.starts_with("## ") {
+                    chapter = h.trim().to_string();
+                }
+                name = h.trim().to_string();
+            }
+            None if line.starts_with("# ") && !fence => {}
+            None => body.push(line),
+        }
+    }
+    flush(&chapter, &name, &mut body);
+    out
+}
+
+/// The zshrs extension builtins and the operators — documented in the LSP
+/// tables, not in any man page.
+fn lsp_chapters() -> Vec<Entry> {
+    let mut builtins: Vec<&str> = crate::ext_builtins::EXT_BUILTIN_NAMES
         .iter()
         .chain(crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.iter())
         .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
         .collect();
-    let mut zsh_builtins: Vec<String> = crate::ported::builtin::BUILTINS
-        .iter()
-        .map(|b| b.node.nam.to_string())
-        .filter(|n| !extension.contains(n.as_str()))
-        .collect();
-    zsh_builtins.sort();
-    chapters.push(("Builtins", zsh_builtins));
-
-    let mut zshrs_builtins: Vec<String> = extension.iter().map(|n| n.to_string()).collect();
-    zshrs_builtins.sort();
-    chapters.push(("zshrs builtins", zshrs_builtins));
-
-    chapters.push((
-        "Options",
-        crate::zsh_option_docs::OPTION_DOCS.iter().map(|(n, _)| n.to_string()).collect(),
-    ));
-    chapters.push((
-        "Special parameters",
-        crate::zsh_special_var_docs::SPECIAL_VAR_DOCS
-            .iter()
-            .map(|(n, _)| n.to_string())
-            .collect(),
-    ));
-
+    builtins.sort();
+    let operators: Vec<&str> = crate::lsp::OPERATOR_DOCS.iter().map(|(n, _)| *n).collect();
     let mut out = Vec::new();
-    let mut names: HashSet<String> = HashSet::new();
-    let mut cards: HashSet<String> = HashSet::new();
-    for (chapter, list) in chapters {
-        for name in list {
-            if names.contains(&name) {
+    let mut seen: HashSet<String> = HashSet::new();
+    for (chapter, names) in [("zshrs builtins", builtins), ("Operators", operators)] {
+        for name in names {
+            let card = crate::lsp::lookup_doc(name);
+            if card.is_empty() || !seen.insert(card.clone()) {
                 continue;
             }
-            let card = crate::lsp::lookup_doc(doc_key(&name));
-            if card.is_empty() || cards.contains(&card) {
-                continue;
-            }
-            names.insert(name.clone());
-            cards.insert(card.clone());
-            out.push(Entry { chapter, name, card });
+            out.push(Entry {
+                part: "zshrs builtins and operators".into(),
+                chapter: chapter.into(),
+                name: name.to_string(),
+                body: Body::Card(card),
+            });
         }
     }
     out
 }
 
-/// zsh's yodl source files the `( list )` subshell under the token name
-/// `LPAR`; the book shows it, and accepts it, as `(`.
-fn topic_name(doc_name: &str) -> &str {
-    if doc_name == "LPAR" { "(" } else { doc_name }
+/// Split a man page into topics. Sections NAME and SEE ALSO carry no
+/// reference text and are skipped; the page's NAME line titles its part.
+fn parse_man(page: &str, text: &str) -> Vec<Entry> {
+    let lines: Vec<&str> = text.lines().collect();
+    let part = lines
+        .iter()
+        .position(|l| l.trim_matches('"').ends_with("NAME") && l.starts_with(".SH"))
+        .and_then(|i| lines.get(i + 1))
+        .map(|l| troff_plain(l))
+        .unwrap_or_else(|| page.to_string());
+
+    let mut out: Vec<Entry> = Vec::new();
+    let mut sh = String::new();
+    let mut ss = String::new();
+    let mut skip = false;
+    let mut depth = 0usize;
+    // The topic being collected: its names, its body, and whether it is a
+    // `.TP` item (vs a section's opening prose).
+    let mut names: Vec<String> = Vec::new();
+    let mut synopsis: Vec<String> = Vec::new();
+    let mut body: Vec<String> = Vec::new();
+    let mut is_item = false;
+    let mut want_term = false;
+
+    let chapter = |sh: &str, ss: &str| {
+        if ss.is_empty() { format!("{page}: {sh}") } else { format!("{page}: {sh} › {ss}") }
+    };
+    let mut flush = |names: &mut Vec<String>, synopsis: &mut Vec<String>, body: &mut Vec<String>, sh: &str, ss: &str, skip: bool| {
+        let has_text = body.iter().any(|l| !l.starts_with('.') && !l.trim().is_empty());
+        if !skip && !names.is_empty() && has_text {
+            out.push(Entry {
+                part: part.clone(),
+                chapter: chapter(sh, ss),
+                name: names.join(", "),
+                body: Body::Troff { synopsis: std::mem::take(synopsis), lines: std::mem::take(body) },
+            });
+        }
+        names.clear();
+        synopsis.clear();
+        body.clear();
+    };
+
+    for raw in &lines {
+        let line = *raw;
+        let (mac, rest) = split_macro(line);
+        match mac {
+            Some("SH") | Some("SS") => {
+                flush(&mut names, &mut synopsis, &mut body, &sh, &ss, skip);
+                let title = troff_plain(&unquote_args(rest).join(" "));
+                if mac == Some("SH") {
+                    skip = matches!(title.as_str(), "NAME" | "SEE ALSO");
+                    sh = title.clone();
+                    ss.clear();
+                } else {
+                    ss = title.clone();
+                }
+                names = vec![title];
+                is_item = false;
+                want_term = false;
+                depth = 0;
+            }
+            // What a top-level `.TP` starts is decided by its term: a bullet
+            // or list number is a list inside the current topic, anything
+            // else a topic of its own.
+            Some("TP") if depth == 0 => want_term = true,
+            Some("RS") => {
+                depth += 1;
+                body.push(line.to_string());
+            }
+            Some("RE") => {
+                depth = depth.saturating_sub(1);
+                body.push(line.to_string());
+            }
+            Some("PD") | Some("TH") | Some("so") | Some("\\\"") => {}
+            _ if line.starts_with(".\\\"") || line == "." => {}
+            _ if want_term => {
+                want_term = false;
+                let term = troff_plain(&macro_text(line));
+                if is_list_marker(&term) && !names.is_empty() {
+                    body.push(".TP".to_string());
+                    body.push(line.to_string());
+                    continue;
+                }
+                // `.PD 0` pairs: a term followed at once by another `.TP`
+                // shares the next term's body — one topic, both names.
+                let empty = !body.iter().any(|l| !l.starts_with('.') && !l.trim().is_empty());
+                if !(is_item && empty) {
+                    flush(&mut names, &mut synopsis, &mut body, &sh, &ss, skip);
+                }
+                is_item = true;
+                let mut name = term_name(line);
+                // A numbered entry (`1.` `Nested substitution`) is named by
+                // the whole term, not the bold number alone.
+                if is_list_marker(&name) && name != term {
+                    name = term.clone();
+                }
+                if name.is_empty() {
+                    // A continuation line of the previous term's synopsis.
+                    if synopsis.is_empty() {
+                        synopsis.extend(names.last().cloned());
+                    }
+                    synopsis.push(term);
+                    continue;
+                }
+                if name != term {
+                    synopsis.push(term);
+                }
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            _ => body.push(line.to_string()),
+        }
+    }
+    flush(&mut names, &mut synopsis, &mut body, &sh, &ss, skip);
+    out
 }
 
-/// The `lsp::lookup_doc` key for a topic name (inverse of `topic_name`).
-fn doc_key(topic: &str) -> &str {
-    if topic == "(" { "LPAR" } else { topic }
+/// The name a `.TP` term documents. The manual sets the name in bold and
+/// follows it with plain text — a builtin's synopsis
+/// (`\fBtypeset\fP [ {+|-}AHU… ]`) or a widget's key bindings
+/// (`\fBvi-forward-word\fP (unbound) (w)`) — so a leading bold run followed
+/// by a space or nothing is the name. Any other term (`${name:-word}`, which
+/// alternates bold and italic) is its own name.
+///
+/// The separating space may sit inside the bold run (`\fBprint \fP[ …`,
+/// `\fBtypeset \fP\fB\-T\fP …`). A bold run of spaces alone continues the
+/// previous term's synopsis on a new line; its name is empty.
+fn term_name(line: &str) -> String {
+    let full = macro_text(line);
+    let plain = troff_plain(&full);
+    let Some(rest) = full.strip_prefix("\\fB") else { return plain };
+    let Some(end) = rest.find("\\f") else { return plain };
+    let bold = &rest[..end];
+    let after = &rest[end..];
+    let after = after.strip_prefix("\\fP").or_else(|| after.strip_prefix("\\fR")).unwrap_or(after);
+    if bold.ends_with(' ') || after.trim().is_empty() || after.starts_with(' ') {
+        troff_plain(bold)
+    } else {
+        plain
+    }
+}
+
+/// A `.TP` term that marks a list entry rather than naming something: a
+/// bullet, a dash, or a list number (`1.`, `2)`, `(3)`).
+fn is_list_marker(term: &str) -> bool {
+    let t = term.trim_matches(|c| c == '(' || c == ')' || c == '.');
+    matches!(term, "•" | "*" | "-" | "o") || (!t.is_empty() && t.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// `.XX args` → (Some("XX"), "args"); a text line → (None, line).
+fn split_macro(line: &str) -> (Option<&str>, &str) {
+    let Some(rest) = line.strip_prefix('.').or_else(|| line.strip_prefix('\'')) else {
+        return (None, line);
+    };
+    let rest = rest.trim_start();
+    match rest.find(char::is_whitespace) {
+        Some(i) => (Some(&rest[..i]), rest[i..].trim_start()),
+        None => (Some(rest), ""),
+    }
+}
+
+/// Macro arguments, honouring double quotes (`"two words"`).
+fn unquote_args(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut any = false;
+    for c in s.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                any = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if any || !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                any = false;
+            }
+            c => {
+                cur.push(c);
+                any = true;
+            }
+        }
+    }
+    if any || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// A font macro line (`.B x`, `.BR a b`) as inline troff text; any other
+/// line unchanged.
+fn macro_text(line: &str) -> String {
+    let (mac, rest) = split_macro(line);
+    let fonts: &[char] = match mac {
+        Some("B") => &['B'],
+        Some("I") => &['I'],
+        Some("BR") => &['B', 'R'],
+        Some("RB") => &['R', 'B'],
+        Some("BI") => &['B', 'I'],
+        Some("IB") => &['I', 'B'],
+        Some("IR") => &['I', 'R'],
+        Some("RI") => &['R', 'I'],
+        Some(_) => return String::new(),
+        None => return line.to_string(),
+    };
+    let args = unquote_args(rest);
+    if fonts.len() == 1 {
+        return format!("\\f{}{}\\fP", fonts[0], args.join(" "));
+    }
+    args.iter()
+        .enumerate()
+        .map(|(i, a)| format!("\\f{}{a}\\fP", fonts[i % 2]))
+        .collect()
+}
+
+/// Inline troff to terminal text: font escapes to ANSI (bold → cyan, as code
+/// spans are in the hover cards; italic → italic), character escapes to
+/// their characters.
+fn troff_inline(s: &str, t: &Theme) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('f') => match it.next() {
+                Some('B') => out.push_str(t.c),
+                Some('I') => out.push_str(t.i),
+                Some(_) => out.push_str(t.n),
+                None => {}
+            },
+            Some('(') => {
+                let code: String = it.by_ref().take(2).collect();
+                out.push_str(match code.as_str() {
+                    "em" => "—",
+                    "en" => "–",
+                    "aq" => "'",
+                    "dq" => "\"",
+                    "lq" => "“",
+                    "rq" => "”",
+                    "oq" => "‘",
+                    "cq" => "’",
+                    "bu" => "•",
+                    "co" => "©",
+                    "ti" => "~",
+                    "ha" => "^",
+                    "rs" => "\\",
+                    "mu" => "×",
+                    "hy" => "-",
+                    "ga" => "`",
+                    _ => "",
+                });
+            }
+            Some('*') => {
+                // `\*(lq` / `\*q` string registers.
+                if it.peek() == Some(&'(') {
+                    it.next();
+                    let code: String = it.by_ref().take(2).collect();
+                    out.push_str(match code.as_str() {
+                        "lq" => "“",
+                        "rq" => "”",
+                        _ => "",
+                    });
+                } else {
+                    it.next();
+                }
+            }
+            Some('-') => out.push('-'),
+            Some('e') | Some('\\') => out.push('\\'),
+            Some(' ') | Some('~') => out.push(' '),
+            Some('&') | Some('c') | Some('%') | Some('|') | Some('^') => {}
+            Some('\'') => out.push('\''),
+            Some('`') => out.push('`'),
+            Some('.') => out.push('.'),
+            Some(o) => out.push(o),
+            None => {}
+        }
+    }
+    out
+}
+
+/// Inline troff with every escape resolved and no styling.
+fn troff_plain(s: &str) -> String {
+    troff_inline(s, &Theme::new(false)).trim().to_string()
+}
+
+/// Render a topic's troff lines to wrapped terminal lines.
+///
+/// Fill-mode text is joined into paragraphs and word-wrapped; `.nf` blocks
+/// and space-led lines keep their lines (examples, in green). Indentation
+/// follows troff: a `.TP` term sits at the margin and its text one level in;
+/// `.RS` moves the margin to the current text column (so an item's later
+/// paragraphs line up with its first) and `.RE` restores it.
+fn render_troff(lines: &[String], width: usize, t: &Theme) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut para = String::new();
+    // The margin level, whether the text is an item's (one level in), and
+    // the margins `.RS` saved.
+    let mut base = 0usize;
+    let mut in_item = false;
+    let mut saved: Vec<(usize, bool)> = Vec::new();
+    let mut nofill = false;
+    let mut want_term = false;
+    let mut url: Option<String> = None;
+
+    let indent = |level: usize| "  ".to_string() + &"    ".repeat(level);
+    fn flush(out: &mut Vec<String>, para: &mut String, ind: &str, width: usize) {
+        let text = para.trim();
+        if !text.is_empty() {
+            for l in word_wrap(text, width.saturating_sub(ind.len()).max(20)) {
+                out.push(format!("{ind}{l}"));
+            }
+        }
+        para.clear();
+    }
+    fn blank(out: &mut Vec<String>) {
+        if out.last().is_some_and(|l| !l.trim().is_empty()) {
+            out.push(String::new());
+        }
+    }
+
+    for line in lines {
+        let (mac, rest) = split_macro(line);
+        let ind = indent(base + in_item as usize);
+        match mac {
+            Some("PP") | Some("LP") | Some("P") | Some("IP") => {
+                flush(&mut out, &mut para, &ind, width);
+                blank(&mut out);
+                if mac == Some("IP") {
+                    if let Some(tag) = unquote_args(rest).first().filter(|s| !s.is_empty()) {
+                        para.push_str(&troff_inline(tag, t));
+                        para.push(' ');
+                    }
+                }
+            }
+            Some("br") | Some("sp") => {
+                flush(&mut out, &mut para, &ind, width);
+                if mac == Some("sp") {
+                    blank(&mut out);
+                }
+            }
+            Some("nf") | Some("EX") => {
+                flush(&mut out, &mut para, &ind, width);
+                nofill = true;
+            }
+            Some("fi") | Some("EE") => nofill = false,
+            Some("RS") => {
+                flush(&mut out, &mut para, &ind, width);
+                saved.push((base, in_item));
+                base += in_item as usize;
+                in_item = false;
+            }
+            Some("RE") => {
+                flush(&mut out, &mut para, &ind, width);
+                (base, in_item) = saved.pop().unwrap_or((0, false));
+            }
+            Some("TP") => {
+                flush(&mut out, &mut para, &ind, width);
+                blank(&mut out);
+                in_item = false;
+                want_term = true;
+            }
+            Some("UR") => url = Some(rest.trim().to_string()),
+            Some("UE") => {
+                if let Some(u) = url.take() {
+                    para.push_str(&format!("<{u}>"));
+                }
+                para.push_str(rest);
+                para.push(' ');
+            }
+            Some("B" | "I" | "BR" | "RB" | "BI" | "IB" | "IR" | "RI") | None => {
+                let text = troff_inline(&macro_text(line), t);
+                if want_term {
+                    out.push(format!("{}{text}{}", indent(base), t.n));
+                    in_item = true;
+                    want_term = false;
+                } else if nofill {
+                    out.push(format!("{ind}{}{text}{}", t.g, t.n));
+                } else if mac.is_none() && line.is_empty() {
+                    flush(&mut out, &mut para, &ind, width);
+                    blank(&mut out);
+                } else if mac.is_none() && line.starts_with(' ') {
+                    flush(&mut out, &mut para, &ind, width);
+                    out.push(format!("{ind}{text}{}", t.n));
+                } else {
+                    para.push_str(&text);
+                    para.push_str(t.n);
+                    para.push(' ');
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    flush(&mut out, &mut para, &indent(base + in_item as usize), width);
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    out
 }
 
 /// A screenful of the book: its chapter, the lines shown, and the entries
 /// that start on it.
 struct Page {
+    part: String,
     chapter: String,
     lines: Vec<String>,
     starts: Vec<usize>,
 }
 
-/// The chapters in book order with their topic counts.
-fn chapter_counts(entries: &[Entry]) -> Vec<(&'static str, usize)> {
-    let mut out: Vec<(&'static str, usize)> = Vec::new();
+/// Consecutive runs of `key(entry)` with their topic counts, in book order.
+fn runs<'a>(entries: &'a [Entry], key: impl Fn(&'a Entry) -> &'a str) -> Vec<(&'a str, usize)> {
+    let mut out: Vec<(&str, usize)> = Vec::new();
     for e in entries {
+        let k = key(e);
         match out.last_mut() {
-            Some((c, n)) if *c == e.chapter => *n += 1,
-            _ => out.push((e.chapter, 1)),
+            Some((c, n)) if *c == k => *n += 1,
+            _ => out.push((k, 1)),
         }
     }
     out
 }
 
-/// Lay the rendered cards out on pages of `height` lines. A chapter always
-/// starts a page; a card taller than a page continues on the next ones.
+/// Lay the rendered topics out on pages of `height` lines. A chapter always
+/// starts a page; a topic taller than a page continues on the next ones.
 fn build_pages(entries: &[Entry], height: usize, color: bool) -> Vec<Page> {
+    let empty = |part: String, chapter: String| Page { part, chapter, lines: Vec::new(), starts: Vec::new() };
     let mut pages: Vec<Page> = Vec::new();
-    let mut cur = Page { chapter: String::new(), lines: Vec::new(), starts: Vec::new() };
+    let mut cur = empty(String::new(), String::new());
     for (i, e) in entries.iter().enumerate() {
-        let card: Vec<String> = render_doc_card(&e.name, &e.card, color)
-            .lines()
-            .map(str::to_string)
-            .collect();
+        let text = e.render(color);
         let new_chapter = cur.chapter != e.chapter;
-        let fits = cur.lines.len() + card.len() + 1 <= height;
+        let fits = cur.lines.len() + text.len() + 1 <= height;
         if !cur.lines.is_empty() && (new_chapter || !fits) {
-            pages.push(std::mem::replace(
-                &mut cur,
-                Page { chapter: String::new(), lines: Vec::new(), starts: Vec::new() },
-            ));
+            pages.push(std::mem::replace(&mut cur, empty(String::new(), String::new())));
         }
-        cur.chapter = e.chapter.to_string();
+        cur.part = e.part.clone();
+        cur.chapter = e.chapter.clone();
         cur.starts.push(i);
         if !cur.lines.is_empty() {
             cur.lines.push(String::new());
         }
-        for line in card {
+        for line in text {
             if cur.lines.len() == height {
-                let chapter = cur.chapter.clone();
-                pages.push(std::mem::replace(
-                    &mut cur,
-                    Page { chapter, lines: Vec::new(), starts: Vec::new() },
-                ));
+                let next = empty(cur.part.clone(), cur.chapter.clone());
+                pages.push(std::mem::replace(&mut cur, next));
             }
             cur.lines.push(line);
         }
@@ -172,6 +695,7 @@ const KEYS: &[(&str, &str)] = &[
     ("j  n  space  enter", "next page"),
     ("k  p", "previous page"),
     ("]  [", "next / previous chapter"),
+    ("}  {", "next / previous part"),
     ("d  u", "forward / back 5 pages"),
     ("g  G", "first / last page"),
     ("t", "table of contents"),
@@ -185,6 +709,7 @@ const KEYS: &[(&str, &str)] = &[
 struct Theme {
     c: &'static str,
     g: &'static str,
+    i: &'static str,
     d: &'static str,
     b: &'static str,
     n: &'static str,
@@ -193,56 +718,60 @@ struct Theme {
 impl Theme {
     fn new(color: bool) -> Self {
         if color {
-            Theme { c: "\x1b[36m", g: "\x1b[32m", d: "\x1b[2m", b: "\x1b[1m", n: "\x1b[0m" }
+            Theme { c: "\x1b[36m", g: "\x1b[32m", i: "\x1b[3m", d: "\x1b[2m", b: "\x1b[1m", n: "\x1b[0m" }
         } else {
-            Theme { c: "", g: "", d: "", b: "", n: "" }
+            Theme { c: "", g: "", i: "", d: "", b: "", n: "" }
         }
     }
 }
 
-/// The opening page: what the book holds and how to move around it.
+/// The opening page: what the book holds, the keys, and its parts.
 fn intro_lines(entries: &[Entry], t: &Theme) -> Vec<String> {
-    let Theme { c, g, d, b, n } = t;
-    let chapters = chapter_counts(entries);
+    let Theme { c, g, d, b, n, .. } = t;
+    let parts = runs(entries, |e| e.part.as_str());
+    let chapters = runs(entries, |e| e.chapter.as_str()).len();
     let mut out = vec![
         format!("  {d}>> THE ZSHRS REFERENCE // INTERACTIVE DOCUMENTATION <<{n}"),
         String::new(),
+        format!("  {b}The zshrs manual and the whole zsh manual, every builtin,{n}"),
+        format!("  {b}option, parameter, expansion, widget and completion style.{n}"),
         format!(
-            "  {b}Every reserved word, operator, builtin, option and special{n}"
-        ),
-        format!(
-            "  {b}parameter. {g}{}{n} {b}topics in {g}{}{n} {b}chapters.{n}",
+            "  {g}{}{n} {b}topics in {g}{chapters}{n} {b}chapters across {g}{}{n} {b}parts.{n}",
             entries.len(),
-            chapters.len()
+            parts.len()
         ),
         String::new(),
-        format!("  {d}── KEYS ──────────────────────────────────────────────{n}"),
+        format!("  {d}── KEYS ─────────────────────────────────────────────────{n}"),
     ];
     for (k, what) in KEYS {
         out.push(format!("  {c}{k:<20}{n} {what}"));
     }
     out.push(String::new());
-    out.push(format!("  {d}── CHAPTERS ──────────────────────────────────────────{n}"));
-    for (i, (chapter, count)) in chapters.iter().enumerate() {
-        out.push(format!("  {c}{:>2}.{n} {b}{chapter:<24}{n} {d}{count} topics{n}", i + 1));
+    out.push(format!("  {d}── PARTS ────────────────────────────────────────────────{n}"));
+    for (i, (part, count)) in parts.iter().enumerate() {
+        out.push(format!("  {c}{:>2}.{n} {b}{part:<52}{n} {d}{count}{n}", i + 1));
     }
     out
 }
 
-/// `--toc`: each chapter with the page it starts on, then its topics.
+/// `--toc`: every chapter grouped by part, with the page it starts on and,
+/// with `with_topics`, each topic's page.
 fn toc_lines(entries: &[Entry], pages: &[Page], t: &Theme, with_topics: bool) -> Vec<String> {
     let Theme { c, d, b, n, .. } = t;
     let mut out = Vec::new();
-    for (chapter, count) in chapter_counts(entries) {
+    let mut part = "";
+    for (chapter, count) in runs(entries, |e| e.chapter.as_str()) {
         let first = pages.iter().position(|p| p.chapter == chapter).unwrap_or(0);
-        out.push(format!(
-            "  {b}{chapter:<24}{n} {d}{count} topics, page {}{n}",
-            first + 2
-        ));
+        let ep = &entries[pages[first].starts[0]].part;
+        if ep != part {
+            part = ep;
+            out.push(format!("{b}{part}{n}"));
+        }
+        out.push(format!("  {chapter:<60} {d}{count} topics, page {}{n}", first + 2));
         if with_topics {
             for (pi, p) in pages.iter().enumerate().filter(|(_, p)| p.chapter == chapter) {
                 for &ei in &p.starts {
-                    out.push(format!("      {c}{:<28}{n} {d}{}{n}", entries[ei].name, pi + 2));
+                    out.push(format!("      {c}{:<40}{n} {d}{}{n}", entries[ei].name, pi + 2));
                 }
             }
         }
@@ -250,16 +779,16 @@ fn toc_lines(entries: &[Entry], pages: &[Page], t: &Theme, with_topics: bool) ->
     out
 }
 
-/// Pages whose topic name or card contains `pat` (case-insensitive), as
-/// (page number, topic name) — page 1 is the introduction.
+/// Topics whose name, chapter or text contains `pat` (case-insensitive), as
+/// (page number, topic name, chapter) — page 1 is the introduction.
 fn search(entries: &[Entry], pages: &[Page], pat: &str) -> Vec<(usize, String)> {
     let pat = pat.to_lowercase();
     let mut out = Vec::new();
     for (pi, p) in pages.iter().enumerate() {
         for &ei in &p.starts {
             let e = &entries[ei];
-            if e.name.to_lowercase().contains(&pat) || e.card.to_lowercase().contains(&pat) {
-                out.push((pi + 2, e.name.clone()));
+            if e.text().to_lowercase().contains(&pat) {
+                out.push((pi + 2, format!("{}  ({})", e.name, e.chapter)));
             }
         }
     }
@@ -274,7 +803,7 @@ fn print_help(t: &Theme) {
     println!("  {c}TOPIC{n}               print TOPIC's entry (`zshrs --docs typeset`)");
     println!("  {c}PAGE{n}                print page PAGE");
     println!("  {c}-t, --toc{n}           table of contents with every topic's page");
-    println!("  {c}-l, --list{n}          every topic, one per line");
+    println!("  {c}-l, --list{n}          every topic and its chapter, one per line");
     println!("  {c}-s, --search PAT{n}    topics whose name or text contains PAT");
     println!("  {c}-h, --help{n}          this message");
     println!();
@@ -296,26 +825,22 @@ pub fn run(args: &[String], color: bool) -> i32 {
     // The options; any other word is a topic, `-` and `-eq` included.
     const OPTIONS: &[&str] = &["-t", "--toc", "-l", "--list", "-s", "--search"];
     if let Some(a) = first.filter(|a| !OPTIONS.contains(a) && a.parse::<usize>().is_err()) {
-        if a.starts_with('-') && crate::lsp::lookup_doc(a).is_empty() {
-            eprintln!("zshrs: --docs: bad option: {a}");
-            return 1;
-        }
         return print_topic(a, color);
     }
 
     let entries = entries();
+    if matches!(first, Some("-l" | "--list")) {
+        for e in &entries {
+            println!("{}\t{}", e.name, e.chapter);
+        }
+        return 0;
+    }
     let (rows, _) = term_size();
     let height = rows.saturating_sub(4).max(8);
     let pages = build_pages(&entries, height, color);
     let total = pages.len() + 1; // + the introduction
 
     match first {
-        Some("-l" | "--list") => {
-            for e in &entries {
-                println!("{}", e.name);
-            }
-            return 0;
-        }
         Some("-t" | "--toc") => {
             for l in toc_lines(&entries, &pages, &t, true) {
                 println!("{l}");
@@ -328,8 +853,8 @@ pub fn run(args: &[String], color: bool) -> i32 {
                 return 1;
             };
             let hits = search(&entries, &pages, pat);
-            for (page, name) in &hits {
-                println!("  {}{page:>5}{}  {name}", t.c, t.n);
+            for (page, what) in &hits {
+                println!("  {}{page:>5}{}  {what}", t.c, t.n);
             }
             return if hits.is_empty() { 1 } else { 0 };
         }
@@ -368,29 +893,56 @@ pub fn run(args: &[String], color: bool) -> i32 {
 /// `zshrs --docs NAME`: the hover card for NAME — styled when `color`,
 /// otherwise the raw markdown, so `zshrs --docs X | glow` and the editor
 /// popup that renders markdown itself get the `**name**` heading intact.
+/// A name only the manual documents (a widget, a style, an expansion flag)
+/// prints its manual entry; a name the manual documents in several places
+/// prints each.
 fn print_topic(name: &str, color: bool) -> i32 {
-    let card = crate::lsp::lookup_doc(doc_key(name));
-    if card.is_empty() {
-        eprintln!("zshrs: no docs for {name}");
+    let card = crate::lsp::lookup_doc(if name == "(" { "LPAR" } else { name });
+    if !card.is_empty() {
+        if color {
+            print!("{}", render_doc_card(name, &card, true));
+        } else {
+            print!("{card}");
+            if !card.ends_with('\n') {
+                println!();
+            }
+        }
+        return 0;
+    }
+    let hits: Vec<Entry> = entries()
+        .into_iter()
+        .filter(|e| e.name == name || e.name.split(", ").any(|n| n == name))
+        .collect();
+    if hits.is_empty() {
+        if name.starts_with('-') {
+            eprintln!("zshrs: --docs: bad option: {name}");
+        } else {
+            eprintln!("zshrs: no docs for {name}");
+        }
         return 1;
     }
-    if color {
-        print!("{}", render_doc_card(name, &card, true));
-    } else {
-        print!("{card}");
-        if !card.ends_with('\n') {
+    for (i, e) in hits.iter().enumerate() {
+        if i > 0 {
             println!();
+        }
+        for l in e.render(color) {
+            println!("{l}");
         }
     }
     0
 }
 
-/// Terminal rows and columns; 24x80 when there is no terminal.
+/// Terminal rows and columns; 24x80 when there is no terminal. Read once:
+/// without a terminal `crossterm` falls back to running `tput`, and the
+/// renderer asks for the width once per topic — thousands of subprocesses
+/// (`--docs --list` took 20 s) for a size that cannot change while the
+/// pages are laid out.
 fn term_size() -> (usize, usize) {
-    match crossterm::terminal::size() {
+    static SIZE: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
+    *SIZE.get_or_init(|| match crossterm::terminal::size() {
         Ok((cols, rows)) if rows > 0 && cols > 0 => (rows as usize, cols as usize),
         _ => (24, 80),
-    }
+    })
 }
 
 /// Raw mode and the alternate screen for the life of the book; dropped on
@@ -470,7 +1022,10 @@ fn browse(entries: &[Entry], pages: &[Page], intro: &[String], start: usize, hei
     let toc = toc_lines(entries, pages, t, false);
     let keys: Vec<String> = KEYS.iter().map(|(k, w)| format!("  {}{k:<20}{} {w}", t.c, t.n)).collect();
     // A chapter's first page; page 0 is the introduction.
-    let chapter_of = |p: usize| if p == 0 { "" } else { pages[p - 1].chapter.as_str() };
+    let chapter_of: fn(&Page) -> &str = |p| &p.chapter;
+    let part_of: fn(&Page) -> &str = |p| &p.part;
+    let next_run = |cur: usize, key: fn(&Page) -> &str| next_run(pages, cur, key);
+    let prev_run = |cur: usize, key: fn(&Page) -> &str| prev_run(pages, cur, key);
     loop {
         let (header, body): (String, Vec<String>) = match &view {
             View::Page(0) => ("ZSHRS DOCS // introduction".into(), intro.to_vec()),
@@ -518,23 +1073,20 @@ fn browse(entries: &[Entry], pages: &[Page], intro: &[String], start: usize, hei
                 cur = total - 1;
                 page(cur)
             }
-            KeyCode::Char(']' | '}') => {
-                let here = chapter_of(cur);
-                cur = (cur + 1..total).find(|&p| chapter_of(p) != here).unwrap_or(cur);
+            KeyCode::Char(']') => {
+                cur = next_run(cur, chapter_of);
                 page(cur)
             }
-            KeyCode::Char('[' | '{') => {
-                // Back to the start of this chapter, or of the previous one
-                // when already there.
-                let mut p = cur;
-                if p > 0 && chapter_of(p - 1) != chapter_of(p) {
-                    p -= 1;
-                }
-                let here = chapter_of(p);
-                while p > 0 && chapter_of(p - 1) == here {
-                    p -= 1;
-                }
-                cur = p;
+            KeyCode::Char('}') => {
+                cur = next_run(cur, part_of);
+                page(cur)
+            }
+            KeyCode::Char('[') => {
+                cur = prev_run(cur, chapter_of);
+                page(cur)
+            }
+            KeyCode::Char('{') => {
+                cur = prev_run(cur, part_of);
                 page(cur)
             }
             KeyCode::Char('r') => {
@@ -785,4 +1337,30 @@ fn visible_width(s: &str) -> usize {
 /// `stty size` subprocess: the book renders every card, thousands of them.
 fn term_width() -> usize {
     term_size().1
+}
+
+/// The `key` (chapter or part) of book page `p`; the introduction (page 0)
+/// has none.
+fn page_key(pages: &[Page], p: usize, key: fn(&Page) -> &str) -> &str {
+    if p == 0 { "" } else { key(&pages[p - 1]) }
+}
+
+/// The first page after `cur` whose `key` differs: the next chapter or part.
+fn next_run(pages: &[Page], cur: usize, key: fn(&Page) -> &str) -> usize {
+    let here = page_key(pages, cur, key);
+    (cur + 1..=pages.len()).find(|&p| page_key(pages, p, key) != here).unwrap_or(cur)
+}
+
+/// The first page of `cur`'s chapter or part — or of the previous one when
+/// `cur` is already its first page.
+fn prev_run(pages: &[Page], cur: usize, key: fn(&Page) -> &str) -> usize {
+    let mut p = cur;
+    if p > 0 && page_key(pages, p - 1, key) != page_key(pages, p, key) {
+        p -= 1;
+    }
+    let here = page_key(pages, p, key);
+    while p > 0 && page_key(pages, p - 1, key) == here {
+        p -= 1;
+    }
+    p
 }
