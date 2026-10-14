@@ -11275,362 +11275,239 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     let from_pat = &positional[0];
     let to_pat = &positional[1];
 
-    // Convert source pattern with `(...)` capture groups to a
-    // regex anchored at both ends. zsh-style globs:
-    //   `*`   → `(.*)` (capture if -W or wrapped in `(...)`,
-    //          else just `.*`)
-    //   `?`   → `.`
-    //   `(p)` → `(p_translated)` capture group
-    //   `[…]` → `[…]` literal char class
-    // zmv:117 "The pattern is always treated as an EXTENDED_GLOB pattern." The
-    // SOURCE may lead with globbing FLAGS: `(#b)` (backreferences → $match, the
-    // default for zmv captures), `(#m)` ($MATCH = the whole match), `(#i)`/
-    // `(#l)` (case-insensitive). The GLOB above honours them via extendedglob,
-    // but the capture REGEX must strip them — regex `()` groups already give
-    // backreferences, so `(#b)` is a no-op there, `(#i)`/`(#l)` map to a
-    // case-insensitive regex, and `(#m)` binds $MATCH to the whole match.
-    // Without stripping, `(#b)file(?).dat` compiled to a regex containing a
-    // literal `(#b)` group that matched no real filename → empty rename set.
-    let mut case_insensitive = false;
-    let mut want_match_var = false;
-    let mut re_pat = from_pat.clone();
-    while let Some(rest) = re_pat.strip_prefix("(#") {
-        let Some(close) = rest.find(')') else { break };
-        let flags = &rest[..close];
-        // Only a pure flag group (recognised letters/digits). Anything else —
-        // e.g. `(#c2,3)` count spec followed by a pattern — is left for the
-        // regex builder to reject/handle rather than mis-stripped.
-        if flags.is_empty() || !flags.chars().all(|c| "bmiIlaeqsMBcC0123456789".contains(c)) {
-            break;
-        }
-        if flags.contains('i') || flags.contains('l') {
-            case_insensitive = true;
-        }
-        if flags.contains('m') {
-            want_match_var = true;
-        }
-        re_pat = rest[close + 1..].to_string();
+    // zmv:125-126 `emulate -RL zsh; setopt extendedglob` — every pattern below
+    // (the `[[ … = (#b)… ]]` tests and the file glob) is an EXTENDED_GLOB
+    // pattern, matched by the shell's own pattern engine: captures, `(#i)`,
+    // `(#m)` and friends behave exactly as in the function.
+    let saved_eg = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
+    crate::ported::options::opt_state_set("extendedglob", true);
+    // zmv:128-130 `local … match mbegin mend … MATCH MBEGIN MEND` — the
+    // function's own copies start unset and the caller's come back at the end.
+    const MATCH_ARRAYS: [&str; 3] = ["match", "mbegin", "mend"];
+    const MATCH_SCALARS: [&str; 3] = ["MATCH", "MBEGIN", "MEND"];
+    let saved_arrays: Vec<Option<Vec<String>>> =
+        MATCH_ARRAYS.iter().map(|n| crate::ported::params::getaparam(n)).collect();
+    let saved_scalars: Vec<Option<String>> = MATCH_SCALARS
+        .iter()
+        .map(|n| crate::fusevm_bridge::with_executor(|exec| exec.scalar(n)))
+        .collect();
+    for n in MATCH_ARRAYS.iter().chain(MATCH_SCALARS.iter()) {
+        crate::ported::params::unsetparam(n);
     }
-    let mut regex_src = String::from("^");
-    if case_insensitive {
-        regex_src.push_str("(?i)");
-    }
-    let mut chars = re_pat.chars().peekable();
-    let mut group_idx = 0;
-    // zmv:197-202 — under -w/-W the GLOB is the pattern with every wildcard
-    // parenthesised too (`pat="${pat//${~find}/($MATCH)}"`), not the pattern as
-    // typed: with -Q a trailing `(*)` is then a qualifier (zmv:219). Built in
-    // the same pass as the regex so both recognise the same wildcards.
-    let mut glob_src = String::new();
-    // Byte offset in `regex_src` where the most recently emitted atom began, so
-    // an extendedglob quantifier (`#` = zero-or-more, `##` = one-or-more; zmv
-    // runs under `setopt extendedglob`, zmv:126) can wrap it. For a group the
-    // opening `(` position is stashed here so `(...)#`/`(...)##` wrap the whole
-    // group, not just its trailing `)`.
-    let mut last_atom_start = regex_src.len();
-    let mut group_starts: Vec<usize> = Vec::new();
-    while let Some(c) = chars.next() {
-        // zsh globbing `x#`/`x##` — a postfix quantifier on the previous atom.
-        if c == '#' {
-            let one_or_more = chars.peek() == Some(&'#');
-            if one_or_more {
-                chars.next();
+    // Function exit: the `local`s and `emulate -L` options unwind.
+    let restore_locals = || {
+        crate::ported::options::opt_state_set("extendedglob", saved_eg);
+        for (n, v) in MATCH_ARRAYS.iter().zip(&saved_arrays) {
+            match v {
+                Some(a) => {
+                    let _ = crate::ported::params::setaparam(n, a.clone());
+                }
+                None => {
+                    crate::ported::params::unsetparam(n);
+                }
             }
-            glob_src.push_str(if one_or_more { "##" } else { "#" });
-            let atom: String = regex_src[last_atom_start..].to_string();
-            regex_src.truncate(last_atom_start);
-            regex_src.push_str("(?:");
-            regex_src.push_str(&atom);
-            regex_src.push_str(if one_or_more { ")+" } else { ")*" });
-            continue;
         }
-        let atom_begin = regex_src.len();
-        match c {
-            // zmv:197-202 — under -w/-W every WILDCARD becomes its own capture
-            // group (C's `pat="${pat//${~find}/($MATCH)}"`), not just `*`. The
-            // `find` pattern there covers `**/`, `*`, `?`, `<a-b>` and `[…]`.
-            '*' => {
-                // `**/` is one wildcard, not two (zmv:197 `\*\*##/`).
-                let mut atom = String::from(".*");
-                let mut orig = String::from("*");
-                if chars.peek() == Some(&'*') {
-                    chars.next();
-                    orig.push('*');
-                    while chars.peek() == Some(&'*') {
-                        chars.next();
-                        orig.push('*');
-                    }
-                    if chars.peek() == Some(&'/') {
-                        chars.next();
-                        orig.push('/');
-                        atom = String::from("(?:.*/)?");
-                    }
+        for (n, v) in MATCH_SCALARS.iter().zip(&saved_scalars) {
+            match v {
+                Some(s) => {
+                    crate::fusevm_bridge::with_executor(|exec| exec.set_scalar(n.to_string(), s.clone()));
                 }
-                // zmv:225-226 takes the parens off a `(**/)` group again before
-                // globbing (`fpat="$match[1]$match[2]$match[3]"`): `(**/)` is
-                // not a valid glob, so the recursive part stays bare.
-                let recursive = orig.ends_with('/');
-                glob_src.push_str(&if wildcard && !recursive { format!("({orig})") } else { orig });
-                if wildcard {
-                    regex_src.push('(');
-                    regex_src.push_str(&atom);
-                    regex_src.push(')');
-                    group_idx += 1;
-                } else {
-                    regex_src.push_str(&atom);
+                None => {
+                    crate::ported::params::unsetparam(n);
                 }
             }
-            '?' => {
-                glob_src.push_str(if wildcard { "(?)" } else { "?" });
-                if wildcard {
-                    regex_src.push_str("(.)");
-                    group_idx += 1;
-                } else {
-                    regex_src.push('.');
-                }
-            }
-            // `<a-b>` numeric range (zmv:197 `<[0-9]#-[0-9]#>`).
-            '<' if re_pat.contains('>') => {
-                let mut body = String::new();
-                let mut closed = false;
-                for cc in chars.by_ref() {
-                    if cc == '>' {
-                        closed = true;
-                        break;
-                    }
-                    body.push(cc);
-                }
-                let orig = format!("<{body}{}", if closed { ">" } else { "" });
-                let range = closed && body.chars().all(|c| c.is_ascii_digit() || c == '-');
-                glob_src.push_str(&if wildcard && range { format!("({orig})") } else { orig });
-                if range {
-                    if wildcard {
-                        regex_src.push_str("([0-9]+)");
-                        group_idx += 1;
-                    } else {
-                        regex_src.push_str("[0-9]+");
-                    }
-                } else {
-                    regex_src.push_str("<");
-                    regex_src.push_str(&body);
-                    if closed {
-                        regex_src.push('>');
-                    }
-                }
-            }
-            '(' => {
-                group_starts.push(atom_begin);
-                regex_src.push('(');
-                group_idx += 1;
-            }
-            ')' => regex_src.push(')'),
-            '[' => {
-                let mut cls = String::from("[");
-                for cc in chars.by_ref() {
-                    cls.push(cc);
-                    if cc == ']' {
-                        break;
-                    }
-                }
-                glob_src.push_str(&if wildcard { format!("({cls})") } else { cls.clone() });
-                if wildcard {
-                    regex_src.push('(');
-                    regex_src.push_str(&cls);
-                    regex_src.push(')');
-                    group_idx += 1;
-                } else {
-                    regex_src.push_str(&cls);
-                }
-            }
-            '|' => regex_src.push('|'),
-            '.' | '+' | '^' | '$' | '\\' | '{' | '}' => {
-                regex_src.push('\\');
-                regex_src.push(c);
-            }
-            _ => regex_src.push(c),
         }
-        let pushed_by_arm = matches!(c, '*' | '?' | '[') || (c == '<' && re_pat.contains('>'));
-        if !pushed_by_arm {
-            glob_src.push(c);
-        }
-        // A closing `)` makes the whole group the atom a following `#` quantifies.
-        last_atom_start = if c == ')' {
-            group_starts.pop().unwrap_or(atom_begin)
-        } else {
-            atom_begin
-        };
-    }
-    regex_src.push('$');
+    };
+    // `[[ $subject = PATTERN ]]` with PATTERN given as source text: true on a
+    // match, leaving any `(#b)` captures in $match like the cond does.
+    let pat_matches = |pattern: &str, subject: &str| -> bool {
+        let mut tok = pattern.to_string();
+        crate::ported::glob::shtokenize(&mut tok);
+        crate::ported::pattern::patcompile(&tok, crate::ported::zsh_h::PAT_STATIC, None)
+            .is_some_and(|prog| crate::ported::pattern::pattry(&prog, subject))
+    };
+    let match_vec = || crate::ported::params::getaparam("match").unwrap_or_default();
 
-    // zmv:204-216 — `-W` turns the wildcards in the REPLACEMENT into
-    // sequential ${1} .. ${N} references (`repl="${repl//${~find}/$open$[++N]$close}"`),
-    // and errors when the two counts disagree (zmv:209-212).
-    let rewritten_to;
-    let to_pat: &String = if wildcard_repl {
+    // zmv:190-203 — `-w`/`-W` parenthesise every wildcard of the search pattern:
+    //     find='(#m)((\*\*##/|[*?]|<[0-9]#-[0-9]#>|\[(^|)(\]|)(\[:[a-z]##:\]|\\?|[^\]])##\])\##|?\###)'
+    //     pat="${pat//${~find}/($MATCH)}"
+    // i.e. a `**/` (two or more stars and a slash), a lone `*`/`?`, a `<a-b>`
+    // range or a `[…]` class, each with any `#`s after it; or any other
+    // character followed by one or more `#`. Returns the rewritten text, each
+    // wildcard replaced by `wrap(wildcard, its 1-based number)`, and the count.
+    let rewrite_wildcards = |src: &str, wrap: &dyn Fn(&str, usize) -> String| -> (String, usize) {
+        let c: Vec<char> = src.chars().collect();
         let mut out = String::new();
-        let mut n = 0usize;
-        let mut tc = to_pat.chars().peekable();
-        while let Some(c) = tc.next() {
-            match c {
+        let mut cnt = 0usize;
+        let mut i = 0usize;
+        while i < c.len() {
+            let start = i;
+            let mut end = match c[i] {
                 '*' => {
-                    while tc.peek() == Some(&'*') {
-                        tc.next();
+                    let mut j = i;
+                    while j < c.len() && c[j] == '*' {
+                        j += 1;
                     }
-                    if tc.peek() == Some(&'/') {
-                        tc.next();
-                    }
-                    n += 1;
-                    out.push_str(&format!("${{{}}}", n));
+                    if j - i >= 2 && c.get(j) == Some(&'/') { j + 1 } else { i + 1 }
                 }
-                '?' => {
-                    n += 1;
-                    out.push_str(&format!("${{{}}}", n));
+                '?' => i + 1,
+                '<' => {
+                    let mut j = i + 1;
+                    while j < c.len() && c[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    if c.get(j) == Some(&'-') {
+                        j += 1;
+                        while j < c.len() && c[j].is_ascii_digit() {
+                            j += 1;
+                        }
+                        if c.get(j) == Some(&'>') { j + 1 } else { start }
+                    } else {
+                        start
+                    }
                 }
                 '[' => {
-                    let mut cls = String::from("[");
-                    for cc in tc.by_ref() {
-                        cls.push(cc);
-                        if cc == ']' {
-                            break;
+                    let mut j = i + 1;
+                    if c.get(j) == Some(&'^') {
+                        j += 1;
+                    }
+                    if c.get(j) == Some(&']') {
+                        j += 1;
+                    }
+                    let body = j;
+                    loop {
+                        match c.get(j) {
+                            Some('[') if c.get(j + 1) == Some(&':') => {
+                                let mut k = j + 2;
+                                while k < c.len() && c[k].is_ascii_lowercase() {
+                                    k += 1;
+                                }
+                                if k > j + 2 && c.get(k) == Some(&':') && c.get(k + 1) == Some(&']') {
+                                    j = k + 2;
+                                } else {
+                                    j += 1;
+                                }
+                            }
+                            Some('\\') if j + 1 < c.len() => j += 2,
+                            Some(']') | None => break,
+                            Some(_) => j += 1,
                         }
                     }
-                    n += 1;
-                    out.push_str(&format!("${{{}}}", n));
+                    if j > body && c.get(j) == Some(&']') { j + 1 } else { start }
                 }
-                _ => out.push(c),
+                _ => start,
+            };
+            if end > start {
+                while end < c.len() && c[end] == '#' {
+                    end += 1;
+                }
+            } else if c.get(i + 1) == Some(&'#') {
+                // `?\###` — any other character followed by one or more `#`.
+                end = i + 2;
+                while end < c.len() && c[end] == '#' {
+                    end += 1;
+                }
+            }
+            if end > start {
+                cnt += 1;
+                let w: String = c[start..end].iter().collect();
+                out.push_str(&wrap(&w, cnt));
+                i = end;
+            } else {
+                out.push(c[i]);
+                i += 1;
             }
         }
-        if n != group_idx {
-            // zmv:210 — `print -P "%N: error: number of wildcards in each pattern must match"`
-            eprintln!(
-                "{}: error: number of wildcards in each pattern must match",
-                myname
-            );
-            return 1;
+        (out, cnt)
+    };
+    let mut pat = from_pat.clone();
+    let mut repl = to_pat.clone();
+    if wildcard {
+        let (wrapped, cnt) = rewrite_wildcards(&pat, &|w, _| format!("({w})"));
+        if cnt == 0 {
+            // zmv:200-201
+            eprintln!("{}: warning: no wildcards were found in search pattern", myname);
+        } else {
+            pat = wrapped; // zmv:203
         }
-        rewritten_to = out;
-        &rewritten_to
+        if wildcard_repl {
+            // zmv:205-216 — `repl="${repl//${~find}/$open$[++N]$close}"`.
+            let (numbered, n) = rewrite_wildcards(&repl, &|_, k| format!("${{{k}}}"));
+            if n != cnt {
+                eprintln!("{}: error: number of wildcards in each pattern must match", myname);
+                restore_locals();
+                return 1;
+            }
+            if n == 0 {
+                eprintln!("{}: warning: no wildcards were found in replacement pattern", myname);
+            }
+            repl = numbered;
+        }
+    }
+    // zmv:219-223 and zmv:240 — with -Q a trailing `(…)` is a glob qualifier:
+    // it stays on the glob, and the per-file match uses the pattern without it.
+    let mut opat: Option<String> = None;
+    if bare_glob_qual && pat_matches(r"(#b)(*)\([^\)\|\~]##\)", &pat) {
+        opat = match_vec().into_iter().next();
+    }
+    // zmv:225-238 — a `(**/)` group comes off for the glob (`(**/)` is not a
+    // glob), which gains `(odon)` so files are renamed before their
+    // directories; otherwise the glob is the pattern.
+    let mut fpat_bareglobqual = bare_glob_qual;
+    let fpat = if pat_matches(r"(#b)(*)\((\*\*##/)\)(*)", &pat) {
+        let mut fpat: String = match_vec().concat();
+        if bare_glob_qual && opat.is_some() {
+            fpat.pop(); // zmv:231 `fpat[-1]="odon)"`
+            fpat.push_str("odon)");
+        } else {
+            fpat_bareglobqual = true; // zmv:233 `setopt bareglobqual`
+            fpat.push_str("(odon)");
+        }
+        fpat
     } else {
-        to_pat
+        pat.clone()
     };
-    let re = match regex::Regex::new(&regex_src) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("{}: bad pattern: {}", action, e);
-            return 1;
-        }
-    };
+    if let Some(o) = opat {
+        pat = o; // zmv:240
+    }
 
-    // Enumerate candidate files. zmv:237-239 uses the pattern AS the glob
-    // (`fpat=$pat; files=(${~fpat})`) under `setopt extendedglob` (zmv:126) —
-    // in a zsh glob `(…)` is a GROUP, so `(*).​(txt|log)` is both a valid glob
-    // and the capture syntax; the two coexist by design.
-    //
-    // Stripping the parens to build the glob turned `(*).(txt|log)` into
-    // `*.txt|log`, which matches nothing with a `.log` extension — `baz.log`
-    // silently vanished from the rename set. zshrs's own glob engine handles
-    // the grouped form identically to zsh (verified against `print -rl --
-    // (*).(txt|log)`), so hand it the pattern unaltered.
-    let mut glob_pat: String = if wildcard {
-        // The leading `(#…)` flag groups stripped into `re_pat` stay on the glob.
-        format!("{}{}", &from_pat[..from_pat.len() - re_pat.len()], glob_src)
-    } else {
-        from_pat.clone()
-    };
-    // zmv:225-226 — `if [[ $pat = (#b)(*)\((\*\*##/)\)(*) ]]; then
-    // fpat="$match[1]$match[2]$match[3]"`: a `(**/)` group is written in the
-    // pattern so `$1` captures the directories, but `(**/)` is not a glob, so
-    // the parens come off for the glob. The leading `(*)` is greedy, so it is
-    // the LAST such group.
-    let bytes = glob_pat.as_bytes();
-    let unwrap = (0..bytes.len()).rev().find_map(|open| {
-        let stars = bytes[open + 1..].iter().take_while(|&&b| b == b'*').count();
-        let close = open + 1 + stars + 1;
-        (bytes[open] == b'('
-            && stars >= 2
-            && bytes.get(open + 1 + stars) == Some(&b'/')
-            && bytes.get(close) == Some(&b')'))
-        .then_some((open, close))
-    });
-    if let Some((open, close)) = unwrap {
-        glob_pat = format!("{}{}{}", &glob_pat[..open], &glob_pat[open + 1..close], &glob_pat[close + 1..]);
-    }
-    // zmv:148 `[[ -z $opt_Q ]] && setopt nobareglobqual`. With bare glob
-    // qualifiers ON (the zsh default), a TRAILING `(…)` is parsed as a
-    // qualifier list, so `(*).(*)` — the canonical swap-name-and-extension
-    // pattern — matched nothing at all. zmv turns them off for the whole
-    // function body so the trailing group stays a capture group; `-Q` asks for
-    // the qualifier reading back.
-    //
-    // zsh sets this as a real (function-scoped) option and its glob reads it,
-    // so mirror that around the glob and restore after. glob() snapshots every
-    // glob-relevant option into TLS at entry (glob.rs:3640 enter_glob_scope),
-    // which is what keeps this coherent for the in-flight glob.
-    let saved_bgq = crate::ported::zsh_h::isset(crate::ported::zsh_h::BAREGLOBQUAL);
-    if !bare_glob_qual && saved_bgq {
-        crate::ported::options::opt_state_set("bareglobqual", false);
-    }
-    // zmv:126 `setopt extendedglob` — zmv always treats its pattern as an
-    // EXTENDED_GLOB pattern, which is what makes globbing flags like `(#b)`
-    // (backreferences → $match), `(#m)` ($MATCH), and `(#i)` work. The native
-    // impl globbed WITHOUT it, so `zmv '(#b)file(?).dat' …` glob-failed with
-    // "no matches found" before any rename could happen.
-    let saved_eg = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
-    if !saved_eg {
-        crate::ported::options::opt_state_set("extendedglob", true);
-    }
-    // zmv:125 `emulate -RL zsh` — the glob runs with zsh's defaults whatever
-    // the caller set: NOMATCH on, NULL_GLOB and CSH_NULL_GLOB off, so no match
-    // is always the "no matches found" error (a caller's `setopt nonomatch`
-    // does not reach inside zmv).
-    use crate::ported::zsh_h::{isset, CSHNULLGLOB, NOMATCH, NULLGLOB};
+    // zmv:244-248 — `setopt localoptions nullglob; files=(${~fpat})` under
+    // the function's `emulate -RL zsh` (NOMATCH on, CSH_NULL_GLOB off) and
+    // zmv:148 `setopt nobareglobqual` unless -Q: no match is an empty list,
+    // not a "no matches found" abort.
+    use crate::ported::zsh_h::{isset, BAREGLOBQUAL, CSHNULLGLOB, NOMATCH, NULLGLOB};
     let saved_glob_opts = [
+        ("bareglobqual", isset(BAREGLOBQUAL), fpat_bareglobqual),
         ("nomatch", isset(NOMATCH), true),
-        ("nullglob", isset(NULLGLOB), false),
+        ("nullglob", isset(NULLGLOB), true),
         ("cshnullglob", isset(CSHNULLGLOB), false),
     ];
     for (name, _, forced) in saved_glob_opts {
         crate::ported::options::opt_state_set(name, forced);
     }
-    let candidates = crate::fusevm_bridge::with_executor(|exec| exec.expand_glob(&glob_pat));
+    let files = crate::fusevm_bridge::with_executor(|exec| exec.expand_glob(&fpat));
     for (name, saved, _) in saved_glob_opts {
         crate::ported::options::opt_state_set(name, saved);
     }
-    if !saved_eg {
-        crate::ported::options::opt_state_set("extendedglob", false);
-    }
-    if !bare_glob_qual && saved_bgq {
-        crate::ported::options::opt_state_set("bareglobqual", true);
-    }
-    // zmv:239 globs with NOMATCH in force, so no match is a `zerr` inside the
-    // function: the error aborts the caller and the status is 1. The glob has
-    // already reported it and raised errflag; carrying on with no candidates
-    // returned 0, so the aborted script exited 0. The abort unwinds before the
-    // caller stores this builtin's return value, so the status is set here, as
-    // the function's failed command would leave it.
-    if errflag.load(std::sync::atomic::Ordering::Relaxed) & ERRFLAG_ERROR != 0 {
-        crate::fusevm_bridge::with_executor(|exec| exec.set_last_status(1));
-        return 1;
-    }
-    if candidates.len() == 1
-        && candidates[0] == glob_pat
-        && !std::path::Path::new(&candidates[0]).exists()
-    {
-        eprintln!("{}: no matches found: {}", action, from_pat);
-        return 1;
-    }
-
-    // For each match, compute destination by applying captures.
-    // zmv:243 `errs=()` — substitution errors accumulate and are reported
+    // zmv:242 `errs=()` — substitution errors accumulate and are reported
     // together at the end (zmv:280-284), never inline per-file.
     let mut errs: Vec<String> = Vec::new();
+    if files.is_empty() {
+        errs.push(format!("no files matched `{}'", fpat)); // zmv:249
+    }
     let mut renames: Vec<(String, String)> = Vec::new();
-    for src in &candidates {
-        let caps = match re.captures(src) {
-            Some(c) => c,
-            None => continue,
-        };
-        // zmv:255-257 — the destination is NOT a hand-rolled `$1` substitution:
+    for src in &files {
+        // zmv:252-259 — a recursive glob in the pattern becomes `(*/|)` for the
+        // per-file match (the rewritten `pat` carries over to later files).
+        if pat_matches(r"(#b)(*)(\(\*\*##/\)|\*\*##/)(*)", &pat) {
+            let m = match_vec();
+            pat = format!("{}(*/|){}", m.first().map_or("", String::as_str), m.get(2).map_or("", String::as_str));
+        }
+        // zmv:260 `[[ -e $f && $f = (#b)${~pat} ]] || continue`
+        if !std::path::Path::new(src).exists() || !pat_matches(&format!("(#b){}", pat), src) {
+            continue;
+        }
+        // zmv:261-263 — the destination is NOT a hand-rolled `$1` substitution:
         //
         //     set -- "$match[@]"
         //     g=${(Xe)repl}
@@ -11638,47 +11515,20 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
         // i.e. the capture groups become the POSITIONAL PARAMETERS and the
         // replacement is then run through full parameter expansion (`e`), with
         // `X` reporting parse errors. That is what makes `$f` (the current
-        // source file, zmv:245 `for f in $files`) work, and it is why zsh's own
+        // source file, zmv:251 `for f in $files`) work, and it is why zsh's own
         // documentation can offer `zmv -v '* *' '${f// /_}'` — an arbitrary
-        // expansion over $f, not just a number reference.
-        //
-        // Substituting only `$1`..`$9`/`${N}` by hand left `$f` as the literal
-        // text `$f`, so every file mapped to the same name and zmv aborted with
-        // "both map to new_$f". Bind f + the positionals and reuse the shell's
-        // own `(e)` machinery (subst.rs:14508 `subst_parse_str` → `singsub`),
-        // which is the same code path `${(Xe)…}` takes.
+        // expansion over $f, not just a number reference. `$match` itself is
+        // the pattern engine's, as the cond above left it.
         let saved_f = crate::fusevm_bridge::with_executor(|exec| exec.scalar("f"));
         let saved_pp = crate::fusevm_bridge::with_executor(|exec| exec.pparams());
-        // zmv binds the capture groups to BOTH `$match` (from `[[ $f =
-        // (#b)$pat ]]`, zmv:260) AND the positionals (`set -- "$match[@]"`,
-        // zmv:261), so a replacement can reference either `$match[1]` or `$1`.
-        // Binding only the positionals left `$match[1]` expanding to EMPTY, so
-        // `zmv '(*).dat' 'x$match[1].dat'` mapped every file to the same name
-        // and aborted with a bogus "both map to" collision. Save + restore
-        // `$match` around the expansion, mirroring how `$f`/positionals are.
-        let saved_match = crate::ported::params::getaparam("match");
-        let saved_match_var = if want_match_var {
-            crate::fusevm_bridge::with_executor(|exec| exec.scalar("MATCH"))
-        } else {
-            None
-        };
-        let match_args: Vec<String> = (1..caps.len())
-            .map(|i| caps.get(i).map(|m| m.as_str()).unwrap_or("").to_string())
-            .collect();
         crate::fusevm_bridge::with_executor(|exec| {
-            exec.set_scalar("f".to_string(), src.clone()); // zmv:245 `for f in $files`
-            exec.set_pparams(match_args.clone()); // zmv:255 `set -- "$match[@]"`
+            exec.set_scalar("f".to_string(), src.clone()); // zmv:251 `for f in $files`
+            exec.set_pparams(match_vec()); // zmv:261 `set -- "$match[@]"`
         });
-        let _ = crate::ported::params::setaparam("match", match_args.clone()); // zmv:260 `$match`
-                                                                               // `(#m)` binds $MATCH to the whole match (regex group 0).
-        if want_match_var {
-            let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
-            crate::fusevm_bridge::with_executor(|exec| exec.set_scalar("MATCH".to_string(), whole));
-        }
-        // zmv:257 `g=${(Xe)repl}` — `X` => quoteerr, `e` => re-substitute.
-        let dest = match crate::ported::subst::subst_parse_str(to_pat, false, true) {
+        // zmv:263 `g=${(Xe)repl}` — `X` => quoteerr, `e` => re-substitute.
+        let dest = match crate::ported::subst::subst_parse_str(&repl, false, true) {
             Some(parsed) => crate::ported::subst::singsub(&parsed),
-            None => crate::ported::subst::singsub(to_pat),
+            None => crate::ported::subst::singsub(&repl),
         };
         crate::fusevm_bridge::with_executor(|exec| {
             match &saved_f {
@@ -11687,24 +11537,6 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
             }
             exec.set_pparams(saved_pp.clone());
         });
-        match &saved_match {
-            Some(m) => {
-                let _ = crate::ported::params::setaparam("match", m.clone());
-            }
-            None => {
-                crate::ported::params::unsetparam("match");
-            }
-        }
-        if want_match_var {
-            match &saved_match_var {
-                Some(v) => crate::fusevm_bridge::with_executor(|exec| {
-                    exec.set_scalar("MATCH".to_string(), v.clone())
-                }),
-                None => {
-                    crate::ported::params::unsetparam("MATCH");
-                }
-            }
-        }
         // zmv:264-265 — an empty expansion joins `errs`; it is reported with
         // the rest at the end (zmv:280-284), not immediately.
         if dest.is_empty() {
@@ -11735,6 +11567,8 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
         }
         renames.push((src.clone(), dest));
     }
+
+    restore_locals();
 
     // zmv:271-272 — a destination two sources both map to is an error, unless
     // the destination is an existing DIRECTORY (`! -d $g`).
