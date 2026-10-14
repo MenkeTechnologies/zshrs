@@ -6,7 +6,9 @@
 //! itself shells out to `date` — a fork+exec, on every prompt. The
 //! overwhelmingly common custom segment is nothing more than
 //!
-//!     echo "<text with $VARS, $$ and $(date +FMT)>"
+//! ```text
+//! echo "<text with $VARS, $$ and $(date +FMT)>"
+//! ```
 //!
 //! which is a pure function of parameters and the clock. This module
 //! evaluates exactly that subset in-process. Anything it does not
