@@ -514,7 +514,7 @@ pub fn zle_free_highlight() {
 // instead puts explicit "off" bits on the LAST cell of a highlighted run and
 // writes each attribute's own off capability straight after that cell
 // (`settextattributes(c->atr & TXT_ATTR_OFF_MASK)`). A zsh drop-in
-// (`emulating()`) uses the 5.9.2 form; native zshrs keeps the dev engine.
+// installed as `zsh` (`emulating_592()`) uses the 5.9.2 form; native zshrs keeps the dev engine.
 // The helpers are macros: build.rs admits only fns that exist in the
 // snapshotted (development-tree) C source.
 // =====================================================================
@@ -621,7 +621,7 @@ macro_rules! clearattributes {
 /// to mess up the display" — a clear to end of line keeps the prompt's
 /// attributes, so the cleared cells take the prompt's colour.
 pub fn tcoutclear(cap: i32) {
-    if crate::extensions::emulation_startup::emulating() {
+    if crate::extensions::emulation_startup::emulating_592() {
         // c:596-600 (5.9.2) — `clearattributes(); tcout(cap);`
         clearattributes!();
         tcout(cap);
@@ -651,7 +651,7 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
 
     let _ = *MB_LOCALE_READY; // see `MB_LOCALE_READY` — locale-driven encode
 
-    let attrs592 = crate::extensions::emulation_startup::emulating() && c.atr != TXT_ERROR;
+    let attrs592 = crate::extensions::emulation_startup::emulating_592() && c.atr != TXT_ERROR;
     let mut out: Vec<u8> = Vec::new();
     if attrs592 {
         use crate::ported::zsh_h::TXT_ATTR_ON_VALUES_MASK;
@@ -2324,7 +2324,7 @@ pub fn zrefresh() {
         let nlnct = rpms.ln + 1;
         NBUF.lock().unwrap().truncate(nlnct as usize);
         NLNCT.store(nlnct, Ordering::SeqCst);
-        if crate::extensions::emulation_startup::emulating() {
+        if crate::extensions::emulation_startup::emulating_592() {
             // Puts the 5.9.2 "off" bits on the last cell of every highlighted
             // run (zle_refresh.c:1413-1417 / c:1469 `all_atr_off`, which C
             // writes while it lays the cells out; this port lays them out
@@ -2560,7 +2560,7 @@ pub fn zrefresh() {
         // (c:2399). With `zle -T tc` blanking every tcout cap, zsh still
         // emits this reset.
         crate::ported::prompt::tsetcap(crate::ported::zsh_h::TCALLATTRSOFF, 0); // c:1137
-        if crate::extensions::emulation_startup::emulating() {
+        if crate::extensions::emulation_startup::emulating_592() {
             // 5.9.2 c:1196-1198 — `tsetcap(TCSTANDOUTEND, 0);
             // tsetcap(TCUNDERLINEEND, 0);` after the all-off.
             crate::ported::prompt::tsetcap(crate::ported::zsh_h::TCSTANDOUTEND, 0);
@@ -5484,7 +5484,7 @@ pub fn compute_render_attrs() -> Vec<(zattr, zattr)> {
     // 5.9.2 c:1285-1304 — `base_atr_off |= TXT_ATTR_OFF_FROM_ON(rhp->atr)` for
     // every region that ends at this position: the cell before it carries the
     // off bits, even when another region starts right there.
-    if crate::extensions::emulation_startup::emulating() {
+    if crate::extensions::emulation_startup::emulating_592() {
         for &(start, end, atr, _mask, _layer) in &entries {
             if start >= 0 && end > start && end as usize <= attrs.len() {
                 let off = TXT_ATTR_OFF_FROM_ON!(atr & ATTR_ON_FLAGS);
