@@ -2271,7 +2271,7 @@ impl modulestab {
             // canonical `failed to load module` warning through its own
             // `try_load_module` gate — matching the pre-existing
             // behaviour where this branch returned quietly.
-            if !self.module_linked(name) {
+            if try_load_module(self, name) == 0 {
                 let _ = do_load_module(self, name, 1); // c:2225
                 unqueue_signals(); // c:2226
                 return 1; // c:2227
@@ -2395,6 +2395,14 @@ impl modulestab {
             m.handle.is_none() && m.linked.is_none() // c:2279 !m->u.handle
         };
         if needs_setup {
+            // c:2282-2286 — `if (!(linked = module_linked(name)) &&
+            // !(handle = do_load_module(name, silent))) return 1;`: a module
+            // whose dlopen would fail (see try_load_module).
+            if try_load_module(self, name) == 0 {
+                let _ = do_load_module(self, name, 1); // c:2283
+                unqueue_signals(); // c:2284
+                return 1; // c:2285
+            }
             // c:2281 — `linked = module_linked(name)`: every zshrs
             // module is statically linked, so the lookup always hits;
             // callbacks dispatch by name (839f32249b), the record
@@ -3772,6 +3780,20 @@ pub fn try_load_module(table: &modulestab, name: &str) -> i32 {
     // must still emit `failed to load module` rather than "boot" the
     // phantom; and a real module has no node at all until its first
     // load, which must still succeed.
+    //
+    // c:1601 `dlopen(buf, RTLD_LAZY | RTLD_GLOBAL)` defers only FUNCTION
+    // references; deltochar.c:42 reads zle's data symbol `bindk`, so that
+    // module fails to load unless zsh/zle is already loaded. load_module
+    // loads a declared (`zmodload -d`) dependency first (c:2273-2279); a
+    // plain `zmodload zsh/deltochar` does not.
+    // Loaded = booted and not pending unload, the scanpmmodules criterion.
+    let zle_loaded = table
+        .modules
+        .get("zsh/zle")
+        .is_some_and(|m| (m.node.flags & MOD_INIT_B) != 0 && (m.node.flags & MOD_UNLOAD) == 0);
+    if name == "zsh/deltochar" && !zle_loaded {
+        return 0;
+    }
     if table.module_linked(name) {
         1
     } else {
@@ -5129,7 +5151,7 @@ pub fn require_module(
         }
         // try_load_module gates the static-link path. On miss, emit
         // the canonical zwarn (gated by silent).
-        if try_load_module(table, &mname) == 0 {
+        if !table.module_linked(&mname) {
             if silent == 0 {
                 // c:1622 — same message and same reasoning as do_load_module
                 // (module.rs, `failed to load module `%s'` with the dlerror tail
@@ -5144,7 +5166,14 @@ pub fn require_module(
         // c:2354 — `ret = load_module(module, features, silent);` — the full
         // 0/1/2 status, NOT a success flag: 2 means the module loaded but some
         // feature could not be set, and `zmodload` reports it.
-        table.load_module(&mname, features, feat_pat)
+        let ret = table.load_module(&mname, features, feat_pat);
+        // c:2224-2225 / c:2282-2283 — a compiled-in module whose dlopen would
+        // still fail (try_load_module) is reported by do_load_module only
+        // after load_module has loaded its declared dependencies.
+        if ret == 1 && silent == 0 && try_load_module(table, &mname) == 0 {
+            crate::ported::utils::zwarn(&format!("failed to load module `{}'", mname)); // c:1622
+        }
+        ret
     } else {
         // c:2356 — `ret = do_module_features(m, features, 0);`
         // Module already loaded; just enable the requested features.
