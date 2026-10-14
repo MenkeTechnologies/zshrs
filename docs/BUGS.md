@@ -61284,3 +61284,59 @@ table, `EXT_BUILTIN_NAMES`, the daemon `z*` family, `native_cmds`) and never the
 registry, where `znative load` / `zmodload -R` put a cdylib's commands. `plugin_host::is_plugin_command`
 existed for exactly this question and had no caller. The predicate now asks it too; the test
 registers a plugin command through a `#[cfg(test)]` seam and pins that it is a known command.
+
+## #1179 — `disable` on a `znative` / `zmodload -R` plugin command hides it from `whence` but it still runs — open
+
+**Status:** `open`, isolated 2026-10-14 at v0.13.42.
+
+```console
+zmodload -R examples/plugin-hello/target/debug/libhello.dylib
+rhello world; disable rhello; print rc=$?; whence -w rhello; print ${+builtins[rhello]}; rhello world
+zshrs 0.13.42    hello, world — from a native Rust plugin (pwd=…)
+                 rc=0
+                 rhello: none
+                 0
+                 hello, world — from a native Rust plugin (pwd=…)
+expected         the second `rhello` is not resolved as a builtin: PATH search, `command not found: rhello`, status 127
+```
+
+**Root cause.** #1178 taught `bin_enable` the plugin registry (`builtin.rs` `Tab::Builtin` arm accepts
+`plugin_host::is_plugin_command(nm)` and inserts the name into `BUILTINS_DISABLED`), so every lookup
+consumer now reports the name as disabled. Dispatch never reads that set for plugin commands: the
+`plugin_host::dispatch(cmd, args)` call in `vm_helper.rs` (the external-exec slot, before the PATH guard)
+runs the registry entry unconditionally, and `plugin_host::dispatch` itself only does a registry lookup.
+The sibling `native_cmds` dispatch directly below it is gated on `native_cmds::is_enabled(cmd)`, which
+checks `BUILTINS_DISABLED` — the plugin arm needs the same gate. C masks a disabled builtin in the
+lookup that precedes execution (`builtintab->getnode`, c:Src/exec.c:3495; `gethashnode` returns NULL for
+a `DISABLED` node, c:Src/hashtable.c:231-243), so `disable NAME` must fall through to PATH exactly as `disable git` already does for a native command.
+
+## #1180 — `noclobber` does not protect a file from `&>`, `>&` or a `>` that joins a pipe — open
+
+**Status:** `open`, isolated 2026-10-14 at v0.13.42.
+
+```console
+echo old > f; setopt noclobber; <form>; print rc=$?; cat f
+form                 zsh 5.9.2                              zshrs 0.13.42
+echo x &> f          zsh:1: file exists: f / rc=1 / old     rc=0 / x
+echo x >& f          zsh:1: file exists: f / rc=1 / old     rc=0 / x
+echo x > f | cat     zsh:1: file exists: f / rc=0 / old     prints x / rc=0 / x
+echo x &>> missing   no such file or directory: missing     rc=0, creates missing
+```
+
+Plain `echo x > f`, `{ … } > f`, `( … )`, `$( … )`, `exec 3> f` and the multio `> f > g` all
+refuse correctly (one diagnostic, status 1). The overwrite cases are silent data loss under an option
+whose only purpose is preventing it.
+
+**Root cause.** The noclobber check (regular-file + `CLOBBER_EMPTY` gate, c:Src/exec.c clobber_open)
+exists only in the `r::WRITE` arm of `host_apply_redirect` and the `r::WRITE` arm of the multio opener
+in `fusevm_bridge.rs`. Three other openers reach the same file with `fs::File::create`:
+
+- `r::WRITE_BOTH` (`&>`, static `>& word`) → `redir_errwrite(fs::File::create(target), …)`.
+- `r::DUP_WRITE` with a non-numeric word (dynamic `>& $var`, REDIR_ERRWRITE) → same call.
+- the pipe-MULTIOS path at the top of `host_apply_redirect` (an fd-1 write redirect in a pipeline stage
+  that joins the pipe) → `r::WRITE | r::CLOBBER => fs::File::create(target)`, with no option check.
+
+`r::APPEND_BOTH` (`&>>`) opens with `create(true)` unconditionally, ignoring the NO_CLOBBER +
+!APPEND_CREATE rule that the `r::APPEND` arm already ports (c:Src/exec.c:3924-3927). In C every one of
+these goes through `clobber_open` / the same append mode selection, so the fix is to route them through
+the existing check rather than add three more copies of it.
