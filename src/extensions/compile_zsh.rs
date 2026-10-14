@@ -10233,9 +10233,12 @@ impl ZshCompiler {
         // as the literal `b|a` where zsh globs it to `b`.
         let has_glob_meta = default_word_may_glob(s);
         let has_default_op =
-            (s.contains('$') || s.contains(crate::ported::zsh_h::Qstring))
+            (s.contains('$')
+                || s.contains(crate::ported::zsh_h::Stringg)
+                || s.contains(crate::ported::zsh_h::Qstring))
                 && (s.contains('-') || s.contains('+') || s.contains('\u{e19b}'));
-        // A default/alternate operator only exists inside a `${…}`: a literal
+        // A default/alternate operator only exists inside a `${…}` (the `$` is the
+        // lexer's String token unquoted, Qstring inside "…"): a literal
         // `n2-*` must stay in the deferred argv glob (c:Src/exec.c:3755-3757) so
         // the FIRST failing word is the one named.
         let default_word_glob_bracket = self.word_seg_depth == 0
