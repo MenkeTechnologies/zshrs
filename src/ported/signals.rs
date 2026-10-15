@@ -431,6 +431,14 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
                 }
             }
         }
+        // !!! RUST-ONLY !!! `zhandler` blocks every signal at entry (c:405-407). C
+        // returns here with that mask still applied and relies on the kernel restoring
+        // the interrupted mask at handler return; on Darwin the interrupted thread
+        // kept the all-signals mask, so every later external started with SIGTERM,
+        // SIGHUP and the rest blocked (`ztmux kill-server` could not stop the server
+        // it had started). Restoring the entry mask here makes the return
+        // independent of the kernel.
+        let _ = signal_setmask(&oldmask);
         return;
     }
 

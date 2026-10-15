@@ -132,6 +132,35 @@ mod deferral_tests {
             "zhandler deadlocked on the parameter table its own thread holds"
         );
     }
+    /// The queueing branch of `zhandler` returns without the dispatch path's
+    /// `signal_setmask`; the thread's mask must be what it was on entry, not the
+    /// all-signals mask `zhandler` applies first. A mask left full is inherited by
+    /// every external the shell then starts.
+    #[test]
+    fn a_queued_signal_leaves_the_threads_signal_mask_as_it_found_it() {
+        use crate::ported::signals::zhandler;
+        use crate::ported::signals_h::{queue_signals, unqueue_signals};
+
+        let _g = crate::test_util::global_state_lock();
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mask = || unsafe {
+                let mut m: libc::sigset_t = std::mem::zeroed();
+                libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut m);
+                (1..32).filter(|&s| libc::sigismember(&m, s) == 1).collect::<Vec<_>>()
+            };
+            let before = mask();
+
+            queue_signals();
+            zhandler(libc::SIGCHLD);
+            let after = mask();
+            unqueue_signals();
+
+            assert_eq!(after, before, "zhandler left its all-signals mask applied after queueing");
+            let _ = done.send(());
+        });
+        assert!(finished.recv_timeout(Duration::from_secs(30)).is_ok(), "mask test hung");
+    }
     /// A signal deferred because another thread holds the parameter table is
     /// run by `settle_deferred_signals` rather than left queued until the next
     /// keystroke (the idle-shell `kill -HUP $$` that did nothing).
