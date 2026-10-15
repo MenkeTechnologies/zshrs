@@ -6,7 +6,8 @@
 //! sh: 3  local suf comp state line expl curcontext="$curcontext" ret=1 NORMARG
 //! sh: 4  typeset -A opt_args
 //! sh: 5  suf=()
-//! sh: 7  _arguments -n -C -S -s  <20 option specs>  '(-)*:param:->params' && ret=0
+//! sh: 7  _arguments -n -C -S -S -s -A '-*' :  <20 option specs>  '(-)*:param:->params' && ret=0
+//!        (zsh 5.9.1/5.9.2: `_arguments -n -C -S -s`; a drop-in run as `zsh` keeps it)
 //! sh:28  [[ $state = params ]] || return ret
 //! sh:30  $+opt_args[-A]  → compset -S '=*' || compset -P '*=' || suf=( -S '=' )
 //! sh:34  $+opt_args[-F] && CURRENT > NORMARG  → per-module FEATURE completion
@@ -81,11 +82,8 @@ fn has_key(name: &str, key: &str) -> bool {
 
 /// sh:7-26 — the `_arguments` spec set, verbatim.
 fn arg_specs() -> Vec<String> {
-    vec![
-        s("-n"), // sh:7
-        s("-C"),
-        s("-S"),
-        s("-s"),
+    let mut specs = arg_flags();
+    specs.extend([
         s("(-R -P -i -u -d -a -b -c -I -p -f -e -F -m)-A[create module aliases]"), // sh:8
         s("(-)-R[remove module aliases]"),                                        // sh:9
         s("(-A -R -F -L -m -P -l -e)-u[unload module]"),                           // sh:10
@@ -105,7 +103,18 @@ fn arg_specs() -> Vec<String> {
         s("(-b -c -d -I -f -F -P -l -m -A -R)-p[autoload module for parameters]"), // sh:24
         s("(-u -b -c -d -p -f -A -R)-P[array param for features]:array name:_parameters"), // sh:25
         s("(-)*:param:->params"),                                          // sh:26
-    ]
+    ]);
+    specs
+}
+
+/// sh:7 — the leading `_arguments` flags. Master adds a second `-S` (a
+/// lone `-` ends options too), `-A '-*'` and the `:` separator.
+fn arg_flags() -> Vec<String> {
+    if crate::extensions::emulation_startup::emulating_592() {
+        vec![s("-n"), s("-C"), s("-S"), s("-s")]
+    } else {
+        vec![s("-n"), s("-C"), s("-S"), s("-S"), s("-s"), s("-A"), s("-*"), s(":")]
+    }
 }
 
 /// sh:72's glob, kept verbatim so a real `znative` cdylib under
@@ -463,13 +472,10 @@ mod tests {
     #[test]
     fn spec_set_is_complete_and_ordered() {
         let specs = arg_specs();
-        assert_eq!(
-            &specs[..4],
-            &["-n".to_string(), "-C".to_string(), "-S".to_string(), "-s".to_string()],
-            "sh:7 flags"
-        );
+        let flags = ["-n", "-C", "-S", "-S", "-s", "-A", "-*", ":"].map(String::from);
+        assert_eq!(&specs[..flags.len()], &flags, "sh:7 flags (master)");
         // sh:8-25 = 18 option specs, sh:26 = 1 rest spec.
-        assert_eq!(specs.len(), 4 + 18 + 1);
+        assert_eq!(specs.len(), flags.len() + 18 + 1);
         assert_eq!(specs.last().unwrap(), "(-)*:param:->params", "sh:26");
         // Every option spec names exactly one option letter after its
         // exclusion list.

@@ -58,7 +58,12 @@ fn flag_branch_specs() -> Vec<String> {
         "-W[(rarely needed) enable single-letter option stacking with arguments in the same word (-x X -y == -xXy)]",
         "-C[modify $curcontext for `->action' (instead of $context)]",
         "-R[when `->action' matches, return 300]",
-        "-S[honour `--' as end-of-options guard]",
+        // master: `*-S` — repeatable, a second `-S` makes a lone `-` a guard too.
+        if crate::extensions::emulation_startup::emulating_592() {
+            "-S[honour `--' as end-of-options guard]"
+        } else {
+            "*-S[honour `--' (and `-' if given twice) as end-of-options guard]"
+        },
         "-A[do not complete options after non-options]:pattern matching unknown options (e.g., '-*')",
         "-O[pass elements of array variable to function calls in actions]:array variable name:_parameters -g array",
         "-M[specify matchspec for completing option names and values]:matchspec for completing option names and values [ 'r\\:|[_-]=* r\\:|=*' ]",
@@ -141,7 +146,7 @@ mod tests {
         assert_eq!(s[2], ":");
         // Every documented flag spec is present (leading-char check).
         for lead in [
-            "!-n[", "-s[", "-w[", "-W[", "-C[", "-R[", "-S[", "-A[", "-O[", "-M[", "-0[", "--[",
+            "!-n[", "-s[", "-w[", "-W[", "-C[", "-R[", "*-S[", "-A[", "-O[", "-M[", "-0[", "--[",
         ] {
             assert!(s.iter().any(|x| x.starts_with(lead)), "missing {lead}");
         }
