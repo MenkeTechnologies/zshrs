@@ -14142,7 +14142,8 @@ fn test_private_nameref_survives_callee_local_of_same_name() {
          () { typeset -a ary; local -P -n ref=ary; () { typeset ref=XX }; typeset -p ary ref }",
     );
     assert_eq!(st, 0, "stderr: {err:?}");
-    assert_eq!(out, "typeset -a ary\ntypeset -n ref=ary\n");
+    // `-P` sets PM_HIDE, which the development tree's pmtypes[] prints (c:6043).
+    assert_eq!(out, "typeset -a ary\ntypeset -hn ref=ary\n");
 }
 
 #[test]
@@ -14191,9 +14192,22 @@ fn test_typeset_n_lists_name_of_lifted_private_reference() {
 #[test]
 fn test_typeset_p_omits_hide_flag() {
     // zsh 5.9.2's pmtypes[] (Src/params.c:5783) has no PM_HIDE row, so
-    // `typeset -p` and the `typeset` listing never print the hide flag.
-    let (st, out, err) =
-        run_zshrs_parity("() { local -h status; typeset -p status; local -h x=1; typeset -p x; typeset +m x }");
+    // `typeset -p` and the `typeset` listing never print the hide flag. The
+    // development tree adds the row (c:6043); zshrs keeps 5.9.2's table only
+    // when it stands in for zsh 5.9.2, i.e. runs under the name `zsh`.
+    use std::os::unix::process::CommandExt;
+    let out = Command::new(zshrs_bin())
+        .arg0("zsh")
+        .args(["--zsh", "-f", "-c", "() { local -h status; typeset -p status; local -h x=1; typeset -p x; typeset +m x }"])
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn zshrs");
+    let (st, out, err) = (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    );
     assert_eq!(st, 0, "stderr: {err:?}");
     assert_eq!(out, "typeset status=''\ntypeset x=1\nlocal x\n");
 }

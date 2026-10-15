@@ -16657,8 +16657,15 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 typeflag: 0,
                 flags: PMTF_TEST_LEVEL,
             },
-            // 5.9.2 pmtypes[] (params.c:5783) has no PM_HIDE row; the dev tree adds
-            // `{ PM_HIDE, "hide", 'h', 0 }` and `typeset -p` then prints `-h`.
+            // c:6043 — `{ PM_HIDE, "hide", 'h', 0 }`. zsh 5.9.2's pmtypes[]
+            // (params.c:5783) has no such row, so a drop-in run as `zsh`
+            // (emulating_592) skips it in the walk below.
+            PmType {
+                binflag: PM_HIDE,
+                string: "hide",
+                typeflag: b'h',
+                flags: 0,
+            },
             PmType {
                 binflag: PM_LEFT,
                 string: "left justified",
@@ -16730,6 +16737,9 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             let mut doneminus = false; // c:6200
             for pmptr in PMTYPES.iter() {
                 // c:6204
+                if pmptr.binflag == PM_HIDE && crate::extensions::emulation_startup::emulating_592() {
+                    continue; // 5.9.2 has no hide row (see PMTYPES)
+                }
                 if altname != 0 && altname == pmptr.typeflag {
                     // c:6207
                     continue;
