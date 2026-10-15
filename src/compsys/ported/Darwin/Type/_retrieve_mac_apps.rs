@@ -116,8 +116,13 @@ pub fn mac_apps_caching_policy(cache_path: &str) -> i32 {
 /// <query>` per `app_dir_root` entry via the ported `_call_program`,
 /// splitting stdout on newlines (`${(f)...}`).
 fn mac_apps_spotlight_retrieve(app_dir_root: &[String]) -> Vec<String> {
-    // sh:20
-    let mdfind_query = "kMDItemContentType == 'com.apple.application-*'";
+    // sh:20 — master narrows the query to app bundles; 5.9.2 matched every
+    // `com.apple.application-*` content type.
+    let mdfind_query = if crate::extensions::emulation_startup::emulating_592() {
+        "kMDItemContentType == 'com.apple.application-*'"
+    } else {
+        "kMDItemContentType == 'com.apple.application-bundle'"
+    };
     let mut mac_apps = Vec::new();
     // sh:22-26
     for i in app_dir_root {
@@ -447,6 +452,24 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
     // sh:102  typeset -g -Ua _mac_apps — unique.
     let mut seen = HashSet::new();
     mac_apps.retain(|p| seen.insert(p.clone()));
+    // master sh:104-116 — `_mac_apps=( ${_mac_apps:#(${(j<|>)~ign_pats})} )`:
+    // drop framework, toolchain and browser-profile false positives.
+    if !crate::extensions::emulation_startup::emulating_592() {
+        const IGN_PATS: [&str; 7] = [
+            "/Library/Apple/System/Library/(|Private)Frameworks/*",
+            "/Library/Developer/CommandLineTools/*",
+            "/Library/Image Capture/*",
+            "/Library/PrivilegedHelperTools/*",
+            "/System/Library/(|Private)Frameworks/*",
+            "/Users/*/Library/Application Support/*/Profiles/*/storage/*",
+            "/Users/*/Library/HTTPStorages/*",
+        ];
+        let mut pat = format!("({})", IGN_PATS.join("|"));
+        crate::ported::glob::tokenize(&mut pat);
+        if let Some(prog) = crate::ported::pattern::patcompile(&pat, crate::ported::zsh_h::PAT_STATIC, None) {
+            mac_apps.retain(|p| !crate::ported::pattern::pattry(&prog, p));
+        }
+    }
     setaparam("_mac_apps", mac_apps);
     // sh:102 — the `-U` ATTRIBUTE, not just a unique value. Stamped after
     // the assignment because `setaparam` creates the node and would not
