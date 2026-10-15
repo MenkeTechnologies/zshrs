@@ -2144,6 +2144,13 @@ impl ShellExecutor {
         if name.starts_with(|c: char| c.is_ascii_digit()) {
             return false;
         }
+        // c:Src/params.c:430 `IPDEF9("argv", &pparams, …)` — always an array,
+        // its storage is `pparams` behind the GSU, so the node need not carry a
+        // `u_arr`. Without this, a stdin/-i shell (whose node has none) took
+        // `argv[n]=v` for a non-array and never evaluated the `n` subscript.
+        if name == "argv" {
+            return true;
+        }
         let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
             crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
             _ => name.to_string(),

@@ -381,3 +381,39 @@ mod shift_named_array {
         );
     }
 }
+
+/// c:Src/params.c:430 `IPDEF9("argv", &pparams, …)` — `argv` is an array,
+/// so `argv[n]=v` evaluates `n` as arithmetic (getindex) in every input
+/// mode. Read from standard input the `argv` node carries no materialised
+/// array, and the subscript was taken literally: `argv[n++]=$ans`, the line
+/// zcalc stores each result with, left `$1` empty.
+mod argv_element_assignment_from_stdin {
+    use super::*;
+    use std::io::Write;
+    use std::process::Stdio;
+
+    fn run_stdin(cmd: &mut Command, input: &str) -> String {
+        let mut child = cmd
+            .env_remove("ZSHRS_CACHE")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn shell");
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        String::from_utf8_lossy(&child.wait_with_output().expect("wait").stdout).into_owned()
+    }
+
+    #[test]
+    fn arithmetic_subscripts_on_argv_assign_the_positionals() {
+        if !zsh_available() {
+            return;
+        }
+        let input = "set -- q r; n=1; argv[n]=a; print -r -- \"[$*]\"\n\
+                     argv[n+1]=b; print -r -- \"[$*]\"\n\
+                     f() { integer i=1; argv[i++]=x; argv[i++]=y; print -r -- \"[$*] $i\" }; f\n";
+        let z = run_stdin(Command::new(zsh_path()).arg("-f"), input);
+        let r = run_stdin(Command::new(zshrs_bin()).args(["--zsh", "-f"]), input);
+        assert_eq!(z, "[a r]\n[a b]\n[x y] 3\n", "reference zsh");
+        assert_eq!(z, r);
+    }
+}
