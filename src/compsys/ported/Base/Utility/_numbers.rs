@@ -6,7 +6,7 @@
 //! sh:41  local desc tag range suffixes suffix suffixfmt pad pat='<->' partial=''
 //! sh:42  local -a expl formats
 //! sh:43  local -a default max min keep tags units
-//! sh:47  zparseopts -K -D -A opts M+:=keep q+=keep s+:=keep S+:=keep J+: V+: 1 2 o+: n F: x+: X+: \
+//! sh:47  zparseopts -K -D -A opts M+:=keep q+=keep s+:=keep S+:=keep J+: V+: 1 2 o+: n F: x+: X+: \   (5.9.2; master: {M+:,q+,r+:,R+:,s+:,S+:}=keep)
 //! sh:48    t:=tags u:=units l:=min m:=max d:=default f=type e=type N=type
 //! sh:50  desc="${1:-number}" tag="${tags[2]:-numbers}"
 //! sh:51  (( $# )) && shift
@@ -157,40 +157,40 @@ pub fn _numbers(args: &[String]) -> i32 {
         // call left behind.
         setaparam(name, Vec::new());
     }
-    let _ = bin_zparseopts(
-        "zparseopts",
-        &[
-            "-K".to_string(),
-            "-D".to_string(),
-            "-v".to_string(),
-            src.to_string(),
-            "-a".to_string(),
-            "opts_flat".to_string(),
-            "M+:=keep".to_string(),
-            "q+=keep".to_string(),
-            "s+:=keep".to_string(),
-            "S+:=keep".to_string(),
-            "J+:".to_string(),
-            "V+:".to_string(),
-            "1".to_string(),
-            "2".to_string(),
-            "o+:".to_string(),
-            "n".to_string(),
-            "F:".to_string(),
-            "x+:".to_string(),
-            "X+:".to_string(),
-            "t:=tags".to_string(),
-            "u:=units".to_string(),
-            "l:=min".to_string(),
-            "m:=max".to_string(),
-            "d:=default".to_string(),
-            "f=type".to_string(),
-            "e=type".to_string(),
-            "N=type".to_string(),
-        ],
-        &make_ops(),
-        0,
-    );
+    let mut zpo: Vec<String> = vec![
+        "-K".to_string(),
+        "-D".to_string(),
+        "-v".to_string(),
+        src.to_string(),
+        "-a".to_string(),
+        "opts_flat".to_string(),
+        "M+:=keep".to_string(),
+        "q+=keep".to_string(),
+        "s+:=keep".to_string(),
+        "S+:=keep".to_string(),
+        "J+:".to_string(),
+        "V+:".to_string(),
+        "1".to_string(),
+        "2".to_string(),
+        "o+:".to_string(),
+        "n".to_string(),
+        "F:".to_string(),
+        "x+:".to_string(),
+        "X+:".to_string(),
+        "t:=tags".to_string(),
+        "u:=units".to_string(),
+        "l:=min".to_string(),
+        "m:=max".to_string(),
+        "d:=default".to_string(),
+        "f=type".to_string(),
+        "e=type".to_string(),
+        "N=type".to_string(),
+    ];
+    if !crate::extensions::emulation_startup::emulating_592() {
+        // master sh:48 `{M+:,q+,r+:,R+:,s+:,S+:}=keep`
+        zpo.splice(8..8, ["r+:=keep".to_string(), "R+:=keep".to_string()]);
+    }
+    let _ = bin_zparseopts("zparseopts", &zpo, &make_ops(), 0);
     let positional = getaparam(src).unwrap_or_default();
     // Tear down `__compsys_argv` — the zparseopts-bridge scratch array, not a
     // real zsh identifier (zsh operates on positional $argv). It is declared
@@ -403,8 +403,12 @@ pub fn _numbers(args: &[String]) -> i32 {
         suffixes.push_str(&zformat_substring(&suffixfmt, &specs, false)); // sh:79
     }
     if !suffixes.is_empty() {
-        // sh:81
-        formats.push(format!("x:{}", suffixes));
+        // sh:81 — master writes `%%x:`: the `%%` spec prefix tells
+        // `_description`'s `zformat -Fq` to leave this value unquoted, so the
+        // suffix format's own `%U`/`%u` pass through (upstream 54767). 5.9.2
+        // used `x:` with an unquoting `zformat -F`.
+        let spec = if crate::extensions::emulation_startup::emulating_592() { "x:" } else { "%%x:" };
+        formats.push(format!("{}{}", spec, suffixes));
     }
 
     // sh:83 — `_comp_mesg=yes` is a SCALAR; `_main_complete` tests it with
