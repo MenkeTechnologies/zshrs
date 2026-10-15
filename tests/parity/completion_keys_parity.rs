@@ -1132,3 +1132,33 @@ zpty -w -n w $'\\t'; pump; pump
         assert_same_dump(&driver, &format!("Tab inside the open quoted value of `{keys}`"));
     }
 }
+
+/// c:Src/Zle/compcore.c:2848-2871 — add_match_data folds a bare ignored
+/// prefix (`compset -P`, `compadd -i`) into the first cline's `prefix`
+/// instead of leaving it as a separate cline ahead of the match. The port
+/// lacked the merge, so with the matcher `r:|-=*` the unambiguous string
+/// stopped before the anchor: `:x:a<TAB>` over ab-cd/abc-gh gave `:x:ab`
+/// where zsh gives `:x:ab-`, and `zstyle :completion:<TAB>` did nothing.
+#[test]
+fn an_ignored_prefix_keeps_the_matcher_anchored_unambiguous_part() {
+    let defs = "_s5(){ compset -P :x:; compadd -M 'r:|-=*' - ab-cd abc-gh }; compdef _s5 s5; \
+                _s6(){ compadd -i :x: -M 'r:|-=* r:|=*' - ab-cd abc-gh }; compdef _s6 s6";
+    for keys in ["s5 :x:a", "s6 a", "zstyle :completion:"] {
+        let driver = format!(
+            "{OPEN_PUMPED}
+zpty -w w 'autoload -Uz compinit; compinit -u -D; print CI_READY$((6*7))'
+integer t=0; while [[ $all != *CI_READY42* ]] && (( t++ < 200 )); do pump; done
+zpty -w w {}; pump
+{}
+pump
+zpty -w -n w {}; pump
+zpty -w -n w $'\\t'; pump; pump
+{}",
+            crate::zpty_probe::sq(defs),
+            crate::zpty_probe::dump_widget(r#""BUF=[$BUFFER] CUR=[$CURSOR]""#),
+            crate::zpty_probe::sq(keys),
+            crate::zpty_probe::DUMP_KEY_PUMPED
+        );
+        assert_same_dump(&driver, &format!("Tab after the ignored prefix in `{keys}`"));
+    }
+}

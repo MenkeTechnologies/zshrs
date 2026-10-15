@@ -5027,122 +5027,133 @@ pub fn add_match_data(
         }
     }
 
-    // c:2766-2873 — path-prefix Cline splicing. palen accumulates qipl,
-    // ipl, pl, ppl (when no pline). Each contributing string gets a
-    // bld_parts Cline prepended to `line`.
-    let qipl_local = qipre_v.len() as i32;
-    let ipl_local = ipre_.len() as i32;
-    let pl_local = pre_s.len() as i32;
+    // `lp->next = line; line = p;` (compcore.c:2811-2812 and siblings): append
+    // `line` after the last part of `p` and make `p` the new head.
+    let prepend_parts = |mut p: Option<Box<Cline>>, line: Option<Box<Cline>>| -> Option<Box<Cline>> {
+        if p.is_none() {
+            return line;
+        }
+        let mut t: &mut Option<Box<Cline>> = &mut p;
+        while t.is_some() {
+            t = &mut t.as_mut().unwrap().next;
+        }
+        *t = line;
+        p
+    };
+
+    // compcore.c:2783-2806 / 2848-2871 — splice the prefix parts `p` ahead of
+    // `line`. When the last part `lp` is a bare prefix (no line/word/orig of its
+    // own) and `line`'s first part carries none of `mask`, `lp->prefix` is
+    // folded into `line->prefix` and `lp` is dropped; otherwise `lp->next = line`.
+    let splice_prefix_parts = |mut p: Option<Box<Cline>>, mut line: Option<Box<Cline>>, mask: i32| -> Option<Box<Cline>> {
+        let mergeable = {
+            let mut lp = p.as_deref();
+            while let Some(n) = lp.and_then(|n| n.next.as_deref()) {
+                lp = Some(n);
+            }
+            match (lp, line.as_deref()) {
+                (Some(lp), Some(l)) => {
+                    lp.prefix.is_some()
+                        && (l.flags & mask) == 0
+                        && lp.llen == 0
+                        && lp.wlen == 0
+                        && lp.olen == 0
+                }
+                _ => false,
+            }
+        };
+        if !mergeable {
+            return prepend_parts(p, line); // c:2804-2805 / 2869-2870
+        }
+        // Detach lp: walk to the slot holding the last node.
+        let mut t: &mut Option<Box<Cline>> = &mut p;
+        while t.as_ref().unwrap().next.is_some() {
+            t = &mut t.as_mut().unwrap().next;
+        }
+        let mut lp = t.take().unwrap(); // c:2858 free_cline(lp) — after the move
+        // c:2852-2856 — `lpp->next = line->prefix; line->prefix = lp->prefix;`
+        let mut lprefix = lp.prefix.take();
+        let l = line.as_mut().unwrap();
+        {
+            let mut s: &mut Option<Box<Cline>> = &mut lprefix;
+            while s.is_some() {
+                s = &mut s.as_mut().unwrap().next;
+            }
+            *s = l.prefix.take();
+        }
+        l.prefix = lprefix;
+        // c:2860-2867 — `if (p != lp) { q->next = line; line = p; }`; `t` is
+        // now the emptied slot (p itself when p == lp).
+        if p.is_none() {
+            return line;
+        }
+        prepend_parts(p, line)
+    };
+    // c:2762-2872 — "The prefix is handled differently because the completion
+    // code is much more eager to insert the -P prefix than it is to insert
+    // the -S suffix." palen accumulates qipl, ipl, pl, ppl (when no pline).
+    let qipl_local = qipre_v.len() as i32; // c:2766
+    let ipl_local = ipre_.len() as i32; // c:2768
+    let pl_local = pre_s.len() as i32; // c:2770
     let ppl_local = if pline.is_none() && !ppre.is_empty() {
-        ppre.len() as i32
+        ppre.len() as i32 // c:2772
     } else {
         0
     };
+    let palen = qipl_local + ipl_local + pl_local + ppl_local;
     if pl_local > 0 {
-        if ppl_local > 0 {
-            let p = bld_parts(ppre, ppl_local, ppl_local, None, None);
-            // Walk p to its tail, link its tail's next to line.
-            if p.is_some() {
-                let mut p_chain = p;
-                let mut tail: *mut Option<Box<Cline>> = &mut p_chain;
-                unsafe {
-                    while let Some(ref n) = *tail {
-                        if n.next.is_none() {
-                            break;
-                        }
-                        tail = &mut (*tail).as_mut().unwrap().next;
-                    }
-                    if let Some(t) = (*tail).as_mut() {
-                        t.next = line.take();
-                    }
-                }
-                line = p_chain;
-            }
+        // c:2775-2807 — path prefix (pline or ppre) merged ahead of `line`.
+        if ppl_local > 0 || pline.is_some() {
+            let p = if pline.is_some() {
+                crate::ported::zle::compmatch::cp_cline(pline.as_deref(), 1) // c:2779
+            } else {
+                bld_parts(ppre, ppl_local, ppl_local, None, None) // c:2781
+            };
+            line = splice_prefix_parts(
+                p,
+                line,
+                crate::ported::zle::comp_h::CLF_SUF | crate::ported::zle::comp_h::CLF_MID,
+            ); // c:2783-2806
         }
-        let p = bld_parts(pre_s, pl_local, pl_local, None, None);
-        if let Some(mut head) = p {
-            let mut t: *mut Option<Box<Cline>> = &mut head.next;
-            unsafe {
-                while (*t).is_some() {
-                    if (*t).as_deref().unwrap().next.is_none() {
-                        break;
-                    }
-                    t = &mut (*t).as_mut().unwrap().next;
-                }
-                *t = line.take();
-            }
-            line = Some(head);
-        }
+        // c:2808-2825 — pre, ipre, qipre each prepended as their own parts.
+        line = prepend_parts(bld_parts(pre_s, pl_local, pl_local, None, None), line); // c:2809-2812
         if ipl_local > 0 {
-            let p = bld_parts(ipre_, ipl_local, ipl_local, None, None);
-            if let Some(mut head) = p {
-                let mut t: *mut Option<Box<Cline>> = &mut head.next;
-                unsafe {
-                    // Walk to the empty slot past the tail node, then attach
-                    // `line` there. The previous code stopped AT the last node
-                    // and did `*t = line`, OVERWRITING it (dropped the final
-                    // bld_parts segment — e.g. the last dir component `zdt3/`
-                    // of `/private/tmp/zdt3/` — so ambiguous path completion
-                    // corrupted the line). c:2812/2818/2824/2841 `lp->next =
-                    // line` appends; it never replaces lp.
-                    while (*t).is_some() {
-                        t = &mut (*t).as_mut().unwrap().next;
-                    }
-                    *t = line.take();
-                }
-                line = Some(head);
-            }
+            line = prepend_parts(bld_parts(ipre_, ipl_local, ipl_local, None, None), line); // c:2815-2818
         }
         if qipl_local > 0 {
-            let p = bld_parts(&qipre_v, qipl_local, qipl_local, None, None);
-            if let Some(mut head) = p {
-                let mut t: *mut Option<Box<Cline>> = &mut head.next;
-                unsafe {
-                    // Walk to the empty slot past the tail node, then attach
-                    // `line` there. The previous code stopped AT the last node
-                    // and did `*t = line`, OVERWRITING it (dropped the final
-                    // bld_parts segment — e.g. the last dir component `zdt3/`
-                    // of `/private/tmp/zdt3/` — so ambiguous path completion
-                    // corrupted the line). c:2812/2818/2824/2841 `lp->next =
-                    // line` appends; it never replaces lp.
-                    while (*t).is_some() {
-                        t = &mut (*t).as_mut().unwrap().next;
-                    }
-                    *t = line.take();
-                }
-                line = Some(head);
-            }
+            line = prepend_parts(
+                bld_parts(&qipre_v, qipl_local, qipl_local, None, None),
+                line,
+            ); // c:2821-2824
         }
-    } else if qipl_local + ipl_local + pl_local + ppl_local > 0 || pline.is_some() {
-        // c:2827-2842 — consolidated apre buffer.
-        let apre = format!(
-            "{}{}{}{}",
-            qipre_v.as_str(),
-            ipre_,
-            pre_s,
-            if pline.is_none() { ppre } else { "" }
-        );
-        let apre_len = apre.len() as i32;
-        if apre_len > 0 {
-            let p = bld_parts(&apre, apre_len, apre_len, None, None);
-            if let Some(mut head) = p {
-                let mut t: *mut Option<Box<Cline>> = &mut head.next;
-                unsafe {
-                    // Walk to the empty slot past the tail node, then attach
-                    // `line` there. The previous code stopped AT the last node
-                    // and did `*t = line`, OVERWRITING it (dropped the final
-                    // bld_parts segment — e.g. the last dir component `zdt3/`
-                    // of `/private/tmp/zdt3/` — so ambiguous path completion
-                    // corrupted the line). c:2812/2818/2824/2841 `lp->next =
-                    // line` appends; it never replaces lp.
-                    while (*t).is_some() {
-                        t = &mut (*t).as_mut().unwrap().next;
-                    }
-                    *t = line.take();
+    } else if palen > 0 || pline.is_some() {
+        // c:2827-2871 — consolidated apre buffer (qipre ipre pre ppre).
+        let p = if palen > 0 {
+            let apre = format!(
+                "{}{}{}{}",
+                qipre_v.as_str(),
+                ipre_,
+                pre_s,
+                if ppl_local > 0 { ppre } else { "" }
+            ); // c:2830-2839
+            let mut p = bld_parts(&apre, palen, palen, None, None); // c:2841
+            if pline.is_some() {
+                // c:2843-2844 — `lp->next = cp_cline(pline, 1)`.
+                let mut t: &mut Option<Box<Cline>> = &mut p;
+                while t.is_some() {
+                    t = &mut t.as_mut().unwrap().next;
                 }
-                line = Some(head);
+                *t = crate::ported::zle::compmatch::cp_cline(pline.as_deref(), 1);
             }
-        }
+            p
+        } else {
+            crate::ported::zle::compmatch::cp_cline(pline.as_deref(), 1) // c:2846
+        };
+        // c:2848-2871 — without the merge, a bare `compset -P`/`compadd -i`
+        // prefix stayed a cline of its own ahead of the match, and the
+        // unambiguous string lost the matcher-anchored part after it
+        // (`r:|-=*` over ab-cd/abc-gh inserted `ab`, zsh inserts `ab-`).
+        line = splice_prefix_parts(p, line, crate::ported::zle::comp_h::CLF_SUF);
     }
 
     // c:2869 — `stl = strlen(str);`
