@@ -191,6 +191,12 @@ pub fn _zmodload_module_files(args: &[String]) -> i32 {
     let names = loadable_module_names();
     if !names.is_empty() {
         let mut mp: Vec<String> = args.to_vec();
+        // sh:72's matches come from _path_files' `compadd -Qf` (CMF_FILE), and
+        // a file match whose text names no existing file gets no trailing
+        // space (Src/Zle/compresult.c:1144-1147) — `zsh/zutil` is a glob
+        // modified with `(:r)`, not a path. Mark the registry names the same
+        // way so `zmodload zsh/zu<TAB>` leaves the word open like zsh.
+        mp.push(s("-f"));
         mp.push(s("/"));
         mp.push(format!("({})", names.join(" ")));
         if _multi_parts(&mp) == 0 {
