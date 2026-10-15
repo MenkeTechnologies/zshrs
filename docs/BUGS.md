@@ -61337,6 +61337,6 @@ in `fusevm_bridge.rs`. Three other openers reach the same file with `fs::File::c
   that joins the pipe) → `r::WRITE | r::CLOBBER => fs::File::create(target)`, with no option check.
 
 `r::APPEND_BOTH` (`&>>`) opens with `create(true)` unconditionally, ignoring the NO_CLOBBER +
-!APPEND_CREATE rule that the `r::APPEND` arm already ports (c:Src/exec.c:3924-3927). In C every one of
+!APPEND_CREATE rule that the `r::APPEND` arm already ports (c:Src/exec.c:3989-3990). In C every one of
 these goes through `clobber_open` / the same append mode selection, so the fix is to route them through
 the existing check rather than add three more copies of it.

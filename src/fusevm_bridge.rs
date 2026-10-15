@@ -22830,7 +22830,7 @@ impl ShellExecutor {
                 }
             }
             r::APPEND => {
-                // c:Src/exec.c:3924-3927 — `>>` honors NO_CLOBBER+!APPENDCREATE
+                // c:Src/exec.c:3989-3990 — `>>` honors NO_CLOBBER+!APPENDCREATE
                 // by opening O_APPEND|O_WRONLY WITHOUT O_CREAT, so missing
                 // files yield ENOENT. zsh source:
                 //   if (!isset(CLOBBER) && !isset(APPENDCREATE) &&
