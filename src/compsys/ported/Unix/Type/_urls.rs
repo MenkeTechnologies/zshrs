@@ -86,9 +86,13 @@ pub fn _urls(args: &[String]) -> i32 {
     //
     // `urls` (rs:105) is NOT declared here: sh:47's `zstyle -a … urls
     // urls` writes the caller-visible name upstream too, and the measured
-    // run showed zsh gaining `urls` where zshrs did not — the opposite
-    // direction, and a separate divergence from this one.
+    // run showed zsh 5.9.2 gaining `urls` where zshrs did not. Master's
+    // sh:40 adds `urls` to the `local` list, so it no longer leaks there;
+    // a drop-in run as `zsh` (emulating_592) keeps 5.9.2's global write.
     crate::compsys::ported::shared::declare_locals(&["expl", "uhosts"], 0);
+    if !crate::extensions::emulation_startup::emulating_592() {
+        crate::compsys::ported::shared::declare_locals(&["urls"], 0);
+    }
     let curcontext = get("curcontext");
     let ctx = format!(":completion:{}:urls", curcontext);
     let mut ret = 1;
