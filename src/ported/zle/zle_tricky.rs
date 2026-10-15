@@ -2074,7 +2074,15 @@ pub fn get_comp_string() -> Option<String> {
                     Some(ts) => {
                         let jcnt = ts.chars().filter(|&c| c == snull || c == dnull).count();
                         if jcnt & 1 == 1 {
-                            if LINCMD.load(Ordering::SeqCst) != 0 && ts.contains('=') {
+                            // c:1222 `strchr(tokstr, '=')`. The lexer emits the
+                            // assignment `=` as the Equals token where C keeps it
+                            // raw (lex.rs LX2_EQUALS ENVSTRING arm; parse.rs:9589
+                            // accepts both spellings too), so an unterminated
+                            // single-quoted value — `PS1='%F{gre<TAB>` — was
+                            // never taken for an assignment.
+                            if LINCMD.load(Ordering::SeqCst) != 0
+                                && ts.contains(['=', crate::ported::zsh_h::Equals])
+                            {
                                 varq = 1;
                                 tokv = ENVSTRING;
                                 set_tok(ENVSTRING);

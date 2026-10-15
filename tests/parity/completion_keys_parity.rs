@@ -1099,3 +1099,36 @@ print -rl -- ${{${{(M)ls:#*invalid zwc*}}/#*\/zsh(|rs):/zsh:}} >| $OUTFILE
     );
     assert_same_dump_release(&driver, "invalid zwc warnings while loading a completion function");
 }
+
+/// c:Src/Zle/zle_tricky.c:1215-1227 — the word before the cursor is an
+/// assignment whose single-quoted value is still open, so the lexer stops
+/// with LEXERR, and get_comp_string takes a token with an odd number of
+/// quote markers and a `=` (`strchr(tokstr, '=')`) for an ENVSTRING: the
+/// completion runs in the parameter's value context (`_ps1234` for PS1,
+/// files for an ordinary variable). zshrs's lexer spells that `=` as the
+/// Equals token, so the test never matched and the word was completed as a
+/// command name: `PS1='%F{gre<TAB>` stayed as typed.
+///
+/// compinit runs in the inner shell before the keys are typed; the driver
+/// waits for a marker it prints (`CI_READY42`, computed so the echoed command
+/// line cannot match) because a blind pump times out while compinit is still
+/// scanning under a loaded test run.
+#[test]
+fn an_open_single_quoted_assignment_value_completes_as_a_value() {
+    for keys in ["PS1='%F{gre", "PS1='%F{red}%(?.", "a='/us"] {
+        let driver = format!(
+            "{OPEN_PUMPED}
+zpty -w w 'autoload -Uz compinit; compinit -u -D; print CI_READY$((6*7))'
+integer t=0; while [[ $all != *CI_READY42* ]] && (( t++ < 200 )); do pump; done
+{}
+pump
+zpty -w -n w {}; pump
+zpty -w -n w $'\\t'; pump; pump
+{}",
+            crate::zpty_probe::dump_widget(r#""BUF=[$BUFFER] CUR=[$CURSOR]""#),
+            crate::zpty_probe::sq(keys),
+            crate::zpty_probe::DUMP_KEY_PUMPED
+        );
+        assert_same_dump(&driver, &format!("Tab inside the open quoted value of `{keys}`"));
+    }
+}
