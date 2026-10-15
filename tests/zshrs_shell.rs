@@ -17400,3 +17400,19 @@ fn script_cache_stores_scripts_that_end_in_exit_return_or_exec() {
         assert!(listing.contains(name), "{name} missing from dbview scripts:\n{listing}");
     }
 }
+
+/// Src/init.c:445-454 — standing in for zsh (argv[0] `zsh`), `--version`
+/// prints zsh's own line, `zsh VERSION (MACHTYPE-VENDOR-OSTYPE)` (the
+/// `[PATCHLEVEL]` is omitted for a tagged release), because scripts and
+/// plugin managers parse it (E01options "zsh --version output"). Under its
+/// own name the binary reports `zshrs X.Y.Z`.
+#[test]
+fn version_flag_reports_zsh_when_run_as_zsh() {
+    use std::os::unix::process::CommandExt;
+    let as_zsh = Command::new(zshrs_bin()).arg0("zsh").arg("--version").output().expect("spawn");
+    let line = String::from_utf8_lossy(&as_zsh.stdout).into_owned();
+    let (_, mach, _) = run_zshrs("print -rn -- $MACHTYPE-$VENDOR-$OSTYPE");
+    assert_eq!(line, format!("zsh 5.9.2 ({mach})\n"));
+    let own = Command::new(zshrs_bin()).arg("--version").output().expect("spawn");
+    assert!(String::from_utf8_lossy(&own.stdout).starts_with("zshrs "), "{own:?}");
+}

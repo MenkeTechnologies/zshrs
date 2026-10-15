@@ -1682,7 +1682,22 @@ pub fn zshrs_main() {
 
     // Handle --version
     if args.iter().any(|a| a == "--version") {
-        println!("zshrs {}", env!("CARGO_PKG_VERSION"));
+        if argv0_basename == "zsh" {
+            // Standing in for zsh: Src/init.c:445-454 — `zsh VERSION
+            // (MACHTYPE-VENDOR-OSTYPE)`, with `[PATCHLEVEL]` after the version
+            // unless the patchlevel is the tagged release's `zsh-VER-0-…`.
+            // Scripts and plugin managers parse this line.
+            use zsh::ported::config_h::{MACHTYPE, OSTYPE, VENDOR};
+            use zsh::ported::patchlevel::{ZSH_PATCHLEVEL, ZSH_VERSION};
+            let tagged = ZSH_PATCHLEVEL.starts_with(&format!("zsh-{ZSH_VERSION}-0-"));
+            if tagged {
+                println!("zsh {ZSH_VERSION} ({MACHTYPE}-{VENDOR}-{OSTYPE})");
+            } else {
+                println!("zsh {ZSH_VERSION} [{ZSH_PATCHLEVEL}] ({MACHTYPE}-{VENDOR}-{OSTYPE})");
+            }
+        } else {
+            println!("zshrs {}", env!("CARGO_PKG_VERSION"));
+        }
         return;
     }
 
