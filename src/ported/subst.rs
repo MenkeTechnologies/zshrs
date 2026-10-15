@@ -9633,10 +9633,13 @@ pub fn paramsubst(
             };
         }
         let ksh_bare_ref_c2286 = |name: &str| -> bool {
+            // c:2288 `itype_end(t, INAMESPC, 1)` — INAMESPC also takes the
+            // leading `.` of a namespace (`.ns.a`), so a namespaced array is
+            // clamped like any other (K02parameter "namerefs with namespaces").
             let is_ident = name
                 .as_bytes()
                 .first()
-                .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_'); // c:2287 itype_end
+                .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'.'); // c:2287 itype_end
             crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) // c:2287
                 && arrasg == 0 // c:2286 !(scanflags & SCANPM_ASSIGNING)
                 && is_ident

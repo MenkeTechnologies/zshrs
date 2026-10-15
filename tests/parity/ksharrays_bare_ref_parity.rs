@@ -732,3 +732,22 @@ fn star_subscript_substring_keeps_the_array() {
         );
     }
 }
+
+/// c:Src/params.c:2288 — the clamp's identifier test is `itype_end(t,
+/// INAMESPC, 1)`, and INAMESPC takes a namespace's leading `.`, so a
+/// namespaced array (or a nameref with a namespaced name) is clamped to its
+/// first element too. zshrs tested for a leading letter or `_` only, and
+/// `${(k).ns.a}` / `${!.ns.r}` came back whole (K02parameter "namerefs with
+/// namespaces").
+mod namespaced_names {
+    use super::*;
+
+    #[test]
+    fn a_namespaced_array_is_clamped_like_any_other() {
+        both_states("typeset -a .ns.a=(x y z)", "${.ns.a} ${(k).ns.a} ${#.ns.a}");
+        both_states(
+            "arr=(a b c); typeset -n .ns.r=arr",
+            "${.ns.r} ${(k).ns.r} ${(!).ns.r}",
+        );
+    }
+}
