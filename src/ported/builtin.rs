@@ -8299,19 +8299,38 @@ pub fn bin_typeset(
                     })
                     .and_then(|pm| pm.ename.clone()) // c:2263 `pm->ename`
                     .and_then(|ename| {
-                        paramtab() // c:2265 getnode(paramtab, pm->ename)
-                            .read()
-                            .ok()
-                            .and_then(|t| {
-                                t.get(&ename).map(|apm| (ename.clone(), apm.u_arr.clone()))
-                            })
-                            .and_then(|(n, a)| a.map(|a| (n, a))) // c:2266 getfn
+                        // master c:2264-2266 — `x = ((struct tieddata *)
+                        // pm->u.data)->arrptr`: the array the scalar is TIED
+                        // to, not whatever `ename` resolves to now. A local of
+                        // that name (`typeset -i var` in a function, then
+                        // `typeset -g -U VAR`) hides it on the `old` chain;
+                        // 5.9.2's `getnode(paramtab, pm->ename)` took the
+                        // local and segfaulted (B02typeset). Walk to the node
+                        // tied back to this scalar.
+                        let t = paramtab().read().ok()?;
+                        let mut cur = t.get(&ename).map(|b| &**b);
+                        while let Some(apm) = cur {
+                            if (apm.node.flags as u32 & PM_TIED) != 0
+                                && apm.ename.as_deref() == Some(arg.as_str())
+                            {
+                                return apm.u_arr.clone().map(|a| (ename.clone(), a)); // c:2266
+                            }
+                            cur = apm.old.as_deref();
+                        }
+                        None
                     });
                 if let Some((ename, x)) = peer {
                     let x = crate::ported::params::uniqarray(x); // c:2267
                     if let Ok(mut tab) = paramtab().write() {
-                        if let Some(apm) = tab.get_mut(&ename) {
-                            apm.u_arr = Some(x.clone());
+                        let mut cur = tab.get_mut(&ename).map(|b| &mut **b);
+                        while let Some(apm) = cur {
+                            if (apm.node.flags as u32 & PM_TIED) != 0
+                                && apm.ename.as_deref() == Some(arg.as_str())
+                            {
+                                apm.u_arr = Some(x.clone());
+                                break;
+                            }
+                            cur = apm.old.as_deref_mut();
                         }
                         // The tied scalar caches the joined string in u_str;
                         // refresh it so `$SCALAR` reads the deduped join

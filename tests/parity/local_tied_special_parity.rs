@@ -384,3 +384,22 @@ mod local_special_keeps_peer {
         );
     }
 }
+
+/// `typeset -g -U SCALAR` while a local of the tied ARRAY's name hides it:
+/// master typeset_single uniquifies the array the scalar is tied to
+/// (`((struct tieddata *)pm->u.data)->arrptr`, c:Src/builtin.c:2264), not the
+/// local `getnode(ename)` finds (5.9.2 did, and segfaulted), and
+/// printparamnode's tied arm prints the peer node as it is (`p = tmp`,
+/// c:Src/params.c:6282), so the hidden case shows the local integer.
+/// B02typeset.ztst "Regression test for not segfaulting when uniquifying a
+/// hidden tied array".
+mod uniquify_hidden_tied_array {
+    use super::*;
+
+    #[test]
+    fn global_unique_reaches_the_tied_array_under_a_local() {
+        assert_parity(
+            "typeset -T VAR var=(a b c b a); () { typeset -i var=1; typeset -g -U VAR; typeset -p VAR var; }; typeset -p VAR var",
+        );
+    }
+}

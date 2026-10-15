@@ -16824,16 +16824,10 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 // pm before calling printparamnode (see builtin.rs)
                 // so no paramtab lock is held here. Read the peer
                 // directly. Bug #410.
-                let peer_info: Option<(String, Vec<String>)> =
-                    paramtab().read().ok().and_then(|t| {
-                        t.get(&ename).map(|peer_pm| {
-                            (
-                                peer_pm.node.nam.clone(),
-                                peer_pm.u_arr.clone().unwrap_or_default(),
-                            )
-                        })
-                    });
-                if let Some((peer_name, peer_arr)) = peer_info {
+                let peer_node: Option<param> =
+                    paramtab().read().ok().and_then(|t| t.get(&ename).map(|peer_pm| (**peer_pm).clone()));
+                if let Some(peer) = peer_node {
+                    let peer_name = peer.node.nam.clone();
                     let typeset_mode = (printflags & PRINT_TYPESET) != 0;
                     let we_are_scalar = (f & PM_ARRAY) == 0;
                     if typeset_mode && we_are_scalar {
@@ -16842,28 +16836,12 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                         // OUR name first (the scalar side), then
                         // swap.
                         let _ = std::io::Write::write_all(&mut std::io::stdout(), &crate::ported::utils::unmetafy_str(&format!("{} ", quotedzputs(&hn.node.nam))));
-                        hn.node.nam = peer_name;
-                        hn.u_arr = Some(peer_arr);
-                        hn.u_str = None;
-                        // Flip the PM_TYPE bits to PM_ARRAY so
-                        // printparamvalue dispatches the array arm.
-                        // PM_TYPE is a const fn that masks the
-                        // type-bits union (PM_SCALAR | PM_INTEGER |
-                        // PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED
-                        // | PM_NAMEREF). Clear them all, then set
-                        // PM_ARRAY.
-                        let type_mask = crate::ported::zsh_h::PM_SCALAR
-                            | crate::ported::zsh_h::PM_INTEGER
-                            | crate::ported::zsh_h::PM_EFLOAT
-                            | crate::ported::zsh_h::PM_FFLOAT
-                            | crate::ported::zsh_h::PM_ARRAY
-                            | crate::ported::zsh_h::PM_HASHED
-                            | crate::ported::zsh_h::PM_NAMEREF;
-                        hn.node.flags = (hn.node.flags & !(type_mask as i32)) | (PM_ARRAY as i32);
-                        // Drop the scalar getfn so printparamvalue
-                        // doesn't pull from the scalar gsu (which
-                        // would resolve PATH-the-colon-string).
-                        hn.gsu_s = None;
+                        // c:6282 `p = tmp;` — the value printed is the PEER
+                        // node's, by ITS type: normally the tied array, but a
+                        // local that hides it (`typeset -i var` in a function,
+                        // then `typeset -g -U VAR`) prints as that local
+                        // (`typeset -g -UT VAR var=1`, B02typeset).
+                        *hn = peer;
                     } else {
                         // c:6286 — non-swap path: just print peer's
                         // name + space. The downstream name+value
