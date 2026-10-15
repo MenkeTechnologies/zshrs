@@ -297,11 +297,11 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - New early-return in `builtin_export`: when args are exactly `["-p"]`, walk `std::env::vars()`, sort, and emit `export NAME=<quoted-value>` lines. Matches POSIX + zsh format.
 
-### `zmv` / `zcp` / `zln` / `zcalc` native bundled functions
+### `zmv` / `zcp` / `zln` native bundled functions (and `zcalc`, back to the script)
 
-- Previously these autoloaded zsh function files from `/opt/homebrew/Cellar/zsh/.../functions` and zshrs's parser HUNG indefinitely on the zsh-specific syntax in those bodies. Native Rust ports replace the autoload path: `call_function` short-circuits the four names BEFORE the alias/function/external lookup, dispatching directly to `builtin_zmv` and `builtin_zcalc`.
-- `builtin_zmv` handles flags `-n` (dry-run), `-f` (force), `-i`, `-v`, `-W` (wildcard), `-s` (symlink for ln mode), `-M`/`-C`/`-L` (force action), `-p prog` (custom executable). The source pattern's `(...)` capture groups translate to a regex; the destination's `$N` / `${N}` substitute the captures. Collision detection (two srcs → same dest) errors before any file action. `zcp` and `zln` are the same dispatcher with different default actions.
-- `builtin_zcalc` supports `-e EXPR` non-interactive evaluation (`zcalc -e "2+3*4"` → `14`); interactive REPL not implemented.
+- Previously these autoloaded zsh function files from `/opt/homebrew/Cellar/zsh/.../functions` and zshrs's parser HUNG indefinitely on the zsh-specific syntax in those bodies. Native Rust ports replace the autoload path for `zmv`/`zcp`/`zln`: while the autoload stub is still undefined, dispatch goes to `ext_builtins::zmv` instead of loading the file.
+- `builtin_zmv` handles flags `-n` (dry-run), `-f` (force), `-i`, `-v`, `-W` (wildcard), `-s` (symlink for ln mode), `-M`/`-C`/`-L` (force action), `-p prog` (custom executable). Files are globbed under NULL_GLOB and matched with the shell's own `(#b)` pattern engine exactly as `Functions/Misc/zmv` does (including its `(**/)` and `-Q` handling); the destination is `${(Xe)repl}` with the captures as `$1`… and `$match`. Collision detection (two srcs → same dest) errors before any file action. `zcp` and `zln` are the same dispatcher with different default actions.
+- `zcalc` no longer has a native port: the bundled `Functions/Misc/zcalc` script now runs unchanged (interactive REPL, `-e`, `-f`, `-r`, history, `$1…` result references), so `autoload -Uz zcalc` loads it like zsh. The native version handled only `-e` and refused interactive mode even on a terminal.
 
 ### `[[ a -nt b ]]`, `[[ a -ot b ]]`, `[[ -k ]]`, `[[ -u ]]`, `[[ -g ]]`, `[[ -O ]]`, `[[ -G ]]` cond tests
 

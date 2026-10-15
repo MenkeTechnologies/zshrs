@@ -1137,7 +1137,7 @@ pub(crate) fn is_registered_builtin(name: &str) -> bool {
 /// Whether NAME is an autoload stub that has not been loaded yet: an enabled
 /// shfunctab entry with PM_UNDEFINED set (c:Src/zsh.h:1895). Loading clears
 /// the flag (c:Src/exec.c:5790, c:5815); a function defined in the shell
-/// never carries it. Gates the native zmv/zcp/zln/zcalc ports, which stand
+/// never carries it. Gates the native zmv/zcp/zln ports, which stand
 /// in for the fpath load of the stock autoload functions only.
 fn autoload_stub_pending(name: &str) -> bool {
     crate::ported::hashtable::shfunctab_lock()
@@ -22021,7 +22021,7 @@ impl fusevm::ShellHost for ZshrsHost {
             argv.extend(args.iter().cloned());
             crate::provenance::on_exec("call", &argv);
         }
-        // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln/zcalc are zsh autoload
+        // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln are zsh autoload
         // functions, NOT builtins. zshrs ships fast native impls, but they
         // must behave like the zsh functions — command-not-found until
         // `autoload -Uz <name>` creates a function entry. When autoloaded we
@@ -22029,15 +22029,15 @@ impl fusevm::ShellHost for ZshrsHost {
         // can hang zshrs's parser on zsh-specific syntax); when NOT autoloaded
         // we fall through (return None → resolution ends in command-not-found),
         // matching `zsh -f; zmv` → "command not found: zmv".
-        // A DEFINED zmv/zcp/zln/zcalc body (user-written, or a stub already
+        // A DEFINED zmv/zcp/zln body (user-written, or a stub already
         // loaded by `autoload +X`) is an ordinary shell function and runs as
         // one through the function dispatch below. The native port stands in
         // only for the fpath load of a still-PM_UNDEFINED stub
         // (c:Src/exec.c:5691-5695 execautofn → loadautofn, which clears
         // PM_UNDEFINED at c:5790/c:5815).
         let native_autoload =
-            matches!(name, "zmv" | "zcp" | "zln" | "zcalc") && autoload_stub_pending(name);
-        if matches!(name, "zmv" | "zcp" | "zln" | "zcalc")
+            matches!(name, "zmv" | "zcp" | "zln") && autoload_stub_pending(name);
+        if matches!(name, "zmv" | "zcp" | "zln")
             && !with_executor(|exec| exec.function_exists(name))
         {
             return None;
@@ -22057,9 +22057,6 @@ impl fusevm::ShellHost for ZshrsHost {
             }
             "zln" if native_autoload => {
                 return Some(crate::extensions::ext_builtins::zmv(&args, "ln"));
-            }
-            "zcalc" if native_autoload => {
-                return Some(crate::extensions::ext_builtins::zcalc(&args));
             }
             // znative — the plugin package manager (src/extensions/pkg/). Installs
             // + loads zsh script and native (Rust cdylib) plugins from a global
@@ -23312,7 +23309,7 @@ impl ShellExecutor {
             "unalias" | "unhash" | "unfunction" => {
                 return dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
-            // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln/zcalc are zsh autoload
+            // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln are zsh autoload
             // functions — implemented natively in Rust so `autoload -Uz zmv`
             // works without shipping the function source (and without the
             // fpath source hanging the parser). The stub guard keeps them command-not-found until autoloaded, exactly like zsh;
@@ -23329,9 +23326,6 @@ impl ShellExecutor {
             }
             "zln" if autoload_stub_pending("zln") => {
                 return crate::extensions::ext_builtins::zmv(&rest_vec, "ln")
-            }
-            "zcalc" if autoload_stub_pending("zcalc") => {
-                return crate::extensions::ext_builtins::zcalc(&rest_vec)
             }
             "zselect" => {
                 // Route through canonical dispatch_builtin which goes
@@ -24161,7 +24155,8 @@ mod function_shadows_builtin_tests {
 
 #[cfg(test)]
 mod zmv_native_autoload_tests {
-    //! zmv/zcp/zln/zcalc are zsh autoload functions with native ports. The
+    //! zmv/zcp/zln are zsh autoload functions with native ports (zcalc runs
+    //! the bundled script). The
     //! port stands in only for loading a PM_UNDEFINED stub (c:Src/exec.c:
     //! 5691-5695); a defined body is an ordinary shell function.
     use crate::vm_helper::ShellExecutor;
