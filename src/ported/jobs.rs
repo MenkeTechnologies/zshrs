@@ -2634,12 +2634,11 @@ pub fn spawnjob() {
     // entersubsh (Src/exec.c:1154).
     let in_subsh = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed) > 0
         || crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::Relaxed) > 0;
-    if !in_subsh {
-        // c:1899-1903 (5.9.2) — `if (!subsh) { if (curjob == -1 || ...) {
-        // curjob = thisjob; setprevjob(); } else if (prevjob == -1 || ...)
-        // prevjob = thisjob; ...}`: a subshell has no job control, so a job
-        // started there is not marked current (W03jobparameters). The dev
-        // tree's upstream 54584 dropped this guard.
+    // c:1896-1901 — upstream 54584 ("jobs: update curjob in sub-shells")
+    // makes the curjob/prevjob update unconditional, so `$(sleep 2 & jobs)`
+    // lists its job as `+`. 5.9.2 wrapped it in `if (!subsh)` (a subshell has
+    // no job control, W03jobparameters); a drop-in run as `zsh` keeps that.
+    if !in_subsh || !crate::extensions::emulation_startup::emulating_592() {
         // c:1899-1901 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))
         //                  { curjob = thisjob; setprevjob(); }`
         // c:1902-1903 — else if prevjob also not stopped, prevjob = thisjob.

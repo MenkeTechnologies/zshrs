@@ -185,18 +185,26 @@ fn assert_parity(s: &str) {
 }
 
 /// [`assert_parity`] against the release zshrs reports as its own version, for rows
-/// whose answer moved on master. Skips when none is installed.
+/// whose answer moved on master. Skips when none is installed. zshrs keeps the
+/// release's answers only when it stands in for that zsh — run under the name
+/// `zsh` (`emulating_592`) — so that is how it is run here.
 fn assert_parity_release(s: &str) {
     let Some(zsh) = crate::oracle::release_zsh_path() else {
         eprintln!("skip: no zsh reporting zshrs's version is installed");
         return;
     };
-    assert_parity_at(zsh, s);
+    use std::os::unix::process::CommandExt;
+    let mut c = Command::new(zshrs_bin());
+    c.arg0("zsh").args(["--zsh", "-f", "-c", s]).env_remove("ZSHRS_CACHE");
+    assert_parity_with(zsh, s, run_deadlined(c, "zshrs"));
 }
 
 fn assert_parity_at(zsh: &str, s: &str) {
+    assert_parity_with(zsh, s, run_zshrs(s));
+}
+
+fn assert_parity_with(zsh: &str, s: &str, r: R) {
     let z = run_zsh_at(zsh, s);
-    let r = run_zshrs(s);
     assert_eq!(
         z.stdout, r.stdout,
         "stdout mismatch for {:?}\n zsh:   {:?}\n zshrs: {:?}",
