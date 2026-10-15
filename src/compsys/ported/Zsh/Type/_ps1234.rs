@@ -125,7 +125,14 @@ pub fn _ps1234() -> i32 {
     let mut grp: String;
     let mut cols: i64;
     let mut bs = String::new();
-    let mut suf: Vec<String> = Vec::new();
+    // master sh:3/8 — `local -a … suf` then `suf=( -S '' )`; 5.9.2 sh:4 has a
+    // scalar `suf` that starts empty. A drop-in run as `zsh` keeps 5.9.2.
+    let master = !crate::extensions::emulation_startup::emulating_592();
+    let mut suf: Vec<String> = if master {
+        vec!["-S".to_string(), String::new()]
+    } else {
+        Vec::new()
+    };
     let mut pre: Vec<String> = Vec::new();
     let mut changed = 1;
     let mut ret = 1;
@@ -141,11 +148,14 @@ pub fn _ps1234() -> i32 {
     while changed != 0 {
         changed = 0;
         // sh:13  formats with arg: %x{...}
-        if compset_p(r"%[DFK](\\|){[^}]#}") {
+        // master sh:14-15 add `H` (`%H{group}`) to both format classes.
+        let with_arg = if master { r"%[DFHK](\\|){[^}]#}" } else { r"%[DFK](\\|){[^}]#}" };
+        let normal = if master { r"%[0-9-\\]#[^DFHK(0-9-<>\\\[]" } else { r"%[0-9-\\]#[^DFK(0-9-<>\\\[]" };
+        if compset_p(with_arg) {
             changed = 1;
         }
         // sh:14  normal formats
-        if compset_p(r"%[0-9-\\]#[^DFK(0-9-<>\\\[]") {
+        if compset_p(normal) {
             changed = 1;
         }
         // sh:15  truncations
@@ -230,7 +240,15 @@ pub fn _ps1234() -> i32 {
         }
 
         // sh:45  if (( $#suf )) && compset -P "(<->|%v)"; then
-        if !suf.is_empty() && compset_p(r"(<->|%v)") {
+        // 5.9.2 sh:45 `(( $#suf ))`; master sh:46 `[[ $ISUFFIX != (\\|)}* ]]`
+        // (suf is never empty there any more).
+        let open = if master {
+            let isuffix = getsparam("ISUFFIX").unwrap_or_default();
+            !(isuffix.starts_with('}') || isuffix.starts_with("\\}"))
+        } else {
+            !suf.is_empty()
+        };
+        if open && compset_p(r"(<->|%v)") {
             // sh:47  _wanted ansi-colors expl 'closing brace' compadd -S '' \}
             if dfc(
                 "_wanted",
@@ -358,6 +376,20 @@ pub fn _ps1234() -> i32 {
         if dfc("_date_formats", &["zsh"], 101) == 0 {
             ret = 0;
         }
+    } else if master && compset_p(r"%H(\\|){") {
+        // master sh:102-104 — `%H{group}`: complete the highlight-group names.
+        if !compset_s(r"(\\|)}*") {
+            suf = vec!["-S".to_string(), format!("{}}}", bs)];
+        }
+        let mut argv: Vec<String> = ["highlight-groups", "expl", "highlight group", "compadd"]
+            .map(String::from)
+            .to_vec();
+        argv.extend(suf.clone());
+        argv.extend(["-k".to_string(), ".zle.hlgroups".to_string()]);
+        let owned: Vec<&str> = argv.iter().map(String::as_str).collect();
+        if dfc("_wanted", &owned, 104) == 0 {
+            ret = 0;
+        }
     } else if cond_psfix(&["%".to_string()], 0) != 0
         // sh:102 — `! zstyle -t … prefix-needed`, a VALUE test; see
         //   [`zstyle_t`].
@@ -445,6 +477,12 @@ pub fn _ps1234() -> i32 {
                 .into_iter()
                 .map(String::from),
             );
+        }
+        // master sh:159 — `'H{:use highlight group'` follows `E:`.
+        if master {
+            if let Some(i) = specs.iter().position(|s| s == "E:clear to end of line") {
+                specs.insert(i + 1, "H{:use highlight group".to_string());
+            }
         }
         // sh:169-170  _describe -t prompt-format-specifiers … specs -S '' $pre
         setaparam("specs", specs);
