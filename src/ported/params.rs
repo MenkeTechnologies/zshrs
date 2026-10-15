@@ -23006,7 +23006,7 @@ pub fn is_nameref(name: &str) -> bool {
 /// Raw scalar value of a (possibly hidden) param clone — the
 /// type-dispatch heart of `getstrvalue` (Src/params.c:2350-2382)
 /// without the VALFLAG_SUBST padding (refs to hidden bindings).
-fn param_scalar_value(pm: &param) -> Option<String> {
+pub(crate) fn param_scalar_value(pm: &param) -> Option<String> {
     let t = PM_TYPE(pm.node.flags as u32);
     if t == PM_INTEGER {
         let base = if pm.base > 0 { pm.base } else { 10 };

@@ -8823,7 +8823,17 @@ pub fn bin_typeset(
                         // c:Src/builtin.c:2299-2301 — a bare `export NAME` of a parameter that
                         // was never assigned (PM_UNSET) does not `addenv`; the environment
                         // entry appears with the first assignment.
-                        if let Some(val) = saved_val.as_deref().or((!was_fresh).then_some("")) {
+                        // c:2302 `addenv(pm, getsparam(pname))`: C's getsparam is
+                        // getstrvalue WITHOUT VALFLAG_SUBST, so a `-L`/`-R`/`-Z`
+                        // width never pads the exported text (`typeset -R5 w=ab;
+                        // typeset -x w` exports `ab`). zshrs's getsparam pads, so
+                        // read the parameter's raw value here.
+                        let raw_val = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get(arg).and_then(|pm| crate::ported::params::param_scalar_value(pm)));
+                        let export_val = saved_val.as_ref().map(|s| raw_val.unwrap_or_else(|| s.clone()));
+                        if let Some(val) = export_val.as_deref().or((!was_fresh).then_some("")) {
                             // c:Src/builtin.c typeset_single -> export_param
                             // (c:Src/params.c:2670) -> zputenv (c:5325), which
                             // hands the value to `setenv` as a NUL-TERMINATED C

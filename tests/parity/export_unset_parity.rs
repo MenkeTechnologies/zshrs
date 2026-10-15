@@ -93,6 +93,19 @@ mod export_basic {
     fn export_multiple_at_once() {
         assert_parity(r#"export A=1 B=2 C=3; sh -c 'echo $A $B $C'"#);
     }
+
+    /// c:Src/builtin.c:2302 `addenv(pm, getsparam(pname))` — getsparam is
+    /// getstrvalue without VALFLAG_SUBST, so a `-L`/`-R`/`-Z` width shapes
+    /// `$name` but never the exported text, nor the stored value that
+    /// `typeset -p` prints (B02typeset "Typesetting is cumulative").
+    #[test]
+    fn exporting_a_width_justified_parameter_exports_the_raw_value() {
+        assert_parity(
+            "typeset -R5 w=ab; typeset -x w; printenv w; typeset -p w; \
+             typeset -R5 v=\"\"; typeset -x v; typeset -p v; print -r -- \"[$v]\"; \
+             typeset -Z4 -i n=7; export n; printenv n; typeset -L3 q=abcdef; export q; printenv q",
+        );
+    }
 }
 
 mod export_listing {
