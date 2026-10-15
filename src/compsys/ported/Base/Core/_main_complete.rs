@@ -711,6 +711,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let quote = crate::ported::params::getsparam("compstate[quote]").unwrap_or_default();
     if quote.is_empty() {
         let prefix = getsparam("PREFIX").unwrap_or_default();
+        let emulating_592 = crate::extensions::emulation_startup::emulating_592();
+        // `'~['[^\]]#` (5.9.2 sh:97) / `\~\[[^]]#` (master sh:96): `~[` and a
+        // run of non-`]` characters only, i.e. the subscript is still open.
+        let open_subscript = prefix.starts_with("~[") && !prefix[2..].contains(']');
         // Instrumentation for the sh:96 guard. It is a byte test on the LIVE
         // `$PREFIX`, so it fails silently if the published value carries
         // anything ahead of the `~` that the shell's own `${(qq)PREFIX}`
@@ -734,14 +738,16 @@ pub fn _main_complete(args: &[String]) -> i32 {
             ) == 0
         {
             let _ = crate::ported::params::setsparam("compstate[context]", "equal");
-        } else if prefix.starts_with('~') && !prefix.contains('/') {
-            // sh:96 — BOTH halves of this guard gate the `~[` arm too: it is
-            // the `elif`'s body in the shell source, not a sibling branch.
-            // The port had the `~[` test as its own `else if` ahead of this
-            // one, so `~[/usr/lo` — which zsh leaves alone, `$PREFIX`
-            // containing a `/` — took the subscript path and got its first
-            // two characters eaten by `compset -p 2`.
-            if prefix.starts_with("~[") && !prefix[2..].contains(']') {
+        } else if prefix.starts_with('~')
+            && (!prefix.contains('/') || (!emulating_592 && open_subscript))
+        {
+            // 5.9.2 sh:96 — BOTH halves of this guard gate the `~[` arm too: it
+            // is the `elif`'s body in the shell source, not a sibling branch, so
+            // `~[/usr/lo` (a `/` in `$PREFIX`) is left alone there. Master
+            // (sh:96-104) tests `\~\[[^]]#` FIRST as its own `elif`, so an open
+            // `~[…` is subscript context whatever it contains, and the tilde
+            // arm is `\~[^/]#`.
+            if open_subscript {
                 // sh:97 — `[[ "$PREFIX" = '~['[^\]]# ]]`: `~[` followed by a
                 // run of NON-`]` characters and nothing else, i.e. the
                 // subscript is still OPEN. `starts_with("~[")` alone also
@@ -771,9 +777,14 @@ pub fn _main_complete(args: &[String]) -> i32 {
                 // reached `_subscript` only via `_complete`'s context lookup —
                 // which re-derives the context and applies the whole
                 // completer/tag machinery zsh deliberately skips here.
-                let sub = comps_entry("-subscript-");
-                if !sub.is_empty() && dispatch_function_call(&sub, &[]) == Some(0) {
-                    return 0;
+                //
+                // Master drops that line: the completer chain reaches the
+                // `-subscript-` completer through the context.
+                if emulating_592 {
+                    let sub = comps_entry("-subscript-");
+                    if !sub.is_empty() && dispatch_function_call(&sub, &[]) == Some(0) {
+                        return 0;
+                    }
                 }
             } else {
                 // sh:106  ~user
@@ -1307,6 +1318,11 @@ pub fn _main_complete(args: &[String]) -> i32 {
             let _ = setsparam("mesg", "");
             let mut zf_ops = make_ops();
             zf_ops.ind[b'f' as usize] = 1; // `-f` is a parsed flag (zutil.c:2151)
+            // master sh:369 `zformat -fq`: quote `%` in the `d:`/`D:` values so a
+            // description containing `%` is shown, not expanded. 5.9.2: `-f`.
+            if !crate::extensions::emulation_startup::emulating_592() {
+                zf_ops.ind[b'q' as usize] = 1;
+            }
             let _ = bin_zformat("zformat", &zf_argv, &zf_ops, 0);
             let mesg = getsparam("mesg").unwrap_or_else(|| warn_format.clone());
             let _ = bin_compadd("compadd", &["-x".to_string(), mesg], &make_ops(), 0);
