@@ -311,7 +311,7 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
     let mut cmdpath = lookupstyle(&format!(":completion:{}", curcontext), "command-path");
 
     // sh:63-66 — no style and a privilege prefix: PATH plus its sbin
-    // variants, de-duplicated, keeping directories only (`(/-N)`:
+    // variants, de-duplicated, keeping directories only (`(-/N)`:
     // directory after following symlinks, nullglob).
     let priv_prefix = getaparam("_comp_priv_prefix").unwrap_or_default();
     if cmdpath.is_empty() && !priv_prefix.is_empty() {

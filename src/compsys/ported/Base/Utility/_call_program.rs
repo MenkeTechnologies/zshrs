@@ -29,6 +29,12 @@
 //! sh:34  fi 2>&$err_fd
 //! ```
 //!
+//! That is zsh 5.9.2's body. Master replaces sh:7-17 with
+//! `zparseopts -A opth -D -F - l p q Q || return`: the flags combine, and
+//! `-q` / `-Q` pass `argv[2,-1]` / `argv[3,-1]` through `(q+)` so the `eval`
+//! sees them as literal words (`_open` uses `-q`). The port follows master;
+//! a drop-in run as `zsh` (emulating_592) keeps the single-flag parse.
+//!
 //! Runs the helper through the SHELL'S OWN `eval` (sh:28/30/33), so the
 //! helper sees this shell's functions, aliases, options and parameters, and
 //! a missing command is reported by zsh with zsh's status:
@@ -50,6 +56,16 @@ use crate::ported::params::getsparam;
 use std::env;
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
+
+/// Empty builtin `options` for the direct `bin_zparseopts` call.
+fn make_ops() -> crate::ported::zsh_h::options {
+    crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
 
 /// `_call_program` — run a helper command. First arg is the style key
 /// suffix; flags `-p` (privileged) and `-l` (skip locale reset) come first.
@@ -136,51 +152,84 @@ fn command_line(args: &[String]) -> Option<(Vec<String>, bool, u64)> {
     // sh:5 `local -a prefix`
     let mut prefix: Vec<String> = Vec::new();
 
-    // sh:7-17  flag parse
-    if let Some(first) = argv.first() {
-        if first == "-p" {
-            // sh:8  shift
-            argv.remove(0);
-            // sh:9  if (( $#_comp_priv_prefix )); then
-            let priv_prefix =
-                crate::ported::params::getaparam("_comp_priv_prefix").unwrap_or_default();
-            if !priv_prefix.is_empty() {
-                // sh:10  curcontext="${curcontext%:*}/${…[1]}:"
-                //
-                // Note the TRAILING colon: sh:26 appends `:${1}` to this, so
-                // the privileged context carries an empty component and reads
-                // `:completion:<ctx-head>/sudo::<tag>`. Both the
-                // `gain-privileges` lookup below and the `command` lookup at
-                // sh:26 use it — the manual says so: "When looking up the
-                // gain-privileges and command styles, the command component
-                // of the zstyle context will end with a slash ("/") followed
-                // by the command that would be used to gain privileges."
-                let head = match curcontext.rfind(':') {
-                    Some(i) => &curcontext[..i], // `${curcontext%:*}`
-                    None => curcontext.as_str(),
-                };
-                curcontext = format!("{}/{}:", head, priv_prefix_command(&priv_prefix));
-                // sh:11-12  zstyle -t ":completion:${curcontext}:${1}" \
-                //             gain-privileges && prefix=( $_comp_priv_prefix )
-                //
-                // `zstyle -t` is true only at status 0; 1 (set but not true)
-                // and 2 (unset) both leave `prefix` empty, which is why this
-                // is `zstyle_t`, not `zstyle_T`.
-                if let Some(tag) = argv.first() {
-                    let gp_ctx = format!(":completion:{}:{}", curcontext, tag);
-                    if crate::compsys::ported::shared::zstyle_t(&gp_ctx, "gain-privileges") == 0 {
-                        prefix = priv_prefix;
-                    }
+    // master sh:8 — `zparseopts -A opth -D -F - l p q Q || return`: any mix
+    // of the four flags, run through the real `bin_zparseopts`. zsh 5.9.2
+    // (sh:7-17) took ONE leading `-p` or `-l`; a drop-in run as `zsh` keeps that.
+    let mut opts: Vec<String> = Vec::new();
+    if crate::extensions::emulation_startup::emulating_592() {
+        if matches!(argv.first().map(String::as_str), Some("-p") | Some("-l")) {
+            opts.push(argv.remove(0));
+        }
+    } else {
+        let src = "__compsys_argv";
+        crate::compsys::ported::shared::declare_locals(&["opth"], crate::ported::zsh_h::PM_HASHED);
+        crate::compsys::ported::shared::set_bridge_argv(src, &argv);
+        let zpo = ["-A", "opth", "-D", "-F", "-v", src, "-", "l", "p", "q", "Q"].map(String::from);
+        let rc = crate::ported::modules::zutil::bin_zparseopts("zparseopts", &zpo, &make_ops(), 0);
+        argv = crate::ported::params::getaparam(src).unwrap_or_default();
+        crate::ported::params::unsetparam(src);
+        if rc != 0 {
+            return None; // sh:8 `|| return`
+        }
+        opts = crate::ported::params::gethkparam("opth").unwrap_or_default();
+    }
+    let has = |o: &str| opts.iter().any(|k| k == o);
+    // sh:10 — `(( $+opth[-l] )) && clocale=`
+    if has("-l") {
+        use_locale = false;
+    }
+    // sh:18-25 — `-q` quotes `argv[2,-1]`, `-Q` quotes `argv[3,-1]`, each word
+    // with `(q+)`, so the `eval` at sh:39/44 re-parses them as literal words.
+    // Index into `argv` (0 is the style tag).
+    let quote_from = if has("-q") {
+        Some(1)
+    } else if has("-Q") {
+        Some(2)
+    } else {
+        None
+    };
+    if has("-p") {
+        // sh:15  if (( $+opth[-p] && $#_comp_priv_prefix )); then
+        let priv_prefix =
+            crate::ported::params::getaparam("_comp_priv_prefix").unwrap_or_default();
+        if !priv_prefix.is_empty() {
+            // sh:10  curcontext="${curcontext%:*}/${…[1]}:"
+            //
+            // Note the TRAILING colon: sh:26 appends `:${1}` to this, so
+            // the privileged context carries an empty component and reads
+            // `:completion:<ctx-head>/sudo::<tag>`. Both the
+            // `gain-privileges` lookup below and the `command` lookup at
+            // sh:26 use it — the manual says so: "When looking up the
+            // gain-privileges and command styles, the command component
+            // of the zstyle context will end with a slash ("/") followed
+            // by the command that would be used to gain privileges."
+            let head = match curcontext.rfind(':') {
+                Some(i) => &curcontext[..i], // `${curcontext%:*}`
+                None => curcontext.as_str(),
+            };
+            curcontext = format!("{}/{}:", head, priv_prefix_command(&priv_prefix));
+            // sh:11-12  zstyle -t ":completion:${curcontext}:${1}" \
+            //             gain-privileges && prefix=( $_comp_priv_prefix )
+            //
+            // `zstyle -t` is true only at status 0; 1 (set but not true)
+            // and 2 (unset) both leave `prefix` empty, which is why this
+            // is `zstyle_t`, not `zstyle_T`.
+            if let Some(tag) = argv.first() {
+                let gp_ctx = format!(":completion:{}:{}", curcontext, tag);
+                if crate::compsys::ported::shared::zstyle_t(&gp_ctx, "gain-privileges") == 0 {
+                    prefix = priv_prefix;
                 }
             }
-        } else if first == "-l" {
-            argv.remove(0);
-            use_locale = false;
         }
     }
 
     if argv.is_empty() {
         return None;
+    }
+    if let Some(from) = quote_from {
+        for w in argv.iter_mut().skip(from) {
+            *w = crate::ported::utils::quotedzputs(w); // `(q+)`, c:Src/subst.c:4063
+        }
     }
 
     // sh:26  if zstyle -s ":completion:${curcontext}:${1}" command tmp; then
