@@ -2408,6 +2408,9 @@ pub fn zshrs_main() {
         if is_ksh_mode() {
             executor.enter_ksh_mode();
         }
+        // The `emulate` calls above reset the whole option table, so the
+        // drop-in's own deltas (set once at mode selection) go back on top.
+        zsh::emulation_startup::apply_personality_option_deltas();
         if xtrace {
             zsh::ported::options::opt_state_set("xtrace", true);
         }

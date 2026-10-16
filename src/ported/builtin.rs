@@ -14531,7 +14531,14 @@ pub fn bin_getopts(
         }
     } else {
         // c:5784 — `zsfree(zoptarg); zoptarg = ztrdup("");`
-        setsparam("OPTARG", "");
+        // !!! BASH/KORN GATE (no C counterpart) !!! bash, ksh93 and mksh leave
+        // `$OPTARG` UNSET after an option that takes no argument; zsh and dash
+        // set it to the empty string.
+        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+            crate::ported::params::unsetparam("OPTARG");
+        } else {
+            setsparam("OPTARG", "");
+        }
     }
 
     // c:5788 — `setsparam(var, metafy(optbuf, lenoptbuf, META_DUP));`
@@ -14608,6 +14615,12 @@ pub fn bin_break(
             // count to the loop nest and returns 0: `break` / `continue` outside a
             // loop (or with count 0) is a silent no-op, not an error.
             if crate::dash_mode::dash_faithful() && (num == 0 || loops == 0) {
+                return 0;
+            }
+            // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! bash, ksh93, mksh and
+            // /bin/sh also treat `break` / `continue` outside a loop as a no-op
+            // returning 0 (bash only warns); a non-positive count stays an error.
+            if crate::dash_mode::posix_faithful() && num > 0 && loops == 0 {
                 return 0;
             }
             if num <= 0 {
@@ -21852,7 +21865,7 @@ fn parse_int_arg(s: &str) -> i64 {
     // shell exactly. `--... --zsh` and runtime `emulate sh` leave
     // posix_faithful() false and keep zsh's math-eval semantics.
     if crate::dash_mode::posix_faithful()
-        && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
+        && (crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH) || crate::dash_mode::pdksh_family())
     {
         if s.is_empty() {
             return 0; // dash: empty operand → 0, exit 0 (no error)

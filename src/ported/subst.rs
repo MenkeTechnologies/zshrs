@@ -16377,6 +16377,10 @@ pub fn paramsubst(
         } else {
             (raw_value, is_set)
         };
+        let is_set = is_set && !crate::dash_mode::at_star_unset_without_args(
+            &var_name,
+            arrays_get("@").is_none_or(|a| a.is_empty()),
+        );
         // c:Src/subst.c:3442-3445 / 3460-3463 — `if (flags & SUB_EGLOB)
         // opts[EXTENDEDGLOB] = 1; getmatch…(); opts[EXTENDEDGLOB] = eglob;`:
         // the `(*)` flag turns extended globbing on for the pattern of the

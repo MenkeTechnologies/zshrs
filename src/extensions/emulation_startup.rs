@@ -567,6 +567,9 @@ pub fn apply_personality_option_deltas() {
     // plus its clear-to-end-of-line padding is the most visible thing on
     // the screen, so it is off for all of them.
     opt_state_set("promptsp", false);
+    // EVERY drop-in: `$OPTARG` starts unset (`${OPTARG+set}` is empty in bash,
+    // ksh93, mksh, dash and /bin/sh). zsh pre-declares it as an empty scalar.
+    crate::ported::params::unsetparam("OPTARG");
     if p != Personality::Bash {
         return;
     }

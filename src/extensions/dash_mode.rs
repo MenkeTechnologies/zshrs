@@ -3602,3 +3602,14 @@ pub fn dash_test(name: &str, args: &[String]) -> i32 {
     }
     i32::from(status)
 }
+
+/// True when `name` is `@` / `*` with NO positional parameters, in a drop-in
+/// that counts that as UNSET for the `-` / `+` / `=` / `?` operators: bash,
+/// ksh93 and mksh answer `${@-x}` → `x` and `${@+x}` → empty after `set --`.
+/// dash treats `$@` as set (`${@-x}` empty, `${@+x}` → `x`), as does zsh, so
+/// both keep the stock behavior.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn at_star_unset_without_args(name: &str, no_args: bool) -> bool {
+    matches!(name, "@" | "*") && no_args && (bash_mode() || korn_mode())
+}

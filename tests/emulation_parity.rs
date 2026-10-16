@@ -2152,6 +2152,38 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     "set -A a x y z; unset 'a[2]'; set -A a p q r s; print -r -- \"${#a[@]} ${a[*]}\"",
 ];
 
+/// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
+/// the same way and zsh does not: zsh predeclares `OPTARG`, and refuses
+/// `break` / `continue` outside a loop.
+const REAL_SHELL_CORPUS: &[&str] = &[
+    "echo \"[${OPTARG+set}]\"",
+    "echo \"[${OPTARG-unset}]\"",
+    "break; echo after=$?",
+    "continue; echo after=$?",
+    "f() { break; echo in=$?; }; f; echo out=$?",
+    "for i in 1 2; do echo $i; break; done; echo done",
+];
+
+/// bash, ksh93 and mksh count `$@` / `$*` with no positional parameters as
+/// UNSET for `-` / `+` (dash and zsh count them as set), and leave `OPTARG` unset
+/// after a `getopts` option that takes no argument (dash and zsh set it empty).
+const BASH_KORN_CORPUS: &[&str] = &[
+    "set -- -a x; getopts a o; echo \"$o [${OPTARG+set}]\"",
+    "set --; printf '[%s]' \"${@-x}\"; printf '\\n'",
+    "set --; printf '[%s]' \"${*-y}\"; printf '\\n'",
+    "set --; printf '[%s]' \"${@+x}\"; printf '\\n'",
+    "set --; printf '[%s]' \"${*+y}\"; printf '\\n'",
+    "set --; printf '[%s]' \"${@:-x}\" \"${*:-y}\"; printf '\\n'",
+    "set -- a; printf '[%s]' \"${@-x}\" \"${*+y}\"; printf '\\n'",
+];
+
+/// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
+/// (strtol base 0), though its arithmetic does not.
+const PDKSH_CORPUS: &[&str] = &[
+    "printf '%d\\n' 010 0x1f 7",
+    "echo $((010))",
+];
+
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
 /// `bad option` with status 1 (Src/builtin.c:123 / :109).
 const ZSH_BAD_OPTION_CORPUS: &[&str] = &[
@@ -3676,7 +3708,10 @@ fn emulation_parity_matrix() {
                 .chain(if case.name == "zsh" { ZSH_ONLY_CORPUS } else { &[] })
                 .chain(if case.name == "zsh" { ZSH_BAD_OPTION_CORPUS } else { &[] })
                 .chain(if matches!(case.name, "bash" | "ksh") { BASH_KSH_CORPUS } else { &[] })
-                .chain(if case.name == "ksh" { KSH_ONLY_CORPUS } else { &[] });
+                .chain(if case.name == "ksh" { KSH_ONLY_CORPUS } else { &[] })
+                .chain(if case.ref_emulate.is_none() && case.name != "zsh" { REAL_SHELL_CORPUS } else { &[] })
+                .chain(if matches!(case.name, "bash" | "ksh" | "mksh") { BASH_KORN_CORPUS } else { &[] })
+                .chain(if matches!(case.name, "mksh" | "pdksh") { PDKSH_CORPUS } else { &[] });
         for script in corpus {
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {
