@@ -4646,6 +4646,10 @@ pub fn bin_kill(
     if idx >= argv.len() {
         // c:3010
         zwarnnam(nam, "not enough arguments"); // c:3011
+        // bash, dash, ash and ksh93 answer a usage error with 2 (mksh keeps 1).
+        if crate::dash_mode::posix_faithful() && !crate::dash_mode::pdksh_family() {
+            return 2;
+        }
         return 1;
     }
 

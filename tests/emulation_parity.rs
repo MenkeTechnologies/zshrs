@@ -1701,6 +1701,7 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "set -o nosuchopt_zz 2>/dev/null; echo $?; echo after",
     "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
     // `${!#}` is indirection through `$#`: the LAST positional.
     "set -- a b c; printf '[%s]' \"${!#}\"; printf '\\n'",
@@ -2017,6 +2018,9 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
+    "kill -9 2>/dev/null; echo $?",
+    "echo $((0b11)) 2>/dev/null; echo $?",
+    "alias 'z z=x' 2>/dev/null; echo $?",
     // A lone `-` is an ordinary `echo` argument (zsh's option parser eats it).
     "echo -",
     "echo - a",
@@ -2162,6 +2166,7 @@ const KSH_ONLY_CORPUS: &[&str] = &[
 /// the same way and zsh does not: zsh predeclares `OPTARG`, and refuses
 /// `break` / `continue` outside a loop.
 const REAL_SHELL_CORPUS: &[&str] = &[
+    "echo [$!]",
     "echo \"[${OPTARG+set}]\"",
     "echo \"[${COLUMNS+c}${LINES+l}]\"",
     "echo \"[${OPTARG-unset}]\"",
@@ -2194,6 +2199,8 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "echo $((0b11)) 2>/dev/null; echo $?",
+    "alias 'z z=x' 2>/dev/null; echo $?",
     "printf '%d\\n' 010 0x1f 7",
     "echo $((010))",
     // A read-only violation is status 2 in mksh, 1 for the other fatal shapes.
@@ -2215,6 +2222,9 @@ const PDKSH_CORPUS: &[&str] = &[
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
 /// form is ONE empty word (bash, ksh and mksh drop it).
 const DASH_FAMILY_CORPUS: &[&str] = &[
+    "kill -9 2>/dev/null; echo $?",
+    "echo $((0b11)) 2>/dev/null; echo $?",
+    "d=$(mktemp -d); cd $d; touch .h a; echo .*; echo *; cd /; rm -rf $d",
     "set --; f() { echo $#; }; f \"${@-x}\"; f \"${@-}\"; f \"${@:-x}\"; f \"${@+x}\"; f ${@-x}",
     "set --; f() { echo $#; }; f \"${*-x}\" \"${@}\" \"${@}\" \"${@-x}\"",
     "set -- a b; f() { echo $#; }; f \"${@-x}\"",

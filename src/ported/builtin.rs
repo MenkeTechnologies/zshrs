@@ -1510,6 +1510,12 @@ pub fn bin_set(
                     // failed lookup (C's execbuiltin checks errflag
                     // after the call; zshrs's bridge bases on the
                     // return value).
+                    // bash: `set -o BAD` is a plain status-2 failure, not a fatal error.
+                    if crate::dash_mode::bash_mode() {
+                        zwarnnam(nam, &format!("{}: invalid option name", optname));
+                        unqueue_signals();
+                        return 2;
+                    }
                     zerrnam(nam, &format!("no such option: {}", optname));
                     unqueue_signals();
                     return 1;
@@ -12964,6 +12970,19 @@ pub fn bin_alias(
             if !OPT_ISSET(ops, b'L') {
                 // c:4524
                 let n = &arg[..eq];
+                // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! bash, ksh93 and mksh
+                // refuse an alias name holding whitespace, `/`, `$`, quotes or shell
+                // metacharacters ("invalid alias name", status 1); zsh takes any name.
+                if crate::dash_mode::posix_faithful()
+                    && !crate::dash_mode::dash_faithful()
+                    && n.chars().any(|c| {
+                        c.is_whitespace() || "/$`\"'\\|&;()<>".contains(c)
+                    })
+                {
+                    zwarnnam(name, &format!("`{n}': invalid alias name"));
+                    returnval = 1;
+                    continue;
+                }
                 let v = &arg[eq + 1..];
                 let lock = if use_suffix {
                     sufaliastab_lock()
@@ -13425,6 +13444,16 @@ pub fn bin_print(
                 let _ = std::io::stdout().flush();
                 // c:5435 invalid directive / c:5204 argument specifier
                 // out of range — `msg` carries the full zwarnnam text.
+                // c:5419 hands the format fragment to zwarnnam as a `%s` argument,
+                // and zerrmsg prints `%s` through nicezputs: a newline the format
+                // escape pass produced shows as `\n`.
+                let msg = match msg.strip_suffix(": invalid directive") {
+                    Some(frag) => format!(
+                        "{}: invalid directive",
+                        crate::ported::utils::nicedup(frag, 0)
+                    ),
+                    None => msg,
+                };
                 crate::ported::utils::zwarnnam(name, &msg);
                 // dash's printf reports a bad directive as status 2.
                 if crate::dash_mode::dash_faithful() {

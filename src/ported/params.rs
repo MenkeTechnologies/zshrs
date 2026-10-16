@@ -18237,9 +18237,9 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // canonical store like the C getter does.
             let pid =
                 crate::ported::modules::clone::lastpid.load(std::sync::atomic::Ordering::Relaxed);
-            // bash(1): `$!` is unset until a background job has been started
-            // (expands to ""); zsh's `lastpid` reads 0 there.
-            if pid == 0 && crate::dash_mode::bash_mode() {
+            // bash, dash, ksh93 and mksh: `$!` is unset until a background job has been
+            // started (expands to ""); zsh's `lastpid` reads 0 there.
+            if pid == 0 && crate::dash_mode::posix_faithful() {
                 return Some(String::new());
             }
             Some(pid.to_string())

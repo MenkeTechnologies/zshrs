@@ -1142,8 +1142,9 @@ pub(crate) fn lexconstant() -> i32 {
             // !!! DASH-STRICT GATE !!! `0b` binary literals are a zsh/bash(4+)
             // extension; real dash/ash reject them (POSIX has only decimal /
             // `0` octal / `0x` hex). Under --dash/--ash the `b` is left
-            // unconsumed so `0b101` errors on the stray `b`, matching dash.
-            Some('b') if !crate::dash_mode::dash_strict() => {
+            // unconsumed so `0b101` errors on the stray `b`, matching dash. bash, ksh93
+            // and mksh reject it too, so every real-shell drop-in leaves it unconsumed.
+            Some('b') if !crate::dash_mode::dash_strict() && !crate::dash_mode::posix_faithful() => {
                 // Binary: 0b1010
                 advance();
                 // c:Src/math.c:468 — `zstrtol_underscore(ptr, &ptr, 0, 1)`; its
