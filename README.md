@@ -1131,6 +1131,18 @@ of any lineage does.
 ### CLI flags
 
 ```sh
+zshrs --doctor               # full diagnostic report: shell health, caches,
+                             # performance (not available in the --zsh /
+                             # --posix drop-ins)
+zshrs --doctor --json        # the same report as one JSON object
+zshrs --banner               # logo, version, builtin totals, daemon status
+zshrs --dump-tokens FILE     # one TOKNAME<tab>TOKSTR line per lexer token
+zshrs --dump-ast FILE        # parser AST as a canonical S-expression
+zshrs --dump-wordcode FILE   # wordcode emitter output (EPROG / WORDS / WC[i] / STRS)
+zshrs --dump-zwc ZWCFILE [FN]  # inspect a compiled .zwc (list, or one function)
+                             # FILE may be `-` for stdin on the dumpers above
+zshrs --disasm ...           # print fusevm opcodes for each compiled unit
+                             # before the VM runs it (execution continues)
 zshrs --lsp                  # LSP server over stdio
 zshrs --dap HOST:PORT        # DAP debugger; TCP connect-back to IDE listener
 zshrs --dap                  # DAP debugger over stdio (executable-spawned clients)
@@ -1170,9 +1182,10 @@ zshrs --fmt [-w] [-t] [-i N] [FILE…]
                              # 4); -t indents with tabs
 ```
 
-All six flags dispatch from `bins/zshrs.rs` into `src/extensions/lsp.rs`,
-`src/extensions/dap.rs`, and `src/extensions/plugin_cache.rs`. The LSP and
-DAP modules are dependency-free additions
+The editor-integration flags (`--lsp`, `--dap`, `--dump-reflection`,
+`--dump-plugins`, `--docs`, `--fmt`) dispatch from `bins/zshrs.rs` into
+`src/extensions/lsp.rs`, `dap.rs`, `plugin_cache.rs`, `docs_book.rs` and
+`fmt.rs`. The LSP and DAP modules are dependency-free additions
 (no `lsp-server` / `lsp-types` / `dap-types` crates) — Content-Length
 framing + JSON-RPC are hand-rolled on top of `serde_json` to keep the
 default build lean.
