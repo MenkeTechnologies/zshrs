@@ -3557,7 +3557,7 @@ pub fn bin_fg(
     if (func == BIN_FG || func == BIN_BG) && !jobbing {
         // c:2474
         zwarnnam(name, "no job control in this shell"); // c:2476 (54584)
-        return 1; // c:2477
+        return crate::dash_mode::fatal_error_status().unwrap_or(1); // c:2477 (dash: 2)
     }
 
     // c:2467 — `queue_signals();`
@@ -3793,7 +3793,7 @@ pub fn bin_fg(
                 // c:2494
                 zwarnnam(name, "no current job"); // c:2495
                 unqueue_signals();
-                return 1; // c:2497
+                return crate::dash_mode::fatal_error_status().unwrap_or(1); // c:2497 (dash: 2)
             }
             // c:2514 `firstjob = curjob` → the job loop's first test.
             // c:2587-2591 — a subshell may list its parent's jobs but not

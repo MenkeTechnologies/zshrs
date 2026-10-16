@@ -619,6 +619,11 @@ pub fn apply_personality_param_deltas() {
     // EVERY drop-in: `$OPTARG` starts unset (`${OPTARG+set}` is empty in bash,
     // ksh93, mksh, dash and /bin/sh). zsh pre-declares it as an empty scalar.
     crate::ported::params::unsetparam("OPTARG");
+    // zsh's `which` is a builtin; no other shell has one, so the word resolves to
+    // the external `which`.
+    if let Ok(mut disabled) = crate::ported::builtin::BUILTINS_DISABLED.lock() {
+        disabled.insert("which".to_string());
+    }
     // zsh's `$OSTYPE` / `$MACHTYPE` are not set by dash, ksh93 or the pdksh
     // line, and only mksh sets `$COLUMNS` / `$LINES` outside a terminal.
     if !matches!(p, Personality::Bash | Personality::Sh) {

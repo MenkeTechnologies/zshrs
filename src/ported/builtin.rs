@@ -11845,7 +11845,7 @@ pub fn bin_whence(
                     println!(
                         "{} is a {}",
                         arg,
-                        if crate::dash_mode::dash_faithful() {
+                        if crate::dash_mode::dash_faithful() || crate::dash_mode::bash_mode() {
                             "shell keyword"
                         } else if crate::dash_mode::ksh93_mode() {
                             "keyword"
@@ -14659,11 +14659,21 @@ pub fn bin_break(
         // c:5816 — mathevali reports a bad expression itself (zerr, which
         // sets errflag), so the `argument is not positive` zerrnam below is
         // then suppressed; the Rust mathevali hands the message back instead.
-        num = match mathevali(&argv[0]) {
-            Ok(n) => n as i32,
-            Err(msg) => {
-                zerr(&msg);
-                0
+        // bash: a non-numeric `exit` / `return` operand is "numeric argument
+        // required", status 2 (zsh evaluates it as arithmetic: `abc` is 0).
+        let bash_nonnumeric = crate::dash_mode::bash_mode()
+            && (func == BIN_EXIT || func == BIN_RETURN)
+            && argv[0].trim().trim_start_matches(['+', '-']).parse::<u64>().is_err();
+        num = if bash_nonnumeric {
+            zwarnnam(name, &format!("{}: numeric argument required", argv[0]));
+            2
+        } else {
+            match mathevali(&argv[0]) {
+                Ok(n) => n as i32,
+                Err(msg) => {
+                    zerr(&msg);
+                    0
+                }
             }
         }; // c:5816
         nump = 1; // c:5817
@@ -18754,7 +18764,7 @@ pub fn bin_umask(
             Ok(n) => um = n, // c:7530
             Err(_) => {
                 zwarnnam(nam, "bad umask"); // c:7532
-                return 1; // c:7533
+                return crate::dash_mode::fatal_error_status().unwrap_or(1); // c:7533 (dash: 2)
             }
         }
     } else {
@@ -21239,6 +21249,18 @@ fn printf_format(
             if let Some(&m) = iter.peek() {
                 if matches!(m, 'l' | 'L' | 'h') && !crate::dash_mode::dash_strict() {
                     raw.push(m); // c:5290 — `c++` past the modifier; `start` still covers it
+                    iter.next();
+                }
+            }
+            // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! bash and ksh93 skip any run of
+            // length modifiers (`%lld`, `%hhd`, `%zd`, `%jd`, `%td`); zsh errors on the
+            // second one.
+            if crate::dash_mode::posix_faithful() && !crate::dash_mode::dash_strict() {
+                while let Some(&m) = iter.peek() {
+                    if !matches!(m, 'l' | 'L' | 'h' | 'z' | 'j' | 't') {
+                        break;
+                    }
+                    raw.push(m);
                     iter.next();
                 }
             }

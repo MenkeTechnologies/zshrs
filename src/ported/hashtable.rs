@@ -2954,7 +2954,16 @@ pub fn printreswdnode(hn: &reswd, printflags: i32) {
     }
     // c:1161-1164 — PRINT_WHENCE_VERBOSE branch.
     if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
-        println!("{} is a reserved word", hn.node.nam); // c:1162
+        // !!! DROP-IN GATE (no C counterpart) !!! bash and dash say "shell keyword",
+        // ksh93 "keyword"; zsh and mksh say "reserved word".
+        let kind = if crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful() {
+            "a shell keyword"
+        } else if crate::dash_mode::ksh93_mode() {
+            "a keyword"
+        } else {
+            "a reserved word"
+        };
+        println!("{} is {}", hn.node.nam, kind); // c:1162
         return; // c:1163
     }
     // c:1166-1167 — default: name only.

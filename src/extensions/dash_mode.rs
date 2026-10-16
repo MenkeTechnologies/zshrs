@@ -345,8 +345,14 @@ pub fn dash_echo_octal_normalize(s: &str) -> String {
             let digits: String = b[i + 2..].iter().take(3).take_while(|c| c.is_digit(8)).collect();
             out.push_str(&format!("\\{:0>3}", digits));
             i += 2 + digits.len();
-        } else {
+        } else if "abcfnrtv\\".contains(b[i + 1]) || b[i + 1].is_digit(8) {
             out.push('\\');
+            out.push(b[i + 1]);
+            i += 2;
+        } else {
+            // `\x41`, `\e`, `\u00e9`, … : dash's echo has no such escape, so the
+            // backslash is printed as written.
+            out.push_str("\\\\");
             out.push(b[i + 1]);
             i += 2;
         }
@@ -3147,7 +3153,7 @@ pub fn dash_ulimit(argv: &[String]) -> i32 {
     0
 }
 
-/// Double the backslash of every `\c` and `\x` in a printf format so zsh's
+/// Double the backslash of every `\c`, `\x`, `\e`, `\u` in a printf format so zsh's
 /// `getkeystring` (which reads `\c` as "stop output" and `\xNN` as a byte) emits
 /// them literally, as dash's printf does. An already-escaped `\\` pair is
 /// passed through.
@@ -3162,7 +3168,7 @@ pub fn dash_printf_keep_backslash_c(fmt: &str) -> String {
             continue;
         }
         match chars.next() {
-            Some(k @ ('c' | 'x')) => {
+            Some(k @ ('c' | 'x' | 'e' | 'E' | 'u' | 'U')) => {
                 out.push_str("\\\\");
                 out.push(k);
             }

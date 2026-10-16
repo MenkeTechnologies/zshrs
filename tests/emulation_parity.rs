@@ -1701,6 +1701,9 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "(exit abc) 2>/dev/null; echo $?",
+    "f() { return abc; }; f 2>/dev/null; echo $?",
+    "type if",
     "export X=1; export -n X; env | grep -c '^X='; echo $X",
     "set -o nosuchopt_zz 2>/dev/null; echo $?; echo after",
     "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
@@ -2019,6 +2022,7 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
+    "printf '%ld %lld %hhd %zd|\\n' 1 2 3 4",
     "select x in a b; do break; done 2>/dev/null </dev/null; echo $?",
     "kill -9 2>/dev/null; echo $?",
     "echo $((0b11)) 2>/dev/null; echo $?",
@@ -2054,6 +2058,7 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "type if",
     "f() { local a=1; echo \"[$a]\"; echo rc=$?; }; f",
     "set -- a b; shift -1; echo no",
     "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
@@ -2170,6 +2175,7 @@ const KSH_ONLY_CORPUS: &[&str] = &[
 /// the same way and zsh does not: zsh predeclares `OPTARG`, and refuses
 /// `break` / `continue` outside a loop.
 const REAL_SHELL_CORPUS: &[&str] = &[
+    "which echo | head -1",
     "echo [$!]",
     "echo \"[${OPTARG+set}]\"",
     "echo \"[${COLUMNS+c}${LINES+l}]\"",
@@ -2228,6 +2234,8 @@ const PDKSH_CORPUS: &[&str] = &[
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
 /// form is ONE empty word (bash, ksh and mksh drop it).
 const DASH_FAMILY_CORPUS: &[&str] = &[
+    "fg 2>/dev/null; echo $?",
+    "umask 999 2>/dev/null; echo $?",
     "kill -9 2>/dev/null; echo $?",
     "echo $((0b11)) 2>/dev/null; echo $?",
     "d=$(mktemp -d); cd $d; touch .h a; echo .*; echo *; cd /; rm -rf $d",
@@ -2243,6 +2251,9 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    "echo \"\\x41|\\101|\\0101|\\e|a\\cb\"",
+    "printf '\\e[0m\\n' | od -c | head -1",
+    "type if",
     "set -o pipefail 2>/dev/null; echo after",
     "set -o noglob; echo ok",
     "printf '\\x41|\\101|a\\cb\\n'; echo",
