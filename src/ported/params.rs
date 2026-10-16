@@ -18226,6 +18226,9 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             )
         }
         "$" => Some(mypid.load(std::sync::atomic::Ordering::Relaxed).to_string()), // c:353 IPDEF4("$", &mypid)
+        // !!! BASH-MODE (no C counterpart) !!! `$BASHPID` is the PID of the process
+        // evaluating it (a subshell's own, where `$$` stays the parent's).
+        "BASHPID" if crate::dash_mode::bash_mode() => Some(std::process::id().to_string()),
         "!" => {
             // c:Src/params.c:345 IPDEF4("!", &lastpid) — `$!` reads
             // directly from the `lastpid` atomic (Src/jobs.c:73).

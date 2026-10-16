@@ -675,6 +675,10 @@ pub fn execbuiltin(
                 if crate::dash_mode::dash_faithful() {
                     return 2;
                 }
+                // ksh93's `ulimit` usage error is 2 as well.
+                if crate::dash_mode::ksh93_mode() && name == "ulimit" {
+                    return 2;
+                }
                 return 1; // c:393
             }
             // c:395 — `arg = *++argv;`
@@ -1978,6 +1982,18 @@ pub fn bin_cd(
     if isset(crate::ported::zsh_h::RESTRICTED) {
         zwarnnam(nam, "restricted"); // c:845
         return 1; // c:846
+    }
+    // !!! BASH/KSH GATE (no C counterpart) !!! `cd ''` is an error (status 1) and bash
+    // refuses two operands (status 2); zsh treats `cd old new` as a substitution.
+    if func == BIN_CD && crate::dash_mode::posix_faithful() {
+        if argv.first().is_some_and(|a| a.is_empty()) {
+            zwarnnam(nam, "null directory");
+            return 1;
+        }
+        if crate::dash_mode::bash_mode() && argv.len() > 1 {
+            zwarnnam(nam, "too many arguments");
+            return 2;
+        }
     }
     // c:844 — `doprintdir = (doprintdir == -1);`
     let prev = DOPRINTDIR.load(Relaxed);
@@ -11793,7 +11809,19 @@ pub fn bin_whence(
                 .filter(|_| crate::dash_mode::aliases_visible())
                 .and_then(|t| t.get(arg).map(|a| a.clone()));
             if let Some(a) = alias_text {
-                printaliasnode(&a, aliasflags); // c:4094
+                if nam == "command" && crate::dash_mode::ksh93_mode() {
+                    // ksh93's `command -v ALIAS` prints the alias value alone.
+                    println!("{}", a.text);
+                } else if nam == "command" && crate::dash_mode::dash_faithful() {
+                    // dash prints the reusable `alias NAME='value'` form.
+                    println!(
+                        "alias {}={}",
+                        a.node.nam,
+                        crate::extensions::emulation_startup::single_quote(&a.text)
+                    );
+                } else {
+                    printaliasnode(&a, aliasflags); // c:4094
+                }
                 informed = 1; // c:4095
                 if !all {
                     continue;

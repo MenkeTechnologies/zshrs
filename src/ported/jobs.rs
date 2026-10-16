@@ -4311,6 +4311,30 @@ pub fn bin_kill(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `kill` has no `-SIGNAME` /
+    // `-n` forms and takes only decimal pids or %jobs; anything else is a fatal
+    // "Illegal option" / "Illegal number" (status 2, the script goes on).
+    if crate::dash_mode::dash_faithful() && !argv.iter().any(|a| a == "-l" || a == "-L") {
+        let mut i = 0usize;
+        while i < argv.len() && argv[i].starts_with('-') && argv[i].len() > 1 {
+            let b = &argv[i][1..];
+            if b == "-" {
+                i += 1;
+                break;
+            }
+            if b.starts_with("SIG") || b == "n" {
+                zwarnnam(nam, &format!("Illegal option -{}", &b[..1]));
+                return 2;
+            }
+            i += if b == "s" { 2 } else { 1 };
+        }
+        for a in argv.iter().skip(i) {
+            if !a.starts_with('%') && a.parse::<i64>().is_err() {
+                zwarnnam(nam, &format!("Illegal number: {}", a));
+                return 2;
+            }
+        }
+    }
     let mut sig: i32 = libc::SIGTERM; // c:2774
     let mut returnval: i32 = 0; // c:2775
     let mut got_sig = false; // c:2780

@@ -1701,6 +1701,7 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "cd /tmp; cd a b 2>/dev/null; echo $?",
     "(exit abc) 2>/dev/null; echo $?",
     "f() { return abc; }; f 2>/dev/null; echo $?",
     "type if",
@@ -2022,6 +2023,8 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
+    "cd '' 2>/dev/null; echo $?",
+    "ulimit -Z 2>/dev/null; echo $?",
     "printf '%ld %lld %hhd %zd|\\n' 1 2 3 4",
     "select x in a b; do break; done 2>/dev/null </dev/null; echo $?",
     "kill -9 2>/dev/null; echo $?",
@@ -2058,6 +2061,7 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "alias a1=b; command -v a1",
     "type if",
     "f() { local a=1; echo \"[$a]\"; echo rc=$?; }; f",
     "set -- a b; shift -1; echo no",
@@ -2234,6 +2238,10 @@ const PDKSH_CORPUS: &[&str] = &[
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
 /// form is ONE empty word (bash, ksh and mksh drop it).
 const DASH_FAMILY_CORPUS: &[&str] = &[
+    "kill nosuch 2>/dev/null; echo after",
+    "kill -n 0 $$ 2>/dev/null; echo after",
+    "kill -CONT $$; echo $?",
+    "ulimit -Z 2>/dev/null; echo after",
     "fg 2>/dev/null; echo $?",
     "umask 999 2>/dev/null; echo $?",
     "kill -9 2>/dev/null; echo $?",
@@ -2251,6 +2259,8 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    "alias a1=echo; command -v a1",
+    "kill -SIGCONT $$ 2>/dev/null; echo after",
     "echo \"\\x41|\\101|\\0101|\\e|a\\cb\"",
     "printf '\\e[0m\\n' | od -c | head -1",
     "type if",

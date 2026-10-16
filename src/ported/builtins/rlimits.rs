@@ -1388,6 +1388,10 @@ pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32
                             /* unrecognised limit */
                             // c:786
                             zwarnnam(name, &format!("bad option: -{}", opt));
+                            // bash, ksh93 and dash answer a usage error with 2.
+                            if crate::dash_mode::posix_faithful() && !crate::dash_mode::pdksh_family() {
+                                return 2;
+                            }
                             return 1;
                         }
                     }
