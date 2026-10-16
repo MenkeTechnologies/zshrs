@@ -798,25 +798,20 @@ fn inherited_fpath_drops_distribution_tree_but_keeps_site_functions() {
             "{keep} carries third-party completions and must survive, got {entries:?}"
         );
     }
-    // The bundle goes LAST, so it supplies only what nothing else does.
-    // Leading it shadowed every curated completion of the same name --
-    // 242 of zsh-more-completions' files on the author's setup, `_ls`
-    // among them. Nothing is lost by trailing: the only tree that could
-    // out-rank it is a host zsh's own, which is filtered off fpath.
-    assert!(
-        entries.last().is_some_and(|e| e.ends_with("/.zshrs/functions")),
-        "the bundled tree must trail, got {:?}",
-        entries
-    );
+    // The bundle takes the index the dropped host tree held (19936d1d1e), as
+    // c:Src/init.c:1132-1143 seeds zsh's own function tree at a fixed spot:
+    // ahead of the appended plugin directories, behind anything a plugin
+    // prepended. Here the host trees led the inherited list, so it leads.
     let bundle_at = entries
         .iter()
         .position(|e| e.ends_with("/.zshrs/functions"))
         .expect("bundle on fpath");
+    assert_eq!(bundle_at, 0, "the bundle replaces the host tree's slot, got {entries:?}");
     for user_dir in ["/tmp/zshrs-pin-plugin/src", "/tmp/zshrs-pin-zinit/completions"] {
         let at = entries.iter().position(|e| *e == user_dir).expect(user_dir);
         assert!(
-            at < bundle_at,
-            "{user_dir} must out-rank the bundle so a curated function wins, got {entries:?}"
+            at > bundle_at,
+            "{user_dir} is an appended plugin directory and follows the bundle, got {entries:?}"
         );
     }
 }

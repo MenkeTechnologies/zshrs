@@ -17319,9 +17319,10 @@ fn test_arith_increment_does_not_inherit_previous_evaluation_base() {
 /// `source` replays a sourced file's compiled events from `scripts.rkyv`, but
 /// only to a run that starts from the lexer-visible state the first run did:
 /// the chunks have alias expansions baked in. Changing the alias between two
-/// sources of an unchanged file must re-lex it, and a file that defines its
-/// own alias must never be stored (its later events were lexed under state a
-/// replay cannot re-derive). Also pins that `dbview scripts` lists the file.
+/// sources of an unchanged file must re-lex it. A file that defines its own
+/// alias is stored too (0577ee3d20): each event carries the alias-table
+/// position it was lexed under, so the second source still prints `BAR hi`.
+/// Also pins that `dbview scripts` lists both files.
 #[test]
 fn source_cache_replays_only_under_the_same_alias_state() {
     let dir = tempdir_for_test();
@@ -17351,7 +17352,7 @@ fn source_cache_replays_only_under_the_same_alias_state() {
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     assert_eq!(
         stdout,
-        "A one\nfA two\nA one\nfA two\nB one\nfA two\nBAR hi\nBAR hi\nCACHED-A=1 CACHED-B=0\n",
+        "A one\nfA two\nA one\nfA two\nB one\nfA two\nBAR hi\nBAR hi\nCACHED-A=1 CACHED-B=1\n",
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );

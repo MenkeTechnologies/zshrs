@@ -1,7 +1,8 @@
 //! A corrupt `plugins.db` must heal itself, not stay dead forever.
 //!
 //! The cache is derived data: it is rebuilt from the plugins the shell
-//! sources. Before the fix this test pins, SQLite's `SQLITE_NOTADB`
+//! sources. The shell opens it on the first `dbview`, so the
+//! runs below issue one. Before the fix this test pins, SQLite's `SQLITE_NOTADB`
 //! ("file is not a database") was logged once per startup and the cache was
 //! then skipped — permanently, for every future shell, because nothing ever
 //! removed the bad file. A real `~/.zshrs/plugins.db` sat corrupt for three
@@ -49,7 +50,7 @@ fn corrupt_plugin_cache_is_discarded_and_rebuilt() {
     assert!(!is_sqlite(&db), "fixture must start corrupt");
 
     let out = Command::new(&bin)
-        .args(["-f", "-c", "print ok"])
+        .args(["-f", "-c", "dbview plugins >/dev/null 2>&1; print ok"])
         .env("ZSHRS_HOME", &home)
         .output()
         .expect("run zshrs");
@@ -67,7 +68,7 @@ fn corrupt_plugin_cache_is_discarded_and_rebuilt() {
 
     // Second start on the healed file must be quiet: no discard, no rebuild.
     let out2 = Command::new(&bin)
-        .args(["-f", "-c", "print ok2"])
+        .args(["-f", "-c", "dbview plugins >/dev/null 2>&1; print ok2"])
         .env("ZSHRS_HOME", &home)
         .output()
         .expect("run zshrs again");

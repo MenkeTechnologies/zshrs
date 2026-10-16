@@ -45,11 +45,10 @@ fn run(home: &std::path::Path, script: &str) -> (String, String) {
 #[test]
 fn user_code_cannot_reach_the_shells_own_descriptors() {
     let home = tempfile::tempdir().expect("tempdir");
-    // First run creates the log and the history database.
-    run(home.path(), "print seed");
-    // A non-interactive run opens the plugins database and only an interactive
-    // one opens the history database, so guard whichever SQLite file the shell
-    // actually holds.
+    // plugins.db is opened on the first dbview, not at every shell start
+    // (ca923c2cda), so ask for one; only an interactive run opens the history
+    // database. Guard whichever SQLite file the shell actually holds.
+    run(home.path(), "dbview plugins >/dev/null 2>&1; print seed");
     let db = ["zshrs_history.db", "plugins.db"]
         .iter()
         .map(|name| home.path().join(name))

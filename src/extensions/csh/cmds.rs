@@ -2570,7 +2570,7 @@ mod tests {
         assert_eq!(tr("&& echo a"), "print -r -- a");
         assert_eq!(tr("echo a ;; echo b"), "print -r -- a; print -r -- b");
         assert_eq!(tr("echo a;"), "print -r -- a");
-        assert_eq!(tr("echo a & ; echo b"), "print -r -- a & print -r -- \"[${#jobstates}] $!\"; print -r -- b");
+        assert_eq!(tr("echo a & ; echo b"), "print -r -- a & print -r -- \"[${#jobstates}] $!\"; _csh_jt[${#jobstates}]='echo a'; print -r -- b");
     }
 
     #[test]
@@ -2634,11 +2634,11 @@ mod tests {
     #[test]
     fn subshells_and_background() {
         // csh `&` ends a whole `;` list: `a; b &` backgrounds both.
-        assert_eq!(tr("echo a; echo b &"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\";");
-        assert_eq!(tr("echo a; echo b & echo c; echo d"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\"; print -r -- c; print -r -- d");
-        assert_eq!(tr("echo a && echo b &"), "print -r -- a && print -r -- b & print -r -- \"[${#jobstates}] $!\";");
+        assert_eq!(tr("echo a; echo b &"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\"; _csh_jt[${#jobstates}]='( echo a; echo b )';");
+        assert_eq!(tr("echo a; echo b & echo c; echo d"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\"; _csh_jt[${#jobstates}]='( echo a; echo b )'; print -r -- c; print -r -- d");
+        assert_eq!(tr("echo a && echo b &"), "print -r -- a && print -r -- b & print -r -- \"[${#jobstates}] $!\"; _csh_jt[${#jobstates}]='echo a && echo b';");
         assert_eq!(tr("(cd /usr; pwd)"), "( cd /usr; pwd )");
-        assert_eq!(tr("(echo a; echo b) &"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\";");
+        assert_eq!(tr("(echo a; echo b) &"), "( print -r -- a; print -r -- b ) & print -r -- \"[${#jobstates}] $!\"; _csh_jt[${#jobstates}]='( echo a; echo b )';");
         assert!(guarded("(echo a) > f", "( print -r -- a ) > f"));
         assert_eq!(tr("(echo a) | (cat)"), "( print -r -- a ) | ( cat )");
     }
