@@ -70,6 +70,7 @@ const PARITY_CASES: &[ParityCase] = &[
         name: "bash",
         zshrs_flags: &["--bash"],
         candidates: &[
+            "/opt/homebrew/bin/bash",
             "bash",
             "/bin/bash",
             "/usr/bin/bash",
@@ -82,7 +83,7 @@ const PARITY_CASES: &[ParityCase] = &[
     ParityCase {
         name: "ksh",
         zshrs_flags: &["--ksh"],
-        candidates: &["ksh", "/bin/ksh", "/usr/bin/ksh"],
+        candidates: &["/opt/homebrew/bin/ksh", "ksh", "/bin/ksh", "/usr/bin/ksh"],
         ref_emulate: None,
         extended: true,
         optional: false,
@@ -4864,7 +4865,7 @@ fn ksh_version(ksh: &str) -> Option<(u32, u32, u32)> {
 
 #[test]
 fn ksh93_specifics_match_ksh93() {
-    let Some(ksh) = find_shell(&["ksh", "/bin/ksh", "/usr/bin/ksh"]) else {
+    let Some(ksh) = find_shell(&["/opt/homebrew/bin/ksh", "ksh", "/bin/ksh", "/usr/bin/ksh"]) else {
         eprintln!("skip: ksh not found");
         return;
     };
