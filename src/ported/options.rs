@@ -327,6 +327,31 @@ pub fn emulate(mode: &str, fully: bool) {
     }
     let mut new_opts = [-1i8; OPT_SIZE as usize];
     installemulation(emu, &mut new_opts); // c:552
+    // c:555-570 — inside a function, decide whether it is traced: a
+    // `functions -t/-T` tag keeps XTRACE on across the option reset, so
+    // `emulate -RL zsh` as a traced function's first line does not silence it.
+    let mut traced_fn = false;
+    let top = crate::ported::modules::parameter::FUNCSTACK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .last()
+        .filter(|f| f.tp == crate::ported::zsh_h::FS_FUNC)
+        .map(|f| f.name.clone());
+    if let Some(name) = top {
+        let tagged = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .and_then(|t| t.get(&name).map(|f| f.node.flags))
+            .is_some_and(|fl| {
+                (fl as u32
+                    & (crate::ported::zsh_h::PM_TAGGED | crate::ported::zsh_h::PM_TAGGED_LOCAL))
+                    != 0
+            });
+        if tagged {
+            new_opts[crate::ported::zsh_h::XTRACE as usize] = 1; // c:564
+            traced_fn = true;
+        }
+    }
     for optno in 1..OPT_SIZE {
         let v = new_opts[optno as usize];
         if v >= 0 && (OPTNS_FLAGS_BY_NO[optno as usize] & OPT_SPECIAL) == 0 {
@@ -363,6 +388,12 @@ pub fn emulate(mode: &str, fully: bool) {
         for name in ZSH_OPTION_ALIASES.iter() {
             reset(name, optns_flags(name));
         }
+    }
+    // The walk above stands in for C building every option in `new_opts` before
+    // one commit; the c:564 XTRACE=1 of a traced function has to win over its
+    // default-off reset.
+    if traced_fn {
+        opt_state_set("xtrace", true);
     }
 }
 

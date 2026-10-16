@@ -5498,8 +5498,7 @@ impl ShellExecutor {
                     // existing Shfunc, so every stub flag except PM_UNDEFINED
                     // survives. See the twin site below for why PM_ABSPATH_USED
                     // in particular has to come back.
-                    let abspath_used =
-                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
+                    let abspath_used = stub.node.flags as u32 & AUTOLOAD_KEPT_FLAGS;
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
@@ -5579,8 +5578,7 @@ impl ShellExecutor {
                         != 0)
                         .then(|| stub.filename.clone())
                         .flatten();
-                    let abspath_used =
-                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
+                    let abspath_used = stub.node.flags as u32 & AUTOLOAD_KEPT_FLAGS;
                     // c:Src/Modules/parameter.c:295-315 — a body that arrived
                     // through `functions[NAME]=BODY` is NOT a file. See
                     // `body_came_from_param_assignment`.
@@ -5920,8 +5918,7 @@ impl ShellExecutor {
                     // failed with "function definition file not found" (zsh runs
                     // $D/sibling), and compsys `_`-names fell through to the Rust
                     // port instead of the user's file.
-                    let abspath_used =
-                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
+                    let abspath_used = stub.node.flags as u32 & AUTOLOAD_KEPT_FLAGS;
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                         _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
@@ -6103,8 +6100,7 @@ impl ShellExecutor {
                         != 0)
                         .then(|| stub.filename.clone())
                         .flatten();
-                    let abspath_used =
-                        (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
+                    let abspath_used = stub.node.flags as u32 & AUTOLOAD_KEPT_FLAGS;
                     // c:Src/Modules/parameter.c:295-315 — a body that arrived
                     // through `functions[NAME]=BODY` is NOT a file. See
                     // `body_came_from_param_assignment`.
@@ -8524,16 +8520,22 @@ impl Drop for NoAliasesRestore {
 ///
 /// Restoring on that arm would make a ksh-autoloaded function inherit its
 /// directory to siblings where zsh does not.
-fn restore_loaddir(name: &str, dir: &str, abspath_used: bool, ksh_style: bool) {
+/// The stub flags that survive an autoload (C loads in place, c:5751 clears only
+/// PM_UNDEFINED): the absolute-path marker and the `functions -t/-T/-W` tags,
+/// without which `functions -t f; f` stopped tracing once `f` was loaded.
+const AUTOLOAD_KEPT_FLAGS: u32 = crate::ported::zsh_h::PM_ABSPATH_USED
+    | crate::ported::zsh_h::PM_TAGGED
+    | crate::ported::zsh_h::PM_TAGGED_LOCAL
+    | crate::ported::zsh_h::PM_WARNNESTED;
+
+fn restore_loaddir(name: &str, dir: &str, kept_flags: u32, ksh_style: bool) {
     if ksh_style {
         return; // c:5792-5806 — no loadautofnsetfile on the ksh arm
     }
     if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
         if let Some(shf) = tab.get_mut(name) {
             crate::ported::exec::loadautofnsetfile(shf, Some(dir)); // c:5735
-            if abspath_used {
-                shf.node.flags |= crate::ported::zsh_h::PM_ABSPATH_USED as i32; // c:5751
-            }
+            shf.node.flags |= kept_flags as i32; // c:5751 — flags survive the in-place load
         }
     }
 }

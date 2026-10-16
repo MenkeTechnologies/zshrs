@@ -369,3 +369,31 @@ fn run_time_command_names_ignore_builtins_of_unloaded_modules() {
     assert!(out.contains("command not found: zstat") && out.ends_with("127\n"), "{out:?}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `functions -t NAME` on a not-yet-loaded autoload stub: C loads the body in
+/// place (c:5751 clears only PM_UNDEFINED), so the trace tag survives the load.
+/// zshrs re-registered the body on a fresh node and dropped it, so the function
+/// ran silently from its first call.
+#[test]
+fn trace_tag_survives_autoload() {
+    let dir = std::env::temp_dir().join(format!("zshrs-tagfn-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tf"), "print in-body\n").unwrap();
+    let script = format!(
+        "PS4='+> '; fpath=({} $fpath); autoload -U tf; functions -t tf; tf 2>&1; tf 2>&1",
+        dir.display()
+    );
+    let (_ec, out, _err) = run(&script);
+    assert_eq!(out, "+> print in-body\nin-body\n+> print in-body\nin-body\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// c:Src/options.c:555-570 — inside a traced (`functions -t`) function,
+/// `emulate -R` keeps XTRACE on instead of resetting it with the other options.
+#[test]
+fn emulate_reset_keeps_xtrace_in_a_traced_function() {
+    let (_ec, out, _err) = run(
+        "PS4='+> '; f() { emulate -RL zsh; print a }; functions -t f; f 2>&1",
+    );
+    assert_eq!(out, "+> emulate -RL zsh\n+> print a\na\n");
+}
