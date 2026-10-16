@@ -308,7 +308,7 @@
         <div class="cat-grid">
           <div class="cat-card">
             <h4>Two axes of emulation fidelity, both available</h4>
-            <p><code>--sh</code> reproduces <code>/bin/sh</code>; <code>--sh --zsh</code> reproduces zsh&rsquo;s <em>model</em> of <code>/bin/sh</code>. The bare POSIX modes use XSI <code>echo</code> where zsh&rsquo;s <code>emulate sh</code> sets <code>BSD_ECHO</code>, and <code>--bash</code> accepts bash&rsquo;s own <code>set -o</code> names including the six zsh has no option for. Eight Bourne-family dialects on one bytecode core, each verified against its actual reference shell rather than against zsh&rsquo;s approximation. No precedent found for offering both notions of fidelity as distinct modes.</p>
+            <p><code>--sh</code> reproduces <code>/bin/sh</code>; <code>--sh --zsh</code> reproduces zsh&rsquo;s <em>model</em> of <code>/bin/sh</code>. The bare POSIX modes use XSI <code>echo</code> where zsh&rsquo;s <code>emulate sh</code> sets <code>BSD_ECHO</code>, and <code>--bash</code> accepts bash&rsquo;s own <code>set -o</code> names including the six zsh has no option for. Eight Bourne-family dialects on one bytecode core, each verified against its actual reference shell rather than against zsh&rsquo;s approximation (the matrix prefers the newest installed reference &mdash; bash 5.3 and ksh93u+m, not macOS&rsquo;s bash 3.2 and ksh93u+ 2012 &mdash; and compares the zsh-style legs with real <code>zsh</code> running <code>emulate sh</code> / <code>emulate ksh</code>). No precedent found for offering both notions of fidelity as distinct modes.</p>
           </div>
           <div class="cat-card">
             <h4>A hybrid port: native spine, interpreted leaves, one tree</h4>
@@ -522,7 +522,7 @@ uname  date  mktemp</div>
           <div class="cat-card"><h4>Parallel Glob</h4><p><code>**/</code> recursive walk split per-subdir across pool</p></div>
           <div class="cat-card"><h4>Metadata Prefetch</h4><p>Glob qualifiers: one parallel <code>stat</code> batch, zero syscalls after</p></div>
           <div class="cat-card"><h4>PATH Rehash</h4><p>Parallel <code>readdir</code> across every PATH directory</p></div>
-          <div class="cat-card"><h4>History Writes</h4><p>Daemon-side writes via IPC &mdash; prompt never waits, zero client SQLite handle</p></div>
+          <div class="cat-card"><h4>History Writes</h4><p>Off the prompt path: daemon-side writes via IPC, and the shell&rsquo;s own <code>zshrs_history.db</code> written by a background thread (WAL, no per-commit fsync) &mdash; accepting a command never waits on the file</p></div>
         </div>
       </section>
 
@@ -593,10 +593,10 @@ uname  date  mktemp</div>
             <h4>catalog.db (SQLite mirror)</h4>
             <p>Daemon-hydrated FTS5-indexed mirror of all rkyv contents. Used ONLY by
             <code>dbview</code> and <code>zcache</code> introspection &mdash; never read on the
-            hot path. Clients have ZERO SQLite handles. The daemon's own FTS5 history
+            hot path. Clients hold no handle on it. The daemon's own FTS5 history
             (<code>history.db</code>) sits next to it; the shell's user-facing history is
             <code>zshrs_history</code> (flat zsh-extended-history-format text) plus a sibling
-            FTS5 index <code>zshrs_history.db</code>, both in <code>$ZSHRS_HOME</code>.</p>
+            FTS5 index <code>zshrs_history.db</code>, both in <code>$ZSHRS_HOME</code>. The index uses a WAL journal with <code>synchronous=NORMAL</code> and a 2&nbsp;s busy timeout, and the shell writes it from a background writer thread (drained, bounded at 3&nbsp;s, on exit), so many shells sharing it never stall each other&rsquo;s prompt.</p>
           </div>
         </div>
 
