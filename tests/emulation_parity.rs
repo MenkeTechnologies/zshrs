@@ -5210,3 +5210,21 @@ fn ksh_zsh_style_unbraced_assoc_subscript_and_octal_vars_match_zsh() {
     let bad = probe_mismatches(&["--ksh", "--zsh"], &zsh, &["-f"], "emulate ksh\n", &probes);
     assert!(bad.is_empty(), "--ksh --zsh diverged from zsh:\n{}", bad.join("\n"));
 }
+
+/// dash, ksh, mksh and /bin/sh read a `-c` string a line at a time, so a syntax
+/// error on a later line leaves the earlier lines already run (stdout `first`, then
+/// the diagnostic). zsh — and the zsh-style legs — parse the whole string first and
+/// run nothing. zshrs's real-shell drop-ins used to behave like zsh.
+#[test]
+fn dash_c_string_runs_the_lines_before_a_syntax_error() {
+    let script = "printf 'first\\n'\ncase x in ) printf m;; esac\nprintf 'last\\n'";
+    for case in PARITY_CASES {
+        if case.ref_emulate.is_some() || case.name == "zsh" {
+            continue;
+        }
+        let Some(refbin) = find_shell(case.candidates) else { continue };
+        let ((r_out, _), (z_out, _)) = run_case(case, &refbin, script);
+        assert_eq!(r_out, "first\n", "{}: the reference shell's own behaviour changed", case.name);
+        assert_eq!(z_out, r_out, "{}: lines before a syntax error must run", case.name);
+    }
+}

@@ -4393,6 +4393,41 @@ impl ShellExecutor {
         Ok(compiler.compile(&program))
     }
 
+    /// Whether `script` parses without a syntax error, with its diagnostics held
+    /// back (`noerrs`) and the shell's error state left as it was found.
+    fn script_parses_cleanly(script: &str) -> bool {
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        let saved_noerrs = std::mem::replace(
+            &mut *crate::ported::utils::noerrs_lock().lock().unwrap_or_else(|e| e.into_inner()),
+            1,
+        );
+        let _ = parse_isolated_at(script, None);
+        let failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        *crate::ported::utils::noerrs_lock().lock().unwrap_or_else(|e| e.into_inner()) = saved_noerrs;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        !failed
+    }
+
+    /// For a `-c` string that does not parse as a whole: run the longest prefix of
+    /// complete lines that does, as a shell reading line by line would have before
+    /// reaching the bad one. Does nothing when the whole string parses.
+    fn run_valid_cmdarg_prefix(&mut self, script: &str) -> Result<(), String> {
+        if Self::script_parses_cleanly(script) {
+            return Ok(());
+        }
+        let lines: Vec<&str> = script.split('\n').collect();
+        let valid = (1..lines.len())
+            .rev()
+            .map(|k| lines[..k].join("\n"))
+            .find(|prefix| !prefix.trim().is_empty() && Self::script_parses_cleanly(prefix));
+        if let Some(prefix) = valid {
+            let chunk = self.compile_script_isolated(&prefix)?;
+            self.run_chunk(chunk, "cmdarg")?;
+        }
+        Ok(())
+    }
+
     /// `execstring(cmd, 0, 1, "cmdarg")` (c:Src/init.c:1568) — run the `-c`
     /// string as the shell's last act: [`Self::execute_script`] with the
     /// string compiled as an exiting list (see CMDARG_EXITING).
@@ -4403,6 +4438,14 @@ impl ShellExecutor {
         let status = if crate::dash_mode::bash_mode() {
             self.run_events_per_command(script, false, true)?
         } else {
+            // !!! POSIX-DROP-IN GATE (no C counterpart) !!! dash, ksh, mksh and /bin/sh
+            // also read a `-c` string a line at a time: a syntax error on line 2
+            // leaves line 1 already run. zsh parses the whole string first, which the
+            // zsh-style legs keep. When the whole string does not parse, run the longest
+            // line prefix that does, then fall through to report the error as before.
+            if crate::dash_mode::posix_faithful() && script.contains('\n') {
+                self.run_valid_cmdarg_prefix(script)?;
+            }
             CMDARG_EXITING.with(|c| c.set(true));
             let chunk = self.compile_script_isolated(script);
             CMDARG_EXITING.with(|c| c.set(false));

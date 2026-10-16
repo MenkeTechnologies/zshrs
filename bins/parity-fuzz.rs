@@ -12418,6 +12418,160 @@ fn gen_expand(seed: u64, d: ExpandDialect) -> Vec<String> {
     stmts
 }
 
+// ---------------------------------------------------------------------------
+// Dialect-aware modes for the non-zsh targets
+//
+// Every Bourne-family target used to ignore `--mode` (only `expand` was
+// dialect-aware) and run its one fixed grammar, so a `--matrix` run could not
+// probe globbing, arithmetic, here-documents, loops, functions, traps,
+// redirections, `test`, `printf`, `case` or IFS splitting on dash/ash/sh/ksh/
+// mksh/pdksh/bash at all. `gen_dialect` serves each of those modes for the
+// target's own dialect: POSIX statements everywhere, `[[ ]]`/`(( ))` from ksh up,
+// arrays and brace expansion for bash only.
+//
+// Every statement prints through `printf` (never `echo`, whose escape handling
+// differs by shell) and stays deterministic: no `$$`, time, `$RANDOM` or
+// unsorted glob order beyond the fixture's fixed names.
+// ---------------------------------------------------------------------------
+
+const DIALECT_WORDS: &[&str] = &["abc", "hello", "a.b.c", "x y", "", "foo bar baz", "A1b2", "12", "-5", "a:b:c"];
+const DIALECT_INTS: &[&str] = &["0", "1", "2", "3", "5", "7", "10", "42", "-1", "-3", "255"];
+const DIALECT_GLOBS: &[&str] = &[
+    "*", "*.txt", "*.log", "*.md", "[a-d]*", "?", "??*", "d*", "*.*", "[!a-c]*", "[[:alpha:]]*",
+    "dir1/*", "*/*", "nomatch*", "[0-9]*", "e*y", "*[tg]", "a.???", "[a-c].txt", ".hid*",
+];
+
+fn dq(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$")
+}
+
+/// One statement for `mode` in dialect `d`, or `None` when the mode has no
+/// dialect-portable form (the caller then falls back to the target's fixed grammar).
+fn dialect_one(rng: &mut StdRng, mode: Mode, d: ExpandDialect) -> Option<String> {
+    let w = *pick(rng, DIALECT_WORDS);
+    let n = *pick(rng, DIALECT_INTS);
+    let m = *pick(rng, DIALECT_INTS);
+    let ksh_up = !matches!(d, ExpandDialect::Posix);
+    Some(match mode {
+        Mode::Glob => {
+            let g = *pick(rng, DIALECT_GLOBS);
+            match rng.gen_range(0..4) {
+                0 => format!("for f in {g}; do printf '<%s>' \"$f\"; done; printf '\\n'"),
+                1 => format!("set -- {g}; printf '%s\\n' \"$#\""),
+                2 => format!("set -f; set -- {g}; printf '%s\\n' \"$#\" \"$1\"; set +f"),
+                _ => format!("v='{g}'; set -- $v; printf '%s\\n' \"$#\""),
+            }
+        }
+        Mode::Arith => {
+            let op = *pick(rng, &["+", "-", "*", "&", "|", "^", "<<", ">>", "<", ">", "<=", ">=", "==", "!=", "&&", "||"]);
+            let (a, b) = if matches!(op, "<<" | ">>") { (n.trim_start_matches('-'), "2") } else { (n, m) };
+            match rng.gen_range(0..6) {
+                0 => format!("printf '%s\\n' \"$(( {a} {op} {b} ))\""),
+                1 => format!("x={a}; printf '%s\\n' \"$(( x {op} {b} ))\""),
+                2 if b != "0" => format!("printf '%s %s\\n' \"$(( {a} / {b} ))\" \"$(( {a} % {b} ))\""),
+                3 => format!("x={a}; printf '%s %s\\n' \"$(( x = x {op} {b} ))\" \"$x\""),
+                4 => format!("printf '%s\\n' \"$(( ({a}) ? {b} : 9 ))\""),
+                _ if ksh_up => format!("(( {a} {op} {b} )) ; printf '%s\\n' \"$?\""),
+                _ => format!("printf '%s\\n' \"$(( ~{a} + !{b} ))\""),
+            }
+        }
+        Mode::Heredoc => {
+            let q = if rng.gen_bool(0.5) { "EOT" } else { "'EOT'" };
+            let body = ["plain text", "v=$v and $((1+2))", "tab\there", "back\\\\slash \\$esc", "`printf sub`"];
+            let line = *pick(rng, &body);
+            if rng.gen_bool(0.3) {
+                format!("v=val; cat <<-{q}\n\t{line}\n\tEOT")
+            } else {
+                format!("v=val; cat <<{q}\n{line}\nEOT")
+            }
+        }
+        Mode::Loop => match rng.gen_range(0..6) {
+            0 => format!("for i in 1 2 3 4; do [ $i = {} ] && continue; printf '%s' $i; done; printf '\\n'", 1 + (n.len() % 3)),
+            1 => "i=0; while [ $i -lt 4 ]; do i=$((i+1)); [ $i = 3 ] && break; printf '%s' $i; done; printf ' %s\\n' $i".to_string(),
+            2 => "i=5; until [ $i -le 2 ]; do printf '%s' $i; i=$((i-1)); done; printf '\\n'".to_string(),
+            3 => "for i in a b; do for j in 1 2 3; do [ $j = 2 ] && continue 2; printf '%s%s ' $i $j; done; done; printf '\\n'".to_string(),
+            4 => "for i in a b c; do for j in 1 2; do [ $i = b ] && break 2; printf '%s%s ' $i $j; done; done; printf '\\n'".to_string(),
+            _ => "set -- p q r; for i; do printf '[%s]' \"$i\"; done; printf '\\n'; for i in; do printf never; done; printf 'ok\\n'".to_string(),
+        },
+        Mode::Func => match rng.gen_range(0..6) {
+            0 => "f() { printf '%s:%s\\n' \"$#\" \"$1\"; shift; printf '%s\\n' \"$#\"; }; f a b c".to_string(),
+            1 => format!("f() {{ return {}; }}; f; printf '%s\\n' $?", n.trim_start_matches('-')),
+            2 => "x=out; f() { x=in; }; f; printf '%s\\n' $x".to_string(),
+            3 => "f() { if [ $1 -le 1 ]; then printf 1; else printf '%s' $(( $1 * $(f $(($1-1))) )); fi; }; f 5; printf '\\n'".to_string(),
+            4 => "f() { g() { printf inner; }; g; printf '\\n'; }; f; g".to_string(),
+            _ => "f() { printf '<%s>' \"$@\"; printf '\\n'; }; f 'a b' '' c; f".to_string(),
+        },
+        Mode::Trap => match rng.gen_range(0..5) {
+            0 => "trap 'printf bye\\n' EXIT; printf main\\n".to_string(),
+            1 => "(trap 'printf sub\\n' EXIT; printf in\\n); printf out\\n".to_string(),
+            2 => "trap 'printf usr1\\n' USR1; kill -USR1 $$; printf after\\n".to_string(),
+            3 => "trap '' USR1; kill -USR1 $$; printf ignored\\n".to_string(),
+            _ => "trap 'printf a\\n' EXIT; trap - EXIT; printf none\\n".to_string(),
+        },
+        Mode::Redir => match rng.gen_range(0..6) {
+            0 => "{ printf out; printf err >&2; } 2>&1 | cat; printf '\\n'".to_string(),
+            1 => "printf one > /dev/null; printf '%s\\n' $?".to_string(),
+            2 => "exec 3>&1; printf fd3 >&3; exec 3>&-; printf '\\n'".to_string(),
+            3 => "cat < /dev/null; printf '%s\\n' $?".to_string(),
+            4 => "cat /nonexistent_zz 2>/dev/null; printf '%s\\n' $?".to_string(),
+            _ => "{ printf a; printf b; } > /dev/null 2>&1; printf '%s\\n' $?".to_string(),
+        },
+        Mode::Cmdsub => match rng.gen_range(0..6) {
+            0 => format!("x=$(printf '%s\\n\\n' '{w}'); printf '[%s]\\n' \"$x\""),
+            1 => "printf '%s\\n' \"$(printf a; printf b)\" `printf bq`".to_string(),
+            2 => "x=$(exit 4); printf '%s\\n' $?".to_string(),
+            3 => "printf '%s\\n' \"$(printf '%s' \"$(printf deep)\")\"".to_string(),
+            4 => "printf '<%s>' $(printf 'a  b'); printf '\\n'".to_string(),
+            _ => "printf '<%s>' \"$(printf 'a  b')\"; printf '\\n'".to_string(),
+        },
+        Mode::Split => {
+            let ifs = *pick(rng, &[":", " ", ":,", "a", "\\t", ""]);
+            let text = *pick(rng, &["a:b::c", "  a  b  ", "a:,b", "banana", "x"]);
+            format!("IFS='{ifs}'; v='{text}'; set -- $v; printf '%s' $#; for i in \"$@\"; do printf '<%s>' \"$i\"; done; printf '\\n'; unset IFS")
+        }
+        Mode::Cond => match rng.gen_range(0..6) {
+            0 => format!("[ '{w}' = '{w}' ] && printf eq || printf ne; printf '\\n'"),
+            1 => format!("[ {n} -lt {m} ] && printf lt; [ {n} -ge {m} ] && printf ge; printf '\\n'"),
+            2 => format!("[ -n '{w}' ] && printf n; [ -z '{w}' ] && printf z; printf '\\n'"),
+            3 => "[ -d / ] && printf d; [ -f /etc/passwd ] && printf f; [ -e /nonexistent_zz ] || printf E; printf '\\n'".to_string(),
+            4 => format!("[ '{w}' != x ] && [ {n} -ne {m} ] || printf no; printf '\\n'"),
+            _ if ksh_up => format!("[[ '{w}' = *b* ]] && printf m; [[ -n '{w}' && {n} -lt {m} ]] && printf y; printf '\\n'"),
+            _ => format!("test '{w}' = '{w}'; printf '%s\\n' $?"),
+        },
+        Mode::Printf => {
+            let f = *pick(rng, &["%s", "%5s|", "%-5s|", "%d", "%05d", "%x", "%o", "%c", "%.2s", "%3d|%-3d|", "%%", "%s %s"]);
+            let a = if f.contains('d') || f.contains('x') || f.contains('o') { n } else { w };
+            format!("printf '{f}\\n' '{}' '{}'", dq(a), dq(m))
+        }
+        Mode::Pattern => {
+            let pat = *pick(rng, &["a*", "*c", "?b?", "[a-c]*", "[!a]*", "a|b", "abc|x*", "*", "?"]);
+            let subj = *pick(rng, &["abc", "xyz", "a", "", "bcd", "A1b2"]);
+            format!("case '{subj}' in {pat}) printf 'M '; ;; *) printf 'N '; ;; esac; v='{subj}'; printf '%s %s\\n' \"${{v#{pat}}}\" \"${{v%%{pat}}}\"")
+        }
+        Mode::Quote => match rng.gen_range(0..5) {
+            0 => "printf '%s\\n' 'single $x \"q\"' \"double \\$x \\\" \\\\ \\`\"".to_string(),
+            1 => "x='a  b'; printf '<%s>' $x \"$x\" '$x'; printf '\\n'".to_string(),
+            2 => "printf '%s\\n' a\\ b 'a''b' \"a\"\"b\" a\"b\"'c'".to_string(),
+            3 => "x=*; printf '%s\\n' \"$x\"".to_string(),
+            _ => "set -- 'a b' c; printf '<%s>' \"$@\" $* \"$*\"; printf '\\n'".to_string(),
+        },
+        _ => return None,
+    })
+}
+
+/// A short program of `dialect_one` statements, or `None` for a mode with no
+/// dialect form.
+fn gen_dialect(seed: u64, mode: Mode, d: ExpandDialect) -> Option<Vec<String>> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let count = rng.gen_range(1..=3);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(dialect_one(&mut rng, mode, d)?);
+    }
+    Some(out)
+}
+
+
 /// Generate the statement list for a seed in the selected mode.
 fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
     // `--mode expand` is an expansion-semantics probe every Bourne-family target
@@ -12425,6 +12579,16 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
     if mode == Mode::Expand {
         if let Some(d) = expand_dialect(shell_target()) {
             return gen_expand(seed, d);
+        }
+    }
+    // The dialect-aware modes (glob, arith, heredoc, loop, func, trap, redir, cmdsub,
+    // split, cond, printf, pattern, quote) run on every Bourne-family non-zsh target
+    // in that target's own dialect.
+    if shell_target() != ShellTarget::Zsh {
+        if let Some(d) = expand_dialect(shell_target()) {
+            if let Some(stmts) = gen_dialect(seed, mode, d) {
+                return stmts;
+            }
         }
     }
     // Non-zsh targets ignore the zsh-feature Mode and use a grammar their shell
