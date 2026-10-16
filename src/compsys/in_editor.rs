@@ -360,6 +360,17 @@ fn bootstrap_shell() {
         }
     }
 
+    // c:Src/Zle/zle_thingy.c:605-608 — a completion widget needs the
+    // `zsh/complete` module: its boot creates the completion parameters
+    // (`$compstate`, `$PREFIX`, ...) the completer chain reads. An
+    // interactive shell gets it from `compinit`; this bootstrap never runs one.
+    {
+        let mut tab = crate::ported::module::MODULESTAB
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::ported::module::require_module(&mut tab, "zsh/complete", None, 1, false);
+    }
+
     crate::ported::exec::install_session_executor(executor);
     SHELL_READY.store(true, Ordering::SeqCst);
     tracing::info!(

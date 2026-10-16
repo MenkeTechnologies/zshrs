@@ -1597,11 +1597,20 @@ fn winch_during_widget_foreground_wait(
     // ZLE arrive as one burst and the shell may treat them as pasted text.
     // `SETUP_OK` is the handshake — a prompt count is not one, because a
     // redraw reprints the prompt and inflates it.
+    let prompts_before_source = count("WPROMPT");
     let _ = writer.write_all(format!("source {}\n", init.display()).as_bytes());
     let _ = writer.flush();
     assert!(
         wait_for("SETUP_OK", 1, 40),
         "the widget fixture never sourced; saw {:?}",
+        String::from_utf8_lossy(&seen.lock().unwrap()).into_owned()
+    );
+    // SETUP_OK is printed while the line is still cooked; ^T typed before the
+    // next prompt arrives the tty's VSTATUS (SIGINFO on macOS: "load: …") and
+    // never reaches ZLE. Wait for the prompt the sourcing command returns to.
+    assert!(
+        wait_for("WPROMPT", prompts_before_source + 1, 40),
+        "no prompt after the widget fixture; saw {:?}",
         String::from_utf8_lossy(&seen.lock().unwrap()).into_owned()
     );
     let before_resize = seen.lock().unwrap().len();
