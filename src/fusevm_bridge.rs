@@ -3084,6 +3084,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::utils::zwarnnam("builtin", "command not found");
             return Value::Status(127);
         }
+        // !!! KSH93 GATE (no C counterpart) !!! ksh93's `builtin NAME` declares a
+        // library builtin to load; `echo` is already one, so the word after it
+        // is reported "not found" (status 1).
+        if crate::dash_mode::ksh93_mode() && !args.is_empty() {
+            crate::ported::utils::zwarnnam("builtin", &format!("{}: not found", args[args.len() - 1]));
+            return Value::Status(1);
+        }
         // c:Src/exec.c:3483-3487 — the precommand-modifier walk checks
         // `shfunctab` for the command word BEFORE `builtintab`, and only
         // skips that check once a prefix has already been consumed

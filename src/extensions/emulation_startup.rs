@@ -637,6 +637,12 @@ pub fn apply_personality_param_deltas() {
     if matches!(p, Personality::Mksh | Personality::Pdksh) {
         crate::ported::params::setsparam("PS1", "$ ");
     }
+    // ksh93 sets `$ENV` to `~/.kshrc`.
+    if p == Personality::Ksh93 {
+        if let Some(home) = crate::ported::params::getsparam("HOME") {
+            crate::ported::params::setsparam("ENV", &format!("{home}/.kshrc"));
+        }
+    }
     // bash and ksh93 leave PS1 unset in a non-interactive shell (bash PS2 too).
     if matches!(p, Personality::Ksh93 | Personality::Bash) {
         crate::ported::params::unsetparam("PS1");

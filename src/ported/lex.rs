@@ -1332,6 +1332,37 @@ thread_local! {
     )};
 }
 
+/// !!! RUST-ONLY MACRO !!! — no counterpart in Src/lex.c.
+///
+/// Under sh/ksh emulation a bare `$NN` is `${N}` followed by the digit text
+/// (`$10` is `${1}0`): fetchvalue takes ONE digit when the reference is not
+/// braced (c:Src/params.c:2210-2214 with `bracks = -1`). The lexer hands the
+/// name to the expander as written, so escape the second digit (`Bnull d`) and
+/// the expander stops after the first. Evaluates to true when it consumed `d f`.
+macro_rules! split_bare_positional {
+    ($marker:expr, $first:expr) => {{
+        use crate::ported::zsh_h::{EMULATE_KSH, EMULATE_SH};
+        let mut consumed = false;
+        if let Some(d) = $first.filter(|c: &char| c.is_ascii_digit()) {
+            if crate::ported::zsh_h::EMULATION(EMULATE_SH | EMULATE_KSH) {
+                match hgetc() {
+                    Some(f) if f.is_ascii_digit() => {
+                        add($marker);
+                        add(d);
+                        add(Bnull);
+                        add(f);
+                        consumed = true;
+                    }
+                    Some(f) => hungetc(f),
+                    None => {}
+                }
+            }
+        }
+        consumed
+    }};
+}
+
+
 /// Get the next token. Direct port of `gettok(void)` from
 /// `Src/lex.c:613-936`. Reads chars via hgetc, dispatches on the
 /// leading char through the `lexact1[]` table at c:725. The 23
@@ -2316,6 +2347,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         }
                         add(Dnull);
                     }
+                    _ if split_bare_positional!(Stringg, e) => {}
                     _ => {
                         if let Some(e) = e {
                             hungetc(e);
@@ -3503,6 +3535,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                             add(Qstring);
                             add('$');
                         }
+                        _ if split_bare_positional!(Qstring, next) => {}
                         _ => {
                             if let Some(next) = next {
                                 hungetc(next);

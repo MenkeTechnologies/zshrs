@@ -1701,6 +1701,7 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
     // `${!#}` is indirection through `$#`: the LAST positional.
     "set -- a b c; printf '[%s]' \"${!#}\"; printf '\\n'",
     // Integer arithmetic wraps at 64 bits (zsh truncates the literal instead).
@@ -2047,6 +2048,8 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
+    "builtin echo hi 2>/dev/null; echo $?",
     "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
     "echo \"[$PS2][${PS1+s}][${UID+s}][${EUID+s}]\"",
     "print hello",
@@ -2168,6 +2171,13 @@ const REAL_SHELL_CORPUS: &[&str] = &[
     "for i in 1 2; do echo $i; break; done; echo done",
 ];
 
+/// Every shell but native zsh (including the zsh-STYLE legs): a bare `$NN` is
+/// `${N}` followed by the digit (c:Src/params.c:2210, `bracks = -1`).
+const BARE_POSITIONAL_CORPUS: &[&str] = &[
+    "set -- a b c d e f g h i j k; echo $10 ${10} \"$10\" $11",
+    "set -- a b; echo $1$2 $12",
+];
+
 /// bash, ksh93 and mksh count `$@` / `$*` with no positional parameters as
 /// UNSET for `-` / `+` (dash and zsh count them as set), and leave `OPTARG` unset
 /// after a `getopts` option that takes no argument (dash and zsh set it empty).
@@ -2196,6 +2206,7 @@ const PDKSH_CORPUS: &[&str] = &[
     // A failed `cd` is status 2; `{1..3}` is not a range (the comma form is).
     "cd /nonexistent_zz 2>/dev/null; echo $?",
     "echo {1..3} {a,b}c",
+    "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
     // `$PS1` is `$ ` in mksh (unset in ksh93); no `$UID` / `$EUID`.
     "echo \"[$PS1][$PS2][${UID+s}][${EUID+s}]\"",
     "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
@@ -2209,6 +2220,7 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
     "set -- a b; f() { echo $#; }; f \"${@-x}\"",
     // No `builtin`, no `$UID` / `$EUID`.
     "builtin echo x 2>/dev/null; echo $?",
+    "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
     "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
     "echo \"[${UID+s}][${EUID+s}]\"",
 ];
@@ -3757,6 +3769,7 @@ fn emulation_parity_matrix() {
                 .chain(if matches!(case.name, "mksh" | "pdksh") { PDKSH_CORPUS } else { &[] })
                 .chain(if matches!(case.name, "dash" | "ash") { DASH_FAMILY_CORPUS } else { &[] })
                 .chain(if case.name == "dash" { DASH_ONLY_CORPUS } else { &[] })
+                .chain(if case.name != "zsh" { BARE_POSITIONAL_CORPUS } else { &[] })
                 .chain(if case.ref_emulate.is_some() || case.name == "zsh" { ZSH_REF_CORPUS } else { &[] });
         for script in corpus {
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);

@@ -20921,6 +20921,11 @@ fn printf_format(
                 if iter.peek() == Some(&'$') {
                     iter.next(); // c:5202 — consume `$`
                     raw.push('$');
+                    // !!! BASH/DASH GATE (no C counterpart) !!! bash, dash and ash have no
+                    // `%n$` form: the directive is invalid. zsh, ksh93 and mksh take it.
+                    if crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful() {
+                        return Err((out, format!("{raw}: invalid directive")));
+                    }
                     let narg: usize = digits.parse().unwrap_or(0);
                     // c:5203-5212 — out-of-range positional is a hard
                     // error (`zwarnnam(...); return 1`). `argc` in C is
