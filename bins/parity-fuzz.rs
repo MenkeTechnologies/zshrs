@@ -399,6 +399,22 @@ fn differs(z: &RunOut, r: &RunOut) -> bool {
     false
 }
 
+/// Keep generated commands away from the X server. macOS ships `/opt/X11/bin/x`
+/// and `/opt/X11/bin/X` as symlinks to `Xquartz`, so a case that runs the bare
+/// word `x` (alias bodies, glob/subscript probes) launches XQuartz and steals
+/// GUI focus. Both legs go through `run_with_timeout_stdin`, so parity holds.
+fn strip_x11(cmd: &mut Command) {
+    cmd.env_remove("DISPLAY");
+    if let Some(path) = std::env::var_os("PATH") {
+        let kept: Vec<PathBuf> = std::env::split_paths(&path)
+            .filter(|p| !p.starts_with("/opt/X11"))
+            .collect();
+        if let Ok(joined) = std::env::join_paths(kept) {
+            cmd.env("PATH", joined);
+        }
+    }
+}
+
 /// Spawn `cmd` and wait up to `timeout`, killing it if it overruns.
 fn run_with_timeout(cmd: Command, timeout: Duration) -> RunOut {
     run_with_timeout_stdin(cmd, timeout, None)
@@ -411,6 +427,7 @@ fn run_with_timeout(cmd: Command, timeout: Duration) -> RunOut {
 /// by it — PRINT_EXIT_VALUE at c:Src/exec.c:4253/5442, for one — can never fire
 /// in a `-c` run no matter what the program says.
 fn run_with_timeout_stdin(mut cmd: Command, timeout: Duration, feed: Option<&str>) -> RunOut {
+    strip_x11(&mut cmd);
     cmd.stdin(if feed.is_some() {
         Stdio::piped()
     } else {
