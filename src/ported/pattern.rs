@@ -574,6 +574,14 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     let cacheable = endexp.is_none();
     if cacheable {
         if let Some(hit) = crate::pat_cache::get(exp, inflags) {
+            // A compile leaves its final flags in the global `patglobflags`
+            // (`globend`), and the matcher gates `$MATCH` / `$match` on that global
+            // (c:2526), not on the program. A hit skips the compile, so the global
+            // still held whichever pattern compiled LAST: `for …; do [[ $x = (#m)f* ]];
+            // case q in a) ;; esac; done` lost `$MATCH` from the second pass on,
+            // because the `case` pattern `a` had compiled in between. Put back the
+            // flags the cached program ended with.
+            patglobflags.store(hit.0.globend, Ordering::Relaxed);
             return Some(hit);
         }
     }

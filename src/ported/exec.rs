@@ -1366,7 +1366,10 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
                 }
             }
             // c:3056 — `builtintab->getnode(builtintab, cmdarg)`.
-            let entry = BUILTINS.iter().find(|b| b.node.nam == cmdarg);
+            let entry = BUILTINS
+                .iter()
+                .find(|b| b.node.nam == cmdarg)
+                .filter(|_| !crate::fusevm_bridge::builtin_awaits_module_load(&cmdarg));
             let Some(entry) = entry else {
                 // c:3056-3058
                 break;
@@ -11671,9 +11674,13 @@ pub fn execcmd_exec(
                 }
             }
             // c:3434-3447 — builtintab lookup.
+            // A module's builtins are in C's builtintab only while the module is
+            // loaded; until then (zsh/files `mv`, zsh/stat `zstat`, …) the name is
+            // external or not found.
             let builtin_entry: Option<&'static builtin> = BUILTINS
                 .iter()
-                .find(|b| b.node.nam.as_str() == cmdarg.as_str());
+                .find(|b| b.node.nam.as_str() == cmdarg.as_str())
+                .filter(|_| !crate::fusevm_bridge::builtin_awaits_module_load(cmdarg.as_str()));
             if builtin_entry.is_none() {
                 if (cflags & BINF_BUILTIN) != 0 {
                     // c:3435 — `zwarn("no such builtin: %s", cmdarg);`

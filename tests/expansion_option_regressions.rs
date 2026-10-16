@@ -333,3 +333,39 @@ fn quoted_star_slice_joins_on_ifs() {
     let (_ec, out, _err) = run("x=(a b c); IFS=-; print \"${x[*]:0:2}\"; print -l \"${x[@]:0:2}\"; set -- p q r; print \"${*:1}\"");
     assert_eq!(out, "a-b\na\nb\np-q-r\n");
 }
+
+/// A cached compiled pattern skips the compile that leaves its flags in the
+/// global `patglobflags`, and the matcher gates `$MATCH` on that global (c:2526).
+/// After a `case` pattern compiled in between, the second pass over the same
+/// `(#m)` cond no longer set `$MATCH` (the stock `zmv '(#m)…'` renamed every
+/// file to the first one's name).
+#[test]
+fn cached_match_pattern_still_sets_match_after_another_pattern_compiled() {
+    let (_ec, out, err) = run(
+        "setopt extendedglob; for x in f1 f2; do [[ $x = (#m)f* ]]; case q in a) ;; esac; print -r -- \"$x [$MATCH]\"; done",
+    );
+    assert_eq!(err, "");
+    assert_eq!(out, "f1 [f1]\nf2 [f2]\n");
+}
+
+/// zsh/files' `mv`, `ln`, `chmod`, … and zsh/stat's `zstat` live in `builtintab`
+/// only once their module is loaded. A command name that is only known at run
+/// time (`$cmd`, an array head — how the stock `zmv` runs `$action`) used the
+/// static table regardless, so `$cmd -v` hit the module's option parser
+/// ("bad option: -v") instead of /bin/mv, and `$cmd` for `zstat` ran without
+/// `zmodload`.
+#[test]
+fn run_time_command_names_ignore_builtins_of_unloaded_modules() {
+    let dir = std::env::temp_dir().join(format!("zshrs-dyn-mv-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "x").unwrap();
+    let script = format!(
+        "cd {}; cmd=mv; $cmd -v a.txt b.txt >/dev/null; print $?; cmd=zstat; $cmd +size b.txt 2>&1; print $?",
+        dir.display()
+    );
+    let (_ec, out, _err) = run(&script);
+    assert!(dir.join("b.txt").exists(), "{out:?}");
+    assert!(out.starts_with("0\n"), "{out:?}");
+    assert!(out.contains("command not found: zstat") && out.ends_with("127\n"), "{out:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}

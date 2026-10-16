@@ -2427,13 +2427,9 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
             }
         }
         // c:880-884 — fall through to $HOME.
-        match getsparam("HOME") {
-            Some(h) if !h.is_empty() => Some(h),
-            _ => {
-                zwarnnam(nam, "HOME not set");
-                None
-            }
-        }
+        // `home` (c:885) is a C global filled from the passwd entry at startup, never
+        // NULL; `unset HOME` leaves it empty and `cd` then does nothing, silently.
+        Some(getsparam("HOME").unwrap_or_default())
     } else if argv.len() == 1 {
         // c:887
         let arg = &argv[0];
