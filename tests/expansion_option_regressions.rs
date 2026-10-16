@@ -405,3 +405,20 @@ fn printf_invalid_directive_message_shows_control_chars_visibly() {
     let (_ec, out, _err) = run("printf '%\\n' 2>&1");
     assert_eq!(out, "zsh:printf:1: %\\n: invalid directive\n");
 }
+
+/// c:1717 `while (tok == SEPER) zshlex();` — `function` may be followed by
+/// separators before the brace, which makes it an anonymous function.
+#[test]
+fn function_keyword_separator_then_brace_is_anonymous() {
+    let (_ec, out, err) = run("function; { print a }; function\n{ print b }");
+    assert_eq!((out.as_str(), err.as_str()), ("a\nb\n", ""));
+}
+
+/// c:2113 — a bodyless `()` is a parse error naming the `()` token, with no
+/// line number (`lineno = 0` is still set from c:2072).
+#[test]
+fn bodyless_anonymous_function_is_a_parse_error() {
+    let (ec, out, err) = run("print a; ()");
+    assert_eq!((ec, out.as_str()), (1, ""));
+    assert_eq!(err, "zsh: parse error near `()'\n");
+}

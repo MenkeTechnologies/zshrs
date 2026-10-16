@@ -2763,7 +2763,9 @@ fn par_funcdef() -> Option<ZshCommand> {
         zshlex();
     }
 
+    let mut skipped_separator = false;
     while tok() == SEPER || tok() == NEWLIN {
+        skipped_separator = true;
         crate::funcdef_capture::body_mark_restart(&mut body_mark);
         zshlex();
     }
@@ -2797,7 +2799,10 @@ fn par_funcdef() -> Option<ZshCommand> {
         //   the body brace is allowed even without a separator
         //   (`function name {body}` and `function () {body}` both work
         //   in zsh). Bug #60 in docs/BUGS.md.
-        if names.is_empty() && !saw_paren {
+        // A separator before the brace (`function; { … }`, `function<NL>{ … }`) is
+        // the c:1717 `while (tok == SEPER)` skip: the lexer then stops at the `{`
+        // itself rather than one byte past it, so the peek below does not apply.
+        if names.is_empty() && !saw_paren && !skipped_separator {
             // Check the source byte IMMEDIATELY after the `{`. Tokenizing the
             // brace leaves `pos()` at `{`+2 — the lexer consumes the brace AND
             // the one separator char behind it — so that byte lives at
@@ -10173,7 +10178,13 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         // fusevm shfuncs carry no C-shaped Eprog, so hashtable.rs:1397-1414
         // renders from this raw `body` string, not getpermtext. Without it the
         // body listed as `f () { }` (empty).
-        let cmd = par_cmd(true)?;
+        // A bodyless `()` (end of input, `;`, `}`) is c:2113 `YYERROR` — the error
+        // names the last token lexed, here the `()` itself.
+        let Some(cmd) = par_cmd(true) else {
+            set_lineno(0); // c:2072 `lineno = 0` is still in force when YYERROR fires
+            set_tok(LEXERR);
+            return None;
+        };
         let body_source = crate::funcdef_capture::body_text(body_mark)
             .map(|s| {
                 s.trim()
