@@ -589,6 +589,15 @@ const DASH_SET_O: &[SetOpt] = &[
     fixed("debug", false),
 ];
 
+/// True when `name` is one of the options dash's `set -o` knows. dash answers
+/// any other name with "Illegal option -o NAME" and, `set` being a special
+/// builtin, exits (status 2).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_knows_set_o(name: &str) -> bool {
+    DASH_SET_O.iter().any(|opt| opt.name == name)
+}
+
 /// ksh93u+m's `set -o`, alphabetical. Note the POSITIVE spellings —
 /// `clobber`, `glob`, `exec`, `log`, `unset` are the inverses of zsh's
 /// `noclobber`, `noglob`, `noexec`, `nolog`, `nounset`.

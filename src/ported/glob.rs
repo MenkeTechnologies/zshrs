@@ -2111,6 +2111,15 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
 /// `{a,b}` / `{1..10}` / `{a-z}` handling.
 /// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(list, np)
 pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
+    // !!! PDKSH-FAITHFUL GATE (no C counterpart) !!! mksh/pdksh expand `{a,b}` but have
+    // no `{1..3}` range form: a brace group with `..` and no comma stays literal.
+    if crate::dash_mode::posix_faithful()
+        && crate::dash_mode::pdksh_family()
+        && s.contains("..")
+        && !s.contains(crate::ported::zsh_h::Comma)
+    {
+        return vec![s.to_string()];
+    }
     // c:2276
     if !hasbraces(s, brace_ccl) {
         return vec![s.to_string()];

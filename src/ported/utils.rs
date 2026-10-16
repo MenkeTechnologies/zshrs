@@ -239,6 +239,7 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
 /// ```
 /// WARNING: param names don't match C — Rust=(msg) vs C=()
 pub fn zerr(msg: &str) {
+    crate::extensions::dash_mode::note_error_message(msg);
     // c:173
     let noerrs = *noerrs_lock().lock().unwrap();
     if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {

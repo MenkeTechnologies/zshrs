@@ -2047,6 +2047,8 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
+    "echo \"[$PS2][${PS1+s}][${UID+s}][${EUID+s}]\"",
     "print hello",
     "print -r 'a\\tb'",
     "print -n a; print b",
@@ -2158,6 +2160,7 @@ const KSH_ONLY_CORPUS: &[&str] = &[
 /// `break` / `continue` outside a loop.
 const REAL_SHELL_CORPUS: &[&str] = &[
     "echo \"[${OPTARG+set}]\"",
+    "echo \"[${COLUMNS+c}${LINES+l}]\"",
     "echo \"[${OPTARG-unset}]\"",
     "break; echo after=$?",
     "continue; echo after=$?",
@@ -2183,6 +2186,45 @@ const BASH_KORN_CORPUS: &[&str] = &[
 const PDKSH_CORPUS: &[&str] = &[
     "printf '%d\\n' 010 0x1f 7",
     "echo $((010))",
+    // A read-only violation is status 2 in mksh, 1 for the other fatal shapes.
+    "readonly r=1; (r=2); echo a$?",
+    "readonly r=1; (export r=3); echo b$?",
+    "readonly r=1; (r=2 true); echo c$?",
+    "readonly r=1; (: $((r=5))); echo d$?",
+    "(set -u; : $zz_unset) 2>/dev/null; echo e$?",
+    "(: ${zz_unset:?msg}) 2>/dev/null; echo f$?",
+    // A failed `cd` is status 2; `{1..3}` is not a range (the comma form is).
+    "cd /nonexistent_zz 2>/dev/null; echo $?",
+    "echo {1..3} {a,b}c",
+    // `$PS1` is `$ ` in mksh (unset in ksh93); no `$UID` / `$EUID`.
+    "echo \"[$PS1][$PS2][${UID+s}][${EUID+s}]\"",
+    "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
+];
+
+/// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
+/// form is ONE empty word (bash, ksh and mksh drop it).
+const DASH_FAMILY_CORPUS: &[&str] = &[
+    "set --; f() { echo $#; }; f \"${@-x}\"; f \"${@-}\"; f \"${@:-x}\"; f \"${@+x}\"; f ${@-x}",
+    "set --; f() { echo $#; }; f \"${*-x}\" \"${@}\" \"${@}\" \"${@-x}\"",
+    "set -- a b; f() { echo $#; }; f \"${@-x}\"",
+    // No `builtin`, no `$UID` / `$EUID`.
+    "builtin echo x 2>/dev/null; echo $?",
+    "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
+    "echo \"[${UID+s}][${EUID+s}]\"",
+];
+
+/// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
+const DASH_ONLY_CORPUS: &[&str] = &[
+    "set -o pipefail 2>/dev/null; echo after",
+    "set -o noglob; echo ok",
+    "printf '\\x41|\\101|a\\cb\\n'; echo",
+];
+
+/// zsh and its zsh-STYLE legs: `<` / `>` are not `test` operators
+/// ("condition expected", status 2); only `[[ ]]` orders strings.
+const ZSH_REF_CORPUS: &[&str] = &[
+    "[ a \\< b ] 2>/dev/null; echo $?",
+    "test b \\> a 2>/dev/null; echo $?",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
@@ -3712,7 +3754,10 @@ fn emulation_parity_matrix() {
                 .chain(if case.name == "ksh" { KSH_ONLY_CORPUS } else { &[] })
                 .chain(if case.ref_emulate.is_none() && case.name != "zsh" { REAL_SHELL_CORPUS } else { &[] })
                 .chain(if matches!(case.name, "bash" | "ksh" | "mksh") { BASH_KORN_CORPUS } else { &[] })
-                .chain(if matches!(case.name, "mksh" | "pdksh") { PDKSH_CORPUS } else { &[] });
+                .chain(if matches!(case.name, "mksh" | "pdksh") { PDKSH_CORPUS } else { &[] })
+                .chain(if matches!(case.name, "dash" | "ash") { DASH_FAMILY_CORPUS } else { &[] })
+                .chain(if case.name == "dash" { DASH_ONLY_CORPUS } else { &[] })
+                .chain(if case.ref_emulate.is_some() || case.name == "zsh" { ZSH_REF_CORPUS } else { &[] });
         for script in corpus {
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {
@@ -4346,12 +4391,18 @@ fn dash_family_reports_two_for_a_fatal_shell_error() {
                 "{flags:?}: `{body}` must exit 2"
             );
         }
-        // Every other personality keeps 1.
+        // mksh (R59) answers 2 for a read-only violation only; every other
+        // personality keeps 1.
+        let mksh_want = if body.contains("readonly") { "2\n" } else { "1\n" };
+        assert_eq!(
+            run_zshrs(&["--mksh"], &sub).0,
+            mksh_want,
+            "--mksh: `({body})` status"
+        );
         for flags in [
             &["--zsh"][..],
             &["--bash"][..],
             &["--ksh"][..],
-            &["--mksh"][..],
         ] {
             assert_eq!(
                 run_zshrs(flags, &sub).0,

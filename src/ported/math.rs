@@ -1684,7 +1684,7 @@ thread_local! {
     /// `if (mlevel++)` (c:386) / `if (--mlevel)` (c:446), so mlevel is 0
     /// exactly when no evaluation is in progress. `matheval` reads it to
     /// decide whether the output radix is a fresh one (c:1486).
-    static M_LEVEL: Cell<i32> = const { Cell::new(0) };                     // c:67
+    pub(crate) static M_LEVEL: Cell<i32> = const { Cell::new(0) };                     // c:67
 }
 
 /// c:Src/math.c:65 — `#define MAX_MLEVEL 256`, the recursion cap on nested

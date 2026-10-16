@@ -3078,6 +3078,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // → `bin_*` directly. No function/alias lookup happens.
     vm.register_builtin(BUILTIN_BUILTIN, |vm, argc| {
         let args = pop_args(vm, argc);
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash and ash have no
+        // `builtin`; the word is an ordinary missing command.
+        if crate::dash_mode::dash_faithful() {
+            crate::ported::utils::zwarnnam("builtin", "command not found");
+            return Value::Status(127);
+        }
         // c:Src/exec.c:3483-3487 — the precommand-modifier walk checks
         // `shfunctab` for the command word BEFORE `builtintab`, and only
         // skips that check once a prefix has already been consumed

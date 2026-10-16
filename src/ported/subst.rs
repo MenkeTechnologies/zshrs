@@ -17107,6 +17107,18 @@ pub fn paramsubst(
                     // (`${(U)a:+alt}` folded `a`'s elements, `${(U)e:-dflt}` read the
                     // empty array and dropped the default).
                     var_name = String::new();
+                } else if qt
+                    && crate::dash_mode::dash_faithful()
+                    && var_name == "@"
+                    && arrays_get("@").is_none_or(|a| a.is_empty())
+                {
+                    // !!! DASH GATE (no C counterpart) !!! `"${@-w}"` with no positional
+                    // parameters is ONE empty word in dash and ash (`$@` counts as set,
+                    // but the quoted braces keep an empty field); zsh drops the word.
+                    value = String::new();
+                    split_parts = None;
+                    isarr = 0;
+                    c3227_scalarized = true;
                 }
             } else if let Some(default) = r.strip_prefix("::=") {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`), so the

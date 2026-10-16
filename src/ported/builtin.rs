@@ -1472,6 +1472,15 @@ pub fn bin_set(
                 // returns 0. `bash_set_o` owns exactly those names in --bash
                 // and returns None everywhere else, leaving the faithful C
                 // path below untouched for --zsh and the other emulations.
+                // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has only its own
+                // `set -o` names; any other (`pipefail`, `posix`, …) is a fatal error.
+                if crate::dash_mode::dash_faithful()
+                    && !crate::extensions::emulation_output::dash_knows_set_o(&optname)
+                {
+                    zerrnam(nam, &format!("Illegal option -o {}", optname));
+                    unqueue_signals();
+                    return crate::dash_mode::fatal_error_status().unwrap_or(2);
+                }
                 if let Some(st) = crate::dash_mode::bash_set_o(&optname, action) {
                     if st != 0 {
                         unqueue_signals();
@@ -2044,6 +2053,10 @@ pub fn bin_cd(
         None => {
             unqueue_signals();
             // !!! DASH-FAMILY GATE !!! dash's failed `cd` is a `sh_error`: status 2.
+            // mksh answers 2 for a failed `cd` as well.
+            if crate::dash_mode::pdksh_family() && crate::dash_mode::posix_faithful() {
+                return 2;
+            }
             return crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
         }
     };
@@ -17607,8 +17620,10 @@ pub fn testlex() {
             "!" => BANG_TOK,    // c:7215
             "(" => INPAR_TOK,   // c:7217
             ")" => OUTPAR_TOK,  // c:7219
-            "<" => INANG_TOK,   // c:7221
-            ">" => OUTANG_TOK,  // c:7223
+            // !!! DROP-IN GATE !!! zsh 5.9.2 has no `<` / `>` here: `[ a \< b ]` is
+            // "condition expected: <" (status 2). bash, ksh and sh order strings.
+            "<" if crate::dash_mode::posix_faithful() => INANG_TOK,
+            ">" if crate::dash_mode::posix_faithful() => OUTANG_TOK,
             _ => STRING_LEX,    // c:7225
         });
         TESTARGS_IDX.set(i + 1); // c:7226 — `testargs++`

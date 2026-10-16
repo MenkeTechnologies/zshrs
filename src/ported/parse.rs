@@ -3873,8 +3873,14 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
     // c:2659
     let bc: Vec<char> = b.chars().collect();
     let is_eq = |ch: char| ch == '=' || ch == Equals;
-    let is_gt = |ch: char| ch == '>' || ch == Outang;
-    let is_lt = |ch: char| ch == '<' || ch == Inang;
+    // !!! RUST-ONLY: a PLAIN `<` / `>` word (`[ a \< b ]`) is an ordering operator only
+    // for the bash/ksh/sh/mksh drop-ins; zsh 5.9.2 answers "condition expected: <"
+    // (status 2), so zsh and its zsh-style legs accept the Inang / Outang tokens alone.
+    let plain_order = crate::extensions::emulation_startup::emulating()
+        && crate::extensions::emulation_startup::personality()
+            != crate::extensions::emulation_startup::Personality::Zsh;
+    let is_gt = |ch: char| (plain_order && ch == '>') || ch == Outang;
+    let is_lt = |ch: char| (plain_order && ch == '<') || ch == Inang;
     let is_tilde = |ch: char| ch == '~' || ch == Tilde;
     let is_bang = |ch: char| ch == '!' || ch == Bang;
 

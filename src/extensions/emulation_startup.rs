@@ -567,9 +567,6 @@ pub fn apply_personality_option_deltas() {
     // plus its clear-to-end-of-line padding is the most visible thing on
     // the screen, so it is off for all of them.
     opt_state_set("promptsp", false);
-    // EVERY drop-in: `$OPTARG` starts unset (`${OPTARG+set}` is empty in bash,
-    // ksh93, mksh, dash and /bin/sh). zsh pre-declares it as an empty scalar.
-    crate::ported::params::unsetparam("OPTARG");
     if p != Personality::Bash {
         return;
     }
@@ -599,6 +596,54 @@ pub fn apply_personality_option_deltas() {
     // defaults for the rows backed by a real zsh option.
     crate::dash_mode::set_bash_mode(true);
     crate::dash_mode::bash_shopt_apply_defaults();
+}
+
+/// True for the drop-ins that have no `$UID` / `$EUID`: dash, ksh93 and the
+/// pdksh line (bash and zsh define them; `/bin/sh` is bash on macOS and dash on
+/// Linux, so the `sh` personality is left alone).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn lacks_uid_params() -> bool {
+    // Not `personality()`: the parameter table is built before it is recorded.
+    crate::dash_mode::dash_faithful() || crate::dash_mode::korn_mode()
+}
+
+/// The drop-in's parameter-table deltas: parameters the emulated shell does not
+/// define (or defines differently) than zsh. Needs the parameter table, so it
+/// runs after `apply_personality_option_deltas` once the table exists.
+pub fn apply_personality_param_deltas() {
+    let p = personality();
+    if p == Personality::Zsh {
+        return;
+    }
+    // EVERY drop-in: `$OPTARG` starts unset (`${OPTARG+set}` is empty in bash,
+    // ksh93, mksh, dash and /bin/sh). zsh pre-declares it as an empty scalar.
+    crate::ported::params::unsetparam("OPTARG");
+    // zsh's `$OSTYPE` / `$MACHTYPE` are not set by dash, ksh93 or the pdksh
+    // line, and only mksh sets `$COLUMNS` / `$LINES` outside a terminal.
+    if !matches!(p, Personality::Bash | Personality::Sh) {
+        crate::ported::params::unsetparam("OSTYPE");
+        crate::ported::params::unsetparam("MACHTYPE");
+    }
+    if !matches!(p, Personality::Mksh | Personality::Pdksh) {
+        crate::ported::params::unsetparam("COLUMNS");
+        crate::ported::params::unsetparam("LINES");
+    }
+    // The Korn family starts a non-interactive shell with `PS2='> '`; mksh also
+    // has `PS1='$ '` (ksh93 and bash leave PS1 unset).
+    if matches!(p, Personality::Ksh93 | Personality::Mksh | Personality::Pdksh) {
+        crate::ported::params::setsparam("PS2", "> ");
+    }
+    if matches!(p, Personality::Mksh | Personality::Pdksh) {
+        crate::ported::params::setsparam("PS1", "$ ");
+    }
+    // bash and ksh93 leave PS1 unset in a non-interactive shell (bash PS2 too).
+    if matches!(p, Personality::Ksh93 | Personality::Bash) {
+        crate::ported::params::unsetparam("PS1");
+    }
+    if p == Personality::Bash {
+        crate::ported::params::unsetparam("PS2");
+    }
 }
 
 /// Whether this drop-in writes the bracketed-paste enable/disable pair

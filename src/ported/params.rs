@@ -1720,6 +1720,11 @@ pub fn createparamtable() {
         if crate::dash_mode::dash_faithful() && matches!(ip.name, "RANDOM" | "SECONDS") {
             return;
         }
+        // !!! DROP-IN GATE (no C counterpart) !!! dash, ksh93 and mksh define no
+        // $UID / $EUID.
+        if matches!(ip.name, "UID" | "EUID") && crate::extensions::emulation_startup::lacks_uid_params() {
+            return;
+        }
         // c:840 — `paramdef->gsu` selects which gsu_scalar vtable the
         // new param gets. C uses the per-IPDEF macro's BR(...) field;
         // since the Rust special_paramdef doesn't carry a gsu slot
@@ -17949,6 +17954,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     }
     match name {
         // libc identity callbacks.
+        "UID" | "EUID" if crate::extensions::emulation_startup::lacks_uid_params() => None,
         "UID" => Some(uidgetfn().to_string()),
         "GID" => Some(gidgetfn().to_string()),
         "EUID" => Some(euidgetfn().to_string()),

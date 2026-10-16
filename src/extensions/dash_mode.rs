@@ -276,8 +276,28 @@ pub fn fatal_error_status() -> Option<i32> {
     // distinguishes the drop-in from it.
     if posix_faithful() && dash_strict() {
         Some(2)
+    } else if pdksh_family() && READONLY_VIOLATION.swap(false, Ordering::Relaxed) {
+        // mksh answers 2 (not 1) for a read-only violation only; its other
+        // fatal shapes (`set -u`, `${x:?}`, `$((1/0))`) are 1.
+        Some(2)
     } else {
         None
+    }
+}
+
+/// Set by [`note_error_message`] when the error just reported was a
+/// read-only variable violation under the pdksh line; consumed by
+/// [`fatal_error_status`].
+static READONLY_VIOLATION: AtomicBool = AtomicBool::new(false);
+
+/// Called with every `zerr` message so [`fatal_error_status`] can tell a
+/// read-only violation from the other fatal shapes.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn note_error_message(msg: &str) {
+    // mksh answers 1 for a read-only assignment made by `$(( ))`.
+    if pdksh_family() && crate::ported::math::M_LEVEL.with(|c| c.get()) == 0 && msg.starts_with("read-only variable: ") {
+        READONLY_VIOLATION.store(true, Ordering::Relaxed);
     }
 }
 
@@ -3127,9 +3147,10 @@ pub fn dash_ulimit(argv: &[String]) -> i32 {
     0
 }
 
-/// Double the backslash of every `\c` in a printf format so zsh's
-/// `getkeystring` (which reads `\c` as "stop output") emits `\c` literally,
-/// as dash's printf does. An already-escaped `\\` pair is passed through.
+/// Double the backslash of every `\c` and `\x` in a printf format so zsh's
+/// `getkeystring` (which reads `\c` as "stop output" and `\xNN` as a byte) emits
+/// them literally, as dash's printf does. An already-escaped `\\` pair is
+/// passed through.
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn dash_printf_keep_backslash_c(fmt: &str) -> String {
@@ -3141,7 +3162,10 @@ pub fn dash_printf_keep_backslash_c(fmt: &str) -> String {
             continue;
         }
         match chars.next() {
-            Some('c') => out.push_str("\\\\c"),
+            Some(k @ ('c' | 'x')) => {
+                out.push_str("\\\\");
+                out.push(k);
+            }
             Some(n) => {
                 out.push('\\');
                 out.push(n);

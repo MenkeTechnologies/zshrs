@@ -2646,6 +2646,11 @@ impl ShellExecutor {
                     {
                         continue;
                     }
+                    if matches!(entry.name, "UID" | "EUID")
+                        && crate::extensions::emulation_startup::lacks_uid_params()
+                    {
+                        continue;
+                    }
                     // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
                     // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
                     //
