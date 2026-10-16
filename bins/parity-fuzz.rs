@@ -603,12 +603,22 @@ fn run_zshrs(script: &str, bin: &Path, timeout: Duration) -> RunOut {
     // Only the real-zsh target carries the Shinstdin (stdin) mode.
     let stdin = matches!(cfg.refk, RefKind::Zsh) && stdin_mode();
     let file = (shell_target() == ShellTarget::Csh).then(|| csh_script_file(script));
-    if stdin {
-        cmd.args(cfg.flags).arg("-f");
-    } else if let Some(path) = &file {
-        cmd.args(cfg.flags).arg("-f").arg(path);
+    // `-f` is NO_RCS only where the drop-in keeps zsh semantics. In a real-shell
+    // drop-in (`--bash`, `--ksh`, `--sh`, …) it is `set -f` — noglob — and the
+    // reference shell is not given it, so every pathname-expansion case compared a
+    // globbing reference against a zshrs that never globbed. A `-c` drop-in reads
+    // no startup files, so nothing needs it.
+    let rcs_off: &[&str] = if matches!(cfg.refk, RefKind::Real(_)) && shell_target() != ShellTarget::Csh {
+        &[]
     } else {
-        cmd.args(cfg.flags).args(["-f", "-c", script]);
+        &["-f"]
+    };
+    if stdin {
+        cmd.args(cfg.flags).args(rcs_off);
+    } else if let Some(path) = &file {
+        cmd.args(cfg.flags).args(rcs_off).arg(path);
+    } else {
+        cmd.args(cfg.flags).args(rcs_off).args(["-c", script]);
     }
     cmd.env_remove("ZSHRS_CACHE");
     cmd.env_remove("ENV");

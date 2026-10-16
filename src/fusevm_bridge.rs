@@ -4820,11 +4820,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .ok()
                 .and_then(|t| {
                     t.get("pipestatus")
-                        .map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0)
+                        .map(|pm| {
+                        (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0
+                            && (pm.node.flags
+                                & (crate::ported::zsh_h::PM_LOCAL | crate::ported::zsh_h::PM_HIDE) as i32)
+                                != 0
+                    })
                 })
                 .unwrap_or(false);
             if !shadowed {
                 let strs: Vec<String> = pipestatus.iter().map(|s| s.to_string()).collect();
+                // Once any builtin has run, jobs.rs `waitonejob` has created the
+                // paramtab node holding `(lastval)`; the executor's array store
+                // alone then loses to it on the bash `$PIPESTATUS` alias path
+                // (`:; true | false | true; echo ${PIPESTATUS[@]}` read `0`).
+                crate::ported::params::setaparam("pipestatus", strs.clone());
                 exec.set_array("pipestatus".to_string(), strs);
             }
         });

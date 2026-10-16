@@ -16303,6 +16303,22 @@ pub fn bin_read(
             }
         }
     }
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash `read -p PROMPT var`: `-p` takes
+    // the prompt text and shows it, without a newline, only when input is a
+    // terminal. zsh's `-p` reads from the coprocess instead (c:6510), so every
+    // `-p` test below is masked off in bash mode.
+    let bash_p = crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'p');
+    if bash_p && !args.is_empty() {
+        let text = args.remove(0);
+        let fd = if OPT_HASARG(ops, b'u') {
+            OPT_ARG(ops, b'u').and_then(|a| a.trim().parse::<i32>().ok()).unwrap_or(0)
+        } else {
+            0
+        };
+        if unsafe { libc::isatty(fd) } == 1 {
+            eprint!("{text}");
+        }
+    }
     let bash_n = read_counts && OPT_ISSET(ops, b'n');
     let bash_bign = read_counts && OPT_ISSET(ops, b'N');
     let bash_stop_at_nl = bash_n && !bash_bign; // -N ignores the delimiter
@@ -16376,7 +16392,7 @@ pub fn bin_read(
     if (OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q'))
         && !bash_nchars
         && !OPT_ISSET(ops, b'u')
-        && !OPT_ISSET(ops, b'p')
+        && !(OPT_ISSET(ops, b'p') && !bash_p)
     {
         // c:6457
         if !izle {
@@ -16435,7 +16451,7 @@ pub fn bin_read(
     // "-p: no coprocess" rather than "not an identifier". Bug #387.
     // The `-u`-with-arg path falls through and shares this same gate
     // when its arg is "p" (c:6494) — also handled.
-    if OPT_ISSET(ops, b'p') || (OPT_HASARG(ops, b'u') && OPT_ARG(ops, b'u').as_deref() == Some("p"))
+    if (OPT_ISSET(ops, b'p') && !bash_p) || (OPT_HASARG(ops, b'u') && OPT_ARG(ops, b'u').as_deref() == Some("p"))
     {
         let coprocin =
             crate::ported::modules::clone::coprocin.load(std::sync::atomic::Ordering::Relaxed);
@@ -16487,7 +16503,7 @@ pub fn bin_read(
     // `-p`, the same path reads from coprocin (set by the BUILTIN_
     // RUN_COPROC handler at fusevm_bridge.rs around the
     // `coproc CMD` launch). Bug #388.
-    let ufd: i32 = if OPT_ISSET(ops, b'p') {
+    let ufd: i32 = if OPT_ISSET(ops, b'p') && !bash_p {
         crate::ported::modules::clone::coprocin.load(std::sync::atomic::Ordering::Relaxed)
     } else if OPT_HASARG(ops, b'u') {
         // c:Src/builtin.c:6494-6500 — `fdarg = (int)zstrtol(argptr,

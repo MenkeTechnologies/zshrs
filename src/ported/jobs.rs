@@ -5432,7 +5432,10 @@ pub fn waitonejob(jn: i32) {
         // this paramtab write is the Rust-only mirror. A local shadow
         // (`typeset -h +g pipestatus`) has no PM_SPECIAL and no GSU, so
         // the C writer cannot reach it — skip the mirror too, or the
-        // shadow loses its PM_UNSET (B02typeset.ztst:37,38).
+        // shadow loses its PM_UNSET (B02typeset.ztst:37,38). A shadow is a
+        // node marked local/hidden: the plain node `setaparam` below creates
+        // under sh/ksh/bash (where `pipestatus` is not a registered special)
+        // must not read as one.
         // Rust-only: every builtin and function lands here, so skip the
         // write when the mirror already holds `(lastval)`. A rewrite of an
         // identical one-element array costs a write lock, a queue_signals
@@ -5444,7 +5447,10 @@ pub fn waitonejob(jn: i32) {
             .and_then(|t| {
                 t.get("pipestatus").map(|pm| {
                     (
-                        (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0,
+                        (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) == 0
+                            && (pm.node.flags
+                                & (crate::ported::zsh_h::PM_LOCAL | crate::ported::zsh_h::PM_HIDE) as i32)
+                                != 0,
                         (pm.node.flags & crate::ported::zsh_h::PM_UNSET as i32) == 0
                             && pm.u_arr.as_deref() == Some(std::slice::from_ref(&lastval_str)),
                     )

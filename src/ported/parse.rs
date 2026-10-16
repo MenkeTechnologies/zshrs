@@ -3897,7 +3897,18 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
     // '<' and Inang as well, so C always emits COND_STRGTR here: in `test`/`[`, `a < b` is
     // evaluated as `a > b` (the reference build does the same).
     if bc.len() == 1 && (is_gt(bc[0]) || is_lt(bc[0])) {
-        let op = COND_STRGTR;
+        // !!! RUST-ONLY: the bash/ksh/sh/mksh drop-ins ask `test`/`[` for what the
+        // real shells compute — `<` is "sorts before", `>` is "sorts after". C's
+        // `||` chain above always yields COND_STRGTR, which only the zsh personality
+        // is meant to inherit.
+        let posix_order = crate::extensions::emulation_startup::emulating()
+            && crate::extensions::emulation_startup::personality()
+                != crate::extensions::emulation_startup::Personality::Zsh;
+        let op = if posix_order && is_lt(bc[0]) {
+            COND_STRLT
+        } else {
+            COND_STRGTR
+        };
         ecadd(WCB_COND(op as u32, 0));
         ecstr(a);
         ecstr(c);

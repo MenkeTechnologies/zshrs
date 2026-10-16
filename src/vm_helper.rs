@@ -3057,15 +3057,19 @@ impl ShellExecutor {
         // (an imported `PROMPT4` is an ordinary variable) and always starts with
         // `PS1='$ '` (`# ` for root), `PS2='> '`, `PS4='+ '`, interactive or not.
         let dash_prompts = crate::extensions::dash_mode::dash_faithful();
+        // !!! RUST-ONLY !!! Every real-shell drop-in (bash, ksh93, mksh, sh, …) shares
+        // dash's PS4 default (`+ `), has no `PROMPTn` aliases and starts with the
+        // three-character sh IFS; only the PS1/PS2 seeding above stays dash-specific.
+        let posix_real = crate::extensions::dash_mode::posix_faithful();
         // c:Src/init.c:1212-1213 — `ifs = EMULATION(EMULATE_KSH|EMULATE_SH) ?
         // ztrdup(DEFAULT_IFS_SH) : ztrdup(DEFAULT_IFS)`: the sh default has no
         // Meta+space tail. An inherited `IFS` still wins (importenv).
-        if dash_prompts && std::env::var_os("IFS").is_none() {
+        if (dash_prompts || posix_real) && std::env::var_os("IFS").is_none() {
             *crate::ported::params::ifs_lock().lock().unwrap() =
                 Some(crate::ported::zsh_h::DEFAULT_IFS_SH.to_string());
         }
         let seed_prompt = |name: &str, alias: Option<&str>, default: &str| {
-            let alias = if dash_prompts { None } else { alias };
+            let alias = if dash_prompts || posix_real { None } else { alias };
             let default = match (dash_prompts, name) {
                 (true, "PS1") => {
                     if crate::ported::utils::privasserted() {
@@ -3076,6 +3080,7 @@ impl ShellExecutor {
                 }
                 (true, "PS2") => "> ",
                 (true, "PS4") => "+ ",
+                (false, "PS4") if posix_real => "+ ",
                 _ => default,
             };
             let cur = crate::ported::params::getsparam(name);
