@@ -72,9 +72,11 @@ read it as a fixed cost disappearing, not as a benchmark.
 
 ### 6. Parallelism as grammar rather than library
 
-`pmap`, `pgrep`, `peach`, `barrier`, `async`, and `await` are VM-dispatched
-shell builtins (fusevm dispatch IDs 210–215), not library calls: the body
-compiles once and runs on pooled VMs with zero forks. `make -j`, `xargs -P`,
+`pmap`, `pgrep`, `peach`, `barrier`, `async`, and `await` (plus `puniq`,
+`psort`, `pfirst`, `pany`, `pmap_chunked`, `par_lines`, `par_walk`) are shell
+builtins scheduled on a per-process worker pool, not library calls: each item
+runs in a fresh `zshrs` process (never `sh -c`), and the chunked forms run many
+items per process. `make -j`, `xargs -P`,
 and GNU parallel all sit outside the shell language. This is inside it.
 
 ---
@@ -361,7 +363,8 @@ and rare, and not a thing anyone ports.
 "first shell with both LSP and DAP." See entry 28 for what survives.
 Also cut: `par_for` / `par_map` / `par_filter` / `par_reduce` as named
 parallel opcodes — the shipped primitives are `pmap`, `pgrep`, `peach`,
-`barrier`, `async`, `await` (entry 6), and the four `par_*` names existed only
+`barrier`, `async`, `await`, `puniq`, `psort`, `pfirst`, `pany`, `pmap_chunked`,
+`par_lines`, `par_walk` (entry 6), and the four `par_*` names existed only
 in the old register.
 
 **Borderline, cut for consistency.** Flat history plus an FTS5 sibling index

@@ -1400,17 +1400,32 @@ Number lines. \fB\-b a\fR numbers all, \fB\-w N\fR field width. coreutils drop\-
 .B nproc
 Print the number of processing units available. \fB\-\-all\fR ignores affinity.
 .TP
+.B pany
+Parallel any: run the template per item, status 0 as soon as one run succeeds (the rest are skipped), else 1. \fBpany 'grep \-q TODO {}' *.rs\fR.
+.TP
+.B par_lines
+Run the template once per line of FILE (\fB{}\fR is the line). FILE is memory\-mapped and split into line\-aligned ranges that run in parallel; output is in file order. \fBpar_lines 'echo got {}' access.log\fR.
+.TP
+.B par_walk
+Run the template once per file and directory under each PATH (\fB{}\fR is the path), walking the tree in parallel; output is in walk order. \fBpar_walk 'test \-f {} && wc \-l {}' src\fR.
+.TP
 .B patdebug
 Dump the compiled form of a pattern (the ZSH_PAT_DEBUG builtin of zsh). \fBpatdebug [\-p] PATTERN\fR.
 .TP
 .B peach
 Parallel for\-each on the worker pool: run the template once per item with \fB{}\fR replaced by the item, printing output as each finishes. \fBpeach 'convert {} {}.png' *.svg\fR.
 .TP
+.B pfirst
+Print the first item (lowest position) for which the template succeeds; status 1 when none does. \fBpfirst 'test \-x {}/zsh' /usr/bin /opt/homebrew/bin\fR.
+.TP
 .B pgrep
 Print PIDs of processes matching a pattern. \fB\-f\fR matches full command line.
 .TP
 .B pmap
 Parallel map on the worker pool: run the template once per item with \fB{}\fR replaced by the item, printing output in input order. \fBpmap 'gzip {}' *.log\fR. Not the process memory\-map command of the same name.
+.TP
+.B pmap_chunked
+Like \fBpmap\fR, but items are handed out in chunks of N and each chunk runs in one shell process. \fBpmap_chunked 50 'gzip {}' *.log\fR.
 .TP
 .B printenv
 Print the value of one or more environment variables, or all if none given. coreutils drop\-in.
@@ -1420,6 +1435,12 @@ Profile command execution in\-process with nanosecond timing. \fBprofile CMD...\
 .TP
 .B provenance
 Value lineage over bytecode execution. \fBprovenance \-m NAME\fR arms tracking for a parameter; \fBprovenance NAME\fR then prints where its bytes came from (\fB$(...)\fR, \fB<(...)\fR, glob, heredoc, an earlier assignment) and every bytecode op that produced or consumed them \(em \fBassign\fR, \fBexpand\fR, \fBconcat\fR, \fBexec\fR, \fBcall\fR, \fBunset\fR \(em each with its \fB$LINENO\fR. \fB\-j\fR emits JSON, \fB\-u\fR untracks, \fB\-c\fR clears. Records nothing until armed; disable entirely with \fB[provenance] enabled = false\fR in \fB~/.zshrs/zshrs.toml\fR or \fBZSHRS_PROVENANCE=0\fR.
+.TP
+.B psort
+Parallel stable sort of the operands or stdin lines. \fB\-n\fR numeric, \fB\-r\fR reverse. \fBpsort \-nr 10 9 100\fR.
+.TP
+.B puniq
+Parallel distinct: unique operands or stdin lines in first\-occurrence order. \fBcat big.log | puniq\fR.
 .TP
 .B realpath
 Resolve symlinks and \fB.\fR / \fB..\fR to a canonical absolute path. coreutils drop\-in.

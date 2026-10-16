@@ -16,8 +16,10 @@ This RFC proposes `zshrs` as the **universal default shell** for all *Nix system
 - Compile all execution to bytecode (100% compiled, zero tree-walking)
 - JIT-compile hot paths to native x86-64/aarch64 machine code via Cranelift
 - Persist both the bytecode *and* the JIT's native code across invocations
-- Run parallel primitives as VM-dispatched builtins (`pmap`, `pgrep`, `peach`,
-  `barrier`, `async`, `await`) rather than forking to `sh -c`
+- Run parallel primitives as pool-scheduled builtins (`pmap`, `pgrep`, `peach`,
+  `barrier`, `async`, `await`, `puniq`, `psort`, `pfirst`, `pany`, `pmap_chunked`,
+  `par_lines`, `par_walk`) that start a fresh `zshrs` per item or chunk rather
+  than forking to `sh -c`
 - Take command substitution, globbing, completion and autoloading off `fork()`
   entirely, with 48 coreutils commands executing in-process
 
@@ -69,7 +71,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 1. **Bytecode compilation** — Scripts compile to register-based bytecode (fusevm 0.26.7, 235 opcodes)
 2. **Sharded rkyv image cache** — `~/.zshrs/images/{shard}.rkyv` per source root (zpwr, each zinit plugin, completions corpus, etc.) plus a top-level `index.rkyv` for two-level lookup (~150-200ns); per-shard rebuild keeps `git pull` blast radius bounded (e.g. 3-5s for zpwr alone vs 30s full corpus); sibling `catalog.db` (worker-hydrated, per-shard) provides SQL-queryable view + entry stats that survive rebuilds
 3. **Tiered JIT** — Linear JIT for straight-line code, Block JIT for loops/conditionals, native x86-64/aarch64 via Cranelift
-4. **Anti-fork builtins** — commands execute in-process, zero fork (zsh ports, including the 4 zsh/attr xattr builtins, plus extensions, including 48 coreutils and 6 parallel/async primitives)
+4. **Anti-fork builtins** — commands execute in-process, zero fork (zsh ports, including the 4 zsh/attr xattr builtins, plus extensions, including 48 coreutils builtins)
 5. **Megafat binary** — Optional Stryke integration adds 3200+ additional builtins
 
 **Measured improvements:**
@@ -221,7 +223,7 @@ Integrity: Optional HMAC signing for security-critical deployments
 | **Coreutils (anti-fork)** | **48** | base64, basename, cat, cksum, comm, cut, date, dircolors, dirname, env, expand, expr, factor, fold, groups, head, id, link, logname, mkfifo, mktemp, nice, nl, nproc, paste, printenv, realpath, seq, sha256sum, shuf, sleep, sort, sum, tac, tail, tee, touch, tr, tsort, tty, uname, unexpand, uniq, unlink, users, wc, whoami, yes |
 | **xattr (direct syscall)** | 4 | zgetattr, zsetattr, zdelattr, zlistattr |
 | Text processing | 50+ | jq, yq, awk-equivalent, regex |
-| **Parallel (VM-executed)** | 6 | async, await, pmap, pgrep, peach, barrier |
+| **Parallel (worker pool)** | 13 | async, await, pmap, pgrep, peach, barrier, puniq, psort, pfirst, pany, pmap_chunked, par_lines, par_walk |
 | Network | 10+ | http, curl-equivalent, socket |
 | Zsh compat | 40+ | zstyle, zmodload, bindkey, zle |
 
@@ -230,11 +232,12 @@ Integrity: Optional HMAC signing for security-critical deployments
 Traditional shells fork for every external command. zshrs eliminates forks for:
 
 1. **Coreutils builtins** — `cat`, `head`, `tail`, `wc`, `sort`, `find`, etc. execute in-process
-2. **Parallel primitives** — `pmap`, `pgrep`, `peach` compile to bytecode and run on VM (not `sh -c`)
-3. **xattr operations** — direct `getxattr`/`setxattr`/`listxattr`/`removexattr` syscalls
-4. **Command substitution** — `$(builtin)` captures stdout via `dup2`, no fork
+2. **xattr operations** — direct `getxattr`/`setxattr`/`listxattr`/`removexattr` syscalls
+3. **Command substitution** — `$(builtin)` captures stdout via `dup2`, no fork
 
 **Speedup per avoided fork: 2-5ms** (fork + exec + ld.so + libc init overhead eliminated)
+
+The parallel primitives (`pmap`, `pgrep`, `peach`, `pmap_chunked`, `par_lines`, `par_walk`, …) are not on this list: they start a fresh `zshrs` per item, or per chunk of items, scheduled on a rayon pool.
 
 ### Binary Distribution
 
@@ -521,7 +524,7 @@ flow, and [CREATORS.md](../CREATORS.md) for the historical record.
 | uname | ext | ext | ext | **builtin** | Direct uname() |
 | id/whoami | ext | ext | ext | **builtin** | Direct getuid/getgid |
 | xattr ops | ext | ext | zsh/attr | **builtin** | Direct syscall |
-| pmap/pgrep/peach | ✗ | ✗ | ✗ | **builtin** | VM-executed, no fork |
+| pmap/pgrep/peach + puniq/psort/pfirst/pany/pmap_chunked/par_lines/par_walk | ✗ | ✗ | ✗ | **builtin** | Worker pool, fresh zshrs per item/chunk |
 | async/await | ✗ | ✗ | ✗ | **builtin** | Extension |
 | jq | ext | ext | ext | **builtin** | Native JSON (via Stryke) |
 

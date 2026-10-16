@@ -1630,7 +1630,7 @@ tmpdir=$(mktemp -d)</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-parallel">
       <h2>Parallel Primitives</h2>
-      <p class="chapter-meta">5 topics · all run on the persistent worker pool, not via fork. Bytecode-VM execution under <code>rayon</code> task scheduler.</p>
+      <p class="chapter-meta">12 topics · scheduled on a per-process <code>rayon</code> worker pool (safe inside <code>$(…)</code> and pipeline stages). Each item runs in a fresh <code>zshrs</code> process; the <code>*_chunked</code>, <code>par_lines</code> and <code>par_walk</code> forms run a whole chunk of items per process.</p>
 
       <article class="doc-entry" id="doc-pmap">
         <h3><a class="doc-anchor" href="#doc-pmap">#</a> <code>pmap 'cmd {}' args…</code></h3>
@@ -1649,6 +1649,50 @@ pmap 'sha256sum {}' **/*.iso</code></pre>
         <h3><a class="doc-anchor" href="#doc-peach">#</a> <code>peach 'cmd {}' args…</code></h3>
         <p>Parallel for-each, unordered. Fire each task and don't preserve order — useful when output order doesn't matter.</p>
         <pre><code>peach 'convert {} {}.png' *.svg</code></pre>
+      </article>
+
+      <article class="doc-entry" id="doc-puniq">
+        <h3><a class="doc-anchor" href="#doc-puniq">#</a> <code>puniq [ITEM…]</code></h3>
+        <p>Distinct items in first-occurrence order, hash-partitioned across the worker pool. Reads stdin lines when no ITEM is given.</p>
+        <pre><code>puniq a b a c
+cat big.log | puniq</code></pre>
+      </article>
+
+      <article class="doc-entry" id="doc-psort">
+        <h3><a class="doc-anchor" href="#doc-psort">#</a> <code>psort [-n] [-r] [ITEM…]</code></h3>
+        <p>Parallel stable sort of the operands or of stdin lines. <code>-n</code> compares numerically, <code>-r</code> reverses.</p>
+        <pre><code>psort -nr 10 9 100
+cat big.txt | psort</code></pre>
+      </article>
+
+      <article class="doc-entry" id="doc-pfirst">
+        <h3><a class="doc-anchor" href="#doc-pfirst">#</a> <code>pfirst 'cmd {}' args…</code></h3>
+        <p>Prints the first argument (lowest position) for which the command succeeds; status 1 when none does. Arguments past the best match found so far are not tested, and the winner is the lowest position, not the first to finish.</p>
+        <pre><code>pfirst 'test -x {}/zsh' /usr/bin /opt/homebrew/bin</code></pre>
+      </article>
+
+      <article class="doc-entry" id="doc-pany">
+        <h3><a class="doc-anchor" href="#doc-pany">#</a> <code>pany 'cmd {}' args…</code></h3>
+        <p>Status 0 as soon as the command succeeds for some argument, else 1; prints nothing. Remaining arguments are skipped once one passes.</p>
+        <pre><code>pany 'grep -q TODO {}' *.rs &amp;&amp; echo has-todos</code></pre>
+      </article>
+
+      <article class="doc-entry" id="doc-pmap_chunked">
+        <h3><a class="doc-anchor" href="#doc-pmap_chunked">#</a> <code>pmap_chunked N 'cmd {}' args…</code></h3>
+        <p>Like <code>pmap</code>, but arguments go to the pool in chunks of N and each chunk runs in one shell process, paying process startup once per N items. Output is in argument order.</p>
+        <pre><code>pmap_chunked 50 'gzip {}' *.log</code></pre>
+      </article>
+
+      <article class="doc-entry" id="doc-par_lines">
+        <h3><a class="doc-anchor" href="#doc-par_lines">#</a> <code>par_lines 'cmd {}' FILE</code></h3>
+        <p>Runs the command once per line of FILE, <code>{}</code> replaced by the line. FILE is memory-mapped and cut into line-aligned ranges that run in parallel; output is in file order.</p>
+        <pre><code>par_lines 'echo got {}' access.log</code></pre>
+      </article>
+
+      <article class="doc-entry" id="doc-par_walk">
+        <h3><a class="doc-anchor" href="#doc-par_walk">#</a> <code>par_walk 'cmd {}' PATH…</code></h3>
+        <p>Runs the command once per file and directory under each PATH (the PATHs included), <code>{}</code> replaced by the path. The tree is walked in parallel with names sorted within a directory; output is in walk order.</p>
+        <pre><code>par_walk 'test -f {} &amp;&amp; wc -l {}' src</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-barrier">
@@ -8202,6 +8246,55 @@ echo done
         <h3><code>pmap</code> <a class="doc-anchor" href="#doc-lsp-extension-pmap">¶</a></h3>
         <p>pmap 'cmd {}' arg1 arg2 arg3 — parallel map across worker pool. Runs <code>cmd</code> for each argument, replacing <code>{}</code> with the argument. Output is collected in order. Returns 0 if all succeed.</p>
         <p>Usage:   pmap 'gzip {}' *.log   pmap 'echo {}' a b c d   ls *.rs | pmap 'wc -l {}'</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-pany">
+
+        <h3><code>pany</code> <a class="doc-anchor" href="#doc-lsp-extension-pany">¶</a></h3>
+        <p>pany 'cmd {}' arg1 arg2 ... — parallel any. Status 0 as soon as cmd succeeds for some argument, else 1; prints nothing.</p>
+        <p>Usage:   pany 'grep -q TODO {}' *.rs &amp;&amp; echo has-todos</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-par_lines">
+
+        <h3><code>par_lines</code> <a class="doc-anchor" href="#doc-lsp-extension-par_lines">¶</a></h3>
+        <p>par_lines 'cmd {}' FILE — run cmd once per line of FILE, {} replaced by the line. FILE is memory-mapped and split into line-aligned ranges that run in parallel; output is in file order.</p>
+        <p>Usage:   par_lines 'echo got {}' access.log</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-par_walk">
+
+        <h3><code>par_walk</code> <a class="doc-anchor" href="#doc-lsp-extension-par_walk">¶</a></h3>
+        <p>par_walk 'cmd {}' PATH... — run cmd once per file and directory under each PATH, {} replaced by the path; output is in walk order.</p>
+        <p>Usage:   par_walk 'test -f {} &amp;&amp; wc -l {}' src</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-pfirst">
+
+        <h3><code>pfirst</code> <a class="doc-anchor" href="#doc-lsp-extension-pfirst">¶</a></h3>
+        <p>pfirst 'cmd {}' arg1 arg2 ... — print the FIRST argument (lowest position) for which cmd succeeds; status 1 and no output when none does.</p>
+        <p>Usage:   pfirst 'test -x {}/zsh' /usr/bin /opt/homebrew/bin</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-pmap_chunked">
+
+        <h3><code>pmap_chunked</code> <a class="doc-anchor" href="#doc-lsp-extension-pmap_chunked">¶</a></h3>
+        <p>pmap_chunked N 'cmd {}' arg1 arg2 ... — like pmap, but arguments go to the pool in chunks of N and each chunk runs in one shell process.</p>
+        <p>Usage:   pmap_chunked 50 'gzip {}' *.log</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-psort">
+
+        <h3><code>psort</code> <a class="doc-anchor" href="#doc-lsp-extension-psort">¶</a></h3>
+        <p>psort [-n] [-r] [ITEM...] — parallel stable sort of the operands, or of stdin lines when none are given. -n compares numerically, -r reverses.</p>
+        <p>Usage:   psort -nr 10 9 100</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-puniq">
+
+        <h3><code>puniq</code> <a class="doc-anchor" href="#doc-lsp-extension-puniq">¶</a></h3>
+        <p>puniq [ITEM...] — distinct operands (or stdin lines) in first-occurrence order, hash-partitioned across the worker pool.</p>
+        <p>Usage:   cat big.log | puniq</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-printenv">

@@ -236,7 +236,7 @@
           </div>
           <div class="cat-card">
             <h4>Parallelism as grammar rather than library</h4>
-            <p><code>pmap</code>, <code>pgrep</code>, <code>peach</code>, <code>barrier</code>, <code>async</code> and <code>await</code> are VM-dispatched builtins (fusevm IDs 210&ndash;215), not library calls: the body compiles once and runs on pooled VMs with zero forks. <code>make -j</code>, <code>xargs -P</code> and GNU parallel all sit outside the shell language. This is inside it.</p>
+            <p><code>pmap</code>, <code>pgrep</code>, <code>peach</code>, <code>barrier</code>, <code>async</code> and <code>await</code> are shell builtins scheduled on a per-process rayon worker pool, not library calls; each item runs in a fresh <code>zshrs</code> process (never <code>sh -c</code>), and the chunked forms (<code>pmap_chunked</code>, <code>par_lines</code>, <code>par_walk</code>) run many items per process. <code>make -j</code>, <code>xargs -P</code> and GNU parallel all sit outside the shell language. This is inside it.</p>
           </div>
         </div>
 
@@ -464,7 +464,7 @@
           <tr><td><code>date</code>/<code>hostname</code>/<code>uname</code></td><td>fork + exec</td><td><span class="highlight">Direct syscall</span></td><td>3000-8000x</td></tr>
           <tr><td><code>sleep</code>/<code>mktemp</code>/<code>touch</code></td><td>fork + exec</td><td><span class="highlight">Builtin</span> &mdash; zero fork</td><td>2000-5000x</td></tr>
           <tr><td><code>xattr</code> operations</td><td>fork + exec xattr</td><td><span class="highlight">Direct syscall</span></td><td>2000-5000x</td></tr>
-          <tr><td><code>pmap</code>/<code>pgrep</code>/<code>peach</code></td><td>fork N times to sh -c</td><td><span class="highlight">VM execution</span> &mdash; zero fork</td><td>Nx</td></tr>
+          <tr><td><code>pmap</code>/<code>pgrep</code>/<code>peach</code></td><td>fork N times to sh -c</td><td><span class="highlight">worker pool</span> &mdash; fresh zshrs per item, or per chunk</td><td>Nx</td></tr>
           <tr><td><code>$(cmd)</code></td><td>fork + pipe + exec</td><td>In-process stdout capture via <code>dup2</code></td><td>&mdash;</td></tr>
           <tr><td><code>&lt;(cmd)</code> / <code>&gt;(cmd)</code></td><td>fork + FIFO</td><td>Worker pool thread + FIFO</td><td>&mdash;</td></tr>
           <tr><td>Glob <code>**/*.rs</code></td><td>Single-threaded <code>opendir</code></td><td>Parallel <code>walkdir</code> per-subdir on pool</td><td>&mdash;</td></tr>
@@ -1230,14 +1230,18 @@ Every subsequent call (client path, ZERO daemon RTT):
       <section class="tutorial-section">
         <h2><span class="section-num">[0x07]</span> EXCLUSIVE BUILTINS</h2>
 
-        <h3>Parallel Primitives (VM-executed, zero fork)</h3>
+        <h3>Parallel Primitives (worker pool)</h3>
         <table class="arch-table">
           <tr><th>Builtin</th><th>Description</th></tr>
           <tr><td><code>async</code> / <code>await</code></td><td>Ship work to pool, collect result</td></tr>
-          <tr><td><code>pmap</code></td><td>Parallel map with ordered output &mdash; compiles to bytecode, runs on VM, zero forks</td></tr>
-          <tr><td><code>pgrep</code></td><td>Parallel filter &mdash; compiles to bytecode, runs on VM, zero forks</td></tr>
-          <tr><td><code>peach</code></td><td>Parallel for-each, unordered &mdash; compiles to bytecode, runs on VM, zero forks</td></tr>
+          <tr><td><code>pmap</code></td><td>Parallel map with ordered output &mdash; worker pool, one fresh zshrs process per item</td></tr>
+          <tr><td><code>pgrep</code></td><td>Parallel filter &mdash; worker pool, one fresh zshrs process per item</td></tr>
+          <tr><td><code>peach</code></td><td>Parallel for-each, unordered &mdash; worker pool, one fresh zshrs process per item</td></tr>
           <tr><td><code>barrier</code></td><td>Run all commands in parallel, wait for all</td></tr>
+          <tr><td><code>puniq</code> / <code>psort</code></td><td>Parallel distinct / stable sort of operands or stdin lines</td></tr>
+          <tr><td><code>pfirst</code> / <code>pany</code></td><td>Lowest-position / any item for which the command succeeds</td></tr>
+          <tr><td><code>pmap_chunked</code></td><td><code>pmap</code> with one shell process per chunk of N items</td></tr>
+          <tr><td><code>par_lines</code> / <code>par_walk</code></td><td>One command per line of a file / per path of a tree, parallel, ordered output</td></tr>
         </table>
 
         <h3>AOP / Debugging</h3>

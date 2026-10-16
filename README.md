@@ -114,7 +114,7 @@ Every operation that zsh forks for runs in-process. **Zero forks for builtins.**
 | `date`/`hostname`/`uname` | fork + exec | **Builtin** — direct syscall |
 | `sleep`/`mktemp`/`touch` | fork + exec | **Builtin** — zero fork |
 | `xattr` operations | fork + exec xattr | **Direct syscall** — zero fork |
-| `pmap`/`pgrep`/`peach` | fork N times | **VM execution** — zero fork |
+| `pmap`/`pgrep`/`peach` | fork N times to `sh -c` | **Worker pool** — a fresh `zshrs` per item (per chunk for the chunked forms), never `sh -c` |
 | `git` (via [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native)) | fork + exec /usr/bin/git | **Builtin** — zvcs linked in, zero fork |
 | `fzf` (via [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native)) | fork + exec the fzf binary | **Builtin** — arb's finder linked in, zero fork |
 | `**/*.rs` | Single-threaded `opendir` | Parallel per-subdir descent on the rayon pool (`[glob] recursive_parallel`, default on) |
@@ -336,7 +336,7 @@ par_walk 'test -f {} && wc -l {}' src  # one command per file/dir under PATH, wa
 
 `puniq`, `psort`, `pfirst`, `pany`, `pmap_chunked`, `par_lines` and `par_walk` port strykelang's `par_list`, `par_lines` and `par_walk` algorithms (`src/extensions/par_ops.rs`). `pfirst` returns the lowest position that passes, not the first to finish. `pmap_chunked`, `par_lines` and `par_walk` hand items to a shell process over fd 3 (NUL-separated), so the command's own stdin is `/dev/null`. All of them run on a per-process rayon pool, so they also work inside `$(...)` and pipeline stages.
 
-`pmap` / `pgrep` / `peach` run their body through the shared fusevm bytecode VM with the `{}` placeholder substituted as `${=__zshrs_p_arg__}` (matching zsh `SH_WORD_SPLIT` on literal substitution). The body is parsed and compiled to a fusevm `Chunk` ONCE before the input is iterated; the per-iteration loop sets the param via `setsparam`, acquires a VM from `fusevm::VMPool` (preserves Vec capacities across iterations), runs the cached chunk, and releases the VM back to the pool. `unsetparam` runs once at the end. No fork, no per-iteration parse/compile, no per-iteration VM allocation.
+`pmap` / `pgrep` / `peach` substitute the `{}` placeholder with `${=__ZSHRS_P_ARG__}` (matching zsh `SH_WORD_SPLIT` on literal substitution) and run the template in a fresh `zshrs --zsh -c` process per item, the item passed in that environment variable. Items are scheduled on a per-process rayon pool (`fork_safe_pool`), so the builtins also work inside `$(…)` and pipeline stages; `pmap` and `pgrep` collect results in input order, `peach` streams them as they finish. `pmap_chunked`, `par_lines` and `par_walk` run a whole chunk of items in ONE process instead, reading them NUL-separated from fd 3.
 
 ---
 
@@ -441,14 +441,14 @@ dbview scripts                 # compiled sourced scripts (scripts.rkyv); option
 
 ## [0x08] EXCLUSIVE BUILTINS
 
-### Parallel Primitives (VM-executed, zero fork)
+### Parallel Primitives (worker pool)
 
 | Builtin | Description |
 |---------|-------------|
 | `async` / `await` | Ship work to pool, collect result |
-| `pmap` | Parallel map with ordered output — runs on VM, not fork |
-| `pgrep` | Parallel filter — runs on VM, not fork |
-| `peach` | Parallel for-each, unordered — runs on VM, not fork |
+| `pmap` | Parallel map with ordered output — worker pool, fresh `zshrs` per item |
+| `pgrep` | Parallel filter — worker pool, fresh `zshrs` per item |
+| `peach` | Parallel for-each, unordered — worker pool, fresh `zshrs` per item |
 | `barrier` | Run all commands in parallel, wait for all |
 | `puniq` / `psort` | Parallel distinct / stable sort of operands or stdin lines |
 | `pfirst` / `pany` | Lowest-position / any item for which the command succeeds |
