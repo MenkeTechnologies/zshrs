@@ -397,3 +397,11 @@ fn emulate_reset_keeps_xtrace_in_a_traced_function() {
     );
     assert_eq!(out, "+> emulate -RL zsh\n+> print a\na\n");
 }
+
+/// c:5419 passes the format fragment to zwarnnam as a `%s`, which zerrmsg prints
+/// through nicezputs: the newline the format escape pass made shows as `\n`.
+#[test]
+fn printf_invalid_directive_message_shows_control_chars_visibly() {
+    let (_ec, out, _err) = run("printf '%\\n' 2>&1");
+    assert_eq!(out, "zsh:printf:1: %\\n: invalid directive\n");
+}
