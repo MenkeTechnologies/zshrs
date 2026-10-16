@@ -4406,6 +4406,17 @@ impl ShellExecutor {
         // back afterwards because the caller still reads it to pick the
         // exit status of the dash-family drop-ins.
         let saved_errflag = errflag.load(Ordering::Relaxed);
+        // 5.9.2 c:Src/exec.c:1645-1649 — the `-c` string is run with `exiting`,
+        // so the end of its top-level execlist calls `dotrap(SIGEXIT)` with
+        // errflag still set (dotrapargs returns at once) and THEN clears
+        // `sigtrapped[SIGEXIT]`; zexit finds no trap left. The development
+        // tree saves and clears errflag around that call (0c33d1694c), a
+        // drop-in `zsh` keeps the release's loss.
+        if saved_errflag != 0 && crate::extensions::emulation_startup::emulating_592() {
+            if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                t.remove("EXIT");
+            }
+        }
         errflag.store(0, Ordering::Relaxed); // c:6012
         let result = self.fire_script_exit_hooks(status);
         errflag.fetch_or(saved_errflag, Ordering::Relaxed);

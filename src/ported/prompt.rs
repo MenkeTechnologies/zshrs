@@ -1307,6 +1307,15 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     if xc.is_ascii_uppercase() {
                         let _ = tsetattrs(atr);
                     } else {
+// zsh 5.9.2's unset escapes (`%f %k %b %u %s`) record the attribute as CHANGED
+// whether or not it was on (`txtchangeset`, Src/prompt.c:551-600 at the
+// zsh-5.9.2 tag), so `%f%f`, or `%f` after an invalid `%F{300}`, prints the
+// reset every time. The development tree's current/pending diff prints nothing
+// for an attribute already off. A drop-in `zsh` marks it ON first so the diff
+// emits the reset a lone escape would.
+                        if crate::extensions::emulation_startup::emulating_592() {
+                            *current_attrs_lock().lock().expect("current_attrs poisoned") |= atr;
+                        }
                         let _ = tunsetattrs(atr);
                     }
                     putpromptattrs(bv);
@@ -1334,7 +1343,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     if atr != 0 && atr != TXT_ERROR {
                         let _ = tsetattrs(atr); // c:624
                     } else {
-                        let _ = tunsetattrs(if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR }); // c:630/642
+                        let off = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
+                        if crate::extensions::emulation_startup::emulating_592() {
+                            // Mark the COLOUR (lowest bit of its field), not the
+                            // on-flag: that flag is one of `TXT_ATTR_ALL`, and
+                            // counting it as an attribute to switch off makes
+                            // `applytextattributes` clear everything (`\e[0m`).
+                            let field = if is_fg { TXT_ATTR_FG_COL_MASK } else { TXT_ATTR_BG_COL_MASK };
+                            *current_attrs_lock().lock().expect("current_attrs poisoned") |= field & field.wrapping_neg();
+                        }
+                        let _ = tunsetattrs(off); // c:630/642
                     }
                     putpromptattrs(bv);
                 }
@@ -2868,8 +2886,18 @@ pub fn applytextattributes(flags: i32) -> String {
     let pending = *pending_attrs_lock().lock().expect("pending_attrs poisoned");
 
     let mut change = *current ^ pending; // c:1647
-    let mut keepon = !change & pending & TXT_ATTR_ALL; // c:1648
-    let mut turnoff = change & !pending & TXT_ATTR_ALL; // c:1649
+    // zsh 5.9.2 weighs only the character attributes when it decides between
+    // clearing everything and switching attributes off one by one; the colour
+    // on-flags (TXTFGCOLOUR/TXTBGCOLOUR, inside TXT_ATTR_ALL) are the
+    // development tree's addition. Counting them made `%B%b%F{red}x%f` end in
+    // `\e[0m` where the release prints `\e[39m`.
+    let counted = if crate::extensions::emulation_startup::emulating_592() {
+        TXT_ATTR_ALL & !(TXTFGCOLOUR | TXTBGCOLOUR)
+    } else {
+        TXT_ATTR_ALL
+    };
+    let mut keepon = !change & pending & counted; // c:1648
+    let mut turnoff = change & !pending & counted; // c:1649
     let mut keepcount: i32; // c:1650
     let mut turncount: i32 = 0;
 
@@ -2904,7 +2932,10 @@ pub fn applytextattributes(flags: i32) -> String {
         change &= !TXTFAINT;
     }
 
-    if keepcount < turncount || (change & !pending & TXT_ATTR_FONT_WEIGHT) != 0 {
+    // The release never takes the "fewer sequences if everything goes off"
+    // shortcut (`keepcount < turncount`): `%U x %u` ends in `\e[24m`, not `\e[0m`.
+    let shortcut = keepcount < turncount && !crate::extensions::emulation_startup::emulating_592();
+    if shortcut || (change & !pending & TXT_ATTR_FONT_WEIGHT) != 0 {
         // c:1676-1682 — this cleared all attributes, may need to restore some
         cap(&mut out, TCALLATTRSOFF);
         change = pending & TXT_ATTR_ALL & !unknown;

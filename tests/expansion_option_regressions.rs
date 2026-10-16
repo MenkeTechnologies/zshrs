@@ -256,3 +256,50 @@ fn err_trap_fires_for_the_always_construct_on_592() {
     );
     assert_eq!(out, "err rc=1\nalways\nerr rc=1\nafter\n");
 }
+
+/// 5.9.2 c:Src/exec.c:1645-1649 — the `-c` string runs with `exiting`, so its
+/// top-level execlist calls dotrap(SIGEXIT) while errflag is set (dotrapargs
+/// returns at once) and then clears the trap. A drop-in `zsh` therefore loses
+/// the EXIT trap when the string ended on an error abort; the development
+/// tree clears errflag around that call and runs it (0c33d1694c).
+#[test]
+fn a_drop_in_zsh_loses_the_exit_trap_after_an_error_abort_in_dash_c() {
+    use std::os::unix::process::CommandExt;
+    let script = "trap 'print p' EXIT; typeset -r ro=1; ro=2; print reached";
+    let out = Command::new(zshrs_bin())
+        .arg0("zsh")
+        .args(["-f", "-c", script])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("spawn zshrs");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let (_ec, dev, _err) = run(script);
+    assert_eq!(dev, "p\n");
+}
+
+/// zsh 5.9.2's `%f %k %b %u %s` record the attribute as changed whether or not
+/// it was on (Src/prompt.c:551-600 at the zsh-5.9.2 tag), and its output never
+/// takes the clear-everything shortcut for a colour or underline. A drop-in
+/// `zsh` therefore repeats a reset and ends colours with `\e[39m` / `\e[49m`
+/// and underline with `\e[24m` even after `%B…%b`.
+#[test]
+fn a_drop_in_zsh_prompt_repeats_resets_and_ends_attributes_individually() {
+    use std::os::unix::process::CommandExt;
+    let cases = [
+        ("%F{red}a%f%f", "\x1b[31ma\x1b[39m\x1b[39m"),
+        ("%B%b%b", "\x1b[1m\x1b[0m\x1b[0m"),
+        ("%F{300}o%f", "\x1b[39mo\x1b[39m"),
+        ("%B%b%F{red}x%f", "\x1b[1m\x1b[0m\x1b[31mx\x1b[39m"),
+        ("%B b%b|%U u%u", "\x1b[1m b\x1b[0m|\x1b[4m u\x1b[24m"),
+    ];
+    for (fmt, want) in cases {
+        let out = Command::new(zshrs_bin())
+            .arg0("zsh")
+            .args(["-f", "-c", &format!("print -Pn -- '{fmt}'")])
+            .env_remove("ZSHRS_CACHE")
+            .env("TERM", "xterm-256color")
+            .output()
+            .expect("spawn zshrs");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{fmt}");
+    }
+}
