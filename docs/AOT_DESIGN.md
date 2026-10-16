@@ -550,6 +550,7 @@ zcache clean log                # SYNC — truncate zshrs.log (single fs op, fas
 zcache rebuild [--wait]         # ASYNC — full corpus rebuild (worker pool fan-out)
 zcache rebuild shard <name> [--wait]  # ASYNC — surgical
 zcache rebuild --parallel N     # ASYNC — control worker pool fan-out for this rebuild
+# NOT SHIPPED: the rebuild verbs and their daemon ops were removed (daemon/builtins.rs); re-run zshrs-recorder to re-index (docs/RECORDER.md)
 
 zcache verify                   # SYNC — integrity scan: shard hashes vs catalog header,
                                 # PRAGMA integrity_check on catalog.db, report drift /
