@@ -24115,7 +24115,11 @@ pub fn paramsubst(
         //     ${(D)v}  v='a*b'        → zsh `a\*b`      was `a*b`
         // The bit-2 half below already calls the nicedupstring port directly;
         // this is now symmetric with it.
-        if (mods & 1) != 0 {
+        // c:Src/subst.c:3777 (positive-q quoting) runs BEFORE c:3854 (mods): with
+        // a `(q…)` flag zshrs applies the quote later, so the (D) contraction is
+        // done AFTER it below — `${(Dq)empty}` is `\'\'`, the quoted `''` run
+        // through substnamedir, not `''`.
+        if (mods & 1) != 0 && quotemod <= 0 {
             // c:4155/4163 — `substnamedir(...)`.
             let dir_one = |s: &str| -> String { crate::ported::utils::substnamedir(s) };
             // c:4150 — `if (isarr) { for (ap = aval; ...) } else { val = ... }`.
@@ -24637,6 +24641,11 @@ pub fn paramsubst(
                   // HOME wrap when both had the same path, so
                   // `hash -d hm=$HOME` + `(D)$HOME` rendered as
                   // `~hm` instead of `~`.
+                if quotemod > 0 {
+                    // c:4155/4163 — the q-then-D order: `substnamedir` (which also
+                    // backslash-quotes), skipped in the early (D) block above.
+                    return crate::ported::utils::substnamedir(s);
+                }
                 crate::ported::utils::finddir(s).unwrap_or_else(|| s.to_string())
             };
             let render_v = |s: &str| -> String {

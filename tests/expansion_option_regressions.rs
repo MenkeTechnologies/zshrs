@@ -303,3 +303,16 @@ fn a_drop_in_zsh_prompt_repeats_resets_and_ends_attributes_individually() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{fmt}");
     }
 }
+
+/// c:Src/subst.c:3777-3880 — positive `(q)` quoting runs before the `mods` stage,
+/// whose `(D)` is `substnamedir`: it backslash-quotes every string it returns. So
+/// `${(Dq)empty}` is the quoted `''` quoted again (`\'\'`); zshrs contracted first
+/// and quoted after, which only agrees when the value is non-empty.
+#[test]
+fn quote_then_namedir_quotes_the_quoted_form() {
+    let (_ec, out, err) = run(
+        "empty=; x='a b*'; print -r -- \"[${(Dq)empty}][${(qD)empty}][${(Dq)x}][${(Dqq)x}][${(D)empty}]\"",
+    );
+    assert_eq!(err, "");
+    assert_eq!(out, "[\\'\\'][\\'\\'][a\\\\\\ b\\\\\\*][\\'a\\ b\\*\\'][]\n");
+}
