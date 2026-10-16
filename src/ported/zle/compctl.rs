@@ -1977,6 +1977,21 @@ pub(crate) fn ccmakehookfn(_dummy: *mut crate::ported::zsh_h::hookdef, dat: *mut
 
         CCUSED.with(|r| r.borrow_mut().clear()); // c:1838 ccused = newlinklist()
 
+        // `clwords`/`clwnum`/`clwpos` are ONE set of globals in C (declared in
+        // zle_tricky.c, read by compctl.c's condition walk). The port keeps
+        // zle_tricky's copy (what get_comp_string fills) and compctl's own, so
+        // hand the parsed words across before the condition code runs; without
+        // it `c[-1,-f]` / `p[1]` saw an empty word list and never held.
+        {
+            let words = crate::ported::zle::zle_tricky::CLWORDS
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            let pos = crate::ported::zle::zle_tricky::CLWPOS.load(Ordering::Relaxed);
+            *CLWNUM.lock().unwrap() = words.len() as i32;
+            *CLWPOS.lock().unwrap() = if pos < 0 { words.len() as i32 } else { pos };
+            *CLWORDS.lock().unwrap() = words;
+        }
         let s = crate::ported::mem::dupstring(&os); // c:1841
         makecomplistglobal(&s, incmd != 0, lst, 0); // c:1842
         cc::endcmgroup(None); // c:1843

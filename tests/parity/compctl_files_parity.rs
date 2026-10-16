@@ -61,7 +61,7 @@ fn compctl_f_completes_a_unique_file_prefix() {
 #[test]
 fn compctl_slash_offers_only_directories() {
     assert_same_verdict(
-        &driver("-/", "fxa", "GOT:fxadir/:42"),
+        &driver("-/", "fxa", "GOT:fxadir:42"),
         "K",
         "`compctl -/` completed `fxa` to the directory fxadir/",
     );
@@ -126,7 +126,7 @@ fn compctl_x_condition_on_previous_word_restricts_to_directories() {
             &["compctl -f -x 'c[-1,-f]' -/ -- fxcmd"],
             "-f fxa",
             "",
-            "GOT:fxadir/:42",
+            "GOT:fxadir:42",
         ),
         "K",
         "`c[-1,-f]` selected `-/` for the word after `-f`",
@@ -175,7 +175,7 @@ fn compctl_x_position_condition_false_keeps_directories_only() {
             &["compctl -/ -x 'p[1]' -f -- fxcmd"],
             "-f fxbe",
             "",
-            "GOT:fxbeta.txt:42",
+            "GOT:fxbe:42",
         ),
         "K",
         "`p[1]` was false for the second argument so only directories applied",

@@ -44,7 +44,16 @@ where
         let mut old: libc::sigset_t = std::mem::zeroed();
         libc::sigfillset(&mut all);
         libc::pthread_sigmask(libc::SIG_SETMASK, &all, &mut old);
-        let handle = builder.spawn(f);
+        // Belt and braces: block again from inside the thread. The inherited mask
+        // is what keeps a signal off it during startup, but a platform that hands
+        // the new thread anything else (observed on a loaded macOS runner: SIGCHLD
+        // deliverable) must not leave a helper thread running the shell's handlers.
+        let handle = builder.spawn(move || {
+            let mut all: libc::sigset_t = std::mem::zeroed();
+            libc::sigfillset(&mut all);
+            libc::pthread_sigmask(libc::SIG_SETMASK, &all, std::ptr::null_mut());
+            f()
+        });
         libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
         handle
     }
