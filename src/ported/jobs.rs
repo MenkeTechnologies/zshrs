@@ -3556,7 +3556,9 @@ pub fn bin_fg(
     let jobbing = isset(MONITOR);
     if (func == BIN_FG || func == BIN_BG) && !jobbing {
         // c:2474
-        zwarnnam(name, "no job control in this shell"); // c:2476 (54584)
+        // 5.9.2's message ends in a period; the dev tree dropped it (c:2476).
+        let period = if crate::extensions::emulation_startup::emulating_592() { "." } else { "" };
+        zwarnnam(name, &format!("no job control in this shell{period}")); // c:2476 (54584)
         return crate::dash_mode::fatal_error_status().unwrap_or(1); // c:2477 (dash: 2)
     }
 
