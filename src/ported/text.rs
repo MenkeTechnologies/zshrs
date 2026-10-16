@@ -1430,6 +1430,7 @@ const FSTR: [&str; 18] = [
 /// WARNING: NOT IN `text.c` — `ecgetstr(Estate, …)` is defined in `Src/parse.c`.
 /// Local shim renamed to avoid name-clashing with the canonical
 /// `parse::ecgetstr(&mut estate, ...)`; the body delegates directly.
+/// Port of `ecgetstr()` from `Src/parse.c:2855`.
 fn ecgetstr(st: &mut estate, dup: i32, tok: Option<&mut i32>) -> String {
     parse::ecgetstr(st, dup, tok)
 }

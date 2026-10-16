@@ -196,6 +196,7 @@ pub fn createoptiontable() {
 /// Per-option callback invoked by `scanhashtable(optiontab, ...,
 /// setemulate, ...)` to populate the `new_opts[]` table with each
 /// option's default-for-target-emulation state.
+/// Port of `setemulate()` from `Src/options.c:507`.
 pub fn setemulate(optno: i32, fully: i32) {
     // c:507 — `Optname on = (Optname) hn;` The node carries its option
     // number; the port is handed the number and reads the node's flags from
@@ -233,6 +234,7 @@ pub fn setemulate(optno: i32, fully: i32) {
 /// emulation state by walking `optiontab` via the `setemulate`
 /// per-option callback. Does NOT mutate the live `opts[]` — that
 /// happens in the caller (`emulate()` and `bin_emulate -L`).
+/// Port of `installemulation()` from `Src/options.c:523`.
 pub fn installemulation(new_emulation: i32, new_opts: &mut [i8; OPT_SIZE as usize]) {
     // c:523
     // c:525 — `setemulate_emulation = new_emulation;`
@@ -265,6 +267,7 @@ pub fn installemulation(new_emulation: i32, new_opts: &mut [i8; OPT_SIZE as usiz
 /// inlines the body of `installemulation()` (c:523) to populate
 /// `opts[]` per the new emulation, skipping OPT_SPECIAL entries per
 /// the exec.c:5933-5938 walk.
+/// Port of `emulate()` from `Src/options.c:533`.
 pub fn emulate(mode: &str, fully: bool) {
     // c:533
     let ch = mode.chars().next().unwrap_or('z');
@@ -1352,6 +1355,7 @@ pub fn printoptionlist() {
 /// Static-link path: OPT_ALIAS flag tracking on each option isn't
 /// ported, so every entry takes the non-alias branch.
 /// WARNING: param names don't match C — Rust=(name, _ignored) vs C=(hn, ignored)
+/// Port of `printoptionlist_printoption()` from `Src/options.c:958`.
 pub fn printoptionlist_printoption(name: &str, _ignored: i32) {
     // c:958
     println!("  --{}", name); // c:971

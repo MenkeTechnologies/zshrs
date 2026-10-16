@@ -545,6 +545,7 @@ pub struct zle_position {
 /// "Save positions including cursor, end-of-line and (non-special)
 /// region highlighting. Must be matched by a subsequent
 /// `zle_restore_positions()`."
+/// Port of `zle_save_positions()` from `Src/Zle/zle_utils.c:619`.
 pub fn zle_save_positions() {
     use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
     // c:621 — `newpos = zalloc(sizeof(*newpos));`
@@ -595,6 +596,7 @@ pub fn zle_save_positions() {
 
 /// Port of `mod_export void zle_restore_positions(void)` from
 /// Src/Zle/zle_utils.c:677. Pops the last saved (cs, mark, ll).
+/// Port of `zle_restore_positions()` from `Src/Zle/zle_utils.c:677`.
 pub fn zle_restore_positions() {
     use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
     // c:679 — pop the head of the position stack.
@@ -633,6 +635,7 @@ pub fn zle_restore_positions() {
 /// Port of `mod_export void zle_free_positions(void)` from
 /// Src/Zle/zle_utils.c:102. Discards the top of stack without
 /// applying it.
+/// Port of `zle_free_positions()` from `Src/Zle/zle_utils.c:747`.
 pub fn zle_free_positions() {
     // c:747
     if let Ok(mut s) = ZLE_POSITIONS.lock() {
@@ -859,6 +862,7 @@ pub fn cut(i: i32, ct: i32, dir: i32) -> i32 {
 ///     (c:1004-1018), then apply CUT_FRONT/CUT_REPLACE direction or
 ///     normal append (c:1019-1043).
 /// WARNING: param names don't match C — Rust=(txt, flags) vs C=(line, ct, flags)
+/// Port of `cuttext()` from `Src/Zle/zle_utils.c:946`.
 pub fn cuttext(
     txt: &[char], // c:946 line, ct
     flags: i32,
@@ -1559,6 +1563,7 @@ pub fn bindztrdup(str: &[u8]) -> String {
 /// Rust returns the formatted String (callers don't take a stream);
 /// the zputs call is dropped because callers compose the result
 /// into larger output via `format!` rather than streaming.
+/// Port of `printbind()` from `Src/Zle/zle_utils.c:1283`.
 pub fn printbind(seq: &[u8]) -> String {
     // c:1283
     bindztrdup(seq) // c:1285
@@ -1573,6 +1578,7 @@ pub fn printbind(seq: &[u8]) -> String {
 /// (by display width) → clearflag-driven cursor restore. `msg` is already
 /// decoded text, so the `unmetafy` + `mbrtowc` decode of C (and its
 /// MB_INVALID/MB_INCOMPLETE single-byte arm) has nothing left to do.
+/// Port of `showmsg()` from `Src/Zle/zle_utils.c:1303`.
 pub fn showmsg(msg: &str) {
     // c:1310
     use crate::ported::utils::{wcs_nicechar, write_loop};
@@ -1718,6 +1724,7 @@ pub fn handleundo() {
 // add an entry to the undo system, if anything has changed              // c:1532
 /// If the line changed since the last snapshot, append a Change record
 /// describing the diff. Port of `mkundoent` (zle_utils.c:1532).
+/// Port of `mkundoent()` from `Src/Zle/zle_utils.c:1532`.
 pub fn mkundoent() {
     // c:1532
     // Snapshot BOTH buffers and BOTH lengths once, under a single fixed
@@ -1821,6 +1828,7 @@ pub fn mkundoent() {
 
 /// Snapshot the current line into `last_line` so the next `mkundoent`
 /// can diff against it. Port of `setlastline` (zle_utils.c:1587).
+/// Port of `setlastline()` from `Src/Zle/zle_utils.c:1588`.
 pub fn setlastline() {
     let snapshot = ZLELINE.lock().unwrap().clone();
     let mut ll = LASTLINE.lock().unwrap();
@@ -1837,6 +1845,7 @@ pub fn setlastline() {
 /// `last_change` (parsed from `args[0]` if provided, else -1 for
 /// "single step") or at `undo_limitno`. Returns 0 on success,
 /// 1 when nothing left to undo.
+/// Port of `undo()` from `Src/Zle/zle_utils.c:1601`.
 pub fn undo(args: &[String]) -> i32 {
     // c:1601
     let last_change: i64 = if !args.is_empty() {
@@ -1949,6 +1958,7 @@ pub fn unapplychange(ch: i32) -> i32 {
 /// `Src/Zle/zle_utils.c:1661`. Walks the undo stack forward
 /// from ` CURCHANGE.load(std::sync::atomic::Ordering::SeqCst)` calling `applychange` on each; returns 0
 /// on success, 1 when nothing to redo.
+/// Port of `redo()` from `Src/Zle/zle_utils.c:1661`.
 pub fn redo() -> i32 {
     // c:1661
     handleundo(); // c:1670 — same pending-edit commit as `undo`
@@ -1990,6 +2000,7 @@ pub fn redo() -> i32 {
 /// the undo stack: deletes `ch->del` characters at `ch->off`, then
 /// inserts `ch->ins` at the same position, and updates `zlecs`.
 /// Returns 1 if there are more changes to apply (CH_NEXT), else 0.
+/// Port of `applychange()` from `Src/Zle/zle_utils.c:1678`.
 pub fn applychange(ch: i32) -> i32 {
     // c:1678
     let idx = ch as usize;
@@ -2034,6 +2045,7 @@ pub fn applychange(ch: i32) -> i32 {
 ///     return 0;
 /// } else return undo(args);
 /// ```
+/// Port of `viundochange()` from `Src/Zle/zle_utils.c:1705`.
 pub fn viundochange(
     // c:1705
     args: &[String],
@@ -2066,6 +2078,7 @@ pub fn viundochange(
 /// handleundo();
 /// return 0;
 /// ```
+/// Port of `splitundo()` from `Src/Zle/zle_utils.c:1721`.
 pub fn splitundo() -> i32 {
     // c:1721
     // C uses signed `vistartchange`; Rust uses u64 with u64::MAX as
@@ -2085,6 +2098,7 @@ pub fn splitundo() -> i32 {
 /// from `cur_change` chaining CH_PREV/CH_NEXT flags so the changes
 /// since `vistartchange+1` form a single undo step (atomic vi
 /// insert-mode group). Resets `vistartchange = u64::MAX` (C's -1).
+/// Port of `mergeundo()` from `Src/Zle/zle_utils.c:1733`.
 pub fn mergeundo() {
     // c:1733
     // c:1735-1742 — walk current->prev while changeno > vistartchange+1.
@@ -2109,6 +2123,7 @@ pub fn mergeundo() {
 /// element, then unrefs the Thingy and preserves errflag/retflag
 /// across the call (except for ERRFLAG_INT which is propagated so
 /// `^C` during the hook still cancels the outer command).
+/// Port of `zlecallhook()` from `Src/Zle/zle_utils.c:1755`.
 pub fn zlecallhook(name: &str, arg: Option<&str>) {
     // c:1755
 

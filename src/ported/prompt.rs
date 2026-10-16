@@ -285,6 +285,7 @@ pub struct buf_vars {
 /// preserve existing zshrs callers (3000+ tests). The `home` arg
 /// is the explicit-HOME override used for unit tests; live callers
 /// pass an empty string to delegate to finddir's HOME read.
+/// Port of `promptpath()` from `Src/prompt.c:134`.
 pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     // c:134
     // c:139-141 — `if (tilde && (nd = finddir(p))) modp = tricat("~",
@@ -518,6 +519,7 @@ pub fn zattrescape(attrs: zattr) -> String {
 /// (the caller derives one), 24-bit `#rrggbb` colours, faint/italic, and
 /// the `no` prefix — all of which need the mask + wide-colour
 /// representation change.
+/// Port of `parsehighlight()` from `Src/prompt.c:285`.
 pub fn parsehighlight(spec: &str) -> zattr {
     // c:2031 (match_highlight attribute-parse core; see citation note)
     let mut attrs: zattr = 0;
@@ -575,6 +577,7 @@ pub fn parsehighlight(spec: &str) -> zattr {
 /// previous Rust port took `(&str, bool) -> Option<(Color, String)>`
 /// which couldn't read bv->fm at all and wasn't callable from the
 /// matching C site.
+/// Port of `parsecolorchar()` from `Src/prompt.c:318`.
 pub fn parsecolorchar(bv: &mut buf_vars, arg: zattr, is_fg: bool) -> zattr {
     // c:318
     // c:320 — `if (bv->fm[1] == '{')`.
@@ -683,6 +686,7 @@ pub fn parsecolorchar(bv: &mut buf_vars, arg: zattr, is_fg: bool) -> zattr {
 ///
 /// Returns the byte that stopped the walk (0 = end-of-string, else
 /// `endchar` match) — matches C's `return *bv->fm` semantics.
+/// Port of `putpromptchar()` from `Src/prompt.c:359`.
 pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
     // c:359
     use crate::ported::zsh_h::{isset, PROMPTPERCENT};
@@ -2828,6 +2832,7 @@ pub fn prompttrunc(
 /// ignored (matches the C source's `cmdsp < CMDSTACKSZ` guard).
 /// C body (2 lines):
 ///   `if (cmdsp >= 0 && cmdsp < CMDSTACKSZ) cmdstack[cmdsp++] = cmdtok;`
+/// Port of `cmdpush()` from `Src/prompt.c:1624`.
 pub fn cmdpush(cmdtok: u8) {
     // c:1624
     CMDSTACK.with(|s| {
@@ -2841,6 +2846,7 @@ pub fn cmdpush(cmdtok: u8) {
 /// Pop the top parser context token. Port of `cmdpop()` from
 /// Src/prompt.c. Empty-stack pop is a no-op (the C source emits
 /// a `BUG: cmdstack empty` debug print and continues).
+/// Port of `cmdpop()` from `Src/prompt.c:1632`.
 pub fn cmdpop() {
     CMDSTACK.with(|s| {
         let mut st = s.borrow_mut();
@@ -2861,6 +2867,7 @@ pub fn cmdpop() {
 /// `shout` otherwise. The Rust attribute layer is string-returning: the
 /// bytes come back in emission order, unbracketed, and the caller writes
 /// them (zle) or wraps them in `Inpar`/`Outpar` (prompt expansion).
+/// Port of `applytextattributes()` from `Src/prompt.c:1645`.
 pub fn applytextattributes(flags: i32) -> String {
     use crate::ported::zsh_h::{
         TCALLATTRSOFF, TCBOLDFACEBEG, TCFAINTBEG, TCITALICSBEG, TCITALICSEND, TCSTANDOUTBEG,
@@ -3172,6 +3179,7 @@ pub fn map256toRGB(atr: &mut u64, shift: u32, set24: u64) {
 /// goes back through the `GETCOLORATTR` hook (`zsh/nearcolor`, loaded on
 /// demand). When either side has no 24-bit value the opacity only picks
 /// the side that wins (`<= 50` the primary).
+/// Port of `mixattrs()` from `Src/prompt.c:1802`.
 pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
     use crate::ported::zsh_h::TXT_ATTR_FONT_WEIGHT;
     let mut mix: zattr = 0; // c:1804 — attributes resulting from colour mixing
@@ -3504,6 +3512,7 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
     *hp = h; // c:1274 *hp = h
 }
 /// `match_named_colour` — see implementation.
+/// Port of `match_named_colour()` from `Src/prompt.c:1915`.
 pub fn match_named_colour(teststrp: &str) -> Option<u8> {
     // c:1915
     // c:1925-1928 uses `strncmp` (case-SENSITIVE) against the
@@ -3773,6 +3782,7 @@ pub const HIGHLIGHTS: [(&str, zattr, zattr); 6] = [
 /// The `hl=GROUP` word (c:2041-2046) resolves `GROUP` through
 /// `.zle.hlgroups` with C's `parsehighlight` (c:285) inlined.
 /// WARNING: param names don't match C — Rust=(teststr, layer) vs C=(teststr, on_var, setmask, layer)
+/// Port of `match_highlight()` from `Src/prompt.c:2031`.
 pub fn match_highlight<'a>(teststr: &'a str, mut layer: Option<&mut i32>) -> (zattr, zattr, &'a str) {
     let bytes = teststr.as_bytes();
     let mut pos = 0usize; // teststr
@@ -3969,6 +3979,7 @@ pub fn match_highlight<'a>(teststr: &'a str, mut layer: Option<&mut i32>) -> (za
 /// `fg=red`). That spec formatter's logic is inlined in
 /// `output_highlight` (the `colour_spec` closure). Callers here want the
 /// escape, so the name is kept to avoid churn.
+/// Port of `output_colour()` from `Src/prompt.c:2136`.
 pub fn output_colour(colour: u8, is_fg: bool) -> String {
     // c:Src/prompt.c:2440 set_colour_attribute — emits the active
     // terminfo color sequence. Real terminals (xterm-style) define
@@ -4001,6 +4012,7 @@ pub fn output_colour(colour: u8, is_fg: bool) -> String {
 /// off starts with `reset` instead. `none` when nothing is written; the
 /// opacity fields of `mask` append `opacity=F%[/B%]`. C counts the length
 /// when `buf` is NULL; the Rust caller just takes the `String`.
+/// Port of `output_highlight()` from `Src/prompt.c:2179`.
 pub fn output_highlight(atr: zattr, mask: zattr) -> String {
     use crate::ported::zsh_h::{TXT_ATTR_BG_COL_MASK, TXT_ATTR_FG_COL_MASK};
     let mut mask = mask;
@@ -4102,6 +4114,7 @@ pub fn output_highlight(atr: zattr, mask: zattr) -> String {
 ///     fg_bg_sequences[COL_SEQ_BG].def = ztrdup(TC_COL_BG_DEFAULT);
 /// }
 /// ```
+/// Port of `set_default_colour_sequences()` from `Src/prompt.c:2341`.
 pub fn set_default_colour_sequences() {
     // c:2341
     let mut seqs = fg_bg_sequences.lock().unwrap();
@@ -4136,6 +4149,7 @@ pub fn set_default_colour_sequences() {
 /// into the same `fg_bg_sequences` slot. `GETKEYS_BINDKEY` is what
 /// makes `\e` / `^[` / octal escapes expand here.
 /// WARNING: param names don't match C — Rust=(spec) vs C=(str, var)
+/// Port of `set_colour_code()` from `Src/prompt.c:2353`.
 pub fn set_colour_code(spec: &str) -> String {
     // c:2353
     let (keyseq, _len) = crate::ported::utils::getkeystring_with(
@@ -4254,6 +4268,7 @@ pub static colseq_buf_allocs: std::sync::atomic::AtomicI32 = std::sync::atomic::
 ///     colseq_buf = (char *)zalloc(len+15);
 /// }
 /// ```
+/// Port of `allocate_colour_buffer()` from `Src/prompt.c:2367`.
 pub fn allocate_colour_buffer() {
     // c:2367
 
@@ -4350,6 +4365,7 @@ pub fn free_colour_buffer() {
 /// `countprompt` skips it when measuring visible width). `TSC_RAW`
 /// selects C's output channel (`putraw` vs `putshout`), a choice the
 /// caller owns here, so it does not affect the bytes produced.
+/// Port of `set_colour_attribute()` from `Src/prompt.c:2440`.
 pub fn set_colour_attribute(atr: zattr, fg_bg: i32, flags: i32) -> String {
     // c:2440
     let is_prompt = (flags & TSC_PROMPT) != 0; // c:2443

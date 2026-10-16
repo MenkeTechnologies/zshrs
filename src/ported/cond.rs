@@ -99,6 +99,7 @@ pub fn cond_subst(strp: &mut String, glob_ok: i32) {
 /// Return status is the final shell status, i.e. 0 for true, 1 for
 /// false, 2 for syntax error, 3 for "option in tested in -o does not
 /// exist".
+/// Port of `evalcond()` from `Src/cond.c:70`.
 pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
     // c:70
     // zwarnnam(fromtest, ...) with fromtest == NULL prints no command name.

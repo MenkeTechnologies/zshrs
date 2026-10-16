@@ -369,6 +369,7 @@ pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len(); // c:312
 /// with the mask of what it explicitly set and its layer. Categories the
 /// array does not mention take the defaults (c:385-397).
 /// WARNING: param names don't match C — Rust=(manager, atrs) vs C=()
+/// Port of `zle_set_highlight()` from `Src/Zle/zle_refresh.c:322`.
 pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
     use crate::ported::zsh_h::{TXTBOLDFACE, TXTSTANDOUT, TXTUNDERLINE};
     use HighlightCategory::*;
@@ -498,6 +499,7 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
 /// composition buffer that [`zle_set_highlight`] took. The buffer is
 /// refcounted (`colseq_buf_allocs`, `Src/prompt.c:2337`), so this only
 /// drops it once the last holder is gone.
+/// Port of `zle_free_highlight()` from `Src/Zle/zle_refresh.c:415`.
 pub fn zle_free_highlight() {
     // c:415
     crate::ported::prompt::free_colour_buffer(); // c:417
@@ -620,6 +622,7 @@ macro_rules! clearattributes {
 /// "Output a termcap capability, clearing any text attributes so as not
 /// to mess up the display" — a clear to end of line keeps the prompt's
 /// attributes, so the cleared cells take the prompt's colour.
+/// Port of `tcoutclear()` from `Src/Zle/zle_refresh.c:607`.
 pub fn tcoutclear(cap: i32) {
     if crate::extensions::emulation_startup::emulating_592() {
         // c:596-600 (5.9.2) — `clearattributes(); tcout(cap);`
@@ -646,6 +649,7 @@ pub fn tcoutclear(cap: i32) {
 /// The multiword/`nmwbuf` glyph path (c:634-642) reads the combining
 /// cluster `addmultiword` stored in the thread-local `NMWBUF` (length at
 /// `nmwbuf[c.chr]`, codepoints following) and emits each.
+/// Port of `zwcputc()` from `Src/Zle/zle_refresh.c:622`.
 pub fn zwcputc(c: &REFRESH_ELEMENT) {
     use crate::ported::utils::{wcrtomb, MbStateBuf, MBSTATE_ZERO, MB_LOCALE_READY};
 
@@ -750,6 +754,7 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
 /// `Src/Zle/zle_refresh.c:654-662`: `zwcputc` each of the first `i`
 /// cells, returning `i`. The `zwrite(a,b)` macro (c:255/259) is
 /// `zwcwrite(a, b)`.
+/// Port of `zwcwrite()` from `Src/Zle/zle_refresh.c:655`.
 pub fn zwcwrite(s: &[REFRESH_ELEMENT], i: usize) -> usize {
     let n = i.min(s.len());
     ZWCWRITE_CURATR.store(0, Ordering::SeqCst); // c:659 `zattr curatr = 0`
@@ -820,6 +825,7 @@ thread_local! {
 /// The empty Vecs are the NULL state so the next [`resetvideo`] pass
 /// reallocates fresh buffers.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
+/// Port of `freevideo()` from `Src/Zle/zle_refresh.c:700`.
 pub fn freevideo() {
     // c:700
     // c:702-709 — C walks nbuf/obuf rows calling zfree on each
@@ -995,6 +1001,7 @@ pub fn resetvideo(state: &mut RefreshState) {
 /// first line can show the "more text above" indicator. The previous port
 /// was a fake — it emitted a terminal scroll escape (CSI S/T) and took a
 /// line *count*, neither of which is what C does.
+/// Port of `scrollwindow()` from `Src/Zle/zle_refresh.c:798`.
 pub fn scrollwindow(tline: i32) {
     // c:798
     let winh = WINH.load(Ordering::SeqCst);
@@ -1036,6 +1043,7 @@ pub fn scrollwindow(tline: i32) {
 /// `RefreshElement` cell type) — divergent from C and inconsistent with the
 /// now-global `scrollwindow`; this is the first consolidation step toward
 /// driving the live build's vertical scroll through `nextline`.
+/// Port of `nextline()` from `Src/Zle/zle_refresh.c:842`.
 pub fn nextline(rpms: &mut rparams, wrapped: i32) -> i32 {
     // c:841
     let winw = WINW.load(Ordering::SeqCst);
@@ -1124,6 +1132,7 @@ pub fn nextline(rpms: &mut rparams, wrapped: i32) -> i32 {
 /// Ported faithfully on the global `NBUF` (`REFRESH_ELEMENT`) with the real
 /// status-pane scroll cascade (tosln/nvln/more_end + the three scrollwindow
 /// calls).
+/// Port of `snextline()` from `Src/Zle/zle_refresh.c:875`.
 pub fn snextline(rpms: &mut rparams) {
     // c:875
     let winw = WINW.load(Ordering::SeqCst);
@@ -1190,6 +1199,7 @@ pub fn snextline(rpms: &mut rparams) {
 /// The renderer dispatches on the flag and reads `nmwbuf[base.chr]`
 /// (count) then `nmwbuf[base.chr+1..base.chr+1+count]` (cluster
 /// codepoints) — see C c:635-636 and the COMPARE macro at c:77.
+/// Port of `addmultiword()` from `Src/Zle/zle_refresh.c:913`.
 pub fn addmultiword(
     base: &mut REFRESH_ELEMENT, // c:913
     tptr: &[char],
@@ -1265,6 +1275,7 @@ pub fn bufswap() {
 /// `zrefresh` — see implementation.
 // The full-repaint path early-returns on purpose (the minimal-update diff
 // machinery below is intentionally preserved WIP and unreachable for now).
+/// Port of `zrefresh()` from `Src/Zle/zle_refresh.c:975`.
 #[allow(unreachable_code)]
 pub fn zrefresh() {
     // c:975
@@ -3291,6 +3302,7 @@ pub fn wpfxlen(olds: &[REFRESH_ELEMENT], news: &[REFRESH_ELEMENT]) -> usize {
 /// `oput_rpmpt`/`olnct`/`prompt_attr` statics are not yet
 /// surface-area in zshrs. Stubbed deps are flagged inline with
 /// `// !!! STUB: needs <c-name> port at <Src/file.c:NNNN>`.
+/// Port of `refreshline()` from `Src/Zle/zle_refresh.c:1749`.
 pub fn refreshline(ln: i32) {
     // c:1749
 
@@ -3919,6 +3931,7 @@ pub fn refreshline(ln: i32) {
 ///   - down-movement: `tc_downcurs` while on-screen, real newlines past
 ///     `vmaxln-1` to scroll/create lines (c:2195-2212)
 ///   - horizontal close via `singmoveto` (c:2214-2215)
+/// Port of `moveto()` from `Src/Zle/zle_refresh.c:2105`.
 pub fn moveto(row: usize, col: usize) {
     // c:2163
     let zr_cr = REFRESH_ELEMENT { chr: '\r', atr: TXT_ERROR };
@@ -4043,6 +4056,7 @@ pub fn moveto(row: usize, col: usize) {
 /// and the output is deterministic across platforms. The
 /// `tcout_func_name` user-hook (c:2414) is deferred; the `tputs` half
 /// (c:2417) now runs, so `$<n>` delay specs no longer reach the tty.
+/// Port of `tcoutarg()` from `Src/Zle/zle_refresh.c:2351`.
 pub fn tcoutarg(cap: i32, arg: i32) {
     // c:2409
     use crate::ported::init::tcstr;
@@ -4080,6 +4094,7 @@ pub fn tcoutarg(cap: i32, arg: i32) {
 /// longer than `ct` repeats of the single cap (c:2223), falls back to
 /// looping the single cap (c:2226-2229), otherwise returns 0 (c:2231) so
 /// the caller chooses the fallback. Returns 1 when an escape was emitted.
+/// Port of `tcmultout()` from `Src/Zle/zle_refresh.c:2163`.
 pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
     // c:2221
     use crate::ported::init::{tclen, tcstr};
@@ -4151,6 +4166,7 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
 /// wide characters the trick is unsafe, so the prompt is always either stepped
 /// through with `TCRIGHT` or reprinted. `lpromptbuf` is `zle_main::prompt()`.
 /// `tc_rightcurs` never mutates `vcs`/`vln` — the caller owns those.
+/// Port of `tc_rightcurs()` from `Src/Zle/zle_refresh.c:2179`.
 pub fn tc_rightcurs(count: usize) {
     // c:2237
     if count == 0 {
@@ -4296,6 +4312,7 @@ pub fn tc_rightcurs(count: usize) {
 /// CSI B can't) followed by a CR, and returns -1 so the caller knows the
 /// column was reset to 0. Returns 0 when the capability moved without
 /// touching the column.
+/// Port of `tc_downcurs()` from `Src/Zle/zle_refresh.c:2262`.
 pub fn tc_downcurs(ct: i32) -> i32 {
     // c:2320
     let mut ret = 0; // c:2324
@@ -4329,6 +4346,7 @@ pub fn tc_downcurs(ct: i32) -> i32 {
 /// then reads `$REPLY` and writes each byte to the shell-output fd
 /// (decoding Meta-byte pairs). Returns 0 when the function ran (caller
 /// suppresses the raw termcap escape), 1 otherwise (caller emits raw).
+/// Port of `tcout_via_func()` from `Src/Zle/zle_refresh.c:2291`.
 pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
     use crate::ported::builtin::STOPMSG;
     use crate::ported::exec::sfcontext;
@@ -4465,6 +4483,7 @@ pub fn tcout(cap: i32) {
 /// The `clear-screen` widget. The previous port hardcoded `CSI 2J CSI H`
 /// instead of the terminal's real clear capability and dropped the
 /// resetneeded/clearflag/reexpandprompt sequence.
+/// Port of `clearscreen()` from `Src/Zle/zle_refresh.c:2366`.
 pub fn clearscreen() -> i32 {
     // c:2424
     // c:2426 — `tcoutclear(TCCLEARSCREEN);` use the terminal's clear cap.
@@ -4499,6 +4518,7 @@ pub fn clearscreen() -> i32 {
 /// prompt (home, CR for safety, up over the prompt's height) and flags a
 /// full redraw. The previous port dropped the whole body and just called
 /// zrefresh.
+/// Port of `redisplay()` from `Src/Zle/zle_refresh.c:2377`.
 pub fn redisplay() -> i32 {
     // c:2435
     // c:2437 — C `moveto(0, 0)` is the first row of the edit area, i.e. the
@@ -4580,6 +4600,7 @@ pub fn redisplay() -> i32 {
 /// `lpromptbuf`/`MB_METACHARLENCONV` / `WCWIDTH` / `IS_BASECHAR` /
 /// `IS_COMBINING` primitives not yet ported. Stubs flagged
 /// inline with `// !!! STUB: …`.
+/// Port of `singlerefresh()` from `Src/Zle/zle_refresh.c:2397`.
 pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     // c:2397
 
@@ -5026,6 +5047,7 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
 /// The previous port threaded a `RefreshState` and its callers passed a
 /// throwaway `RefreshState::new()` (vcs always 0), ignoring the global
 /// VCS that `singlerefresh` actually maintains (line ~691) — fixed here.
+/// Port of `singmoveto()` from `Src/Zle/zle_refresh.c:2687`.
 pub fn singmoveto(pos: i32) {
     // c:2745
     use crate::ported::init::tclen;
@@ -5061,6 +5083,7 @@ pub fn singmoveto(pos: i32) {
 
 /// Initialize ZLE refresh subsystem
 /// Port of zle_refresh_boot() from zle_refresh.c
+/// Port of `zle_refresh_boot()` from `Src/Zle/zle_refresh.c:2712`.
 pub fn zle_refresh_boot() -> RefreshState {
     RefreshState::new()
 }
@@ -5536,6 +5559,7 @@ pub fn partial_refresh() -> io::Result<()> {
 ///
 /// which shifted the whole edit line right by the payload length and
 /// overwrote it (`> echo hi` painted as `>    hi`).
+/// Port of `countprompt()` from `Src/prompt.c:1140`.
 fn countprompt(s: &str) -> usize {
     // c:1140
     let mut w = 0i32;
@@ -5558,6 +5582,7 @@ fn countprompt(s: &str) -> usize {
 /// (`TXT_ATTR_FG_24BIT` / `TXT_ATTR_BG_24BIT`), and the zsh/nearcolor
 /// `get_color_attr` hook that maps a hex triplet onto the 256-colour
 /// palette (Src/Modules/nearcolor.c).
+/// Port of `match_highlight()` from `Src/prompt.c:2031`.
 pub fn match_highlight(spec: &str) -> zattr {
     // c:519 / c:347-363 — `match_highlight(strp, &rhp->atr)`.
     crate::ported::prompt::match_highlight(spec, None).0
@@ -5567,6 +5592,7 @@ pub fn match_highlight(spec: &str) -> zattr {
 /// Multibyte path: `chr == chr && atr == atr && (combining-cluster eq)`.
 /// Non-multibyte path collapses to the same first conjunction. Rust uses
 /// the derived `PartialEq` on `REFRESH_ELEMENT`.
+/// Port of `ZR_equal()` from `Src/Zle/zle_refresh.c:74`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn ZR_equal(
@@ -5580,6 +5606,7 @@ pub fn ZR_equal(
 /// Port of `ZR_memcpy(d, s, l)` macro from `Src/Zle/zle_refresh.c:92`.
 /// `#define ZR_memcpy(d, s, l)  memcpy((d), (s), (l)*sizeof(REFRESH_ELEMENT))`.
 /// Copy `l` REFRESH_ELEMENT slots from `src` to `dst`.
+/// Port of `ZR_memcpy()` from `Src/Zle/zle_refresh.c:92`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn ZR_memcpy(
@@ -5680,6 +5707,7 @@ pub static ZR_START_ELLIPSIS: &[REFRESH_ELEMENT] = &[
 /// capability if the terminal has it, else `x` single-inserts. `tccan(X)`
 /// is `tclen[X]` (zsh.h:2680); the `tclen` substrate (init.rs) is populated
 /// by the termcap loader, so the real costs are read here.
+/// Port of `tcinscost()` from `Src/Zle/zle_refresh.c:1724`.
 #[inline]
 pub fn tcinscost(x: i32) -> i32 {
     // c:1782 — `#define tcinscost(X)
@@ -5700,6 +5728,7 @@ pub fn tcinscost(x: i32) -> i32 {
 
 /// Port of the `tcdelcost(X)` macro from `Src/Zle/zle_refresh.c:1783`.
 /// `#define tcdelcost(X) (tccan(TCMULTDEL) ? tclen[TCMULTDEL] : (X)*tclen[TCDEL])`.
+/// Port of `tcdelcost()` from `Src/Zle/zle_refresh.c:1725`.
 #[inline]
 pub fn tcdelcost(x: i32) -> i32 {
     // c:1783 — `#define tcdelcost(X)
@@ -5719,6 +5748,7 @@ pub fn tcdelcost(x: i32) -> i32 {
 /// `(void) tcmultout(TCDEL, TCMULTDEL, (X))`. Emit `x` character-
 /// delete escapes via the multi-form helper. Without curses substrate
 /// it's a no-op.
+/// Port of `tc_delchars()` from `Src/Zle/zle_refresh.c:1726`.
 #[inline]
 pub fn tc_delchars(x: i32) {
     // c:1784 — `#define tc_delchars(X) (void) tcmultout(TCDEL, TCMULTDEL, (X))`.
@@ -5734,6 +5764,7 @@ pub fn tc_delchars(x: i32) {
 
 /// Port of `tc_inschars(X)` macro from `Src/Zle/zle_refresh.c:1727`.
 /// `(void) tcmultout(TCINS, TCMULTINS, (X))`.
+/// Port of `tc_inschars()` from `Src/Zle/zle_refresh.c:1727`.
 #[inline]
 pub fn tc_inschars(x: i32) {
     // c:1785 — `tcmultout(TCINS, TCMULTINS, (X))`.
@@ -5746,6 +5777,7 @@ pub fn tc_inschars(x: i32) {
 
 /// Port of `tc_upcurs(X)` macro from `Src/Zle/zle_refresh.c:1728`.
 /// `(void) tcmultout(TCUP, TCMULTUP, (X))`.
+/// Port of `tc_upcurs()` from `Src/Zle/zle_refresh.c:1728`.
 #[inline]
 pub fn tc_upcurs(x: i32) {
     // c:1786 — `tcmultout(TCUP, TCMULTUP, (X))`.
@@ -5758,6 +5790,7 @@ pub fn tc_upcurs(x: i32) {
 
 /// Port of `tc_leftcurs(X)` macro from `Src/Zle/zle_refresh.c:1729`.
 /// `(void) tcmultout(TCLEFT, TCMULTLEFT, (X))`.
+/// Port of `tc_leftcurs()` from `Src/Zle/zle_refresh.c:1729`.
 #[inline]
 pub fn tc_leftcurs(x: i32) {
     // c:1729
@@ -6084,6 +6117,7 @@ pub struct rparams {
 /// special entries at the front of the same array; the Rust
 /// `REGION_HIGHLIGHTS` holds only the user entries.
 /// WARNING: param names don't match C — Rust=(aval) vs C=(pm, aval)
+/// Port of `set_region_highlight()` from `Src/Zle/zle_refresh.c:488`.
 pub fn set_region_highlight(aval: Option<&[String]>) {
     use crate::ported::ztype_h::inblank;
     // c:469-483 — resize to the new count, freeing the old memos (c:475).
@@ -6174,6 +6208,7 @@ pub fn set_region_highlight(aval: Option<&[String]>) {
 /// user explicitly unsets it (`exp` true), clear the user region
 /// highlights back to the special baseline (`set_region_highlight(NULL)`,
 /// c:595) and run the standard parameter unset (c:596).
+/// Port of `unset_region_highlight()` from `Src/Zle/zle_refresh.c:592`.
 pub fn unset_region_highlight(pm: &mut crate::ported::zsh_h::param, exp: i32) {
     // c:592
     if exp != 0 {
@@ -6190,6 +6225,7 @@ pub fn unset_region_highlight(pm: &mut crate::ported::zsh_h::param, exp: i32) {
 /// `N_SPECIAL_HIGHLIGHTS` entries (c:415); the Rust `REGION_HIGHLIGHTS`
 /// holds only the user entries, so nothing is skipped. An empty table is
 /// an empty array (c:408-409).
+/// Port of `get_region_highlight()` from `Src/Zle/zle_refresh.c:430`.
 pub fn get_region_highlight(_pm: &crate::ported::zsh_h::param) -> Vec<String> {
     let rh = REGION_HIGHLIGHTS.lock().unwrap();
     rh.iter()

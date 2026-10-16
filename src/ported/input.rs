@@ -836,6 +836,7 @@ pub fn inungetc(c: char) {
 /// — Ok((contents, byte_count)) or Err(-1) on open/read fail.
 /// Path is unmetafied to match C's `unmeta(fn)` step before open.
 /// WARNING: param names don't match C — Rust=(path) vs C=(out, fn).
+/// Port of `zstuff()` from `Src/input.c:614`.
 pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
     // c:614
     use std::io::Read;

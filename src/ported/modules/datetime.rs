@@ -496,6 +496,7 @@ static PATAB: Lazy<Mutex<Vec<crate::ported::zsh_h::paramdef>>> = Lazy::new(|| {
 // `featuresarray(m, &module_features)` (Src/module.c:3284) directly. This
 // thin wrapper only unpacks the Rust-side bintab/patab statics into the
 // slices that generic fn takes.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(m: *const module, _f: &Mutex<features>) -> Vec<String> {
     let bn = BINTAB.lock().unwrap();
     let pd = PATAB.lock().unwrap();
@@ -517,6 +518,7 @@ fn featuresarray(m: *const module, _f: &Mutex<features>) -> Vec<String> {
 /// `int **`) is never NULL here; `*enables` non-NULL maps to `Some`. That
 /// makes this the same two-way door C has: `Some` = SET the given bitmap,
 /// `None` = GET the live one.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3370
     if let Some(e) = enables.as_ref() {
@@ -543,6 +545,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 /// order `bn`, `cd`, `mf`, `pd`, advancing `e` past each block. datetime
 /// has only `bn_size`(1) and `pd_size`(3), so the `cd`/`mf` arms are
 /// absent (C skips them too — `if (f->cd_size)` is false).
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(_m: *const module, _f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
     // c:3445
     let mut ret = 0; // c:3448

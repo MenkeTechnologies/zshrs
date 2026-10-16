@@ -198,6 +198,7 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
 /// the bytes it always did, and a caller holding metafied bytes — which
 /// are not valid UTF-8 and so cannot be a `&str` at all — can pass those.
 /// WARNING: param names don't match C — Rust=(a, bs, sortflags) vs C=(as, bs, sortflags)
+/// Port of `zstrcmp()` from `Src/sort.c:191`.
 pub fn zstrcmp<A: AsRef<[u8]>, B: AsRef<[u8]>>(a: A, bs: B, sortflags: u32) -> Ordering {
     // c:191
     let (a, bs) = (a.as_ref(), bs.as_ref());

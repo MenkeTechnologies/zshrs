@@ -106,6 +106,7 @@ pub fn getrandom_buffer(m: &mut [u8]) -> io::Result<()> {
 /// sample only the rare `leftover < max` slot. `count` is folded into
 /// `buffer.len()` per Rust idiom.
 /// WARNING: param names don't match C — Rust=(buffer, max) vs C=(buffer, count, max)
+/// Port of `get_bound_random_buffer()` from `Src/Modules/random.c:104`.
 pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {
     // c:104
     // c:112 getrandom_buffer(buffer, count*sizeof(uint32_t)) — fill u32s.
@@ -483,6 +484,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "f:zrand_float".to_string(),
@@ -495,6 +497,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3394-3395 — `if (!enables || *enables) return
     // setfeatureenables(m, f, enables ? *enables : NULL);`
@@ -513,6 +516,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
     // c:3354-3382 — walk bn/cd/mf/pd in that order, each block taking its
     // slice of the positional enables bitmap; `e == NULL` disables

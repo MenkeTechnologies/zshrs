@@ -73,6 +73,7 @@ pub fn widgetstr(w: Option<&std::sync::Arc<crate::ported::zle::zle_h::widget>>) 
 /// set to the widget's type label (`builtin` / `user:fn` /
 /// `completion:fn`), or PM_UNSET if the widget name isn't in
 /// `thingytab` (zle_thingy.c:60).
+/// Port of `getpmwidgets()` from `Src/Zle/zleparameter.c:59`.
 pub fn getpmwidgets(
     _ht: *mut crate::ported::zsh_h::HashTable,
     name: &str,
@@ -157,6 +158,7 @@ pub fn getpmwidgets(
 /// from `Src/Zle/zleparameter.c:81-101`. Walks `thingytab` and invokes
 /// the callback per entry with a transient Param whose `u_str` is
 /// the type label.
+/// Port of `scanpmwidgets()` from `Src/Zle/zleparameter.c:81`.
 pub fn scanpmwidgets(
     _ht: *mut crate::ported::zsh_h::HashTable,
     func: Option<crate::ported::zsh_h::ParamScanFunc>,
@@ -234,6 +236,7 @@ pub fn scanpmwidgets(
 /// Port of `static char **keymapsgetfn(UNUSED(Param pm))` from
 /// `Src/Zle/zleparameter.c:105-119`. Walks `keymapnamtab` and returns
 /// every keymap name as a sorted `Vec<String>`.
+/// Port of `keymapsgetfn()` from `Src/Zle/zleparameter.c:105`.
 pub fn keymapsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // c:105
     // c:Src/Zle/zle_keymap.c:1224-1230 init_keymaps + default_bindings

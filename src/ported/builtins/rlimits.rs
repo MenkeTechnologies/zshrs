@@ -519,6 +519,7 @@ pub(crate) fn zstrtorlimt(s: &str, base: i32) -> (rlim_t, usize) {
     (ret, pos)
 }
 
+/// Port of `zstrtorlimt()` from `Src/Builtins/rlimits.c:272`.
 #[cfg(not(unix))]
 pub(crate) fn zstrtorlimt(_s: &str, _base: i32) -> (u64, usize) {
     (0, 0)
@@ -572,6 +573,7 @@ pub(crate) fn showlimitvalue(lim: i32, val: rlim_t) {
     }
 }
 
+/// Port of `showlimitvalue()` from `Src/Builtins/rlimits.c:307`.
 #[cfg(not(unix))]
 pub(crate) fn showlimitvalue(_lim: i32, _val: u64) {}
 
@@ -640,6 +642,7 @@ pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {
     0
 }
 
+/// Port of `showlimits()` from `Src/Builtins/rlimits.c:346`.
 #[cfg(not(unix))]
 pub(crate) fn showlimits(_nam: &str, _hard: bool, _lim: i32) -> i32 {
     0
@@ -719,6 +722,7 @@ pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 {
     0
 }
 
+/// Port of `printulimit()` from `Src/Builtins/rlimits.c:386`.
 #[cfg(not(unix))]
 pub(crate) fn printulimit(_nam: &str, _lim: i32, _hard: bool, _head: bool) -> i32 {
     0
@@ -845,6 +849,7 @@ pub(crate) fn do_limit(
     0
 }
 
+/// Port of `do_limit()` from `Src/Builtins/rlimits.c:431`.
 #[cfg(not(unix))]
 pub(crate) fn do_limit(
     _nam: &str,
@@ -1029,6 +1034,7 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
     ret // c:617
 }
 
+/// Port of `bin_limit()` from `Src/Builtins/rlimits.c:519`.
 #[cfg(not(unix))]
 pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     0
@@ -1120,6 +1126,7 @@ pub(crate) fn do_unlimit(
     0
 }
 
+/// Port of `do_unlimit()` from `Src/Builtins/rlimits.c:622`.
 #[cfg(not(unix))]
 pub(crate) fn do_unlimit(
     _nam: &str,
@@ -1239,6 +1246,7 @@ pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32)
     ret // c:722
 }
 
+/// Port of `bin_unlimit()` from `Src/Builtins/rlimits.c:670`.
 #[cfg(not(unix))]
 pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     0
@@ -1512,6 +1520,7 @@ pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32
     ret // c:856
 }
 
+/// Port of `bin_ulimit()` from `Src/Builtins/rlimits.c:729`.
 #[cfg(not(unix))]
 pub(crate) fn bin_ulimit(_name: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     0
@@ -1691,6 +1700,7 @@ fn leak_unknown_name(i: i32) -> &'static str {
 // move it. Inlines the C body: if LIMITS[i] differs from
 // CURRENT_LIMITS[i], call `setrlimit`, then sync CURRENT_LIMITS[i]
 // back to LIMITS[i].
+/// Port of `zsetlimit()` from `Src/exec.c:314`.
 #[cfg(unix)]
 fn zsetlimit(limnum: i32, nam: &str) -> i32 {
     ensure_limits_initialized();
@@ -1728,6 +1738,7 @@ fn zsetlimit(limnum: i32, nam: &str) -> i32 {
     0
 }
 
+/// Port of `zsetlimit()` from `Src/exec.c:314`.
 #[cfg(not(unix))]
 fn zsetlimit(_limnum: i32, _nam: &str) -> i32 {
     0
@@ -1736,6 +1747,7 @@ fn zsetlimit(_limnum: i32, _nam: &str) -> i32 {
 // WARNING: NOT IN RLIMITS.C — `setlimits` lives in `Src/exec.c:331`.
 // Loops over RLIM_NLIMITS and calls `zsetlimit()` on each. Same
 // rationale as `zsetlimit` above.
+/// Port of `setlimits()` from `Src/exec.c:331`.
 #[cfg(unix)]
 pub(crate) fn setlimits(nam: &str) -> i32 {
     let mut ret = 0;
@@ -1747,6 +1759,7 @@ pub(crate) fn setlimits(nam: &str) -> i32 {
     ret
 }
 
+/// Port of `setlimits()` from `Src/exec.c:331`.
 #[cfg(not(unix))]
 pub(crate) fn setlimits(_nam: &str) -> i32 {
     0
@@ -1762,6 +1775,7 @@ pub(crate) fn setlimits(_nam: &str) -> i32 {
 //   char **featuresarray(Module m, Features f);
 // Returns a NUL-terminated array of feature descriptors like "b:limit".
 // The descriptor list is built inline: this module has no `Features` tables.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:limit".to_string(),
@@ -1774,6 +1788,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 //   int handlefeatures(Module m, Features f, int **enables);
 // On NULL `*enables`, fills it with the current per-feature enable bits
 // via `getfeatureenables`. On non-NULL, calls `setfeatureenables`.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -1783,6 +1798,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 
 // `getfeatureenables` lives in `Src/module.c:3314`: the live per-feature
 // enable bits, read through the name-keyed `handlefeatures` (NULL `*enables`).
+/// Port of `getfeatureenables()` from `Src/module.c:3314`.
 fn getfeatureenables(m: *const module, f: &Mutex<features>) -> Vec<i32> {
     let mut enables = None;
     handlefeatures(m, f, &mut enables);
@@ -1791,6 +1807,7 @@ fn getfeatureenables(m: *const module, f: &Mutex<features>) -> Vec<i32> {
 
 // `setfeatureenables` lives in `Src/module.c:3350`: enables or disables each
 // registered feature per `e` (all of them when `e` is NULL).
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&Vec<i32>>) -> i32 {
     crate::ported::module::setfeatureenables(
         "zsh/rlimits",

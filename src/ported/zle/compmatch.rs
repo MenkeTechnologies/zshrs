@@ -188,6 +188,7 @@ pub fn cmatchers_same(
 /// matcher that qualifies for brace-matching to the file-scope
 /// `bmatchers` Cmlist. Original chain head is appended after the new
 /// entries so the final list is `[new_entries..., old_bmatchers...]`.
+/// Port of `add_bmatchers()` from `Src/Zle/compmatch.c:101`.
 pub fn add_bmatchers(m: Option<&Cmatcher>) {
     // c:101
     let cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
@@ -220,6 +221,7 @@ pub fn add_bmatchers(m: Option<&Cmatcher>) {
 /// Direct port of `mod_export void update_bmatchers(void)` from
 /// `Src/Zle/compmatch.c:121`. Called when mstack changes — ensures
 /// `bmatchers` contains no matchers absent from `mstack`.
+/// Port of `update_bmatchers()` from `Src/Zle/compmatch.c:121`.
 pub fn update_bmatchers() {
     // c:121
     let bm_cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
@@ -265,6 +267,7 @@ pub fn update_bmatchers() {
 /// dance collapses to a `Box::new`. Sets `word`/`wlen`/`line`/`llen`/
 /// `orig`/`olen`/`flags` per the args; clears `prefix`/`suffix`/`min`/
 /// `max`/`slen`.
+/// Port of `get_cline()` from `Src/Zle/compmatch.c:144`.
 pub fn get_cline(
     l: Option<String>,
     ll: i32,
@@ -663,6 +666,7 @@ const CHR_WEOF: u32 = u32::MAX;
 /// sequence consumes exactly one byte and returns [`CHR_WEOF`],
 /// mirroring C's `*wcp = WEOF; return 1 + (*s == Meta);`. An empty
 /// buffer returns `(0, 0)`, matching C's `if (!in || !*in) return 0;`.
+/// Port of `unmeta_one()` from `Src/utils.c:5058`.
 fn unmeta_one(b: &[u8]) -> (u32, usize) {
     let Some(&first) = b.first() else {
         return (0, 0); // c:5069 — empty string
@@ -688,6 +692,7 @@ fn unmeta_one(b: &[u8]) -> (u32, usize) {
 /// from `Src/Zle/compmatch.c:327`. Pushes the string `w` (or
 /// `l` when `m & CMF_LINE`) of length `wl` into the file-scope
 /// `MATCHBUF` accumulator; `sfx` prepends instead of appends.
+/// Port of `add_match_str()` from `Src/Zle/compmatch.c:327`.
 pub fn add_match_str(
     m: Option<&Cmatcher>, // c:327
     l: &str,
@@ -741,6 +746,7 @@ pub fn add_match_str(
 /// `MATCHPARTS`, splitting the new part via `bld_parts` per the
 /// matcher's anchor rules and consuming any pending `MATCHSUBS`
 /// nodes into the new tail.
+/// Port of `add_match_part()` from `Src/Zle/compmatch.c:373`.
 pub fn add_match_part(
     m: Option<&Cmatcher>, // c:373
     l: Option<&str>,
@@ -978,6 +984,7 @@ pub fn add_match_part(
 /// `Src/Zle/compmatch.c:446`. Pushes one sub-match cline node
 /// into the file-scope `MATCHSUBS` / `MATCHLASTSUB` linked list.
 /// Called from match_str during a CMF_RIGHT anchor match.
+/// Port of `add_match_sub()` from `Src/Zle/compmatch.c:446`.
 pub fn add_match_sub(
     m: Option<&Cmatcher>, // c:446
     l: Option<&str>,
@@ -1152,6 +1159,7 @@ pub fn add_match_sub(
 /// byte offsets that C reaches with pointer arithmetic and a temporary
 /// `'\0'`, and an offset landing inside a multibyte character cannot be
 /// expressed as a `&str` at all.
+/// Port of `match_str()` from `Src/Zle/compmatch.c:500`.
 #[allow(clippy::too_many_arguments)]
 pub fn match_str(
     // c:500
@@ -2197,6 +2205,7 @@ pub fn match_str(
 /// non-ASCII character, so the port takes `&[u8]` as C takes `char *`.
 /// A resulting partial sequence decodes to `WEOF` inside
 /// [`pattern_match`], exactly as C's `unmeta_one` reports it.
+/// Port of `match_parts()` from `Src/Zle/compmatch.c:1092`.
 pub fn match_parts(l: &[u8], w: &[u8], n: i32, part: i32) -> i32 {
     // c:1092
     let ln = (n as usize).min(l.len());
@@ -2215,6 +2224,7 @@ pub fn match_parts(l: &[u8], w: &[u8], n: i32, part: i32) -> i32 {
 /// candidate `w` against prefix `pfx` and suffix `sfx`. Returns the
 /// matched string on success, None on no match. Writes the Cline
 /// structure into `clp`, the "is exact match" flag into `exact`.
+/// Port of `comp_match()` from `Src/Zle/compmatch.c:1123`.
 #[allow(clippy::too_many_arguments)]
 pub fn comp_match(
     // c:1123
@@ -2704,6 +2714,7 @@ pub fn pattern_match1(
 ///
 /// Returns `CHR_INVALID` (u32::MAX) on miss; the matched line
 /// char on success.
+/// Port of `pattern_match_equivalence()` from `Src/Zle/compmatch.c:1316`.
 pub fn pattern_match_equivalence(
     lp: &Cpattern, // c:1316
     wind: u32,
@@ -2799,6 +2810,7 @@ pub fn pattern_match_equivalence(
 /// the corresponding `prestrict` Cpattern. Used when building the
 /// line-string from a partial match. Writes the deduced line chars
 /// into `new_line` and returns 1 on full match, 0 otherwise.
+/// Port of `pattern_match_restrict()` from `Src/Zle/compmatch.c:1383`.
 pub fn pattern_match_restrict(
     p: Option<&Cpattern>, // c:1383
     wp: Option<&Cpattern>,
@@ -3291,6 +3303,7 @@ pub fn bld_parts(
 /// it does not, fall back to the `bmatchers` chain and let
 /// `pattern_match_restrict` deduce the line chars (the "nightmare"
 /// multi-matcher case). `sfx` builds both strings from the end.
+/// Port of `bld_line()` from `Src/Zle/compmatch.c:1736`.
 pub fn bld_line(
     mp: &Cmatcher, // c:1734
     line: &mut Vec<char>,
@@ -3524,6 +3537,7 @@ pub fn bld_line(
 /// chars verbatim or using a no-anchor matcher's bld_line synthesis.
 /// Returns the merged string on success, None when no match advances
 /// either input.
+/// Port of `join_strs()` from `Src/Zle/compmatch.c:1994`.
 pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String> {
     // c:2050 — C accumulates into a `char *` buffer one BYTE at a time.
     // Collecting into a `String` via `byte as char` re-encoded every
@@ -3674,6 +3688,7 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
 ///   - `2` if `join` is set and `join_strs` produced a merged anchor
 ///     (sets `CLF_JOIN` and rewrites `o->word`/`wlen`)
 ///   - `0` otherwise.
+/// Port of `cmp_anchors()` from `Src/Zle/compmatch.c:2107`.
 pub fn cmp_anchors(
     o: &mut Cline, // c:2107
     n: &Cline,
@@ -3748,6 +3763,7 @@ pub struct cmdata {
 /// `Src/Zle/compmatch.c:2152`. Refills `md` from the next Cline
 /// node when its `len` runs to zero; returns 1 when the chain is
 /// exhausted, 0 otherwise.
+/// Port of `check_cmdata()` from `Src/Zle/compmatch.c:2152`.
 pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
     // c:2152
     // `sfx` only ever selected C's cursor bump (c:2169/:2173); this port stores
@@ -3845,6 +3861,7 @@ pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<Cline>> {
 /// substring `str[..len]` against the data currently in `md` via
 /// one of the no-anchor matchers in `bmatchers`; on success
 /// returns the matched-portion Cline and updates `md`/`*mlen`.
+/// Port of `join_sub()` from `Src/Zle/compmatch.c:2212`.
 pub fn join_sub(
     md: &mut cmdata,
     str: &str,
@@ -4014,6 +4031,7 @@ pub fn join_sub(
 /// as it consumes characters.
 ///
 /// Returns the count of matched bytes — the C source's "ret" value.
+/// Port of `sub_match()` from `Src/Zle/compmatch.c:2301`.
 pub fn sub_match(md: &mut cmdata, str: &str, len: i32, sfx: i32) -> i32 {
     // c:2301
     let mut ret = 0i32;
@@ -4556,6 +4574,7 @@ pub fn join_mid(
 /// iteratively invokes join_psfx with progressively shrinking
 /// prefix copies (via cp_cline) until either side merges or the
 /// chain exhausts.
+/// Port of `sub_join()` from `Src/Zle/compmatch.c:2649`.
 pub fn sub_join(
     a: &mut Cline, // c:2649
     b: Option<Box<Cline>>,
@@ -4695,6 +4714,7 @@ pub fn sub_join(
 /// join_psfx / join_mid to merge each pair of corresponding nodes.
 /// Chain restitching uses a tail-cursor pattern (`oo` / `po`) so
 /// nodes can be spliced out or replaced without losing the head.
+/// Port of `join_clines()` from `Src/Zle/compmatch.c:2706`.
 pub fn join_clines(
     // c:2706
     o: Option<Box<Cline>>,

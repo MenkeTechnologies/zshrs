@@ -61,6 +61,7 @@ use std::sync::{Mutex, OnceLock};
 /// from compcore.c:287. The top-level completion driver: per-round
 /// state reset → `makecomplist` → dispatch to `do_ambiguous` /
 /// `do_single` / `do_allmatches` per result count.
+/// Port of `do_completion()` from `Src/Zle/compcore.c:287`.
 pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     // c:287
 
@@ -495,6 +496,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
 /// shortcircuits via menu-completion, clamps the cursor when re-
 /// entering an in-word completion, and toggles automenu mode.
 /// Returns 1 to suppress the next-stage match build, 0 to continue.
+/// Port of `before_complete()` from `Src/Zle/compcore.c:461`.
 pub fn before_complete(lst: &mut i32) -> i32 {
     // c:461
 
@@ -632,6 +634,7 @@ pub fn before_complete(lst: &mut i32) -> i32 {
 ///   - `ret >= 1` → zero `dat[1]`, clear menucmp/menuacc, null minfo.cur.
 ///   - `ret >= 2` → also rewind buffer to origline.
 ///   - `ret == 2` → also schedule list clear (CLEARLIST=1, invalidatelist).
+/// Port of `after_complete()` from `Src/Zle/compcore.c:503`.
 pub fn after_complete(dat: &mut [i32]) -> i32 {
     // c:503
     let menucmp_v = MENUCMP.load(Ordering::Relaxed);
@@ -743,6 +746,7 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
 /// dispatches into the user shell function `fn`. The `comprpms`/
 /// `compkpms` slots are modelled by the `$compstate` hash storage
 /// (a key's PM_UNSET bit is spelled as removing the entry).
+/// Port of `callcompfunc()` from `Src/Zle/compcore.c:544`.
 pub fn callcompfunc(s: &str, fn_name: &str) {
     use crate::ported::zle::comp_h::{
         CP_ALLKEYS, CP_ALLREALS, CP_EXACT, CP_EXACTSTR, CP_INSERT, CP_KEYPARAMS, CP_LASTPROMPT,
@@ -1712,6 +1716,7 @@ static COMPCTL_HOOKS: std::sync::Once = std::sync::Once::new();
 /// compcore.c:946. Top-level dispatch into the completion subsystem:
 /// either the new compsys path (`callcompfunc`) or the legacy compctl
 /// path (`COMPCTLMAKEHOOK`).
+/// Port of `makecomplist()` from `Src/Zle/compcore.c:946`.
 pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
     // c:946
     let owb = WB.load(Ordering::Relaxed); // c:946
@@ -2077,6 +2082,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
 
 /// Port of `mod_export char *multiquote(char *s, int ign)` from
 /// compcore.c:1064.
+/// Port of `multiquote()` from `Src/Zle/compcore.c:1065`.
 pub fn multiquote(s: &str, ign: i32) -> String {
     // c:1065
     // c:1067 — `char *p = compqstack;`. C takes the global POINTER and
@@ -2137,6 +2143,7 @@ pub fn multiquote(s: &str, ign: i32) -> String {
 
 /// Port of `mod_export char *tildequote(char *s, int ign)` from
 /// compcore.c:1091.
+/// Port of `tildequote()` from `Src/Zle/compcore.c:1092`.
 pub fn tildequote(s: &str, ign: i32) -> String {
     // c:1092
     let bytes = s.as_bytes(); // c:1092
@@ -2190,6 +2197,7 @@ pub fn tildequote(s: &str, ign: i32) -> String {
 /// The legacy compctl caller has only the untokenized word and passes
 /// `true`, which lets the `$`/`{`/`(` literals stand in for their tokens at
 /// the cost of that one path not seeing the escape.
+/// Port of `check_param()` from `Src/Zle/compcore.c:1113`.
 pub fn check_param(s: &str, set: bool, test: bool, untok: bool) -> Option<usize> {
     // c:1113
 
@@ -2555,6 +2563,7 @@ pub fn check_param(s: &str, set: bool, test: bool, untok: bool) -> Option<usize>
 /// Port of `mod_export char *rembslash(char *s)` from compcore.c:1322.
 ///
 /// "Strip backslash escapes from a token, treating `\X` as `X`."
+/// Port of `rembslash()` from `Src/Zle/compcore.c:1323`.
 pub fn rembslash(s: &str) -> String {
     // c:1323
     let mut result = String::with_capacity(s.len()); // c:1323
@@ -2578,6 +2587,7 @@ pub fn rembslash(s: &str) -> String {
 // =====================================================================
 
 /// Port of `mod_export int remsquote(char *s)` from compcore.c:1342.
+/// Port of `remsquote()` from `Src/Zle/compcore.c:1343`.
 pub fn remsquote(s: &mut String) -> i32 {
     // c:1343
     let rcquotes = isset(RCQUOTES); // c:1343
@@ -2621,6 +2631,7 @@ pub fn remsquote(s: &mut String) -> i32 {
 /// C calls `tokenize(p)` first then walks the string replacing
 /// unescaped `$`/`{`/`}` with the token bytes `String`/`Inbrace`/
 /// `Outbrace`. Backslash-escaped variants become `Bnull`.
+/// Port of `ctokenize()` from `Src/Zle/compcore.c:1366`.
 pub fn ctokenize(p: &str) -> String {
     // c:1366
     // c:1370 — `tokenize(p);` ran FIRST in C and was missing here entirely,
@@ -2689,6 +2700,7 @@ pub fn ctokenize(p: &str) -> String {
 
 /// Port of `mod_export char *comp_str(int *ipl, int *pl, int untok)`
 /// from compcore.c:1402.
+/// Port of `comp_str()` from `Src/Zle/compcore.c:1403`.
 pub fn comp_str(untok: bool) -> (String, i32, i32) {
     // c:1403
     let mut p = COMPPREFIX
@@ -2728,6 +2740,7 @@ pub fn comp_str(untok: bool) -> (String, i32, i32) {
 
 /// Port of `mod_export char *comp_quoting_string(int stype)` from
 /// compcore.c:1434.
+/// Port of `comp_quoting_string()` from `Src/Zle/compcore.c:1435`.
 pub fn comp_quoting_string(stype: i32) -> &'static str {
     // c:1435
     match stype {
@@ -2781,6 +2794,7 @@ pub fn comp_quoting_string(stype: i32) -> &'static str {
 /// both the `dolq` byte-count delta and the `css += zlemetacs - j`
 /// cursor micro-adjustment are computed (inheriting the same non-ASCII
 /// byte/char caveat noted above).
+/// Port of `set_comp_sep()` from `Src/Zle/compcore.c:1460`.
 pub fn set_comp_sep() -> i32 {
     use crate::ported::lex::{
         ctxtlex, noaliases, set_noaliases, set_tok, set_tokstr, tok, tokstr, untokenize,
@@ -3371,6 +3385,7 @@ pub fn set_comp_sep() -> i32 {
 /// Port of `static void set_list_array(char *name, LinkList l)` from
 /// compcore.c:1947. Writes an array-typed parameter via the canonical
 /// `setaparam` (params.c:3595).
+/// Port of `set_list_array()` from `Src/Zle/compcore.c:1947`.
 pub fn set_list_array(name: &str, l: &[String]) {
     // c:1947
     let _ = setaparam(name, l.to_vec()); // c:1956
@@ -3382,6 +3397,7 @@ pub fn set_list_array(name: &str, l: &[String]) {
 
 /// Port of `mod_export char **get_user_var(char *nam)` from
 /// compcore.c:1956.
+/// Port of `get_user_var()` from `Src/Zle/compcore.c:1956`.
 pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
     // c:1956
     let nam = nam?; // c:1956
@@ -3512,6 +3528,7 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
 /// holds no value for them, so a `fetchvalue` + `arrgetfn` read would come
 /// back empty and `compadd -k commands` would add the literal word
 /// "commands".
+/// Port of `get_data_arr()` from `Src/Zle/compcore.c:2022`.
 pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
     // c:2022
 
@@ -3665,6 +3682,7 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
 
 /// Port of `static void addmatch(char *str, int flags, char ***dispp,
 ///                                int line)` from compcore.c:2041.
+/// Port of `addmatch()` from `Src/Zle/compcore.c:2041`.
 pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {
     // c:2041
     let mut cm = Cmatch::default(); // c:2041
@@ -3751,6 +3769,7 @@ pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {
 /// c:2482-2601, apar/opar setaparam c:2602-2605, exp addexpl
 /// c:2610, hasallmatch CAF_ALL placeholder c:2612-2614, dummy
 /// entries c:2616-2617.
+/// Port of `addmatches()` from `Src/Zle/compcore.c:2080`.
 pub fn addmatches(
     dat: &mut Cadata, // c:2080
     argv: &[String],
@@ -4891,6 +4910,7 @@ pub fn addmatches(
 /// unfinished-brace filter (`lastprebr`/`lastpostbr` + `hasbrpsfx`). Nothing
 /// is registered in that case: `mnum`, `ai->count` and the match list are all
 /// left untouched.
+/// Port of `add_match_data()` from `Src/Zle/compcore.c:2643`.
 #[allow(clippy::too_many_arguments)]
 pub fn add_match_data(
     // c:2643
@@ -5662,6 +5682,7 @@ pub fn add_match_data(
 
 /// Port of `mod_export void begcmgroup(char *n, int flags)` from
 /// compcore.c:3073.
+/// Port of `begcmgroup()` from `Src/Zle/compcore.c:3073`.
 pub fn begcmgroup(n: Option<&str>, flags: i32) {
     // c:3073
     if let Some(name) = n {
@@ -5742,6 +5763,7 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {
 
 /// Port of `mod_export void endcmgroup(char **ylist)` from
 /// compcore.c:3131.
+/// Port of `endcmgroup()` from `Src/Zle/compcore.c:3131`.
 pub fn endcmgroup(ylist: Option<Vec<String>>) {
     // c:3131 — C is a one-liner (`mgroup->ylist = ylist`) because the
     // file-scope `matches`/`fmatches`/`expls`/`allccs` LinkLists ARE this
@@ -5822,6 +5844,7 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
 // =====================================================================
 
 /// Port of `mod_export void addexpl(int always)` from compcore.c:3140.
+/// Port of `addexpl()` from `Src/Zle/compcore.c:3140`.
 pub fn addexpl(always: bool) {
     // c:3140
     let curexpl_snap = {
@@ -5893,6 +5916,7 @@ pub fn addexpl(always: bool) {
 /// one of qsort's O(n log n) calls. `arch <TAB>` (47058 command names,
 /// sorted four times by four `$compstate[nmatches]` reads) spent 61% of the
 /// completion there. Callers build keys with `MatchSortKey::new(m)`.
+/// Port of `matchcmp()` from `Src/Zle/compcore.c:3173`.
 pub fn matchcmp(
     a: &Cmatch,
     ak: &crate::tolerant_sort::MatchSortKey,
@@ -5981,6 +6005,7 @@ pub fn matchcmp(
 
 /// Port of `static int matcheq(Cmatch a, Cmatch b)` from
 /// compcore.c:3206.
+/// Port of `matcheq()` from `Src/Zle/compcore.c:3207`.
 pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {
     // c:3207
     matchstreq(a.ipre.as_ref(),  b.ipre.as_ref())  &&                        // c:3207
@@ -6022,6 +6047,7 @@ pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {
 /// pointers. Sorting, compacting (`*cp++ = *ap`) and truncating (`*cp =
 /// NULL`) move only indices, exactly as C moves only pointers; every flag
 /// write goes to `src[..]`, i.e. to the live match.
+/// Port of `makearray()` from `Src/Zle/compcore.c:3224`.
 pub fn makearray(src: &mut Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32) {
     // c:3224
     let mut ord: Vec<usize> = (0..src.len()).collect(); // c:3230-3236
@@ -6243,6 +6269,7 @@ pub fn makearray(src: &mut Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i
 /// Port of `static Cmatch dupmatch(Cmatch m, int nbeg, int nend)` from
 /// compcore.c:3370. Deep-copies one match; brpl/brsl are truncated to
 /// nbeg/nend per the C body's nbeg/nend-sized `zalloc` + element copy.
+/// Port of `dupmatch()` from `Src/Zle/compcore.c:3370`.
 pub fn dupmatch(m: &Cmatch, nbeg: i32, nend: i32) -> Cmatch {
     // c:3370
     let mut r = Cmatch::default(); // c:3370-3374
@@ -6287,6 +6314,7 @@ pub fn dupmatch(m: &Cmatch, nbeg: i32, nend: i32) -> Cmatch {
 /// Port of `mod_export int permmatches(int last)` from compcore.c:3422.
 /// Promotes the per-round `amatches` accumulator into the permanent
 /// `pmatches` snapshot via deep-copy through `dupmatch`/`makearray`.
+/// Port of `permmatches()` from `Src/Zle/compcore.c:3423`.
 pub fn permmatches(last: i32) -> i32 {
     // c:3423
     let ofi = PERMMATCHES_FI.load(Ordering::Relaxed); // c:3423 ofi = fi
@@ -6594,6 +6622,7 @@ pub fn permmatches(last: i32) -> i32 {
 /// automatic Drop on the owned String / `Vec<i32>` fields. nbeg/nend
 /// kept on the signature for C parity (consumed by C as `zfree` size
 /// args; Rust Vec carries its own length).
+/// Port of `freematch()` from `Src/Zle/compcore.c:3575`.
 pub fn freematch(m: Cmatch, _nbeg: i32, _nend: i32) {
     // c:3577 — `if (!m) return;` — Rust's owned `m` is always valid;
     // dropping it on return runs every field's destructor (c:3579-3596
@@ -6608,6 +6637,7 @@ pub fn freematch(m: Cmatch, _nbeg: i32, _nend: i32) {
 /// The `cm` arm at c:3636-3637 (`minfo.cur = NULL`) is the only
 /// side-effect that doesn't fall out of Rust's ownership model — wire
 /// it explicitly.
+/// Port of `freematches()` from `Src/Zle/compcore.c:3605`.
 pub fn freematches(g: Vec<Cmgroup>, cm: i32) {
     // c:3605
     drop(g);
@@ -6905,6 +6935,7 @@ pub static MINFO: OnceLock<Mutex<Menuinfo>> = OnceLock::new(); // zle_tricky.c m
 // matcheq — `Src/Zle/compcore.c:3203-3215`.
 // =====================================================================
 
+/// Port of `matchstreq()` from `Src/Zle/compcore.c:3203`.
 #[inline]
 fn matchstreq(a: Option<&String>, b: Option<&String>) -> bool {
     // c:3207
@@ -7020,6 +7051,7 @@ pub const IN_PAR_LW: i32 = 5; // = IN_PAR (zsh.h:2332)
 /// Reads ZLEMETALINE, decodes via the canonical stringaszleline
 /// (handles incs adjustment + unmetafy + UTF-8 decode), populates
 /// ZLELINE / ZLELL / ZLECS, clears ZLEMETALINE/ZLEMETALL.
+/// Port of `unmetafy_line()` from `Src/Zle/zle_tricky.c:995`.
 pub fn unmetafy_line() {
     // zle_tricky.c:995
     let meta = ZLEMETALINE
@@ -7066,6 +7098,7 @@ pub fn unmetafy_line() {
 /// Reads ZLELINE, encodes via the canonical zlelineasstring (handles
 /// wcrtomb + metafy expansion), populates ZLEMETALINE / ZLEMETALL /
 /// ZLEMETACS, clears ZLELINE/ZLELL.
+/// Port of `metafy_line()` from `Src/Zle/zle_tricky.c:978`.
 pub fn metafy_line() {
     // zle_tricky.c:978
     let raw_vec: Vec<char> = ZLELINE
@@ -7435,6 +7468,7 @@ fn qipre_get() -> String {
 
 /// Adapter for `int movefd(int fd)` from `Src/utils.c:2974` —
 /// delegates to the canonical port in `ported::utils::movefd`.
+/// Port of `movefd()` from `Src/utils.c:1990`.
 fn movefd(fd: i32) -> i32 {
     // utils.c:2974
     crate::ported::utils::movefd(fd)
@@ -7451,6 +7485,7 @@ fn movefd(fd: i32) -> i32 {
 /// descriptor is closed anyway — so the shell's stdin was DESTROYED by
 /// the first Tab and fd 0 stayed closed for the rest of the session
 /// (`cat` at the prompt after a completion read a bad descriptor).
+/// Port of `redup()` from `Src/utils.c:2021`.
 fn redup(new: i32) {
     // utils.c:2021
     crate::ported::utils::redup(new, 0);

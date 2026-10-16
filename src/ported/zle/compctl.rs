@@ -263,6 +263,7 @@ pub(crate) fn freecompcond(cc: Compcond) {
 /// Direct port of `static Cmlist cpcmlist(Cmlist l)` from
 /// Src/Zle/compctl.c:291. Deep-copies a Cmlist linked list, using
 /// `cpcmatcher` for each matcher's chain. Returns the new head.
+/// Port of `cpcmlist()` from `Src/Zle/compctl.c:291`.
 pub(crate) fn cpcmlist(
     // c:291
     mut l: Option<&Cmlist>,
@@ -314,6 +315,7 @@ thread_local! {
 /// Src/Zle/compctl.c:311. Parses each argv entry as a cmatcher
 /// spec, builds a fresh Cmlist chain, frees the old CMATCHER and
 /// installs the new one via cpcmlist.
+/// Port of `set_gmatcher()` from `Src/Zle/compctl.c:311`.
 pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {
     // c:311
     // c:314-325 — same back-to-front link as `cpcmlist` above, for the same
@@ -348,6 +350,7 @@ pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {
 /// Src/Zle/compctl.c:336. Looks for a leading `-M` flag followed
 /// by matcher specs (no `-`-prefixed args), then forwards to
 /// `set_gmatcher` and translates its return into 0/1/2.
+/// Port of `get_gmatcher()` from `Src/Zle/compctl.c:336`.
 pub(crate) fn get_gmatcher(name: &str, argv: &[String]) -> i32 {
     // c:336
     if argv.first().map(|s| s.as_str()) != Some("-M") {
@@ -373,6 +376,7 @@ pub(crate) fn get_gmatcher(name: &str, argv: &[String]) -> i32 {
 /// `Src/Zle/compctl.c:357`. Prints the global matcher chain (the
 /// CMATCHER list) as `compctl -M 'str1' 'str2' ...` when `ac` is
 /// non-zero, or `MATCH 'str1' ...` otherwise. Used by `compctl -L`.
+/// Port of `print_gmatcher()` from `Src/Zle/compctl.c:357`.
 pub(crate) fn print_gmatcher(ac: i32) {
     // c:357
     let guard = CMATCHER.read().ok();
@@ -3804,6 +3808,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
 /// before and after the word, and `makecomplistcmd` is called on the
 /// word. Offsets are CHARACTER offsets throughout (`inbufct`, `wb`, `we`
 /// and `zlemetacs` are character based in this port).
+/// Port of `sep_comp_string()` from `Src/Zle/compctl.c:2806`.
 pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     // c:2813
     use crate::ported::hist::{strinbeg, strinend};
@@ -6267,6 +6272,7 @@ static COMPCTLREAD_INSTALLED: Mutex<bool> = Mutex::new(false);
 /// `Src/ztype.h:62`. Tests whether `c` is one of the parser's
 /// "inull" token chars (the high-bit token bytes the lexer
 /// produces).
+/// Port of `inull()` from `Src/ztype.h:62`.
 fn inull(c: char) -> bool {
     // c:62
     matches!(c, Snull | Dnull | Bnull | Bnullkeep | Nularg)

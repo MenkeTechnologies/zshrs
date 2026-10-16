@@ -184,6 +184,7 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
 /// Non-`USE_MMAP` build path (port of the `#else` arm at
 /// `Src/Modules/mapfile.c:68`): `fopen("w")` + `putc` loop +
 /// `fclose`. Used on platforms without mmap.
+/// Port of `setpmmapfile()` from `Src/Modules/mapfile.c:68`.
 #[cfg(not(unix))]
 pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
     // c:68
@@ -389,6 +390,7 @@ pub fn get_contents(fname: &str) -> Option<String> {
 
 /// Non-Unix build path (port of the `#ifndef USE_MMAP` arm at
 /// `Src/Modules/mapfile.c:167`): plain read with metafy.
+/// Port of `get_contents()` from `Src/Modules/mapfile.c:167`.
 #[cfg(not(unix))]
 pub fn get_contents(fname: &str) -> Option<String> {
     // c:167. No metafy: zshrs strings are native UTF-8 (see the
@@ -475,6 +477,7 @@ pub fn getpmmapfile(
 /// wasteful, since that would mean we always read the entire
 /// contents of every single file in the directory into memory.
 /// Hence just leave it empty." → values are always `""` (c:263).
+/// Port of `scanpmmapfile()` from `Src/Modules/mapfile.c:241`.
 pub fn scanpmmapfile(
     _ht: *mut crate::ported::zsh_h::HashTable,
     func: Option<crate::ported::zsh_h::ParamScanFunc>,
@@ -600,6 +603,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["p:mapfile".to_string()]
 }
@@ -608,6 +612,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -619,6 +624,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
     // c:Src/module.c:3354-3382 — only the partab block (c:3376-3378
     // setparamdefs). cleanup_ passes `e == NULL`, which deletes the

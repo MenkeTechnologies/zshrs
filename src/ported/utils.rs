@@ -109,6 +109,7 @@ use crate::ported::ztype_h::{
 /// ASCII characters use the typtab ISEP bit.
 pub static IFS_WIDE: std::sync::RwLock<Vec<char>> = std::sync::RwLock::new(Vec::new());
 
+/// Port of `set_widearray()` from `Src/utils.c:69`.
 pub fn set_widearray(mb_array: &str) -> Vec<char> {
     let mut bytes = mb_array.as_bytes().to_vec();
     unmetafy(&mut bytes);
@@ -2562,6 +2563,7 @@ pub static ZTERM_COLUMNS: std::sync::atomic::AtomicI32 = std::sync::atomic::Atom
 /// matches.
 ///
 /// WARNING: param names don't match C — Rust=() vs C=(signalled)
+/// Port of `adjustlines()` from `Src/utils.c:1831`.
 pub fn adjustlines() -> usize {
     // c:1833
     let cached = ZTERM_LINES.load(Ordering::SeqCst);
@@ -2611,6 +2613,7 @@ pub fn adjustlines() -> usize {
 /// (c:1856) is the file-static half that only `adjustwinsize` calls.
 ///
 /// WARNING: param names don't match C — Rust=() vs C=(signalled)
+/// Port of `adjustcolumns()` from `Src/utils.c:1856`.
 pub fn adjustcolumns() -> usize {
     // c:1858
     let cached = ZTERM_COLUMNS.load(Ordering::SeqCst);
@@ -11895,6 +11898,7 @@ pub fn statuidprint(uid: u32) -> Option<String> {
 /// (`Src/compat.c:64`) is the `#ifndef HAVE_GETHOSTNAME` fallback built on
 /// `uname()`, which this does NOT implement — this wraps libc's real one.
 /// Get hostname
+/// Port of `gethostname()` from `Src/compat.c:64`.
 pub fn gethostname() -> String {
     #[cfg(unix)]
     {

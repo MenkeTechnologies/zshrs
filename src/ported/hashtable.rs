@@ -1315,6 +1315,7 @@ impl Default for reswd_table {
 /// Route through the canonical `crate::ported::utils::ztrcmp` so
 /// `functions`, `alias`, etc. sort their key listings the same way
 /// C does for Meta-encoded names.
+/// Port of `hnamcmp()` from `Src/hashtable.c:341`.
 pub fn hnamcmp(ap: &str, bp: &str) -> std::cmp::Ordering {
     ztrcmp(ap, bp) // c:345
 }
@@ -3135,6 +3136,7 @@ pub fn createaliastables() {
 /// Mirrors C `addaliasnode(aliastab, name, createaliasnode(text, flags))`
 /// at hashtable.c:1230 — caller-side bundle for the
 /// hashnode+text+flags inline-build.
+/// Port of `createaliasnode()` from `Src/hashtable.c:1230`.
 pub fn createaliasnode(name: &str, text: &str, flags: u32) -> alias {
     // c:1230
     alias {
@@ -3429,6 +3431,7 @@ pub fn emptyhisttable() {
 /// Rust port passes `reduce_blanks` as an explicit 3rd arg to keep
 /// the option read out of this leaf fn (call sites at hist.c thread
 /// the option from the parent scope).
+/// Port of `histstrcmp()` from `Src/hashtable.c:1396`.
 pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering {
     // c:1396
     // c:50 — `inblank(c)` = `c == ' ' || c == '\t'`. NOT newline, NOT broad.

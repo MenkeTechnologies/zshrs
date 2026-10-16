@@ -67,6 +67,7 @@ pub fn zgettime(ts: &mut timespec) -> i32 {
 /// is not actually monotonic -- there are reports that it can go     // c:133
 /// backwards. CLOCK_MONOTONIC_RAW does not have this problem. On top // c:133
 /// of that, it is faster to read and it has nanosecond precision.    // c:133
+/// Port of `zgettime_monotonic_if_available()` from `Src/compat.c:133`.
 pub fn zgettime_monotonic_if_available(ts: &mut timespec) -> i32 {
     // c:133
     let mut ret: i32 = -1; // c:133
@@ -191,6 +192,7 @@ pub fn last_errstr() -> String {
 ///
 /// The previous Rust impl capped at 1MB which is way too high
 /// for closem() loops; matched zsh's actual cap.
+/// Port of `zopenmax()` from `Src/compat.c:300`.
 pub fn zopenmax() -> i64 {
     // c:300
     // `ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307` — 64 (NOT 1024).
@@ -1294,6 +1296,7 @@ pub fn strstr(s: &str, t: &str) -> Option<usize> {
 /// — fallback that fills tv_sec from `time(NULL)` and zeroes tv_usec.
 /// Rust shim returns (sec, usec) from libc gettimeofday; mirrors the
 /// C contract of always returning 0.
+/// Port of `gettimeofday()` from `Src/compat.c:86`.
 pub fn gettimeofday() -> (i64, i64) {
     // c:86
     #[cfg(unix)]

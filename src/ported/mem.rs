@@ -408,6 +408,7 @@ pub fn calloc(n: usize, size: usize) -> usize {
 /// the system allocator, so these counters are always 0; the output
 /// shape matches C for parity with debug scripts.
 /// WARNING: param names don't match C — Rust=(_name, _argv, ops, _func) vs C=(name, argv, ops, func)
+/// Port of `bin_mem()` from `Src/mem.c:1722`.
 pub fn bin_mem(
     // c:1722
     _name: &str,

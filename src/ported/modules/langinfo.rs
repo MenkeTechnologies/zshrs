@@ -100,6 +100,7 @@ static NL_TABLE: &[(&str, libc::nl_item)] = &[
     ("ALT_DIGITS", libc::ALT_DIGITS),
 ];
 /// `liitem` — see implementation.
+/// Port of `liitem()` from `Src/Modules/langinfo.c:379`.
 #[cfg(unix)]
 pub fn liitem(name: &str) -> Option<libc::nl_item> {
     // c:379
@@ -333,6 +334,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["p:langinfo".to_string()]
 }
@@ -341,6 +343,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -352,6 +355,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(m: *const module, f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
     // c:Src/module.c:3354-3382 — only the partab block (c:3376-3378
     // setparamdefs). cleanup_ passes `e == NULL`, which deletes the

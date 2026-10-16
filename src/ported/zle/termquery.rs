@@ -177,6 +177,7 @@ static WAITVAR: &str = ".term.querywait"; // c:137
 /// nested groups to the `T_OR` or `T_END` that closes the current branch
 /// (or the table's end). Positions are indices into `states`.
 /// WARNING: param names don't match C — Rust=(states, pos) vs C=(pos)
+/// Port of `find_branch()` from `Src/Zle/termquery.c:170`.
 pub fn find_branch(states: &[u8], pos: usize) -> usize {
     // c:170
     // C tables end in NUL; reading past the slice reads that NUL.
@@ -202,6 +203,7 @@ pub fn find_branch(states: &[u8], pos: usize) -> usize {
 /// the position just past the `T_END` closing the group `pos` is in.
 /// Backward (-1): the `T_BEGIN` opening it.
 /// WARNING: param names don't match C — Rust=(states, pos, direction) vs C=(pos, direction)
+/// Port of `find_matching()` from `Src/Zle/termquery.c:185`.
 pub fn find_matching(states: &[u8], pos: usize, direction: i32) -> usize {
     // c:185
     let state_at = |i: usize| states.get(i).copied().unwrap_or(0);
@@ -245,6 +247,7 @@ pub type ProbeOutput = Option<Vec<u8>>;
 /// The previous port read a raw reply into a string and returned it; no
 /// reply was ever parsed, so `query_terminal` could not be enabled
 /// without the replies reaching the line editor as keystrokes.
+/// Port of `probe_terminal()` from `Src/Zle/termquery.c:200`.
 pub fn probe_terminal(
     tquery: &str,
     states: &[u8],
@@ -619,6 +622,7 @@ impl Drop for TermNamespaceIdents {
     }
 }
 
+/// Port of `handle_color()` from `Src/Zle/termquery.c:438`.
 pub fn handle_color(bg: i32, red: i32, green: i32, blue: i32) -> i32 {
     // c:438
     let _ns = TermNamespaceIdents::enter();
@@ -696,6 +700,7 @@ static QUERIES: &[&str] = &[
 /// int len, char *capture, int clen, void *output)` from
 /// `Src/Zle/termquery.c:474`. Per-query dispatcher invoked by the
 /// state-machine matcher with the parsed response payload.
+/// Port of `handle_query()` from `Src/Zle/termquery.c:474`.
 pub fn handle_query(
     sequence: i32,
     numbers: &[i32],
@@ -757,6 +762,7 @@ pub fn handle_query(
 /// `$.term.bg` / `$.term.mode`, name and version into `$.term.id` /
 /// `$.term.version`, and `modkeys-kitty` / `truecolor` onto
 /// `$.term.extensions`.
+/// Port of `query_terminal()` from `Src/Zle/termquery.c:505`.
 pub fn query_terminal() {
     // c:505
     // ZSHRS-ONLY gate. termquery.c is a development-tree file: zsh 5.9.2 sends no
@@ -832,6 +838,7 @@ pub fn query_terminal() {
     }
 }
 
+/// Port of `base64_encode()` from `Src/Zle/termquery.c:549`.
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -950,6 +957,7 @@ pub fn base64_decode(src: &str) -> Vec<u8> {
 ///
 /// C body (single statement):
 ///     `*(char**)output = base64_decode(capture, clen);`
+/// Port of `handle_paste()` from `Src/Zle/termquery.c:595`.
 pub fn handle_paste(
     _sequence: i32,
     _numbers: &[i32],
@@ -987,6 +995,7 @@ pub fn url_encode(s: &str) -> String {
 /// `Src/Zle/termquery.c:644`. Asks the terminal for the OS selection
 /// (`clip` `c` = clipboard, `p` = primary) with OSC 52 and returns the
 /// decoded contents, or None when the terminal gave no reply.
+/// Port of `system_clipget()` from `Src/Zle/termquery.c:625`.
 pub fn system_clipget(clip: char) -> Option<String> {
     // c:644
     let mut seq = *b"\x1b]52;.;?\x1b\\"; // c:647 `char seq[] = "\033]52;.;?\033\\";`
@@ -1028,6 +1037,7 @@ pub fn system_clipput(data: &str) -> String {
 /// `class` length is implied (Rust slice) rather than passed as
 /// `clen`. The leading `+`/`-` toggles between "enable" and
 /// "disable"; bare entries (no sign) are treated as enable.
+/// Port of `extension_enabled()` from `Src/Zle/termquery.c:645`.
 pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
     // c:683 — `char **elist = getaparam(EXTVAR);` where
     //          EXTVAR = ".term.extensions". Pull the array straight
@@ -1091,6 +1101,7 @@ const EDITEXT: &[(&str, [&str; 2], usize, bool)] = &[
 /// buffer (or the corresponding `zle_bracketed_paste[sindex]`
 /// when the entry is `bracketed-paste`), then `write_loop`s the
 /// buffer to `SHTTY`.
+/// Port of `collate_seq()` from `Src/Zle/termquery.c:676`.
 pub fn collate_seq(sindex: usize, dir: i32) {
     // c:676
     let mut seq = Vec::<u8>::with_capacity(256); // c:678
@@ -1244,6 +1255,7 @@ pub fn end_edit() -> i32 {
 /// WARNING: signature change — C returns `const char **` (4-NULL-
 /// terminated when disabled); Rust returns a fixed-size array of
 /// String. Caller picks PS1/PS2/RPS marker by index.
+/// Port of `prompt_markers()` from `Src/Zle/termquery.c:731`.
 pub fn prompt_markers() -> [String; 3] {
     // c:731
     // c:741 — `if (!extension_enabled("integration", "prompt", 11, 1))
@@ -1336,6 +1348,7 @@ pub fn mark_output(start: bool) {
 /// so the caller chooses (notify_pwd uses SHTTY).
 /// WARNING: signature change — C=(path_components) writes SHTTY vs
 /// Rust=(fd, path_components) writes the given fd.
+/// Port of `write_urlencoded()` from `Src/Zle/termquery.c:769`.
 pub fn write_urlencoded(fd: i32, path_components: &str) {
     // c:769
     // c:772 — `url_encode(path_components, &enc_len)`.
@@ -1350,6 +1363,7 @@ pub fn write_urlencoded(fd: i32, path_components: &str) {
 /// directory across new tabs and splits. Gated on the
 /// `integration:pwd` extension toggle, and refuses to emit if `$HOST`
 /// contains a `/` (otherwise the resulting URL would be malformed).
+/// Port of `notify_pwd()` from `Src/Zle/termquery.c:778`.
 pub fn notify_pwd() {
     // c:778
     // ZSHRS-ONLY gate: the OSC 7 cwd report is dev-tree behaviour; 5.9.2 (what a
@@ -1387,6 +1401,7 @@ pub fn notify_pwd() {
 /// composed CURF_* bit pattern. C mutates `*cursor_form`; we return
 /// the value.
 /// WARNING: signature change — C=(teststr, cursor_form*) vs Rust=(spec) -> u32
+/// Port of `match_cursorform()` from `Src/Zle/termquery.c:798`.
 pub fn match_cursorform(spec: &str) -> u32 {
     // c:798
     // c:800-810 — name→(value,mask) table. "none" zeros every bit
@@ -1489,6 +1504,7 @@ pub fn match_cursorform(spec: &str) -> u32 {
 /// CURF_UNDERLINE`. The `cursor_enabled_mask` gate is computed once on
 /// first call (and again if `trashedzle` flips — currently no
 /// trashedzle global, so the first-call gate is the only one).
+/// Port of `zle_set_cursorform()` from `Src/Zle/termquery.c:856`.
 pub fn zle_set_cursorform() {
     // c:856
     // c:858 — `char **atrs = getaparam("zle_cursorform");`
@@ -1584,6 +1600,7 @@ pub fn zle_set_cursorform() {
 /// `cursor_enabled_mask` are intentionally preserved across the
 /// free so the extension-probe doesn't re-run unless `trashedzle`
 /// flips inside `zle_set_cursorform`.
+/// Port of `free_cursor_forms()` from `Src/Zle/termquery.c:904`.
 pub fn free_cursor_forms() {
     // c:904
     // c:906-907 — `if (cursor_forms) zfree(...);`  c:908 — `cursor_forms = 0;`
@@ -1597,6 +1614,7 @@ pub fn free_cursor_forms() {
 /// CURC_REGION_START/_END / CURC_VISUAL), diffs against the
 /// previously-emitted `state`, and writes only the changed
 /// DECSCUSR / DECSET / OSC 12 fragments to SHTTY.
+/// Port of `cursor_form()` from `Src/Zle/termquery.c:913`.
 pub fn cursor_form() {
     // c:913
     use crate::ported::zle::zle_h::{CURC_COMMAND, CURC_EDIT, CURC_OVERWRITE, CURC_VISUAL};

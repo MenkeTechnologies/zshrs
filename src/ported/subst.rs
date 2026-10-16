@@ -631,6 +631,7 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
 
 /// String substitution - main workhorse
 /// Port of stringsubst(LinkList list, LinkNode node, int pf_flags, int *ret_flags, int asssub) from subst.c lines 227-421
+/// Port of `stringsubst()` from `Src/subst.c:237`.
 fn stringsubst(
     // c:237
     list: &mut LinkList, // c:237

@@ -169,6 +169,7 @@ pub fn makerunning(jobtab: &mut [job], idx: usize) {
 /// **WARNING: param names don't match C** — Rust (jobtab, pid, aux)
 /// vs C (pid, **jptr, **pptr, int aux). Returns `Some((job_idx,
 /// proc_idx, aux_was_true))` rather than mutating out-pointers.
+/// Port of `findproc()` from `Src/jobs.c:191`.
 pub fn findproc(jobtab: &[job], pid: i32, aux: bool) -> Option<(usize, usize, bool)> {
     // c:191
     let mut last_match: Option<(usize, usize, bool)> = None;
@@ -1534,6 +1535,7 @@ pub fn sigmsg(sig: i32) -> &'static str {
 ///
 /// WARNING: param names don't match C — Rust=(job, job_num, lng, cur_job,
 /// prev_job, thisfmt) vs C=(jn, lng, synch)
+/// Port of `printjob()` from `Src/jobs.c:1138`.
 pub fn printjob(
     job: &job,
     job_num: usize,
@@ -1979,6 +1981,7 @@ pub fn deletejob(jobtab: &mut [job], jn: usize, disowning: bool) {
 /// The C call site at exec.c:2853 passes the entersubsh_ret-filled
 /// gleader/list_pipe_job from the child via the synch pipe. Rust mirrors
 /// the full signature; legacy callers pass `None`/`-1`.
+/// Port of `addproc()` from `Src/jobs.c:1538`.
 pub fn addproc(
     job: &mut job,
     pid: i32,
@@ -2075,6 +2078,7 @@ pub fn havefiles(jobtab: &[job]) -> bool {
 // in which case the behaviour is a little different:  the command          // c:1627
 // itself can be interrupted by a trapped signal.                           // c:1627
 /// Wait for a specific PID (from jobs.c waitforpid lines 1627-1663)
+/// Port of `waitforpid()` from `Src/jobs.c:1627`.
 pub fn waitforpid(pid: i32) -> Option<i32> {
     // c:1627
     #[cfg(unix)]
@@ -2521,6 +2525,7 @@ pub fn clearoldjobtab() {
 /// returned to a child-job caller. The Rust port previously walked
 /// from index 0 via `enumerate()`, corrupting parent-shell job
 /// tracking when jobtab[0] was empty.
+/// Port of `initjob()` from `Src/jobs.c:1862`.
 pub fn initjob(jobtab: &mut Vec<job>) -> usize {
     // c:1862
     // Ensure jobtab has slot 0 reserved for the shell (matches C's
@@ -2783,6 +2788,7 @@ pub fn spawnjob() {
 ///   - c:1968 — getrusage(RUSAGE_CHILDREN, &ti)
 ///   - c:1973-1984 — handle `kids` save / delta
 ///   - c:1985-1986 — `if (!delta == !kids) printtime("children")`
+/// Port of `shelltime()` from `Src/jobs.c:1926`.
 #[cfg(unix)]
 pub fn shelltime(
     shell: Option<&mut timeinfo>,
@@ -2899,6 +2905,7 @@ pub fn shelltime(
 }
 
 /// Non-unix stub matching the C body's #ifdef-gated absence.
+/// Port of `shelltime()` from `Src/jobs.c:1926`.
 #[cfg(not(unix))]
 pub fn shelltime(
     _shell: Option<&mut timeinfo>,
@@ -2910,6 +2917,7 @@ pub fn shelltime(
 
 // see if jobs need printing                                                // c:1993
 /// Scan jobs and print changed status (from jobs.c scanjobs)
+/// Port of `scanjobs()` from `Src/jobs.c:1993`.
 pub fn scanjobs(jobtab: &mut [job]) {
     // c:1993
     // C body:
@@ -3413,6 +3421,7 @@ pub static bgstatus_count: std::sync::atomic::AtomicI64 = // c:2304
 /// `Src/jobs.c:2325`. Caps the global `bgstatus_list` at
 /// `_SC_CHILD_MAX`, evicting oldest on overflow, then appends a
 /// new `bgstatus { pid, status }` entry.
+/// Port of `addbgstatus()` from `Src/jobs.c:2325`.
 pub fn addbgstatus(pid: i32, status_val: i32) {
     // c:2325
     // c:2370 — `if (bgstatus_count == max_child)` cap + eviction.
@@ -4833,6 +4842,7 @@ pub fn sig_names_for_signals_param() -> Vec<String> {
     out
 }
 /// `getsigidx` — see implementation.
+/// Port of `getsigidx()` from `Src/jobs.c:3047`.
 pub fn getsigidx(s: &str) -> Option<i32> {
     // c:3052-3058 — numeric-input branch: bounded by VSIGCOUNT + RT range.
     if let Some(first) = s.chars().next() {

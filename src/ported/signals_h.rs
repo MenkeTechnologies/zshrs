@@ -411,6 +411,7 @@ pub fn dont_queue_signals() {
 /// `Src/signals.h:104/123`. Restore the queueing counter to a saved
 /// value (typically captured before a section that called
 /// `dont_queue_signals` or similar).
+/// Port of `restore_queue_signals()` from `Src/signals.h:104`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn restore_queue_signals(q: i32) {
@@ -533,6 +534,7 @@ pub fn child_block() {
 }
 
 /// Non-unix no-op shim.
+/// Port of `child_block()` from `Src/signals.h:52`.
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]
@@ -550,6 +552,7 @@ pub fn child_unblock() {
 }
 
 /// Non-unix no-op shim.
+/// Port of `child_unblock()` from `Src/signals.h:53`.
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]
@@ -573,6 +576,7 @@ pub fn winch_block() {
 }
 
 /// Non-unix no-op shim.
+/// Port of `winch_block()` from `Src/signals.h:56`.
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]
@@ -593,6 +597,7 @@ pub fn winch_unblock() {
 }
 
 /// Non-unix no-op shim.
+/// Port of `winch_unblock()` from `Src/signals.h:57`.
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]
@@ -616,6 +621,7 @@ pub fn signal_ignore(s: i32) -> libc::sighandler_t {
 }
 
 /// Non-unix shim — same signature, no-op.
+/// Port of `signal_ignore()` from `Src/signals.h:64`.
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]
@@ -635,6 +641,7 @@ pub fn signal_default(s: i32) -> libc::sighandler_t {
 }
 
 /// Non-unix shim — same signature, no-op.
+/// Port of `signal_default()` from `Src/signals.h:67`.
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]

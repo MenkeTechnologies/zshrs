@@ -222,6 +222,7 @@ pub fn zlinefind(haystack: &str, pos: usize, needle: &str, dir: i32, sens: i32) 
 /// `Src/Zle/zle_hist.c:233`. Walks history backward by `zmult`,
 /// honoring `HISTIGNOREDUPS` (passed to `zle_goto_hist` as
 /// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
+/// Port of `uphistory()` from `Src/Zle/zle_hist.c:233`.
 pub fn uphistory() -> i32 {
     // c:233
     // c:235 — `int nodups = isset(HISTIGNOREDUPS);`
@@ -630,6 +631,7 @@ pub fn acceptlineanddownhistory() -> i32 {
 /// `Src/Zle/zle_hist.c:434`. Walks history forward by `zmult`,
 /// honoring `HISTIGNOREDUPS` (passed to `zle_goto_hist` as
 /// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
+/// Port of `downhistory()` from `Src/Zle/zle_hist.c:434`.
 pub fn downhistory() -> i32 {
     // c:434
     // c:436 — `int nodups = isset(HISTIGNOREDUPS);`
@@ -879,6 +881,7 @@ pub fn beginningofbufferorhistory() -> i32 {
 /// `zle_goto_hist(firsthist(), 0, 0)`, then refills the ZLE buffer
 /// from that entry. Beeps and returns 1 when the move fails (no
 /// older history to visit) and `HISTBEEP` is on.
+/// Port of `beginningofhistory()` from `Src/Zle/zle_hist.c:584`.
 pub fn beginningofhistory() -> i32 {
     // c:584
     // c:586 — `zle_goto_hist(firsthist(), 0, 0)`. The Rust History
@@ -915,6 +918,7 @@ pub fn endofbufferorhistory() -> i32 {
 /// `zle_goto_hist`. Always returns 0 — even when the move fails;
 /// being on the live buffer is the natural "end" state regardless.
 /// C body (2 lines): `zle_goto_hist(curhist, 0, 0); return 0;`
+/// Port of `endofhistory()` from `Src/Zle/zle_hist.c:604`.
 pub fn endofhistory() -> i32 {
     // c:604
     let (cur, end) = {
@@ -1459,6 +1463,7 @@ pub fn pushinput() -> i32 {
 /// `bufstack` linked list (saved-line stack populated by
 /// `push-line` and friends) and inserts the bytes into the editor
 /// buffer at the cursor — NOT reading history.
+/// Port of `zgetline()` from `Src/Zle/zle_hist.c:898`.
 pub fn zgetline() -> i32 {
     // c:898
     // c:900 — `char *s = getlinknode(bufstack);`
@@ -1692,6 +1697,7 @@ const ISEARCH_SBUF_MAX: usize = 4096;
 /// operate on bytes); the visible cursor `ZLECS` is a char index, so
 /// byte→char conversion happens at every line-set point.
 /// WARNING: param names don't match C — Rust=(dir) vs C=(args, dir, pattern)
+/// Port of `doisearch()` from `Src/Zle/zle_hist.c:1082`.
 pub fn doisearch(dir: i32) -> i32 {
     // c:1082
     let mut dir = dir;

@@ -254,6 +254,7 @@ pub struct listcols {
 /// `(decoded, rest)` so callers don't lose the parsed payload.
 /// The pre-existing test asserts the empty-input invariant — the
 /// return-type change preserves that (`getcolval("", 0).1 == ""`).
+/// Port of `getcolval()` from `Src/Zle/complist.c:275`.
 pub fn getcolval(s: &str, multi: i32) -> (String, &str) {
     use crate::ported::init::tcstr;
     let _ = tcstr; // touch import so cfg(test) regen doesn't trim it.
@@ -771,6 +772,7 @@ pub fn getcols(_unused: &str) -> i32 {
 /// and only then calls in: see `zcputs` (c:580), `putmatchcol`
 /// (c:881) and `putfilecol` (c:910), each of which resolves its cap
 /// to an owned `Option<String>` inside a scoped block.
+/// Port of `zlrputs()` from `Src/Zle/complist.c:564`.
 pub fn zlrputs(cap: &str) -> i32 {
     // c:564
     let mut last = match LAST_CAP.lock() {
@@ -829,6 +831,7 @@ pub fn zlrputs(cap: &str) -> i32 {
 /// code and never touched `mcolors`, so the chain walk (c:583), the
 /// group-pattern test (c:585) and the `zlrputs("0")` fallback (c:591)
 /// were all missing. Callers open-coded ad-hoc substitutes.
+/// Port of `zcputs()` from `Src/Zle/complist.c:580`.
 pub fn zcputs(group: Option<&str>, colour: usize) {
     // c:580
     // c:583-589 — walk the chain for `colour`; first entry with a
@@ -915,6 +918,7 @@ pub fn zcoff() {
 /// paint (`mlbeg >= 0`) and the terminal supports the cap. If a
 /// LS_COLOR cap is currently active, emit the SGR-reset first so
 /// the EOL-clear doesn't carry the color into untouched columns.
+/// Port of `cleareol()` from `Src/Zle/complist.c:608`.
 pub fn cleareol() {
     // c:608
     if MLBEG.load(Ordering::Relaxed) < 0 {
@@ -1287,6 +1291,7 @@ pub fn clprintfmt(p: &str, ml: i32) -> i32 {
 /// single wide character contributes [`zwcwidth`]. The per-character total
 /// equals the C per-byte total and the wrap/screen-full checks fire at the
 /// same output positions.
+/// Port of `clnicezputs()` from `Src/Zle/complist.c:715`.
 pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
     use crate::ported::lex::untokenize;
     use crate::ported::utils::{nicechar, unmetafy_str, wcs_nicechar, zwcwidth};
@@ -1484,6 +1489,7 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
 /// mutex to read `lc=`/`rc=`. C has no lock here — `mcolors` is plain
 /// global memory — so this scoping is Rust-only bookkeeping, not a
 /// behavioural divergence.
+/// Port of `putmatchcol()` from `Src/Zle/complist.c:881`.
 pub fn putmatchcol(group: &str, n: &str) -> i32 {
     // c:881
     // What the chain walk decided: emit this cap (c:896), or fall
@@ -1585,6 +1591,7 @@ pub fn putmatchcol(group: &str, n: &str) -> i32 {
 /// LOCK CONTRACT: as in [`putmatchcol`] — the `MCOLORS` guard is
 /// confined to the blocks that decide which cap applies and is
 /// dropped before any `zlrputs` / `zcputs` call.
+/// Port of `putfilecol()` from `Src/Zle/complist.c:910`.
 pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 {
     // c:910
     use crate::ported::zle::complist as cl;
@@ -1778,6 +1785,7 @@ pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 {
 ///   - accept-search → return 1 (abort)
 ///   - anything else → unget the cmd and return 1
 /// Finally clears the prompt line with `\r<columns spaces>\r`.
+/// Port of `asklistscroll()` from `Src/Zle/complist.c:1001`.
 pub fn asklistscroll(ml: i32) -> i32 {
     use crate::ported::utils::{adjustcolumns, adjustlines};
     use crate::ported::zle::zle_keymap::{getkeycmd, selectlocalmap, ungetkeycmd};
@@ -1864,6 +1872,7 @@ pub fn asklistscroll(ml: i32) -> i32 {
 /// if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
 /// return 0;
 /// ```
+/// Port of `compprintnl()` from `Src/Zle/complist.c:1054`.
 pub fn compprintnl(ml: i32) -> i32 {
     // c:1054
     // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
@@ -1911,6 +1920,7 @@ pub fn compprintnl(ml: i32) -> i32 {
 ///     return cc;
 /// }
 /// ```
+/// Port of `compprintfmt()` from `Src/Zle/complist.c:1072`.
 pub fn compprintfmt(
     // c:1072
     fmt: &str,
@@ -2386,6 +2396,7 @@ pub static MLISTP: std::sync::LazyLock<std::sync::Mutex<String>> =
 /// the shell-output fd. The C source also handles wrap detection +
 /// `asklistscroll` scroll-prompts; those land when the curses
 /// substrate is wired.
+/// Port of `compzputs()` from `Src/Zle/complist.c:1338`.
 #[allow(unused_variables)]
 pub fn compzputs(s: &str, ml: i32) -> i32 {
     // c:1338
@@ -2419,6 +2430,7 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {
 /// chain, emits explanations + ylist + cmatch grid via
 /// `clprintm` / `compprintfmt` / `compzputs`, tracking line
 /// position against `mlbeg`/`mlend` for resumable scrolling.
+/// Port of `compprintlist()` from `Src/Zle/complist.c:1367`.
 pub fn compprintlist(showall: i32) -> i32 {
     // c:1367
 
@@ -3145,6 +3157,7 @@ pub static LAST_NLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(g, m, mc, ml, lastc, width) vs C=(g, mp, mc, ml, lastc, width)
+/// Port of `clprintm()` from `Src/Zle/complist.c:1730`.
 pub fn clprintm(
     // c:1731 `Cmgroup g` — a POINTER in C. The `Arc` is that pointer:
     // `mgtab[…] = g` below must store a handle, not a deep copy of the
@@ -3589,6 +3602,7 @@ pub static LAST_GROUP: std::sync::LazyLock<std::sync::Mutex<String>> =
 /// from `*cp` counting distinct Cmatch pointers, then forward to
 /// see whether the rest of the row is uniform. Returns the count of
 /// distinct matches seen on the way back to the first occurrence.
+/// Port of `singlecalc()` from `Src/Zle/complist.c:1909`.
 pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {
     let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
     if zterm_columns <= 0 {
@@ -3908,6 +3922,7 @@ pub fn singledraw() -> i32 {
 /// dummy, Chdata dat)` signature so this registers directly as the
 /// `comp_list_matches` Hookfn (complist.c:3595); both are unused (the body
 /// reads the `amatches` globals as the C source does).
+/// Port of `complistmatches()` from `Src/Zle/complist.c:1990`.
 pub fn complistmatches(
     _dummy: *mut crate::ported::zsh_h::hookdef,
     _dat: *mut std::ffi::c_void,
@@ -4562,6 +4577,7 @@ pub fn msearchpush(p: i32, back: i32) {
 /// the per-frame state into `MSEARCHSTR` / `MLINE` / `MCOL` /
 /// `MSEARCHSTATE`. Returns the `back` flag of the popped frame so
 /// callers can re-run the search in the original direction.
+/// Port of `msearchpop()` from `Src/Zle/complist.c:2281`.
 pub fn msearchpop() -> i32 {
     let mut stack = MSEARCHSTACK.lock().unwrap();
     // c:2284 — `if (!s) return NULL;` (empty stack → no-op).
@@ -4585,6 +4601,7 @@ pub fn msearchpop() -> i32 {
 /// contains `msearchstr`. Returns the `mtab` index of the match
 /// (C's `Cmatch **`), or -1 for NULL, wrapping around once when the
 /// end is reached.
+/// Port of `msearch()` from `Src/Zle/complist.c:2302`.
 pub fn msearch(ptr: i32, ins: Option<&str>, back: i32, rep: i32, wrapp: &mut i32) -> i32 {
     // c:2302
     let mcols = MCOLS.load(Ordering::SeqCst);
@@ -4716,6 +4733,7 @@ pub static MSEARCHSTACK: std::sync::LazyLock<std::sync::Mutex<Vec<menusearch>>> 
 /// `mtab[][]` matrix, dispatches widget actions (up/down/forward/
 /// backward/accept/search/cancel), repaints via `complistmatches`.
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+/// Port of `domenuselect()` from `Src/Zle/complist.c:2383`.
 pub fn domenuselect(
     _dummy: *mut crate::ported::zsh_h::hookdef,
     _dat: *mut std::ffi::c_void,
@@ -6918,6 +6936,7 @@ pub fn domenuselect(
 /// `menu_start` hook, where `dummy` is the Hookdef — i.e. the explicit
 /// `menu-select` widget was subject to a threshold C exempts it from, and
 /// with `$MENUSELECT` unset it could not start interactive selection at all.
+/// Port of `menuselect()` from `Src/Zle/complist.c:3484`.
 pub fn menuselect(args: &[String]) -> i32 {
     // c:3501
     // C reads the `minfo` struct fields directly (`minfo.cur`,
@@ -7005,6 +7024,7 @@ pub fn enables_() -> i32 {
 /// if the user hasn't already provided them. Idempotent: re-running
 /// is safe because `openkeymap` returns the existing entry when
 /// already linked.
+/// Port of `menuselect_bindings()` from `Src/Zle/complist.c:3533`.
 pub fn menuselect_bindings() -> i32 {
     use crate::ported::zle::zle_keymap::{linkkeymap, newkeymap, openkeymap, Keymap};
     use crate::ported::zle::zle_thingy::Thingy;
@@ -7399,6 +7419,7 @@ pub static MGTABP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 /// at `src/ported/zle/compresult.rs::calclist` with the same
 /// semantics; this entry exists for C-name parity in the complist
 /// module's symbol table.
+/// Port of `calclist()` from `Src/Zle/compresult.c:1495`.
 pub fn calclist(showall: i32) -> i32 {
     // c:compresult.c:1495
     // Delegate to the canonical port; the function-table dispatch

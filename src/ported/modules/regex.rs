@@ -37,6 +37,7 @@ pub const ZREGEX_EXTENDED: i32 = 0; // c:36
 /// already-formatted error string.
 ///
 /// C signature: `static void zregex_regerrwarn(int r, regex_t *re, char *msg)`.
+/// Port of `zregex_regerrwarn()` from `Src/Modules/regex.c:40`.
 pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {
     // c:40
     zwarnnam(prefix, err_msg); // c:40
@@ -446,6 +447,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     // c:3298-3299 — `dyncat((cdp->flags & CONDF_INFIX) ? "C:" : "c:", …)`.
     // `cotab` (c:Src/Modules/regex.c:213-215) declares its single conddef
@@ -460,6 +462,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -471,6 +474,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }

@@ -1229,6 +1229,7 @@ pub fn yankpop() -> i32 {
 ///     the time the widget runs: the terminal delivers `\e[200~`, the body
 ///     and `\e[201~` in one burst. A read that bypasses the pump finds the
 ///     terminal empty, and the body is then executed as keystrokes.
+/// Port of `bracketedstring()` from `Src/Zle/zle_misc.c:784`.
 pub fn bracketedstring() -> String {
     // c:798
     const ENDESC: &[u8] = b"\x1b[201~"; // c:800

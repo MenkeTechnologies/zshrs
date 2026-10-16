@@ -106,6 +106,7 @@ pub static lastcode: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 /// `ZFST_TYPE(x)` macro — extract type-flag bits.
 /// Port of `#define ZFST_TYPE(x) (x & ZFST_TMSK)` from
 /// `Src/Modules/zftp.c`.
+/// Port of `ZFST_TYPE()` from `Src/Modules/zftp.c:267`.
 #[allow(non_snake_case)]
 #[inline]
 pub fn ZFST_TYPE(x: i32) -> i32 {
@@ -115,6 +116,7 @@ pub fn ZFST_TYPE(x: i32) -> i32 {
 /// `ZFST_MODE(x)` macro — extract mode-flag bits.
 /// Port of `#define ZFST_MODE(x) (x & ZFST_MMSK)` from
 /// `Src/Modules/zftp.c`.
+/// Port of `ZFST_MODE()` from `Src/Modules/zftp.c:273`.
 #[allow(non_snake_case)]
 #[inline]
 pub fn ZFST_MODE(x: i32) -> i32 {
@@ -5701,6 +5703,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
     vec!["b:zftp".to_string()]
 }
@@ -5709,6 +5712,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -5720,6 +5724,7 @@ fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, e
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<crate::ported::zsh_h::features>,

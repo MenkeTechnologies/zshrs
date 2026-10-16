@@ -480,6 +480,7 @@ pub fn execfor(state: &mut estate, do_exec: i32) -> i32 {
 
 /// Port of `execselect(Estate state, UNUSED(int do_exec))` from
 /// `Src/loop.c:217-410`. `select var in words; do body; done` REPL.
+/// Port of `execselect()` from `Src/loop.c:217`.
 pub fn execselect(state: &mut estate, _do_exec: i32) -> i32 {
     // The full select body manages a REPL prompt, terminal columns,
     // selectlist redraw, etc. The `selectlist` helper at loop.rs:130
@@ -498,6 +499,7 @@ pub fn execselect(state: &mut estate, _do_exec: i32) -> i32 {
 
 /// Port of `execwhile(Estate state, UNUSED(int do_exec))` from
 /// `Src/loop.c:413-498`. `while/until cond; do body; done`.
+/// Port of `execwhile()` from `Src/loop.c:413`.
 pub fn execwhile(state: &mut estate, _do_exec: i32) -> i32 {
     let code = state.prog.prog[state.pc.wrapping_sub(1)]; // c:417
     let isuntil = WC_WHILE_TYPE(code) == WC_WHILE_UNTIL; // c:419
@@ -587,6 +589,7 @@ pub fn execwhile(state: &mut estate, _do_exec: i32) -> i32 {
 
 /// Port of `execrepeat(Estate state, UNUSED(int do_exec))` from
 /// `Src/loop.c:499-551`. `repeat N; do body; done`.
+/// Port of `execrepeat()` from `Src/loop.c:499`.
 pub fn execrepeat(state: &mut estate, _do_exec: i32) -> i32 {
     let code = state.prog.prog[state.pc.wrapping_sub(1)]; // c:503
     let old_simple_pline = simple_pline.swap(1, Ordering::Relaxed); // c:507

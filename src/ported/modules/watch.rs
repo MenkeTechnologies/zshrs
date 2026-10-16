@@ -121,6 +121,7 @@ pub fn getlogtime(u: &libc::utmpx, inout: i32) -> i64 {
 /// the formatted output as a String (Rust adapts the C
 /// printf-to-stdout convention to a return-value-string style for
 /// the AST/exec pipeline).
+/// Port of `watch3ary()` from `Src/Modules/watch.c:206`.
 pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String {
     // c:206
     watchlog2(if logged_in { 1 } else { 0 }, entry, fmt, 1, 0)
@@ -138,6 +139,7 @@ pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String {
 /// concatenated output as a String — `prnt=1` accumulates into
 /// the result, `prnt=0` walks but emits nothing. The `fini`
 /// delimiter is honored: parsing stops when `*fmt == fini`.
+/// Port of `watchlog2()` from `Src/Modules/watch.c:242`.
 pub fn watchlog2(inout: i32, u: &libc::utmpx, fmt: &str, prnt: i32, fini: i32) -> String {
     // c:242
     let mut result = String::new();
@@ -376,6 +378,7 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {
 ///
 /// On match, calls `watchlog2(inout, u, fmt, 1, 0)` to print the
 /// event followed by a newline. Output goes to stdout per c:434.
+/// Port of `watchlog()` from `Src/Modules/watch.c:458`.
 pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {
     // c:458
     // c:463 — `if (!*u->ut_name) return;`
@@ -497,6 +500,7 @@ pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {
 ///     `if (u->ut_time == v->ut_time)
 ///          return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));
 ///      return u->ut_time - v->ut_time;`
+/// Port of `ucmp()` from `Src/Modules/watch.c:527`.
 pub fn ucmp(u: &libc::utmpx, v: &libc::utmpx) -> i32 {
     // c:527
     let (ut, vt) = (u.ut_tv.tv_sec as i64, v.ut_tv.tv_sec as i64);
@@ -562,6 +566,7 @@ thread_local! {
 /// 32 : initial_sz` capacity hint (parse.c:539) — dowatch calls
 /// `readwtab(&utab, wtabsz + 4)` on subsequent reads so the
 /// reallocation doesn't fire on a stable utmp.
+/// Port of `readwtab()` from `Src/Modules/watch.c:537`.
 pub fn readwtab(initial_sz: i32) -> Vec<libc::utmpx> {
     // c:537
     // c:539 — `int wtabmax = initial_sz < 2 ? 32 : initial_sz;`
@@ -796,6 +801,7 @@ pub fn checksched() {
 /// — clear the watch table + lastutmpcheck so the next preprompt
 /// hook re-emits the full watch list using `$WATCHFMT`. Returns 1
 /// when `$watch` is empty (nothing to refresh) per c:661.
+/// Port of `bin_log()` from `Src/Modules/watch.c:659`.
 pub fn bin_log(
     _name: &str,
     _argv: &[String], // c:659
@@ -1410,6 +1416,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
     vec![
         "b:log".to_string(),
@@ -1422,6 +1429,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -1433,6 +1441,7 @@ fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, e
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<crate::ported::zsh_h::features>,

@@ -248,6 +248,7 @@ pub fn bin_echotc(
 /// Port of `static HashNode gettermcap(UNUSED(HashTable ht), const char *name)`
 /// from `Src/Modules/termcap.c:144-199`. Synthesised Param with
 /// PM_SCALAR + value or PM_UNSET on no match.
+/// Port of `gettermcap()` from `Src/Modules/termcap.c:144`.
 pub fn gettermcap(
     _ht: *mut crate::ported::zsh_h::HashTable,
     name: &str,
@@ -364,6 +365,7 @@ pub fn gettermcap(
 /// `tgetstr` returns NULL for it). Routing every array through
 /// `gettermcap` — which falls back to `ztgetflag` when `tgetstr`
 /// would have failed — emitted such codes twice.
+/// Port of `scantermcap()` from `Src/Modules/termcap.c:200`.
 pub fn scantermcap(
     _ht: *mut crate::ported::zsh_h::HashTable,
     func: Option<crate::ported::zsh_h::ParamScanFunc>,
@@ -719,6 +721,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:echotc".to_string(), "p:termcap".to_string()]
 }
@@ -727,6 +730,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -738,6 +742,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }

@@ -708,6 +708,7 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
 ///
 /// The `cmd->old` / `cmd->read` pre-buffer machinery at c:572-588 and
 /// c:683-694 is carried by `ptycmd::old` / `ptycmd::read_buf`.
+/// Port of `ptyread()` from `Src/Modules/zpty.c:548`.
 pub fn ptyread(nam: &str, cmd: &mut ptycmd, args: &[&str], noblock: bool, mustmatch: bool) -> i32 {
     // c:550
     let mut used: usize = 0;
@@ -1011,6 +1012,7 @@ pub fn ptywritestr(cmd: &mut ptycmd, s: &[u8]) -> i32 {
 /// guarantees.
 ///
 /// C signature: `static int ptywrite(Ptycmd cmd, char **args, int nonl)`.
+/// Port of `ptywrite()` from `Src/Modules/zpty.c:743`.
 pub fn ptywrite(cmd: &mut ptycmd, args: &[&str], nonl: i32) -> i32 {
     // c:744
     if !args.is_empty() {
@@ -1329,6 +1331,7 @@ pub fn bin_zpty(
 /// fd closed, child pgrp SIGHUP'd) when the shell exits.
 ///
 /// C signature: `static int ptyhook(Hookdef d, void *dummy)`.
+/// Port of `ptyhook()` from `Src/Modules/zpty.c:874`.
 pub fn ptyhook(_d: *mut crate::ported::zsh_h::hookdef, _dummy: *mut std::ffi::c_void) -> i32 {
     // c:874
     // c:876 — `deleteallptycmds();`
@@ -1415,6 +1418,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:zpty".to_string()]
 }
@@ -1423,6 +1427,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -1434,6 +1439,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }

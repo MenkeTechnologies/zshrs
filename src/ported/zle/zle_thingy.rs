@@ -960,6 +960,7 @@ pub fn bin_zle_keymap(name: &str, args: &[String], _ops: &options, _func: i32) -
 /// `hn` is the node C's `scanhashtable` hands in; `None` stands for that
 /// whole-table walk (c:396), `Some(name)` for the single node
 /// `bin_zle_list` passes (c:409).
+/// Port of `scanlistwidgets()` from `Src/Zle/zle_thingy.c:505`.
 pub fn scanlistwidgets(hn: Option<&str>, list: i32) -> i32 {
     // c:505
     use std::io::Write;
@@ -1862,6 +1863,7 @@ pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i3
 /// Registers the transformation via `ShellExecutor.hook_functions`
 /// under the synthetic hook name `zle-transform-<tcfn>` so the
 /// redisplay path can find it. Args validate first.
+/// Port of `bin_zle_transform()` from `Src/Zle/zle_thingy.c:955`.
 pub fn bin_zle_transform(_name: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:955
     // c:957-963 — badargs convention:

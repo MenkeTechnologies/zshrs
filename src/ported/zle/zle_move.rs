@@ -48,6 +48,7 @@ use crate::zsh_h::{IS_BASECHAR, IS_COMBINING};
 ///     }
 /// }
 /// ```
+/// Port of `alignmultiwordleft()` from `Src/Zle/zle_move.c:49`.
 pub fn alignmultiwordleft(pos: &mut usize, setpos: i32) -> i32 {
     // c:49
     let mut loccs = *pos;
@@ -110,6 +111,7 @@ pub fn alignmultiwordleft(pos: &mut usize, setpos: i32) -> i32 {
 ///     return 1;                                                  // c:112-114
 /// }
 /// ```
+/// Port of `alignmultiwordright()` from `Src/Zle/zle_move.c:89`.
 pub fn alignmultiwordright(pos: &mut usize, setpos: i32) -> i32 {
     // c:89
     // c:96 — probe via left-align to confirm we're on a combining char.
@@ -448,6 +450,7 @@ pub fn endoflinehist() -> i32 {
 /// (`!strcmp(curkeymapname, "vicmd")`), as the int C adds to `zlecs`.
 /// !!! RUST-ONLY adapter: returns usize so `cs += invicmdmode()` reads
 /// like C; the predicate itself is `zle_h::invicmdmode`.
+/// Port of `invicmdmode()` from `Src/Zle/zle.h:324`.
 fn invicmdmode() -> usize {
     crate::ported::zle::zle_h::invicmdmode(&crate::ported::zle::zle_keymap::curkeymapname())
         as usize

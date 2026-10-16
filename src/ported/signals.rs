@@ -371,6 +371,7 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
 /// which is the wrong analog — raise(2) goes through the kernel and
 /// loses the queued signal behind the process signal mask. See Bug
 /// #104 in docs/BUGS.md.)
+/// Port of `zhandler()` from `Src/signals.c:399`.
 pub extern "C" fn zhandler(sig: libc::c_int) {
     last_signal.store(sig, Ordering::Relaxed); // c:403
 
@@ -958,6 +959,7 @@ pub struct savetrap {
 /// Direct port of `void dosavetrap(int sig, int level)` from
 /// `Src/signals.c:626`. Captures the current trap state for
 /// `sig` into a `savetrap` and pushes it onto `SAVETRAPS`.
+/// Port of `dosavetrap()` from `Src/signals.c:626`.
 pub fn dosavetrap(sig: i32, level: i32) {
     // c:626
     let flags = sigtrapped
@@ -1032,6 +1034,7 @@ pub fn dosavetrap(sig: i32, level: i32) {
 /// either `ZSIG_IGNORED` (empty list + non-ZSIG_FUNC) or
 /// `ZSIG_TRAPPED`, then ORs in `flags` and the
 /// `locallevel << ZSIG_SHIFT` scope tag.
+/// Port of `settrap()` from `Src/signals.c:693`.
 pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
     // c:693
     if sig == -1 {
@@ -1389,6 +1392,7 @@ pub fn starttrapscope() {
 /// deeper scope) and restores each via `settrap`. The pending
 /// SIGEXIT trap (if any) is split out so it runs AFTER the
 /// other restores complete.
+/// Port of `endtrapscope()` from `Src/signals.c:880`.
 pub fn endtrapscope() {
     // c:880
     let locallevel = locallevel_fn();
@@ -1706,6 +1710,7 @@ pub fn endtrapscope() {
 /// trapped + queueing enabled it pushes onto `trap_queue` and
 /// returns 1; otherwise it calls `dotrap(SIGIDX(sig))` (with the
 /// SIGALRM TMOUT reset at the end) and returns 1.
+/// Port of `handletrap()` from `Src/signals.c:972`.
 pub fn handletrap(sig: i32) -> i32 {
     // c:972
     let idx = crate::ported::signals_h::SIGIDX(sig);
@@ -1758,6 +1763,7 @@ pub fn handletrap(sig: i32) -> i32 {
 /// caller is the `wait` builtin (which wants traps to fire immediately
 /// so the wait can be interrupted). The flag is a boolean (`= 1` /
 /// `= 0`), symmetric with the reset in `unqueue_traps` at c:1042.
+/// Port of `queue_traps()` from `Src/signals.c:1024`.
 pub fn queue_traps(wait_cmd: i32) {
     // c:1024
     // c:1026 — both gates must be off for queueing to be enabled.
@@ -1771,6 +1777,7 @@ pub fn queue_traps(wait_cmd: i32) {
 /// `Src/signals.c:1041`. Disables `trap_queueing_enabled` and
 /// flushes the pending queue by dispatching each sig through
 /// `handletrap()`.
+/// Port of `unqueue_traps()` from `Src/signals.c:1041`.
 pub fn unqueue_traps() {
     // c:1041
     // c:1041 — `trap_queueing_enabled = 0;`
@@ -2220,6 +2227,7 @@ pub fn dotrap(sig: i32) -> i32 {
 ///     unqueue_signals();
 /// }
 /// ```
+/// Port of `dotrapargs()` from `Src/signals.c:1081`.
 #[allow(clippy::too_many_arguments)]
 pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     // c:1081
@@ -2728,6 +2736,7 @@ pub static DONTSAVETRAP: AtomicI32 = AtomicI32::new(0);
 
 /// Port of `killpg()` libc passthrough — used by jobs.c / signals.c
 /// callers; not in zsh source itself but referenced via libc.
+/// Port of `killpg()` from `Src/signals.h:31`.
 pub fn killpg(pgrp: i32, sig: i32) -> i32 {
     unsafe { libc::killpg(pgrp, sig) }
 }

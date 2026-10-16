@@ -2339,6 +2339,7 @@ pub static compkpms: Mutex<Option<Vec<Option<String>>>> = Mutex::new(None); // c
 /// swaps for `$compstate`'s own table (c:1357-1362); `tab` is that swap:
 /// `None` creates in the real paramtab, `Some` creates the element Params of
 /// the `$compstate` hash being built.
+/// Port of `addcompparams()` from `Src/Zle/complete.c:1297`.
 pub fn addcompparams(cp: &[compparam], pp: &mut [Option<String>], mut tab: Option<&mut HashTable>) {
     // c:1306
     for (i, c) in cp.iter().enumerate() {
@@ -2423,6 +2424,7 @@ pub fn addcompparams(cp: &[compparam], pp: &mut [Option<String>], mut tab: Optio
 /// Direct port of `void makecompparams(void)` from
 /// `Src/Zle/complete.c:1342`. Creates the `comprparams[]` params, then
 /// `$compstate` with a table of its own holding the `compkparams[]` elements.
+/// Port of `makecompparams()` from `Src/Zle/complete.c:1333`.
 pub fn makecompparams() {
     // c:1342
     let mut rp = comprpms.lock().unwrap();
@@ -2455,6 +2457,7 @@ pub fn makecompparams() {
 
 /// Direct port of `static HashTable get_compstate(Param pm)` from
 /// `Src/Zle/complete.c:1366`. C body: `return pm->u.hash;`.
+/// Port of `get_compstate()` from `Src/Zle/complete.c:1357`.
 pub fn get_compstate(pm: &param) -> Option<&HashTable> {
     // c:1366
     pm.u_hash.as_ref() // c:1369
@@ -2463,6 +2466,7 @@ pub fn get_compstate(pm: &param) -> Option<&HashTable> {
 /// Direct port of `static void set_compstate(Param pm, HashTable ht)` from
 /// `Src/Zle/complete.c:1373`. Copies each assigned key into the C global its
 /// `compkparams` row names and clears the key's `PM_UNSET`.
+/// Port of `set_compstate()` from `Src/Zle/complete.c:1364`.
 pub fn set_compstate(pm: &mut param, ht: HashTable) {
     // c:1373
     // c:1383 — `if (!ht) return;`
@@ -2530,6 +2534,7 @@ pub fn set_compstate(pm: &mut param, ht: HashTable) {
 /// nmatches)` — runs permmatches(0) to commit any pending matches,
 /// then returns 0 if that returned non-zero (incomplete) or the
 /// nmatches counter otherwise.
+/// Port of `get_nmatches()` from `Src/Zle/complete.c:1401`.
 #[allow(unused_variables)]
 pub fn get_nmatches(_pm: &param) -> i64 {
     // c:1401
@@ -2552,6 +2557,7 @@ pub fn get_nmatches(_pm: &param) -> i64 {
 /// directly — same observable count for the common case where no
 /// permmatches commit is pending. Falls back to the cached
 /// COMPLISTLINES atomic when listdat isn't initialized.
+/// Port of `get_listlines()` from `Src/Zle/complete.c:1408`.
 #[allow(unused_variables)]
 pub fn get_listlines(_pm: &param) -> i64 {
     // c:1418 — `return list_lines();`. The port inlined only calclist(0),
@@ -2649,6 +2655,7 @@ static ORDEROPTS: &[OrderOpt] = &[
 /// live `amatches` chain, collects the `str` field of each visible
 /// match (skipping CMF_HIDE), and feeds the resulting `Vec<String>`
 /// to `unambig_data` which computes the LCP.
+/// Port of `get_unambig()` from `Src/Zle/complete.c:1429`.
 #[allow(unused_variables)]
 pub fn get_unambig(_pm: &param) -> String {
     // c:1429
@@ -2693,6 +2700,7 @@ pub fn get_unambig(_pm: &param) -> String {
 /// which is only right when the divergence sits at its end: for zsh's own
 /// `Test/Y02compmatch.ztst` `r:|.=**` sequence (line 752-758) zsh reports
 /// 4 and 2 where the length-derived value gave 10 and 11.
+/// Port of `get_unambig_curs()` from `Src/Zle/complete.c:1436`.
 #[allow(unused_variables)]
 pub fn get_unambig_curs(_pm: &param) -> i64 {
     // c:1436
@@ -2804,6 +2812,7 @@ pub static COMPKPARAMS: &[compparam] = &[
 /// longest-common-prefix helper, not this function (its `mnum`-keyed
 /// three-string cache is not modelled; the renders below are equivalent,
 /// just uncached).
+/// Port of `get_unambig_pos()` from `Src/Zle/complete.c:1447`.
 #[allow(unused_variables)]
 pub fn get_unambig_pos(_pm: &param) -> String {
     // c:1447
@@ -2890,6 +2899,7 @@ pub fn get_unambig_pos(_pm: &param) -> String {
 /// number, so `insert_positions` collapsed to its LAST element: zsh's own
 /// `Test/Y02compmatch.ztst` expects `{4:5:6}` (line 667) and `{9:27}`
 /// (line 714) where this reported `{6}` and `{27}`.
+/// Port of `get_insert_pos()` from `Src/Zle/complete.c:1458`.
 #[allow(unused_variables)]
 pub fn get_insert_pos(_pm: &param) -> String {
     // c:1458
@@ -2943,6 +2953,7 @@ pub fn get_insert_pos(_pm: &param) -> String {
 /// printable form via `comp_quoting_string`. Was returning the raw
 /// QT_* byte stack which gave gibberish like `\x00\x01\x02` to
 /// callers reading `$compstate[quoting_stack]`.
+/// Port of `get_compqstack()` from `Src/Zle/complete.c:1469`.
 #[allow(unused_variables)]
 pub fn get_compqstack(_pm: &param) -> String {
     // c:1469
@@ -2973,6 +2984,7 @@ pub fn get_compqstack(_pm: &param) -> String {
 /// views; the implicit unset of `$compstate` going out of scope drops its
 /// table and forgets every `compkpms` slot; an implicit unset of a
 /// `comprpms` param forgets that slot.
+/// Port of `compunsetfn()` from `Src/Zle/complete.c:1489`.
 pub fn compunsetfn(pm: &mut param, exp: i32) {
     // c:1498
     if exp != 0 {
@@ -3033,6 +3045,7 @@ pub fn compunsetfn(pm: &mut param, exp: i32) {
 /// int kunset)` from `Src/Zle/complete.c:1537`. Two bitmap walks: bit `i` of
 /// `rset` / `runset` clears / sets `PM_UNSET` on `comprpms[i]`, bit `i` of
 /// `kset` / `kunset` on `compkpms[i]`.
+/// Port of `comp_setunset()` from `Src/Zle/complete.c:1528`.
 pub fn comp_setunset(mut rset: i32, mut runset: i32, mut kset: i32, mut kunset: i32) {
     // c:1537
     // c:1542 — `if (comprpms && (rset >= 0 || runset >= 0))`
@@ -3126,6 +3139,7 @@ pub fn comp_setunset(mut rset: i32, mut runset: i32, mut kset: i32, mut kunset: 
 /// delegate (`doshfunc`'s `body_runner`), not an `Eprog` this function
 /// could re-enter by itself. Identical shape to
 /// `param_private::wrap_private`, the other wrapper in the chain.
+/// Port of `comp_wrapper()` from `Src/Zle/complete.c:1556`.
 pub fn comp_wrapper(
     _prog: *const eprog, // c:1556
     _w: *const funcwrap,
@@ -3345,6 +3359,7 @@ pub fn cond_psfix(a: &[String], id: i32) -> i32 {
 /// Direct port of `int cond_range(char **a, int id)` from
 /// `Src/Zle/complete.c:1676`. Dispatches to `do_comp_vars` with
 /// CVT_RANGEPAT and the two args as start/end patterns.
+/// Port of `cond_range()` from `Src/Zle/complete.c:1676`.
 pub fn cond_range(a: &[String], id: i32) -> i32 {
     // c:1676
     // c:1688-1689 — both operands go through `cond_str(a, n, 1)`, which
@@ -3445,6 +3460,7 @@ pub fn setup_(m: *const module) -> i32 {
 /// `Src/Zle/complete.c:1743`. Returns the array of feature names this
 /// module exposes; static-link path has no per-feature toggle so this
 /// is structurally a no-op returning 0.
+/// Port of `features_()` from `Src/Zle/complete.c:1743`.
 #[allow(unused_variables)]
 pub fn features_(m: *const module) -> i32 {
     // c:1743
@@ -3503,6 +3519,7 @@ static COTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> = Lazy::new(|| {
 /// LOADED zsh/complete list `-b:compadd -b:compset` where `zsh -f` lists
 /// both `+`. The bit lives in the name-keyed ledger behind
 /// `module.rs::handlefeatures` (c:3392).
+/// Port of `enables_()` from `Src/Zle/complete.c:1751`.
 #[allow(unused_variables)]
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:1751

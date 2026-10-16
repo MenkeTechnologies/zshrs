@@ -4593,6 +4593,7 @@ pub fn patmatchindex(range: &[u8], mut ind: i32) -> Option<(Option<u8>, i32)> {
 /// then matched `a` against EVERY uppercase name (`cd /a<TAB>`
 /// offered /Applications /Library /System /Users /Volumes, and the
 /// bogus ambiguity suppressed the insertion entirely).
+/// Port of `patmatchrange()` from `Src/pattern.c:3856`.
 pub fn patmatchrange(
     s: Option<&[u8]>,
     c: u32,

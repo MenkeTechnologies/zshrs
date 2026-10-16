@@ -770,11 +770,13 @@ fn checksched_thunk() {
 // =====================================================================
 
 // `featuresarray` lives in `Src/module.c:3279`.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:sched".to_string(), "p:zsh_scheduled_events".to_string()]
 }
 
 // `handlefeatures` lives in `Src/module.c:3388`.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -783,6 +785,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 }
 
 // `getfeatureenables` lives in `Src/module.c:3314`.
+/// Port of `getfeatureenables()` from `Src/module.c:3314`.
 fn getfeatureenables(_m: *const module, f: &Mutex<features>) -> Vec<i32> {
     let g = f.lock().unwrap();
     let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
@@ -790,6 +793,7 @@ fn getfeatureenables(_m: *const module, f: &Mutex<features>) -> Vec<i32> {
 }
 
 // `setfeatureenables` lives in `Src/module.c:3350`.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&Vec<i32>>) -> i32 {
     0
 }

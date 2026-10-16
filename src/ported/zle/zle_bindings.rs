@@ -39,6 +39,7 @@ use crate::ported::zle::{
 /// `getkeystring_with` returns a char-level METAFIED String (high bytes as
 /// `Meta` + `c ^ 32`) because a Rust String must stay valid UTF-8; the keymap
 /// trie indexes RAW bytes, so unmetafy back to bytes on the way out.
+/// Port of `getkeystring()` from `Src/utils.c:6915`.
 pub fn getkeystring(s: &str) -> Vec<u8> {
     // c:utils.c:6915 via c:Src/Zle/zle_keymap.c:1022
     let (decoded, _) = crate::ported::utils::getkeystring_with(
@@ -111,6 +112,7 @@ pub fn bindkey_by_name(keymap: &str, seq: &str, widget: &str) -> bool {
 /// Port of `bindkey -L` listing from Src/Zle/zle_keymap.c (the
 /// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
 /// (`first[]`) and multi-byte trie entries (`multi`) are included.
+/// Port of `bindlistout()` from `Src/Zle/zle_keymap.c:1172`.
 pub fn bindlistout(keymap: &str) -> Vec<(String, String)> {
     // c:zle_keymap.c:1094
     let mut bindings = Vec::new();

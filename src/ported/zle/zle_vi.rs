@@ -67,6 +67,7 @@ pub fn vichange() -> i32 {
 ///      `vichgflag = 1`. Otherwise (every other vi command) copy
 ///      `keybuf` verbatim and set `vichgflag = 2` (c:97-115).
 ///   3. `vichgflag != 0` and not in replay — already recording, no-op.
+/// Port of `startvichange()` from `Src/Zle/zle_vi.c:90`.
 pub fn startvichange(im: i32) {
     use crate::ported::utils::unmetafy;
     use crate::ported::zle::zle_keymap::{keybuf, keybuflen};
@@ -137,6 +138,7 @@ pub fn startvichange(im: i32) {
 ///     viinsbegin = zlecs;
 /// }
 /// ```
+/// Port of `startvitext()` from `Src/Zle/zle_vi.c:118`.
 pub fn startvitext(im: i32) {
     // c:118
     startvichange(im); // c:118
@@ -268,6 +270,7 @@ pub fn vigetkey() -> i32 {
 /// The line-wise-repeat branch (`k2 == bindk`, i.e. `dd`/`cc`/`yy`)
 /// reuses [`dovilinerange`]; see its port for the count-handling
 /// limitation.
+/// Port of `getvirange()` from `Src/Zle/zle_vi.c:172`.
 pub fn getvirange(wf: i32) -> i32 {
     // c:172
     // Helpers to map the C `int mark` (-1 == "no mark") onto the
@@ -592,6 +595,7 @@ pub fn viinsertbol() -> i32 {
 /// `Src/Zle/zle_vi.c:384`. vi `d{motion}` — deletes the range covered
 /// by the motion via `getvirange` + `forekill`. The line-wise vilinerange
 /// arm (c:392-398) drops the trailing newline.
+/// Port of `videlete()` from `Src/Zle/zle_vi.c:384`.
 pub fn videlete() -> i32 {
     // c:384
     startvichange(1); // c:388
@@ -1257,6 +1261,7 @@ pub fn viunindent() -> i32 {
 /// `Src/Zle/zle_vi.c:888`. Backspace, vi-command-mode-aware. Negative
 /// zmult routes through `videletechar` with the absolute count; else
 /// kills up to `findbol()`'s worth of characters.
+/// Port of `vibackwarddeletechar()` from `Src/Zle/zle_vi.c:888`.
 pub fn vibackwarddeletechar() -> i32 {
     // c:888
     let curkm = crate::ported::zle::zle_keymap::curkeymapname()
@@ -1430,6 +1435,7 @@ pub fn viswapcase() -> i32 {
 ///     return 0;
 /// }
 /// ```
+/// Port of `vicapslockpanic()` from `Src/Zle/zle_vi.c:1002`.
 pub fn vicapslockpanic() -> i32 {
     // c:1002
     // c:1004 — clearlist = 1.

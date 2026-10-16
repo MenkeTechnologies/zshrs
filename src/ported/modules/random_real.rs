@@ -239,6 +239,7 @@ pub fn random_real() -> f64 {
 /// `u64::leading_zeros()` is the HW intrinsic on every modern arch),
 /// or to `_zclz64()` as the portable fallback. C resolves this at
 /// preprocessor time; Rust resolves at the call site.
+/// Port of `clz64()` from `Src/Modules/random_real.c:43`.
 #[inline]
 pub fn clz64(x: u64) -> i32 {
     // Equivalent to C's `__builtin_clzll(x)` branch (c:43).

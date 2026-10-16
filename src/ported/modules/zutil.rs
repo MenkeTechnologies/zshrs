@@ -66,6 +66,7 @@ pub fn savematch(m: &mut MatchData) {
 /// params.rs:4731). Skipping the unset means a regex callout that
 /// set `$match` from an originally-unset state would leave `$match`
 /// set after restorematch — the OPPOSITE of the documented contract.
+/// Port of `restorematch()` from `Src/Modules/zutil.c:55`.
 pub fn restorematch(m: &MatchData) {
     // c:55
     // c:57-68 — C uses `setaparam` which routes through `assignaparam`
@@ -1985,6 +1986,7 @@ pub fn connectstates(
 /// from `Src/Modules/zutil.c:1142`. Atom in the zregexparse grammar:
 ///   `/pat/[+/-]` \[`%lookahead%`\] \[`-guard`\] \[`:action`\]    — pattern atom
 ///   `(` ... `)`                                            — grouped alt
+/// Port of `rparseelt()` from `Src/Modules/zutil.c:1142`.
 pub fn rparseelt(result: &mut RParseResult) -> i32 {
     // c:1142
     // c:1145 — s = *rparseargs;
@@ -2107,6 +2109,7 @@ pub fn rparseelt(result: &mut RParseResult) -> i32 {
 /// Port of `static int rparseclo(RParseResult *result, jmp_buf *perr)`
 /// from `Src/Modules/zutil.c:1252`. Closure: atom followed by `#`
 /// (zero-or-more); a string of `#`s collapses to one.
+/// Port of `rparseclo()` from `Src/Modules/zutil.c:1252`.
 pub fn rparseclo(result: &mut RParseResult) -> i32 {
     // c:1252
     // c:1254 — if (rparseelt(result, perr)) return 1;
@@ -2310,6 +2313,7 @@ pub fn rparseseq(result: &mut RParseResult) -> i32 {
 /// Port of `static int rparsealt(RParseResult *result, jmp_buf *perr)`
 /// from `Src/Modules/zutil.c:1345`. Alternation: one or more `seq`
 /// terms separated by `|`.
+/// Port of `rparsealt()` from `Src/Modules/zutil.c:1345`.
 pub fn rparsealt(result: &mut RParseResult) -> i32 {
     // c:1345
     // c:1349-1350 — if (rparseseq(result, perr)) return 1;
@@ -2358,6 +2362,7 @@ pub fn rparsealt(result: &mut RParseResult) -> i32 {
 ///     nextslist has at least one set of pending branches)
 ///   - 2 if there were no next-state candidates at all (nexts empty)
 ///   - 3 if a pattern fails to compile
+/// Port of `rmatch()` from `Src/Modules/zutil.c:1366`.
 pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) -> i32 {
     // c:1368-1373 — `LinkNode ln, lnn; LinkList nexts; LinkList nextslist;
     //                RParseBranch *br; RParseState *st = NULL; int point1=0, point2=0;`
@@ -2802,6 +2807,7 @@ pub const ZOF_GNUL: i32 = 128; // c:1538
 /// Direct port of `static Zoptdesc get_opt_desc(char *name)` from
 /// `Src/Modules/zutil.c:1558`. Walks the [`OPT_DESCS`] linked list
 /// looking for an entry whose `name` matches `name` exactly.
+/// Port of `get_opt_desc()` from `Src/Modules/zutil.c:1558`.
 #[allow(non_snake_case)]
 pub fn get_opt_desc(name: &str) -> Option<Zoptdesc> {
     // c:1560 — `for (p = opt_descs; p; p = p->next) if (!strcmp(...))`.
@@ -2822,6 +2828,7 @@ pub fn get_opt_desc(name: &str) -> Option<Zoptdesc> {
 ///   - `ZOF_GNUL`: exact match OR prefix-match with `=` separator.
 ///   - `ZOF_GNUS` (no arg, GNU-style): exact match only.
 ///   - default (cuddled): prefix-match.
+/// Port of `lookup_opt()` from `Src/Modules/zutil.c:1570`.
 #[allow(non_snake_case)]
 pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {
     let head = OPT_DESCS.lock().unwrap();
@@ -2857,6 +2864,7 @@ pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {
 /// Direct port of `static Zoptarr get_opt_arr(char *name)` from
 /// `Src/Modules/zutil.c:1602`. Walks the [`OPT_ARRS`] linked list
 /// looking for an entry whose `name` matches `name` exactly.
+/// Port of `get_opt_arr()` from `Src/Modules/zutil.c:1602`.
 #[allow(non_snake_case)]
 pub fn get_opt_arr(name: &str) -> Option<Zoptarr> {
     // c:1604 — `for (p = opt_arrs; p; p = p->next) if (!strcmp(...))`.
@@ -2876,6 +2884,7 @@ pub fn get_opt_arr(name: &str) -> Option<Zoptarr> {
 /// alias chain set up by `=` mapping in zparseopts option specs.
 /// Returns `start` if `start` isn't a mapping head, returns the
 /// mapped Zoptdesc on a clean chase, returns NULL on cycle detection.
+/// Port of `map_opt_desc()` from `Src/Modules/zutil.c:1614`.
 #[allow(non_snake_case)]
 pub fn map_opt_desc(start: Option<Zoptdesc>) -> Option<Zoptdesc> {
     // c:1616-1617 — `if (!start || !(start->flags & ZOF_MAP)) return start;`
@@ -2993,6 +3002,7 @@ pub fn map_opt_desc(start: Option<Zoptdesc>) -> Option<Zoptdesc> {
 /// collapses into a single `push` since Rust's Vec preserves order.
 /// The `d->arr->num` increments + `d->arr->vals/last` chain are
 /// also flattened.
+/// Port of `add_opt_val()` from `Src/Modules/zutil.c:1642`.
 #[allow(non_snake_case)]
 pub fn add_opt_val(d: &mut zoptdesc, arg: String) {
     // c:1642
@@ -4266,6 +4276,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:zformat".to_string(),
@@ -4279,6 +4290,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -4290,6 +4302,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }

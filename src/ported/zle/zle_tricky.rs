@@ -95,6 +95,7 @@ pub fn usetab() -> i32 {
 /// `callcompfunc(s, compfunc)` inside `do_completion` invokes the
 /// right shfunc (`_main_complete` for the default compinit setup),
 /// and calls the base widget's C fn (e.g. `completeword`).
+/// Port of `completecall()` from `Src/Zle/zle_tricky.c:202`.
 pub fn completecall(args: &[String]) -> i32 {
     // c:202
     // c:204-205 — `cfargs = args; cfret = 0;`.
@@ -142,6 +143,7 @@ pub fn completecall(args: &[String]) -> i32 {
 /// Port of `int completeword(char **args)` from
 /// `Src/Zle/zle_tricky.c:216`.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
+/// Port of `completeword()` from `Src/Zle/zle_tricky.c:216`.
 pub fn completeword(args: &[String]) -> i32 {
     // c:216
     USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:218 — `usemenu = !!isset(MENUCOMPLETE)`
@@ -452,6 +454,7 @@ pub fn checkparams(p: &str) -> i32 {
 /// using `skipparens` to walk balanced brackets.
 ///
 /// Returns 1 if a wildcard is found, 0 otherwise.
+/// Port of `cmphaswilds()` from `Src/Zle/zle_tricky.c:457`.
 pub fn cmphaswilds(str: &str) -> i32 {
     // c:457
     use crate::ported::zsh_h::{
@@ -594,6 +597,7 @@ pub fn cmphaswilds(str: &str) -> i32 {
 /// of `get_comp_string` uses. `at()` returns `'\0'` past the end so
 /// the reads C makes at (and one past) the NUL terminator behave the
 /// same way.
+/// Port of `parambeg()` from `Src/Zle/zle_tricky.c:521`.
 pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
     // c:521
     use crate::ported::zsh_h::{
@@ -729,6 +733,7 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
 /// `COMP_EXPAND_COMPLETE` left the buffer unchanged (c:825-868),
 /// otherwise → `docompletion` (c:870). Finally fires the
 /// AFTERCOMPLETEHOOK chain (c:878).
+/// Port of `docomplete()` from `Src/Zle/zle_tricky.c:599`.
 pub fn docomplete(lst: i32) -> i32 {
     // TEMPORARY: ftime scaffold — one report per completion, every exit path.
     struct FtimeDump;
@@ -3885,6 +3890,7 @@ pub fn get_comp_string() -> Option<String> {
 ///
 /// `len == -1` triggers strlen(str). `move` (Rust `move_cursor` — the
 /// C name collides with Rust's `move` keyword) selects cursor-advance.
+/// Port of `inststrlen()` from `Src/Zle/zle_tricky.c:2231`.
 pub fn inststrlen(
     // c:2231
     str: &str,
@@ -3993,6 +3999,7 @@ pub fn inststrlen(
 ///   8. Otherwise: delete the current word from the buffer and
 ///      splice each expansion in, quoting + untokenizing each.
 ///   9. Pop heap and return.
+/// Port of `doexpansion()` from `Src/Zle/zle_tricky.c:2263`.
 pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
     // c:2265 — `int ret = 1, first = 1;`
     let mut ret: i32 = 1;
@@ -4207,6 +4214,7 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
 /// has no `complete` definition (the `zsh -f` path before the module
 /// boots), we call `compcore::do_completion` directly — same
 /// observational behavior as C's `def` fallback at `module.c:993-994`.
+/// Port of `docompletion()` from `Src/Zle/zle_tricky.c:2339`.
 pub fn docompletion(s: &str, lst: i32, incmd: i32) -> i32 {
     // c:2339
     let mut dat = crate::ported::zle::zle_h::compldat {
@@ -4230,6 +4238,7 @@ pub fn docompletion(s: &str, lst: i32, incmd: i32) -> i32 {
 
 /// Get length of common prefix
 /// Port of pfxlen(char *s, char *t) from zle_tricky.c
+/// Port of `pfxlen()` from `Src/Zle/zle_tricky.c:2359`.
 pub fn pfxlen(s1: &str, s2: &str) -> usize {
     // c:2359
     s1.chars()
@@ -4240,6 +4249,7 @@ pub fn pfxlen(s1: &str, s2: &str) -> usize {
 
 /// Get length of common suffix
 /// Port of sfxlen(char *s, char *t) from zle_tricky.c
+/// Port of `sfxlen()` from `Src/Zle/zle_tricky.c:2411`.
 pub fn sfxlen(s1: &str, s2: &str) -> usize {
     // c:2411
     s1.chars()
@@ -5303,6 +5313,7 @@ pub static CMDWE: AtomicI32 = AtomicI32::new(0); // c:2936
 /// never appear in decoded text, so character indices into it are already
 /// `zleline` indices and C's `stringaszleline` conversion (c:2966-2974)
 /// has nothing left to convert.
+/// Port of `getcurcmd()` from `Src/Zle/zle_tricky.c:2932`.
 pub fn getcurcmd(trackpos: i32) -> Option<String> {
     // c:2939
     use crate::ported::lex::{
@@ -5825,6 +5836,7 @@ pub const META: char = '\u{83}';
 /// `#define inststr(X) inststrlen((X),1,-1)` — insert string `X` at
 /// cursor with auto-len + cursor-advance semantics. Most common
 /// inserter wrapper used across the completion engine.
+/// Port of `inststr()` from `Src/Zle/zle_tricky.c:57`.
 pub fn inststr(s: &str) -> i32 {
     // c:278
     inststrlen(s, true, -1)
@@ -5837,6 +5849,7 @@ pub fn inststr(s: &str) -> i32 {
 /// The real `quotestring` lives in Src/Zsh/utils.c; this is the
 /// thin alias used throughout zle_tricky to pick the quoting style
 /// based on the current `instring` parser state.
+/// Port of `quotename()` from `Src/Zle/zle_tricky.c:427`.
 pub fn quotename(s: &str, instring: i32) -> String {
     // c:427
     let raw = if instring == QT_NONE {

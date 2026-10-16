@@ -404,6 +404,7 @@ static STRNAMES: LazyLock<Vec<&'static str>> =
 /// Port of `static void scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)`
 /// from `Src/Modules/terminfo.c:177-289`. Walks the bool/num/string
 /// capability tables and invokes the callback per resolved cap.
+/// Port of `scanterminfo()` from `Src/Modules/terminfo.c:177`.
 pub fn scanterminfo(
     _ht: *mut crate::ported::zsh_h::HashTable,
     func: Option<crate::ported::zsh_h::ParamScanFunc>,
@@ -604,6 +605,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
     vec!["b:echoti".to_string(), "p:terminfo".to_string()]
 }
@@ -612,6 +614,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -623,6 +626,7 @@ fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, e
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<crate::ported::zsh_h::features>,

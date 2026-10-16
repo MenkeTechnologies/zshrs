@@ -51,6 +51,7 @@ use std::sync::atomic::Ordering;
 /// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
 /// is in a clean state suitable for parsing a nested input (command
 /// substitution body, here-doc terminator, eval'd string).
+/// Port of `lex_context_save()` from `Src/lex.c:216`.
 pub fn lex_context_save(ls: &mut lex_stack) {
     // c:218-239 — copy live state into the stack. Mirrors C
     // field-by-field; `toplevel` param dropped because C does
@@ -105,6 +106,7 @@ pub fn lex_context_save(ls: &mut lex_stack) {
 
 /// zsh/Src/lex.c:245 `lex_context_restore`. Inverse of
 /// `lex_context_save`. Called after the nested parse completes.
+/// Port of `lex_context_restore()` from `Src/lex.c:245`.
 pub fn lex_context_restore(ls: &mut lex_stack) {
     // c:249-261 — copy stack state back into live fields.
     LEX_DBPARENS.set(ls.dbparens != 0);
@@ -136,6 +138,7 @@ pub fn lex_context_restore(ls: &mut lex_stack) {
 /// `do { ... } while (tok != ENDINPUT && exalias())` at lex.c:270-276,
 /// followed by here-doc draining (lex.c:278-306), newline tracking
 /// (lex.c:307-310), and SEMI/NEWLIN→SEPER folding (lex.c:311-312).
+/// Port of `zshlex()` from `Src/lex.c:266`.
 pub fn zshlex() {
     // lex.c:268-269 — early-out on prior LEXERR.
     if tok() == LEXERR {
@@ -308,6 +311,7 @@ pub fn zshlex() {
 /// list separators / pipes / control keywords reset to cmd-pos;
 /// word-shaped tokens leave cmd-pos. Redirections (lex.c:361-368)
 /// stash prior incmdpos and force the redir target to non-cmd-pos.
+/// Port of `ctxtlex()` from `Src/lex.c:317`.
 pub fn ctxtlex() {
     // lex.c:319 — static `oldpos` cache for redir-target restore
     // is captured per-call here as `oldpos` below (zshrs's parser
@@ -494,6 +498,7 @@ pub fn initlextabs() {
 /// Note: `lex_init(input)` already sets equivalent defaults; this
 /// function exists for the rare case a caller wants to reset the
 /// lexer state mid-parse without re-loading input.
+/// Port of `lexinit()` from `Src/lex.c:441`.
 pub fn lexinit() {
     // lex.c:443 — `nocorrect = dbparens = lexstop = 0;`
     LEX_NOCORRECT.set(0);
@@ -597,6 +602,7 @@ macro_rules! SETPAREND {
 /// if it succeeds AND the next char is `)` (closing the second
 /// paren of `(( ))`), it's math. Otherwise rewinds and treats as
 /// a command substitution.
+/// Port of `cmd_or_math()` from `Src/lex.c:495`.
 fn cmd_or_math() -> i32 {
     // dash/ash have NO `(( ))` arithmetic command — `((` is just two nested
     // subshells `( (`. Real dash runs `(( 1 + 1 ))` as the command `1` (with
@@ -727,6 +733,7 @@ fn cmd_or_math() -> i32 {
 /// math parse via `cmd_or_math` → arithmetic substitution (with
 /// the open-paren retroactively rewritten to Inparmath); else
 /// command substitution via skipcomm.
+/// Port of `cmd_or_math_sub()` from `Src/lex.c:540`.
 fn cmd_or_math_sub() -> i32 {
     loop {
         let c = hgetc();
@@ -1331,6 +1338,7 @@ thread_local! {
 /// LX1_* arms below mirror C's `switch (lexact1[STOUC(c)])` body
 /// one-for-one; the LX1_OTHER fallthrough at c:918 routes to
 /// `gettokstr` for word-shape lexing.
+/// Port of `gettok()` from `Src/lex.c:614`.
 fn gettok() -> lextok {
     // c:617 — `int peekfd = -1;`. Local fd-prefix accumulator.
     // Written into the global `tokfd` ONLY at redir-arm exit
@@ -3897,6 +3905,7 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// returning the tokenized text directly. Lossy for callers that
 /// need to know the exact stop position, but nothing in zshrs's
 /// expansion layer uses that yet.
+/// Port of `parse_subst_string()` from `Src/lex.c:1796`.
 pub fn parse_subst_string(s: &str) -> Result<String, String> {
     // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`. C nulstring
     // is `{Nularg, 0}` (0xa1, NUL) — defined in Src/subst.c:36. A
@@ -4019,6 +4028,7 @@ pub fn gotword() {
 /// text was successfully injected back into the input stream for
 /// re-lexing.
 /// WARNING: param names don't match C — Rust=(lextext) vs C=()
+/// Port of `checkalias()` from `Src/lex.c:1902`.
 fn checkalias(lextext: &str) -> bool {
     // lex.c:1906-1907 — guard on null lextext.
     if lextext.is_empty() {
@@ -4289,6 +4299,7 @@ fn checkalias(lextext: &str) -> bool {
 /// Direct port of `exalias(void)` at `Src/lex.c:1953`. No
 /// parameters — reads global `aliastab`/`sufaliastab`/`reswdtab`
 /// directly, mirroring C.
+/// Port of `exalias()` from `Src/lex.c:1953`.
 pub fn exalias() -> bool {
     // lex.c:1957 — `hwend()` closes the history WORD for the token gettok
     // just produced (zshlex loops `gettok(); while (... exalias())`, so
@@ -4613,6 +4624,7 @@ pub fn exalias() -> bool {
 /// zsh/Src/lex.c:2025 `zshlex_raw_add`. Called from hgetc
 /// when `lex_add_raw` is nonzero so cmd-sub bodies (`$(...)`,
 /// `<(...)`, `>(...)`) can be replayed verbatim without re-lexing.
+/// Port of `zshlex_raw_add()` from `Src/lex.c:2025`.
 pub fn zshlex_raw_add(c: char) {
     // lex.c:2027-2028 — guard on lex_add_raw flag.
     if LEX_LEX_ADD_RAW.get() == 0 {
@@ -4628,6 +4640,7 @@ pub fn zshlex_raw_add(c: char) {
 /// port of zsh/Src/lex.c:2043 `zshlex_raw_back`. Called when
 /// the lexer ungets a char that was just captured raw — the raw
 /// buffer must mirror the live input so this undoes the last add.
+/// Port of `zshlex_raw_back()` from `Src/lex.c:2043`.
 pub fn zshlex_raw_back() {
     // lex.c:2045-2046 — guard.
     if LEX_LEX_ADD_RAW.get() == 0 {
@@ -4640,6 +4653,7 @@ pub fn zshlex_raw_back() {
 /// Mark the current raw-buffer offset (for restore later). Direct
 /// port of zsh/Src/lex.c:2053 `zshlex_raw_mark`. Returns
 /// `len + offset` so callers can restore via `back_to_mark`.
+/// Port of `zshlex_raw_mark()` from `Src/lex.c:2053`.
 pub fn zshlex_raw_mark(offset: i64) -> i64 {
     // lex.c:2055-2056 — guard.
     if LEX_LEX_ADD_RAW.get() == 0 {
@@ -4654,6 +4668,7 @@ pub fn zshlex_raw_mark(offset: i64) -> i64 {
 /// Truncates the raw buffer to `mark` bytes — undoes any captures
 /// since the mark was taken (used when a speculative parse fails
 /// and the lexer rolls back).
+/// Port of `zshlex_raw_back_to_mark()` from `Src/lex.c:2062`.
 pub fn zshlex_raw_back_to_mark(mark: i64) {
     // lex.c:2064-2065 — guard.
     if LEX_LEX_ADD_RAW.get() == 0 {
@@ -5844,6 +5859,7 @@ pub(crate) fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String
     (out, i)
 }
 /// `untokenize` — see implementation.
+/// Port of `untokenize()` from `Src/exec.c:2077`.
 pub fn untokenize(s: &str) -> String {
     // c:Src/exec.c:2136-2156 — C's loop scans for the first `itok(c)` and
     // returns the string byte-for-byte unchanged when there is none. Every

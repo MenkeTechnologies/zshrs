@@ -357,6 +357,7 @@ pub struct ztmout {
 /// Picks the next read timeout based on do_keytmout + the
 /// timedfns list. Truncated to the keymap timeout subset until
 /// timedfns wiring lands.
+/// Port of `calc_timeout()` from `Src/Zle/zle_main.c:454`.
 fn calc_timeout(do_keytmout: i64) -> ztmout {
     // c:454
     let kt = KEYTIMEOUT.load(SeqCst);
@@ -1084,6 +1085,7 @@ pub fn getfullchar(do_keytmout: bool) -> Option<char> {
 ///     `WEOF` — the `timeout == 0` arm — rather than `'?'`.
 ///
 /// WARNING: param names don't match C — Rust=(inchar) vs C=(inchar, outstr, outcount)
+/// Port of `getrestchar()` from `Src/Zle/zle_main.c:990`.
 pub fn getrestchar(inchar: i32) -> i32 {
     // c:990
     use crate::ported::utils::{mbrtowc, MbStateBuf, MBSTATE_ZERO, MB_INCOMPLETE, MB_INVALID};
@@ -2189,6 +2191,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
 /// Src/Zle/zle_main.c:1604). The C source sets mult=1, tmult=1,
 /// vibuf=0, base=10 — `tmult=1` is what makes successive C-u
 /// invocations multiply (1→4→16→64) instead of staying at 0.
+/// Port of `initmodifier()` from `Src/Zle/zle_main.c:1604`.
 pub fn initmodifier() {
     *ZMOD.lock().unwrap() = modifier {
         flags: 0,
@@ -2593,6 +2596,7 @@ pub fn bin_vared(
 /// prompt, and emits the binding name via `showmsg`. This C-name-parity
 /// entry stays so widget-dispatch callers can find it; it forwards the
 /// delegate's exit code (0 success, 1 on the C early-exit paths).
+/// Port of `describekeybriefly()` from `Src/Zle/zle_main.c:1892`.
 pub fn describekeybriefly() -> i32 {
     // c:1892
     describe_key_briefly() // c:1929 — real-substrate entry.
@@ -2628,6 +2632,7 @@ pub struct findfunc {
 /// from `Src/Zle/zle_main.c:1935`. Per-keymap scan callback for
 /// `describe-key-briefly`: when `func` matches the target in `ff`,
 /// appends `" <seq>"` to `ff.msg`, capped at MAXFOUND hits.
+/// Port of `scanfindfunc()` from `Src/Zle/zle_main.c:1935`.
 pub fn scanfindfunc(seq: &[u8], func: Option<&Thingy>, ff: &mut findfunc) {
     // c:1935
     // c:1939 — `if(func != ff->func) return;` (identity by name, see findfunc).
@@ -2649,6 +2654,7 @@ pub fn scanfindfunc(seq: &[u8], func: Option<&Thingy>, ff: &mut findfunc) {
 
 /// Port of `int whereis(UNUSED(char **args))` from
 /// `Src/Zle/zle_main.c:1954-1972` — the `where-is` widget.
+/// Port of `whereis()` from `Src/Zle/zle_main.c:1954`.
 pub fn whereis() -> i32 {
     // c:1954
     let mut ff = findfunc::default(); // c:1956
@@ -2679,6 +2685,7 @@ pub fn whereis() -> i32 {
 /// `Src/Zle/zle_main.c:1974`. Drive a nested ZLE edit session —
 /// bump zle_recursive, redraw the line, run the editor mainloop,
 /// then restore.
+/// Port of `recursiveedit()` from `Src/Zle/zle_main.c:1974`.
 pub fn recursiveedit() -> i32 {
     // c:1974
     ZLE_RECURSIVE.fetch_add(1, SeqCst); // c:1976
@@ -2830,6 +2837,7 @@ pub fn resetprompt() {
 ///     redisplay(NULL);
 /// ```
 /// Triggers a prompt re-expansion + redraw.
+/// Port of `zle_resetprompt()` from `Src/Zle/zle_main.c:2058`.
 pub fn zle_resetprompt() {
     // c:2058
     reexpandprompt(); // c:2060
@@ -3057,6 +3065,7 @@ pub fn zleaftertrap(
 /// Shared by both call sites so `init_thingies()` cannot run twice.
 pub(crate) static ZLE_MODULE_SETUP: std::sync::Once = std::sync::Once::new();
 
+/// Port of `setup_()` from `Src/Zle/zle_main.c:2243`.
 pub fn setup_(m: *const module) -> i32 {
     // c:zle_main.c setup_
     // c:2252 — `init_thingies()` registers the built-in widgets.
@@ -3081,6 +3090,7 @@ pub fn setup_(m: *const module) -> i32 {
 /// from `Src/Zle/zle_main.c:2286`. Returns the module's
 /// feature-name array via `featuresarray(m, &module_features)`,
 /// matching the C body line-for-line.
+/// Port of `features_()` from `Src/Zle/zle_main.c:2286`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     // c:2286
     // c:2287-2288 — `*features = featuresarray(m, &module_features); return 0`.
@@ -3135,6 +3145,7 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 /// addhookdefs(m, zlehooks, sizeof(zlehooks)/sizeof(*zlehooks));
 /// return 0;
 /// ```
+/// Port of `boot_()` from `Src/Zle/zle_main.c:2301`.
 pub fn boot_(_m: *const module) -> i32 {
     // c:2301
     // c:2303-2304 — `addhookfunc("before_trap", zlebeforetrap);
@@ -3218,6 +3229,7 @@ pub fn boot_(_m: *const module) -> i32 {
 /// // delete keymaps + restore old entry points
 /// return 0;
 /// ```
+/// Port of `cleanup_()` from `Src/Zle/zle_main.c:2312`.
 pub fn cleanup_(_m: *const module) -> i32 {
     // c:2312
     // c:2314 — refuse to unload while ZLE is active.
@@ -3241,6 +3253,7 @@ pub fn cleanup_(_m: *const module) -> i32 {
 /// `Src/Zle/zle_main.c:2327`. Releases per-module state: incremental
 /// search spots, vi-buffer slots, killring entries, clwords array,
 /// and runs the refresh-state finalizer.
+/// Port of `finish_()` from `Src/Zle/zle_main.c:2327`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {
     // c:zle_main.c finish_
@@ -3555,6 +3568,7 @@ pub enum zle_main_entry_args<'a> {
 ///     return NULL;
 /// }
 /// ```
+/// Port of `zle_main_entry()` from `Src/Zle/zle_main.c:2123`.
 pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> {
     // c:2123
 

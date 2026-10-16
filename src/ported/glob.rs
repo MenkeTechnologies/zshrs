@@ -380,6 +380,7 @@ pub fn addpath(s: &mut String, l: &str) {
 ///      suffix, which is not the C contract.
 /// The `l` flag now matches C: `l ? lstat : stat` (l → `symlink_metadata`).
 /// Do not wire this in until gap #1 is resolved.
+/// Port of `statfullpath()` from `Src/glob.c:283`.
 pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
     // c:283
     let full = if st.is_empty() {
@@ -1433,6 +1434,7 @@ pub fn gmatchcmp(
 /// emulate C's `*sp = tt + plus;` pointer advance via slice
 /// indexing.
 /// WARNING: param names don't match C — Rust=(s, plus) vs C=(sp)
+/// Port of `glob_exec_string()` from `Src/glob.c:1085`.
 pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
     // c:1085
     if plus_form {
@@ -1490,6 +1492,7 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
 /// from Src/glob.c:1125. Inserts `data` at `next`, with optional
 /// `gf_pre_words` prefix and `gf_post_words` suffix injection from
 /// CURGLOBDATA (the `P:before:after:` glob qualifier).
+/// Port of `insert_glob_match()` from `Src/glob.c:1125`.
 pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {
     // c:1125
     let (pre, post) = {
@@ -1628,6 +1631,7 @@ pub fn checkglobqual(
 /// expand the pattern via `glob_path` (which covers the c:1240-2012
 /// qualifier+scanner+sort body), then splice the resulting matches
 /// back at `node` via `insert_glob_match` (c:1995-2007).
+/// Port of `zglob()` from `Src/glob.c:1214`.
 pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
     // c:1214
     if np >= list.len() {

@@ -558,6 +558,7 @@ static WIDGET_PARAM_LEVEL: std::sync::atomic::AtomicI32 = std::sync::atomic::Ato
 /// Called when one of ZLE's special parameters ($BUFFER etc.) is
 /// `unset`. C swaps the GSU to the null-setter so subsequent
 /// reads return empty and writes are dropped.
+/// Port of `zleunsetfn()` from `Src/Zle/zle_params.c:237`.
 pub fn zleunsetfn(pm: &mut param, exp: i32) {
     // c:237
     crate::ported::params::stdunsetfn(pm, exp); // c:237
@@ -1566,6 +1567,7 @@ pub fn get_context() -> &'static str {
 /// scripts can do `[[ $ZLE_STATE == *foo* ]]` without caring
 /// about ordering.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
+/// Port of `get_zle_state()` from `Src/Zle/zle_params.c:966`.
 pub fn get_zle_state() -> String {
     // c:966
     use crate::ported::zsh_h::HIST_FOREIGN;

@@ -67,6 +67,7 @@ pub const ZLEEOF: i32 = -1; // c:37 WEOF
 /// that build-time auto-gen, so this helper uses the manually-kept
 /// index→name table in `T_THINGY_NAMES` below and forwards to
 /// `lookup_thingy(name)` — same observable contract as the C macro.
+/// Port of `Th()` from `Src/Zle/zle.h:316`.
 #[inline]
 pub fn Th(index: i32) -> Option<crate::ported::zle::zle_thingy::Thingy> {
     // c:316
@@ -121,6 +122,7 @@ pub const T_THINGY_NAMES: &[&str] = &[
 /// True when the current keymap is the vi command-mode keymap.
 /// The Rust `in_vi_cmd_mode()` free fn (zle_main.rs:815) is the
 /// state-bound counterpart; this free-fn uses the global keymap name.
+/// Port of `invicmdmode()` from `Src/Zle/zle.h:324`.
 #[inline]
 pub fn invicmdmode(curkeymapname: &str) -> bool {
     // c:324
@@ -136,6 +138,7 @@ pub fn invicmdmode(curkeymapname: &str) -> bool {
 
 /// Port of `ZS_memcpy` from zle.h:40 (`#define ZS_memcpy wmemcpy`).
 /// Copies `n` chars from `src` into `dst`.
+/// Port of `ZS_memcpy()` from `Src/Zle/zle.h:40`.
 #[inline]
 pub fn ZS_memcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) {
     // c:40
@@ -145,6 +148,7 @@ pub fn ZS_memcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) {
 /// Port of `ZS_memmove` from zle.h:41 (`#define ZS_memmove wmemmove`).
 /// Same as ZS_memcpy but tolerates overlapping ranges (vec move
 /// semantics handle overlap).
+/// Port of `ZS_memmove()` from `Src/Zle/zle.h:41`.
 #[inline]
 pub fn ZS_memmove(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) {
     // c:41
@@ -164,6 +168,7 @@ pub fn ZS_memset(dst: &mut [ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) {
 
 /// Port of `ZS_memcmp` from zle.h:43 (`#define ZS_memcmp wmemcmp`).
 /// Returns Ordering of the first `n` chars.
+/// Port of `ZS_memcmp()` from `Src/Zle/zle.h:43`.
 #[inline]
 pub fn ZS_memcmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ordering {
     // c:43
@@ -195,6 +200,7 @@ pub fn ZS_strcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T]) {
 
 /// Port of `ZS_strncpy` from zle.h:46 (`#define ZS_strncpy wcsncpy`).
 /// Copies up to `n` chars; pads remainder with NUL if `src` is shorter.
+/// Port of `ZS_strncpy()` from `Src/Zle/zle.h:46`.
 #[inline]
 pub fn ZS_strncpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) {
     // c:46
@@ -224,6 +230,7 @@ pub fn ZS_strncmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ord
 
 /// Port of `ZS_strchr` from zle.h:50 (`#define ZS_strchr wcschr`).
 /// Returns the index of the first occurrence of `c` in `s`, or `None`.
+/// Port of `ZS_strchr()` from `Src/Zle/zle.h:50`.
 #[inline]
 pub fn ZS_strchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T) -> Option<usize> {
     // c:50
@@ -232,6 +239,7 @@ pub fn ZS_strchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T) -> Option<usize> {
 
 /// Port of `ZS_memchr` from zle.h:51 (`#define ZS_memchr wmemchr`).
 /// Returns the index of the first occurrence of `c` in `s[..n]`.
+/// Port of `ZS_memchr()` from `Src/Zle/zle.h:51`.
 #[inline]
 pub fn ZS_memchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) -> Option<usize> {
     // c:51
@@ -255,11 +263,13 @@ pub fn ZS_width(s: &[ZLE_CHAR_T]) -> usize {
 // =====================================================================
 
 /// Port of `ZC_ialpha` from zle.h:60.
+/// Port of `ZC_ialpha()` from `Src/Zle/zle.h:60`.
 #[inline]
 pub fn ZC_ialpha(c: ZLE_CHAR_T) -> bool {
     c.is_alphabetic()
 } // c:60
 /// Port of `ZC_ialnum` from zle.h:61.
+/// Port of `ZC_ialnum()` from `Src/Zle/zle.h:61`.
 #[inline]
 pub fn ZC_ialnum(c: ZLE_CHAR_T) -> bool {
     c.is_alphanumeric()
@@ -269,12 +279,14 @@ pub fn ZC_ialnum(c: ZLE_CHAR_T) -> bool {
 /// `Src/utils.c:4302-4307` — `iswspace(wc) && wc != L'\n'`. Catches
 /// CR/FF/VT/NBSP/U+2028/etc. in addition to space and tab; only
 /// newline is explicitly excluded.
+/// Port of `ZC_iblank()` from `Src/Zle/zle.h:62`.
 #[inline]
 pub fn ZC_iblank(c: ZLE_CHAR_T) -> bool {
     // c:62
     crate::ported::utils::wcsiblank(c)
 }
 /// Port of `ZC_icntrl` from zle.h:63.
+/// Port of `ZC_icntrl()` from `Src/Zle/zle.h:63`.
 #[inline]
 pub fn ZC_icntrl(c: ZLE_CHAR_T) -> bool {
     c.is_control()
@@ -286,22 +298,26 @@ pub fn ZC_idigit(c: ZLE_CHAR_T) -> bool {
 } // c:64
 /// Port of `ZC_iident` from zle.h:65 (`wcsitype(c, IIDENT)`). Identifier
 /// char per zsh's IIDENT class: alphanumeric or `_`.
+/// Port of `ZC_iident()` from `Src/Zle/zle.h:65`.
 #[inline]
 pub fn ZC_iident(c: ZLE_CHAR_T) -> bool {
     c.is_alphanumeric() || c == '_'
 } // c:65
 /// Port of `ZC_ilower` from zle.h:66.
+/// Port of `ZC_ilower()` from `Src/Zle/zle.h:66`.
 #[inline]
 pub fn ZC_ilower(c: ZLE_CHAR_T) -> bool {
     c.is_lowercase()
 } // c:66
 /// Port of `ZC_inblank` from zle.h:67 (`iswspace`). True for any
 /// whitespace char (incl. newline).
+/// Port of `ZC_inblank()` from `Src/Zle/zle.h:67`.
 #[inline]
 pub fn ZC_inblank(c: ZLE_CHAR_T) -> bool {
     c.is_whitespace()
 } // c:67
 /// Port of `ZC_iupper` from zle.h:68.
+/// Port of `ZC_iupper()` from `Src/Zle/zle.h:68`.
 #[inline]
 pub fn ZC_iupper(c: ZLE_CHAR_T) -> bool {
     c.is_uppercase()
@@ -325,6 +341,7 @@ pub fn ZC_iupper(c: ZLE_CHAR_T) -> bool {
 /// An empty `WORDCHARS` is honoured as empty, matching C: the loop tests
 /// `*s`, so `WORDCHARS=''` contributes nothing, while an UNSET parameter
 /// falls back to DEFAULT_WORDCHARS.
+/// Port of `ZC_iword()` from `Src/Zle/zle.h:69`.
 #[inline]
 pub fn ZC_iword(c: ZLE_CHAR_T) -> bool {
     // c:4352-4361 `wcsitype(c, IWORD)` — alphanumeric always wins.
@@ -341,18 +358,21 @@ pub fn ZC_iword(c: ZLE_CHAR_T) -> bool {
         .contains(c)
 } // c:69
 /// Port of `ZC_ipunct` from zle.h:70.
+/// Port of `ZC_ipunct()` from `Src/Zle/zle.h:70`.
 #[inline]
 pub fn ZC_ipunct(c: ZLE_CHAR_T) -> bool {
     c.is_ascii_punctuation()
 } // c:70
 
 /// Port of `ZC_tolower` from zle.h:72.
+/// Port of `ZC_tolower()` from `Src/Zle/zle.h:72`.
 #[inline]
 pub fn ZC_tolower(c: ZLE_CHAR_T) -> ZLE_CHAR_T {
     // c:72
     c.to_lowercase().next().unwrap_or(c)
 }
 /// Port of `ZC_toupper` from zle.h:73.
+/// Port of `ZC_toupper()` from `Src/Zle/zle.h:73`.
 #[inline]
 pub fn ZC_toupper(c: ZLE_CHAR_T) -> ZLE_CHAR_T {
     // c:73
@@ -727,6 +747,7 @@ pub const NO_INSERT_CHAR: i32 = 256; // c:331
 
 /// Port of `removesuffix()` from zle.h:333.
 /// C: `iremovesuffix(NO_INSERT_CHAR, 0)`.
+/// Port of `removesuffix()` from `Src/Zle/zle.h:333`.
 pub fn removesuffix() -> i32 {
     // c:333
     crate::ported::zle::zle_misc::iremovesuffix(NO_INSERT_CHAR, 0) // c:333
@@ -775,6 +796,7 @@ pub const COMP_EXPAND_COMPLETE: i32 = 4; // c:360
 pub const COMP_LIST_EXPAND: i32 = 5; // c:361
 
 /// Port of `COMP_ISEXPAND(X)` from zle.h:362.
+/// Port of `COMP_ISEXPAND()` from `Src/Zle/zle.h:362`.
 #[inline]
 pub fn COMP_ISEXPAND(x: i32) -> bool {
     x >= COMP_EXPAND
@@ -1059,6 +1081,7 @@ pub const ZSH_INVALID_WCHAR_BASE: u32 = 0xe000; // c:541
 
 /// Port of `ZSH_INVALID_WCHAR_TEST(x)` from zle.h:544. Detect a
 /// wide character within our range.
+/// Port of `ZSH_INVALID_WCHAR_TEST()` from `Src/Zle/zle.h:544`.
 #[inline]
 pub fn ZSH_INVALID_WCHAR_TEST(x: u32) -> bool {
     // c:544
@@ -1067,6 +1090,7 @@ pub fn ZSH_INVALID_WCHAR_TEST(x: u32) -> bool {
 
 /// Port of `ZSH_INVALID_WCHAR_TO_CHAR(x)` from zle.h:548. Turn a
 /// wide character in that range back to single byte.
+/// Port of `ZSH_INVALID_WCHAR_TO_CHAR()` from `Src/Zle/zle.h:548`.
 #[inline]
 pub fn ZSH_INVALID_WCHAR_TO_CHAR(x: u32) -> u8 {
     // c:548
@@ -1075,6 +1099,7 @@ pub fn ZSH_INVALID_WCHAR_TO_CHAR(x: u32) -> u8 {
 
 /// Port of `ZSH_INVALID_WCHAR_TO_INT(x)` from zle.h:550. Turn a
 /// wide character in that range to an integer.
+/// Port of `ZSH_INVALID_WCHAR_TO_INT()` from `Src/Zle/zle.h:551`.
 #[inline]
 pub fn ZSH_INVALID_WCHAR_TO_INT(x: u32) -> i32 {
     // c:550
@@ -1083,6 +1108,7 @@ pub fn ZSH_INVALID_WCHAR_TO_INT(x: u32) -> i32 {
 
 /// Port of `ZSH_CHAR_TO_INVALID_WCHAR(x)` from zle.h:553. Turn a
 /// single byte character into a private wide character.
+/// Port of `ZSH_CHAR_TO_INVALID_WCHAR()` from `Src/Zle/zle.h:554`.
 #[inline]
 pub fn ZSH_CHAR_TO_INVALID_WCHAR(x: u8) -> u32 {
     // c:553
@@ -1098,6 +1124,7 @@ pub fn ZSH_CHAR_TO_INVALID_WCHAR(x: u8) -> u32 {
 
 /// Port of `METACHECK()` from zle.h:561.
 /// C: `DPUTS(zlemetaline == NULL, "line not metafied")`.
+/// Port of `METACHECK()` from `Src/Zle/zle.h:560`.
 #[inline]
 pub fn METACHECK() { // c:561
                      // c:561 — DPUTS only fires when DEBUG is defined; treat as
@@ -1106,6 +1133,7 @@ pub fn METACHECK() { // c:561
 
 /// Port of `UNMETACHECK()` from zle.h:563.
 /// C: `DPUTS(zlemetaline != NULL, "line metafied")`.
+/// Port of `UNMETACHECK()` from `Src/Zle/zle.h:562`.
 #[inline]
 pub fn UNMETACHECK() { // c:563
                        // c:563 — see METACHECK above.

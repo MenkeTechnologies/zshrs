@@ -138,6 +138,7 @@ pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) ->
 /// `#else /* !HAVE_CAP_GET_PROC */ # define bin_cap bin_notavail`
 /// (same for getcap/setcap); upstream 54669 (1426a4dfdc) later dropped
 /// the stubs and stopped building the module without --enable-cap.
+/// Port of `bin_cap()` from `Src/Modules/cap.c:36`.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
 pub(crate) fn bin_cap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     // c:Src/builtin.c:7596 bin_notavail — "not available on this system".
@@ -204,6 +205,7 @@ pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
 }
 
 /// Port of `bin_getcap()` — non-Linux stub.
+/// Port of `bin_getcap()` from `Src/Modules/cap.c:68`.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
 pub(crate) fn bin_getcap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     // c:Src/builtin.c:7596 bin_notavail — "not available on this system".
@@ -273,6 +275,7 @@ pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
 }
 
 /// Port of `bin_setcap()` — non-Linux stub.
+/// Port of `bin_setcap()` from `Src/Modules/cap.c:91`.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
 pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     // c:Src/builtin.c:7596 bin_notavail — "not available on this system".
@@ -359,6 +362,7 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `featuresarray()` from `Src/module.c:3279`.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:cap".to_string(),
@@ -371,6 +375,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:3392 — the name-keyed variant in src/ported/module.rs; this
     // module ships no `Features` descriptor tables for the per-feature
@@ -382,6 +387,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Ve
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
 fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }

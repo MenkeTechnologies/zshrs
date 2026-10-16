@@ -40,6 +40,7 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 /// `Src/Modules/newuser.c:58`. Returns 0 (file accessible) or
 /// non-zero (errno via `access(2) F_OK`). The C body composes
 /// `dotdir/fname` and calls `access(F_OK)`.
+/// Port of `check_dotfile()` from `Src/Modules/newuser.c:58`.
 pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {
     // c:58
     let mut p = PathBuf::from(dotdir); // c:58-61

@@ -321,6 +321,7 @@ pub fn cut_cline(l: Option<Box<Cline>>) -> Option<Box<Cline>> {
 /// walks (`brp->next`, `brs->prev`) become index steps. The cursor
 /// lands on the mid / prefix / suffix / diff missing-char point per
 /// `mid`/`pm`/`sm`/`d`.
+/// Port of `cline_str()` from `Src/Zle/compresult.c:165`.
 pub fn cline_str(
     // c:165
     l: Option<Box<Cline>>,
@@ -736,6 +737,7 @@ pub fn cline_str(
 /// `Src/Zle/compresult.c:489`. Small utility turning a list of
 /// positions into a colon-separated string (e.g. `[1, 5, 10]` →
 /// `"1:5:10"`). C's `LinkList` of `long` positions is a `&[i32]` here.
+/// Port of `build_pos_string()` from `Src/Zle/compresult.c:489`.
 pub fn build_pos_string(list: &[i32]) -> String {
     // c:489
     // c:496-517 — sprintf each position, join with ':'.
@@ -798,6 +800,7 @@ pub fn unambig_data(matches: &[String]) -> String {
 /// number of bytes inserted; `scs` receives the auto-suffix insertion
 /// point. Cursor is left at `ocs` (just after the string / last brace
 /// begin) on return.
+/// Port of `instmatch()` from `Src/Zle/compresult.c:578`.
 pub fn instmatch(
     // c:578
     m: &Cmatch,
@@ -993,6 +996,7 @@ pub fn instmatch(
 /// the line, captures the resulting `lastprebr`/`lastpostbr`, restores
 /// the line + `lastend`/`brpcs`/`brscs`, and compares against
 /// `pre`/`suf`.
+/// Port of `hasbrpsfx()` from `Src/Zle/compresult.c:685`.
 pub fn hasbrpsfx(m: &Cmatch, pre: Option<&str>, suf: Option<&str>) -> bool {
     // c:683
     // c:687-688 — CMF_ALL shortcut.
@@ -1108,6 +1112,7 @@ pub fn hasbrpsfx(m: &Cmatch, pre: Option<&str>, suf: Option<&str>) -> bool {
 /// `menucmp=0`/`lastambig=1` transition flags. Returns 1 if any
 /// completion text was inserted, 0 otherwise.
 /// WARNING: param names don't match C — Rust=(matches) vs C=()
+/// Port of `do_ambiguous()` from `Src/Zle/compresult.c:744`.
 pub fn do_ambiguous(matches: &[String]) -> i32 {
     // c:744
     // c:746 — `menucmp = menuacc = 0`.
@@ -1492,6 +1497,7 @@ pub fn ztat(path: &str, follow_symlink: bool) -> Option<std::fs::Metadata> {
 /// = `Cmatch *`, `++minfo.cur`, `minfo.group->next`); the Rust store
 /// is `amatches: Vec<Cmgroup>`, so those are `group_idx`/`cur_idx`
 /// index steps. `lastbrbeg` is the tail node of the `BRBEG` chain.
+/// Port of `do_allmatches()` from `Src/Zle/compresult.c:897`.
 pub fn do_allmatches(_end: i32) {
     // c:895
     let mut first = true; // c:897
@@ -1633,6 +1639,7 @@ pub fn do_allmatches(_end: i32) {
 /// directory slash, brace `,`/`}` suffixes, and the trailing space —
 /// and fires the `insert_match` hook. `CMF_ALL` dispatches to
 /// `do_allmatches`. Operates entirely on the metafied `ZLEMETALINE`.
+/// Port of `do_single()` from `Src/Zle/compresult.c:963`.
 pub fn do_single(m: &Cmatch) {
     // c:961
     let cs = || ZLEMETACS.load(Relaxed);
@@ -2083,6 +2090,7 @@ pub fn do_single(m: &Cmatch) {
 /// `group_idx` steps over `amatches: Vec<Cmgroup>`. On success the
 /// resolved `group_idx`/`cur_idx` are written back to `minfo` and the
 /// match is returned (the caller assigns `minfo.cur`).
+/// Port of `valid_match()` from `Src/Zle/compresult.c:1210`.
 pub fn valid_match(mut mi: i32, next: i32) -> Option<Cmatch> {
     // c:1206
     let groups = amatches
@@ -2191,6 +2199,7 @@ pub fn valid_match(mut mi: i32, next: i32) -> Option<Cmatch> {
 /// things C's function does. It also had no callers, so the real menu
 /// stepping had to be open-coded elsewhere. Restored to the C shape now
 /// that valid_match / do_single / ZMULT / metafy_line all exist.
+/// Port of `do_menucmp()` from `Src/Zle/compresult.c:1253`.
 pub fn do_menucmp(lst: i32) {
     // c:1249
     // c:1253-1257 — "Just list the matches if the list was requested."
@@ -2703,6 +2712,7 @@ pub fn skipnolist(p: &[Cmatch], showall: i32) -> usize {
 /// computes per-group column widths, line counts, and per-match
 /// width entries, then writes `listdat`. Returns 1 when listdat was
 /// updated, 0 when the cached snapshot is still valid.
+/// Port of `calclist()` from `Src/Zle/compresult.c:1495`.
 pub fn calclist(showall: i32) -> i32 {
     // c:1495
 
@@ -3336,6 +3346,7 @@ pub fn calclist(showall: i32) -> i32 {
 ///     nlines >= zterm_lines`.
 ///   - If threshold tripped, prompt via `getzlequery` and set
 ///     `minfo.asked = 1 or 2`. Else return based on previous asked.
+/// Port of `asklist()` from `Src/Zle/compresult.c:1925`.
 pub fn asklist() -> i32 {
     // c:1925
     // c:1928 — `trashzle(); showinglist = listshown = 0; lastlistlen = 0`.
@@ -4096,6 +4107,7 @@ pub fn iprintm(
 /// mirror the C `(Hookdef, Chdata)` signature so this registers directly
 /// as a `Hookfn`; both are unused (the body reads the `amatches`/`listdat`
 /// globals as the C source does).
+/// Port of `ilistmatches()` from `Src/Zle/compresult.c:2284`.
 pub fn ilistmatches(
     _dummy: *mut crate::ported::zsh_h::hookdef,
     _dat: *mut std::ffi::c_void,
@@ -4152,6 +4164,7 @@ pub fn ilistmatches(
 /// Walks `amatches` into a `chdata` bag and dispatches via
 /// `runhookdef(COMPLISTMATCHESHOOK, &dat)` so `_main_complete`-style
 /// user hooks can override the default `ilistmatches` rendering.
+/// Port of `list_matches()` from `Src/Zle/compresult.c:2304`.
 pub fn list_matches() -> i32 {
     // c:2304
     if VALIDLIST.load(Ordering::SeqCst) == 0 {
@@ -4228,6 +4241,7 @@ pub fn list_matches() -> i32 {
 /// (`lastambig`, `menucmp`, `menuacc`, `validlist`, `showinglist`,
 /// `fromcomp`) to 0, clears `listdat.valid`, and zeros out `nmatches`
 /// + `amatches`.
+/// Port of `invalidate_list()` from `Src/Zle/compresult.c:2334`.
 pub fn invalidate_list() -> i32 {
     // c:2334
 
