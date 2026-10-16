@@ -2142,6 +2142,14 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     "exit 3",
     "(exit 4); print $?",
     "print done; exit",
+    // ── ksh93u+m namespace, `$-`, printf bases and table-only `set -o` names ──
+    "print -r -- \"[${.sh.version}]\"; f() { print -r -- \"fun=${.sh.fun}\"; }; f",
+    "[[ abc =~ a(b)c ]]; print -r -- \"[${.sh.match[0]}][${.sh.match[1]}] n=${#.sh.match[@]}\"",
+    "print -r -- \"$-\"; set -u; print -r -- \"$-\"; set +u; set -C; print -r -- \"$-\"",
+    "printf '%..8d|%..16d|%5..8d|%.3..8d\\n' 300 255 5 5",
+    "set -o keyword; [[ -o keyword ]]; print -r -- $?; set +o keyword; [[ -o keyword ]]; print -r -- $?",
+    "set -o gmacs; print -r -- $?; set +o gmacs; print -r -- $?",
+    "set -A a x y z; unset 'a[2]'; set -A a p q r s; print -r -- \"${#a[@]} ${a[*]}\"",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
