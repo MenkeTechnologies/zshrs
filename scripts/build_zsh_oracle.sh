@@ -11,6 +11,10 @@
 # configure — e.g. `--enable-etcdir=/etc/zsh` on Debian/Ubuntu, so the oracle
 # reads the same system zshenv the platform's zsh (and zshrs, see
 # src/extensions/global_rc.rs) reads.
+#
+# --enable-unicode9: zshrs always uses the Unicode 9 width and printable tables
+# (`${(q+)}`, `(m)`), so the oracle must too. Without it the oracle asks the
+# platform libc, and U+00AD is non-printable on macOS but printable on glibc.
 set -eu
 src=${1:-$HOME/forkedRepos/zsh}
 [ $# -gt 0 ] && shift
@@ -23,7 +27,7 @@ trap 'rm -rf "$work"' EXIT
 git clone -q "$src" "$work/zsh"
 cd "$work/zsh"
 ./Util/preconfig >/dev/null
-./configure -q --prefix="$prefix" --enable-multibyte --enable-pcre "$@"
+./configure -q --prefix="$prefix" --enable-multibyte --enable-unicode9 --enable-pcre "$@"
 make -s -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 make -s install.bin install.modules install.fns
 "$prefix/bin/zsh" -f -c 'print -r -- "zsh oracle: $ZSH_VERSION at $0"'
