@@ -323,7 +323,18 @@ peach 'convert {} {}.png' *.svg
 
 # Barrier — run all, wait for all
 barrier 'npm test' ::: 'cargo test' ::: 'pytest'
+
+# Ported from stryke
+puniq a b a c                          # distinct, first-occurrence order (or stdin lines)
+psort -nr 10 9 100                     # parallel stable sort: -n numeric, -r reverse
+pfirst 'test -x {}/zsh' /usr/bin /opt/homebrew/bin   # lowest-position item that passes
+pany 'grep -q TODO {}' *.rs            # status 0 if any item passes, rest skipped
+pmap_chunked 50 'gzip {}' *.log        # pmap, one shell process per 50 items
+par_lines 'echo got {}' access.log     # mmap FILE, one command per line, file order
+par_walk 'test -f {} && wc -l {}' src  # one command per file/dir under PATH, walk order
 ```
+
+`puniq`, `psort`, `pfirst`, `pany`, `pmap_chunked`, `par_lines` and `par_walk` port strykelang's `par_list`, `par_lines` and `par_walk` algorithms (`src/extensions/par_ops.rs`). `pfirst` returns the lowest position that passes, not the first to finish. `pmap_chunked`, `par_lines` and `par_walk` hand items to a shell process over fd 3 (NUL-separated), so the command's own stdin is `/dev/null`. All of them run on a per-process rayon pool, so they also work inside `$(...)` and pipeline stages.
 
 `pmap` / `pgrep` / `peach` run their body through the shared fusevm bytecode VM with the `{}` placeholder substituted as `${=__zshrs_p_arg__}` (matching zsh `SH_WORD_SPLIT` on literal substitution). The body is parsed and compiled to a fusevm `Chunk` ONCE before the input is iterated; the per-iteration loop sets the param via `setsparam`, acquires a VM from `fusevm::VMPool` (preserves Vec capacities across iterations), runs the cached chunk, and releases the VM back to the pool. `unsetparam` runs once at the end. No fork, no per-iteration parse/compile, no per-iteration VM allocation.
 
@@ -439,6 +450,10 @@ dbview scripts                 # compiled sourced scripts (scripts.rkyv); option
 | `pgrep` | Parallel filter — runs on VM, not fork |
 | `peach` | Parallel for-each, unordered — runs on VM, not fork |
 | `barrier` | Run all commands in parallel, wait for all |
+| `puniq` / `psort` | Parallel distinct / stable sort of operands or stdin lines |
+| `pfirst` / `pany` | Lowest-position / any item for which the command succeeds |
+| `pmap_chunked` | `pmap` with one shell process per chunk of N items |
+| `par_lines` / `par_walk` | One command per line of a file / per path of a tree, parallel, ordered output |
 
 ### AOP / Debugging
 

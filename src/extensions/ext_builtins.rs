@@ -316,13 +316,20 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "nice",
     "nl",
     "nproc",
+    "pany",
+    "par_lines",
+    "par_walk",
     "paste",
     "peach",
+    "pfirst",
     "pgrep",
     "pmap",
+    "pmap_chunked",
     "printenv",
     "profile",
     "provenance",
+    "psort",
+    "puniq",
     "realpath",
     "rev",
     "run_tests",
@@ -1999,7 +2006,7 @@ impl ShellExecutor {
         // order" guarantee holds across the parallel run. The
         // subprocess inherits our env (so $PATH etc. work) plus
         // gets ARG_ENV=item.
-        let results: Vec<(i32, Vec<u8>, Vec<u8>)> = items
+        let results: Vec<(i32, Vec<u8>, Vec<u8>)> = par_install(|| items
             .par_iter()
             .map(|item| {
                 let output = Command::new(&exe)
@@ -2013,7 +2020,7 @@ impl ShellExecutor {
                     Err(_) => (1, Vec::new(), Vec::new()),
                 }
             })
-            .collect();
+            .collect());
 
         let mut any_fail = false;
         for (status, stdout, stderr) in results {
@@ -2064,7 +2071,7 @@ impl ShellExecutor {
         use rayon::prelude::*;
         // Parallel filter: keep input order via `.collect()`, output
         // only items whose test passed (rc=0).
-        let pass_flags: Vec<bool> = items
+        let pass_flags: Vec<bool> = par_install(|| items
             .par_iter()
             .map(|item| {
                 let status = Command::new(&exe)
@@ -2078,7 +2085,7 @@ impl ShellExecutor {
                     Err(_) => false,
                 }
             })
-            .collect();
+            .collect());
 
         for (item, &passed) in items.iter().zip(pass_flags.iter()) {
             if passed {
@@ -2122,7 +2129,7 @@ impl ShellExecutor {
         // runs items concurrently; failures are aggregated via an
         // atomic flag.
         let any_fail = AtomicBool::new(false);
-        items.par_iter().for_each(|item| {
+        par_install(|| items.par_iter().for_each(|item| {
             let status = Command::new(&exe)
                 .args(["--zsh", "-c", &parametrised])
                 .env(ARG_ENV, item)
@@ -2134,7 +2141,7 @@ impl ShellExecutor {
             if !ok {
                 any_fail.store(true, std::sync::atomic::Ordering::Relaxed);
             }
-        });
+        }));
 
         if any_fail.load(std::sync::atomic::Ordering::Relaxed) {
             1
@@ -12298,6 +12305,13 @@ pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
     "nice",
     "nl",
     "nproc",
+    "pany",
+    "par_lines",
+    "par_walk",
+    "pfirst",
+    "pmap_chunked",
+    "psort",
+    "puniq",
     "paste",
     "printenv",
     "sha256sum",
@@ -12313,6 +12327,318 @@ pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
     "yes",
     "zbuild",
 ];
+
+// ---------------------------------------------------------------------
+// Parallel list / file / tree builtins — ports of strykelang's `puniq`,
+// `pfirst`, `pany`, `psort`, `pmap_chunked`, `par_lines` and `par_walk`.
+// The algorithms live in `par_ops.rs`; this block is argument parsing and
+// the per-item `zshrs --zsh -c` subprocess the sibling `pmap`/`pgrep` use.
+// ---------------------------------------------------------------------
+
+/// Run `f` on this PROCESS's rayon pool. A pipeline stage or `$(...)` is a forked
+/// child: the parent's pool has no threads there, so a bare `par_iter` blocks
+/// forever (see `fork_safe_pool`). Falls back to the caller's thread when no
+/// pool can be built.
+fn par_install<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    match crate::fork_safe_pool::pool() {
+        Some(pool) => pool.install(f),
+        None => f(),
+    }
+}
+
+/// Environment variable (and chunk-loop variable) the `{}` placeholder reads.
+const PAR_ARG_ENV: &str = "__ZSHRS_P_ARG__";
+
+/// Rewrite `{}` to `${=VAR}`: the `=` flag word-splits the item on `$IFS`,
+/// the same expansion `pmap` gives its items.
+fn par_parametrise(template: &str) -> String {
+    template.replace("{}", &format!("${{={}}}", PAR_ARG_ENV))
+}
+
+/// Items for `puniq` / `psort`: the operands, or stdin lines when there are none.
+fn par_items_or_stdin(operands: &[String]) -> Vec<String> {
+    if !operands.is_empty() {
+        return operands.to_vec();
+    }
+    let mut text = String::new();
+    let _ = io::stdin().read_to_string(&mut text);
+    text.lines().map(str::to_string).collect()
+}
+
+fn par_print_lines(items: &[String]) {
+    let out = io::stdout();
+    let mut out = out.lock();
+    for item in items {
+        let _ = writeln!(out, "{item}");
+    }
+}
+
+/// Run `template` once per item inside ONE `zshrs --zsh -c` process, feeding the
+/// items NUL-separated on fd 3 (so a template that reads stdin cannot eat them).
+/// Returns (status, stdout, stderr); status is 1 when any template run failed.
+fn par_run_chunk(exe: &std::path::Path, template: &str, items: &[Vec<u8>]) -> (i32, Vec<u8>, Vec<u8>) {
+    use std::process::{Command, Stdio};
+    let script = format!(
+        "__zshrs_pfail=0; while IFS= read -r -d '' -u3 {var}; do {{ {tmpl}\n}} || __zshrs_pfail=1; done 3<&0 </dev/null; exit $__zshrs_pfail",
+        var = PAR_ARG_ENV,
+        tmpl = par_parametrise(template),
+    );
+    let mut child = match Command::new(exe)
+        .args(["--zsh", "-c", &script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return (1, Vec::new(), Vec::new()),
+    };
+    let mut feed = Vec::new();
+    for item in items {
+        feed.extend_from_slice(item);
+        feed.push(0);
+    }
+    let stdin = child.stdin.take();
+    let writer = std::thread::spawn(move || {
+        if let Some(mut stdin) = stdin {
+            let _ = stdin.write_all(&feed);
+        }
+    });
+    let out = child.wait_with_output();
+    let _ = writer.join();
+    match out {
+        Ok(o) => (o.status.code().unwrap_or(1), o.stdout, o.stderr),
+        Err(_) => (1, Vec::new(), Vec::new()),
+    }
+}
+
+/// Run every chunk in parallel and write the results in chunk order.
+/// Returns 0 when every template run succeeded, else 1.
+fn par_run_chunks(name: &str, template: &str, chunks: &[Vec<Vec<u8>>]) -> i32 {
+    use rayon::prelude::*;
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("zshrs:{name}:1: current_exe: {e}");
+            return 1;
+        }
+    };
+    let results: Vec<(i32, Vec<u8>, Vec<u8>)> = par_install(|| {
+        chunks
+            .par_iter()
+            .map(|chunk| par_run_chunk(&exe, template, chunk))
+            .collect()
+    });
+    let mut any_fail = false;
+    for (status, stdout, stderr) in results {
+        let _ = io::stdout().write_all(&stdout);
+        let _ = io::stderr().write_all(&stderr);
+        any_fail |= status != 0;
+    }
+    i32::from(any_fail)
+}
+
+/// Run `template` for `item` in a fresh `zshrs --zsh -c`, output discarded.
+fn par_test_item(exe: &std::path::Path, parametrised: &str, item: &str) -> bool {
+    use std::process::{Command, Stdio};
+    Command::new(exe)
+        .args(["--zsh", "-c", parametrised])
+        .env(PAR_ARG_ENV, item)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+impl ShellExecutor {
+    /// puniq [ITEM...] — distinct items in first-occurrence order, hash-partitioned
+    /// across the worker pool. Reads stdin lines when no ITEM is given.
+    /// Port of strykelang `puniq` (`par_list::puniq_run`).
+    ///
+    /// Usage:
+    ///   puniq a b a c          # a b c
+    ///   cat big.log | puniq
+    pub(crate) fn builtin_puniq(&mut self, args: &[String]) -> i32 {
+        let items = par_items_or_stdin(args);
+        let out = par_install(|| crate::par_ops::puniq_run(items, rayon::current_num_threads()));
+        par_print_lines(&out);
+        0
+    }
+
+    /// psort [-n] [-r] [ITEM...] — parallel stable sort (`-n` numeric, `-r`
+    /// reverse). Reads stdin lines when no ITEM is given. Port of strykelang `psort`.
+    ///
+    /// Usage:
+    ///   psort -nr 10 9 100
+    ///   cat big.txt | psort
+    pub(crate) fn builtin_psort(&mut self, args: &[String]) -> i32 {
+        let mut spec = crate::par_ops::SortSpec::default();
+        let mut rest = args;
+        while let Some(first) = rest.first() {
+            if first == "--" {
+                rest = &rest[1..];
+                break;
+            }
+            let Some(flags) = first.strip_prefix('-').filter(|f| !f.is_empty()) else {
+                break;
+            };
+            for c in flags.chars() {
+                match c {
+                    'n' => spec.numeric = true,
+                    'r' => spec.reverse = true,
+                    _ => {
+                        eprintln!("zshrs:psort:1: bad option: -{c}");
+                        return 1;
+                    }
+                }
+            }
+            rest = &rest[1..];
+        }
+        let items = par_items_or_stdin(rest);
+        par_print_lines(&par_install(|| crate::par_ops::psort_run(items, spec)));
+        0
+    }
+
+    /// pfirst 'cmd {}' ITEM... — print the FIRST item (lowest position) for which
+    /// `cmd` succeeds; status 1 and no output when none does. Items after the best
+    /// match found so far are not tested. Port of strykelang `pfirst`.
+    ///
+    /// Usage:
+    ///   pfirst 'test -x {}/bin/zsh' /usr /opt/homebrew /usr/local
+    pub(crate) fn builtin_pfirst(&mut self, args: &[String]) -> i32 {
+        if args.len() < 2 {
+            eprintln!("zshrs:pfirst:1: requires 'command {{}}' followed by arguments");
+            return 1;
+        }
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zshrs:pfirst:1: current_exe: {e}");
+                return 1;
+            }
+        };
+        let tmpl = par_parametrise(&args[0]);
+        let items = &args[1..];
+        match par_install(|| crate::par_ops::pfirst_run(items, |item| par_test_item(&exe, &tmpl, item))) {
+            Some(i) => {
+                println!("{}", items[i]);
+                0
+            }
+            None => 1,
+        }
+    }
+
+    /// pany 'cmd {}' ITEM... — status 0 when `cmd` succeeds for any item, else 1;
+    /// prints nothing. Once one item passes the others are skipped. Port of
+    /// strykelang `pany`.
+    ///
+    /// Usage:
+    ///   pany 'grep -q TODO {}' *.rs && echo "has TODOs"
+    pub(crate) fn builtin_pany(&mut self, args: &[String]) -> i32 {
+        if args.len() < 2 {
+            eprintln!("zshrs:pany:1: requires 'command {{}}' followed by arguments");
+            return 1;
+        }
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zshrs:pany:1: current_exe: {e}");
+                return 1;
+            }
+        };
+        let tmpl = par_parametrise(&args[0]);
+        i32::from(!par_install(|| crate::par_ops::pany_run(&args[1..], |item| par_test_item(&exe, &tmpl, item))))
+    }
+
+    /// pmap_chunked N 'cmd {}' ITEM... — like `pmap`, but ITEMs are handed to the
+    /// pool in chunks of N and each chunk runs in ONE shell process, so the
+    /// per-process startup is paid once per N items. Output is in item order.
+    /// Port of strykelang `pmap_chunked`.
+    ///
+    /// Usage:
+    ///   pmap_chunked 50 'gzip {}' *.log
+    pub(crate) fn builtin_pmap_chunked(&mut self, args: &[String]) -> i32 {
+        if args.len() < 3 {
+            eprintln!("zshrs:pmap_chunked:1: requires CHUNK 'command {{}}' followed by arguments");
+            return 1;
+        }
+        let Some(size) = args[0].parse::<usize>().ok().filter(|n| *n > 0) else {
+            eprintln!("zshrs:pmap_chunked:1: {}: chunk size must be a positive integer", args[0]);
+            return 1;
+        };
+        let items: Vec<String> = args[2..].to_vec();
+        let chunks: Vec<Vec<Vec<u8>>> = crate::par_ops::chunk_items(&items, size)
+            .into_iter()
+            .map(|c| c.iter().map(|i| i.as_bytes().to_vec()).collect())
+            .collect();
+        par_run_chunks("pmap_chunked", &args[1], &chunks)
+    }
+
+    /// par_lines 'cmd {}' FILE — run `cmd` once per line of FILE with `{}` replaced
+    /// by the line. FILE is memory-mapped and cut into line-aligned ranges that
+    /// run in parallel; output is written in file order. Port of strykelang
+    /// `par_lines`.
+    ///
+    /// Usage:
+    ///   par_lines 'echo got {}' access.log
+    pub(crate) fn builtin_par_lines(&mut self, args: &[String]) -> i32 {
+        if args.len() != 2 {
+            eprintln!("zshrs:par_lines:1: usage: par_lines 'command {{}}' FILE");
+            return 1;
+        }
+        let file = match std::fs::File::open(&args[1]) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("zshrs:par_lines:1: {}: {e}", args[1]);
+                return 1;
+            }
+        };
+        // SAFETY: the map is read-only and dropped before returning; a concurrent
+        // truncation of FILE by another process is the usual mmap caveat.
+        let mmap = match unsafe { memmap2::Mmap::map(&file) } {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("zshrs:par_lines:1: {}: mmap: {e}", args[1]);
+                return 1;
+            }
+        };
+        let data: &[u8] = &mmap;
+        let ranges = crate::par_ops::line_aligned_chunks(data, rayon::current_num_threads() * 8);
+        let chunks: Vec<Vec<Vec<u8>>> = ranges
+            .into_iter()
+            .map(|(s, e)| crate::par_ops::lines_in_range(data, s, e))
+            .collect();
+        par_run_chunks("par_lines", &args[0], &chunks)
+    }
+
+    /// par_walk 'cmd {}' PATH... — run `cmd` once per file and directory under each
+    /// PATH (the PATHs themselves included) with `{}` replaced by the path. The
+    /// tree is walked in parallel, names sorted within a directory; output is in
+    /// walk order. Port of strykelang `par_walk`.
+    ///
+    /// Usage:
+    ///   par_walk 'test -f {} && wc -l {}' src
+    pub(crate) fn builtin_par_walk(&mut self, args: &[String]) -> i32 {
+        if args.len() < 2 {
+            eprintln!("zshrs:par_walk:1: usage: par_walk 'command {{}}' PATH...");
+            return 1;
+        }
+        let roots: Vec<std::path::PathBuf> = args[1..].iter().map(std::path::PathBuf::from).collect();
+        let paths = par_install(|| crate::par_ops::collect_paths(&roots));
+        if paths.is_empty() {
+            return 0;
+        }
+        let size = crate::par_ops::auto_chunk_size(paths.len(), rayon::current_num_threads());
+        let items: Vec<Vec<u8>> = {
+            use std::os::unix::ffi::OsStrExt;
+            paths.iter().map(|p| p.as_os_str().as_bytes().to_vec()).collect()
+        };
+        let chunks: Vec<Vec<Vec<u8>>> = items.chunks(size).map(<[_]>::to_vec).collect();
+        par_run_chunks("par_walk", &args[0], &chunks)
+    }
+}
 
 #[cfg(test)]
 mod coreutils_port_tests {

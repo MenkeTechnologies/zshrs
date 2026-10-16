@@ -334,6 +334,11 @@ pub mod dumpers;
 /// `ext_builtins` submodule.
 #[path = "extensions/ext_builtins.rs"]
 pub mod ext_builtins;
+
+/// Parallel list / file / tree algorithms (`puniq`, `pfirst`, `pany`, `psort`,
+/// `pmap_chunked`, `par_lines`, `par_walk`) ported from strykelang.
+#[path = "extensions/par_ops.rs"]
+pub mod par_ops;
 /// `fds` submodule.
 #[path = "extensions/fds.rs"]
 pub mod fds;
