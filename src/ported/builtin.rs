@@ -8472,10 +8472,24 @@ pub fn bin_typeset(
             //     }
             // So `readonly NAME` leaves NAME unset, and `typeset +r NAME` on it
             // is refused.
-            let entry_flags: Option<u32> = paramtab()
+            let mut entry_flags: Option<u32> = paramtab()
                 .read()
                 .ok()
                 .and_then(|t| t.get(arg.as_str()).map(|p| p.node.flags as u32));
+            // 5.9.2 c:2043 — a TYPESET_TO_UNSET declaration (PM_DECLARED|PM_UNSET) is not
+            // `usepm`, so `typeset -U h` after `typeset -a h` makes a NEW parameter that
+            // carries only the flags given now: the array type is not kept.
+            if crate::extensions::emulation_startup::emulating_592()
+                && !TYPESET_M_APPLY.with(|c| c.get())
+                && !usepm_at_entry
+                && entry_flags.is_some_and(|f| {
+                    (f & (PM_DECLARED | PM_UNSET)) == (PM_DECLARED | PM_UNSET)
+                        && (f & PM_SPECIAL) == 0
+                })
+            {
+                crate::ported::params::unsetparam(arg);
+                entry_flags = None;
+            }
             let posix_strict = isset(POSIXBUILTINS) && !OPT_ISSET(&ops, b'p'); // c:2194
             let usepm_entry = entry_flags.is_some() && usepm_at_entry;
             let posix_keep_unset = posix_strict

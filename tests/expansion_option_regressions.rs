@@ -316,3 +316,12 @@ fn quote_then_namedir_quotes_the_quoted_form() {
     assert_eq!(err, "");
     assert_eq!(out, "[\\'\\'][\\'\\'][a\\\\\\ b\\\\\\*][\\'a\\ b\\*\\'][]\n");
 }
+
+/// 5.9.2 c:2043 — a TYPESET_TO_UNSET declaration is not `usepm`, so a later
+/// `typeset -U h` builds a new parameter that has only the `-U` attribute; the
+/// array type of the earlier `typeset -a h` is gone.
+#[test]
+fn typeset_on_a_declared_unset_array_drops_its_type_on_592() {
+    let out = run_as_zsh("setopt typesettounset; typeset -a h; typeset -U h; typeset -p h");
+    assert_eq!(out, "typeset -U h\n");
+}
