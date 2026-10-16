@@ -143,3 +143,19 @@ fn lineno_in_function_sub_chunks_is_function_relative() {
     // Verified against zsh 5.9.2 on the same script.
     assert_eq!(out, "c 2\nd 3\nj 4\ns 6\nm 7\nn 8\n");
 }
+
+/// c:Src/subst.c:3811-3819 — a style above plain `(q)` untokenizes the value,
+/// so the Star in a `${(qq):-b*}` default word is plain text once quoted and
+/// must not be filename-generated. The default-word glob flag was set from
+/// the SOURCE word regardless of the quote flag, so a literal suffix next to
+/// the expansion made the quoted `'b*',` a pattern ("no matches found").
+/// D04parameter.ztst chunk 178; plain `(q)` keeps its tokens and still globs.
+#[test]
+fn quoted_default_word_with_a_glob_char_is_not_globbed() {
+    let (_ec, out, err) = run("print -r - ${(qq):-b*}, ${(qqq):-a= {b,c}*}, x${(qqqq):-b?}");
+    assert_eq!(err, "");
+    assert_eq!(out, "'b*', \"a= b*\" \"a= c*\", x$'b?'\n");
+    let (_ec, out, err) = run("print -r - ${(q):-b*},");
+    assert_eq!(out, "");
+    assert!(err.contains("no matches found"), "{err:?}");
+}

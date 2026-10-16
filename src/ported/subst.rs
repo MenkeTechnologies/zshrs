@@ -16883,7 +16883,7 @@ pub fn paramsubst(
                     // compile-emitted BUILTIN_DEFAULT_WORD_GLOB; gated on
                     // unquoted context. `${x:-$d}` (d='*') has no glob in
                     // the SOURCE so it is NOT flagged.
-                    if !qt {
+                    if !qt && !(quotemod > 0 && quotetype > QT_BACKSLASH) {
                         // pretokenize_src_pat keeps nested `$..`/`${..}`/
                         // `$(..)` spans verbatim, so a `*` inside a nested
                         // strip/filter pattern (`${p#*:}`) is NOT counted as
@@ -17043,7 +17043,7 @@ pub fn paramsubst(
                             isarr = 1;
                         }
                     }
-                    if !qt {
+                    if !qt && !(quotemod > 0 && quotetype > QT_BACKSLASH) {
                         let __dg = default_word_lexer_tokens(pretokenize_src_pat(default)); // c:globlist (default-word glob)
                                                                  // Top-level `|` is alternation for FILENAME
                                                                  // GENERATION though literal for the shared pattern
@@ -17673,7 +17673,7 @@ pub fn paramsubst(
                             isarr = 1;
                         }
                     }
-                    if !qt {
+                    if !qt && !(quotemod > 0 && quotetype > QT_BACKSLASH) {
                         let __dg = default_word_lexer_tokens(pretokenize_src_pat(alt)); // c:globlist (alt-word glob)
                                                              // Top-level `|` is alternation for FILENAME
                                                              // GENERATION though literal for the shared pattern
@@ -17790,7 +17790,7 @@ pub fn paramsubst(
                             isarr = 1;
                         }
                     }
-                    if !qt {
+                    if !qt && !(quotemod > 0 && quotetype > QT_BACKSLASH) {
                         let __dg = default_word_lexer_tokens(pretokenize_src_pat(alt)); // c:globlist (alt-word glob)
                                                              // Top-level `|` is alternation for FILENAME
                                                              // GENERATION though literal for the shared pattern
