@@ -40,3 +40,8 @@ src/ported/utils.rs::imeta_byte->imeta
 # form that reads the keymap name itself rather than taking it as a
 # parameter. Renaming it to `invicmdmode` would duplicate the C name.
 src/ported/zle/zle_main.rs::in_vi_cmd_mode->invicmdmode
+
+# getkeystring_with: the `how` / `misc` (GETKEY_UPDATE_OFFSET) form of getkeystring.
+# `getkeystring(s)` keeps the C name for the callers that need neither, so this
+# variant must carry a distinct Rust name; its doc cites the C function it ports.
+src/ported/utils.rs::getkeystring_with->getkeystring

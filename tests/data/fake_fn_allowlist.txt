@@ -1765,3 +1765,34 @@ execode_wordcode
 # counterpart — C's loop() reaches the executor via globals; zshrs runs
 # the fusevm executor as an object installed by the bin before zsh_main.
 install_session_executor
+
+# Thin Rust wrappers over libc / compiler builtins and C macros or function-pointer
+# globals that have no C function body to cite (every_top_level_fn_cites_its_c_source
+# skips names listed here). Each is called by the C source it replaces but defined by
+# libc, a macro or an assignment, not a function in Src/.
+atoi
+broken_setregid
+broken_setreuid
+clone_cadef_shallow
+clone_castate
+clone_castate_full
+condlex
+convfloat_underscore
+errno_get
+errno_set
+errno_str
+getegid
+geteuid
+getgid
+getpid
+getppid
+getuid
+have_native_setregid
+have_native_setreuid
+hgetc
+hungetc
+kill
+setenv
+seteuid_breaks_setuid
+tflag
+unsetenv

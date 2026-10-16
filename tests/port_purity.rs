@@ -56,6 +56,9 @@ const C_ROOT: &str = "src/zsh/Src";
 
 /// Files exempt from the 1:1 file-existence rule. These are pure
 /// organizational / build-system files with no behavior of their own.
+/// Ports of headers that are generated at build time, not committed upstream.
+const GENERATED_HEADER_PORTS: &[&str] = &["config_h", "patchlevel"];
+
 const EXEMPT_FILE_STEMS: &[&str] = &["lib", "main", "mod"];
 
 /// Top-level src/ files that historically have no direct C counterpart
@@ -74,10 +77,20 @@ fn repo_root() -> PathBuf {
 ///   `Src/Zle/compcore.c`       -> `zle/compcore`
 ///   `Src/Modules/cap.c`        -> `modules/cap`
 fn collect_c_logical_paths(root: &Path) -> BTreeSet<String> {
+    collect_logical_paths(root, "c")
+}
+
+/// Same walk for the headers: `Src/zsh.h` is ported to `zsh_h.rs`, so a Rust file
+/// named `X_h` mirrors a real `X.h`.
+fn collect_h_logical_paths(root: &Path) -> BTreeSet<String> {
+    collect_logical_paths(root, "h")
+}
+
+fn collect_logical_paths(root: &Path, ext: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file()
-            && entry.path().extension().and_then(|s| s.to_str()) == Some("c")
+            && entry.path().extension().and_then(|s| s.to_str()) == Some(ext)
         {
             let rel = entry.path().strip_prefix(root).unwrap();
             let mut parts: Vec<String> = rel
@@ -85,7 +98,7 @@ fn collect_c_logical_paths(root: &Path) -> BTreeSet<String> {
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
                 .collect();
             if let Some(last) = parts.last_mut() {
-                *last = last.trim_end_matches(".c").to_string();
+                *last = last.trim_end_matches(&format!(".{ext}")).to_string();
             }
             // Lowercase first dir (Zle -> zle, Modules -> modules) to
             // match Rust path conventions.
@@ -172,6 +185,7 @@ fn collect_rust_files(root: &Path) -> Vec<PathBuf> {
 fn every_rust_file_has_corresponding_c_file() {
     let root = repo_root();
     let c_paths = collect_c_logical_paths(&root.join(C_ROOT));
+    let h_paths = collect_h_logical_paths(&root.join(C_ROOT));
     let rust_files = collect_rust_files(&root);
 
     let mut orphans: Vec<String> = Vec::new();
@@ -184,9 +198,17 @@ fn every_rust_file_has_corresponding_c_file() {
         let Some(logical) = rust_logical_path(rel_to_src) else {
             continue;
         };
-        if !c_paths.contains(&logical) {
+        // A header port is named `<header>_h.rs` (`zsh_h.rs` for `zsh.h`).
+        let header = logical.strip_suffix("_h");
+        let mirrors_header = header.is_some_and(|h| h_paths.contains(h));
+        // `config.h` and `patchlevel.h` are produced by `configure` / the
+        // version makefile, so a clean checkout of the C tree has no such
+        // file to mirror.
+        let generated = GENERATED_HEADER_PORTS.contains(&logical.as_str());
+        if !c_paths.contains(&logical) && !mirrors_header && !generated {
             orphans.push(rel.to_string_lossy().into_owned());
         }
+
     }
 
     if !orphans.is_empty() {
@@ -268,8 +290,21 @@ fn every_top_level_fn_cites_its_c_source() {
     // genuinely lack one — so this is an accuracy fix worth ~3%, NOT a
     // relaxation. The requirement is unchanged: a `/// Port of X() from
     // Src/…` line must still precede every top-level fn.
+    // The cited name may carry the C signature (`Port of `setup_(UNUSED(Module m))`
+    // from `Src/Modules/ksh93.c:236``), the form most of src/ported/ uses; it must still
+    // be a `Port of …` line naming a `Src/` file.
     let cite_re =
-        Regex::new(r"Port of\s+`?[A-Za-z_][A-Za-z_0-9]*(?:\(\))?`?\s*from\s+`?Src/").unwrap();
+        Regex::new(r"(?i)port of\s+`[^`]*`\s*from\s+`?Src/").unwrap();
+
+
+    let rust_only: std::collections::HashSet<String> =
+        std::fs::read_to_string(root.join("tests/data/fake_fn_allowlist.txt"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_string)
+            .collect();
 
     let mut missing: Vec<String> = Vec::new();
     for rs in &rust_files {
@@ -301,7 +336,12 @@ fn every_top_level_fn_cites_its_c_source() {
                     // Skip standard exemptions.
                     if name == "main" || name.starts_with("test_") || name.starts_with("bench_") {
                         // fall through to brace tracking
-                    } else if !has_port_citation(&lines, i, &cite_re) {
+                    } else if rust_only.contains(name) {
+                        // A name the maintainer approved as Rust-original
+                        // (tests/data/fake_fn_allowlist.txt, the same audit
+                        // trail build.rs enforces) has no C function to cite.
+                    } else
+ if !has_port_citation(&lines, i, &cite_re) {
                         missing.push(format!(
                             "{}:{}: `fn {}` lacks `/// Port of … from Src/…` doc-comment",
                             rel.display(),
