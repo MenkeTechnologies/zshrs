@@ -2374,7 +2374,7 @@ impl ZshCompiler {
                 // a WithRedirectsBegin/End scope. Mirrors the
                 // canonical zsh behaviour where `f` opens the redirs
                 // on every call. Bug #158.
-                if matches!(inner.as_ref(), ZshCommand::FuncDef(_)) {
+                if matches!(inner.as_ref(), ZshCommand::FuncDef(f) if !is_anon_funcdef(f)) {
                     if let ZshCommand::FuncDef(mut f) = *inner.clone() {
                         // Build a single-list body that wraps the
                         // existing function body in
@@ -14665,6 +14665,15 @@ const TNL: &str = "; ";
 /// `taddnl(1)` under `tnewlins == 0` — `c:Src/text.c:244-245`
 /// (`taddstr(" ")`).
 const TNL_NOSEMI: &str = " ";
+
+/// !!! WARNING: Rust-only helper, no C counterpart !!!
+///
+/// Whether a function definition is anonymous (`() { … }`). C keeps no name
+/// for it (`nargs == 0`); zshrs's parser gives it a synthetic
+/// `_zshrs_anon_N` / `_zshrs_anon_kw_N` name.
+fn is_anon_funcdef(fd: &crate::parse::ZshFuncDef) -> bool {
+    fd.names.len() == 1 && fd.names[0].starts_with("_zshrs_anon_")
+}
 
 /// !!! WARNING: Rust-only compile-time pre-filter, no C counterpart !!!
 ///

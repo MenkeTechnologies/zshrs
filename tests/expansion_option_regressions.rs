@@ -159,3 +159,31 @@ fn quoted_default_word_with_a_glob_char_is_not_globbed() {
     assert_eq!(out, "");
     assert!(err.contains("no matches found"), "{err:?}");
 }
+
+/// c:Src/exec.c — redirections after an anonymous function's body belong to
+/// the command, so their targets expand in the CALLER's scope. zshrs wrapped
+/// them around the body, where `$1` was the anonymous function's own (empty)
+/// positional, and the output went to the terminal instead of the file.
+#[test]
+fn anonymous_function_redirect_target_expands_in_the_callers_scope() {
+    let dir = std::env::temp_dir().join(format!("zshrs-anon-redir-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("out.txt");
+    let script = format!("set -- {}; () {{ print \"in:$1\" }} a > $1", file.display());
+    let (_ec, out, _err) = run(&script);
+    assert_eq!(out, "");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "in:a\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// c:Src/builtin.c:5738 — `if (stopmsg || (zexit(0, ZEXIT_DEFERRED), !stopmsg))`.
+/// `jobs` leaves stopmsg at 2 (c:2486), and zshrs tested `stopmsg == 0` first,
+/// so `exit` inside a function body then did nothing and `(exit 3)` in a
+/// function returned 0. A05execution.ztst chunk 37.
+#[test]
+fn exit_in_a_function_still_defers_after_jobs_set_stopmsg() {
+    let (_ec, out, _err) = run("jobs; g() { (exit 3); print $?; }; g");
+    assert_eq!(out, "3\n");
+    let (ec, out, _err) = run("jobs; g() { exit 4 }; g; print not-reached");
+    assert_eq!((ec, out.as_str()), (4, ""));
+}

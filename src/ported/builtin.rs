@@ -14631,10 +14631,12 @@ pub fn bin_break(
             let shell_exiting = SHELL_EXITING.load(Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {
                 // c:5871
-                if STOPMSG.load(Relaxed) == 0 {
-                    zexit(0, ZEXIT_DEFERRED); // c:5884
-                }
-                if STOPMSG.load(Relaxed) == 0 {
+                // c:5738 — `if (stopmsg || (zexit(0, ZEXIT_DEFERRED), !stopmsg))`: an
+                    // already-set stopmsg (`jobs` leaves it at 2) still defers the exit.
+                    if STOPMSG.load(Relaxed) != 0 || {
+                        zexit(0, ZEXIT_DEFERRED);
+                        STOPMSG.load(Relaxed) == 0
+                    } {
                     // c:5884
                     let trap_state = TRAP_STATE.load(Relaxed);
                     if trap_state != 0 {
@@ -14684,10 +14686,12 @@ pub fn bin_break(
             if cur_locallevel > forklevel && shell_exiting != -1 {
                 // c:5871
                 // Probe via ZEXIT_DEFERRED — may set stopmsg.
-                if STOPMSG.load(Relaxed) == 0 {
-                    zexit(0, ZEXIT_DEFERRED); // c:5884
-                }
-                if STOPMSG.load(Relaxed) == 0 {
+                // c:5738 — `if (stopmsg || (zexit(0, ZEXIT_DEFERRED), !stopmsg))`: an
+                    // already-set stopmsg (`jobs` leaves it at 2) still defers the exit.
+                    if STOPMSG.load(Relaxed) != 0 || {
+                        zexit(0, ZEXIT_DEFERRED);
+                        STOPMSG.load(Relaxed) == 0
+                    } {
                     // c:5884 still no stopmsg → defer
                     let trap_state = TRAP_STATE.load(Relaxed);
                     if trap_state != 0 {

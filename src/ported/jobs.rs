@@ -2701,7 +2701,18 @@ pub fn spawnjob() {
                         line.push_str(&format!(" {}", p.pid));
                     }
                     line.push('\n');
-                    eprint!("{}", line); // c:1907-1911
+                    // c:1851 — `FILE *fout = shout ? shout : stdout;`; init.rs
+                    // keeps shout as fd + 1, 0 for NULL.
+                    let shout_v = *crate::ported::init::shout
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if shout_v == 0 {
+                        print!("{}", line);
+                        let _ = std::io::Write::flush(&mut std::io::stdout());
+                    } else {
+                        let fd = (shout_v - 1) as i32;
+                        unsafe { libc::write(fd, line.as_ptr() as *const libc::c_void, line.len()) };
+                    }
                 }
             }
         }
