@@ -12823,6 +12823,11 @@ fn parse_args() -> Args {
                      --shell, so `--matrix --mode expand` covers sh, dash,\n\
                      ash, ksh, mksh, pdksh, bash and the zsh-style legs)\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
+                     --matrix         run every target in turn (re-execs one pass per\n\
+                                      target), forwarding --mode/--verify/--max-report/\n\
+                                      --baseline/--stderr; each leg writes\n\
+                                      <out stem>.<target>.<ext>; ends with a summary\n\
+                                      table and exits 1 on any NEW divergence.\n\
                      --shell TARGET   zsh (default) | pdksh. pdksh differentials a\n\
                                       real pdksh/mksh/oksh vs `zshrs --pdksh` using\n\
                                       a ksh/POSIX generator (mode is ignored).\n\
@@ -12939,9 +12944,58 @@ fn regex_lite_replace(s: &str, pat: &str, rep: &str) -> String {
     }
 }
 
+/// Counters a single-target pass prints, scraped from its summary lines.
+#[derive(Default)]
+struct LegSummary {
+    cases: String,
+    divergences: String,
+    new: String,
+    timeouts: String,
+}
+
+/// Pull the `fuzzed N cases`, `divergences : D (K known / M new)` and
+/// `timeouts : T` figures out of one leg's output.
+fn scrape_leg(out: &str) -> LegSummary {
+    let mut s = LegSummary::default();
+    for line in out.lines() {
+        if let Some(rest) = line.strip_prefix("fuzzed ") {
+            s.cases = rest.split_whitespace().next().unwrap_or("?").to_string();
+        } else if let Some(rest) = line.strip_prefix("divergences : ") {
+            s.divergences = rest.split_whitespace().next().unwrap_or("?").to_string();
+            s.new = rest
+                .split('/')
+                .nth(1)
+                .and_then(|t| t.split_whitespace().next())
+                .unwrap_or("?")
+                .to_string();
+        } else if let Some(rest) = line.strip_prefix("timeouts    : ") {
+            s.timeouts = rest.split_whitespace().next().unwrap_or("?").to_string();
+        }
+    }
+    s
+}
+
+/// The divergence corpus file for one leg: `<stem>.<target>.<ext>` beside the
+/// requested `--out`, so the legs of one matrix run do not overwrite each other.
+fn leg_out_path(out: &Path, target: &str) -> PathBuf {
+    let stem = out.file_stem().and_then(|s| s.to_str()).unwrap_or("divergences");
+    let name = match out.extension().and_then(|e| e.to_str()) {
+        Some(ext) => format!("{stem}.{}.{ext}", target.replace('/', "-")),
+        None => format!("{stem}.{}", target.replace('/', "-")),
+    };
+    out.with_file_name(name)
+}
+
 /// `--matrix`: re-exec this binary once per target (a clean single-target pass
-/// each), so the whole 10-way matrix runs from one command. Targets whose
-/// reference shell is absent are reported as SKIP, never a failure.
+/// each), so the whole matrix runs from one command. Targets whose reference
+/// shell is absent are reported as SKIP, never a failure.
+///
+/// Every flag that shapes a pass is forwarded — `--mode`, `--verify`,
+/// `--max-report`, `--baseline`, `--stderr` — and each leg writes its own
+/// divergence file. Without that, `--matrix --verify 3` ran the legs unverified
+/// and stopped each at the default report cap, so the per-target rates could not be
+/// compared. The run ends with one table, and exits 1 when any leg found a
+/// divergence its baseline does not list.
 fn run_matrix(args: &Args) {
     let self_exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -12951,32 +13005,73 @@ fn run_matrix(args: &Args) {
         }
     };
     println!(
-        "═══ parity-fuzz {}-way matrix — {} cases/target, seed {} ═══",
+        "═══ parity-fuzz {}-way matrix — mode {}, {} cases/target, seed {} ═══",
         ALL_TARGETS.len(),
+        mode_name(args.mode),
         args.count,
         args.base_seed
     );
+    let mut rows: Vec<(String, String, LegSummary, bool)> = Vec::new();
+    let mut any_new = false;
     for t in ALL_TARGETS {
         let cfg = target_cfg(t);
         if reference_bin(t).is_none() {
             println!("\n── {} ── SKIP (no reference shell installed)", cfg.name);
+            rows.push((cfg.name.to_string(), "SKIP".into(), LegSummary::default(), false));
             continue;
         }
         println!("\n── {} ──", cfg.name);
-        let _ = Command::new(&self_exe)
-            .args([
-                "--shell",
-                cfg.name,
-                "--count",
-                &args.count.to_string(),
-                "--seed",
-                &args.base_seed.to_string(),
-                "--jobs",
-                &args.jobs.to_string(),
-                "--timeout-ms",
-                &args.timeout_ms.to_string(),
-            ])
-            .status();
+        let mut cmd = Command::new(&self_exe);
+        cmd.args([
+            "--shell",
+            cfg.name,
+            "--mode",
+            mode_name(args.mode),
+            "--count",
+            &args.count.to_string(),
+            "--seed",
+            &args.base_seed.to_string(),
+            "--jobs",
+            &args.jobs.to_string(),
+            "--timeout-ms",
+            &args.timeout_ms.to_string(),
+            "--verify",
+            &args.verify.to_string(),
+            "--max-report",
+            &args.max_report.to_string(),
+            "--out",
+        ])
+        .arg(leg_out_path(&args.out_path, cfg.name));
+        if let Some(b) = &args.baseline {
+            cmd.arg("--baseline").arg(b);
+        }
+        if CMP_STDERR.load(std::sync::atomic::Ordering::Relaxed) {
+            cmd.arg("--stderr");
+        }
+        let out = cmd.stdin(Stdio::null()).stderr(Stdio::inherit()).output();
+        let (text, ok) = match out {
+            Ok(o) => (String::from_utf8_lossy(&o.stdout).into_owned(), o.status.success()),
+            Err(e) => (format!("spawn failed: {e}"), false),
+        };
+        print!("{text}");
+        let sum = scrape_leg(&text);
+        any_new |= !ok;
+        rows.push((cfg.name.to_string(), if ok { "ok" } else { "NEW" }.into(), sum, !ok));
+    }
+
+    println!("\n═══ matrix summary ═══");
+    println!(
+        "{:<14} {:<6} {:>8} {:>12} {:>5} {:>9}",
+        "target", "status", "cases", "divergences", "new", "timeouts"
+    );
+    for (name, status, sum, _) in &rows {
+        println!(
+            "{:<14} {:<6} {:>8} {:>12} {:>5} {:>9}",
+            name, status, sum.cases, sum.divergences, sum.new, sum.timeouts
+        );
+    }
+    if any_new {
+        std::process::exit(1);
     }
 }
 
@@ -12985,7 +13080,7 @@ fn main() {
     let bin = zshrs_bin();
     let timeout = Duration::from_millis(args.timeout_ms);
 
-    // --matrix: run each of the 10 targets as a full single-target child pass
+    // --matrix: run each target as a full single-target child pass
     // (each prints its own oracle/divergence summary). The OnceLock/thread-local
     // design is one-target-per-process, so re-exec keeps every pass clean.
     if args.matrix {
