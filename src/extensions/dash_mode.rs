@@ -723,6 +723,43 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
     }
 }
 
+/// ksh93's `.sh.*` namespace under `--ksh`, as scalars. `None` for any other
+/// name, or outside ksh93 mode.
+///
+/// `.sh.version` is `$KSH_VERSION`; `.sh.fun` the innermost running function;
+/// `.sh.file` the script (or `-c`) name.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn korn_sh_scalar(name: &str) -> Option<String> {
+    if !ksh93_mode() || !name.starts_with(".sh.") {
+        return None;
+    }
+    match name {
+        ".sh.version" => Some(ksh_version_string().to_string()),
+        ".sh.fun" => Some(
+            crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .ok()
+                .and_then(|f| f.iter().rev().find(|fs| fs.tp == crate::ported::zsh_h::FS_FUNC).map(|fs| fs.name.clone()))
+                .unwrap_or_default(),
+        ),
+        ".sh.file" => Some(crate::ported::utils::scriptfilename_get().unwrap_or_default()),
+        _ => None,
+    }
+}
+
+/// `.sh.match`: the last `[[ s =~ re ]]` match, the whole match first and then
+/// each capture group — ksh93 numbers them from 0, where zsh's `$match` starts
+/// at the first group.
+pub fn korn_sh_match() -> Vec<String> {
+    let whole = crate::ported::params::getsparam("MATCH").unwrap_or_default();
+    let groups = crate::ported::subst::arrays_get("match").unwrap_or_default();
+    if whole.is_empty() && groups.is_empty() {
+        return Vec::new();
+    }
+    std::iter::once(whole).chain(groups).collect()
+}
+
 /// bash's `shopt` option table: `(bash name, zshrs option key, bash default)`.
 ///
 /// The name list and the defaults are bash 5.3's own — `bash -c shopt`
@@ -1116,6 +1153,70 @@ pub fn bash_dollar_dash() -> String {
     }
     if isset(SHINSTDIN) {
         out.push('s');
+    }
+    out
+}
+
+/// `$-` under `--ksh` (ksh93u+m) and `--mksh` / `--pdksh`, measured on the real
+/// shells: `ksh -c 'echo $-'` is `chsB`, `mksh -c` is `hc`.
+///
+/// /// (`ksh -Cu -c` -> `chsuBC`); `h` (hashall), `s` and `B` (brace expansion)
+/// are always there. mksh prints in its option-table order (`C a e f m u h v x`
+/// then `c`), with `h` always on. `c` marks a `-c` string, `s` (ksh93 only,
+/// always) reading from stdin.
+///
+/// !!! RUST-ONLY — no zsh C counterpart !!!
+pub fn korn_dollar_dash() -> String {
+    use crate::ported::options::opt_state_get;
+    use crate::ported::zsh_h::{isset, INTERACTIVE};
+    let on = |name: &str| opt_state_get(name).unwrap_or(false);
+    let flags: [(char, bool); 11] = [
+        ('a', on("allexport")),
+        ('e', on("errexit")),
+        ('f', !on("glob")),
+        ('i', isset(INTERACTIVE)),
+        ('m', on("monitor")),
+        ('n', !on("exec")),
+        ('u', !on("unset")),
+        ('v', on("verbose")),
+        ('x', on("xtrace")),
+        ('C', !on("clobber")),
+        ('B', !on("ignorebraces")),
+    ];
+    let has = |c: char| flags.iter().any(|(l, v)| *l == c && *v);
+    let is_c = crate::ported::params::getsparam("ZSH_EXECUTION_STRING").is_some_and(|c| !c.is_empty());
+    let mut out = String::new();
+    if pdksh_family() {
+        for c in ['C', 'a', 'e', 'f', 'i', 'm', 'n', 'u'] {
+            if has(c) {
+                out.push(c);
+            }
+        }
+        out.push('h');
+        for c in ['v', 'x'] {
+            if has(c) {
+                out.push(c);
+            }
+        }
+        if is_c {
+            out.push('c');
+        }
+    } else {
+        for c in ['c', 'a', 'e', 'f', 'h', 'i', 'm', 'n', 's', 'u', 'v', 'x'] {
+            let set = match c {
+                'c' => is_c,
+                'h' | 's' => true,
+                _ => has(c),
+            };
+            if set {
+                out.push(c);
+            }
+        }
+        for c in ['B', 'C'] {
+            if has(c) {
+                out.push(c);
+            }
+        }
     }
     out
 }

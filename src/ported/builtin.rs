@@ -1482,6 +1482,15 @@ pub fn bin_set(
                     // the positional parameters.
                     break;
                 }
+                // !!! KORN-MODE GATE (no C counterpart) !!! ksh93 / mksh accept option
+                // names (`keyword`, `posix`, `gmacs`, `utf8-mode`, …) zsh has no option for.
+                if let Some(st) = crate::extensions::emulation_output::korn_set_o(&optname, action) {
+                    if st != 0 {
+                        unqueue_signals();
+                        return st;
+                    }
+                    break;
+                }
                 let optno = optlookup(&optname); // c:642
                 if optno == 0 {
                     // c:642 — C: `zerrnam(nam, "no such option: %s", *args)`.
@@ -1686,6 +1695,8 @@ pub fn bin_set(
             crate::ported::params::sethparam(&aname, new_arr);
         } else {
             setaparam(&aname, new_arr);
+            // bash / Korn sparse arrays: a whole-array assignment leaves no holes.
+            crate::bash_arrays::clear(&aname);
         }
     } else {
         // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
@@ -20861,6 +20872,9 @@ fn printf_format(
             // value), so it cannot serve as `start`; accumulate the raw text
             // separately as each character is consumed.
             let mut raw = String::from("%");
+            // !!! KSH93 (no C counterpart) !!! `%..8d` — ksh93's printf prints an integer in the
+            // given base (`printf '%..8d' 300` is `454`); `%.3..8d` zero-pads it to 3 digits.
+            let mut ksh_base: Option<u32> = None;
             // c:Src/builtin.c:5199-5219 — `%n$` positional argument
             // specifier. A leading 1-9 digit run followed by `$` selects
             // the n-th argument (1-based) for this conversion instead of
@@ -21093,6 +21107,30 @@ fn printf_format(
                             break;
                         }
                     }
+                    if iter.peek() == Some(&'.') && crate::dash_mode::ksh93_mode() {
+                        iter.next();
+                        raw.push('.');
+                        // `%.3..8d`: the precision is already read, so the base marker is `..` here.
+                        if iter.peek() == Some(&'.') {
+                            iter.next();
+                            raw.push('.');
+                        }
+                        let mut digits = String::new();
+                        while let Some(&c) = iter.peek() {
+                            if c.is_ascii_digit() {
+                                digits.push(c);
+                                raw.push(c);
+                                iter.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        ksh_base = digits.parse::<u32>().ok().filter(|b| (2..=64).contains(b));
+                        // `%..8d` is precision-less: drop the bare `.` pushed above.
+                        if spec.ends_with('.') {
+                            spec.pop();
+                        }
+                    }
                 }
             }
             // c:Src/builtin.c:5290 — `/* ignore any size modifier */
@@ -21230,8 +21268,36 @@ fn printf_format(
                     }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     let n = parse_int_arg(&a);
-                    spec.push('d');
-                    out.push_str(&format_spec_int(&spec, n));
+                    if let Some(base) = ksh_base {
+                        let mut digits = String::new();
+                        let mut v = n.unsigned_abs();
+                        if v == 0 {
+                            digits.push('0');
+                        }
+                        while v > 0 {
+                            digits.insert(0, std::char::from_digit((v % base as u64) as u32, base.min(36)).unwrap_or('?'));
+                            v /= base as u64;
+                        }
+                        let (left, zero_flag, width, prec) = parse_flags_width_prec(&spec);
+                        if let Some(p) = prec {
+                            while digits.len() < p {
+                                digits.insert(0, '0');
+                            }
+                        }
+                        let sign = if n < 0 { "-" } else if spec.contains('+') { "+" } else { "" };
+                        let body_len = sign.len() + digits.len();
+                        let pad = width.saturating_sub(body_len);
+                        if left {
+                            out.push_str(&format!("{sign}{digits}{}", " ".repeat(pad)));
+                        } else if zero_flag && prec.is_none() {
+                            out.push_str(&format!("{sign}{}{digits}", "0".repeat(pad)));
+                        } else {
+                            out.push_str(&format!("{}{sign}{digits}", " ".repeat(pad)));
+                        }
+                    } else {
+                        spec.push('d');
+                        out.push_str(&format_spec_int(&spec, n));
+                    }
                     arg_i += 1;
                 }
                 Some('u') => {

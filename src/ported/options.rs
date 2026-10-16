@@ -1146,6 +1146,9 @@ pub fn dashgetfn() -> String {
     if crate::dash_mode::bash_mode() {
         return crate::dash_mode::bash_dollar_dash();
     }
+    if crate::dash_mode::korn_mode() {
+        return crate::dash_mode::korn_dollar_dash();
+    }
     // c:289-290 — `#define FIRST_OPT '0'` / `#define LAST_OPT 'y'`.
     // The previous Rust port iterated `(b'A'..=b'z')` (A=0x41..z=0x7a),
     // skipping the 17 char positions C walks BEFORE 'A' (digits + most

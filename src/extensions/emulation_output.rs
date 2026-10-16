@@ -672,8 +672,56 @@ const MKSH_SET_O: &[SetOpt] = &[
     o("xtrace", "xtrace"),
 ];
 
+/// State of the Korn shells' `set -o` names that zsh has no option for
+/// (`keyword`, `posix`, `gmacs`, `globstar`, `utf8-mode`, …): the real shells
+/// accept and remember them, so `set -o X; [[ -o X ]]` answers true. The tables
+/// above give their DEFAULT; this holds what a script changed.
+///
+/// !!! RUST-ONLY — no zsh C counterpart !!!
+static KORN_FIXED_STATE: std::sync::Mutex<Vec<(&'static str, bool)>> = std::sync::Mutex::new(Vec::new());
+
+fn korn_table() -> Option<&'static [SetOpt]> {
+    match crate::emulation_startup::personality() {
+        crate::emulation_startup::Personality::Ksh93 => Some(KSH93_SET_O),
+        crate::emulation_startup::Personality::Mksh | crate::emulation_startup::Personality::Pdksh => {
+            Some(MKSH_SET_O)
+        }
+        _ => None,
+    }
+}
+
+/// `set -o NAME` / `set +o NAME` for a name only the Korn shells' table owns.
+/// `None` when the shell is not a Korn drop-in or NAME is not such a name.
+pub fn korn_set_o(name: &str, on: bool) -> Option<i32> {
+    if !crate::dash_mode::posix_faithful() {
+        return None;
+    }
+    let opt = korn_table()?.iter().find(|o| o.zsh.is_none() && o.name == name)?;
+    let mut st = KORN_FIXED_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    match st.iter_mut().find(|(n, _)| *n == opt.name) {
+        Some(slot) => slot.1 = on,
+        None => st.push((opt.name, on)),
+    }
+    Some(0)
+}
+
+/// Current state of such a name (`[[ -o NAME ]]`), `None` when not owned here.
+pub fn korn_get_o(name: &str) -> Option<bool> {
+    if !crate::dash_mode::posix_faithful() {
+        return None;
+    }
+    let opt = korn_table()?.iter().find(|o| o.zsh.is_none() && o.name == name)?;
+    Some(opt.state())
+}
+
 impl SetOpt {
     fn state(&self) -> bool {
+        if self.zsh.is_none() {
+            let st = KORN_FIXED_STATE.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((_, v)) = st.iter().find(|(n, _)| *n == self.name) {
+                return *v;
+            }
+        }
         match self.zsh {
             Some(name) => {
                 let on = crate::ported::options::opt_state_get(name).unwrap_or(self.default_on);

@@ -22482,7 +22482,13 @@ pub fn paramsubst(
                             None => arr.iter().skip(lo).cloned().collect(), // c:715
                         };
                         let kept = if bash_off_underflow { Vec::new() } else { kept };
-                        value = kept.join(" "); // c:715
+                        // c:Src/subst.c:3033 — in double quotes an array that is not
+                        // `[@]` is joined on IFS[0] (`IFS=-; "${x[*]:0:2}"` is `a-b`).
+                        value = if qt && nojoin != 2 && !matches!(splat_sub!(), Some("@")) && var_name != "@" {
+                            crate::ported::utils::sepjoin(&kept, None)
+                        } else {
+                            kept.join(" ") // c:715
+                        };
                         split_parts = Some(kept); // c:715 (auto-splat slice)
                     } else {
                         // c:3766+ — substring offsets count CHARACTERS via
@@ -29657,6 +29663,9 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
         if let Some(v) = crate::dash_mode::bash_special_array(name) {
             return Some(v);
         }
+    }
+    if name == ".sh.match" && crate::dash_mode::ksh93_mode() {
+        return Some(crate::dash_mode::korn_sh_match());
     }
     // c:Src/params.c:1090-1115 createparam — a `local NAME` / `typeset
     // NAME` replaces the special's paramtab node with a plain one, so

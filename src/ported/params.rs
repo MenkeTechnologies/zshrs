@@ -5952,6 +5952,42 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                         }
                     }
                 };
+                // !!! PDKSH-FAMILY (no C counterpart) !!! mksh gives an integer parameter the
+                // base of the last base literal assigned to it (`8#17`, `16#ff`, `0x1f`),
+                // and prints it that way afterwards: `typeset -i v=0x1f; print $v` is
+                // `16#1f`, and the base survives `v=v+1`. zsh keeps the display base
+                // only when asked for with `typeset -i BASE`.
+                if (flags & ASSPM_ENV_IMPORT) == 0 && crate::dash_mode::pdksh_family() {
+                    if let Some(b) = {
+                        let t = s.trim().trim_start_matches(['-', '+']);
+                        let mut found = None;
+                        let bytes: Vec<char> = t.chars().collect();
+                        let mut i = 0;
+                        while i < bytes.len() {
+                            if bytes[i] == '#' && i > 0 && bytes[i - 1].is_ascii_digit() {
+                                let mut st = i;
+                                while st > 0 && bytes[st - 1].is_ascii_digit() {
+                                    st -= 1;
+                                }
+                                let n: String = bytes[st..i].iter().collect();
+                                if let Ok(b) = n.parse::<i32>() {
+                                    if (2..=36).contains(&b) {
+                                        found = Some(b);
+                                    }
+                                }
+                            } else if bytes[i] == '0'
+                                && matches!(bytes.get(i + 1), Some('x') | Some('X'))
+                                && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
+                            {
+                                found = Some(16);
+                            }
+                            i += 1;
+                        }
+                        found
+                    } {
+                        pm.base = b;
+                    }
+                }
                 // c:2775-2778 — `if (flags & ASSPM_AUGMENT) pm->u.val += val.l;
                 //                else pm->u.val = val.l;`. The augment
                 // path is what makes `integer x=42; x+=8` store 50 instead
@@ -17756,6 +17792,11 @@ fn is_unset_special(name: &str) -> bool {
 /// path. Mirrors the `Param.gsu->getfn` dispatch C zsh does
 /// inside `getsparam` / `getstrvalue` (Src/params.c:3076 / 2335).
 pub fn lookup_special_var(name: &str) -> Option<String> {
+    if name.starts_with(".sh.") {
+        if let Some(v) = crate::dash_mode::korn_sh_scalar(name) {
+            return Some(v);
+        }
+    }
     // ksh93 / mksh `$KSH_VERSION` under --ksh / --mksh / --pdksh (the strings the
     // reference shells report; scripts probe it with `${KSH_VERSION+set}`).
     if name == "KSH_VERSION" && crate::dash_mode::korn_mode() {

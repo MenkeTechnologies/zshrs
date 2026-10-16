@@ -325,3 +325,11 @@ fn typeset_on_a_declared_unset_array_drops_its_type_on_592() {
     let out = run_as_zsh("setopt typesettounset; typeset -a h; typeset -U h; typeset -p h");
     assert_eq!(out, "typeset -U h\n");
 }
+
+/// c:Src/subst.c:3033 — a double-quoted `[*]` slice joins on IFS[0]:
+/// `IFS=-; x=(a b c); "${x[*]:0:2}"` is `a-b`, while `"${x[@]:0:2}"` keeps two words.
+#[test]
+fn quoted_star_slice_joins_on_ifs() {
+    let (_ec, out, _err) = run("x=(a b c); IFS=-; print \"${x[*]:0:2}\"; print -l \"${x[@]:0:2}\"; set -- p q r; print \"${*:1}\"");
+    assert_eq!(out, "a-b\na\nb\np-q-r\n");
+}

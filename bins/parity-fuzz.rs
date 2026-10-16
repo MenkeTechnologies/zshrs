@@ -290,7 +290,45 @@ fn in_path(name: &str) -> Option<String> {
 /// `RefKind::Zsh` / `RefKind::ZshEmulate`. `None` when a `Real` reference has no
 /// installed candidate — the run is SKIPPED (never failed), like the optional
 /// legs of the parity matrix.
+/// The `sh` target's reference and any extra argument it needs.
+///
+/// `/bin/sh` is whatever the host ships: dash on Debian-family Linux, but on
+/// macOS bash 3.2.57 in POSIX mode — which answers 127 for every fatal
+/// expansion / assignment / arithmetic error in a subshell, where dash says 2
+/// and bash 5 `--posix` says 1. A comparison against that is a comparison
+/// against one bash release's quirk, not against POSIX `sh`, so when `/bin/sh`
+/// is a bash older than 4 the leg uses the newest `bash --posix` on PATH
+/// instead — with `xpg_echo`, which `/bin/sh` builds turn on, so `echo` expands
+/// backslash escapes as dash's does — and falls back to `/bin/sh` when there is
+/// none.
+fn sh_reference() -> (String, &'static [&'static str]) {
+    static REF: std::sync::OnceLock<(String, &'static [&'static str])> = std::sync::OnceLock::new();
+    REF.get_or_init(|| {
+        let bash_major = |bin: &str| -> Option<u32> {
+            let out = Command::new(bin)
+                .args(["-c", "printf %s \"${BASH_VERSION%%.*}\""])
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+        };
+        if matches!(bash_major("/bin/sh"), Some(m) if m < 4) {
+            for cand in ["bash", "/opt/homebrew/bin/bash", "/usr/local/bin/bash"] {
+                if let Some(path) = in_path(cand) {
+                    if matches!(bash_major(&path), Some(m) if m >= 4) {
+                        return (path, &["--posix", "-O", "xpg_echo"]);
+                    }
+                }
+            }
+        }
+        ("/bin/sh".to_string(), &[])
+    })
+    .clone()
+}
+
 fn reference_bin(t: ShellTarget) -> Option<String> {
+    if t == ShellTarget::Sh {
+        return Some(sh_reference().0);
+    }
     match target_cfg(t).refk {
         RefKind::Zsh | RefKind::ZshEmulate(_) => Some(zsh_path().to_string()),
         RefKind::Real(cands) => cands.iter().find_map(|n| in_path(n)),
@@ -595,6 +633,9 @@ fn run_zsh(script: &str, timeout: Duration) -> RunOut {
             // user rc perturbs the deterministic run.
             let bin = reference_bin(t).unwrap_or_else(|| cfg.name.to_string());
             let mut cmd = Command::new(bin);
+            if t == ShellTarget::Sh {
+                cmd.args(sh_reference().1);
+            }
             let file = (t == ShellTarget::Csh).then(|| csh_script_file(script));
             match &file {
                 Some(path) => cmd.arg("-f").arg(path),
@@ -11249,7 +11290,15 @@ fn posix_wide_one(rng: &mut StdRng) -> String {
         1 => {
             // `f` is deliberately absent: the harness passes `-f` to zshrs
             // (no-rc), so `$-` carrying it is an invocation artifact.
-            let letter = *pick(rng, &["c", "u", "C", "a", "x", "v", "m"]);
+            // `c` is left to the dash-family legs: bash and ksh put it in `$-` for
+            // `-c`, dash does not, and the `sh` leg's reference is whichever shell
+            // the host's /bin/sh is.
+            let letters: &[&str] = if matches!(shell_target(), ShellTarget::Dash | ShellTarget::Ash) {
+                &["c", "u", "C", "a", "x", "v", "m"]
+            } else {
+                &["u", "C", "a", "x", "v", "m"]
+            };
+            let letter = *pick(rng, letters);
             format!("case $- in *{letter}*) printf 'has\\n';; *) printf 'no\\n';; esac")
         }
         // A FATAL expansion / arithmetic error. XCU §2.8.1 makes these exit a

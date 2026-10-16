@@ -577,6 +577,10 @@ pub fn dolstat(s: &str) -> u32 {
 /// through the canonical option table via `optlookup` /
 /// `optlookupc` (Src/options.c:684 / :721).
 pub fn optison(name: Option<&str>, s: &str) -> i32 {
+    // !!! KORN-MODE GATE (no C counterpart) !!! see `emulation_output::korn_set_o`.
+    if let Some(on) = crate::extensions::emulation_output::korn_get_o(s) {
+        return if on { 0 } else { 1 };
+    }
     // c:502
     let i: i32 = if s.len() == 1 {
         // c:502
