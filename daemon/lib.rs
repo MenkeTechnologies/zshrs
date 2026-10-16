@@ -262,7 +262,13 @@ pub fn run() -> Result<()> {
     );
 
     // Singleton enforcement. Holds the lock for daemon lifetime.
-    let _pid_lock = pidlock::acquire(&paths)?;
+    // `ZSHRS_DAEMON_LOCK_WAIT_MS` is set only for the replacement that
+    // `zcache daemon restart` spawns: it outlives the old daemon's drain.
+    let lock_wait_ms = std::env::var("ZSHRS_DAEMON_LOCK_WAIT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    let _pid_lock = pidlock::acquire_waiting(&paths, std::time::Duration::from_millis(lock_wait_ms))?;
     tracing::trace!(pid_file = %paths.pid_file.display(), pid, "daemon: pidlock acquired");
 
     // Spin up tokio runtime + run server.

@@ -314,6 +314,12 @@ fn zcache_export(args: &[String]) -> i32 {
     let mut out_path: Option<String> = None;
     let mut include_sensitive = false;
     let mut show_sensitive = false;
+    // Same filter/range/all surface as `zcache view` (docs/DAEMON.md:
+    // `zcache export history --filter … --range …`, `export subscriptions --all`,
+    // `export sourced --all`); the server's `export` op honors all three.
+    let mut filter: Option<String> = None;
+    let mut range: Option<String> = None;
+    let mut all = false;
     // For `zcache export functions <name>` / `export shard <name>` /
     // `export script <path>` — first non-flag positional after the target.
     let mut name: Option<String> = None;
@@ -331,6 +337,15 @@ fn zcache_export(args: &[String]) -> i32 {
             },
             "--include-sensitive" => include_sensitive = true,
             "--show-sensitive" => show_sensitive = true,
+            "--filter" => match iter.next() {
+                Some(p) => filter = Some(p.clone()),
+                None => return err_exit("zcache export", "--filter requires a value"),
+            },
+            "--range" => match iter.next() {
+                Some(r) => range = Some(r.clone()),
+                None => return err_exit("zcache export", "--range requires a value"),
+            },
+            "--all" => all = true,
             other if other.starts_with('-') => {
                 return err_exit("zcache export", &format!("unknown flag `{}`", other));
             }
@@ -393,6 +408,15 @@ fn zcache_export(args: &[String]) -> i32 {
             });
             if let Some(n) = name.as_ref() {
                 p["name"] = Value::String(n.clone());
+            }
+            if let Some(f) = filter.as_ref() {
+                p["filter"] = json!(f);
+            }
+            if let Some(r) = range.as_ref() {
+                p["range"] = json!(r);
+            }
+            if all {
+                p["all"] = json!(true);
             }
             ("export", p)
         }
@@ -1078,7 +1102,21 @@ fn zsend(args: &[String]) -> i32 {
 }
 
 fn znotify(args: &[String]) -> i32 {
-    let (target, message) = match parse_send_args(args, "znotify") {
+    // `znotify --urgency <low|normal|critical> <target> <msg…>` (docs/DAEMON.md).
+    let mut urgency = "normal".to_string();
+    let mut stripped: Vec<String> = Vec::new();
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        if a == "--urgency" {
+            match iter.next().map(String::as_str) {
+                Some(level @ ("low" | "normal" | "critical")) => urgency = level.to_string(),
+                _ => return err_exit("znotify", "--urgency requires low, normal or critical"),
+            }
+        } else {
+            stripped.push(a.clone());
+        }
+    }
+    let (target, message) = match parse_send_args(&stripped, "znotify") {
         Ok(v) => v,
         Err(code) => return code,
     };
@@ -1088,7 +1126,7 @@ fn znotify(args: &[String]) -> i32 {
     };
     match client.call(
         "notify",
-        json!({ "target": target, "message": message, "urgency": "normal" }),
+        json!({ "target": target, "message": message, "urgency": urgency }),
     ) {
         Ok(v) => {
             let count = v
@@ -1773,7 +1811,9 @@ fn zsubscribe_set_paused(pause: bool, sub_id: Option<u64>, all: bool) -> i32 {
     } else if let Some(id) = sub_id {
         payload["id"] = json!(id);
     } else {
-        return err_exit("zsubscribe", "--pause/--resume requires --id <N> or --all");
+        // docs/DAEMON.md: bare `--pause` / `--resume` mute or unmute every
+        // stream of this shell.
+        payload["all"] = json!(true);
     }
     let mut client = match connect_or_err() {
         Ok(c) => c,

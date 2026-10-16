@@ -670,7 +670,7 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
             });
             let _ = state.broadcast(super::ipc::Frame::event("daemon_shutdown", payload), &[]);
 
-            let new_pid = match spawn_replacement_daemon() {
+            let new_pid = match spawn_replacement_daemon(&state.paths.root) {
                 Ok(p) => Some(p),
                 Err(e) => {
                     tracing::warn!(
@@ -3782,7 +3782,7 @@ fn parse_bindkey_line(line: &str) -> Option<(String, String)> {
 ///   2. `/proc/self/exe` (Linux) — current binary self-path; works for
 ///      `zshrs --daemon` invocations launched from the shell binary.
 ///   3. PATH lookup of `zshrs-daemon` then `zshrs`.
-fn spawn_replacement_daemon() -> std::io::Result<u32> {
+fn spawn_replacement_daemon(root: &std::path::Path) -> std::io::Result<u32> {
     use std::process::Command;
 
     let exe = if let Ok(p) = std::env::var("ZSHRS_BIN") {
@@ -3805,6 +3805,11 @@ fn spawn_replacement_daemon() -> std::io::Result<u32> {
     if !is_daemon_bin {
         cmd.arg("--daemon");
     }
+    // Same home as the daemon being replaced (it may have been started with
+    // `--home`, which the environment does not carry), and wait out the old
+    // daemon's singleton lock instead of exiting as "already running".
+    cmd.env("ZSHRS_HOME", root);
+    cmd.env("ZSHRS_DAEMON_LOCK_WAIT_MS", "10000");
 
     // Detach: new session, redirect stdio to /dev/null. The new daemon writes
     // tracing output to ~/.zshrs/zshrs-daemon.log.

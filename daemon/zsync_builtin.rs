@@ -330,34 +330,59 @@ fn pull(args: &[String]) -> i32 {
 }
 
 fn diff(args: &[String]) -> i32 {
-    let subsystem = match args.first() {
-        Some(s) => s.clone(),
-        None => return err_exit("diff: missing <subsystem>"),
-    };
-    let overlay = if let Some(idx) = args.iter().position(|a| a == "--overlay") {
+    // `zsync diff [subsystem]` (docs/DAEMON.md): with no `--overlay` the
+    // overlay is the calling shell's own, read through the enumerator that
+    // `zsync up --all` uses; with no subsystem, every one it reports.
+    let subsystem = args.first().filter(|a| !a.starts_with("--")).cloned();
+    let explicit = if let Some(idx) = args.iter().position(|a| a == "--overlay") {
         let raw = match args.get(idx + 1) {
             Some(s) => s.clone(),
             None => return err_exit("diff: --overlay requires a JSON value"),
         };
         match serde_json::from_str::<Value>(&raw) {
-            Ok(v) => v,
+            Ok(v) => Some(v),
             Err(e) => return err_exit(&format!("diff: malformed --overlay: {}", e)),
         }
     } else {
-        Value::Null
+        None
     };
+    let mut pairs: Vec<(String, Value)> = match (&subsystem, explicit) {
+        (Some(sub), Some(overlay)) => vec![(sub.clone(), overlay)],
+        (sub, None) => {
+            let Some(enumerator) = OVERLAY_ENUMERATOR.get() else {
+                return err_exit(
+                    "diff: shell-side overlay enumerator not registered; pass \
+                     `<subsystem> --overlay '<json>'`",
+                );
+            };
+            enumerator()
+                .into_iter()
+                .filter(|(name, _)| sub.as_ref().is_none_or(|want| want == name))
+                .collect()
+        }
+        (None, Some(_)) => return err_exit("diff: --overlay requires a <subsystem>"),
+    };
+    if let Some(sub) = &subsystem {
+        if pairs.is_empty() {
+            pairs.push((sub.clone(), Value::Null));
+        }
+    }
     let mut client = match connect() {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    match client.call(
-        "diff_canonical",
-        json!({ "subsystem": subsystem, "overlay": overlay }),
-    ) {
-        Ok(v) => {
-            print_pretty(&v);
-            0
+    let mut out = serde_json::Map::new();
+    for (name, overlay) in pairs {
+        match client.call("diff_canonical", json!({ "subsystem": name, "overlay": overlay })) {
+            Ok(v) => {
+                out.insert(name, v);
+            }
+            Err(e) => return err_exit(&format!("diff: {}", e)),
         }
-        Err(e) => err_exit(&format!("diff: {}", e)),
     }
+    match (subsystem, out.len()) {
+        (Some(sub), 1) => print_pretty(&out.remove(&sub).unwrap_or(Value::Null)),
+        _ => print_pretty(&Value::Object(out)),
+    }
+    0
 }

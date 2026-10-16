@@ -713,7 +713,7 @@ zregexparse  zutil       zmodload     zle
 # Cache management
 zcache                              # alias for `zcache info`
 zcache info                         # daemon stats: shard sizes, entry counts, in-flight jobs
-zcache jobs                         # list active compile jobs
+zcache jobs                         # same payload as `zcache info`
 zcache clean [--wait]               # regenerable only: shards, index.rkyv, shell caches (preserves entry_stats)
 zcache clean --all [--wait]         # same as `zcache clean` (no prompt)
 zcache clean shards [--wait]
@@ -726,9 +726,6 @@ zcache clean stats
 zcache clean log
 # all | shards | shard | index | shell | log run in-process when no daemon is up;
 # catalog | stats | zwc | zcompdump | legacy need the running daemon.
-zcache rebuild [--wait]
-zcache rebuild shard <name> [--wait]
-zcache rebuild --parallel N
 zcache verify                       # integrity scan + PRAGMA integrity_check on catalog.db
 zcache compact [--wait]             # vacuum + dedup
 
@@ -861,7 +858,7 @@ zsubscribe --pause                  # mute deliveries without dropping subscript
 zsubscribe --resume
 
 # Job supervision (planned: session-persistent jobs)
-zjob submit <cmd…>                  # detached, supervised, survives shell exit
+zjob submit <cmd…>                  # detached, supervised, survives shell exit; one quoted argument with spaces runs via sh -c
 zjob list                           # this user's running supervised jobs
 zjob status <job_id>
 zjob output <job_id>                # tail captured stdout/stderr
@@ -880,7 +877,7 @@ zsync pull <subsystem>              # opt-in mid-session refresh from canonical 
 zlog                                # default: live tail of ~/.zshrs/zshrs.log
 zlog tail [-n N] [-f|--follow] [shell|daemon|recorder|all]
 zlog grep <pattern> [--rotated]
-zlog level [<new_level>] [<module=level>…]
+zlog level <directive>             # e.g. info | debug | info,fsnotify=trace
 zlog clear
 zlog rotate
 zlog path
@@ -1235,7 +1232,7 @@ zlog stats                          # daemon log self-stats: line counts, size, 
 - ANY scattered per-plugin cache files outside `~/.zshrs/images/` — REJECT.
 - ANY removal of `entry_stats` to "simplify" — REJECT.
 - ANY auto-consumption of `.zwc` / `.zcompdump` files on daemon scans, fpath walks, fsnotify watches, or plugin-tree enumeration — REJECT. They're invisible to all automatic discovery; only `zcache import zwc|zcompdump <path>` (user-explicit, freshness-validated) may ingest them.
-- ANY periodic re-walk of `$PATH` / `$FPATH` / plugin trees / source-statement targets by the daemon — REJECT. Walks happen exactly twice in daemon's life: first init (cold cache) and explicit cache bust (`zcache clean` / `rebuild`). Steady state is fsnotify-driven incremental updates only. No polling, no cron, no "every 5 minutes refresh."
+- ANY periodic re-walk of `$PATH` / `$FPATH` / plugin trees / source-statement targets by the daemon — REJECT. Walks happen exactly twice in daemon's life: first init (cold cache) and explicit cache bust (`zcache clean` and a recorder run). Steady state is fsnotify-driven incremental updates only. No polling, no cron, no "every 5 minutes refresh."
 - ANY default keybinding that depends on Meta / Alt — REJECT. Meta keys behave unpredictably across terminals (macOS Option-key chars, tmux pass-through quirks, ssh meta-bit stripping, locale escape sequences). Ctrl-prefixed bindings only for shipped defaults; users can opt into Meta bindings explicitly via `bindkey` if their setup tolerates it.
 
 ### Acceptance criteria

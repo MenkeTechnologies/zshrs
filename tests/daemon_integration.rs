@@ -805,3 +805,49 @@ fn zd_daemon_lifecycle_verbs() {
     run("stop");
     assert!(daemon_lifecycle(&paths, "bogus", &exe).is_err());
 }
+
+/// `daemon restart` over IPC must leave a daemon running in the same home. The
+/// replacement is spawned while the old daemon still holds the singleton pid
+/// lock, so it has to wait for the lock instead of exiting as "already
+/// running"; and job ids must continue past the earlier jobs rather than restart
+/// at 1, which `INSERT OR REPLACE` plus a truncating `<id>.out` open would turn
+/// into overwriting job 1's row and captured output.
+#[test]
+fn ipc_restart_leaves_a_daemon_and_job_ids_continue() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    let first = c
+        .call("job_submit", json!({ "command": ["echo one"] }))
+        .expect("submit before restart");
+    let first_id = first["job_id"].as_u64().expect("job id");
+    let old_pid = c.call("daemon", json!({ "verb": "status" })).unwrap()["pid"]
+        .as_u64()
+        .unwrap();
+    c.call("daemon", json!({ "verb": "restart" })).expect("restart");
+    drop(c);
+
+    let start = Instant::now();
+    let mut new_pid = None;
+    while start.elapsed() < Duration::from_secs(15) {
+        if let Ok(mut c) = Client::connect_existing(&d.paths) {
+            if let Ok(s) = c.call("daemon", json!({ "verb": "status" })) {
+                let pid = s["pid"].as_u64().unwrap();
+                if pid != old_pid {
+                    new_pid = Some(pid);
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    assert!(new_pid.is_some(), "no replacement daemon came up after restart");
+
+    let mut c = d.connect();
+    let second = c
+        .call("job_submit", json!({ "command": ["echo two"] }))
+        .expect("submit after restart");
+    assert!(
+        second["job_id"].as_u64().unwrap() > first_id,
+        "job ids must continue after a restart: {first:?} then {second:?}"
+    );
+}

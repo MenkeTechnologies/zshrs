@@ -1170,7 +1170,7 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
                 return Ok(json!({
                     "status": "not_built",
                     "path": state.paths.index_rkyv.display().to_string(),
-                    "note": "run `zcache rebuild` or `zcache first-init` to populate",
+                    "note": "run `zshrs-recorder` to populate",
                 })
                 .to_string());
             }

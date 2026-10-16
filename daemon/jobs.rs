@@ -322,6 +322,18 @@ impl Supervisor {
                 CREATE INDEX IF NOT EXISTS jobs_started_idx ON jobs(started_at_ns DESC);
                 "#,
             )?;
+            // A row still `running` was owned by a previous daemon process;
+            // this one holds no handle on it, so it can never finish.
+            conn.execute(
+                "UPDATE jobs SET state = 'failed', error_msg = 'daemon restarted' WHERE state = 'running'",
+                [],
+            )?;
+            // Ids continue past the history: `submit` writes `INSERT OR REPLACE`
+            // and truncates `<id>.out`/`<id>.err`, so restarting at 1 would
+            // overwrite the earlier jobs' rows and captured output.
+            let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM jobs", [], |r| r.get(0))?;
+            let mut g = self.inner.lock();
+            g.next_id = g.next_id.max(max_id as u64 + 1);
             Ok(())
         })
     }
@@ -340,6 +352,15 @@ impl Supervisor {
         if command.is_empty() {
             return Err(super::DaemonError::other("empty command"));
         }
+        // One argument holding a command line (`zjob submit "sleep 1; echo hi"`)
+        // is shell text, not a program name: hand it to `sh -c`. Several
+        // arguments stay an argv, exec'd directly.
+        let command = match command.as_slice() {
+            [line] if line.contains(char::is_whitespace) => {
+                vec!["/bin/sh".to_string(), "-c".to_string(), line.clone()]
+            }
+            _ => command,
+        };
         self.ensure_jobs_dir()?;
 
         let id = {

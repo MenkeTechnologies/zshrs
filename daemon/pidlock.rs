@@ -91,6 +91,22 @@ pub fn acquire(paths: &CachePaths) -> Result<PidLock> {
     PidLock::acquire(paths)
 }
 
+/// Like [`acquire`], but while another daemon holds the lock keep retrying for
+/// up to `wait`. A replacement spawned by `zcache daemon restart` starts while
+/// the old daemon is still draining, so one non-blocking attempt would lose the
+/// race and leave no daemon at all.
+pub fn acquire_waiting(paths: &CachePaths, wait: std::time::Duration) -> Result<PidLock> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match PidLock::acquire(paths) {
+            Err(DaemonError::AlreadyRunning(_)) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Read the pid stored in daemon.pid without acquiring the lock. Used by clients to
 /// check whether a daemon is (likely) running before opening the socket.
 pub fn read_pid(paths: &CachePaths) -> Option<i32> {
@@ -156,6 +172,35 @@ mod tests {
         }
         // Lock released — second attempt should succeed.
         let _again = acquire(&paths).unwrap();
+    }
+
+    #[test]
+    fn acquire_waiting_takes_the_lock_once_the_holder_drops_it() {
+        let tmp = TempDir::new().unwrap();
+        let paths = CachePaths::with_root(tmp.path().join("zshrs"));
+        paths.ensure_dirs().unwrap();
+
+        let guard = acquire(&paths).unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(guard);
+        });
+        let started = std::time::Instant::now();
+        let again = acquire_waiting(&paths, std::time::Duration::from_secs(5)).unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(150));
+        drop(again);
+        releaser.join().unwrap();
+    }
+
+    #[test]
+    fn acquire_waiting_gives_up_after_its_deadline() {
+        let tmp = TempDir::new().unwrap();
+        let paths = CachePaths::with_root(tmp.path().join("zshrs"));
+        paths.ensure_dirs().unwrap();
+
+        let _guard = acquire(&paths).unwrap();
+        let err = acquire_waiting(&paths, std::time::Duration::from_millis(120)).unwrap_err();
+        assert!(matches!(err, DaemonError::AlreadyRunning(_)));
     }
 
     #[test]

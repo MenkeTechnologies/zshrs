@@ -9,7 +9,7 @@
 #   3. Spawn a fresh daemon in the foreground with TRACE-level logging
 #      streaming to stderr.
 #   4. Wait for the singleton socket to come up.
-#   5. Trigger first_init on the user's $ZDOTDIR/.zshrc (or the path the
+#   5. Run the recorder on the user's $ZDOTDIR/.zshrc (or the path the
 #      caller passed).
 #   6. Stay attached so every IPC op, fsnotify event, walk pass, shard
 #      atomic-rename, and canonical promotion is visible live.
@@ -20,7 +20,7 @@
 #   daemon/scripts/daemon-reset.sh ~/.zshrc.test         # custom path
 #   ZSHRS_LOG=info daemon/scripts/daemon-reset.sh        # quieter
 #   ZSHRS_LOG=trace daemon/scripts/daemon-reset.sh       # firehose
-#   daemon/scripts/daemon-reset.sh --no-init             # skip first_init
+#   daemon/scripts/daemon-reset.sh --no-init             # skip the recorder
 #   daemon/scripts/daemon-reset.sh --keep-cache          # don't wipe
 #
 # Output: every daemon log line (ANSI-coloured) to your terminal until you
@@ -117,15 +117,19 @@ if [[ ! -S "$CACHE_ROOT/daemon.sock" ]]; then
 fi
 echo "==> Daemon up (pid $DAEMON_PID, socket at $CACHE_ROOT/daemon.sock)" >&2
 
-# ---- 5. Trigger first_init ----
+# ---- 5. Index the user's startup files ----
+# State indexing is the recorder's job (docs/RECORDER.md); the daemon has no
+# first-init op. The recorder writes its shard itself, then the daemon's
+# fsnotify watcher picks it up.
 if (( DO_INIT )); then
     if [[ -f "$ZSHRC" ]]; then
-        echo "==> Triggering first_init for $ZSHRC..." >&2
-        "$SHELL_BIN" -c "zcache first-init --zshrc '$ZSHRC'" || {
-            echo "daemon-reset: first_init failed (daemon still running)" >&2
+        echo "==> Recording $ZSHRC..." >&2
+        cargo build --features recorder --bin zshrs-recorder
+        "${REPO_ROOT}/target/debug/zshrs-recorder" --file "$ZSHRC" || {
+            echo "daemon-reset: recorder failed (daemon still running)" >&2
         }
     else
-        echo "==> Skipping first_init: $ZSHRC not found" >&2
+        echo "==> Skipping recorder: $ZSHRC not found" >&2
     fi
 fi
 
@@ -136,7 +140,7 @@ if (( KEEP_RUNNING )); then
     echo "      $SHELL_BIN -c 'zcache info'" >&2
     echo "      $SHELL_BIN -c 'zcache verify'" >&2
     echo "      $SHELL_BIN -c 'zcache view path'" >&2
-    echo "      $SHELL_BIN -c 'zcache rebuild'" >&2
+    echo "      $SHELL_BIN -c 'zwhere alias'" >&2
     echo "      $SHELL_BIN -c 'zcache doctor' 2>/dev/null || true" >&2
     echo "      tail -f $CACHE_ROOT/zshrs.log" >&2
     wait "$DAEMON_PID"
