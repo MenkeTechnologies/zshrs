@@ -15054,6 +15054,10 @@ pub fn zexit(val: i32, from_where: i32) {
     // file and run logout scripts. This is THE write-at-exit path for
     // interactive history (`-f`/NO_RCS shells intentionally skip it,
     // matching C).
+    // !!! RUST-ONLY !!! drain the SQLite history writer thread before exiting.
+    if interact() {
+        crate::history::history_sqlite_flush();
+    }
     if isset(RCS) && interact() {
         // c:6013
         // c:6014-6020 — `if (!nohistsave) { ... }`.

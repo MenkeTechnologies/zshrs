@@ -76,6 +76,15 @@ impl HistoryEngine {
         // it has to land high in the first place. See crate::lowfd.
         let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(&path)?;
+        // Many shells (one per pane) share this file. The default rollback
+        // journal + FULL sync made every writer take an exclusive lock and
+        // fsync twice, so a burst of concurrent commands stalled each other
+        // for up to the busy timeout (measured: 16 writers, p95 90 ms, max
+        // 1.8 s per command). WAL lets readers (autosuggest, search) run
+        // beside a writer and NORMAL sync drops the per-commit fsync.
+        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        conn.pragma_update(None, "synchronous", "NORMAL").ok();
         crate::startup_trace::mark("hist: sqlite open");
         // c:Src/utils.c:2007-2010 — every descriptor the shell takes for
         // itself is recorded as `FDT_INTERNAL`. SQLite never hands back a
@@ -668,15 +677,90 @@ pub fn is_histfile(path: &str) -> bool {
     }
 }
 
+/// One unit of work for the history writer thread.
+enum WriterJob {
+    /// A line was accepted at `at`.
+    Add { line: String, cwd: Option<String>, at: std::time::Instant },
+    /// The command armed by the last `Add` finished at `at`.
+    Finish { exit_code: i32, at: std::time::Instant },
+    /// Reply on the channel once every earlier job is done.
+    Flush(std::sync::mpsc::Sender<()>),
+}
+
+/// Sender to the shell's history writer thread, started on first use.
+/// `None` inside means the thread could not start and writes stay inline.
+static HISTORY_WRITER: std::sync::OnceLock<Option<std::sync::Mutex<std::sync::mpsc::Sender<WriterJob>>>> =
+    std::sync::OnceLock::new();
+
+/// The writer owns its own connection, opened here on the calling (main)
+/// thread so sqlite's descriptors land where `lowfd` puts them. Every sqlite
+/// write the prompt used to wait for (the UNIQUE-index probe, the FTS5
+/// trigram insert, the duration update, two commits) now runs beside it.
+fn history_writer() -> Option<&'static std::sync::Mutex<std::sync::mpsc::Sender<WriterJob>>> {
+    HISTORY_WRITER
+        .get_or_init(|| {
+            let engine = HistoryEngine::new().ok()?;
+            let (tx, rx) = std::sync::mpsc::channel::<WriterJob>();
+            std::thread::Builder::new()
+                .name("history-writer".into())
+                .spawn(move || {
+                    let mut pending: Option<(i64, std::time::Instant)> = None;
+                    for job in rx {
+                        match job {
+                            WriterJob::Add { line, cwd, at } => {
+                                pending = engine.add(&line, cwd.as_deref()).ok().map(|id| (id, at));
+                            }
+                            WriterJob::Finish { exit_code, at } => {
+                                if let Some((id, start)) = pending.take() {
+                                    let dur = at.duration_since(start).as_millis() as i64;
+                                    let _ = engine.update_last(id, dur, exit_code);
+                                }
+                            }
+                            WriterJob::Flush(done) => {
+                                let _ = done.send(());
+                            }
+                        }
+                    }
+                })
+                .ok()?;
+            Some(std::sync::Mutex::new(tx))
+        })
+        .as_ref()
+}
+
+fn send_writer_job(job: WriterJob) -> bool {
+    history_writer()
+        .and_then(|tx| tx.lock().ok().map(|tx| tx.send(job).is_ok()))
+        .unwrap_or(false)
+}
+
+/// Wait (bounded) for the writer to drain, so a shell that exits right after
+/// its last command still records it.
+pub fn history_sqlite_flush() {
+    if HISTORY_WRITER.get().is_none_or(|w| w.is_none()) {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    if send_writer_job(WriterJob::Flush(tx)) {
+        let _ = rx.recv_timeout(std::time::Duration::from_secs(3));
+    }
+}
+
 /// Append an accepted interactive line to the SQLite history index
 /// (+ text mirror) and arm the pending row for `history_sqlite_finish`.
+/// The write happens on the history writer thread; the prompt does not wait.
 pub fn history_sqlite_add(line: &str) {
     let cwd = std::env::current_dir()
         .ok()
         .map(|p| p.to_string_lossy().to_string());
+    let at = std::time::Instant::now();
+    if send_writer_job(WriterJob::Add { line: line.to_string(), cwd: cwd.clone(), at }) {
+        HIST_PENDING.with(|p| p.set(Some((-1, at))));
+        return;
+    }
     let id = with_session_engine(|e| e.add(line, cwd.as_deref()).ok()).flatten();
     if let Some(id) = id {
-        HIST_PENDING.with(|p| p.set(Some((id, std::time::Instant::now()))));
+        HIST_PENDING.with(|p| p.set(Some((id, at))));
     }
 }
 
@@ -686,7 +770,12 @@ pub fn history_sqlite_finish(exit_code: i32) {
     let Some((id, start)) = HIST_PENDING.with(|p| p.take()) else {
         return;
     };
-    let dur = start.elapsed().as_millis() as i64;
+    let at = std::time::Instant::now();
+    // id -1 marks a line the writer thread owns.
+    if id == -1 && send_writer_job(WriterJob::Finish { exit_code, at }) {
+        return;
+    }
+    let dur = at.duration_since(start).as_millis() as i64;
     let _ = with_session_engine(|e| e.update_last(id, dur, exit_code));
 }
 
