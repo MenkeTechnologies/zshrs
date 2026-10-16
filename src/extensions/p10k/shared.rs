@@ -360,3 +360,81 @@ mod ttl_tests {
         assert_eq!(runs.load(Ordering::SeqCst), 1);
     }
 }
+
+/// Run a tool with a hard latency budget: stdout drained on a helper
+/// thread, child killed and reaped on overrun so a hung tool can't wedge
+/// the prompt. `require_success=false` mirrors plain `$(cmd)` capture
+/// (output kept despite a non-zero exit). stdin is null unless `input`
+/// is given, so the child can never read the tty.
+pub(crate) fn run_tool_raw(
+    bin: &std::path::Path,
+    args: &[&str],
+    dir: Option<&std::path::Path>,
+    env: &[(&str, &str)],
+    input: Option<Vec<u8>>,
+    budget: Duration,
+    require_success: bool,
+) -> Option<Vec<u8>> {
+    use std::process::Stdio;
+    let mut cmd = std::process::Command::new(bin);
+    cmd.args(args)
+        .envs(env.iter().copied())
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!(target: "p10k", bin = %bin.display(), %e, "tool spawn failed");
+            return None;
+        }
+    };
+    if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
+        crate::signal_thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&data);
+        });
+    }
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    crate::signal_thread::spawn(move || {
+        let mut out = Vec::new();
+        use std::io::Read;
+        let _ = stdout.read_to_end(&mut out);
+        let _ = tx.send(out);
+    });
+    match rx.recv_timeout(budget) {
+        Ok(out) => {
+            let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+            if require_success && !ok {
+                return None;
+            }
+            Some(out)
+        }
+        Err(_) => {
+            tracing::debug!(
+                target: "p10k",
+                bin = %bin.display(), ?budget,
+                "tool exceeded budget — killed"
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+    }
+}
+
+/// [`run_tool_raw`] with no env or stdin, stdout as a lossy string.
+pub(crate) fn run_tool_budget(
+    bin: &std::path::Path,
+    args: &[&str],
+    dir: Option<&std::path::Path>,
+    budget: Duration,
+    require_success: bool,
+) -> Option<String> {
+    run_tool_raw(bin, args, dir, &[], None, budget, require_success)
+        .map(|out| String::from_utf8_lossy(&out).into_owned())
+}

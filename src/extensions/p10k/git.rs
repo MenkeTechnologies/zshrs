@@ -854,16 +854,10 @@ fn push_target_of(cfg: &GitConfig, common_dir: &Path, branch: &str) -> Option<Pu
 /// `(commits in head not in other, commits in other not in head)` — the
 /// two `CountRange` walks of gitstatus (`other..HEAD`, `HEAD..other`).
 fn rev_list_counts(common_dir: &Path, head: &str, other: &str) -> Option<(i64, i64)> {
-    let out = Command::new("git")
-        .arg(format!("--git-dir={}", common_dir.display()))
-        .args(["rev-list", "--left-right", "--count"])
-        .arg(format!("{head}...{other}"))
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    let git_dir = format!("--git-dir={}", common_dir.display());
+    let range = format!("{head}...{other}");
+    let out = git_bounded(&[&git_dir, "rev-list", "--left-right", "--count", &range], None)?;
+    let text = String::from_utf8_lossy(&out);
     let mut it = text.split_whitespace().map(|n| n.parse::<i64>());
     match (it.next(), it.next()) {
         (Some(Ok(a)), Some(Ok(b))) => Some((a, b)),
@@ -1263,27 +1257,14 @@ fn peel_objects<'a>(
         u
     };
     if !unseen.is_empty() {
-        let child = Command::new("git")
-            .arg(format!("--git-dir={}", common_dir.display()))
-            .args(["cat-file", "--batch-check=%(objectname)"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
-        let mut answers: Vec<String> = Vec::new();
-        if let Ok(mut child) = child {
-            if let Some(mut stdin) = child.stdin.take() {
-                let input: String = unseen.iter().map(|o| format!("{o}^{{}}\n")).collect();
-                let _ = stdin.write_all(input.as_bytes());
-            }
-            if let Ok(out) = child.wait_with_output() {
-                answers = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .map(str::to_string)
-                    .collect();
-            }
-        }
+        let input: String = unseen.iter().map(|o| format!("{o}^{{}}\n")).collect();
+        let git_dir = format!("--git-dir={}", common_dir.display());
+        let answers: Vec<String> = git_bounded(
+            &[&git_dir, "cat-file", "--batch-check=%(objectname)"],
+            Some(input.into_bytes()),
+        )
+        .map(|out| String::from_utf8_lossy(&out).lines().map(str::to_string).collect())
+        .unwrap_or_default();
         let mut m = memo.lock().unwrap();
         for (i, oid) in unseen.iter().enumerate() {
             // `<input> missing` lines never equal a 40/64-hex id.
@@ -1460,17 +1441,11 @@ pub fn commit_message(workdir: &Path, commit: &str) -> (String, String) {
     if let Some(hit) = memo.lock().ok().and_then(|m| m.get(commit).cloned()) {
         return hit;
     }
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(workdir)
-        .args(["cat-file", "commit", commit])
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
+    let workdir_arg = workdir.to_string_lossy();
+    let out = git_bounded(&["-C", &workdir_arg, "cat-file", "commit", commit], None);
     let result = match out {
-        Ok(o) if o.status.success() => {
-            let raw = String::from_utf8_lossy(&o.stdout).into_owned();
+        Some(o) => {
+            let raw = String::from_utf8_lossy(&o).into_owned();
             let (headers, message) = raw.split_once("\n\n").unwrap_or((raw.as_str(), ""));
             let encoding = headers
                 .lines()
@@ -2059,4 +2034,24 @@ u UU N... 100644 100644 100644 100644 aaaa bbbb cccc conflict.rs
         assert_eq!(commit_summary_of(&"x".repeat(400)).len(), MAX_COMMIT_SUMMARY_LEN);
         assert_eq!(commit_summary_of(""), "");
     }
+}
+
+/// Latency cap for the inline `git` helpers (ahead/behind counts, commit
+/// summary, peel). `git` on PATH may be a wrapper that queues behind a
+/// daemon; past this the child is killed and the field stays empty
+/// instead of holding the prompt.
+const GIT_AUX_BUDGET: Duration = Duration::from_millis(500);
+
+/// `git <args>` under [`GIT_AUX_BUDGET`], optional-locks off, stdout bytes.
+/// `input` is fed to stdin; None leaves stdin null.
+fn git_bounded(args: &[&str], input: Option<Vec<u8>>) -> Option<Vec<u8>> {
+    crate::extensions::p10k::shared::run_tool_raw(
+        Path::new("git"),
+        args,
+        None,
+        &[("GIT_OPTIONAL_LOCKS", "0")],
+        input,
+        GIT_AUX_BUDGET,
+        true,
+    )
 }

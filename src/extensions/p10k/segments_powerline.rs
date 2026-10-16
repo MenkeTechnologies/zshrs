@@ -41,6 +41,7 @@ use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
 use crate::extensions::p10k::shared::ttl_cached as cached_ttl;
+use crate::extensions::p10k::shared::run_tool_budget;
 use crate::extensions::p10k::shared::{color1, env_or_param, global_int, esc_pct, decode_g, seg_icon, apply_visual_identifier, apply_content_expansion, make_segment};
 use crate::ported::params::getsparam;
 use crate::ported::utils::getkeystring;
@@ -131,61 +132,6 @@ fn upfind(name: &str) -> Option<PathBuf> {
 // Subprocess: TTL cache + budgeted runner
 // ---------------------------------------------------------------------
 
-
-/// Run a tool with a hard latency budget — the git.rs run_porcelain
-/// pattern (mirrors segments_extra::run_tool_budget): stdout drained on
-/// a helper thread, child killed and reaped on overrun so a hung
-/// network tool can't wedge the prompt.
-fn run_tool_budget(
-    bin: &Path,
-    args: &[&str],
-    dir: Option<&Path>,
-    budget: Duration,
-    require_success: bool,
-) -> Option<String> {
-    let mut cmd = std::process::Command::new(bin);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::debug!(target: "p10k", bin = %bin.display(), %e, "tool spawn failed");
-            return None;
-        }
-    };
-    let mut stdout = child.stdout.take()?;
-    let (tx, rx) = std::sync::mpsc::channel();
-    crate::signal_thread::spawn(move || {
-        let mut out = Vec::new();
-        use std::io::Read;
-        let _ = stdout.read_to_end(&mut out);
-        let _ = tx.send(out);
-    });
-    match rx.recv_timeout(budget) {
-        Ok(out) => {
-            let ok = child.wait().map(|s| s.success()).unwrap_or(false);
-            if require_success && !ok {
-                return None;
-            }
-            Some(String::from_utf8_lossy(&out).into_owned())
-        }
-        Err(_) => {
-            tracing::debug!(
-                target: "p10k",
-                bin = %bin.display(), ?budget,
-                "tool exceeded budget — killed"
-            );
-            let _ = child.kill();
-            let _ = child.wait();
-            None
-        }
-    }
-}
 
 // ---------------------------------------------------------------------
 // Pure formatters (ported; unit-tested below)

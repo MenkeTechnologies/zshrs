@@ -113,6 +113,11 @@ static CMD_PATH_CACHE: OnceLock<Mutex<(String, Instant, HashMap<String, Option<P
 /// tool shows up without restarting the shell.
 const CMD_PATH_TTL: Duration = Duration::from_secs(15);
 
+/// Latency cap for the blocking system-tool probes (`vm_stat`, `pmset`,
+/// `airport`, `iw`, `task`, ...): past it the child is killed and the
+/// segment renders empty instead of holding the prompt.
+const TOOL_BUDGET: Duration = Duration::from_millis(500);
+
 pub(crate) fn cmd_on_path(name: &str) -> Option<PathBuf> {
     let path_var = env_or_param("PATH");
     let m = CMD_PATH_CACHE.get_or_init(|| Mutex::new((String::new(), Instant::now(), HashMap::new())));
@@ -154,21 +159,9 @@ pub(crate) fn cmd_on_path(name: &str) -> Option<PathBuf> {
 
 /// Run an external command, stdout as a string (stderr dropped — the
 /// zsh originals all `2>/dev/null`). None on spawn failure or non-zero
-/// exit.
+/// exit, or when the child outlives `TOOL_BUDGET` (killed and reaped).
 fn run_tool(bin: &std::path::Path, args: &[&str]) -> Option<String> {
-    match std::process::Command::new(bin)
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-    {
-        Ok(out) if out.status.success() => Some(String::from_utf8_lossy(&out.stdout).into_owned()),
-        Ok(_) => None,
-        Err(e) => {
-            tracing::debug!(target: "p10k", bin = %bin.display(), %e, "tool spawn failed");
-            None
-        }
-    }
+    crate::extensions::p10k::shared::run_tool_budget(bin, args, None, TOOL_BUDGET, true)
 }
 
 // ---------------------------------------------------------------------
