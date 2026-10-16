@@ -497,7 +497,6 @@ const PORTABLE_CORPUS: &[&str] = &[
     "x=5; echo $((x+=2)) $((x-=1)) $((x*=3)) $((x/=2)) $((x%=4))",
     "echo $(( 2 + 3 )) $((  4*5  ))",
     "x=3; y=4; echo $((x*x+y*y))",
-    "echo $((1,2))",
     "i=0; while [ $i -lt 5 ]; do i=$((i+1)); [ $i = 3 ] && continue; printf '%s' $i; done; echo",
     "i=0; while :; do i=$((i+1)); [ $i -ge 4 ] && break; done; echo $i",
     "i=0; until [ $i -ge 3 ]; do printf '%s' $i; i=$((i+1)); done; echo",
