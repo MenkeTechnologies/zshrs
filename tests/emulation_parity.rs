@@ -2052,6 +2052,8 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "f() { local a=1; echo \"[$a]\"; echo rc=$?; }; f",
+    "set -- a b; shift -1; echo no",
     "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
     "builtin echo hi 2>/dev/null; echo $?",
     "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
@@ -2199,6 +2201,8 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "echo $((2 ** 3)) 2>/dev/null; echo after",
+    "set -- a b; shift -1; echo no",
     "echo $((0b11)) 2>/dev/null; echo $?",
     "alias 'z z=x' 2>/dev/null; echo $?",
     "printf '%d\\n' 010 0x1f 7",

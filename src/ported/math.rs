@@ -2532,7 +2532,11 @@ pub(crate) fn zzlex() -> i32 {
                 // Skip the POWER branch under dash_strict so `2**10` lexes
                 // as `2 * * 10` (MUL MUL) and the parser errors with
                 // "expecting primary", matching /bin/dash.
-                if peek() == Some('*') && !crate::dash_mode::dash_strict() {
+                // mksh/pdksh have no `**` either ("unexpected '*'").
+                if peek() == Some('*')
+                    && !crate::dash_mode::dash_strict()
+                    && !(crate::dash_mode::pdksh_family() && crate::dash_mode::posix_faithful())
+                {
                     advance();
                     if peek() == Some('=') {
                         advance();

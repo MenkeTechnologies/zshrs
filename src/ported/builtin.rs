@@ -4324,6 +4324,13 @@ pub fn bin_typeset(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no `local`: the call is
+    // "not found" (127) and the script goes on.
+    if name == "local" && crate::dash_mode::ksh93_mode() {
+        zwarnnam(name, "not found");
+        return 127;
+    }
+
     // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `local` prints nothing
     // when given no names, and `local x` makes a local that INHERITS the
     // visible value (`x=5; f() { local x; echo $x; }` prints 5), where zsh's
@@ -14178,6 +14185,17 @@ pub fn bin_shift(
                     return crate::dash_mode::fatal_error_status().unwrap_or(2);
                 }
             }
+        }
+        // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh parse `shift` operands as
+        // options: `shift -1` is a usage error that ends the script.
+        if crate::dash_mode::korn_mode()
+            && argv[0].len() > 1
+            && argv[0].starts_with('-')
+            && argv[0][1..].chars().all(|c| c.is_ascii_digit())
+        {
+            unqueue_signals();
+            zerrnam(name, &format!("{}: unknown option", argv[0]));
+            return if crate::dash_mode::pdksh_family() { 1 } else { 2 };
         }
         // c:5600
         let first = &argv[0];
