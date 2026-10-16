@@ -187,3 +187,72 @@ fn exit_in_a_function_still_defers_after_jobs_set_stopmsg() {
     let (ec, out, _err) = run("jobs; g() { exit 4 }; g; print not-reached");
     assert_eq!((ec, out.as_str()), (4, ""));
 }
+
+/// Run as a drop-in `zsh` (argv[0] = zsh), which selects 5.9.2 behaviour where
+/// the development tree differs. Expected values are what Homebrew zsh 5.9.2
+/// printed for the same script.
+fn run_as_zsh(script: &str) -> String {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "zshrs-asz-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let link = dir.join("zsh");
+    std::os::unix::fs::symlink(zshrs_bin(), &link).unwrap();
+    let out = Command::new(&link)
+        .args(["-f", "-c", script])
+        .env_remove("ZSHRS_CACHE")
+        .env_remove("ZDOTDIR")
+        .output()
+        .expect("spawn zsh");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// c:3906 vs c:3937 — `(j:SEP:)` joins before the case fold, so with an empty
+/// separator `C` capitalises across the former element boundary.
+#[test]
+fn join_precedes_case_modification() {
+    let (_ec, out, _err) = run("a=('x y' 'z w'); print -r -- ${(j::C)a} ${(j:a:C)a} ${(C)a}");
+    assert_eq!(out, "X Yz W X Yaz W X Y Z W\n");
+}
+
+/// 5.9.2 c:1481-1486 — an out-of-range word index is clamped into
+/// [1, wordcount] (the development tree returns nothing, workers/54773).
+#[test]
+fn word_subscript_clamps_out_of_range_on_592() {
+    let out = run_as_zsh("ws='a b c d'; print -r -- \"[${ws[(w)5]}][${ws[(w)-9]}][${ws[(w)0]}]\"");
+    assert_eq!(out, "[d][a][a]\n");
+}
+
+/// 5.9.2 pcre.c:322-329 / c:408 — the capture count handed to
+/// zpcre_get_substrings is pcre2_match's return value, so a trailing group
+/// that did not participate is dropped rather than reported empty.
+#[test]
+fn pcre_trailing_unset_group_is_dropped_on_592() {
+    let out = run_as_zsh(
+        "zmodload zsh/pcre; pcre_compile 'x(y)?z'; pcre_match -a arr xz; print -r -- n=${#arr}",
+    );
+    assert_eq!(out, "n=0\n");
+}
+
+/// 5.9.2 c:2043 — usepm has no PM_DECLARED term, so re-declaring a
+/// TYPESET_TO_UNSET parameter with the option off creates it empty.
+#[test]
+fn redeclared_unset_param_becomes_empty_on_592() {
+    let out = run_as_zsh(
+        "f() { setopt typesettounset; typeset u; unsetopt typesettounset; typeset u; print \"[${+u}]\" }; f",
+    );
+    assert_eq!(out, "[1]\n");
+}
+
+/// 5.9.2 exectry (c:Src/loop.c:716-805) never sets `this_noerrexit`, so the
+/// ERR trap fires once more for the construct's own non-zero status.
+#[test]
+fn err_trap_fires_for_the_always_construct_on_592() {
+    let out = run_as_zsh(
+        "trap 'print -r -- \"err rc=$?\"' ERR; f() { { false } always { print -r -- always }; print -r -- after }; f",
+    );
+    assert_eq!(out, "err rc=1\nalways\nerr rc=1\nafter\n");
+}

@@ -14305,6 +14305,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // chain, where the full errexit check is suppressed. Mirrors ONLY the
     // errflag arm of BUILTIN_ERREXIT_CHECK below: an errflag abandons the
     // list in zsh, and no connector can consume it.
+    vm.register_builtin(BUILTIN_TRY_ERREXIT_592, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        // Drop-in `zsh` only; `zshrs --zsh` keeps the development tree's rule.
+        if !crate::extensions::emulation_startup::emulating_592() {
+            return Value::Int(0);
+        }
+        let last = vm.last_status;
+        // c:1651 — `!donetrap`.
+        if last == 0 || crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0 {
+            return Value::Int(0);
+        }
+        if zerr_sigtrapped() {
+            // c:Src/signals.c:1085-1087 / c:1220-1222 — dotrapargs saves and
+            // restores breaks / retflag / lastval around the trap body.
+            let obreaks = crate::ported::builtin::BREAKS.load(Ordering::Relaxed);
+            let oretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
+            let olastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+            let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR); // c:1601
+            crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed); // c:1602
+            crate::ported::builtin::BREAKS.store(obreaks, Ordering::Relaxed);
+            crate::ported::builtin::RETFLAG.store(oretflag, Ordering::Relaxed);
+            crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed);
+        }
+        errexit_tail(last)
+    });
     vm.register_builtin(BUILTIN_FATAL_ABORT_CHECK, |vm, _argc| {
         use std::sync::atomic::Ordering;
         // c:Src/exec.c:1390 — `while (wc_code(code) == WC_LIST && !breaks &&
@@ -18815,6 +18840,12 @@ pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 /// Same errflag arm as `BUILTIN_ERREXIT_CHECK`, with the errexit/ZERR
 /// half omitted.
 pub const BUILTIN_FATAL_ABORT_CHECK: u16 = 641;
+/// 5.9.2 only: the ZERR trap / ERR_EXIT / ERR_RETURN half of execlist's
+/// `sublist_done:` for a `{ try } always { … }` construct. 5.9.2's exectry
+/// (c:Src/loop.c:716-805) never sets `this_noerrexit`, so the construct's own
+/// non-zero status fires them; the development tree sets it (c:799) and
+/// suppresses them, which the compile-time `errexit_suppress_depth` models.
+pub const BUILTIN_TRY_ERREXIT_592: u16 = 792;
 /// Post-`always`-arm checks for the canonical RETFLAG / BREAKS /
 /// CONTFLAG atomics that mark try-block escapes. Each returns
 /// Value::Int(1) when the corresponding atomic is set (and consumes

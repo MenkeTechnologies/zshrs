@@ -603,7 +603,13 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             &re,
             &plaintext,
             &caps,
-            caps.len() as i32,
+            // 5.9.2 passes pcre2_match's return `ret` (highest participating group
+            // + 1, c:322-329); the development tree passes the group count.
+            if crate::extensions::emulation_startup::emulating_592() {
+                (0..caps.len()).rev().find(|&i| caps.get(i).is_some()).map_or(0, |i| i + 1) as i32
+            } else {
+                caps.len() as i32
+            },
             matched_portion,
             Some(receptacle),
             named,
@@ -909,7 +915,13 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                         &re,
                         &lhs_plain,
                         &caps,
-                        caps.len() as i32, // c:477 pcre2_get_ovector_count
+                        // 5.9.2 c:408 passes `r` (highest participating group + 1); the
+                        // development tree c:477 passes pcre2_get_ovector_count.
+                        if crate::extensions::emulation_startup::emulating_592() {
+                            (0..caps.len()).rev().find(|&i| caps.get(i).is_some()).map_or(0, |i| i + 1) as i32
+                        } else {
+                            caps.len() as i32
+                        },
                         svar,
                         Some(avar),
                         Some(".pcre.match"),

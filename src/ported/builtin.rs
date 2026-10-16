@@ -8403,7 +8403,12 @@ pub fn bin_typeset(
                 .and_then(|t| t.get(arg.as_str()).map(|p| p.node.flags as u32))
                 .map(|f| {
                     (f & PM_UNSET) == 0
-                        || (f & PM_DECLARED) != 0 // c:2059 (55020)
+                        // c:2059 (55020) — 5.9.2's usepm (c:2043) has no PM_DECLARED term.
+                        // (a special keeps it: c:2051-2052 `usepm = 2` reuses it regardless)
+                        || ((f & PM_DECLARED) != 0
+                            && ((f & PM_SPECIAL) != 0
+                                || TYPESET_M_APPLY.with(|c| c.get())
+                                || !crate::extensions::emulation_startup::emulating_592()))
                         || (isset(crate::ported::zsh_h::POSIXBUILTINS)
                             && (f & (PM_READONLY | PM_EXPORTED)) != 0)
                 })
@@ -8433,8 +8438,12 @@ pub fn bin_typeset(
             // TYPESET_TO_UNSET declaration (`typeset -a h; typeset -U h`)
             // leaves it unset.
             let keep_declared_unset = usepm_entry
-                && entry_flags
-                    .is_some_and(|f| (f & (PM_DECLARED | PM_UNSET)) == (PM_DECLARED | PM_UNSET));
+                && entry_flags.is_some_and(|f| {
+                    (f & (PM_DECLARED | PM_UNSET)) == (PM_DECLARED | PM_UNSET)
+                        && ((f & PM_SPECIAL) != 0
+                            || TYPESET_M_APPLY.with(|c| c.get())
+                            || !crate::extensions::emulation_startup::emulating_592())
+                });
             if posix_strict
                 && !posix_keep_unset
                 && usepm_entry

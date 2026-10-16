@@ -4015,6 +4015,11 @@ pub(crate) fn getarg<'a>(
                 if r < 0 {
                     r += len + 1; // c:1645-1646
                 }
+                // 5.9.2 c:1481-1486 clamps instead: `r < 1 → 1`, `r > i → i`, so
+                // `${ws[(w)5]}` on four words is the LAST word and `(w)-9` the first.
+                if crate::extensions::emulation_startup::emulating_592() && len > 0 {
+                    r = r.clamp(1, len);
+                }
                 return Some(getarg_out::Value(Value::str(if r < 1 || r > len {
                     String::new() // c:1647-1648 `if (r < 1 || r > i) return 0;`
                 } else {

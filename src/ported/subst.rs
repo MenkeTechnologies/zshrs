@@ -12091,6 +12091,10 @@ pub fn paramsubst(
                             if r < 0 {
                                 r += len + 1; // c:1645-1646
                             }
+                            // 5.9.2 c:1481-1486 clamps `r` into [1, wordcount] instead.
+                            if crate::extensions::emulation_startup::emulating_592() && len > 0 {
+                                r = r.clamp(1, len);
+                            }
                             if r < 1 || r > len {
                                 String::new() // c:1647-1648
                             } else {
@@ -12828,6 +12832,10 @@ pub fn paramsubst(
                                             }
                                             if r < 0 {
                                                 r += iw + 1; // c:1645-1646
+                                            }
+                                            // 5.9.2 c:1481-1486 clamps `r` into [1, wordcount].
+                                            if crate::extensions::emulation_startup::emulating_592() {
+                                                r = r.clamp(1, iw);
                                             }
                                             // c:1647-1648 (workers/54773) — an
                                             // out-of-range word index is offset
@@ -23137,7 +23145,13 @@ pub fn paramsubst(
                 value = transform(&value); // c:3959
             } else if let Some(parts) = split_parts.clone() {
                 // c:3937
-                let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
+                // c:3906 vs c:3937 — `(j:SEP:)` joins BEFORE casemodify runs,
+                // so the fold sees the joined scalar: `(j::C)` on ('x y' 'z w')
+                // is `X Yz W`, not the per-element `X YZ W`.
+                let new_parts: Vec<String> = match sep {
+                    Some(ref sp) => vec![transform(&parts.join(sp))],
+                    None => parts.iter().map(|s| transform(s)).collect(),
+                };
                 value = new_parts.join(" "); // c:3937
                 split_parts = Some(new_parts); // c:3937
             } else if has_non_splat_subscript {
@@ -23195,7 +23209,11 @@ pub fn paramsubst(
                     } else {
                         arr
                     };
-                let new_arr: Vec<String> = arr.iter().map(|s| transform(s)).collect();
+                // c:3906 — the `(j:SEP:)` join precedes the fold; see above.
+                let new_arr: Vec<String> = match sep {
+                    Some(ref sp) => vec![transform(&arr.join(sp))],
+                    None => arr.iter().map(|s| transform(s)).collect(),
+                };
                 value = new_arr.join(" "); // c:3937
                 split_parts = Some(new_arr); // c:3937
             } else {

@@ -2728,6 +2728,18 @@ impl ZshCompiler {
                 self.errexit_suppress_depth += 1;
                 self.emit_errexit_check();
                 self.errexit_suppress_depth -= 1;
+                // 5.9.2's exectry has no `this_noerrexit = 1`, so a drop-in
+                // `zsh` still runs the ZERR / ERR_EXIT half for the construct.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_TRY_ERREXIT_592, 0),
+                    0,
+                );
+                let try_skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+                self.emit_loop_errflag_status();
+                self.emit_cmd_stack_drain();
+                let try_jump = self.builder.emit(Op::Jump(0), 0);
+                self.return_patches.push(try_jump);
+                self.builder.patch_jump(try_skip, self.builder.current_pos());
                 self.break_escape_suppress -= 1;
                 // If the try-block fired a return/break/continue, the
                 // canonical RETFLAG / BREAKS / CONTFLAG atomics are
