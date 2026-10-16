@@ -568,6 +568,23 @@ fn known_gap(leg: &str, label: &str) -> Option<&'static str> {
         .map(|(_, _, why)| *why)
 }
 
+/// Whether `refbin` and the zshrs symlink `link` report the same bash
+/// `major.minor` in `$BASH_VERSION`.
+fn same_bash_release(refbin: &str, link: &str) -> bool {
+    let minor = |bin: &str| -> Option<String> {
+        let out = Command::new(bin)
+            .args(["-c", "printf %s \"${BASH_VERSION:-}\""])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let v = String::from_utf8_lossy(&out.stdout).into_owned();
+        let mut parts = v.split('.');
+        Some(format!("{}.{}", parts.next()?, parts.next()?))
+    };
+    minor(refbin) == minor(link)
+}
+
 /// True when this reference binary is bash wearing another name.
 ///
 /// macOS ships `/bin/sh` as bash 3.2, and bash-as-sh keeps bash's own
@@ -978,6 +995,19 @@ fn login_shell_via_argv0_dash_matches_the_reference_shell() {
             ("argv0-login, exit", vec!["-c", "exit"]),
         ] {
             if sh_is_bash && !args.contains(&"-i") {
+                continue;
+            }
+            // `-bash -c CMD` reads no profile in the bash zshrs reports (5.3, measured
+            // — see EXPLICIT_LOGIN) but does in 5.2 (Ubuntu's). A reference of another
+            // release cannot be compared on the shapes that differ between the two.
+            if case.name == "bash"
+                && !args.contains(&"-i")
+                && !same_bash_release(&refbin, &link_s)
+            {
+                eprintln!(
+                    "  note: {refbin} is another bash release than zshrs reports; \
+                     skipping `{label}`"
+                );
                 continue;
             }
             let ref_home = home_with(&files);
