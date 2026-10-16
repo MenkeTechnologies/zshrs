@@ -7793,6 +7793,23 @@ pub fn paramsubst(
                         idx = body_chars.len();
                         bash_handled = true;
                     }
+                } else if bang_bash
+                    && matches!(
+                        after[0],
+                        ':' | '#' | '%' | '/' | '^' | ',' | '-' | '+' | '=' | '?' | '~' | '@'
+                    )
+                    && after != ['@']
+                    && after[0] != Pound
+                {
+                    // `${!ident<operator>…}` (BASH): the operator applies to the value of
+                    // the variable NAMED by $ident (`y=x; x=foo; ${!y:-none}` → `foo`).
+                    // Same `(P)` re-pointing as the bare `${!ident}` form above; the rest of
+                    // the body stays in place for the operator parse. `${!prefix@}` (name
+                    // match) is excluded by the `['@']` test.
+                    var_name = target.clone();
+                    aspar = true;
+                    idx = j;
+                    bash_handled = true;
                 } else if after.len() == 3
                     && (after[0] == '[' || after[0] == Inbrack)
                     && (after[1] == '@' || after[1] == '*' || after[1] == '\u{e187}')
@@ -14208,6 +14225,22 @@ pub fn paramsubst(
                     // takes the same `vunset > 0 && unset(UNSET)` arm.
                     return (String::new(), start_pos, vec![String::new()]);
                 }
+            }
+            // !!! RUST-ONLY (bash/ksh/mksh drop-in) !!! A SCALAR subscripted with `[@]` or
+            // `[*]` is a one-element array there: `x=abc; ${#x[@]}` is 1 (bash(1), Arrays),
+            // where zsh answers the string length. Unset was rejected above.
+            if crate::dash_mode::sparse_arrays()
+                && matches!(subscript.as_deref(), Some("@") | Some("*"))
+                && is_set
+                && !wantt
+                && rest.is_empty()
+                && magic_keys.is_none()
+                && !arrays_contains(&var_name)
+                && !assoc_contains(&var_name)
+                && var_name != "@"
+                && var_name != "*"
+            {
+                return ("1".to_string(), start_pos, vec!["1".to_string()]);
             }
             // c:Src/subst.c:3860-3878 + params.c:1616 — under KSHARRAYS a bare
             // array name is a scalar (element 1), so `${#arr}` is the STRING

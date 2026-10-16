@@ -399,6 +399,40 @@ pub fn execbuiltin(
     // c:275 — `argc = countlinknodes(args);` — total argv length.
     argc = args.len() as i32; // c:275
 
+    // !!! BASH/KSH93 GATE (no C counterpart) !!! `read -n2 x` / `read -rN3 x`: bash and
+    // ksh93 take the count glued onto the flag, while zsh's option parser would read the
+    // digits as further option letters ("bad option: -2"). Split the digits off into the
+    // separate word the `-n N` / `-N N` handling in bin_read already expects.
+    let args: Vec<String> = if name == "read"
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
+    {
+        let mut out: Vec<String> = Vec::with_capacity(args.len() + 1);
+        let mut past_flags = false;
+        for a in args {
+            let glued = !past_flags
+                && a.len() > 2
+                && a.starts_with('-')
+                && !a.starts_with("--")
+                && {
+                    let t = a.trim_end_matches(|c: char| c.is_ascii_digit());
+                    t.len() < a.len() && t.len() > 1 && (t.ends_with('n') || t.ends_with('N'))
+                };
+            if glued {
+                let t = a.trim_end_matches(|c: char| c.is_ascii_digit()).to_string();
+                let digits = a[t.len()..].to_string();
+                out.push(t);
+                out.push(digits);
+            } else {
+                if !a.starts_with('-') || a == "--" {
+                    past_flags = true;
+                }
+                out.push(a);
+            }
+        }
+        out
+    } else {
+        args
+    };
     // c:284-293 — `VARARR(char *, argarr, argc+1)` + copy args into argarr.
     let argarr: Vec<String> = args; // c:284 argarr[]
     let mut argv: usize = 0; // c:285 char **argv = argarr;
@@ -960,7 +994,21 @@ pub fn execbuiltin(
     // c:506 — `return (*(bn->handlerfunc))(name, argv, &ops, bn->funcid);`
     let trimmed: &[String] = &argarr[argv..];
     let handler = bn_ref.handlerfunc.expect("handlerfunc checked at c:264");
-    handler(&name, trimmed, &ops, bn_ref.funcid) // c:506
+    // !!! BASH-MODE (no C counterpart) !!! bash's declaration builtins report a failed
+    // assignment (`declare -r s=1; declare s=2`) as status 1 and carry on with the rest
+    // of the line; zsh's zerr from the same assignment ends it (errflag).
+    let bash_decl = crate::dash_mode::bash_mode()
+        && matches!(
+            name.as_str(),
+            "typeset" | "declare" | "local" | "readonly" | "export" | "integer" | "float"
+        );
+    let had_err = bash_decl && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0;
+    let rc = handler(&name, trimmed, &ops, bn_ref.funcid); // c:506
+    if bash_decl && !had_err && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
+        return if rc == 0 { 1 } else { rc };
+    }
+    rc
 }
 
 /// Port of `bin_enable()` from `Src/builtin.c:517`.
@@ -12651,7 +12699,7 @@ pub fn bin_unhash(
         // c:4431
         if remove_one(&tab, arg) { // c:4432
              // freed
-        } else if func == BIN_UNSET && isset(POSIXBUILTINS) {
+        } else if func == BIN_UNSET && (isset(POSIXBUILTINS) || crate::dash_mode::bash_mode()) {
             // c:4434 — POSIX: unset of nonexistent isn't an error.
             returnval = 0; // c:4435
         } else {

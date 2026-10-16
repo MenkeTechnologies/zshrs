@@ -3955,7 +3955,12 @@ impl ShellExecutor {
                                                                            // MAJOR.MINOR break on the `-test` suffix. Use the cleaned
                                                                            // `patchlevel::ZSH_VERSION` here ("5.9") and surface the full
                                                                            // snapshot tag as `$ZSHRS_VERSION` for zshrs identity checks.
-        crate::ported::params::setsparam("ZSH_VERSION", crate::ported::patchlevel::ZSH_VERSION); // c:972
+        // !!! RUST-ONLY !!! A drop-in for ANOTHER shell (`--bash`, `--ksh`, `--sh`, `--dash`, …)
+        // leaves ZSH_VERSION unset, as the real shell does: scripts detect zsh with
+        // `${ZSH_VERSION:+…}` and would take the zsh branch under bash.
+        if !crate::dash_mode::posix_faithful() {
+            crate::ported::params::setsparam("ZSH_VERSION", crate::ported::patchlevel::ZSH_VERSION); // c:972
+        }
                                                                                                  // c:Src/params.c:973 + Src/patchlevel.h — `ZSH_PATCHLEVEL` is a
                                                                                                  // git-describe-style identifier (`zsh-MAJOR.MINOR-N-gHASH`) of
                                                                                                  // the upstream commit zshrs targets. `build.rs` emits "unknown"
@@ -4392,10 +4397,17 @@ impl ShellExecutor {
     /// string as the shell's last act: [`Self::execute_script`] with the
     /// string compiled as an exiting list (see CMDARG_EXITING).
     pub fn execute_cmdarg(&mut self, script: &str) -> Result<i32, String> {
-        CMDARG_EXITING.with(|c| c.set(true));
-        let chunk = self.compile_script_isolated(script);
-        CMDARG_EXITING.with(|c| c.set(false));
-        let status = self.run_chunk(chunk?, "cmdarg")?;
+        // !!! BASH-MODE (no C counterpart) !!! bash reads a `-c` string one line at a
+        // time, so a runtime error discards the rest of its line and the next line
+        // still runs; the whole-chunk compile below would unwind the entire string.
+        let status = if crate::dash_mode::bash_mode() {
+            self.run_events_per_command(script, false, true)?
+        } else {
+            CMDARG_EXITING.with(|c| c.set(true));
+            let chunk = self.compile_script_isolated(script);
+            CMDARG_EXITING.with(|c| c.set(false));
+            self.run_chunk(chunk?, "cmdarg")?
+        };
         // c:Src/init.c:1572 — `zexit(lastval, ZEXIT_NORMAL)` follows the
         // `-c` string, and c:Src/builtin.c:6012-6015 clears the error state
         // before the EXIT trap (`errflag = intrap = 0; if
@@ -4839,6 +4851,7 @@ impl ShellExecutor {
 
         // c:116 — `int err, non_empty = 0;`
         let mut non_empty = false;
+        let mut lexerr_seen = false;
         let mut vm_error: Option<String> = None;
         let mut drained = false;
 
@@ -4871,6 +4884,15 @@ impl ShellExecutor {
                         && crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) == 0
                     {
                         crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:173
+                    }
+                    // !!! BASH-MODE (no C counterpart) !!! a syntax error ends a
+                    // non-interactive bash with status 2 (zsh: 1).
+                    if tok_v == LEXERR
+                        && crate::extensions::dash_mode::bash_mode()
+                        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+                    {
+                        crate::ported::builtin::LASTVAL.store(2, Ordering::Relaxed);
+                        lexerr_seen = true;
                     }
                     // !!! DASH-FAITHFUL GATE (no C counterpart) !!! a syntax error in a
                     // sourced file is `exraise(EXERROR)`: status 2 and the shell ends.
@@ -4994,7 +5016,7 @@ impl ShellExecutor {
         // c:1633-1636 — `case LOOP_EMPTY: /* Empty code resets status */
         // lastval = 0;`. `source /dev/null` (or a comments-only file) clears
         // `$?` rather than leaving the caller's.
-        if !non_empty {
+        if !non_empty && !lexerr_seen {
             self.set_last_status(0); // c:1635
         }
         Ok(self.last_status())
@@ -6194,6 +6216,12 @@ impl ShellExecutor {
             }
             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:6061 (zerr)
             crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:6062
+            // !!! BASH-MODE (no C counterpart) !!! bash ends a non-interactive shell that
+            // exceeds FUNCNEST; zsh only fails the call (errflag).
+            if crate::dash_mode::bash_mode() && !crate::ported::zsh_h::interact() {
+                crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed);
+                crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL);
+            }
             return Some(1);
         }
         let display_name = if name.starts_with("_zshrs_anon_") {

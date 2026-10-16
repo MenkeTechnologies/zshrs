@@ -584,6 +584,14 @@ pub fn apply_personality_option_deltas() {
     // command substitutions in the prompt at display time — zsh's
     // PROMPT_SUBST.
     opt_state_set("promptsubst", true);
+    // bash does not abandon a script on a runtime error (readonly assignment,
+    // arithmetic error, failglob): it discards the rest of that input line and
+    // reads the next. zsh's CONTINUE_ON_ERROR is the same behavior.
+    opt_state_set("continueonerror", true);
+    // Outside its POSIX mode bash lets a special builtin fail (`typeset` /
+    // `declare` / `readonly` on a read-only name) without ending the shell,
+    // which is what `emulate sh`'s POSIX_BUILTINS does.
+    opt_state_set("posixbuiltins", false);
     // bash-only param syntax (`${!var}`, `${v^^}`) and the `shopt`
     // defaults for the rows backed by a real zsh option.
     crate::dash_mode::set_bash_mode(true);

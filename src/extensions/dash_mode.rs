@@ -1038,6 +1038,12 @@ pub fn bash_set_o(bash_name: &str, on: bool) -> Option<i32> {
     }
     if let Some((_, cell)) = BASH_ONLY_OPTS.iter().find(|(n, _)| *n == bash_name) {
         cell.store(on, Ordering::Relaxed);
+        // `set -o posix` is what turns bash's POSIX special-builtin rules on
+        // (persistent prefix assignments, fatal special-builtin errors); they
+        // are off in a plain `bash`.
+        if bash_name == "posix" {
+            crate::ported::options::opt_state_set("posixbuiltins", on);
+        }
         return Some(0);
     }
     let (_, zname) = BASH_SET_O.iter().find(|(b, _)| *b == bash_name)?;

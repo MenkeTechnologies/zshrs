@@ -7850,6 +7850,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if !glob_subst || (default_off && !default_pending) {
             return raw;
         }
+        // c:Src/glob.c:1233 — zglob is only reached `if (unset(GLOB))` is false;
+        // `set -f` / `setopt noglob` leaves a GLOB_SUBST result literal.
+        if opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true) {
+            return raw;
+        }
         // Collect input strings (Str → vec![s]; Array → multiple).
         let inputs: Vec<String> = match raw {
             Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
