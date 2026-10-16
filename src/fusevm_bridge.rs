@@ -5921,12 +5921,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         with_executor(|exec| {
                             exec.set_scalar("REPLY".to_string(), String::new());
                         });
-                        let _ = writeln!(std::io::stderr());
-                        let _ = std::io::stderr().flush();
-                        // !!! KORN-MODE (no C counterpart) !!! ksh93 and mksh end a
+                        if crate::extensions::dash_mode::bash_mode() {
+                            // bash writes this newline to STDOUT.
+                            println!();
+                        } else {
+                            let _ = writeln!(std::io::stderr());
+                            let _ = std::io::stderr().flush();
+                        }
+                        // !!! KORN/BASH-MODE (no C counterpart) !!! bash, ksh93 and mksh end a
                         // `select` that hit EOF with status 1, whatever the body
                         // last returned (zsh keeps the last body status).
-                        if crate::extensions::dash_mode::korn_mode() {
+                        if crate::extensions::dash_mode::korn_mode()
+                            || crate::extensions::dash_mode::bash_mode()
+                        {
                             last_status = 1;
                         }
                         break 'select;

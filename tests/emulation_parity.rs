@@ -1701,6 +1701,7 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "export X=1; export -n X; env | grep -c '^X='; echo $X",
     "set -o nosuchopt_zz 2>/dev/null; echo $?; echo after",
     "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
     // `${!#}` is indirection through `$#`: the LAST positional.
@@ -2018,6 +2019,7 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
+    "select x in a b; do break; done 2>/dev/null </dev/null; echo $?",
     "kill -9 2>/dev/null; echo $?",
     "echo $((0b11)) 2>/dev/null; echo $?",
     "alias 'z z=x' 2>/dev/null; echo $?",

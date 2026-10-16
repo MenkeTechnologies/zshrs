@@ -465,6 +465,8 @@ pub fn execbuiltin(
                 "hash" => optstr_bytes = b"rdplt".to_vec(),
                 "enable" => optstr_bytes = b"anprs".to_vec(),
                 "type" => optstr_bytes.push(b'P'),
+                // bash `export -n NAME` drops the export attribute.
+                "export" => optstr_bytes.push(b'n'),
                 // bash `history`: -c clear, -d OFFSET delete, -a/-n/-r/-w/-s/-p.
                 "history" => optstr_bytes = b"acd:nprsw".to_vec(),
                 _ => {}
@@ -4324,6 +4326,19 @@ pub fn bin_typeset(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // !!! BASH-MODE (no C counterpart) !!! bash `export -n NAME...` drops the export
+    // attribute (zsh has no `export -n`); it is `typeset +x NAME...`.
+    if name == "export" && crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'n') {
+        let mut fresh = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        fresh.ind[b'x' as usize] = 2; // `+x`
+        return bin_typeset("typeset", argv, &fresh, func);
+    }
+
     // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no `local`: the call is
     // "not found" (127) and the script goes on.
     if name == "local" && crate::dash_mode::ksh93_mode() {
