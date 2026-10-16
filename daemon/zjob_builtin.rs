@@ -372,8 +372,17 @@ fn output(args: &[String]) -> i32 {
         };
     }
 
-    // Follow mode: stream the existing content first, then subscribe to job
-    // output events for new lines until the job completes.
+    // Follow mode: subscribe first (nothing the job prints between the read
+    // and the subscription is lost), then print the existing content, then
+    // stream new output until the job completes.
+    let pattern = format!("job:{}.{}", id, if stderr { "stderr" } else { "stdout" });
+    let complete_pattern = format!("job:{}.complete", id);
+    if let Err(e) = client.call("subscribe", json!({ "pattern": pattern })) {
+        return err_exit(&format!("output --follow subscribe: {}", e));
+    }
+    if let Err(e) = client.call("subscribe", json!({ "pattern": complete_pattern })) {
+        return err_exit(&format!("output --follow subscribe complete: {}", e));
+    }
     match client.call("job_output", payload.clone()) {
         Ok(v) => {
             if let Some(content) = v.get("content").and_then(Value::as_str) {
@@ -382,14 +391,16 @@ fn output(args: &[String]) -> i32 {
         }
         Err(e) => return err_exit(&format!("output: {}", e)),
     }
-
-    let pattern = format!("job:{}.{}", id, if stderr { "stderr" } else { "stdout" });
-    let complete_pattern = format!("job:{}.complete", id);
-    if let Err(e) = client.call("subscribe", json!({ "pattern": pattern })) {
-        return err_exit(&format!("output --follow subscribe: {}", e));
-    }
-    if let Err(e) = client.call("subscribe", json!({ "pattern": complete_pattern })) {
-        return err_exit(&format!("output --follow subscribe complete: {}", e));
+    // A job that finished before the subscription will never send `complete`.
+    if let Ok(v) = client.call("job_status", json!({ "id": id })) {
+        let job = v.get("job");
+        let st = job.and_then(|j| j.get("state")).and_then(Value::as_str).unwrap_or("");
+        if matches!(st, "exited" | "killed" | "failed" | "cancelled") {
+            return job
+                .and_then(|j| j.get("exit_code"))
+                .and_then(Value::as_i64)
+                .map_or(0, |c| c as i32);
+        }
     }
     if let Err(e) = client.set_read_timeout(None) {
         return err_exit(&format!("output --follow timeout: {}", e));
@@ -399,13 +410,30 @@ fn output(args: &[String]) -> i32 {
     loop {
         match client.next_frame() {
             Ok(Frame::Event { event, payload }) => {
+                // The supervisor publishes `Frame::event("job", { topic, data })`
+                // with topic `stdout` | `stderr` | `complete` (jobs.rs `publish`);
+                // `data` is `{ data: <line>, bytes }` for a pipe job and
+                // `{ bytes_b64, len }` for a pty job.
+                let _ = &event;
                 let topic = payload.get("topic").and_then(Value::as_str).unwrap_or("");
-                if topic.ends_with(".complete") || event == "job_complete" {
-                    return 0;
+                let data = payload.get("data");
+                if topic == "complete" {
+                    return data
+                        .and_then(|d| d.get("exit_code"))
+                        .and_then(Value::as_i64)
+                        .map_or(0, |c| c as i32);
                 }
-                if let Some(line) = payload.get("data").and_then(Value::as_str) {
+                if let Some(line) = data.and_then(|d| d.get("data")).and_then(Value::as_str) {
                     print!("{}", line);
+                } else if let Some(bytes) = data
+                    .and_then(|d| d.get("bytes_b64"))
+                    .and_then(Value::as_str)
+                    .and_then(|b| base64_decode_local(b).ok())
+                {
+                    use std::io::Write;
+                    let _ = std::io::stdout().write_all(&bytes);
                 }
+                let _ = std::io::Write::flush(&mut std::io::stdout());
             }
             Ok(_) => continue,
             Err(DaemonError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) => {
@@ -778,6 +806,7 @@ fn stdin_pump(
     };
 
     let mut buf = [0u8; 4096];
+    let mut last_size = current_winsize(stdin_fd);
     let mut pollfd = libc::pollfd {
         fd: stdin_fd,
         events: libc::POLLIN,
@@ -786,6 +815,17 @@ fn stdin_pump(
     loop {
         if detach_signal.load(Ordering::SeqCst) {
             return 0;
+        }
+        // Follow the attaching terminal's size. Polled rather than driven by
+        // SIGWINCH: the hosting shell keeps SIGWINCH blocked for its own signal
+        // thread, so a handler installed here never runs.
+        let size = current_winsize(stdin_fd);
+        if size != last_size {
+            last_size = size;
+            let (rows, cols) = size;
+            if rows > 0 && cols > 0 {
+                let _ = client.call("job_resize", json!({"id": id, "rows": rows, "cols": cols}));
+            }
         }
         let rc = unsafe { libc::poll(&mut pollfd, 1, 100) };
         if rc < 0 {
@@ -983,6 +1023,10 @@ fn wait_for(args: &[String]) -> i32 {
     match client.call("job_wait", payload) {
         Ok(v) => {
             print_pretty(&v);
+            // Like timeout(1): a wait that ran out is not the job's success.
+            if v.get("timed_out").and_then(Value::as_bool) == Some(true) {
+                return 124;
+            }
             v.get("exit_code")
                 .and_then(Value::as_i64)
                 .map(|c| c as i32)
