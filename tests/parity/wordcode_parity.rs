@@ -183,7 +183,26 @@ fn dump_via_zshrs(src: &str) -> String {
     // state (chwords/chwordpos/chline etc.) that races across parallel test
     // threads — concurrent parses overflow chwordpos and poison its mutex.
     let _g = crate::parser_lock::parser_guard();
+    // The committed `.wordcode` references were dumped by a released zsh, so lex
+    // as the release does (a numeric range `<->` stays live inside `${…}`;
+    // the development tree's 54437 makes it literal there). Restored on exit.
+    struct Release;
+    impl Release {
+        fn on() -> Self {
+            zsh::extensions::emulation_startup::set_emulating(true);
+            zsh::extensions::emulation_startup::set_argv0_zsh(true);
+            Release
+        }
+    }
+    impl Drop for Release {
+        fn drop(&mut self) {
+            zsh::extensions::emulation_startup::set_argv0_zsh(false);
+            zsh::extensions::emulation_startup::set_emulating(false);
+        }
+    }
+    let _release = Release::on();
     zsh::lex::lex_init(src);
+
     zsh::lex::set_tok(ENDINPUT);
     zsh::parse::init_parse();
     zsh::lex::zshlex();

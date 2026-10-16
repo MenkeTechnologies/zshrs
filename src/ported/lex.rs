@@ -2634,7 +2634,9 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             // so isnumglob still fires below — but cond /
                             // case patterns stay raw.
                             add(c);
-                        } else if in_brace_param == 0 && isnumglob() {
+                        } else if (in_brace_param == 0 || crate::extensions::emulation_startup::emulating_592()) && isnumglob() {
+                            // 5.9.2 c:1198 is plain `if (isnumglob())`: a drop-in `zsh` keeps numeric
+                            // ranges live inside `${…}`.
                             // c:1201 `if (!in_brace_param && isnumglob())`
                             // (workers/54437): inside `${…}` a `<N-M>`
                             // stays literal text, so `${(l<3><->):-}` pads
