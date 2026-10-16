@@ -1937,6 +1937,10 @@ pub fn source(s: &str) -> i32 {
         .unwrap_or_else(|e| e.into_inner())
         .pop();
 
+    // c:1517 — `lineno = oldlineno;`: the sourced file's lines are not the caller's.
+    // Left alone, the first line read afterwards continued the count (`$LINENO` was 15
+    // after Debian's 18-line /etc/zsh/zshenv).
+    crate::ported::lex::set_lineno(oldlineno as u64);
     // c:1646-1670 — restore shell state.
     crate::ported::utils::set_scriptname(old_scriptname);
     crate::ported::utils::set_scriptfilename(old_scriptfilename);
