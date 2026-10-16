@@ -308,6 +308,7 @@ Special options:
   --help       show this message, then exit
   --version    show zsh version number, then exit
   --doctor     full diagnostic report of shell health, caches, and performance
+  --doctor --json   the same report as one JSON object
   --banner     print the ZSHRS logo, version and builtin totals, and daemon status
 
 Parser-pipeline dumpers (FILE, or `-` for stdin; output goes to stdout):
@@ -1756,7 +1757,7 @@ pub fn zshrs_main() {
     // Handle --doctor (zshrs-exclusive, not available in --zsh or --posix)
     if args.iter().any(|a| a == "--doctor") {
         if is_zshrs_mode() {
-            run_doctor();
+            run_doctor(args.iter().any(|a| a == "--json"));
         } else {
             eprintln!("zshrs: --doctor is only available in zshrs mode (not --zsh or --posix)");
             std::process::exit(1);
@@ -3123,229 +3124,379 @@ pub fn zshrs_main() {
     std::process::exit(zsh::ported::init::zsh_main(argv.len() as i32, &argv));
 }
 
-/// zshrs --doctor: full diagnostic report of shell health, caches, and performance.
-fn run_doctor() {
+/// zshrs --doctor [--json]: full diagnostic report of shell health, caches, and performance.
+fn run_doctor(json: bool) {
+    let report = gather_doctor();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string())
+        );
+    } else {
+        render_doctor(&report);
+    }
+}
+
+/// Count the entries of every existing directory in a `:`-separated list.
+/// Returns `(total, valid, missing_dirs, entry_count)`.
+fn scan_dir_list(list: &str) -> (usize, usize, Vec<String>, usize) {
+    let dirs: Vec<&str> = list.split(':').filter(|s| !s.is_empty()).collect();
+    let mut valid = 0usize;
+    let mut entries = 0usize;
+    let mut missing = Vec::new();
+    for dir in &dirs {
+        if std::path::Path::new(dir).is_dir() {
+            valid += 1;
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                entries += rd.count();
+            }
+        } else {
+            missing.push(dir.to_string());
+        }
+    }
+    (dirs.len(), valid, missing, entries)
+}
+
+fn file_len(p: &std::path::Path) -> u64 {
+    std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+}
+
+/// Collect every doctor datum once; `render_doctor` prints it, `--json` dumps it.
+fn gather_doctor() -> serde_json::Value {
+    use serde_json::json;
+
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let environment = json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "pid": std::process::id(),
+        "cwd": cwd,
+        "shell": std::env::var("SHELL").unwrap_or_else(|_| "?".to_string()),
+        "cpus": cpus,
+        "pool_size": cpus.clamp(2, 18),
+    });
+
+    let (path_total, path_valid, path_missing, path_cmds) =
+        scan_dir_list(&std::env::var("PATH").unwrap_or_default());
+    let (fpath_total, fpath_valid, fpath_missing, fpath_files) =
+        scan_dir_list(&std::env::var("FPATH").unwrap_or_default());
+
+    // Per docs/DESIGN_GOALS.md:13 and docs/DAEMON.md:226, the only shell cache
+    // layer is rkyv-mmapped bytecode under `~/.zshrs/images/` with the
+    // top-level `~/.zshrs/index.rkyv`. Hot lookups never hit SQLite.
+    let zshrs_dir = dirs::home_dir()
+        .map(|h| h.join(".zshrs"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/.zshrs"));
+    let index_rkyv = zshrs_dir.join("index.rkyv");
+    let images_dir = zshrs_dir.join("images");
+    let mut shards: Vec<(String, u64)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&images_dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("rkyv") {
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                shards.push((name, entry.metadata().map(|m| m.len()).unwrap_or(0)));
+            }
+        }
+    }
+    shards.sort();
+    let scripts = zsh::script_cache::stats().map(|(count, bytes)| {
+        json!({
+            "entries": count,
+            "bytes": bytes,
+            "path": zsh::script_cache::default_cache_path().display().to_string(),
+        })
+    });
+    let autoload_count = zsh::autoload_cache::entry_count();
+    let caches = json!({
+        "index": {
+            "path": index_rkyv.display().to_string(),
+            "present": index_rkyv.exists(),
+            "bytes": file_len(&index_rkyv),
+        },
+        "images": {
+            "path": images_dir.display().to_string(),
+            "present": images_dir.is_dir(),
+            "total_bytes": shards.iter().map(|(_, s)| *s).sum::<u64>(),
+            "shards": shards.iter().map(|(n, s)| json!({"name": n, "bytes": s})).collect::<Vec<_>>(),
+        },
+        "scripts": scripts,
+        "autoloads": (autoload_count > 0).then(|| json!({
+            "functions": autoload_count,
+            "path": zsh::autoload_cache::default_cache_path().display().to_string(),
+        })),
+    });
+
+    // The recorder shard is what startup replays, so ITS counts are the
+    // shell's real state; the SQLite files are daemon-maintained copies.
+    let recorded = zsh::ext_builtins::recorded_state_counts().map(|(shard, counts)| {
+        json!({
+            "shard": shard,
+            "counts": counts.iter().map(|(l, n)| json!({"label": l, "count": n})).collect::<Vec<_>>(),
+        })
+    });
+
+    let compsys_path = zsh::compsys::cache::default_cache_path();
+    let mut sqlite = json!({
+        "compsys": {
+            "path": compsys_path.display().to_string(),
+            "present": compsys_path.exists(),
+            "bytes": file_len(&compsys_path),
+            "completions": if compsys_path.exists() {
+                CompsysCache::open(&compsys_path)
+                    .ok()
+                    .map(|c| zsh::compsys::cache_entry_count(&c))
+                    .unwrap_or(0)
+            } else { 0 },
+        },
+    });
+    let plugin_path = zsh::plugin_cache::default_cache_path();
+    #[cfg(feature = "daemon")]
+    {
+        let catalog = zshrs_daemon::paths::CachePaths::resolve()
+            .ok()
+            .map(|p| p.catalog_db);
+        sqlite["plugins"] = json!(catalog.and_then(|p| zshrs_daemon::catalog::mirrored_plugin_count(&p)));
+    }
+
+    // History is a durable command record, not a cache.
+    let hist_path = zsh::history::HistoryEngine::db_path();
+    let history = json!({
+        "path": hist_path.display().to_string(),
+        "present": hist_path.exists(),
+        "bytes": file_len(&hist_path),
+        "entries": if hist_path.exists() {
+            zsh::history::HistoryEngine::new().ok().and_then(|e| e.count().ok()).unwrap_or(0)
+        } else { 0 },
+    });
+
+    let log_path = zsh::log::log_path();
+    let log = json!({
+        "path": log_path.display().to_string(),
+        "present": log_path.exists(),
+        "bytes": file_len(&log_path),
+        "lines": std::fs::read_to_string(&log_path).map(|s| s.lines().count()).unwrap_or(0),
+    });
+
+    let zdotdir = std::env::var("ZDOTDIR")
+        .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()));
+    let startup: Vec<serde_json::Value> = [
+        zsh::global_rc::global_rc_path("/etc/zshenv"),
+        format!("{}/.zshenv", zdotdir),
+        zsh::global_rc::global_rc_path("/etc/zprofile"),
+        format!("{}/.zprofile", zdotdir),
+        zsh::global_rc::global_rc_path("/etc/zshrc"),
+        format!("{}/.zshrc", zdotdir),
+        zsh::global_rc::global_rc_path("/etc/zlogin"),
+        format!("{}/.zlogin", zdotdir),
+    ]
+    .iter()
+    .map(|path| {
+        let p = std::path::Path::new(path);
+        json!({
+            "path": path,
+            "present": p.exists(),
+            "bytes": file_len(p),
+            "cached": p.exists() && is_script_cached(&plugin_path, path),
+        })
+    })
+    .collect();
+    let recording = if zsh::daemon_presence::recording_present() {
+        json!({"present": true, "stale_rc": zsh::daemon_presence::recording_staleness()})
+    } else {
+        json!({"present": false, "stale_rc": null})
+    };
+
+    let profiling = json!({
+        "chrome_tracing": zsh::log::profiling_enabled(),
+        "flamegraph": zsh::log::flamegraph_enabled(),
+        "prometheus": zsh::log::prometheus_enabled(),
+        "zshrs_log": std::env::var("ZSHRS_LOG").ok(),
+    });
+
+    let t0 = Instant::now();
+    let mut executor = ShellExecutor::new();
+    let init_ms = t0.elapsed().as_millis();
+    let t1 = Instant::now();
+    executor.drain_compinit_bg();
+    let drain_ms = t1.elapsed().as_millis();
+    let total_ms = init_ms + drain_ms;
+
+    let mut issues: Vec<String> = Vec::new();
+    if !path_missing.is_empty() {
+        issues.push(format!("{} PATH entries missing", path_missing.len()));
+    }
+    if !fpath_missing.is_empty() {
+        issues.push(format!("{} FPATH entries missing", fpath_missing.len()));
+    }
+    if !hist_path.exists() {
+        issues.push("no history database".to_string());
+    }
+    if !compsys_path.exists() {
+        issues.push("no completion cache".to_string());
+    }
+    if total_ms > 100 {
+        issues.push("startup > 100ms".to_string());
+    }
+
+    json!({
+        "environment": environment,
+        "path": {
+            "total": path_total, "valid": path_valid,
+            "missing": path_missing, "commands": path_cmds,
+        },
+        "fpath": {
+            "total": fpath_total, "valid": fpath_valid,
+            "missing": fpath_missing, "function_files": fpath_files,
+        },
+        "caches": caches,
+        "recorded_state": recorded,
+        "sqlite": sqlite,
+        "history": history,
+        "log": log,
+        "startup_files": startup,
+        "recording": recording,
+        "profiling": profiling,
+        "startup_benchmark": {
+            "executor_init_ms": init_ms as u64,
+            "compinit_drain_ms": drain_ms as u64,
+            "total_ms": total_ms as u64,
+        },
+        "issues": issues,
+    })
+}
+
+/// Human-readable rendering of [`gather_doctor`].
+fn render_doctor(r: &serde_json::Value) {
     let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
     let red = |s: &str| format!("\x1b[31m{}\x1b[0m", s);
     let yellow = |s: &str| format!("\x1b[33m{}\x1b[0m", s);
     let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
     let dim = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+    let s = |v: &serde_json::Value| v.as_str().unwrap_or("").to_string();
+    let n = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
 
     println!("{}", bold("zshrs doctor"));
     println!("{}", dim(&"=".repeat(60)));
     println!();
 
-    // --- Version & Environment ---
+    let e = &r["environment"];
     println!("{}", bold("Environment"));
-    println!("  version:    zshrs {}", env!("CARGO_PKG_VERSION"));
-    println!("  pid:        {}", std::process::id());
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "?".to_string());
-    println!("  cwd:        {}", cwd);
-    println!(
-        "  shell:      {}",
-        std::env::var("SHELL").unwrap_or_else(|_| "?".to_string())
-    );
-    let cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    println!("  cpus:       {}", cpus);
-    let pool_size = cpus.clamp(2, 18);
-    println!("  pool size:  {}", pool_size);
+    println!("  version:    zshrs {}", s(&e["version"]));
+    println!("  pid:        {}", n(&e["pid"]));
+    println!("  cwd:        {}", s(&e["cwd"]));
+    println!("  shell:      {}", s(&e["shell"]));
+    println!("  cpus:       {}", n(&e["cpus"]));
+    println!("  pool size:  {}", n(&e["pool_size"]));
     println!();
 
-    // --- PATH ---
+    let p = &r["path"];
+    let path_missing = p["missing"].as_array().map(|a| a.len()).unwrap_or(0);
     println!("{}", bold("PATH"));
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    let path_dirs: Vec<&str> = path_var.split(':').filter(|s| !s.is_empty()).collect();
-    let mut path_ok = 0usize;
-    let mut path_missing = 0usize;
-    let mut path_cmds = 0usize;
-    for dir in &path_dirs {
-        if std::path::Path::new(dir).is_dir() {
-            path_ok += 1;
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                path_cmds += entries.count();
-            }
-        } else {
-            path_missing += 1;
-        }
-    }
     println!(
         "  directories: {} total, {} {}, {} {}",
-        path_dirs.len(),
-        path_ok,
+        n(&p["total"]),
+        n(&p["valid"]),
         green("valid"),
         path_missing,
-        if path_missing > 0 {
-            red("missing")
-        } else {
-            green("missing")
-        },
+        if path_missing > 0 { red("missing") } else { green("missing") },
     );
-    println!("  commands:    ~{}", path_cmds);
-    if path_missing > 0 {
-        for dir in &path_dirs {
-            if !std::path::Path::new(dir).is_dir() {
-                println!("  {} PATH entry does not exist: {}", red("!"), dir);
-            }
-        }
+    println!("  commands:    ~{}", n(&p["commands"]));
+    for dir in p["missing"].as_array().into_iter().flatten() {
+        println!("  {} PATH entry does not exist: {}", red("!"), s(dir));
     }
     println!();
 
-    // --- FPATH ---
+    let f = &r["fpath"];
+    let fpath_missing = f["missing"].as_array().map(|a| a.len()).unwrap_or(0);
     println!("{}", bold("FPATH"));
-    let fpath_var = std::env::var("FPATH").unwrap_or_default();
-    let fpath_dirs: Vec<&str> = fpath_var.split(':').filter(|s| !s.is_empty()).collect();
-    let mut fpath_ok = 0usize;
-    let mut fpath_missing = 0usize;
-    let mut fpath_files = 0usize;
-    for dir in &fpath_dirs {
-        if std::path::Path::new(dir).is_dir() {
-            fpath_ok += 1;
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                fpath_files += entries.count();
-            }
-        } else {
-            fpath_missing += 1;
-        }
-    }
     println!(
         "  directories:   {} total, {} {}, {} {}",
-        fpath_dirs.len(),
-        fpath_ok,
+        n(&f["total"]),
+        n(&f["valid"]),
         green("valid"),
         fpath_missing,
-        if fpath_missing > 0 {
-            red("missing")
-        } else {
-            green("missing")
-        },
+        if fpath_missing > 0 { red("missing") } else { green("missing") },
     );
-    println!("  function files: {}", fpath_files);
+    println!("  function files: {}", n(&f["function_files"]));
     println!();
 
-    // --- Caches (rkyv-mmapped) ---
-    // Per docs/DESIGN_GOALS.md:13 and docs/DAEMON.md:226, the only
-    // shell cache layer is rkyv-mmapped bytecode under
-    // `~/.zshrs/images/` with the top-level `~/.zshrs/index.rkyv`
-    // (fq_name → shard_id, generation, byte_offset). Hot lookups
-    // never hit SQLite — clients mmap rkyv exclusively.
+    let c = &r["caches"];
     println!("{}", bold("Caches (rkyv-mmapped)"));
-    let zshrs_dir = dirs::home_dir()
-        .map(|h| h.join(".zshrs"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/.zshrs"));
-    let index_rkyv = zshrs_dir.join("index.rkyv");
-    if index_rkyv.exists() {
-        let size = std::fs::metadata(&index_rkyv).map(|m| m.len()).unwrap_or(0);
+    let idx = &c["index"];
+    if idx["present"].as_bool() == Some(true) {
         println!(
             "  index:       {} {}  {}",
-            index_rkyv.display(),
-            format_bytes(size),
+            s(&idx["path"]),
+            format_bytes(n(&idx["bytes"])),
             green("OK")
         );
     } else {
         println!(
             "  index:       {} {}",
-            index_rkyv.display(),
+            s(&idx["path"]),
             yellow("(absent — daemon has not built shards yet)")
         );
     }
-    let images_dir = zshrs_dir.join("images");
-    if images_dir.is_dir() {
-        let mut shards: Vec<(String, u64)> = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(&images_dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if p.extension().and_then(|e| e.to_str()) == Some("rkyv") {
-                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                    let name = p
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    shards.push((name, size));
-                }
-            }
-        }
-        shards.sort();
-        let total: u64 = shards.iter().map(|(_, s)| *s).sum();
+    let im = &c["images"];
+    if im["present"].as_bool() == Some(true) {
+        let shards = im["shards"].as_array().cloned().unwrap_or_default();
         println!(
             "  images/:     {} shards, {} total",
             shards.len(),
-            format_bytes(total)
+            format_bytes(n(&im["total_bytes"]))
         );
-        for (name, size) in &shards {
-            println!("               {} {}", format_bytes(*size), name);
+        for sh in &shards {
+            println!("               {} {}", format_bytes(n(&sh["bytes"])), s(&sh["name"]));
         }
     } else {
-        println!(
-            "  images/:     {} {}",
-            images_dir.display(),
-            yellow("(absent)")
-        );
+        println!("  images/:     {} {}", s(&im["path"]), yellow("(absent)"));
     }
-
-    // Legacy single-file shards still in active shell-side use until
-    // daemon hydration migrates them under images/.
-    if let Some((count, bytes)) = zsh::script_cache::stats() {
-        let path = zsh::script_cache::default_cache_path();
+    if !c["scripts"].is_null() {
         println!(
             "  scripts:     {} entries, {}  {}",
-            count,
-            format_bytes(bytes as u64),
-            dim(&format!("{}", path.display()))
+            n(&c["scripts"]["entries"]),
+            format_bytes(n(&c["scripts"]["bytes"])),
+            dim(&s(&c["scripts"]["path"]))
         );
     }
-    let autoload_count = zsh::autoload_cache::entry_count();
-    if autoload_count > 0 {
-        let path = zsh::autoload_cache::default_cache_path();
+    if !c["autoloads"].is_null() {
         println!(
             "  autoloads:   {} functions  {}",
-            autoload_count,
-            dim(&format!("{}", path.display()))
+            n(&c["autoloads"]["functions"]),
+            dim(&s(&c["autoloads"]["path"]))
         );
     }
     println!();
 
-    // --- Recorded state (authoritative) ---
-    // The recorder shard is what startup replays, so ITS counts are the
-    // shell's real state. The SQLite files below are daemon-maintained
-    // copies; with no daemon running they stay empty or stale.
-    let recorded = zsh::ext_builtins::recorded_state_counts();
-    if let Some((shard_name, counts)) = &recorded {
+    if !r["recorded_state"].is_null() {
         println!("{}", bold("Recorded state (authoritative)"));
-        println!("  {}", dim(shard_name));
-        for (label, n) in counts {
-            println!("  {:<17}{}", format!("{}:", label), n);
+        println!("  {}", dim(&s(&r["recorded_state"]["shard"])));
+        for row in r["recorded_state"]["counts"].as_array().into_iter().flatten() {
+            println!("  {:<17}{}", format!("{}:", s(&row["label"])), n(&row["count"]));
         }
         println!();
     }
-    // --- SQLite (read-only mirrors) ---
-    // Same directory, different job: daemon-maintained copies you can
-    // query with SQL or `dbview`. They are NOT the bytecode cache and
-    // are NOT read when deciding cache hit/miss or when running
-    // compiled code. The numbers below are inspection-only.
+
     println!("{}", bold("SQLite (read-only mirrors)"));
     println!(
         "  {}",
         dim("daemon-maintained; not read on cache lookup / hot path")
     );
-
-    let compsys_path = zsh::compsys::cache::default_cache_path();
-    if compsys_path.exists() {
-        let size = std::fs::metadata(&compsys_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let count = CompsysCache::open(&compsys_path)
-            .ok()
-            .map(|c| zsh::compsys::cache_entry_count(&c))
-            .unwrap_or(0);
+    let cs = &r["sqlite"]["compsys"];
+    if cs["present"].as_bool() == Some(true) {
         println!(
             "  compsys.db:  {} completions, {}  {}",
-            count,
-            format_bytes(size),
+            n(&cs["completions"]),
+            format_bytes(n(&cs["bytes"])),
             dim("mirror"),
         );
     } else {
@@ -3354,83 +3505,47 @@ fn run_doctor() {
             yellow("not found — run compinit to create the mirror")
         );
     }
-
-    let plugin_path = zsh::plugin_cache::default_cache_path();
-
-    #[cfg(feature = "daemon")]
-    {
-        let catalog = zshrs_daemon::paths::CachePaths::resolve()
-            .ok()
-            .map(|p| p.catalog_db);
-        match catalog.and_then(|p| zshrs_daemon::catalog::mirrored_plugin_count(&p)) {
-            Some(n) => println!("  plugins:     {} plugins  {}", n, dim("mirror")),
+    if let Some(pl) = r["sqlite"].get("plugins") {
+        match pl.as_u64() {
+            Some(count) => println!("  plugins:     {} plugins  {}", count, dim("mirror")),
             None => println!("  plugins:     {}", yellow("no mirror — start the daemon to hydrate it")),
         }
     }
     println!();
 
-    // --- History ---
-    // History is a durable command record, not a cache. Reported in
-    // its own section to make that distinction visible.
+    let h = &r["history"];
     println!("{}", bold("History"));
-    let hist_path = zsh::history::HistoryEngine::db_path();
-    if hist_path.exists() {
-        let size = std::fs::metadata(&hist_path).map(|m| m.len()).unwrap_or(0);
-        let count = zsh::history::HistoryEngine::new()
-            .ok()
-            .and_then(|e| e.count().ok())
-            .unwrap_or(0);
+    if h["present"].as_bool() == Some(true) {
         println!(
             "  {}  {} entries, {}  {}",
-            hist_path.display(),
-            count,
-            format_bytes(size),
+            s(&h["path"]),
+            n(&h["entries"]),
+            format_bytes(n(&h["bytes"])),
             green("OK"),
         );
     } else {
-        println!("  {}  {}", hist_path.display(), yellow("not found"));
+        println!("  {}  {}", s(&h["path"]), yellow("not found"));
     }
     println!();
 
-    // --- Log file ---
+    let l = &r["log"];
     println!("{}", bold("Log"));
-    let log_path = zsh::log::log_path();
-    if log_path.exists() {
-        let size = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-        let lines = std::fs::read_to_string(&log_path)
-            .map(|s| s.lines().count())
-            .unwrap_or(0);
+    if l["present"].as_bool() == Some(true) {
         println!(
             "  {}  {} lines, {}",
-            log_path.display(),
-            lines,
-            format_bytes(size)
+            s(&l["path"]),
+            n(&l["lines"]),
+            format_bytes(n(&l["bytes"]))
         );
     } else {
         println!("  {}", dim("no log file yet"));
     }
     println!();
 
-    // --- Startup files ---
     println!("{}", bold("Startup Files"));
-    let zdotdir = std::env::var("ZDOTDIR")
-        .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()));
-    let startup_files = [
-        (zsh::global_rc::global_rc_path("/etc/zshenv"), true),
-        (format!("{}/.zshenv", zdotdir), false),
-        (zsh::global_rc::global_rc_path("/etc/zprofile"), false),
-        (format!("{}/.zprofile", zdotdir), false),
-        (zsh::global_rc::global_rc_path("/etc/zshrc"), false),
-        (format!("{}/.zshrc", zdotdir), false),
-        (zsh::global_rc::global_rc_path("/etc/zlogin"), false),
-        (format!("{}/.zlogin", zdotdir), false),
-    ];
-    for (path, _always) in &startup_files {
-        let p = std::path::Path::new(path);
-        if p.exists() {
-            let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-            let cached = is_script_cached(&plugin_path, path);
-            let cache_status = if cached {
+    for sf in r["startup_files"].as_array().into_iter().flatten() {
+        if sf["present"].as_bool() == Some(true) {
+            let cache_status = if sf["cached"].as_bool() == Some(true) {
                 green("cached")
             } else {
                 yellow("uncached")
@@ -3438,82 +3553,52 @@ fn run_doctor() {
             println!(
                 "  {} {} {}  [{}]",
                 green("*"),
-                path,
-                dim(&format!("({})", format_bytes(size))),
+                s(&sf["path"]),
+                dim(&format!("({})", format_bytes(n(&sf["bytes"])))),
                 cache_status,
             );
         } else {
-            // Both `always`-flagged and not-found render the same dim
-            // line; the distinction is meaningful only for the
-            // present/up-to-date branch above.
-            println!("  {} {}", dim("-"), dim(path));
+            println!("  {} {}", dim("-"), dim(&s(&sf["path"])));
         }
     }
-    // Recording staleness — an rc file edited since the last recording.
-    if !zsh::daemon_presence::recording_present() {
+    let rec = &r["recording"];
+    if rec["present"].as_bool() != Some(true) {
+        println!("  {} recording: {}", dim("-"), dim("none (rc files sourced normally)"));
+    } else if let Some(rc) = rec["stale_rc"].as_str() {
         println!(
-            "  {} recording: {}",
-            dim("-"),
-            dim("none (rc files sourced normally)"),
+            "  {} recording: {} ({} is newer — run `zshrs-recorder`)",
+            yellow("!"),
+            yellow("STALE"),
+            rc,
         );
     } else {
-        match zsh::daemon_presence::recording_staleness() {
-            Some(rc) => println!(
-                "  {} recording: {} ({} is newer — run `zshrs-recorder`)",
-                yellow("!"),
-                yellow("STALE"),
-                rc,
-            ),
-            None => println!("  {} recording: {}", green("*"), green("up to date")),
-        }
+        println!("  {} recording: {}", green("*"), green("up to date"));
     }
     println!();
 
-    // --- Profiling ---
+    let pr = &r["profiling"];
     println!("{}", bold("Profiling Features"));
-    println!(
-        "  chrome tracing: {}",
-        if zsh::log::profiling_enabled() {
+    let feature = |on: &serde_json::Value, flag: &str| {
+        if on.as_bool() == Some(true) {
             green("enabled")
         } else {
-            dim("disabled (build with --features profiling)")
+            dim(&format!("disabled (build with --features {flag})"))
         }
-    );
-    println!(
-        "  flamegraph:     {}",
-        if zsh::log::flamegraph_enabled() {
-            green("enabled")
-        } else {
-            dim("disabled (build with --features flamegraph)")
-        }
-    );
-    println!(
-        "  prometheus:     {}",
-        if zsh::log::prometheus_enabled() {
-            green("enabled")
-        } else {
-            dim("disabled (build with --features prometheus)")
-        }
-    );
+    };
+    println!("  chrome tracing: {}", feature(&pr["chrome_tracing"], "profiling"));
+    println!("  flamegraph:     {}", feature(&pr["flamegraph"], "flamegraph"));
+    println!("  prometheus:     {}", feature(&pr["prometheus"], "prometheus"));
     println!(
         "  ZSHRS_LOG:      {}",
-        std::env::var("ZSHRS_LOG").unwrap_or_else(|_| "info (default)".to_string())
+        pr["zshrs_log"].as_str().unwrap_or("info (default)")
     );
     println!();
 
-    // --- Startup benchmark ---
+    let b = &r["startup_benchmark"];
+    let total = n(&b["total_ms"]);
     println!("{}", bold("Startup Benchmark"));
-    let t0 = Instant::now();
-    let mut executor = ShellExecutor::new();
-    let init_ms = t0.elapsed().as_millis();
-    println!("  executor init:  {}ms", init_ms);
-
-    let t1 = Instant::now();
-    executor.drain_compinit_bg();
-    let drain_ms = t1.elapsed().as_millis();
-    println!("  compinit drain: {}ms", drain_ms);
-
-    let total = init_ms + drain_ms;
+    println!("  executor init:  {}ms", n(&b["executor_init_ms"]));
+    println!("  compinit drain: {}ms", n(&b["compinit_drain_ms"]));
     let status = if total < 30 {
         green(&format!("{}ms — excellent", total))
     } else if total < 100 {
@@ -3524,30 +3609,19 @@ fn run_doctor() {
     println!("  total:          {}", status);
     println!();
 
-    // --- Summary ---
     println!("{}", bold("Summary"));
-    let mut issues = 0;
-    if path_missing > 0 {
-        println!("  {} {} PATH entries missing", red("!"), path_missing);
-        issues += 1;
+    let issues = r["issues"].as_array().cloned().unwrap_or_default();
+    for issue in &issues {
+        let text = s(issue);
+        // Missing PATH/FPATH entries and slow startup are errors; absent caches are warnings.
+        let mark = if text.contains("missing") || text.contains("startup") {
+            red("!")
+        } else {
+            yellow("!")
+        };
+        println!("  {} {}", mark, text);
     }
-    if fpath_missing > 0 {
-        println!("  {} {} FPATH entries missing", red("!"), fpath_missing);
-        issues += 1;
-    }
-    if !hist_path.exists() {
-        println!("  {} no history database", yellow("!"));
-        issues += 1;
-    }
-    if !compsys_path.exists() {
-        println!("  {} no completion cache", yellow("!"));
-        issues += 1;
-    }
-    if total > 100 {
-        println!("  {} startup > 100ms", red("!"));
-        issues += 1;
-    }
-    if issues == 0 {
+    if issues.is_empty() {
         println!("  {} all checks passed", green("*"));
     }
 }

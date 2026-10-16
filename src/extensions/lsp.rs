@@ -5862,7 +5862,7 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     // Special / informational
     ("--help",     "Print the full usage message (every flag, dumper, parity mode) and exit 0."),
     ("--version",  "Print the zsh version string baked into the binary and exit 0."),
-    ("--doctor",   "Full diagnostic report of shell health, caches, plugin load timings, and performance counters."),
+    ("--doctor",   "Full diagnostic report of shell health, caches, plugin load timings, and performance counters. With --json the report is one JSON object on stdout."),
     ("--banner",   "Print the ZSHRS logo, a box with the version and the builtin and extension totals, and whether the daemon answers on its socket. The `zbanner` builtin prints the same inside a shell, plus that shell's function, alias, parameter and job counts."),
     // Editor / IDE integration
     ("--lsp",      "Run the Language Server on stdio. Serves completion / hover / definition / references / rename / documentSymbol / foldingRange / semanticTokens / formatting / diagnostics. Consumed by the IntelliJ plugin, Helix, Neovim, VS Code, etc."),
