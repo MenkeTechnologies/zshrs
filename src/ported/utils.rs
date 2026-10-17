@@ -6108,6 +6108,9 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
     // c:3947-3956 — pre-compute total length, alloc, copy elements
     //               interleaving sep. Rust slice::join collapses all that
     //               into the one canonical call.
+    if sep_str.is_empty() && crate::dash_mode::ksh93_mode() {
+        return crate::extensions::emulation_output::ksh93_empty_ifs_join(arr);
+    }
     arr.join(sep_str)
 }
 

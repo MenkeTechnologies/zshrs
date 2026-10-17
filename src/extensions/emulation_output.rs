@@ -1049,3 +1049,31 @@ pub fn dash_split_fields(args: &[String], ifs: Option<&str>) -> Option<Vec<Strin
     Some(fields)
 }
 
+
+/// ksh93 joins `"$*"` under `IFS=''` by concatenation, but a run of empty
+/// positionals leaves its internal field marker in the result, which prints as `\`.
+/// An empty run between two values always leaves one; at either end it leaves one only
+/// when it is two or more long.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn ksh93_empty_ifs_join(elems: &[String]) -> String {
+    if elems.iter().all(|e| e.is_empty()) {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < elems.len() {
+        if !elems[i].is_empty() {
+            out.push_str(&elems[i]);
+            i += 1;
+            continue;
+        }
+        let run = elems[i..].iter().take_while(|e| e.is_empty()).count();
+        let interior = i > 0 && i + run < elems.len();
+        if interior || run >= 2 {
+            out.push('\\');
+        }
+        i += run;
+    }
+    out
+}
