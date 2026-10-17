@@ -383,3 +383,333 @@ printf a | cat | cat | cat
 printf 'a\nb\nc\n' | while read l; do printf '%s,' $l; done; printf '\n'
 printf 'a\nb\n' | { read x; read y; printf '%s%s\n' $y $x; }
 i=0; printf 'a\nb\n' | while read l; do i=$((i+1)); done; printf '%s\n' $i
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in *; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- *; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in a*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- a*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in *1; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- *1; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in ?1; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- ?1; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in a[12]; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- a[12]; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in [ab]1; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- [ab]1; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in [!a]*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- [!a]*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in .h; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- .h; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in */*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- */*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in sub/*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- sub/*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in s*/s?; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- s*/s?; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in nosuch*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- nosuch*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in "a*"; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- "a*"; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in 'a*'; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- 'a*'; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in \a*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- \a*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in a\*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- a\*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in *y; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- *y; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in x?y; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- x?y; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in [[:alpha:]]1; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- [[:alpha:]]1; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in ./a*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- ./a*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; for f in sub/../a*; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -- sub/../a*; printf '%s\n' $#; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; set -f; for f in *; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; x='*'; for f in $x; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; x='*'; for f in "$x"; do printf '<%s>' "$f"; done; printf '\n'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; printf '%s\n' a* | wc -l | tr -d ' '; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; touch a1 a2 b1 .h 'x y' ; mkdir sub; touch sub/s1 sub/s2; case $(printf '%s' a*) in 'a1 a2') printf ok;; *) printf bad;; esac; printf '\n'; cd /; rm -rf $d
+x=$(printf 'a\n\n\n'); printf '[%s]\n' "$x"
+x=`printf 'a\n\n\n'`; printf '[%s]\n' "$x"
+for w in $(printf 'a\n\n\n'); do printf '<%s>' "$w"; done; printf '\n'
+x=$(printf ''); printf '[%s]\n' "$x"
+x=`printf ''`; printf '[%s]\n' "$x"
+for w in $(printf ''); do printf '<%s>' "$w"; done; printf '\n'
+x=$(printf '\n'); printf '[%s]\n' "$x"
+x=`printf '\n'`; printf '[%s]\n' "$x"
+for w in $(printf '\n'); do printf '<%s>' "$w"; done; printf '\n'
+x=$(printf 'a b'); printf '[%s]\n' "$x"
+x=`printf 'a b'`; printf '[%s]\n' "$x"
+for w in $(printf 'a b'); do printf '<%s>' "$w"; done; printf '\n'
+x=$(printf '  a  '); printf '[%s]\n' "$x"
+x=`printf '  a  '`; printf '[%s]\n' "$x"
+for w in $(printf '  a  '); do printf '<%s>' "$w"; done; printf '\n'
+x=$(echo a; echo b); printf '[%s]\n' "$x"
+x=`echo a; echo b`; printf '[%s]\n' "$x"
+for w in $(echo a; echo b); do printf '<%s>' "$w"; done; printf '\n'
+x=$(printf 'x'; false); printf '[%s]\n' "$x"
+x=`printf 'x'; false`; printf '[%s]\n' "$x"
+for w in $(printf 'x'; false); do printf '<%s>' "$w"; done; printf '\n'
+x=$(printf '%s' "$(printf nested)"); printf '[%s]\n' "$x"
+x=`printf '%s' "$(printf nested)"`; printf '[%s]\n' "$x"
+for w in $(printf '%s' "$(printf nested)"); do printf '<%s>' "$w"; done; printf '\n'
+x=$(printf '$HOME' | wc -c | tr -d ' '); printf '[%s]\n' "$x"
+x=`printf '$HOME' | wc -c | tr -d ' '`; printf '[%s]\n' "$x"
+for w in $(printf '$HOME' | wc -c | tr -d ' '); do printf '<%s>' "$w"; done; printf '\n'
+x=$(echo "q r"); printf '[%s]\n' "$x"
+x=`echo "q r"`; printf '[%s]\n' "$x"
+for w in $(echo "q r"); do printf '<%s>' "$w"; done; printf '\n'
+x=$(echo 'q r'); printf '[%s]\n' "$x"
+x=`echo 'q r'`; printf '[%s]\n' "$x"
+for w in $(echo 'q r'); do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "$(printf 'a\nb')"
+printf '%s\n' "$(cat <<E<NL>hi<NL>E<NL>)"
+x=$(printf '%s' "a\\b"); printf '%s\n' "$x"
+x=`printf '%s' 'a\\b'`; printf '%s\n' "$x"
+printf '%s\n' "$(printf '%s' "$(printf '%s' deep)")"
+printf '%s\n' "`printf '%s' \`printf inner\``"
+x=$(printf 'a)b'); printf '%s\n' "$x"
+x=$( (printf sub) ); printf '%s\n' "$x"
+x=$(printf 'a'; printf 'b' >&2) 2>/dev/null; printf '%s\n' "$x"
+x=$(exit 3); printf '%s\n' $?
+x=$(false) || printf failed; printf '\n'
+[  ]; printf '%s\n' $?
+test ; printf '%s\n' $?
+[ a ]; printf '%s\n' $?
+test a; printf '%s\n' $?
+[ "" ]; printf '%s\n' $?
+test ""; printf '%s\n' $?
+[ -n ]; printf '%s\n' $?
+test -n; printf '%s\n' $?
+[ -z ]; printf '%s\n' $?
+test -z; printf '%s\n' $?
+[ ! ]; printf '%s\n' $?
+test !; printf '%s\n' $?
+[ ! a ]; printf '%s\n' $?
+test ! a; printf '%s\n' $?
+[ ! "" ]; printf '%s\n' $?
+test ! ""; printf '%s\n' $?
+[ a = a ]; printf '%s\n' $?
+test a = a; printf '%s\n' $?
+[ a != a ]; printf '%s\n' $?
+test a != a; printf '%s\n' $?
+[ -n a ]; printf '%s\n' $?
+test -n a; printf '%s\n' $?
+[ -z "" ]; printf '%s\n' $?
+test -z ""; printf '%s\n' $?
+[ ! -n a ]; printf '%s\n' $?
+test ! -n a; printf '%s\n' $?
+[ ! -z a ]; printf '%s\n' $?
+test ! -z a; printf '%s\n' $?
+[ a -a b ]; printf '%s\n' $?
+test a -a b; printf '%s\n' $?
+[ a -o "" ]; printf '%s\n' $?
+test a -o ""; printf '%s\n' $?
+[ "" -o "" ]; printf '%s\n' $?
+test "" -o ""; printf '%s\n' $?
+[ "" -a a ]; printf '%s\n' $?
+test "" -a a; printf '%s\n' $?
+[ -n a -a -n b ]; printf '%s\n' $?
+test -n a -a -n b; printf '%s\n' $?
+[ -z a -o -n b ]; printf '%s\n' $?
+test -z a -o -n b; printf '%s\n' $?
+[ 1 -eq 1 -a 2 -eq 2 ]; printf '%s\n' $?
+test 1 -eq 1 -a 2 -eq 2; printf '%s\n' $?
+[ 1 -eq 2 -o 2 -eq 2 ]; printf '%s\n' $?
+test 1 -eq 2 -o 2 -eq 2; printf '%s\n' $?
+[ a = a -a b = c ]; printf '%s\n' $?
+test a = a -a b = c; printf '%s\n' $?
+[ ! a = b ]; printf '%s\n' $?
+test ! a = b; printf '%s\n' $?
+[ -f ]; printf '%s\n' $?
+test -f; printf '%s\n' $?
+[ -d ]; printf '%s\n' $?
+test -d; printf '%s\n' $?
+[ = = = ]; printf '%s\n' $?
+test = = =; printf '%s\n' $?
+[ a =  ]; printf '%s\n' $?
+test a = ; printf '%s\n' $?
+[ -e / -a -d / ]; printf '%s\n' $?
+test -e / -a -d /; printf '%s\n' $?
+eval 'x=1; printf %s $x'; printf '\n'
+eval "printf '%s' hi"; printf '\n'
+eval 'f() { printf in; }; f'; printf '\n'
+eval printf '%s' a b; printf '\n'
+eval 'a=1 b=2'; printf '%s%s' $a $b; printf '\n'
+eval 'printf "%s" "$HOME"' | wc -c | tr -d ' '; printf '\n'
+eval; printf '\n'
+eval ''; printf '\n'
+eval ' '; printf '\n'
+eval 'false'; printf %s $?; printf '\n'
+eval 'true'; printf %s $?; printf '\n'
+eval 'exit 4'; printf no; printf '\n'
+x='a b'; eval "set -- $x"; printf %s $#; printf '\n'
+x='a b'; eval 'set -- "$x"'; printf %s $#; printf '\n'
+eval 'for i in 1 2; do printf %s $i; done'; printf '\n'
+eval 'if true; then printf y; fi'; printf '\n'
+eval 'case a in a) printf m;; esac'; printf '\n'
+v=x; eval "$v=5"; printf %s $x; printf '\n'
+eval 'echo a' 'echo b'; printf '\n'
+eval eval 'printf z'; printf '\n'
+set -- -a; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -b; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ab; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ax; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b x; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -- x; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -- -a; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- x -a; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -z; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -z; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x -b; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -; while getopts 'ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -b; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ab; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ax; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b x; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -- x; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -- -a; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- x -a; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -z; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -z; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x -b; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -; while getopts 'a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -b; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ab; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ax; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b x; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -- x; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -- -a; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- x -a; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -z; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -z; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x -b; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -; while getopts ':ab' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -b; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ab; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ax; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b x; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -- x; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -- -a; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- x -a; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -z; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -z; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x -b; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -; while getopts ':a:b' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -b; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ab; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -ax; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -b x; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -- x; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -- -a; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- x -a; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -z; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a -z; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -a x -b; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+set -- -; while getopts 'ab:' o; do printf '[%s:%s]' "$o" "${OPTARG:-u}"; done 2>/dev/null; printf ' %s\n' "$OPTIND"
+x=1; unset x; printf '[%s]\n' "${x-u}"
+x=1; unset -v x; printf '[%s]\n' "${x-u}"
+x=1; (unset x); printf '%s\n' $x
+readonly x=1; printf '%s\n' $x
+export x=1; sh -c 'printf %s "$x"'; printf '\n'
+x=1; sh -c 'printf [%s] "$x"'; printf '\n'
+x=1 sh -c 'printf [%s] "$x"'; printf '[%s]\n' "${x-u}"
+export x; x=2; sh -c 'printf %s "$x"'; printf '\n'
+unset x; export x; sh -c 'printf [%s] "${x-u}"'; printf '\n'
+x=1; export x; unset x; sh -c 'printf [%s] "${x-u}"'; printf '\n'
+a=1 b=2; printf '%s%s\n' $a $b
+a=1 printf '%s\n' "${a-u}"
+a=1; a=2 eval 'printf %s $a'; printf '%s\n' $a
+f() { a=in; }; a=out f; printf '%s\n' "${a-u}"
+for v in A B; do export $v=$v; done; sh -c 'printf %s%s $A $B'; printf '\n'
+printf '%s\n' "$0" | grep -c .
+printf '%s\n' "$$" | grep -c '^[0-9]*$'
+true; printf '%s\n' $?
+false; printf '%s\n' $?
+printf '%s\n' "$#"
+set -- a b; printf '%s\n' "$#" "$1" "$2" "${3-u}"
+set -- a b; printf '%s\n' "$*"
+set -- a b; IFS=-; printf '%s\n' "$*"; unset IFS
+set -- a b; printf '%s\n' "$@"
+set -- 'a b' c; printf '[%s]' "$@"; printf '\n'
+set -- 'a b' c; printf '[%s]' $@; printf '\n'
+printf '%s\n' "${IFS+set}"
+printf '%s' "$IFS" | od -c | head -1
+sleep 0 & printf '%s\n' "$!" | grep -c '^[0-9]'; wait
+sleep 0 & wait $!; printf '%s\n' $?
+(exit 3) & wait $!; printf '%s\n' $?
+printf '%s\n' "${PPID:+set}"
+printf '%s' "${RANDOM+r}"; printf '\n'
+{ printf a; printf b; } | cat; printf '\n'
+( printf a; printf b ) | cat; printf '\n'
+{ printf a; } > /dev/null; printf b; printf '\n'
+for i in 1 2; do printf $i; done | cat; printf '\n'
+while read l; do printf '<%s>' "$l"; done <<E<NL>a<NL>b<NL>E<NL>printf '\n'
+if true; then printf a; fi | cat; printf '\n'
+case a in a) printf x;; esac | cat; printf '\n'
+! { false; }; printf '%s\n' $?
+! ( true ); printf '%s\n' $?
+{ false; true; }; printf '%s\n' $?
+{ true; false; }; printf '%s\n' $?
+{ printf a<NL>}; printf b
+printf '[%s]\n' a\ b
+for w in a\ b; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "a b"
+for w in "a b"; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' 'a b'
+for w in 'a b'; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' a"b"c
+for w in a"b"c; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' a'b'c
+for w in a'b'c; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' \$HOME
+for w in \$HOME; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "\$HOME"
+for w in "\$HOME"; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' '\$HOME'
+for w in '\$HOME'; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "\\"
+for w in "\\"; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' \\
+for w in \\; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "\""
+for w in "\""; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' '"'
+for w in '"'; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "'"
+for w in "'"; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' \`
+for w in \`; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "\`"
+for w in "\`"; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' a\<NL>b
+for w in a\<NL>b; do printf '<%s>' "$w"; done; printf '\n'
+printf '[%s]\n' "a\<NL>b"
+for w in "a\<NL>b"; do printf '<%s>' "$w"; done; printf '\n'
+d=$(mktemp -d); mkdir $d/r; ln -s r $d/l; cd $d/l; pwd -P | grep -c '/r$'; cd /; rm -rf $d
+d=$(mktemp -d); mkdir $d/r; ln -s r $d/l; cd $d/l; pwd | grep -c '/l$'; cd /; rm -rf $d
+d=$(mktemp -d); cd $d; mkdir a; cd a; cd ..; pwd | grep -c "$(basename $d)"; cd /; rm -rf $d
+cd /tmp; cd - >/dev/null; pwd | grep -c .
+cd / ; cd /usr; printf '%s\n' "$OLDPWD"
+cd /; printf '%s\n' "$PWD"
+cd /usr/..; printf '%s\n' "$PWD"
+cd /usr/bin/..; printf '%s\n' "$PWD"
+umask 022; umask
+umask 077; umask
+umask 0; umask
+umask 022; (umask 077); umask

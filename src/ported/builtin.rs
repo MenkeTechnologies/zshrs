@@ -14579,7 +14579,13 @@ pub fn bin_getopts(
         } else {
             let prefix = if plus { "+" } else { "-" };
             zwarn(&format!("bad option: {}{}", prefix, wopch)); // c:5736
-            setsparam("OPTARG", "");
+            // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! the real shells leave $OPTARG unset
+            // when a non-silent getopts reports `?`; zsh sets it to the empty string.
+            if crate::dash_mode::posix_faithful() {
+                crate::ported::params::unsetparam("OPTARG");
+            } else {
+                setsparam("OPTARG", "");
+            }
         }
         ZOPTIND.store(zoptind, Relaxed);
         OPTCIND.store(optcind, Relaxed);
@@ -14608,7 +14614,13 @@ pub fn bin_getopts(
                     setsparam("OPTARG", &optbuf);
                 } else {
                     setsparam(&var, "?");
-                    setsparam("OPTARG", "");
+                    // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! the real shells leave $OPTARG unset
+                    // when a non-silent getopts reports `?`; zsh sets it to the empty string.
+                    if crate::dash_mode::posix_faithful() {
+                        crate::ported::params::unsetparam("OPTARG");
+                    } else {
+                        setsparam("OPTARG", "");
+                    }
                     let prefix = if plus { "+" } else { "-" };
                     zwarn(&format!(
                         "argument expected after {}{} option",
