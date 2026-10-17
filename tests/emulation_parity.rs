@@ -2046,6 +2046,7 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
+    "typeset -A A; A[\"q r\"]=1; A[\"q\\\"r\"]=5; k=\"a b\"; A[$k]=2; A[x\"y\"]=3; for k in \"${!A[@]}\"; do echo \"<$k>=${A[$k]}\"; done | sort",
     "getopts a 2>/dev/null; echo $?",
     "(( 1/0 )) 2>/dev/null; echo $?",
     "ulimit -Z 2>/dev/null; echo $?",
@@ -2247,6 +2248,7 @@ const BASH_53_CORPUS: &[&str] = &[
 ];
 
 const BASH_KORN_CORPUS: &[&str] = &[
+    "typeset -a e; e=(); echo \"[${e[@]-none}] [${e[*]-none}] [${e[@]+set}] [${e[@]:-none}]\"; g=(a); echo \"[${g[@]-none}] [${g[@]+set}]\"",
     "set -- -a x; getopts a o; echo \"$o [${OPTARG+set}]\"",
     "set --; printf '[%s]' \"${@-x}\"; printf '\\n'",
     "set --; printf '[%s]' \"${*-y}\"; printf '\\n'",

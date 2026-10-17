@@ -16409,6 +16409,12 @@ pub fn paramsubst(
             &var_name,
             arrays_get("@").is_none_or(|a| a.is_empty()),
         );
+        // !!! BASH/KORN GATE (no C counterpart) !!! `${arr[@]-w}` / `${arr[*]+w}` on an EMPTY
+        // array treat it as unset: the default applies and `+` yields nothing.
+        let is_set = is_set
+            && !((crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+                && subscript.as_deref().is_some_and(|s| is_splat_txt!(s))
+                && arrays_get(&var_name).is_some_and(|a| a.is_empty()));
         // c:Src/subst.c:3442-3445 / 3460-3463 — `if (flags & SUB_EGLOB)
         // opts[EXTENDEDGLOB] = 1; getmatch…(); opts[EXTENDEDGLOB] = eglob;`:
         // the `(*)` flag turns extended globbing on for the pattern of the

@@ -16366,7 +16366,12 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             let body: String = m
                 .iter()
                 .map(|(k, v)| {
-                    format!("[{}]={} ", esc(k), crate::dash_mode::bash_quote_element(v))
+                    let key = if crate::dash_mode::bash_contains_shell_metas(k) {
+                        format!("\"{}\"", esc(k))
+                    } else {
+                        k.clone()
+                    };
+                    format!("[{}]={} ", key, crate::dash_mode::bash_quote_element(v))
                 })
                 .collect();
             println!("declare {} {}=({})", flag_disp, nm, body);

@@ -3712,3 +3712,29 @@ pub fn bash_compound_words(value: &str) -> Option<Vec<String>> {
     }
     Some(words)
 }
+
+/// Quote removal on a literal associative-array subscript: `A["q r"]=1` stores the key
+/// `q r` in bash and the Korn shells (zsh keeps the quote characters in the key).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn strip_subscript_quotes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    let (mut sq, mut dq) = (false, false);
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !dq => sq = !sq,
+            '"' if !sq => dq = !dq,
+            '\\' if !sq => match chars.next() {
+                Some(n) if dq && !matches!(n, '"' | '\\' | '$' | '`') => {
+                    out.push('\\');
+                    out.push(n);
+                }
+                Some(n) => out.push(n),
+                None => out.push('\\'),
+            },
+            _ => out.push(c),
+        }
+    }
+    out
+}

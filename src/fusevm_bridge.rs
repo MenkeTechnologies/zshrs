@@ -6737,6 +6737,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // bash/ksh remove the quotes of a literal subscript (`A["q r"]=1` stores `q r`).
+        let key = if !key_is_dynamic
+            && (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+            && key.contains(['"', '\'', '\\'])
+        {
+            crate::dash_mode::strip_subscript_quotes(&key)
+        } else {
+            key
+        };
         // c:Src/exec.c:4475-4478 (54941) — `A[k]=v cmd`: save_params cuts
         // the assignment text at the subscript (`itype_end(s, INAMESPC, 0)`
         // stopping at `[`) and snapshots the whole base parameter `A`, so
