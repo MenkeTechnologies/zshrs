@@ -2357,20 +2357,53 @@ fn release_zsh() -> Option<String> {
     find_shell(ZSH)
 }
 
+/// Wall-clock limit for one script. A shell that hangs is a divergence, not a stuck CI job.
+const SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What `run` reports for a script that exceeded [`SCRIPT_TIMEOUT`].
+const TIMED_OUT: &str = "<<TIMED OUT>>";
+
 /// (stdout, success). stderr is intentionally dropped — its text
 /// legitimately differs across shells; only stdout + exit-sign are compared.
+/// A script still running after [`SCRIPT_TIMEOUT`] is killed and reported as
+/// `(TIMED_OUT, false)`.
 fn run(bin: &str, args: &[&str], script: &str) -> (String, bool) {
+    use std::io::Read;
+    use std::process::Stdio;
     let mut full: Vec<&str> = args.to_vec();
     full.push("-c");
     full.push(script);
-    let out = Command::new(bin)
+    let mut child = Command::new(bin)
         .args(&full)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .unwrap_or_else(|e| panic!("spawn {bin}: {e}"));
-    (
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        out.status.success(),
-    )
+    // Drain stdout on its own thread so a chatty script cannot fill the pipe and stall.
+    let mut pipe = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = pipe.read_to_end(&mut buf);
+        buf
+    });
+    let deadline = std::time::Instant::now() + SCRIPT_TIMEOUT;
+    let status = loop {
+        match child.try_wait().unwrap_or_else(|e| panic!("wait {bin}: {e}")) {
+            Some(st) => break Some(st),
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    };
+    let out = reader.join().unwrap_or_default();
+    match status {
+        Some(st) => (String::from_utf8_lossy(&out).into_owned(), st.success()),
+        None => (TIMED_OUT.to_string(), false),
+    }
 }
 
 /// Run one corpus script through a parity case: zshrs with the case flags,
@@ -3788,86 +3821,162 @@ fn test_bracket_posix_three_arg_binary_rule() {
     }
 }
 
+/// The scripts one way runs, in corpus order, each at most once. Keeping the
+/// selection in one function means the per-way report counts exactly what ran.
+fn corpus_for(case: &ParityCase, refbin: &str) -> Vec<&'static str> {
+    let empty: &'static [&'static str] = &[];
+    let name = case.name;
+    let real_shell = case.ref_emulate.is_none() && name != "zsh";
+    let parts: [&'static [&'static str]; 14] = [
+        PORTABLE_CORPUS,
+        if case.extended { EXTENDED_CORPUS } else { empty },
+        if name == "bash" { BASH_ONLY_CORPUS } else { empty },
+        if name == "zsh" { ZSH_ONLY_CORPUS } else { empty },
+        if name == "zsh" { ZSH_BAD_OPTION_CORPUS } else { empty },
+        if matches!(name, "bash" | "ksh") { BASH_KSH_CORPUS } else { empty },
+        if name == "ksh" { KSH_ONLY_CORPUS } else { empty },
+        if real_shell { REAL_SHELL_CORPUS } else { empty },
+        if matches!(name, "bash" | "ksh" | "mksh") { BASH_KORN_CORPUS } else { empty },
+        if name == "bash" && shell_version_at_least(refbin, 5, 3) { BASH_53_CORPUS } else { empty },
+        if matches!(name, "mksh" | "pdksh") { PDKSH_CORPUS } else { empty },
+        if matches!(name, "dash" | "ash") { DASH_FAMILY_CORPUS } else { empty },
+        if name == "dash" { DASH_ONLY_CORPUS } else { empty },
+        if name != "zsh" { BARE_POSITIONAL_CORPUS } else { empty },
+    ];
+    // ksh93u+m releases before 1.0.10 (Ubuntu 24.04 ships 1.0.8) reject or format
+    // these differently from the 1.0.10 line `--ksh` follows.
+    let old_ksh = name == "ksh" && ksh_version(refbin).is_some_and(|v| v < (1, 0, 10));
+    let mut seen = std::collections::HashSet::new();
+    parts
+        .iter()
+        .flat_map(|p| p.iter().copied())
+        .filter(|script| !(old_ksh && KSH_1_0_10_ONLY.contains(script)))
+        .filter(|script| seen.insert(*script))
+        .collect()
+}
+
+/// First line of `<shell> --version` (stdout or stderr), or the file name when the
+/// shell has no such flag (dash, ash). Printed in the report so a failure says which
+/// reference binary and release it was measured against.
+fn shell_banner(shell: &str) -> String {
+    let fallback = || {
+        Path::new(shell)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| shell.to_string())
+    };
+    let Ok(out) = Command::new(shell).arg("--version").stdin(std::process::Stdio::null()).output() else {
+        return fallback();
+    };
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    // A shell without `--version` prints a usage error; only a line carrying a release
+    // number counts as a banner.
+    match text
+        .lines()
+        .map(str::trim)
+        .find(|l| l.chars().any(|c| c.is_ascii_digit()) && !l.to_lowercase().contains("illegal option") && !l.contains("Usage"))
+    {
+        Some(l) => l.chars().take(90).collect(),
+        None => fallback(),
+    }
+}
+
+/// Outcome of one way of the matrix.
+struct WayReport {
+    name: &'static str,
+    refbin: String,
+    banner: String,
+    cases: usize,
+    mismatches: Vec<String>,
+}
+
+/// Why a way did not run.
+enum WaySkip {
+    /// No reference binary installed.
+    Missing,
+    /// `/bin/sh` is dash: the `sh` way would repeat the `dash` way against a shell
+    /// `--sh` is not meant to be (zshrs's `--sh` is POSIX sh, not dash's quirks).
+    ShIsDash(String),
+}
+
+fn run_way(case: &ParityCase) -> Result<WayReport, WaySkip> {
+    let refbin = find_shell(case.candidates).ok_or(WaySkip::Missing)?;
+    if case.name == "sh" && resolves_to_dash(&refbin) {
+        return Err(WaySkip::ShIsDash(refbin));
+    }
+    let corpus = corpus_for(case, &refbin);
+    let mut mismatches = Vec::new();
+    for script in &corpus {
+        let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
+        if r_out != z_out || r_ok != z_ok {
+            mismatches.push(format!(
+                "  [{}] {script:?}\n    ref: ok={r_ok} out={r_out:?}\n    zrs: ok={z_ok} out={z_out:?}",
+                case.name
+            ));
+        }
+    }
+    Ok(WayReport {
+        name: case.name,
+        banner: shell_banner(&refbin),
+        refbin,
+        cases: corpus.len(),
+        mismatches,
+    })
+}
+
 #[test]
 fn emulation_parity_matrix() {
     let require = std::env::var("ZSHRS_REQUIRE_REF_SHELLS").is_ok();
-    let mut tested = 0usize;
+    // Every way is independent (own reference process, own zshrs process), so they run
+    // side by side: the matrix costs the slowest way, not the sum of all of them.
+    let results: Vec<(&ParityCase, Result<WayReport, WaySkip>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = PARITY_CASES
+            .iter()
+            .map(|case| (case, scope.spawn(move || run_way(case))))
+            .collect();
+        handles
+            .into_iter()
+            .map(|(case, h)| (case, h.join().unwrap_or_else(|_| panic!("way `{}` panicked", case.name))))
+            .collect()
+    });
+
     let mut missing: Vec<&str> = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
-
-    for case in PARITY_CASES {
-        let Some(refbin) = find_shell(case.candidates) else {
-            // Optional cases (ash/mksh) are best-effort: absence never counts
-            // toward the enforced-missing list.
-            if !case.optional {
-                missing.push(case.name);
+    let mut tested = 0usize;
+    eprintln!("{:<14} {:>6} {:>10}  reference", "way", "cases", "mismatches");
+    for (case, res) in &results {
+        match res {
+            Ok(r) => {
+                tested += 1;
+                eprintln!(
+                    "{:<14} {:>6} {:>10}  {} ({})",
+                    r.name,
+                    r.cases,
+                    r.mismatches.len(),
+                    r.refbin,
+                    r.banner
+                );
+                mismatches.extend(r.mismatches.iter().cloned());
             }
-            eprintln!(
-                "skip: `{}` reference not found{}",
-                case.name,
-                if case.optional { " (optional)" } else { "" }
-            );
-            continue;
-        };
-        // Where `/bin/sh` is dash the `sh` way would just repeat the `dash` way against a
-        // shell `--sh` is not meant to be (zshrs's `--sh` is POSIX sh, not dash's quirks).
-        if case.name == "sh" && resolves_to_dash(&refbin) {
-            eprintln!("skip: `sh` reference {refbin} is dash (covered by the dash way)");
-            continue;
-        }
-        tested += 1;
-        let emu = case
-            .ref_emulate
-            .map(|e| format!(" [emulate {e}]"))
-            .unwrap_or_default();
-        eprintln!(
-            "testing {} : zshrs {} vs {}{} (extended={})",
-            case.name,
-            case.zshrs_flags.join(" "),
-            refbin,
-            emu,
-            case.extended
-        );
-
-        // The portable corpus runs for every case; the extended corpus only
-        // for cases whose reference has arrays / [[ / (( )) / brace expansion.
-        let corpus =
-            PORTABLE_CORPUS
-                .iter()
-                .chain(if case.extended { EXTENDED_CORPUS } else { &[] })
-                .chain(if case.name == "bash" { BASH_ONLY_CORPUS } else { &[] })
-                .chain(if case.name == "zsh" { ZSH_ONLY_CORPUS } else { &[] })
-                .chain(if case.name == "zsh" { ZSH_BAD_OPTION_CORPUS } else { &[] })
-                .chain(if matches!(case.name, "bash" | "ksh") { BASH_KSH_CORPUS } else { &[] })
-                .chain(if case.name == "ksh" { KSH_ONLY_CORPUS } else { &[] })
-                .chain(if case.ref_emulate.is_none() && case.name != "zsh" { REAL_SHELL_CORPUS } else { &[] })
-                .chain(if matches!(case.name, "bash" | "ksh" | "mksh") { BASH_KORN_CORPUS } else { &[] })
-                .chain(if case.name == "bash" && shell_version_at_least(&refbin, 5, 3) { BASH_53_CORPUS } else { &[] })
-                .chain(if matches!(case.name, "mksh" | "pdksh") { PDKSH_CORPUS } else { &[] })
-                .chain(if matches!(case.name, "dash" | "ash") { DASH_FAMILY_CORPUS } else { &[] })
-                .chain(if case.name == "dash" { DASH_ONLY_CORPUS } else { &[] })
-                .chain(if case.name != "zsh" { BARE_POSITIONAL_CORPUS } else { &[] });
-        // ksh93u+m releases before 1.0.10 (Ubuntu 24.04 ships 1.0.8) reject or format
-        // these differently from the 1.0.10 line `--ksh` follows.
-        let old_ksh = case.name == "ksh" && ksh_version(&refbin).is_some_and(|v| v < (1, 0, 10));
-        for script in corpus {
-            if old_ksh && KSH_1_0_10_ONLY.contains(script) {
-                continue;
+            Err(WaySkip::Missing) => {
+                // Optional ways (ash/mksh/pdksh) are best-effort: absence never counts
+                // toward the enforced-missing list.
+                if !case.optional {
+                    missing.push(case.name);
+                }
+                eprintln!(
+                    "{:<14} {:>6} {:>10}  skipped: reference not found{}",
+                    case.name,
+                    "-",
+                    "-",
+                    if case.optional { " (optional)" } else { "" }
+                );
             }
-            let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
-            if r_out != z_out || r_ok != z_ok {
-                mismatches.push(format!(
-                    "  [{}] {script:?}\n    ref: ok={r_ok} out={r_out:?}\n    zrs: ok={z_ok} out={z_out:?}",
-                    case.name
-                ));
+            Err(WaySkip::ShIsDash(bin)) => {
+                eprintln!("{:<14} {:>6} {:>10}  skipped: {bin} is dash (covered by the dash way)", case.name, "-", "-");
             }
         }
     }
-
-    eprintln!(
-        "emulation parity: tested {tested} way(s), {} missing",
-        missing.len()
-    );
 
     assert!(
         mismatches.is_empty(),
