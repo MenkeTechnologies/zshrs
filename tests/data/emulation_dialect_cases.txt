@@ -425,3 +425,9 @@ sh/zsh-style,ksh/zsh-style	setopt NO_UNSET 2>/dev/null; k=1; print -r -- $nope[$
 bash	set -k; echo "a=1" b; echo a=1 c; echo "[$a]"
 bash	true | false; declare -a
 sh/zsh-style,ksh/zsh-style	setopt NO_UNSET 2>/dev/null; out=(); print -r -- $out; print after
+ksh	unset u; w='a b'; s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; s "${u:-"$w"}" "${u:-"d e"}" "x${u:-"d e"}y"
+ksh	unset u w; s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; s ${u-"$w"} x
+ksh	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; set -- '' ''; s $@; s $*; set -- a ''; s $@
+dash	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; IFS=a; set -- x a y; s $*; set -- a x a; s $*; set -- a a; s $*; set -- b '' c; s $*
+dash	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; IFS=:; set -- x '' y; s $*; s $@
+sh	echo -n hi; echo; set -- a; shift 9 2>/dev/null; echo $?

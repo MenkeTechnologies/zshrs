@@ -6297,6 +6297,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return split_words_c3932(&v.to_str());
         };
         let elems: Vec<String> = items.iter().map(|x| x.to_str()).collect();
+        if crate::dash_mode::dash_strict() {
+            if let Some(fields) = crate::extensions::emulation_output::dash_split_fields(&elems, ifs_opt.as_deref()) {
+                return splice_words_value(fields);
+            }
+        }
         match join_c3914(elems, ifs_opt.as_deref()) {
             // c:3914-3927 left `isarr` non-zero, so c:3931's `!isarr` keeps the
             // split off too and the ORIGINAL elements are the answer.
@@ -7131,23 +7136,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         match v {
             Value::Array(items) => {
-                // !!! DASH GATE (no C counterpart) !!! With `IFS` set but EMPTY dash does
-                // no field splitting at all and so has nothing to prune: an unquoted
-                // `$*` / `$@` keeps its empty positionals as their own fields
-                // (`set -- '' a; IFS=''; printf '<%s>' $*` is `<><a>`; bash, ksh93,
-                // mksh and zsh drop the empty one).
-                if crate::dash_mode::dash_faithful()
-                    && with_executor(|exec| exec.scalar("IFS")).as_deref() == Some("")
-                {
-                    // Exactly one TRAILING empty field goes (dash's ifsbreakup drops the
-                    // empty field it would start after the last separator).
-                    //   set -- '' a ''; IFS=; printf '<%s>' $*   is   <><a>
-                    let mut kept: Vec<Value> = items.iter().cloned().collect();
-                    if kept.last().is_some_and(|x| x.to_str().is_empty()) {
-                        kept.pop();
-                    }
-                    return Value::array(kept);
-                }
                 if argc & (WORD_DROP_KEEPS_FIRST | WORD_DROP_KEEPS_LAST) != 0 && plan9_active() {
                     // c:4341 — under plan9 the quoted-empty affix is glued to
                     // every element, so no node of the word is empty.
@@ -7157,7 +7145,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let filtered: Vec<Value> = items
                     .iter()
                     .enumerate()
-                    .filter(|(i, x)| word_drop_keeps(argc, *i, last) || !x.to_str().is_empty())
+                    .filter(|(i, x)| {
+                        // mksh drops a leading empty field only.
+                        let mksh_lead = crate::dash_mode::pdksh_family()
+                            && *i == 0
+                            && {
+                                let s = x.to_str();
+                                !s.is_empty() && s.chars().all(|c| c == crate::ported::zsh_h::Nularg)
+                            };
+                        (word_drop_keeps(argc, *i, last) || !x.to_str().is_empty()) && !mksh_lead
+                    })
                     .map(|(_, x)| x.clone())
                     .collect();
                 Value::array(filtered)
@@ -8556,6 +8553,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if spbreak == 0 {
             return splice_words_value(prefork_c184_drop_empty(elems));
         }
+        if crate::dash_mode::dash_strict() {
+            if let Some(fields) = crate::extensions::emulation_output::dash_split_fields(&elems, ifs_opt.as_deref()) {
+                return splice_words_value(fields);
+            }
+        }
         match join_c3914(elems, ifs_opt.as_deref()) {
             // c:3914-3927 left `isarr` non-zero, so c:3931's `!isarr` keeps the
             // split off as well and the ORIGINAL elements are the answer.
@@ -9227,21 +9229,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let mut parts: Vec<String> = pp
                         .iter()
                         .filter(|e| !e.is_empty())
-                        .flat_map(|e| crate::ported::utils::sepsplit(e, None, false))
+                        .flat_map(|e| crate::ported::utils::sepsplit(e, None, false).into_iter().filter(|f| !f.is_empty()))
                         .collect();
                     // `$@` (not `$*`) keeps ONE empty field when the last positional is
                     // empty: `set -- a '' ''; printf '<%s>' $@` is `<a><>`.
                     let keeps_trailing = name == "@"
-                        && !parts.is_empty()
+                        && pp.len() >= 2
                         && pp.last().is_some_and(|e| e.is_empty());
                     if keeps_trailing {
                         parts.push(String::new());
                     }
                     // The end-of-word drop must let that one empty field through.
-                    note_quoted_splice_elems(if keeps_trailing { parts.len() } else { 0 });
+                    note_quoted_splice_elems(if keeps_trailing { parts.len().max(2) } else { 0 });
                     return Value::array(parts.into_iter().map(Value::str).collect());
                 }
                 let ifs_opt = with_executor(|exec| exec.scalar("IFS"));
+                if crate::dash_mode::dash_strict() {
+                    if let Some(fields) = crate::extensions::emulation_output::dash_split_fields(&pp, ifs_opt.as_deref()) {
+                        note_quoted_splice_elems(0);
+                        return Value::array(fields.into_iter().map(Value::str).collect());
+                    }
+                }
                 if let JoinC3914::Joined(joined) = join_c3914(pp.clone(), ifs_opt.as_deref()) {
                     // c:3919 `sepsplit(val, spsep, 0, 1)` with spsep NULL →
                     // spacesplit (c:Src/utils.c:3711), then c:184-187. The
@@ -9545,6 +9553,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // untouched array the code below already returns.
             if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
                 let ifs_opt = with_executor(|exec| exec.scalar("IFS"));
+                if crate::dash_mode::dash_strict() {
+                    if let Some(fields) = crate::extensions::emulation_output::dash_split_fields(&items, ifs_opt.as_deref()) {
+                        return splice_words_value(fields);
+                    }
+                }
                 if let JoinC3914::Joined(val) = join_c3914(items.clone(), ifs_opt.as_deref()) {
                     // c:3932 `aval = sepsplit(val, spsep, 0, 1)`, then
                     // c:3933-3938's 0/1/N result shape.

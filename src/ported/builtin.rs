@@ -515,6 +515,14 @@ pub fn execbuiltin(
             if crate::dash_mode::dash_strict() && name == "echo" && (argv > 0 || arg_str != "-n") {
                 break;
             }
+            // !!! SH (no C counterpart) !!! /bin/sh is bash built with xpg_echo: `echo` takes no
+            // options at all, `-n`, `-e` and `-E` are text.
+            if name == "echo"
+                && crate::extensions::emulation_startup::personality()
+                    == crate::extensions::emulation_startup::Personality::Sh
+            {
+                break;
+            }
             // !!! BASH/KSH-MODE (no C counterpart) !!! bash/ksh `echo` has no lone-`-`
             // option arg: `echo -` prints `-` (zsh's c:337-341 swallows it).
             if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
@@ -14574,9 +14582,11 @@ pub fn bin_shift(
             // the script on it (`shift 99; echo AFTER` never echoes).
             // Not a usage error, so ksh93 exits with the builtin's own
             // status (1) while dash still uses 2 — see
-            // `special_builtin_abort_status`.
+            // `special_builtin_abort_status`. /bin/sh (bash 3.2 in POSIX mode) answers 1 and goes on.
             if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
                 && crate::extensions::emulation_output::special_builtin_error_aborts()
+                && crate::extensions::emulation_startup::personality()
+                    != crate::extensions::emulation_startup::Personality::Sh
             {
                 use std::sync::atomic::Ordering;
                 EXIT_VAL.store(

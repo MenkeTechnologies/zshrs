@@ -16839,7 +16839,8 @@ pub fn paramsubst(
                     && raw_value.is_empty()
                     && (crate::dash_mode::bash_mode()
                         || crate::dash_mode::korn_mode()
-                        || crate::dash_mode::dash_faithful()))
+                        || crate::dash_mode::dash_faithful()
+                        || crate::dash_mode::posix_faithful()))
                     || crate::pattern_data_escape::ksh93_at_star_null(&var_name);
                 let vunset = !is_set
                     || crate::pattern_data_escape::ksh93_at_star_null(&var_name)
@@ -16896,7 +16897,13 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(default, split_flags);
+                    let requoted = crate::extensions::emulation_output::ksh93_requote_operand(default, qt);
+                    let (operand_text, operand_flags) = match &requoted {
+                        Some(t) => (t.as_str(), PREFORK_SHWORDSPLIT | PREFORK_SPLIT),
+                        None => (default, split_flags),
+                    };
+                    let (mut ms_joined, mut ms_parts, ms_isarr, ms_ws) = multsub_operand(operand_text, operand_flags);
+                    crate::extensions::emulation_output::ksh93_drop_quoted_empty(operand_text, qt, &mut ms_joined, &mut ms_parts);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     // c:3227 — `multsub(&val, split_flags, (aspar ? NULL : &aval),
@@ -17063,7 +17070,13 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(default, split_flags);
+                    let requoted = crate::extensions::emulation_output::ksh93_requote_operand(default, qt);
+                    let (operand_text, operand_flags) = match &requoted {
+                        Some(t) => (t.as_str(), PREFORK_SHWORDSPLIT | PREFORK_SPLIT),
+                        None => (default, split_flags),
+                    };
+                    let (mut ms_joined, mut ms_parts, ms_isarr, ms_ws) = multsub_operand(operand_text, operand_flags);
+                    crate::extensions::emulation_output::ksh93_drop_quoted_empty(operand_text, qt, &mut ms_joined, &mut ms_parts);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     // c:3227 — `multsub(&val, split_flags, (aspar ? NULL : &aval),
@@ -17727,7 +17740,13 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(alt, split_flags);
+                    let requoted = crate::extensions::emulation_output::ksh93_requote_operand(alt, qt);
+                    let (operand_text, operand_flags) = match &requoted {
+                        Some(t) => (t.as_str(), PREFORK_SHWORDSPLIT | PREFORK_SPLIT),
+                        None => (alt, split_flags),
+                    };
+                    let (mut ms_joined, mut ms_parts, ms_isarr, ms_ws) = multsub_operand(operand_text, operand_flags);
+                    crate::extensions::emulation_output::ksh93_drop_quoted_empty(operand_text, qt, &mut ms_joined, &mut ms_parts);
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
@@ -17844,7 +17863,13 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(alt, split_flags);
+                    let requoted = crate::extensions::emulation_output::ksh93_requote_operand(alt, qt);
+                    let (operand_text, operand_flags) = match &requoted {
+                        Some(t) => (t.as_str(), PREFORK_SHWORDSPLIT | PREFORK_SPLIT),
+                        None => (alt, split_flags),
+                    };
+                    let (mut ms_joined, mut ms_parts, ms_isarr, ms_ws) = multsub_operand(operand_text, operand_flags);
+                    crate::extensions::emulation_output::ksh93_drop_quoted_empty(operand_text, qt, &mut ms_joined, &mut ms_parts);
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;

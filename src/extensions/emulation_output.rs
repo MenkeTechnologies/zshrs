@@ -932,3 +932,120 @@ pub fn float_precision_base(is_float: bool, digits: i32) -> i32 {
         digits
     }
 }
+
+/// ksh93: a double quote inside the operand of a double-quoted `${name op word}` does not nest, it
+/// TOGGLES the outer quoting — `"${u:-"d e"}"` is `d` `e` (the inner words are unquoted) and
+/// `"${u:-"$w"x}"` splits `$w` while `x` stays attached. Re-reading the operand as a word that
+/// starts and ends inside the outer quote gives exactly that: wrapping it in one more pair of quote
+/// markers makes the original markers close and reopen the quoting. `None` when the rule does not
+/// apply (not ksh93, not inside quotes, no inner quote, or an unbalanced one).
+pub fn ksh93_requote_operand(operand: &str, in_quotes: bool) -> Option<String> {
+    if !in_quotes || !crate::dash_mode::ksh93_mode() {
+        return None;
+    }
+    let dnull = crate::ported::zsh_h::Dnull;
+    let n = operand.chars().filter(|c| *c == dnull).count();
+    if n == 0 || n % 2 != 0 {
+        return None;
+    }
+    // The lexer read the whole operand inside the outer quotes, so `$` and the backquote are the
+    // quoted tokens; between an inner pair they are unquoted now.
+    use crate::ported::zsh_h::{Qstring, Qtick, Stringg, Tick};
+    let mut inner = false;
+    let body: String = operand
+        .chars()
+        .map(|c| {
+            if c == dnull {
+                inner = !inner;
+                c
+            } else if inner && c == Qstring {
+                Stringg
+            } else if inner && c == Qtick {
+                Tick
+            } else {
+                c
+            }
+        })
+        .collect();
+    Some(format!("{dnull}{body}{dnull}"))
+}
+
+/// ksh93: an UNQUOTED `${name op "word"}` whose quoted word expands to nothing leaves no argument
+/// at all (`s ${u-"$w"}` with `w` unset passes none), where zsh and bash pass one empty one.
+/// Takes the quoted-empty marker off the expanded operand so the usual empty-word removal applies.
+pub fn ksh93_drop_quoted_empty(operand: &str, in_quotes: bool, joined: &mut String, parts: &mut Vec<String>) {
+    if in_quotes || !crate::dash_mode::ksh93_mode() || !operand.contains(crate::ported::zsh_h::Dnull) {
+        return;
+    }
+    let nul = crate::ported::zsh_h::Nularg;
+    joined.retain(|c| c != nul);
+    for p in parts.iter_mut() {
+        p.retain(|c| c != nul);
+    }
+}
+
+/// dash's field splitting of an unquoted `$*` / `$@` / array splat (`ifsbreakup`, applied to the
+/// arguments one by one): the boundary between two arguments acts as IFS white space, so it merges
+/// with a neighbouring IFS non-white-space character into ONE delimiter, an empty argument adds
+/// nothing, and an empty field survives only where two non-white-space delimiters (or the start
+/// and one) enclose it. Measured against /bin/dash with `IFS=a`:
+///
+/// ```text
+/// set -- x a y   -> <x><y>        set -- a x    -> <><x>       set -- xaay -> <x><><y>
+/// set -- x a a   -> <x><>         set -- a a    -> <><>        set -- b '' c -> <b><c>
+/// ```
+///
+/// Empty fields come back as the one-byte nulstring (`Nularg`), as zsh's own splitter hands them out,
+/// so the empty-word removal later keeps them. `None` for an empty (but set) IFS, which does no
+/// splitting at all.
+pub fn dash_split_fields(args: &[String], ifs: Option<&str>) -> Option<Vec<String>> {
+    let ifs = ifs.unwrap_or(" \t\n");
+    if ifs.is_empty() {
+        return None;
+    }
+    let is_ws = |c: char| matches!(c, ' ' | '\t' | '\n') && ifs.contains(c);
+    let is_sep = |c: char| ifs.contains(c) && !is_ws(c);
+    let nul = crate::ported::zsh_h::Nularg;
+    let mut fields: Vec<String> = Vec::new();
+    let mut cur: Option<String> = None;
+    // A field was just ended by white space: a following non-white-space delimiter is part of the
+    // same delimiter, not the start of an empty field.
+    let mut ws_after_field = false;
+    let mut end_field = |cur: &mut Option<String>, fields: &mut Vec<String>| {
+        if let Some(f) = cur.take() {
+            fields.push(f);
+        }
+    };
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            // Argument boundary: white space.
+            if cur.is_some() {
+                end_field(&mut cur, &mut fields);
+                ws_after_field = true;
+            }
+        }
+        for c in arg.chars() {
+            if is_ws(c) {
+                if cur.is_some() {
+                    end_field(&mut cur, &mut fields);
+                    ws_after_field = true;
+                }
+            } else if is_sep(c) {
+                if cur.is_some() {
+                    end_field(&mut cur, &mut fields);
+                } else if ws_after_field {
+                    // absorbed into the delimiter the white space started
+                } else {
+                    fields.push(nul.to_string());
+                }
+                ws_after_field = false;
+            } else {
+                cur.get_or_insert_with(String::new).push(c);
+                ws_after_field = false;
+            }
+        }
+    }
+    end_field(&mut cur, &mut fields);
+    Some(fields)
+}
+

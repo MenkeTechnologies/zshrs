@@ -202,6 +202,11 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
 pub fn zstrcmp<A: AsRef<[u8]>, B: AsRef<[u8]>>(a: A, bs: B, sortflags: u32) -> Ordering {
     // c:191
     let (a, bs) = (a.as_ref(), bs.as_ref());
+    // !!! DASH/ASH (no C counterpart) !!! dash compares names bytewise (`strcmp`), not by locale
+    // collation, so `b2_x` sorts before `b_x`.
+    if crate::dash_mode::dash_strict() {
+        return a.cmp(bs);
+    }
     let sortnumeric = if sortflags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {
         -1 // c:209-210
     } else if sortflags & (SORTIT_NUMERICALLY as u32) != 0 {
