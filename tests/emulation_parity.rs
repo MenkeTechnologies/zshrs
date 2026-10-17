@@ -1703,6 +1703,9 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "eval \"echo '\" 2>/dev/null; echo $?",
+    "eval 'echo (' 2>/dev/null; echo $?",
+    "eval false; echo $?",
     "set -- a b; shift abc 2>/dev/null; echo $?",
     "type -p echo; type -p ls | grep -c ls",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
@@ -2076,6 +2079,9 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "eval \"echo '\" 2>/dev/null; echo $?",
+    "eval 'echo (' 2>/dev/null; echo $?",
+    "eval false; echo $?",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
     "type -t echo; type -t ls; type -t if; f() { :; }; type -t f; alias a=b; type -t a; type -t nosuch_zz; echo rc=$?",
     "cd //tmp; pwd",

@@ -3058,7 +3058,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             with_executor(|exec| {
                 // c:6175 execode — no end-of-script hooks (c:Src/builtin.c:6213)
-                exec.execute_string_without_exit_hooks(&src).unwrap_or(1)
+                // A syntax error in the eval string is status 2 in bash and 3 in ksh93.
+                exec.execute_string_without_exit_hooks(&src).unwrap_or_else(|_| {
+                    if crate::dash_mode::bash_mode() {
+                        2
+                    } else if crate::dash_mode::ksh93_mode() {
+                        3
+                    } else {
+                        1
+                    }
+                })
             })
         };
         crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
