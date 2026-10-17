@@ -141,7 +141,7 @@
           <span class="sep">/</span>
           <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
-        <p class="docs-build-line">zshrs v0.13.48 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 578 regression tests (396 corpus · 174 dispatch · 8 absence) · 21,394 <code>#[test]</code> hooks workspace-wide</p>
+        <p class="docs-build-line">zshrs v0.13.48 · 14 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive</p>
       </div>
       <div class="tutorial-toolbar">
         <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -162,72 +162,7 @@
 
   <main class="tutorial-main">
     <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SHELL REFERENCE</h2>
-    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. <strong>Coverage gate:</strong> 396 construct-corpus tests in <code>tests/zsh_construct_corpus.rs</code> exercise every category below; <strong>21,394 <code>#[test]</code> hooks</strong> (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>, 2026-10-01) span tracked Rust sources. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
-
-    <section class="tutorial-section">
-      <h2>Pipeline Architecture</h2>
-      <p>Two execution pipelines exist; the new one is the default as of session 2026-04-27:</p>
-      <ul>
-        <li><strong>New (default):</strong> <code>crate::ported::lex</code> (port of <code>src/zsh/Src/lex.c</code>, in <code>src/ported/lex.rs</code>) → <code>crate::ported::parse</code> (port of <code>src/zsh/Src/parse.c</code>, in <code>src/ported/parse.rs</code>) → <code>ZshCompiler</code> (original Rust, <code>src/extensions/compile_zsh.rs</code>) → fusevm bytecode. Lex + parse are strict-port code; the bytecode compiler lives in <code>src/extensions/</code> because it has no C ancestor. Faster + more faithful to zsh's grammar than the legacy tree-walker.</li>
-        <li><strong>Old (escape hatch):</strong> set <code>ZSHRS_OLD_PIPELINE=1</code> to route through the legacy hand-rolled <code>ShellLexer</code>/<code>ShellParser</code>/<code>ShellCompiler</code>. Slated for deletion once corpus parity is proven across all dogfood scenarios.</li>
-      </ul>
-      <p style="font-size: 12px; color: var(--text-muted);">A residual bridge inside <code>compile_word_str</code> still re-parses param-modifier forms (<code>${x:-default}</code>, <code>${x#prefix}</code>, <code>${x/pat/rep}</code>) through the legacy <code>ShellParser</code> via <code>untokenize_preserve_quotes</code> round-trip. Each iteration of the migration replaces one runtime-fallback call site with native ops.</p>
-    </section>
-
-    <section class="tutorial-section">
-      <h2>Coverage Gate</h2>
-      <p>Each construct in this reference is pinned by at least one assertion in
-      <code>tests/zsh_construct_corpus.rs</code>. The corpus runs the real
-      <code>zshrs -f -c &lt;script&gt;</code> binary and asserts exact stdout +
-      exit status. Categories covered:</p>
-      <ul>
-        <li>Simple commands, multi-word arguments, assignments (chained, empty, quoted, single-quoted)</li>
-        <li>List operators: <code>;</code>, <code>&amp;&amp;</code>, <code>||</code>, <code>&amp;</code>, short-circuit chains</li>
-        <li>Control flow: <code>if</code>/<code>elif</code>/<code>else</code>, <code>while</code>, <code>until</code>, <code>for in</code>, <code>for ((;;))</code>, <code>case</code> (literal/glob/alternation), <code>select</code>, <code>coproc</code></li>
-        <li><code>break</code> / <code>continue</code> / <code>return</code> with status</li>
-        <li>Functions: <code>name() {}</code>, <code>function</code> keyword, <code>local</code> scope, <code>$1…$#</code> + <code>"$@"</code> splice</li>
-        <li>Pipelines: 2/3-stage, function-in-first-stage, negation</li>
-        <li>Redirects: <code>&gt;</code>, <code>&gt;&gt;</code>, <code>&lt;</code>, <code>&lt;&lt;EOF</code>, <code>&lt;&lt;&lt;str</code>, <code>2&gt;&amp;1</code>, block redir, <code>&lt;&amp;fd</code> with var-expanded fd, close-fd</li>
-        <li>Quoting: single, double, <code>$'…'</code> ANSI-C, backtick, escaped <code>\$</code> in dq</li>
-        <li>Parameter expansion: every modifier from zshexpn(1) — default, assign, error, alternate, length, substring, strip prefix/suffix (short/long, with glob), replace first/all, upper/lower postfix</li>
-        <li>ZshFlags: L, U, j:s:, s:s:, f, o, O, P, @, k, v, #, q (level 1-4), q+, q-, q*, q!, g, n, i, t, %, e, p, A, ~, plus stacking</li>
-        <li>Special parameters: <code>$?</code>, <code>$$</code>, <code>$@</code>, <code>$*</code>, <code>$#</code>, <code>$N</code>, <code>$!</code>, <code>$_</code>, <code>$-</code></li>
-        <li>Command substitution: <code>$(…)</code>, backticks, nested, in array literal (with word-split)</li>
-        <li>Arithmetic: <code>$((…))</code>, <code>((…))</code>, <code>let</code> — addition/precedence/paren/div/mod/pow/bitwise/shift/inc/dec/compare/logical/ternary, with var sync to <code>executor.variables</code></li>
-        <li>Tilde, brace ranges (numeric/letter/zero-pad), brace alternation (nested + prefix/suffix), brace in for-loop</li>
-        <li>Glob: <code>*</code>, <code>?</code>, <code>[…]</code>, qualifiers (<code>(.)</code>, <code>(/)</code>, <code>(@)</code>, <code>(N)</code>, <code>(x/r/w)</code>, sort modifiers <code>o</code>/<code>O</code>/<code>oL</code>/<code>OL</code>/<code>om</code>/<code>Om</code>)</li>
-        <li>Process substitution: <code>&lt;(cmd)</code>, <code>&gt;(cmd)</code></li>
-        <li>Heredoc + herestring</li>
-        <li>Indexed arrays: literal, append <code>+=()</code>, index 1-based + negative, splice <code>${arr[@]}</code>, length, iteration, empty, quoted-element preservation</li>
-        <li>Associative arrays: <code>typeset -A</code>, <code>m[k]=v</code>, <code>m[k]+=tail</code>, lookup, keys, values, missing-key empty</li>
-        <li><code>[[ … ]]</code>: <code>==</code>/<code>!=</code>/<code>&lt;</code>/<code>&gt;</code>, glob, <code>-z</code>/<code>-n</code>, numeric <code>-eq</code>/<code>-lt</code>/<code>-le</code>/<code>-gt</code>/<code>-ge</code>, file tests <code>-e</code>/<code>-f</code>/<code>-d</code>/<code>-r</code>, logical <code>&amp;&amp;</code>/<code>||</code>/<code>!</code>, regex <code>=~</code> with anchors + capture groups</li>
-        <li>POSIX builtins: <code>cd</code>, <code>pwd</code>, <code>echo</code>, <code>print</code>, <code>printf</code>, <code>read</code> (single/multi-var/array), <code>eval</code>, <code>exec</code>, <code>set</code>, <code>shift</code>, <code>unset</code>, <code>export</code>, <code>alias</code>/<code>unalias</code>, <code>type</code>, <code>true</code>/<code>false</code>/<code>:</code>, <code>test</code>/<code>[</code></li>
-        <li>Coreutils builtins (anti-fork): <code>seq</code>, <code>basename</code>, <code>dirname</code>, <code>tr</code> (with range expansion), <code>cat</code>, <code>head</code>/<code>tail</code>, <code>wc</code>, <code>sort</code>, <code>uniq</code>, <code>find</code>, <code>cut</code>, <code>rev</code>, <code>tee</code>, <code>sleep</code>, <code>mktemp</code>, <code>whoami</code>, <code>id</code>, <code>hostname</code>, <code>uname</code>, <code>date</code>, <code>touch</code>, <code>realpath</code></li>
-        <li>Background <code>&amp;</code>, <code>async</code>/<code>await</code>, coproc round-trip via <code>/dev/fd/N</code></li>
-        <li>Eval with deferred expansion (single-quoted args), multi-command eval</li>
-        <li>Bang (<code>!</code>) — literal in non-interactive (with surrounding chars), command negation when standalone</li>
-        <li>Aliases — regular + with args</li>
-        <li>Subshells <code>(…)</code> with full state isolation (variables/arrays/assoc/positional/<strong>cwd</strong> restored)</li>
-        <li><code>(exit N)</code> in a subshell exits the subshell only, not the parent; status propagates through <code>SubshellEnd</code></li>
-        <li>Brace groups <code>{…}</code> (no isolation, command-scope only) — and <em>compound forms with trailing redirects</em>: <code>{ … } 2&gt;&amp;1</code>, <code>(…) &gt;file</code>, <code>if …; fi &gt;file</code> via <code>ZshCommand::Redirected</code></li>
-        <li>Anonymous functions <code>() { body } args…</code> — auto-call form executes once with the trailing words as <code>$1…$N</code></li>
-        <li>Trap EXIT (fires on script exit through both pipelines)</li>
-        <li>Repeat N cmd</li>
-        <li>Case fall-through <code>;&amp;</code> (run next arm without re-testing) and test-next <code>;|</code> (re-test next arm's pattern)</li>
-        <li><code>|&amp;</code> pipe with stderr merge (<code>cmd1 |&amp; cmd2</code> ≡ <code>cmd1 2&gt;&amp;1 | cmd2</code>)</li>
-        <li>Heredoc variants: <code>&lt;&lt;EOF</code> (var-expand), <code>&lt;&lt;-EOF</code> (strip leading tabs), <code>&lt;&lt;'EOF'</code> / <code>&lt;&lt;"EOF"</code> (quoted-terminator → verbatim, no expansion)</li>
-        <li>Special parameters: <code>$?</code>, <code>$$</code>, <code>$@</code>, <code>$*</code>, <code>$#</code>, <code>$N</code>, <code>$!</code>, <code>$_</code>, <code>$-</code>, <code>$RANDOM</code>, <code>$SECONDS</code>, <code>$EPOCHSECONDS</code>, <code>$LINENO</code>, <code>$REPLY</code>, <code>PIPESTATUS</code> / <code>pipestatus</code></li>
-        <li><code>[[ -v var ]]</code> existence test (scalar/array/assoc/env)</li>
-        <li><code>${a[$i]}</code> variable subscript (<code>$i</code>, <code>${expr}</code>, <code>$((arith))</code> all resolve before subscript parsing)</li>
-        <li><code>${v: -3}</code> negative substring offset (space disambiguates from <code>${v:-default}</code>)</li>
-        <li><code>${var:=default}</code>, <code>${var:?msg}</code>, <code>${var:+alt}</code>, <code>${v/#prefix/repl}</code> / <code>${v/%suffix/repl}</code> (anchor variants of replace)</li>
-        <li>Arithmetic with <code>$NAME</code> / <code>${NAME}</code> / <code>$N</code> inside <code>((…))</code>, <code>$((…))</code>, <code>for ((…))</code> — pre-loaded via <code>BUILTIN_GET_VAR</code></li>
-        <li><code>set -e</code>, <code>getopts</code>, <code>read</code> into multiple vars / default <code>$REPLY</code></li>
-        <li><code>printf</code> format-string repetition (POSIX: re-applies format while args remain)</li>
-      </ul>
-      <p style="margin-top: 0.7rem; font-size: 12px; color: var(--text-muted);">
-      Out-of-scope (separate Phase work): zsh modules (zsh/curses, zsh/net/socket, zsh/zftp, zsh/zselect, zsh/sched), interactive ZLE widget firing on Tab + bindkey'd user widgets, async <code>compinit</code> fpath pre-warm, full setopt option matrix (~200 options × 2 toggles), some long-tail glob qualifiers (<code>L+N</code> size, <code>mh-N</code> mtime, <code>om[1,N]</code> "newest N"), and the dogfood gate (zpwr load + .zshrc as login shell for 14 days). zsh's own <code>Test/*.ztst</code> suite runs against a real zsh oracle through <code>scripts/ztst_compsys.py --core</code>: zshrs passes every assertion zsh 5.9.1 passes except 2 (<code>A05execution</code> #33 and #34, <code>wait</code> on an unknown job ID).</p>
-    </section>
+    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
 
     <section class="tutorial-section">
       <h2>Chapters</h2>
@@ -246,7 +181,6 @@
         <li><a href="#ch-completion">Completion System</a> <span class="chapter-count">10</span></li>
         <li><a href="#ch-zle">ZLE Line Editor</a> <span class="chapter-count">4</span></li>
         <li><a href="#ch-pcre">PCRE &amp; Regex</a> <span class="chapter-count">4</span></li>
-        <li><a href="#ch-recently-closed">Recently Closed Compat Gaps</a> <span class="chapter-count">46</span></li>
         <li><a href="#ch-lsp-compat">Compat Builtin Index</a> <span class="chapter-count">LSP</span></li>
         <li><a href="#ch-lsp-keywords">Keyword Index</a> <span class="chapter-count">LSP</span></li>
         <li><a href="#ch-lsp-options">Option Index</a> <span class="chapter-count">LSP</span></li>
@@ -260,11 +194,11 @@
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-control-flow">
       <h2>Control Flow</h2>
-      <p class="chapter-meta">14 topics · compiled to fusevm bytecode with deferred jump patches; no tree-walker dispatch. Includes anonymous-fn auto-call and <code>case</code> fall-through (<code>;&amp;</code>) / test-next (<code>;|</code>).</p>
+      <p class="chapter-meta">14 topics</p>
 
       <article class="doc-entry" id="doc-if">
         <h3><a class="doc-anchor" href="#doc-if">#</a> <code>if … then … fi</code></h3>
-        <p>Standard POSIX conditional. <code>elif</code> branches and an optional <code>else</code> are supported. Status semantics: a Status(0) is truthy in zshrs, so <code>if cmd; then …; fi</code> runs the <em>then</em> arm when <code>cmd</code> exits 0. The compile path emits <code>JumpIfFalse</code> at the end of each conditional probe.</p>
+        <p>Standard POSIX conditional. <code>elif</code> branches and an optional <code>else</code> are supported.</p>
         <pre><code>if [[ -d "$dir" ]]; then
   cd "$dir"
 elif [[ -f "$dir" ]]; then
@@ -286,7 +220,7 @@ done</code></pre>
 
       <article class="doc-entry" id="doc-until">
         <h3><a class="doc-anchor" href="#doc-until">#</a> <code>until … do … done</code></h3>
-        <p>Inverse of <code>while</code> — loops while the condition is non-zero. Compiles to the same bytecode shape with the condition jump inverted.</p>
+        <p>Inverse of <code>while</code> — loops while the condition is non-zero.</p>
         <pre><code>until ping -c1 -W1 example.com &gt;/dev/null; do
   sleep 1
 done
@@ -295,7 +229,7 @@ echo "online"</code></pre>
 
       <article class="doc-entry" id="doc-for">
         <h3><a class="doc-anchor" href="#doc-for">#</a> <code>for var in words; do … done</code></h3>
-        <p>Iterates <code>var</code> over the word list. Words are <em>compiled at runtime</em> — <code>${arr[@]}</code> splices into N iterations via <code>BUILTIN_ARRAY_FLATTEN</code>. The for-loop preserves break/continue patches as deferred jump sites so nested loops work correctly.</p>
+        <p>Iterates <code>var</code> over the word list.</p>
         <pre><code>for f in *.rs; do
   echo "compiling $f"
 done
@@ -308,7 +242,7 @@ done</code></pre>
 
       <article class="doc-entry" id="doc-for-arith">
         <h3><a class="doc-anchor" href="#doc-for-arith">#</a> <code>for ((init; cond; step)); do … done</code></h3>
-        <p>C-style arithmetic for loop. The arithmetic expressions compile through the inline arithmetic compiler (no <code>$((…))</code> wrapping needed inside the parens).</p>
+        <p>C-style arithmetic for loop.</p>
         <pre><code>for ((i = 0; i &lt; 10; i++)); do
   echo "i=$i"
 done</code></pre>
@@ -316,7 +250,7 @@ done</code></pre>
 
       <article class="doc-entry" id="doc-case">
         <h3><a class="doc-anchor" href="#doc-case">#</a> <code>case … esac</code></h3>
-        <p>Pattern-matched dispatch. Patterns are compiled via <code>compile_case_pattern</code> which preserves <code>$</code>-expansion but does <em>not</em> glob-expand the pattern itself (otherwise <code>case x in *) …</code> would expand <code>*</code> to the cwd listing). Match check uses <code>Op::StrMatch</code> (host-routed glob match).</p>
+        <p>Pattern-matched dispatch. The patterns keep <code>$</code>-expansion but are not glob-expanded against the current directory.</p>
         <pre><code>case "$1" in
   start) echo starting ;;
   stop)  echo stopping ;;
@@ -326,7 +260,7 @@ esac</code></pre>
 
       <article class="doc-entry" id="doc-select">
         <h3><a class="doc-anchor" href="#doc-select">#</a> <code>select var in words; do … done</code></h3>
-        <p>Interactive numbered-menu loop. Prints <code>1) word1\n2) word2\n…</code> to stderr, prompts via <code>$PROMPT3</code> (default <code>?#&nbsp;</code>), reads stdin, sets <code>var</code> to the chosen word, runs the body. <code>$REPLY</code> contains the raw input. EOF on stdin exits the loop. The real <code>break</code> keyword exits early via the cross-VM <code>LoopSignal</code> mechanism; the legacy <code>BREAK_SELECT=1</code> sentinel still works for back-compat.</p>
+        <p>Interactive numbered-menu loop. Prints <code>1) word1\n2) word2\n…</code> to stderr, prompts via <code>$PROMPT3</code> (default <code>?#&nbsp;</code>), reads stdin, sets <code>var</code> to the chosen word, runs the body. <code>$REPLY</code> contains the raw input. EOF on stdin exits the loop.</p>
         <pre><code>select choice in build test deploy quit; do
   case $choice in
     build)  cargo build ;;
@@ -339,14 +273,14 @@ done</code></pre>
 
       <article class="doc-entry" id="doc-anon-fn">
         <h3><a class="doc-anchor" href="#doc-anon-fn">#</a> <code>() { body } args…</code></h3>
-        <p>Anonymous function. Defined and immediately invoked with the trailing words as <code>$1…$N</code>. Parser routes <code>Inoutpar</code> (the <code>()</code> token) to <code>parse_anon_funcdef</code>, which generates a unique <code>_zshrs_anon_N</code> name; <code>compile_funcdef</code> registers and calls when <code>auto_call_args</code> is set. The <code>function</code> keyword with no name (<code>function { body } args…</code>, any separator after it) is the same anonymous function. A <code>()</code> with no body is a parse error, as in zsh.</p>
+        <p>Anonymous function. Defined and immediately invoked with the trailing words as <code>$1…$N</code>. The <code>function</code> keyword with no name (<code>function { body } args…</code>, any separator after it) is the same anonymous function. A <code>()</code> with no body is a parse error, as in zsh.</p>
         <pre><code>() { echo "hi $1, $2 args"; } world 1
 # → hi world, 1 args</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-case-fall">
         <h3><a class="doc-anchor" href="#doc-case-fall">#</a> <code>case;&amp;</code> fall-through, <code>;|</code> test-next</h3>
-        <p>Per-arm separators after a case body. <code>;;</code> exits (default), <code>;&amp;</code> falls through to the next arm <em>without</em> re-testing its pattern, <code>;|</code> falls through and <em>does</em> re-test. <code>compile_case</code> tracks a <code>pending_fall</code> patch site so <code>;&amp;</code> emits a forward jump that the next arm's body-start patches.</p>
+        <p>Per-arm separators after a case body. <code>;;</code> exits (default), <code>;&amp;</code> falls through to the next arm <em>without</em> re-testing its pattern, <code>;|</code> falls through and <em>does</em> re-test.</p>
         <pre><code>case "$x" in
   a) print A ;&amp;     # falls into b's body
   b) print B ;;
@@ -356,7 +290,7 @@ esac</code></pre>
 
       <article class="doc-entry" id="doc-coproc">
         <h3><a class="doc-anchor" href="#doc-coproc">#</a> <code>coproc [name] { body }</code></h3>
-        <p>Forks the body with bidirectional pipes. Two pipes are created (parent→child stdin, child→parent stdout); child <code>setsid</code>s and runs the body, parent stores <code>[read_fd, write_fd]</code> in <code>$COPROC</code> (or the given name as an array). Read child output via <code>/dev/fd/${COPROC[1]}</code>, write to its stdin via <code>/dev/fd/${COPROC[2]}</code>. Job-table integration is Phase G6.</p>
+        <p>Forks the body with bidirectional pipes. Two pipes are created (parent→child stdin, child→parent stdout); child <code>setsid</code>s and runs the body, parent stores <code>[read_fd, write_fd]</code> in <code>$COPROC</code> (or the given name as an array). Read child output via <code>/dev/fd/${COPROC[1]}</code>, write to its stdin via <code>/dev/fd/${COPROC[2]}</code>.</p>
         <pre><code>coproc { while read line; do echo "ECHO: $line"; done }
 echo hello &gt; /dev/fd/${COPROC[2]}
 read reply &lt; /dev/fd/${COPROC[1]}
@@ -365,7 +299,7 @@ echo "$reply"   # ECHO: hello</code></pre>
 
       <article class="doc-entry" id="doc-break">
         <h3><a class="doc-anchor" href="#doc-break">#</a> <code>break</code></h3>
-        <p>Exits the innermost <code>for</code>/<code>while</code>/<code>until</code>. Compiled as a deferred forward <code>Jump(0)</code> patched to land just past the loop's exit point. Inside <code>select</code> use <code>BREAK_SELECT=1</code> instead until cross-construct loop control lands in Phase G6.</p>
+        <p>Exits the innermost <code>for</code>/<code>while</code>/<code>until</code>.</p>
         <pre><code>for f in *.log; do
   [[ -s $f ]] || break    # stop on first empty
   process "$f"
@@ -383,7 +317,7 @@ done</code></pre>
 
       <article class="doc-entry" id="doc-return">
         <h3><a class="doc-anchor" href="#doc-return">#</a> <code>return [n]</code></h3>
-        <p>Return from a function with the given status (default last-status). Compile emits a forward <code>Op::Jump(0)</code> patched to past the chunk's end; standalone-chunk VMs interpret this as halt. <code>Op::Return</code> alone restarts the body from <code>ip=0</code>, which is wrong for top-level scripts.</p>
+        <p>Return from a function with the given status (default last-status).</p>
         <pre><code>greet() {
   [[ -z "$1" ]] && return 1
   echo "hello, $1"
@@ -392,7 +326,7 @@ done</code></pre>
 
       <article class="doc-entry" id="doc-list-ops">
         <h3><a class="doc-anchor" href="#doc-list-ops">#</a> <code>;</code> <code>&amp;&amp;</code> <code>||</code> <code>&amp;</code></h3>
-        <p>Sequential, conditional, and background separators. <code>cmd1 &amp;&amp; cmd2</code> runs <code>cmd2</code> only if <code>cmd1</code> succeeded; <code>||</code> is the inverse. <code>&amp;</code> backgrounds the preceding command via <code>BUILTIN_RUN_BG</code> — fork + setsid, parent returns Status(0) immediately. Compiled with deferred short-circuit jumps to avoid double-compilation of the next command.</p>
+        <p>Sequential, conditional, and background separators. <code>cmd1 &amp;&amp; cmd2</code> runs <code>cmd2</code> only if <code>cmd1</code> succeeded; <code>||</code> is the inverse.</p>
         <pre><code>git pull &amp;&amp; cargo test || echo "test failed"
 sleep 30 &amp;
 echo "going to bg"</code></pre>
@@ -402,18 +336,18 @@ echo "going to bg"</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-arrays-hashes">
       <h2>Arrays &amp; Associative Arrays</h2>
-      <p class="chapter-meta">13 topics · indexed arrays in <code>executor.arrays</code>, assoc in <code>executor.assoc_arrays</code>; argv splice via fusevm 0.14.0+.</p>
+      <p class="chapter-meta">13 topics</p>
 
       <article class="doc-entry" id="doc-arr-literal">
         <h3><a class="doc-anchor" href="#doc-arr-literal">#</a> <code>arr=(a b c)</code></h3>
-        <p>Indexed-array literal assignment. Compile emits N element pushes + name push, then <code>BUILTIN_SET_ARRAY</code> (id 287) which writes a <code>Vec&lt;String&gt;</code> into <code>executor.arrays</code> and clears any prior scalar binding for the same name.</p>
+        <p>Indexed-array literal assignment.</p>
         <pre><code>arr=(alpha beta "two words" gamma)
 echo ${#arr[@]}    # 4</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-arr-append">
         <h3><a class="doc-anchor" href="#doc-arr-append">#</a> <code>arr+=(d e)</code></h3>
-        <p>Append elements to an existing array (or create if missing). Routes through <code>BUILTIN_APPEND_ARRAY</code> (id 295) which extends <code>executor.arrays[name]</code>.</p>
+        <p>Append elements to an existing array (or create if missing).</p>
         <pre><code>arr=(a b)
 arr+=(c d)
 echo ${arr[@]}    # a b c d</code></pre>
@@ -421,7 +355,7 @@ echo ${arr[@]}    # a b c d</code></pre>
 
       <article class="doc-entry" id="doc-arr-index">
         <h3><a class="doc-anchor" href="#doc-arr-index">#</a> <code>${arr[N]}</code></h3>
-        <p>Indexed access. zsh is 1-based for positive indices; negative indices count from the end (<code>${arr[-1]}</code> = last). Routes through <code>BUILTIN_ARRAY_INDEX</code> (id 289). For assoc arrays the same form does string-key lookup.</p>
+        <p>Indexed access. zsh is 1-based for positive indices; negative indices count from the end (<code>${arr[-1]}</code> = last). For assoc arrays the same form does string-key lookup.</p>
         <pre><code>arr=(alpha beta gamma)
 echo ${arr[1]}     # alpha
 echo ${arr[-1]}    # gamma</code></pre>
@@ -429,21 +363,21 @@ echo ${arr[-1]}    # gamma</code></pre>
 
       <article class="doc-entry" id="doc-arr-splice-all">
         <h3><a class="doc-anchor" href="#doc-arr-splice-all">#</a> <code>${arr[@]}</code></h3>
-        <p>Splice all elements as separate argv slots. Pushes a <code>Value::Array</code> which fusevm's <code>Op::Exec</code>/<code>Op::ExecBg</code>/<code>Op::CallFunction</code> and <code>pop_args</code> flatten into individual args. Without the splice, the array would collapse to one space-joined scalar.</p>
+        <p>Splice all elements as separate argv slots. Without the splice, the array would collapse to one space-joined scalar.</p>
         <pre><code>arr=(--verbose --color=always /etc /var)
 ls "${arr[@]}"     # ls --verbose --color=always /etc /var</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-arr-length">
         <h3><a class="doc-anchor" href="#doc-arr-length">#</a> <code>${#arr[@]}</code></h3>
-        <p>Number of elements. Routes through <code>BUILTIN_ARRAY_LENGTH</code> (id 291).</p>
+        <p>Number of elements.</p>
         <pre><code>arr=(a b c d)
 echo ${#arr[@]}    # 4</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-arr-iterate">
         <h3><a class="doc-anchor" href="#doc-arr-iterate">#</a> <code>for x in ${arr[@]}</code></h3>
-        <p>Iterate over array elements. The for-loop word-list compile path calls <code>BUILTIN_ARRAY_FLATTEN</code> (id 293) which flattens nested arrays one level — so <code>for x in start ${arr[@]} end</code> produces N+2 iterations, not 3.</p>
+        <p>Iterate over array elements.</p>
         <pre><code>arr=(red green blue)
 for c in ${arr[@]}; do
   echo "color: $c"
@@ -460,7 +394,7 @@ echo "len=${#arr[@]}"   # len=0</code></pre>
 
       <article class="doc-entry" id="doc-assoc-decl">
         <h3><a class="doc-anchor" href="#doc-assoc-decl">#</a> <code>typeset -A name</code> / <code>declare -A name</code></h3>
-        <p>Declare an associative array. The executor's <code>builtin_typeset</code> handles <code>-A</code> and pre-creates the <code>HashMap&lt;String, String&gt;</code> entry in <code>executor.assoc_arrays</code>. Optional — <code>name[key]=val</code> creates the assoc on demand too.</p>
+        <p>Declare an associative array. Optional — <code>name[key]=val</code> creates the assoc on demand too.</p>
         <pre><code>typeset -A user
 user[name]=Alice
 user[role]=eng
@@ -469,7 +403,7 @@ echo "${user[name]}"   # Alice</code></pre>
 
       <article class="doc-entry" id="doc-assoc-set">
         <h3><a class="doc-anchor" href="#doc-assoc-set">#</a> <code>name[key]=value</code></h3>
-        <p>Assoc-array key set. Compile detects <code>name[key]</code> shape on the LHS of an assignment and routes to <code>BUILTIN_SET_ASSOC</code> (id 288) which stores into <code>executor.assoc_arrays[name][key]</code>.</p>
+        <p>Assoc-array key set.</p>
         <pre><code>db[host]=localhost
 db[port]=5432
 db[user]=admin
@@ -478,7 +412,7 @@ echo "${db[host]}:${db[port]}"</code></pre>
 
       <article class="doc-entry" id="doc-assoc-get">
         <h3><a class="doc-anchor" href="#doc-assoc-get">#</a> <code>${name[key]}</code></h3>
-        <p>Assoc-array lookup. <code>BUILTIN_ARRAY_INDEX</code> checks <code>assoc_arrays</code> first; if the name has an assoc binding the string key is used directly. Missing keys return empty string.</p>
+        <p>Assoc-array lookup. Missing keys return empty string.</p>
         <pre><code>typeset -A m
 m[a]=1; m[b]=2
 echo "a=${m[a]} b=${m[b]}"
@@ -487,7 +421,7 @@ echo "missing=[${m[nope]}]"   # missing=[]</code></pre>
 
       <article class="doc-entry" id="doc-assoc-keys">
         <h3><a class="doc-anchor" href="#doc-assoc-keys">#</a> <code>${(k)name}</code></h3>
-        <p>List the keys of an associative array. Order is HashMap iteration order (implementation-defined). See the <a href="#ch-zsh-flags">Zsh Parameter Flags</a> chapter for the full flag set.</p>
+        <p>List the keys of an associative array. See the <a href="#ch-zsh-flags">Zsh Parameter Flags</a> chapter for the full flag set.</p>
         <pre><code>typeset -A m
 m[apple]=1; m[banana]=2
 for k in "${(k)m}"; do echo $k; done | sort</code></pre>
@@ -511,7 +445,7 @@ echo "${m[k]}"   # second</code></pre>
 
       <article class="doc-entry" id="doc-assoc-append">
         <h3><a class="doc-anchor" href="#doc-assoc-append">#</a> <code>m[k]+=tail</code></h3>
-        <p>Append onto an existing assoc value (string concat). If the key is missing, behaves like a plain set. Routes through <code>BUILTIN_APPEND_ASSOC</code> (id 298).</p>
+        <p>Append onto an existing assoc value (string concat). If the key is missing, behaves like a plain set.</p>
         <pre><code>m[host]=localhost
 m[host]+=":5432"
 echo "${m[host]}"    # localhost:5432</code></pre>
@@ -521,11 +455,11 @@ echo "${m[host]}"    # localhost:5432</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-param-expansion">
       <h2>Parameter Expansion</h2>
-      <p class="chapter-meta">21 topics · 15 of 19 VarModifier variants lower to native fusevm ops via <code>Op::ExpandParam</code>; <code>${var:-default}</code> + <code>${#var}</code> have been native-lowered in <code>compile_zsh.rs</code> (Phase 1 steps 1–2); 4 remaining variants + stacked ZshFlags + <code>$(cmd)</code>/<code>$((expr))</code>/concat <code>${a}${b}</code> still hit the runtime fallback or the <code>untokenize_preserve_quotes</code> bridge to the legacy <code>ShellParser</code>.</p>
+      <p class="chapter-meta">21 topics</p>
 
       <article class="doc-entry" id="doc-pe-default">
         <h3><a class="doc-anchor" href="#doc-pe-default">#</a> <code>${var:-default}</code></h3>
-        <p>Use <code>default</code> if <code>var</code> is unset or empty. Lowers to <code>Op::ExpandParam(DEFAULT)</code>. The default expression is itself compiled (variables, command substitution, etc. all expand at use time).</p>
+        <p>Use <code>default</code> if <code>var</code> is unset or empty. The default expression is itself compiled (variables, command substitution, etc. all expand at use time).</p>
         <pre><code>name=${1:-anonymous}
 log_level=${LOG_LEVEL:-info}
 target=${1:-$(date +%Y%m%d)}</code></pre>
@@ -533,35 +467,35 @@ target=${1:-$(date +%Y%m%d)}</code></pre>
 
       <article class="doc-entry" id="doc-pe-assign">
         <h3><a class="doc-anchor" href="#doc-pe-assign">#</a> <code>${var:=default}</code></h3>
-        <p>Assign <code>default</code> to <code>var</code> if unset/empty, then expand. Lowers to <code>Op::ExpandParam(ASSIGN)</code>. The variable is set in <code>executor.variables</code> as a side effect.</p>
+        <p>Assign <code>default</code> to <code>var</code> if unset/empty, then expand.</p>
         <pre><code>: ${CACHE_DIR:=$HOME/.cache}
 echo "$CACHE_DIR"   # CACHE_DIR is now set</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-pe-error">
         <h3><a class="doc-anchor" href="#doc-pe-error">#</a> <code>${var:?msg}</code></h3>
-        <p>Print error and exit if <code>var</code> is unset/empty. Lowers to <code>Op::ExpandParam(ERROR)</code>. Common in script preamble for required env vars.</p>
+        <p>Print error and exit if <code>var</code> is unset/empty. Common in script preamble for required env vars.</p>
         <pre><code>: ${API_TOKEN:?must be set}
 : ${DEPLOY_TARGET:?usage: deploy &lt;target&gt;}</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-pe-alternate">
         <h3><a class="doc-anchor" href="#doc-pe-alternate">#</a> <code>${var:+alt}</code></h3>
-        <p>Expand to <code>alt</code> if <code>var</code> is set and non-empty, else empty. Lowers to <code>Op::ExpandParam(ALTERNATE)</code>.</p>
+        <p>Expand to <code>alt</code> if <code>var</code> is set and non-empty, else empty.</p>
         <pre><code>flag=${VERBOSE:+--verbose}
 cargo build $flag</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-pe-length">
         <h3><a class="doc-anchor" href="#doc-pe-length">#</a> <code>${#var}</code></h3>
-        <p>String length of scalar (or via <code>${(#)arr}</code> the element count of an array — see Zsh Flags). Lowers to <code>Op::ExpandParam(LENGTH)</code>.</p>
+        <p>String length of scalar (or via <code>${(#)arr}</code> the element count of an array — see Zsh Flags).</p>
         <pre><code>name=Alice
 echo ${#name}   # 5</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-pe-substring">
         <h3><a class="doc-anchor" href="#doc-pe-substring">#</a> <code>${var:offset:length}</code></h3>
-        <p>Substring extraction. Lowers to <code>Op::ExpandParam(SLICE)</code>. Negative offsets count from the end. Length is optional (omitted = to end).</p>
+        <p>Substring extraction. Negative offsets count from the end. Length is optional (omitted = to end).</p>
         <pre><code>s=abcdefgh
 echo ${s:2:3}    # cde
 echo ${s:-3}     # fgh    (last 3 chars)
@@ -602,7 +536,7 @@ echo ${path//\//.}      # .a.b.c</code></pre>
 
       <article class="doc-entry" id="doc-pe-upper">
         <h3><a class="doc-anchor" href="#doc-pe-upper">#</a> <code>${var:u}</code> / <code>${(U)var}</code></h3>
-        <p>Uppercase. The <code>:u</code> postfix lowers to <code>Op::ExpandParam(UPPER)</code>; the <code>(U)</code> flag form goes through <code>BUILTIN_PARAM_FLAG</code> and supports stacking with other flags.</p>
+        <p>Uppercase.</p>
         <pre><code>x=hello
 echo ${x:u}      # HELLO
 echo ${(U)x}     # HELLO</code></pre>
@@ -618,21 +552,20 @@ echo ${(L)x}     # hello</code></pre>
 
       <article class="doc-entry" id="doc-pe-special-q">
         <h3><a class="doc-anchor" href="#doc-pe-special-q">#</a> <code>$?</code></h3>
-        <p>Exit status of the last command. Routed through <code>BUILTIN_GET_VAR("?")</code> which reads <code>vm.last_status</code> synced into the executor.</p>
+        <p>Exit status of the last command.</p>
         <pre><code>cargo test
 if (( $? != 0 )); then echo "tests failed"; fi</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-pe-special-pid">
         <h3><a class="doc-anchor" href="#doc-pe-special-pid">#</a> <code>$$</code></h3>
-        <p>Current shell PID (<code>std::process::id()</code>).</p>
         <pre><code>tmpdir=/tmp/build_$$
 mkdir -p "$tmpdir"</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-pe-special-positional">
         <h3><a class="doc-anchor" href="#doc-pe-special-positional">#</a> <code>$1 $2 … $@ $* $#</code></h3>
-        <p>Positional parameters. <code>$@</code> / <code>$*</code> expand to the full list (joined by IFS), <code>$#</code> is the count, numeric <code>$N</code> is the Nth positional. Native fast-path: <code>"$@"</code> and <code>${arr[@]}</code> reach <code>BUILTIN_GET_VAR</code> / <code>BUILTIN_ARRAY_ALL</code> as <code>Value::Array</code> and spread through <code>BUILTIN_ARRAY_FLATTEN</code>.</p>
+        <p>Positional parameters. <code>$@</code> / <code>$*</code> expand to the full list (joined by IFS), <code>$#</code> is the count, numeric <code>$N</code> is the Nth positional.</p>
         <pre><code>greet() {
   echo "got $# args"
   for arg in "$@"; do echo "- $arg"; done
@@ -642,7 +575,7 @@ greet alpha "two words" gamma</code></pre>
 
       <article class="doc-entry" id="doc-pe-special-misc">
         <h3><a class="doc-anchor" href="#doc-pe-special-misc">#</a> <code>$! $_ $-</code></h3>
-        <p>Auxiliary special params. <code>$!</code> = PID of the most recent backgrounded job. <code>$_</code> = last argument of the previous command (or empty at script start). <code>$-</code> = current shell flag set as a single string. All routed through <code>BUILTIN_GET_VAR</code>.</p>
+        <p>Auxiliary special params. <code>$!</code> = PID of the most recent backgrounded job. <code>$_</code> = last argument of the previous command (or empty at script start). <code>$-</code> = current shell flag set as a single string.</p>
       </article>
 
       <article class="doc-entry" id="doc-pe-random">
@@ -652,7 +585,6 @@ greet alpha "two words" gamma</code></pre>
           <li><code>$RANDOM</code> — 15-bit pseudorandom int. Mixes nanos+pid via Knuth's hash, masked to 15 bits. No seedable state today (independent draws).</li>
           <li><code>$SECONDS</code> — seconds since shell start, derived from <code>__zshrs_start_secs</code> baseline.</li>
           <li><code>$EPOCHSECONDS</code> — Unix time, <code>SystemTime::now()</code>.</li>
-          <li><code>$LINENO</code> — current line in the script (falls back to 1 today; full line tracking is Phase G work).</li>
         </ul>
         <pre><code>tmp="/tmp/build_$$_$RANDOM"
 echo "elapsed: $SECONDS s"
@@ -661,7 +593,7 @@ echo "now: $EPOCHSECONDS"</code></pre>
 
       <article class="doc-entry" id="doc-pe-pipestatus">
         <h3><a class="doc-anchor" href="#doc-pe-pipestatus">#</a> <code>$PIPESTATUS</code> / <code>$pipestatus</code></h3>
-        <p>Per-stage exit codes of the most recent pipeline. <code>BUILTIN_RUN_PIPELINE</code> collects each stage's status and writes both <code>pipestatus</code> (zsh convention) and <code>PIPESTATUS</code> (bash convention). Useful for <code>set -e</code>-style scripts that need to differentiate which stage failed.</p>
+        <p>Per-stage exit codes of the most recent pipeline. Useful for <code>set -e</code>-style scripts that need to differentiate which stage failed.</p>
         <pre><code>seq 100 | grep '^5' | wc -l
 echo "${pipestatus[@]}"   # 0 0 0
 false | true
@@ -670,7 +602,7 @@ echo "${pipestatus[1]}"   # 1   (zsh: 1-indexed)</code></pre>
 
       <article class="doc-entry" id="doc-pe-var-exists">
         <h3><a class="doc-anchor" href="#doc-pe-var-exists">#</a> <code>[[ -v var ]]</code> — existence test</h3>
-        <p><code>BUILTIN_VAR_EXISTS</code> (id 306) checks every binding table — scalar <code>variables</code>, <code>arrays</code>, <code>assoc_arrays</code>, plus the process env — and returns true if <em>any</em> matches. Useful for "set but empty" vs "unset" disambiguation that <code>-z</code> conflates.</p>
+        <p>Useful for "set but empty" vs "unset" disambiguation that <code>-z</code> conflates.</p>
         <pre><code>x=""
 [[ -v x ]] &amp;&amp; echo "set"        # set (even though empty)
 [[ -z $x ]] &amp;&amp; echo "empty"      # empty
@@ -680,7 +612,7 @@ unset x
 
       <article class="doc-entry" id="doc-pe-arith-sub">
         <h3><a class="doc-anchor" href="#doc-pe-arith-sub">#</a> <code>$((expr))</code></h3>
-        <p>Arithmetic substitution. The expression compiles through the inline arithmetic compiler — no runtime parser invocation. Integers are <code>i64</code>; supports <code>+ - * / % ** &amp; | ^ &lt;&lt; &gt;&gt; &amp;&amp; ||</code> and pre/post inc/dec.</p>
+        <p>Arithmetic substitution. Integers are 64-bit; supports <code>+ - * / % ** &amp; | ^ &lt;&lt; &gt;&gt; &amp;&amp; ||</code> and pre/post inc/dec.</p>
         <pre><code>(( total = 1 + 2 * 3 ))
 echo $((2 ** 16))    # 65536
 echo $((0xff &amp; 0x0f))</code></pre>
@@ -688,7 +620,7 @@ echo $((0xff &amp; 0x0f))</code></pre>
 
       <article class="doc-entry" id="doc-pe-cmd-sub">
         <h3><a class="doc-anchor" href="#doc-pe-cmd-sub">#</a> <code>$(cmd)</code> / <code>` cmd `</code></h3>
-        <p>Command substitution. zshrs runs the inner command on a nested VM and captures stdout via <code>os_pipe::pipe()</code> + <code>dup2</code> — <em>no fork</em>. Trailing newlines are stripped per POSIX.</p>
+        <p>Command substitution. Captures the command's stdout without forking. Trailing newlines are stripped per POSIX.</p>
         <pre><code>now=$(date +%s)
 files=$(ls *.rs | wc -l)
 echo "$files files at $now"</code></pre>
@@ -698,7 +630,7 @@ echo "$files files at $now"</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-zsh-flags">
       <h2>Zsh Parameter Flags</h2>
-      <p class="chapter-meta">12 topics · <code>${(flags)name}</code> form. Flags apply left-to-right; <code>(jL)</code> joins-then-lowercases, <code>(s:,:U)</code> splits-then-uppercases. Routes through <code>BUILTIN_PARAM_FLAG</code> (id 297).</p>
+      <p class="chapter-meta">12 topics</p>
 
       <article class="doc-entry" id="doc-flag-L">
         <h3><a class="doc-anchor" href="#doc-flag-L">#</a> <code>(L)</code> — lowercase</h3>
@@ -773,7 +705,7 @@ echo ${(#)${(@)x}}  # 1  (array length after @-coerce)</code></pre>
 
       <article class="doc-entry" id="doc-flag-k">
         <h3><a class="doc-anchor" href="#doc-flag-k">#</a> <code>(k)</code> — keys of assoc</h3>
-        <p>Returns the keys of an associative array as an array. Order is HashMap iteration order.</p>
+        <p>Returns the keys of an associative array as an array.</p>
         <pre><code>typeset -A m
 m[apple]=1; m[banana]=2
 for k in "${(k)m}"; do echo "$k"; done</code></pre>
@@ -862,7 +794,7 @@ echo "${(p)fmt}"   # cyan "color"</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-redirects-pipes">
       <h2>Redirection &amp; Pipelines</h2>
-      <p class="chapter-meta">14 topics · pipelines fork-per-stage via <code>BUILTIN_RUN_PIPELINE</code> (id 285); redirects scoped via <code>WithRedirectsBegin/End</code>.</p>
+      <p class="chapter-meta">14 topics</p>
 
       <article class="doc-entry" id="doc-redir-write">
         <h3><a class="doc-anchor" href="#doc-redir-write">#</a> <code>cmd &gt; file</code> — write</h3>
@@ -901,9 +833,8 @@ make 2&gt;&amp;1 | tee build.log</code></pre>
         <ul style="margin-top: 0.4rem;">
           <li><code>&lt;&lt;EOF</code> — variables, command sub, arithmetic all expand inside the body. Body trailing newline trimmed before <code>HereString</code> emit so stdin is byte-identical to source.</li>
           <li><code>&lt;&lt;-EOF</code> — leading tabs stripped from each body line <em>and</em> from the closing-terminator-line check. Lets you indent the heredoc body inside a function body.</li>
-          <li><code>&lt;&lt;'EOF'</code> / <code>&lt;&lt;"EOF"</code> — quoted terminator → body is verbatim, <strong>no</strong> expansion. Detected by SNULL/DNULL markers in the lexer's terminator string; <code>HereDocInfo.quoted</code> drives compile-side behavior.</li>
+          <li><code>&lt;&lt;'EOF'</code> / <code>&lt;&lt;"EOF"</code> — quoted terminator → body is verbatim, <strong>no</strong> expansion.</li>
         </ul>
-        <p style="margin-top: 0.4rem;">Body capture happens in a parser post-pass (<code>fill_heredoc_bodies</code>) — the lexer collects bodies into <code>self.heredocs[]</code> at <code>process_heredocs</code> (called on Newlin/Endinput); the parser records a <code>heredoc_idx</code> per redir during <code>parse_redirection</code>; the post-pass walks the AST resolving indices into <code>ZshRedir.heredoc</code>.</p>
         <pre><code>cat &lt;&lt;EOF
 hello $USER
 host: $(hostname)
@@ -927,7 +858,7 @@ EOF</code></pre>
 
       <article class="doc-entry" id="doc-redir-pipe">
         <h3><a class="doc-anchor" href="#doc-redir-pipe">#</a> <code>cmd1 | cmd2</code> — pipeline</h3>
-        <p>Connect cmd1's stdout to cmd2's stdin via a pipe. zshrs's pipeline is bytecode-native: each stage compiles to a sub-chunk; <code>BUILTIN_RUN_PIPELINE</code> creates N-1 pipes, forks N children, wires fds, runs each stage's bytecode on a fresh VM. SIGPIPE works correctly.</p>
+        <p>SIGPIPE works correctly.</p>
         <pre><code>seq 100 | sort | uniq | wc -l</code></pre>
       </article>
 
@@ -944,8 +875,7 @@ EOF</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-redir-procsub-in">
-        <h3><a class="doc-anchor" href="#doc-redir-procsub-in">#</a> <code>&lt;(cmd)</code> — process sub (input)</h3>
-        <p>Spawn cmd, present its stdout as a path readable by the consumer. zshrs uses worker pool threads instead of fork — the FIFO/temp file is wired to a thread that runs the bytecode for cmd.</p>
+        <h3><a class="doc-anchor" href="#doc-redir-procsub-in">#</a> $1        <p>Spawn cmd, present its stdout as a path readable by the consumer.</p>
         <pre><code>diff &lt;(sort a.txt) &lt;(sort b.txt)</code></pre>
       </article>
 
@@ -975,7 +905,7 @@ exec 5&lt;&amp;-     # close fd 5</code></pre>
 
       <article class="doc-entry" id="doc-redir-with-redirects">
         <h3><a class="doc-anchor" href="#doc-redir-with-redirects">#</a> <code>{ cmds; } &gt; file</code> — block redirect</h3>
-        <p>Apply a redirect to a compound command. <code>WithRedirectsBegin/End</code> bracket the inner ops so the parent shell's fds are restored after.</p>
+        <p>Apply a redirect to a compound command.</p>
         <pre><code>{
   echo header
   date
@@ -987,7 +917,7 @@ exec 5&lt;&amp;-     # close fd 5</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-shell-builtins">
       <h2>POSIX / Zsh Builtins</h2>
-      <p class="chapter-meta">52 topics · the full POSIX-required set plus zsh's interactive-shell builtins. Every entry routes through fusevm <code>CallBuiltin(id, argc)</code>; arrays splice via <code>pop_args</code>.</p>
+      <p class="chapter-meta">52 topics</p>
 
       <article class="doc-entry" id="doc-cd">
         <h3><a class="doc-anchor" href="#doc-cd">#</a> <code>cd [dir]</code></h3>
@@ -1039,14 +969,14 @@ unset -f myfunc   # remove function</code></pre>
 
       <article class="doc-entry" id="doc-source">
         <h3><a class="doc-anchor" href="#doc-source">#</a> <code>source file</code> / <code>. file</code></h3>
-        <p>Execute a script in the current shell. zshrs's source path uses bytecode caching: first run compiles + stores to SQLite; subsequent runs deserialize cached chunks. Plugin delta cache replays state changes (functions, aliases, vars, hooks, zstyles, options) in microseconds.</p>
+        <p>Plugin delta cache replays state changes (functions, aliases, vars, hooks, zstyles, options) in microseconds.</p>
         <pre><code>source ~/.zshrc
 . /etc/profile.d/lang.sh</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-exit">
         <h3><a class="doc-anchor" href="#doc-exit">#</a> <code>exit [n]</code></h3>
-        <p>Exit the shell with status <em>n</em> (default last status). Aliases: <code>bye</code>, <code>logout</code>. Compile emits a forward jump patched past chunk-end (halts the VM). EXIT trap fires before halt.</p>
+        <p>Exit the shell with status <em>n</em> (default last status). Aliases: <code>bye</code>, <code>logout</code>. EXIT trap fires before halt.</p>
         <pre><code>[[ -z $1 ]] &amp;&amp; { echo "missing arg"; exit 2; }</code></pre>
       </article>
 
@@ -1131,7 +1061,7 @@ echo "${#lines[@]} hosts"</code></pre>
 
       <article class="doc-entry" id="doc-eval">
         <h3><a class="doc-anchor" href="#doc-eval">#</a> <code>eval string</code></h3>
-        <p>Re-parse and execute the joined-args string as shell code. Single-quoted args defer expansion correctly (the lexer's <code>\0</code>-sentinel for single-quoted specials is honored by the compile path's trigger detection).</p>
+        <p>Re-parse and execute the joined-args string as shell code.</p>
         <pre><code>x=10
 eval 'echo $x'    # 10  (expansion deferred to eval-time)
 eval "$(starship init zsh)"</code></pre>
@@ -1173,7 +1103,7 @@ set -- alpha beta gamma   # set $1 $2 $3</code></pre>
 
       <article class="doc-entry" id="doc-setopt-unsetopt">
         <h3><a class="doc-anchor" href="#doc-setopt-unsetopt">#</a> <code>setopt</code> / <code>unsetopt</code></h3>
-        <p>Toggle zsh-style options. Options live in <code>executor.options</code>; <code>setopt foo</code> turns on, <code>unsetopt foo</code> turns off.</p>
+        <p>Toggle zsh-style options.</p>
         <pre><code>setopt extended_glob
 setopt null_glob
 unsetopt nomatch</code></pre>
@@ -1210,8 +1140,7 @@ echo "${opts[-h]}"</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-autoload">
-        <h3><a class="doc-anchor" href="#doc-autoload">#</a> <code>autoload [name…]</code></h3>
-        <p>Mark a function for lazy loading from <code>$fpath</code>. zshrs's autoload path uses SQLite-cached bytecodes: first invocation deserializes a chunk; subsequent invocations skip lex/parse/compile entirely.</p>
+        <h3><a class="doc-anchor" href="#doc-autoload">#</a> $1        <p>Mark a function for lazy loading from <code>$fpath</code>.</p>
         <pre><code>autoload -Uz compinit
 compinit</code></pre>
       </article>
@@ -1385,8 +1314,7 @@ zmodload zsh/regex</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-zcompile">
-        <h3><a class="doc-anchor" href="#doc-zcompile">#</a> <code>zcompile file</code></h3>
-        <p>Pre-compile a zsh script to <code>.zwc</code>. zshrs treats <code>.zwc</code> as one of its bytecode-cache inputs and deserializes the chunk directly when sourcing the original file.</p>
+        <h3><a class="doc-anchor" href="#doc-zcompile">#</a> $1        <p>Pre-compile a zsh script to <code>.zwc</code>.</p>
         <pre><code>zcompile ~/.zshrc</code></pre>
       </article>
     </section>
@@ -1394,18 +1322,18 @@ zmodload zsh/regex</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-job-control">
       <h2>Job Control &amp; Background</h2>
-      <p class="chapter-meta">11 topics · <code>cmd &amp;</code> compiles to a sub-chunk + <code>BUILTIN_RUN_BG</code> (id 290) fork dispatch; full job-table integration is Phase G6.</p>
+      <p class="chapter-meta">11 topics</p>
 
       <article class="doc-entry" id="doc-amp">
         <h3><a class="doc-anchor" href="#doc-amp">#</a> <code>cmd &amp;</code> — background</h3>
-        <p>Run cmd in the background. The compile path detects <code>ListOp::Amp</code>, compiles cmd into a sub-chunk, emits <code>CallBuiltin(BUILTIN_RUN_BG, 1)</code>. The handler forks; child <code>setsid</code>s and runs the chunk on a fresh VM; parent returns Status(0) immediately.</p>
+        <p>Run cmd in the background.</p>
         <pre><code>sleep 30 &amp;
 make all &amp; make docs &amp; wait</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-jobs">
         <h3><a class="doc-anchor" href="#doc-jobs">#</a> <code>jobs</code></h3>
-        <p>List background jobs known to the shell. Note: pids spawned via <code>BUILTIN_RUN_BG</code> aren't yet registered in the JobTable (Phase G6); externally-launched bg cmds via <code>std::process::Command::spawn()</code> are.</p>
+        <p>List background jobs known to the shell.</p>
         <pre><code>jobs                # active jobs
 jobs -l             # with pids</code></pre>
       </article>
@@ -1630,7 +1558,7 @@ tmpdir=$(mktemp -d)</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-parallel">
       <h2>Parallel Primitives</h2>
-      <p class="chapter-meta">12 topics · scheduled on a per-process <code>rayon</code> worker pool (safe inside <code>$(…)</code> and pipeline stages). Each item runs in a fresh <code>zshrs</code> process; the <code>*_chunked</code>, <code>par_lines</code> and <code>par_walk</code> forms run a whole chunk of items per process.</p>
+      <p class="chapter-meta">12 topics · scheduled on a per-process <code>rayon</code> worker pool (safe inside <code>$(…)</code> and pipeline stages).</p>
 
       <article class="doc-entry" id="doc-pmap">
         <h3><a class="doc-anchor" href="#doc-pmap">#</a> <code>pmap 'cmd {}' args…</code></h3>
@@ -1712,7 +1640,7 @@ cat big.txt | psort</code></pre>
     <section class="tutorial-section" id="ch-aop">
       <h2>AOP Intercept</h2>
       <p class="chapter-meta">3 topics · the first shell with aspect-oriented programming. <code>before</code>/<code>after</code>/<code>around</code> advice. Routes through <code>host_exec_external</code> → <code>run_intercepts</code>.</p>
-      <p>The <code>{ … }</code> body is a zshrs syntax extension: zsh cannot parse a bare <code>}</code> as an argument, so the lexer takes the span between the braces as raw source and stores it verbatim. The body is <em>not</em> expanded at registration — <code>$INTERCEPT_ARGS</code>, <code>$(…)</code> and globs resolve each time the advice fires — and it keeps its own redirections, pipelines and here-documents. Under <code>zshrs --zsh</code> the extension is off and the form is rejected exactly as <code>/bin/zsh</code> rejects it; the quoted equivalent, <code>intercept before git 'code'</code>, works in every mode.</p>
+      <p>The body is <em>not</em> expanded at registration — <code>$INTERCEPT_ARGS</code>, <code>$(…)</code> and globs resolve each time the advice fires — and it keeps its own redirections, pipelines and here-documents. Under <code>zshrs --zsh</code> the extension is off and the form is rejected exactly as <code>/bin/zsh</code> rejects it; the quoted equivalent, <code>intercept before git 'code'</code>, works in every mode.</p>
 
       <article class="doc-entry" id="doc-intercept-before">
         <h3><a class="doc-anchor" href="#doc-intercept-before">#</a> <code>intercept before pat { code }</code></h3>
@@ -1749,7 +1677,7 @@ cat big.txt | psort</code></pre>
 
       <article class="doc-entry" id="doc-doctor">
         <h3><a class="doc-anchor" href="#doc-doctor">#</a> <code>doctor</code></h3>
-        <p>Full diagnostic dump: worker-pool metrics, SQLite cache stats, bytecode coverage, registered intercepts, history db size, options table.</p>
+        <p>Full diagnostic dump: worker-pool metrics, cache stats, registered intercepts, history db size, options table.</p>
         <pre><code>doctor</code></pre>
       </article>
 
@@ -1770,7 +1698,7 @@ dbview history docker         # history search</code></pre>
 
       <article class="doc-entry" id="doc-provenance">
         <h3><a class="doc-anchor" href="#doc-provenance">#</a> <code>provenance [-m|-u|-j|-l|-c] [NAME…]</code></h3>
-        <p>Value lineage: where a parameter's bytes came from, and every bytecode op that produced or consumed them. <code>-m</code> arms tracking for a parameter, <code>-j</code> prints the chain as JSON, <code>-u</code> untracks, <code>-c</code> clears. The engine records nothing until armed; <code>[provenance] enabled = false</code> in <code>~/.zshrs/zshrs.toml</code> (or <code>ZSHRS_PROVENANCE=0</code>) refuses arming outright.</p>
+        <p>Value lineage: where a parameter's bytes came from, and every operation that produced or consumed them. <code>-m</code> arms tracking for a parameter, <code>-j</code> prints the chain as JSON, <code>-u</code> untracks, <code>-c</code> clears. The engine records nothing until armed; <code>[provenance] enabled = false</code> in <code>~/.zshrs/zshrs.toml</code> (or <code>ZSHRS_PROVENANCE=0</code>) refuses arming outright.</p>
         <pre><code>provenance -m ARCHIVE
 REPORT=$(date +%Y-%m-%d)
 ARCHIVE=${REPORT}.tar.gz
@@ -1801,12 +1729,11 @@ history docker                # FTS search</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-completion">
       <h2>Completion System</h2>
-      <p class="chapter-meta">10 topics · compsys backed by rkyv-mmap'd shards (zero-copy hot path). Read-only SQLite mirrors sit beside them for <code>dbview</code> / SQL inspection only &mdash; no role in Tab cache hit/miss. <code>compinit</code> pre-warms the autoload index across the worker pool.</p>
+      <p class="chapter-meta">10 topics · <code>compinit</code> pre-warms the autoload index across the worker pool.</p>
 
       <article class="doc-entry" id="doc-compinit">
-        <h3><a class="doc-anchor" href="#doc-compinit">#</a> <code>compinit</code></h3>
-        <p>Initialize the completion system. zshrs's <code>compinit</code> is async: fpath is scanned + bytecode-compiled in the background while the prompt drops.</p>
-        <pre><code>autoload -Uz compinit &amp;&amp; compinit</code></pre>
+        <h3><a class="doc-anchor" href="#doc-compinit">#</a> $1        <p>Initialize the completion system.</p>
+$2><code>autoload -Uz compinit &amp;&amp; compinit</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-compdef">
@@ -1896,7 +1823,7 @@ bindkey -M vicmd 'k' up-line-or-beginning-search</code></pre>
 
       <article class="doc-entry" id="doc-abbrev">
         <h3><a class="doc-anchor" href="#doc-abbrev">#</a> Abbreviations</h3>
-        <p>Fish-style abbreviations: type the abbrev + space, the full command expands inline. Configured via the <code>fish/abbrs.rs</code> backend.</p>
+        <p>Fish-style abbreviations: type the abbrev + space, the full command expands inline.</p>
         <pre><code>abbr gco='git checkout'
 abbr -g G='| grep'</code></pre>
       </article>
@@ -1931,7 +1858,7 @@ pcre_study</code></pre>
 
       <article class="doc-entry" id="doc-regex-tilde">
         <h3><a class="doc-anchor" href="#doc-regex-tilde">#</a> <code>[[ string =~ pattern ]]</code></h3>
-        <p>POSIX/PCRE regex match inside the conditional. Routed through <code>Op::RegexMatch</code> (host method <code>regex_match</code>).</p>
+        <p>POSIX/PCRE regex match inside the conditional.</p>
         <pre><code>if [[ $version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
   major=${match[1]}; minor=${match[2]}; patch=${match[3]}
 fi</code></pre>
@@ -1939,330 +1866,6 @@ fi</code></pre>
     </section>
 
     <!-- ════════════════════════════════════════════════════════════════════ -->
-    <section class="tutorial-section" id="ch-recently-closed">
-      <h2>Recently Closed Compat Gaps (eighty-eighth-pass)</h2>
-      <p class="chapter-meta">46 constructs · all verified against <code>src/zsh/Src/</code> via direct C-source ports. Each entry is pinned by at least one assertion in <code>tests/zshrs_shell.rs</code>; workspace-wide test hooks today: 19,341 (see header strip). These were the highest-impact gaps in <code>man zshall</code> coverage that remained after the seventy-seventh pass — most are param expansion, pattern matching, function scoping, and trap behavior.</p>
-
-      <h3>Glob &amp; Pattern</h3>
-      <article class="doc-entry" id="doc-gap-glob-tilde-exclude">
-        <h3><a class="doc-anchor" href="#doc-gap-glob-tilde-exclude">#</a> <code>extendedglob</code> <code>~</code> exclusion at PATH level</h3>
-        <p>Direct port of <code>pattern.c</code> P_EXCLUDE: matches RHS as a pattern against each LHS candidate's basename + full path, not as a separate CWD glob.</p>
-        <pre><code>setopt extendedglob
-echo /tmp/dir/*.txt~*README*   # all .txt except README.txt</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-glob-caret-path">
-        <h3><a class="doc-anchor" href="#doc-gap-glob-caret-path">#</a> <code>/^pat</code> at any path component</h3>
-        <p>Negation operator now triggers in any path component, not just the leading word.</p>
-        <pre><code>setopt extendedglob
-echo /tmp/dir/^skipme   # everything in /tmp/dir except files matching skipme</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-glob-var-prefix">
-        <h3><a class="doc-anchor" href="#doc-gap-glob-var-prefix">#</a> <code>$D/*</code>, <code>$D/(a|b)</code> — glob meta after var ref</h3>
-        <p>New <code>BUILTIN_GLOB_EXPAND</code> (id 343): pops a scalar pattern, runs <code>expand_glob</code>, pushes Value::Array. Compile path detects glob meta in literal segments only (so <code>$?</code>/<code>$#</code>/etc don't trigger).</p>
-        <pre><code>D=/tmp/build
-echo $D/*       # globs after $D substitution
-echo $D/(a|b)   # alternation after $D substitution</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-glob-recursive-sort">
-        <h3><a class="doc-anchor" href="#doc-gap-glob-recursive-sort">#</a> <code>**/*</code> recursive sort by full path</h3>
-        <p>Recursive globs sort by full-path lex order (zsh's depth-first walk). Non-recursive globs keep basename-sorted output.</p>
-        <pre><code>echo /tmp/dir/**/*  # f, sub, sub/g — not f, g, sub</code></pre>
-      </article>
-
-      <h3>Parameter Expansion</h3>
-      <article class="doc-entry" id="doc-gap-nested-strip">
-        <h3><a class="doc-anchor" href="#doc-gap-nested-strip">#</a> <code>${${a%.txt}#hel}</code> — outer strip on inner result</h3>
-        <p>Direct port of <code>subst.c</code> getarg machinery — same dispatch for inner and outer.</p>
-        <pre><code>a=hello.txt
-echo "${${a%.txt}#hel}"   # lo</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-nested-flag">
-        <h3><a class="doc-anchor" href="#doc-gap-nested-flag">#</a> <code>${(s. .)${(j. .)a}}</code> — outer flag on inner expansion</h3>
-        <p>Flag handler now recurses on leading <code>${</code> in <code>rest</code>; applies U/L/C/Split/Join/SplitWords/SplitLines to inner result.</p>
-        <pre><code>a=(a b c)
-echo "${(s. .)${(j. .)a}}"   # a b c (split-then-rejoin)</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-nested-cmdsubst">
-        <h3><a class="doc-anchor" href="#doc-gap-nested-cmdsubst">#</a> <code>${(flags)$(...)}</code> — cmd-subst as flag operand</h3>
-        <p>Branch added for cmd-subst operands. <code>(P)</code> indirect honored: captured output is treated as a variable name and looked up.</p>
-        <pre><code>a=hi; echo "${(P)$(echo a)}"   # hi  (NOT "a")
-echo "${(U)$(echo hello)}"     # HELLO
-echo "${(z)$(echo a b c)}"     # a b c</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-nested-subscript">
-        <h3><a class="doc-anchor" href="#doc-gap-nested-subscript">#</a> <code>${(U)${(s. .)s}[N]}</code> — [N] subscript after inner expansion</h3>
-        <p>Splits the flag-applied joined-scalar back to parts, indexes, re-applies case-transform flags.</p>
-        <pre><code>s="x y z"
-echo "${(U)${(s. .)s}[1]}"   # X</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-pad-empty-s1">
-        <h3><a class="doc-anchor" href="#doc-gap-pad-empty-s1">#</a> <code>${(l:N::s2:)val}</code> — pad with empty s1 + s2 fallback</h3>
-        <p>Pad parser collects both strings; when s1 empty and s2 given, s2 acts as fill char.</p>
-        <pre><code>echo "${(l:5::0:)42}"   # 00000  (zsh-faithful)</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-bracket-pair-delim">
-        <h3><a class="doc-anchor" href="#doc-gap-bracket-pair-delim">#</a> <code>${(j[+])a}</code>, <code>${(s[|])s}</code> — bracket-pair flag delimiters</h3>
-        <p>zsh subst.c <code>get_strarg</code> accepts matched bracket pairs as flag delimiters: <code>[</code>/<code>]</code>, <code>{</code>/<code>}</code>, <code>(</code>/<code>)</code>, <code>&lt;</code>/<code>&gt;</code>. Both flag-parser sites updated.</p>
-        <pre><code>a=(a b c)
-echo "${(j[+])a}"      # a+b+c
-echo "${(j&lt;X&gt;)a}"      # aXbXc
-echo "${(s[|])\"x|y|z\"}" # x y z</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-q-modifier">
-        <h3><a class="doc-anchor" href="#doc-gap-q-modifier">#</a> <code>:Q</code> modifier — backslash escape removal</h3>
-        <p><code>hist.c</code> remquote: strips paired <code>'</code>/<code>"</code> AND <code>\X</code> backslash escapes. Both <code>:Q</code> paths fixed.</p>
-        <pre><code>a="a\\ b"
-echo ${a:Q}   # a b</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-replace-backslash">
-        <h3><a class="doc-anchor" href="#doc-gap-replace-backslash">#</a> <code>${a//\X/repl}</code> — backslash unescape for non-meta chars</h3>
-        <p>Pattern pre-pass strips <code>\X</code> when X is not a glob meta. <code>\?</code>/<code>\*</code>/<code>\[</code>/<code>\]</code>/<code>\(</code>/<code>\)</code>/<code>\|</code>/<code>\\</code> still escape.</p>
-        <pre><code>a="x:y:z"
-echo "${a//\:/-}"     # x-y-z
-echo "${a//\./X}"     # works on dots too</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-sort-flags-dq">
-        <h3><a class="doc-anchor" href="#doc-gap-sort-flags-dq">#</a> <code>"${(o)a[@]}"</code>, <code>"${(O)a[@]}"</code>, <code>"${(n)a[@]}"</code> — sort flags survive DQ when [@] given</h3>
-        <p>Compile path encodes the at-subscript context through a new <code>\u{03}</code> sentinel in the flags string so the runtime DQ-stripper preserves array-only flags.</p>
-        <pre><code>a=(c a b)
-echo "${(o)a[@]}"      # a b c
-echo "${(O)a[@]}"      # c b a
-a=(10 2 1 22)
-echo "${(n)a[@]}"      # 1 2 10 22</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-special-default">
-        <h3><a class="doc-anchor" href="#doc-gap-special-default">#</a> <code>${SECONDS-default}</code> — zsh-special params always-set</h3>
-        <p>Whitelist treats <code>SECONDS</code>, <code>EPOCHSECONDS</code>, <code>EPOCHREALTIME</code>, <code>RANDOM</code>, <code>LINENO</code>, <code>HISTCMD</code>, <code>PPID</code>, <code>UID</code>, <code>EUID</code>, <code>GID</code>, <code>EGID</code>, <code>SHLVL</code> as set even when not in <code>self.variables</code>. <code>HISTCMD</code> getter also added.</p>
-        <pre><code>echo "${SECONDS-default}"   # 0  (or current value)
-echo "${UID-default}"       # 501
-echo "${HISTCMD-default}"   # 0</code></pre>
-      </article>
-
-      <h3>Arrays &amp; Subscripts</h3>
-      <article class="doc-entry" id="doc-gap-assoc-order">
-        <h3><a class="doc-anchor" href="#doc-gap-assoc-order">#</a> Associative-array key insertion order</h3>
-        <p>Storage switched from <code>HashMap</code> to <code>indexmap::IndexMap</code> so <code>${(k)h}</code> / <code>${(kv)h}</code> iterate in insertion order matching zsh's HashTable hnodes.</p>
-        <pre><code>typeset -A h
-h=(a 1 b 2 c 3)
-echo ${(k)h}       # a b c
-echo ${(kv)h}      # a 1 b 2 c 3</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-multi-for">
-        <h3><a class="doc-anchor" href="#doc-gap-multi-for">#</a> <code>for k v in arr</code> — multi-name for loop</h3>
-        <p>Direct port of <code>parse.c par_for</code>: parser collects all leading identifiers; compiler emits N-stride iteration with empty-string fill on short tail.</p>
-        <pre><code>arr=(a 1 b 2 c 3)
-for k v in $arr; do echo "$k=$v"; done
-
-typeset -A h=(a 1 b 2)
-for k v in ${(kv)h}; do echo "$k=$v"; done</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-array-array-splice">
-        <h3><a class="doc-anchor" href="#doc-gap-array-array-splice">#</a> <code>b=("${a[@]}")</code> — array-to-array splice preserves boundaries</h3>
-        <p>New <code>scalar_assign_depth</code> separate from <code>assign_context_depth</code> — only scalar RHS forces JOIN_STAR. Array init keeps splice.</p>
-        <pre><code>a=("1 2" "3 4")
-b=("${a[@]}")
-echo ${#b}   # 2  (preserves both elements)</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-bare-splice">
-        <h3><a class="doc-anchor" href="#doc-gap-bare-splice">#</a> <code>$a[@]</code>, <code>$a[*]</code> — bare (no-braces) splice</h3>
-        <p><code>array_splice_ref</code> extended to accept the no-braces form, identical semantics to <code>${a[@]}</code>.</p>
-        <pre><code>a=(x y z)
-printf "%s\n" $a[@]    # x, y, z (3 lines)
-f() { echo $#; }; f $a[@]   # 3</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-scalar-assign-join">
-        <h3><a class="doc-anchor" href="#doc-gap-scalar-assign-join">#</a> <code>b="${a[@]}"</code> — scalar assignment joins via JOIN_STAR</h3>
-        <p>Compile path forces <code>BUILTIN_ARRAY_JOIN_STAR</code> when <code>scalar_assign_depth &gt; 0</code> (zsh subst.c forces single-string for scalar RHS).</p>
-        <pre><code>a=(1 2 3)
-b="${a[@]}"
-echo $b   # 1 2 3</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-subscript-var-remove">
-        <h3><a class="doc-anchor" href="#doc-gap-subscript-var-remove">#</a> <code>a[$n]=()</code> — variable subscript element-remove</h3>
-        <p>Compile path now routes the subscript through <code>compile_word_str</code> when key has <code>$</code> or backtick.</p>
-        <pre><code>a=(1 2 3 4)
-n=3
-a[$n]=()       # remove 3rd element
-echo "${a[@]}" # 1 2 4
-a=(1 2 3 4)
-a[$#a]=()      # remove last
-echo "${a[@]}" # 1 2 3</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-assoc-i-flag">
-        <h3><a class="doc-anchor" href="#doc-gap-assoc-i-flag">#</a> <code>${h[(I)pat]}</code>, <code>${h[(R)pat]}</code> on assoc — return ALL matches</h3>
-        <p><code>(I)</code>/<code>(R)</code> return all matching keys/values space-joined; <code>(i)</code>/<code>(r)</code> return first. <code>(i)</code>/<code>(I)</code> search keys; <code>(r)</code>/<code>(R)</code> search values.</p>
-        <pre><code>typeset -A h=(a 1 b 2)
-echo "${h[(I)*]}"      # a b
-echo "${h[(i)*]}"      # a
-echo "${h[(I)a]}"      # a (single match)
-typeset -A h=(a 1 b 1 c 2)
-echo "${h[(R)1]}"      # 1 1</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-typeset-preserve">
-        <h3><a class="doc-anchor" href="#doc-gap-typeset-preserve">#</a> <code>typeset -a a</code> preserves existing array at top scope</h3>
-        <p>Bare-declaration path now guards with <code>in_function || !exists</code>. <code>typeset -aU</code> dedupes in place.</p>
-        <pre><code>a=(1 2 3); typeset -a a; echo $a       # 1 2 3 (was empty)
-a=(a b a c b); typeset -aU a; echo $a  # a b c (was empty)</code></pre>
-      </article>
-
-      <h3>Arithmetic</h3>
-      <article class="doc-entry" id="doc-gap-arith-subscript-rhs">
-        <h3><a class="doc-anchor" href="#doc-gap-arith-subscript-rhs">#</a> <code>((i=a[2]))</code> — RHS array subscript pre-resolve</h3>
-        <p><code>[</code> added to <code>needs_eval</code> trigger so MathEval (which runs <code>pre_resolve_array_subscripts</code>) handles it.</p>
-        <pre><code>a=(10 20 30)
-((i=a[2])); echo $i              # 20
-((sum=a[1]+a[2]+a[3])); echo $sum # 60</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-arith-assoc-postinc">
-        <h3><a class="doc-anchor" href="#doc-gap-arith-assoc-postinc">#</a> <code>((h[a]++))</code>, <code>((h[a]+=v))</code> — compound ops on assoc</h3>
-        <p>Direct port of zsh's math.c LVAL_NUM_SUBSC: subscript receiver retains lvalue identity through compound operators.</p>
-        <pre><code>typeset -A h
-h[a]=5
-((h[a]++))      # h[a] = 6
-((h[a]+=10))    # h[a] = 16</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-arith-pre-inc">
-        <h3><a class="doc-anchor" href="#doc-gap-arith-pre-inc">#</a> <code>((++a[i]))</code>, <code>((++h[k]))</code> — pre-increment on subscript</h3>
-        <p>New <code>parse_subscript_arith_pre_inc</code> + compile-side <code>subscripted_arith_compound_check</code> accepts the pre-op shape. Pre-op returns NEW value, post-op OLD.</p>
-        <pre><code>a=(10 20 30)
-((++a[2])); echo $a   # 10 21 30
-typeset -A h
-h[a]=5
-((++h[a])); echo $h[a] # 6</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-arith-ternary">
-        <h3><a class="doc-anchor" href="#doc-gap-arith-ternary">#</a> <code>((a = cond ? T : F))</code> — ternary in assignment</h3>
-        <p><code>?</code> added to <code>needs_eval</code> triggers so MathEval handles ternary fully. ArithCompiler can't write back through <code>?:</code>.</p>
-        <pre><code>((a = 5 &gt; 3 ? 99 : 0)); echo $a   # 99</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-math-int-preserving">
-        <h3><a class="doc-anchor" href="#doc-gap-math-int-preserving">#</a> <code>abs</code>/<code>min</code>/<code>max</code>/<code>int</code>/<code>floor</code>/<code>ceil</code>/<code>trunc</code> — int-preserving</h3>
-        <p>Int-input return int (not <code>5.</code>). Float input still returns float.</p>
-        <pre><code>echo $((abs(-5)))      # 5  (was 5.)
-echo $((max(3,5,7)))   # 7
-echo $((abs(-5.5)))    # 5.5  (still float)</code></pre>
-      </article>
-
-      <h3>Conditionals &amp; Parser</h3>
-      <article class="doc-entry" id="doc-gap-cond-parens">
-        <h3><a class="doc-anchor" href="#doc-gap-cond-parens">#</a> <code>[[ a == a &amp;&amp; (b == b || c == c) ]]</code> — cond grouping parens</h3>
-        <p>Lexer's <code>incondpat</code> resets on <code>&amp;&amp;</code>, <code>||</code>, <code>(</code>, <code>)</code>, <code>!</code>, <code>]]</code> per <code>cond.c par_cond_3</code>.</p>
-        <pre><code>[[ a == a &amp;&amp; (b == b || c == c) ]] &amp;&amp; echo y</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-case-paren-wrap">
-        <h3><a class="doc-anchor" href="#doc-gap-case-paren-wrap">#</a> <code>case W in (P|Q)) BODY ;;</code> — wrapped pattern with alternation</h3>
-        <p>Parser accepts both bare <code>(P) BODY</code> and wrapped <code>(P)) BODY</code> (the <code>(...)</code> is the pattern wrapper, the second <code>)</code> is the arm-close).</p>
-        <pre><code>case foo in
-  (foo|bar)) echo y;;
-  (*)) echo n;;
-esac</code></pre>
-      </article>
-
-      <h3>Functions &amp; Scoping</h3>
-      <article class="doc-entry" id="doc-gap-source-args">
-        <h3><a class="doc-anchor" href="#doc-gap-source-args">#</a> <code>. file.sh ARG1 ARG2</code> — source passes positionals</h3>
-        <p>Save outer <code>positional_params</code>, install <code>args[1..]</code> as new positionals, restore on exit.</p>
-        <pre><code># file.sh: echo "$1=$2"
-. ./file.sh hi bye   # hi=bye
-
-set -- a b c
-. ./file.sh inner    # inside file.sh: $1=inner
-echo "$@"            # outside: a b c (preserved)</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-local-assoc">
-        <h3><a class="doc-anchor" href="#doc-gap-local-assoc">#</a> <code>typeset -A h=(...)</code> in function shadows outer</h3>
-        <p>New <code>local_assoc_save_stack</code> mirrors <code>local_array_save_stack</code> lifecycle. Both <code>call_function</code> paths (legacy + bytecode) updated.</p>
-        <pre><code>typeset -A h=(a 1)
-f() { typeset -A h=(b 2); echo $h[b]; }
-f                       # 2
-echo $h[a]              # 1 (outer preserved)
-echo "[${h[b]-empty}]"  # [empty] (inner didn't leak)</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-subshell-umask">
-        <h3><a class="doc-anchor" href="#doc-gap-subshell-umask">#</a> Subshell umask snapshot+restore</h3>
-        <p><code>SubshellSnapshot</code> snapshots <code>libc::umask</code>; <code>subshell_end</code> restores. zsh forks for <code>(...)</code> so umask dies with child; we run in-process so we manually reset.</p>
-        <pre><code>umask 022
-(umask 077)   # subshell
-umask         # 022 (parent unchanged)</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-subshell-exit-trap">
-        <h3><a class="doc-anchor" href="#doc-gap-subshell-exit-trap">#</a> Subshell EXIT trap fires at subshell end</h3>
-        <p>Was firing at process exit. Now fires before parent continues. <code>SubshellSnapshot</code> snapshots+restores parent traps; inner trap fires with <code>traps.remove("EXIT")</code> so the inner <code>execute_script</code> doesn't recurse.</p>
-        <pre><code>(trap "echo trapped" EXIT; true)
-echo done   # output: trapped\ndone (was: done\ntrapped)</code></pre>
-      </article>
-
-      <h3>Brace &amp; Word Expansion</h3>
-      <article class="doc-entry" id="doc-gap-brace-with-var">
-        <h3><a class="doc-anchor" href="#doc-gap-brace-with-var">#</a> <code>{one,${a},three}</code> — brace expansion after var substitution</h3>
-        <p>Segment-concat path now emits <code>BUILTIN_BRACE_EXPAND</code> after concat when any literal segment contains <code>{</code> or <code>}</code>.</p>
-        <pre><code>a=hi
-echo {one,${a},three}        # one hi three
-echo pre{1,${a},2}post       # pre1post prehipost pre2post</code></pre>
-      </article>
-
-      <h3>Builtins &amp; I/O</h3>
-      <article class="doc-entry" id="doc-gap-print-C">
-        <h3><a class="doc-anchor" href="#doc-gap-print-C">#</a> <code>print -C N</code> — column-padded output</h3>
-        <p>Per-column width padding with 2-space separator (zsh format). Trailing partial rows skip padding after the last present item.</p>
-        <pre><code>print -C 2 a b c d
-# a  c
-# b  d
-print -C 2 alpha beta gamma delta
-# alpha  gamma
-# beta   delta</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-read-eE">
-        <h3><a class="doc-anchor" href="#doc-gap-read-eE">#</a> <code>read -e</code> / <code>read -E</code> — echo line</h3>
-        <p>zsh's <code>bin_read</code> calls fputs(buf, stdout) under both. <code>-e</code> echoes only (no assign); <code>-E</code> echoes AND assigns.</p>
-        <pre><code>echo "abc" | { read -E v; echo "[$v]"; }
-# abc
-# [abc]
-echo "abc" | { read -e v; echo "[$v]"; }
-# abc
-# []</code></pre>
-      </article>
-
-      <article class="doc-entry" id="doc-gap-zerr-trap">
-        <h3><a class="doc-anchor" href="#doc-gap-zerr-trap">#</a> <code>trap "..." ZERR</code> / <code>trap "..." ERR</code> — fires on non-zero status</h3>
-        <p>Wired into <code>BUILTIN_ERREXIT_CHECK</code>. Runs the trap body before the errexit decision; <code>last_status</code> saved/restored to prevent recursion on trap-body failures.</p>
-        <pre><code>trap "echo zerr" ZERR
-false
-echo done
-# zerr
-# done</code></pre>
-      </article>
-    </section>
-
-    <!-- BEGIN LSP-REFERENCE — auto-generated by `zshrs --dump-reference-html`. -->
 
     <!-- ════════════════════════════════════════════════════════════════════ -->
 
@@ -2270,7 +1873,7 @@ echo done
 
       <h2>Compat Builtin Index</h2>
 
-      <p class="chapter-meta">157 entries · zsh-faithful ports from <code>ported::builtin::BUILTINS</code>. Each mirrors an upstream <code>Src/Builtins/*.c</code> entry 1:1, with the hover body extracted from <code>man zshall</code> yodl. See also: <a href="#ch-lsp-extensions">Extension Builtin Index</a> for zshrs-only additions.</p>
+      <p class="chapter-meta">157 entries</p>
 
       <article class="doc-entry" id="doc-lsp-compat-dash">
 
@@ -2297,16 +1900,6 @@ echo done
 
         <h3><code>[</code> <a class="doc-anchor" href="#doc-lsp-compat-lbracket">¶</a></h3>
         <p>POSIX <code>test</code> command (also spelled <code>test</code>). Same conditional semantics as POSIX <code>test</code>. Prefer <code>[[ … ]]</code> in zsh — it's safer (no word splitting) and supports more operators.</p>
-      </article>
-
-      <article class="doc-entry" id="doc-lsp-compat-__rust_compile">
-
-        <h3><code>__rust_compile</code> <a class="doc-anchor" href="#doc-lsp-compat-__rust_compile">¶</a></h3>
-        <p>Compile and register an inline <code>rust { … }</code> block. Internal — emitted by the desugar pass, not meant to be typed by hand.</p>
-        <p>Usage: <code>__rust_compile '&lt;base64&gt;' [&lt;line&gt;]</code></p>
-        <p>Before lexing, <code>zsh::rust_ffi::desugar</code> rewrites every <code>rust { … }</code> block that starts at a command boundary into a call to this builtin, carrying the block body base64-encoded (argv[0]) plus the block's source line (argv[1], kept for diagnostics). The handler passes the body to <code>fusevm::ffi::compile_and_register</code>, which compiles it into a cached cdylib and registers each exported <code>extern "C"</code> function.</p>
-        <p>A registered export then runs as an ordinary command word, resolved by <code>ShellExecutor::try_registered_ffi_command</code> — consulted only AFTER builtins, shell functions, <code>$PATH</code>, and <code>command_not_found_handler</code> all miss, so a real command of the same name always wins.</p>
-        <p>Returns 0 on success; 1 with a <code>zshrs: &lt;error&gt;</code> diagnostic on stderr when the block fails to compile or the body argument is missing.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-compat-alias">
@@ -4037,7 +3630,7 @@ echo done
 
       <h2>Keyword Index</h2>
 
-      <p class="chapter-meta">31 entries · zsh reserved words from <code>Src/hashtable.c</code> <code>reswds[]</code>. Mirrors the <code>man zshmisc</code> "Reserved Words" section. Declarers (<code>declare</code>, <code>export</code>, <code>float</code>, <code>integer</code>, <code>local</code>, <code>readonly</code>, <code>typeset</code>) are reserved AND also appear in the Builtin Index — they're both.</p>
+      <p class="chapter-meta">31 entries</p>
 
       <article class="doc-entry" id="doc-lsp-keyword-bang">
 
@@ -7357,7 +6950,7 @@ echo done
 
       <h2>Compsys Function Index</h2>
 
-      <p class="chapter-meta">52 entries · the <code>_arguments</code> / <code>_files</code> / <code>_describe</code> family of completion functions. Native Rust implementations in the <code>compsys</code> crate replace the upstream zsh shell-function versions for performance.</p>
+      <p class="chapter-meta">52 entries</p>
 
       <article class="doc-entry" id="doc-lsp-compsys-_all_labels">
 
@@ -7657,7 +7250,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-compsys-_directories">
 
         <h3><code>_directories</code> <a class="doc-anchor" href="#doc-lsp-compsys-_directories">¶</a></h3>
-        <p>Complete directory names only. Equivalent to <code>_files -/</code>. Honors <code>path-files</code> zstyle and respects <code>GLOB_DOTS</code>. Rust impl in <code>crate::compsys::files::directories_execute</code>.</p>
+        <p>Complete directory names only. Equivalent to <code>_files -/</code>. Honors <code>path-files</code> zstyle and respects <code>GLOB_DOTS</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-compsys-_dispatch">
@@ -7742,7 +7335,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-compsys-_main_complete">
 
         <h3><code>_main_complete</code> <a class="doc-anchor" href="#doc-lsp-compsys-_main_complete">¶</a></h3>
-        <p>Top-level entry the compsys dispatcher calls for every completion attempt. Walks the configured completer list (<code>_complete</code> / <code>_approximate</code> / <code>_match</code> / …), invoking each until one returns matches. Sets <code>$compstate[insert]</code> based on the result. Rust impl in <code>crate::compsys::ported::_main_complete::_main_complete</code>.</p>
+        <p>Top-level entry the compsys dispatcher calls for every completion attempt. Walks the configured completer list (<code>_complete</code> / <code>_approximate</code> / <code>_match</code> / …), invoking each until one returns matches. Sets <code>$compstate[insert]</code> based on the result.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-compsys-_match">
@@ -8012,7 +7605,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-extension-caller">
 
         <h3><code>caller</code> <a class="doc-anchor" href="#doc-lsp-extension-caller">¶</a></h3>
-        <p>caller - display call stack (bash) caller [N] — bash builtin returning the location of the current frame N. With no arg or N=0: 'LINE FUNC' (or just 'LINE main' at top level). With N&gt;0: 'LINE FUNC FILE' for frame N. Direct port of bash's bin_caller in builtins.def. Reads from the existing $funcstack array we now maintain (vm_helper:7828-7835).</p>
+        <p>caller - display call stack (bash) caller [N] — bash builtin returning the location of the current frame N. With no arg or N=0: 'LINE FUNC' (or just 'LINE main' at top level). With N&gt;0: 'LINE FUNC FILE' for frame N. Reads from the existing $funcstack array we now maintain (vm_helper:7828-7835).</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-cat">
@@ -8103,7 +7696,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-extension-env">
 
         <h3><code>env</code> <a class="doc-anchor" href="#doc-lsp-extension-env">¶</a></h3>
-        <p>env [-i] [NAME=VALUE]... [COMMAND [ARG]...] — print env or run COMMAND with modified environment. Direct port of coreutils env(1) for the most-used invocations.</p>
+        <p>env [-i] [NAME=VALUE]... [COMMAND [ARG]...] — print env or run COMMAND with modified environment.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-expand">
@@ -8115,7 +7708,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-extension-expr">
 
         <h3><code>expr</code> <a class="doc-anchor" href="#doc-lsp-extension-expr">¶</a></h3>
-        <p>expr ARG... — evaluate expression. POSIX expr(1). Subset port: integer arithmetic (+ - * / %), string match ': REGEX', length STRING, substr STRING POS LEN, index STRING CHARS. Recognizes the closing arg list directly (single-pass shunting-yard would be heavier than needed for the common scripts).</p>
+        <p>expr ARG... — evaluate expression. POSIX expr(1). Recognizes the closing arg list directly (single-pass shunting-yard would be heavier than needed for the common scripts).</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-factor">
@@ -8212,7 +7805,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-extension-nl">
 
         <h3><code>nl</code> <a class="doc-anchor" href="#doc-lsp-extension-nl">¶</a></h3>
-        <p>nl [-b STYLE] [FILE...] — number lines. Direct port of coreutils nl(1) for the most-used flag set.</p>
+        <p>nl [-b STYLE] [FILE...] — number lines.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-nproc">
@@ -8335,7 +7928,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-extension-run_tests">
 
         <h3><code>run_tests</code> <a class="doc-anchor" href="#doc-lsp-extension-run_tests">¶</a></h3>
-        <p>Alias for <code>ztest_run</code> — print the per-block test summary and roll the per-block counters into the run-wide totals. Returns 0 on all-pass, 1 if any assertion failed. Port of strykelang's <code>test_run</code> / <code>run_tests</code> builtin pair.</p>
+        <p>Alias for <code>ztest_run</code> — print the per-block test summary and roll the per-block counters into the run-wide totals. Returns 0 on all-pass, 1 if any assertion failed.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-seq">
@@ -8479,7 +8072,7 @@ echo done
       <article class="doc-entry" id="doc-lsp-extension-zassert_contains">
 
         <h3><code>zassert_contains</code> <a class="doc-anchor" href="#doc-lsp-extension-zassert_contains">¶</a></h3>
-        <p><code>zassert_contains HAYSTACK NEEDLE [MSG]</code> — pass when NEEDLE is a substring of HAYSTACK. Bumps the per-block <code>ztest_pass_count</code> on success, <code>ztest_fail_count</code> on failure; the ✓/✗ glyph + label print on stderr. Port of strykelang's <code>builtin_assert_contains</code>.</p>
+        <p><code>zassert_contains HAYSTACK NEEDLE [MSG]</code> — pass when NEEDLE is a substring of HAYSTACK. Bumps the per-block <code>ztest_pass_count</code> on success, <code>ztest_fail_count</code> on failure; the ✓/✗ glyph + label print on stderr.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zassert_dies">
@@ -9157,7 +8750,6 @@ echo done
       </article>
 
     </section>
-    <!-- END LSP-REFERENCE -->
 
 <!-- BEGIN CANONICAL-GRAMMAR -->
 <!-- generated by scripts/gen_grammar_docs.py -->
@@ -9189,10 +8781,8 @@ echo done
   <div><div class="cg-val">10</div><div class="cg-lab">History exp.</div></div>
   <div><div class="cg-val">16</div><div class="cg-lab">Modifiers</div></div>
 </div>
-<p class="docs-build-line">Generated 2026-05-31 from <code>data/grammar/canonical.json</code>.</p>
 <div class="cg-section">
 <h3>Reserved keywords (50)</h3>
-<p class="cg-meta">Source: <code>src/zsh/Src/hashtable.c::reswds[]</code> + zshrs lexer extensions.</p>
 <h4 style="margin:0.7rem 0 0.3rem;color:var(--accent);font-size:11px;letter-spacing:1px;text-transform:uppercase;">Control flow (20)</h4>
 <div class="cg-grid">
   <code>[[</code>
@@ -9272,7 +8862,6 @@ echo done
 <h3>Builtins (157)</h3>
 <p class="cg-meta">Every command implemented inside the shell — no fork/exec required.</p>
 <h4 style="margin:0.7rem 0 0.3rem;color:var(--accent);font-size:11px;letter-spacing:1px;text-transform:uppercase;">POSIX / zsh core (74)</h4>
-<p class="cg-meta">Source: <code>src/zsh/Src/builtin.c::builtins[]</code>.</p>
 <div class="cg-grid">
   <code>.</code>
   <code>:</code>
@@ -9350,7 +8939,6 @@ echo done
   <code>zmodload</code>
 </div>
 <h4 style="margin:0.7rem 0 0.3rem;color:var(--accent);font-size:11px;letter-spacing:1px;text-transform:uppercase;">zsh modules (59)</h4>
-<p class="cg-meta">Source: <code>src/zsh/Src/Modules/*.c</code> (curses, datetime, pcre, files, stat, terminfo, zftp, zselect, zsystem, zutil, …).</p>
 <div class="cg-grid">
   <code>cap</code>
   <code>chgrp</code>
@@ -9413,7 +9001,6 @@ echo done
   <code>zuntie</code>
 </div>
 <h4 style="margin:0.7rem 0 0.3rem;color:var(--accent);font-size:11px;letter-spacing:1px;text-transform:uppercase;">zshrs extensions (24)</h4>
-<p class="cg-meta">Source: <code>daemon/builtins.rs</code> + <code>src/extensions/ext_builtins.rs</code>.</p>
 <div class="cg-grid">
   <code>zask</code>
   <code>zcache</code>
@@ -9443,7 +9030,7 @@ echo done
 </div>
 <div class="cg-section">
 <h3>setopt options (196)</h3>
-<p class="cg-meta">Source: <code>src/zsh/Src/options.c::optns[]</code>. All upstream zsh options recognized by name; use <code>setopt</code> / <code>unsetopt</code> to toggle, or <code>NO_</code> prefix (e.g. <code>NO_GLOB</code>).</p>
+<p class="cg-meta">All upstream zsh options recognized by name; use <code>setopt</code> / <code>unsetopt</code> to toggle, or <code>NO_</code> prefix (e.g. <code>NO_GLOB</code>).</p>
 <div class="cg-grid">
   <code>ALIASES</code>
   <code>ALIASFUNCDEF</code>
@@ -9645,7 +9232,7 @@ echo done
 </div>
 <div class="cg-section">
 <h3>Special variables (88)</h3>
-<p class="cg-meta">Source: <code>src/zsh/Src/params.c::special_params[]</code>. Includes scalar (<code>$?</code>, <code>$RANDOM</code>) and array forms (<code>$path</code>, <code>$pipestatus</code>); upper-case and lower-case names are linked pairs where applicable.</p>
+<p class="cg-meta">Includes scalar (<code>$?</code>, <code>$RANDOM</code>) and array forms (<code>$path</code>, <code>$pipestatus</code>); upper-case and lower-case names are linked pairs where applicable.</p>
 <div class="cg-grid">
   <code>$!</code>
   <code>$#</code>
@@ -9948,7 +9535,7 @@ echo done
 <!-- END CANONICAL-GRAMMAR -->
 
     <p style="font-size: 11px; color: var(--text-muted); text-align: center; margin: 3rem 0 1rem; font-family: 'Share Tech Mono', monospace;">
-      // generated against fusevm 0.26.7 dispatch · zshrs v0.13.48 · 15 chapters · 21,394 #[test] hooks · MenkeTechnologies
+      // generated against fusevm 0.26.7 dispatch · zshrs v0.13.48 · 14 chapters · 21,394 #[test] hooks · MenkeTechnologies
     </p>
   </main>
   </div>
