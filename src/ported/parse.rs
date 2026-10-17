@@ -3294,7 +3294,12 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                         // `exec {1}>&-`) is a valid fd var. The prior check also
                         // required the first char to be `_`/alphabetic, which
                         // rejected `{1}`/`{2}`/`{12}` — zsh accepts them.
-                        if !name.is_empty() && name.bytes().all(crate::ported::ztype_h::iident) {
+                        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no
+                        // `{var}>` form: `{fd}` is a plain word.
+                        if !name.is_empty()
+                            && name.bytes().all(crate::ported::ztype_h::iident)
+                            && !crate::dash_mode::dash_faithful()
+                        {
                             let varid = name.to_string();
                             words.pop();
                             if let Some(mut redir) = par_redir() {

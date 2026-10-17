@@ -2969,16 +2969,22 @@ pub fn oldpwd_cd_target() -> Option<String> {
 /// every other personality keeps Src/lex.c:958.
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
-pub fn korn_subscript_blank(brct: i32, incmdpos: bool, lexbuf: &str) -> bool {
+pub fn korn_subscript_blank(brct: i32, incmdpos: bool, lexbuf: &str, rest: &str) -> bool {
     if brct <= 0 || !incmdpos || !(bash_mode() || korn_mode()) {
         return false;
     }
     let name_len = lexbuf
         .find(|c: char| !(c == '_' || c.is_ascii_alphanumeric()))
         .unwrap_or(lexbuf.len());
+    // Only an ASSIGNMENT glues: the bracket must close and `=` / `+=` must
+    // follow it (`echo b[in 2>/dev/null` is two words and a redirection).
+    let closes_as_assignment = rest
+        .find(']')
+        .is_some_and(|i| rest[i + 1..].starts_with('=') || rest[i + 1..].starts_with("+="));
     name_len > 0
         && !lexbuf.starts_with(|c: char| c.is_ascii_digit())
         && lexbuf[name_len..].starts_with(crate::ported::zsh_h::Inbrack)
+        && closes_as_assignment
 }
 
 /// ksh93 `printf %f/%e/%g` rounds an exactly-representable tie away from zero

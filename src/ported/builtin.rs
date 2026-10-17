@@ -446,6 +446,11 @@ pub fn execbuiltin(
         if crate::dash_mode::dash_strict() && name == "echo" {
             optstr_bytes = b"n".to_vec();
         }
+        // !!! BASH-MODE (no C counterpart) !!! bash's `alias -p` lists the aliases
+        // exactly as a bare `alias` does; zsh has no `-p`.
+        if crate::dash_mode::bash_mode() && name == "alias" {
+            optstr_bytes.push(b'p');
+        }
         // !!! KSH93-ONLY (no C counterpart) !!! ksh93u+m's `echo` takes `-n` and `-e`
         // and nothing else: `echo -E x` and `echo -nE x` print the flag as text.
         if crate::dash_mode::ksh93_mode() && name == "echo" {
@@ -817,6 +822,23 @@ pub fn execbuiltin(
             && (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode())
         {
             return 2;
+        }
+        // A bare `type` / `unset` is a no-op (0) in bash, mksh, dash and /bin/sh and a
+        // usage error (2) in ksh93.
+        if argc < bn_ref.minargs && matches!(name.as_str(), "type" | "unset") {
+            if crate::dash_mode::ksh93_mode() {
+                // `unset` is a special builtin: its usage error ends a
+                // non-interactive ksh93 (see `special_builtin_error_aborts`).
+                if name == "unset" && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+                    use std::sync::atomic::Ordering;
+                    EXIT_VAL.store(2, Ordering::Relaxed);
+                    EXIT_PENDING.store(1, Ordering::Relaxed);
+                }
+                return 2;
+            }
+            if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+                return 0;
+            }
         }
         // bash and ksh93 answer a `getopts` with too few operands with a usage error, status 2.
         if argc < bn_ref.minargs
@@ -1542,6 +1564,14 @@ pub fn bin_set(
                     // the positional parameters.
                     break;
                 }
+                // !!! BASH-MODE (no C counterpart) !!! bash knows only its own option
+                // names: `set -o bgnice` / `markdirs` / `nullglob` (zsh options) are
+                // "invalid option name", status 2.
+                if crate::dash_mode::bash_mode() {
+                    zwarnnam(nam, &format!("{}: invalid option name", optname));
+                    unqueue_signals();
+                    return 2;
+                }
                 // !!! KORN-MODE GATE (no C counterpart) !!! ksh93 / mksh accept option
                 // names (`keyword`, `posix`, `gmacs`, `utf8-mode`, …) zsh has no option for.
                 if let Some(st) = crate::extensions::emulation_output::korn_set_o(&optname, action) {
@@ -1581,6 +1611,12 @@ pub fn bin_set(
                 break;
             }
             // c:646-657 — `A` array-mode (with optional name arg).
+            // !!! BASH-MODE (no C counterpart) !!! bash has no `set -A`: usage error 2.
+            if c == 'A' && crate::dash_mode::bash_mode() {
+                zwarnnam(nam, "-A: invalid option");
+                unqueue_signals();
+                return 2;
+            }
             if c == 'A' {
                 // c:646
                 array = if action { 1 } else { -1 }; // c:649
@@ -1623,6 +1659,13 @@ pub fn bin_set(
                     crate::ported::options::optlookupc(c) // c:663
                 };
                 if optno == 0 {
+                    // bash: an unknown letter is an "invalid option" usage error (2)
+                    // and the shell goes on; zsh's zerrnam ends the line.
+                    if crate::dash_mode::bash_mode() {
+                        zwarnnam(nam, &format!("-{}: invalid option", c));
+                        unqueue_signals();
+                        return 2;
+                    }
                     // c:663
                     zerrnam(nam, &format!("bad option: -{}", c)); // c:663
                 } else if dosetopt(optno, if action { 1 } else { 0 }, 0) != 0
@@ -4528,10 +4571,27 @@ pub fn bin_typeset(
         zwarnnam(name, "not found");
         return 127;
     }
-    // !!! KORN GATE (no C counterpart) !!! neither ksh93 nor mksh has `declare`.
+    // !!! KORN GATE (no C counterpart) !!! neither ksh93 nor mksh has `declare`;
+    // only the Korn shells have `nameref`.
     if name == "declare" && crate::dash_mode::korn_mode() {
         zwarnnam(name, "not found");
         return 127;
+    }
+    if name == "nameref" && !crate::dash_mode::korn_mode() && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful()) {
+        zwarnnam(name, "not found");
+        return 127;
+    }
+    // !!! BASH-MODE (no C counterpart) !!! bash's typeset has no `-L` / `-R` / `-Z`
+    // field options and no `-iN` output base: all are "invalid option", status 2.
+    if crate::dash_mode::bash_mode()
+        && matches!(name, "typeset" | "declare" | "local")
+        && (OPT_ISSET(ops, b'L')
+            || OPT_ISSET(ops, b'R')
+            || OPT_ISSET(ops, b'Z')
+            || OPT_ARG(ops, b'i').is_some_and(|a| !a.is_empty()))
+    {
+        zwarnnam(name, "invalid option");
+        return 2;
     }
 
     // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `local` prints nothing
@@ -10890,6 +10950,22 @@ pub fn bin_unset(
             returnval = 1; // c:3877
             continue; // c:3878
         }
+        // !!! BASH-MODE (no C counterpart) !!! bash(1): "If no options are supplied,
+        // each name refers to a variable; if there is no variable by that name, a
+        // function with that name, if any, is unset."
+        if crate::dash_mode::bash_mode()
+            && subscript.is_none()
+            && !OPT_ISSET(ops, b'v')
+            && paramtab().read().map_or(true, |t| !t.contains_key(nm))
+            && getshfunc(nm).is_some()
+        {
+            let mut f_ops = ops.clone();
+            f_ops.ind[b'f' as usize] = 1;
+            if bin_unhash(name, std::slice::from_ref(&nm.to_string()), &f_ops, func) != 0 {
+                returnval = 1;
+            }
+            continue;
+        }
         // c:3766-3770 (5.9.2) — `else if ((pm->node.flags & PM_RESTRICTED) &&
         // isset(RESTRICTED)) { zerrnam(name, "%s: restricted", pm->node.nam);
         // returnval = 1; }`
@@ -11703,6 +11779,8 @@ pub fn bin_whence(
     let mut returnval: i32 = 0;
     let mut printflags: i32 = 0;
     let mut informed: i32 = 0;
+    // Any name found at all (C's `informed` is per name); see the bash gate at the end.
+    let mut any_found = false;
     let mut expand: i32 = 0;
 
     // c:3989-3993 — flags.
@@ -11738,6 +11816,16 @@ pub fn bin_whence(
     // to satisfy the port-purity build gate on src/ported/.
     // Outside bash/ksh93 the registered `-t` is not zsh's: `type`'s optstr is
     // "ampfsSw" (c:Src/builtin.c:123), so zsh answers `bad option: -t`, status 1.
+    // A bare `type` is a no-op (0) in bash, mksh, dash and /bin/sh and a usage
+    // error (2) in ksh93; zsh answers 1.
+    if argv.is_empty() {
+        if crate::dash_mode::ksh93_mode() {
+            return 2;
+        }
+        if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+            return 0;
+        }
+    }
     if !crate::dash_mode::bash_mode() && !crate::dash_mode::ksh93_mode() && OPT_ISSET(ops, b't') {
         zwarnnam(nam, "bad option: -t");
         return 1;
@@ -12125,6 +12213,7 @@ pub fn bin_whence(
                     printaliasnode(&a, aliasflags); // c:4094
                 }
                 informed = 1; // c:4095
+                any_found = true;
                 if !all {
                     continue;
                 } // c:4097
@@ -12152,6 +12241,7 @@ pub fn bin_whence(
                     if let Some(a) = suf_alias {
                         printaliasnode(&a, printflags); // c:4103
                         informed = 1; // c:4104
+                        any_found = true;
                         if !all {
                             continue;
                         } // c:4106
@@ -12187,6 +12277,7 @@ pub fn bin_whence(
                     println!("{}", arg); // c:4110
                 }
                 informed = 1; // c:4111
+                any_found = true;
                 if !all {
                     continue;
                 } // c:4112
@@ -12235,6 +12326,7 @@ pub fn bin_whence(
                     None => printshfuncexpand(f, printflags, expand), // c:4117
                 }
                 informed = 1; // c:4118
+                any_found = true;
                 if !all {
                     continue;
                 } // c:4120
@@ -12280,6 +12372,7 @@ pub fn bin_whence(
             if let Some(hn) = builtin_node {
                 printbuiltinnode(hn, printflags); // c:4124
                 informed = 1; // c:4125
+                any_found = true;
                 if !all {
                     continue;
                 } // c:4127
@@ -12307,6 +12400,7 @@ pub fn bin_whence(
                 };
                 printbuiltinnode(&mut ext_node as *mut hashnode, printflags);
                 informed = 1;
+                any_found = true;
                 if !all {
                     continue;
                 }
@@ -12333,6 +12427,7 @@ pub fn bin_whence(
                 };
                 printbuiltinnode(&mut ext_node as *mut hashnode, printflags);
                 informed = 1;
+                any_found = true;
                 if !all {
                     continue;
                 }
@@ -12363,6 +12458,7 @@ pub fn bin_whence(
                 // `whence -w foo` (PRINT_WHENCE_WORD) lost `foo: hashed`.
                 printcmdnamnode(&cn, printflags);
                 informed = 1; // c:4117
+                any_found = true;
                 if !all {
                     continue;
                 } // c:4118-4119
@@ -12412,6 +12508,7 @@ pub fn bin_whence(
                             println!(); // c:4161 fputc('\n', stdout)
                         }
                         informed = 1; // c:4163
+                        any_found = true;
                     } else {
                     }
                 }
@@ -12472,6 +12569,7 @@ pub fn bin_whence(
                 // PRINT_WHENCE_WORD form and belongs to `whence -w`.
                 printbuiltinnode(&b.node as *const hashnode as *mut hashnode, printflags); // c:4163
                 informed = 1; // c:4164
+                any_found = true;
                 continue;
             }
         }
@@ -12504,6 +12602,7 @@ pub fn bin_whence(
                 println!(); // c:4195 fputc('\n', stdout)
             }
             informed = 1; // c:4197
+            any_found = true;
             continue;
         }
         // c:4201-4205 — not found at all.
@@ -12518,6 +12617,15 @@ pub fn bin_whence(
         returnval = 1; // c:4204
     }
     unqueue_signals();
+    // !!! BASH/DASH GATE (no C counterpart) !!! `command -v a b` succeeds in bash,
+    // dash and /bin/sh when ANY name was found; zsh, ksh93 and mksh need all of
+    // them (`type a b` still fails in bash).
+    if func == BIN_COMMAND
+        && any_found
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful() || crate::dash_mode::sh_mode())
+    {
+        return 0;
+    }
     let status = returnval | (informed == 0) as i32; // c:4209
     // !!! DASH-STRICT GATE (no C counterpart) !!! dash's `type` / `command -v`
     // / `command -V` answer 127 (not zsh's 1) when a name is not found.
@@ -12912,7 +13020,13 @@ pub fn bin_unhash(
         }; // c:4357
         if OPT_ISSET(ops, b'a') {
             // c:4361
-            if !argv.is_empty() {
+            // bash, ksh93 and dash ignore names given with `unalias -a` (mksh rejects them).
+            if !argv.is_empty()
+                && !(crate::dash_mode::bash_mode()
+                    || crate::dash_mode::ksh93_mode()
+                    || crate::dash_mode::dash_faithful()
+                    || crate::dash_mode::sh_mode())
+            {
                 // c:4362
                 zwarnnam(name, "-a: too many arguments"); // c:4363
                 return 1; // c:4364
@@ -12921,6 +13035,13 @@ pub fn bin_unhash(
         } else if argv.is_empty() {
             // c:4367
             zwarnnam(name, "not enough arguments"); // c:4368
+            // bash and ksh93 answer a usage error with 2, dash accepts a bare `unalias`.
+            if crate::dash_mode::dash_faithful() {
+                return 0;
+            }
+            if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() {
+                return 2;
+            }
             return 1; // c:4369
         }
     } else if OPT_ISSET(ops, b'd') {
@@ -13323,6 +13444,10 @@ pub fn bin_alias(
         // shell rc matches /bin/zsh's observed behavior.
         if arg.starts_with('=') {
             zwarnnam(name, "bad assignment");
+            // bash and dash count the empty name as a failure (1).
+            if crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful() {
+                returnval = 1;
+            }
             break;
         }
         if let Some(eq) = arg.find('=') {
@@ -14527,7 +14652,14 @@ pub fn bin_print(
                                               // — landing on the original stdout (terminal) AND missing
                                               // the file. Flush here so the bytes hit fd 1 (the redirect
                                               // target) before bin_print returns. Bug #397.
-            let _ = lk.flush();
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and /bin/sh
+            // report a failed write (`echo a 1>&-`) with status 1; zsh answers 0.
+            let flushed = lk.flush();
+            if (flushed.is_err() || crate::stdout_ferror::take_stdout_ferror() != 0)
+                && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+            {
+                return 1;
+            }
         }
     }
     0
@@ -18992,7 +19124,11 @@ pub fn bin_trap(
     for sigarg in &argv {
         // c:7421
         let sig = getsigidx(sigarg);
-        if sig == -1 {
+        // !!! BASH/KORN GATE (no C counterpart) !!! `ZERR` is zsh's spelling of ERR;
+        // bash, ksh93 and mksh do not know it ("invalid signal specification").
+        let korn_bash_zerr = (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+            && sigarg.eq_ignore_ascii_case("ZERR");
+        if sig == -1 || korn_bash_zerr {
             // c:7426
             zwarnnam(name, &format!("undefined signal: {}", sigarg)); // c:7427
             trap_install_error = 1; // c:7445 *argv non-NULL on break

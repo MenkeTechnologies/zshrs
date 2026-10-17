@@ -3907,7 +3907,13 @@ impl ZshCompiler {
             // stderr and the redirects (including target expansion)
             // never apply — `noglob 2>/dev/null` still shows the
             // error. No WithRedirectsBegin/End scope here.
-            if has_redirects {
+            // !!! BASH-MODE (no C counterpart) !!! bash runs a bare `builtin` (even
+            // with a redirection) as a no-op, status 0.
+            let bare_builtin = crate::dash_mode::bash_mode()
+                && simple.words[..precmd_skip.min(simple.words.len())]
+                    .iter()
+                    .any(|w| crate::lex::untokenize(w) == "builtin");
+            if has_redirects && !bare_builtin {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_REDIR_NO_CMD, 0),
                     0,

@@ -2078,7 +2078,8 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         let inbl = c.is_ascii() && crate::ztype_h::inblank(c as u8);
 
         if inbl && in_brace_param == 0 && pct == 0 && !sub && !LEX_LEXBUF.with_borrow(|b| {
-                crate::dash_mode::korn_subscript_blank(brct, LEX_OLDPOS.get(), b.ptr.as_deref().unwrap_or(""))
+                let rest = LEX_INPUT.with_borrow(|s| s.get(LEX_POS.get()..).unwrap_or("").to_string());
+                crate::dash_mode::korn_subscript_blank(brct, LEX_OLDPOS.get(), b.ptr.as_deref().unwrap_or(""), &rest)
             }) {
             // Whitespace outside brace param ends token.
             //

@@ -4592,7 +4592,12 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         // compile diagnostic — and BADPATTERN was ignored entirely.
         // (The `errflag` half — a diagnostic already emitted by the
         // qualifier parser — is handled by the gate at glob.rs:3770.)
-        if !isset(crate::ported::zsh_h::BADPATTERN) {
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and /bin/sh
+        // keep a word whose bracket never closes (`echo b[in`) as it is.
+        if !isset(crate::ported::zsh_h::BADPATTERN)
+            || crate::dash_mode::bash_mode()
+            || crate::dash_mode::posix_faithful()
+        {
             // c:1846-1848 —
             //     if (!nountok)
             //         untokenize(ostr);

@@ -2058,6 +2058,15 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // Brace ranges skip the backslash and pad `{0..02}`; test's three-operand rule
     // and strict integers.
     "echo {Z..a} {0..02} {00..2}; [ -a -a -a ]; echo $?; [ -n -a ]; echo $?; [ '' -eq 0 ] 2>/dev/null; echo $?; [ 9999999999999999999 -gt 1 ] 2>/dev/null; echo $?",
+    // Bare `type` / `unset` / `builtin` are no-ops; `command -v` succeeds when any
+    // name is found; `unset NAME` drops a function of that name.
+    "type; echo rc=$?; unset; echo rc=$?; builtin; echo rc=$?; builtin 2>/dev/null; echo rc=$?; command -v echo nosuch; echo rc=$?; f() { :; }; unset f; type f 2>/dev/null; echo rc=$?",
+    // `kill -l 0` is EXIT, past the table is 1; ZERR is no signal; unknown `set`
+    // letters and option names are usage errors (2), as is `set -A`.
+    "kill -l 0; kill -l 64 2>/dev/null; echo rc=$?; trap 'echo z' ZERR 2>/dev/null; echo rc=$?; set -q 2>/dev/null; echo rc=$?; set -o bgnice 2>/dev/null; echo rc=$?; set -A a x 2>/dev/null; echo rc=$?",
+    // `alias -p`, `alias =z`, `unalias -a NAME`, bare `unalias`; no `nameref`, no
+    // `typeset -L`; an unclosed `[` stays literal; a failed write is status 1.
+    "alias x=1; alias -p; alias =z 2>/dev/null; echo rc=$?; unalias -a x; echo rc=$?; unalias 2>/dev/null; echo rc=$?; nameref r=x 2>/dev/null; echo rc=$?; typeset -L3 s=abc 2>/dev/null; echo rc=$?; cd /; echo b[in 2>/dev/null; echo a 1>&-; echo rc=$?",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
@@ -2238,6 +2247,11 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     "printf '%'; echo \" rc=$?\"; printf 'a%'; echo; printf '%a\\n' 1.5; printf 'a\\cb|' | od -An -c | tr -s ' '; printf '%s\\n' \"$(printf 'x\\Ey' | tr '\\033' _)\"; echo {Z..a} {x..z}",
     // A read-only assignment inside a function ends the script; `read -e` / `-x` are 2.
     "f() { readonly l=1; l=2; echo no; }; f; echo rc=$?; printf 'a\\n' | { read -e x 2>/dev/null; echo rc=$?; }; printf 'a\\n' | { read -x x 2>/dev/null; echo rc=$?; }",
+    // Bare `type` is a usage error (2); `kill -l 0` / `128` are EXIT; ZERR is no
+    // signal; `unalias -a NAME` is fine, bare `unalias` is 2; a failed write is 1;
+    // an unclosed `[` stays literal. A bare `unset` ends the shell (2).
+    "type 2>/dev/null; echo rc=$?; kill -l 0; kill -l 128; trap 'echo z' ZERR 2>/dev/null; echo rc=$?; unalias -a x; echo rc=$?; unalias 2>/dev/null; echo rc=$?; echo a 1>&-; echo rc=$?; cd /; echo b[in",
+    "unset 2>/dev/null; echo no",
 ];
 
 /// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
@@ -2358,6 +2372,9 @@ const PDKSH_CORPUS: &[&str] = &[
     "[ 1 -eq 1.0 ] 2>/dev/null; echo $?; [ 0x1 -eq 1 ] 2>/dev/null; echo $?; [ b -eq 0 ]; echo $?; b=5; [ b -gt 4 ]; echo $?; [ 1 -eq 1 -a ] 2>/dev/null; echo $?; [ -N /etc/passwd ] 2>/dev/null; echo $?",
     // A read-only assignment ends only the function (status 2); `read -p` / `-e` are 2.
     "f() { readonly l=1; l=2; echo no; }; f 2>/dev/null; echo rc=$?; printf 'a\\n' | { read -p P x 2>/dev/null; echo rc=$?; }; printf 'a\\n' | { read -e x 2>/dev/null; echo rc=$?; }",
+    // Bare `type` / `unset` are no-ops; ZERR is no signal; `unalias -a NAME` is an
+    // error here; a failed write is 1; an unclosed `[` stays literal.
+    "type; echo rc=$?; unset; echo rc=$?; trap 'echo z' ZERR 2>/dev/null; echo rc=$?; unalias -a x; echo rc=$?; echo a 1>&-; echo rc=$?; cd /; echo b[in",
 ];
 
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
@@ -2403,6 +2420,11 @@ const DASH_ONLY_CORPUS: &[&str] = &[
     // printf: no `%n`, `%b` keeps `\\e`, `%a` is the hex float, `%05s` zero-pads;
     // `read -p PROMPT`; a bad name is 2; `[^b]` is not a negated class.
     "printf '%n\\n' 2>/dev/null; echo rc=$?; printf '%b\\n' '\\e'; printf 'a\\n' | { read -p P x; echo \"[$x]\"; }; printf 'a\\n' | { read 1x 2>/dev/null; echo rc=$?; }; case abc in a[^b]c) echo 1;; *) echo 2;; esac; printf '%a\\n' 1.5; printf '%05s|\\n' ab",
+    // `kill -l N M` names only the first, `kill -l 0` is 2; a failed null-command
+    // redirection is 2; `{fd}` is a word; bare `type` / `unset` / `unalias` are
+    // no-ops; `command -v` succeeds when any name is found; `unalias -a NAME` is
+    // fine; `alias =z` is 1; a failed write is 1; an unclosed `[` stays literal.
+    "kill -l 9 15; kill -l 0 2>/dev/null; echo rc=$?; < /nonexistent 2>/dev/null; echo rc=$?; echo a {fd}>/dev/null; echo rc=$?; type; echo rc=$?; unset; echo rc=$?; command -v echo nosuch; echo rc=$?; unalias -a x; echo rc=$?; unalias; echo rc=$?; alias =z 2>/dev/null; echo rc=$?; echo a 1>&- 2>/dev/null; echo rc=$?; echo b[in",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
@@ -2460,6 +2482,9 @@ const SH_BASH_CORPUS: &[&str] = &[
     "printf 'a\\cb\\n'; printf '%s\\n' \"$(printf 'x\\Ey' | tr '\\033' _)\"; printf '%a\\n' 1.5; printf -n a 2>/dev/null; echo rc=$?; printf '[%c]\\n'; printf 'a\\n' | { read -e x; echo \"[$x]\"; }; printf 'a\\n' | { read -N 2 x 2>/dev/null; echo rc=$?; }",
     // Brace ranges as in bash 5; `;&` is a syntax error.
     "echo {Z..a} {0..02}; case abc in abc) echo 1;& xyz) echo 2;; esac 2>/dev/null; echo rc=$?",
+    // Bare `type` / `unset` are no-ops; `command -v` succeeds when any name is
+    // found; an unclosed `[` stays literal; no `nameref`.
+    "type; echo rc=$?; unset; echo rc=$?; command -v echo nosuch; echo rc=$?; cd /; echo b[in; nameref r=x 2>/dev/null; echo rc=$?",
 ];
 
 /// True when `path` is a bash build (`$BASH_VERSION` is set when it runs).

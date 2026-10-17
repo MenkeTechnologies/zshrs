@@ -4449,6 +4449,20 @@ pub fn bin_kill(
                         // c:2883 — `if (1 <= sig && sig <= SIGCOUNT)`: slot 0
                         // (EXIT) and the pseudo-signal slots print as numbers.
                         let in_range = (1..=crate::ported::signals_h::SIGCOUNT).contains(&s);
+                        // !!! DROP-IN GATE (no C counterpart) !!! `kill -l 0` is EXIT in bash
+                        // and ksh93 (ksh93 for 128 too); a number past the table is an
+                        // "invalid signal specification" (bash 1, dash 2; dash also for 0).
+                        if (crate::dash_mode::ksh93_mode() && s == 0) || (crate::dash_mode::bash_mode() && n == 0) {
+                            println!("EXIT");
+                            continue;
+                        }
+                        if !in_range
+                            && cfg!(not(target_os = "linux"))
+                            && (crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful())
+                        {
+                            zwarnnam(nam, &format!("{}: invalid signal specification", n));
+                            return if crate::dash_mode::dash_faithful() { 2 } else { 1 };
+                        }
                         let rt_name = || {
                             // c:2884-2886 — `else if ((signame = rtsigname(sig, 0)))`.
                             #[cfg(target_os = "linux")]
@@ -4466,6 +4480,10 @@ pub fn bin_kill(
                             println!("{}", name);
                         } else {
                             println!("{}", n); // c:2862
+                        }
+                        // dash's `kill -l N M` names only the first number.
+                        if crate::dash_mode::dash_faithful() {
+                            return 0;
                         }
                     } else {
                         // c:2820-2823 — `zstrtol` parses leading

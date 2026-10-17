@@ -3279,6 +3279,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(status) = try_user_fn_override("builtin", &args) {
             return Value::Status(status);
         }
+        // !!! BASH-MODE (no C counterpart) !!! a bare `builtin` is a no-op (0) in bash.
+        if args.is_empty() && crate::dash_mode::bash_mode() {
+            return Value::Status(0);
+        }
         // c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }`
         // after argument expansion: a bad glob qualifier or pattern in the
         // words (`builtin print x(a)` "number expected") skips the builtin
@@ -14181,8 +14185,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             f
         });
         if redir_failed {
-            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
-            return Value::Status(1);
+            // !!! DASH-FAMILY GATE !!! dash reports the failed redirection as 2.
+            let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+            crate::ported::builtin::LASTVAL.store(st, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(st);
         }
         // c:3395-3399 — the no-NULLCMD / CSH_NULLCMD refusal already ran in
         // BUILTIN_NULLCMD_CHECK, before the redirections opened.
