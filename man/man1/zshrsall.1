@@ -179,6 +179,45 @@ accepts bash's own
 .B "set \-o"
 names, including the six zsh has no option for.
 .PP
+The parity matrix (\fBtests/emulation_parity.rs\fR) compares the standard output and exit status of
+.B zshrs \-\-X
+with the real shell X over shared and per\-dialect script corpora, and the two zsh\-style legs with
+.B zsh
+running
+.B "emulate sh"
+and
+.BR "emulate ksh" .
+It prefers the newest installed reference (bash 5.3 and ksh93u+m, not macOS's bash 3.2 and
+ksh93u+ 2012), because those are the versions zshrs reports. Differences it pins include:
+.BR $OPTARG ,
+.BR $UID ,
+.BR $EUID ,
+.BR $OSTYPE ,
+.BR $COLUMNS " and " $!
+being unset where the real shell leaves them unset;
+.B $10
+meaning
+.B ${1}0
+under sh and ksh;
+.B break
+outside a loop being a no\-op; dash's
+.BR "set \-o"
+names, \fBecho\fR and \fBprintf\fR escapes; bash's
+.BR "export \-n" ,
+.BR "cd ''" ,
+.BR "exit abc" ;
+mksh's missing
+.B **
+and
+.BR {1..3} ;
+ksh93's missing
+.BR local ;
+and each shell's usage\-error status for
+.BR kill ,
+.BR ulimit ,
+.BR fg ,
+.BR umask " and " cd .
+.PP
 Parity modes never write the cache, never connect to the daemon, and
 never load the extensions layer.
 .SH "STARTUP FILES"
@@ -2361,6 +2400,7 @@ State root (\fBZSHRS_HOME\fR). Holds the rkyv caches
 the SQLite databases
 .RB ( catalog.db ,
 .BR history.db ,
+.BR zshrs_history.db ,
 .BR plugins.db ,
 .BR compsys.db ),
 the daemon files
