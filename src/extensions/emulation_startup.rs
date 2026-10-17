@@ -642,6 +642,15 @@ pub fn apply_personality_param_deltas() {
         let n = unsafe { libc::getgroups(gids.len() as libc::c_int, gids.as_mut_ptr()) };
         if n > 0 {
             gids.truncate(n as usize);
+            // bash puts the user's PRIMARY gid (`getgid(2)`, not the effective one: a
+            // process started under `sg adm` has egid 4 and bash still lists 1001 first)
+            // at the front by swapping it with element 0, or prepending it when
+            // getgroups(2) did not list it.
+            let gid = unsafe { libc::getgid() };
+            match gids.iter().position(|g| *g == gid) {
+                Some(i) => gids.swap(0, i),
+                None => gids.insert(0, gid),
+            }
             crate::ported::params::setaparam("GROUPS", gids.iter().map(|g| g.to_string()).collect());
         }
     }

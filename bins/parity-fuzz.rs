@@ -145,9 +145,11 @@ fn target_cfg(t: ShellTarget) -> TargetCfg {
         Bash => TargetCfg {
             name: "bash",
             flags: &["--bash"],
+            // Newest first: zshrs reports bash 5.3, and macOS's /bin/bash is 3.2 (no
+            // negative subscripts, no `${v@Q}`, …), which would be a different question.
             refk: RefKind::Real(&[
-                "bash",
                 "/opt/homebrew/bin/bash",
+                "bash",
                 "/bin/bash",
                 "/usr/bin/bash",
             ]),
@@ -156,7 +158,7 @@ fn target_cfg(t: ShellTarget) -> TargetCfg {
         Ksh => TargetCfg {
             name: "ksh",
             flags: &["--ksh"],
-            refk: RefKind::Real(&["ksh", "/opt/homebrew/bin/ksh", "/bin/ksh", "/usr/bin/ksh"]),
+            refk: RefKind::Real(&["/opt/homebrew/bin/ksh", "ksh", "/bin/ksh", "/usr/bin/ksh"]),
             gen: GenKind::Ksh,
         },
         Sh => TargetCfg {
