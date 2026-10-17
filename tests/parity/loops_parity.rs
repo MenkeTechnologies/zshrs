@@ -528,3 +528,30 @@ mod short_while_after_compound_condition {
         assert_parity("unsetopt shortloops; i=0; while (( i++ < 2 )) print s$i");
     }
 }
+
+/// c:Src/exec.c:1263-1264 / Src/builtin.c:5801-5804 (55061) — a subshell
+/// moves the enclosing `loops` to `ancestor_loops`, so a `break`/`continue`
+/// in any forked or in-process subshell form errors with "not in same
+/// subshell as first enclosing loop" and the loop outside runs on. With no
+/// loop anywhere the message names `for` too. `eval` keeps the message
+/// prefix `(eval)` in both shells.
+mod break_outside_the_loops_subshell {
+    use super::*;
+
+    #[test]
+    fn every_subshell_form_reports_the_ancestor_loop() {
+        assert_parity(
+            "eval 'for x in a b; do ( print $x:before; continue; print $x:after ); done' 2>&1; print st=$?",
+        );
+        assert_parity("eval 'for i in 1 2; do print \"[$(break)]\"; done' 2>&1");
+        assert_parity("eval 'for i in 1 2; do { break } | cat; print $i; done' 2>&1");
+        assert_parity("eval 'for i in 1 2; do { continue } & wait; print $i; done' 2>&1");
+        assert_parity("eval 'for i in 1 2; do cat <(break); print $i; done' 2>&1");
+    }
+
+    #[test]
+    fn no_loop_at_all_names_every_loop_keyword() {
+        assert_parity("eval 'f(){ break }; f' 2>&1; print st=$?");
+        assert_parity("eval 'continue' 2>&1; print st=$?");
+    }
+}

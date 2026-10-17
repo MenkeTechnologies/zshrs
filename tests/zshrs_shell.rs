@@ -9956,11 +9956,12 @@ fn test_print_u_bad_fd_errors() {
 
 #[test]
 fn test_kill_illegal_pid_zsh_format() {
-    // zsh: `kill -0 abc` (non-numeric pid) -> `kill:1: illegal pid:
-    // abc` exit 1 (c:Src/jobs.c:3039 in zsh 5.9.2; the dev tree words it "invalid" since upstream 54721).
+    // zsh: `kill -0 abc` (non-numeric pid) -> `kill:1: invalid pid:
+    // abc` exit 1 (c:Src/jobs.c:3039; 5.9.2, and zshrs run as argv[0] `zsh`,
+    // word it "illegal" — the dev tree renamed it in upstream 54721).
     let (status, _, stderr) = run_zshrs("kill -0 abc");
     assert_eq!(status, 1);
-    assert!(stderr.contains("illegal pid: abc"), "got: {stderr}");
+    assert!(stderr.contains("invalid pid: abc"), "got: {stderr}");
 }
 
 #[test]
@@ -11052,10 +11053,10 @@ fn test_let_orphan_mul_at_op() {
     // orphan-at-start expressions like pure-binary ops with no
     // unary form (Mul, Div, Mod, Power).
     let (status, _, stderr) = run_zshrs("let \"*\"");
-    // Math-error STATUS: zsh 5.9.2 Src/builtin.c:7316-7319 clears
-    // ERRFLAG_ERROR and returns `val == 0` = 1 (C01arith.ztst "NO_UNSET
-    // part 3"); the dev tree's upstream 54285 returns 2 instead.
-    assert_eq!(status, 1);
+    // Math-error STATUS: Src/builtin.c:7446-7449 clears ERRFLAG_ERROR and
+    // returns 2 (upstream 54285, C01arith.ztst "NO_UNSET part 3"); 5.9.2,
+    // and zshrs run as argv[0] `zsh`, return `val == 0` = 1.
+    assert_eq!(status, 2);
     assert!(stderr.contains("operand expected at `*'"), "got: {stderr}");
 }
 
@@ -11063,8 +11064,8 @@ fn test_let_orphan_mul_at_op() {
 fn test_let_orphan_div_at_op() {
     // Same orphan-binary case for Div.
     let (status, _, stderr) = run_zshrs("let \"/\"");
-    // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
-    assert_eq!(status, 1);
+    // c:Src/builtin.c:7449 — see `test_let_orphan_mul_at_op`.
+    assert_eq!(status, 2);
     assert!(stderr.contains("operand expected at `/'"), "got: {stderr}");
 }
 
@@ -11075,8 +11076,8 @@ fn test_let_orphan_mul_with_right_includes_remaining() {
     // input (operator + everything after) becomes the error
     // context.
     let (status, _, stderr) = run_zshrs("let \"*5\"");
-    // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
-    assert_eq!(status, 1);
+    // c:Src/builtin.c:7449 — see `test_let_orphan_mul_at_op`.
+    assert_eq!(status, 2);
     assert!(stderr.contains("operand expected at `*5'"), "got: {stderr}");
 }
 
@@ -11087,8 +11088,8 @@ fn test_let_trailing_mul_still_end_of_string() {
     // input has been exhausted. Our orphan-at-start check
     // explicitly only fires when stack.is_empty().
     let (status, _, stderr) = run_zshrs("let \"5*\"");
-    // c:Src/builtin.c:7479 — see `test_let_orphan_mul_at_op`.
-    assert_eq!(status, 1);
+    // c:Src/builtin.c:7449 — see `test_let_orphan_mul_at_op`.
+    assert_eq!(status, 2);
     assert!(
         stderr.contains("operand expected at end of string"),
         "got: {stderr}"
@@ -16893,12 +16894,13 @@ fn test_alias_func_def_warning_then_parse_error() {
 }
 
 #[test]
-fn test_let_nounset_error_returns_1() {
-    // zsh 5.9.2 Src/builtin.c:7316-7319 — a math error in `let` (here NO_UNSET's
-    // "parameter not set") is non-fatal and returns 1 (C01arith.ztst "NO_UNSET part 3").
+fn test_let_nounset_error_returns_2() {
+    // Src/builtin.c:7446-7449 — a math error in `let` (here NO_UNSET's
+    // "parameter not set") is non-fatal and returns 2 (upstream 54285,
+    // C01arith.ztst "NO_UNSET part 3"; 5.9.2 returns 1).
     let (status, out, stderr) =
         run_zshrs_parity("( unsetopt unset; let noexist==0 ); print rc=$?");
-    assert_eq!(out, "rc=1\n", "{stderr}");
+    assert_eq!(out, "rc=2\n", "{stderr}");
     assert_eq!(status, 0);
     assert!(stderr.contains("noexist: parameter not set"), "{stderr}");
 }

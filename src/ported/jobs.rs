@@ -4827,13 +4827,14 @@ pub fn bin_kill(
                 }
                 Err(_) => {
                     // c:3038-3040 — `} else if (!isanum(*argv)) {
-                    //   zwarnnam("kill", "illegal pid: %s", *argv);
+                    //   zwarnnam("kill", "invalid pid: %s", *argv);  ("illegal" before 54721)
                     //   returnval++; }`. C ACCUMULATES one failure per bad
                     // operand and the builtin's status is that count
                     // (c:3067 `return returnval < 126 ? returnval : 1;`), so
                     // `kill a b c` exits 3. Assigning 1 collapsed every
                     // multi-operand failure to 1.
-                    zwarnnam(nam, &format!("illegal pid: {}", arg));
+                    let adj = if crate::extensions::emulation_startup::emulating_592() { "illegal" } else { "invalid" };
+                    zwarnnam(nam, &format!("{} pid: {}", adj, arg));
                     returnval += 1; // c:3040 returnval++
                 }
             }
@@ -4924,13 +4925,14 @@ pub fn bin_kill(
                 }
                 Err(_) => {
                     // c:3038-3040 — `} else if (!isanum(*argv)) {
-                    //   zwarnnam("kill", "illegal pid: %s", *argv);
+                    //   zwarnnam("kill", "invalid pid: %s", *argv);  ("illegal" before 54721)
                     //   returnval++; }`. C ACCUMULATES one failure per bad
                     // operand, and the builtin's status is that COUNT
                     // (c:3067), so `kill a b c` exits 3 and `kill -INT a b c`
                     // exits 3. Assigning 1 collapsed every multi-operand
                     // failure to a single 1.
-                    zwarnnam(nam, &format!("illegal pid: {}", arg));
+                    let adj = if crate::extensions::emulation_startup::emulating_592() { "illegal" } else { "invalid" };
+                    zwarnnam(nam, &format!("{} pid: {}", adj, arg));
                     returnval += 1; // c:3040 returnval++
                 }
             }

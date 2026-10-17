@@ -907,9 +907,10 @@ pub(crate) fn mathevall(prec_tp: prec_type) -> Result<mnumber, String> {
             // case: `bad math expression: unexpected ')'`.
             return Err("bad math expression: unexpected ')'".to_string());
         } else {
-            // c:1498-1499 — `if (*junk) zerr("bad math expression:
-            // illegal character: %c", *junk);`
-            return Err(format!("bad math expression: illegal character: {}", c));
+            // c:1503-1504 — `if (*junk) zerr("bad math expression:
+            // invalid character: %c", *junk);` — "illegal" before 54721.
+            let adj = if crate::extensions::emulation_startup::emulating_592() { "illegal" } else { "invalid" };
+            return Err(format!("bad math expression: {} character: {}", adj, c));
         }
     }
 
@@ -3322,8 +3323,9 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             }
         }
         if let Some(c) = rest.chars().next() {
-            // c:1094-1095
-            crate::ported::utils::zerr(&format!("bad math expression: illegal character: {}", c));
+            // c:1104-1105 — "invalid" since 54721, "illegal" in 5.9.2.
+            let adj = if crate::extensions::emulation_startup::emulating_592() { "illegal" } else { "invalid" };
+            crate::ported::utils::zerr(&format!("bad math expression: {} character: {}", adj, c));
             return None;
         }
         Some(out)

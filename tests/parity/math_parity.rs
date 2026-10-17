@@ -827,17 +827,37 @@ mod subscript_math_is_mathevalarg {
 
     /// [`same`] against the release zshrs reports as its own version, for rows whose
     /// answer moved on master (the "illegal character" wording became "invalid").
+    /// zshrs keeps the release answer only when it stands in for zsh (argv[0]
+    /// `zsh`, `emulating_592`), so that is how it is run here.
     fn same_release(script: &str) {
         let Some(zsh) = crate::oracle::release_zsh_path() else {
             eprintln!("skip: no zsh reporting zshrs's version is installed");
             return;
         };
-        same_as(zsh, script);
+        same_as_with(zsh, script, run_zshrs_as_zsh(script));
+    }
+
+    fn run_zshrs_as_zsh(script: &str) -> ShellResult {
+        use std::os::unix::process::CommandExt;
+        let out = Command::new(zshrs_bin())
+            .arg0("zsh")
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        ShellResult {
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            exit: out.status.code().unwrap_or(-1),
+        }
     }
 
     fn same_as(zsh: &str, script: &str) {
+        same_as_with(zsh, script, run_zshrs(script));
+    }
+
+    fn same_as_with(zsh: &str, script: &str, r: ShellResult) {
         let z = run_zsh_at(zsh, script);
-        let r = run_zshrs(script);
         assert_eq!(
             (&z.stdout, &z.stderr, z.exit),
             (&r.stdout, &r.stderr, r.exit),
@@ -962,6 +982,17 @@ mod subscript_math_is_mathevalarg {
         same_release(r#"print -r -- $(( 1, @ ))"#);
         same_release(r#"integer i; i=@"#);
         same_release(r#"let @"#);
+    }
+
+    /// The same rows under zshrs's own name follow master: 54721 renamed the
+    /// junk-check message (Src/math.c:1105, 1504) to "invalid character".
+    #[test]
+    fn top_level_arithmetic_says_invalid_character_on_master() {
+        same(r#"print -r -- $(( @ ))"#);
+        same(r#"print -r -- $(( 1@ ))"#);
+        same(r#"print -r -- $(( 1, @ ))"#);
+        same(r#"integer i; i=@"#);
+        same(r#"let @"#);
     }
 }
 

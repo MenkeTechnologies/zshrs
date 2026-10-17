@@ -5189,6 +5189,12 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
         locallevel.load(Ordering::Relaxed),
         Ordering::Relaxed,
     );
+    // c:1263-1264 — `ancestor_loops += loops; loops = 0;` (55061). 5.9.2 lets
+    // the child inherit `loops`.
+    if !crate::extensions::emulation_startup::emulating_592() {
+        use crate::ported::builtin::{ANCESTOR_LOOPS, LOOPS};
+        ANCESTOR_LOOPS.fetch_add(LOOPS.swap(0, Ordering::SeqCst), Ordering::SeqCst);
+    }
 }
 
 /// RAII guard applying the fork-safe subset of
@@ -5276,6 +5282,8 @@ pub struct SubshStateGuard {
     saved_usezle: bool,
     saved_zleactive: i32,
     saved_subsh: i32,
+    saved_loops: i32,
+    saved_ancestor_loops: i32,
 }
 
 /// The `zleactive` the shell had before the innermost in-process subshell
@@ -5312,7 +5320,15 @@ impl SubshStateGuard {
             saved_usezle: isset(USEZLE),
             saved_zleactive: zleactive.load(Ordering::Relaxed),
             saved_subsh: subsh.load(Ordering::Relaxed),
+            saved_loops: crate::ported::builtin::LOOPS.load(Ordering::SeqCst),
+            saved_ancestor_loops: crate::ported::builtin::ANCESTOR_LOOPS.load(Ordering::SeqCst),
         };
+        // c:1263-1264 — `ancestor_loops += loops; loops = 0;` (55061). 5.9.2 lets
+        // the child inherit `loops`.
+        if !crate::extensions::emulation_startup::emulating_592() {
+            use crate::ported::builtin::{ANCESTOR_LOOPS, LOOPS};
+            ANCESTOR_LOOPS.fetch_add(LOOPS.swap(0, Ordering::SeqCst), Ordering::SeqCst);
+        }
         // c:1153-1154 — `if (!(flags & ESUB_FAKE)) subsh = 1;`. The
         // substitution's body is "in a subshell" for every consumer that
         // asks, which is what keeps PRINT_EXIT_VALUE quiet inside
@@ -5340,6 +5356,8 @@ impl Drop for SubshStateGuard {
         // Reverse order of `enter`; the C child never restores because it
         // `_realexit()`s, so this half has no C counterpart to cite.
         subsh.store(self.saved_subsh, Ordering::Relaxed);
+        crate::ported::builtin::LOOPS.store(self.saved_loops, Ordering::SeqCst);
+        crate::ported::builtin::ANCESTOR_LOOPS.store(self.saved_ancestor_loops, Ordering::SeqCst);
         if SUBSH_STATE_DEPTH.fetch_sub(1, Ordering::SeqCst) <= 1 {
             SUBSH_PARENT_ZLEACTIVE.store(-1, Ordering::SeqCst);
         }

@@ -15419,11 +15419,16 @@ pub fn bin_break(
                 return 1; // c:5798
             }
             if loops == 0 {
-                // c:5800 — break/continue only permitted in loops
-                // 5.9.2 inherits `loops` into a subshell, so there is no "loop is in a
-                // parent process" case to tell apart (the dev tree's `ancestor_loops`, 55061,
-                // adds "not in same subshell as first enclosing loop" and "for" here).
-                zerrnam(name, "not in while, until, select, or repeat loop"); // c:5803
+                // c:5801-5804 — break/continue only permitted in loops. 5.9.2
+                // has no `ancestor_loops` (55061): a subshell inherits `loops`,
+                // and the message lacks "for".
+                if crate::extensions::emulation_startup::emulating_592() {
+                    zerrnam(name, "not in while, until, select, or repeat loop");
+                } else if ANCESTOR_LOOPS.load(Relaxed) != 0 {
+                    zerrnam(name, "not in same subshell as first enclosing loop"); // c:5803
+                } else {
+                    zerrnam(name, "not in for, while, until, select, or repeat loop"); // c:5804
+                }
                 return 1; // c:5804
             }
             CONTFLAG.store((func == BIN_CONTINUE) as i32, Relaxed); // c:5806
@@ -19615,12 +19620,17 @@ pub fn bin_let(
             }
         }
     }
-    // c:7476-7478 (5.9.2) — `/* Errors in math evaluation in let are
-    // non-fatal. */ errflag &= ~ERRFLAG_ERROR;` then the status comes from
-    // the value below; the dev tree's upstream 54285 returns 2 here, 5.9.2
-    // returns 1 because the failed evaluation yields zero.
-    errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
-    // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
+    // c:7446-7450 — `if (errflag) { /* Errors in math evaluation in let are
+    // non-fatal. */ errflag &= ~ERRFLAG_ERROR; return 2; }` (upstream 54285).
+    // 5.9.2 only clears the flag; its status comes from the value below,
+    // which a failed evaluation leaves at zero, so 1.
+    if crate::extensions::emulation_startup::emulating_592() {
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
+    } else if errflag.load(Relaxed) != 0 {
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7448
+        return 2; // c:7449
+    }
+    // c:7452 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
     if val.type_ == MN_INTEGER {
         // c:7482
         (val.l == 0) as i32
@@ -21733,6 +21743,11 @@ pub static INEVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 /// `LOOPS` static — `int loops;` (`Src/loop.c:41`), loops started in the
 /// current subshell.
 pub static LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `ANCESTOR_LOOPS` static — `int ancestor_loops;` (`Src/loop.c:36`), loops
+/// started in ancestor subshells (55061). `entersubsh` moves `loops` here
+/// (`Src/exec.c:1263-1264`), so `bin_break` can tell a loop in a parent
+/// process from no loop at all.
+pub static ANCESTOR_LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 /// `BREAKS` static.
 pub static BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 /// `CONTFLAG` static.
@@ -24385,7 +24400,7 @@ mod tests {
             "c:7482 — last expr zero → return 1 (failure)"
         );
 
-        // 3. Math error → return 1 (zsh 5.9.2; the dev tree returns 2, builtin.c:7479)
+        // 3. Math error → return 2 (c:7446-7449, upstream 54285; 5.9.2 returns 1)
         //    AND clear ERRFLAG_ERROR.
         // Pre-set errflag manually to simulate matheval failure side
         // effect (since exact bad-syntax behavior of the matheval port
@@ -24396,8 +24411,8 @@ mod tests {
         // is already set from a prior step.
         let argv = vec!["1".to_string()];
         let rc = bin_let("let", &argv, &ops, 0);
-        assert_eq!(rc, 1, "zsh 5.9.2 returns 1 after a math error (dev tree: c:7479 `return 2;`)");
-        // c:7478 — `errflag &= ~ERRFLAG_ERROR` must have run.
+        assert_eq!(rc, 2, "c:7449 — `return 2;` after a math error (5.9.2 returns 1)");
+        // c:7448 — `errflag &= ~ERRFLAG_ERROR` must have run.
         assert_eq!(
             errflag.load(Relaxed) & ERRFLAG_ERROR,
             0,

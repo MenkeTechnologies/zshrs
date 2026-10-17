@@ -18388,6 +18388,12 @@ fn forked_child_subsh_levels() {
         Ordering::Relaxed,
     ); // c:1221
     crate::ported::builtin::SUBSHELL_DEPTH.store(0, Ordering::Relaxed);
+    // c:1263-1264 — `ancestor_loops += loops; loops = 0;` (55061). 5.9.2 lets
+    // the child inherit `loops`.
+    if !crate::extensions::emulation_startup::emulating_592() {
+        use crate::ported::builtin::{ANCESTOR_LOOPS, LOOPS};
+        ANCESTOR_LOOPS.fetch_add(LOOPS.swap(0, Ordering::SeqCst), Ordering::SeqCst);
+    }
     // !!! RUST-ONLY: a forked child is no longer inside the in-process
     // `$( … )` it was forked from; its signal traps print to its own fd 1,
     // as in C, and the parent's saved fds are gone (mark_saved_fd).
@@ -21329,8 +21335,17 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::builtin::LOOPS.load(SeqCst),
                     crate::ported::builtin::BREAKS.load(SeqCst),
                     crate::ported::builtin::CONTFLAG.load(SeqCst),
+                    crate::ported::builtin::ANCESTOR_LOOPS.load(SeqCst),
                 )
             };
+            // c:Src/exec.c:1263-1264 — `ancestor_loops += loops; loops = 0;`
+            // (55061), after the snapshot so SubshellEnd puts both back. 5.9.2
+            // lets the child inherit `loops`.
+            if !crate::extensions::emulation_startup::emulating_592() {
+                use crate::ported::builtin::{ANCESTOR_LOOPS, LOOPS};
+                use std::sync::atomic::Ordering::SeqCst;
+                ANCESTOR_LOOPS.fetch_add(LOOPS.swap(0, SeqCst), SeqCst);
+            }
             exec.subshell_snapshots.push(SubshellSnapshot {
                 comp_globals: crate::vm_helper::CompGlobalsSnap::save(),
                 // c:Src/utils.c:2111 `addlockfd` — the fds carrying
@@ -21616,8 +21631,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 // SubshellSnapshot::loop_flags.
                 {
                     use std::sync::atomic::Ordering::SeqCst;
-                    let (loops, breaks, contflag) = snap.loop_flags;
+                    let (loops, breaks, contflag, ancestor_loops) = snap.loop_flags;
                     crate::ported::builtin::LOOPS.store(loops, SeqCst);
+                    crate::ported::builtin::ANCESTOR_LOOPS.store(ancestor_loops, SeqCst);
                     crate::ported::builtin::BREAKS.store(breaks, SeqCst);
                     crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);
                 }
