@@ -1346,7 +1346,7 @@ fn parse_errors_and_quoting() {
         "x=1 y=2; print $x $y",
         "x= ; print \"[$x]\"",
         "x=a b=c; print $x $b",
-        "=x 2>&1",
+        "=xxxx 2>&1",
         "1x=a 2>&1",
         "x[1]=a; print $x",
         "x[1,2]=a 2>&1; print $x",

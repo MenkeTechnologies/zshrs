@@ -303,11 +303,11 @@ fn s_modifier_with_an_identical_replacement_succeeds() {
 #[test]
 fn ampersand_in_the_replacement_stands_for_the_pattern() {
     assert_same_dump(
-        &subst_driver("unsetopt hist_subst_pattern", "!!:s/old/&X/"),
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s/old/&xxxx/"),
         "`&` expanded to the pattern",
     );
     assert_same_dump(
-        &subst_driver("setopt hist_subst_pattern", "!!:s/old/&X/"),
+        &subst_driver("setopt hist_subst_pattern", "!!:s/old/&xxxx/"),
         "`&` stayed literal under HIST_SUBST_PATTERN",
     );
 }
