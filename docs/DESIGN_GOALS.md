@@ -137,7 +137,7 @@ Locked 2026-04-28: zshrs's runtime is a **client/server architecture**. A single
 7. **Daemon spawn-on-demand** — first zshrs client to launch checks for `daemon.sock`; if absent, fork-spawns daemon. Subsequent N clients just connect. `flock` on `daemon.pid` enforces singleton.
 8. **fsnotify exclusively daemon-side** — clients never run a fsnotify watcher. 100×-watcher thundering-herd is fatal.
 
-**Patent significance:** the daemon architecture is the **second omnibus claim** in the patent strategy (`memory/aot_patent_strategy.md`), independently assertible from the unified-AOT claim. New work touching the daemon, IPC verbs, federation, or cross-shell semantics is patent-relevant dependent-claim material.
+**Patent significance:** the daemon architecture is the **second omnibus claim** in the patent strategy, independently assertible from the unified-AOT claim. New work touching the daemon, IPC verbs, federation, or cross-shell semantics is patent-relevant dependent-claim material.
 
 ---
 
