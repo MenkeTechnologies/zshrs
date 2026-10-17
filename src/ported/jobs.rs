@@ -1599,6 +1599,25 @@ pub fn printjob(
         ' '
     };
 
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash lists a job as
+    // `[N]M  STATE<pad to 27>COMMAND`, with the state spelled `Running` / `Stopped` /
+    // `Done` / `Exit N`, a ` &` after a running job's command and the pipeline's
+    // stages joined by ` | `. `jobs -l` / `-d` / `-p` keep the shared layout.
+    if crate::dash_mode::bash_mode() && lng == 0 && !job.procs.is_empty() {
+        let state = if job.procs.iter().any(|p| p.status == SP_RUNNING) {
+            "Running".to_string()
+        } else if job.procs.iter().any(|p| libc::WIFSTOPPED(p.status)) {
+            "Stopped".to_string()
+        } else {
+            let last = job.procs.last().map_or(0, |p| p.status);
+            let code = if libc::WIFEXITED(last) { libc::WEXITSTATUS(last) } else { 128 + libc::WTERMSIG(last) };
+            if code == 0 { "Done".to_string() } else { format!("Exit {code}") }
+        };
+        let text = job.procs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join(" | ");
+        let amp = if state == "Running" { " &" } else { "" };
+        return format!("[{job_num}]{marker}  {state:<27}{text}{amp}");
+    }
+
     // c:1273-1277 — first line carries `[N]  M `; continuation lines
     // (further proc groups) carry the matching indent.
     // c:1281-1288 — `if (!thisfmt || lng) { "[%ld]  %c " / indent }

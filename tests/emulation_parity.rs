@@ -1701,6 +1701,8 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "sleep 0.4 & sleep 0.4 & jobs; wait",
+    "sleep 0.4 & jobs; wait",
     "cd //tmp; pwd; echo $PWD",
     "cd ///tmp; pwd",
     "cd /tmp//; pwd",
