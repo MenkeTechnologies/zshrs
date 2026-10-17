@@ -5377,32 +5377,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
     // character offsets, so the cut walks characters and each
     // MB_METACHARLEN (c:2520) is one.
     let chars: Vec<char> = s.chars().collect();
-    let len = chars.len() as i32; // c:2510
-    if v.start < 0 {
-        // c:2511-2515
-        v.start += len;
-        if v.start < 0 {
-            v.start = 0;
-        }
-    }
-    if v.end < 0 {
-        // c:2516-2522
-        v.end += len;
-        if v.end >= 0 && v.end < len {
-            v.end += 1; // c:2520 `v->end += MB_METACHARLEN(eptr)`
-        }
-    }
-    if v.start > len {
-        return String::new(); // c:2524-2525
-    }
-    let tail = &chars[v.start as usize..]; // c:2526
-    if v.end <= v.start {
-        String::new() // c:2528-2529
-    } else if v.end - v.start <= len - v.start {
-        tail[..(v.end - v.start) as usize].iter().collect() // c:2530-2531
-    } else {
-        tail.iter().collect()
-    }
+    crate::scalar_range_cut::str_range_cut(&chars, v.start as i64, v.end as i64)
 }
 
 /// Slice an indexed array using zsh 1-based inclusive semantics.

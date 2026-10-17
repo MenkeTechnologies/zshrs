@@ -13158,8 +13158,14 @@ pub fn paramsubst(
                         } else {
                             (lo, hi)
                         };
-                        let chars_arr: Vec<String> = s_chars.clone();
-                        getarrvalue(&chars_arr, lo, hi).concat()
+                        // c:Src/params.c:2144-2145 — a positive start is
+                        // converted to the 0-based offset; getstrvalue's
+                        // scalar tail (not the array slicer) clamps a
+                        // negative start to 0.
+                        let chars_flat: Vec<char> =
+                            s_chars.iter().flat_map(|c| c.chars()).collect();
+                        let c_start = if lo > 0 { lo - 1 } else { lo };
+                        crate::scalar_range_cut::str_range_cut(&chars_flat, c_start, hi)
                     } else {
                         String::new()
                     }
@@ -16367,31 +16373,7 @@ pub fn paramsubst(
                         // follows is getstrvalue's scalar tail, walked in
                         // CHARACTERS (C uses MB_METACHARLEN).
                         let tag: Vec<char> = value.chars().collect();
-                        let len = tag.len() as i64; // c:Src/params.c:2510
-                        if start < 0 {
-                            start += len; // c:Src/params.c:2512
-                            if start < 0 {
-                                start = 0; // c:Src/params.c:2513-2514
-                            }
-                        }
-                        if end < 0 {
-                            end += len; // c:Src/params.c:2517
-                            if end >= 0 && end < len {
-                                // c:Src/params.c:2518-2522 — `if (*eptr)
-                                // v->end += MB_METACHARLEN(eptr);`
-                                end += 1;
-                            }
-                        }
-                        value = if start > len {
-                            String::new() // c:Src/params.c:2525
-                        } else if end <= start {
-                            String::new() // c:Src/params.c:2528-2529
-                        } else {
-                            // c:Src/params.c:2530-2531 — truncate at `end`
-                            // when it lands inside the remaining text.
-                            let hi = if end > len { len } else { end };
-                            tag[start as usize..hi as usize].iter().collect()
-                        };
+                        value = crate::scalar_range_cut::str_range_cut(&tag, start, end);
                     }
                 }
             }

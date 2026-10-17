@@ -129,6 +129,8 @@ pub mod fork_safe_pool;
 pub mod signal_queue_guard;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
+/// `scalar_range_cut` submodule (Rust-only; see the module docs).
+pub mod scalar_range_cut;
 /// `test_util` submodule.
 #[cfg(test)]
 pub mod test_util;
