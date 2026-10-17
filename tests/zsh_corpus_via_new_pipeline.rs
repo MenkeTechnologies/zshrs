@@ -733,7 +733,8 @@ fn np_arith_in_string() {
 // Empty subshell
 #[test]
 fn np_empty_subshell() {
-    ok_status("()", "", 0);
+    // A bare `()` is a parse error in zsh; `( )` is the empty subshell.
+    ok_status("( )", "", 0);
 }
 
 // Brace group preserving status
