@@ -3774,7 +3774,9 @@ pub(crate) fn op(what: i32) {
                 }
 
                 MOD | MODEQ => {
-                    if is_float {
+                    // !!! KSH93 GATE (no C counterpart) !!! ksh93 computes `%` on the integer
+                    // truncation of float operands; zsh uses IEEE fmod.
+                    if is_float && !crate::dash_mode::ksh93_mode() {
                         // float % 0.0 → NaN per IEEE; let it fall
                         // through to f64 semantics rather than
                         // raising the integer-only error.
