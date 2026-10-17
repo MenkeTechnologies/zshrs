@@ -2305,6 +2305,7 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    "echo $((-9223372036854775808 / -1)) $((9223372036854775808)) $((-9223372036854775808)) $((99999999999999999999))",
     "(exec nosuch_zz) 2>/dev/null; echo $?; (exec /bin/echo hi); echo $?; (exec /nonexistent/x) 2>/dev/null; echo $?",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
     "printf -v v '%s-%s' a b; echo \"[$v]\" $?; printf '%s\\n' ok",

@@ -3699,6 +3699,12 @@ pub fn zstrtol_underscore(s: &str, base: i32, underscore: bool) -> (i64, &str) {
         }
     }
 
+    // !!! DASH GATE (no C counterpart) !!! dash (strtoimax) clamps a literal that does not
+    // fit 64 bits to the maximum, with no diagnostic; zsh truncates it.
+    if trunc_idx.is_some() && crate::dash_mode::dash_faithful() {
+        let max = i64::MAX;
+        return (if neg { -max } else { max }, &s[i..]);
+    }
     if let Some(t) = trunc_idx {
         // c:2512
         let digits = t.saturating_sub(inp_idx);
