@@ -21867,7 +21867,12 @@ pub fn paramsubst(
                 // offset 0 — yielding the original value unchanged.
                 // Detect the canonical "letter but not a known
                 // modifier" case here and emit the zsh diagnostic.
-                if !is_modifier && first.is_ascii_alphabetic() {
+                // bash, ksh93, mksh and /bin/sh read `${x:i}` as a substring with the
+                // arithmetic offset `i`; see the substring arm's `math_names`.
+                if !is_modifier
+                    && first.is_ascii_alphabetic()
+                    && !(crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode())
+                {
                     zerr(&format!("unrecognized modifier `{}'", first)); // c:3788
                     errflag_set_error();
                     return (String::new(), 0, Vec::new()); // c:3791
@@ -22212,7 +22217,12 @@ pub fn paramsubst(
                             None => (slice, ""),
                             Some(c1) => {
                                 let after = slice[c1 + 1..].chars().next();
-                                if matches!(after, Some(c) if c.is_ascii_alphabetic() || c == '&') {
+                                // bash, ksh93, mksh and /bin/sh have no colon
+                                // modifiers: a letter there is an arithmetic length.
+                                let colon_mods = !(crate::dash_mode::bash_mode()
+                                    || crate::dash_mode::korn_mode()
+                                    || crate::dash_mode::sh_mode());
+                                if colon_mods && matches!(after, Some(c) if c.is_ascii_alphabetic() || c == '&') {
                                     // c:1571 — alpha/`&` → offset-only substring,
                                     // modifier chain begins at this colon.
                                     (&slice[..c1], &slice[c1..])
@@ -22304,7 +22314,13 @@ pub fn paramsubst(
                     // subst.c:3787. bash treats bare `n` as an arith
                     // identifier; zsh requires explicit `$n` or
                     // `$((n))`. Bug #477 in docs/BUGS.md.
-                    if has_length_sep {
+                    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh and
+                    // /bin/sh read the offset and length as arithmetic, so a bare
+                    // variable name (`${x:i}`, `${x:i+1:i}`) is fine; zsh wants `$i`.
+                    let math_names = crate::dash_mode::bash_mode()
+                        || crate::dash_mode::korn_mode()
+                        || crate::dash_mode::sh_mode();
+                    if has_length_sep && !math_names {
                         let len_trimmed = parts[1].trim_start();
                         if len_trimmed
                             .chars()
@@ -22333,7 +22349,9 @@ pub fn paramsubst(
                             && crate::ported::lex::parse_subscript(t, ':').is_none() // c:1580
                             && crate::ported::lex::parse_subscript(t, '\0').is_none() // c:1583
                     };
-                    let failed = if unparsable(parts[0]) {
+                    let failed = if math_names {
+                        None
+                    } else if unparsable(parts[0]) {
                         Some(parts[0])
                     } else if has_length_sep && unparsable(parts[1]) {
                         Some(parts[1])

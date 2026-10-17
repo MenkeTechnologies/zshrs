@@ -22404,9 +22404,11 @@ impl fusevm::ShellHost for ZshrsHost {
             crate::exec_jobs::mark_thisjob_cursh(false);
         }
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
-        // mksh: a `${v:?msg}` error inside the function ended the function only.
-        let status = if crate::dash_mode::pdksh_family()
-            && crate::dash_mode::posix_faithful()
+        // mksh: a `${v:?msg}` error inside the function ended the function only;
+        // ksh93 and mksh: so did a read-only assignment (status 1 / 2).
+        let korn_readonly = crate::dash_mode::take_korn_fn_readonly().filter(|_| status.is_some());
+        let status = if ((crate::dash_mode::pdksh_family() && crate::dash_mode::posix_faithful())
+            || korn_readonly.is_some())
             && status.is_some()
             && crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_HARD
@@ -22417,7 +22419,11 @@ impl fusevm::ShellHost for ZshrsHost {
         {
             crate::ported::utils::errflag
                 .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
-            status.map(|s| if s == 0 { 1 } else { s })
+            status.map(|s| match korn_readonly {
+                Some(r) => r,
+                None if s == 0 => 1,
+                None => s,
+            })
         } else {
             status
         };

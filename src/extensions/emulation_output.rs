@@ -460,7 +460,7 @@ static BASH_RETURN_SAVED: std::sync::Mutex<Vec<Option<String>>> = std::sync::Mut
 /// starts without one; the caller's is put back at exit unless the callee
 /// installed its own.
 pub fn bash_return_trap_enter() {
-    if !crate::dash_mode::bash_mode() {
+    if !(crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) {
         return;
     }
     let outer = traps_table().lock().ok().and_then(|mut t| t.remove("RETURN"));
@@ -473,7 +473,7 @@ pub fn bash_return_trap_enter() {
 /// `RETURN` trap the function installed (`$?` is preserved), or restore the
 /// caller's.
 pub fn bash_return_trap_exit() {
-    if !crate::dash_mode::bash_mode() {
+    if !(crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) {
         return;
     }
     let outer = BASH_RETURN_SAVED.lock().ok().and_then(|mut st| st.pop()).flatten();

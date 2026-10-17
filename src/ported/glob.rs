@@ -1992,11 +1992,14 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                             }
                             // c:2085/2094 — digit adjacent to `..`.
                             shape_ok
+                                && !crate::dash_mode::pdksh_family()
                                 && (b.first().is_some_and(|c| c.is_ascii_digit())
                                     || b.last().is_some_and(|c| c.is_ascii_digit()))
                         };
                         if nested
-                            || bracechardots(&content).is_some()
+                            // !!! PDKSH GATE (no C counterpart) !!! mksh has no `{a..c}`
+                            // / `{1..3}` ranges at all: the word stays literal.
+                            || (!crate::dash_mode::pdksh_family() && bracechardots(&content).is_some())
                             || numeric_ok
                             || crate::dash_mode::ksh93_char_step_range(&content)
                         {
@@ -2114,6 +2117,14 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
                                                                           // must decode AND consume exactly the whole endpoint text.
     if l_len != 0 && l_len == lb.len() && r_len != 0 && r_len == rb.len() {
         if let (Some(c1), Some(c2)) = (cstart, cend) {
+            // !!! KSH93 GATE (no C counterpart) !!! ksh93 expands a letter range
+            // only within one case (`{x..z}` yes, `{Z..a}` stays literal).
+            if crate::dash_mode::ksh93_mode()
+                && (c1.is_ascii_lowercase() != c2.is_ascii_lowercase()
+                    || c1.is_ascii_uppercase() != c2.is_ascii_uppercase())
+            {
+                return None;
+            }
             return Some((c1, c2, incr)); // c:2266-2270
         }
     }
@@ -2180,7 +2191,8 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                         let prefix: String = chars[..start].iter().collect();
                         let suffix: String = chars[i + 1..].iter().collect();
                         let content: String = chars[start + 1..i].iter().collect();
-                        if let Some(dp) = dotdot_pos {
+                        // !!! PDKSH GATE (no C counterpart) !!! mksh has no `..` ranges.
+                        if let Some(dp) = dotdot_pos.filter(|_| !crate::dash_mode::pdksh_family()) {
                             if comma_positions.is_empty() {
                                 if let Some(parts) = expand_range(&prefix, &content, dp, &suffix) {
                                     return (Some(parts), None);
@@ -6924,7 +6936,8 @@ fn expand_range(
         let is_padded_field = |stripped: &str| stripped.len() >= 2 && stripped.starts_with('0');
         // Suppress pad ONLY when LEFT is exactly the single-char "0"
         // (no sign, no extra digits). "-0" or "00" both pad.
-        let left_is_bare_zero = left == "0";
+        // bash pads `{0..02}` too (`00 01 02`); only zsh exempts a bare `0`.
+        let left_is_bare_zero = left == "0" && !(crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode());
         // ksh93 never zero-pads a numeric range (`{01..03}` -> `1 2 3`); neither
         // does bash 3.2 (/bin/sh).
         let pad = !crate::dash_mode::ksh93_mode()
@@ -7004,6 +7017,14 @@ fn expand_range(
         }
 
         for c in chars {
+            // bash expands the backslash of `{Z..a}` to a word that quote
+            // removal then empties (`echo {Z..a}` shows two spaces there);
+            // zsh prints the `\`.
+            if c == '\\' && (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) {
+                // Nularg keeps the empty word (a bare empty string is dropped).
+                results.push(format!("{}{}{}", prefix, crate::ported::zsh_h::Nularg, suffix));
+                continue;
+            }
             // c:2328-2334 — `MB_CHARINIT(); ncptr = MB_NICECHAR(cend);
             // ... memcpy(p + strp, ncptr, nclen);` — every element of a
             // CHARACTER range is spliced in through `MB_NICECHAR`

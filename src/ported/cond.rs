@@ -297,29 +297,77 @@ pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
             let mut mn1: mnumber;
             let mut mn2: mnumber;
             if fromtest.is_some() {
-
-                let (l1, eptr) = zstrtol(&left, 10);
-                let mut err: &str = &left;
-                let mut l2: i64 = 0;
-                let mut bad = !eptr.is_empty();
-                if !bad {
-                    let (v2, e2) = zstrtol(&right, 10);
-                    l2 = v2;
-                    err = &right;
-                    bad = !e2.is_empty();
-                }
-                if bad {
-                    // !!! PDKSH GATE (no C counterpart) !!! mksh's `test` treats a
-                    // non-integer operand of `-eq` etc. as a plain false (status 1,
-                    // no message); zsh, bash and ksh93 report it with status 2.
-                    if crate::dash_mode::pdksh_family() {
-                        return 1;
-                    }
-                    warnnam(&format!("integer expression expected: {}", err));
+                // !!! DROP-IN GATE (no C counterpart) !!! bash, dash and /bin/sh
+                // reject an empty operand and a decimal past 64 bits ("integer
+                // expression expected", 2); zsh's zstrtol takes the truncated value.
+                let strict = crate::dash_mode::bash_mode()
+                    || crate::dash_mode::dash_faithful()
+                    || crate::dash_mode::sh_mode();
+                let bad_strict = |s: &str| {
+                    let t = s.trim();
+                    let d = t.trim_start_matches(['+', '-']);
+                    strict
+                        && (t.is_empty()
+                            || (!d.is_empty()
+                                && d.bytes().all(|b| b.is_ascii_digit())
+                                && t.parse::<i64>().is_err()))
+                };
+                if bad_strict(&left) || bad_strict(&right) {
+                    warnnam(&format!("integer expression expected: {}", left));
                     return 2;
                 }
-                mn1 = mnumber { l: l1, d: 0.0, type_: MN_INTEGER };
-                mn2 = mnumber { l: l2, d: 0.0, type_: MN_INTEGER };
+                // !!! PDKSH GATE (no C counterpart) !!! mksh's `test` reads an
+                // identifier operand as that variable's value (0 when unset), a
+                // decimal in 32 bits, and rejects anything else (`1.0`, `0x1`) with 2.
+                let mksh_int = |s: &str| -> Option<i64> {
+                    // (`isident` also takes a digit run, the positional names.)
+                    if s.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                        && crate::ported::params::isident(s)
+                    {
+                        let v = crate::ported::params::getsparam(s).unwrap_or_default();
+                        return Some(v.trim().parse::<i64>().unwrap_or(0));
+                    }
+                    let t = s.trim();
+                    let (neg, d) = match t.strip_prefix('-') {
+                        Some(r) => (true, r),
+                        None => (false, t.strip_prefix('+').unwrap_or(t)),
+                    };
+                    if d.is_empty() || !d.bytes().all(|b| b.is_ascii_digit()) {
+                        return None;
+                    }
+                    let u = d.parse::<u128>().unwrap_or(u128::MAX);
+                    let v = i64::from(u as u32 as i32);
+                    Some(if neg { v.wrapping_neg() } else { v })
+                };
+                if crate::dash_mode::pdksh_family() {
+                    match (mksh_int(&left), mksh_int(&right)) {
+                        (Some(a), Some(b)) => {
+                            mn1 = mnumber { l: a, d: 0.0, type_: MN_INTEGER };
+                            mn2 = mnumber { l: b, d: 0.0, type_: MN_INTEGER };
+                        }
+                        _ => {
+                            warnnam(&format!("{}: unexpected operator/operand", right));
+                            return 2;
+                        }
+                    }
+                } else {
+                    let (l1, eptr) = zstrtol(&left, 10);
+                    let mut err: &str = &left;
+                    let mut l2: i64 = 0;
+                    let mut bad = !eptr.is_empty();
+                    if !bad {
+                        let (v2, e2) = zstrtol(&right, 10);
+                        l2 = v2;
+                        err = &right;
+                        bad = !e2.is_empty();
+                    }
+                    if bad {
+                        warnnam(&format!("integer expression expected: {}", err));
+                        return 2;
+                    }
+                    mn1 = mnumber { l: l1, d: 0.0, type_: MN_INTEGER };
+                    mn2 = mnumber { l: l2, d: 0.0, type_: MN_INTEGER };
+                }
             } else {
                 let zero = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
                 mn1 = matheval(&left).unwrap_or(zero);
@@ -430,7 +478,17 @@ pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
                     None => 1,
                     Some(m) => {
                         if m.atime() == m.mtime() {
-                            (m.atime_nsec() > m.mtime_nsec()) as i32
+                            // !!! BASH/KSH93 GATE (no C counterpart) !!! bash and ksh93
+                            // want the file modified STRICTLY after it was last read
+                            // (`mtime > atime`); zsh takes equal times as true.
+                            if crate::dash_mode::bash_mode()
+                                || crate::dash_mode::ksh93_mode()
+                                || crate::dash_mode::sh_mode()
+                            {
+                                (m.mtime_nsec() <= m.atime_nsec()) as i32
+                            } else {
+                                (m.atime_nsec() > m.mtime_nsec()) as i32
+                            }
                         } else {
                             (m.atime() > m.mtime()) as i32
                         }

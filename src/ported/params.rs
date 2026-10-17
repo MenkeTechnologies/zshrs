@@ -17976,9 +17976,10 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     // the scalar/bare reads of bash's special arrays (bash: `$PIPESTATUS` ==
     // `${PIPESTATUS[0]}`, `$FUNCNAME` == current function, `$BASH_VERSINFO` ==
     // major). No-op in --zsh (gate) — those names are ordinary there.
-    if crate::dash_mode::bash_mode() {
+    // /bin/sh (bash 3.2) has the same specials, except that its version is its own.
+    if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
         match name {
-            "BASH_VERSION" => return Some(crate::dash_mode::bash_version()),
+            "BASH_VERSION" if crate::dash_mode::bash_mode() => return Some(crate::dash_mode::bash_version()),
             // bash(1): HOSTNAME is the host name — zsh's HOST.
             "HOSTNAME" => return crate::ported::params::getsparam("HOST"),
             // bash(1): HOSTTYPE is the machine type, OSTYPE the OS, and

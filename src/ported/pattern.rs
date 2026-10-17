@@ -788,6 +788,19 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 i += 1;
                 continue;
             }
+            // !!! DROP-IN GATE (no C counterpart) !!! an unquoted `[` with no `]`
+            // after it is a literal bracket in bash, ksh93, mksh, dash and /bin/sh
+            // (`case x in [) …` is fine there); zsh calls it a bad pattern.
+            if cu == 0xe191
+                && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                && !chars[i + 1..].iter().any(|&c| c as u32 == 0xe192 || c == ']')
+            {
+                in_bracket = false;
+                opush!('\\');
+                opush!('[');
+                i += 1;
+                continue;
+            }
             if (0xe184..=0xe19e).contains(&cu) {
                 // Token -> the raw metachar the parser dispatches on.
                 opush!(ztokens[(cu - 0xe184) as usize]);
@@ -2326,7 +2339,13 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             let parse_b = patparse.lock().unwrap();
             let bb = parse_b.as_bytes();
             let mut i_b = bracket_start;
-            if i_b < bb.len() && (bb[i_b] == b'^' || bb[i_b] == b'!') {
+            // !!! DASH/PDKSH GATE (no C counterpart) !!! /bin/dash and mksh negate
+            // a class only with `!`; a leading `^` is an ordinary member.
+            if i_b < bb.len()
+                && (bb[i_b] == b'!'
+                    || (bb[i_b] == b'^'
+                        && !(crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family())))
+            {
                 negate = true;
                 i_b += 1;
             }

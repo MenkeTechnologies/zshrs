@@ -2050,6 +2050,14 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     "echo $(( --3 )) $(( ++3 )) $(( - -3 ))",
     "f() { local a=1 b; local; }; f; g() { local; echo none; }; g",
     "echo \\",
+    // printf: `\\c` in the format is literal, `\\E` is ESC, `%a` is the hex float,
+    // `-n` is an invalid option (2).
+    "printf 'a\\cb\\n'; printf '%s\\n' \"$(printf 'x\\Ey' | tr '\\033' _)\"; printf '%a %a %a %.2a %A\\n' 1 1.5 0 1.5 1.5; printf -n a 2>/dev/null; echo rc=$?",
+    // read: `-e` off a pipe is a plain read; `-A` is invalid (2); a bad name is 1.
+    "printf 'a\\n' | { read -e x; echo \"[$x]\"; }; printf 'a\\n' | { read -A a 2>/dev/null; echo rc=$?; }; printf 'a\\n' | { read 1x 2>/dev/null; echo rc=$?; }",
+    // Brace ranges skip the backslash and pad `{0..02}`; test's three-operand rule
+    // and strict integers.
+    "echo {Z..a} {0..02} {00..2}; [ -a -a -a ]; echo $?; [ -n -a ]; echo $?; [ '' -eq 0 ] 2>/dev/null; echo $?; [ 9999999999999999999 -gt 1 ] 2>/dev/null; echo $?",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
@@ -2225,6 +2233,11 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     "echo $(( -9223372036854775808 )) $(( 9223372036854775808 )) $(( 99999999999999999999 )); echo $(( 2 ** 63 )) $(( 2 ** 64 )) $(( 3 ** 40 )) $(( -2 ** 63 ))",
     // A `$( )` capture stops at the first NUL; a negative substring length is empty.
     "x=\"$(printf 'a\\0b\\0c')\"; echo \"${#x}\" \"$x\"; y=abc; echo \"[${y:0:-1}][${y:1:-1}]\"",
+    // printf: a `%` ending the format is literal, `%a` shows twelve mantissa digits,
+    // `\\cX` in the format is the control character, `\\E` is ESC; no `{Z..a}`.
+    "printf '%'; echo \" rc=$?\"; printf 'a%'; echo; printf '%a\\n' 1.5; printf 'a\\cb|' | od -An -c | tr -s ' '; printf '%s\\n' \"$(printf 'x\\Ey' | tr '\\033' _)\"; echo {Z..a} {x..z}",
+    // A read-only assignment inside a function ends the script; `read -e` / `-x` are 2.
+    "f() { readonly l=1; l=2; echo no; }; f; echo rc=$?; printf 'a\\n' | { read -e x 2>/dev/null; echo rc=$?; }; printf 'a\\n' | { read -x x 2>/dev/null; echo rc=$?; }",
 ];
 
 /// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
@@ -2250,6 +2263,10 @@ const REAL_SHELL_CORPUS: &[&str] = &[
     "echo $(( 1_000 )) 2>/dev/null; echo after",
     // An assignment is accepted as the middle operand of `?:`.
     "x=0; echo $(( x ? y = 1 : 2 )); x=1; echo $(( x ? y = 5 : 2 )) $y",
+    // read: NUL bytes dropped (sh: line ends there), ONE trailing IFS delimiter dropped.
+    "printf 'a\\0b\\n' | { read x; echo \"[$x]\"; }; printf 'a,b,\\n' | { IFS=, read x y; echo \"[$x][$y]\"; }; printf 'abcb\\n' | { IFS=b read x y; echo \"[$x][$y]\"; }; printf 'a,b,,\\n' | { IFS=, read x y; echo \"[$x][$y]\"; }",
+    // printf `%d` saturates, `%05s` is the platform's; a lone `[` is a literal pattern.
+    "printf '%d\\n' 9223372036854775808 -9223372036854775809 2>/dev/null; printf '%05s|\\n' ab; case x in [) echo 1;; esac; echo rc=$?",
 ];
 
 /// Every shell but native zsh (including the zsh-STYLE legs): a bare `$NN` is
@@ -2287,6 +2304,9 @@ const BASH_KORN_CORPUS: &[&str] = &[
     "echo a\n\n\necho b; echo c;\n\necho d\n",
     // The Korn shells and bash accept `'a'` / `--3` differently; both reject `1.5`.
     "echo $(( 1.5 + 1 )) 2>/dev/null; echo after",
+    // Arithmetic names in substring offsets; dangling `-a`/`-o`; `declare` exists
+    // in bash only.
+    "x=abcdef; i=2; echo ${x:i} ${x:$i:1} ${x:i+1:i}; [ 1 -eq 1 -a ] 2>/dev/null; echo $?; [ -n abc -o ] 2>/dev/null; echo $?; [ -a -a -a ] 2>/dev/null; echo $?; f() { declare x=3; echo $x; }; x=1; f 2>/dev/null; echo $x",
 ];
 
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
@@ -2328,6 +2348,16 @@ const PDKSH_CORPUS: &[&str] = &[
     "; echo x",
     // `%b` reads a bare `\\NNN` as octal; `\\x41` comes out as `x41`.
     "printf '%b\\n' 'A\\101\\x41'",
+    // The system printf: `\\E` and `\\c` drop their backslash, `%a` is the hex float,
+    // `-n` fails with 1, `%c` with no operand prints nothing.
+    "printf '%s\\n' \"$(printf 'x\\Ey\\n')\"; printf 'a\\cb\\n'; printf '%a\\n' 1.5; printf -n a 2>/dev/null; echo rc=$?; printf '[%c]\\n'",
+    // No `{a..c}` ranges; `;;&` exists; `[^b]` is not a negated class.
+    "echo a{1..3} {a..c} {1..3}{a,b}; case abc in abc) echo 1;;& a*) echo 2;; esac; case abc in a[^b]c) echo 1;; *) echo 2;; esac",
+    // test: an identifier operand is its value, `1.0`/`0x1` are rejected, 32-bit
+    // digits, dangling `-a`, no `-N`.
+    "[ 1 -eq 1.0 ] 2>/dev/null; echo $?; [ 0x1 -eq 1 ] 2>/dev/null; echo $?; [ b -eq 0 ]; echo $?; b=5; [ b -gt 4 ]; echo $?; [ 1 -eq 1 -a ] 2>/dev/null; echo $?; [ -N /etc/passwd ] 2>/dev/null; echo $?",
+    // A read-only assignment ends only the function (status 2); `read -p` / `-e` are 2.
+    "f() { readonly l=1; l=2; echo no; }; f 2>/dev/null; echo rc=$?; printf 'a\\n' | { read -p P x 2>/dev/null; echo rc=$?; }; printf 'a\\n' | { read -e x 2>/dev/null; echo rc=$?; }",
 ];
 
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
@@ -2370,6 +2400,9 @@ const DASH_ONLY_CORPUS: &[&str] = &[
     "set -o pipefail 2>/dev/null; echo after",
     "set -o noglob; echo ok",
     "printf '\\x41|\\101|a\\cb\\n'; echo",
+    // printf: no `%n`, `%b` keeps `\\e`, `%a` is the hex float, `%05s` zero-pads;
+    // `read -p PROMPT`; a bad name is 2; `[^b]` is not a negated class.
+    "printf '%n\\n' 2>/dev/null; echo rc=$?; printf '%b\\n' '\\e'; printf 'a\\n' | { read -p P x; echo \"[$x]\"; }; printf 'a\\n' | { read 1x 2>/dev/null; echo rc=$?; }; case abc in a[^b]c) echo 1;; *) echo 2;; esac; printf '%a\\n' 1.5; printf '%05s|\\n' ab",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
@@ -2419,6 +2452,14 @@ const SH_BASH_CORPUS: &[&str] = &[
     "f() { local a=1 b; local; }; f",
     // `printf %b` reads a bare `\\NNN` as octal.
     "printf '%b\\n' 'A\\101\\x41'",
+    // Arithmetic names in substrings, `$FUNCNAME`, `$\"…\"`, test's `-a FILE` / `-o OPT`
+    // and no `-v`.
+    "x=abcdef; i=2; echo ${x:i} ${x:i+1:i}; f() { echo $FUNCNAME; }; f; echo $\"hello\"; [ -a /etc/passwd ]; echo $?; [ -o noglob ]; echo $?; [ -v HOME ] 2>/dev/null; echo $?",
+    // printf as in bash 5 (`\\c` literal, `\\E`, `%a`, `-n`), `%c` with no operand
+    // prints nothing; `read -e` off a pipe is plain, `-N` does not exist.
+    "printf 'a\\cb\\n'; printf '%s\\n' \"$(printf 'x\\Ey' | tr '\\033' _)\"; printf '%a\\n' 1.5; printf -n a 2>/dev/null; echo rc=$?; printf '[%c]\\n'; printf 'a\\n' | { read -e x; echo \"[$x]\"; }; printf 'a\\n' | { read -N 2 x 2>/dev/null; echo rc=$?; }",
+    // Brace ranges as in bash 5; `;&` is a syntax error.
+    "echo {Z..a} {0..02}; case abc in abc) echo 1;& xyz) echo 2;; esac 2>/dev/null; echo rc=$?",
 ];
 
 /// True when `path` is a bash build (`$BASH_VERSION` is set when it runs).

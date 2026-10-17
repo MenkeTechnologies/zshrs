@@ -683,8 +683,12 @@ pub fn execbuiltin(
                 if crate::dash_mode::dash_faithful() {
                     return 2;
                 }
-                // ksh93's `ulimit` usage error is 2 as well.
+                // ksh93's `ulimit` usage error is 2 as well; so is a bad `read` option
+                // in ksh93, mksh and /bin/sh.
                 if crate::dash_mode::ksh93_mode() && name == "ulimit" {
+                    return 2;
+                }
+                if name == "read" && (crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode()) {
                     return 2;
                 }
                 return 1; // c:393
@@ -803,8 +807,15 @@ pub fn execbuiltin(
             zexit(1, ZEXIT_NORMAL);
             return 1;
         }
-        // ksh93 `let` with no expression is a usage error, status 2.
+        // ksh93 `let` with no expression is a usage error, status 2; so is a bare
+        // `printf` in bash, ksh93 and /bin/sh.
         if argc < bn_ref.minargs && name == "let" && crate::dash_mode::ksh93_mode() {
+            return 2;
+        }
+        if argc < bn_ref.minargs
+            && name == "printf"
+            && (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode())
+        {
             return 2;
         }
         // bash and ksh93 answer a `getopts` with too few operands with a usage error, status 2.
@@ -4514,6 +4525,11 @@ pub fn bin_typeset(
     // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no `local`: the call is
     // "not found" (127) and the script goes on.
     if name == "local" && crate::dash_mode::ksh93_mode() {
+        zwarnnam(name, "not found");
+        return 127;
+    }
+    // !!! KORN GATE (no C counterpart) !!! neither ksh93 nor mksh has `declare`.
+    if name == "declare" && crate::dash_mode::korn_mode() {
         zwarnnam(name, "not found");
         return 127;
     }
@@ -13440,6 +13456,21 @@ pub fn bin_print(
         zwarnnam(name, &format!("Illegal option {}", &args[0][..2]));
         return 2;
     }
+    // !!! DROP-IN GATE (no C counterpart) !!! `printf -n …`: bash, ksh93 and /bin/sh
+    // report an invalid option (2; `-v NAME` is theirs); mksh runs the system printf,
+    // which fails with 1.
+    if func == BIN_PRINTF
+        && args.first().is_some_and(|a| a.len() > 1 && a.starts_with('-') && a != "--" && !a.starts_with("-v"))
+    {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode() {
+            zwarnnam(name, &format!("{}: invalid option", &args[0][..2]));
+            return 2;
+        }
+        if crate::dash_mode::pdksh_family() {
+            zwarnnam(name, &format!("illegal option -- {}", &args[0][1..2]));
+            return 1;
+        }
+    }
     // c:4659-4684 — "Error check option combinations and option arguments".
     // The FIRST thing bin_print does, before any argument work:
     //     if (OPT_ISSET(ops,'z') + OPT_ISSET(ops,'s') + OPT_ISSET(ops,'S') +
@@ -16808,6 +16839,48 @@ pub fn bin_read(
         return 2;
     }
     let mut args = args.to_vec();
+    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, dash and /bin/sh check
+    // the variable names up front ("not a valid identifier") and go on with status
+    // 1 (dash: 2); zsh's setsparam error ends the line. mksh takes `x-y` as a name.
+    if crate::dash_mode::bash_mode()
+        || crate::dash_mode::sh_mode()
+        || crate::dash_mode::ksh93_mode()
+        || crate::dash_mode::dash_faithful()
+    {
+        // `-p PROMPT` takes the first operand as the prompt text.
+        let skip_prompt = usize::from(OPT_ISSET(ops, b'p') && !crate::dash_mode::ksh93_mode());
+        for a in args.iter().skip(skip_prompt) {
+            let nm = a.split('?').next().unwrap_or("");
+            let base = nm.split('[').next().unwrap_or("");
+            if !crate::ported::params::isident(base) {
+                zwarnnam(name, &format!("`{}': not a valid identifier", a));
+                return if crate::dash_mode::dash_faithful() { 2 } else { 1 };
+            }
+        }
+    }
+    // Options the emulated shell's `read` does not have are usage errors (2):
+    // mksh `-p` (its coprocess form takes no prompt) / `-e`; ksh93 `-e`; bash and
+    // /bin/sh `-A`; /bin/sh (bash 3.2) `-N`.
+    let korn_e = crate::dash_mode::korn_mode() && OPT_ISSET(ops, b'e');
+    let mksh_p = crate::dash_mode::pdksh_family() && OPT_ISSET(ops, b'p');
+    let bash_big_a = (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) && OPT_ISSET(ops, b'A');
+    let sh_big_n = crate::dash_mode::sh_mode() && OPT_ISSET(ops, b'N');
+    if korn_e || mksh_p || bash_big_a || sh_big_n {
+        zwarnnam(name, "invalid option");
+        return 2;
+    }
+    // bash and /bin/sh `read -e` use readline only on a terminal: with input from
+    // a pipe or file it is a plain read, nothing is echoed. zsh's `-e` echoes the
+    // line and skips the assignment.
+    let ops_owned: options;
+    let ops: &options = if (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) && OPT_ISSET(ops, b'e') {
+        let mut o = ops.clone();
+        o.ind[b'e' as usize] = 0;
+        ops_owned = o;
+        &ops_owned
+    } else {
+        ops
+    };
     let mut nchars: i32 = 1; // c:6415
     let mut partial_eof = false;
 
@@ -16848,7 +16921,9 @@ pub fn bin_read(
     // the prompt text and shows it, without a newline, only when input is a
     // terminal. zsh's `-p` reads from the coprocess instead (c:6510), so every
     // `-p` test below is masked off in bash mode.
-    let bash_p = crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'p');
+    // dash and /bin/sh have the same `-p PROMPT` (the prompt shows only on a terminal).
+    let bash_p = (crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful() || crate::dash_mode::sh_mode())
+        && OPT_ISSET(ops, b'p');
     if bash_p && !args.is_empty() {
         let text = args.remove(0);
         let fd = if OPT_HASARG(ops, b'u') {
@@ -17680,6 +17755,16 @@ pub fn bin_read(
     // ASCII and `ifs_wide` for a multibyte char; only a single byte can be
     // IWSEP (c:Src/utils.c:3686).
     let read_multibyte = isset(crate::ported::zsh_h::MULTIBYTE);
+    // !!! DROP-IN GATE (no C counterpart) !!! NUL bytes in the input: bash, ksh93,
+    // mksh and dash drop them, /bin/sh (bash 3.2) ends the line at the first one;
+    // zsh keeps them.
+    let buf = if crate::dash_mode::sh_mode() {
+        buf.split('\0').next().unwrap_or("").to_string()
+    } else if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+        buf.replace('\0', "")
+    } else {
+        buf
+    };
     // Byte length of the unit at the front of `s`: a Meta pair is one unit.
     let unit_len = |s: &str| -> usize {
         let mut it = s.chars();
@@ -17911,7 +17996,27 @@ pub fn bin_read(
             }
         }
         // c:7078-7091 — strip trailing IFS whitespace.
-        emit(last, &rest[..ws_suffix_start(&rest)]);
+        let mut tail = &rest[..ws_suffix_start(&rest)];
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and
+        // /bin/sh also drop ONE trailing non-whitespace IFS delimiter from the last
+        // variable (`IFS=, read x y` on `a,b,` leaves y=b); zsh keeps it.
+        // (`a,b,,` keeps `b,,`: the delimiter is dropped only when the one before
+        // it is not a delimiter too.)
+        if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+            if let Some(lc) = tail.chars().last() {
+                let unit = lc.to_string();
+                let before = &tail[..tail.len() - unit.len()];
+                let prev_is_sep = before
+                    .chars()
+                    .last()
+                    .is_some_and(|p| unit_sep(&p.to_string()) == (true, false));
+                if unit_sep(&unit) == (true, false) && !before.ends_with(rmark) && !prev_is_sep {
+                    tail = before;
+                    tail = &tail[..ws_suffix_start(tail)];
+                }
+            }
+        }
+        emit(last, tail);
     } else {
         // c:Src/builtin.c:6843 — `read VAR` single-var path strips
         // leading/trailing IFS-whitespace exactly like the multi-var
@@ -18206,13 +18311,60 @@ pub fn bin_test(
     // (exists, same as `-e`) and `test -o OPTION` (option is on). In zsh's
     // grammar (c:7276+) both `-a` and `-o` are the binary AND / OR, so a lone
     // operand is "too many arguments".
-    if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode()) && argv.len() == 2 {
+    if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode())
+        && argv.len() == 2
+    {
         if argv[0] == "-a" {
             argv[0] = "-e".to_string();
         } else if argv[0] == "-o" {
             let r = crate::ported::cond::optison(Some(name), &argv[1]);
             return if r == 0 { 0 } else { 1 };
         }
+    }
+    // !!! DROP-IN GATE (no C counterpart) !!! a binary `-a` / `-o` with nothing after
+    // it (`[ 1 -eq 1 -a ]`, `[ -n x -o ]`) is "argument expected" (2) in bash, ksh93,
+    // mksh and /bin/sh; zsh's grammar reads the dangling operator as a word. bash 3.2
+    // has no `-v`; mksh no `-N`.
+    // bash, mksh and /bin/sh: from three operands on, unless the POSIX three-operand
+    // rule makes `$2` a binary primary (`[ -a -a -a ]` is the AND of two words);
+    // ksh93 only from four on (`[ -n abc -o ]` is still fine there).
+    let dangling_andor = argv.len() >= 2 && matches!(argv[argv.len() - 1].as_str(), "-a" | "-o");
+    let three_binary = argv.len() == 3
+        && (matches!(argv[1].as_str(), "-a" | "-o") || crate::ported::text::is_cond_binary_op(&argv[1]) != 0);
+    if dangling_andor
+        && ((crate::dash_mode::ksh93_mode() && argv.len() >= 4)
+            || ((crate::dash_mode::bash_mode() || crate::dash_mode::pdksh_family() || crate::dash_mode::sh_mode())
+                && argv.len() >= 3
+                && !three_binary))
+    {
+        zwarnnam(name, "argument expected");
+        return 2;
+    }
+    // `[ -a -a -a ]`: by the three-operand rule `$2` is the AND of two plain words
+    // in bash, mksh and /bin/sh; ksh93 rejects it (2), zsh's grammar takes it.
+    if three_binary
+        && matches!(argv[1].as_str(), "-a" | "-o")
+        && crate::dash_mode::ksh93_mode()
+        && argv[0].starts_with('-')
+        && argv[2].starts_with('-')
+    {
+        zwarnnam(name, "argument expected");
+        return 2;
+    }
+    if three_binary
+        && matches!(argv[1].as_str(), "-a" | "-o")
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::pdksh_family() || crate::dash_mode::sh_mode())
+        && argv[0].starts_with('-')
+        && argv[2].starts_with('-')
+    {
+        let (l, r) = (!argv[0].is_empty(), !argv[2].is_empty());
+        return if (argv[1] == "-a" && l && r) || (argv[1] == "-o" && (l || r)) { 0 } else { 1 };
+    }
+    if (crate::dash_mode::sh_mode() && argv.len() == 2 && argv[0] == "-v")
+        || (crate::dash_mode::pdksh_family() && argv.len() == 2 && argv[0] == "-N")
+    {
+        zwarnnam(name, &format!("{}: unexpected operator/operand", argv[1]));
+        return 2;
     }
 
     // c:7257-7274 — XSI 3/4-arg parens + 4-arg `!` extension.
@@ -21714,6 +21866,16 @@ fn printf_format(
                     return Err((out, format!("{raw}%: invalid directive"))); // c:5419
                 }
                 Some('%') => out.push('%'),
+                // !!! KSH93 GATE (no C counterpart) !!! ksh93 prints a `%` that ends the
+                // format (`printf '%'`, `'%5'`, `'%.'`, `'a%'`) literally, status 0.
+                None if crate::dash_mode::ksh93_mode() => {
+                    out.push('%');
+                    break;
+                }
+                // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's printf has no `%n`.
+                Some('n') if crate::dash_mode::dash_faithful() => {
+                    return Err((out, format!("{raw}n: invalid directive")));
+                }
                 Some('n') => {
                     // c:5427-5428 — `if (curarg) setiparam(curarg, count -
                     // rcount);`. The arg is the target variable's NAME; nothing
@@ -21732,7 +21894,39 @@ fn printf_format(
                 Some('s') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     spec.push('s');
-                    out.push_str(&format_spec_str(&spec, &a, false));
+                    // !!! DROP-IN GATE (no C counterpart) !!! bash, dash, mksh and /bin/sh
+                    // hand `%05s` to libc, which zero-pads a string on this platform
+                    // (`000ab`); zsh and ksh93 pad with spaces.
+                    let libc_zero = crate::dash_mode::bash_mode()
+                        || crate::dash_mode::dash_faithful()
+                        || crate::dash_mode::pdksh_family()
+                        || crate::dash_mode::sh_mode();
+                    out.push_str(&format_spec_str(&spec, &a, libc_zero));
+                    arg_i += 1;
+                }
+                // !!! DROP-IN GATE (no C counterpart) !!! `%a` / `%A`: the C99 hex float,
+                // which every real shell's printf has and zsh's lacks ("invalid directive").
+                Some(conv @ ('a' | 'A'))
+                    if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() =>
+                {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let v: f64 = match a.trim().parse::<f64>() {
+                        Ok(v) => v,
+                        Err(_) => crate::ported::math::matheval(a.trim()).map_or(0.0, |n| {
+                            if n.type_ == crate::ported::math::MN_FLOAT { n.d } else { n.l as f64 }
+                        }),
+                    };
+                    let (left, _zero, width, prec) = parse_flags_width_prec(&spec);
+                    let body = crate::dash_mode::hex_float(v, conv == 'A', crate::dash_mode::ksh93_mode(), prec);
+                    let body = if spec.contains('+') && v >= 0.0 { format!("+{body}") } else { body };
+                    let pad = width.saturating_sub(body.chars().count());
+                    if left {
+                        out.push_str(&body);
+                        out.push_str(&" ".repeat(pad));
+                    } else {
+                        out.push_str(&" ".repeat(pad));
+                        out.push_str(&body);
+                    }
                     arg_i += 1;
                 }
                 // bash/ksh `printf '%(FMT)T' TS` — strftime(FMT, TS). The
@@ -21989,6 +22183,17 @@ fn printf_format(
                     out.push_str(&format_spec_float_conv(&spec, n, conv));
                     arg_i += 1;
                 }
+                Some('c')
+                    if args.get(arg_i).is_none()
+                        && (crate::dash_mode::pdksh_family() || crate::dash_mode::sh_mode()) =>
+                {
+                    // !!! DROP-IN GATE (no C counterpart) !!! a `%c` with no operand
+                    // prints nothing but its padding in the system printf (mksh) and
+                    // bash 3.2 (/bin/sh); zsh writes a NUL byte.
+                    let (_, _, width, _) = parse_flags_width_prec(&spec);
+                    out.push_str(&" ".repeat(width));
+                    arg_i += 1;
+                }
                 Some('c') => {
                     // c:5300-5306 — `%c` outputs the arg's first char with
                     // WIDTH/justify applied (`%3c`→"  x", `%-3c`→"x  ") but
@@ -22112,11 +22317,11 @@ fn printf_format(
                             if cs[i] != BS || i + 1 >= cs.len() {
                                 o.push(cs[i]);
                                 i += 1;
-                            } else if cs[i + 1] == 'x' && crate::dash_mode::dash_faithful() {
-                                // dash: `\x` is no escape; keep the backslash itself.
+                            } else if matches!(cs[i + 1], 'x' | 'e' | 'E') && crate::dash_mode::dash_faithful() {
+                                // dash: `\x` and `\e` are no escapes; keep the backslash itself.
                                 o.push(BS);
                                 o.push(BS);
-                                o.push('x');
+                                o.push(cs[i + 1]);
                                 i += 2;
                             } else if cs[i + 1] == 'x' && crate::dash_mode::pdksh_family() {
                                 // system printf: `\x41` prints as `x41`.
@@ -22431,7 +22636,13 @@ fn parse_int_arg(s: &str) -> i64 {
             };
         let ndig = digits.chars().take_while(|c| c.is_digit(radix)).count();
         // Digit chars are ASCII, so char count == byte length of the run.
-        let mut val = i64::from_str_radix(&digits[..ndig], radix).unwrap_or(0);
+        // strtoimax saturates on overflow (`9223372036854775808` → INT64_MAX,
+        // `-9223372036854775809` → INT64_MIN).
+        let mut val = match i64::from_str_radix(&digits[..ndig], radix) {
+            Ok(v) => v,
+            Err(_) if ndig > 0 => return if neg { i64::MIN } else { i64::MAX },
+            Err(_) => 0,
+        };
         if neg {
             val = -val;
         }
@@ -22450,6 +22661,19 @@ fn parse_int_arg(s: &str) -> i64 {
     // magnitude 9223372036854775808 truncates to 18 digits exactly as
     // zsh, and INT64_MIN (-9223372036854775808) round-trips without the
     // manual `-parsed` negate that panicked on i64::MIN.
+    // !!! BASH/KSH93/SH GATE (no C counterpart) !!! a plain decimal past the 64-bit
+    // range saturates (strtoimax): bash 5, ksh93 and bash 3.2 all print
+    // INT64_MAX / INT64_MIN where zsh truncates the digits.
+    if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode() {
+        let t = s.trim();
+        let (neg, d) = match t.strip_prefix('-') {
+            Some(r) => (true, r),
+            None => (false, t.strip_prefix('+').unwrap_or(t)),
+        };
+        if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()) && d.parse::<i64>().is_err() {
+            return if neg { i64::MIN } else { i64::MAX };
+        }
+    }
     // c:5460-5464 — evaluate as math; on error emit the diagnostic (C's
     // mathevali does this internally), zero the value, and flag ret=1.
     match crate::ported::math::mathevali(s.trim()) {

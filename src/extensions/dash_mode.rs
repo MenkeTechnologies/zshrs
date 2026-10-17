@@ -312,6 +312,78 @@ pub fn note_error_message(msg: &str) {
     if pdksh_family() && crate::ported::math::M_LEVEL.with(|c| c.get()) == 0 && msg.starts_with("read-only variable: ") {
         READONLY_VIOLATION.store(true, Ordering::Relaxed);
     }
+    // mksh ends only the FUNCTION on a read-only assignment made inside one; the
+    // caller goes on with status 2 (ksh93, like zsh, ends the script).
+    if pdksh_family() && crate::ported::utils::locallevel() > 0 && msg.starts_with("read-only variable: ") {
+        KORN_FN_READONLY.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Set by [`note_error_message`] for a read-only violation inside a function
+/// under the pdksh line; consumed by the function-return path.
+static KORN_FN_READONLY: AtomicBool = AtomicBool::new(false);
+
+/// `Some(2)` once after an mksh function body hit a read-only assignment: the
+/// function ends, the error is cleared and the status is 2.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn take_korn_fn_readonly() -> Option<i32> {
+    if KORN_FN_READONLY.swap(false, Ordering::Relaxed) {
+        READONLY_VIOLATION.store(false, Ordering::Relaxed);
+        Some(2)
+    } else {
+        None
+    }
+}
+
+/// The C99 `%a` hex float the real shells' printf prints and zsh's lacks:
+/// `0x1p+0`, `0x1.8p+0`, `0x0p+0`, with the mantissa's trailing zeros dropped
+/// (`pad13` keeps all 13 digits, ksh93's `0x1.0000000000000p+0`) and `prec`
+/// rounding it to that many hex digits. `upper` is `%A`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn hex_float(v: f64, upper: bool, pad13: bool, prec: Option<usize>) -> String {
+    if v.is_nan() {
+        return if upper { "NAN" } else { "nan" }.to_string();
+    }
+    let sign = if v.is_sign_negative() { "-" } else { "" };
+    if v.is_infinite() {
+        return format!("{sign}{}", if upper { "INF" } else { "inf" });
+    }
+    let bits = v.to_bits();
+    let exp_bits = ((bits >> 52) & 0x7ff) as i64;
+    let mant = bits & ((1u64 << 52) - 1);
+    let (mut lead, exp) = if exp_bits == 0 {
+        (0u64, if mant == 0 { 0 } else { -1022 })
+    } else {
+        (1u64, exp_bits - 1023)
+    };
+    let digits = match prec {
+        Some(p) if p < 13 => {
+            let shift = 4 * (13 - p);
+            let rounded = (((lead << 52) | mant) + (1u64 << (shift - 1))) >> shift;
+            lead = rounded >> (4 * p);
+            if p == 0 {
+                String::new()
+            } else {
+                format!("{:0width$x}", rounded & ((1u64 << (4 * p)) - 1), width = p)
+            }
+        }
+        Some(p) => format!("{:0<width$}", format!("{:013x}", mant), width = p),
+        // ksh93 shows twelve mantissa digits (`0x1.800000000000p+0`).
+        None if pad13 => format!("{:013x}", mant)[..12].to_string(),
+        None => format!("{:013x}", mant).trim_end_matches('0').to_string(),
+    };
+    let mut s = format!("0x{lead}");
+    if !digits.is_empty() {
+        s.push('.');
+        s.push_str(&digits);
+    }
+    s.push_str(&format!("p{}{}", if exp >= 0 { "+" } else { "-" }, exp.abs()));
+    if upper {
+        s = s.to_uppercase();
+    }
+    format!("{sign}{s}")
 }
 
 /// True for the bare `zshrs --dash` drop-in (not the zsh-style
@@ -699,7 +771,11 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
     // (same command prints `[]`), so this widens to the pdksh line only,
     // not to `--ksh`. `FUNCNAME` and `BASH_VERSINFO` stay bash-only —
     // neither Korn shell has them.
-    if !bash_mode() && !(name == "PIPESTATUS" && pdksh_family()) {
+    // /bin/sh (bash 3.2) has `FUNCNAME` and `PIPESTATUS` too.
+    if !bash_mode()
+        && !(name == "PIPESTATUS" && pdksh_family())
+        && !(matches!(name, "FUNCNAME" | "PIPESTATUS") && sh_mode())
+    {
         return None;
     }
     match name {
@@ -3400,6 +3476,8 @@ fn dash_getn(s: &str) -> Result<i64, String> {
         return Err(format!("Illegal number: {s}"));
     }
     let mag = digits.bytes().try_fold(0i64, |a, b| a.checked_mul(10)?.checked_add((b - b'0') as i64));
+    // Saturates like the Homebrew dash this harness also checks against
+    // (/bin/dash reports "Illegal number" instead — a version split).
     Ok(match (mag, neg) {
         (Some(m), false) => m,
         (Some(m), true) => -m,

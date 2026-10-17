@@ -12277,7 +12277,23 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
             // `\E` yield ESC where zsh yields `\E`. Unlike the octal
             // `continue` arm (c:7159), C restores the miscadded decrement
             // here, since the backslash is kept.
-            Some('E') if (how & GETKEY_EMACS) == 0 => {
+            // !!! DROP-IN GATE (no C counterpart) !!! in a printf FORMAT mksh's
+            // system printf prints `\e` / `\E` as the bare letter.
+            Some(c @ ('e' | 'E'))
+                if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
+                    && crate::dash_mode::pdksh_family() =>
+            {
+                result.push(c);
+                consumed += 1;
+            }
+            // !!! DROP-IN GATE (no C counterpart) !!! `\E` is ESC everywhere in
+            // bash, ksh93 and /bin/sh.
+            Some('E')
+                if (how & GETKEY_EMACS) == 0
+                    && !(crate::dash_mode::bash_mode()
+                        || crate::dash_mode::ksh93_mode()
+                        || crate::dash_mode::sh_mode()) =>
+            {
                 consumed += 1;
                 if miscadded {
                     if let Some(m) = misc.as_deref_mut() {
@@ -12677,6 +12693,52 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
             // set, drop the backslash; otherwise keep `\<char>`.
             Some(c) => {
                 consumed += 1;
+                // !!! DROP-IN GATE (no C counterpart) !!! `\E` is ESC in bash, ksh93
+                // and /bin/sh (zsh knows only `\e`); in a printf FORMAT mksh's system
+                // printf prints `\e`/`\E` as the bare letter. `\c` in a printf FORMAT:
+                // bash and /bin/sh print it literally, ksh93 reads `\cX` as the
+                // control character (NUL when nothing follows), mksh drops the
+                // backslash; zsh ends the output.
+                let printf_fmt = (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0;
+                if c == 'c' && printf_fmt {
+                    if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
+                        result.push('\\');
+                        result.push('c');
+                        continue;
+                    }
+                    if crate::dash_mode::ksh93_mode() {
+                        // The operand is the DECODED next character: `\c\n` is
+                        // control-newline (`J`).
+                        let mut operand = chars.next();
+                        if operand == Some('\\') {
+                            consumed += 1;
+                            operand = chars.next().map(|x| match x {
+                                'n' => '\n',
+                                't' => '\t',
+                                'r' => '\r',
+                                'a' => '\u{7}',
+                                'b' => '\u{8}',
+                                'f' => '\u{c}',
+                                'v' => '\u{b}',
+                                'e' | 'E' => '\u{1b}',
+                                other => other,
+                            });
+                        }
+                        let ctrl = match operand {
+                            Some(x) => {
+                                consumed += 1;
+                                (x.to_ascii_uppercase() as u8) ^ 0x40
+                            }
+                            None => 0,
+                        };
+                        result.push(ctrl as char);
+                        continue;
+                    }
+                    if crate::dash_mode::pdksh_family() {
+                        result.push('c');
+                        continue;
+                    }
+                }
                 // c:utils.c:7045 — `\c` under GETKEY_BACKSLASH_C
                 // means TRUNCATE: drop the rest of the input,
                 // suppress the trailing newline. Used by `echo`

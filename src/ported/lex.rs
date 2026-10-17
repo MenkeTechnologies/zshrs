@@ -1622,7 +1622,8 @@ fn gettok() -> lextok {
                     // `dash: 1: Syntax error: "&" unexpected`), so the
                     // POSIX/ksh drop-ins must keep rejecting it, and
                     // `--zsh` keeps zsh's parse error verbatim.
-                    if crate::extensions::dash_mode::bash_mode() {
+                    // mksh has `;;&` as well (ksh93 and dash reject it).
+                    if crate::extensions::dash_mode::bash_mode() || crate::dash_mode::pdksh_family() {
                         match hgetc() {
                             Some('&') => return SEMIBAR,
                             Some(d2) => {
@@ -1636,7 +1637,8 @@ fn gettok() -> lextok {
                 }
                 // !!! DASH-STRICT GATE (no C counterpart) !!! `;&` / `;|` are zsh/ksh/bash
                 // case terminators; dash lexes `;` then a stray `&` / `|` (syntax error).
-                Some('&') if !crate::dash_mode::dash_strict() => SEMIAMP,
+                // bash 3.2 (/bin/sh) has no `;&` either.
+                Some('&') if !crate::dash_mode::dash_strict() && !crate::dash_mode::sh_mode() => SEMIAMP,
                 Some('|') if !crate::dash_mode::dash_strict() => SEMIBAR,
                 _ => {
                     if let Some(d) = d {
@@ -2337,7 +2339,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // !!! BASH/KSH-MODE (no C counterpart) !!! bash/ksh locale translation
                         // `$"..."` is the plain string when no catalog applies; zsh keeps
                         // the `$` literal.
-                        if !(crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode()) {
+                        if !(crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode()) {
                             add(Stringg);
                         }
                         add(Dnull);
@@ -2803,7 +2805,9 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 } else if next.is_none()
                     && !sub
                     && (crate::dash_mode::bash_mode()
-                        || crate::dash_mode::ksh93_mode()
+                        // ksh93 keeps it only as a word of its own (`echo \` prints `\`,
+                        // `echo a\` prints `a`).
+                        || (crate::dash_mode::ksh93_mode() && LEX_LEXBUF.with_borrow(|b| b.len == 0))
                         || crate::dash_mode::dash_faithful())
                 {
                     // !!! BASH/KSH93/DASH GATE (no C counterpart) !!! a backslash at the
