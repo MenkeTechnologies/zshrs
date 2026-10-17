@@ -4998,7 +4998,10 @@ pub fn bin_typeset(
         }
         // `typeset -u` / `-l` on a number makes it a plain upper- or lower-cased string.
         if (on & (PM_LOWER | PM_UPPER)) != 0 && (on & PM_INTEGER) == 0 {
-            off |= PM_INTEGER | PM_UNIQUE;
+            off |= PM_INTEGER;
+            if (on & PM_UNIQUE) == 0 {
+                off |= PM_UNIQUE;
+            }
         }
     }
     // !!! KSH93 (no C counterpart) !!! `typeset NAME=value` on an existing numeric or justified

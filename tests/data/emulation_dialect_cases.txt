@@ -269,18 +269,18 @@ zsh,bash,ksh,ksh/zsh-style,mksh	if [[ ab == a+(b) ]]; then printf T; else printf
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 1 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 0 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 1 + 1 == 2 )); printf '%s %s\n' $? "$x" 2>/dev/null
-zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( x = 5 )); printf '%s %s\n' $? "$x" 2>/dev/null
-zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( x = 5, y = x * 2 )); printf '%s %s\n' $? "$x" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	xxxx=1; (( xxxx = 5 )); printf '%s %s\n' $? "$xxxx" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	xxxx=1; (( xxxx = 5, y = xxxx * 2 )); printf '%s %s\n' $? "$xxxx" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 3 > 2 && 2 > 1 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 3 < 2 || 2 > 1 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( !0 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,sh/zsh-style,ksh/zsh-style,mksh	x=1; (( ~0 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 1 ? 0 : 1 )); printf '%s %s\n' $? "$x" 2>/dev/null
-zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( x++ )); printf '%s %s\n' $? "$x" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	xxxx=1; (( xxxx++ )); printf '%s %s\n' $? "$xxxx" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( ++x )); printf '%s %s\n' $? "$x" 2>/dev/null
-zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( x-- )); printf '%s %s\n' $? "$x" 2>/dev/null
-zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( x += 3 )); printf '%s %s\n' $? "$x" 2>/dev/null
-zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( x <<= 2 )); printf '%s %s\n' $? "$x" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	xxxx=1; (( xxxx-- )); printf '%s %s\n' $? "$xxxx" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	xxxx=1; (( xxxx += 3 )); printf '%s %s\n' $? "$xxxx" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	xxxx=1; (( xxxx <<= 2 )); printf '%s %s\n' $? "$xxxx" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 7 % 3 == 1 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 2 ** 3 == 8 )); printf '%s %s\n' $? "$x" 2>/dev/null
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; (( 0x10 == 16 )); printf '%s %s\n' $? "$x" 2>/dev/null
