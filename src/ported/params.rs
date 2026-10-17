@@ -4806,42 +4806,55 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                 // c:1736-1760 — the ARRAY search arm (`ishash` false, so
                 // c:1711's hash scan is skipped and `ta = getarrvalue(v)` is
                 // walked directly). C's `getarg` returns the 1-based INDEX
-                // `r` of the match and getindex's tail (c:2151-2153) turns it
-                // into `start`/`end`; this port's `getarg` has no Value
-                // out-param and hands back the matched ELEMENT(S) instead, so
-                // put them in `v->arr` — the same cache `getvaluearr` reads
-                // first (c:711-712) — and set the bounds to cover exactly
-                // them. `k`/`K` degrade to `r`/`R` here because C gates
-                // `keymatch = ishash` (c:1401/1406).
+                // `r` of the match — the same walk for `r`/`R` as for
+                // `i`/`I`, since `ind` only steers the hash scan (c:1741) —
+                // and `k`/`K` act as `r`/`R` because c:1401/1406 gate
+                // `keymatch = ishash`. This port's `getarg` hands back the
+                // matched ELEMENT for `r`/`R`, so search with the index flags
+                // to get `r` (the same r->i / R->I mapping as the scalar arm
+                // above) and run getindex's non-inv tail on it. The bounds
+                // must name the real element: `${a[(r)y]::=Q}` and every
+                // other write through these bounds lands on it (c:3343).
+                let mapped: String = flag_part
+                    .chars()
+                    .map(|c| match c {
+                        'r' | 'k' => 'i',
+                        'R' | 'K' => 'I',
+                        other => other,
+                    })
+                    .collect();
+                let body_idx = format!("({}{}", mapped, &body[1 + flag_part.len()..]);
                 let arr: Vec<String> = v.pm.as_ref().map(|p| arrgetfn(p)).unwrap_or_default();
-                if let Some(getarg_out::Value(val)) = getarg(body, Some(&arr), None, None) {
-                    let hits: Vec<String> = match val {
-                        // c:1724-1734 — the MATCHMANY forms are array-shaped.
-                        Value::Array(parts) => parts.iter().map(|p| p.to_str()).collect(),
-                        other => {
-                            // c:1758 — a miss returns index 0, i.e. no
-                            // element; this port signals it with "".
-                            let s = other.to_str();
-                            if s.is_empty() {
-                                Vec::new()
-                            } else {
-                                vec![s]
-                            }
+                if let Some(getarg_out::Value(val)) = getarg(&body_idx, Some(&arr), None, None) {
+                    let mut r: i64 = val.to_str().parse().unwrap_or(0);
+                    // !!! RUST-ONLY: this port's getarg already applies the
+                    // c:2091 KSHARRAYS shift to a search index (its `ksh_idx`),
+                    // a step C takes only on getindex's INV branch. Undo it so
+                    // the non-inv tail below sees C's 1-based `r`. The shift
+                    // leaves 0 alone, so for a reverse search 0 is either the
+                    // c:1758 miss or a last match on the first element; the
+                    // value-returning search tells them apart.
+                    if isset(KSHARRAYS) {
+                        let down = flag_part
+                            .chars()
+                            .rev()
+                            .find(|c| matches!(c, 'r' | 'R' | 'k' | 'K'))
+                            .is_some_and(|c| c.is_ascii_uppercase());
+                        let first_hit = r == 0
+                            && down
+                            && !arr.is_empty()
+                            && !arr[0].is_empty()
+                            && matches!(
+                                getarg(body, Some(&arr), None, None),
+                                Some(getarg_out::Value(hit)) if hit.to_str() == arr[0]
+                            );
+                        if r > 0 || !down || first_hit {
+                            r += 1;
                         }
-                    };
-                    // c:1394-1399 — the LAST direction letter decides `down`
-                    // (every arm resets the others); `k`/`K` act as `r`/`R`
-                    // on an array (c:1401/1406 `keymatch = ishash`).
-                    let down = flag_part
-                        .chars()
-                        .rev()
-                        .find(|c| matches!(c, 'r' | 'R' | 'k' | 'K'))
-                        .is_some_and(|c| c.is_ascii_uppercase());
-                    if hits.is_empty() && down {
-                        // c:1758-1760 / c:1782 — a reverse search that matches
-                        // nothing returns index 0, so getindex's tail sees
-                        // `start == 0 && end == 0` (c:2126) and the
-                        // zero-subscript rule decides what that means:
+                    }
+                    if r == 0 {
+                        // c:2125-2150 — `start == 0 && end == 0`: a reverse
+                        // search that matched nothing (c:1758 / c:1782).
                         if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
                             // c:2134-2140 — "Treat this as accessing the
                             // first element of the array."
@@ -4853,12 +4866,11 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                             v.start = -1; // c:2148
                             v.end = 0;
                         }
-                        *pptr = past_close; // c:2164
-                        return 0; // c:2166
+                    } else {
+                        v.start = (r - 1) as i32; // c:2123-2124 `start -= startprevlen`
+                        v.end = r as i32; // c:2117 `end = start`
                     }
-                    v.start = 0; // c:2144-2145 (getarg's 1, less startprevlen)
-                    v.end = hits.len() as i32; // c:2135
-                    v.arr = hits;
+                    v.scanflags = 0; // c:2153-2158 — no MATCHMANY on an array
                     *pptr = past_close; // c:2164
                     return 0; // c:2166
                 }
@@ -6112,38 +6124,19 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                     pm.u_arr = Some(one);
                 }
             } else {
-                // c:2933+ — slice splice path with bounds adjust.
-                let arr = pm.u_arr.get_or_insert_with(Vec::new);
-                let len = arr.len() as i64;
-                let start_raw = v.start as i64;
-                let end_raw = v.end as i64;
-                let start = if start_raw < 0 {
-                    (len + start_raw + 1).max(0)
-                } else {
-                    start_raw
-                };
-                let end = if end_raw < 0 {
-                    (len + end_raw + 1).max(0)
-                } else {
-                    end_raw
-                };
-                let start_idx = (start.max(1) - 1) as usize;
-                let end_idx = end.max(0) as usize;
-                while arr.len() < start_idx {
-                    arr.push(String::new());
+                // c:2813-2819 — the one-element array goes through
+                // setarrvalue, which owns the slice splice (c:2933+) and the
+                // VALFLAG_INV adjustment (c:2938-2942). Lift getindex's
+                // 0-based start to the 1-based start this port's setarrvalue
+                // keeps (its c:2944 WARNING), exactly as assignaparam does.
+                if v.start >= 0 && (v.valflags & VALFLAG_INV) == 0 {
+                    v.start += 1;
                 }
-                let end_idx = end_idx.min(arr.len());
-                if start_idx <= end_idx {
-                    arr.splice(start_idx..end_idx, one);
-                } else {
-                    for (i, x) in one.into_iter().enumerate() {
-                        if start_idx + i < arr.len() {
-                            arr[start_idx + i] = x;
-                        } else {
-                            arr.push(x);
-                        }
-                    }
+                setarrvalue(v, one); // c:2818
+                if let Some(pm) = v.pm.as_mut() {
+                    setscope(pm); // c:2835
                 }
+                return; // c:2836-2840 — PM_ARRAY is never exported here
             }
         }
         t if t == PM_HASHED => {
@@ -6384,15 +6377,23 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
         return;
     }
 
-    // c:2938-2942 — VALFLAG_INV + !KSHARRAYS off-by-one. Inverse
+    // c:2925-2929 — VALFLAG_INV + !KSHARRAYS off-by-one. Inverse
     // subscripts (`a[(i)pat]=val`) are 1-based when KSHARRAYS is
-    // off; shift start/end down by 1 to match the 0-based slice
-    // arithmetic below.
-    if v.valflags & VALFLAG_INV != 0 && !isset(KSHARRAYS) {
-        if v.start > 0 {
-            v.start -= 1;
+    // off: `if (v->start > 0) v->start--; v->end--;`. That leaves C's
+    // 0-based start (under KSHARRAYS getindex already made it 0-based,
+    // c:2091); lift it to the 1-based start this port keeps (the
+    // RUST-ONLY INDEX CONVENTION WARNING below). Without the lift
+    // `${a[(i)y]::=Q}` on (x y z) overwrote `x` and `y`.
+    if v.valflags & VALFLAG_INV != 0 {
+        if !isset(KSHARRAYS) {
+            if v.start > 0 {
+                v.start -= 1; // c:2927
+            }
+            v.end -= 1; // c:2928
         }
-        v.end -= 1;
+        if v.start >= 0 {
+            v.start += 1;
+        }
     }
 
     // c:2933+ — PM_ARRAY slice path.
@@ -8904,6 +8905,56 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         // reaches this through c:Src/subst.c:3313 `setsparam(idbeg, …)`, whose
         // `idbeg` still carries the `[@]`).
         let is_whole_value = key == "@" || key == "*"; // c:2048
+        // c:3251 + c:1410 — a subscript FLAG GROUP (`a[(r)pat]`, `s[(i)c]`)
+        // on an existing non-hashed parameter is resolved by getindex's
+        // search, never by arithmetic: `getvalue(&vbuf, &t, 1)` leaves
+        // v->start/v->end on the matched element and c:3343 assignstrvalue
+        // writes through them. paramsubst's `${a[(r)y]::=Q}` reaches here via
+        // c:Src/subst.c:3313 `setsparam(idbeg, …)` with the raw subscript.
+        if !is_hashed
+            && !is_whole_value
+            && (key.starts_with('(') || key.starts_with(crate::ported::zsh_h::Inpar))
+        {
+            let pm_clone = paramtab().read().ok().and_then(|t| t.get(name).cloned());
+            if let Some(pm_clone) = pm_clone {
+                if (pm_clone.node.flags as u32 & PM_READONLY) != 0 {
+                    zerr(&format!("read-only variable: {}", name)); // c:3217
+                    unqueue_signals(); // c:3220
+                    return None; // c:3221
+                }
+                // c:2268-2277 (fetchvalue) — an array value carries
+                // `v->scanflags = flags`, or SCANPM_ARRONLY when no flags were
+                // passed, so getarg answers an element index for (r)/(R).
+                let scanflags = if PM_TYPE(pm_clone.node.flags as u32) & (PM_ARRAY | PM_HASHED) != 0 {
+                    SCANPM_ARRONLY as i32
+                } else {
+                    0
+                };
+                let mut v = value {
+                    pm: Some(pm_clone),
+                    arr: Vec::new(),
+                    scanflags,
+                    valflags: 0,
+                    start: 0,
+                    end: -1,
+                };
+                let bracketed = format!("[{}]", key);
+                let mut sp: &str = &bracketed;
+                if getindex(&mut sp, &mut v, 0) != 0 {
+                    unqueue_signals(); // c:3220
+                    return None;
+                }
+                assignstrvalue(Some(&mut v), Some(val.to_string()), flags); // c:3343
+                let cloned = v.pm.clone();
+                if let Some(pm_back) = v.pm {
+                    if let Some(slot) = paramtab().write().unwrap().get_mut(name) {
+                        *slot = pm_back;
+                    }
+                }
+                unqueue_signals(); // c:3344
+                return cloned; // c:3345
+            }
+        }
         let resolved_idx: i64 = if is_hashed || is_whole_value {
             0 // unused: hashed params key by name, `[@]`/`[*]` by start/end
         } else {

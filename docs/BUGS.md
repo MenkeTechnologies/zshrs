@@ -61431,6 +61431,38 @@ line 2 where zsh writes line 1 (`$LINENO` 1 vs 0 after loading it, in either she
 `cur_add_func` re-parses `shfunc::body`, which `funcdef_capture` trims, so the body's offset from
 its header is gone before the dump is written.
 
+## #1184 — a write through a subscript SEARCH landed on the wrong element — fixed
+
+**Status:** `fixed` 2026-10-17.
+
+```console
+$ zsh   -fc 'a=(x y z); : ${a[(r)y]::=Q}; b=(x y z); : ${b[(i)y]::=Q}; print -r -- $a / $b'
+x Q z / x Q z
+$ zshrs -fc 'a=(x y z); : ${a[(r)y]::=Q}; b=(x y z); : ${b[(i)y]::=Q}; print -r -- $a / $b'
+zshrs:1: bad math expression: operator expected at `y'
+```
+
+Also `(( a[(i)3] = 7 ))` reported "assignment to invalid subscript range", and
+`setopt ksharrays; a[(i)y]=Q` wrote the element after the match.
+
+**C reference.** Every subscripted write is `assignsparam` → `getvalue(&vbuf, &t, 1)`
+(c:Src/params.c:3251), whose `getindex` runs the flag search and leaves
+`v->start`/`v->end` on the matched element; `assignstrvalue` (c:3343) writes through
+those bounds, an array element via `setarrvalue` (c:2818). paramsubst's `::=` reaches
+it with the raw subscript through `setsparam(idbeg, …)` (c:Src/subst.c:3313).
+
+**Fix.**
+* `assignsparam` (`src/ported/params.rs`) resolves a `(flags)` subscript on a
+  non-hashed parameter through `getindex` → `assignstrvalue` instead of arithmetic.
+* `getindex`'s array `(r)`/`(R)`/`(k)`/`(K)` arm returns the element's index bounds
+  (c:2117-2158) instead of caching the matched value over `0..n`.
+* `assignstrvalue`'s PM_ARRAY arm calls `setarrvalue` (c:2818) instead of its own splice.
+* `setarrvalue`'s VALFLAG_INV adjustment (c:2925-2929) is lifted to the port's 1-based start.
+* The fusevm `name[sub]=v` store and the math `a[sub]=` store hand a flag subscript to
+  `assignsparam` untouched (the store's own search, which ignored KSHARRAYS, is removed).
+
+Pinned by `tests/parity/subscript_search_assign_parity.rs`.
+
 ## #1185 — a subscript on an integer/float parameter stored an array element — fixed
 
 **Status:** `fixed` 2026-10-17.

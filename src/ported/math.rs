@@ -3213,7 +3213,10 @@ pub(crate) fn setmathvar(name: &str, val: mnumber, pval: bool) -> mnumber {
                 })
                 .unwrap_or(false)
         };
-        let canonical = if is_hashed {
+        // c:Src/params.c:1410 — a `(flags)pat` subscript is a getindex
+        // SEARCH, not arithmetic; assignsparam resolves it through getindex.
+        let is_search = body.starts_with('(') || body.starts_with(crate::ported::zsh_h::Inpar);
+        let canonical = if is_hashed || is_search {
             name.to_string()
         } else {
             // Save/restore evaluator state around the recursive
