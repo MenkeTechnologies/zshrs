@@ -61340,3 +61340,58 @@ in `fusevm_bridge.rs`. Three other openers reach the same file with `fs::File::c
 !APPEND_CREATE rule that the `r::APPEND` arm already ports (c:Src/exec.c:3989-3990). In C every one of
 these goes through `clobber_open` / the same append mode selection, so the fix is to route them through
 the existing check rather than add three more copies of it.
+
+## #1181 — real-shell drop-ins diverged from their reference shells on ~60 dialect details — fixed
+
+**Status:** `fixed` 2026-10-16, v0.13.46–0.13.48. Found by running candidate scripts through all nine ways of
+`tests/emulation_parity.rs` (stdout + exit status against the real shell) and fixing every divergence that
+was a shell difference rather than a host artefact. Each fix has a corpus case in that file.
+
+The matrix itself had a reference-selection defect: `bash` resolved to macOS `/bin/bash` 3.2.57 and `ksh` to
+ksh93u+ 2012, although zshrs advertises bash 5.3 and ksh93u+m 1.0.10. 94 cases failed on that alone; the
+references now prefer `/opt/homebrew/bin/bash` and `/opt/homebrew/bin/ksh`.
+
+| Dialect | Divergence | Fix |
+|---|---|---|
+| bash, ksh93, mksh, sh, dash | `$OPTARG` was set (empty) at startup | unset in every drop-in; `getopts` leaves it unset after an option with no argument in bash/ksh93/mksh |
+| bash, ksh93, mksh, sh | `break` / `continue` outside a loop aborted the script | no-op returning 0 |
+| bash, ksh93, mksh | `"${@-x}"`, `"${@+x}"` with no positionals treated `$@` as set | unset for `-`/`+`; dash/ash keep "set" |
+| dash, ash | quoted `"${@-w}"` with no positionals produced no word | one empty word |
+| dash | `set -o pipefail` (any non-dash name) accepted | fatal "Illegal option -o", status 2 |
+| dash, ash | `builtin` existed | "command not found" |
+| dash | `printf '\x41'`, `echo '\e'` interpreted | printed literally; octal kept |
+| dash, ash | `.*` omitted `.` and `..` | included |
+| dash, ash | `fg`/`bg` with no job, invalid `umask` returned 1 | 2 |
+| dash | `kill -SIGCONT`, `kill -n`, `kill nosuch` accepted / status 1 | status 2, script continues |
+| bash, dash, ash | `printf '%3$s'` worked | invalid directive |
+| bash, ksh93, mksh | `printf '%lld'`, `%hhd`, `%zd` rejected | length-modifier runs accepted |
+| bash | `export -n`, `cd ''`, `cd a b`, `exit abc`, `return abc`, `set -o BAD`, `$BASHPID`, `select` at EOF | `-n` drops the attribute; 1; 2; 2; 2; 2 (no abort); own pid; status 1 with the newline on stdout |
+| bash, ksh93, mksh, sh | `$((0b11))` accepted; `alias 'z z=x'` accepted | arithmetic error; "invalid alias name", status 1 |
+| ksh93 | `$((010))` octal, `local`, `builtin NAME`, `ENV`, `PS1`, `shift -1`, `ulimit -Z` | per-shell: decimal (kept), "not found" 127, "not found" 1, `~/.kshrc`, unset, fatal usage error, status 2 |
+| mksh/pdksh | read-only violation and failed `cd` returned 1; `**` and `{1..3}` expanded; `printf %d 010` decimal | 2 (2 for read-only only, not `set -u`/`${x:?}`/`$((1/0))`); both rejected; octal |
+| bash, dash, ksh93, mksh | `type`/`command -v` wording; `which` was a zsh builtin | "shell keyword" / "keyword"; external `which`; ksh93 alias prints its value, dash `alias a='b'` |
+| dash, ash, ksh93, mksh | `$UID`, `$EUID`, `$OSTYPE`, `$MACHTYPE`, `$COLUMNS`, `$LINES`, `$!` (before a job) were set | unset (mksh keeps `COLUMNS`/`LINES`); `$PS1`/`$PS2` values per shell |
+| sh, ksh (incl. zsh-style legs) | `$10` was `${10}` | `${1}0` (lexer escapes the second digit when `EMULATION(SH\|KSH)`) |
+| zsh and zsh-style legs | `[ a \< b ]` ordered strings | "condition expected", status 2 (ordering only in the drop-ins) |
+
+**Not fixed (host artefacts or out of scope):** `/bin/sh` on macOS is bash 3.2 in POSIX mode and `ash` is
+busybox, so their differences are not encoded; `$BASHPID` equals `$$` inside `$(...)` (command substitution
+runs in-process); `[[ x =~ (a)(b) ]]` in the zsh-style legs is accepted by the `emulate sh<newline>script`
+oracle but a parse error under `parity-fuzz`'s `emulate sh -c` oracle; ksh `$((x))` with `x=abc`, ksh/mksh
+64-bit overflow, mksh's rejection of bashisms, ksh93 `type -t` and `${1:?msg}` inside a function.
+
+## #1182 — prompt stalled when many shells shared `zshrs_history.db` — fixed
+
+**Status:** `fixed` 2026-10-16, v0.13.46 (`4d47ce7b39`).
+
+Accepting a line ran `HistoryEngine::add` (UNIQUE-index probe + FTS5 trigram insert) and the next prompt ran
+`update_last`, both synchronously, on a rollback-journal database with `synchronous=FULL`. With one shell per
+tmux pane and broadcast input every pane writes the same file at once. Measured on a copy of the database, 16
+concurrent writers: median 3.7 ms, p95 90 ms, **max 1.8 s** per command (single writer 3 ms).
+
+Fix (`src/extensions/history.rs`): the file is opened WAL with `synchronous=NORMAL` and a 2 s busy timeout, and
+`history_sqlite_add` / `history_sqlite_finish` post to a per-shell writer thread that owns its own connection
+(opened on the main thread so the descriptors land above the script range). `zexit` calls
+`history_sqlite_flush`, which drains the queue (bounded at 3 s). The same benchmark under WAL + NORMAL: p95
+24 ms, max 0.76 s before the thread, and the prompt no longer waits on any of it. A failed thread start falls
+back to the old inline write.
