@@ -99,7 +99,7 @@ const PARITY_CASES: &[ParityCase] = &[
     ParityCase {
         name: "dash",
         zshrs_flags: &["--dash"],
-        candidates: &["/bin/dash", "/usr/bin/dash"],
+        candidates: &["/opt/homebrew/bin/dash", "/bin/dash", "/usr/bin/dash"],
         ref_emulate: None,
         extended: false,
         optional: false,
@@ -1703,6 +1703,7 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "x=a/b; echo \"[${x///:}] [${x///}] [${x////}] [${x///b}] [${x//a/}]\"",
     "command -x 2>/dev/null; echo $?",
     "command -x echo hi 2>/dev/null; echo $?",
     "command -pv echo; command -p -V echo; command -pV ls",

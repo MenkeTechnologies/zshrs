@@ -18284,7 +18284,15 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), chars.len(), vec![]);
                 }
-                let (raw_pat, raw_repl) = split_unescaped(rep);
+                // !!! BASH-MODE GATE (no C counterpart) !!! bash reads a `/` right after `//`
+                // as the first character of the pattern: `${x///:}` replaces "/:", not "".
+                let (raw_pat, raw_repl) = match rep.strip_prefix('/') {
+                    Some(tail) if crate::dash_mode::bash_mode() => {
+                        let (p, r) = split_unescaped(tail);
+                        (format!("/{p}"), r)
+                    }
+                    _ => split_unescaped(rep),
+                };
                 // c:Src/lex.c:1519-1556 + c:Src/subst.c:301 — inside
                 // double quotes `$'` is Qstring + RAW `'` and is NOT
                 // ANSI-C; C's getmatch replacement keeps it literal
