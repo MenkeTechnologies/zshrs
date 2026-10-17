@@ -1238,7 +1238,9 @@ pub fn korn_dollar_dash() -> String {
         for c in ['c', 'a', 'e', 'f', 'h', 'i', 'm', 'n', 's', 'u', 'v', 'x'] {
             let set = match c {
                 'c' => is_c,
-                'h' | 's' => true,
+                'h' => true,
+                // `s`: commands come from a string or stdin, not a script file.
+                's' => is_c || on("shinstdin"),
                 _ => has(c),
             };
             if set {
