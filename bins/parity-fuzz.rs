@@ -598,19 +598,32 @@ fn run_zsh(script: &str, timeout: Duration) -> RunOut {
             run_with_timeout_stdin(cmd, timeout, stdin_mode().then_some(script))
         }
         RefKind::ZshEmulate(mode) => {
-            // zsh-STYLE leg: real zsh started UNDER the emulated shell's name (`sh`, `ksh`), which
-            // applies `emulate -R <mode>` before the script is parsed, exactly what `zshrs --<mode>
-            // --zsh` stands in for. A `-c "emulate <mode> -c …"` wrapper would also parse under the
-            // emulation, but `emulate -c` answers 1 whenever its body left an error pending, which
-            // a shell started as `<mode>` does not.
-            let dir = std::env::temp_dir().join(format!("parity-fuzz-zsh-{}", std::process::id()));
-            let link = dir.join(mode);
-            if !link.exists() {
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::os::unix::fs::symlink(zsh_path(), &link);
-            }
-            let mut cmd = Command::new(&link);
-            cmd.args(["-f", "-c", script]);
+            // zsh-STYLE leg: parse the script UNDER `emulate <mode>`.
+            //
+            // A single `-c "emulate <mode>\n<script>"` is WRONG: zsh parses the
+            // ENTIRE -c string under PLAIN-zsh options BEFORE the `emulate` line
+            // executes, so parse-time emulation deltas (IGNOREBRACES, SH_GLOB,
+            // …) never apply to the script's parse. That flawed oracle reported
+            // ~100+ phantom "brace-leniency" gaps for ShZsh — e.g. `f() { cmd }`
+            // parsed leniently by the plain-zsh reference but strictly by
+            // `zshrs --sh --zsh` (IGNOREBRACES active at parse), which is the
+            // CORRECT match to `zsh -o ignorebraces`.
+            //
+            // The `emulate <mode> -c "$s"` one-shot form DOES parse its argument
+            // under the emulation (Src/builtin.c bin_emulate → parses with the
+            // emulated option set). The script rides in as the positional `$1`
+            // so arbitrary quotes / `$` / backticks in it cannot break out of
+            // the fixed wrapper. `emulate -c` runs its body in the CURRENT
+            // positional scope, so we FIRST stash the script (`s=$1`) then clear
+            // the positionals (`set --`) — otherwise a script using `$#` / `$@`
+            // / `$*` would see the wrapper's own args (`$#`==1, `$@`==the script
+            // text) instead of the empty set that `zshrs -c <script>` runs with.
+            // The stash var uses an obscure name (`__oracle_src`) no generator
+            // ever emits, so a script that reads an unset `$s`/`$x` can't pick
+            // up the wrapper's captured text.
+            let mut cmd = Command::new(zsh_path());
+            let wrapper = format!("__oracle_src=$1; set --; emulate {mode} -c \"$__oracle_src\"");
+            cmd.args(["-f", "-c", &wrapper, "zsh", script]);
             if let Some(dir) = FIXTURE_CWD.get() {
                 cmd.current_dir(dir);
             }
