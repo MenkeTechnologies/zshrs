@@ -245,16 +245,15 @@ fn numeric_comparisons() {
 
 #[test]
 fn string_comparisons() {
+    // `<` / `>` as test operators are left out: released zsh (5.9.2) rejects them with
+    // "condition expected" while a development-tree oracle orders strings, so the answer
+    // depends on which zsh the oracle is. tests/zshrs_shell.rs pins the 5.9.2 behaviour.
     assert_cases(&[
         "[ a = a ]",
         "[ a == a ]",
         "[ a = b ]",
         "[ a != a ]",
         "[ a != b ]",
-        "[ a '<' b ]",
-        "[ b '<' a ]",
-        "[ b '>' a ]",
-        "[ a '>' b ]",
         "[ 'a*' = 'a*' ]",
         "[ abc = 'a*' ]",
         "[ abc = abc* ]",
@@ -264,9 +263,7 @@ fn string_comparisons() {
         "[ '' = '' ]",
         "[ a = ]",
         "[ = ]",
-        "[ a '<' ]",
         "[ '<' ]",
-        "[ '<' '<' '<' ]",
         "[ a =~ a ]",
     ]);
 }

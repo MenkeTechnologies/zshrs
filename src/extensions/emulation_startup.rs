@@ -636,6 +636,15 @@ pub fn apply_personality_param_deltas() {
     if p != Personality::Bash {
         crate::ported::params::unsetparam("SRANDOM");
     }
+    // bash's `$GROUPS`: the supplementary group ids, in getgroups(2) order.
+    if p == Personality::Bash {
+        let mut gids = vec![0 as libc::gid_t; 256];
+        let n = unsafe { libc::getgroups(gids.len() as libc::c_int, gids.as_mut_ptr()) };
+        if n > 0 {
+            gids.truncate(n as usize);
+            crate::ported::params::setaparam("GROUPS", gids.iter().map(|g| g.to_string()).collect());
+        }
+    }
     // zsh's `which` is a builtin; no other shell has one, so the word resolves to
     // the external `which`.
     if let Ok(mut disabled) = crate::ported::builtin::BUILTINS_DISABLED.lock() {
@@ -659,8 +668,9 @@ pub fn apply_personality_param_deltas() {
     if matches!(p, Personality::Mksh | Personality::Pdksh) {
         crate::ported::params::setsparam("PS1", "$ ");
     }
-    // ksh93 sets `$ENV` to `~/.kshrc`.
-    if p == Personality::Ksh93 {
+    // ksh93 sets `$ENV` to `~/.kshrc` — unless the environment already carries one,
+    // which is what decides the interactive startup file.
+    if p == Personality::Ksh93 && crate::ported::params::getsparam("ENV").is_none() {
         if let Some(home) = crate::ported::params::getsparam("HOME") {
             crate::ported::params::setsparam("ENV", &format!("{home}/.kshrc"));
         }
