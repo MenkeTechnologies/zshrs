@@ -22484,6 +22484,27 @@ pub fn paramsubst(
                             let s0 = vars_get("0").unwrap_or_default(); // c:3702 argzero
                             arr.insert(0, s0); // c:3668-3669,3681-3682,3701-3703
                         }
+                        // !!! BASH-MODE GATE (no C counterpart) !!! a bash sparse array slices by
+                        // INDEX: `${a[@]:1:2}` takes the live elements whose index is >= 1.
+                        let off = if crate::dash_mode::bash_mode()
+                            && crate::bash_arrays::has_holes(&var_name)
+                        {
+                            let live = crate::bash_arrays::live_indices(&var_name, arr.len());
+                            // A negative offset counts back from one past the highest index.
+                            let off = if off < 0 {
+                                live.last().map_or(0, |&l| l as i64 + 1) + off
+                            } else {
+                                off
+                            };
+                            arr = live
+                                .into_iter()
+                                .filter(|&i| off >= 0 && i as i64 >= off)
+                                .map(|i| arr[i].clone())
+                                .collect();
+                            0
+                        } else {
+                            off
+                        };
                         let n = arr.len() as i64; // c:715
                                                   // bash empties the slice when a negative offset underflows
                                                   // past element 0 (`${a[@]: -5}` on a 3-elem array → "" in
