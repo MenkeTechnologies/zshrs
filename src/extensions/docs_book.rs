@@ -7,20 +7,19 @@
 //! book in the terminal — the interface `stryke docs` has: an introduction,
 //! chapters, a table of contents, search and vim-style keys.
 //!
-//! The book is the manuals the binary already carries, not a second copy:
-//! zshrs's own pages (`man/man1/zshrs.1`, `zshrsall.1`) and every page of
-//! zsh's manual (`vendor/zsh/man1`), read from `bundled_docs` and laid out
-//! page by page in `zshall.1`'s order. Each man page is a part, each
-//! `.SH` / `.SS` section a chapter, and each `.TP` item a topic; a
-//! section's opening prose is a topic of its own. Two chapters come from
-//! the LSP tables because the manuals do not cover them: the zshrs
-//! extension builtins and the operators.
+//! The book is the reference, not a second copy of it: zshrs's own pages
+//! (`man/man1/zshrs.1`, `zshrsall.1`), the language reference
+//! (`docs/reference.html`, compiled in) and every page of zsh's manual
+//! (`vendor/zsh/man1`, read from `bundled_docs` in `zshall.1`'s order).
+//! Each man page and each reference part is a part, each `.SH` / `.SS`
+//! section or reference chapter a chapter, and each `.TP` item or reference
+//! entry a topic; a section's opening prose is a topic of its own. Project
+//! guides, plans and design notes are not part of the book.
 //!
 //! The interactive book runs only when stdin and stdout are both terminals
 //! and `ZSHRS_NO_TTY` is unset; anything else prints and exits, so a pipe,
 //! CI job or editor can never block on a key read.
 
-use std::collections::HashSet;
 use std::io::{IsTerminal, Write};
 
 /// What a topic's text is: an LSP hover card (markdown) or the troff lines
@@ -104,8 +103,7 @@ pub fn entries() -> Vec<Entry> {
     let mut out = Vec::new();
     let pages = man_pages();
     let mut pages = pages.into_iter().peekable();
-    // zshrs's own pages first, then its guides and the LSP-only chapters,
-    // then zsh's manual.
+    // zshrs's own pages first, then the language reference, then zsh's manual.
     while let Some((page, _)) = pages.peek() {
         if !page.starts_with("zshrs") {
             break;
@@ -113,122 +111,123 @@ pub fn entries() -> Vec<Entry> {
         let (page, text) = pages.next().unwrap();
         out.extend(parse_man(&page, &text));
     }
-    for (file, text) in GUIDES {
-        out.extend(parse_markdown(file, text));
-    }
-    out.extend(lsp_chapters());
+    out.extend(parse_reference_html(REFERENCE_HTML));
     for (page, text) in pages {
         out.extend(parse_man(&page, &text));
     }
     out
 }
 
-/// zshrs's user-facing guides, compiled in so the book always matches the
-/// build. The repository's porting notes, bug log and plans are not guides
-/// and stay out.
-const GUIDES: &[(&str, &str)] = &[
-    ("README", include_str!("../../README.md")),
-    ("INVENTIONS", include_str!("../../docs/INVENTIONS.md")),
-    ("DESIGN_GOALS", include_str!("../../docs/DESIGN_GOALS.md")),
-    ("DAEMON", include_str!("../../docs/DAEMON.md")),
-    ("DAEMON_AS_SERVICE", include_str!("../../docs/DAEMON_AS_SERVICE.md")),
-    ("SHELL_IDS", include_str!("../../docs/SHELL_IDS.md")),
-    ("RECORDER", include_str!("../../docs/RECORDER.md")),
-    ("RECORDER_PROTOCOL", include_str!("../../docs/RECORDER_PROTOCOL.md")),
-    ("PLUGINS", include_str!("../../docs/PLUGINS.md")),
-    ("PORTING_ZSH_PLUGIN", include_str!("../../docs/PORTING_ZSH_PLUGIN.md")),
-    ("ZNATIVE", include_str!("../../docs/ZNATIVE.md")),
-    ("COMPLETION_DISPATCH", include_str!("../../docs/COMPLETION_DISPATCH.md")),
-    ("IN_EDITOR_COMPSYS_COMPLETION", include_str!("../../docs/IN_EDITOR_COMPSYS_COMPLETION.md")),
-    ("hot_path_performance", include_str!("../../docs/hot_path_performance.md")),
-    ("RFC", include_str!("../../docs/RFC.md")),
-];
+/// The language reference, `docs/reference.html`, compiled in so the book
+/// always matches the build.
+const REFERENCE_HTML: &str = include_str!("../../docs/reference.html");
 
-/// Split a markdown guide into topics: the `#` title names the part, each
-/// `##` section is a chapter, and each `###` subsection a topic; the prose
-/// before a section's first `###` is a topic named after the section.
-/// Headings inside code fences are code, not structure.
-fn parse_markdown(file: &str, text: &str) -> Vec<Entry> {
-    // The first `# ` heading outside a code fence (a `# comment` in a shell
-    // example is not a title).
-    let mut in_fence = false;
-    let title = text
-        .lines()
-        .find_map(|l| {
-            if l.trim_start().starts_with("```") {
-                in_fence = !in_fence;
-            }
-            l.strip_prefix("# ").filter(|_| !in_fence)
-        })
-        .map(|t| format!("{file} — {}", t.trim()))
-        .unwrap_or_else(|| file.to_string());
+/// Split the reference page into topics: each `<section id="ch-…">` is a
+/// chapter (the numbered ones form the language part, the `ch-lsp-` ones the
+/// index part), each `doc-entry` article a topic, and the prose before a
+/// chapter's first article a topic named after the chapter.
+fn parse_reference_html(html: &str) -> Vec<Entry> {
+    const SECTION: &str = "<section class=\"tutorial-section\" id=\"ch-";
+    const ARTICLE: &str = "<article class=\"doc-entry\"";
     let mut out = Vec::new();
-    let mut chapter = String::new();
-    let mut name = String::new();
-    let mut body: Vec<&str> = Vec::new();
-    let mut fence = false;
-    let mut flush = |chapter: &str, name: &str, body: &mut Vec<&str>| {
-        let text = body.join("\n");
-        if !name.is_empty() && !text.trim().is_empty() {
-            out.push(Entry {
-                part: title.clone(),
-                chapter: format!("{file}: {}", if chapter.is_empty() { "introduction" } else { chapter }),
-                name: name.to_string(),
-                body: Body::Card(format!("**{name}** — _{file}: {chapter}_\n\n{}", text.trim())),
-            });
-        }
-        body.clear();
-    };
-    for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            fence = !fence;
-        }
-        let heading = (!fence).then(|| line.strip_prefix("## ").or_else(|| line.strip_prefix("### ")));
-        match heading.flatten() {
-            Some(h) => {
-                flush(&chapter, &name, &mut body);
-                if line.starts_with("## ") {
-                    chapter = h.trim().to_string();
-                }
-                name = h.trim().to_string();
+    for section in html.split(SECTION).skip(1) {
+        let section = section.split("</section>").next().unwrap_or("");
+        let id = section.split('"').next().unwrap_or("");
+        let part = if id.starts_with("lsp-") { "Reference indexes" } else { "Language reference" };
+        let Some(chapter) = tag_inner(section, "h2").map(|h| html_text(&h)) else { continue };
+        let mut pieces = section.split(ARTICLE);
+        let intro = pieces.next().unwrap_or("");
+        let intro = html_to_markdown(intro.split_once("</h2>").map_or(intro, |(_, rest)| rest));
+        let mut push = |name: String, text: String| {
+            if !text.trim().is_empty() {
+                out.push(Entry {
+                    part: part.to_string(),
+                    chapter: chapter.clone(),
+                    body: Body::Card(format!("**{name}** — _{chapter}_\n\n{}", text.trim())),
+                    name,
+                });
             }
-            None if line.starts_with("# ") && !fence => {}
-            None => body.push(line),
+        };
+        push(chapter.clone(), intro);
+        for article in pieces {
+            let article = article.split("</article>").next().unwrap_or("");
+            let Some(name) = tag_inner(article, "h3").map(|h| html_text(&h)) else { continue };
+            let name = name.trim_start_matches('#').trim_end_matches('¶').trim().to_string();
+            let body = article.split_once("</h3>").map_or("", |(_, rest)| rest);
+            push(name, html_to_markdown(body));
         }
     }
-    flush(&chapter, &name, &mut body);
     out
 }
 
-/// The zshrs extension builtins and the operators — documented in the LSP
-/// tables, not in any man page.
-fn lsp_chapters() -> Vec<Entry> {
-    let mut builtins: Vec<&str> = crate::ext_builtins::EXT_BUILTIN_NAMES
-        .iter()
-        .chain(crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.iter())
-        .copied()
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    builtins.sort();
-    let operators: Vec<&str> = crate::lsp::OPERATOR_DOCS.iter().map(|(n, _)| *n).collect();
-    let mut out = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    for (chapter, names) in [("zshrs builtins", builtins), ("Operators", operators)] {
-        for name in names {
-            let card = crate::lsp::lookup_doc(name);
-            if card.is_empty() || !seen.insert(card.clone()) {
-                continue;
+/// The inner HTML of the first `<tag …>…</tag>` in `s`.
+fn tag_inner(s: &str, tag: &str) -> Option<String> {
+    let open = s.find(&format!("<{tag}"))?;
+    let start = open + s[open..].find('>')? + 1;
+    let end = start + s[start..].find(&format!("</{tag}>"))?;
+    Some(s[start..end].to_string())
+}
+
+/// Markup removed and entities decoded, whitespace collapsed.
+fn html_text(s: &str) -> String {
+    html_to_markdown(s).split_whitespace().collect::<Vec<_>>().join(" ").replace('`', "").replace("**", "")
+}
+
+/// HTML to the markdown subset `render_doc_card` draws: code spans and
+/// fences, bold, emphasis and bullets; every other tag is dropped.
+fn html_to_markdown(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_pre = false;
+    let mut rest = html;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&decode_entities(&rest[..lt]));
+        rest = &rest[lt..];
+        let Some(gt) = rest.find('>') else { break };
+        let tag = &rest[1..gt];
+        rest = &rest[gt + 1..];
+        let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace()).next().unwrap_or("");
+        let closing = tag.starts_with('/');
+        match (name, closing) {
+            ("pre", false) => {
+                in_pre = true;
+                out.push_str("\n```\n");
             }
-            out.push(Entry {
-                part: "zshrs builtins and operators".into(),
-                chapter: chapter.into(),
-                name: name.to_string(),
-                body: Body::Card(card),
-            });
+            ("pre", true) => {
+                in_pre = false;
+                out.push_str("\n```\n");
+            }
+            ("code", _) if !in_pre => out.push('`'),
+            ("strong" | "b", _) => out.push_str("**"),
+            ("em" | "i", _) => out.push('_'),
+            ("li", false) => out.push_str("\n- "),
+            ("p" | "ul" | "ol" | "div", true) => out.push_str("\n\n"),
+            ("br", _) => out.push('\n'),
+            _ => {}
         }
     }
-    out
+    out.push_str(&decode_entities(rest));
+    out.lines().map(str::trim_end).collect::<Vec<_>>().join("\n").replace("\n\n\n", "\n\n")
+}
+
+fn decode_entities(s: &str) -> String {
+    [
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", "\""),
+        ("&#39;", "'"),
+        ("&nbsp;", " "),
+        ("&mdash;", "—"),
+        ("&ndash;", "–"),
+        ("&rarr;", "→"),
+        ("&larr;", "←"),
+        ("&rsquo;", "’"),
+        ("&lsquo;", "‘"),
+        ("&hellip;", "…"),
+        ("&middot;", "·"),
+        ("&amp;", "&"),
+    ]
+    .iter()
+    .fold(s.to_string(), |acc, (from, to)| acc.replace(from, to))
 }
 
 /// Split a man page into topics. Sections NAME and SEE ALSO carry no

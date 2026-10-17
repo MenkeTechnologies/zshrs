@@ -40,9 +40,9 @@ fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
-/// The book is the manuals: every man page the binary carries is a part,
-/// in `zshall.1`'s order after zshrs's own, and the guides and LSP-only
-/// chapters sit between them.
+/// The book is the manuals and the language reference: every man page the
+/// binary carries is a part, in `zshall.1`'s order after zshrs's own, and the
+/// reference parts sit between them; no project guide is in it.
 #[test]
 fn the_book_holds_every_manual_in_order() {
     let entries = zsh::docs_book::entries();
@@ -55,7 +55,7 @@ fn the_book_holds_every_manual_in_order() {
     let starts = |p: &str| parts.iter().position(|x| x.starts_with(p)).unwrap_or_else(|| panic!("no part {p}: {parts:?}"));
     // zshrs first, zsh's manual in zshall.1's .so order after it.
     let order = [
-        "zshrs -", "zshrsall", "README", "zshrs builtins", "zsh -", "zshroadmap", "zshmisc", "zshexpn",
+        "zshrs -", "zshrsall", "Language reference", "Reference indexes", "zsh -", "zshroadmap", "zshmisc", "zshexpn",
         "zshparam", "zshoptions", "zshbuiltins", "zshzle", "zshcompwid", "zshcompsys", "zshcompctl",
         "zshmodules", "zshcalsys", "zshtcpsys", "zshzftpsys", "zshcontrib",
     ];
@@ -79,6 +79,14 @@ fn the_book_holds_every_manual_in_order() {
             "{name} is not a topic in {chapter}"
         );
     }
+    // The reference page is in the book; the repository guides are not.
+    for (name, chapter) in [("if … then … fi", "Control Flow"), ("pmap", "Extension Builtin Index")] {
+        assert!(entries.iter().any(|e| e.name == name && e.chapter == chapter), "{name} is not a topic in {chapter}");
+    }
+    assert!(
+        !entries.iter().any(|e| e.part.starts_with("README") || e.part.contains("RFC") || e.part.contains("INVENTIONS")),
+        "a project guide is in the book"
+    );
     // A bullet or list number is part of a topic, never a topic of its own.
     assert!(
         !entries.iter().any(|e| matches!(e.name.as_str(), "•" | "1." | "2.")),

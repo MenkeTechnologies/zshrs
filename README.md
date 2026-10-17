@@ -1187,8 +1187,9 @@ zshrs --dump-plugins         # JSON dump of the plugins the last recorded
                              # zplug); the daemon fills plugins.db from each
                              # recorder shard, so it is empty until one is
                              # ingested; feeds the IDE's External Libraries view
-zshrs --docs                 # the reference book: the zshrs manual and
-                             # guides plus the whole zsh manual (every
+zshrs --docs                 # the reference book: the zshrs manual,
+                             # the language reference (docs/reference.html)
+                             # and the whole zsh manual (every
                              # builtin, option, parameter, expansion,
                              # widget, completion style, module), paged in
                              # the terminal (j/k pages, ]/[ chapters, }/{
