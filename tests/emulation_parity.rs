@@ -2966,15 +2966,16 @@ fn bash_mode_self_contained() {
         "--bash recycling with an empty operand still exits non-zero"
     );
 
-    // POSIX sh must NOT brace-expand (regression guard for the gate).
+    // `/bin/sh` is bash 3.2 in POSIX mode, which still brace-expands
+    // (`sh -c "printf '%s ' {a,b,c}"` → `a b c `); the drop-in follows it.
     let out = Command::new(zshrs_bin())
         .args(["--sh", "-f", "-c", "printf '%s ' {a,b,c}"])
         .output()
         .expect("spawn");
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "{a,b,c} ",
-        "--sh must not brace-expand"
+        "a b c ",
+        "--sh brace-expands like /bin/sh (bash 3.2)"
     );
 }
 
