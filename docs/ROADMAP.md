@@ -36,7 +36,7 @@ Critical path. Until G is done, zshrs cannot replace zsh on the maintainer's mac
 - Sweep every `println!`/`eprintln!`/`eprint!`/`print!` in the codebase.
 - Route each to `tracing::{info,warn,debug}` UNLESS it's in: `--help`/`--version`/`--doctor`/`dbview`/builtin user-invoked output, error reporting on stderr (`zshrs: <cmd>: <reason>` format only), or user-script output.
 - Add `#![deny(clippy::print_stdout, clippy::print_stderr)]` lint to `bins/zshrs.rs` so future regressions break the build.
-- **Acceptance:** `./target/debug/zshrs -i -f </dev/null` produces zero bytes on stdout/stderr before the prompt.
+- **Acceptance:** `zshrs -i -f </dev/null` produces zero bytes on stdout/stderr before the prompt.
 - **Test:** regression test runs `zshrs -i -f` with stdin closed, asserts output is empty until prompt char.
 - **Effort:** 1 day.
 

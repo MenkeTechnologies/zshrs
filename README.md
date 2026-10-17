@@ -758,8 +758,7 @@ one pinned to the same zshrs binary that runs CI. Sixteen batches:
 | 368–375 | codecs + interpreters + algorithms — Bencode encoder/decoder (BitTorrent wire format), Hamming(7,4) single-bit error-correcting block code, skyline problem (key-point outline from N building triples), Brainfuck interpreter (pure-zsh), Ackermann function (total non-primitive-recursive, Ackermann 1928 / Péter simplification), LZW (Lempel–Ziv–Welch) compression (the algorithm behind GIF + Unix `compress`), Elias gamma universal codes for positive integers, grand finale 375-demo banner v9 |
 
 ```bash
-cargo build --bin zshrs
-target/debug/zshrs --zsh examples/demos/10_fizzbuzz.zsh
+cargo run --bin zshrs -- --zsh examples/demos/10_fizzbuzz.zsh
 cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 ```
 
@@ -1105,7 +1104,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │  │  → zero bytes in default binary    │  │ runtime (was its    │
                   │  └────────────────────────────────────┘  │ own crate)          │
                   ├──────────────────────────────────────────┴─────────────────────┤
-                  │    bins/  (5 .rs — 3 shipped + bench-autoload, parity-fuzz)    │
+                  │    bins/  (shipped: zshrs, zshrs-recorder, zd)                 │
                   │     zshrs            zshrs-recorder         zd                 │
                   │     (default)        (--features recorder)  (--features zd)    │
                   ├────────────────────────────────────────────────────────────────┤
