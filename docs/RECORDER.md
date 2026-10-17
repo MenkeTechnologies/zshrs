@@ -1621,7 +1621,7 @@ shipped by any shell.
 - Builtin: `zwhere` (matches the `z*` builtin family per
   `cache_architecture_rkyv.md` memory)
 - Mode flag: `zshrs-recorder`
-- Wrapper: `bins/zshrs-recorder` (calls `zshrs-recorder`)
+- Wrapper: `bins/zshrs-recorder.rs` (calls `zshrs-recorder`)
 - Daemon op: `record_events` (matches existing `source_resolve`,
   `op_*` naming)
 - SQLite table: `definitions` (canonical), `runs` (per-run header),

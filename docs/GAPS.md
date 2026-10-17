@@ -1965,7 +1965,7 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ### `let "1+"` / `$((5+))` reported bare "not enough operands" instead of zsh's "bad math expression" wording
 
-- zsh: math-expression parser errors are wrapped in `bad math expression: <reason>` so script consumers can grep for the canonical prefix. zshrs's `MathContext::op` arm emitted a bare `not enough operands` diagnostic, missing the wrapper. Changed `src/math.rs` to emit `bad math expression: operand expected at end of string` for the binary-op underflow case (matches zsh's exact phrasing for `let "1+"` AND `$((5+))`). Test: `test_arith_trailing_op_uses_zsh_wording`.
+- zsh: math-expression parser errors are wrapped in `bad math expression: <reason>` so script consumers can grep for the canonical prefix. zshrs's `MathContext::op` arm emitted a bare `not enough operands` diagnostic, missing the wrapper. Changed `src/ported/math.rs` to emit `bad math expression: operand expected at end of string` for the binary-op underflow case (matches zsh's exact phrasing for `let "1+"` AND `$((5+))`). Test: `test_arith_trailing_op_uses_zsh_wording`.
 
 ### `let "("` reported bare "')' expected" instead of zsh's wrapped wording
 
@@ -2243,7 +2243,7 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ### `let "!"` reported "stack empty" instead of zsh's "operand expected" wording
 
-- zsh's MathContext emits `bad math expression: operand expected at end of string` when a unary op has no operand. zshrs's bare `stack empty` had no match for scripts grepping zsh's canonical wording. Updated `src/math.rs` to emit the wrapped phrasing. Test: `test_let_unary_op_no_operand`.
+- zsh's MathContext emits `bad math expression: operand expected at end of string` when a unary op has no operand. zshrs's bare `stack empty` had no match for scripts grepping zsh's canonical wording. Updated `src/ported/math.rs` to emit the wrapped phrasing. Test: `test_let_unary_op_no_operand`.
 
 ## Closed (eighty-fourth-pass)
 
@@ -2433,7 +2433,7 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 Fix: defer the trailing `zshlex()` to after the `HDOCS`/`LEX_HEREDOCS` push, matching the wordcode variant.
 
-Tests now passing: `heredoc_basic`, `heredoc_dash_strips_tabs`, `heredoc_expands_variables`, `heredoc_quoted_delim_no_expand` in `tests/advanced_parity.rs`.
+Tests now passing: `heredoc_basic`, `heredoc_dash_strips_tabs`, `heredoc_expands_variables`, `heredoc_quoted_delim_no_expand` in `tests/parity/advanced_parity.rs`.
 
 ### `parsestrnoerr` read from wrong input source (heredoc expansion errored)
 
@@ -2447,7 +2447,7 @@ Fix: in `parsestrnoerr`, save+swap `LEX_INPUT`/`LEX_POS` around `dquote_parse` t
 
 Fix: drop the stale PWD/OLDPWD re-write block in `cd_new_pwd`; `bin_cd` is the authoritative writer. This also fixes the double-shift bug where OLDPWD got overwritten with the new PWD instead of preserving the pre-cd value.
 
-Test now passing: `subshell_cd_isolated` in `tests/advanced_parity.rs`.
+Test now passing: `subshell_cd_isolated` in `tests/parity/advanced_parity.rs`.
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
