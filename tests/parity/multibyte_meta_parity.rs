@@ -221,3 +221,33 @@ fn printf_width_counts_mbrlen_characters() {
         "2020e97ce920207c2020e97c0a202020c3a97cc3a9617c0a20c3a97cc37cc3a9207c0a",
     );
 }
+
+/// In a non-UTF-8 locale `(q)` spells `∞` as three adjacent `$'\NNN'`
+/// pieces, and `(Q)` must give back the original string, not three lone
+/// raw bytes that only print the same. zinit stores its `∞zinit-*-hook`
+/// names through `${(q)}` and calls them through `${(Q)}`, so a mismatch
+/// is `command not found` for every hook.
+#[test]
+fn dequote_of_quoted_multibyte_round_trips_in_the_c_locale() {
+    let script = r#"h=∞zinit-hook
+w=( ${(z)${(q)h}} )
+[[ ${(Q)${(q)h}} == $h ]] && print same || print differ
+[[ ${(Q)w[1]} == $h ]] && print same || print differ"#;
+    let run_c = |cmd: &mut Command| {
+        cmd.args(["-f", "-c", script])
+            .env_remove("LC_CTYPE")
+            .env_remove("LANG")
+            .env_remove("ZSHRS_CACHE")
+            .env("LC_ALL", "C")
+            .output()
+            .expect("spawn shell")
+            .stdout
+    };
+    if let Some(z) = zsh_path() {
+        let got = run_c(&mut Command::new(z));
+        assert_eq!(got, b"same\nsame\n", "reference shell changed");
+    }
+    let mut c = Command::new(zshrs_bin());
+    c.arg("--zsh");
+    assert_eq!(run_c(&mut c), b"same\nsame\n", "zshrs diverged from zsh");
+}

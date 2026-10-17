@@ -24178,7 +24178,15 @@ pub fn paramsubst(
                 out.push(c);
                 i += 1;
             }
-            out
+            // Each `$'\NNN'` piece decodes to one lone raw byte, so the
+            // `(q)` spelling of `∞` in a non-UTF-8 locale
+            // (`$'\342'$'\210'$'\236'`) arrives as three separate raw bytes.
+            // C holds the whole result as one byte string; re-join the bytes
+            // so a run that is valid UTF-8 is that text again.
+            match String::from_utf8(crate::ported::utils::unmetafy_str(&out)) {
+                Ok(joined) => joined,
+                Err(_) => out,
+            }
         };
         // c:Src/subst.c:3917 — `val = sepjoin(aval, sep, 1); isarr = 0;`.
         // An explicit (j:X:)/(F) separator collapses the array to a SCALAR
