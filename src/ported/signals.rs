@@ -80,6 +80,12 @@ pub static trap_queue: [AtomicI32; MAX_QUEUE_SIZE] = // c:92
 /// Port of `install_handler(int sig)` from `Src/signals.c:100`.
 pub fn install_handler(sig: i32) {
     // c:100
+    // !!! RUST-ONLY !!! `zhandler` queues a signal by writing `signal_mask_queue`. That
+    // table is a LazyLock whose first use allocates; allocating inside the handler
+    // while the interrupted thread holds the allocator lock deadlocks the shell on
+    // itself (glibc `main_arena`, seen as a prompt that never returns after `ls`).
+    // Build it now, before any handler can run.
+    std::sync::LazyLock::force(&signal_mask_queue);
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
         act.sa_sigaction = zhandler as *const () as usize;
@@ -426,7 +432,9 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
         if temp_rear != queue_front.load(Ordering::SeqCst) {
             queue_rear.store(temp_rear, Ordering::SeqCst);
             signal_queue[temp_rear].store(sig, Ordering::SeqCst);
-            if let Ok(mut g) = signal_mask_queue.lock() {
+            // `try_lock`: a blocking acquire would wait on the interrupted thread if it
+            // holds the table (the table is pre-built, see `install_handler`).
+            if let Ok(mut g) = signal_mask_queue.try_lock() {
                 if let Some(slot) = g.get_mut(temp_rear) {
                     *slot = oldmask;
                 }
