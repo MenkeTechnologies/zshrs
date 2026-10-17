@@ -326,8 +326,8 @@ a worker pool of persistent subprocesses \(em one per CPU by default,
 to override \(em which fork per test and report over a JSON pipe, with
 per-test capture of file descriptor 2 so concurrent workers cannot tear
 each other's output.
-.B \-q
-suppresses per-test lines. The assertions themselves
+.BR \-q ", " \-\-quiet
+suppress per-test lines. The assertions themselves
 (the assertion verbs \(em
 .BR zassert_eq ", " zassert_ne ", " zassert_ok ", " zassert_match
 and the rest \(em plus
