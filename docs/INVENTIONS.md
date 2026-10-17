@@ -37,7 +37,7 @@ machine code, first to persist general bytecode across processes.
 
 The `.fjit` disk cache keeps JIT output warm between shell invocations, so
 hot chunks are not recompiled per process (`fusevm` features `jit`,
-`jit-disk-cache`, `aot` — `Cargo.toml:123`; blobs are `{op_hash:016x}.fjit`,
+`jit-disk-cache`, `aot` — `Cargo.toml`; blobs are `{op_hash:016x}.fjit`,
 with slot-kind vectors folded into the cache key so float-specialized code is
 never reused for an integer slot). Strictly larger than entry 1. Managed
 runtimes have done this for years — Android ART's `.oat`, .NET ReadyToRun,
