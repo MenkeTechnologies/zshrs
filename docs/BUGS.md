@@ -61495,3 +61495,26 @@ zshrs   CONTEXT=line
 **C reference.** `get_context` (c:Src/Zle/zle_params.c:958-973) returns
 `"start"` for `ZLCON_LINE_START` and the default; `"line"` is not a value it
 produces. **Fix.** `get_context`'s default arm returns `"start"`.
+
+## #1187 — a user-created keymap had no primary name, so `bindkey -lL` printed its aliases as `-N` — fixed
+
+**Status:** `fixed` 2026-10-17.
+
+```console
+$ zsh   -fc 'zmodload zsh/zle; bindkey -N m2; bindkey -A m2 main; bindkey -lL main'
+bindkey -A m2 main
+$ zshrs -fc 'zmodload zsh/zle; bindkey -N m2; bindkey -A m2 main; bindkey -lL main'
+bindkey -N main
+```
+
+**C reference.** `refkeymap_by_name` (c:Src/Zle/zle_keymap.c:209-213) names
+a keymap after the first non-`main` name linked to it; `unrefkeymap_by_name`
+(c:246-262) hands the name to the sorted-first surviving alias via
+`scanprimaryname` (c:224-238) when the primary is unlinked or re-pointed.
+
+**Fix.** The port kept `primary` only on the built-in keymaps because the
+shared `Arc<Keymap>` was treated as immutable. `refkeymap_by_name`,
+`unrefkeymap_by_name`, `scanprimaryname` and `freekeymapnamnode` now follow
+the C bodies, storing the field across every alias through
+`src/keymap_primary.rs`; `linkkeymap` and `unlinkkeymap` call them at
+c:457 / c:443.

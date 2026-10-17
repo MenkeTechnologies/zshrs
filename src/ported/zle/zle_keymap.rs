@@ -184,110 +184,99 @@ pub fn emptykeymapnamtab() {
     keymapnamtab().lock().unwrap().clear();
 }
 
-/// Port of `refkeymap_by_name()` from `Src/Zle/zle_keymap.c:209`.
-/// C: `void refkeymap_by_name(char *name)` from
-/// `Src/Zle/zle_keymap.c:208-216`.
-/// ```c
-/// KeymapName kmn = keymapnamtab.getnode(keymapnamtab, name);
-/// if (kmn) {
-///     refkeymap(kmn->keymap);
-///     if (!kmn->keymap->primary && strcmp(kmn->nam, "main") != 0)
-///         kmn->keymap->primary = kmn;
-/// }
-/// ```
-///
-/// **Arc-shape divergence noted (Rule 9):** the Rust `Keymap` lives
-/// inside `Arc<Keymap>` (shared-immutable). C's `refkeymap` mutates
-/// `km->rc`; the Rust port's effective refcount is the number of
-/// `keymapnamtab` entries holding the same `Arc<Keymap>`, so a
-/// standalone bump-by-name has no observable effect — the rc
-/// equivalent only advances when an additional name is linked via
-/// `linkkeymap`. Same for `primary` promotion (`Arc<Keymap>` is
-/// immutable; promotion only happens on the next `linkkeymap`).
-/// We keep the lookup as a contract check so callers see a working
-/// "did this name exist?" probe.
 /// Port of `refkeymap_by_name(KeymapName kmn)` from `Src/Zle/zle_keymap.c:209`.
+/// ```c
+/// refkeymap(kmn->keymap);
+/// if (!kmn->keymap->primary && strcmp(kmn->nam, "main") != 0)
+///     kmn->keymap->primary = kmn;
+/// ```
+/// The keymap's reference count is the number of `keymapnamtab` names
+/// holding its `Arc`, so `refkeymap` is implicit in the link itself; the
+/// primary-name store goes through every alias via
+/// [`crate::keymap_primary::set_keymap_primary`].
 pub fn refkeymap_by_name(kmn: &str) {
     // c:209
-    let _ = keymapnamtab().lock().unwrap().get(kmn); // c:209 getnode probe
+    let mut tab = keymapnamtab().lock().unwrap();
+    let Some(km) = tab.get(kmn).map(|n| n.keymap.clone()) else {
+        return;
+    };
+    // c:212-213 — first non-"main" name to reference a keymap names it.
+    if km.primary.is_none() && kmn != "main" {
+        crate::keymap_primary::set_keymap_primary(&mut tab, &km, Some(kmn.to_string()));
+    }
 }
 
-/// Port of `scanprimaryname()` from `Src/Zle/zle_keymap.c:224`.
-/// C: `static void scanprimaryname(HashNode hn,
-///                                              UNUSED(int flags))` from
-/// `Src/Zle/zle_keymap.c:224`. Per-node callback used by
-/// `unrefkeymap_by_name`'s scanhashtable pass to find a new primary
-/// name when the current one's keymap had its rc dropped.
-///
-/// **Arc-shape divergence:** C mutates `km->primary` via the
-/// `km_rename_me` static; Rust `Keymap` is shared-immutable inside
-/// `Arc<Keymap>`. The standalone fn is invoked via scanhashtable
-/// from `unrefkeymap_by_name` only. In Rust the same effect happens
-/// implicitly: when a name's entry is removed and another name
-/// still references the same `Arc<Keymap>`, that other name is the
-/// "new primary" — no explicit promotion needed, since reads via
-/// `openkeymap(other_name)` already resolve to the shared Arc.
-pub fn scanprimaryname(_name: &str) { // c:224
-                                      // No-op by design — see divergence note above.
+/// Port of `scanprimaryname(HashNode hn, int ignored)` from
+/// `Src/Zle/zle_keymap.c:224`. Per-node callback of the sorted
+/// `scanhashtable` walk in [`unrefkeymap_by_name`]; C's `km_rename_me`
+/// file static is the `km_rename_me` argument and its `primary` slot is
+/// `found`.
+pub fn scanprimaryname(
+    nam: &str,
+    n: &KeymapName,
+    km_rename_me: &Arc<Keymap>,
+    found: &mut Option<String>,
+) {
+    // c:224
+    // c:231-232 — already found a new primary name.
+    if found.is_some() {
+        return;
+    }
+    // c:234-235 — never use "main".
+    if nam == "main" {
+        return;
+    }
+    // c:236-237
+    if Arc::ptr_eq(&n.keymap, km_rename_me) {
+        *found = Some(nam.to_string());
+    }
 }
 
-/// Port of `unrefkeymap_by_name()` from `Src/Zle/zle_keymap.c:246`.
-/// C: `void unrefkeymap_by_name(char *name)` from
-/// `Src/Zle/zle_keymap.c:246`.
+/// Port of `unrefkeymap_by_name(KeymapName kmname)` from
+/// `Src/Zle/zle_keymap.c:246`. `kmname` / `km` are the node's name and
+/// `kmname->keymap`.
 /// ```c
-/// kmname = keymapnamtab.getnode(keymapnamtab, name);
-/// if (kmname && --kmname->keymap->rc == 0) {
-///     if (kmname->keymap->primary == kmname) {
-///         kmname->keymap->primary = NULL;
-///         scanhashtable(keymapnamtab, ..., scanprimaryname, 0);
-///     }
-///     // chained deletekeymap via scanhashtable removal
+/// Keymap km = kmname->keymap;
+/// if (unrefkeymap(km) && km->primary == kmname) {
+///     km->primary = NULL;
+///     km_rename_me = km;
+///     scanhashtable(keymapnamtab, 1, 0, 0, scanprimaryname, 0);
+///     km_rename_me = NULL;
 /// }
 /// ```
-pub fn unrefkeymap_by_name(name: &str) {
+/// `unrefkeymap(km)` is nonzero while some OTHER name still holds `km`.
+/// The node itself may still be in the table (the `linkkeymap` re-point
+/// at c:457 unrefs before it stores the new keymap) and then takes part in
+/// the scan exactly as in C.
+pub fn unrefkeymap_by_name(kmname: &str, km: &Arc<Keymap>) {
     // c:246
-    // c:246 — `kmname = getnode(name)`. Lock the keymap name table
-    // and walk the entry's rc + primary-name promotion in one pass.
-    let mut tab = match keymapnamtab().lock() {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-    let Some(_kmn) = tab.get(name) else {
+    let mut tab = keymapnamtab().lock().unwrap();
+    // c:249 — `unrefkeymap(km)`: rc after the drop, i.e. other holders.
+    let still_referenced = tab
+        .iter()
+        .any(|(nam, n)| nam != kmname && Arc::ptr_eq(&n.keymap, km));
+    if !still_referenced || km.primary.as_deref() != Some(kmname) {
         return;
-    }; // c:249
-
-    // c:252 — `--km->rc`. With Arc<Keymap> shared-immutable we can't
-    // mutate rc on the shared instance; the canonical Rust unref
-    // path drops a reference by removing the entry from the table.
-    // Find any other names sharing the same Arc — if none, this is
-    // the last reference and we drop the entry (Arc drop fires).
-    let arc_to_remove = tab.get(name).map(|kmn| kmn.keymap.clone());
-    let shared_count = if let Some(ref arc) = arc_to_remove {
-        tab.values()
-            .filter(|kmn| Arc::ptr_eq(&kmn.keymap, arc))
-            .count()
-    } else {
-        0
-    };
-
-    if shared_count <= 1 {
-        // c:253 rc==0 path
-        tab.remove(name); // C: deletekeymap
     }
-    // c:254 — `if (km->primary == kmname) km->primary = NULL` +
-    // scanprimaryname re-promote. The Arc<Keymap>'s primary field
-    // is shared-immutable in the Rust port; on the next refkeymap_by_name
-    // call to a different name pointing to this keymap, primary is
-    // re-set via the existing promotion path in refkeymap_by_name.
+    // c:256-258 — clear, then the sorted (`scanhashtable(.., 1, ..)`) scan.
+    let mut names: Vec<&String> = tab.keys().collect();
+    names.sort();
+    let mut found: Option<String> = None;
+    for nam in names {
+        if let Some(n) = tab.get(nam) {
+            scanprimaryname(nam, n, km, &mut found);
+        }
+    }
+    crate::keymap_primary::set_keymap_primary(&mut tab, km, found);
 }
 
-/// Port of `freekeymapnamnode()` from `Src/Zle/zle_keymap.c:267`.
-/// C: `freekeymapnamnode(HashNode hn)`.
-pub fn freekeymapnamnode(hn: &str) {
+/// Port of `freekeymapnamnode(HashNode hn)` from `Src/Zle/zle_keymap.c:267`.
+/// Takes the node already removed from `keymapnamtab`
+/// (`freenode(removenode(..))`, c:443).
+pub fn freekeymapnamnode(hn: KeymapName) {
     // c:267
-    // c:267-273 — `kmn = (KeymapName)hn; zsfree(kmn->nam);
-    //              unrefkeymap_by_name(kmn); zfree(kmn,...)`.
-    keymapnamtab().lock().unwrap().remove(hn);
+    // c:271-273 — `zsfree(kmn->nam); unrefkeymap_by_name(kmn); zfree(kmn)`.
+    unrefkeymap_by_name(&hn.nam, &hn.keymap);
 }
 
 /// Port of `newkeytab()` from `Src/Zle/zle_keymap.c:278`.
@@ -709,7 +698,12 @@ pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {
         None => 2,                                                  // c:440
         Some(n) if ignm == 0 && (n.flags & KMN_IMMORTAL) != 0 => 1, // c:441
         Some(_) => {
-            tab.remove(name); // c:443
+            // c:443 — `keymapnamtab->freenode(keymapnamtab->removenode(..))`.
+            let node = tab.remove(name);
+            drop(tab);
+            if let Some(node) = node {
+                freekeymapnamnode(node);
+            }
             0
         }
     }
@@ -904,7 +898,7 @@ pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {
     //               else { n = makekeymapnamnode(km); ... addnode }
     //               refkeymap_by_name(n); return 0`.
     let mut tab = keymapnamtab().lock().unwrap();
-    if let Some(existing) = tab.get_mut(name) {
+    if let Some(existing) = tab.get(name) {
         // c:453-454 — `if (n->flags & KMN_IMMORTAL) return 1`.
         if existing.flags & KMN_IMMORTAL != 0 {
             return 1;
@@ -913,8 +907,15 @@ pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {
         if Arc::ptr_eq(&existing.keymap, &km) {
             return 0;
         }
-        // c:457-458 — `unrefkeymap_by_name(n); n->keymap = km`.
-        existing.keymap = km;
+        // c:457 — `unrefkeymap_by_name(n)` while `n` still holds the old map.
+        let old = existing.keymap.clone();
+        drop(tab);
+        unrefkeymap_by_name(name, &old);
+        tab = keymapnamtab().lock().unwrap();
+        // c:458 — `n->keymap = km`.
+        if let Some(existing) = tab.get_mut(name) {
+            existing.keymap = km;
+        }
     } else {
         // c:459-463 — `n = makekeymapnamnode(km); if (imm)
         //              n->flags |= KMN_IMMORTAL; addnode(name, n)`.
@@ -4484,7 +4485,7 @@ mod tests {
     fn unrefkeymap_by_name_empty_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        unrefkeymap_by_name("");
+        unrefkeymap_by_name("", &newkeymap(None, ""));
     }
 
     /// c:886 — `selectkeymap` is deterministic for same input.
@@ -4540,20 +4541,55 @@ mod tests {
         init_keymaps();
     }
 
-    /// c:224 — `scanprimaryname("")` empty name is safe (no-op).
+    /// c:231-237 — `scanprimaryname` skips "main", takes the first holder
+    /// of `km_rename_me`, and never overwrites a name already found.
     #[test]
-    fn scanprimaryname_empty_no_panic() {
+    fn scanprimaryname_skips_main_and_keeps_first() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        scanprimaryname("");
+        let km = newkeymap(None, "x");
+        let node = |nam: &str, k: &Arc<Keymap>| KeymapName { nam: nam.into(), flags: 0, keymap: k.clone() };
+        let mut found = None;
+        scanprimaryname("main", &node("main", &km), &km, &mut found);
+        assert_eq!(found, None);
+        scanprimaryname("other", &node("other", &newkeymap(None, "o")), &km, &mut found);
+        assert_eq!(found, None);
+        scanprimaryname("alias1", &node("alias1", &km), &km, &mut found);
+        scanprimaryname("alias2", &node("alias2", &km), &km, &mut found);
+        assert_eq!(found.as_deref(), Some("alias1"));
     }
 
-    /// c:278 — `freekeymapnamnode("")` empty name is safe.
+    /// c:209-213 / c:246-258 — the primary name follows the keymap
+    /// through its aliases: `bindkey -N m3; bindkey -A m3 m4; bindkey -A
+    /// m3 main` lists `-A m3 m4`, deleting `m3` hands primary to the
+    /// sorted-first surviving non-"main" alias, and "main" alone is `-N`.
+    #[test]
+    fn primary_name_follows_links_and_unlinks() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let primary = |n: &str| openkeymap(n).and_then(|k| k.primary.clone());
+        assert_eq!(linkkeymap(newkeymap(None, "m3"), "m3", 0), 0);
+        assert_eq!(primary("m3").as_deref(), Some("m3"));
+        assert_eq!(linkkeymap(openkeymap("m3").unwrap(), "m4", 0), 0);
+        assert_eq!(linkkeymap(openkeymap("m3").unwrap(), "main", 0), 0);
+        assert_eq!(primary("m4").as_deref(), Some("m3"));
+        assert_eq!(primary("main").as_deref(), Some("m3"));
+        assert_eq!(unlinkkeymap("m3", 0), 0);
+        assert_eq!(primary("m4").as_deref(), Some("m4"));
+        assert_eq!(primary("main").as_deref(), Some("m4"));
+        assert_eq!(unlinkkeymap("m4", 0), 0);
+        assert_eq!(primary("main"), None);
+        // A keymap first reached through "main" gets no primary name.
+        assert_eq!(linkkeymap(newkeymap(None, "main"), "main", 0), 0);
+        assert_eq!(primary("main"), None);
+    }
+
+    /// c:267 — freeing a node that was never in the table is safe.
     #[test]
     fn freekeymapnamnode_empty_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        freekeymapnamnode("");
+        freekeymapnamnode(makekeymapnamnode(newkeymap(None, "")));
     }
 
     /// c:940 — `reselectkeymap` returns void (signature pin) + safe.
@@ -4667,7 +4703,7 @@ mod tests {
     fn unrefkeymap_by_name_unknown_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        unrefkeymap_by_name("__never_keymap_xyz__");
+        unrefkeymap_by_name("__never_keymap_xyz__", &newkeymap(None, ""));
     }
 
     /// c:240 — `unrefkeymap_by_name("")` empty name safe (alt).
@@ -4675,7 +4711,7 @@ mod tests {
     fn unrefkeymap_by_name_empty_no_panic_alt() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        unrefkeymap_by_name("");
+        unrefkeymap_by_name("", &newkeymap(None, "x"));
     }
 
     /// c:517 — `newkeymap(None, "")` returns Arc<Keymap> (compile-time pin).

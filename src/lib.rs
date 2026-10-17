@@ -131,6 +131,9 @@ pub mod signal_queue_guard;
 pub mod subscript_escape;
 /// `scalar_range_cut` submodule (Rust-only; see the module docs).
 pub mod scalar_range_cut;
+/// `keymap_primary` submodule (Rust-only; see the module docs): the
+/// `km->primary` store across every alias of a shared keymap.
+pub mod keymap_primary;
 /// `zwc_lineno` submodule (Rust-only; see the module docs): original line
 /// numbers for code deparsed out of a `.zwc` dump.
 pub mod zwc_lineno;
