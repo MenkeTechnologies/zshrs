@@ -2179,6 +2179,7 @@ const KSH_ONLY_CORPUS: &[&str] = &[
 /// the same way and zsh does not: zsh predeclares `OPTARG`, and refuses
 /// `break` / `continue` outside a loop.
 const REAL_SHELL_CORPUS: &[&str] = &[
+    "echo a,b}; echo }; { echo blk; }; f() { echo fn; }; f; echo x}y",
     "which echo | head -1",
     "echo [$!]",
     "echo \"[${OPTARG+set}]\"",

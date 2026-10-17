@@ -3246,7 +3246,10 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     // as the standalone `}` word → reswdtab OUTBRACE. This is what
     // makes `{print hi}` / `f(){print x}` close their blocks and
     // `echo hi}` a parse error, while mid-word `a}b` stays literal.
+    // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! bash, ksh, dash and mksh keep a
+    // trailing `}` in an argument word (`echo a,b}` prints `a,b}`); only zsh sheds it.
     else if unset(IGNOREBRACES)
+        && !crate::dash_mode::posix_faithful()
         && !sub
         && LEX_LEXBUF.with_borrow(|b| b.buf_len()) > 1
         && peek == STRING_LEX
@@ -4547,6 +4550,9 @@ pub fn exalias() -> bool {
         let is_close_brace_special = lextext == "}"
             && unset(IGNOREBRACES)
             && unset(IGNORECLOSEBRACES)
+            // The real shells close a block only with `}` in command position;
+            // elsewhere (`echo }`) it is an ordinary word.
+            && (!crate::dash_mode::posix_faithful() || LEX_INCMDPOS.get())
             && !tokstr_has_quote_marker;
         // lex.c:2002-2014 — the C structure is
         //     if ((incmdpos || ...) && (rw = reswd_lookup)) { ... }
