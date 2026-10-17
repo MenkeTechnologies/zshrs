@@ -6825,6 +6825,28 @@ pub fn paramsubst(
                     _ => false,
                 };
                 if next_is_name_start {
+                    // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! bash, ksh93, mksh and dash take
+                    // no operator after the name of `${#name}`: `${#x#a}` is "bad substitution"
+                    // (zsh applies the operator to the length).
+                    if crate::dash_mode::posix_faithful() {
+                        let nm_start = idx + 1;
+                        let mut nm_end = nm_start;
+                        while nm_end < body_chars.len()
+                            && (body_chars[nm_end] == '_' || body_chars[nm_end].is_ascii_alphanumeric())
+                        {
+                            nm_end += 1;
+                        }
+                        if nm_end > nm_start
+                            && body_chars[nm_start].is_ascii_alphabetic() | (body_chars[nm_start] == '_')
+                            && body_chars
+                                .get(nm_end)
+                                .is_some_and(|c| matches!(*c, '#' | '%' | '/' | ':' | '^' | ',' | '@' | '+' | '=' | '?') || *c == Pound)
+                        {
+                            zerr("bad substitution");
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
+                    }
                     length_op = true;
                     idx += 1;
                     continue;
@@ -17936,10 +17958,18 @@ pub fn paramsubst(
                     // the propagation instead of clearing the next-
                     // statement script-abort signal. Bug #193 in
                     // docs/BUGS.md.
-                    crate::ported::utils::errflag.fetch_or(
-                        crate::ported::zsh_h::ERRFLAG_HARD,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
+                    // !!! PDKSH GATE (no C counterpart) !!! mksh ends only the FUNCTION on
+                    // `${v:?}` / `${v?}`; `call_function` clears the error on return and the
+                    // script carries on with status 1.
+                    let pdksh_fn = crate::dash_mode::pdksh_family()
+                        && crate::dash_mode::posix_faithful()
+                        && crate::ported::utils::locallevel() > 0;
+                    if !pdksh_fn {
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_HARD,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
                     // c:Src/subst.c:3368-3380 — a non-interactive shell exits
                     // from inside the expansion:
                     //     if (!interact) {
@@ -17954,7 +17984,7 @@ pub fn paramsubst(
                     // stashed the global EXIT trap, so only one the function set
                     // itself fires, and an enclosing `always` block never runs.
                     // Unwinding to the top level on ERRFLAG_HARD ran both.
-                    if !crate::ported::zsh_h::interact() {
+                    if !crate::ported::zsh_h::interact() && !pdksh_fn {
                         let pid = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed);
                         if crate::ported::builtin::SUBSHELL_DEPTH.load(std::sync::atomic::Ordering::Relaxed) > 0 {
                             // An in-process `( … )` stands in for C's forked child, whose
@@ -18002,13 +18032,21 @@ pub fn paramsubst(
                     errflag_set_error();
                     // c:Src/subst.c:3344 — `errflag |= ERRFLAG_HARD;`
                     // (same fatal-abort semantics as `:?`). Bug #193.
-                    crate::ported::utils::errflag.fetch_or(
-                        crate::ported::zsh_h::ERRFLAG_HARD,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
+                    // !!! PDKSH GATE (no C counterpart) !!! mksh ends only the FUNCTION on
+                    // `${v:?}` / `${v?}`; `call_function` clears the error on return and the
+                    // script carries on with status 1.
+                    let pdksh_fn = crate::dash_mode::pdksh_family()
+                        && crate::dash_mode::posix_faithful()
+                        && crate::ported::utils::locallevel() > 0;
+                    if !pdksh_fn {
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_HARD,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
                     // c:Src/subst.c:3368-3380 — same immediate exit as the `:?`
                     // arm above (one C arm serves both spellings).
-                    if !crate::ported::zsh_h::interact() {
+                    if !crate::ported::zsh_h::interact() && !pdksh_fn {
                         let pid = crate::ported::params::mypid.load(std::sync::atomic::Ordering::Relaxed);
                         if crate::ported::builtin::SUBSHELL_DEPTH.load(std::sync::atomic::Ordering::Relaxed) > 0 {
                             // An in-process `( … )` stands in for C's forked child, whose

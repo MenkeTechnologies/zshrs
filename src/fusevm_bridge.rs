@@ -22404,6 +22404,23 @@ impl fusevm::ShellHost for ZshrsHost {
             crate::exec_jobs::mark_thisjob_cursh(false);
         }
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
+        // mksh: a `${v:?msg}` error inside the function ended the function only.
+        let status = if crate::dash_mode::pdksh_family()
+            && crate::dash_mode::posix_faithful()
+            && status.is_some()
+            && crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_HARD
+                == 0
+            && crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR
+                != 0
+        {
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+            status.map(|s| if s == 0 { 1 } else { s })
+        } else {
+            status
+        };
         if status.is_none() {
             EXEC_DASH.with(|c| c.set(exec_dash));
             JOB_TEXT.with(|t| *t.borrow_mut() = job_text);

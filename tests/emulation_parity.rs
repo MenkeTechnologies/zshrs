@@ -2210,6 +2210,7 @@ const KSH_ONLY_CORPUS: &[&str] = &[
 /// the same way and zsh does not: zsh predeclares `OPTARG`, and refuses
 /// `break` / `continue` outside a loop.
 const REAL_SHELL_CORPUS: &[&str] = &[
+    "x=abc; echo ${#x}; echo ${#x#a}; echo after",
     "set -- -z; getopts ab o 2>/dev/null; printf '[%s:%s]\\n' \"$o\" \"${OPTARG-u}\"",
     "set -- -a; getopts a: o 2>/dev/null; printf '[%s:%s]\\n' \"$o\" \"${OPTARG-u}\"",
     "echo a,b}; echo }; { echo blk; }; f() { echo fn; }; f; echo x}y",
@@ -2253,6 +2254,8 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "f() { echo ${1:?missing}; echo inf; }; f; echo \"after rc=$?\"; g() { echo ${v?unset}; echo ing; }; g; echo \"after2 rc=$?\"",
+    "f() { echo ${1:?missing}; }; f 2>/dev/null; echo $?; : ${nosuch_zz:?m}; echo notreached",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
     "(( 1/0 )) 2>/dev/null; echo $?",
     "trap 'echo x' INT; (trap) | wc -l | tr -d ' '; trap | wc -l | tr -d ' '; x=$(trap); echo \"[$x]\"; trap",
