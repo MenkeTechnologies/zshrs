@@ -438,3 +438,5 @@ sh	echo a; echo $((1%0)); echo no; echo $?
 sh	echo ${x:?m}; echo no
 ksh	set -- a "" b "" "" ; IFS=; printf "<%s>" "$*"; x="$*"; printf "<%s>" "$x"; echo
 ksh	set -- "" "" a; IFS=; printf "<%s>" "$*"; echo
+bash	mapfile -t -O 2 arr < <(printf "a\n"); readarray -t arr <<< $'x\ny'; declare -p arr; echo ${#arr[@]}
+bash	shopt -s nocasematch; case ABC in [[:upper:]]*) echo y;; *) echo n;; esac; case abc in [[:upper:]]*) echo y;; *) echo n;; esac; [[ abc == [[:upper:]]* ]] && echo y || echo n; case b in [A-C]) echo y;; *) echo n;; esac; case D in [a-c]) echo y;; *) echo n;; esac

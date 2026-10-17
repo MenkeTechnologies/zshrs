@@ -697,3 +697,84 @@ pub fn ksh93_at_star_null(name: &str) -> bool {
         && crate::dash_mode::ksh93_mode()
         && crate::ported::params::getsparam("1").unwrap_or_default().is_empty()
 }
+
+/// Index of the `]` that closes the bracket class whose first member is at
+/// `start` (a first `]` is a member; `[:name:]` groups are skipped).
+fn class_close(cs: &[char], start: usize) -> Option<usize> {
+    let mut j = start;
+    while j < cs.len() {
+        match cs[j] {
+            '[' if cs.get(j + 1) == Some(&':') => {
+                j += 2 + cs[j + 2..].windows(2).position(|w| w == [':', ']'])? + 2;
+                continue;
+            }
+            ']' if j > start => return Some(j),
+            _ => {}
+        }
+        j += 1;
+    }
+    None
+}
+
+/// bash `shopt -s nocasematch`: rewrite the glob so its literal letters match
+/// either case — `a` -> `[aA]`, `[a-c]` -> `[a-cA-C]` — while a `[:upper:]`
+/// style class keeps testing the subject as given (`case a in [[:upper:]])`
+/// does not match, `case ABC in [[:upper:]]*)` does).
+///
+/// !!! RUST-ONLY HELPER !!! — no C counterpart.
+pub fn nocasematch_fold(pat: &str) -> String {
+    let cs: Vec<char> = pat.chars().collect();
+    let swap = |c: char| if c.is_ascii_lowercase() { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
+    let mut out = String::with_capacity(pat.len() * 2);
+    let mut i = 0;
+    while i < cs.len() {
+        match cs[i] {
+            '\\' => {
+                match cs.get(i + 1) {
+                    Some(&n) if n.is_ascii_alphabetic() => out.extend(['[', n, swap(n), ']']),
+                    Some(&n) => out.extend(['\\', n]),
+                    None => out.push('\\'),
+                }
+                i += 2;
+            }
+            '[' => {
+                let start = i + 1 + usize::from(matches!(cs.get(i + 1), Some('!' | '^')));
+                let Some(close) = class_close(&cs, start) else {
+                    out.push('[');
+                    i += 1;
+                    continue;
+                };
+                out.extend(&cs[i..close]);
+                let mut j = start;
+                while j < close {
+                    if cs[j] == '[' && cs.get(j + 1) == Some(&':') {
+                        j += 2 + cs[j + 2..].windows(2).position(|w| w == [':', ']']).unwrap_or(0) + 2;
+                    } else if cs.get(j + 1) == Some(&'-')
+                        && j + 2 < close
+                        && cs[j].is_ascii_alphabetic()
+                        && cs[j + 2].is_ascii_alphabetic()
+                    {
+                        out.extend([swap(cs[j]), '-', swap(cs[j + 2])]);
+                        j += 3;
+                    } else {
+                        if cs[j].is_ascii_alphabetic() {
+                            out.push(swap(cs[j]));
+                        }
+                        j += 1;
+                    }
+                }
+                out.push(']');
+                i = close + 1;
+            }
+            c if c.is_ascii_alphabetic() => {
+                out.extend(['[', c, swap(c), ']']);
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}

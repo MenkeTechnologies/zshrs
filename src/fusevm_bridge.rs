@@ -13622,7 +13622,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // not letters, so the pattern's `*`/`?`/`[…]` structure is preserved).
         // No-op unless the bash shopt is active. --zsh unaffected.
         let (s, pat) = if crate::dash_mode::nocasematch() {
-            (s.to_lowercase(), pat.to_lowercase())
+            (s, crate::pattern_data_escape::nocasematch_fold(&pat))
         } else {
             (s, pat)
         };
@@ -20762,11 +20762,10 @@ impl fusevm::ShellHost for ZshrsHost {
         // BOTH sides for the match decision — glob metacharacters are not
         // letters, so `*` / `?` / `[…]` structure survives `to_lowercase`.
         // No-op unless the bash shopt is active; --zsh unaffected.
-        let (folded_s, folded_pat);
+        let folded_pat;
         let (s, pattern): (&str, &str) = if crate::dash_mode::nocasematch() {
-            folded_s = s.to_lowercase();
-            folded_pat = pattern.to_lowercase();
-            (&folded_s, &folded_pat)
+            folded_pat = crate::pattern_data_escape::nocasematch_fold(pattern);
+            (s, &folded_pat)
         } else {
             (s, pattern)
         };

@@ -10133,6 +10133,7 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
             }
         }
         None => {
+            crate::bash_arrays::clear(&array_name);
             crate::ported::params::setaparam(&array_name, lines);
         }
     }
