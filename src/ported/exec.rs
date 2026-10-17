@@ -544,7 +544,16 @@ pub fn getoutput(cmd: &str, qt: i32) -> Option<Vec<String>> {
     }
 
     // c:4731 — `if ((s = simple_redir_name(prog, REDIR_READ)))` — `$(< word)`
-    if let Some(red_name) = simple_redir_name(&prog, crate::ported::zsh_h::REDIR_READ) {
+    // !!! BASH/KSH93 DROP-IN (no C counterpart) !!! `$(< <(cmd))`: the parser turns the
+    // `< <(` pair into REDIR_INPIPE, so C reaches the null-command path, which under
+    // SH_NULLCMD runs `:` and substitutes nothing. bash and ksh93 read the process
+    // substitution's file like any other `$(< word)`.
+    let korn_style_read = crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode();
+    if let Some(red_name) = simple_redir_name(&prog, crate::ported::zsh_h::REDIR_READ).or_else(|| {
+        korn_style_read
+            .then(|| simple_redir_name(&prog, crate::ported::zsh_h::REDIR_INPIPE))
+            .flatten()
+    }) {
         /* $(< word) */
         // c:4732
         s = red_name;

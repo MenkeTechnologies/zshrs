@@ -10757,7 +10757,12 @@ pub fn paramsubst(
                 };
                 if is_splat_txt!(sub) {
                     // c:2916 (full array)
-                    arr.join(" ")
+                    // `[*]` joins on IFS[0] (c:3032 sepjoin); `[@]` keeps the space join.
+                    if sub == "*" {
+                        crate::ported::utils::sepjoin(&arr, None)
+                    } else {
+                        arr.join(" ")
+                    }
                 } else if let Some((flags, num, beg, pat, flag_ind, flag_down)) = {
                     // c:Src/params.c:1390-1483 — the subscript-flag switch is
                     // SEQUENTIAL, and every direction arm RESETS the others, so

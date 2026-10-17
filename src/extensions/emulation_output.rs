@@ -919,3 +919,16 @@ fn set_o_render(reusable: bool) -> Option<String> {
 // the process-global personality, and the library test binary runs its
 // tests in parallel threads that share it — doing it inline made unrelated
 // compsys / zle / hist tests fail depending on scheduling.
+
+/// The `pm->base` to store for a `typeset -F N` / `-E N` precision argument.
+///
+/// ksh93 reads `-F0` as "no decimals" (`typeset -F0 v=2.7` prints `3`) while a bare
+/// `-F` means ten, so its explicit zero is stored as -1 for `convfloat`; zsh keeps 0
+/// meaning "default".
+pub fn float_precision_base(is_float: bool, digits: i32) -> i32 {
+    if is_float && digits == 0 && crate::dash_mode::ksh93_mode() {
+        -1
+    } else {
+        digits
+    }
+}

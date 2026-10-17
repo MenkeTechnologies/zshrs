@@ -5321,6 +5321,12 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
                     }
                     // c:2483 — pad char picks: ' ' if PM_RIGHT_B or
                     // numeric-prefix detection failed, else '0'.
+                    // !!! PDKSH (no C counterpart) !!! mksh's `-Z` zero-fills the whole string, signs, blanks
+                    // and letters included (`typeset -Z5 v=abc` is `00abc`).
+                    if pad_flags & PM_RIGHT_Z != 0 && crate::dash_mode::pdksh_family() {
+                        zero = true;
+                        valprefend = 0;
+                    }
                     let pad_char = if (pad_flags & PM_RIGHT_B) != 0 || !zero {
                         ' '
                     } else {
@@ -5958,11 +5964,12 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                     }
                 };
                 // !!! PDKSH-FAMILY (no C counterpart) !!! mksh gives an integer parameter the
-                // base of the last base literal assigned to it (`8#17`, `16#ff`, `0x1f`),
-                // and prints it that way afterwards: `typeset -i v=0x1f; print $v` is
-                // `16#1f`, and the base survives `v=v+1`. zsh keeps the display base
+                // base of the FIRST value assigned to it, when that is a base literal (`8#17`,
+                // `16#ff`, `0x1f`), and prints it that way afterwards: `typeset -i v=0x1f;
+                // print $v` is `16#1f`, the base survives `v=v+1`, and a later literal never
+                // changes it (a plain first value fixes base 10). zsh keeps the display base
                 // only when asked for with `typeset -i BASE`.
-                if (flags & ASSPM_ENV_IMPORT) == 0 && crate::dash_mode::pdksh_family() {
+                if (flags & ASSPM_ENV_IMPORT) == 0 && crate::dash_mode::pdksh_family() && pm.base == 0 {
                     if let Some(b) = {
                         let t = s.trim().trim_start_matches(['-', '+']);
                         let mut found = None;
@@ -6027,6 +6034,11 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                     if lb != -1 {
                         pm.base = lb;
                     }
+                }
+                // !!! PDKSH (no C counterpart) !!! mksh fixes an integer's output base at its first
+                // assignment (`typeset -i v=5` is base 10 for good), so a later `B#N` keeps it.
+                if pm.base == 0 && crate::dash_mode::pdksh_family() {
+                    pm.base = 10;
                 }
             }
         }
@@ -6889,6 +6901,12 @@ pub fn getsparam(name: &str) -> Option<String> {
                                 } else if !numeric_pm && !bytes[tpos].is_ascii_digit() {
                                     zero = false;
                                 }
+                            }
+                            // !!! PDKSH (no C counterpart) !!! mksh's `-Z` zero-fills the whole string, signs, blanks
+                            // and letters included (`typeset -Z5 v=abc` is `00abc`).
+                            if pad_flags & PM_RIGHT_Z != 0 && crate::dash_mode::pdksh_family() {
+                                zero = true;
+                                valprefend = 0;
                             }
                             let pad_char = if (pad_flags & PM_RIGHT_B) != 0 || !zero {
                                 ' '
@@ -11386,6 +11404,10 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                         pm.base = lb;
                     }
                 }
+                // !!! PDKSH (no C counterpart) !!! see the create path: the base is fixed once set.
+                if pm.base == 0 && crate::dash_mode::pdksh_family() {
+                    pm.base = 10;
+                }
             }
             // c:2856-2880 — `setnumvalue`'s type switch. The STORAGE half of
             // each arm lands here, under the guard, because that is where C
@@ -15232,7 +15254,12 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
     // `typeset -E f=1.5; print $f` -> `1.5`, `print $((2**0.5))` ->
     // `1.4142135623731`, `print $((5.0))` -> `5`.
     let ksh93 = crate::dash_mode::ksh93_mode();
-    let (fmt_char, digits) = if ksh93 && (pm_flags & PM_EFLOAT) != 0 {
+    // digits < 0 is ksh93's explicit `-F0` / `-E0` (see `float_precision_base`).
+    let ksh93_zero = ksh93 && digits < 0 && (pm_flags & (PM_EFLOAT | PM_FFLOAT)) != 0;
+    let digits = if ksh93_zero { 0 } else { digits };
+    let (fmt_char, digits) = if ksh93_zero {
+        (if (pm_flags & PM_EFLOAT) != 0 { 'g' } else { 'f' }, 0)
+    } else if ksh93 && (pm_flags & PM_EFLOAT) != 0 {
         ('g', if digits <= 0 { 10 } else { digits })
     } else if (pm_flags & PM_EFLOAT) != 0 {
         // c:5715
@@ -16397,7 +16424,9 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             attrs.push("-a".to_string());
         }
         let with_num = |letter: &str, n: i32| -> String {
-            if n != 0 {
+            if n < 0 {
+                format!("-{letter} 0") // explicit `-F0` (see `float_precision_base`)
+            } else if n != 0 {
                 format!("-{letter} {n}")
             } else {
                 format!("-{letter}")

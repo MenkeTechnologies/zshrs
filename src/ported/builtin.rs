@@ -1008,8 +1008,16 @@ pub fn execbuiltin(
             name.as_str(),
             "typeset" | "declare" | "local" | "readonly" | "export" | "integer" | "float"
         );
-    let had_err = bash_decl && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0;
+    // !!! PDKSH (no C counterpart) !!! mksh's `typeset` is not a POSIX special builtin: assigning to a
+    // read-only variable (`typeset +r r`, `typeset r=2`) reports it, returns 2 and the script
+    // goes on, where zsh's zerr ends the line.
+    let pdksh_decl = crate::dash_mode::pdksh_family() && name == "typeset";
+    let had_err = (bash_decl || pdksh_decl) && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0;
     let rc = handler(&name, trimmed, &ops, bn_ref.funcid); // c:506
+    if pdksh_decl && !had_err && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
+        return 2;
+    }
     if bash_decl && !had_err && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
         return if rc == 0 { 1 } else { rc };
@@ -4380,6 +4388,52 @@ pub fn bin_typeset(
         return bin_typeset("typeset", argv, &fresh, func);
     }
 
+    // !!! BASH-MODE (no C counterpart) !!! `declare -a NAME='(x y)'` (the compound text arrives
+    // as one quoted word) builds the array from the words inside the parentheses.
+    if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'a') && !OPT_ISSET(ops, b'A') {
+        let mut rest: Vec<String> = Vec::new();
+        let mut handled = false;
+        for arg in argv {
+            match arg.split_once('=') {
+                // An unquoted `NAME=(a b)` arrives pre-split as the `\u{1f}` pack form and
+                // takes the generic paren-init path; only the quoted compound text is parsed here.
+                Some((n, v))
+                    if !n.is_empty() && v.trim_start().starts_with('(') && !v.contains('\u{1f}') =>
+                {
+                    if let Some(words) = crate::dash_mode::bash_compound_words(v) {
+                        crate::ported::params::setaparam(n, words);
+                        handled = true;
+                        continue;
+                    }
+                    rest.push(arg.clone());
+                }
+                _ => rest.push(arg.clone()),
+            }
+        }
+        if handled {
+            if rest.is_empty() {
+                return 0;
+            }
+            return bin_typeset(name, &rest, ops, func);
+        }
+    }
+
+    // !!! PDKSH GATE (no C counterpart) !!! mksh's `typeset -Ui NAME=EXPR` is an UNSIGNED
+    // 32-bit integer: `-1` reads back as 4294967295. zsh's `-U` (unique) means nothing for a
+    // scalar integer.
+    if crate::dash_mode::pdksh_family() && OPT_ISSET(ops, b'U') && OPT_ISSET(ops, b'i') {
+        let wrapped: Vec<String> = argv
+            .iter()
+            .map(|arg| match arg.split_once('=').map(|(n, e)| (n, mathevali(e))) {
+                Some((n, Ok(v))) => format!("{n}={}", v as u32),
+                _ => arg.clone(),
+            })
+            .collect();
+        if wrapped != argv {
+            return bin_typeset(name, &wrapped, ops, func);
+        }
+    }
+
     // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no `local`: the call is
     // "not found" (127) and the script goes on.
     if name == "local" && crate::dash_mode::ksh93_mode() {
@@ -4661,6 +4715,43 @@ pub fn bin_typeset(
     if (on & PM_TIED) != 0 {
         // c:2741
         off |= PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED; // c:2742
+    }
+    // !!! KORN-FAMILY (no C counterpart) !!! ksh93 and mksh treat -L/-R/-Z as string
+    // attributes: applying one to an integer or float parameter turns it back into a
+    // string, so the field is cut from the value's text, not from its numeric rendering.
+    if crate::dash_mode::korn_mode()
+        && (on & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
+        && (on & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT)) == 0
+    {
+        off |= PM_INTEGER | PM_EFLOAT | PM_FFLOAT;
+    }
+    // !!! PDKSH (no C counterpart) !!! mksh keeps case conversion and field justification
+    // apart: `typeset -u v` on a `-L4` variable leaves a plain upper-cased string. A
+    // value assigned to an unsigned integer without export/readonly asked for drops the
+    // unsigned attribute (`typeset -Ui v=-1; typeset -i v=5` is a signed integer).
+    if crate::dash_mode::pdksh_family() {
+        if (on & (PM_LOWER | PM_UPPER)) != 0 && (on & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) == 0 {
+            off |= PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z;
+        }
+        if (on & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0 && (on & (PM_LOWER | PM_UPPER)) == 0 {
+            off |= PM_LOWER | PM_UPPER;
+        }
+        if argv.iter().any(|a| a.contains('='))
+            && (on & (PM_UNIQUE | PM_EXPORTED | PM_READONLY | PM_TAGGED)) == 0
+        {
+            off |= PM_UNIQUE;
+        }
+    }
+    // !!! KSH93 (no C counterpart) !!! `typeset NAME=value` on an existing numeric or justified
+    // parameter, with none of those attributes asked for again, makes it a plain string
+    // (`typeset -i8 v=5; typeset -x v=1` leaves `typeset -x v=1`). Without a value the
+    // attributes stay.
+    if crate::dash_mode::ksh93_mode()
+        && !matches!(name, "export" | "readonly")
+        && argv.iter().any(|a| a.contains('='))
+        && (on & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) == 0
+    {
+        off |= PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z;
     }
     on &= !off; // c:2744
 
@@ -8194,10 +8285,22 @@ pub fn bin_typeset(
                     };
                     if let Some(s) = prec_arg {
                         if let Ok(b) = s.trim().parse::<i32>() {
+                            let b = crate::extensions::emulation_output::float_precision_base(
+                                (on & (PM_EFLOAT | PM_FFLOAT)) != 0,
+                                b,
+                            );
                             if let Ok(mut tab) = paramtab().write() {
                                 if let Some(pm) = tab.get_mut(n) {
                                     pm.base = b;
                                 }
+                            }
+                        }
+                    } else if crate::dash_mode::ksh93_mode() && (on & PM_INTEGER) != 0 {
+                        // !!! KSH93 (no C counterpart) !!! `typeset -i v=...` with no base argument
+                        // puts an existing integer back to base 10.
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(pm) = tab.get_mut(n) {
+                                pm.base = 0;
                             }
                         }
                     }
@@ -8887,6 +8990,10 @@ pub fn bin_typeset(
                 if let Some(s) = prec_arg {
                     if let Ok(b) = s.trim().parse::<i32>() {
                         // c:1985 zstrtol
+                        let b = crate::extensions::emulation_output::float_precision_base(
+                            (on & (PM_EFLOAT | PM_FFLOAT)) != 0,
+                            b,
+                        );
                         if let Ok(mut tab) = paramtab().write() {
                             if let Some(pm) = tab.get_mut(arg) {
                                 pm.base = b; // c:1987 pm->base = base
@@ -8905,6 +9012,10 @@ pub fn bin_typeset(
                     // base 16). zsh 5.9.1 verified.
                     let switching_int_float = ((on & PM_INTEGER) != 0 && prior_is_float)
                         || ((on & (PM_EFLOAT | PM_FFLOAT)) != 0 && prior_is_integer);
+                    // !!! KSH93 (no C counterpart) !!! `typeset -i v` / `integer v` on an integer
+                    // without a base argument puts it back to base 10.
+                    let switching_int_float = switching_int_float
+                        || (crate::dash_mode::ksh93_mode() && (on & PM_INTEGER) != 0 && prior_is_integer);
                     if !was_fresh && switching_int_float {
                         if let Ok(mut tab) = paramtab().write() {
                             if let Some(pm) = tab.get_mut(arg) {

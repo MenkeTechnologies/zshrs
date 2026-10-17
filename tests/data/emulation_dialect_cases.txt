@@ -385,3 +385,22 @@ zsh,bash,ksh,sh/zsh-style,ksh/zsh-style	cat <(printf a) <(printf b); printf '\n'
 zsh,bash,ksh,sh/zsh-style,ksh/zsh-style	diff <(printf a) <(printf a) >/dev/null; printf '%s\n' $?
 zsh,bash,ksh,sh/zsh-style,ksh/zsh-style	while read l; do printf '<%s>' "$l"; done < <(printf 'x\ny\n'); printf '\n'
 zsh,bash,ksh,sh/zsh-style,ksh/zsh-style	wc -l < <(printf 'a\nb\n') | tr -d ' '
+bash	declare -a a=(1 2); printf '[%s]' "${a[1]}"; printf '\n'
+bash,ksh	printf '%s\n' "$(< <(printf hi))"
+bash,mksh	IFS=,; true | false | true; printf '%s\n' "${PIPESTATUS[*]}"
+ksh	builtin -p >/dev/null 2>&1; echo $?
+ksh	builtin -d printf >/dev/null 2>&1; echo $?
+ksh	typeset -F0 v=2.7; echo $v
+ksh,mksh	typeset -i8 v=5; typeset -L2 v=xy; echo "[$v]"
+ksh,mksh	typeset -i36 v=5; typeset -Z3 v=7; echo "[$v]"
+ksh	typeset -i8 v=10; typeset -i v=16#ff; echo $v
+ksh	typeset -i8 v=10; integer v=7; echo $v
+ksh	typeset -i8 v=42; typeset -x v=1; typeset -p v
+mksh	typeset -Ui v=-1; typeset -x v=1; typeset -p v
+mksh	typeset -Ui v=-1; typeset -i v=5; typeset -p v
+mksh	typeset -i v=2#101; typeset -i v=8#17; echo $v
+mksh	typeset -i v=5; typeset -i v=16#ff; echo $v
+mksh	typeset -r r=1; typeset +r r; echo after $?
+mksh	typeset -Z5 v=abc; echo "[$v]"
+mksh	typeset -L4 v=abcdef; typeset -l v=ABC; echo "[$v]"
+ksh,mksh	umask 0755; print -r -- "${ printf inner; }"

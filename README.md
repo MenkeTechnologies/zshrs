@@ -973,7 +973,7 @@ by version between machines.
 | | zsh oracle | emulation targets |
 |---|---|---|
 | Cases | 22,200 (74 modes) | 2,100 (7 shells) |
-| Divergences | **18 (0.08%)** | 709 (33.8%) |
+| Divergences | **18 (0.08%)** | 15 (0.71%) |
 | Modes/targets at zero | **73 of 74** | -- |
 
 All residual zsh-mode divergence is in one mode, with a single identified
@@ -1004,8 +1004,10 @@ Two further notes on reading this table:
   signals inherited-ignored, `trap` prints the QUIT line in zsh, both
   signals SIG-prefixed in bash, and nothing at all in dash/ksh/sh.
 
-Per emulation target, out of 300 each: `ksh` 163, `mksh` 130, `pdksh` 130,
-`bash` 112, `sh` 80, `dash` 47, `ash` 47. The emulation modes are held to a
+Per emulation target, out of 300 each: `bash` 15 and every other target 0 (`ksh`,
+`mksh`, `pdksh`, `sh`, `dash`, `ash`). All 15 `bash` cases print the shell's own path,
+which differs because the fuzzer starts each shell by its own binary path
+(`caller`, `caller 0` and `${BASH_SOURCE[0]}` inside a `-c` string report `$0`). The emulation modes are held to a
 weaker contract than zsh mode -- exit-status *sign* rather than exact code --
 because the reference shells disagree with each other on exact codes.
 

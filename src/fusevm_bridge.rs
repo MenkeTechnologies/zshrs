@@ -1187,6 +1187,10 @@ fn user_fn_shadows_builtin(name: &str) -> bool {
 /// builtin typeset` is "no such builtin"), plus the zshrs builtins that live
 /// outside it: the daemon `z*` family and the opcode builtins above.
 pub(crate) fn builtin_prefix_finds(name: &str) -> bool {
+    // ksh93 `builtin -d NAME` and its usage error are decided by the `builtin` handler itself.
+    if crate::dash_mode::ksh93_mode() && name.len() > 1 && name.starts_with('-') {
+        return true;
+    }
     if crate::extensions::ext_builtins::is_undefined_contrib_function(name) {
         return false;
     }
@@ -3121,6 +3125,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
             if delete {
+                // Deleting a builtin leaves the name to PATH, exactly like `disable`.
+                dispatch_builtin_raw("disable", names.iter().map(|n| n.to_string()).collect());
                 return Value::Status(0);
             }
             let table = crate::ported::builtin::createbuiltintable();
@@ -7176,6 +7182,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 None
             };
+            // !!! KORN-FAMILY (no C counterpart) !!! C lets the body's `>|` create TMP under the
+            // shell's umask, so `umask 0755` leaves a file the read-back cannot open. ksh93 and
+            // mksh capture in memory; pre-create TMP as 0600 so `>|` truncates it in place.
+            if let (true, Some(t)) = (crate::dash_mode::korn_mode(), &rplytmp) {
+                use std::os::unix::fs::PermissionsExt;
+                if std::fs::OpenOptions::new().write(true).create_new(true).open(t).is_ok() {
+                    let _ = std::fs::set_permissions(t, std::fs::Permissions::from_mode(0o600));
+                }
+            }
             let cmdarg: String = match (kind, &rplytmp) {
                 (0, Some(t)) => format!(
                     ">| {} {{\n{}\n;}}", // c:1993 outfmt
@@ -8099,8 +8114,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::utils::errflag
                     .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             }
-            vm.last_status = 2;
-            return Value::Status(2);
+            let st = if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() { 1 } else { 2 };
+            vm.last_status = st;
+            return Value::Status(st);
         }
         // c:5267 — `(( 0 ))` is false, anything else is true.
         let status = i32::from(!mn_is_true(val));
@@ -15084,8 +15100,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 crate::ported::utils::errflag
                     .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
-                vm.last_status = 2;
-                Value::Status(2)
+                // !!! BASH/KSH93 GATE (no C counterpart) !!! `(( 1/0 ))` fails with status 1
+                // there; zsh and mksh say 2.
+                let st = if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() { 1 } else { 2 };
+                vm.last_status = st;
+                Value::Status(st)
             }
         } else {
             Value::Status(vm.last_status)
