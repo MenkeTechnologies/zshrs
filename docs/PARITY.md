@@ -36,8 +36,25 @@ measurement section of `README.md` carries the current figures):
 - **zsh's own test suite** (`scripts/ztst_compsys.py --core`, oracle zsh 5.9.2
   from the `zsh-5.9.2` tag). Detail in `docs/parity_report.html`.
 - **In-tree ztst corpus** (`tests/ztst_runner.rs`, no oracle).
-- **Emulation matrix** (`tests/emulation_parity.rs`) — every dialect against
-  its real reference shell.
+- **Emulation matrix** (`tests/emulation_parity.rs`) — nine ways (`zsh`, `bash`,
+  `ksh`, `sh`, `dash`, `mksh`, `ash`, plus the zsh-style `--sh --zsh` and
+  `--ksh --zsh` legs, and `pdksh` when a reference is installed), each against
+  its real reference shell, comparing stdout and exit status. Corpora: shared
+  portable scripts, per-dialect hand-written corpora, generated operator grids,
+  a cross-dialect data file (`tests/data/emulation_extra_cases.txt`) and a
+  dialect data file tagged per way (`tests/data/emulation_dialect_cases.txt`).
+  Ways run in parallel, scripts run in an empty scratch directory with a 30 s
+  limit, and the run prints a per-way table naming the reference binary and
+  release. The newest installed reference is preferred (bash 5.3, ksh93u+m).
+
+  Known open divergences the matrix does not yet pin (each is a separate
+  per-shell rule): unquoted `$@` / `$*` with empty arguments under a
+  non-default IFS (dash drops them all, mksh drops a leading one, ksh93 keeps
+  one); an alias defined on one line of a `-c` string and used on the next
+  (dash, ksh, mksh and ash expand it); empty `()` and bash's `{ ; }` (syntax
+  errors in the real shells); sparse-array slicing `${a[@]:off}` in bash and
+  ksh (by index, not position); ksh93's `${v:-"q r"}` splitting inside double
+  quotes.
 
 The oracle-backed ztst figure is the largest measure of remaining debt; the
 other suites sample narrower slices of the language.
