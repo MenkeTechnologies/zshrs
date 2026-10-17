@@ -98,42 +98,6 @@ the end of every
 .BR zshrs\-recorder (1)
 run, and is reachable through the daemon as
 .BR "zd prewarm" .
-.SS Parser-pipeline dumpers
-Each dumper writes to stdout and accepts
-.B \-
-for stdin.
-.TP
-.BI \-\-dump\-tokens " FILE"
-Emit one
-.IB TOKNAME \\t TOKSTR
-line per lexer token.
-.TP
-.BI \-\-dump\-ast " FILE"
-Parser AST in canonical S-expression form.
-.TP
-.BI \-\-dump\-wordcode " FILE"
-Wordcode emitter output
-.RB ( EPROG ,
-.BR WORDS ,
-.BR WC[i] ,
-.BR STRS ).
-.TP
-.BI \-\-dump\-zwc " ZWCFILE " [ FN ]
-Inspect a compiled
-.B .zwc
-cache: list its function index, or, with
-.IR FN ,
-disassemble a single entry.
-.SS VM debugging
-.TP
-.B \-\-tiers
-Run it, then report which fusevm execution tier took each of its chunks.
-.TP
-.B \-\-disasm
-Print
-.B fusevm
-opcodes for each compiled unit before VM execution. Does not suppress
-execution.
 .SS Parity modes
 Each parity mode disables all caches and the daemon and matches the
 named reference shell byte-for-byte; every

@@ -79,15 +79,7 @@ with a persistent worker pool servicing builtins and most external
 calls without
 .BR fork (2).
 .PP
-The pipeline outputs can be inspected directly via
-.BR \-\-dump\-tokens ,
-.BR \-\-dump\-ast ,
-.BR \-\-dump\-wordcode ,
-and
-.BR \-\-disasm
-(see
-.BR zshrs (1)).
-Resulting bytecode is cached as rkyv shards under
+Compiled bytecode is cached as rkyv shards under
 .IR ~/.zshrs/ .
 .SH INVOCATION
 .B zshrs
@@ -105,8 +97,7 @@ runs the script with
 set to its path. See
 .BR zshrs (1)
 for the full flag table, including the editor and developer tooling
-.RB ( \-\-lsp ", " \-\-dap ", " \-\-fmt ", " \-\-ztest ", " \-\-docs )
-and the parser-pipeline dumpers.
+.RB ( \-\-lsp ", " \-\-dap ", " \-\-fmt ", " \-\-ztest ", " \-\-docs ).
 .SH "PARITY MODES"
 .TP
 .B \-\-zsh
@@ -153,9 +144,6 @@ prompt lines) is translated to zsh text and run by the same engine. Covers
 \fB$#x\fR, \fB$x[n]\fR, \fB$?x\fR and the \fB:h :t :r :e\fR modifiers, \fB>&\fR,
 \fB>!\fR, \fB|&\fR, and aliases with history arguments. Checked against
 .BR tcsh (1).
-Not yet translated: \fBsource\fR of a csh file from inside a csh script,
-\fBonintr label\fR, \fBgoto\fR into a block, and csh's abort-on-error
-behaviour for undefined variables.
 .PP
 Eight Bourne-family dialects run on one bytecode core, and each is
 verified against its own reference shell rather than against zsh's
@@ -2350,8 +2338,8 @@ Set to \fB0\fR to disable the caches and the daemon. The parity modes
 (\fB\-\-zsh\fR, \fB\-\-bash\fR, \fB\-\-ksh\fR, \fB\-\-sh\fR, \fB\-\-csh\fR, \fB\-\-posix\fR) set it.
 .TP
 .B ZSHRS_LOG
-.BR tracing -style filter for the structured log. Examples:
-.BR debug ", " "zshrs::ported::lex=trace" ", " "zshrs=info,fusevm=trace" .
+.BR tracing -style filter for the structured log, for example
+.BR info " or " "zshrs=info" .
 .TP
 .B ZSHRS_LONG_CMD_PRE_THRESHOLD
 Seconds. Commands taking longer fire the preexec long-cmd hook.
@@ -2487,31 +2475,7 @@ it is never printed to the terminal. No startup banner. No deprecation
 nags. No spell-correction prompts. No "did you mean" hints. No
 tip-of-the-day. No "use \fB\-\-help\fR for more" suffix in error
 messages.
-.SH "DEBUGGING & INTROSPECTION"
-.TP
-.B \-\-disasm
-Print fusevm opcodes before VM execution.
-.TP
-.B \-\-dump\-tokens
-Token stream from lex.rs.
-.TP
-.B \-\-dump\-ast
-Parsed AST from parse.rs.
-.TP
-.B \-\-dump\-wordcode
-zsh-style wordcode (for parity comparison against
-.BR zcompile ).
-.TP
-.B \-\-dump\-zwc
-Inspect a
-.B *.zwc
-bytecode bundle.
-.TP
-.B \-\-tiers
-Run a script, then report which fusevm execution tier took each of its
-chunks \(em and for the chunks that reached neither, which op kinds kept
-them out. The answer comes from fusevm's own eligibility and cache
-predicates, so it is the compiler's account rather than an estimate.
+.SH "INTROSPECTION"
 .TP
 .B \-\-dump\-reflection
 JSON self-description of every builtin, keyword and option.
@@ -2525,7 +2489,7 @@ JSON for every plugin the most recent recorded session sourced or put on fpath, 
 The daemon writes the list to \fIplugins.db\fR when it ingests a recorder shard; the output is empty until one has been ingested.
 .TP
 .B \-\-doctor
-Full diagnostic report; useful when filing issues.
+Full diagnostic report.
 .TP
 .B ZSHRS_LOG
 .BR tracing -style filter on the structured log.
@@ -2584,6 +2548,4 @@ https://github.com/MenkeTechnologies/zshrs/issues
 .UE .
 Include
 .B \-\-doctor
-output and
-.B ZSHRS_LOG=debug
-log excerpts.
+output.
