@@ -1005,8 +1005,7 @@ Two further notes on reading this table:
   signals SIG-prefixed in bash, and nothing at all in dash/ksh/sh.
 
 Per emulation target, out of 300 each: `ksh`, `mksh`, `pdksh`, `bash`, `sh`, `dash` and
-`ash` are all 0, and five further 3,000-case seed ranges per target found no divergence the
-last fixes left open. The `dash` and `ash` references are `/bin/dash` (the dash the parity
+`ash` are all 0, and four further 3,000-case seed ranges per target (seeds 1, 5000, 9000, 14000) found none. The `dash` and `ash` references are `/bin/dash` (the dash the parity
 corpus pins); the Homebrew dash 0.5.13 differs from it in `getopts`, `$'…'`, `echo` escapes
 and `alias` output, and is not a target. The fuzzer starts zshrs under the reference's path
 (`argv[0]`), because `caller` and `${BASH_SOURCE[0]}` in a `-c` string report it, and runs the
