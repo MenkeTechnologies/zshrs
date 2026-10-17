@@ -18002,6 +18002,22 @@ pub fn bin_test(
         }
     }
     let mut argv = argv.to_vec();
+    // !!! KSH93 GATE (no C counterpart) !!! ksh93's `test` evaluates the operands of -eq, -ne,
+    // -lt, -le, -gt and -ge as arithmetic expressions: `test 0x10 -eq 16` and `test a -eq a`
+    // (both 0) succeed, where zsh reports "bad floating point constant".
+    if crate::dash_mode::ksh93_mode() {
+        for i in 1..argv.len().saturating_sub(1) {
+            if matches!(argv[i].as_str(), "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge") {
+                for j in [i - 1, i + 1] {
+                    if argv[j].parse::<i64>().is_err() {
+                        if let Ok(n) = mathevali(&argv[j]) {
+                            argv[j] = n.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
     let mut sense = 0i32; // c:7236
 
     // c:7239-7247 — `[` requires trailing `]`.

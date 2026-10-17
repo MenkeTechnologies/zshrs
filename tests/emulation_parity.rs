@@ -2082,6 +2082,7 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "test 0x10 -eq 16; echo $?; test a -eq a 2>/dev/null; echo $?; test 1+1 -eq 2; echo $?; test 7 -eq 8; echo $?",
     "eval \"echo '\" 2>/dev/null; echo $?",
     "eval 'echo (' 2>/dev/null; echo $?",
     "eval false; echo $?",
