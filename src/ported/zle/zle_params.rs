@@ -1548,15 +1548,15 @@ pub fn get_lsearch() -> String {
         .clone()
 }
 
-/// Port of `get_context(UNUSED(Param pm))` from Src/Zle/zle_params.c:942.
+/// Port of `get_context(UNUSED(Param pm))` from Src/Zle/zle_params.c:958.
 pub fn get_context() -> &'static str {
-    // c:942
-    // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
+    // c:958
+    // c:960-973 — switch on zlecontext → "cont" / "select" / "vared" / "start".
     match ZLECONTEXT.load(Ordering::SeqCst) {
-        x if x == ZLCON_LINE_CONT => "cont", // c:945-946
-        x if x == ZLCON_SELECT => "select",  // c:949-950
-        x if x == ZLCON_VARED => "vared",    // c:953-954
-        _ => "line",                         // c:957-958 default
+        x if x == ZLCON_LINE_CONT => "cont", // c:961-962
+        x if x == ZLCON_SELECT => "select",  // c:964-965
+        x if x == ZLCON_VARED => "vared",    // c:967-968
+        _ => "start",                        // c:970-972 ZLCON_LINE_START / default
     }
 }
 
@@ -1999,7 +1999,7 @@ mod display_tests {
         let _g = zle_test_setup();
         zle_reset();
         ZLECONTEXT.store(ZLCON_LINE_START, Ordering::SeqCst);
-        assert_eq!(get_context(), "line");
+        assert_eq!(get_context(), "start");
         ZLECONTEXT.store(ZLCON_LINE_CONT, Ordering::SeqCst);
         assert_eq!(get_context(), "cont");
         ZLECONTEXT.store(ZLCON_SELECT, Ordering::SeqCst);

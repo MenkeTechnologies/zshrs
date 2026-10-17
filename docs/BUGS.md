@@ -61481,3 +61481,17 @@ $ zshrs -fc 'typeset -i j=5; j[1]=3; typeset -F f=1.5; f[1]=7; print $j $f'
 **Fix.** `assignsparam`'s single-index path dispatches a numeric parameter to
 `assignstrvalue` with the getindex bounds instead of the array element store.
 Pinned by `tests/parity/subscript_search_assign_parity.rs`.
+
+## #1186 — `$CONTEXT` read `line` on the first line of a command instead of `start` — fixed
+
+**Status:** `fixed` 2026-10-17.
+
+```console
+# widget bound in an interactive shell, printing $CONTEXT
+zsh     CONTEXT=start
+zshrs   CONTEXT=line
+```
+
+**C reference.** `get_context` (c:Src/Zle/zle_params.c:958-973) returns
+`"start"` for `ZLCON_LINE_START` and the default; `"line"` is not a value it
+produces. **Fix.** `get_context`'s default arm returns `"start"`.
