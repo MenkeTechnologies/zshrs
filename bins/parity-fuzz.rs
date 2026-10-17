@@ -680,6 +680,13 @@ fn run_zshrs(script: &str, bin: &Path, timeout: Duration) -> RunOut {
     } else {
         cmd.args(cfg.flags).args(rcs_off).args(["-c", script]);
     }
+    // bash reports its invocation path as `$0` / `BASH_SOURCE` / `caller`. Start zshrs under the
+    // reference's path so that text is not a divergence; the mode is chosen by the explicit flag.
+    if shell_target() == ShellTarget::Bash {
+        if let Some(path) = reference_bin(ShellTarget::Bash) {
+            std::os::unix::process::CommandExt::arg0(&mut cmd, path);
+        }
+    }
     cmd.env_remove("ZSHRS_CACHE");
     cmd.env_remove("ENV");
     if let Some(dir) = FIXTURE_CWD.get() {
