@@ -61430,3 +61430,22 @@ Residual, open: `zcompile -c` of a function defined on ONE line (`g(){ echo $LIN
 line 2 where zsh writes line 1 (`$LINENO` 1 vs 0 after loading it, in either shell).
 `cur_add_func` re-parses `shfunc::body`, which `funcdef_capture` trims, so the body's offset from
 its header is gone before the dump is written.
+
+## #1185 — a subscript on an integer/float parameter stored an array element — fixed
+
+**Status:** `fixed` 2026-10-17.
+
+```console
+$ zsh   -fc 'typeset -i j=5; j[1]=3; typeset -F f=1.5; f[1]=7; print $j $f'
+3 7.0000000000
+$ zshrs -fc 'typeset -i j=5; j[1]=3; typeset -F f=1.5; f[1]=7; print $j $f'
+5 1.5000000000
+```
+
+**C reference.** `assignstrvalue`'s PM_INTEGER / PM_EFLOAT / PM_FFLOAT arms
+(c:Src/params.c:2777-2810) ignore `v->start`/`v->end` and assign `mathevali(val)` /
+`matheval(val)` to the whole parameter; `[0]` is still the c:2700 invalid range.
+
+**Fix.** `assignsparam`'s single-index path dispatches a numeric parameter to
+`assignstrvalue` with the getindex bounds instead of the array element store.
+Pinned by `tests/parity/subscript_search_assign_parity.rs`.

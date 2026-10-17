@@ -9213,6 +9213,37 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     }
                 }
                 pm.u_str = Some(out);
+            } else if matches!(pm_type, t if t == PM_INTEGER || t == PM_EFLOAT || t == PM_FFLOAT) {
+                // c:Src/params.c:2777-2810 — assignstrvalue's PM_INTEGER /
+                // PM_EFLOAT / PM_FFLOAT arms ignore v->start / v->end: the
+                // whole value is replaced by `mathevali(val)` / `matheval(val)`.
+                // `typeset -i i=5; i[1]=3` leaves `i` an integer holding 3.
+                // c:2699-2703 — getindex's [0] still reports the empty range.
+                if idx == 0 && !isset(KSHARRAYS) && !isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                    drop(tab); // zerr redraws ZLE, which reads paramtab
+                    zerr(&format!("{}: assignment to invalid subscript range", name)); // c:2700
+                    unqueue_signals();
+                    return None;
+                }
+                let pm_clone = pm.clone();
+                drop(tab); // mathevali reads paramtab
+                let mut v = value {
+                    pm: Some(pm_clone),
+                    arr: Vec::new(),
+                    scanflags: 0,
+                    valflags: 0,
+                    start: idx as _,
+                    end: idx as _,
+                };
+                assignstrvalue(Some(&mut v), Some(val.to_string()), flags); // c:3343
+                let cloned = v.pm.clone();
+                if let Some(pm_back) = v.pm {
+                    if let Some(slot) = paramtab().write().unwrap().get_mut(name) {
+                        *slot = pm_back;
+                    }
+                }
+                unqueue_signals(); // c:3344
+                return cloned; // c:3345
             } else {
                 // PM_ARRAY + numeric subscript (c:3357 `assignaparam`).
                 // c:Src/params.c:2125-2150 + c:2911 — `a[0]=val` under
