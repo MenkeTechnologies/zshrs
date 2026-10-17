@@ -12488,6 +12488,31 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
                     result.push_str("\\x");
                     continue;
                 }
+                // !!! POSIX/BASH GATE (no C counterpart) !!! bash `echo -e`, ksh93, mksh,
+                // dash and /bin/sh all keep `\x` verbatim when no hex digit follows; zsh
+                // decodes it as NUL. Scoped to the echo/print paths: `$'...'` has its own
+                // arms (bash above, mksh below), bindkey (GETKEY_EMACS) keeps zsh's
+                // reading, and ksh93's printf FORMAT (GETKEY_PRINTF_PERCENT) does decode
+                // the NUL.
+                let no_hex_follows = !chars.peek().is_some_and(|c| c.is_ascii_hexdigit());
+                let dollar_quote = (how & crate::ported::zsh_h::GETKEY_DOLLAR_QUOTE as u32) != 0;
+                let ksh93_printf_fmt = crate::dash_mode::ksh93_mode()
+                    && (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0;
+                if d == 'x'
+                    && no_hex_follows
+                    && !dollar_quote
+                    && !ksh93_printf_fmt
+                    && (how & crate::ported::zsh_h::GETKEY_EMACS as u32) == 0
+                    && (crate::dash_mode::posix_faithful() || crate::dash_mode::bash_mode())
+                {
+                    result.push_str("\\x");
+                    continue;
+                }
+                // mksh `$'...'`: a digitless `\x` drops the backslash (`$'d\x'` is `dx`).
+                if d == 'x' && no_hex_follows && dollar_quote && crate::dash_mode::pdksh_family() {
+                    result.push('x');
+                    continue;
+                }
                 // c:7157-7161 — the pre-checks that run only without
                 // GETKEY_OCTAL_ESC. `\0` is the octal introducer (`s++`);
                 // any other bare digit is not an escape.

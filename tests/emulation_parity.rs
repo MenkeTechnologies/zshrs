@@ -1703,6 +1703,7 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "echo -e \"a\\x\" \"\\x41\"; echo \"b\\x\"; printf \"%s\\n\" $'d\\x'",
     "a=(x y z); a[5]=w; unset \"a[1]\"; echo \"${a[@]:1:2}\" \"${a[@]:2}\" \"${a[@]:3}\" \"${a[@]:0:2}\" \"${a[@]: -2}\"; echo \"[${a[@]: -9}]\"",
     "a=$BASHPID; b=$(echo $BASHPID); (d=$BASHPID; echo $((d==a))); echo $((a==$$)) $((b==a)); echo x | { echo $((BASHPID==a)); }",
     "x=a/b; echo \"[${x///:}] [${x///}] [${x////}] [${x///b}] [${x//a/}]\"",
@@ -2086,6 +2087,7 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "echo \"a\\x\"; printf 'p\\x|\\n' | wc -c | tr -d ' '",
     "echo $((7.5%2)) $((-7.5%2)) $((9.9%4))",
     "test 1.5 -gt 1; echo $?; test 1.5 -lt 1; echo $?; test 2 -eq 2.0; echo $?; [ 0.1 -ne 0.1 ]; echo $?",
     "test 0x10 -eq 16; echo $?; test a -eq a 2>/dev/null; echo $?; test 1+1 -eq 2; echo $?; test 7 -eq 8; echo $?",
@@ -2261,6 +2263,7 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "echo \"a\\x\" \"\\x41\"; printf \"%s\\n\" $'d\\x'",
     "cat /dev/null; hash; echo a; hash -r; echo $?; alias -t; hash ls; echo $?",
     "f() { echo ${1:?missing}; echo inf; }; f; echo \"after rc=$?\"; g() { echo ${v?unset}; echo ing; }; g; echo \"after2 rc=$?\"",
     "f() { echo ${1:?missing}; }; f 2>/dev/null; echo $?; : ${nosuch_zz:?m}; echo notreached",
@@ -2312,6 +2315,7 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    "echo \"a\\x\" \"\\x41\"",
     "echo $((-9223372036854775808 / -1)) $((9223372036854775808)) $((-9223372036854775808)) $((99999999999999999999))",
     "(exec nosuch_zz) 2>/dev/null; echo $?; (exec /bin/echo hi); echo $?; (exec /nonexistent/x) 2>/dev/null; echo $?",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
