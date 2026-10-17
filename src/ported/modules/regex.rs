@@ -270,7 +270,14 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     };
     let (groups, nsub) = match matched {
         Some(m) => m,
-        None => return 0, // c:93-94 REG_NOMATCH
+        None => {
+            // !!! BASH GATE (no C counterpart) !!! a failed `=~` empties `BASH_REMATCH`; zsh leaves
+            // `$match` alone.
+            if isset(BASHREMATCH) {
+                setaparam("BASH_REMATCH", Vec::new());
+            }
+            return 0; // c:93-94 REG_NOMATCH
+        }
     };
     // Group N's byte range, or None when it did not participate.
     let group = |n: usize| -> Option<(usize, usize)> { groups.get(n).copied().flatten() };

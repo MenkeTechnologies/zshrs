@@ -18688,10 +18688,7 @@ pub fn paramsubst(
                         // head match (`c#` on "ab" → "Xab") still lands at
                         // end==0. Empty-pattern falls back to the window scan.
                         let matched: Option<usize> = if let Some(prog) = prog_opt.as_ref() {
-                            crate::ported::pattern::patflags.store(
-                                prog.0.flags | crate::ported::zsh_h::PAT_NOANCH,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
+                            crate::pattern_data_escape::publish_patflags(prog.0.flags | crate::ported::zsh_h::PAT_NOANCH);
                             let mut pst = crate::ported::pattern::rpat::new();
                             crate::ported::pattern::patmatch(
                                 &prog.1,
@@ -18920,10 +18917,7 @@ pub fn paramsubst(
                                         } else {
                                             0
                                         };
-                                        crate::ported::pattern::patflags.store(
-                                            base_flags | pat_notend,
-                                            std::sync::atomic::Ordering::Relaxed,
-                                        );
+                                        crate::pattern_data_escape::publish_patflags(base_flags | pat_notend);
                                         let mut _p2 = crate::ported::pattern::rpat::new();
                                         // c:3048-3049 pattrylen(p, t, umlen2, ...)
                                         if let Some(l2) = crate::ported::pattern::patmatch(
@@ -18995,17 +18989,14 @@ pub fn paramsubst(
                             // the interior-slice scan. The slice's end IS the
                             // real string end, so `(#e)` needs no PAT_NOTEND.
                             let q_byte = byte_off[q];
-                            crate::ported::pattern::patflags.store(
-                                prog.0.flags
+                            crate::pattern_data_escape::publish_patflags(prog.0.flags
                                     | crate::ported::zsh_h::PAT_NOANCH
                                     | pat_notend // c:2882 — sticky, never re-cleared
                                     | if q_byte > 0 {
                                         crate::ported::zsh_h::PAT_NOTSTART
                                     } else {
                                         0
-                                    },
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
+                                    });
                             let mut _pst = crate::ported::pattern::rpat::new();
                             // c:Src/pattern.c — single-"*" (PAT_ANY) fast path
                             // matches the whole remainder without the bytecode.
@@ -19093,17 +19084,14 @@ pub fn paramsubst(
                     if q == nn && !just_matched {
                         let end_empty_match = if let Some(prog) = prog_opt.as_ref() {
                             let q_byte = byte_off[nn];
-                            crate::ported::pattern::patflags.store(
-                                prog.0.flags
+                            crate::pattern_data_escape::publish_patflags(prog.0.flags
                                     | crate::ported::zsh_h::PAT_NOANCH
                                     | pat_notend // c:2882 — sticky, never re-cleared
                                     | if q_byte > 0 {
                                         crate::ported::zsh_h::PAT_NOTSTART
                                     } else {
                                         0
-                                    },
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
+                                    });
                             let mut _pst = crate::ported::pattern::rpat::new();
                             crate::ported::pattern::patmatch(
                                 &prog.1,
@@ -19660,16 +19648,13 @@ pub fn paramsubst(
                             )?;
                             let start_byte: usize = cvv[..start].iter().map(|c| c.len_utf8()).sum();
                             let full: String = cvv.iter().collect();
-                            crate::ported::pattern::patflags.store(
-                                prog.0.flags
+                            crate::pattern_data_escape::publish_patflags(prog.0.flags
                                     | crate::ported::zsh_h::PAT_NOANCH
                                     | if start_byte > 0 {
                                         crate::ported::zsh_h::PAT_NOTSTART
                                     } else {
                                         0
-                                    },
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
+                                    });
                             let mut pst = crate::ported::pattern::rpat::new();
                             let end_byte = crate::ported::pattern::patmatch(
                                 &prog.1,
@@ -19907,10 +19892,7 @@ pub fn paramsubst(
                                             } else {
                                                 0
                                             };
-                                            crate::ported::pattern::patflags.store(
-                                                base_flags | pat_notend_one,
-                                                std::sync::atomic::Ordering::Relaxed,
-                                            );
+                                            crate::pattern_data_escape::publish_patflags(base_flags | pat_notend_one);
                                             let mut p2 = crate::ported::pattern::rpat::new();
                                             // c:3048-3049 pattrylen(p, t, umlen2, ...)
                                             if let Some(l2) = crate::ported::pattern::patmatch(
