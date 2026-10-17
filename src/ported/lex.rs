@@ -2800,6 +2800,18 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         continue;
                     }
                     break;
+                } else if next.is_none()
+                    && !sub
+                    && (crate::dash_mode::bash_mode()
+                        || crate::dash_mode::ksh93_mode()
+                        || crate::dash_mode::dash_faithful())
+                {
+                    // !!! BASH/KSH93/DASH GATE (no C counterpart) !!! a backslash at the
+                    // very end of the input is a literal `\` (`bash -c 'echo \'` prints
+                    // `\`); zsh, mksh and /bin/sh drop it. Only the shell's own input:
+                    // a re-lexed expansion (`sub`) ends in a Bnull quite normally.
+                    add(Bnull);
+                    add('\\');
                 } else {
                     add(Bnull);
                     if let Some(next) = next {

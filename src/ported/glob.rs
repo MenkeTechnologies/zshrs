@@ -1971,7 +1971,13 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                                 }
                                 if j == n {
                                     shape_ok = true; // c:2084 Outbrace
-                                } else if j + 1 < n && b[j] == b'.' && b[j + 1] == b'.' {
+                                } else if j + 1 < n
+                                    && b[j] == b'.'
+                                    && b[j + 1] == b'.'
+                                    // !!! SH GATE (no C counterpart) !!! bash 3.2 (/bin/sh)
+                                    // has no `{N..M..S}` step form: the word stays literal.
+                                    && !crate::dash_mode::sh_mode()
+                                {
                                     j += 2; // c:2087 `..incr`
                                     if j < n && b[j] == b'-' {
                                         j += 1;
@@ -6919,8 +6925,10 @@ fn expand_range(
         // Suppress pad ONLY when LEFT is exactly the single-char "0"
         // (no sign, no extra digits). "-0" or "00" both pad.
         let left_is_bare_zero = left == "0";
-        // ksh93 never zero-pads a numeric range (`{01..03}` -> `1 2 3`).
+        // ksh93 never zero-pads a numeric range (`{01..03}` -> `1 2 3`); neither
+        // does bash 3.2 (/bin/sh).
         let pad = !crate::dash_mode::ksh93_mode()
+            && !crate::dash_mode::sh_mode()
             && !left_is_bare_zero
             && (is_padded_field(lstrip)
                 || is_padded_field(rstrip)

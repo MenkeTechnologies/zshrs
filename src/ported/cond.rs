@@ -309,7 +309,12 @@ pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
                     bad = !e2.is_empty();
                 }
                 if bad {
-
+                    // !!! PDKSH GATE (no C counterpart) !!! mksh's `test` treats a
+                    // non-integer operand of `-eq` etc. as a plain false (status 1,
+                    // no message); zsh, bash and ksh93 report it with status 2.
+                    if crate::dash_mode::pdksh_family() {
+                        return 1;
+                    }
                     warnnam(&format!("integer expression expected: {}", err));
                     return 2;
                 }
@@ -433,13 +438,21 @@ pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
                 },
                 't' => nz(unsafe { libc::isatty(mathevali(&left).unwrap_or(0) as i32) } != 0),
                 _ if ctype == COND_NT || ctype == COND_OT => {
+                    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh and
+                    // /bin/sh: `-nt` is true when the first file exists and the second
+                    // does not, `-ot` when the second exists and the first does not.
+                    // zsh needs both (dash too; `dash_newerf` has its own rule).
+                    let one_sided = crate::dash_mode::bash_mode()
+                        || (crate::dash_mode::posix_faithful() && !crate::dash_mode::dash_strict());
                     // c:400
                     let (a, nsecs) = match getstat(&left) {
-                        None => return 1,
+                        None => {
+                            return (!(one_sided && ctype == COND_OT && getstat(&right).is_some())) as i32
+                        }
                         Some(m) => (m.mtime(), m.mtime_nsec()),
                     };
                     let m2 = match getstat(&right) {
-                        None => return 1,
+                        None => return (!(one_sided && ctype == COND_NT)) as i32,
                         Some(m) => m,
                     };
                     if a == m2.mtime() {

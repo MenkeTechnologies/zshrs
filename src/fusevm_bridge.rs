@@ -3175,6 +3175,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:6175 execode — no end-of-script hooks (c:Src/builtin.c:6213)
                 // A syntax error in the eval string is status 2 in bash and 3 in ksh93.
                 exec.execute_string_without_exit_hooks(&src).unwrap_or_else(|_| {
+                    // !!! PDKSH GATE (no C counterpart) !!! mksh ends the shell on a
+                    // syntax error in the eval'd text (`eval "if"; echo after` prints
+                    // nothing, status 1); the others report it and go on.
+                    if crate::dash_mode::pdksh_family() {
+                        crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL);
+                    }
                     if crate::dash_mode::bash_mode() {
                         2
                     } else if crate::dash_mode::ksh93_mode() {
@@ -7364,6 +7370,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
             let cmdarg: String = match (kind, &rplytmp) {
+                // !!! PDKSH GATE (no C counterpart) !!! mksh's grammar rejects a `;` with
+                // nothing before it (`{ cmd\n;}` is "unexpected ';'", and the drop-in's
+                // parser enforces that), so its body closes with a bare `}`; the line
+                // numbering is the same either way.
+                (0, Some(t)) if crate::dash_mode::pdksh_family() => format!(
+                    ">| {} {{\n{}\n}}",
+                    crate::ported::utils::quotestring(t, crate::ported::zsh_h::QT_BACKSLASH),
+                    body
+                ),
                 (0, Some(t)) => format!(
                     ">| {} {{\n{}\n;}}", // c:1993 outfmt
                     crate::ported::utils::quotestring(t, crate::ported::zsh_h::QT_BACKSLASH),

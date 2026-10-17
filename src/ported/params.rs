@@ -5224,7 +5224,10 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
             10
         };
         convbase_underscore(
-            pm.gsu_i.as_ref().map_or_else(|| intgetfn(pm), |g| (g.getfn)(pm)), // c:2373 pm->gsu.i->getfn
+            crate::dash_mode::pdksh_unsigned_view(
+                pm.node.flags as u32,
+                pm.gsu_i.as_ref().map_or_else(|| intgetfn(pm), |g| (g.getfn)(pm)), // c:2373 pm->gsu.i->getfn
+            ),
             base,
             pm.width, // c:2373 pm->width for underscore grouping
         )
@@ -5687,7 +5690,7 @@ pub fn export_param(pm: &mut param) {
     let val: String = if t == PM_INTEGER {
         // c:2664 — `convbase(buf, pm->gsu.i->getfn(pm), pm->base)`.
         let base = if pm.base > 0 { pm.base } else { 10 };
-        convbase(intgetfn(pm), base as u32) // c:2664
+        convbase(crate::dash_mode::pdksh_unsigned_view(pm.node.flags as u32, intgetfn(pm)), base as u32) // c:2664
     } else if (pm.node.flags as u32 & (PM_EFLOAT | PM_FFLOAT)) != 0 {
         // c:2668 — `convfloat(pm->gsu.f->getfn(pm), pm->base,
         //                     pm->node.flags, NULL)`.
@@ -5769,6 +5772,16 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
     };
 
     if (pm.node.flags as u32 & PM_READONLY) != 0 {
+        // !!! SH GATE (no C counterpart) !!! /bin/sh (bash 3.2) reports `unset` of a
+        // read-only variable and goes on (status 1); zsh's zerr ends the line. The
+        // bash/ksh drop-ins take the same shape in `unsetparam_pm`.
+        if crate::dash_mode::sh_mode() {
+            crate::ported::utils::zwarnnam(
+                "unset",
+                &format!("{}: cannot unset: readonly variable", pm.node.nam),
+            );
+            return;
+        }
         // c:2701 — `zerr("read-only variable: %s", pm->node.nam)`.
         zerr(&format!("read-only variable: {}", pm.node.nam)); // c:2701
         return;
@@ -6767,7 +6780,7 @@ pub fn getsparam(name: &str) -> Option<String> {
                 // c:2364 `convbase(buf, v->pm->gsu.i->getfn(v->pm), …)` — a
                 // module integer (`$SRANDOM`) answers through its getfn.
                 let val = pm.gsu_i.as_ref().map_or(pm.u_val, |g| (g.getfn)(pm));
-                Some(convbase(val, base as u32))
+                Some(convbase(crate::dash_mode::pdksh_unsigned_view(pm.node.flags as u32, val), base as u32))
             } else if t == PM_EFLOAT || t == PM_FFLOAT {
                 Some(convfloat(pm.u_dval, pm.base, pm.node.flags as u32))
             } else if t == PM_SCALAR && pm.gsu_s.is_some() {
@@ -11772,7 +11785,7 @@ pub fn unsetparam(name: &str) -> i32 {
     if is_readonly_special {
         // !!! BASH-MODE (no C counterpart) !!! bash: `unset: NAME: cannot unset:
         // readonly variable`, status 1, script continues (zsh zerr aborts the line).
-        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode() {
             crate::ported::utils::zwarnnam("unset", &format!("{name}: cannot unset: readonly variable"));
             unqueue_signals();
             return 1;
@@ -11993,7 +12006,7 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         // !!! BASH/KSH-MODE (no C counterpart) !!! bash reports `unset: NAME:
         // cannot unset: readonly variable` and carries on (status 1); zsh's
         // zerr aborts the rest of the command line.
-        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode() {
             crate::ported::utils::zwarnnam(
                 "unset",
                 &format!("{}: cannot unset: readonly {}", pm.node.nam, kind),

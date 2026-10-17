@@ -629,6 +629,16 @@ pub fn getoutput(cmd: &str, qt: i32) -> Option<Vec<String>> {
     cmdoutval.store(0, Ordering::Relaxed); // c:4759
     let buf = crate::ported::exec::run_command_substitution(cmd);
     LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed); // c:4775
+    // !!! DROP-IN GATE (no C counterpart) !!! NUL bytes in `$( )` output: bash,
+    // dash, mksh and /bin/sh drop them (`"$(printf 'a\0b')"` is `ab`), ksh93 stops
+    // at the first one (`a`); zsh keeps them.
+    let buf = if crate::dash_mode::ksh93_mode() {
+        buf.split('\0').next().unwrap_or("").to_string()
+    } else if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+        buf.replace('\0', "")
+    } else {
+        buf
+    };
 
     // ── c:4772 `retval = readoutput(pipes[0], qt, NULL);` ─────────────
     // The fd died with the fork, but readoutput's POST-READ half (c:4858-

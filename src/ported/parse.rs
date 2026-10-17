@@ -860,6 +860,10 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
             clear_hdocs();
             return None;
         }
+        if crate::dash_mode::bash_leading_semicolon_error() {
+            clear_hdocs();
+            return None;
+        }
         zshlex();
     }
     if tok() == ENDINPUT {
@@ -934,6 +938,9 @@ pub fn par_event(endtok: lextok) -> bool {
     // c:639-643
     while tok() == SEPER {
         if isnewlin() > 0 && endtok == ENDINPUT {
+            return false;
+        }
+        if crate::dash_mode::bash_leading_semicolon_error() {
             return false;
         }
         zshlex();
@@ -1286,6 +1293,14 @@ fn par_sublist() -> Option<ZshSublist> {
             if !crate::dash_mode::dash_skip_operator_separators() {
                 return None;
             }
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93 and mksh reject
+            // `cmd &&` at the end of the input ("unexpected end of file"); zsh runs
+            // `cmd`. dash is reported above.
+            if tok() == ENDINPUT && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful()) {
+                zerr("syntax error: unexpected end of file");
+                set_tok(LEXERR);
+                return None;
+            }
             // c:Src/parse.c:par_sublist — and-or operators (`&&`,
             // `||`) require a sublist on each side. After consuming
             // `&&`/`||`, another and-or operator OR a pipe-operator
@@ -1308,6 +1323,12 @@ fn par_sublist() -> Option<ZshSublist> {
         DBAR => {
             zshlex();
             if !crate::dash_mode::dash_skip_operator_separators() {
+                return None;
+            }
+            // See the DAMPER arm: `cmd ||` at end of input is a syntax error outside zsh.
+            if tok() == ENDINPUT && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful()) {
+                zerr("syntax error: unexpected end of file");
+                set_tok(LEXERR);
                 return None;
             }
             if matches!(tok(), DAMPER | DBAR | BAR_TOK | BARAMP) {
@@ -9235,6 +9256,10 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
             {
                 zerr("Syntax error: \";\" unexpected");
                 set_tok(LEXERR);
+                break;
+            }
+            // bash, /bin/sh and mksh reject it too (their own wording).
+            if tok() == SEPER && crate::dash_mode::bash_leading_semicolon_error() {
                 break;
             }
             zshlex();

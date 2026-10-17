@@ -793,6 +793,16 @@ pub fn execbuiltin(
                 "too many arguments"
             },
         ); // c:434
+        // !!! DROP-IN GATE (no C counterpart) !!! `exit 1 2`: bash, ksh93, mksh, dash
+        // and /bin/sh all report "too many arguments" and then EXIT with status 1;
+        // zsh alone reports it and goes on.
+        if name == "exit"
+            && argc > bn_ref.maxargs
+            && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+        {
+            zexit(1, ZEXIT_NORMAL);
+            return 1;
+        }
         // ksh93 `let` with no expression is a usage error, status 2.
         if argc < bn_ref.minargs && name == "let" && crate::dash_mode::ksh93_mode() {
             return 2;
@@ -1540,11 +1550,12 @@ pub fn bin_set(
                     // failed lookup (C's execbuiltin checks errflag
                     // after the call; zshrs's bridge bases on the
                     // return value).
-                    // bash: `set -o BAD` is a plain status-2 failure, not a fatal error.
-                    if crate::dash_mode::bash_mode() {
+                    // bash: `set -o BAD` is a plain status-2 failure, not a fatal error
+                    // (status 1 in bash 3.2, i.e. /bin/sh).
+                    if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
                         zwarnnam(nam, &format!("{}: invalid option name", optname));
                         unqueue_signals();
-                        return 2;
+                        return if crate::dash_mode::sh_mode() { 1 } else { 2 };
                     }
                     zerrnam(nam, &format!("no such option: {}", optname));
                     unqueue_signals();
@@ -4556,6 +4567,39 @@ pub fn bin_typeset(
     {
         zwarnnam(name, "can only be used in a function");
         return 1;
+    }
+
+    // !!! BASH-MODE (no C counterpart) !!! bash(1): "With no operands, local writes a
+    // list of local variables to the standard output" — the variables of the CURRENT
+    // function only, as `declare -- name="value"` (bash 5) or `name=value` (bash 3.2,
+    // i.e. /bin/sh), and nothing when there are none. zsh's bare `local` lists every
+    // parameter.
+    if name == "local"
+        && argv.is_empty()
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
+        && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > 0
+    {
+        let level = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32;
+        let mut names: Vec<String> = crate::ported::params::paramtab()
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, pm)| pm.level == level)
+            .map(|(n, _)| n.clone())
+            .collect();
+        names.sort();
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        for n in names {
+            let value = crate::ported::params::getsparam(&n);
+            let line = match (crate::dash_mode::bash_mode(), value) {
+                (true, Some(v)) => format!("declare -- {}=\"{}\"", n, v),
+                (true, None) => format!("declare -- {}", n),
+                (false, v) => format!("{}={}", n, v.unwrap_or_default()),
+            };
+            let _ = writeln!(out, "{}", line);
+        }
+        return 0;
     }
 
     // !!! BASH-MODE (no C counterpart) !!! bash's `declare -F` / `typeset -F`
@@ -14969,11 +15013,20 @@ pub fn bin_break(
         // then suppressed; the Rust mathevali hands the message back instead.
         // bash: a non-numeric `exit` / `return` operand is "numeric argument
         // required", status 2 (zsh evaluates it as arithmetic: `abc` is 0).
-        let bash_nonnumeric = crate::dash_mode::bash_mode()
+        let bash_nonnumeric = (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
             && (func == BIN_EXIT || func == BIN_RETURN)
             && argv[0].trim().trim_start_matches(['+', '-']).parse::<u64>().is_err();
         num = if bash_nonnumeric {
             zwarnnam(name, &format!("{}: numeric argument required", argv[0]));
+            // /bin/sh (bash 3.2) leaves at once with 255; bash 5 does NOT exit on
+            // `exit abc`, it fails with status 2 (`return abc` still returns 2).
+            if crate::dash_mode::sh_mode() {
+                zexit(255, ZEXIT_NORMAL);
+                return 255;
+            }
+            if func == BIN_EXIT {
+                return 2;
+            }
             2
         } else {
             match mathevali(&argv[0]) {
@@ -14989,7 +15042,9 @@ pub fn bin_break(
     // !!! EMULATION-ONLY (no C counterpart) !!! bash and the pdksh line keep a
     // function's status in 8 bits (`f() { return 300; }; f; echo $?` -> 44,
     // `return -1` -> 255); zsh and ksh93 hand back the full value.
-    if func == BIN_RETURN && (crate::dash_mode::bash_mode() || crate::dash_mode::pdksh_family()) {
+    if func == BIN_RETURN
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::pdksh_family() || crate::dash_mode::sh_mode())
+    {
         num &= 0xff;
     }
 
@@ -15063,10 +15118,11 @@ pub fn bin_break(
                 return num; // c:5855
             }
             // !!! BASH-MODE (no C counterpart) !!! bash refuses `return` outside
-            // a function / sourced script (status 2) and keeps running.
-            if crate::dash_mode::bash_mode() {
+            // a function / sourced script (status 2; 1 in bash 3.2, i.e. /bin/sh)
+            // and keeps running.
+            if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
                 zwarnnam(name, "can only `return\u{27} from a function or sourced script");
-                return 2;
+                return if crate::dash_mode::sh_mode() { 1 } else { 2 };
             }
             // c:5858 — fallthrough: treat as logout/exit.
             zexit(num, ZEXIT_NORMAL); // c:5858
@@ -16081,6 +16137,13 @@ pub fn eval(argv: &[String]) -> i32 {
     // c:6203 — `prog = parse_string(zjoin(argv, ' ', 1), 1);`
     let joined = crate::ported::utils::zjoin(argv, ' ');
     let prog = crate::ported::exec::parse_string(&joined, 1);
+
+    // !!! PDKSH GATE (no C counterpart) !!! mksh ends the shell on a syntax error in
+    // the eval'd text (`eval "if"; echo after` prints nothing, status 1); bash, ksh93,
+    // dash and zsh report it and go on.
+    if prog.is_none() && crate::dash_mode::pdksh_family() {
+        zexit(1, ZEXIT_NORMAL);
+    }
 
     if let Some(prog) = prog {
         // c:6205 — `if (wc_code(*prog->prog) != WC_LIST)`
@@ -22033,7 +22096,14 @@ fn printf_format(
                     // '\1' -> ^A. Respell each as zsh's `\0NNN` introducer form (which
                     // GETKEYS_PRINTF_ARG already decodes) so `\0101`, `\x41` and
                     // `\\` keep their getkeystring meaning.
-                    let a = if crate::dash_mode::bash_mode() {
+                    // dash, mksh (whose printf is the system one) and /bin/sh read a
+                    // bare `\NNN` the same way. dash keeps `\x41` literal and the
+                    // system printf prints it as `x41`; bash and /bin/sh decode it.
+                    let octal_arg = crate::dash_mode::bash_mode()
+                        || crate::dash_mode::dash_faithful()
+                        || crate::dash_mode::sh_mode()
+                        || crate::dash_mode::pdksh_family();
+                    let a = if octal_arg {
                         const BS: char = '\u{5c}';
                         let cs: Vec<char> = a.chars().collect();
                         let mut o = String::with_capacity(a.len());
@@ -22042,6 +22112,16 @@ fn printf_format(
                             if cs[i] != BS || i + 1 >= cs.len() {
                                 o.push(cs[i]);
                                 i += 1;
+                            } else if cs[i + 1] == 'x' && crate::dash_mode::dash_faithful() {
+                                // dash: `\x` is no escape; keep the backslash itself.
+                                o.push(BS);
+                                o.push(BS);
+                                o.push('x');
+                                i += 2;
+                            } else if cs[i + 1] == 'x' && crate::dash_mode::pdksh_family() {
+                                // system printf: `\x41` prints as `x41`.
+                                o.push('x');
+                                i += 2;
                             } else if cs[i + 1] == '0' || !cs[i + 1].is_digit(8) {
                                 // `\0NNN`, `\\`, `\x..`, `\n` ...: pass the pair through.
                                 o.push(BS);

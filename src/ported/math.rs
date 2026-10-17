@@ -1163,6 +1163,9 @@ pub(crate) fn lexconstant() -> i32 {
                     return EOI;
                 }
                 let val = crate::ported::utils::zstrtol_underscore(&m_input_slice_from(hex_start), 16, true).0;
+                // !!! PDKSH (no C counterpart) !!! mksh keeps constants in 32 bits
+                // (`$(( 0x100000000 ))` is 0); see the decimal arm.
+                let val = if crate::dash_mode::pdksh_family() { i64::from(val as i32) } else { val };
                 m_lastbase_set(16);
                 m_yyval_set(if m_force_float() {
                     mnumber {
@@ -1327,8 +1330,11 @@ pub(crate) fn lexconstant() -> i32 {
 
     // Parse decimal integer or float
     let num_start = m_pos();
+    // !!! DROP-IN GATE (no C counterpart) !!! the `_` digit separator is zsh's
+    // own; bash, ksh93, mksh, dash and /bin/sh all reject `$(( 1_000 ))`.
+    let underscore_ok = !crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode();
     while let Some(c) = peek() {
-        if is_digit(c) || c == '_' {
+        if is_digit(c) || (c == '_' && underscore_ok) {
             advance();
         } else {
             break;
@@ -1337,8 +1343,14 @@ pub(crate) fn lexconstant() -> i32 {
 
     // !!! BASH-MODE (no C counterpart) !!! bash arithmetic is integer-only:
     // a `.` after a number is "invalid arithmetic operator (error token is
-    // ".5+1")", never a float constant.
-    if peek() == Some('.') && crate::dash_mode::bash_mode() {
+    // ".5+1")", never a float constant. dash, mksh and /bin/sh are integer-only
+    // too (ksh93 alone has floats).
+    if peek() == Some('.')
+        && (crate::dash_mode::bash_mode()
+            || crate::dash_mode::dash_faithful()
+            || crate::dash_mode::sh_mode()
+            || crate::dash_mode::pdksh_family())
+    {
         let tok = m_input_slice_from(m_pos());
         m_error_set(format!(
             "arithmetic syntax error: invalid arithmetic operator (error token is \"{tok}\")"
@@ -1532,18 +1544,43 @@ pub(crate) fn lexconstant() -> i32 {
     // parse_int_arg for #258.
     let val: i64 = match int_str.parse::<i64>() {
         Ok(n) => n,
+        // !!! KSH93 GATE (no C counterpart) !!! ksh93 reads every constant as a
+        // double, so a literal past INT64_MAX is the nearest double: exactly
+        // representable ones saturate (`9223372036854775808` → INT64_MAX,
+        // `-9223372036854775808` → INT64_MIN), the rest stay float
+        // (`99999999999999999999` → 1e+20).
+        Err(_)
+            if crate::dash_mode::ksh93_mode()
+                && !int_str.is_empty()
+                && int_str.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            let d: f64 = int_str.parse().unwrap_or(0.0);
+            let n = ksh93_overflow!(if is_neg { -d } else { d });
+            m_yyval_set(n);
+            return NUM;
+        }
         // !!! BASH-MODE (no C counterpart) !!! bash accumulates decimal
         // literals in intmax_t with wraparound and no warning, so
         // `$((9223372036854775808))` is INT64_MIN and `$((-9223372036854775808))`
         // is INT64_MIN too (zsh truncates to 18 digits with a warning).
+        // /bin/sh (bash 3.2) does the same; mksh accumulates in 32 bits, so
+        // `9223372036854775807` is -1 and `99999999999999999999` keeps its low
+        // 32 bits (1661992959).
         Err(_)
-            if crate::dash_mode::bash_mode()
+            if (crate::dash_mode::bash_mode()
+                || crate::dash_mode::sh_mode()
+                || crate::dash_mode::pdksh_family())
                 && !int_str.is_empty()
                 && int_str.chars().all(|c| c.is_ascii_digit()) =>
         {
-            int_str
+            let wrapped = int_str
                 .bytes()
-                .fold(0i64, |a, d| a.wrapping_mul(10).wrapping_add((d - b'0') as i64))
+                .fold(0i64, |a, d| a.wrapping_mul(10).wrapping_add((d - b'0') as i64));
+            if crate::dash_mode::pdksh_family() {
+                i64::from(wrapped as i32)
+            } else {
+                wrapped
+            }
         }
         Err(_) if !int_str.is_empty() && int_str.chars().all(|c| c.is_ascii_digit()) => {
             // zstrtol emits the "number truncated after N digits" warning itself.
@@ -1553,6 +1590,9 @@ pub(crate) fn lexconstant() -> i32 {
         }
         Err(_) => 0,
     };
+    // !!! PDKSH (no C counterpart) !!! mksh keeps every constant in 32 bits:
+    // `$(( 9223372036854775807 ))` is -1 and `$(( 4294967296 ))` is 0.
+    let val = if crate::dash_mode::pdksh_family() { i64::from(val as i32) } else { val };
     m_yyval_set(if m_force_float() {
         mnumber {
             l: 0,
@@ -3015,6 +3055,20 @@ pub(crate) fn zzlex() -> i32 {
                     return ID;
                 }
 
+                // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh read a
+                // single-quoted character as its code: `$(( 'a' ))` is 97.
+                if c == '\'' && crate::dash_mode::korn_mode() {
+                    let after_quote = m_pos();
+                    if let Some(ch) = peek() {
+                        advance();
+                        if peek() == Some('\'') {
+                            advance();
+                            m_yyval_set(mnumber { l: ch as i64, d: 0.0, type_: MN_INTEGER });
+                            return NUM;
+                        }
+                    }
+                    m_pos_set(after_quote);
+                }
                 // c:842 — `default: if (idigit(*--ptr) ...` — the C
                 // default case BACKS UP so an unrecognized char (e.g.
                 // `'`) is left un-consumed; matheval's trailing-junk
@@ -4011,8 +4065,9 @@ pub(crate) fn op(what: i32) {
                                            // never faults on a float zero, so the all-integer
                                            // `0 ** -n` becomes pow(0.0,-n)=Inf rather than an error.
                     // !!! BASH-MODE (no C counterpart) !!! bash arithmetic is integer-only:
-                    // a negative exponent is an error, not a real result.
-                    if !cf && b.l < 0 && crate::dash_mode::bash_mode() {
+                    // a negative exponent is an error, not a real result. /bin/sh (bash 3.2)
+                    // agrees.
+                    if !cf && b.l < 0 && (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) {
                         m_error_set("exponent less than 0".to_string());
                         return;
                     }
@@ -4029,7 +4084,12 @@ pub(crate) fn op(what: i32) {
                         }; // c:1341
                         cf = true; // c:1339 (a.type = b.type = c.type = MN_FLOAT)
                     }
-                    if !cf {
+                    if !cf && crate::dash_mode::ksh93_mode() {
+                        // !!! KSH93 GATE (no C counterpart) !!! ksh93 raises in double:
+                        // `2**63` saturates to INT64_MAX, `2**64` and `3**40` print as
+                        // floats (see `ksh93_overflow!`).
+                        ksh93_overflow!((a.l as f64).powf(b.l as f64))
+                    } else if !cf {
                         // c:1344 — for (c.u.l = 1; b.u.l--; c.u.l *= a.u.l).
                         // zsh's naive O(e) loop times out on a pathological
                         // exponent (`0 ** 4.6e9` loops billions of times).
@@ -4292,6 +4352,13 @@ pub(crate) fn op(what: i32) {
         }
         PREPLUS => {
             if mv.lval.is_none() {
+                // !!! BASH/DASH GATE (no C counterpart) !!! bash, /bin/sh and dash read
+                // `++`/`--` before a non-lvalue as two unary signs: `$(( --3 ))` and
+                // `$(( ++3 ))` are 3. zsh, ksh93 and mksh demand an lvalue.
+                if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || crate::dash_mode::dash_faithful() {
+                    push(val, None);
+                    return;
+                }
                 m_error_set("bad math expression: lvalue required".to_string());
                 return;
             }
@@ -4322,6 +4389,11 @@ pub(crate) fn op(what: i32) {
         }
         PREMINUS => {
             if mv.lval.is_none() {
+                // See PREPLUS: `--3` is `-(-3)` in bash, /bin/sh and dash.
+                if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || crate::dash_mode::dash_faithful() {
+                    push(val, None);
+                    return;
+                }
                 m_error_set("bad math expression: lvalue required".to_string());
                 return;
             }
@@ -5055,7 +5127,20 @@ pub(crate) fn mathparse(pc: u8) {
                 }
                 let colon_prec = m_prec()[COLON as usize];
                 let stack_before = m_stack_len();
-                mathparse(colon_prec - 1);
+                // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and
+                // /bin/sh all accept an assignment as the middle operand
+                // (`x ? y = 1 : 2`); zsh parses it below the `=` level and fails on the
+                // `=`. Parse the middle at assignment level with `:` lifted past it so
+                // the loop still stops there; the table is restored right after.
+                let middle_assigns = crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful();
+                if middle_assigns {
+                    let saved = m_prec();
+                    m_prec_set(if m_c_precedences() { &C_PREC_TERNARY_MIDDLE } else { &Z_PREC_TERNARY_MIDDLE });
+                    mathparse(m_prec()[EQ as usize]);
+                    m_prec_set(saved);
+                } else {
+                    mathparse(colon_prec - 1);
+                }
                 if !q {
                     m_noeval_dec();
                 }
@@ -5083,7 +5168,14 @@ pub(crate) fn mathparse(pc: u8) {
                     m_noeval_inc();
                 }
                 let quest_prec = m_prec()[QUEST as usize];
-                mathparse(quest_prec);
+                // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh also take an
+                // assignment as the ELSE operand: `x ? 1 : y = 3` sets y (bash and
+                // zsh reject it).
+                if crate::dash_mode::korn_mode() {
+                    mathparse(m_prec()[EQ as usize]);
+                } else {
+                    mathparse(quest_prec);
+                }
                 if q {
                     m_noeval_dec();
                 }
@@ -5150,6 +5242,23 @@ static C_PREC: [u8; TOKCOUNT] = [
     1, 137, 2, 2, 2, 2, 2, 2, 9, 10, 11, 4, 4, 4, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8, 12, 14, 13, 15, 16,
     17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18, 200, 2, 2, 0, 0, 3, 0, 17, 0,
 ];
+
+/// !!! RUST-ONLY (no C counterpart) !!! `Z_PREC` with `:` lifted to the comma
+/// level, used only while the drop-in modes parse a ternary's middle operand at
+/// assignment level (see the QUEST arm of `mathparse`).
+static Z_PREC_TERNARY_MIDDLE: [u8; TOKCOUNT] = {
+    let mut t = Z_PREC;
+    t[COLON as usize] = 17;
+    t
+};
+
+/// !!! RUST-ONLY (no C counterpart) !!! `C_PREC` with `:` lifted to the comma
+/// level; see `Z_PREC_TERNARY_MIDDLE`.
+static C_PREC_TERNARY_MIDDLE: [u8; TOKCOUNT] = {
+    let mut t = C_PREC;
+    t[COLON as usize] = 18;
+    t
+};
 
 /// Operator type table (matches C math.c type[] array)
 static OP_TYPE: [u16; TOKCOUNT] = [

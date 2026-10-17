@@ -7759,7 +7759,8 @@ pub fn paramsubst(
             // form, and handle it; the rarer `${!prefix*}` name-match still
             // falls through to the "bad substitution" reject below.
             let mut bash_handled = false;
-            let bang_bash = crate::dash_mode::bash_mode();
+            // /bin/sh (bash 3.2) has the same `${!name}` forms.
+            let bang_bash = crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode();
             // The Korn family (`--ksh`/`--mksh`/`--pdksh`) shares the array-index
             // form `${!arr[@]}` / `[*]` with bash (verified vs ksh93/mksh →
             // `0 1 2`; assoc → keys), but NOT the scalar indirect `${!name}`
@@ -7791,6 +7792,17 @@ pub fn paramsubst(
                 let after = &body_chars[j..];
                 if after.is_empty() {
                     if bang_bash {
+                        // !!! BASH-MODE GATE (no C counterpart) !!! bash 5 rejects an
+                        // indirection through an unset or empty variable: "invalid
+                        // indirect expansion", fatal, status 1. bash 3.2 (/bin/sh)
+                        // expands it to nothing.
+                        if crate::dash_mode::bash_mode()
+                            && crate::ported::params::getsparam(&target).map_or(true, |v| v.is_empty())
+                        {
+                            zerr(&format!("{}: invalid indirect expansion", target));
+                            errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+                            return (String::new(), new_pos, Vec::new());
+                        }
                         // `${!ident}` indirect (BASH): raw_value is fetched from
                         // var_name later (subst.rs ~6030), so re-pointing does
                         // the indirect.
@@ -22670,6 +22682,18 @@ pub fn paramsubst(
                         let start = if off < 0 { (total + off).max(0) } else { off } as usize;
                         value = match len {
                             Some(l) if l >= 0 => units().skip(start).take(l as usize).collect(),
+                            // !!! DROP-IN GATE (no C counterpart) !!! a negative LENGTH:
+                            // ksh93 yields the empty string, mksh ignores it (the slice
+                            // runs to the end), and /bin/sh (bash 3.2) has no negative
+                            // lengths at all ("substring expression < 0", fatal). bash 5
+                            // and zsh count it back from the end (the arm below).
+                            Some(_) if crate::dash_mode::ksh93_mode() => String::new(),
+                            Some(_) if crate::dash_mode::pdksh_family() => units().skip(start).collect(),
+                            Some(l) if crate::dash_mode::sh_mode() => {
+                                crate::ported::utils::zerr(&format!("{}: substring expression < 0", l));
+                                errflag_set_error();
+                                return (String::new(), 0, Vec::new());
+                            }
                             Some(l) => {
                                 // c:Src/subst.c:3722-3741 — a negative length counts
                                 // from the string end: end = strlen + length. C's

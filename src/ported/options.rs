@@ -1174,7 +1174,8 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
 /// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn dashgetfn() -> String {
-    if crate::dash_mode::bash_mode() {
+    // /bin/sh (bash 3.2) spells `$-` like bash: `sh -c 'echo $-'` is `hBc`.
+    if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
         return crate::dash_mode::bash_dollar_dash();
     }
     if crate::dash_mode::korn_mode() {

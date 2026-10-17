@@ -2042,6 +2042,14 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // Exceeding FUNCNEST ends a non-interactive bash.
     // `unset -f` of a name that is not a function is not an error.
     "unset -f never_defined_zz; printf '%d\\n' $?",
+    // `exit abc` is reported with status 2 and does NOT exit; `${!x}` through an unset
+    // name is fatal; `--3` is 3; `local` with no operands lists the function's locals;
+    // a backslash at the very end of the input is literal.
+    "exit abc 2>/dev/null; echo rc=$?",
+    "echo \"[${!x}]\" 2>/dev/null; echo after",
+    "echo $(( --3 )) $(( ++3 )) $(( - -3 ))",
+    "f() { local a=1 b; local; }; f; g() { local; echo none; }; g",
+    "echo \\",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
@@ -2213,6 +2221,10 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     "set -o keyword; [[ -o keyword ]]; print -r -- $?; set +o keyword; [[ -o keyword ]]; print -r -- $?",
     "set -o gmacs; print -r -- $?; set +o gmacs; print -r -- $?",
     "set -A a x y z; unset 'a[2]'; set -A a p q r s; print -r -- \"${#a[@]} ${a[*]}\"",
+    // Constants and `**` go through double too: saturate when exact, else float.
+    "echo $(( -9223372036854775808 )) $(( 9223372036854775808 )) $(( 99999999999999999999 )); echo $(( 2 ** 63 )) $(( 2 ** 64 )) $(( 3 ** 40 )) $(( -2 ** 63 ))",
+    // A `$( )` capture stops at the first NUL; a negative substring length is empty.
+    "x=\"$(printf 'a\\0b\\0c')\"; echo \"${#x}\" \"$x\"; y=abc; echo \"[${y:0:-1}][${y:1:-1}]\"",
 ];
 
 /// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
@@ -2232,6 +2244,12 @@ const REAL_SHELL_CORPUS: &[&str] = &[
     "continue; echo after=$?",
     "f() { break; echo in=$?; }; f; echo out=$?",
     "for i in 1 2; do echo $i; break; done; echo done",
+    // `exit` with two operands reports them and exits 1; zsh alone goes on.
+    "exit 1 2; echo after",
+    // zsh's `_` digit separator is a syntax error everywhere else.
+    "echo $(( 1_000 )) 2>/dev/null; echo after",
+    // An assignment is accepted as the middle operand of `?:`.
+    "x=0; echo $(( x ? y = 1 : 2 )); x=1; echo $(( x ? y = 5 : 2 )) $y",
 ];
 
 /// Every shell but native zsh (including the zsh-STYLE legs): a bare `$NN` is
@@ -2259,6 +2277,16 @@ const BASH_KORN_CORPUS: &[&str] = &[
     "set --; printf '[%s]' \"${*+y}\"; printf '\\n'",
     "set --; printf '[%s]' \"${@:-x}\" \"${*:-y}\"; printf '\\n'",
     "set -- a; printf '[%s]' \"${@-x}\" \"${*+y}\"; printf '\\n'",
+    // `-nt` is true when only the second file is missing, `-ot` when only the first is.
+    "[ /etc/passwd -nt /nonexistent_zz ]; echo $?; [ /nonexistent_zz -ot /etc/passwd ]; echo $?; [ /nonexistent_zz -nt /etc/passwd ]; echo $?; [ /etc/passwd -ot /nonexistent_zz ]; echo $?",
+    // NUL bytes are dropped from a `$( )` capture (ksh93 truncates; see KSH_ONLY).
+    "x=\"$(printf 'a\\0b\\0c')\"; echo \"${#x}\" \"$x\"",
+    // `cmd &&` at the end of the input is a syntax error (zsh runs `cmd`); blank
+    // lines and trailing `;` are not.
+    "echo a &&",
+    "echo a\n\n\necho b; echo c;\n\necho d\n",
+    // The Korn shells and bash accept `'a'` / `--3` differently; both reject `1.5`.
+    "echo $(( 1.5 + 1 )) 2>/dev/null; echo after",
 ];
 
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
@@ -2291,6 +2319,15 @@ const PDKSH_CORPUS: &[&str] = &[
     // `$PS1` is `$ ` in mksh (unset in ksh93); no `$UID` / `$EUID`.
     "echo \"[$PS1][$PS2][${UID+s}][${EUID+s}]\"",
     "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
+    // Constants are 32-bit; `'a'` is a character code; `test -eq` on a word is a plain false;
+    // a negative substring length runs to the end.
+    "echo $(( 9223372036854775807 )) $(( 4294967296 )) $(( 0x100000000 )) $(( 99999999999999999999 )) $(( 'a' + 1 )); [ a -eq 1 ] 2>/dev/null; echo $?; x=abc; echo \"[${x:1:-1}]\"",
+    // The ELSE operand of `?:` may be an assignment; a syntax error in eval ends the shell;
+    // a `;` with nothing before it is a syntax error.
+    "x=0; echo $(( x ? 1 : y = 3 )) $y; eval 'if'; echo after",
+    "; echo x",
+    // `%b` reads a bare `\\NNN` as octal; `\\x41` comes out as `x41`.
+    "printf '%b\\n' 'A\\101\\x41'",
 ];
 
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
@@ -2359,6 +2396,37 @@ fn shell_version_at_least(shell: &str, major: u32, minor: u32) -> bool {
         (Some(a), Some(b)) => (a, b) >= (major, minor),
         _ => false,
     }
+}
+
+/// `--sh` against a `/bin/sh` that is bash (macOS ships bash 3.2 in POSIX mode
+/// there). These are the places that shell measurably differs from both bash 5
+/// and dash; they are skipped when `/bin/sh` is something else.
+const SH_BASH_CORPUS: &[&str] = &[
+    // Brace expansion stays on and `$-` carries `B`.
+    "echo {a,b}; echo $-",
+    // `exit abc` leaves at once with 255; `return` outside a function is status 1.
+    "exit abc 2>/dev/null; echo no",
+    "return 2>/dev/null; echo rc=$?; f() { return 300; }; f; echo $?",
+    // `unset` of a read-only and `set -o BAD` fail with 1 and go on.
+    "readonly R=1; unset R 2>/dev/null; echo rc=$?; set -o nope 2>/dev/null; echo rc=$?",
+    // `${!x}` indirects, and through an unset name expands to nothing.
+    "echo \"[${!x}]\"; x=y; y=v; echo ${!x}",
+    // A negative substring length is an error (fatal, 127 at top level).
+    "x=abc; echo \"${x:0:-1}\" 2>/dev/null; echo no",
+    // Constants wrap in 64 bits; a negative exponent is an error; `--3` is 3.
+    "echo $(( 9223372036854775808 )) $(( 99999999999999999999 )) $(( --3 )); echo $(( 2 ** -1 )) 2>/dev/null; echo no",
+    // `local` with no operands lists the function's locals as `name=value`.
+    "f() { local a=1 b; local; }; f",
+    // `printf %b` reads a bare `\\NNN` as octal.
+    "printf '%b\\n' 'A\\101\\x41'",
+];
+
+/// True when `path` is a bash build (`$BASH_VERSION` is set when it runs).
+fn is_bash(path: &str) -> bool {
+    std::process::Command::new(path)
+        .args(["-c", "echo ${BASH_VERSION:+bash}"])
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "bash")
 }
 
 /// True when `path` resolves to dash (Debian/Ubuntu's `/bin/sh`).
@@ -4064,10 +4132,11 @@ fn corpus_for(case: &ParityCase, refbin: &str) -> Vec<&'static str> {
                 .map(|(_, script)| script.as_str()),
         )
         .collect();
-    let parts: [&'static [&'static str]; 14] = [
+    let parts: [&'static [&'static str]; 15] = [
         PORTABLE_CORPUS,
         if case.extended { EXTENDED_CORPUS } else { empty },
         if name == "bash" { BASH_ONLY_CORPUS } else { empty },
+        if name == "sh" && is_bash(refbin) { SH_BASH_CORPUS } else { empty },
         if name == "zsh" { ZSH_ONLY_CORPUS } else { empty },
         if name == "zsh" { ZSH_BAD_OPTION_CORPUS } else { empty },
         if matches!(name, "bash" | "ksh") { BASH_KSH_CORPUS } else { empty },

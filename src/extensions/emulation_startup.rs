@@ -567,6 +567,11 @@ pub fn apply_personality_option_deltas() {
     // plus its clear-to-end-of-line padding is the most visible thing on
     // the screen, so it is off for all of them.
     opt_state_set("promptsp", false);
+    // `/bin/sh` on macOS is bash 3.2 in POSIX mode, which still brace-expands
+    // (`sh -c 'echo {a,b}'` → `a b`, `$-` carries `B`); `emulate sh` turns it off.
+    if p == Personality::Sh {
+        opt_state_set("ignorebraces", false);
+    }
     if p != Personality::Bash {
         return;
     }

@@ -238,6 +238,19 @@ pub fn bash_mode() -> bool {
     BASH_MODE.load(Ordering::Relaxed)
 }
 
+/// True for the bare `zshrs --sh` drop-in (not the zsh-style `--sh --zsh`
+/// leg). The parity reference for it is `/bin/sh`, which on macOS is bash
+/// 3.2 in POSIX mode; the gates behind this predicate encode what that
+/// shell measurably does where it differs from both bash 5 and dash.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn sh_mode() -> bool {
+    posix_faithful()
+        && crate::extensions::emulation_startup::personality()
+            == crate::extensions::emulation_startup::Personality::Sh
+}
+
 /// The exit status a FATAL shell error leaves behind, when the emulated
 /// shell disagrees with zsh's `1`.
 ///
@@ -3218,6 +3231,41 @@ pub fn dash_skip_operator_separators() -> bool {
     }
     set_tok(LEXERR);
     false
+}
+
+/// The value an integer parameter SHOWS under the pdksh line: `typeset -Ui`
+/// (mksh's unsigned 32-bit integer, carried as PM_UNIQUE on an integer) prints
+/// the low 32 bits unsigned, so a stored -1 reads back as 4294967295 and
+/// `v=v-1` then shows 4294967294. Every other parameter shows its value as is.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn pdksh_unsigned_view(flags: u32, val: i64) -> i64 {
+    use crate::ported::zsh_h::{PM_INTEGER, PM_UNIQUE};
+    if pdksh_family() && flags & PM_INTEGER != 0 && flags & PM_UNIQUE != 0 {
+        i64::from(val as i32 as u32)
+    } else {
+        val
+    }
+}
+
+/// A `;` with no command before it (`; echo x`, `echo a; ; echo b`) is a
+/// syntax error in bash and mksh ("unexpected token `;'"); zsh, ksh93 and
+/// dash (which has its own lexer-level rule) skip it. Called by the parser's
+/// leading-separator loops when the current token is a `;` separator; reports
+/// the error and leaves `tok` at LEXERR when it applies.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn bash_leading_semicolon_error() -> bool {
+    use crate::ported::lex::{set_tok, LEX_ISNEWLIN};
+    use crate::ported::zsh_h::LEXERR;
+    // c:Src/lex.c:310 — `isnewlin = inbufct ? -1 : 1` for a newline, 0 for `;`.
+    if LEX_ISNEWLIN.with(|c| c.get()) != 0 || !(bash_mode() || sh_mode() || pdksh_family()) {
+        return false;
+    }
+    crate::ported::utils::zerr("syntax error near unexpected token `;'");
+    set_tok(LEXERR);
+    true
 }
 
 // ---------------------------------------------------------------------------
