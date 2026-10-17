@@ -297,10 +297,10 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - New early-return in `builtin_export`: when args are exactly `["-p"]`, walk `std::env::vars()`, sort, and emit `export NAME=<quoted-value>` lines. Matches POSIX + zsh format.
 
-### `zmv` / `zcp` / `zln` native bundled functions (and `zcalc`, back to the script)
+### `zmv` / `zcp` / `zln` / `zcalc` run the bundled `Functions/Misc` scripts
 
-- Previously these autoloaded zsh function files from `/opt/homebrew/Cellar/zsh/.../functions` and zshrs's parser HUNG indefinitely on the zsh-specific syntax in those bodies. Native Rust ports replace the autoload path for `zmv`/`zcp`/`zln`: while the autoload stub is still undefined, dispatch goes to `ext_builtins::zmv` instead of loading the file.
-- `builtin_zmv` handles flags `-n` (dry-run), `-f` (force), `-i`, `-v`, `-W` (wildcard), `-s` (symlink for ln mode), `-M`/`-C`/`-L` (force action), `-p prog` (custom executable). Files are globbed under NULL_GLOB and matched with the shell's own `(#b)` pattern engine exactly as `Functions/Misc/zmv` does (including its `(**/)` and `-Q` handling); the destination is `${(Xe)repl}` with the captures as `$1`… and `$match`. Collision detection (two srcs → same dest) errors before any file action. `zcp` and `zln` are the same dispatcher with different default actions.
+- These autoload the bundled `Functions/Misc/zmv` script and run it unmodified (under the names `zcp`/`zln` it picks its action from `${(%):-%N}`), as zsh does: `autoload -U zmv` then `zmv` loads the script into a shell function (`whence -v zmv` reports the function file). Every flag (`-n -f -i -v -w -W -C -L -M -s -p -P -o -Q`), `(**/)` captures, `$1`/`$f` destinations and collision detection are the script's own code paths running on zshrs's glob and `(#b)` pattern engine.
+- An earlier native Rust stand-in (`ext_builtins::zmv`) had no remaining callers once dispatch went through the script, and was removed.
 - `zcalc` no longer has a native port: the bundled `Functions/Misc/zcalc` script now runs unchanged (interactive REPL, `-e`, `-f`, `-r`, history, `$1…` result references), so `autoload -Uz zcalc` loads it like zsh. The native version handled only `-e` and refused interactive mode even on a terminal.
 
 ### `[[ a -nt b ]]`, `[[ a -ot b ]]`, `[[ -k ]]`, `[[ -u ]]`, `[[ -g ]]`, `[[ -O ]]`, `[[ -G ]]` cond tests

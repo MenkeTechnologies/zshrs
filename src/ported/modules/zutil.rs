@@ -614,294 +614,209 @@ pub fn scanpatstyles(hn: HashNode, spatflags: i32) {
 }
 
 impl ZFormat {
-    /// Recursive walker for zformat. Returns the index of the
-    /// terminator (`endchar`). idx is mutated in place.
-    /// Direct port of `zformat_substring()` from Src/Modules/zutil.c:814 —
+    /// Direct port of `zformat_substring()` from Src/Modules/zutil.c:816 —
     /// the recursive descent over the format string with `%c` substitution
     /// and `%(?...)` ternary blocks.
+    ///
+    /// C walks the METAFIED `char *` byte by byte: a spec letter is one
+    /// byte (`specs[(unsigned char) *s]`) and every width is a `strlen`
+    /// byte count. zshrs holds strings as UTF-8 `char`s plus Meta pairs,
+    /// so the caller hands in the raw byte stream (`unmetafy_str`) and
+    /// re-encodes the output (`decode_script_bytes`); the walk itself is
+    /// then byte-for-byte C's. One deliberate difference: C counts the
+    /// METAFIED length, so a UTF-8 byte in 0x83..0xa2 counts twice and a
+    /// width can split a Meta pair (zsh 5.9.2 prints `\xe6\x00` for
+    /// `%.2x` of `日本`); here widths count the raw bytes.
+    /// Returns the index of the terminator
+    /// (`endchar`, or the end of `s`), or `None` where C returns NULL.
     fn substring(
-        bytes: &[char],
-        idx: &mut usize,
-        out: &mut String,
-        endchar: char,
-        specs: &HashMap<char, String>,
+        s: &[u8],
+        mut i: usize,
+        out: &mut Vec<u8>,
+        endchar: u8,
+        specs: &[Option<Vec<u8>>],
         presence: bool,
         quote: bool,
-        qspecs: &HashMap<char, usize>,
+        qspecs: &[usize],
         skip: bool,
-    ) -> Option<()> {
-        while *idx < bytes.len() {
-            let c = bytes[*idx];
-            // Stop at endchar (zutil.c:820 `*s != endchar`).
-            if endchar != '\0' && c == endchar {
-                return Some(());
-            }
-            if c != '%' {
-                // Plain text — emit unless skipping (zutil.c:937-948).
+    ) -> Option<usize> {
+        let at = |k: usize| s.get(k).copied().unwrap_or(0);
+        // c:822 — `for (s = instr; *s && *s != endchar; s++)`
+        while i < s.len() && s[i] != endchar {
+            if s[i] != b'%' {
+                // c:961-970 — plain character.
                 if !skip {
-                    out.push(c);
+                    out.push(s[i]);
                 }
-                *idx += 1;
+                i += 1;
                 continue;
             }
-            // `%` — parse the spec.
-            let start = *idx;
-            *idx += 1;
-            // Optional `-` for right-align (zutil.c:825-826).
-            let mut right = false;
-            if *idx < bytes.len() && bytes[*idx] == '-' {
-                right = true;
-                *idx += 1;
+            // c:824-825
+            let (mut min, mut max): (i64, i64) = (-1, -1);
+            let mut start = i;
+            i += 1;
+            // c:827-828 — `if ((right = (*++s == '-'))) s++;`
+            let mut right = at(i) == b'-';
+            if right {
+                i += 1;
             }
-            // Optional digit run for min (zutil.c:828-831).
-            let mut min: Option<i64> = None;
-            if *idx < bytes.len() && bytes[*idx].is_ascii_digit() {
-                let mut n: i64 = 0;
-                while *idx < bytes.len() && bytes[*idx].is_ascii_digit() {
-                    n = n * 10 + bytes[*idx].to_digit(10).unwrap() as i64;
-                    *idx += 1;
+            // c:830-833
+            if at(i).is_ascii_digit() {
+                min = 0;
+                while at(i).is_ascii_digit() {
+                    min = min * 10 + (at(i) - b'0') as i64;
+                    i += 1;
                 }
-                min = Some(n);
             }
-            // Ternary detection: `(` at this position (zutil.c:834-840).
-            let testit = *idx < bytes.len() && bytes[*idx] == '(';
-            // `%(-...` allows leading `-` after the paren (zutil.c:835-840).
-            if testit && *idx + 1 < bytes.len() && bytes[*idx + 1] == '-' {
+            // c:836-842 — ternary expressions, `%(-1...` allowed.
+            let testit = at(i) == b'(';
+            if testit && at(i + 1) == b'-' {
                 right = true;
-                *idx += 1;
+                i += 1;
             }
-            // Optional `.MAX` or just `.` after (zutil.c:841-845).
-            let mut max: Option<i64> = None;
-            if *idx < bytes.len()
-                && (bytes[*idx] == '.' || testit)
-                && *idx + 1 < bytes.len()
-                && bytes[*idx + 1].is_ascii_digit()
-            {
-                *idx += 1; // skip `.` or `(`
-                let mut n: i64 = 0;
-                while *idx < bytes.len() && bytes[*idx].is_ascii_digit() {
-                    n = n * 10 + bytes[*idx].to_digit(10).unwrap() as i64;
-                    *idx += 1;
+            // c:843-847
+            if (at(i) == b'.' || testit) && at(i + 1).is_ascii_digit() {
+                max = 0;
+                i += 1;
+                while at(i).is_ascii_digit() {
+                    max = max * 10 + (at(i) - b'0') as i64;
+                    i += 1;
                 }
-                max = Some(n);
-            } else if *idx < bytes.len() && (bytes[*idx] == '.' || testit) {
-                *idx += 1;
+            } else if at(i) == b'.' || testit {
+                i += 1;
+            }
+            // c:849-856 — next char isn't a legal spec char: unwind and
+            // treat the sequence literally, but swallow the `%` of `%%` /
+            // `%)` unless -q.
+            if !testit && matches!(at(i), 0 | b'%' | b')' | b'-' | b'.') {
+                if !quote && i - start == 1 && matches!(at(i), b'%' | b')') {
+                    start += 1;
+                }
+                i = start;
             }
 
-            // c:849-856 — "next char isn't a legal spec char -- unwind, treat
-            // the sequence literally":
-            //   if (!testit && (!*s || *s == '%' || *s == ')' || *s == '-' || *s == '.')) {
-            //       if (!quote) start += (s - start == 1 && (*s == '%' || *s == ')'));
-            //       s = start;
-            //   }
-            // After the unwind `*s` is `%` (or `)`), never a registered spec, so
-            // the raw-copy arm below emits exactly one character.
-            let mut start = start;
-            if !testit {
-                let at = bytes.get(*idx).copied();
-                if matches!(at, None | Some('%') | Some(')') | Some('-') | Some('.')) {
-                    // c:853 — `-q` keeps `%%` and `%)` intact for the later
-                    // prompt expansion the quoted output is destined for.
-                    if !quote && *idx - start == 1 && matches!(at, Some('%') | Some(')')) {
-                        start += 1; // c:854
-                    }
-                    *idx = start; // c:855
-                }
-            }
-
-            if testit && *idx < bytes.len() {
-                // Ternary expression — zutil.c:858-902.
-                let testval: i64 = min.or(max).unwrap_or(0);
-                let spec_char = bytes[*idx];
-                let actval: bool;
-                let spec_val = specs.get(&spec_char);
-                if let Some(sv) = spec_val.filter(|s| !s.is_empty()) {
-                    if presence {
-                        let cmp_val: i64 = if testval != 0 {
-                            sv.chars().count() as i64
-                        } else {
-                            1
-                        };
-                        // c:875-876 — "don't count extra %s from quoting when
-                        // testing this"; applied even to the bare-presence
-                        // value 1, so a `-q` spec holding a `%` with no test
-                        // width tests as absent, as in C.
-                        let cmp_val = cmp_val - qspecs.get(&spec_char).copied().unwrap_or(0) as i64;
-                        actval = if right {
-                            testval < cmp_val
-                        } else {
-                            testval >= cmp_val
-                        };
-                    } else {
-                        let signed_test = if right { -testval } else { testval };
-                        // c:882 — `actval = (int) mathevali(specs[(unsigned
-                        // char) *s]) - testval;`. The spec's VALUE is an
-                        // arithmetic expression, not a bare integer: the
-                        // documented `%18(s.math.)` with `s:6*3` is true.
-                        // The previous `sv.parse()` returned 0 for any
-                        // non-literal, so every arithmetic test was false.
-                        //
-                        // C's `mathevali` REPORTS a bad expression on the way
-                        // out (checkunary -> zerr) and leaves `errflag` set,
-                        // yielding 0 (c:Src/math.c:1505-1509); `bin_zformat`
-                        // never checks it, so the shell aborts on the flag.
-                        // Rust's `mathevali` returns that message in `Err`
-                        // instead, and the port discarded it with
-                        // `.unwrap_or(0)` — so `zformat -f R '%(%.yes.no)'`
-                        // printed `yes` where zsh 5.9.2 prints `bad math
-                        // expression: operand expected at `%'` and aborts.
-                        // Surface it the way bin_let (builtin.rs:17151) and
-                        // paramsubst (subst.rs:3171) already do.
-                        let n: i64 = match crate::ported::math::mathevali(sv) {
-                            Ok(v) => v,
-                            Err(msg) => {
-                                crate::ported::utils::zerr(&msg);
-                                errflag.store(
-                                    errflag.load(Ordering::Relaxed)
-                                        | crate::ported::zsh_h::ERRFLAG_ERROR,
-                                    Ordering::Relaxed,
-                                );
-                                0 // c:Src/math.c:1509 — error yields 0
-                            }
-                        };
-                        actval = (n - signed_test) != 0;
-                    }
+            let c = at(i);
+            if testit && c != 0 {
+                // c:860-861 — only one number is useful for ternaries.
+                let mut testval: i64 = if min >= 0 {
+                    min
+                } else if max >= 0 {
+                    max
                 } else {
-                    actval = if presence { !right } else { testval != 0 };
+                    0
+                };
+                let actval: bool;
+                match specs[c as usize].as_deref().filter(|v| !v.is_empty()) {
+                    Some(spec) => {
+                        if presence {
+                            // c:865-873
+                            let mut len: i64 = if testval != 0 {
+                                let sv = crate::script_bytes::decode_script_bytes(spec);
+                                crate::ported::zsh_h::MB_METASTRWIDTH(&sv) as i64
+                            } else {
+                                1
+                            };
+                            // c:874-875 — don't count extra %s from quoting.
+                            len -= qspecs[c as usize] as i64;
+                            actval = if right { testval < len } else { testval >= len };
+                        } else {
+                            // c:877-881 — put the sign back; zero means equal,
+                            // i.e. true.
+                            if right {
+                                testval = -testval;
+                            }
+                            let sv = crate::script_bytes::decode_script_bytes(spec);
+                            // C's `mathevali` reports a bad expression and
+                            // leaves errflag set, yielding 0 (c:Src/math.c:
+                            // 1505-1509); bin_zformat never checks it.
+                            let n = match crate::ported::math::mathevali(&sv) {
+                                Ok(v) => v,
+                                Err(msg) => {
+                                    crate::ported::utils::zerr(&msg);
+                                    errflag.fetch_or(
+                                        crate::ported::zsh_h::ERRFLAG_ERROR,
+                                        Ordering::Relaxed,
+                                    );
+                                    0
+                                }
+                            };
+                            actval = n - testval != 0;
+                        }
+                    }
+                    // c:883 — `actval = presence ? !right : testval;`
+                    None => actval = if presence { !right } else { testval != 0 },
                 }
-                // Skip past the spec char to find the delimiter
-                // (zutil.c:888 `if (!(endcharl = *++s))`).
-                *idx += 1;
-                if *idx >= bytes.len() {
+                // c:886-887 — careful about premature end of string.
+                i += 1;
+                let endcharl = at(i);
+                if endcharl == 0 {
                     return None;
                 }
-                let endcharl = bytes[*idx];
-                *idx += 1;
-                // First branch (true-text) — emit only if actval is true,
-                // i.e. skip = skip || !actval. Wait, C says
-                // `skip || actval` for the FIRST sub-call meaning: if
-                // actval is true SKIP the first branch?
-                // Re-reading zutil.c:880-884 — comment says "Either skip
-                // true text and output false text, or vice versa". The
-                // pattern `skip || actval` for the first call means: if
-                // actval, skip the first text. So the FIRST text
-                // (between `(` and the delim) is the FALSE branch, the
-                // SECOND text (between delim and `)`) is the TRUE.
-                //     if (!(s = zformat_substring(s+1, ..., endcharl, ...,
-                //                 skip || actval)) || !*s)
-                //         return NULL;
-                // c:882-884 — a branch that runs off the end of the format
-                // without meeting its delimiter makes the whole format
-                // malformed; the previous port kept going and returned the
-                // partial text, so `zformat -F R '%(..)'` succeeded.
-                ZFormat::substring(
-                    bytes, idx, out, endcharl, specs, presence, quote, qspecs, skip || actval,
+                // c:893-901 — either skip true text and output false text,
+                // or vice versa, unless already skipping.
+                i = ZFormat::substring(
+                    s, i + 1, out, endcharl, specs, presence, quote, qspecs, skip || actval,
                 )?;
-                if *idx >= bytes.len() {
-                    return None; // c:884
+                if i >= s.len() {
+                    return None;
                 }
-                *idx += 1; // c:882 `s+1` — past the delimiter
-                ZFormat::substring(
-                    bytes, idx, out, ')', specs, presence, quote, qspecs, skip || !actval,
+                i = ZFormat::substring(
+                    s, i + 1, out, b')', specs, presence, quote, qspecs, skip || !actval,
                 )?;
-                if *idx >= bytes.len() {
-                    return None; // c:887
+                if i >= s.len() {
+                    return None;
                 }
-                *idx += 1; // c:821 `s++` — past the closing `)`
-                continue;
-            }
-
-            if skip {
-                // In skip mode — advance past spec char and continue.
-                if *idx < bytes.len() {
-                    *idx += 1;
-                }
-                continue;
-            }
-
-            // Plain `%X` spec (zutil.c:890-922).
-            if *idx >= bytes.len() {
-                // c:952-964 with `*s == '\0'` — no spec char (`%(` or `%-`
-                // at the end): `len = s - start + 1` copies the sequence up
-                // to the terminator verbatim.
-                for &c in &bytes[start..] {
-                    out.push(c);
-                }
-                continue;
-            }
-            {
-                let spec_char = bytes[*idx];
-                *idx += 1;
-                if let Some(spec_val) = specs.get(&spec_char).filter(|_| *idx - 1 != start) {
-                    let mut val_chars: Vec<char> = spec_val.chars().collect();
-                    // c:908-920 — "the assumption with quoted specs is that the
-                    // output will be subject to further % expansion -- adjust
-                    // width specifiers so that the result will be correct
-                    // *after* that expansion": each doubled `%` inside the
-                    // width widens it by one.
-                    let (mut min, mut max) = (min, max);
-                    if (min > Some(0) || max > Some(0))
-                        && qspecs.get(&spec_char).copied().unwrap_or(0) > 0
-                    {
-                        let mut i = 0usize;
-                        while i < val_chars.len() {
-                            if val_chars[i] == '%' {
-                                let i64i = i as i64;
-                                if let Some(m) = min.filter(|&m| m > 0 && i64i < m) {
-                                    min = Some(m + 1);
-                                }
-                                if let Some(m) = max.filter(|&m| m > 0 && i64i < m) {
-                                    max = Some(m + 1);
-                                }
-                                i += 1;
+            } else if skip {
+                // c:902-903
+            } else if let Some(spec) = specs[c as usize].as_deref() {
+                let (mut smin, mut smax) = (min, max);
+                // c:907-918 — quoted specs feed a later % expansion: widen
+                // the width for every doubled % inside it.
+                if (smin > 0 || smax > 0) && qspecs[c as usize] > 0 {
+                    let mut k = 0usize;
+                    while k < spec.len() {
+                        if spec[k] == b'%' {
+                            if smin > 0 && (k as i64) < smin {
+                                smin += 1;
                             }
-                            i += 1;
+                            if smax > 0 && (k as i64) < smax {
+                                smax += 1;
+                            }
+                            k += 1;
                         }
+                        k += 1;
                     }
-                    let len = val_chars.len() as i64;
-                    let len = match max {
-                        Some(m) if m >= 0 && len > m => {
-                            val_chars.truncate(m as usize);
-                            m
-                        }
-                        _ => len,
-                    };
-                    let outl = match min {
-                        Some(m) if m >= 0 && m > len => m,
-                        _ => len,
-                    };
-                    if len >= outl {
-                        for &c in val_chars.iter().take(outl as usize) {
-                            out.push(c);
-                        }
-                    } else {
-                        let diff = (outl - len) as usize;
-                        if right {
-                            for _ in 0..diff {
-                                out.push(' ');
-                            }
-                            for &c in val_chars.iter() {
-                                out.push(c);
-                            }
-                        } else {
-                            for &c in val_chars.iter() {
-                                out.push(c);
-                            }
-                            for _ in 0..diff {
-                                out.push(' ');
-                            }
-                        }
-                    }
+                }
+                // c:920-922
+                let mut len = spec.len() as i64;
+                if len > smax && smax >= 0 {
+                    len = smax;
+                }
+                let outl = if smin >= 0 && smin > len { smin } else { len };
+                // c:931-947
+                if len >= outl {
+                    out.extend_from_slice(&spec[..outl as usize]);
                 } else {
-                    // Unknown spec — emit raw segment back
-                    // (zutil.c:923-936).
-                    for &c in &bytes[start..*idx] {
-                        out.push(c);
+                    let pad = std::iter::repeat(b' ').take((outl - len) as usize);
+                    if right {
+                        out.extend(pad);
+                        out.extend_from_slice(&spec[..len as usize]);
+                    } else {
+                        out.extend_from_slice(&spec[..len as usize]);
+                        out.extend(pad);
                     }
                 }
+            } else {
+                // c:948-959 — `len = s - start + 1`: copy the sequence up to
+                // and including the current character (just `%` or `)` after
+                // an unwind; none past the end of the string).
+                let end = (i + 1).min(s.len());
+                out.extend_from_slice(&s[start..end]);
             }
+            // c:822 — the loop's `s++`.
+            i += 1;
         }
-        Some(())
+        Some(i)
     }
 } // impl ZFormat
 
@@ -1751,7 +1666,6 @@ pub fn bin_zformat(
     } else {
         0
     };
-    let mut presence = false; // c:987
 
     if OPT_ISSET(ops, b'q') && OPT_ISSET(ops, b'Q') {
         zwarnnam(nam, "only one of -qQ allowed"); // c:990
@@ -1772,184 +1686,136 @@ pub fn bin_zformat(
     }
 
     // c:1006 — `switch (OPT_ISSET(ops,'a') ? 'a' : OPT_ISSET(ops,'f') ? 'f' : 'F')`
-    let opt: u8 = if OPT_ISSET(ops, b'a') {
-        b'a'
-    } else if OPT_ISSET(ops, b'f') {
-        b'f'
-    } else {
-        b'F'
-    };
+    if !OPT_ISSET(ops, b'a') {
+        // c:1007-1010 — `case 'F': presence = 1; /* fall-through */ case 'f':`
+        let presence = OPT_ISSET(ops, b'F');
+        // c:1012-1014 — `char *specs[256] = {0}; int qspecs[256] = {0};`
+        // `%` and `)` are never specs; `%%` / `%)` come from the unwind
+        // inside zformat_substring.
+        let mut specs: Vec<Option<Vec<u8>>> = vec![None; 256];
+        let mut qspecs: Vec<usize> = vec![0; 256];
 
-    match opt {
-        b'F' | b'f' => {
-            if opt == b'F' {
-                presence = true; // c:1008 (fall-through into 'f')
+        // c:1017 — `for (ap = args + 2; (arg = *ap); ap++)`. C tests the
+        // bytes of the metafied argument, so a spec letter is exactly one
+        // byte: `é:` is an invalid spec, `$'\xff':` is a valid one.
+        for ap in &args[2..] {
+            let raw = crate::ported::utils::unmetafy_str(ap);
+            let mut arg: &[u8] = &raw;
+            // c:1019 — "quote by default (spec like d:...) with -qQ"
+            let mut quote = qopt != 0;
+            if arg.starts_with(b"%%") {
+                // c:1022-1024 — `%%d:...` explicitly disables quoting
+                quote = false;
+                arg = &arg[2..];
+            } else if arg.first() == Some(&b'%') {
+                // c:1026-1028 — `%d:...` explicitly enables quoting
+                quote = true;
+                arg = &arg[1..];
             }
-            // c:1012-1014 — `char *specs[256] = {0}; int qspecs[256] = {0};`
-            // zero-initialised: `%` and `)` are never specs (upstream
-            // a04c944804 dropped the old seeding; `%%`/`%)` are handled by
-            // the unwind in zformat_substring instead).
-            let mut specs: HashMap<char, String> = HashMap::new();
-            let mut qspecs: HashMap<char, usize> = HashMap::new();
-            for ap in &args[2..] {
-                // c:1017 — "quote by default (spec like d:...) with -qQ"
-                let mut quote = qopt != 0;
-                let mut arg: &str = ap;
-                if arg.starts_with("%%") {
-                    // c:1021-1023 — `%%d:...` explicitly disables quoting
-                    quote = false;
-                    arg = &arg[2..];
-                } else if arg.starts_with('%') {
-                    // c:1025-1027 — `%d:...` explicitly enables quoting
-                    quote = true;
-                    arg = &arg[1..];
-                }
-                let ab = arg.as_bytes();
-                if ab.is_empty()
-                    || ab[0] == b'-'
-                    || ab[0] == b'.'
-                    || ab[0] == b'%'
-                    || ab[0] == b')'
-                    || ab[0].is_ascii_digit()
-                    || ab.len() < 2
-                    || ab[1] != b':'
-                {
-                    zwarnnam(nam, &format!("invalid spec: {}", ap)); // c:1033
-                    return 1;
-                }
-                let key = ab[0] as char;
-                let val = &arg[2..];
-                if quote {
-                    // c:1037-1058 — double every `%` and remember how many
-                    // were added, for the width/presence corrections.
-                    let pct = val.matches('%').count();
-                    specs.insert(key, val.replace('%', "%%"));
-                    qspecs.insert(key, pct);
-                } else {
-                    // c:1060 — qspecs[c] is left as an earlier `-q` spec of
-                    // the same letter set it.
-                    specs.insert(key, val.to_string());
-                }
-            }
-
-            // c:1064-1069 — `if (!zformat_substring(args[1], specs, &out,
-            // &oused, &olen, '\0', presence, qopt == 'q', qspecs, 0))`
-            let chars: Vec<char> = args[1].chars().collect();
-            let mut out = String::with_capacity(chars.len() + 16);
-            let mut idx = 0;
-            if ZFormat::substring(
-                &chars,
-                &mut idx,
-                &mut out,
-                '\0',
-                &specs,
-                presence,
-                qopt == b'q',
-                &qspecs,
-                false,
-            )
-            .is_none()
+            if arg.is_empty()
+                || matches!(arg[0], b'-' | b'.' | b'%' | b')')
+                || arg[0].is_ascii_digit()
+                || arg.get(1) != Some(&b':')
             {
-                zwarnnam(nam, &format!("malformed format string: {}", args[1])); // c:1071
+                // c:1034 — the `%s` operand goes through nicezputs.
+                zwarnnam(nam, &format!("invalid spec: {}", crate::ported::utils::nicedupstring(ap)));
                 return 1;
             }
-            setsparam(&args[0], &out); // c:1076
-            return 0; // c:1077
-        }
-        b'a' => {
-            // c:1080 — -a column-format branch.
-            let mut pre = 0usize; // c:1000
-            let mut suf = 0usize; // c:1000
-                                  // First pass: compute max prefix/suffix widths.
-            for ap in &args[2..] {
-                // c:1005
-                let mut nbc = 0usize; // c:1006
-                let bytes = ap.as_bytes();
-                let mut cp_idx = 0usize;
-                while cp_idx < bytes.len() && bytes[cp_idx] != b':' {
-                    // c:1007
-                    if bytes[cp_idx] == b'\\' && cp_idx + 1 < bytes.len() {
-                        // c:1008
-                        cp_idx += 1;
-                        nbc += 1;
+            let val = &arg[2..];
+            if quote {
+                // c:1038-1061 — double every `%` and remember how many were
+                // added, for the width/presence corrections.
+                let pct = val.iter().filter(|&&c| c == b'%').count();
+                let mut spec = Vec::with_capacity(val.len() + pct);
+                for &c in val {
+                    spec.push(c);
+                    if c == b'%' {
+                        spec.push(b'%');
                     }
-                    cp_idx += 1;
                 }
-                if cp_idx < bytes.len() && bytes[cp_idx] == b':'              // c:1010
-                    && cp_idx + 1 < bytes.len()
-                {
-                    let d = cp_idx.saturating_sub(nbc); // c:1015
-                    if d > pre {
-                        pre = d;
-                    } // c:1016
-                      // multi-byte width branch (c:1017-1029) collapses to
-                      // ASCII byte count for the common case in Rust.
-                    let s = bytes.len() - cp_idx - 1; // c:1030
-                    if s > suf {
-                        suf = s;
-                    } // c:1031
-                }
+                specs[arg[0] as usize] = Some(spec); // c:1060
+                qspecs[arg[0] as usize] = pct; // c:1061
+            } else {
+                // c:1063 — qspecs[c] is left as an earlier quoted spec of the
+                // same letter set it.
+                specs[arg[0] as usize] = Some(val.to_vec());
             }
-            // Second pass: build formatted columns + setaparam.
-            let middle = &args[1]; // c:1037
-            let sl = middle.len(); // c:1037
-            let mut ret: Vec<String> = Vec::new(); // c:1043
-            for ap in &args[2..] {
-                // c:1051
-                let bytes = ap.as_bytes();
-                let mut copy: Vec<u8> = Vec::with_capacity(bytes.len()); // c:1052
-                let mut k = 0usize;
-                let mut sep_at: Option<usize> = None;
-                while k < bytes.len() {
-                    // c:1053
-                    if bytes[k] == b':' {
-                        sep_at = Some(copy.len());
-                        break;
-                    }
-                    if bytes[k] == b'\\' && k + 1 < bytes.len() {
-                        // c:1054
-                        k += 1;
-                    }
-                    copy.push(bytes[k]); // c:1055
-                    k += 1;
-                }
-                // c:1058 — `((cpp==cp && oldc==':') || *cp==':') && cp[1]`:
-                // align ONLY when a colon is present AND the value after it
-                // is non-empty. `empty:` (colon, no value) and `nocolon`
-                // (no colon) both fall to the else and emit just the key —
-                // no padding, no separator. zshrs previously aligned any
-                // colon-bearing spec, leaving a dangling `empty -- `.
-                if sep_at.is_some() && k + 1 < bytes.len() {
-                    let left_len = sep_at.unwrap();
-                    // c:1058
-                    let after = std::str::from_utf8(&bytes[(k + 1)..]).unwrap_or("");
-                    let mut buf = String::with_capacity(pre + sl + after.len());
-                    let prefix = std::str::from_utf8(&copy[..left_len]).unwrap_or("");
-                    buf.push_str(prefix); // c:1072 memcpy(buf, copy, cpp-copy)
-                                          // c:1071 memset(buf, ' ', pre) — pad up to byte count
-                                          // `pre` (matches C !MULTIBYTE_SUPPORT byte-counting; the
-                                          // first pass already computed `pre = cp - *ap - nbc`
-                                          // in bytes c:1015). Using prefix.len() (bytes) not
-                                          // chars().count() — for non-ASCII labels chars<bytes,
-                                          // so the prior char-count version over-padded.
-                    for _ in prefix.len()..pre {
-                        buf.push(' ');
-                    }
-                    buf.push_str(middle); // c:1073 strcpy past `suf` shift
-                    buf.push_str(after); // c:1073 (tail after `:`)
-                    ret.push(buf); // c:1075 ztrdup
-                } else {
-                    ret.push(String::from_utf8_lossy(&copy).into_owned()); // c:1082
-                }
-            }
-            let _ = sl;
-            setaparam(&args[0], ret); // c:1081 setaparam(args[0], ret)
-            return 0; // c:1082
         }
-        _ => {}
+
+        // c:1066-1072 — `if (!zformat_substring(args[1], specs, &out,
+        // &oused, &olen, '\0', presence, qopt == 'q', qspecs, 0))`
+        let fmt = crate::ported::utils::unmetafy_str(&args[1]);
+        let mut out: Vec<u8> = Vec::with_capacity(fmt.len() + 16);
+        if ZFormat::substring(&fmt, 0, &mut out, 0, &specs, presence, qopt == b'q', &qspecs, false)
+            .is_none()
+        {
+            zwarnnam(
+                nam,
+                &format!("malformed format string: {}", crate::ported::utils::nicedupstring(&args[1])),
+            ); // c:1071
+            return 1;
+        }
+        setsparam(&args[0], &crate::script_bytes::decode_script_bytes(&out)); // c:1076
+        return 0; // c:1077
     }
-    // c:1176 — `DPUTS(1, "BUG: unhandled option"); return 1;`
-    1
+
+    // c:1080 — `case 'a':` column format. First pass: the widest
+    // description-bearing key, in bytes (`pre`, unused under
+    // MULTIBYTE_SUPPORT) and in display columns (`prechars`).
+    let mut prechars = 0usize; // c:1085
+    for ap in &args[2..] {
+        // c:1089-1091 — `for (nbc = 0, cp = *ap; *cp && *cp != ':'; cp++)
+        // if (*cp == '\\' && cp[1]) cp++, nbc++;`
+        let b = ap.as_bytes();
+        let (mut cp, mut nbc) = (0usize, 0usize);
+        while cp < b.len() && b[cp] != b':' {
+            if b[cp] == b'\\' && cp + 1 < b.len() {
+                cp += 1;
+                nbc += 1;
+            }
+            cp += 1;
+        }
+        // c:1092 — `if (*cp == ':' && cp[1])`
+        if cp + 1 < b.len() {
+            // c:1101-1104 — `*cp = '\0'; dchars = MB_METASTRWIDTH(*ap) - nbc;`
+            let dchars = crate::ported::zsh_h::MB_METASTRWIDTH(&ap[..cp]).saturating_sub(nbc);
+            prechars = prechars.max(dchars);
+        }
+    }
+    // Second pass. c:1127-1161
+    let sep = &args[1];
+    let mut ret: Vec<String> = Vec::with_capacity(args.len() - 2);
+    for ap in &args[2..] {
+        // c:1128-1134 — copy the key with backslash escapes removed, up to
+        // the first unescaped `:`.
+        let b = ap.as_bytes();
+        let mut copy: Vec<u8> = Vec::with_capacity(b.len());
+        let mut cp = 0usize;
+        while cp < b.len() && b[cp] != b':' {
+            if b[cp] == b'\\' && cp + 1 < b.len() {
+                cp += 1;
+            }
+            copy.push(b[cp]);
+            cp += 1;
+        }
+        let key = String::from_utf8_lossy(&copy).into_owned();
+        // c:1136 — `if (((cpp == cp && oldc == ':') || *cp == ':') && cp[1])`
+        if cp + 1 < b.len() {
+            // c:1138-1157 — key, `prechars - MB_METASTRWIDTH(copy)` spaces,
+            // the separator, then the description.
+            let rempad = prechars.saturating_sub(crate::ported::zsh_h::MB_METASTRWIDTH(&key));
+            let mut buf = String::with_capacity(key.len() + rempad + sep.len() + b.len() - cp);
+            buf.push_str(&key);
+            buf.extend(std::iter::repeat(' ').take(rempad));
+            buf.push_str(sep);
+            buf.push_str(&ap[cp + 1..]);
+            ret.push(buf); // c:1158
+        } else {
+            ret.push(key); // c:1160
+        }
+    }
+    setaparam(&args[0], ret); // c:1164
+    0 // c:1165
 }
 
 /// Port of `connectstates(LinkList out, LinkList in)` from `Src/Modules/zutil.c:1119`.
@@ -4234,35 +4100,22 @@ thread_local! {
 /// repeat flag handling the C source's `zformat_substring()`
 /// (line 814) implements.
 pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: bool) -> String {
-    // Direct port of src/zsh/Src/Modules/zutil.c:814
-    // zformat_substring. Recursive walker that handles:
-    //   - Plain `%X` substitutions
-    //   - Optional `-` for right-align
-    //   - Optional `N` for min width
-    //   - Optional `.M` for max width
-    //   - Ternary `%(SPECTEST.true-text.false-text)` — conditional
-    //     substitution based on whether the spec exists / matches a
-    //     numeric test value. With presence=true (zformat -F) the
-    //     test compares the spec's existence/length; with
-    //     presence=false (zformat -f) the test compares against an
-    //     integer math eval of the spec value.
-    //
-    // The original C uses an output-buffer with growable backing;
-    // we use a Rust String with push_* helpers. The recursive
-    // descent + (skip || actval) pattern is the same.
-    // bin_zformat (c:1026-1032) never registers `%` or `)` as specs — it
-    // rejects them as spec names. `%%` → `%` and `%)` → `)` come from the
-    // unwind at c:849-856 inside the walker, which also keeps a lone
-    // trailing `%` and an unterminated `%(` as literal text.
-    let effective = specs;
-
-    let bytes: Vec<char> = format.chars().collect();
-    let mut out = String::with_capacity(bytes.len() + 16);
-    let mut idx = 0;
-    let _ = ZFormat::substring(
-        &bytes, &mut idx, &mut out, '\0', &effective, presence, false, &HashMap::new(), false,
-    );
-    out
+    // Direct port of src/zsh/Src/Modules/zutil.c:816 zformat_substring
+    // for the in-crate callers (compsys/p10k ports) that hold their specs
+    // in a map: the same byte walk `bin_zformat` drives, without -q. C
+    // indexes specs by one byte, so a spec letter outside ASCII has no
+    // slot and is left unregistered, as is any letter bin_zformat rejects
+    // (c:1031-1033: `-` `.` `%` `)` and digits).
+    let mut table: Vec<Option<Vec<u8>>> = vec![None; 256];
+    for (&k, v) in specs {
+        if k.is_ascii() && !matches!(k, '-' | '.' | '%' | ')' | '0'..='9') {
+            table[k as usize] = Some(crate::ported::utils::unmetafy_str(v));
+        }
+    }
+    let fmt = crate::ported::utils::unmetafy_str(format);
+    let mut out: Vec<u8> = Vec::with_capacity(fmt.len() + 16);
+    let _ = ZFormat::substring(&fmt, 0, &mut out, 0, &table, presence, false, &[0; 256], false);
+    crate::script_bytes::decode_script_bytes(&out)
 }
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();

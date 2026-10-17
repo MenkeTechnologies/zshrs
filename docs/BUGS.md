@@ -1315,9 +1315,9 @@ FAIL → PASS via a parameter→global mirror on the `-i` path in
 
 ---
 
-## #1097 — a glob qualifier with trailing text is a fatal `bad pattern` in zsh, a literal in zshrs — open
+## #1097 — a glob qualifier with trailing text is a fatal `bad pattern` in zsh, a literal in zshrs — fixed
 
-**Status:** `open`, root cause proven 2026-08-24.
+**Status:** `fixed` (verified 2026-10-17: `zshrs -f -c` now aborts with `bad pattern: *(-/):t:directories` rc=1 for the array assignment below and for the `$~tmp1` form `_path_files:472` uses, matching zsh; `*(-.):t:source` still stays literal under `nonomatch`). Root cause proven 2026-08-24.
 
 ```zsh
 $ /bin/zsh -f -c 'setopt nonomatch; t=( *(-/):t:directories ); print -r -- "n=$#t"'

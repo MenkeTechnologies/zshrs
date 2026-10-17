@@ -2834,3 +2834,27 @@ fn bug1177_default_word_tilde_expands_inside_nested_substitution() {
     assert_eq!(ec, 0, "exit 0");
     assert_eq!(stdout, "/a/b/ /a/b/c\n~/x\n");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1097 — a `(/)` qualifier followed by trailing text is a fatal
+// `bad pattern` (zsh 5.9.2), not a literal word
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug1097_dir_qualifier_with_trailing_text_is_bad_pattern() {
+    let tree = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(tree.path().join("sub")).expect("mkdir");
+    std::fs::write(tree.path().join("f.c"), "").expect("touch");
+    let dir = tree.path().display();
+    // `_path_files:472` shape: the failure aborts the function, so the
+    // `print` after it never runs; the `(-.)` form stays a literal.
+    let (ec, stdout, stderr) = run_zshrs(&format!(
+        r#"cd {dir}; setopt nonomatch; t=( *(-.):t:source ); print -r -- "$t"
+f() {{ tmp1='*(-/):t:directories'; tmp1=( $~tmp1 ) 2>/dev/null; print after }}; f; print rc=$?"#
+    ));
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(stdout, "*(-.):t:source\n");
+    assert_eq!(ec, 1, "stderr: {stderr:?}");
+}
