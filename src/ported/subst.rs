@@ -1622,7 +1622,8 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
                 crate::ported::pattern::haswilds(&data_tok)
             };
             if has_glob_chars {
-                let nullglob = gf_nullglob || isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
+                let nullglob = (gf_nullglob || isset(crate::ported::zsh_h::NULLGLOB))
+                    && !(crate::dash_mode::bash_mode() && isset(crate::ported::zsh_h::NOMATCH)); // c:1873 !gf_nullglob
                 let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
                 if nullglob {
                     // c:1872 — under NULL_GLOB the failed word is dropped.

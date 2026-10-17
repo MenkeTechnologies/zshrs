@@ -404,3 +404,12 @@ mksh	typeset -r r=1; typeset +r r; echo after $?
 mksh	typeset -Z5 v=abc; echo "[$v]"
 mksh	typeset -L4 v=abcdef; typeset -l v=ABC; echo "[$v]"
 ksh,mksh	umask 0755; print -r -- "${ printf inner; }"
+bash	shopt -s nullglob; shopt -s failglob; printf '[%s]\n' ./nonexistent_zz* 2>/dev/null; printf 'after\n'
+ksh	typeset -x v=1; typeset -i v=5; typeset -p v
+ksh	typeset -x v=1; typeset v=abc; typeset -p v
+ksh	typeset -L2 v=xy; typeset -Z5 v=42; print -r -- "[$v]"
+ksh	typeset -F0 v=2.7; float v=1.5; print -r -- "$v"
+ksh	a=four; print -r -- $((a+1)); print -r -- $?
+mksh	typeset -i16 v=5; typeset -Ui v=-1; print -r -- "$v"
+mksh	typeset -L2 v=xy; typeset -Z5 v=42; print -r -- "[$v]"
+ksh,mksh	set -A a four; typeset -A h; h[a]=1; print -r -- "${h[a]}"

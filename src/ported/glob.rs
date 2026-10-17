@@ -1741,7 +1741,10 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
         // c:1254 + c:1567-1569 — `gf_nullglob = isset(NULLGLOB)` then the
         // qualifier override. Reading the option ALONE (what this did) made
         // `(N)` inert for every programmatic caller.
-        let nullglob = gf_nullglob || isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
+        // !!! BASH (no C counterpart) !!! `shopt -s failglob` beats `nullglob`: the unmatched
+        // pattern is an error even with both set.
+        let nullglob = (gf_nullglob || isset(crate::ported::zsh_h::NULLGLOB))
+            && !(crate::dash_mode::bash_mode() && isset(crate::ported::zsh_h::NOMATCH)); // c:1873 !gf_nullglob
         let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
                                                                      // c:Src/glob.c:1843-1854 — `if (!q || errflag) { ... zerr(
                                                                      // "bad pattern", ostr); return; }`. When the qualifier

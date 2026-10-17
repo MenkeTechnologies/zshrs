@@ -742,7 +742,11 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         // parameter in arith context is an error. Bug #88 in
         // docs/BUGS.md: zshrs silently used 0, masking typos and
         // breaking defensive `set -u` scripts.
-        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+        // !!! KSH93 (no C counterpart) !!! a name reached through another parameter's VALUE
+        // (`a=four; $((a+1))`) must be set; only a name written in the expression itself
+        // defaults to 0.
+        let nested_unset = crate::dash_mode::ksh93_mode() && M_LEVEL.with(|c| c.get()) > 1;
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) || nested_unset {
             crate::ported::utils::zerr(&format!("{}: parameter not set", name));
         }
         mnumber {

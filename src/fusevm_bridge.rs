@@ -1770,6 +1770,13 @@ fn filesub_deferred_word(raw: Value) -> Value {
 /// c:3523-3524 `if (!lastval) lastval = 1` after a prefork error.
 fn words_errflag_status() -> i32 {
     use std::sync::atomic::Ordering;
+    // !!! DROP-IN (no C counterpart) !!! bash, ksh93 and mksh report a failed expansion as
+    // status 1 whatever the previous status was; only zsh keeps a non-zero one (c:3523-3524).
+    if crate::dash_mode::posix_faithful() && !crate::dash_mode::dash_strict() {
+        GLOB_WORD_ERRFLAG.with(|c| c.set(false));
+        crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
+        return 1;
+    }
     let status = if GLOB_WORD_ERRFLAG.with(|c| c.replace(false)) {
         1 // c:3761
     } else {
@@ -2021,6 +2028,11 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         // status 1 regardless of the prior status — leave that to the
         // normal dispatch/abort path below (which returns 1 and keeps
         // ERRFLAG_HARD set for the downstream errexit gate).
+        // c:Src/exec.c:4422-4436 `done:` — under POSIXBUILTINS every error on a special builtin
+        // is fatal, including one raised while expanding its words (c:4287 skips the builtin).
+        if ef != 0 {
+            arm_posix_special_exit(name);
+        }
         if ef != 0 && hard == 0 && builtin_is_assign_family(name) {
             // c:4287 — execbuiltin skipped; lastval unchanged.
             return crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
@@ -2202,6 +2214,19 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
     }
     status
+}
+
+/// c:Src/exec.c:4422-4436 — POSIXBUILTINS makes any error on a special builtin exit the
+/// non-interactive shell with status 1. Arms the deferred-exit pair; the next ERREXIT_CHECK unwinds.
+fn arm_posix_special_exit(name: &str) {
+    use std::sync::atomic::Ordering;
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+        && builtin_is_pspecial(name)
+    {
+        crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
+        crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+    }
 }
 
 /// c:Src/zsh.h:1467 BINF_PSPECIAL — true when `name` is a POSIX
@@ -6298,6 +6323,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // KSHARRAYS bare form: no subscript. Bare-`$name` words +
         // literal `[idx]suffix` glued onto the last word.
         let mut words = ksharrays_bare_words(&name);
+        // c:Src/subst.c:1689 — the bare `$name` half of `$name[idx]` obeys NO_UNSET too.
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+            let known = words.iter().any(|w| !w.is_empty())
+                || !name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                || crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .is_some_and(|t| t.contains_key(&name))
+                || env::var(&name).is_ok();
+            if !known {
+                crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                with_executor(|exec| exec.set_last_status(1));
+                return Value::str("");
+            }
+        }
         let last = format!("{}[{}]{}", words.pop().unwrap_or_default(), idx, suffix);
         if quoted {
             // DQ context — no filename generation, bracket text stays
@@ -6688,7 +6732,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // for INDEXED arrays (assoc keys are strings), bash mode, numeric key.
         // Captured before the assign; applied after (on the array path).
         let sparse_track: Option<(String, usize, usize)> =
-            if crate::dash_mode::sparse_arrays() && !key.contains(',') {
+            if crate::dash_mode::sparse_arrays()
+                && !key.contains(',')
+                && !with_executor(|exec| exec.has_assoc(&name))
+            {
                 crate::dash_mode::sparse_subscript_index(&key).and_then(|i| {
                     with_executor(|exec| {
                         if !exec.has_assoc(&name) {
@@ -11291,9 +11338,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // in bash mode, only for a plain non-append single index (0-based
         // under ksharrays). Captured before the assign; applied after.
         let sparse_track: Option<(String, usize, usize)> =
-            if crate::dash_mode::sparse_arrays() && !append && !key.contains(',') {
+            if crate::dash_mode::sparse_arrays()
+                && !append
+                && !key.contains(',')
+                && !with_executor(|exec| exec.has_assoc(&name))
+            {
                 crate::dash_mode::sparse_subscript_index(&key)
-                    .filter(|_| !with_executor(|exec| exec.has_assoc(&name)))
                     .map(|i| {
                     let old_len =
                         with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));

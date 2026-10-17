@@ -9365,7 +9365,8 @@ impl ShellExecutor {
             .1
             .map(|q| q.nullglob)
             .unwrap_or(false);
-        let nullglob = opt_state_get("nullglob").unwrap_or(false) || per_glob_nullglob;
+        let nullglob = (opt_state_get("nullglob").unwrap_or(false) || per_glob_nullglob)
+            && !(crate::dash_mode::bash_mode() && opt_state_get("nomatch").unwrap_or(false));
         if nullglob {
             // c:Src/glob.c:1888-1894 —
             //   `else if (in_expandredir) {`
