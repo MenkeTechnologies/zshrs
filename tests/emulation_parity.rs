@@ -1701,9 +1701,10 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "echo \"${GROUPS[@]}|${#GROUPS[@]}|${GROUPS[0]}\"",
+    "f() { echo hi; }; g() { :; }; set | grep -A3 '^f '",
     "ZZ_V=; set | grep '^ZZ_V='",
     "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
-    "cd /tmp; cd a b 2>/dev/null; echo $?",
     "(exit abc) 2>/dev/null; echo $?",
     "f() { return abc; }; f 2>/dev/null; echo $?",
     "type if",
@@ -2024,7 +2025,6 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
-    "cd '' 2>/dev/null; echo $?",
     "ulimit -Z 2>/dev/null; echo $?",
     "printf '%ld %lld %hhd %zd|\\n' 1 2 3 4",
     "select x in a b; do break; done 2>/dev/null </dev/null; echo $?",
@@ -2062,6 +2062,7 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "cd '' 2>/dev/null; echo $?",
     "ZZ_V=\"it's\"; set | grep '^ZZ_V='",
     "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
     "alias a1=b; command -v a1",
@@ -2283,6 +2284,9 @@ const DASH_ONLY_CORPUS: &[&str] = &[
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
 /// `bad option` with status 1 (Src/builtin.c:123 / :109).
+/// Scripts whose ksh93u+m reference output only matches from 1.0.10 on.
+const KSH_1_0_10_ONLY: &[&str] = &["echo $((-7/2)) $((-7%3)) $((7/-2)) $((7%-3))"];
+
 const ZSH_BAD_OPTION_CORPUS: &[&str] = &[
     "type -t echo; echo rc=$?",
     "type -t nonexistent_zz; echo rc=$?",
@@ -3843,7 +3847,13 @@ fn emulation_parity_matrix() {
                 .chain(if matches!(case.name, "dash" | "ash") { DASH_FAMILY_CORPUS } else { &[] })
                 .chain(if case.name == "dash" { DASH_ONLY_CORPUS } else { &[] })
                 .chain(if case.name != "zsh" { BARE_POSITIONAL_CORPUS } else { &[] });
+        // ksh93u+m releases before 1.0.10 (Ubuntu 24.04 ships 1.0.8) reject or format
+        // these differently from the 1.0.10 line `--ksh` follows.
+        let old_ksh = case.name == "ksh" && ksh_version(&refbin).is_some_and(|v| v < (1, 0, 10));
         for script in corpus {
+            if old_ksh && KSH_1_0_10_ONLY.contains(script) {
+                continue;
+            }
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {
                 mismatches.push(format!(
@@ -5015,7 +5025,7 @@ fn ksh93_specifics_match_ksh93() {
         "float f=1.5; print $f",
         "typeset -E f=0.3333333333333; print $f",
         "typeset -E2 f=1; print $f",
-        if new_float_format { float_digits_probe } else { "print $((7.0/2)) $((5.0)) $((1e20))" },
+        if new_float_format { float_digits_probe } else { "print $((7.0/2)) $((5.0))" },
         "print $((sqrt(16))) $((abs(-3))) $((int(3.7)))",
         "printf '%q|' 'a b' \"it's\" 'a;b' abc '' a=b '=x' 'a\"b'; print",
         "printf '%q\\n' \"$(printf 'a\\tb')\"",

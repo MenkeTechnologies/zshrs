@@ -1630,6 +1630,18 @@ pub fn bin_set(
             for mut pm in nodes {
                 printparamnode(&mut pm, printflags); // c:680 printnode
             }
+            // !!! BASH-MODE GATE (no C counterpart) !!! bash's bare `set` follows the
+            // variables with every function definition, as `declare -f` prints them.
+            if crate::dash_mode::bash_mode() && !hadplus {
+                let mut fresh = crate::ported::zsh_h::options {
+                    ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
+                fresh.ind[b'f' as usize] = 1;
+                bin_typeset("declare", &[], &fresh, 0);
+            }
         }
         if array != 0 {
             // c:684
