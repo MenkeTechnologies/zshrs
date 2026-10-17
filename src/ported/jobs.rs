@@ -4417,7 +4417,7 @@ pub fn bin_kill(
                 Ok(n) => sig = n, // c:2818
                 Err(_) => {
                     zwarnnam(nam, &format!("invalid signal number: -{}", body));
-                    return 1; // c:2822
+                    return crate::dash_mode::kill_usage_status(); // c:2822
                 }
             }
             got_sig = true;
@@ -4486,6 +4486,12 @@ pub fn bin_kill(
                             return 0;
                         }
                     } else {
+                        // !!! PDKSH GATE (no C counterpart) !!! mksh's `kill -l` takes
+                        // numbers only ("bad number", status 1).
+                        if crate::dash_mode::pdksh_family() {
+                            zwarnnam(nam, &format!("bad number: {}", token));
+                            return 1;
+                        }
                         // c:2820-2823 — `zstrtol` parses leading
                         // `-`/`+` as sign + digits. For `-X` (sign
                         // consumed, no digit), signame points PAST
@@ -4603,7 +4609,7 @@ pub fn bin_kill(
             if idx >= argv.len() {
                 // c:2916
                 zwarnnam(nam, "-n: argument expected"); // c:2917
-                return 1; // c:2918
+                return crate::dash_mode::kill_usage_status(); // c:2918
             }
             match argv[idx].parse::<i32>() {
                 // c:2920
@@ -4612,7 +4618,7 @@ pub fn bin_kill(
                 }
                 Err(_) => {
                     zwarnnam(nam, &format!("invalid signal number: {}", argv[idx])); // c:2923
-                    return 1;
+                    return crate::dash_mode::kill_usage_status();
                 }
             }
             got_sig = true;
@@ -4627,7 +4633,7 @@ pub fn bin_kill(
             if idx >= argv.len() {
                 // c:2938
                 zwarnnam(nam, "-s: argument expected"); // c:2939
-                return 1;
+                return crate::dash_mode::kill_usage_status();
             }
             let name = argv[idx].as_str();
             // c:Src/jobs.c — empty signal-name after `-s` emits
@@ -4636,7 +4642,7 @@ pub fn bin_kill(
             //   "zsh:kill:1: -: signal name expected" rc=1).
             if name.is_empty() {
                 zwarnnam(nam, "-: signal name expected");
-                return 1;
+                return crate::dash_mode::kill_usage_status();
             }
             match kill_signame_lookup(name) {
                 Some(n) => sig = n,
@@ -4645,7 +4651,7 @@ pub fn bin_kill(
                     let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
                     zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2987
                     zwarnnam(nam, "type kill -L for a list of signals"); // c:2988
-                    return 1; // c:2989
+                    return crate::dash_mode::kill_usage_status(); // c:2989
                 }
             }
             got_sig = true;
@@ -4663,12 +4669,12 @@ pub fn bin_kill(
             if idx >= argv.len() {
                 // c:2785
                 zwarnnam(nam, "-q: argument expected"); // c:2786
-                return 1;
+                return crate::dash_mode::kill_usage_status();
             }
             if argv[idx].parse::<i32>().is_err() {
                 // c:2796
                 zwarnnam(nam, &format!("invalid number: {}", argv[idx])); // c:2797
-                return 1;
+                return crate::dash_mode::kill_usage_status();
             }
             idx += 1; // c:2802
             continue; // c:2803
@@ -4691,7 +4697,7 @@ pub fn bin_kill(
         // then accept-line hits exactly this.
         if body.is_empty() {
             zwarnnam(nam, "-: signal name expected"); // c:2932
-            return 1; // c:2933
+            return crate::dash_mode::kill_usage_status(); // c:2933
         }
 
         // c:2960 — symbolic `-NAME` (no `s` prefix needed).
@@ -4713,7 +4719,7 @@ pub fn bin_kill(
                                                                         // /bin/zsh 5.9 shows lowercase `-l`; the bundled
                                                                         // source AND /opt/homebrew/bin/zsh 5.9.1+ use `-L`.
                 zwarnnam(nam, "type kill -L for a list of signals");
-                return 1;
+                return crate::dash_mode::kill_usage_status();
             }
         }
     }
@@ -4762,6 +4768,11 @@ pub fn bin_kill(
                             }
                         }
                         zwarnnam(nam, &format!("kill {} failed: {}", arg, errmsg));
+                        // dash rejects a signal number past the table up front
+                        // ("Illegal option", 2); here it surfaces as EINVAL.
+                        if errno == libc::EINVAL && crate::dash_mode::dash_faithful() {
+                            return 2;
+                        }
                         returnval += 1; // c:3050 returnval++
                     }
                 }
@@ -4783,6 +4794,10 @@ pub fn bin_kill(
             let p = getjob(arg, nam);
             if p < 0 {
                 // c:2989
+                // dash: "No such job" is a usage error (2).
+                if crate::dash_mode::dash_faithful() {
+                    return 2;
+                }
                 returnval += 1; // c:2990
                 continue;
             }
@@ -4846,6 +4861,11 @@ pub fn bin_kill(
                             }
                         }
                         zwarnnam(nam, &format!("kill {} failed: {}", arg, errmsg)); // c:3049
+                        // dash rejects a signal number past the table up front
+                        // ("Illegal option", 2); here it surfaces as EINVAL.
+                        if errno == libc::EINVAL && crate::dash_mode::dash_faithful() {
+                            return 2;
+                        }
                         returnval += 1; // c:3050 returnval++
                     }
                 }

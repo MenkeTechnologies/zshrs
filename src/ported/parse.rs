@@ -3985,6 +3985,10 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
     }
     // c:2685-2691 — `=~` REGEX (no pattern slot — implicit COND_MODI).
     if bc.len() == 2 && is_eq(bc[0]) && is_tilde(bc[1]) {
+        // !!! PDKSH GATE (no C counterpart) !!! mksh has no `=~`: a syntax error.
+        if crate::dash_mode::pdksh_family() {
+            YYERROR!(ECUSED.get());
+        }
         ecadd(WCB_COND(COND_REGEX as u32, 0));
         ecstr(a);
         ecstr(c);
@@ -10855,6 +10859,11 @@ fn parse_cond_primary() -> Option<ZshCond> {
         // !b[2]` → COND_REGEX. The lexer hands the TOKEN forms (`=` at word
         // start → Equals, `~` → Tilde) inside cond bodies.
         if bc.len() == 2 && is_eq(bc[0]) && (bc[1] == '~' || bc[1] == Tilde) {
+            // !!! PDKSH GATE (no C counterpart) !!! mksh has no `=~`: a syntax error.
+            if crate::dash_mode::pdksh_family() {
+                set_tok(LEXERR);
+                return None;
+            }
             return Some(ZshCond::Regex(s1, s3));
         }
         // c:2692-2702 — `IS_DASH(b[0])`: a numeric/file operator

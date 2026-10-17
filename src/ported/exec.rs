@@ -4938,7 +4938,12 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
                 guard.get(sig as usize).copied().unwrap_or(0)
             };
             let func_set = (st & ZSIG_FUNC) != 0; // c:1090
-            let posix_ignored = isset(POSIXTRAPS) && ((st & ZSIG_IGNORED) != 0); // c:1091
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, mksh and dash keep an
+            // ignored signal listed in the child; ksh93 starts with an empty table.
+            let keep_ignored = isset(POSIXTRAPS)
+                || ((crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                    && !crate::dash_mode::ksh93_mode());
+            let posix_ignored = keep_ignored && ((st & ZSIG_IGNORED) != 0); // c:1091
             if !func_set && !posix_ignored {
                 unsettrap(sig); // c:1092
             }
@@ -11716,8 +11721,15 @@ pub fn execcmd_exec(
             if builtin_entry.is_none() {
                 if (cflags & BINF_BUILTIN) != 0 {
                     // c:3435 — `zwarn("no such builtin: %s", cmdarg);`
-                    zwarn(&format!("no such builtin: {}", cmdarg)); // c:3436
-                    LASTVAL.store(1, Ordering::Relaxed); // c:3437
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no
+                    // `builtin`: the word itself is a command not found (127).
+                    if crate::dash_mode::dash_faithful() {
+                        crate::ported::utils::zwarnnam("builtin", "not found");
+                        LASTVAL.store(127, Ordering::Relaxed);
+                    } else {
+                        zwarn(&format!("no such builtin: {}", cmdarg)); // c:3436
+                        LASTVAL.store(1, Ordering::Relaxed); // c:3437
+                    }
                     if oautocont >= 0 {
                         // c:3438-3439
                         opt_state_set("autocontinue", oautocont != 0);

@@ -2067,6 +2067,9 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // `alias -p`, `alias =z`, `unalias -a NAME`, bare `unalias`; no `nameref`, no
     // `typeset -L`; an unclosed `[` stays literal; a failed write is status 1.
     "alias x=1; alias -p; alias =z 2>/dev/null; echo rc=$?; unalias -a x; echo rc=$?; unalias 2>/dev/null; echo rc=$?; nameref r=x 2>/dev/null; echo rc=$?; typeset -L3 s=abc 2>/dev/null; echo rc=$?; cd /; echo b[in 2>/dev/null; echo a 1>&-; echo rc=$?",
+    // `shift 1 2` ends a non-interactive shell (1); a subshell lists the
+    // parent's traps, EXIT included, and an ignored signal stays listed.
+    "trap 'echo e' EXIT; (trap); trap 'echo u' USR1; (trap); trap | grep -c SIG; trap '' INT; trap | grep -c INT; set -- a b; shift 1 2 2>/dev/null; echo after",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
@@ -2252,6 +2255,8 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     // an unclosed `[` stays literal. A bare `unset` ends the shell (2).
     "type 2>/dev/null; echo rc=$?; kill -l 0; kill -l 128; trap 'echo z' ZERR 2>/dev/null; echo rc=$?; unalias -a x; echo rc=$?; unalias 2>/dev/null; echo rc=$?; echo a 1>&-; echo rc=$?; cd /; echo b[in",
     "unset 2>/dev/null; echo no",
+    // A backslash-escaped `.` in a `=~` regex is literal; a quoted span is not.
+    "[[ abc =~ a\\.c ]]; echo rc=$?; [[ a.c =~ a\\.c ]]; echo rc=$?; [[ abc =~ \"a.c\" ]]; echo rc=$?",
 ];
 
 /// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
@@ -2321,6 +2326,9 @@ const BASH_KORN_CORPUS: &[&str] = &[
     // Arithmetic names in substring offsets; dangling `-a`/`-o`; `declare` exists
     // in bash only.
     "x=abcdef; i=2; echo ${x:i} ${x:$i:1} ${x:i+1:i}; [ 1 -eq 1 -a ] 2>/dev/null; echo $?; [ -n abc -o ] 2>/dev/null; echo $?; [ -a -a -a ] 2>/dev/null; echo $?; f() { declare x=3; echo $x; }; x=1; f 2>/dev/null; echo $x",
+    // A numeric subscript on a scalar: `[0]` is the whole value, any other
+    // index is empty (zsh indexes the characters).
+    "x=abc; i=0; echo \"${x[0]}\" \"${x[1]:-e}\" \"${#x[0]}\" \"${x[@]}\" \"${x[i]}\"",
 ];
 
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
@@ -2375,6 +2383,11 @@ const PDKSH_CORPUS: &[&str] = &[
     // Bare `type` / `unset` are no-ops; ZERR is no signal; `unalias -a NAME` is an
     // error here; a failed write is 1; an unclosed `[` stays literal.
     "type; echo rc=$?; unset; echo rc=$?; trap 'echo z' ZERR 2>/dev/null; echo rc=$?; unalias -a x; echo rc=$?; echo a 1>&-; echo rc=$?; cd /; echo b[in",
+    // `kill -l NAME` is "bad number" (1); an empty test operand is 0; `unset`
+    // of a local reveals the outer value; a shift past `$#` ends only the
+    // function (1); a bare `export` lists names; an ignored signal stays
+    // listed in a subshell.
+    "kill -l TERM 2>/dev/null; echo rc=$?; [ '' -eq 0 ]; echo $?; f() { local x=5; unset x; echo \"[$x]\"; }; x=0; f; echo $x; g() { shift; echo \"[$@]\"; }; g 1; g 2>/dev/null; echo rc=$?; zz=1; export zz; export | grep -c '^zz$'; trap '' INT; (trap); trap | grep -c INT",
 ];
 
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
@@ -2425,6 +2438,13 @@ const DASH_ONLY_CORPUS: &[&str] = &[
     // no-ops; `command -v` succeeds when any name is found; `unalias -a NAME` is
     // fine; `alias =z` is 1; a failed write is 1; an unclosed `[` stays literal.
     "kill -l 9 15; kill -l 0 2>/dev/null; echo rc=$?; < /nonexistent 2>/dev/null; echo rc=$?; echo a {fd}>/dev/null; echo rc=$?; type; echo rc=$?; unset; echo rc=$?; command -v echo nosuch; echo rc=$?; unalias -a x; echo rc=$?; unalias; echo rc=$?; alias =z 2>/dev/null; echo rc=$?; echo a 1>&- 2>/dev/null; echo rc=$?; echo b[in",
+    // `type` knows none of zsh's extra keywords; there is no `builtin` (127);
+    // kill usage errors are 2; a bare `export` lists `export NAME='v'`; an
+    // ignored signal stays listed in a subshell.
+    "type [[ 2>/dev/null; echo rc=$?; builtin nosuch 2>/dev/null; echo rc=$?; kill -s NOSUCH $$ 2>/dev/null; echo rc=$?; kill %1 2>/dev/null; echo rc=$?; zz=1; export zz; export | grep zz; trap '' INT; (trap); trap | grep -c INT",
+    // `set` letters map to dash's option names (`-E` emacs, `-f` noglob);
+    // `interactive`/`debug`/`nolog` are accepted; `shift 1 2` shifts by 1.
+    "set -E; set -o interactive; set -o debug; set -o nolog; echo rc=$?; set -f; echo /etc/pass*; set +f; echo /etc/pass*; set -- a b c; shift 1 2; echo $#",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers

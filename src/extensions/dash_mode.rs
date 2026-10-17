@@ -314,23 +314,40 @@ pub fn note_error_message(msg: &str) {
     }
     // mksh ends only the FUNCTION on a read-only assignment made inside one; the
     // caller goes on with status 2 (ksh93, like zsh, ends the script).
-    if pdksh_family() && crate::ported::utils::locallevel() > 0 && msg.starts_with("read-only variable: ") {
-        KORN_FN_READONLY.store(true, Ordering::Relaxed);
+    if msg.starts_with("read-only variable: ") {
+        note_korn_fn_abort(2);
     }
 }
 
-/// Set by [`note_error_message`] for a read-only violation inside a function
-/// under the pdksh line; consumed by the function-return path.
-static KORN_FN_READONLY: AtomicBool = AtomicBool::new(false);
+/// The status an mksh FUNCTION ends with after an error that ends only the
+/// function (a read-only assignment is 2, a shift past `$#` is 1); 0 when none
+/// is pending. Consumed by the function-return path.
+static KORN_FN_ABORT: AtomicI32 = AtomicI32::new(0);
 
-/// `Some(2)` once after an mksh function body hit a read-only assignment: the
-/// function ends, the error is cleared and the status is 2.
+/// Records that the running function must end with `status`; a no-op outside
+/// the pdksh line or outside a function.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn note_korn_fn_abort(status: i32) {
+    if pdksh_family() && crate::ported::utils::locallevel() > 0 {
+        KORN_FN_ABORT.store(status, Ordering::Relaxed);
+    }
+}
+
+/// Whether such a function-ending error is pending (not consumed).
+pub fn korn_fn_abort_pending() -> bool {
+    KORN_FN_ABORT.load(Ordering::Relaxed) != 0
+}
+
+/// `Some(status)` once after an mksh function body hit such an error: the
+/// function ends, the error is cleared and the status is returned.
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn take_korn_fn_readonly() -> Option<i32> {
-    if KORN_FN_READONLY.swap(false, Ordering::Relaxed) {
+    let status = KORN_FN_ABORT.swap(0, Ordering::Relaxed);
+    if status != 0 {
         READONLY_VIOLATION.store(false, Ordering::Relaxed);
-        Some(2)
+        Some(status)
     } else {
         None
     }
@@ -3319,6 +3336,62 @@ pub fn dash_skip_operator_separators() -> bool {
     }
     set_tok(LEXERR);
     false
+}
+
+/// Whether a zsh reserved word is a keyword of the emulated shell: dash has
+/// none of zsh's extras (`type [[` is "not found"), bash and the Korn shells
+/// lack the csh-style ones.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn reswd_in_emulation(name: &str) -> bool {
+    if dash_faithful() {
+        !matches!(
+            name,
+            "[[" | "]]" | "function" | "select" | "time" | "coproc" | "repeat" | "foreach"
+                | "nocorrect" | "end" | "always" | "declare" | "export" | "float" | "integer"
+                | "local" | "readonly" | "typeset"
+        )
+    } else if bash_mode() || korn_mode() || sh_mode() {
+        !matches!(name, "repeat" | "foreach" | "nocorrect" | "end" | "always")
+            && !(korn_mode() && name == "coproc")
+    } else {
+        true
+    }
+}
+
+/// dash's `set` letters, each with the option name it stands for; a letter
+/// outside this table is a fatal "Illegal option". `i` and `s` are accepted
+/// and ignored here.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_set_letter_name(c: char) -> Option<&'static str> {
+    Some(match c {
+        'a' => "allexport",
+        'b' => "notify",
+        'C' => "noclobber",
+        'e' => "errexit",
+        'E' => "emacs",
+        'f' => "noglob",
+        'i' => "interactive",
+        'I' => "ignoreeof",
+        'm' => "monitor",
+        'n' => "noexec",
+        's' => "stdin",
+        'u' => "nounset",
+        'v' => "verbose",
+        'V' => "vi",
+        'x' => "xtrace",
+        _ => return None,
+    })
+}
+
+/// The status of a `kill` usage error (bad signal, bad pid, missing operand):
+/// dash answers 2, every other shell 1.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn kill_usage_status() -> i32 {
+    if dash_faithful() { 2 } else { 1 }
 }
 
 /// The value an integer parameter SHOWS under the pdksh line: `typeset -Ui`

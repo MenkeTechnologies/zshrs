@@ -812,6 +812,17 @@ pub fn execbuiltin(
             zexit(1, ZEXIT_NORMAL);
             return 1;
         }
+        // bash ends a non-interactive shell on `shift 1 2` ("too many arguments",
+        // status 1); ksh93, mksh and dash shift by the first operand instead.
+        if name == "shift" && argc > bn_ref.maxargs {
+            if crate::dash_mode::bash_mode() && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+                zexit(1, ZEXIT_NORMAL);
+                return 1;
+            }
+            if crate::dash_mode::posix_faithful() {
+                return bin_shift(&name, &argarr[argv..argv + 1], &ops, bn_ref.funcid);
+            }
+        }
         // ksh93 `let` with no expression is a usage error, status 2; so is a bare
         // `printf` in bash, ksh93 and /bin/sh.
         if argc < bn_ref.minargs && name == "let" && crate::dash_mode::ksh93_mode() {
@@ -1652,6 +1663,21 @@ pub fn bin_set(
                 // builtin's name into the error tag ("zsh:set:1:" vs
                 // bare "zsh:1:"). Use zerrnam to match zsh's exact
                 // error format for `set -X 2>&1`.
+                // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's letters map
+                // to its `-o` names; any other letter is a fatal "Illegal option".
+                if crate::dash_mode::dash_faithful() {
+                    let Some(oname) = crate::dash_mode::dash_set_letter_name(c) else {
+                        zerrnam(nam, &format!("Illegal option -{}", c));
+                        unqueue_signals();
+                        return crate::dash_mode::fatal_error_status().unwrap_or(2);
+                    };
+                    let optno = optlookup(oname);
+                    if optno != 0 && !matches!(oname, "interactive" | "stdin") {
+                        let _ = dosetopt(optno, if action { 1 } else { 0 }, 0);
+                    }
+                    ci += 1;
+                    continue;
+                }
                 let optno = if crate::dash_mode::bash_set_letter(c, action) {
                     ci += 1;
                     continue;
@@ -4581,6 +4607,35 @@ pub fn bin_typeset(
         zwarnnam(name, "not found");
         return 127;
     }
+    // !!! DROP-IN GATE (no C counterpart) !!! a bare `export`: mksh lists the exported
+    // NAMES only; dash lists `export NAME='value'` lines, exactly like `export -p`.
+    if name == "export" && argv.is_empty() && crate::dash_mode::pdksh_family() {
+        let mut names: Vec<String> = paramtab()
+            .read()
+            .map(|t| {
+                t.iter()
+                    .filter(|(_, pm)| pm.node.flags as u32 & PM_EXPORTED != 0)
+                    .map(|(n, _)| n.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        for n in names {
+            let _ = writeln!(out, "{}", n);
+        }
+        return 0;
+    }
+    let dash_export_owned: options;
+    let ops: &options = if name == "export" && argv.is_empty() && crate::dash_mode::dash_faithful() {
+        let mut o = ops.clone();
+        o.ind[b'p' as usize] = 1;
+        dash_export_owned = o;
+        &dash_export_owned
+    } else {
+        ops
+    };
     // !!! BASH-MODE (no C counterpart) !!! bash's typeset has no `-L` / `-R` / `-Z`
     // field options and no `-iN` output base: all are "invalid option", status 2.
     if crate::dash_mode::bash_mode()
@@ -11840,10 +11895,11 @@ pub fn bin_whence(
             {
                 return Some("alias");
             }
-            if reswdtab_lock()
-                .read()
-                .ok()
-                .map_or(false, |t| t.get(name).is_some())
+            if crate::dash_mode::reswd_in_emulation(name)
+                && reswdtab_lock()
+                    .read()
+                    .ok()
+                    .map_or(false, |t| t.get(name).is_some())
             {
                 return Some("keyword");
             }
@@ -11875,7 +11931,8 @@ pub fn bin_whence(
         for name in argv {
             let shadowed = (crate::dash_mode::aliases_visible()
                 && aliastab_lock().read().ok().is_some_and(|t| t.get(name).is_some()))
-                || reswdtab_lock().read().ok().is_some_and(|t| t.get(name).is_some())
+                || (crate::dash_mode::reswd_in_emulation(name)
+                    && reswdtab_lock().read().ok().is_some_and(|t| t.get(name).is_some()))
                 || getshfunc(name).is_some()
                 || (!BUILTINS_DISABLED.lock().is_ok_and(|s| s.contains(name.as_str()))
                     && createbuiltintable().get(name.as_str()).is_some());
@@ -12251,10 +12308,11 @@ pub fn bin_whence(
             // c:4109-4114 — `if ((hn = reswdtab->getnode(reswdtab, *argv)))
             //   reswdtab->printnode(hn, printflags);`. Reads canonical
             // reswdtab instead of a drift-prone literal array.
-            let is_reswd = reswdtab_lock()
-                .read()
-                .map(|t| t.get(arg).is_some())
-                .unwrap_or(false);
+            let is_reswd = crate::dash_mode::reswd_in_emulation(arg)
+                && reswdtab_lock()
+                    .read()
+                    .map(|t| t.get(arg).is_some())
+                    .unwrap_or(false);
             if is_reswd {
                 // c:4109
                 if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
@@ -14680,6 +14738,21 @@ pub fn bin_shift(
     let mut num: i32 = 1; // c:5595
     let mut ret: i32 = 0; // c:5595
     let mut idx = 0usize;
+    // !!! DROP-IN GATE (no C counterpart) !!! `shift 1 2`: bash ends a non-interactive
+    // shell ("too many arguments", 1); ksh93, mksh, dash and /bin/sh shift by the
+    // first operand and ignore the rest. zsh reads the rest as array names.
+    let shift_extra_owned: Vec<String>;
+    let argv: &[String] = if argv.len() > 1 && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful()) {
+        if crate::dash_mode::bash_mode() && !isset(crate::ported::zsh_h::INTERACTIVE) {
+            zwarnnam(name, "too many arguments");
+            zexit(1, ZEXIT_NORMAL);
+            return 1;
+        }
+        shift_extra_owned = argv[..1].to_vec();
+        &shift_extra_owned
+    } else {
+        argv
+    };
     queue_signals(); // c:5599
                      // c:5600-5605 — first arg parsed as math expr unless it's an array name.
     if !argv.is_empty() {
@@ -14798,10 +14871,13 @@ pub fn bin_shift(
             // Not a usage error, so ksh93 exits with the builtin's own
             // status (1) while dash still uses 2 — see
             // `special_builtin_abort_status`. /bin/sh (bash 3.2 in POSIX mode) answers 1 and goes on.
+            // mksh ends only the FUNCTION on a shift past `$#` (status 1); at top
+            // level it ends the script like ksh93 and dash.
             if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
                 && crate::extensions::emulation_output::special_builtin_error_aborts()
                 && crate::extensions::emulation_startup::personality()
                     != crate::extensions::emulation_startup::Personality::Sh
+                && !(crate::dash_mode::pdksh_family() && crate::ported::utils::locallevel() > 0)
             {
                 use std::sync::atomic::Ordering;
                 EXIT_VAL.store(
@@ -14809,6 +14885,13 @@ pub fn bin_shift(
                     Ordering::Relaxed,
                 );
                 EXIT_PENDING.store(1, Ordering::Relaxed);
+            }
+            if crate::dash_mode::pdksh_family() && crate::ported::utils::locallevel() > 0 {
+                // The function body stops here; the return gate turns the
+                // error into the function's status 1.
+                crate::dash_mode::note_korn_fn_abort(1);
+                crate::ported::utils::errflag
+                    .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             }
             ret = 1; // c:5638
         } else if OPT_ISSET(ops, b'p') {
@@ -18831,7 +18914,14 @@ pub fn bin_trap(
             Str(String, String),
         }
         queue_signals(); // c:7358
-        let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
+        let mut traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
+        // The snapshot exists only while a subshell (forked, threaded or a
+        // pipeline leg) is running, so its presence is the subshell test.
+        if crate::dash_mode::bash_mode() {
+            if let Some(parent) = BASH_SUBSH_PARENT_TRAPS.lock().ok().and_then(|p| p.clone()) {
+                traps = parent;
+            }
+        }
         // c:Src/builtin.c:7359-7375 — C walks `sigtrapped[]` by signal
         // number index, so the listing is naturally sorted by sig num
         // (HUP=1, INT=2, …, USR1=30, …). zshrs stores traps in a
@@ -18927,7 +19017,9 @@ pub fn bin_trap(
             && (SUBSHELL_DEPTH.load(Relaxed) > 0
                 || std::process::id() as i32 != crate::ported::params::mypid.load(Relaxed) as i32)
         {
-            combined.clear();
+            // A subshell starts with the caught traps reset, but an IGNORED signal
+            // stays ignored and is still listed (`trap '' INT; (trap)`).
+            combined.retain(|(_, e)| matches!(e, TrapEntry::Str(_, body) if body.is_empty()));
         }
         combined.sort_by_key(|(idx, _)| *idx);
         // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 walks the trap
@@ -23407,6 +23499,12 @@ fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
 pub fn traps_table() -> &'static Mutex<HashMap<String, String>> {
     TRAPS_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+/// !!! BASH-MODE STATE (no C counterpart) !!! the parent's trap table as it
+/// stood when the current subshell was entered: bash lists the inherited
+/// traps inside a subshell (`trap 'echo e' EXIT; (trap)` prints the EXIT trap)
+/// even though they no longer fire there.
+pub static BASH_SUBSH_PARENT_TRAPS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 #[cfg(test)]
 mod tests {

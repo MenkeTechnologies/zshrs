@@ -568,10 +568,10 @@ const DASH_SET_O: &[SetOpt] = &[
     o("errexit", "errexit"),
     o("noglob", "noglob"),
     o("ignoreeof", "ignoreeof"),
-    o("interactive", "interactive"),
+    fixed("interactive", false),
     o("monitor", "monitor"),
     o("noexec", "noexec"),
-    o("stdin", "stdin"),
+    fixed("stdin", false),
     o("xtrace", "xtrace"),
     o("verbose", "verbose"),
     o("vi", "vi"),
@@ -585,7 +585,7 @@ const DASH_SET_O: &[SetOpt] = &[
     // and the dash macOS ships as `/bin/dash` have no such option.
     #[cfg(target_os = "linux")]
     o("privileged", "privileged"),
-    o("nolog", "nolog"),
+    fixed("nolog", false),
     fixed("debug", false),
 ];
 
@@ -695,6 +695,7 @@ fn korn_table() -> Option<&'static [SetOpt]> {
         crate::emulation_startup::Personality::Mksh | crate::emulation_startup::Personality::Pdksh => {
             Some(MKSH_SET_O)
         }
+        _ if crate::dash_mode::dash_faithful() => Some(DASH_SET_O),
         _ => None,
     }
 }

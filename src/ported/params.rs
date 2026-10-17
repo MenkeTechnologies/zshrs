@@ -4331,6 +4331,28 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
         return 0; // c:2160
     }
 
+    // !!! BASH/KORN GATE (no C counterpart) !!! a numeric subscript on a SCALAR:
+    // bash, ksh93, mksh and /bin/sh read `x[0]` as the whole value and any other
+    // index as empty (`${#x[0]}` is the length); zsh indexes the characters.
+    if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode())
+        && v.scanflags == 0
+        && v.pm.as_ref().is_some_and(|p| PM_TYPE(p.node.flags as u32) == PM_SCALAR && p.u_hash.is_none())
+        && !body.starts_with('(')
+    {
+        if let Ok(idx) = crate::ported::math::mathevali(body) {
+            if idx == 0 {
+                v.start = 0;
+                v.end = -1;
+            } else {
+                v.valflags |= VALFLAG_EMPTY;
+                v.start = -1;
+                v.end = 0;
+            }
+            *pptr = past_close;
+            return 0;
+        }
+    }
+
     let _ = scanflags;
     // c:2058-2114 — flag subscripts `[(i)pat]` / `[(I)pat]` on an
     // array. The numeric parser below can't handle these; route
@@ -11959,6 +11981,12 @@ pub fn unsetparam(name: &str) -> i32 {
                 .write()
                 .unwrap()
                 .insert(name.to_string(), pm_owned);
+        } else if crate::dash_mode::pdksh_family() && pm_owned.level > 0 && pm_owned.old.is_some() {
+            // !!! PDKSH GATE (no C counterpart) !!! mksh's `unset` of a local drops
+            // the local instance and reveals the outer value (`f() { local x=5;
+            // unset x; echo $x; }; x=0; f` prints 0); zsh keeps the local, unset.
+            let outer = pm_owned.old.take().unwrap();
+            paramtab().write().unwrap().insert(name.to_string(), outer);
         } else if pm_owned.old.is_some()
             || (pm_owned.level > 0 && locallevel.load(Ordering::Relaxed) as i32 >= pm_owned.level)
         {

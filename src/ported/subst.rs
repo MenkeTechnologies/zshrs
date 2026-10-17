@@ -11991,6 +11991,20 @@ pub fn paramsubst(
                         isarr = -1;
                     }
                     scalar
+                } else if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode())
+                    && !sub.starts_with('(')
+                    && !sub.contains(',')
+                    && crate::ported::math::mathevali(sub).is_ok()
+                {
+                    // !!! BASH/KORN GATE (no C counterpart) !!! a numeric subscript
+                    // on a SCALAR: bash, ksh93, mksh and /bin/sh read `x[0]` as the
+                    // whole value and any other index as empty; zsh indexes the
+                    // characters.
+                    if crate::ported::math::mathevali(sub).unwrap_or(0) == 0 {
+                        scalar
+                    } else {
+                        String::new()
+                    }
                 } else {
                     // c:Src/params.c:1634-1663 — every scalar subscript walks
                     // the value with `t += MB_METACHARLEN(t)` and sizes it with

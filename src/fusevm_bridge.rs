@@ -2298,6 +2298,8 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         && (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
+        // mksh ends only the FUNCTION on such an error (the return gate consumes it).
+        && !crate::dash_mode::korn_fn_abort_pending()
     {
         use std::sync::atomic::Ordering;
         crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
@@ -2313,6 +2315,7 @@ fn arm_posix_special_exit(name: &str) {
     if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
         && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
         && builtin_is_pspecial(name)
+        && !crate::dash_mode::korn_fn_abort_pending()
     {
         crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
         crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
@@ -3350,6 +3353,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // zwarn correctly, so this was a reimplementation shadowing a
             // faithful port (same shape as #1027 / #1031 / #1044 / #1050).
             // Bug #1063.
+            if crate::dash_mode::dash_faithful() {
+                crate::ported::utils::zwarnnam("builtin", "not found");
+                return Value::Status(127);
+            }
             crate::ported::utils::zwarn(&format!("no such builtin: {}", name));
             return Value::Status(1);
         }
@@ -3503,6 +3510,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         if dispatch.has_command_vv {
             return Value::Status(command_whence(post, dash_p));
+        }
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no `builtin`: the
+        // word is a command that is not found (127), whatever follows it.
+        if (dispatch.orig_cflags & crate::ported::zsh_h::BINF_BUILTIN) != 0
+            && crate::dash_mode::dash_faithful()
+        {
+            crate::ported::utils::zwarnnam("builtin", "not found");
+            return Value::Status(127);
         }
         if dispatch.is_empty_command {
             return Value::Status(0);
@@ -3660,6 +3675,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         if (walk.cflags & crate::ported::zsh_h::BINF_BUILTIN) != 0 && !walk.is_builtin {
             // c:3490-3492 — `zwarn("no such builtin: %s", cmdarg); lastval = 1;`
+            if crate::dash_mode::dash_faithful() {
+                crate::ported::utils::zwarnnam("builtin", "not found");
+                return Value::Status(127);
+            }
             crate::ported::utils::zwarn(&format!("no such builtin: {}", cmd));
             return Value::Status(1);
         }
@@ -14283,8 +14302,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let ok = precmd_walk_ok(&full);
         if !ok {
             // c:3205 / c:3398 — `lastval = 1;` before `goto done` / return.
-            vm.last_status = 1;
-            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            // dash: `builtin` is a command not found (127).
+            let st = if crate::dash_mode::dash_faithful() && full.first().is_some_and(|w| w == "builtin") {
+                127
+            } else {
+                1
+            };
+            vm.last_status = st;
+            crate::ported::builtin::LASTVAL.store(st, std::sync::atomic::Ordering::Relaxed);
         }
         PRECMD_CHECK_PASSED.with(|c| c.set(ok));
         Value::array(words)
@@ -17762,13 +17787,27 @@ pub(crate) fn entersubsh_reset_traps() {
     // the parent, and `(false; true)` / `$(false)` print none.
     let korn = crate::extensions::dash_mode::korn_mode();
     if let Ok(mut tbl) = crate::ported::builtin::traps_table().lock() {
+        if crate::dash_mode::bash_mode() {
+            if let Ok(mut p) = crate::ported::builtin::BASH_SUBSH_PARENT_TRAPS.lock() {
+                if p.is_none() {
+                    *p = Some(tbl.clone());
+                }
+            }
+        }
         tbl.retain(|name, body| {
             // Above SIGCOUNT — outside c:1088's loop entirely.
             if !korn && (name == "ERR" || name == "ZERR" || name == "DEBUG") {
                 return true;
             }
             // c:1090-1092 — otherwise keep ONLY (POSIXTRAPS && ignored).
-            posixtraps && body.is_empty()
+            // !!! DROP-IN GATE (no C counterpart) !!! an ignored signal stays
+            // ignored in the child, and bash, mksh and dash still list it there
+            // (`trap '' INT; trap | cat`); ksh93 alone starts a subshell with an
+            // empty trap list.
+            let keep_ignored = posixtraps
+                || ((crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                    && !crate::dash_mode::ksh93_mode());
+            keep_ignored && body.is_empty()
         });
     }
     if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
@@ -17781,7 +17820,12 @@ pub(crate) fn entersubsh_reset_traps() {
             if (state & crate::ported::zsh_h::ZSIG_FUNC) != 0 {
                 continue; // c:1090
             }
-            if posixtraps && (state & crate::ported::zsh_h::ZSIG_IGNORED) != 0 {
+            // See the table walk above: bash, mksh and dash keep an ignored signal
+            // listed in the child.
+            let keep_ignored = posixtraps
+                || ((crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                    && !crate::dash_mode::ksh93_mode());
+            if keep_ignored && (state & crate::ported::zsh_h::ZSIG_IGNORED) != 0 {
                 continue; // c:1091
             }
             st[sig] = 0; // c:1092 unsettrap(sig)
@@ -17926,6 +17970,9 @@ pub(crate) fn subshell_signal_leave() {
         return;
     }
     if let Ok(mut p) = SUBSH_PARENT_SIGTRAPPED.lock() {
+        *p = None;
+    }
+    if let Ok(mut p) = crate::ported::builtin::BASH_SUBSH_PARENT_TRAPS.lock() {
         *p = None;
     }
     let pending: Vec<i32> = match SUBSH_DEFERRED_SIGS.lock() {
@@ -20453,7 +20500,11 @@ fn precmd_walk_ok(full: &[String]) -> bool {
         let cmdarg = crate::lex::untokenize(&walk.preargs[walk.precmd_skip]);
         if !builtin_prefix_finds(&cmdarg) {
             // c:3491 — `zwarn("no such builtin: %s", cmdarg);`
-            crate::ported::utils::zwarn(&format!("no such builtin: {}", cmdarg));
+            if crate::dash_mode::dash_faithful() {
+                crate::ported::utils::zwarnnam("builtin", "not found");
+            } else {
+                crate::ported::utils::zwarn(&format!("no such builtin: {}", cmdarg));
+            }
             return false; // c:3492 `lastval = 1;` … `return;`
         }
     }

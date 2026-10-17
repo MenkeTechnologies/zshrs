@@ -312,6 +312,15 @@ pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
                                 && d.bytes().all(|b| b.is_ascii_digit())
                                 && t.parse::<i64>().is_err()))
                 };
+                // mksh reads an EMPTY operand as 0 (`[ '' -eq 0 ]` is true).
+                if crate::dash_mode::pdksh_family() {
+                    if left.trim().is_empty() {
+                        left = "0".to_string();
+                    }
+                    if right.trim().is_empty() {
+                        right = "0".to_string();
+                    }
+                }
                 if bad_strict(&left) || bad_strict(&right) {
                     warnnam(&format!("integer expression expected: {}", left));
                     return 2;

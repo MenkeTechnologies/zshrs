@@ -3869,7 +3869,13 @@ impl ZshCompiler {
                     let done = self.builder.emit(Op::Jump(0), 0);
                     self.builder.patch_jump(failed, self.builder.current_pos());
                     self.builder.emit(Op::Pop, 0);
-                    self.builder.emit(Op::LoadInt(1), 0);
+                    // dash has no `builtin`: the word is a command not found (127).
+                    let fail_status = if crate::dash_mode::dash_faithful() && first == "builtin" {
+                        127
+                    } else {
+                        1
+                    };
+                    self.builder.emit(Op::LoadInt(fail_status), 0);
                     self.builder.emit(Op::SetStatus, 0);
                     self.emit_errexit_check();
                     self.builder.patch_jump(done, self.builder.current_pos());
@@ -13897,8 +13903,11 @@ impl ZshCompiler {
         // string" — a quoted `.`/`+`/`(` is literal. Backslash-escape the regex
         // metacharacters inside literal quoted spans (an expanded `"$v"` inside
         // a span is not reached: its value only exists at run time).
+        // ksh93 keeps the backslash too (`[[ abc =~ a\.c ]]` is false) but a
+        // quoted span stays a regex (`[[ abc =~ "a.c" ]]` is true).
         let escaped;
-        let w = if crate::dash_mode::bash_mode() {
+        let ksh93 = crate::dash_mode::ksh93_mode();
+        let w = if crate::dash_mode::bash_mode() || ksh93 {
             let mut out = String::with_capacity(w.len());
             let mut open: Option<char> = None;
             let mut it = w.chars().peekable();
@@ -13911,7 +13920,7 @@ impl ZshCompiler {
                         out.push(it.next().unwrap_or_default());
                         continue;
                     }
-                    (None, '\u{e19e}' | '\u{e19d}') => open = Some(c),
+                    (None, '\u{e19e}' | '\u{e19d}') if !ksh93 => open = Some(c),
                     (Some(q), c) if c == q => open = None,
                     (Some(_), '.' | '[' | ']' | '(' | ')' | '{' | '}' | '*' | '+' | '?' | '|' | '^' | '\\' | '$') => {
                         out.push('\\');
