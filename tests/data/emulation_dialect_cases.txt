@@ -416,3 +416,12 @@ ksh,mksh	set -A a four; typeset -A h; h[a]=1; print -r -- "${h[a]}"
 ksh	float v=1.5; typeset -p v
 mksh	typeset -r r=1; typeset +r r 2>/dev/null; (: $((1/0))) 2>/dev/null; print -r -- $?
 bash	set -k; echo a=1 b; echo "[$a]"
+bash	declare -i
+bash	declare -ir
+bash	declare -i n=5; declare -a ar=(1 2); declare -i; declare -a
+bash	set -k; f() { echo "[$a]"; }; f a=5 b; echo "[$a]"
+bash	set -k; /bin/echo a=1 b
+sh/zsh-style,ksh/zsh-style	setopt NO_UNSET 2>/dev/null; k=1; print -r -- $nope[$k]; print after
+bash	set -k; echo "a=1" b; echo a=1 c; echo "[$a]"
+bash	true | false; declare -a
+sh/zsh-style,ksh/zsh-style	setopt NO_UNSET 2>/dev/null; out=(); print -r -- $out; print after

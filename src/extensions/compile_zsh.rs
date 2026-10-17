@@ -4481,6 +4481,32 @@ impl ZshCompiler {
         // stage's pipe.
         self.emit_stage_fds_install();
         self.emit_noexec_gate(argc_full);
+        // bash `set -o keyword`: tell the dispatch which argument words were written as
+        // `NAME=value` in the source. Words after one that expands to a variable number of
+        // arguments are left alone, since their positions are not known at compile time.
+        if crate::dash_mode::bash_mode() {
+            let mut mask: u64 = 0;
+            for (i, w) in simple.words[precmd_skip + 1..].iter().enumerate().take(64) {
+                // The name must be plain source text: a quoted `"a=1"` carries marker tokens.
+                let name_end = w.find(|c: char| c == '=' || c == crate::ported::zsh_h::Equals);
+                let is_assign = name_end.is_some_and(|e| {
+                    let n = &w[..e];
+                    n.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                        && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                });
+                if is_assign {
+                    mask |= 1 << i;
+                } else if crate::lex::untokenize(w)
+                    .chars()
+                    .any(|c| matches!(c, '*' | '?' | '[' | '{' | '`' | '$' | '~'))
+                {
+                    break;
+                }
+            }
+            self.builder.emit(Op::LoadInt(mask as i64), 0);
+            self.builder.emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_KEYWORD_MASK, 1), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
         if has_redirects {
             self.emit_redir_scope_begin(&simple.redirs);
         }

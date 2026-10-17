@@ -1342,6 +1342,10 @@ fn assignsparam_ok(name: &str, value: &str, flags: i32) -> bool {
 }
 
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
+    let args = match with_keyword_assignments(args, false, 0, |rest| dispatch_builtin_raw(name, rest)) {
+        Ok(rc) => return rc,
+        Err(args) => args,
+    };
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native p10k engine intercept (src/extensions/p10k): sourcing
     // powerlevel10k.zsh-theme activates the Rust segment engine
@@ -1887,41 +1891,75 @@ pub(crate) fn take_exec_carrier() -> u8 {
     EXEC_DASH.with(|c| c.replace(0))
 }
 
-pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
-    // !!! BASH (no C counterpart) !!! with `set -o keyword` every `NAME=value` word of a command is
-    // an assignment for that command alone, not an argument.
-    if crate::dash_mode::bash_mode() && crate::dash_mode::bash_keyword_on() {
-        let is_assignment = |a: &String| {
-            a.split_once('=').is_some_and(|(n, _)| {
-                n.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                    && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-        };
-        if args.iter().any(is_assignment) {
-            let (assigns, rest): (Vec<String>, Vec<String>) = args.into_iter().partition(is_assignment);
-            let saved: Vec<(String, Option<String>)> = assigns
-                .iter()
-                .filter_map(|a| a.split_once('='))
-                .map(|(n, v)| {
-                    let old = crate::ported::params::getsparam(n);
-                    crate::ported::params::setsparam(n, v);
-                    (n.to_string(), old)
-                })
-                .collect();
-            let rc = dispatch_builtin(name, rest);
-            for (n, old) in saved.into_iter().rev() {
-                match old {
-                    Some(v) => {
-                        crate::ported::params::setsparam(&n, &v);
-                    }
-                    None => {
-                        crate::ported::params::unsetparam(&n);
-                    }
-                }
-            }
-            return rc;
+thread_local! {
+    /// Source-literal `NAME=value` argument positions of the command about to run; see
+    /// `BUILTIN_KEYWORD_MASK`. Taken by the first dispatch that follows.
+    static KEYWORD_MASK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// !!! BASH (no C counterpart) !!! with `set -o keyword` every `NAME=value` word of a command is an
+/// assignment for that command alone, not an argument. Runs `run` on the remaining words with the
+/// assignments in effect, or returns the words back when there is nothing to take out.
+fn with_keyword_assignments<R>(
+    args: Vec<String>,
+    export: bool,
+    first_arg: usize,
+    run: impl FnOnce(Vec<String>) -> R,
+) -> Result<R, Vec<String>> {
+    if !crate::dash_mode::bash_mode() {
+        return Err(args);
+    }
+    let mask = KEYWORD_MASK.with(|c| c.get());
+    if mask == 0 || !crate::dash_mode::bash_keyword_on() {
+        return Err(args);
+    }
+    KEYWORD_MASK.with(|c| c.set(0)); // the nested dispatch below must not apply it again
+    let is_assignment = |i: usize| i >= first_arg && i - first_arg < 64 && mask >> (i - first_arg) & 1 == 1;
+    let (mut assigns, mut rest): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for (i, a) in args.into_iter().enumerate() {
+        if is_assignment(i) {
+            assigns.push(a);
+        } else {
+            rest.push(a);
         }
     }
+    let saved: Vec<(String, Option<String>)> = assigns
+        .iter()
+        .filter_map(|a| a.split_once('='))
+        .map(|(n, v)| {
+            let old = crate::ported::params::getsparam(n);
+            crate::ported::params::setsparam(n, v);
+            if export {
+                crate::ported::params::addenv(n, v);
+            }
+            (n.to_string(), old)
+        })
+        .collect();
+    let rc = run(rest);
+    for (n, old) in saved.into_iter().rev() {
+        match old {
+            Some(v) => {
+                crate::ported::params::setsparam(&n, &v);
+                if export {
+                    crate::ported::params::addenv(&n, &v);
+                }
+            }
+            None => {
+                crate::ported::params::unsetparam(&n);
+                if export {
+                    std::env::remove_var(&n);
+                }
+            }
+        }
+    }
+    Ok(rc)
+}
+
+pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+    let args = match with_keyword_assignments(args, false, 0, |rest| dispatch_builtin(name, rest)) {
+        Ok(rc) => return rc,
+        Err(args) => args,
+    };
     // c:Src/exec.c:772-776 — BINF_DASH only changes an external's argv[0].
     take_exec_dash();
     take_job_text();
@@ -9400,6 +9438,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
             if let Some(arr) = exec.array(&name) {
                 if ksh_arrays {
+                    // c:Src/subst.c:2945-2954 — a ZERO-element array has no element 0: `vunset`.
+                    if arr.is_empty() && !isset(crate::ported::zsh_h::UNSET) {
+                        crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        exec.set_last_status(1);
+                    }
                     return Some((vec![arr.first().cloned().unwrap_or_default()], in_dq));
                 }
                 return Some((arr, in_dq));
@@ -9553,7 +9600,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 false
             };
-            let known = !v.is_empty()
+            // c:Src/subst.c:2945-2954 — under KSHARRAYS a bare reference to a ZERO-element array is
+            // element 0 of nothing: `vunset`, so NO_UNSET reports it.
+            let ksh_empty_array = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                && v.is_empty()
+                && exec.array(&name).is_some_and(|a| a.is_empty());
+            let known = !ksh_empty_array
+                && (!v.is_empty()
                 || name.is_empty()
                 || is_special_single
                 || positional_known
@@ -9562,7 +9615,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .ok()
                     .map(|t| t.contains_key(&name))
                     .unwrap_or(false)
-                || env::var(&name).is_ok();
+                || env::var(&name).is_ok());
             (v, force_dq || exec.in_dq_context > 0, known)
         });
         // c:Src/subst.c:1689 — NO_UNSET / nounset: reading an unset
@@ -12538,6 +12591,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         {
             return Value::Int(1);
         }
+        Value::Int(0)
+    });
+    vm.register_builtin(BUILTIN_KEYWORD_MASK, |vm, _argc| {
+        KEYWORD_MASK.with(|c| c.set(vm.pop().to_int() as u64));
         Value::Int(0)
     });
     // See BUILTIN_NOEXEC_CMD_GATE.
@@ -19072,6 +19129,12 @@ pub const BUILTIN_FATAL_ABORT_CHECK: u16 = 641;
 /// non-zero status fires them; the development tree sets it (c:799) and
 /// suppresses them, which the compile-time `errexit_suppress_depth` models.
 pub const BUILTIN_TRY_ERREXIT_592: u16 = 792;
+
+/// `BUILTIN_KEYWORD_MASK` — bash `set -o keyword`: records, for the command about to be dispatched,
+/// which of its argument words were written as `NAME=value` in the source (bit i = argument i).
+/// Only those are assignments; a word that merely EXPANDS to that shape is an ordinary argument.
+/// argc 1: the mask.
+pub const BUILTIN_KEYWORD_MASK: u16 = 800;
 /// Post-`always`-arm checks for the canonical RETFLAG / BREAKS /
 /// CONTFLAG atomics that mark try-block escapes. Each returns
 /// Value::Int(1) when the corresponding atomic is set (and consumes
@@ -22145,6 +22208,14 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        let args = if with_executor(|exec| exec.function_exists(name)) {
+            match with_keyword_assignments(args, false, 0, |rest| self.call_function(name, rest)) {
+                Ok(rc) => return rc,
+                Err(args) => args,
+            }
+        } else {
+            args
+        };
         // An alias is gone from the text by now; the compiler left its name behind.
         if let Some(status) = intercept_alias_origin(name, &args) {
             return Some(status);
@@ -23460,6 +23531,17 @@ impl ShellExecutor {
     /// the tree-walker's `execute_external` rather than a plain
     /// `Command::new` shortcut. Returns the exit status.
     pub fn host_exec_external(&mut self, args: &[String]) -> i32 {
+        if let Some((cmd, rest)) = args.split_first() {
+            let words: Vec<String> = rest.to_vec();
+            let cmd = cmd.clone();
+            if let Ok(rc) = with_keyword_assignments(words, true, 0, |rest| {
+                let mut full = vec![cmd.clone()];
+                full.extend(rest);
+                self.host_exec_external(&full)
+            }) {
+                return rc;
+            }
+        }
         // c:Src/exec.c:772-776 — BINF_DASH reaches `execute()` only; every
         // other route below runs the command without it.
         let exec_dash = take_exec_carrier();

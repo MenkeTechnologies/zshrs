@@ -621,7 +621,12 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 }
             }
         }
-        if let Some(raw) = getsparam(base_name) {
+        // c:Src/params.c:2286-2288 — under KSHARRAYS a bare array name IS element 0.
+        let ksh_bare_array_elem = (name == base_name && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS))
+            .then(|| crate::ported::subst::arrays_get(base_name))
+            .flatten()
+            .map(|a| a.into_iter().next().unwrap_or_default());
+        if let Some(raw) = ksh_bare_array_elem.or_else(|| getsparam(base_name)) {
             // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash reads a variable in
             // arithmetic with strtoimax over the WHOLE value (decimal, `0x` hex or
             // `0` octal, blanks around it allowed); anything else, `1+2` included,

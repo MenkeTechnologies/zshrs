@@ -691,6 +691,9 @@ pub fn apply_personality_param_deltas() {
     if p == Personality::Bash {
         crate::ported::params::unsetparam("PS2");
     }
+    if p == Personality::Bash {
+        crate::bash_declare::snapshot_baseline();
+    }
 }
 
 /// Whether this drop-in writes the bracketed-paste enable/disable pair

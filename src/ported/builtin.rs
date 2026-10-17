@@ -4396,6 +4396,20 @@ pub fn bin_typeset(
         return bin_typeset("typeset", argv, &fresh, func);
     }
 
+    // !!! BASH-MODE (no C counterpart) !!! a name-less `declare` with only `-i`/`-r`/`-a`/`-A` lists
+    // bash's variables, not zsh's parameter table (see extensions/bash_declare.rs).
+    if crate::dash_mode::bash_mode() && matches!(name, "typeset" | "declare") && argv.is_empty() {
+        let minus: Vec<u8> = (0u8..128).filter(|b| ops.ind[*b as usize] == 1).collect();
+        let plus = (0u8..128).any(|b| ops.ind[b as usize] == 2);
+        if !plus && !minus.is_empty() && minus.iter().all(|b| b"iraA".contains(b)) {
+            let pick = |set: &[u8]| -> String {
+                minus.iter().filter(|b| set.contains(b)).map(|b| *b as char).collect()
+            };
+            crate::bash_declare::list(&pick(b"aA"), &pick(b"ir"));
+            return 0;
+        }
+    }
+
     // !!! KSH93 (no C counterpart) !!! `typeset NAME=value` that does not ask for `-x` again
     // takes the export attribute off an exported parameter (`typeset -x v=1; typeset -i v=5`
     // leaves `typeset -i v=5`). Done as a `typeset +x NAME` first.

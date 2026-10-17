@@ -334,6 +334,9 @@ pub mod dumpers;
 /// `doctor_report` submodule.
 #[path = "extensions/doctor_report.rs"]
 pub mod doctor_report;
+/// `bash_declare` submodule.
+#[path = "extensions/bash_declare.rs"]
+pub mod bash_declare;
 /// `ext_builtins` submodule.
 #[path = "extensions/ext_builtins.rs"]
 pub mod ext_builtins;

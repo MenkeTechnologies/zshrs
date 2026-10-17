@@ -27450,6 +27450,22 @@ pub fn paramsubst(
         // exist. Under NO_UNSET that is c:3608-3613's
         // `zerr("%s: parameter not set", idbeg)`, idbeg being the reference
         // as written (`h[$k]`, not the expanded key).
+        // KSHARRAYS: the bare `$name` before a literal `[…]` is an ordinary reference, so NO_UNSET
+        // applies to it (c:Src/subst.c:3608-3613) even though no subscript was parsed.
+        if ksharrays_bare
+            && subscript_str.is_none()
+            && matches!(opener, Some('[') | Some(Inbrack))
+            && !isset(crate::ported::zsh_h::UNSET)
+            && var_name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && vars_get(&var_name).is_none()
+            && arrays_get(&var_name).is_none()
+            && !assoc_contains(&var_name)
+            && std::env::var(&var_name).is_err()
+        {
+            zerr(&format!("{}: parameter not set", var_name));
+            errflag_set_error();
+            return (String::new(), pos, vec![]);
+        }
         if slot_unset_c2805 && !isset(crate::ported::zsh_h::UNSET) {
             zerr(&format!("{}: parameter not set", idbeg_c2649.as_deref().unwrap_or(&var_name))); // c:3612
             errflag_set_error();
