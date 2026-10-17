@@ -741,10 +741,16 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
         // bash BASH_SOURCE: the file each frame was defined in, then the script itself.
         "BASH_SOURCE" => crate::ported::modules::parameter::FUNCSTACK.lock().ok().map(|f| {
             let script = bash_script_name();
+            // Under `-c` every function was defined in the command string, which bash
+            // names `$0`; only a real script file carries per-frame file names.
+            let in_string = !bash_running_script();
             let mut files: Vec<String> = f
                 .iter()
                 .rev()
-                .map(|fs| fs.filename.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| script.clone()))
+                .map(|fs| match fs.filename.clone().filter(|n| !n.is_empty()) {
+                    Some(n) if !in_string => n,
+                    _ => script.clone(),
+                })
                 .collect();
             if bash_running_script() {
                 files.push(script);
