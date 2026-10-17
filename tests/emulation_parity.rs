@@ -2362,6 +2362,18 @@ fn release_zsh() -> Option<String> {
 /// Wall-clock limit for one script. A shell that hangs is a divergence, not a stuck CI job.
 const SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Working directory every script runs in: an empty per-process scratch directory, so a
+/// redirection a non-`[[` shell reads out of `[[ a < b ]]` (or any stray `> file`) can neither
+/// find a file lying in the repository nor leave one behind.
+fn scratch_cwd() -> &'static Path {
+    static CWD: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    CWD.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("zshrs-parity-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create scratch cwd");
+        dir
+    })
+}
+
 /// What `run` reports for a script that exceeded [`SCRIPT_TIMEOUT`].
 const TIMED_OUT: &str = "<<TIMED OUT>>";
 
@@ -2377,6 +2389,7 @@ fn run(bin: &str, args: &[&str], script: &str) -> (String, bool) {
     full.push(script);
     let mut child = Command::new(bin)
         .args(&full)
+        .current_dir(scratch_cwd())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -3962,6 +3975,27 @@ fn extra_corpus() -> &'static [String] {
     })
 }
 
+/// Dialect scripts from `tests/data/emulation_dialect_cases.txt`: `ways<TAB>script`, where
+/// `ways` lists the ways (by `ParityCase::name`) the script was measured identical on —
+/// arrays, `${v//p/r}` / `${v:o:l}` / `${v^^}`, `[[ ]]`, `(( ))` / `let`, brace expansion,
+/// here-strings, process substitution, `printf -v`, `$'..'`, `typeset` / `declare`, `+=`.
+/// A script a shell does not have is left out of that shell's list, never edited.
+fn dialect_corpus() -> &'static [(Vec<String>, String)] {
+    static DIALECT: std::sync::OnceLock<Vec<(Vec<String>, String)>> = std::sync::OnceLock::new();
+    DIALECT.get_or_init(|| {
+        include_str!("data/emulation_dialect_cases.txt")
+            .lines()
+            .filter_map(|l| {
+                let (ways, script) = l.split_once('\t')?;
+                Some((
+                    ways.split(',').map(str::to_string).collect(),
+                    script.replace("<NL>", "\n"),
+                ))
+            })
+            .collect()
+    })
+}
+
 /// The scripts one way runs, in corpus order, each at most once. Keeping the
 /// selection in one function means the per-way report counts exactly what ran.
 fn corpus_for(case: &ParityCase, refbin: &str) -> Vec<&'static str> {
@@ -3972,6 +4006,12 @@ fn corpus_for(case: &ParityCase, refbin: &str) -> Vec<&'static str> {
         .iter()
         .chain(extra_corpus())
         .map(String::as_str)
+        .chain(
+            dialect_corpus()
+                .iter()
+                .filter(|(ways, _)| ways.iter().any(|w| w == name))
+                .map(|(_, script)| script.as_str()),
+        )
         .collect();
     let parts: [&'static [&'static str]; 14] = [
         PORTABLE_CORPUS,
