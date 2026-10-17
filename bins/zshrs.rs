@@ -2828,6 +2828,12 @@ pub fn zshrs_main() {
                 if let Some(st) = zsh::extensions::dash_mode::fatal_error_status() {
                     std::process::exit(st);
                 }
+                // A zsh-STYLE leg stands in for `zsh -c 'emulate X -c "$script"'`: `emulate` is a
+                // builtin, and a builtin that leaves an error pending reports 1
+                // (c:Src/builtin.c bin_eval: `if (errflag && !lastval) lastval = errflag`) even though the script's own status was 0.
+                if deferred_zsh_style_emu.is_some() && executor.last_status() == 0 {
+                    std::process::exit(1);
+                }
             }
         }
         std::process::exit(executor.last_status());
