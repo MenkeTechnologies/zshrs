@@ -2184,9 +2184,9 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             continue;
                         }
                     }
-                    Some('[') if crate::dash_mode::dash_strict() => {
-                        // !!! DASH-STRICT GATE (no C counterpart) !!! dash/ash
-                        // have no `$[...]` arithmetic substitution (a deprecated
+                    Some('[') if crate::dash_mode::dash_strict() || crate::dash_mode::korn_mode() => {
+                        // !!! DASH-STRICT GATE (no C counterpart) !!! dash/ash,
+                        // ksh93 and mksh have no `$[...]` arithmetic substitution (a deprecated
                         // bash/zsh form; POSIX uses `$(( ))`). The `$` is a
                         // literal dollar and `[...]` ordinary text, so
                         // `echo $[1+2]` prints `$[1+2]` like /bin/dash. Emit

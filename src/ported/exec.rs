@@ -7082,6 +7082,16 @@ pub fn doshfunc(
     let funcsave_breaks = BREAKS.load(Ordering::Relaxed); // c:5859
     let funcsave_contflag = CONTFLAG.load(Ordering::Relaxed); // c:5860
     let funcsave_loops = LOOPS.load(Ordering::Relaxed); // c:5861
+    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh and dash start a
+    // function body outside every enclosing loop, so a `break` in it cannot end
+    // the caller's loop (zsh and /bin/sh let it). funcsave puts `loops` back at
+    // exit (c:6111).
+    if (crate::dash_mode::bash_mode() && !crate::dash_mode::sh_mode())
+        || crate::dash_mode::korn_mode()
+        || crate::dash_mode::dash_faithful()
+    {
+        LOOPS.store(0, Ordering::Relaxed);
+    }
     let funcsave_lastval = LASTVAL.load(Ordering::Relaxed); // c:5862
     let funcsave_numpipestats = {
         // c:5864

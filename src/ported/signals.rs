@@ -1094,7 +1094,13 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
                 *slot = ZSIG_IGNORED;
             }
         }
-        if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
+        // !!! DROP-IN GATE (no C counterpart) !!! zsh handles SIGWINCH itself (ZLE's
+        // resize); bash, ksh93, mksh, dash and /bin/sh deliver a WINCH trap like any
+        // other, so there the disposition follows the trap.
+        let winch_trappable = sig != libc::SIGWINCH
+            || crate::dash_mode::bash_mode()
+            || crate::dash_mode::posix_faithful();
+        if sig != 0 && sig <= SIGCOUNT && winch_trappable && sig != libc::SIGCHLD {
             signal_ignore(sig); // c:719
         }
         // c:720-723 — RT-signal trap-table branch:
@@ -1111,7 +1117,11 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
                 *slot = ZSIG_TRAPPED;
             }
         }
-        if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
+        // See the ignore arm above: the drop-ins trap SIGWINCH like any signal.
+        let winch_trappable = sig != libc::SIGWINCH
+            || crate::dash_mode::bash_mode()
+            || crate::dash_mode::posix_faithful();
+        if sig != 0 && sig <= SIGCOUNT && winch_trappable && sig != libc::SIGCHLD {
             install_handler(sig); // c:732
         }
         // c:733-736 — RT-signal install_handler branch:

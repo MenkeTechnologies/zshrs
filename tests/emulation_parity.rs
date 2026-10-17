@@ -2082,6 +2082,12 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // A pipeline stage lists the parent's traps until its own `trap` changes
     // them; a signal name may be spelled `sigusr1`; `command trap` is trap.
     "trap 'echo x' INT; (trap - INT; trap) | wc -l | tr -d ' '; trap '' INT; (trap 'echo x' INT; trap) | head -1; trap 'echo t' sigusr1; trap | grep -c USR1; trap 'echo e' EXIT; trap | grep -c EXIT; command trap - EXIT; echo end",
+    // `pwd` and `times` ignore operands; a `break` inside a function cannot
+    // end the caller's loop (bash warns, 0); `umask -p`; `]]` and `in` are
+    // keywords; `readonly -p` lists the named variables in the declare form;
+    // a WINCH trap is delivered; the EXIT trap runs when a non-interactive
+    // `exec` fails.
+    "pwd a >/dev/null; echo $?; times a >/dev/null; echo $?; f() { break; echo in; }; for i in 1; do f 2>/dev/null; echo $i; done; umask -p | head -c 6; echo; command -v ']]'; echo $?; type in; readonly r=1; readonly -p | grep -c ' r='; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
@@ -2275,6 +2281,14 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     // `:`; `command` runs builtins; `sigusr1` is a signal name; `10>` is the
     // word `10`.
     "! ! true; echo $?; test '1 ' -eq 1; echo $?; hash -d 2>/dev/null; echo $?; kill -l -1 | head -1; kill -l -x 2>/dev/null; echo $?; alias x=y; alias -p; cd /; echo ~:x | head -c 3; echo; command : ; echo $?; trap 'echo t' sigusr1; echo $?; echo a 10>/dev/null",
+    // `$[` is literal text; `pwd` ignores operands; a `break` inside a
+    // function cannot end the caller's loop; no `local` or `declare`;
+    // `command -V` keeps the alias wording; the POSIX specials and typeset
+    // are "special shell builtin"; `in` is a keyword; a $PATH command is a
+    // "tracked alias"; a signalled child is 256+sig (foreground or waited);
+    // a WINCH trap is delivered; a failed non-interactive `exec` exits
+    // WITHOUT running the EXIT trap.
+    "echo $[1+2]; pwd a >/dev/null; echo $?; f() { break; echo in; }; for i in 1; do f; echo $i; done; command -v local; echo $?; command -v declare; echo $?; alias e=echo; command -V e; type . ; type typeset; type in; type ls | head -c 20; echo; sleep 5 & kill $!; wait $! 2>/dev/null; echo rc=$?; sh -c 'kill -TERM $$'; echo $?; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
 ];
 
 /// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
@@ -2411,6 +2425,15 @@ const PDKSH_CORPUS: &[&str] = &[
     // bytes; `sigusr1` is a signal name; `command` runs builtins; `10>` is the
     // word `10`; `${@:2}` is a fatal bad substitution (1).
     "! ! true; echo $?; test '1 ' -eq 1; echo $?; kill -l -1 2>/dev/null; echo $?; alias x=y; alias -p | tail -1; x=héllo; echo ${#x}; trap 'echo t' sigusr1; echo $?; command : ; echo $?; echo a 10>/dev/null; set -- a b c; echo ${@:2} 2>/dev/null; echo after",
+    // `$[` is literal text; `cd ''` is a no-op; `times` ignores operands;
+    // `alias NAME` for an unknown alias says so on stdout (1); `command -v`
+    // stops at the first missing name; no `declare`; the POSIX specials are
+    // "special shell builtin"; `in` is a keyword; a $PATH command is a
+    // "tracked alias"; printf is the external command; `kill -l ' 1'`; a
+    // `break` inside a function cannot end the caller's loop; a WINCH trap is
+    // delivered; the EXIT trap runs once, before the `exec`, failed or not.
+    "echo $[1+2]; cd ''; echo rc=$?; times a >/dev/null; echo $?; alias x; echo $?; command -v nonexist echo; echo $?; command -v declare; echo $?; type . ; type typeset; type in; type ls | head -c 20; echo; type printf | grep -c /; kill -l ' 1'; f() { break; echo in; }; for i in 1; do f 2>/dev/null; echo $i; done; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
+    "trap 'echo t' EXIT; exec true; echo no",
 ];
 
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
@@ -2478,6 +2501,13 @@ const DASH_ONLY_CORPUS: &[&str] = &[
     "echo a 1>&10; echo no",
     // No array subscripts: `${b[@]}` is a fatal bad substitution (2).
     "echo first; echo ${b[@]}; echo no",
+    // `cd ''` is a no-op; `pwd` and `times` ignore operands; an alias listing
+    // never ends in an empty '' segment; a `break` inside a function cannot
+    // end the caller's loop; `command -v` looks at its first operand only;
+    // `local` is a special builtin and `in` a keyword; `type /path` answers
+    // any existing path; a WINCH trap is delivered; the EXIT trap runs when a
+    // non-interactive `exec` fails.
+    "cd ''; echo rc=$?; pwd a >/dev/null; echo $?; times a >/dev/null; echo $?; alias x=\"echo 'q'\"; alias x; f() { break; echo in; }; for i in 1; do f; echo $i; done; command -v echo ls; command -v nonexist echo; echo $?; type local; type in; type /etc; echo $?; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
@@ -2544,6 +2574,13 @@ const SH_BASH_CORPUS: &[&str] = &[
     // multi-digit fd before `>`; `command` runs builtins; the declaration
     // commands are builtins.
     "test '1 ' -eq 1; echo $?; kill -l -x | head -c 7; echo; kill -0 $$ 999999 2>/dev/null; echo $?; alias x=y; alias -p; cd /; echo ~:x | head -c 3; echo; echo a 10>/dev/null; command : ; echo $?; type local | head -c 30; echo",
+    // `cd ''` is a no-op; `pwd` and `times` ignore operands; `umask -p`;
+    // `readonly -p` lists the named variables as `readonly NAME="value"`;
+    // `unset NAME` drops a function; `]]`, `if` and `in` are keywords; bash's
+    // `type` wording for aliases, with not-found on stderr; `type /path`
+    // answers an existing path; a WINCH trap is delivered; the EXIT trap runs
+    // when a non-interactive `exec` fails, and the shell then exits 0.
+    "cd ''; echo rc=$?; pwd a >/dev/null; echo $?; umask -p | head -c 6; echo; times a >/dev/null; echo $?; readonly r=1; readonly -p | grep ' r='; f() { :; }; unset f; type f 2>/dev/null; echo rc=$?; command -v ']]'; echo $?; alias e=echo; type e; type nonexist 2>/dev/null; echo rc=$?; type if; type in; type nonexist ls 2>/dev/null | wc -l | tr -d ' '; type /etc 2>/dev/null; echo rc=$?; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
 ];
 
 /// True when `path` is a bash build (`$BASH_VERSION` is set when it runs).

@@ -3891,7 +3891,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // keeps the Command route below: C hands it `blank_env` (c:778-779),
         // which carries no `_` either.
         if !clean_env {
-            std::process::exit(exec_execute(&args, walk.exec_argv0.clone(), login, use_defpath, true));
+            // !!! DROP-IN GATE (no C counterpart) !!! mksh runs the EXIT trap once,
+            // before replacing itself (a failed exec does not run it again); bash,
+            // dash and /bin/sh run it when the exec FAILS and the non-interactive
+            // shell exits (127); ksh93 exits without running it.
+            if crate::dash_mode::pdksh_family() {
+                let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGEXIT);
+            }
+            let st = exec_execute(&args, walk.exec_argv0.clone(), login, use_defpath, true);
+            if crate::dash_mode::bash_mode()
+                || (crate::dash_mode::posix_faithful() && !crate::dash_mode::korn_mode())
+            {
+                // !!! SH GATE (no C counterpart) !!! bash 3.2 (/bin/sh) leaves 0, not
+                // 127, when an EXIT trap is set at the failed exec.
+                let exit_trapped = crate::ported::builtin::traps_table()
+                    .lock()
+                    .map(|t| t.get("EXIT").is_some_and(|body| !body.is_empty()))
+                    .unwrap_or(false);
+                let st = if crate::dash_mode::sh_mode() && exit_trapped { 0 } else { st };
+                crate::ported::builtin::zexit(st, crate::ported::zsh_h::ZEXIT_NORMAL);
+            }
+            std::process::exit(st);
         }
         let mut command = std::process::Command::new(&prog);
         command.arg0(&display_argv0);
@@ -4940,7 +4960,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     match waited.map(|(status, _)| status) {
                         Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
-                        Some(status) if libc::WIFSIGNALED(status) => 128 + libc::WTERMSIG(status),
+                        Some(status) if libc::WIFSIGNALED(status) => {
+                            crate::dash_mode::signaled_status(libc::WTERMSIG(status))
+                        }
                         Some(_) => 1,
                         None => 0,
                     }
@@ -5023,7 +5045,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             let s = match waited {
                 Some(status) if libc::WIFEXITED(status) => libc::WEXITSTATUS(status),
-                Some(status) if libc::WIFSIGNALED(status) => 128 + libc::WTERMSIG(status),
+                Some(status) if libc::WIFSIGNALED(status) => {
+                    crate::dash_mode::signaled_status(libc::WTERMSIG(status))
+                }
                 Some(_) => 1,
                 // Unreapable (ECHILD — the handler got there first).
                 // Nothing better to report than success; the stage's
@@ -14173,7 +14197,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if forked {
                 if let Some(p) = tab[newjob].procs.last() {
                     let val = if p.is_signaled() {
-                        0o200 | p.term_sig() // c:Src/jobs.c:489-490
+                        crate::dash_mode::signaled_status(p.term_sig()) // c:Src/jobs.c:489-490
                     } else {
                         p.exit_status() // c:Src/jobs.c:494
                     };
@@ -18490,7 +18514,12 @@ impl Drop for ForegroundWaitGuard {
         // restore_queue_signals(q);`.  The `winch_block` ahead of them puts
         // back the standing mask that c:Src/utils.c:1541 leaves in place
         // between prompts.
-        crate::ported::signals_h::winch_block(); // c:Src/utils.c:1541
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and
+        // /bin/sh never hold SIGWINCH blocked, so a WINCH trap set after a
+        // foreground command still fires at once; only zsh re-arms the block.
+        if !(crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful()) {
+            crate::ported::signals_h::winch_block(); // c:Src/utils.c:1541
+        }
         crate::ported::signals::unqueue_traps(); // c:1667
         crate::ported::signals_h::child_unblock(); // c:1668
         crate::ported::signals_h::restore_queue_signals(self.q); // c:1669

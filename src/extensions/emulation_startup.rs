@@ -663,6 +663,17 @@ pub fn apply_personality_param_deltas() {
     // the external `which`.
     if let Ok(mut disabled) = crate::ported::builtin::BUILTINS_DISABLED.lock() {
         disabled.insert("which".to_string());
+        // ksh93 has no `local` or `declare`; mksh has no `declare` and, as built
+        // here, no `printf` builtin either (`type printf` is the tracked alias for
+        // /usr/bin/printf, whose diagnostics `printf '%q'` then shows).
+        if p == Personality::Ksh93 {
+            disabled.insert("local".to_string());
+            disabled.insert("declare".to_string());
+        }
+        if matches!(p, Personality::Mksh | Personality::Pdksh) {
+            disabled.insert("declare".to_string());
+            disabled.insert("printf".to_string());
+        }
     }
     // zsh's `$OSTYPE` / `$MACHTYPE` are not set by dash, ksh93 or the pdksh
     // line, and only mksh sets `$COLUMNS` / `$LINES` outside a terminal.

@@ -1803,7 +1803,13 @@ pub fn printcmdnamnode(hn: &cmdnam, printflags: i32) {
             // c:768
             // c:769-774 — `nicezputs(nam); printf(" is "); nicezputs(*u.name); putchar('/'); nicezputs(nam); putchar('\n');`
             let _ = nicezputs(&hn.node.nam, &mut so); // c:769
-            print!(" is "); // c:770
+            // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh word a $PATH
+            // command as "NAME is a tracked alias for /path/NAME".
+            if crate::dash_mode::korn_mode() {
+                print!(" is a tracked alias for ");
+            } else {
+                print!(" is "); // c:770
+            }
             if let Some(name_arr) = &hn.name {
                 if let Some(first) = name_arr.first() {
                     let _ = nicezputs(first, &mut so); // c:771
@@ -2956,7 +2962,10 @@ pub fn printreswdnode(hn: &reswd, printflags: i32) {
     if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
         // !!! DROP-IN GATE (no C counterpart) !!! bash and dash say "shell keyword",
         // ksh93 "keyword"; zsh and mksh say "reserved word".
-        let kind = if crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful() {
+        let kind = if crate::dash_mode::bash_mode()
+            || crate::dash_mode::dash_faithful()
+            || crate::dash_mode::sh_mode()
+        {
             "a shell keyword"
         } else if crate::dash_mode::ksh93_mode() {
             "a keyword"
@@ -3240,7 +3249,7 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
         let mut so = io::stdout();
         let _ = nicezputs(&hn.node.nam, &mut so); // c:1296
-        if crate::dash_mode::bash_mode() {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
             // !!! BASH-MODE !!! bash(1) `type`: "NAME is aliased to `TEXT'".
             print!(" is aliased to `");
             let _ = nicezputs(&hn.text, &mut so);
@@ -3293,7 +3302,18 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     if crate::extensions::emulation_output::alias_always_quotes() {
         // dash escapes a quote inside the value as `'"'"'`.
         let quoted = if crate::dash_mode::dash_faithful() {
-            format!("'{}'", hn.text.replace('\'', "'\"'\"'"))
+            let mut q = format!("'{}'", hn.text.replace('\'', "'\"'\"'"));
+            // dash never emits an empty `''` segment at either end
+            // (`alias x="echo 'q'"` lists as `x='echo '"'"'q'"'"`).
+            if q.len() > 2 {
+                if let Some(s) = q.strip_suffix("''") {
+                    q = s.to_string();
+                }
+                if let Some(s) = q.strip_prefix("''") {
+                    q = s.to_string();
+                }
+            }
+            q
         } else {
             crate::extensions::emulation_startup::single_quote(&hn.text)
         };

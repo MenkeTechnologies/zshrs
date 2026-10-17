@@ -232,7 +232,15 @@ pub fn printbuiltinnode(
         // c:188
         // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash words POSIX special
         // builtins as "a special shell builtin".
-        let kind = if crate::dash_mode::dash_faithful() && crate::dash_mode::dash_special_builtin(&bn.nam) {
+        // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh word the POSIX special
+        // builtins the same way; ksh93 also counts `typeset`, and neither has dash's
+        // `local`.
+        let korn_special = crate::dash_mode::korn_mode()
+            && ((crate::dash_mode::dash_special_builtin(&bn.nam) && bn.nam != "local")
+                || (crate::dash_mode::ksh93_mode() && bn.nam == "typeset"));
+        let kind = if (crate::dash_mode::dash_faithful() && crate::dash_mode::dash_special_builtin(&bn.nam))
+            || korn_special
+        {
             "special shell builtin"
         } else {
             "shell builtin"
@@ -452,6 +460,10 @@ pub fn execbuiltin(
         if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode())
             && name == "alias"
         {
+            optstr_bytes.push(b'p');
+        }
+        // bash's `umask -p` (the reusable `umask 0022` form); zsh's umask has no `-p`.
+        if (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) && name == "umask" {
             optstr_bytes.push(b'p');
         }
         // !!! KSH93-ONLY (no C counterpart) !!! ksh93u+m's `echo` takes `-n` and `-e`
@@ -793,9 +805,22 @@ pub fn execbuiltin(
         return 0;
     }
 
+    // !!! DROP-IN GATE (no C counterpart) !!! `pwd` (bash, ksh93, dash, /bin/sh) and
+    // `times` (bash, mksh, dash, /bin/sh) ignore their operands where zsh says
+    // "too many arguments".
+    let ignores_operands = (name == "pwd"
+        && (crate::dash_mode::bash_mode()
+            || crate::dash_mode::ksh93_mode()
+            || crate::dash_mode::dash_faithful()
+            || crate::dash_mode::sh_mode()))
+        || (name == "times"
+            && (crate::dash_mode::bash_mode()
+                || crate::dash_mode::pdksh_family()
+                || crate::dash_mode::dash_faithful()
+                || crate::dash_mode::sh_mode()));
     // c:432-436 — argc bounds check.
     if argc < bn_ref.minargs                                                 // c:432
-        || (argc > bn_ref.maxargs && bn_ref.maxargs != -1)
+        || (argc > bn_ref.maxargs && bn_ref.maxargs != -1 && !ignores_operands)
     {
         zwarnnam(
             &name, // c:433
@@ -2117,6 +2142,13 @@ pub fn bin_cd(
     // refuses two operands (status 2); zsh treats `cd old new` as a substitution.
     if func == BIN_CD && crate::dash_mode::posix_faithful() {
         if argv.first().is_some_and(|a| a.is_empty()) {
+            // dash, mksh and /bin/sh take `cd ''` as `cd .`: a no-op, status 0.
+            if crate::dash_mode::dash_faithful()
+                || crate::dash_mode::pdksh_family()
+                || crate::dash_mode::sh_mode()
+            {
+                return 0;
+            }
             zwarnnam(nam, "null directory");
             return 1;
         }
@@ -11014,7 +11046,7 @@ pub fn bin_unset(
         // !!! BASH-MODE (no C counterpart) !!! bash(1): "If no options are supplied,
         // each name refers to a variable; if there is no variable by that name, a
         // function with that name, if any, is unset."
-        if crate::dash_mode::bash_mode()
+        if (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
             && subscript.is_none()
             && !OPT_ISSET(ops, b'v')
             && paramtab().read().map_or(true, |t| !t.contains_key(nm))
@@ -12239,6 +12271,10 @@ pub fn bin_whence(
     // print.
     let argv_vec: Vec<String> = if OPT_ISSET(ops, b'm') {
         MATCHEDNODES.lock().map(|m| m.clone()).unwrap_or_default()
+    } else if crate::dash_mode::dash_faithful() && func == BIN_COMMAND && !argv.is_empty() {
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `command -v` / `-V`
+        // looks at its FIRST operand only (`command -v echo ls` prints `echo`).
+        argv[..1].to_vec()
     } else {
         argv.to_vec()
     };
@@ -12262,8 +12298,9 @@ pub fn bin_whence(
                 .filter(|_| crate::dash_mode::aliases_visible())
                 .and_then(|t| t.get(arg).map(|a| a.clone()));
             if let Some(a) = alias_text {
-                if nam == "command" && crate::dash_mode::ksh93_mode() {
-                    // ksh93's `command -v ALIAS` prints the alias value alone.
+                if nam == "command" && crate::dash_mode::ksh93_mode() && !v {
+                    // ksh93's `command -v ALIAS` prints the alias value alone
+                    // (`command -V` keeps the "is an alias for" wording).
                     println!("{}", a.text);
                 } else if nam == "command" && crate::dash_mode::dash_faithful() {
                     // dash prints the reusable `alias NAME='value'` form.
@@ -12314,11 +12351,12 @@ pub fn bin_whence(
             // c:4109-4114 — `if ((hn = reswdtab->getnode(reswdtab, *argv)))
             //   reswdtab->printnode(hn, printflags);`. Reads canonical
             // reswdtab instead of a drift-prone literal array.
-            let is_reswd = crate::dash_mode::reswd_in_emulation(arg)
-                && reswdtab_lock()
-                    .read()
-                    .map(|t| t.get(arg).is_some())
-                    .unwrap_or(false);
+            let is_reswd = crate::dash_mode::extra_keyword(arg)
+                || (crate::dash_mode::reswd_in_emulation(arg)
+                    && reswdtab_lock()
+                        .read()
+                        .map(|t| t.get(arg).is_some())
+                        .unwrap_or(false));
             if is_reswd {
                 // c:4109
                 if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
@@ -12329,7 +12367,10 @@ pub fn bin_whence(
                     println!(
                         "{} is a {}",
                         arg,
-                        if crate::dash_mode::dash_faithful() || crate::dash_mode::bash_mode() {
+                        if crate::dash_mode::dash_faithful()
+                            || crate::dash_mode::bash_mode()
+                            || crate::dash_mode::sh_mode()
+                        {
                             "shell keyword"
                         } else if crate::dash_mode::ksh93_mode() {
                             "keyword"
@@ -12585,13 +12626,17 @@ pub fn bin_whence(
             if informed == 0 && (wd || v || csh) {
                 // c:4166
                 // dash: `NAME: not found` (see the end-of-function status note).
-                if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode()) && !wd {
-                    // bash and ksh93 report a missing name on stderr: `type: NAME: not found`.
+                if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode()) && !wd {
+                    // bash, ksh93 and /bin/sh report a missing name on stderr: `type: NAME: not found`.
                     zwarnnam(nam, &format!("{arg}: not found"));
                 } else {
                 println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4168-4169
                 }
                 returnval = 1; // c:4170
+                // mksh's `command -v a b` stops at the first name it cannot find.
+                if crate::dash_mode::pdksh_family() && func == BIN_COMMAND {
+                    break;
+                }
             }
             continue;
         }
@@ -12642,6 +12687,19 @@ pub fn bin_whence(
         //   OPT_ISSET(ops, 'p'))))`. Single call site — the previous
         // Rust port had two near-duplicate findcmd blocks which
         // doubled the lookup. Collapsed into one to match C.
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `type` answers any
+        // EXISTING path with "NAME is NAME" (`type /etc`, `type ~`), where zsh and
+        // bash want an executable file.
+        if crate::dash_mode::dash_faithful() && arg.contains('/') && std::path::Path::new(arg).exists() {
+            if v {
+                println!("{} is {}", arg, arg);
+            } else {
+                println!("{}", arg);
+            }
+            informed = 1;
+            any_found = true;
+            continue;
+        }
         if let Some(cnam) = findcmd(
             arg,
             1,                                                    // c:4181 docmd
@@ -12654,7 +12712,14 @@ pub fn bin_whence(
             } else {
                 if v && !csh {
                     // c:4188
-                    print!("{} is ", arg); // c:4189
+                    // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh word a
+                    // command found on $PATH as "NAME is a tracked alias for /path";
+                    // a name given with a slash keeps "NAME is /path".
+                    if crate::dash_mode::korn_mode() && !arg.contains('/') {
+                        print!("{} is a tracked alias for ", arg);
+                    } else {
+                        print!("{} is ", arg); // c:4189
+                    }
                     print!("{}", quotedzputs(&cnam)); // c:4190
                 } else {
                     print!("{}", cnam); // c:4192
@@ -12672,13 +12737,17 @@ pub fn bin_whence(
         // c:4201-4205 — not found at all.
         if v || csh || wd {
             // c:4202
-            if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode()) && !wd {
+            if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode()) && !wd {
                 zwarnnam(nam, &format!("{arg}: not found"));
             } else {
             println!("{}{}", arg, if wd { ": none" } else if crate::dash_mode::dash_strict() { ": not found" } else { " not found" }); // c:4203
             }
         }
         returnval = 1; // c:4204
+        // mksh's `command -v a b` stops at the first name it cannot find.
+        if crate::dash_mode::pdksh_family() && func == BIN_COMMAND {
+            break;
+        }
     }
     unqueue_signals();
     // !!! BASH/DASH GATE (no C counterpart) !!! `command -v a b` succeeds in bash,
@@ -13596,6 +13665,10 @@ pub fn bin_alias(
             }
             None => {
                 // c:4538
+                // mksh reports an unknown alias on STDOUT: `x alias not found`.
+                if crate::dash_mode::pdksh_family() {
+                    println!("{} alias not found", n);
+                }
                 returnval = 1; // c:4539
             }
         }
@@ -15331,6 +15404,13 @@ pub fn bin_break(
             // /bin/sh also treat `break` / `continue` outside a loop as a no-op
             // returning 0 (bash only warns); a non-positive count stays an error.
             if crate::dash_mode::posix_faithful() && num > 0 && loops == 0 {
+                return 0;
+            }
+            // bash: outside any loop `break` / `continue` warn and answer 0 — also
+            // inside a function called from a loop (doshfunc starts the body with
+            // `loops` 0 there).
+            if crate::dash_mode::bash_mode() && loops == 0 {
+                zwarnnam(name, "only meaningful in a `for', `while', or `until' loop");
                 return 0;
             }
             if num <= 0 {
@@ -19572,6 +19652,15 @@ pub fn bin_umask(
     // c:7503-7521 — no args: display.
     if args.is_empty() {
         // c:7503
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash's `umask -p` prints the
+        // reusable `umask 0022` form; zsh's umask has no `-p`.
+        if (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
+            && OPT_ISSET(ops, b'p')
+            && !OPT_ISSET(ops, b'S')
+        {
+            println!("umask {:04o}", um);
+            return 0;
+        }
         if OPT_ISSET(ops, b'S') {
             // c:7504
             let who_chars = ['u', 'g', 'o']; // c:7505

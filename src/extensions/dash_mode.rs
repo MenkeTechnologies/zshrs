@@ -502,7 +502,7 @@ pub fn dash_arith_var(raw: &str) -> Option<i64> {
 /// names; `type` words them "a special shell builtin").
 const DASH_SPECIAL_BUILTINS: &[&str] = &[
     ":", ".", "break", "continue", "eval", "exec", "exit", "export",
-    "readonly", "return", "set", "shift", "times", "trap", "unset",
+    "local", "readonly", "return", "set", "shift", "times", "trap", "unset",
 ];
 
 /// True when `name` is one of dash's POSIX special builtins.
@@ -3366,13 +3366,34 @@ pub fn reswd_in_emulation(name: &str) -> bool {
             && !(korn_mode() && name == "coproc")
             // bash's declaration commands are builtins, not keywords (`type local`
             // is "local is a shell builtin").
-            && !((bash_mode() || sh_mode())
+            && !((bash_mode() || sh_mode() || korn_mode())
                 && matches!(
                     name,
                     "declare" | "export" | "float" | "integer" | "local" | "readonly" | "typeset"
                 ))
     } else {
         true
+    }
+}
+
+/// Keywords `type` / `command -v` report that zsh's reserved-word table lacks:
+/// `in` (bash, ksh93, mksh, dash, /bin/sh) and `]]` (bash, /bin/sh).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn extra_keyword(name: &str) -> bool {
+    (name == "in" && (bash_mode() || korn_mode() || dash_faithful() || sh_mode()))
+        || (name == "]]" && (bash_mode() || sh_mode()))
+}
+
+/// The status a child killed by signal `sig` leaves in `$?`: ksh93 reports
+/// `256 + sig`, every other shell here `128 + sig`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn signaled_status(sig: i32) -> i32 {
+    if ksh93_mode() {
+        256 + sig
+    } else {
+        0o200 | sig
     }
 }
 

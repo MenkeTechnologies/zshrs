@@ -28,7 +28,7 @@ use crate::ported::zsh_h::job;
 pub fn wait_status_val(s: std::process::ExitStatus) -> i32 {
     use std::os::unix::process::ExitStatusExt as _;
     if let Some(sig) = s.signal() {
-        0o200 | sig // c:493
+        crate::dash_mode::signaled_status(sig) // c:493 (ksh93: 256 + sig)
     } else if let Some(sig) = s.stopped_signal() {
         0o200 | sig // c:495
     } else {

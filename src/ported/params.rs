@@ -16390,9 +16390,14 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     // `export FOO=bar`. Each still filters to the parameters it is about,
     // which the POSIX branch below does via PRINT_POSIX_EXPORT /
     // PRINT_POSIX_READONLY.
-    let bash_posix_listing = crate::dash_mode::bash_mode()
+    let bash_posix_listing = (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
         && (printflags & (PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY)) != 0;
     if bash_posix_listing {
+        // bash lists only NAMED variables there: zsh's read-only specials (`!`,
+        // `#`, `$`, `*`, `-`, `?`, `@`, `0`) have no place in `readonly -p`.
+        if !isident(&hn.node.nam) {
+            return;
+        }
         let f = hn.node.flags as u32;
         if (printflags & PRINT_POSIX_EXPORT) != 0 && (f & PM_EXPORTED) == 0 {
             return;
@@ -16445,6 +16450,26 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             } else {
                 let val = hn.u_str.clone().unwrap_or_default();
                 println!("{kw} {}='{}'", hn.node.nam, val.replace('\'', "'\"'\"'"));
+            }
+            return;
+        }
+        // !!! SH GATE (no C counterpart) !!! /bin/sh (bash 3.2 in POSIX mode) lists
+        // `readonly NAME="value"` / `export NAME="value"` in double quotes, escaping
+        // `"`, `$`, backquote and backslash (bash's sh_double_quote); a declared but
+        // unset name is bare.
+        if crate::dash_mode::sh_mode() {
+            if (f & PM_UNSET) != 0 {
+                println!("{kw} {}", hn.node.nam);
+            } else {
+                let val = hn.u_str.clone().unwrap_or_default();
+                let mut quoted = String::with_capacity(val.len() + 2);
+                for c in val.chars() {
+                    if matches!(c, '"' | '$' | '`' | '\\') {
+                        quoted.push('\\');
+                    }
+                    quoted.push(c);
+                }
+                println!("{kw} {}=\"{quoted}\"", hn.node.nam);
             }
             return;
         }

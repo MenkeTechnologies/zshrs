@@ -652,8 +652,8 @@ pub fn storepipestats(job: &job, inforeground: i32, fixlastval: i32) -> (Vec<i32
         let entry = if st == SP_RUNNING {
             0
         } else if (st & 0x7f) > 0 && (st & 0x7f) < 0x7f {
-            // WIFSIGNALED — bit 0x80 + signal number.
-            0o200 | (st & 0x7f)
+            // WIFSIGNALED — bit 0x80 + signal number (ksh93: 256 + signal).
+            crate::dash_mode::signaled_status(st & 0x7f)
         } else if (st & 0xff) == 0x7f {
             // WIFSTOPPED — bit 0x80 + stop signal.
             0o200 | ((st >> 8) & 0xff)
@@ -768,7 +768,8 @@ pub fn update_job(jobtab: &mut [job], jn: usize) -> bool {
             if i + 1 == nprocs {
                 // c:490-498 — last job in pipeline determines exit status.
                 val = if libc::WIFSIGNALED(pn.status) {
-                    0o200 | libc::WTERMSIG(pn.status)
+                    // ksh93 reports a signalled child as 256+sig, not 128+sig.
+                    crate::dash_mode::signaled_status(libc::WTERMSIG(pn.status))
                 } else if libc::WIFSTOPPED(pn.status) {
                     0o200 | libc::WSTOPSIG(pn.status)
                 } else {
@@ -1107,7 +1108,7 @@ pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
             if libc::WIFEXITED(status) {
                 addbgstatus(pid, libc::WEXITSTATUS(status)); // c:695
             } else if libc::WIFSIGNALED(status) {
-                addbgstatus(pid, 0o200 | libc::WTERMSIG(status)); // c:697
+                addbgstatus(pid, crate::dash_mode::signaled_status(libc::WTERMSIG(status))); // c:697
             }
         }
         // c:Src/jobs.c:463-683 — update_job owns the lastval store, the
@@ -2109,7 +2110,7 @@ pub fn waitforpid(pid: i32) -> Option<i32> {
                 if libc::WIFEXITED(status) {
                     return Some(libc::WEXITSTATUS(status));
                 } else if libc::WIFSIGNALED(status) {
-                    return Some(128 + libc::WTERMSIG(status));
+                    return Some(crate::dash_mode::signaled_status(libc::WTERMSIG(status)));
                 } else if libc::WIFSTOPPED(status) {
                     return None;
                 }
@@ -3607,7 +3608,7 @@ pub fn bin_fg(
         return if libc::WIFEXITED(status) {
             libc::WEXITSTATUS(status)
         } else {
-            128 + libc::WTERMSIG(status)
+            crate::dash_mode::signaled_status(libc::WTERMSIG(status))
         };
     }
     // c:2474 — `wait_for_processes();` reap any newly-finished children
@@ -4033,7 +4034,7 @@ pub fn bin_fg(
                             .flatten()
                             .map(|st| {
                             if libc::WIFSIGNALED(st) {
-                                0o200 | libc::WTERMSIG(st)
+                                crate::dash_mode::signaled_status(libc::WTERMSIG(st))
                             } else {
                                 libc::WEXITSTATUS(st)
                             }
@@ -4061,7 +4062,7 @@ pub fn bin_fg(
                     if libc::WIFEXITED(status) {
                         returnval = libc::WEXITSTATUS(status);
                     } else if libc::WIFSIGNALED(status) {
-                        returnval = 128 + libc::WTERMSIG(status);
+                        returnval = crate::dash_mode::signaled_status(libc::WTERMSIG(status));
                     }
                     if let Ok(mut tab) = table.lock() {
                         update_bg_job(&mut tab, pid, status);
@@ -4460,10 +4461,11 @@ pub fn bin_kill(
                 // c:2819
                 // c:2820-2868 — per-arg lookup: numeric → name; name → number.
                 while idx < argv.len() {
-                    // bash, /bin/sh and dash accept blanks around a number (`kill -l ' 1'`).
+                    // bash, /bin/sh, dash and mksh accept blanks around a number (`kill -l ' 1'`).
                     let token: &str = if crate::dash_mode::bash_mode()
                         || crate::dash_mode::sh_mode()
                         || crate::dash_mode::dash_faithful()
+                        || crate::dash_mode::pdksh_family()
                     {
                         argv[idx].trim()
                     } else {
