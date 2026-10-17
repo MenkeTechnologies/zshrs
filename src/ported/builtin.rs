@@ -11643,7 +11643,7 @@ pub fn bin_whence(
 
     // !!! BASH-MODE GATE (no C counterpart) !!! `type -p NAME` prints the file only when NAME
     // resolves to one (an alias, keyword, function or builtin of that name prints nothing).
-    if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'p') {
+    if crate::dash_mode::bash_mode() && nam == "type" && OPT_ISSET(ops, b'p') {
         for name in argv {
             let shadowed = (crate::dash_mode::aliases_visible()
                 && aliastab_lock().read().ok().is_some_and(|t| t.get(name).is_some()))

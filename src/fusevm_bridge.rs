@@ -3260,6 +3260,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(status) = try_user_fn_override("command", &args) {
             return Value::Status(status);
         }
+        // !!! BASH GATE (no C counterpart) !!! `command` takes only -p, -v and -V: another
+        // option is "invalid option" with a usage line and status 2, not a command named `-x`.
+        if crate::dash_mode::bash_mode() {
+            for a in args.iter().take_while(|a| a.starts_with('-') && a.len() > 1) {
+                if a == "--" {
+                    break;
+                }
+                if let Some(bad) = a[1..].chars().find(|c| !matches!(c, 'p' | 'v' | 'V')) {
+                    crate::ported::utils::zwarnnam("command", &format!("-{bad}: invalid option"));
+                    crate::ported::utils::zwarnnam("command", "usage: command [-pVv] command [arg ...]");
+                    return Value::Status(2);
+                }
+            }
+        }
         let mut full = Vec::with_capacity(args.len() + 1);
         full.push("command".to_string());
         full.extend(args.clone());
