@@ -328,7 +328,7 @@ per-test capture of file descriptor 2 so concurrent workers cannot tear
 each other's output.
 .B \-q
 suppresses per-test lines. The assertions themselves
-(14 assertion verbs \(em
+(the assertion verbs \(em
 .BR zassert_eq ", " zassert_ne ", " zassert_ok ", " zassert_match
 and the rest \(em plus
 .BR ztest_skip " and " ztest_run )
@@ -354,9 +354,33 @@ it (zinit, oh\-my\-zsh, prezto, antidote, antigen, zplug, or loose). The
 JetBrains plugin turns each entry into an IDE library root, so plugin
 functions are navigable and renameable across plugin boundaries.
 .TP
-.BI \-\-gen\-docs " SUBCOMMAND"
-Regenerate the shipped documentation corpus. Run with no subcommand for
-the list.
+.BI \-\-gen\-docs " [PATH] [\-\-out DIR]"
+Walk
+.I PATH
+(default the current directory) for shell sources (.zsh, .sh, .bash, .ksh and rc dotfiles)
+and write Markdown module docs for each under
+.I DIR
+(default
+.IR docs/ ),
+mirroring the source layout. A contiguous block of
+.B ##
+lines immediately above a function declaration documents that function; a
+.B ##
+block at the top of a file is the module header.
+.TP
+.BI \-\-tiers " FILE"
+Run the script, then report which fusevm execution tier took each of its
+chunks, asked of fusevm's own eligibility and cache predicates.
+.TP
+.BR \-\-prewarm\-autoloads " [DIR ...]"
+Parse and cache the autoload functions in each
+.I DIR
+(default every directory on
+.BR $fpath )
+in a separate process.
+.TP
+.BI \-\-csh\-translate " FILE"
+Print the zsh translation of a csh script (\fB\-\fR reads stdin).
 .SS Standard zsh single-letter options
 The following match
 .BR zsh (1)
