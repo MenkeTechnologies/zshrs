@@ -61442,8 +61442,9 @@ $ zshrs -fc 'a=(x y z); : ${a[(r)y]::=Q}; b=(x y z); : ${b[(i)y]::=Q}; print -r 
 zshrs:1: bad math expression: operator expected at `y'
 ```
 
-Also `(( a[(i)3] = 7 ))` reported "assignment to invalid subscript range", and
-`setopt ksharrays; a[(i)y]=Q` wrote the element after the match.
+Also `(( a[(i)3] = 7 ))` reported "assignment to invalid subscript range",
+`setopt ksharrays; a[(i)y]=Q` wrote the element after the match, and a RANGE
+(`${a[2,3]::=Q}`, `${a[(r)b,(r)d]::=M}`) was evaluated as one comma expression.
 
 **C reference.** Every subscripted write is `assignsparam` → `getvalue(&vbuf, &t, 1)`
 (c:Src/params.c:3251), whose `getindex` runs the flag search and leaves
@@ -61452,8 +61453,10 @@ those bounds, an array element via `setarrvalue` (c:2818). paramsubst's `::=` re
 it with the raw subscript through `setsparam(idbeg, …)` (c:Src/subst.c:3313).
 
 **Fix.**
-* `assignsparam` (`src/ported/params.rs`) resolves a `(flags)` subscript on a
-  non-hashed parameter through `getindex` → `assignstrvalue` instead of arithmetic.
+* `assignsparam` (`src/ported/params.rs`) resolves a `(flags)` or range subscript
+  on a non-hashed parameter through `getindex` → `assignstrvalue` instead of arithmetic.
+* `getindex` splits a range at a top-level comma only (c:1533-1536) and evaluates a
+  search operand of an array range as getarg's index (c:1736-1760).
 * `getindex`'s array `(r)`/`(R)`/`(k)`/`(K)` arm returns the element's index bounds
   (c:2117-2158) instead of caching the matched value over `0..n`.
 * `assignstrvalue`'s PM_ARRAY arm calls `setarrvalue` (c:2818) instead of its own splice.

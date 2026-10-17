@@ -4717,7 +4717,64 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
             return 0; // c:2166
         }
     }
-    if body.starts_with('(') {
+    // c:1736-1760 — getarg's ARRAY search (`ishash` false, so c:1711's hash
+    // scan is skipped and `ta = getarrvalue(v)` is walked directly) returns
+    // the 1-based INDEX `r` of the match: the same walk for `r`/`R` as for
+    // `i`/`I`, since `ind` only steers the hash scan (c:1741), and `k`/`K`
+    // act as `r`/`R` because c:1401/1406 gate `keymatch = ishash`. This
+    // port's `getarg` hands back the matched ELEMENT for `r`/`R`, so search
+    // with the index flags to get `r`.
+    // !!! RUST-ONLY: this port's getarg also applies the c:2091 KSHARRAYS
+    // shift to a search index (its `ksh_idx`), a step C takes only on
+    // getindex's INV branch; undo it. The shift leaves 0 alone, so for a
+    // reverse search 0 is either the c:1758 miss or a last match on the
+    // first element; the value-returning search tells them apart.
+    let array_search_r = |bound: &str, arr: &[String]| -> Option<i64> {
+        let flag_part = &bound[1..bound.find(')')?];
+        let mapped: String = flag_part
+            .chars()
+            .map(|c| match c {
+                'r' | 'k' => 'i',
+                'R' | 'K' => 'I',
+                other => other,
+            })
+            .collect();
+        let body_idx = format!("({}{}", mapped, &bound[1 + flag_part.len()..]);
+        let Some(getarg_out::Value(val)) = getarg(&body_idx, Some(arr), None, None) else {
+            return None;
+        };
+        let mut r: i64 = val.to_str().parse().ok()?;
+        if isset(KSHARRAYS) {
+            let down = flag_part
+                .chars()
+                .rev()
+                .find(|c| matches!(c, 'r' | 'R' | 'k' | 'K' | 'i' | 'I'))
+                .is_some_and(|c| c.is_ascii_uppercase());
+            let value_flags: String = flag_part
+                .chars()
+                .map(|c| match c {
+                    'i' => 'r',
+                    'I' => 'R',
+                    other => other,
+                })
+                .collect();
+            let value_body = format!("({}{}", value_flags, &bound[1 + flag_part.len()..]);
+            let first_hit = r == 0
+                && down
+                && !arr.is_empty()
+                && !arr[0].is_empty()
+                && matches!(
+                    getarg(&value_body, Some(arr), None, None),
+                    Some(getarg_out::Value(hit)) if hit.to_str() == arr[0]
+                );
+            if r > 0 || !down || first_hit {
+                r += 1;
+            }
+        }
+        Some(r)
+    };
+    let range_split = crate::subscript_escape::subscript_arg_split(body, false);
+    if body.starts_with('(') && range_split.is_none() {
         // c:2058-2114 on a SCALAR — `(i)`/`(I)` search the string and return
         // the 1-based character position, which getindex turns into a
         // single-element INV access exactly as for an array (c:2110-2114).
@@ -4803,55 +4860,12 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
                 || flag_part.contains('k')
                 || flag_part.contains('K')
             {
-                // c:1736-1760 — the ARRAY search arm (`ishash` false, so
-                // c:1711's hash scan is skipped and `ta = getarrvalue(v)` is
-                // walked directly). C's `getarg` returns the 1-based INDEX
-                // `r` of the match — the same walk for `r`/`R` as for
-                // `i`/`I`, since `ind` only steers the hash scan (c:1741) —
-                // and `k`/`K` act as `r`/`R` because c:1401/1406 gate
-                // `keymatch = ishash`. This port's `getarg` hands back the
-                // matched ELEMENT for `r`/`R`, so search with the index flags
-                // to get `r` (the same r->i / R->I mapping as the scalar arm
-                // above) and run getindex's non-inv tail on it. The bounds
-                // must name the real element: `${a[(r)y]::=Q}` and every
-                // other write through these bounds lands on it (c:3343).
-                let mapped: String = flag_part
-                    .chars()
-                    .map(|c| match c {
-                        'r' | 'k' => 'i',
-                        'R' | 'K' => 'I',
-                        other => other,
-                    })
-                    .collect();
-                let body_idx = format!("({}{}", mapped, &body[1 + flag_part.len()..]);
+                // getindex's non-inv tail on the search index (see
+                // `array_search_r`). The bounds must name the real element:
+                // `${a[(r)y]::=Q}` and every other write through them lands
+                // on it (c:3343).
                 let arr: Vec<String> = v.pm.as_ref().map(|p| arrgetfn(p)).unwrap_or_default();
-                if let Some(getarg_out::Value(val)) = getarg(&body_idx, Some(&arr), None, None) {
-                    let mut r: i64 = val.to_str().parse().unwrap_or(0);
-                    // !!! RUST-ONLY: this port's getarg already applies the
-                    // c:2091 KSHARRAYS shift to a search index (its `ksh_idx`),
-                    // a step C takes only on getindex's INV branch. Undo it so
-                    // the non-inv tail below sees C's 1-based `r`. The shift
-                    // leaves 0 alone, so for a reverse search 0 is either the
-                    // c:1758 miss or a last match on the first element; the
-                    // value-returning search tells them apart.
-                    if isset(KSHARRAYS) {
-                        let down = flag_part
-                            .chars()
-                            .rev()
-                            .find(|c| matches!(c, 'r' | 'R' | 'k' | 'K'))
-                            .is_some_and(|c| c.is_ascii_uppercase());
-                        let first_hit = r == 0
-                            && down
-                            && !arr.is_empty()
-                            && !arr[0].is_empty()
-                            && matches!(
-                                getarg(body, Some(&arr), None, None),
-                                Some(getarg_out::Value(hit)) if hit.to_str() == arr[0]
-                            );
-                        if r > 0 || !down || first_hit {
-                            r += 1;
-                        }
-                    }
+                if let Some(r) = array_search_r(body, &arr) {
                     if r == 0 {
                         // c:2125-2150 — `start == 0 && end == 0`: a reverse
                         // search that matched nothing (c:1758 / c:1782).
@@ -4885,9 +4899,23 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     // (`[(I)pat]`, `[(r)val]`) still route through getarg
     // separately when called by the substitution pipeline.
 
-    let (start_str, end_str) = match body.split_once(',') {
-        Some((a, b)) => (a, Some(b)),
+    // c:1533-1536 — getarg stops the first operand at a TOP-LEVEL comma only;
+    // a comma inside a flag group or nested brackets is part of the operand.
+    let (start_str, end_str): (&str, Option<&str>) = match &range_split {
+        Some((a, b)) => (a.as_str(), Some(b.as_str())),
         None => (body, None),
+    };
+    // c:2058 / c:2112 — a range operand may itself be a search
+    // (`a[(r)b,(r)d]`). Its index is getarg's `r`, which takes no
+    // KSHARRAYS increment (c:1619-1620 is the numeric arm only).
+    let pm_is_array_value = v
+        .pm
+        .as_ref()
+        .map_or(false, |p| PM_TYPE(p.node.flags as u32) == PM_ARRAY);
+    let search_arr: Vec<String> = if pm_is_array_value && range_split.is_some() {
+        v.pm.as_ref().map(|p| arrgetfn(p)).unwrap_or_default()
+    } else {
+        Vec::new()
     };
     // c:Src/params.c:1597 — `r = mathevalarg(s, &s);`. A non-hashed
     // subscript operand is an ARITHMETIC expression, not a decimal
@@ -4901,6 +4929,11 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     // decimal fast path (matheval of "5" is 5) and route everything
     // else through the canonical evaluator so both outcomes survive.
     let evalarg = |t: &str| -> i64 {
+        if pm_is_array_value && (t.starts_with('(') || t.starts_with(crate::ported::zsh_h::Inpar)) {
+            if let Some(r) = array_search_r(t, &search_arr) {
+                return r; // c:1736-1760
+            }
+        }
         let r = match t.parse::<i64>() {
             Ok(n) => n, // fast path; identical to mathevalarg on a decimal literal
             Err(_) => crate::ported::math::mathevalarg(t), // c:1618
@@ -8911,9 +8944,13 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         // v->start/v->end on the matched element and c:3343 assignstrvalue
         // writes through them. paramsubst's `${a[(r)y]::=Q}` reaches here via
         // c:Src/subst.c:3313 `setsparam(idbeg, …)` with the raw subscript.
+        // A RANGE (`a[2,3]`) is getindex's c:2111-2113 second getarg, which
+        // the single-index store below cannot express either.
         if !is_hashed
             && !is_whole_value
-            && (key.starts_with('(') || key.starts_with(crate::ported::zsh_h::Inpar))
+            && (key.starts_with('(')
+                || key.starts_with(crate::ported::zsh_h::Inpar)
+                || crate::subscript_escape::subscript_arg_split(key, false).is_some())
         {
             let pm_clone = paramtab().read().ok().and_then(|t| t.get(name).cloned());
             if let Some(pm_clone) = pm_clone {

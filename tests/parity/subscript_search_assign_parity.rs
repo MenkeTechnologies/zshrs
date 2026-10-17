@@ -135,3 +135,19 @@ fn subscripted_write_to_a_numeric_parameter_replaces_its_value() {
         Some("i: assignment to invalid subscript range"),
     );
 }
+
+#[test]
+fn assign_default_through_a_range_replaces_the_slice() {
+    // c:2111-2113 — the range's second getarg; the single-index store took
+    // the comma expression as one arithmetic index.
+    check("a=(x y z); : ${a[2,3]::=Q}; print -r -- $a", "x Q\n", 0, None);
+    check("s=abcdef; : ${s[2,4]::=X}; print -r -- $s", "aXef\n", 0, None);
+    // Each range operand may itself be a search.
+    check("b=(a b c d e); : ${b[(r)b,(r)d]::=M}; print -r -- $b", "a M e\n", 0, None);
+    check(
+        "setopt ksharrays; c=(a b c d e); : ${c[(r)b,(r)d]::=M}; print -r -- ${c[@]}",
+        "a M e\n",
+        0,
+        None,
+    );
+}
