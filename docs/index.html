@@ -1328,6 +1328,68 @@ git diff --cached | <span class="keyword">ai</span> -v msg -s <span class="strin
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section" id="parity-matrix">
+        <h2><span class="section-num">[0x07a]</span> NINE-WAY PARITY MATRIX</h2>
+
+        <p>Every dialect is checked against its <em>real reference shell</em>, not against zsh&rsquo;s
+        approximation of it. <code>tests/emulation_parity.rs</code> runs the same scripts through
+        <code>zshrs --X</code> and the real shell X and compares standard output and the exit-status
+        sign. The two zsh-style rows keep zsh semantics on purpose, so their reference is
+        <code>zsh</code> itself running <code>emulate sh</code> / <code>emulate ksh</code>.</p>
+
+        <table class="arch-table">
+          <tr><th>Way</th><th>zshrs</th><th>Reference</th><th>Corpora it runs</th></tr>
+            <tr><td><strong>zsh</strong></td><td><code>--zsh</code></td><td>zsh 5.9.2</td><td>shared + extended + zsh-only</td></tr>
+            <tr><td><strong>bash</strong></td><td><code>--bash</code></td><td>bash 5.3</td><td>shared + extended + real-shell + bash-only + bash/ksh + bash/ksh/mksh</td></tr>
+            <tr><td><strong>ksh</strong></td><td><code>--ksh</code></td><td>ksh93u+m</td><td>shared + extended + real-shell + ksh-only + bash/ksh + bash/ksh/mksh</td></tr>
+            <tr><td><strong>sh</strong></td><td><code>--sh</code></td><td>the host <code>/bin/sh</code> (skipped where it is dash)</td><td>shared + real-shell</td></tr>
+            <tr><td><strong>dash</strong></td><td><code>--dash</code></td><td>dash</td><td>shared + real-shell + dash family + dash-only</td></tr>
+            <tr><td><strong>sh/zsh-style</strong></td><td><code>--sh --zsh</code></td><td>zsh <code>emulate sh</code></td><td>shared</td></tr>
+            <tr><td><strong>ksh/zsh-style</strong></td><td><code>--ksh --zsh</code></td><td>zsh <code>emulate ksh</code></td><td>shared + extended</td></tr>
+            <tr><td><strong>mksh</strong></td><td><code>--mksh</code></td><td>mksh</td><td>shared + real-shell + bash/ksh/mksh + pdksh</td></tr>
+            <tr><td><strong>ash</strong></td><td><code>--ash</code></td><td>ash</td><td>shared + real-shell + dash family</td></tr>
+        </table>
+        <p><code>--pdksh</code> is a tenth, optional way: it runs wherever a <code>pdksh</code> reference is installed.</p>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">What each way runs</h3>
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Hand-written corpora</h4>
+            <p>Portable scripts every shell must run identically, plus per-dialect corpora for what only
+            some shells have: arrays, <code>[[ ]]</code>, <code>(( ))</code>, <code>typeset</code>, ksh93&rsquo;s
+            <code>print</code> and <code>.sh.*</code>, bash&rsquo;s <code>declare</code>, dash&rsquo;s quirks.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Generated operator grids</h4>
+            <p>Pattern removal against every operand and pattern; <code>-</code> <code>:-</code> <code>+</code>
+            <code>:+</code> <code>=</code> <code>:=</code> against unset, empty and set variables; every arithmetic
+            operator over sign, zero and shift operands; <code>case</code> subjects against pattern shapes;
+            <code>test</code> operators; IFS shapes; <code>printf</code> conversions; positionals and exit statuses.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Cross-dialect data file</h4>
+            <p><code>"$@"</code> / <code>"$*"</code> under several IFS values, nested expansions, <code>break N</code>,
+            function scope, redirections and here-documents, the <code>set -e</code> matrix, traps,
+            <code>read</code>, globbing, command substitution, <code>getopts</code>, quoting, <code>cd</code> and
+            <code>umask</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Dialect data file, tagged per way</h4>
+            <p>Each script lists the ways it was measured identical on. A script a shell does not have is left out of
+            that shell&rsquo;s list &mdash; never edited to pass.</p>
+          </div>
+        </div>
+
+        <h3 style="color: var(--cyan); margin-top: 1.6rem;">How it runs</h3>
+        <ul>
+          <li>Ways run in parallel; each script has a 30&nbsp;s limit, so a hung shell is a divergence, not a stuck job.</li>
+          <li>Every script runs in an empty scratch directory: a stray redirection cannot read or leave a file.</li>
+          <li>The newest installed reference wins (bash 5.3 and ksh93u+m ahead of macOS&rsquo;s bash 3.2 and ksh93u+ 2012), because zshrs reports those versions.</li>
+          <li>The run prints a per-way table &mdash; cases, mismatches, and the exact reference binary and release.</li>
+          <li>A missing reference is a skip; <code>ZSHRS_REQUIRE_REF_SHELLS</code> makes a missing required one fatal.</li>
+        </ul>
+      </section>
+
       <section class="tutorial-section">
         <h2><span class="section-num">[0x07b]</span> SHELL LANGUAGE FEATURES</h2>
 
