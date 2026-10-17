@@ -3821,12 +3821,156 @@ fn test_bracket_posix_three_arg_binary_rule() {
     }
 }
 
+/// Single-quote `s` for the shell.
+fn sq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Combinatorial scripts every way must agree on: each family is a grid of operators
+/// over operands, so one table row covers dozens of cases. Built once; every entry is
+/// POSIX-portable (printf for output, quoted expansions, no stderr dependence).
+fn grid_corpus() -> &'static [String] {
+    static GRID: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    GRID.get_or_init(|| {
+        let mut out: Vec<String> = Vec::new();
+        // ${v#p} ${v##p} ${v%p} ${v%%p}: every operand against every pattern.
+        let vals = ["abc", "a.b.c", "a b", "/x/y/z", "aaa", "a*b", "", "abcabc"];
+        let pats = ["a", "a*", "*a", "?", "*", "*.", "*/", "b*c", "[ab]", "?*", "*c"];
+        for v in vals {
+            for op in ["#", "##", "%", "%%"] {
+                for p in pats {
+                    out.push(format!("v={}; printf '[%s]\\n' \"${{v{op}{p}}}\"", sq(v)));
+                }
+            }
+        }
+        // - :- + :+ = := # applied to an unset, an empty and a set variable.
+        for pre in ["unset v;", "v=;", "v=x;"] {
+            for form in ["${v-d}", "${v:-d}", "${v+p}", "${v:+p}", "${v=a}", "${v:=a}", "${#v}"] {
+                out.push(format!("{pre} printf '[%s][%s]\\n' \"{form}\" \"${{v-unset}}\""));
+            }
+        }
+        // Binary arithmetic operators over sign / zero / shift-width operands.
+        for (a, b) in [(7, 3), (-7, 3), (0, 5), (2, 10), (255, 16), (1, 0)] {
+            for op in ["+", "-", "*", "<<", ">>", "&", "|", "^", "<", ">", "<=", ">=", "==", "!=", "&&", "||"] {
+                out.push(format!("printf '%s\\n' \"$(( {a} {op} {b} ))\""));
+            }
+            if b != 0 {
+                for op in ["/", "%"] {
+                    out.push(format!("printf '%s\\n' \"$(( {a} {op} {b} ))\""));
+                }
+            }
+        }
+        // case: every subject against every pattern shape. `[a-c]` against an upper-case
+        // letter is left out — it depends on the locale's collation, not the shell.
+        let subjects = ["abc", "a.b", "", "A", "5", "a b", "abc.txt", ".hid"];
+        let case_pats = [
+            "a*", "*c", "?b?", "[a-c]*", "[!a]*", "*", "\"\"", "a|b", "\"a b\"", "[[:digit:]]", "*.*", "*.txt", ".*",
+            "[[:upper:]]", "?",
+        ];
+        for subj in subjects {
+            for pat in case_pats {
+                if subj == "A" && pat == "[a-c]*" {
+                    continue;
+                }
+                out.push(format!("case {} in {pat}) printf match;; *) printf no;; esac; printf '\\n'", sq(subj)));
+            }
+        }
+        // test: string, integer, unary and file operators.
+        for (a, b) in [("a", "a"), ("a", "b"), ("", ""), ("a", ""), ("10", "9"), ("abc", "abd")] {
+            for op in ["=", "!="] {
+                out.push(format!("[ {} {op} {} ]; printf '%s\\n' $?", sq(a), sq(b)));
+            }
+        }
+        for (a, b) in [(1, 2), (2, 1), (3, 3), (-1, 1), (10, 9)] {
+            for op in ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"] {
+                out.push(format!("[ {a} {op} {b} ]; printf '%s\\n' $?"));
+            }
+        }
+        for u in ["-z", "-n"] {
+            for v in ["", "x", " "] {
+                out.push(format!("[ {u} {} ]; printf '%s\\n' $?", sq(v)));
+            }
+        }
+        for f in ["-e", "-d", "-f", "-r", "-w", "-x", "-s", "-L", "-h"] {
+            for path in ["/", "/etc/passwd", "/nonexistent_zz", "/bin/sh"] {
+                out.push(format!("[ {f} {path} ]; printf '%s\\n' $?"));
+            }
+        }
+        // Field splitting: IFS shapes against separator layouts.
+        for ifs in ["\":\"", "\" \"", "\",;\"", "\"\"", "\":\"\" \"", "' \\t\\n'"] {
+            for v in ["a:b:c", "a b  c", ":a:", "a,b;c", "", "a::b", " a b "] {
+                out.push(format!("IFS={ifs}; v={}; set -- $v; printf '%s|' \"$#\" \"$@\"; printf '\\n'", sq(v)));
+            }
+        }
+        // printf conversions over words and numbers (`%%` with an argument is mksh-specific).
+        for fmt in ["%s", "%5s", "%-5s|", "%.2s", "%d", "%5d", "%-5d|", "%05d", "%+d", "%x", "%X", "%o", "%c", "%b"] {
+            for val in ["abc", "42", "-7", "0", "a b"] {
+                out.push(format!("printf {} {}; printf '\\n'", sq(fmt), sq(val)));
+            }
+        }
+        // Positional parameters, shift counts and counting loops.
+        for n in 0..5 {
+            let words: String = (0..n).map(|i| format!("a{i}")).collect::<Vec<_>>().join(" ");
+            let words = if n == 0 { "--".to_string() } else { words };
+            out.push(format!("set -- {words}; printf '%s\\n' \"$#\" \"${{1-u}}\" \"${{{}-u}}\"", n.max(1)));
+        }
+        for n in 0..4 {
+            out.push(format!("set -- a b c; shift {n} 2>/dev/null; printf '%s\\n' \"$#\""));
+            out.push(format!("i=0; while [ $i -lt {n} ]; do i=$((i+1)); done; printf '%s\\n' $i"));
+            out.push(format!("i=0; until [ $i -ge {n} ]; do i=$((i+1)); done; printf '%s\\n' $i"));
+        }
+        // Exit statuses through subshells, functions, child shells and substitutions.
+        for code in [0, 1, 2, 127, 255] {
+            out.push(format!("(exit {code}); printf '%s\\n' $?"));
+            out.push(format!("f() {{ return {code}; }}; f; printf '%s\\n' $?"));
+            out.push(format!("sh -c 'exit {code}'; printf '%s\\n' $?"));
+            out.push(format!("x=$(exit {code}); printf '%s\\n' $?"));
+        }
+        for conn in ["&&", "||"] {
+            for a in ["true", "false"] {
+                for b in ["true", "false"] {
+                    out.push(format!("{a} {conn} {b}; printf '%s\\n' $?"));
+                }
+            }
+        }
+        for a in ["true", "false"] {
+            for b in ["true", "false"] {
+                out.push(format!("{a} | {b}; printf '%s\\n' $?"));
+                out.push(format!("! {a} | {b}; printf '%s\\n' $?"));
+            }
+        }
+        out
+    })
+}
+
+/// Scripts kept in `tests/data/emulation_extra_cases.txt`, one per line (`<NL>` stands for
+/// a newline inside a script). Each was measured identical across all nine ways: `"$@"` /
+/// `"$*"` / `$@` / `$*` under several IFS values, nested parameter expansions,
+/// `break N` / `continue N`, function scope and return status, redirections and here-documents,
+/// the `set -e` matrix, EXIT and signal traps, `read` with IFS variants, arithmetic
+/// assignment forms and subshell isolation.
+fn extra_corpus() -> &'static [String] {
+    static EXTRA: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    EXTRA.get_or_init(|| {
+        include_str!("data/emulation_extra_cases.txt")
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.replace("<NL>", "\n"))
+            .collect()
+    })
+}
+
 /// The scripts one way runs, in corpus order, each at most once. Keeping the
 /// selection in one function means the per-way report counts exactly what ran.
 fn corpus_for(case: &ParityCase, refbin: &str) -> Vec<&'static str> {
     let empty: &'static [&'static str] = &[];
     let name = case.name;
     let real_shell = case.ref_emulate.is_none() && name != "zsh";
+    let grid: Vec<&'static str> = grid_corpus()
+        .iter()
+        .chain(extra_corpus())
+        .map(String::as_str)
+        .collect();
     let parts: [&'static [&'static str]; 14] = [
         PORTABLE_CORPUS,
         if case.extended { EXTENDED_CORPUS } else { empty },
@@ -3850,6 +3994,7 @@ fn corpus_for(case: &ParityCase, refbin: &str) -> Vec<&'static str> {
     parts
         .iter()
         .flat_map(|p| p.iter().copied())
+        .chain(grid)
         .filter(|script| !(old_ksh && KSH_1_0_10_ONLY.contains(script)))
         .filter(|script| seen.insert(*script))
         .collect()

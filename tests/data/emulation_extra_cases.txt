@@ -1,0 +1,385 @@
+ set -- a b c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a b c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a b c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a b c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a b c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a b c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a b c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a b c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a b c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a b c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a b c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a b c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a b c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a b c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a b c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a b c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a b c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a b c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a b c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a b c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a b c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a b c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a b c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a b c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a b' c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a b' c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a b' c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a b' c; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a b' c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a b' c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a b' c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a b' c; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a b' c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a b' c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a b' c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a b' c; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a b' c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a b' c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a b' c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a b' c; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a b' c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a b' c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a b' c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a b' c; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a b' c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a b' c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a b' c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a b' c; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- '' a; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- '' a; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- '' a; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- '' a; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- '' a; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- '' a; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- '' a; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- '' a; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- '' a; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- '' a; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- '' a; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- '' a; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- '' a; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- '' a; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- '' a; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- '' a; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- '' a; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- '' a; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- '' a; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- '' a; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a ''; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a ''; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a ''; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a ''; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a ''; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a ''; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a ''; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a ''; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a ''; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a ''; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a ''; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a ''; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a ''; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a ''; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a ''; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a ''; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a ''; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a ''; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a ''; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a ''; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- a ''; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- a ''; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- a ''; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- a ''; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a  b'; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a  b'; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a  b'; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a  b'; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a  b'; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a  b'; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a  b'; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a  b'; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a  b'; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a  b'; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a  b'; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a  b'; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a  b'; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a  b'; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a  b'; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a  b'; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a  b'; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a  b'; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a  b'; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a  b'; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- 'a  b'; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- 'a  b'; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- 'a  b'; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- 'a  b'; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- ; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- ; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- ; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- ; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- ; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- ; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- ; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- ; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- ; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- ; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- ; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- ; for w in $@; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- ; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- ; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- ; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- ; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- ; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- ; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- ; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- ; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- ; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- ; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- ; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- ; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- "" ""; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- "" ""; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- "" ""; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- "" ""; for w in "$@"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- "" ""; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- "" ""; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- "" ""; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- "" ""; for w in "$*"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- "" ""; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- "" ""; for w in $*; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- "" ""; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- "" ""; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- "" ""; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- "" ""; for w in "x$@y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+ set -- "" ""; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=,; set -- "" ""; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=; set -- "" ""; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+IFS=' ,'; set -- "" ""; for w in "x$*y"; do printf '[%s]' "$w"; done; printf ' %s\n' $#
+v='abc'; printf '[%s]\n' "${v:-${v:-x}}"
+v='abc'; for w in ${v:-${v:-x}}; do printf '[%s]' "$w"; done; printf '\n'
+v='abc'; printf '[%s]\n' "${v:+${v}y}"
+v='abc'; for w in ${v:+${v}y}; do printf '[%s]' "$w"; done; printf '\n'
+v='abc'; printf '[%s]\n' "${v%${v#?}}"
+v='abc'; for w in ${v%${v#?}}; do printf '[%s]' "$w"; done; printf '\n'
+v='abc'; printf '[%s]\n' "${v#${v%?}}"
+v='abc'; for w in ${v#${v%?}}; do printf '[%s]' "$w"; done; printf '\n'
+v='abc'; printf '[%s]\n' "${#v}${#v}"
+v='abc'; for w in ${#v}${#v}; do printf '[%s]' "$w"; done; printf '\n'
+v='abc'; printf '[%s]\n' "${v:-$(printf z)}"
+v='abc'; for w in ${v:-$(printf z)}; do printf '[%s]' "$w"; done; printf '\n'
+v='abc'; printf '[%s]\n' "${v:-"q r"}"
+v='abc'; for w in ${v:-"q r"}; do printf '[%s]' "$w"; done; printf '\n'
+v='abc'; printf '[%s]\n' "${v:-'q r'}"
+v='abc'; for w in ${v:-'q r'}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; printf '[%s]\n' "${v:-${v:-x}}"
+v=''; for w in ${v:-${v:-x}}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; printf '[%s]\n' "${v:+${v}y}"
+v=''; for w in ${v:+${v}y}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; printf '[%s]\n' "${v%${v#?}}"
+v=''; for w in ${v%${v#?}}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; printf '[%s]\n' "${v#${v%?}}"
+v=''; for w in ${v#${v%?}}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; printf '[%s]\n' "${#v}${#v}"
+v=''; for w in ${#v}${#v}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; printf '[%s]\n' "${v:-$(printf z)}"
+v=''; for w in ${v:-$(printf z)}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; for w in ${v:-"q r"}; do printf '[%s]' "$w"; done; printf '\n'
+v=''; printf '[%s]\n' "${v:-'q r'}"
+v=''; for w in ${v:-'q r'}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${v:-${v:-x}}"
+v='a/b'; for w in ${v:-${v:-x}}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${v:+${v}y}"
+v='a/b'; for w in ${v:+${v}y}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${v%${v#?}}"
+v='a/b'; for w in ${v%${v#?}}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${v#${v%?}}"
+v='a/b'; for w in ${v#${v%?}}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${#v}${#v}"
+v='a/b'; for w in ${#v}${#v}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${v:-$(printf z)}"
+v='a/b'; for w in ${v:-$(printf z)}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${v:-"q r"}"
+v='a/b'; for w in ${v:-"q r"}; do printf '[%s]' "$w"; done; printf '\n'
+v='a/b'; printf '[%s]\n' "${v:-'q r'}"
+v='a/b'; for w in ${v:-'q r'}; do printf '[%s]' "$w"; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && break ; printf '%s%s ' $i $j; done; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && continue ; printf '%s%s ' $i $j; done; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && break 1; printf '%s%s ' $i $j; done; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && continue 1; printf '%s%s ' $i $j; done; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && break 2; printf '%s%s ' $i $j; done; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && continue 2; printf '%s%s ' $i $j; done; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && break 3; printf '%s%s ' $i $j; done; done; printf '\n'
+for i in 1 2; do for j in a b; do [ $j = a ] && continue 3; printf '%s%s ' $i $j; done; done; printf '\n'
+f() { x=in; }; x=out; f; printf '%s\n' $x
+x=1; f() { x=2; g; }; g() { printf '%s\n' $x; }; f
+f() { printf '%s\n' "$#"; }; f; f a; f a b; f ''; f '' ''
+f() { return; }; false; f; printf '%s\n' $?
+f() { false; return; }; f; printf '%s\n' $?
+f() { (exit 3); }; f; printf '%s\n' $?
+f() { return 3; echo no; }; f; printf '%s\n' $?
+f() { echo a; }; f | cat
+f() { echo a; }; x=$(f); printf '%s\n' "$x"
+f() { g() { echo inner; }; g; }; f; g
+f() { for i in 1 2 3; do [ $i = 2 ] && return $i; done; }; f; printf '%s\n' $?
+f() { eval 'return 4'; }; f; printf '%s\n' $?
+f() { while :; do return 5; done; }; f; printf '%s\n' $?
+fib() { [ $1 -lt 2 ] && { printf '%s' $1; return; }; fib $(($1-1)); }; fib 5; printf '\n'
+f() { set -- x y; printf '%s\n' $#; }; set -- a; f; printf '%s\n' $#
+f() { shift; printf '%s\n' "$@"; }; f a b c
+f() { local_ok=1; }; f; printf '%s\n' $local_ok
+{ printf out; printf err >&2; } > /dev/null; printf '|%s\n' $?
+printf x > /dev/null; printf '|%s\n' $?
+{ printf out; printf err >&2; } 2> /dev/null; printf '|%s\n' $?
+printf x 2> /dev/null; printf '|%s\n' $?
+{ printf out; printf err >&2; } >/dev/null 2>&1; printf '|%s\n' $?
+printf x >/dev/null 2>&1; printf '|%s\n' $?
+{ printf out; printf err >&2; } 2>&1 >/dev/null; printf '|%s\n' $?
+printf x 2>&1 >/dev/null; printf '|%s\n' $?
+{ printf out; printf err >&2; } < /dev/null; printf '|%s\n' $?
+printf x < /dev/null; printf '|%s\n' $?
+{ printf out; printf err >&2; } >> /dev/null; printf '|%s\n' $?
+printf x >> /dev/null; printf '|%s\n' $?
+d=$(mktemp -d); printf a > $d/f; printf b >> $d/f; cat $d/f; printf '\n'; rm -rf $d
+d=$(mktemp -d); printf 'l1\nl2\n' > $d/f; while read l; do printf '<%s>' "$l"; done < $d/f; printf '\n'; rm -rf $d
+d=$(mktemp -d); exec 3> $d/f; printf x >&3; exec 3>&-; cat $d/f; printf '\n'; rm -rf $d
+d=$(mktemp -d); { printf a; printf b; } > $d/f; cat $d/f; printf '\n'; rm -rf $d
+d=$(mktemp -d); printf 'x' > $d/f; cat < $d/f > $d/g; cat $d/g; printf '\n'; rm -rf $d
+cat <<E<NL>x<NL>E
+cat <<'E'<NL>$HOME<NL>E
+x=1; cat <<E<NL>$x<NL>E
+cat <<-E<NL>	a<NL>	E
+cat <<E | wc -l | tr -d ' '<NL>a<NL>b<NL>E
+set -e; false; printf 'after\n'
+(set -e; false; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; true && false; printf 'after\n'
+(set -e; true && false; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; false || false; printf 'after\n'
+(set -e; false || false; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; ! true; printf 'after\n'
+(set -e; ! true; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; false; true; printf 'after\n'
+(set -e; false; true; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; { false; }; printf 'after\n'
+(set -e; { false; }; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; (false); printf 'after\n'
+(set -e; (false); printf 'after\n'); printf 'rc=%s\n' $?
+set -e; if false; then :; fi; printf 'after\n'
+(set -e; if false; then :; fi; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; while false; do :; done; printf 'after\n'
+(set -e; while false; do :; done; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; f() { false; }; f; printf 'after\n'
+(set -e; f() { false; }; f; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; x=$(false); printf 'after\n'
+(set -e; x=$(false); printf 'after\n'); printf 'rc=%s\n' $?
+set -e; false | true; printf 'after\n'
+(set -e; false | true; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; true | false; printf 'after\n'
+(set -e; true | false; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; [ 1 = 2 ]; printf 'after\n'
+(set -e; [ 1 = 2 ]; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; test 1 = 2; printf 'after\n'
+(set -e; test 1 = 2; printf 'after\n'); printf 'rc=%s\n' $?
+set -e; false && true; printf 'after\n'
+(set -e; false && true; printf 'after\n'); printf 'rc=%s\n' $?
+trap 'printf bye' EXIT; printf hi; printf '\n'
+trap 'printf bye\n' EXIT; exit 3
+(trap 'printf sub\n' EXIT; printf in\n); printf out\n
+trap 'printf a' EXIT; trap - EXIT; printf b; printf '\n'
+f() { trap 'printf ft\n' EXIT; }; f; printf main\n
+trap 'printf bye' 0; printf hi; printf '\n'
+trap 'printf bye\n' 0; exit 3
+(trap 'printf sub\n' 0; printf in\n); printf out\n
+trap 'printf a' 0; trap - 0; printf b; printf '\n'
+f() { trap 'printf ft\n' 0; }; f; printf main\n
+trap 'printf got\n' USR1; kill -USR1 $$; printf after\n
+trap '' USR1; kill -USR1 $$; printf survived\n
+trap 'printf int\n' INT; kill -INT $$; printf after\n
+trap 'printf one\n' USR1; trap 'printf two\n' USR1; kill -USR1 $$
+trap 'printf x' USR2; (kill -USR2 $$); sleep 0; printf '\n'
+printf '%s\n' 'a b c' | {  read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | {  read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | {  read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | { IFS=:; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | { IFS=:; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | { IFS=:; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | { IFS=; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | { IFS=; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a b c' | { IFS=; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | {  read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | {  read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | {  read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | { IFS=:; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | { IFS=:; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | { IFS=:; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | { IFS=; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | { IFS=; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '  a  b  ' | { IFS=; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | {  read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | {  read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | {  read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | { IFS=:; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | { IFS=:; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | { IFS=:; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | { IFS=; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | { IFS=; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a:b:c' | { IFS=; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | {  read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | {  read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | {  read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | { IFS=:; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | { IFS=:; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | { IFS=:; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | { IFS=; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | { IFS=; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' '' | { IFS=; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | {  read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | {  read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | {  read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | { IFS=:; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | { IFS=:; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | { IFS=:; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | { IFS=; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | { IFS=; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a\\ b' | { IFS=; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | {  read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | {  read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | {  read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | { IFS=:; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | { IFS=:; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | { IFS=:; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | { IFS=; read x; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | { IFS=; read x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+printf '%s\n' 'a	b' | { IFS=; read -r x y; printf '[%s][%s]\n' "$x" "${y-unset}"; }
+x=5; x=$((x+1)); printf %s $x; printf '\n'
+x=5; : $((x+=2)); printf %s $x; printf '\n'
+x=5; printf %s $((x++)) $x; printf '\n'
+x=5; printf %s $((++x)) $x; printf '\n'
+x=2; printf %s $((x*x*x)); printf '\n'
+x=7; printf %s $((x/2)) $((x%2)); printf '\n'
+x=-7; printf %s $((x/2)) $((x%2)); printf '\n'
+x=0; printf %s $((x?1:2)); printf '\n'
+x=3; printf %s $((x>2?10:20)); printf '\n'
+printf %s $((1,2,3)); printf '\n'
+x=010; printf %s $((x)); printf '\n'
+printf %s $((0x1f)); printf '\n'
+printf %s $((10#12)); printf '\n'
+printf %s $((- -3)); printf '\n'
+printf %s $((!0)) $((!5)) $((~0)); printf '\n'
+printf '%b|' 'a\\nb'; printf '\n'
+printf '%b|' 'a\\tb'; printf '\n'
+printf '%b|' 'a\\\\b'; printf '\n'
+printf '%b|' 'a\\0101b'; printf '\n'
+printf '%b|' 'a\\x41b'; printf '\n'
+printf '%b|' 'a\\ab'; printf '\n'
+printf '%b|' 'a\\cb'; printf '\n'
+x=1; (x=2); printf '%s\n' $x
+x=1; { x=2; }; printf '%s\n' $x
+x=1; printf a | { x=2; cat; }; printf '%s\n' $x
+cd /; (cd /tmp); pwd
+(cd /tmp; pwd)
+x=$(cd /tmp; pwd); pwd; printf '%s\n' "$x"
+printf a | cat | cat | cat
+printf 'a\nb\nc\n' | while read l; do printf '%s,' $l; done; printf '\n'
+printf 'a\nb\n' | { read x; read y; printf '%s%s\n' $y $x; }
+i=0; printf 'a\nb\n' | while read l; do i=$((i+1)); done; printf '%s\n' $i
