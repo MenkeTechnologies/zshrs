@@ -2258,6 +2258,7 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "cat /dev/null; hash; echo a; hash -r; echo $?; alias -t; hash ls; echo $?",
     "f() { echo ${1:?missing}; echo inf; }; f; echo \"after rc=$?\"; g() { echo ${v?unset}; echo ing; }; g; echo \"after2 rc=$?\"",
     "f() { echo ${1:?missing}; }; f 2>/dev/null; echo $?; : ${nosuch_zz:?m}; echo notreached",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",

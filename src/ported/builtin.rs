@@ -13072,6 +13072,14 @@ pub fn bin_alias(
             };
             return bin_hash(name, argv, &hash_ops, 0);
         }
+        // !!! PDKSH GATE (no C counterpart) !!! mksh tracks no commands in a non-interactive
+        // shell, so `alias -t` lists nothing; `-r` only clears the table.
+        if matches!(personality(), Personality::Mksh | Personality::Pdksh) {
+            if OPT_ISSET(ops, b'r') {
+                crate::ported::hashtable::emptycmdnamtable();
+            }
+            return 0;
+        }
         queue_signals();
         if let Ok(t) = cmdnamtab_lock().read() {
             let mut entries: Vec<_> = t.iter().collect();
