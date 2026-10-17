@@ -1,0 +1,10 @@
+#compdef par_lines
+
+# Per-line parallel run: `par_lines 'cmd {}' FILE` — runs the template once per line of FILE.
+#
+# zshrs builtin; keep in sync with builtin_par_lines (src/extensions/ext_builtins.rs).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+    '1:command template ({} is replaced by each line):_cmdstring' \
+    '2:file:_files'

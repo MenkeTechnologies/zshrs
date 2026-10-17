@@ -1,0 +1,10 @@
+#compdef par_walk
+
+# Parallel tree walk: `par_walk 'cmd {}' PATH...` — runs the template once per file and directory under each PATH.
+#
+# zshrs builtin; keep in sync with builtin_par_walk (src/extensions/ext_builtins.rs).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+    '1:command template ({} is replaced by each path):_cmdstring' \
+    '*:path:_files'

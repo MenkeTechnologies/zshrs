@@ -847,11 +847,11 @@ mod tests {
             evalcond(&["hello", "!=", "world"], &opts, &vars, true, None),
             0
         );
-        // parse.c:2668-2673: in `test`/`[` both `<` and `>` compile to COND_STRGTR
-        // (the reference build evaluates `a < b` as `a > b`).
-        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true, None), 1);
-        assert_eq!(evalcond(&["def", "<", "abc"], &opts, &vars, true, None), 0);
-        assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true, None), 0);
+        // zsh 5.9.2: `<` and `>` are not `test` / `[` operators — a plain word is
+        // "condition expected" (status 2). Only the drop-ins order strings there.
+        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true, None), 2);
+        assert_eq!(evalcond(&["def", "<", "abc"], &opts, &vars, true, None), 2);
+        assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true, None), 2);
     }
 
     #[test]

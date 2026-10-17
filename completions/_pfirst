@@ -1,0 +1,10 @@
+#compdef pfirst
+
+# First match: `pfirst 'cmd {}' ARG...` — prints the lowest-position ARG the template succeeds for.
+#
+# zshrs builtin; keep in sync with builtin_pfirst (src/extensions/ext_builtins.rs).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+    '1:command template ({} is replaced by each argument):_cmdstring' \
+    '*:argument:_default'

@@ -1,0 +1,9 @@
+#compdef puniq
+
+# Distinct operands (or stdin lines) in first-occurrence order.
+#
+# zshrs builtin; keep in sync with builtin_puniq (src/extensions/ext_builtins.rs).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+    '*:item:_default'

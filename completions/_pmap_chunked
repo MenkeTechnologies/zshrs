@@ -1,0 +1,11 @@
+#compdef pmap_chunked
+
+# Chunked parallel map: `pmap_chunked N 'cmd {}' ARG...` — N arguments per shell process.
+#
+# zshrs builtin; keep in sync with builtin_pmap_chunked (src/extensions/ext_builtins.rs).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+    '1:chunk size:' \
+    '2:command template ({} is replaced by each argument):_cmdstring' \
+    '*:argument:_default'

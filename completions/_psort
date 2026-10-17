@@ -1,0 +1,11 @@
+#compdef psort
+
+# Parallel stable sort of the operands, or of stdin lines when none are given.
+#
+# zshrs builtin; keep in sync with builtin_psort (src/extensions/ext_builtins.rs).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments -s \
+    '-n[compare numerically]' \
+    '-r[reverse the order]' \
+    '*:item:_default'

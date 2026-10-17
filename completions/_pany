@@ -1,0 +1,10 @@
+#compdef pany
+
+# Parallel any: `pany 'cmd {}' ARG...` — status 0 as soon as the template succeeds for some ARG.
+#
+# zshrs builtin; keep in sync with builtin_pany (src/extensions/ext_builtins.rs).
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments \
+    '1:command template ({} is replaced by each argument):_cmdstring' \
+    '*:argument:_default'
