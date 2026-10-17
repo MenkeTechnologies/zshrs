@@ -1196,6 +1196,11 @@ pub fn bash_keyword_on() -> bool {
 static BO_NOLOG: AtomicBool = AtomicBool::new(false);
 static BO_POSIX: AtomicBool = AtomicBool::new(false);
 
+/// True while `set -o posix` is on in `--bash` mode.
+pub fn bash_posix_on() -> bool {
+    BO_POSIX.load(Ordering::Relaxed)
+}
+
 /// Read one bash `set -o` option's state by its BASH name: the bash-only
 /// side-table first, else the zsh option it maps to.
 pub fn bash_set_o_get(bash_name: &str) -> bool {
@@ -1630,7 +1635,7 @@ pub fn getopts_end_of_options(var: &str) {
 ///    the body holds an apostrophe; mksh is byte-identical to zsh's
 ///    `quotedzputs`, empty-run trimming included.
 ///
-/// 3. **`SIG`-prefixed names in bash only.** `bash -c "trap ':' HUP; trap"`
+/// 3. **`SIG`-prefixed names in bash only.** (not under `set -o posix`, which prints the bare name) `bash -c "trap ':' HUP; trap"`
 ///    prints `trap -- ':' SIGHUP`, while dash, ash, `/bin/sh`, ksh93 and mksh
 ///    all print the bare `HUP`. bash leaves the pseudo-signals alone —
 ///    `EXIT`, `DEBUG`, `ERR` and `RETURN` print unprefixed — so only names
@@ -1663,7 +1668,7 @@ pub fn trap_listing_line(signame: &str, body: &str) -> Option<String> {
         // bash and /bin/sh: `'` → `'\''`, no empty-run trimming at either end.
         format!("'{}'", body.replace('\'', "'\\''"))
     };
-    let name = if bash_mode() && real_signal_name(signame) {
+    let name = if bash_mode() && !bash_posix_on() && real_signal_name(signame) {
         format!("SIG{}", signame)
     } else {
         signame.to_string()

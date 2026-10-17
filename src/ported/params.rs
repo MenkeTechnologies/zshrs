@@ -2438,7 +2438,10 @@ pub fn createparam(
 
     if !name.is_empty() {
         // c:1149-1150 — `if (isset(ALLEXPORT) && !(flags & PM_HASHELEM)) flags |= PM_EXPORTED;`
-        if isset(ALLEXPORT) && (flags as u32 & PM_HASHELEM) == 0 {
+        // !!! BASH GATE (no C counterpart) !!! bash cannot export an array: `set -a; a=(1 2)` leaves
+        // it unexported, where zsh marks it.
+        let bash_array = crate::dash_mode::bash_mode() && (flags as u32 & (PM_ARRAY | PM_HASHED)) != 0;
+        if isset(ALLEXPORT) && (flags as u32 & PM_HASHELEM) == 0 && !bash_array {
             flags |= PM_EXPORTED as i32;
         }
     }
@@ -16496,6 +16499,11 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             }
             o
         };
+        // A declared but never assigned array lists bare: `declare -a a`, no `=()`.
+        if fl & (PM_HASHED | PM_ARRAY) != 0 && fl & PM_UNSET != 0 {
+            println!("declare {} {}", flag_disp, nm);
+            return;
+        }
         if fl & PM_HASHED != 0 {
             let m = crate::ported::exec::assoc(&nm).unwrap_or_default();
             let body: String = m
