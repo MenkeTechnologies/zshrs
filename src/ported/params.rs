@@ -16437,11 +16437,11 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 format!("-{letter}")
             }
         };
+        if fl & PM_LOWER != 0 && fl & (PM_INTEGER | PM_FFLOAT | PM_EFLOAT) != 0 {
+            attrs.push("-l".to_string()); // ksh93 lists the long flag of `integer` / `float` first
+        }
         if fl & PM_INTEGER != 0 {
             attrs.push(with_num("i", hn.base));
-        }
-        if fl & PM_LOWER != 0 && fl & (PM_FFLOAT | PM_EFLOAT) != 0 {
-            attrs.push("-l".to_string()); // ksh93 lists the long-float flag first
         }
         if fl & PM_FFLOAT != 0 {
             attrs.push(with_num("F", hn.base));
@@ -16449,7 +16449,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if fl & PM_EFLOAT != 0 {
             attrs.push(with_num("E", hn.base));
         }
-        if fl & PM_LOWER != 0 && fl & (PM_FFLOAT | PM_EFLOAT) == 0 {
+        if fl & PM_LOWER != 0 && fl & (PM_INTEGER | PM_FFLOAT | PM_EFLOAT) == 0 {
             attrs.push("-l".to_string());
         }
         if fl & PM_UPPER != 0 {

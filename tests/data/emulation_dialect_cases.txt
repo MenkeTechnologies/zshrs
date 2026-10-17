@@ -431,3 +431,4 @@ ksh	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; set -- '' ''; s $
 dash	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; IFS=a; set -- x a y; s $*; set -- a x a; s $*; set -- a a; s $*; set -- b '' c; s $*
 dash	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; IFS=:; set -- x '' y; s $*; s $@
 sh	echo -n hi; echo; set -- a; shift 9 2>/dev/null; echo $?
+ksh	integer v=7; v=5; typeset -p v

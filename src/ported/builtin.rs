@@ -4828,8 +4828,8 @@ pub fn bin_typeset(
             off |= numeric_or_field;
         }
     }
-    // !!! KSH93 (no C counterpart) !!! `float` is `typeset -lE`: the long-float flag is listed.
-    if crate::dash_mode::ksh93_mode() && name == "float" {
+    // !!! KSH93 (no C counterpart) !!! `float` is `typeset -lE` and `integer` is `typeset -li`: the long flag is listed.
+    if crate::dash_mode::ksh93_mode() && matches!(name, "float" | "integer") {
         on |= PM_LOWER;
     }
     on &= !off; // c:2744
