@@ -16236,6 +16236,27 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             return;
         }
     }
+    // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! the plain `set` listing of a scalar:
+    // dash quotes every value (`X='1'`, a quote inside as `'"'"'`), bash prints an empty
+    // value bare (`X=`), ksh93 writes a value holding a quote as `$'it\'s'`.
+    if (printflags & (PRINT_TYPESET | PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY | crate::ported::zsh_h::PRINT_LINE)) == 0
+        && PM_TYPE(hn.node.flags as u32) == PM_SCALAR
+        && (hn.node.flags as u32 & PM_UNSET) == 0
+    {
+        let val = hn.u_str.clone().unwrap_or_default();
+        if crate::dash_mode::dash_faithful() {
+            println!("{}='{}'", hn.node.nam, val.replace('\'', "'\"'\"'"));
+            return;
+        }
+        if crate::dash_mode::bash_mode() && val.is_empty() {
+            println!("{}=", hn.node.nam);
+            return;
+        }
+        if crate::dash_mode::ksh93_mode() && val.contains('\'') {
+            println!("{}={}", hn.node.nam, crate::dash_mode::ksh93_printf_q(&val));
+            return;
+        }
+    }
     // dash quotes the value in its `export -p` / `readonly -p` listings
     // (`export FOO='bar'`); ksh and mksh print it bare.
     if crate::extensions::emulation_output::alias_always_quotes()

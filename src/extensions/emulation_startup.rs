@@ -621,6 +621,21 @@ pub fn apply_personality_param_deltas() {
     // EVERY drop-in: `$OPTARG` starts unset (`${OPTARG+set}` is empty in bash,
     // ksh93, mksh, dash and /bin/sh). zsh pre-declares it as an empty scalar.
     crate::ported::params::unsetparam("OPTARG");
+    // Variables zshrs predeclares that the real shells do not (`MAILCHECK` is 600 in
+    // ksh93, `TMOUT` 0 in ksh93 and mksh, `CDPATH` is never set; bash 5.3 alone has
+    // `SRANDOM`).
+    crate::ported::params::unsetparam("CDPATH");
+    if p == Personality::Ksh93 {
+        crate::ported::params::setsparam("MAILCHECK", "600");
+    } else {
+        crate::ported::params::unsetparam("MAILCHECK");
+    }
+    if matches!(p, Personality::Ksh93 | Personality::Mksh | Personality::Pdksh) {
+        crate::ported::params::setsparam("TMOUT", "0");
+    }
+    if p != Personality::Bash {
+        crate::ported::params::unsetparam("SRANDOM");
+    }
     // zsh's `which` is a builtin; no other shell has one, so the word resolves to
     // the external `which`.
     if let Ok(mut disabled) = crate::ported::builtin::BUILTINS_DISABLED.lock() {

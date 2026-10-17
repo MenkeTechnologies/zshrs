@@ -3291,11 +3291,13 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     // `yy='1'`), where ksh, mksh and zsh quote only when the value needs
     // it. No `alias ` prefix, unlike bash.
     if crate::extensions::emulation_output::alias_always_quotes() {
-        println!(
-            "{}={}",
-            hn.node.nam,
+        // dash escapes a quote inside the value as `'"'"'`.
+        let quoted = if crate::dash_mode::dash_faithful() {
+            format!("'{}'", hn.text.replace('\'', "'\"'\"'"))
+        } else {
             crate::extensions::emulation_startup::single_quote(&hn.text)
-        );
+        };
+        println!("{}={}", hn.node.nam, quoted);
         return;
     }
 

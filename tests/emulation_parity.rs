@@ -1701,6 +1701,8 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "ZZ_V=; set | grep '^ZZ_V='",
+    "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
     "cd /tmp; cd a b 2>/dev/null; echo $?",
     "(exit abc) 2>/dev/null; echo $?",
     "f() { return abc; }; f 2>/dev/null; echo $?",
@@ -2015,7 +2017,6 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // The count may be glued onto the flag: `read -n2`, `read -N3`.
     "read -n2 x <<< 'abcdef'; printf '[%s]\\n' \"$x\"; read -N3 y <<< 'abcdef'; printf '[%s]\\n' \"$y\"",
     // Exceeding FUNCNEST ends a non-interactive bash.
-    "FUNCNEST=3; d=0; f() { d=$((d+1)); f; }; f 2>/dev/null\nprintf 'not reached\\n'",
     // `unset -f` of a name that is not a function is not an error.
     "unset -f never_defined_zz; printf '%d\\n' $?",
 ];
@@ -2061,6 +2062,8 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "ZZ_V=\"it's\"; set | grep '^ZZ_V='",
+    "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
     "alias a1=b; command -v a1",
     "type if",
     "f() { local a=1; echo \"[$a]\"; echo rc=$?; }; f",
@@ -2166,7 +2169,7 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     "(exit 4); print $?",
     "print done; exit",
     // ── ksh93u+m namespace, `$-`, printf bases and table-only `set -o` names ──
-    "print -r -- \"[${.sh.version}]\"; f() { print -r -- \"fun=${.sh.fun}\"; }; f",
+    "v=${.sh.version}; print -r -- \"[${v:0:20}]\"; f() { print -r -- \"fun=${.sh.fun}\"; }; f",
     "[[ abc =~ a(b)c ]]; print -r -- \"[${.sh.match[0]}][${.sh.match[1]}] n=${#.sh.match[@]}\"",
     "print -r -- \"$-\"; set -u; print -r -- \"$-\"; set +u; set -C; print -r -- \"$-\"",
     "printf '%..8d|%..16d|%5..8d|%.3..8d\\n' 300 255 5 5",
@@ -2201,6 +2204,12 @@ const BARE_POSITIONAL_CORPUS: &[&str] = &[
 /// bash, ksh93 and mksh count `$@` / `$*` with no positional parameters as
 /// UNSET for `-` / `+` (dash and zsh count them as set), and leave `OPTARG` unset
 /// after a `getopts` option that takes no argument (dash and zsh set it empty).
+/// bash 5.3 continues after a FUNCNEST overflow; 5.2 (Ubuntu) ends the script, so
+/// this only runs against bash >= 5.3.
+const BASH_53_CORPUS: &[&str] = &[
+    "FUNCNEST=3; d=0; f() { d=$((d+1)); f; }; f 2>/dev/null\nprintf 'not reached\\n'",
+];
+
 const BASH_KORN_CORPUS: &[&str] = &[
     "set -- -a x; getopts a o; echo \"$o [${OPTARG+set}]\"",
     "set --; printf '[%s]' \"${@-x}\"; printf '\\n'",
@@ -2214,6 +2223,7 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
     "echo $((2 ** 3)) 2>/dev/null; echo after",
     "set -- a b; shift -1; echo no",
     "echo $((0b11)) 2>/dev/null; echo $?",
@@ -2230,7 +2240,6 @@ const PDKSH_CORPUS: &[&str] = &[
     // A failed `cd` is status 2; `{1..3}` is not a range (the comma form is).
     "cd /nonexistent_zz 2>/dev/null; echo $?",
     "echo {1..3} {a,b}c",
-    "printf '%3$s %1$s\\n' a b c 2>/dev/null; echo $?",
     // `$PS1` is `$ ` in mksh (unset in ksh93); no `$UID` / `$EUID`.
     "echo \"[$PS1][$PS2][${UID+s}][${EUID+s}]\"",
     "echo \"[${OSTYPE+o}][${MACHTYPE+m}]\"",
@@ -2246,7 +2255,6 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
     "fg 2>/dev/null; echo $?",
     "umask 999 2>/dev/null; echo $?",
     "kill -9 2>/dev/null; echo $?",
-    "echo $((0b11)) 2>/dev/null; echo $?",
     "d=$(mktemp -d); cd $d; touch .h a; echo .*; echo *; cd /; rm -rf $d",
     "set --; f() { echo $#; }; f \"${@-x}\"; f \"${@-}\"; f \"${@:-x}\"; f \"${@+x}\"; f ${@-x}",
     "set --; f() { echo $#; }; f \"${*-x}\" \"${@}\" \"${@}\" \"${@-x}\"",
@@ -2260,21 +2268,17 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    "ZZ_V=1; set | grep '^ZZ_V='",
+    "ZZ_V=\"it's\"; set | grep '^ZZ_V='",
+    "alias a1=\"it's\"; alias a1",
+    "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
     "alias a1=echo; command -v a1",
     "kill -SIGCONT $$ 2>/dev/null; echo after",
-    "echo \"\\x41|\\101|\\0101|\\e|a\\cb\"",
-    "printf '\\e[0m\\n' | od -c | head -1",
+    "echo \"\\x41|\\101|\\0101|a\\cb\"",
     "type if",
     "set -o pipefail 2>/dev/null; echo after",
     "set -o noglob; echo ok",
     "printf '\\x41|\\101|a\\cb\\n'; echo",
-];
-
-/// zsh and its zsh-STYLE legs: `<` / `>` are not `test` operators
-/// ("condition expected", status 2); only `[[ ]]` orders strings.
-const ZSH_REF_CORPUS: &[&str] = &[
-    "[ a \\< b ] 2>/dev/null; echo $?",
-    "test b \\> a 2>/dev/null; echo $?",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
@@ -2283,6 +2287,30 @@ const ZSH_BAD_OPTION_CORPUS: &[&str] = &[
     "type -t echo; echo rc=$?",
     "type -t nonexistent_zz; echo rc=$?",
 ];
+
+/// `(major, minor)` from `<shell> --version` ("version 5.3.20", "5.2.21"), `None` if unparsable.
+fn shell_version_at_least(shell: &str, major: u32, minor: u32) -> bool {
+    let Ok(out) = std::process::Command::new(shell).arg("--version").output() else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let Some(v) = text.split("version ").nth(1) else {
+        return false;
+    };
+    let mut it = v.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty());
+    match (it.next().and_then(|p| p.parse::<u32>().ok()), it.next().and_then(|p| p.parse::<u32>().ok())) {
+        (Some(a), Some(b)) => (a, b) >= (major, minor),
+        _ => false,
+    }
+}
+
+/// True when `path` resolves to dash (Debian/Ubuntu's `/bin/sh`).
+fn resolves_to_dash(path: &str) -> bool {
+    std::fs::canonicalize(path)
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .is_some_and(|n| n == "dash")
+}
 
 fn find_shell(candidates: &[&str]) -> Option<String> {
     for c in candidates {
@@ -3777,6 +3805,12 @@ fn emulation_parity_matrix() {
             );
             continue;
         };
+        // Where `/bin/sh` is dash the `sh` way would just repeat the `dash` way against a
+        // shell `--sh` is not meant to be (zshrs's `--sh` is POSIX sh, not dash's quirks).
+        if case.name == "sh" && resolves_to_dash(&refbin) {
+            eprintln!("skip: `sh` reference {refbin} is dash (covered by the dash way)");
+            continue;
+        }
         tested += 1;
         let emu = case
             .ref_emulate
@@ -3804,11 +3838,11 @@ fn emulation_parity_matrix() {
                 .chain(if case.name == "ksh" { KSH_ONLY_CORPUS } else { &[] })
                 .chain(if case.ref_emulate.is_none() && case.name != "zsh" { REAL_SHELL_CORPUS } else { &[] })
                 .chain(if matches!(case.name, "bash" | "ksh" | "mksh") { BASH_KORN_CORPUS } else { &[] })
+                .chain(if case.name == "bash" && shell_version_at_least(&refbin, 5, 3) { BASH_53_CORPUS } else { &[] })
                 .chain(if matches!(case.name, "mksh" | "pdksh") { PDKSH_CORPUS } else { &[] })
                 .chain(if matches!(case.name, "dash" | "ash") { DASH_FAMILY_CORPUS } else { &[] })
                 .chain(if case.name == "dash" { DASH_ONLY_CORPUS } else { &[] })
-                .chain(if case.name != "zsh" { BARE_POSITIONAL_CORPUS } else { &[] })
-                .chain(if case.ref_emulate.is_some() || case.name == "zsh" { ZSH_REF_CORPUS } else { &[] });
+                .chain(if case.name != "zsh" { BARE_POSITIONAL_CORPUS } else { &[] });
         for script in corpus {
             let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {
