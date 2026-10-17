@@ -18278,6 +18278,16 @@ pub fn bin_trap(
         if let Some(f) = &p_filter {
             combined.retain(|(i, _)| f.contains(i));
         }
+        // !!! DASH/PDKSH GATE (no C counterpart) !!! a subshell starts with its traps reset,
+        // so dash and mksh list nothing from `( trap )`, `$(trap)` or `trap | cmd` (a forked
+        // pipeline stage has a pid other than `$$`). bash and ksh93 differ per context and
+        // keep the shared behaviour.
+        if (crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family())
+            && (SUBSHELL_DEPTH.load(Relaxed) > 0
+                || std::process::id() as i32 != crate::ported::params::mypid.load(Relaxed) as i32)
+        {
+            combined.clear();
+        }
         combined.sort_by_key(|(idx, _)| *idx);
         // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 walks the trap
         // table downwards; c:7358 and every other shell walk it upwards.

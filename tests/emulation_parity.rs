@@ -2233,6 +2233,7 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "trap 'echo x' INT; (trap) | wc -l | tr -d ' '; trap | wc -l | tr -d ' '; x=$(trap); echo \"[$x]\"; trap",
     "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
     "echo $((2 ** 3)) 2>/dev/null; echo after",
     "set -- a b; shift -1; echo no",
@@ -2278,6 +2279,7 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    "trap 'echo x' INT; (trap) | wc -l | tr -d ' '; trap | wc -l | tr -d ' '; x=$(trap); echo \"[$x]\"; trap",
     "ZZ_V=1; set | grep '^ZZ_V='",
     "ZZ_V=\"it's\"; set | grep '^ZZ_V='",
     "alias a1=\"it's\"; alias a1",
