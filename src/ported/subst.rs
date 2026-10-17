@@ -18019,7 +18019,9 @@ pub fn paramsubst(
                             // !!! DASH-FAMILY GATE (dash_mode::fatal_error_status):
                             // dash's exraise leaves 2 where zsh exits 1. !!!
                             crate::ported::builtin::zexit(
-                                crate::extensions::dash_mode::fatal_error_status().unwrap_or(1),
+                                crate::extensions::dash_mode::fatal_error_status()
+                                    .or_else(crate::fusevm_bridge::sh_expansion_error_status)
+                                    .unwrap_or(1),
                                 crate::ported::zsh_h::ZEXIT_NORMAL,
                             ); // c:3375
                         } else {

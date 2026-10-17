@@ -434,3 +434,5 @@ sh	echo -n hi; echo; set -- a; shift 9 2>/dev/null; echo $?
 ksh	integer v=7; v=5; typeset -p v
 mksh	x=2147483647; echo $((x+1)) $((2147483647*2)) $((1<<33))
 mksh	v='a\*b'; p='\*'; echo "${v%%$p}" "${v#*$p}" "${v%$p}"
+sh	echo a; echo $((1%0)); echo no; echo $?
+sh	echo ${x:?m}; echo no

@@ -1772,15 +1772,26 @@ fn filesub_deferred_word(raw: Value) -> Value {
 /// Status for a command whose words raised errflag, stored into LASTVAL:
 /// c:Src/exec.c:3760-3761 `lastval = 1` after a globlist error, else
 /// c:3523-3524 `if (!lastval) lastval = 1` after a prefork error.
+/// bash in POSIX mode (the `sh` personality) ends a non-interactive shell on a failed
+/// expansion with status 127; a `( … )` subshell reports 1.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub(crate) fn sh_expansion_error_status() -> Option<i32> {
+    let top_level = crate::ported::builtin::SUBSHELL_DEPTH.load(std::sync::atomic::Ordering::Relaxed) == 0;
+    (top_level && crate::extensions::emulation_startup::personality() == crate::extensions::emulation_startup::Personality::Sh)
+        .then_some(127)
+}
+
 fn words_errflag_status() -> i32 {
     use std::sync::atomic::Ordering;
     // !!! DROP-IN (no C counterpart) !!! bash, ksh93 and mksh report a failed expansion as
     // status 1 whatever the previous status was; only zsh keeps a non-zero one (c:3523-3524).
     if crate::dash_mode::posix_faithful() && !crate::dash_mode::dash_strict() {
         GLOB_WORD_ERRFLAG.with(|c| c.set(false));
-        crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
-        try_with_executor(|exec| exec.set_last_status(1));
-        return 1;
+        let status = sh_expansion_error_status().unwrap_or(1);
+        crate::ported::builtin::LASTVAL.store(status, Ordering::Relaxed);
+        try_with_executor(|exec| exec.set_last_status(status));
+        return status;
     }
     let status = if GLOB_WORD_ERRFLAG.with(|c| c.replace(false)) {
         1 // c:3761
