@@ -1005,13 +1005,13 @@ Two further notes on reading this table:
   signals SIG-prefixed in bash, and nothing at all in dash/ksh/sh.
 
 Per emulation target, out of 300 each: `ksh`, `mksh`, `pdksh`, `bash`, `sh`, `dash` and
-`ash` are all 0. Wider sweeps (3,000 cases per seed range) still find a handful per
-target: dash/ash `getopts` after an `OPTIND=1` reset (the Homebrew dash and
-`/bin/dash` disagree), `$nope[$k]` under `NO_UNSET` with a dynamic key, the bare
-`declare -i` listing under bash (zshrs lists zsh specials), and `NO_UNSET` cases in the
-zsh-style legs whose oracle wraps the script in `emulate -c`. The fuzzer starts zshrs under the reference's path
-(`argv[0]`), because `caller` and `${BASH_SOURCE[0]}` in a `-c` string report it. The emulation modes are held to a
-weaker contract than zsh mode -- exit-status *sign* rather than exact code --
+`ash` are all 0, and five further 3,000-case seed ranges per target found no divergence the
+last fixes left open. The `dash` and `ash` references are `/bin/dash` (the dash the parity
+corpus pins); the Homebrew dash 0.5.13 differs from it in `getopts`, `$'…'`, `echo` escapes
+and `alias` output, and is not a target. The fuzzer starts zshrs under the reference's path
+(`argv[0]`), because `caller` and `${BASH_SOURCE[0]}` in a `-c` string report it, and runs the
+zsh-style legs as real zsh started under the emulated name (`sh`, `ksh`). The emulation modes
+are held to a weaker contract than zsh mode -- exit-status *sign* rather than exact code --
 because the reference shells disagree with each other on exact codes.
 
 **zsh's own test suite, against zsh** -- [`scripts/ztst_compsys.py`](scripts/ztst_compsys.py)
