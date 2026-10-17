@@ -3120,22 +3120,22 @@ These are pre-existing bugs the audit exposed, NOT regressions from the iter-86 
 
 ## Still open (seventy-fifth-pass — remaining)
 
-- **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
-- **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
+- ~~**`nocorrect CMD args`**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `nocorrect echo a b` prints `a b`.
+- ~~**`set -n` syntax-only mode**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `set -n; echo ran` prints nothing.
 - ~~**`${(j:sep:)$(cmd subst)}`**~~ — closed in eighty-eighth-pass batch 25. (j) is now a no-op on scalar cmd-subst output (zsh-correct).
-- **Arith error full command-abort** — zsh: `echo $((10/0))` prints only the error and skips `echo`; zshrs prints the error then runs `echo 0`. Partial fix landed (error message now visible); full abort needs expansion-time error plumbing.
-- **`set` noargs print all variables** — `set` with no args should dump every shell parameter in name=value form. zshrs prints ~10 lines; zsh prints ~480. Massive output diff; deferred (needs full param-table walk + assoc/array formatting).
+- ~~**Arith error full command-abort**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `echo $((10/0)); echo after` prints only `division by zero`.
+- **`set` noargs print all variables** — the full parameter table is listed now (2026-10-17 at `bd20494ab0`: 477 lines vs zsh's 473). The extra names are zshrs's own `HELPDIR`, `SRANDOM`, `ZSHRS_VERSION`, `ZSH_EXEPATH`.
 - ~~**`${a:^b}` zip-arrays**~~ — closed in eighty-eighth-pass batch 24. SUB_ZIP_SHORT and SUB_ZIP_LONG implemented.
 - ~~**`${(v)assoc}` insertion order**~~ — closed in eighty-eighth-pass batch 1. Switched assoc storage to IndexMap.
-- **`${(s:l:)hello}` empty-element handling** — zsh drops empty elements when splitting (`hello` split by `l` → `he`, `o`); zshrs keeps empties (`he`, ``, `o`). Niche.
-- **`${#:-empty}` length-of-default** — zsh returns 5 (length of "empty"); zshrs returns 0. Esoteric edge case in `${#name:-default}` parsing.
-- **`*` glob ordering caseglob** — zsh sorts `bench bins Cargo.lock …` (case-insensitive); zshrs sorts `Cargo.lock … bench bins` (case-sensitive). Glob expansion needs to honor the `caseglob` option (default-on in zsh).
-- **`declare -A h; h[foo bar]=baz`** — zsh: "bad pattern: h[foo"; zshrs: "command not found: h[foo". Both error; format/source differs. (Re-verified 2026-06-12 after the unclosed-class patcompile fix: unchanged — this one comes from word-splitting the assignment, not pattern compilation.)
-- **`declare -i` / `declare -a` / `declare -A` no-args listing** — zsh includes shell-internal params (`!`, `$`, `EUID`, `fpath`, etc.) in their respective type listings. zshrs's special params aren't typed, so the filter would return empty. Needs typed-special-param infrastructure.
-- **Math funcs without `zmodload zsh/mathfunc`** — zshrs auto-provides `sqrt`, `sin`, `cos`, `floor`, `ceil`, `min`, `max`, etc.; zsh requires `zmodload zsh/mathfunc` first and errors with "unknown function" otherwise. zshrs is more permissive (likely a feature for daily use); leaving as documented divergence.
+- ~~**`${(s:l:)hello}` empty-element handling**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `he`, `o`.
+- ~~**`${#:-empty}` length-of-default**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `5`.
+- ~~**`*` glob ordering caseglob**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `bench bins Cargo.lock`.
+- ~~**`declare -A h; h[foo bar]=baz`**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `bad pattern: h[foo`.
+- ~~**`declare -i` / `declare -a` / `declare -A` no-args listing**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output) for `declare -i`: the special params (`!`, `#`, `$`, ...) are listed.
+- ~~**Math funcs without `zmodload zsh/mathfunc`**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `echo $(( sqrt(4) ))` is `unknown function: sqrt` without the module.
 
-- **Backtick nesting** — parser-deferred.
-- **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
+- ~~**Backtick nesting**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): ``echo `echo \`echo nested\``` prints `nested`.
+- ~~**`xtrace` exact zsh format**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output) apart from the shell name: `set -x; true` traces through PS4 the same way.
 
 The following items have been investigated and confirmed as false positives or fundamentally compatible:
 
@@ -3151,13 +3151,13 @@ The following items have been investigated and confirmed as false positives or f
 - **CSH_NULL_GLOB error vs command-local stderr redirect** — narrow ordering edge, 2026-06-12 sweep D: `setopt cshnullglob; ls *nope* 2>/dev/null` — zsh emits `no match` during prefork on the SHELL's stderr (before the command's redirections apply), so `2>/dev/null` doesn't eat it; zshrs's per-command badcshglob boundary fires after the dup2, so the message is suppressed. All unredirected forms match (builtin abort + rc 1, external skip + continue, mixed success silence — pinned in `probe_sweep_2026_06_12_d`). Fix requires a word-expansion-complete hook before the redirect ops in the VM dispatch.
 - **`typeset -n` parity probes** — zshrs implements namerefs from the vendored master source (PM_NAMEREF, Src/params.c:6332); the zsh 5.9.1 oracle binary predates them and errors `bad option: -n`. Spec-over-oracle: pinned as a zshrs-behavior test (`bulk_g_nameref_typeset_n_zshrs_pin`), never as oracle-parity rows.
 
-The "Stub modules (loaded but limited)" section below remains as documented deferrals (`zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp`, `zsh/db_gdbm`) — these are niche features whose `zmodload` call currently no-ops, with the corresponding builtins not registered. They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
+The "Stub modules (loaded but limited)" section below now lists only `zsh/db_gdbm`; `zsh/cap`, `zsh/clone`, `zsh/curses` and `zsh/zftp` register their builtins (re-verified 2026-10-17). They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
 
 ## Stub modules (loaded but limited)
 
-- `zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp` — module loads via `zmodload` succeeds but the corresponding builtins (`cap`, `clone`, `zcurses`, `zftp`) aren't registered. Niche features; deferred.
+- `zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp` — closed; after `zmodload`, `whence -w` reports `cap`, `getcap`, `setcap`, `clone`, `zcurses` and `zftp` as builtins, as zsh does (re-verified 2026-10-17 at `bd20494ab0`).
 - `zsh/db_gdbm` — `ztie` correctly reports "GDBM support not compiled in" (no native gdbm dep). Acceptable stub behavior.
 - `zsh/files chown/chmod/chgrp` — works (proper error for nonexistent file).
 - `zsh/mapfile` — closed; `${mapfile[/path]}` magic assoc reads file bytes, composes with `(f)` flag for line-split. See "Closed (this session)" above.
 - `zsh/private` — closed; routed to `builtin_local`.
-- `zsh/newuser`, `zsh/nearcolor` — niche, deferred.
+- `zsh/newuser`, `zsh/nearcolor` — `zmodload` succeeds (status 0), as in zsh.

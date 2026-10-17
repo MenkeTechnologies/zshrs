@@ -1875,6 +1875,7 @@ fi</code></pre>
 
       <p class="chapter-meta">157 entries</p>
 
+
       <article class="doc-entry" id="doc-lsp-compat-dash">
 
         <h3><code>-</code> <a class="doc-anchor" href="#doc-lsp-compat-dash">¶</a></h3>
@@ -3632,6 +3633,7 @@ fi</code></pre>
 
       <p class="chapter-meta">31 entries</p>
 
+
       <article class="doc-entry" id="doc-lsp-keyword-bang">
 
         <h3><code>!</code> <a class="doc-anchor" href="#doc-lsp-keyword-bang">¶</a></h3>
@@ -3905,6 +3907,7 @@ fi</code></pre>
       <h2>Option Index</h2>
 
       <p class="chapter-meta">197 entries · the canonical zsh option registry. Set / clear via <code>setopt NAME</code> / <code>unsetopt NAME</code>.</p>
+
 
       <article class="doc-entry" id="doc-lsp-option-aliases">
 
@@ -4993,6 +4996,12 @@ fi</code></pre>
         <p>If set, regular expression matching with the <code>=~</code> operator will use Perl-Compatible Regular Expressions from the PCRE library. (The <code>zsh/pcre</code> module must be available.) If not set, regular expressions will use the extended regexp syntax provided by the system libraries.</p>
       </article>
 
+      <article class="doc-entry" id="doc-lsp-option-restricted">
+
+        <h3><code>restricted</code> <a class="doc-anchor" href="#doc-lsp-option-restricted">¶</a></h3>
+        <p>Enables restricted mode.  This option cannot be changed using <code>unsetopt</code>, and setting it inside a function always changes it globally regardless of the <code>LOCAL_OPTIONS</code> option.  See the Restricted Shell section of <code>man zshall</code>.</p>
+      </article>
+
       <article class="doc-entry" id="doc-lsp-option-rmstarsilent">
 
         <h3><code>rmstarsilent</code> <a class="doc-anchor" href="#doc-lsp-option-rmstarsilent">¶</a></h3>
@@ -5234,6 +5243,7 @@ fi</code></pre>
       <h2>Special Variable Index</h2>
 
       <p class="chapter-meta">256 entries · zsh-defined parameters and well-known env vars. Includes both scalar (<code>$?</code>) and array (<code>$path</code>) forms.</p>
+
 
       <article class="doc-entry" id="doc-lsp-special-bang">
 
@@ -6952,6 +6962,7 @@ fi</code></pre>
 
       <p class="chapter-meta">52 entries</p>
 
+
       <article class="doc-entry" id="doc-lsp-compsys-_all_labels">
 
         <h3><code>_all_labels</code> <a class="doc-anchor" href="#doc-lsp-compsys-_all_labels">¶</a></h3>
@@ -7329,7 +7340,7 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-compsys-_ls">
 
         <h3><code>_ls</code> <a class="doc-anchor" href="#doc-lsp-compsys-_ls">¶</a></h3>
-        <p>Completion for <code>ls</code> — flags + file paths. Baseline stub that delegates path completion to <code>_files</code> and option completion to a static spec.</p>
+        <p>Completion for <code>ls</code> — flags + file paths. Option specs plus file-path completion via <code>_files</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-compsys-_main_complete">
@@ -7553,7 +7564,8 @@ fi</code></pre>
 
       <h2>Extension Builtin Index</h2>
 
-      <p class="chapter-meta">116 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
+      <p class="chapter-meta">123 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
+
 
       <article class="doc-entry" id="doc-lsp-extension-ai">
 
@@ -7672,7 +7684,7 @@ fi</code></pre>
 
         <h3><code>dbview</code> <a class="doc-anchor" href="#doc-lsp-extension-dbview">¶</a></h3>
         <p>dbview — browse zshrs SQLite cache tables without SQL.</p>
-        <p>Usage:   dbview                      — list all tables and row counts   dbview autoloads             — dump autoloads table (name, source, body len, ast len)   dbview autoloads _git        — show single row by name   dbview comps                 — dump comps table   dbview history               — recent history entries   dbview history &lt;pattern&gt;     — search history   dbview plugins               — plugin cache entries   dbview executables            — PATH executables cache   dbview &lt;table&gt; --count       — just the count</p>
+        <p>Usage:   dbview                      — list all tables and row counts   dbview autoloads             — dump autoloads table (name, source, body len, ast len)   dbview autoloads _git        — show single row by name   dbview comps [pattern]       — live _comps table (command → completer); --count for the total   dbview history               — recent history entries   dbview history &lt;pattern&gt;     — search history   dbview plugins               — plugin cache entries   dbview scripts [pattern]     — compiled sourced scripts (scripts.rkyv)   dbview executables            — PATH executables cache   dbview &lt;table&gt; --count       — just the count</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-dircolors">
@@ -7690,7 +7702,7 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-doctor">
 
         <h3><code>doctor</code> <a class="doc-anchor" href="#doc-lsp-extension-doctor">¶</a></h3>
-        <p>doctor - diagnostic report of shell health, caches, and performance</p>
+        <p>doctor [--json] - diagnostic report of shell health, caches, and performance</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-env">
@@ -7702,13 +7714,13 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-expand">
 
         <h3><code>expand</code> <a class="doc-anchor" href="#doc-lsp-extension-expand">¶</a></h3>
-        <p>expand [-t TAB] [FILE...] — convert tabs to spaces. coreutils expand(1).</p>
+        <p>expand [-i] [-t TAB] [FILE...] — convert tabs to spaces. coreutils expand(1); <code>-i</code> converts only leading tabs.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-expr">
 
         <h3><code>expr</code> <a class="doc-anchor" href="#doc-lsp-extension-expr">¶</a></h3>
-        <p>expr ARG... — evaluate expression. POSIX expr(1). Recognizes the closing arg list directly (single-pass shunting-yard would be heavier than needed for the common scripts).</p>
+        <p>expr ARG... — evaluate expression. POSIX expr(1). Subset port: integer arithmetic (+ - * / %), string match ': REGEX', length STRING, substr STRING POS LEN, index STRING CHARS. Recognizes the closing arg list directly (single-pass shunting-yard would be heavier than needed for the common scripts).</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-factor">
@@ -7814,6 +7826,27 @@ fi</code></pre>
         <p>nproc — print number of online CPUs. coreutils nproc(1). --all uses CPU count from sysconf(_SC_NPROCESSORS_CONF); default uses _SC_NPROCESSORS_ONLN (the schedulable subset).</p>
       </article>
 
+      <article class="doc-entry" id="doc-lsp-extension-pany">
+
+        <h3><code>pany</code> <a class="doc-anchor" href="#doc-lsp-extension-pany">¶</a></h3>
+        <p>pany 'cmd {}' arg1 arg2 ... — parallel any. Status 0 as soon as <code>cmd</code> succeeds for some argument, else 1; prints nothing. Remaining arguments are skipped once one passes.</p>
+        <p>Usage:   pany 'grep -q TODO {}' *.rs &amp;&amp; echo has-todos</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-par_lines">
+
+        <h3><code>par_lines</code> <a class="doc-anchor" href="#doc-lsp-extension-par_lines">¶</a></h3>
+        <p>par_lines 'cmd {}' FILE — run <code>cmd</code> once per line of FILE, <code>{}</code> replaced by the line. FILE is memory-mapped and split into line-aligned ranges that run in parallel (one shell process per range); output is in file order.</p>
+        <p>Usage:   par_lines 'echo got {}' access.log</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-par_walk">
+
+        <h3><code>par_walk</code> <a class="doc-anchor" href="#doc-lsp-extension-par_walk">¶</a></h3>
+        <p>par_walk 'cmd {}' PATH... — run <code>cmd</code> once per file and directory under each PATH (the PATHs included), <code>{}</code> replaced by the path. The tree is walked in parallel with names sorted within a directory; output is in walk order.</p>
+        <p>Usage:   par_walk 'test -f {} &amp;&amp; wc -l {}' src</p>
+      </article>
+
       <article class="doc-entry" id="doc-lsp-extension-paste">
 
         <h3><code>paste</code> <a class="doc-anchor" href="#doc-lsp-extension-paste">¶</a></h3>
@@ -7825,6 +7858,13 @@ fi</code></pre>
         <h3><code>peach</code> <a class="doc-anchor" href="#doc-lsp-extension-peach">¶</a></h3>
         <p>peach 'cmd {}' arg1 arg2 ... — parallel for-each, no output ordering. Like pmap but doesn't collect output — fire-and-forget, print as completed.</p>
         <p>Usage:   peach 'convert {} {}.png' *.svg   peach 'rsync -a {} remote:{}' dir1 dir2 dir3</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-pfirst">
+
+        <h3><code>pfirst</code> <a class="doc-anchor" href="#doc-lsp-extension-pfirst">¶</a></h3>
+        <p>pfirst 'cmd {}' arg1 arg2 ... — print the FIRST argument (lowest position) for which <code>cmd</code> succeeds; status 1 and no output when none does. Arguments past the best match found so far are not tested.</p>
+        <p>Usage:   pfirst 'test -x {}/zsh' /usr/bin /opt/homebrew/bin</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-pgrep">
@@ -7841,53 +7881,11 @@ fi</code></pre>
         <p>Usage:   pmap 'gzip {}' *.log   pmap 'echo {}' a b c d   ls *.rs | pmap 'wc -l {}'</p>
       </article>
 
-      <article class="doc-entry" id="doc-lsp-extension-pany">
-
-        <h3><code>pany</code> <a class="doc-anchor" href="#doc-lsp-extension-pany">¶</a></h3>
-        <p>pany 'cmd {}' arg1 arg2 ... — parallel any. Status 0 as soon as cmd succeeds for some argument, else 1; prints nothing.</p>
-        <p>Usage:   pany 'grep -q TODO {}' *.rs &amp;&amp; echo has-todos</p>
-      </article>
-
-      <article class="doc-entry" id="doc-lsp-extension-par_lines">
-
-        <h3><code>par_lines</code> <a class="doc-anchor" href="#doc-lsp-extension-par_lines">¶</a></h3>
-        <p>par_lines 'cmd {}' FILE — run cmd once per line of FILE, {} replaced by the line. FILE is memory-mapped and split into line-aligned ranges that run in parallel; output is in file order.</p>
-        <p>Usage:   par_lines 'echo got {}' access.log</p>
-      </article>
-
-      <article class="doc-entry" id="doc-lsp-extension-par_walk">
-
-        <h3><code>par_walk</code> <a class="doc-anchor" href="#doc-lsp-extension-par_walk">¶</a></h3>
-        <p>par_walk 'cmd {}' PATH... — run cmd once per file and directory under each PATH, {} replaced by the path; output is in walk order.</p>
-        <p>Usage:   par_walk 'test -f {} &amp;&amp; wc -l {}' src</p>
-      </article>
-
-      <article class="doc-entry" id="doc-lsp-extension-pfirst">
-
-        <h3><code>pfirst</code> <a class="doc-anchor" href="#doc-lsp-extension-pfirst">¶</a></h3>
-        <p>pfirst 'cmd {}' arg1 arg2 ... — print the FIRST argument (lowest position) for which cmd succeeds; status 1 and no output when none does.</p>
-        <p>Usage:   pfirst 'test -x {}/zsh' /usr/bin /opt/homebrew/bin</p>
-      </article>
-
       <article class="doc-entry" id="doc-lsp-extension-pmap_chunked">
 
         <h3><code>pmap_chunked</code> <a class="doc-anchor" href="#doc-lsp-extension-pmap_chunked">¶</a></h3>
-        <p>pmap_chunked N 'cmd {}' arg1 arg2 ... — like pmap, but arguments go to the pool in chunks of N and each chunk runs in one shell process.</p>
+        <p>pmap_chunked N 'cmd {}' arg1 arg2 ... — like pmap, but arguments go to the pool in chunks of N and each chunk runs in ONE shell process, paying process startup once per N items. Output is in argument order.</p>
         <p>Usage:   pmap_chunked 50 'gzip {}' *.log</p>
-      </article>
-
-      <article class="doc-entry" id="doc-lsp-extension-psort">
-
-        <h3><code>psort</code> <a class="doc-anchor" href="#doc-lsp-extension-psort">¶</a></h3>
-        <p>psort [-n] [-r] [ITEM...] — parallel stable sort of the operands, or of stdin lines when none are given. -n compares numerically, -r reverses.</p>
-        <p>Usage:   psort -nr 10 9 100</p>
-      </article>
-
-      <article class="doc-entry" id="doc-lsp-extension-puniq">
-
-        <h3><code>puniq</code> <a class="doc-anchor" href="#doc-lsp-extension-puniq">¶</a></h3>
-        <p>puniq [ITEM...] — distinct operands (or stdin lines) in first-occurrence order, hash-partitioned across the worker pool.</p>
-        <p>Usage:   cat big.log | puniq</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-printenv">
@@ -7911,6 +7909,20 @@ fi</code></pre>
         <p>Usage:   provenance                  — list every tracked parameter and function   provenance NAME             — print NAME's lineage   provenance -m NAME...       — start tracking NAME   provenance -u NAME...       — stop tracking NAME, drop its lineage   provenance -j NAME          — print NAME's lineage as JSON   provenance -f ...           — act on shell functions instead of parameters   provenance -a               — track everything from here on   provenance -ua              — stop tracking everything (keeps what is recorded)   provenance -c               — clear every lineage and disarm</p>
         <p>Flags bundle: <code>-mf NAME</code> arms a function, <code>-jf NAME</code> prints one as JSON.</p>
         <p>The engine records nothing until the first <code>-m</code> or <code>-a</code> (or <code>[provenance] track_all</code> at startup), and refuses to arm at all when <code>[provenance] enabled = false</code> in <code>~/.zshrs/zshrs.toml</code> or <code>ZSHRS_PROVENANCE=0</code> is set.</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-psort">
+
+        <h3><code>psort</code> <a class="doc-anchor" href="#doc-lsp-extension-psort">¶</a></h3>
+        <p>psort [-n] [-r] [ITEM...] — parallel stable sort of the operands, or of stdin lines when none are given. -n compares numerically, -r reverses.</p>
+        <p>Usage:   psort -nr 10 9 100</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-puniq">
+
+        <h3><code>puniq</code> <a class="doc-anchor" href="#doc-lsp-extension-puniq">¶</a></h3>
+        <p>puniq [ITEM...] — distinct operands (or stdin lines) in first-occurrence order, hash-partitioned across the worker pool.</p>
+        <p>Usage:   cat big.log | puniq</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-realpath">
@@ -7970,7 +7982,7 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-tac">
 
         <h3><code>tac</code> <a class="doc-anchor" href="#doc-lsp-extension-tac">¶</a></h3>
-        <p>tac [FILE...] — concatenate files, reverse line order. coreutils tac(1).</p>
+        <p>tac [-b] [-r] [-s SEP] [FILE...] — concatenate files, reverse record order, one file at a time. coreutils tac(1): records end with SEP (default newline); <code>-b</code> attaches SEP to the start of the following record instead; <code>-r</code> treats SEP as a regular expression.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-tail">
@@ -7994,7 +8006,7 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-tput">
 
         <h3><code>tput</code> <a class="doc-anchor" href="#doc-lsp-extension-tput">¶</a></h3>
-        <p>tput — terminfo capability query (minimal subset). Common subset of ncurses tput(1):   tput cols / lines      → terminal width / height   tput colors            → terminal color count   tput clear / cl        → clear screen   tput cup R C           → cursor to (row, col) (0-based)   tput sgr0 / op         → reset attributes / colors   tput bold / smso / rmso / smul / rmul / rev / blink                          → text attributes   tput setaf N / setab N → fg/bg color (8/16 colors) Many other terminfo capabilities aren't yet wired; unknown capabilities fall through to echotc's two-letter mapping or silently exit 1 (tput's standard error code).</p>
+        <p>tput [-T TERM] [-x] [-S] CAPNAME [PARAMS...] — terminfo capability query/emit. The capability is looked up in the terminfo entry for <code>-T TERM</code> (default <code>$TERM</code>) by terminfo name, then by termcap code: numbers print, booleans set the exit status (0 true, 1 false), strings are expanded with the parameters and written raw. <code>cols</code> and <code>lines</code> report the live terminal size; <code>init</code> / <code>reset</code> emit the <code>is1..is3</code> / <code>rs1..rs3</code> sequences; <code>clear</code> also emits <code>E3</code> (scrollback) unless <code>-x</code> is given. Unknown capability exits 4, unknown terminal 3, no terminal 2.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-tr">
@@ -8042,7 +8054,7 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-users">
 
         <h3><code>users</code> <a class="doc-anchor" href="#doc-lsp-extension-users">¶</a></h3>
-        <p>users — print logged-in usernames. Coreutils users(1) / POSIX. Fallback minimal impl: prints \$USER (or current effective user via getpwuid) since fully reading utmp is platform-specific. Multi-user output not yet implemented; shell scripts that just check <code>[[ $(users) ]]</code> still work.</p>
+        <p>users — print logged-in usernames. Coreutils users(1) / POSIX. Walks utmpx via getutxent(3) and lists every USER_PROCESS entry (sorted); falls back to the effective user when utmpx has no entries.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-wc">
@@ -8066,7 +8078,7 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-zask">
 
         <h3><code>zask</code> <a class="doc-anchor" href="#doc-lsp-extension-zask">¶</a></h3>
-        <p>Send an ask-style request to the daemon and print the JSON response. Used by tools/agents that want a single synchronous query against the shared catalog.</p>
+        <p>Ask another shell for input through the daemon and manage the requests. <code>zask --target shell:N picker|input|dialog|menu [opts]</code>, <code>zask progress</code>, <code>zask pending</code>, <code>zask take</code>, <code>zask dismiss ID | --all</code>, <code>zask inbox-clear</code>, <code>zask response ID DATA</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zassert_contains">
@@ -8173,19 +8185,19 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-zcache">
 
         <h3><code>zcache</code> <a class="doc-anchor" href="#doc-lsp-extension-zcache">¶</a></h3>
-        <p>Read / write / list the per-shell cache namespace. <code>zcache get K</code> / <code>zcache set K V [TTL]</code> / <code>zcache del K</code> / <code>zcache list [PREFIX]</code>. Backed by the daemon's in-memory KV with optional SQLite persistence.</p>
+        <p>Inspect and manage the zshrs caches: daemon shards, the catalog and the caches the shell writes itself. <code>zcache info</code>, <code>zcache clean [all|shards|shard NAME|index|shell|log|catalog|stats|zwc|zcompdump|legacy] [--dry-run]</code>, <code>zcache verify</code>, <code>zcache view TARGET</code>, <code>zcache export</code>, <code>zcache import</code>, <code>zcache daemon status|stop|restart</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zcmddashresult">
 
         <h3><code>zcmd-result</code> <a class="doc-anchor" href="#doc-lsp-extension-zcmddashresult">¶</a></h3>
-        <p>Push the exit status + output of a just-completed command to the daemon's command-history catalog. Used by <code>precmd</code> hooks to populate the cross-shell <code>zhistory</code> index.</p>
+        <p>Responder side of <code>zsend --wait</code>: report the exit status and output of a command a <code>cmd:execute</code> event delivered. <code>zcmd-result --id DELIVERY_ID [--exit-code N] [--stdout TEXT] [--stderr TEXT]</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zcomplete">
 
         <h3><code>zcomplete</code> <a class="doc-anchor" href="#doc-lsp-extension-zcomplete">¶</a></h3>
-        <p>Push a completion candidate to the daemon's shared completion cache. Other shells running compinit will see it without re-walking fpath.</p>
+        <p>Ask the daemon's <code>complete</code> op for candidates (commands, handlers, history) matching a command-line prefix and print the JSON reply. <code>zcomplete PREFIX [--limit N]</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zd">
@@ -8199,61 +8211,61 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-zhistory">
 
         <h3><code>zhistory</code> <a class="doc-anchor" href="#doc-lsp-extension-zhistory">¶</a></h3>
-        <p>Query the daemon's federated command-history catalog. Spans every shell that pushed via <code>zcmd-result</code>. SQLite FTS5-backed; <code>zhistory search 'pattern'</code>.</p>
+        <p>Read and write the daemon's cross-shell history store (history.db). <code>zhistory append LINE [--exit-code N] [--cwd DIR]</code>, <code>zhistory query [--filter PAT] [--mode match|fts|like|prefix|exact] [--cwd DIR] [--limit N]</code>, <code>zhistory count</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zid">
 
         <h3><code>zid</code> <a class="doc-anchor" href="#doc-lsp-extension-zid">¶</a></h3>
-        <p>Print the current shell's federated ID — the stable <code>shell_id</code> (<code>bash</code> / <code>zsh</code> / <code>zshrs</code> / …) and the per-process <code>bundle_id</code> the daemon uses to scope state.</p>
+        <p>Print the client id the daemon assigned to this connection.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zjob">
 
         <h3><code>zjob</code> <a class="doc-anchor" href="#doc-lsp-extension-zjob">¶</a></h3>
-        <p>Manage background jobs through the daemon: <code>zjob submit -- cmd …</code> queues, <code>zjob status ID</code>, <code>zjob output ID</code>, <code>zjob wait ID</code>, <code>zjob kill ID</code>. Jobs survive shell exit because the daemon owns them.</p>
+        <p>Run and manage jobs owned by the daemon, so they outlive the shell. <code>zjob submit CMD [ARGS] [--cwd DIR] [--tag T]</code>, <code>zjob list</code>, <code>zjob status ID</code>, <code>zjob output ID [--follow]</code>, <code>zjob attach ID</code>, <code>zjob kill ID [--signal NAME]</code>, <code>zjob cancel ID</code>, <code>zjob wait ID</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zlock">
 
         <h3><code>zlock</code> <a class="doc-anchor" href="#doc-lsp-extension-zlock">¶</a></h3>
-        <p>Acquire / release / try a named cross-shell lock. <code>zlock acquire NAME [TIMEOUT]</code> / <code>zlock release NAME TOKEN</code> / <code>zlock try NAME</code> / <code>zlock do NAME -- cmd …</code>. PID-tagged so the daemon GCs stale entries.</p>
+        <p>Named cross-process locks held by the daemon; a lock is released when its holder dies. <code>zlock try NAME</code>, <code>zlock acquire NAME [--timeout S]</code>, <code>zlock release NAME TOKEN</code>, <code>zlock list</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zlog">
 
         <h3><code>zlog</code> <a class="doc-anchor" href="#doc-lsp-extension-zlog">¶</a></h3>
-        <p>Append a structured log entry to the daemon's log catalog. <code>zlog 'message' [key=val …]</code>. Queryable later via <code>zhistory</code> / <code>dbview</code>.</p>
+        <p>Inspect and manage the zshrs log files under ~/.zshrs. <code>zlog</code> (newest log path), <code>zlog tail [-n N]</code>, <code>zlog grep REGEX</code>, <code>zlog clear</code>, <code>zlog stats</code>, <code>zlog level DIRECTIVE</code>, <code>zlog rotate</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zls">
 
         <h3><code>zls</code> <a class="doc-anchor" href="#doc-lsp-extension-zls">¶</a></h3>
-        <p>List entries in the daemon's federated catalog (aliases, functions, env vars, etc.). <code>zls --kind alias --shell-id bash</code>. The cross-shell mirror of <code>alias</code>/<code>functions</code>/<code>typeset</code>.</p>
+        <p>List the shells connected to the daemon: id, pid, tty, uptime, tags and cwd. <code>zls --tag NAME</code> lists only the shells carrying that tag.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-znotify">
 
         <h3><code>znotify</code> <a class="doc-anchor" href="#doc-lsp-extension-znotify">¶</a></h3>
-        <p>Send a desktop / system notification through the daemon. Routes to <code>osascript</code> (macOS), <code>notify-send</code> (Linux), or the in-shell UI when no platform notifier is available.</p>
+        <p>Show a notification in other shells through the daemon. <code>znotify SHELL_ID|--all|--tag NAME|--user USER MESSAGE</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zping">
 
         <h3><code>zping</code> <a class="doc-anchor" href="#doc-lsp-extension-zping">¶</a></h3>
-        <p>Round-trip latency probe against the daemon. Prints the RTT in microseconds; non-zero exit if the daemon is unreachable.</p>
+        <p>Round-trip probe against the daemon: prints its uptime and the round-trip time. <code>zping --all</code> also lists every registered shell.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zpublish">
 
         <h3><code>zpublish</code> <a class="doc-anchor" href="#doc-lsp-extension-zpublish">¶</a></h3>
-        <p>Publish a JSON event to a pubsub topic. <code>zpublish topic.name '{"key":"val"}'</code>. Subscribers receive via <code>zsubscribe</code>.</p>
+        <p>Publish an event on the daemon's pub/sub bus from this shell's scope. <code>zpublish TOPIC [DATA | --json JSON]</code>; subscribers receive it via <code>zsubscribe</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zsend">
 
         <h3><code>zsend</code> <a class="doc-anchor" href="#doc-lsp-extension-zsend">¶</a></h3>
-        <p>Send a one-shot message to another shell (by <code>shell_id</code> or <code>bundle_id</code>). Like <code>znotify</code> but targets a specific shell, not the user's desktop.</p>
+        <p>Send a command line to other shells through the daemon. <code>zsend [--json] [--wait] [--timeout S] SHELL_ID|--all|--tag NAME|--user USER CMD...</code>; <code>--wait</code> relays the target's output and exit status.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zsleep">
@@ -8266,31 +8278,31 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-zsource">
 
         <h3><code>zsource</code> <a class="doc-anchor" href="#doc-lsp-extension-zsource">¶</a></h3>
-        <p>Push a sourced-file event to the daemon's federated catalog. Used by <code>source</code>/<code>.</code> hooks so the daemon knows which rc files have been loaded by which shells.</p>
+        <p>Ask the daemon's compiled-file registry whether a sourced file's cached body is a hit, stale or a miss. <code>zsource PATH</code>, <code>zsource --stat PATH</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zsubscribe">
 
         <h3><code>zsubscribe</code> <a class="doc-anchor" href="#doc-lsp-extension-zsubscribe">¶</a></h3>
-        <p>Subscribe to a pubsub topic and stream incoming messages to stdout as SSE-style JSON lines. <code>zsubscribe 'shell:*.build_done'</code>.</p>
+        <p>Subscribe to pub/sub events and stream them to stdout. <code>zsubscribe [--json] [--count N] SCOPE.TOPIC</code> (e.g. <code>shell:42.commands</code>, <code>*.chpwd</code>), <code>zsubscribe --list</code>, <code>--pause</code>/<code>--resume [--id N | --all]</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zsuggest">
 
         <h3><code>zsuggest</code> <a class="doc-anchor" href="#doc-lsp-extension-zsuggest">¶</a></h3>
-        <p>Query the daemon's suggestion engine for the next command, given the current cwd + history. Used by ZLE's autosuggestion widget when the local history can't supply a candidate.</p>
+        <p>Ask the daemon for a suggestion completing a command-line prefix. <code>zsuggest PREFIX [--cwd DIR]</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zsync">
 
         <h3><code>zsync</code> <a class="doc-anchor" href="#doc-lsp-extension-zsync">¶</a></h3>
-        <p>Force a flush of the daemon's in-memory state to the SQLite catalog. Normally happens in the background; <code>zsync</code> makes it synchronous so a snapshot is consistent.</p>
+        <p>Move canonical subsystem state (aliases, functions, options, ...) between this shell and the daemon. <code>zsync up SUBSYSTEM KEY VALUE</code>, <code>zsync up --all</code>, <code>zsync pull SUBSYSTEM</code>, <code>zsync diff SUBSYSTEM --overlay JSON</code>, <code>zsync watch SUBSYSTEM...</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-ztag">
 
         <h3><code>ztag</code> <a class="doc-anchor" href="#doc-lsp-extension-ztag">¶</a></h3>
-        <p>Tag the current shell session with one or more labels. <code>ztag prod-deploy</code>. Other shells can filter by tag via <code>zls --tag prod-deploy</code>.</p>
+        <p>Add tags to this shell's daemon session and print its tag list. Other shells target tagged shells with <code>zls --tag</code>, <code>zsend --tag</code>, <code>znotify --tag</code> and <code>tag:NAME.*</code> subscriptions. <code>ztag prod-deploy</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-ztest_run">
@@ -8308,21 +8320,21 @@ fi</code></pre>
       <article class="doc-entry" id="doc-lsp-extension-zunsubscribe">
 
         <h3><code>zunsubscribe</code> <a class="doc-anchor" href="#doc-lsp-extension-zunsubscribe">¶</a></h3>
-        <p>Cancel a <code>zsubscribe</code> stream. <code>zunsubscribe TOPIC</code> or <code>zunsubscribe --all</code>.</p>
+        <p>Cancel a <code>zsubscribe</code> subscription. <code>zunsubscribe SCOPE.TOPIC</code> or <code>zunsubscribe --id SUBSCRIPTION_ID</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zuntag">
 
         <h3><code>zuntag</code> <a class="doc-anchor" href="#doc-lsp-extension-zuntag">¶</a></h3>
-        <p>Remove a tag from the current shell session. Inverse of <code>ztag</code>.</p>
+        <p>Remove tags from this shell's daemon session, or every tag with <code>--all</code>, and print the remaining list. Inverse of <code>ztag</code>.</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zwhere">
 
         <h3><code>zwhere</code> <a class="doc-anchor" href="#doc-lsp-extension-zwhere">¶</a></h3>
-        <p><code>zwhere</code> — query the daemon's federated definitions catalog from inside zshrs. Thin client over the <code>definitions_query</code> op (same thing <code>zd defs query</code> calls). Always available in default zshrs; not feature-gated on <code>recorder</code> because this is a read-only IPC path, not the AOP write path.</p>
+        <p><code>zwhere</code> — query the daemon's federated definitions catalog from inside zshrs. Thin client over the <code>definitions_query</code> op (same thing <code>zd defs query</code> calls). Always available in default zshrs; not feature-gated on <code>recorder</code> because this is a read-only path, not the AOP write path.</p>
         <p>Usage:   zwhere KIND NAME              # rows for <code>KIND NAME</code> across all shells   zwhere KIND --prefix STR      # all KIND rows whose name starts with STR   zwhere --kinds                # list every populated kind   zwhere --shell-id ID …        # restrict to one shell_id   zwhere --limit N …            # cap (default 1000 for tty output)</p>
-        <p>Output format: one row per line, <code>kind\tname\tvalue\tshell_id\tfile:line</code>. Wide-column layout via padding is left to the caller piping through <code>column -t</code> if they want it; <code>zwhere</code> stays narrow so scripts can <code>awk</code> cleanly.</p>
+        <p>Output format: one row per DEFINITION, oldest first — <code>kind\tname\tvalue\tshell_id\tfile:line\tstate\tvia</code>. <code>state</code> is <code>shadowed</code> for a definition a later one replaced and <code>active</code> for the one in force; <code>via</code> is the function call chain it ran under (<code>outer &gt; inner</code>). When a function shadowing the builtin (zinit's <code>alias</code> wrapper) ran it, <code>file:line</code> is where that function was called. With no daemon running, <code>zwhere</code> reads the newest recorder shard directly. Wide-column layout via padding is left to the caller piping through <code>column -t</code>; <code>zwhere</code> stays narrow so scripts can <code>awk</code> cleanly.</p>
       </article>
 
     </section>
@@ -8334,6 +8346,7 @@ fi</code></pre>
       <h2>Operator / Punctuation Index</h2>
 
       <p class="chapter-meta">69 entries · pipelines (<code>|</code>, <code>|&amp;</code>), list ops (<code>&amp;&amp;</code>, <code>||</code>, <code>;</code>, <code>&amp;</code>, <code>;;</code>), redirects (<code>&gt;</code>, <code>&gt;&gt;</code>, <code>&lt;&lt;</code>, <code>&lt;&lt;&lt;</code>, <code>&amp;&gt;</code>, …), conditional/arithmetic openers (<code>[[</code>, <code>]]</code>, <code>((</code>, <code>))</code>), substitution forms (<code>$(</code>, <code>${</code>, <code>$((</code>, <code>&lt;(</code>, <code>&gt;(</code>), test ops (<code>-e</code>, <code>-eq</code>, <code>=~</code>, …), pattern chars (<code>*</code>, <code>?</code>, <code>**</code>, <code>~</code>), brace expansion (<code>{a,b,c}</code>, <code>{1..10}</code>), and assignment (<code>=</code>, <code>+=</code>). Sourced from <code>man zshmisc</code> section prose — these have no per-name yodl <code>item</code> blocks so they're hand-curated.</p>
+
 
       <article class="doc-entry" id="doc-lsp-operator-unnamed">
 

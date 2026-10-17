@@ -416,7 +416,7 @@ All legacy shells remain available in package repositories.
 | Concern | Mitigation |
 |---------|------------|
 | Bytecode cache tampering | Optional HMAC signing; cache in protected directory |
-| Larger attack surface (3200 builtins) | Each builtin is sandboxed; no shell escapes between them |
+| Larger attack surface (in-process builtins) | Each builtin is sandboxed; no shell escapes between them |
 | New codebase (less battle-tested) | Extensive fuzzing; POSIX/bash/zsh test suites; gradual rollout |
 | Supply chain | Reproducible builds; signed releases; multiple mirrors |
 

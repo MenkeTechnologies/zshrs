@@ -104,7 +104,7 @@ for the full flag table, including the editor and developer tooling
 Identical behaviour to
 .BR /bin/zsh .
 All caches disabled, daemon disabled. Used by the parity test corpus
-.RB ( tests/zsh_compat_parity_gaps.rs )
+.RB ( tests/parity/ )
 to verify byte-for-byte equivalence.
 .TP
 .B \-\-bash
@@ -2278,10 +2278,10 @@ supports
 and
 .B around
 advice on every command, builtin, and user function. Advice is
-registered via the
-.B intercepts
-crate (see
-.IR src/intercepts/ )
+registered through the
+.B intercept
+builtin (see
+.IR src/extensions/intercepts.rs )
 and runs in-process inside fusevm \(em no
 .BR fork (2)
 \(em which makes it cheap enough for production tracing, profiling,
@@ -2435,8 +2435,8 @@ must work today. Compat-floor regressions against
 .BR zinit ,
 .BR p10k ,
 and the standard plugin set are catastrophic; the parity test corpus
-.RB ( tests/zsh_compat_parity_gaps.rs ,
-20,000+ cases) is gating.
+.RB ( tests/parity/ )
+is gating.
 .PP
 .B Architectural invariants:
 .IP "" 4

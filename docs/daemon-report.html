@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark light">
 <title>zshrs-daemon — DAEMON.md coverage matrix (updated 2026-10-17)</title>
 <link rel="icon" type="image/svg+xml" href="logo-mark.svg">
-<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 29,530 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-10-17.">
+<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 29,578 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-10-17.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -82,7 +82,7 @@
     </div>
   </header>
 <main class="tutorial-main">
-<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-10-17 &middot; 29,530 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
+<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-10-17 &middot; 29,578 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
 
 <div class="summary-box honest">
   <p><strong>Earlier version of this report claimed "100% implemented." That claim was false.</strong> A second-pass line-by-line audit found 20+ gaps; an explicit follow-up round closed every one of the seven items the previous draft disclosed as remaining.</p>
@@ -121,7 +121,7 @@
   <div class="stat-card"><div class="stat-val">14</div><div class="stat-label">Async events</div></div>
   <div class="stat-card"><div class="stat-val accent">23</div><div class="stat-label">z* builtins</div></div>
   <div class="stat-card"><div class="stat-val">43</div><div class="stat-label">Daemon source files</div></div>
-  <div class="stat-card"><div class="stat-val">29,530</div><div class="stat-label">LOC in daemon/</div></div>
+  <div class="stat-card"><div class="stat-val">29,578</div><div class="stat-label">LOC in daemon/</div></div>
   <div class="stat-card"><div class="stat-val yellow">2</div><div class="stat-label">Known partial / gap</div></div>
   <div class="stat-card"><div class="stat-val">0</div><div class="stat-label">Unimplemented dispatch arms</div></div>
 </div>
@@ -155,42 +155,42 @@
   <td><code>zcache clean zwc</code> / <code>zcompdump</code> / <code>legacy</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
   <td>op_clean rejected those targets; only all/shards/index/log were valid.</td>
-  <td class="cite">ops.rs:1448 (op_clean) — added zwc/zcompdump/legacy/shard/catalog/stats arms; legacy_scope_dirs() bounds the walk to known dirs only</td>
+  <td class="cite">ops.rs:1562 (op_clean) — added zwc/zcompdump/legacy/shard/catalog/stats arms; legacy_scope() bounds the walk to known dirs only</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:673-681</td>
   <td><code>--wait</code> / <code>--dry-run</code> / <code>--no-stats</code> / <code>shard &lt;name&gt;</code> / <code>catalog</code> / <code>stats</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
   <td>None of these flags were parsed in <code>zcache_clean</code> or honored in op_clean.</td>
-  <td class="cite">builtins.rs:562 (zcache_clean parses flags) + ops.rs:1448 (handler)</td>
+  <td class="cite">builtins.rs:669 (zcache_clean parses flags) + ops.rs:1562 (handler)</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:394, 398</td>
   <td><code>zcache verify</code> flags <code>.zwc</code> / <code>.zcompdump</code> as WARN</td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
   <td>op_verify only checked shards + catalog integrity. Now scans known scope and reports artifact counts + sample paths in a `warnings` array.</td>
-  <td class="cite">ops.rs:1500 (op_verify legacy scan)</td>
+  <td class="cite">ops.rs:1917 (op_verify legacy scan)</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:552-555</td>
   <td><code>zcache view --filter</code> / <code>--range</code> / <code>--all</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
   <td>op_view ignored these args. Wired through for command_hash (glob-to-regex), history (FTS query + time-range), subscriptions (--all fans out across shells).</td>
-  <td class="cite">export.rs:144 (sensitive guard) + render_filtered + glob_to_regex + parse_range</td>
+  <td class="cite">export.rs:288 (sensitive guard) + render_filtered + glob_to_regex + parse_range</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:342</td>
   <td><code>--show-sensitive</code> / <code>--include-sensitive</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
   <td>Sensitive flag stored on compiled_files but never gated terminal output. Now: refuse to print body of <code>script</code>/<code>sourced</code> sensitive paths without --show-sensitive.</td>
-  <td class="cite">export.rs:144 (is_path_sensitive) — checks before render</td>
+  <td class="cite">export.rs:288 (is_path_sensitive) — checks before render</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:425</td>
   <td><code>zcache import history</code> + <code>zcache export history --format zsh-histfile</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
   <td>Migration path was missing entirely. Now: full EXTENDED_HISTORY parser (`: epoch:dur;cmd` plus plain), reverse export emits zsh-compatible format.</td>
-  <td class="cite">ops.rs:2240 (op_import_history) + parse_zsh_history_file + export.rs:485 (render_zsh_histfile)</td>
+  <td class="cite">ops.rs:2861 (op_import_history) + parse_zsh_history_file + export.rs:595 (render_zsh_histfile)</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:481-485 + 302-304</td>
@@ -210,19 +210,19 @@
   <td class="cite">DAEMON.md:565-572</td>
   <td><code>zcache import catalog</code> / <code>shard</code> / <code>--all</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td class="cite">ops.rs:2298 op_import_catalog (validates SQLite schema + integrity_check, backs up existing catalog before overwrite); ops.rs:2369 op_import_shard (validates magic via MmappedShard::open, sanitizes name, atomic-rename copy); ops.rs:2528 op_import_all (parses ustar, restores every entry into ~/.zshrs/, *.preimport-&lt;ts&gt; backups for collisions)</td>
+  <td class="cite">ops.rs:3082 op_import_catalog (validates SQLite schema + integrity_check, backs up existing catalog before overwrite); ops.rs:3161 op_import_shard (validates magic via MmappedShard::open, sanitizes name, atomic-rename copy); ops.rs:3340 op_import_all (parses ustar, restores every entry into ~/.zshrs/, *.preimport-&lt;ts&gt; backups for collisions)</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:562</td>
   <td><code>zcache export --all --out backup.tar</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td class="cite">ops.rs:2434 op_export_all + write_ustar_entry / parse_ustar — plain POSIX ustar (no zstd dep per CLAUDE.md durable-deps). Sensitive shards filtered out unless --include-sensitive. Read with <code>tar -xf</code>.</td>
+  <td class="cite">ops.rs:3229 op_export_all + write_ustar_entry / parse_ustar — plain POSIX ustar (no zstd dep per CLAUDE.md durable-deps). Sensitive shards filtered out unless --include-sensitive. Read with <code>tar -xf</code>.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:302-303</td>
   <td>fsnotify-driven delta-walk on <code>.zshrc</code> path/fpath edits</td>
   <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td class="cite">zsync.rs:217 apply_delta_walk extracted as shared helper. Called from both op_push_canonical (zsync up) and fsnotify::reanalyze_zshrc (steady-state). Adds dirs → walk + watch; removes dirs → drop entries + unwatch.</td>
+  <td class="cite">zsync.rs:190 apply_delta_walk extracted as shared helper. Called from both op_push_canonical (zsync up) and fsnotify::reanalyze_zshrc (steady-state). Adds dirs → walk + watch; removes dirs → drop entries + unwatch.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:339-342</td>
@@ -253,7 +253,7 @@
   <td class="cite">Compiled_files.bytecode BLOB</td>
   <td>Real bytecode storage in compiled_files</td>
   <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td>source_resolver.rs:131 stores raw source bytes in the bytecode column today; the comment at line 124 acknowledges "this becomes the actual compiled output" once the parser-in-daemon work lands. Hash + sensitive flag + mtime + inode are populated correctly.</td>
+  <td>source_resolver.rs:15 &mdash; the daemon does not yet bytecode-compile on a miss; the <code>compiled_files</code> row (source_resolver.rs:129) holds metadata only, the bytecode column having been dropped by the v1&rarr;v2 catalog migration (catalog.rs:109). Hash + sensitive flag + mtime + inode are populated correctly.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md acceptance criteria</td>
@@ -270,45 +270,45 @@
 <table class="fmap">
 <thead><tr><th>Op</th><th>Handler fn</th><th>Where</th><th>Status</th></tr></thead>
 <tbody>
-<tr><td><code>info</code></td><td class="fn">op_info</td><td class="cite">ops.rs:117</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>ping</code></td><td class="fn">op_ping</td><td class="cite">ops.rs:142</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>list_shells</code></td><td class="fn">op_list_shells</td><td class="cite">ops.rs:152</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>tag</code> / <code>untag</code></td><td class="fn">op_tag, op_untag</td><td class="cite">ops.rs:166, 174</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>send</code></td><td class="fn">op_send + cmd_result</td><td class="cite">ops.rs:183, 254</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>notify</code></td><td class="fn">op_notify</td><td class="cite">ops.rs:341</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>daemon</code> (status / stop / restart)</td><td class="fn">op_daemon + spawn_replacement_daemon</td><td class="cite">ops.rs:371 + ops.rs:2429</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>cmd_started</code></td><td class="fn">op_cmd_started</td><td class="cite">ops.rs:754</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>complete</code></td><td class="fn">op_complete</td><td class="cite">ops.rs:787</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>suggest</code></td><td class="fn">op_suggest</td><td class="cite">ops.rs:868</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>highlight</code></td><td class="fn">op_highlight + highlight_line + classify_word</td><td class="cite">ops.rs:938, 999, 1146</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>register</code></td><td class="fn">op_register</td><td class="cite">ops.rs:1203</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>doctor</code></td><td class="fn">op_doctor</td><td class="cite">ops.rs:1255</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>canonical_hydrate_view</code></td><td class="fn">op_canonical_hydrate_view</td><td class="cite">ops.rs:1415</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>clean</code> (all/shards/shard/index/log/catalog/stats/zwc/zcompdump/legacy + --dry-run + --no-stats)</td><td class="fn">op_clean + legacy_scope_dirs</td><td class="cite">ops.rs:1448 + 1675</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>verify</code> (shards + catalog + legacy litter)</td><td class="fn">op_verify</td><td class="cite">ops.rs:1500</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>compact</code></td><td class="fn">op_compact</td><td class="cite">ops.rs:1593</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>fpath_changed</code></td><td class="fn">op_fpath_changed</td><td class="cite">ops.rs:1606</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>watcher_stats</code></td><td class="fn">op_watcher_stats</td><td class="cite">ops.rs:1633</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>log_level</code> / <code>log_rotate</code> / <code>log_stats</code></td><td class="fn">op_log_level, op_log_rotate, op_log_stats</td><td class="cite">ops.rs:1638, 1648, 1653</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>subscribe</code> / <code>unsubscribe</code> / <code>subscription_set_paused</code> / <code>publish</code></td><td class="fn">op_subscribe, op_unsubscribe, op_subscription_set_paused, op_publish</td><td class="cite">ops.rs:1683, 1733, 1710, 1749</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>load_script</code></td><td class="fn">op_load_script</td><td class="cite">ops.rs:1777</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>stats_flush</code></td><td class="fn">op_stats_flush</td><td class="cite">ops.rs:1796</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>keys</code></td><td class="fn">op_keys</td><td class="cite">ops.rs:1833</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>subscribe_shard</code></td><td class="fn">op_subscribe_shard</td><td class="cite">ops.rs:1857</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>export_zcompdump</code> + <code>synthesize_zcompdump</code></td><td class="fn">op_export_zcompdump</td><td class="cite">ops.rs:1872 + 1918</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>export_catalog</code></td><td class="fn">op_export_catalog</td><td class="cite">ops.rs:1991</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>export_shard</code></td><td class="fn">op_export_shard</td><td class="cite">ops.rs:2006</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>import_zcompdump</code></td><td class="fn">op_import_zcompdump + parse_zcompdump</td><td class="cite">ops.rs:2036 + 2298</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>import_zwc</code></td><td class="fn">op_import_zwc</td><td class="cite">ops.rs:2127</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>import_history</code> + <code>parse_zsh_history_file</code></td><td class="fn">op_import_history</td><td class="cite">ops.rs:2240 + parse_zsh_history_file</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>import_catalog</code> / <code>import_shard</code> / <code>import_all</code></td><td class="fn">op_import_catalog, op_import_shard, op_import_all</td><td class="cite">ops.rs:2298, 2369, 2528 (closed in round 2 audit)</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>job_*</code> family (submit/list/status/output/kill/cancel/wait)</td><td class="fn">7 op_job_* fns</td><td class="cite">ops.rs:2557+</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>info</code></td><td class="fn">op_info</td><td class="cite">ops.rs:295</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>ping</code></td><td class="fn">op_ping</td><td class="cite">ops.rs:320</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>list_shells</code></td><td class="fn">op_list_shells</td><td class="cite">ops.rs:330</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>tag</code> / <code>untag</code></td><td class="fn">op_tag, op_untag</td><td class="cite">ops.rs:348, 356</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>send</code></td><td class="fn">op_send + cmd_result</td><td class="cite">ops.rs:365, 438</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>notify</code></td><td class="fn">op_notify</td><td class="cite">ops.rs:584</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>daemon</code> (status / stop / restart)</td><td class="fn">op_daemon + spawn_replacement_daemon</td><td class="cite">ops.rs:615 + ops.rs:3785</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>cmd_started</code></td><td class="fn">op_cmd_started</td><td class="cite">ops.rs:725</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>complete</code></td><td class="fn">op_complete</td><td class="cite">ops.rs:755</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>suggest</code></td><td class="fn">op_suggest</td><td class="cite">ops.rs:836</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>highlight</code></td><td class="fn">op_highlight + highlight_line + classify_word</td><td class="cite">ops.rs:894, 949, 1182</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>register</code></td><td class="fn">op_register</td><td class="cite">ops.rs:1239</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>doctor</code></td><td class="fn">op_doctor</td><td class="cite">ops.rs:1292</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>canonical_hydrate_view</code></td><td class="fn">op_canonical_hydrate_view</td><td class="cite">ops.rs:1458</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>clean</code> (all/shards/shard/index/log/catalog/stats/zwc/zcompdump/legacy + --dry-run + --no-stats)</td><td class="fn">op_clean + legacy_scope</td><td class="cite">ops.rs:1562 + 1846</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>verify</code> (shards + catalog + legacy litter)</td><td class="fn">op_verify</td><td class="cite">ops.rs:1917</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>compact</code></td><td class="fn">op_compact</td><td class="cite">ops.rs:1985</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>fpath_changed</code></td><td class="fn">op_fpath_changed</td><td class="cite">ops.rs:1996</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>watcher_stats</code></td><td class="fn">op_watcher_stats</td><td class="cite">ops.rs:2120</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>log_level</code> / <code>log_rotate</code> / <code>log_stats</code></td><td class="fn">op_log_level, op_log_rotate, op_log_stats</td><td class="cite">ops.rs:2198, 2207, 2212</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>subscribe</code> / <code>unsubscribe</code> / <code>subscription_set_paused</code> / <code>publish</code></td><td class="fn">op_subscribe, op_unsubscribe, op_subscription_set_paused, op_publish</td><td class="cite">ops.rs:2242, 2289, 2269, 2305</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>load_script</code></td><td class="fn">op_load_script</td><td class="cite">ops.rs:2333</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>stats_flush</code></td><td class="fn">op_stats_flush</td><td class="cite">ops.rs:2352</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>keys</code></td><td class="fn">op_keys</td><td class="cite">ops.rs:2389</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>subscribe_shard</code></td><td class="fn">op_subscribe_shard</td><td class="cite">ops.rs:2413</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>export_zcompdump</code> + <code>synthesize_zcompdump</code></td><td class="fn">op_export_zcompdump</td><td class="cite">ops.rs:2428 + 2483</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>export_catalog</code></td><td class="fn">op_export_catalog</td><td class="cite">ops.rs:2556</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>export_shard</code></td><td class="fn">op_export_shard</td><td class="cite">ops.rs:2575</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>import_zcompdump</code></td><td class="fn">op_import_zcompdump + parse_zcompdump</td><td class="cite">ops.rs:2605 + 3607</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>import_zwc</code></td><td class="fn">op_import_zwc</td><td class="cite">ops.rs:2700</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>import_history</code> + <code>parse_zsh_history_file</code></td><td class="fn">op_import_history</td><td class="cite">ops.rs:2861 + parse_zsh_history_file</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>import_catalog</code> / <code>import_shard</code> / <code>import_all</code></td><td class="fn">op_import_catalog, op_import_shard, op_import_all</td><td class="cite">ops.rs:3082, 3161, 3340 (closed in round 2 audit)</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>job_*</code> family (submit/list/status/output/kill/cancel/wait)</td><td class="fn">7 op_job_* fns</td><td class="cite">ops.rs:3876+</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>job_input</code> / <code>job_resize</code> (ptmx attach for <code>--pty</code> jobs)</td><td class="fn">op_job_input, op_job_resize</td><td class="cite">ops.rs (base64 input write to pty master; <code>TIOCSWINSZ</code> via nix)</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>source_resolve</code> + sensitive heuristic</td><td class="fn">op_source_resolve + is_sensitive + read_file_nofollow</td><td class="cite">source_resolver.rs:33 + 178; <code>O_NOFOLLOW</code> on read; <code>O_NOFOLLOW | O_CREAT | O_EXCL</code> on shard write; <code>MAP_PRIVATE</code> on sensitive mmap (closed in round 2)</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>history_append</code> / <code>history_query</code></td><td class="fn">op_history_append, op_history_query</td><td class="cite">history.rs:221, 310</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>push_canonical</code> / <code>pull_canonical</code> / <code>diff_canonical</code></td><td class="fn">op_push_canonical, op_pull_canonical, op_diff_canonical</td><td class="cite">zsync.rs:91, 277, 297</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>view</code> / <code>export</code> (with --filter/--range/--all/--show-sensitive)</td><td class="fn">op_view, op_export, render_filtered</td><td class="cite">export.rs:26, 30, 200</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>ask_*</code> family (ask/pending/take/dismiss/response)</td><td class="fn">5 op_ask_* fns</td><td class="cite">zask.rs:196, 320, 340, 362, 375</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>source_resolve</code> + sensitive heuristic</td><td class="fn">op_source_resolve + is_sensitive + read_file_nofollow</td><td class="cite">source_resolver.rs:33 + 183; <code>O_NOFOLLOW</code> on read; <code>O_NOFOLLOW | O_CREAT | O_EXCL</code> on shard write; <code>MAP_PRIVATE</code> on sensitive mmap (closed in round 2)</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>history_append</code> / <code>history_query</code></td><td class="fn">op_history_append, op_history_query</td><td class="cite">history.rs:232, 324</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>push_canonical</code> / <code>pull_canonical</code> / <code>diff_canonical</code></td><td class="fn">op_push_canonical, op_pull_canonical, op_diff_canonical</td><td class="cite">zsync.rs:91, 327, 347</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>view</code> / <code>export</code> (with --filter/--range/--all/--show-sensitive)</td><td class="fn">op_view, op_export, render_filtered</td><td class="cite">export.rs:33, 37, 304</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>ask_*</code> family (ask/pending/take/dismiss/response)</td><td class="fn">5 op_ask_* fns</td><td class="cite">zask.rs:200, 319, 339, 362, 401</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 </tbody>
 </table>
 
@@ -317,17 +317,17 @@
 <table class="fmap">
 <thead><tr><th>Builtin</th><th>Entry fn</th><th>File</th><th>Status</th></tr></thead>
 <tbody>
-<tr><td><code>zcache</code></td><td class="fn">dispatch / zcache</td><td class="cite">builtins.rs:26, 126</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zls</code> / <code>zid</code> / <code>zping</code> / <code>ztag</code> / <code>zuntag</code></td><td class="fn">zls, zid, zping, ztag, zuntag</td><td class="cite">builtins.rs:648, 738, 750, 813, 832</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zsend</code> / <code>znotify</code></td><td class="fn">zsend + parse_send_args, znotify</td><td class="cite">builtins.rs:862, 944</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zsubscribe</code> / <code>zunsubscribe</code></td><td class="fn">zsubscribe, zunsubscribe + filter+pause+list</td><td class="cite">builtins.rs:1251, 1574</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zsync</code> (up/diff/pull/watch)</td><td class="fn">zsync + push + pull + diff + watch</td><td class="cite">zsync_builtin.rs:53, 148, 200, 218, 96</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zask</code></td><td class="fn">zask + ask + take + dismiss + pending + progress + inbox-clear + response</td><td class="cite">zask_builtin.rs:53, 86, 396, 418, 368, 202, 287, 442</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zlog</code> (tail/grep/level/clear/rotate/path/stats)</td><td class="fn">zlog + 7 sub-fns</td><td class="cite">builtins.rs:1056-1218</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zjob</code> (submit/list/status/output/cancel/kill/wait)</td><td class="fn">zjob + 7 sub-fns</td><td class="cite">zjob_builtin.rs:56-442</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zhistory</code> (append/query/count)</td><td class="fn">zhistory + 3 sub-fns</td><td class="cite">zhistory_builtin.rs:50-190</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zcache</code></td><td class="fn">dispatch / zcache</td><td class="cite">builtins.rs:26, 144</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zls</code> / <code>zid</code> / <code>zping</code> / <code>ztag</code> / <code>zuntag</code></td><td class="fn">zls, zid, zping, ztag, zuntag</td><td class="cite">builtins.rs:796, 897, 909, 975, 994</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zsend</code> / <code>znotify</code></td><td class="fn">zsend + parse_send_args, znotify</td><td class="cite">builtins.rs:1024, 1104</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zsubscribe</code> / <code>zunsubscribe</code></td><td class="fn">zsubscribe, zunsubscribe + filter+pause+list</td><td class="cite">builtins.rs:1681, 2006</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zsync</code> (up/diff/pull/watch)</td><td class="fn">zsync + push + pull + diff + watch</td><td class="cite">zsync_builtin.rs:79, 177, 314, 332, 124</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zask</code></td><td class="fn">zask + ask + take + dismiss + pending + progress + inbox-clear + response</td><td class="cite">zask_builtin.rs:53, 297, 392, 454, 364, 198, 283, 472</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zlog</code> (tail/grep/level/clear/rotate/path/stats)</td><td class="fn">zlog + 7 sub-fns</td><td class="cite">builtins.rs:1200-1514</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zjob</code> (submit/list/status/output/cancel/kill/wait)</td><td class="fn">zjob + 7 sub-fns</td><td class="cite">zjob_builtin.rs:56-1037</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zhistory</code> (append/query/count)</td><td class="fn">zhistory + 3 sub-fns</td><td class="cite">zhistory_builtin.rs:50-209</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>zcomplete</code> / <code>zsuggest</code></td><td class="fn">zcomplete, zsuggest</td><td class="cite">zcomplete_builtin.rs:48, 91</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>zsource</code></td><td class="fn">zsource</td><td class="cite">zsource_builtin.rs:57</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>zsource</code></td><td class="fn">zsource</td><td class="cite">zsource_builtin.rs:56</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>zlock</code> (try/acquire/release/list)</td><td class="fn">zlock + 4 sub-fns</td><td class="cite">zlock_builtin.rs</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>zpublish</code> (TOPIC [DATA] [--json '{...}'])</td><td class="fn">zpublish</td><td class="cite">zpublish_builtin.rs</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>zwhere</code> (SUBSYS NAME &mdash; <code>file:line</code> attribution)</td><td class="fn">zwhere</td><td class="cite">zwhere_builtin.rs</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
@@ -346,32 +346,32 @@
 <tr><td>"Daemon = sole writer"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">flock singleton + Mutex&lt;Connection&gt; on catalog/history; atomic-rename ordering</td></tr>
 <tr><td>"Snapshot-at-boot + overlay"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">Per-client mmap snapshot; overlay → canonical via push; mid-session pull opt-in</td></tr>
 <tr><td>"Cache layout"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">Every file in CachePaths struct + 0700/0600 enforced</td></tr>
-<tr><td>"catalog.db schema"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All tables in catalog.rs:62 (plugins, plugin_deps, entries, hooks, entry_stats, compiled_files w/ sensitive col, parent_paths) + canonical view + jobs</td></tr>
+<tr><td>"catalog.db schema"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All tables in catalog.rs:160 (plugins, plugin_deps, entries, hooks, entry_stats, compiled_files w/ sensitive col, parent_paths) + canonical view + jobs</td></tr>
 <tr><td>"Special parameters served by daemon" (_comps, _services, _patcomps, _describe_handlers)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">Each is a canonical subsystem; op_keys serves flat key arrays; export.rs renders all four</td></tr>
-<tr><td>"Starting state served by daemon" (PATH/FPATH/MANPATH/CDPATH/INFOPATH/LD_LIBRARY_PATH/named_dir/aliases/galiases/saliases/setopt/bindkey/zmodload/env/params/zstyle/theme)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All 17 captured by <code>zshrs-recorder</code> (runtime AOP intercept) and stored in canonical engine via <code>recorder_ingest</code>. theme via params subsystem. (Static <code>zshrc_analysis.rs</code> walker pipeline retired; see daemon/lib.rs:53.)</td></tr>
+<tr><td>"Starting state served by daemon" (PATH/FPATH/MANPATH/CDPATH/INFOPATH/LD_LIBRARY_PATH/named_dir/aliases/galiases/saliases/setopt/bindkey/zmodload/env/params/zstyle/theme)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All 17 captured by <code>zshrs-recorder</code> (runtime AOP intercept) and stored in canonical engine via <code>recorder_ingest</code>. theme via params subsystem. (Static <code>zshrc_analysis.rs</code> walker pipeline retired; see daemon/lib.rs:143.)</td></tr>
 <tr><td>"Determinism boundary" (per-shell replay log)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">paths.rs <code>replay_dir</code> at <code>~/.zshrs/replay/</code>; ops.rs:write_replay_log emits <code>{hash8}-{stem}.zsh</code> per source root with non_deterministic_lines body; new op <code>replay_log</code> (op_replay_log) returns body for client to <code>eval</code> at boot.</td></tr>
-<tr><td>"Walk lifecycle — first init" (4-pass)</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">Static 4-pass walker (<code>op_first_init</code>, <code>op_zshrc_analyze</code>, <code>op_plugin_discover</code>, <code>op_rebuild</code>) retired; state attribution now comes from <code>zshrs-recorder</code> runtime AOP intercept (<code>recorder_ingest</code>). See daemon/lib.rs:53.</td></tr>
-<tr><td>"Steady state: fsnotify only, with delta-walks for newly-introduced directories"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zsync.rs:217 <code>apply_delta_walk</code> extracted as shared helper; called from both op_push_canonical (zsync up) and fsnotify::reanalyze_zshrc (steady-state). Adds dirs &rarr; walk + watch; removes dirs &rarr; drop entries + unwatch.</td></tr>
+<tr><td>"Walk lifecycle — first init" (4-pass)</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">Static 4-pass walker (<code>op_first_init</code>, <code>op_zshrc_analyze</code>, <code>op_plugin_discover</code>, <code>op_rebuild</code>) retired; state attribution now comes from <code>zshrs-recorder</code> runtime AOP intercept (<code>recorder_ingest</code>). See daemon/lib.rs:143.</td></tr>
+<tr><td>"Steady state: fsnotify only, with delta-walks for newly-introduced directories"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zsync.rs:190 <code>apply_delta_walk</code> extracted as shared helper; called from both op_push_canonical (zsync up) and fsnotify::reanalyze_zshrc (steady-state). Adds dirs &rarr; walk + watch; removes dirs &rarr; drop entries + unwatch.</td></tr>
 <tr><td>"Source / dot interception"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">source_resolver.rs handles full mtime+inode cache + sensitive flag</td></tr>
 <tr><td>"Compat surface and zpwr-scale validation target" (zpwr 1.6M LOC, 478k history, .tokens.sh)</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">No bench measurement yet; architecture supports it but no &lt;60s cold-build proof exists</td></tr>
-<tr><td>"Plugin manager interop" (8 managers)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zinit/OMZ/antigen/zplug/antibody/sheldon/znap + direct git-clone — captured at runtime via <code>zshrs-recorder</code> intercept and shipped through <code>recorder_ingest</code> (static <code>zshrc_analysis::match_plugin</code> parser retired with the walker pipeline; see daemon/lib.rs:53)</td></tr>
-<tr><td>".zwc / .zcompdump invisible to scans, importable on demand"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">ops.rs <code>op_import_zwc</code> + <code>op_import_zcompdump</code> for explicit ingest; <code>verify</code>+<code>clean</code> flag/remove litter. (Walker-side filter retired with <code>plugin_walk.rs</code>; see daemon/lib.rs:53.)</td></tr>
+<tr><td>"Plugin manager interop" (8 managers)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zinit/OMZ/antigen/zplug/antibody/sheldon/znap + direct git-clone — captured at runtime via <code>zshrs-recorder</code> intercept and shipped through <code>recorder_ingest</code> (static <code>zshrc_analysis::match_plugin</code> parser retired with the walker pipeline; see daemon/lib.rs:143)</td></tr>
+<tr><td>".zwc / .zcompdump invisible to scans, importable on demand"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">ops.rs <code>op_import_zwc</code> + <code>op_import_zcompdump</code> for explicit ingest; <code>verify</code>+<code>clean</code> flag/remove litter. (Walker-side filter retired with <code>plugin_walk.rs</code>; see daemon/lib.rs:143.)</td></tr>
 <tr><td>"History migration"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">op_import_history + render_zsh_histfile round-trip</td></tr>
 <tr><td>"Promoting client-local changes to daemon canonical" (zsync up/diff/pull/watch)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">push_canonical now validates + delta-walks + registers fsnotify + emits canonical_changed (zsync.rs:91)</td></tr>
-<tr><td>"Universal cache dump / view / export" (30+ targets × 9 formats)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">export.rs supports all 9 formats per target. <code>zd export TARGET FORMAT</code> auto-unwraps for binary formats (pdf/sh/csv/json/yaml/text) &mdash; <code>--json</code> opt-in restores envelope. <code>export --all</code> emits POSIX ustar (op_export_all, ops.rs:2434). Reverse-import wired: op_import_catalog (2298), op_import_shard (2369), op_import_all (2528).</td></tr>
-<tr><td>"IPC wire format" (length-prefixed JSON)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">ipc.rs:180/202/219/241 framing; Hello/Welcome/Frame/ErrPayload all defined</td></tr>
+<tr><td>"Universal cache dump / view / export" (30+ targets × 9 formats)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">export.rs supports all 9 formats per target. <code>zd export TARGET FORMAT</code> auto-unwraps for binary formats (pdf/sh/csv/json/yaml/text) &mdash; <code>--json</code> opt-in restores envelope. <code>export --all</code> emits POSIX ustar (op_export_all, ops.rs:3229). Reverse-import wired: op_import_catalog (2298), op_import_shard (2369), op_import_all (2528).</td></tr>
+<tr><td>"IPC wire format" (length-prefixed JSON)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">ipc.rs:230/252/269/291 framing; Hello/Welcome/Frame/ErrPayload all defined</td></tr>
 <tr><td>"Daemon lifecycle" (singleton flock / crash recovery / degraded mode / explicit start)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">pidlock.rs flock singleton; client.rs handles NotConnected fallback. Daemon is its own binary (<code>zshrs-daemon</code>) and is started explicitly &mdash; never auto-spawned from a shell entrypoint.</td></tr>
 <tr><td>"First-run user notification"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">firstrun.rs:18 maybe_print + ZSHRS_QUIET_FIRST_RUN gate</td></tr>
-<tr><td>"Long-running command notices" (4 events)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">history.rs:260-283 publishes long_cmd_complete/failed/signaled; ops.rs:754 op_cmd_started</td></tr>
-<tr><td>"Cold-build-complete znotify"</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">Tied to retired <code>op_first_init</code> walker (see daemon/lib.rs:53). Will move to a <code>recorder_ingest</code>-complete broadcast when the recorder pipeline lands the equivalent payload.</td></tr>
+<tr><td>"Long-running command notices" (4 events)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">history.rs:271-316 publishes long_cmd_complete/failed/signaled; ops.rs:725 op_cmd_started</td></tr>
+<tr><td>"Cold-build-complete znotify"</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">Tied to retired <code>op_first_init</code> walker (see daemon/lib.rs:143). Will move to a <code>recorder_ingest</code>-complete broadcast when the recorder pipeline lands the equivalent payload.</td></tr>
 <tr><td>"zask — daemon-queued UI primitives"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zask.rs full inbox with critical-first ordering, Ctrl-X q activation, 60-min timeout</td></tr>
 <tr><td>"Daemon logging"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">log.rs init + ticker.rs rotation (10MB, 4 archives) + zlog tail/grep/level/clear/rotate/path/stats</td></tr>
 <tr><td>"Hard invariants" (13 REJECT-list items)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All 13 enforced — no client polling, sole writer, no .zwc auto-import, etc.</td></tr>
 <tr><td>"Acceptance criteria" (perf budgets)</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">No bench harness measures &lt;5ms / &lt;2ms / &lt;30s targets; spec stands</td></tr>
-<tr><td>"Security model"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">server.rs:299 peer_uid (SO_PEERCRED); paths.rs:100/113 perm helpers (0700/0600); export.rs:144 sensitive guard. Sensitive read/write: source_resolver.rs:read_file_nofollow uses <code>O_NOFOLLOW</code>; shard.rs:write_shard tmp file <code>O_NOFOLLOW | O_CREAT | O_EXCL</code>; shard.rs:open_sensitive uses memmap2 <code>map_copy_read_only</code> (<code>MAP_PRIVATE</code>).</td></tr>
-<tr><td>"Failure modes &amp; disaster recovery"</td><td class="status-cell"><span class="st-partial">PARTIAL</span><br><span class="partial-note">zcache doctor lives; quarantine/recovery from corrupted shards is single-attempt-rebuild only</span></td><td class="cite">ops.rs:1255 op_doctor 9-check sweep; corruption recovery is "delete + walk again" not "quarantine + auto-rewalk"</td></tr>
-<tr><td>"Cross-platform support"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">notify::RecommendedWatcher autoselects FSEvents/inotify/kqueue; server.rs:299 has Linux/macOS/BSD branches</td></tr>
-<tr><td>"Versioning &amp; migration"</td><td class="status-cell"><span class="st-partial">PARTIAL</span><br><span class="partial-note">scaffold present; only v1 schema exists, no v1→v2 migration test corpus</span></td><td class="cite">shard.rs:36 ShardHeader.format_version; catalog.rs:46 PRAGMA user_version; only one version today</td></tr>
+<tr><td>"Security model"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">server.rs:357 peer_uid (SO_PEERCRED); paths.rs:335/508 perm helpers (0700/0600); export.rs:288 sensitive guard. Sensitive read/write: source_resolver.rs:read_file_nofollow uses <code>O_NOFOLLOW</code>; shard.rs:write_shard tmp file <code>O_NOFOLLOW | O_CREAT | O_EXCL</code>; shard.rs:open_sensitive uses memmap2 <code>map_copy_read_only</code> (<code>MAP_PRIVATE</code>).</td></tr>
+<tr><td>"Failure modes &amp; disaster recovery"</td><td class="status-cell"><span class="st-partial">PARTIAL</span><br><span class="partial-note">zcache doctor lives; quarantine/recovery from corrupted shards is single-attempt-rebuild only</span></td><td class="cite">ops.rs:1292 op_doctor 9-check sweep; corruption recovery is "delete + walk again" not "quarantine + auto-rewalk"</td></tr>
+<tr><td>"Cross-platform support"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">notify::RecommendedWatcher autoselects FSEvents/inotify/kqueue; server.rs:357 has Linux/macOS/BSD branches</td></tr>
+<tr><td>"Versioning &amp; migration"</td><td class="status-cell"><span class="st-partial">PARTIAL</span><br><span class="partial-note">scaffold present; catalog v1→v2 migration exists, no migration test corpus</span></td><td class="cite">shard.rs:37 SHARD_FORMAT_VERSION = 2; catalog.rs:42 SCHEMA_VERSION = 2; catalog.rs:59 PRAGMA user_version; catalog.rs:109 migrate_v1_to_v2</td></tr>
 </tbody>
 </table>
 
@@ -382,7 +382,7 @@
 <code class="build-cmd">grep -nE "unimplemented|todo!|FIXME" daemon/*.rs   # → no matches</code>
 
 <p class="ledger" style="margin-top:2rem;">
-  <strong>What changed in this audit pass.</strong> First report claimed "100% implemented" — that was wrong. Re-reading DAEMON.md line by line surfaced 20+ gaps. Eight were fixable in one session and are now closed (round 1, top table). Round 2 closed every remaining item: <code>import catalog/shard/--all</code>, <code>export --all</code> tar archive, fsnotify delta-walk via shared helper, cold-build-complete znotify, <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code> for sensitive content, per-shell replay log + <code>replay_log</code> op, RTT bench harness binary. May 2026 then landed the architectural moves listed in the second summary box (single <code>$ZSHRS_HOME</code>, separate <code>zshrs-daemon</code>/<code>zshrs-recorder</code> binaries, three log files, default 127.0.0.1:7733 listener with <code>/openapi</code>, <code>zd</code> two-surface design, <code>zlock</code>/<code>zpublish</code>/<code>zwhere</code> builtins, <code>zjob attach</code> bidirectional ptmx, <code>zsync up --all</code>, <code>skip_configs</code>). Remaining open items are real bytecode in compiled_files BLOB and committed perf-budget numbers — listed honestly in section "What's still legitimately incomplete." (The <code>zcache rebuild --parallel</code> row was retired alongside the walker pipeline; see daemon/lib.rs:53.)
+  <strong>What changed in this audit pass.</strong> First report claimed "100% implemented" — that was wrong. Re-reading DAEMON.md line by line surfaced 20+ gaps. Eight were fixable in one session and are now closed (round 1, top table). Round 2 closed every remaining item: <code>import catalog/shard/--all</code>, <code>export --all</code> tar archive, fsnotify delta-walk via shared helper, cold-build-complete znotify, <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code> for sensitive content, per-shell replay log + <code>replay_log</code> op, RTT bench harness binary. May 2026 then landed the architectural moves listed in the second summary box (single <code>$ZSHRS_HOME</code>, separate <code>zshrs-daemon</code>/<code>zshrs-recorder</code> binaries, three log files, default 127.0.0.1:7733 listener with <code>/openapi</code>, <code>zd</code> two-surface design, <code>zlock</code>/<code>zpublish</code>/<code>zwhere</code> builtins, <code>zjob attach</code> bidirectional ptmx, <code>zsync up --all</code>, <code>skip_configs</code>). Remaining open items are real bytecode in compiled_files BLOB and committed perf-budget numbers — listed honestly in section "What's still legitimately incomplete." (The <code>zcache rebuild --parallel</code> row was retired alongside the walker pipeline; see daemon/lib.rs:143.)
 </p>
 
 </main>

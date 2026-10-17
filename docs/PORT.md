@@ -135,19 +135,19 @@ strict-port directory):
 
 | Shell source                              | Rust port goes in...                       |
 |-------------------------------------------|--------------------------------------------|
-| `Completion/Base/Completer/_<NAME>`       | `compsys/ported/Base/Completer/_<NAME>.rs` |
-| `Completion/Base/Core/_<NAME>`            | `compsys/ported/Base/Core/_<NAME>.rs`      |
-| `Completion/Base/Utility/_<NAME>`         | `compsys/ported/Base/Utility/_<NAME>.rs`   |
-| `Completion/Base/Widget/_<NAME>`          | `compsys/ported/Base/Widget/_<NAME>.rs`    |
-| `Completion/Unix/Type/_<NAME>`            | `compsys/ported/Unix/Type/_<NAME>.rs`      |
-| `Completion/Zsh/Type/_<NAME>`             | `compsys/ported/Zsh/Type/_<NAME>.rs`       |
+| `Completion/Base/Completer/_<NAME>`       | `src/compsys/ported/Base/Completer/_<NAME>.rs` |
+| `Completion/Base/Core/_<NAME>`            | `src/compsys/ported/Base/Core/_<NAME>.rs`  |
+| `Completion/Base/Utility/_<NAME>`         | `src/compsys/ported/Base/Utility/_<NAME>.rs` |
+| `Completion/Base/Widget/_<NAME>`          | `src/compsys/ported/Base/Widget/_<NAME>.rs` |
+| `Completion/Unix/Type/_<NAME>`            | `src/compsys/ported/Unix/Type/_<NAME>.rs`  |
+| `Completion/Zsh/Type/_<NAME>`             | `src/compsys/ported/Zsh/Type/_<NAME>.rs`   |
 
-`compsys/ported/` is governed by the same four rules as `src/ported/`:
+`src/compsys/ported/` is governed by the same four rules as `src/ported/`:
 no invented helpers, no bag-of-globals aggregators, one file per
 upstream shell function, header doc-comment cites the upstream source
 (`//! Port of _<NAME>` + path), faithful flag/zstyle/algorithm match.
 Stub bodies fail the per-fn unit tests under
-`cargo test -p compsys --lib 'ported::'`.
+`cargo test --lib 'compsys::ported::'`.
 
 A struct declared in `Src/zsh.h` does not belong in
 `src/ported/modules/parameter.rs` just because parameter.c uses it.
@@ -423,7 +423,7 @@ zsh C does not have, or delete it. There is no fourth option.
 
 The only two locations in the entire tree where non-ported code may
 exist are `src/extensions/` and `src/recorder/` (see Rule 1). The two
-crate-root files `src/exec.rs` and `src/fusevm_bridge.rs` are the only
+crate-root files `src/vm_helper.rs` and `src/fusevm_bridge.rs` are the only
 sanctioned non-port files outside those two directories — they are
 explicitly carved out below and are **not** a precedent for adding more.
 
@@ -861,17 +861,19 @@ directories under `src/`:
 | `src/extensions/`  | Features zsh C does **not** have. The only sanctioned non-port dir.|
 | `src/recorder/`    | Recorder subsystem (cargo `recorder` feature only).                |
 
-> **Exception: `src/exec.rs` is NOT a ported file.** zshrs replaces
+> **Exception: `src/vm_helper.rs` is NOT a ported file.** zshrs replaces
 > zsh's tree-walking interpreter (`Src/exec.c::execlist` /
 > `execpline` / `execcmd`) with a fusevm bytecode VM. There is no 1:1
-> port of `Src/exec.c`. `src/exec.rs` instead holds the
+> port of `Src/exec.c`'s interpreter loop. `src/vm_helper.rs` instead holds the
 > `ShellExecutor` runtime-state struct that everything (the VM, every
 > ported builtin, every utility) threads through; the actual VM
 > bridge lives in `src/fusevm_bridge.rs`. Both files live at the
 > crate root, **not** under `src/ported/`, precisely because they
-> aren't ports. `crate::ported::exec` is kept as a path alias
-> (`pub use crate::exec;` in `ported/mod.rs`) so existing call-sites
-> compile unchanged. This is the **only** sanctioned exception to
+> aren't ports. `crate::ported::vm_helper` is kept as a path alias
+> (`pub use crate::vm_helper;` in `ported/mod.rs`) so existing call-sites
+> compile unchanged. The faithful free-function ports from `Src/exec.c`
+> (`gethere`, `getoutput`, `loadautofn`, `getfpfunc`, ...) live in
+> `src/ported/exec.rs`. This is the **only** sanctioned exception to
 > the "every file in `src/ported/` mirrors a `Src/*.c`" rule.
 
 `src/lib.rs` re-exports `pub use ported::*;` so call sites (`crate::exec::…`,
@@ -1151,6 +1153,6 @@ Before writing any code:
 > no helpers, no "legacy" exemptions — old files and new edits alike
 > must comply. Genuinely new features go under `src/extensions/`. The
 > recorder goes under `src/recorder/`. The only non-port files
-> sanctioned outside those two dirs are `src/exec.rs` and
+> sanctioned outside those two dirs are `src/vm_helper.rs` and
 > `src/fusevm_bridge.rs`. Adhoc code anywhere else is deleted on
 > sight.

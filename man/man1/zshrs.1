@@ -63,6 +63,13 @@ Print the option summary and exit.
 .B \-\-version
 Print the zshrs version and exit.
 .TP
+.BI \-\-emulate " MODE"
+zsh's own option: run as zsh with a full
+.B emulate
+.I MODE
+installed before any later option word is read. It must be the first
+option word.
+.TP
 .B \-\-doctor
 Full diagnostic report of shell health, cache state, daemon presence,
 worker pool, and integrity scan results.
@@ -346,7 +353,9 @@ Emit a JSON self-description of every builtin, keyword and option, for
 tools that would otherwise scrape
 .BR \-\-help .
 .B \-\-dump\-reference\-html
-emits the same corpus as a standalone HTML reference.
+emits the same corpus as HTML chapter sections, one
+.B <article>
+per name.
 .TP
 .B \-\-dump\-plugins
 Emit JSON for every sourced plugin, grouped by the manager that installed
@@ -372,15 +381,50 @@ block at the top of a file is the module header.
 Run the script, then report which fusevm execution tier took each of its
 chunks, asked of fusevm's own eligibility and cache predicates.
 .TP
-.BR \-\-prewarm\-autoloads " [DIR ...]"
-Parse and cache the autoload functions in each
-.I DIR
-(default every directory on
-.BR $fpath )
-in a separate process.
-.TP
-.BI \-\-csh\-translate " FILE"
+.BI \-\-csh\-translate " [\-\-source] FILE"
 Print the zsh translation of a csh script (\fB\-\fR reads stdin).
+.B \-\-source
+translates text a csh
+.B source
+runs inside a function, so its
+.B exit
+leaves only the sourced file.
+.TP
+.BI \-\-dump\-tokens " FILE"
+Print one TOKNAME<tab>TOKSTR line per lexer token.
+.TP
+.BI \-\-dump\-ast " FILE"
+Print the parser AST as a canonical S-expression.
+.TP
+.BI \-\-dump\-wordcode " FILE"
+Print the wordcode emitter output.
+.IP
+For these three,
+.I FILE
+may be
+.B \-
+for stdin; the output format matches the C-side
+.B zshrs_dump
+module's dumpers, so it can be diffed against
+.BR zsh (1).
+.TP
+.BI \-\-dump\-zwc " ZWCFILE [FUNCTION]"
+List the functions in a compiled
+.I .zwc
+file, or dump one of them.
+.TP
+.B \-\-disasm
+Print the fusevm opcodes of each compiled unit before the VM runs it;
+execution continues.
+.TP
+.BI \-\-color " always|never"
+With
+.BR \-\-docs ,
+force ANSI colour on or off. Without it, colour follows
+.BR NO_COLOR ,
+.BR FORCE_COLOR ,
+.B CLICOLOR_FORCE
+and whether stdout is a terminal.
 .SS Standard zsh single-letter options
 The following match
 .BR zsh (1)
@@ -402,7 +446,8 @@ Equivalent to
 Force interactive mode.
 .TP
 .B \-l
-Force login shell.
+.RB ( \-\-login )
+force login shell.
 .TP
 .B \-s
 Read commands from stdin.

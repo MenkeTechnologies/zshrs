@@ -164,7 +164,7 @@
   <div class="stat-card"><div class="stat-val">468/488</div><div class="stat-label">TAB Screens</div><div class="stat-sub">byte-identical</div></div>
   <div class="stat-card"><div class="stat-val yellow">1,275</div><div class="stat-label">Names Matched</div><div class="stat-sub">14 missing of 1,289</div></div>
   <div class="stat-card"><div class="stat-val">49,300</div><div class="stat-label">cargo Parity Pass</div><div class="stat-sub">35 fail &middot; 4 timing</div></div>
-  <div class="stat-card"><div class="stat-val yellow">95</div><div class="stat-label">C Fn Stubs</div><div class="stat-sub">of 2,473 C functions</div></div>
+  <div class="stat-card"><div class="stat-val yellow">87</div><div class="stat-label">C Fn Stubs</div><div class="stat-sub">of 2,473 C functions</div></div>
   <div class="stat-card"><div class="stat-val">9-Way</div><div class="stat-label">Emulation Fuzz</div><div class="stat-sub">--zsh 0 / 20,000 divergent</div></div>
   <div class="stat-card"><div class="stat-val magenta">29</div><div class="stat-label">zshrs-only Passes</div><div class="stat-sub">fail or unrunnable in this zsh build</div></div>
 </div>
@@ -270,7 +270,7 @@
   <li>cargo parity: <code>cargo test --test parity</code>; the reference shell is the development-tree oracle build resolved by <code>tests/parity/oracle.rs</code>, which lacks the <code>restricted</code> option and the subshell job-control guard that 5.9.2 has, so <code>main</code> differs from that oracle in a few cases it matched before. Failures re-run alone with <code>--test-threads=1</code>.</li>
   <li>Surface and fuzz checks compare against the host zsh 5.9.2 and the reference shells named in each table.</li>
   <li>csh: <code>parity-fuzz --shell csh --count 2000 --seed 1 --verify 2</code> and <code>cargo test --test csh_parity</code>, debug build, reference <code>/bin/tcsh</code> 6.21.00; one run each. The generator covers 28 statement kinds; a hand-written battery of 170 further constructs was also run against tcsh (stdout and exit status; job pids normalised).</li>
-  <li>C port coverage is read from the published port report (generated 2026-10-06), not regenerated for this page.</li>
+  <li>C port coverage is read from the published port report (generated 2026-10-17), not regenerated for this page.</li>
   <li>Daily driver: a pty harness started each shell with <code>-i</code> and the real <code>~/.zshrc</code>, waited 30 s, then sourced a probe file and typed the burst and quote lines.</li>
 </ul>
 </main>
@@ -284,7 +284,7 @@ const METERS = [
   ["TAB screens", "490 cells, single TAB, byte-compared", 468, 488, 0, "95.9%", "468 / 488"],
   ["cargo parity", "cargo test --test parity, 28 ignored", 49300, 49339, 4, "99.92%", "35 fail · 4 timing"],
   ["Shell surface", "builtins, options, params, widgets, keymaps, reswords, modules", 1275, 1289, 0, "98.9%", "1,275 / 1,289"],
-  ["C functions ported", "port report, 2026-10-06", 2368, 2473, 95, "95.8%", "95 stubs · 10 unported"]
+  ["C functions ported", "port report, 2026-10-17", 2376, 2473, 87, "96.1%", "87 stubs · 10 unported"]
 ];
 const CATS = [
   ["A", "Grammar & execution", 8, 377, 377],
