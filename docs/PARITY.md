@@ -47,15 +47,14 @@ measurement section of `README.md` carries the current figures):
   limit, and the run prints a per-way table naming the reference binary and
   release. The newest installed reference is preferred (bash 5.3, ksh93u+m).
 
-  Known open divergences the matrix does not yet pin (each is a separate
-  per-shell rule): an alias defined on one line of a `-c` string and used on
-  the next (dash, ksh, mksh and ash expand it; zshrs says command not found);
-  a bare `()` (ksh93 exits 3, mksh accepts it, zshrs exits 1); sparse-array
-  slicing `${a[@]:off}` in ksh after an element was unset (zshrs keeps an
-  empty leading field where ksh93 prints only the live elements). Unquoted
-  `$@` / `$*` with empty arguments under a non-default IFS, ksh93's
-  `${v:-"q r"}` splitting inside double quotes, bash's sparse-array slicing
-  and bash's `{ ; }` syntax error now match their references.
+  The matrix pins no known open divergence at the moment; each earlier one was
+  a separate per-shell rule and now has a case in the dialect data file:
+  unquoted `$@` / `$*` with empty arguments under a non-default IFS, an alias
+  defined on one line of a `-c` string and used on the next, a bare `()` and
+  anonymous functions (syntax errors in the real shells; mksh reads `()` as a
+  null command), sparse-array slicing `${a[@]:off}` in bash and ksh93 (by
+  index), ksh93's `${v:-"q r"}` splitting inside double quotes, and bash's
+  `{ ; }` syntax error.
 
 The oracle-backed ztst figure is the largest measure of remaining debt; the
 other suites sample narrower slices of the language.
