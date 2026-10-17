@@ -1008,8 +1008,8 @@ Per emulation target, out of 300 each: `ksh`, `mksh`, `pdksh`, `bash`, `sh`, `da
 `ash` are all 0, and four further 3,000-case seed ranges per target (seeds 1, 5000, 9000, 14000) found none. The `dash` and `ash` references are `/bin/dash` (the dash the parity
 corpus pins); the Homebrew dash 0.5.13 differs from it in `getopts`, `$'…'`, `echo` escapes
 and `alias` output, and is not a target. The fuzzer starts zshrs under the reference's path
-(`argv[0]`), because `caller` and `${BASH_SOURCE[0]}` in a `-c` string report it, and runs the
-zsh-style legs as real zsh started under the emulated name (`sh`, `ksh`). The emulation modes
+(`argv[0]`), because `caller` and `${BASH_SOURCE[0]}` in a `-c` string report it. The zsh-style legs
+are compared against `zsh -c 'emulate sh -c …'` (byte parity with that is their contract). The emulation modes
 are held to a weaker contract than zsh mode -- exit-status *sign* rather than exact code --
 because the reference shells disagree with each other on exact codes.
 
