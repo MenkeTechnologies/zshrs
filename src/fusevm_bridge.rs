@@ -970,6 +970,22 @@ fn redir_target_expansion_failed(exec: &mut ShellExecutor) -> bool {
     clean_at_open
 }
 
+/// Leave a process that was forked WITHOUT exec (a pipeline stage, a background
+/// job, a coprocess).
+///
+/// !!! RUST-ONLY HELPER !!! — C `_exit`s there (c:Src/exec.c `_exit(lastval)`).
+/// `std::process::exit` runs `atexit` handlers and, on macOS, the thread-local
+/// destructors of the exiting thread. After a fork only the forking thread exists,
+/// so a destructor that joins or signals the other threads (worker pool, editor
+/// engines) waits for threads that are not there: the child never exits, keeps its
+/// end of the pipe open, and the reader (`echo hi | cat`) never sees EOF.
+fn forked_child_exit(status: i32) -> ! {
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    unsafe { libc::_exit(status) }
+}
+
+
 /// Asked by paramsubst's `${name?msg}` arms before they take
 /// c:Src/subst.c:3375's `zexit(1)`: true when the expansion belongs to the
 /// prefix assignments of `X=… cmd`, whose process is not known yet. The exit
@@ -3088,8 +3104,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // library builtin to load; `echo` is already one, so the word after it
         // is reported "not found" (status 1).
         if crate::dash_mode::ksh93_mode() && !args.is_empty() {
-            crate::ported::utils::zwarnnam("builtin", &format!("{}: not found", args[args.len() - 1]));
-            return Value::Status(1);
+            // `builtin NAME...` succeeds when every NAME already is a builtin (0), reports
+            // the first one that is not (1); `-d` deletes (0 even for an unknown name);
+            // `-f LIB` loads a library (none here, 1); any other option is a usage error (2).
+            let mut delete = false;
+            let mut names: Vec<&String> = Vec::new();
+            for a in &args {
+                match a.as_str() {
+                    "-d" => delete = true,
+                    "-f" => return Value::Status(1),
+                    o if o.len() > 1 && o.starts_with('-') => {
+                        crate::ported::utils::zwarnnam("builtin", &format!("{o}: unknown option"));
+                        return Value::Status(2);
+                    }
+                    _ => names.push(a),
+                }
+            }
+            if delete {
+                return Value::Status(0);
+            }
+            let table = crate::ported::builtin::createbuiltintable();
+            for n in names {
+                if !table.contains_key(n.as_str()) {
+                    crate::ported::utils::zwarnnam("builtin", &format!("{n}: not found"));
+                    return Value::Status(1);
+                }
+            }
+            return Value::Status(0);
         }
         // c:Src/exec.c:3483-3487 — the precommand-modifier walk checks
         // `shfunctab` for the command word BEFORE `builtintab`, and only
@@ -4595,7 +4636,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // Flush any buffered output before exiting
                     let _ = std::io::stdout().flush();
                     let _ = std::io::stderr().flush();
-                    std::process::exit(stage_vm.last_status);
+                    forked_child_exit(stage_vm.last_status);
                 }
                 pid => {
                     child_pids.push(pid);
@@ -5035,7 +5076,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let _ = stage_vm.run();
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
-                        std::process::exit(stage_vm.last_status);
+                        forked_child_exit(stage_vm.last_status);
                     }
                     pid => {
                         if gleader == 0 {
@@ -5138,7 +5179,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let _ = bg_vm.run();
                 let _ = std::io::stdout().flush();
                 let _ = std::io::stderr().flush();
-                std::process::exit(bg_vm.last_status);
+                forked_child_exit(bg_vm.last_status);
             }
             pid => {
                 // c:Src/exec.c:2887-2890 — C's parent blocks on the synch
@@ -8807,7 +8848,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let _ = co_vm.run();
                 let _ = std::io::stdout().flush();
                 let _ = std::io::stderr().flush();
-                std::process::exit(co_vm.last_status);
+                forked_child_exit(co_vm.last_status);
             }
             pid => {
                 // Parent: close child ends, store [read_fd, write_fd] in NAME.
