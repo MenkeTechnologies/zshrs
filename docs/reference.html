@@ -339,7 +339,7 @@ done</code></pre>
 
       <article class="doc-entry" id="doc-anon-fn">
         <h3><a class="doc-anchor" href="#doc-anon-fn">#</a> <code>() { body } args…</code></h3>
-        <p>Anonymous function. Defined and immediately invoked with the trailing words as <code>$1…$N</code>. Parser routes <code>Inoutpar</code> (the <code>()</code> token) to <code>parse_anon_funcdef</code>, which generates a unique <code>_zshrs_anon_N</code> name; <code>compile_funcdef</code> registers and calls when <code>auto_call_args</code> is set. <code>()</code> with no body falls back to an empty subshell (POSIX no-op).</p>
+        <p>Anonymous function. Defined and immediately invoked with the trailing words as <code>$1…$N</code>. Parser routes <code>Inoutpar</code> (the <code>()</code> token) to <code>parse_anon_funcdef</code>, which generates a unique <code>_zshrs_anon_N</code> name; <code>compile_funcdef</code> registers and calls when <code>auto_call_args</code> is set. The <code>function</code> keyword with no name (<code>function { body } args…</code>, any separator after it) is the same anonymous function. A <code>()</code> with no body is a parse error, as in zsh.</p>
         <pre><code>() { echo "hi $1, $2 args"; } world 1
 # → hi world, 1 args</code></pre>
       </article>
