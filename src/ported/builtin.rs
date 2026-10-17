@@ -18051,6 +18051,27 @@ pub fn bin_test(
     // -lt, -le, -gt and -ge as arithmetic expressions: `test 0x10 -eq 16` and `test a -eq a`
     // (both 0) succeed, where zsh reports "bad floating point constant".
     if crate::dash_mode::ksh93_mode() {
+        // `test 1.5 -gt 1`: a float operand compares as a float.
+        if argv.len() == 3 && matches!(argv[1].as_str(), "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge") {
+            let val = |t: &str| {
+                crate::ported::math::matheval(t).ok().map(|n| {
+                    if (n.type_ & crate::ported::zsh_h::MN_FLOAT) != 0 { (n.d, true) } else { (n.l as f64, false) }
+                })
+            };
+            if let (Some((a, af)), Some((b, bf))) = (val(&argv[0]), val(&argv[2])) {
+                if af || bf {
+                    let t = match argv[1].as_str() {
+                        "-eq" => a == b,
+                        "-ne" => a != b,
+                        "-lt" => a < b,
+                        "-le" => a <= b,
+                        "-gt" => a > b,
+                        _ => a >= b,
+                    };
+                    return if t { 0 } else { 1 };
+                }
+            }
+        }
         for i in 1..argv.len().saturating_sub(1) {
             if matches!(argv[i].as_str(), "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge") {
                 for j in [i - 1, i + 1] {
