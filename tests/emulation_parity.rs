@@ -99,7 +99,7 @@ const PARITY_CASES: &[ParityCase] = &[
     ParityCase {
         name: "dash",
         zshrs_flags: &["--dash"],
-        candidates: &["/opt/homebrew/bin/dash", "/bin/dash", "/usr/bin/dash"],
+        candidates: &["/bin/dash", "/usr/bin/dash"],
         ref_emulate: None,
         extended: false,
         optional: false,
