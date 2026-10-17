@@ -4442,7 +4442,13 @@ impl ShellExecutor {
         // !!! BASH-MODE (no C counterpart) !!! bash reads a `-c` string one line at a
         // time, so a runtime error discards the rest of its line and the next line
         // still runs; the whole-chunk compile below would unwind the entire string.
-        let status = if crate::dash_mode::bash_mode() {
+        // !!! POSIX-DROP-IN GATE (no C counterpart) !!! dash, ksh, mksh and /bin/sh lex a
+        // line only after the previous one ran, so an alias defined on one line expands on
+        // the next; the whole-chunk compile below lexes every line before any runs.
+        let alias_across_lines = crate::dash_mode::posix_faithful()
+            && script.contains('\n')
+            && script.contains("alias");
+        let status = if crate::dash_mode::bash_mode() || alias_across_lines {
             self.run_events_per_command(script, false, true)?
         } else {
             // !!! POSIX-DROP-IN GATE (no C counterpart) !!! dash, ksh, mksh and /bin/sh

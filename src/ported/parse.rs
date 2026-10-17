@@ -10212,6 +10212,16 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // path's body_start-before-zshlex capture (parse.rs:2484).
     let mut body_mark = crate::funcdef_capture::body_mark_begin();
     zshlex(); // skip ()
+    // !!! POSIX-DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and /bin/sh have no
+    // anonymous functions: `() { … }` is a syntax error. mksh alone reads a bodyless `()` as an
+    // empty subshell, a null command.
+    if crate::dash_mode::posix_faithful() {
+        if crate::dash_mode::pdksh_family() && matches!(tok(), SEPER | NEWLIN | ENDINPUT) {
+            return Some(ZshCommand::Subsh(Box::new(ZshProgram { lists: vec![] })));
+        }
+        set_tok(LEXERR);
+        return None;
+    }
     while tok() == SEPER || tok() == NEWLIN {
         crate::funcdef_capture::body_mark_restart(&mut body_mark);
         zshlex();

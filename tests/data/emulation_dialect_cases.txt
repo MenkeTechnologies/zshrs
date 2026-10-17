@@ -444,3 +444,7 @@ mksh	typeset -Ui v=255; typeset -u v=abc; typeset -p v; typeset -Ui k=9; typeset
 mksh	typeset -u -i w=7; typeset -p w; typeset -i q=7; typeset -u q; typeset -p q
 bash	[[ abc =~ ^a(b)c$ ]]; [[ abc =~ ^z ]]; echo "[${BASH_REMATCH[*]}] ${#BASH_REMATCH[@]}"
 bash,ksh,mksh,zsh	setopt nonomatch 2>/dev/null; echo x*y >/dev/null; v=foo.bar.baz; echo "${v//?/X}" "${v//[!x]/X}" "${v/?/X}"
+dash,ash,ksh,mksh,sh	alias ll="echo hi"<NL>ll<NL>ll there
+dash,ash,ksh,mksh,sh,bash	() { echo anon; }; echo after
+mksh	echo a<NL>()<NL>echo b; (); echo c
+ksh	a=(a b c d); unset "a[1]"; echo "[${a[@]:1}] [${a[@]:2:1}] [${a[@]:0:2}] [${a[*]:1:2}] [${a[@]: -2}]"

@@ -22552,9 +22552,9 @@ pub fn paramsubst(
                             let s0 = vars_get("0").unwrap_or_default(); // c:3702 argzero
                             arr.insert(0, s0); // c:3668-3669,3681-3682,3701-3703
                         }
-                        // !!! BASH-MODE GATE (no C counterpart) !!! a bash sparse array slices by
+                        // !!! BASH/KSH93 GATE (no C counterpart) !!! a bash or ksh93 sparse array slices by
                         // INDEX: `${a[@]:1:2}` takes the live elements whose index is >= 1.
-                        let off = if crate::dash_mode::bash_mode()
+                        let off = if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
                             && crate::bash_arrays::has_holes(&var_name)
                         {
                             let live = crate::bash_arrays::live_indices(&var_name, arr.len());
