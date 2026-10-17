@@ -1703,6 +1703,8 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "set -- a b; shift abc 2>/dev/null; echo $?",
+    "type -p echo; type -p ls | grep -c ls",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
     "read -t 0 x </dev/null; echo $?",
     "echo a | { read -t 0 x; echo $?; }",
@@ -2035,6 +2037,7 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
+    "getopts a 2>/dev/null; echo $?",
     "(( 1/0 )) 2>/dev/null; echo $?",
     "ulimit -Z 2>/dev/null; echo $?",
     "printf '%ld %lld %hhd %zd|\\n' 1 2 3 4",

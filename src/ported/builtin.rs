@@ -789,6 +789,13 @@ pub fn execbuiltin(
         if argc < bn_ref.minargs && name == "let" && crate::dash_mode::ksh93_mode() {
             return 2;
         }
+        // bash and ksh93 answer a `getopts` with too few operands with a usage error, status 2.
+        if argc < bn_ref.minargs
+            && name == "getopts"
+            && (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
+        {
+            return 2;
+        }
         // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash usage errors are status 2.
         if crate::dash_mode::dash_faithful() {
             return 2;
@@ -11634,6 +11641,25 @@ pub fn bin_whence(
         return rc;
     }
 
+    // !!! BASH-MODE GATE (no C counterpart) !!! `type -p NAME` prints the file only when NAME
+    // resolves to one (an alias, keyword, function or builtin of that name prints nothing).
+    if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'p') {
+        for name in argv {
+            let shadowed = (crate::dash_mode::aliases_visible()
+                && aliastab_lock().read().ok().is_some_and(|t| t.get(name).is_some()))
+                || reswdtab_lock().read().ok().is_some_and(|t| t.get(name).is_some())
+                || getshfunc(name).is_some()
+                || (!BUILTINS_DISABLED.lock().is_ok_and(|s| s.contains(name.as_str()))
+                    && createbuiltintable().get(name.as_str()).is_some());
+            if !shadowed {
+                if let Some(path) = crate::ported::exec::findcmd(name, 0, 0) {
+                    println!("{}", path);
+                }
+            }
+        }
+        return 0;
+    }
+
     // !!! BASH-MODE GATE (no C counterpart) !!! `type -P NAME` forces a $PATH
     // search and prints the file, whatever else NAME is.
     if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'P') {
@@ -14374,6 +14400,16 @@ pub fn bin_shift(
                 }
             }
         }
+        // !!! BASH GATE (no C counterpart) !!! a non-numeric `shift` count is "numeric
+        // argument required", status 2 (zsh evaluates it as arithmetic: `abc` is 0).
+        if crate::dash_mode::bash_mode()
+            && argv[0].trim().trim_start_matches(['+', '-']).parse::<u64>().is_err()
+            && crate::ported::params::getaparam(&argv[0]).is_none()
+        {
+            unqueue_signals();
+            zwarnnam(name, &format!("{}: numeric argument required", argv[0]));
+            return 2;
+        }
         // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh parse `shift` operands as
         // options: `shift -1` is a usage error that ends the script.
         if crate::dash_mode::korn_mode()
@@ -14513,6 +14549,11 @@ pub fn bin_getopts(
         // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash: usage error, status 2.
         if crate::dash_mode::dash_faithful() {
             zwarnnam(_name, "Usage: getopts optstring var [arg...]");
+            return 2;
+        }
+        // bash and ksh93 also answer a missing operand with a usage error, status 2.
+        if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() {
+            zwarnnam(_name, "usage: getopts optstring name [arg ...]");
             return 2;
         }
         return 1;
