@@ -554,8 +554,18 @@ impl ShellExecutor {
         }
     }
 
-    /// doctor - diagnostic report of shell health, caches, and performance
-    pub(crate) fn builtin_doctor(&self, _args: &[String]) -> i32 {
+    /// doctor [--json] - diagnostic report of shell health, caches, and performance.
+    /// `--json` prints the same report `zshrs --doctor --json` does, minus the startup
+    /// benchmark (a running shell has no fresh executor to time).
+    pub(crate) fn builtin_doctor(&self, args: &[String]) -> i32 {
+        if args.iter().any(|a| a == "--json") {
+            let report = crate::doctor_report::gather(None);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string())
+            );
+            return 0;
+        }
         let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
         let red = |s: &str| format!("\x1b[31m{}\x1b[0m", s);
         let yellow = |s: &str| format!("\x1b[33m{}\x1b[0m", s);

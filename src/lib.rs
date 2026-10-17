@@ -331,6 +331,9 @@ pub mod dash_mode;
 /// `dumpers` submodule.
 #[path = "extensions/dumpers.rs"]
 pub mod dumpers;
+/// `doctor_report` submodule.
+#[path = "extensions/doctor_report.rs"]
+pub mod doctor_report;
 /// `ext_builtins` submodule.
 #[path = "extensions/ext_builtins.rs"]
 pub mod ext_builtins;

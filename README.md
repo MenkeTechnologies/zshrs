@@ -462,7 +462,7 @@ dbview scripts                 # compiled sourced scripts (scripts.rkyv); option
 |---------|-------------|
 | `intercept` | AOP before/after/around advice on any command |
 | `intercept_proceed` | Call original from around advice |
-| `doctor` | Full diagnostic: pool metrics, cache stats, bytecode coverage |
+| `doctor [--json]` | Full diagnostic: pool metrics, cache stats, bytecode coverage; `--json` prints the `zshrs --doctor --json` report (no startup benchmark) |
 | `dbview` | Read-only browse of SQLite **mirrors**; `dbview scripts` lists the compiled-script rkyv shard entries |
 | `profile` | In-process command profiling with nanosecond accuracy |
 | `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them, each stamped with file, line and wall clock; shell functions carry the same chain ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
@@ -1150,6 +1150,8 @@ zshrs --doctor               # full diagnostic report: shell health, caches,
                              # performance (not available in the --zsh /
                              # --posix drop-ins)
 zshrs --doctor --json        # the same report as one JSON object
+                             # (`doctor --json` inside a shell prints it too,
+                             # with `startup_benchmark` null)
 zshrs --banner               # logo, version, builtin totals, daemon status
 zshrs --dump-tokens FILE     # one TOKNAME<tab>TOKSTR line per lexer token
 zshrs --dump-ast FILE        # parser AST as a canonical S-expression
