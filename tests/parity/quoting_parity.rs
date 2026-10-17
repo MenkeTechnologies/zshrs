@@ -461,6 +461,14 @@ mod ansi_c_escape_edges {
         assert_parity(r#"print -rn -- x$'a\?b'y x$'a\qb'y x$'a\^ab'y | od -An -tx1"#);
     }
 
+    /// Adjacent `$'\NNN'` pieces form ONE byte string, so three lone bytes that
+    /// spell `∞` are `∞` (zsh keeps the word as bytes; a per-piece decode left
+    /// three opaque bytes that never compared equal).
+    #[test]
+    fn adjacent_ansi_c_bytes_join_into_one_multibyte_character() {
+        assert_parity(r#"x=$'\342'$'\210'$'\236'f; [[ $x == ∞f ]] && print same || print differ; print ${#x}"#);
+    }
+
     /// `(Q)` dequotes each element for the `[@]` and `[*]` subscripts too, not
     /// only for the bare array name: zinit reads its hook table with
     /// `"${(Q)${(z@)entry}[@]}"` and called the still-quoted words otherwise.

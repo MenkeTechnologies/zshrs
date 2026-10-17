@@ -6109,7 +6109,11 @@ pub fn untokenize(s: &str) -> String {
         i += 1;
     }
 
-    result
+    // Each `$'…'` piece above is regrouped on its own, so a lone raw byte
+    // from one piece never meets the continuation bytes in the next:
+    // `$'\342'$'\210'$'\236'` stayed three opaque bytes instead of `∞`.
+    // C holds the whole word as one byte string; regroup it as one.
+    crate::script_bytes::regroup_meta_utf8(result)
 }
 
 /// Check if a string contains any token characters.
