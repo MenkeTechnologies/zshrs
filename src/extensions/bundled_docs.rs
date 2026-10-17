@@ -103,23 +103,24 @@ pub fn ensure_installed() -> Option<usize> {
     if !needs_write(&base) {
         return Some(0);
     }
-    let mut n = 0usize;
-    for (name, body) in entries() {
-        let body = &body[..];
+    let files: Vec<(String, Vec<u8>)> = entries()
+        .into_iter()
         // The bundle is written by our own build.rs, but a relative name
         // is still the one field that could escape the directory.
-        if name.is_empty() || name.starts_with('/') || name.contains("..") {
-            continue;
-        }
-        let dest = base.join(&name);
-        let Some(parent) = dest.parent() else { continue };
-        if std::fs::create_dir_all(parent).is_err() {
-            continue;
-        }
-        if std::fs::write(&dest, body).is_ok() {
-            n += 1;
-        }
+        .filter(|(name, _)| !name.is_empty() && !name.starts_with('/') && !name.contains(".."))
+        .collect();
+    let parents: std::collections::BTreeSet<PathBuf> =
+        files.iter().filter_map(|(name, _)| base.join(name).parent().map(Path::to_path_buf)).collect();
+    for parent in &parents {
+        let _ = std::fs::create_dir_all(parent);
     }
+    let written = std::sync::atomic::AtomicUsize::new(0);
+    crate::bundled_functions::par_each(&files, |(name, body)| {
+        if std::fs::write(base.join(name), body).is_ok() {
+            written.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    let n = written.into_inner();
     if let Ok(mut f) = std::fs::File::create(base.join(STAMP)) {
         let _ = f.write_all(stamp_value().as_bytes());
     }

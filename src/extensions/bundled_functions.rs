@@ -94,8 +94,8 @@ fn needs_write(dir: &Path) -> bool {
 /// and is renamed over the destination, which is atomic within a filesystem; the
 /// dot prefix keeps the scan (`_*` only) from ever opening the temporary.
 fn write_atomically(dir: &Path, name: &str, body: &[u8]) -> bool {
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     let dest = dir.join(name);
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     // Already the right bytes (most of the tree is unchanged from one release to the
     // next): leave the file, and its mtime, alone. Three metadata operations per file
     // across 1.2k files is seconds on a busy disk.
@@ -110,6 +110,32 @@ fn write_atomically(dir: &Path, name: &str, body: &[u8]) -> bool {
         let _ = std::fs::remove_file(&tmp);
     }
     ok
+}
+
+/// Create `dir/name` holding `body` in one `open(O_CREAT|O_EXCL)`; a file that is already
+/// there (an install that died half way) goes through [`write_atomically`] instead.
+fn write_new(dir: &Path, name: &str, body: &[u8]) -> bool {
+    match std::fs::File::options().write(true).create_new(true).open(dir.join(name)) {
+        Ok(mut f) => f.write_all(body).is_ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => write_atomically(dir, name, body),
+        Err(_) => false,
+    }
+}
+
+/// Run `f` over `items` on a few plain scoped threads, all joined before this returns.
+///
+/// Creating 1.5k files is a syscall-bound loop; file creation in distinct dentries
+/// scales across threads. Plain threads rather than rayon's global pool: nothing is left
+/// running afterwards for a later `fork` to leave in a half-copied state.
+pub(crate) fn par_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    let chunk = items.len().div_ceil(threads).max(1);
+    std::thread::scope(|s| {
+        for part in items.chunks(chunk) {
+            let f = &f;
+            s.spawn(move || part.iter().for_each(f));
+        }
+    });
 }
 
 /// Materialise the bundle when missing or stale. Returns how many files
@@ -138,8 +164,12 @@ pub fn ensure_installed() -> Option<usize> {
     if !needs_write(&dir) {
         return Some(0);
     }
+    // No stamp at all: a first install. Every other shell is parked on the lock above
+    // until the stamp lands, so nothing can scan a half-written file and the
+    // tmp-file-plus-rename dance (two directory operations per file) is skipped.
+    let fresh = !dir.join(STAMP).exists();
     let raw = zstd::decode_all(BUNDLE).ok()?;
-    let mut n = 0usize;
+    let mut files: Vec<(&str, &[u8])> = Vec::new();
     let mut i = 0usize;
     while i + 4 <= raw.len() {
         let nl = u32::from_le_bytes(raw[i..i + 4].try_into().ok()?) as usize;
@@ -147,7 +177,7 @@ pub fn ensure_installed() -> Option<usize> {
         if i + nl + 4 > raw.len() {
             break;
         }
-        let name = String::from_utf8_lossy(&raw[i..i + nl]).into_owned();
+        let name = std::str::from_utf8(&raw[i..i + nl]).ok();
         i += nl;
         let bl = u32::from_le_bytes(raw[i..i + 4].try_into().ok()?) as usize;
         i += 4;
@@ -158,13 +188,19 @@ pub fn ensure_installed() -> Option<usize> {
         i += bl;
         // Basename only: the bundle is flat, and a name with a separator
         // would otherwise escape the directory.
-        if name.contains('/') || name.contains("..") || name.is_empty() {
-            continue;
-        }
-        if write_atomically(&dir, &name, body) {
-            n += 1;
+        match name {
+            Some(n) if !n.contains('/') && !n.contains("..") && !n.is_empty() => files.push((n, body)),
+            _ => {}
         }
     }
+    let written = std::sync::atomic::AtomicUsize::new(0);
+    par_each(&files, |&(name, body)| {
+        let ok = if fresh { write_new(&dir, name, body) } else { write_atomically(&dir, name, body) };
+        if ok {
+            written.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    let n = written.into_inner();
     write_atomically(&dir, STAMP, stamp_value().as_bytes());
     tracing::info!(target: "bundled_functions", written = n, dir = %dir.display(),
                    "materialised bundled zsh functions");
@@ -222,6 +258,20 @@ mod tests {
         assert_eq!(first, second, "identical content must not be rewritten");
         assert!(write_atomically(dir.path(), "_same", b"#compdef other\n"));
         assert_eq!(std::fs::read(dir.path().join("_same")).unwrap(), b"#compdef other\n");
+    }
+
+    /// A first install creates files directly; a file left by a dead install is replaced
+    /// whole, and every item reaches the worker threads exactly once.
+    #[test]
+    fn first_install_writes_every_file_and_replaces_leftovers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("_left"), b"stale").unwrap();
+        let names: Vec<String> = (0..100).map(|i| format!("_f{i}")).chain(["_left".to_string()]).collect();
+        par_each(&names, |n| assert!(write_new(dir.path(), n, n.as_bytes())));
+        for n in &names {
+            assert_eq!(std::fs::read(dir.path().join(n)).unwrap(), n.as_bytes());
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), names.len());
     }
 
     #[test]
