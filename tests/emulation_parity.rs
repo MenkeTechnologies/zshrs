@@ -1703,6 +1703,7 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "a=$BASHPID; b=$(echo $BASHPID); (d=$BASHPID; echo $((d==a))); echo $((a==$$)) $((b==a)); echo x | { echo $((BASHPID==a)); }",
     "x=a/b; echo \"[${x///:}] [${x///}] [${x////}] [${x///b}] [${x//a/}]\"",
     "command -x 2>/dev/null; echo $?",
     "command -x echo hi 2>/dev/null; echo $?",

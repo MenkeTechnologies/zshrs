@@ -18281,7 +18281,13 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "$" => Some(mypid.load(std::sync::atomic::Ordering::Relaxed).to_string()), // c:353 IPDEF4("$", &mypid)
         // !!! BASH-MODE (no C counterpart) !!! `$BASHPID` is the PID of the process
         // evaluating it (a subshell's own, where `$$` stays the parent's).
-        "BASHPID" if crate::dash_mode::bash_mode() => Some(std::process::id().to_string()),
+        // !!! RUST-ONLY !!! In-process subshells (`( )`, `$( )`) share the OS pid; bash forks
+        // them, so offset the pid by the nesting level to keep BASHPID distinct per level.
+        "BASHPID" if crate::dash_mode::bash_mode() => {
+            let level: u32 = getsparam("ZSH_SUBSHELL").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let forked = std::process::id() as i64 != mypid.load(Ordering::Relaxed) as i64;
+            Some((std::process::id() + if forked { 0 } else { level }).to_string())
+        }
         "!" => {
             // c:Src/params.c:345 IPDEF4("!", &lastpid) — `$!` reads
             // directly from the `lastpid` atomic (Src/jobs.c:73).
