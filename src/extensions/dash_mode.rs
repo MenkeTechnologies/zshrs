@@ -3650,3 +3650,63 @@ pub fn dash_test(name: &str, args: &[String]) -> i32 {
 pub fn at_star_unset_without_args(name: &str, no_args: bool) -> bool {
     matches!(name, "@" | "*") && no_args && (bash_mode() || korn_mode())
 }
+
+/// Split the inside of a quoted compound assignment (`declare -a a='(1 "two words" 3)'`)
+/// into array elements: blanks separate words, single and double quotes group, a
+/// backslash escapes the next character. Returns `None` unless `value` is `( … )`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn bash_compound_words(value: &str) -> Option<Vec<String>> {
+    let inner = value.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut have = false;
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                have = true;
+                for q in chars.by_ref() {
+                    if q == '\'' {
+                        break;
+                    }
+                    cur.push(q);
+                }
+            }
+            '"' => {
+                have = true;
+                while let Some(q) = chars.next() {
+                    match q {
+                        '"' => break,
+                        '\\' => {
+                            if let Some(n) = chars.next() {
+                                cur.push(n);
+                            }
+                        }
+                        _ => cur.push(q),
+                    }
+                }
+            }
+            '\\' => {
+                have = true;
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            }
+            c if c.is_whitespace() => {
+                if have {
+                    words.push(std::mem::take(&mut cur));
+                    have = false;
+                }
+            }
+            c => {
+                have = true;
+                cur.push(c);
+            }
+        }
+    }
+    if have {
+        words.push(cur);
+    }
+    Some(words)
+}
