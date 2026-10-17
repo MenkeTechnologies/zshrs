@@ -4094,6 +4094,14 @@ pub(crate) fn op(what: i32) {
             }
         };
 
+        // !!! PDKSH (no C counterpart) !!! mksh does its arithmetic in 32-bit signed integers: results
+        // wrap (`2147483647+1` is `-2147483648`) and a shift count is taken modulo 32.
+        let result = if crate::dash_mode::pdksh_family() && result.type_ == MN_INTEGER {
+            mnumber { l: i64::from(result.l as i32), ..result }
+        } else {
+            result
+        };
+
         // Handle assignment
         if (tp & (OP_E2 | OP_E2IO)) != 0 {
             if let Some(ref name) = mv_a.lval {
@@ -4536,11 +4544,12 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     // or typed-float parameter, an unset name, a leading zero, a base prefix,
     // `/` `%` `<<` `**`, assignment, a second operator, FORCEFLOAT — returns
     // None and takes the full path, so errors and warnings are unchanged.
-    // ksh93 rounds every integer through a double (`ksh93_round_int!`, `ksh93_overflow!`
-    // in `op`); this shortcut computes exactly, so that mode always takes the full path.
+    // ksh93 rounds every integer through a double (`ksh93_round_int!`, `ksh93_overflow!`)
+    // and mksh wraps to 32 bits, both in `op`; this shortcut computes exactly, so the Korn
+    // modes always take the full path.
     if M_LEVEL.with(|c| c.get()) == 0
         && !crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT)
-        && !crate::dash_mode::ksh93_mode()
+        && !crate::dash_mode::korn_mode()
     {
         let plain = |t: &str| -> Option<i64> {
             let digits = t.strip_prefix('-').unwrap_or(t);

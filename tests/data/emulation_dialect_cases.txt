@@ -432,3 +432,4 @@ dash	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; IFS=a; set -- x 
 dash	s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; IFS=:; set -- x '' y; s $*; s $@
 sh	echo -n hi; echo; set -- a; shift 9 2>/dev/null; echo $?
 ksh	integer v=7; v=5; typeset -p v
+mksh	x=2147483647; echo $((x+1)) $((2147483647*2)) $((1<<33))

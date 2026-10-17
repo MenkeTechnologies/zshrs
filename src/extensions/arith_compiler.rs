@@ -1271,6 +1271,10 @@ pub fn arith_uncompilable_reason(expr: &str) -> Option<&'static str> {
     if crate::dash_mode::ksh93_mode() {
         return Some("ksh93 double arithmetic");
     }
+    // mksh wraps every result to 32 bits, which `op` applies and the compiled ops do not.
+    if crate::dash_mode::pdksh_family() {
+        return Some("pdksh 32-bit arithmetic");
+    }
     let b = expr.as_bytes();
     for (i, &c) in b.iter().enumerate() {
         match c {
