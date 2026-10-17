@@ -323,6 +323,8 @@ pub fn dash_builtin_optstr(name: &str) -> Option<&'static [u8]> {
         "local" => Some(b""),
         "unalias" => Some(b"a"),
         "type" => Some(b""),
+        // dash's printf has no options at all (`printf -v v …` is "Illegal option -v").
+        "printf" => Some(b""),
         _ => None,
     }
 }

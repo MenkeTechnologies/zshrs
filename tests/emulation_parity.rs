@@ -1416,6 +1416,8 @@ const EXTENDED_CORPUS: &[&str] = &[
 /// they run ONLY against the real zsh (`--zsh` vs zsh). Each probe was a
 /// measured `--zsh` divergence.
 const ZSH_ONLY_CORPUS: &[&str] = &[
+    "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
+    "(( 1/0 )) 2>/dev/null; echo $?",
     // The command-name word is globbed in the shell (Src/exec.c:3350-3354,
     // before any fork), so a NOMATCH / bad pattern there ends the list.
     "print a; nope* x 2>/dev/null; print after",
@@ -1701,6 +1703,9 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
+    "read -t 0 x </dev/null; echo $?",
+    "echo a | { read -t 0 x; echo $?; }",
     "sleep 0.4 & sleep 0.4 & jobs; wait",
     "sleep 0.4 & jobs; wait",
     "cd //tmp; pwd; echo $PWD",
@@ -2030,6 +2035,7 @@ const BASH_ONLY_CORPUS: &[&str] = &[
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
 /// against the real bash and the real ksh (`--bash` / `--ksh`), never zsh.
 const BASH_KSH_CORPUS: &[&str] = &[
+    "(( 1/0 )) 2>/dev/null; echo $?",
     "ulimit -Z 2>/dev/null; echo $?",
     "printf '%ld %lld %hhd %zd|\\n' 1 2 3 4",
     "select x in a b; do break; done 2>/dev/null </dev/null; echo $?",
@@ -2067,6 +2073,7 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
     "type -t echo; type -t ls; type -t if; f() { :; }; type -t f; alias a=b; type -t a; type -t nosuch_zz; echo rc=$?",
     "cd //tmp; pwd",
     "cd '' 2>/dev/null; echo $?",
@@ -2233,6 +2240,8 @@ const BASH_KORN_CORPUS: &[&str] = &[
 /// mksh / pdksh: `printf %d` parses a leading-zero operand as octal
 /// (strtol base 0), though its arithmetic does not.
 const PDKSH_CORPUS: &[&str] = &[
+    "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
+    "(( 1/0 )) 2>/dev/null; echo $?",
     "trap 'echo x' INT; (trap) | wc -l | tr -d ' '; trap | wc -l | tr -d ' '; x=$(trap); echo \"[$x]\"; trap",
     "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
     "echo $((2 ** 3)) 2>/dev/null; echo after",
@@ -2279,6 +2288,8 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
+    "printf -v v '%s-%s' a b; echo \"[$v]\" $?; printf '%s\\n' ok",
     "trap 'echo x' INT; (trap) | wc -l | tr -d ' '; trap | wc -l | tr -d ' '; x=$(trap); echo \"[$x]\"; trap",
     "ZZ_V=1; set | grep '^ZZ_V='",
     "ZZ_V=\"it's\"; set | grep '^ZZ_V='",

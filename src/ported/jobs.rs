@@ -4024,15 +4024,21 @@ pub fn bin_fg(
                         // reaper's own record has no such gate, so fall
                         // back to it — it holds the RAW wait status, so
                         // cook it the same way c:695-697 cooks it.
-                        if let Some(bg) = getbgstatus(pid).or_else(|| {
-                            crate::reaped_status::take(pid).map(|st| {
-                                if libc::WIFSIGNALED(st) {
-                                    0o200 | libc::WTERMSIG(st)
-                                } else {
-                                    libc::WEXITSTATUS(st)
-                                }
-                            })
-                        }) {
+                        // Both records are consumed: the one not used must not answer a
+                        // second `wait $pid`.
+                        let keep_for_later = crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful();
+                        let from_ring = getbgstatus(pid);
+                        let from_reaper = (!keep_for_later || from_ring.is_none())
+                            .then(|| crate::reaped_status::take(pid))
+                            .flatten()
+                            .map(|st| {
+                            if libc::WIFSIGNALED(st) {
+                                0o200 | libc::WTERMSIG(st)
+                            } else {
+                                libc::WEXITSTATUS(st)
+                            }
+                        });
+                        if let Some(bg) = from_ring.or(from_reaper) {
                             returnval = bg;
                         } else {
                             // c:Src/jobs.c:2579-2580 — the warning is
@@ -4060,6 +4066,13 @@ pub fn bin_fg(
                     if let Ok(mut tab) = table.lock() {
                         update_bg_job(&mut tab, pid, status);
                         scanjobs(&mut tab);
+                    }
+                    // update_bg_job parks the status in the bgstatus ring for a LATER
+                    // `wait`; this wait has just returned it, so a second `wait $pid`
+                    // must find nothing ("not a child of this shell", 127), as in zsh.
+                    // (bash and dash keep the status: their second `wait $pid` answers again.)
+                    if !(crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful()) {
+                        let _ = getbgstatus(pid);
                     }
                     // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
                     // child that is not `thisjob`, run now that JOBTAB is unlocked.

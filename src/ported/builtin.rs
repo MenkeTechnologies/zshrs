@@ -13281,6 +13281,15 @@ pub fn bin_print(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's printf takes no options: a first
+    // operand that looks like one (`-v`) is "Illegal option" (status 2), not a format.
+    if func == BIN_PRINTF
+        && crate::dash_mode::dash_faithful()
+        && args.first().is_some_and(|a| a.len() > 1 && a.starts_with('-') && a != "--")
+    {
+        zwarnnam(name, &format!("Illegal option {}", &args[0][..2]));
+        return 2;
+    }
     // c:4659-4684 — "Error check option combinations and option arguments".
     // The FIRST thing bin_print does, before any argument work:
     //     if (OPT_ISSET(ops,'z') + OPT_ISSET(ops,'s') + OPT_ISSET(ops,'S') +
@@ -17002,6 +17011,13 @@ pub fn bin_read(
             } else {
                 timeout = mn.l * 1_000_000; // c:6590
             }
+        }
+        // !!! BASH GATE (no C counterpart) !!! `read -t 0` reads nothing: it answers 0 when
+        // the descriptor is ready (data, or end of file) and 1 otherwise.
+        if crate::dash_mode::bash_mode() && !izle && timeout == 0 && ufd >= 0 {
+            let mut pfd = libc::pollfd { fd: ufd, events: libc::POLLIN, revents: 0 };
+            let ready = unsafe { libc::poll(&mut pfd, 1, 0) } > 0;
+            return if ready { 0 } else { 1 };
         }
         if izle {
             // c:6593 — timeout is in 100ths of a second rather than us.
