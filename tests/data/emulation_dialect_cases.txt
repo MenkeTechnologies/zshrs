@@ -413,3 +413,6 @@ ksh	a=four; print -r -- $((a+1)); print -r -- $?
 mksh	typeset -i16 v=5; typeset -Ui v=-1; print -r -- "$v"
 mksh	typeset -L2 v=xy; typeset -Z5 v=42; print -r -- "[$v]"
 ksh,mksh	set -A a four; typeset -A h; h[a]=1; print -r -- "${h[a]}"
+ksh	float v=1.5; typeset -p v
+mksh	typeset -r r=1; typeset +r r 2>/dev/null; (: $((1/0))) 2>/dev/null; print -r -- $?
+bash	set -k; echo a=1 b; echo "[$a]"

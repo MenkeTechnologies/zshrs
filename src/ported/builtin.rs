@@ -1023,6 +1023,7 @@ pub fn execbuiltin(
     let rc = handler(&name, trimmed, &ops, bn_ref.funcid); // c:506
     if pdksh_decl && !had_err && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
         errflag.fetch_and(!(ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD), Relaxed);
+        let _ = crate::dash_mode::fatal_error_status(); // the read-only note belongs to this error
         return 2;
     }
     if bash_decl && !had_err && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
@@ -4804,6 +4805,10 @@ pub fn bin_typeset(
         if (on & numeric_or_field) == 0 {
             off |= numeric_or_field;
         }
+    }
+    // !!! KSH93 (no C counterpart) !!! `float` is `typeset -lE`: the long-float flag is listed.
+    if crate::dash_mode::ksh93_mode() && name == "float" {
+        on |= PM_LOWER;
     }
     on &= !off; // c:2744
 

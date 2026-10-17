@@ -1775,6 +1775,7 @@ fn words_errflag_status() -> i32 {
     if crate::dash_mode::posix_faithful() && !crate::dash_mode::dash_strict() {
         GLOB_WORD_ERRFLAG.with(|c| c.set(false));
         crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
+        try_with_executor(|exec| exec.set_last_status(1));
         return 1;
     }
     let status = if GLOB_WORD_ERRFLAG.with(|c| c.replace(false)) {
@@ -1887,6 +1888,40 @@ pub(crate) fn take_exec_carrier() -> u8 {
 }
 
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+    // !!! BASH (no C counterpart) !!! with `set -o keyword` every `NAME=value` word of a command is
+    // an assignment for that command alone, not an argument.
+    if crate::dash_mode::bash_mode() && crate::dash_mode::bash_keyword_on() {
+        let is_assignment = |a: &String| {
+            a.split_once('=').is_some_and(|(n, _)| {
+                n.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                    && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        };
+        if args.iter().any(is_assignment) {
+            let (assigns, rest): (Vec<String>, Vec<String>) = args.into_iter().partition(is_assignment);
+            let saved: Vec<(String, Option<String>)> = assigns
+                .iter()
+                .filter_map(|a| a.split_once('='))
+                .map(|(n, v)| {
+                    let old = crate::ported::params::getsparam(n);
+                    crate::ported::params::setsparam(n, v);
+                    (n.to_string(), old)
+                })
+                .collect();
+            let rc = dispatch_builtin(name, rest);
+            for (n, old) in saved.into_iter().rev() {
+                match old {
+                    Some(v) => {
+                        crate::ported::params::setsparam(&n, &v);
+                    }
+                    None => {
+                        crate::ported::params::unsetparam(&n);
+                    }
+                }
+            }
+            return rc;
+        }
+    }
     // c:Src/exec.c:772-776 — BINF_DASH only changes an external's argv[0].
     take_exec_dash();
     take_job_text();

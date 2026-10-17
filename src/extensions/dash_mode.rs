@@ -1071,6 +1071,11 @@ static BO_ERRTRACE: AtomicBool = AtomicBool::new(false);
 static BO_FUNCTRACE: AtomicBool = AtomicBool::new(false);
 static BO_HISTORY: AtomicBool = AtomicBool::new(false);
 static BO_KEYWORD: AtomicBool = AtomicBool::new(false);
+
+/// True while `set -o keyword` / `set -k` is on in `--bash` mode.
+pub fn bash_keyword_on() -> bool {
+    BO_KEYWORD.load(Ordering::Relaxed)
+}
 static BO_NOLOG: AtomicBool = AtomicBool::new(false);
 static BO_POSIX: AtomicBool = AtomicBool::new(false);
 
