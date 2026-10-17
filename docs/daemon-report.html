@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>zshrs-daemon — DAEMON.md coverage matrix (updated 2026-05-27)</title>
+<title>zshrs-daemon — DAEMON.md coverage matrix (updated 2026-10-17)</title>
 <link rel="icon" type="image/svg+xml" href="logo-mark.svg">
-<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 26,898 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-10-06.">
+<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 29,530 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-10-17.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -82,7 +82,7 @@
     </div>
   </header>
 <main class="tutorial-main">
-<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-10-06 &middot; 26,898 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
+<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-10-17 &middot; 29,530 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
 
 <div class="summary-box honest">
   <p><strong>Earlier version of this report claimed "100% implemented." That claim was false.</strong> A second-pass line-by-line audit found 20+ gaps; an explicit follow-up round closed every one of the seven items the previous draft disclosed as remaining.</p>
@@ -102,6 +102,7 @@
   <p>&bull; <strong><code>[shell] skip_configs = "auto"</code></strong> in <code>zshrs.toml</code>: when daemon is up + a recorded zshrs canonical shard exists, the shell SKIPS sourcing <code>/etc/zshenv</code> + <code>~/.{zshenv,zprofile,zshrc,zlogin}</code> entirely; <code>canonical_apply</code> rebuilds executor state from the rkyv shard (alias/galias/salias/env/params/setopt/path/fpath/named_dirs/autoload_functions/zstyle/bindkey/compdef/zle widgets). Inline functions deferred until recorder ships bytecode in shard.</p>
   <p>&bull; <strong><code>zd</code> two surfaces:</strong> bin (HTTP via <code>ureq</code>, 2.64 ms) for bash/fish/CI; builtin (in-process Unix socket via <code>Client</code>, 0.48 ms, 5.5&times; faster) inside zshrs.</p>
   <p>&bull; <strong>New <code>zd</code> subcommands:</strong> <code>zd doctor</code>, <code>zd config get/set/list</code>, <code>zd snapshot save/list/load/diff</code>, <code>zd lock</code>, <code>zd publish</code>, <code>zd cache</code>, <code>zd job</code>, <code>zd artifact</code>, <code>zd schedule</code>, <code>zd export</code>, <code>zd view</code>, <code>zd ops</code>. <code>zd export TARGET FORMAT</code> auto-unwraps &mdash; binary payloads (pdf/sh/csv/json/yaml/text) stream raw; <code>--json</code> opt-in restores the envelope.</p>
+  <p>&bull; <strong>Since 2026-10-06:</strong> <code>zd snapshot sign/verify/publish/pubkey/pull/bisect</code> (per-user ed25519 key; directory or HTTP registry), <code>zd daemon status|start|stop|restart</code>, <code>plugins.db</code> populated from each recorder shard (recorder detects zinit, oh-my-zsh, zplug, antigen, antibody, sheldon, zgen, prezto, zim), <code>zwhere</code> lists every definition with <code>file:line</code> and call chain and reads the shard when no daemon runs, <code>zlog tail</code> selects shell|daemon|recorder logs (default all three).</p>
   <p>&bull; <strong>New <code>z*</code> builtins:</strong> <code>zlock</code> (try/acquire/release/list), <code>zpublish</code> (TOPIC [DATA] [--json '{...}']), <code>zwhere</code> (SUBSYS NAME &mdash; <code>file:line</code> attribution from canonical state). Total z* family now 23 (was 15).</p>
   <p>&bull; <strong><code>zjob attach</code> with bidirectional ptmx pump.</strong> <code>--pty</code> at submit time uses <code>nix::pty::openpty()</code>; child runs with slave on 0/1/2. Master fd lives in <code>JobMeta</code>. New IPC ops <code>job_input {id, bytes_b64}</code> and <code>job_resize {id, rows, cols}</code> (<code>TIOCSWINSZ</code>). <code>zjob attach</code> on a pty job: <code>termios cfmakeraw</code> on stdin, stdin reader thread batches keystrokes &rarr; <code>job_input</code>; <code>job:N.stdout</code> events (bytes_b64) decoded to user's tty; SIGWINCH &rarr; <code>job_resize</code>. <code>Ctrl-]</code> detaches. Drop guard restores termios.</p>
   <p>&bull; <strong><code>zsync up --all</code> wired</strong> (was a stub). <code>src/overlay_snapshot.rs</code> snapshots every overlay table &rarr; <code>push_canonical</code> per subsystem. Covers alias/galias/salias, setopt, params (vars+arrays+assoc unioned), env, path, manpath, fpath, named_dir, compdef, zstyle. Skipped: <code>function</code>, <code>bindkey</code>, <code>zmodload</code>.</p>
@@ -115,12 +116,12 @@
 </div>
 
 <div class="stat-grid">
-  <div class="stat-card"><div class="stat-val green">109</div><div class="stat-label">OpenAPI paths</div></div>
-  <div class="stat-card"><div class="stat-val">102</div><div class="stat-label">IPC ops dispatched</div></div>
+  <div class="stat-card"><div class="stat-val green">115</div><div class="stat-label">OpenAPI paths</div></div>
+  <div class="stat-card"><div class="stat-val">108</div><div class="stat-label">IPC ops dispatched</div></div>
   <div class="stat-card"><div class="stat-val">14</div><div class="stat-label">Async events</div></div>
   <div class="stat-card"><div class="stat-val accent">23</div><div class="stat-label">z* builtins</div></div>
-  <div class="stat-card"><div class="stat-val">42</div><div class="stat-label">Daemon source files</div></div>
-  <div class="stat-card"><div class="stat-val">26,898</div><div class="stat-label">LOC in daemon/</div></div>
+  <div class="stat-card"><div class="stat-val">43</div><div class="stat-label">Daemon source files</div></div>
+  <div class="stat-card"><div class="stat-val">29,530</div><div class="stat-label">LOC in daemon/</div></div>
   <div class="stat-card"><div class="stat-val yellow">2</div><div class="stat-label">Known partial / gap</div></div>
   <div class="stat-card"><div class="stat-val">0</div><div class="stat-label">Unimplemented dispatch arms</div></div>
 </div>
@@ -264,7 +265,7 @@
 </table>
 
 <h2 class="section">1. IPC operations — every dispatch arm in <code>ops::dispatch</code></h2>
-<p class="ledger">From the match block in <code>daemon/ops.rs</code>. 102 op names in <code>OP_NAMES</code> route to a real handler; <code>GET /openapi</code> lists 109 paths (4 meta + 102 ops + 3 streams). Zero <code>unimplemented!()</code> arms remain. Newer ops include <code>job_input</code>, <code>job_resize</code> &mdash; bidirectional ptmx attach for <code>--pty</code> jobs (base64 input, <code>TIOCSWINSZ</code> resize).</p>
+<p class="ledger">From the match block in <code>daemon/ops.rs</code>. 108 op names in <code>OP_NAMES</code> route to a real handler; <code>GET /openapi</code> lists 115 paths (4 meta + 108 ops + 3 streams). Zero <code>unimplemented!()</code> arms remain. Newer ops include <code>job_input</code>, <code>job_resize</code> &mdash; bidirectional ptmx attach for <code>--pty</code> jobs (base64 input, <code>TIOCSWINSZ</code> resize).</p> Since 2026-10-06: <code>snapshot_sign</code>, <code>snapshot_verify</code>, <code>snapshot_publish</code>, <code>snapshot_pubkey</code>, <code>snapshot_pull</code>, <code>snapshot_bisect</code>.
 
 <table class="fmap">
 <thead><tr><th>Op</th><th>Handler fn</th><th>Where</th><th>Status</th></tr></thead>
