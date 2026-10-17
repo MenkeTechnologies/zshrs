@@ -443,6 +443,11 @@ pub fn gettext2(state: &mut estate) {
                         tstack.last().map(|t| t.code).unwrap_or(code)
                     };
                     if (WC_LIST_TYPE(sc) as i32 & Z_SIMPLE) != 0 {
+                        // Rust-only: the skipped word is the line (c:Src/parse.c:745).
+                        if crate::zwc_lineno::recording() {
+                            let field = state.prog.prog.get(state.pc).copied().unwrap_or(0);
+                            tbuf.with(|tb| crate::zwc_lineno::note(&tb.borrow(), field));
+                        }
                         state.pc = state.pc.saturating_add(1);
                     }
                 }
@@ -525,12 +530,21 @@ pub fn gettext2(state: &mut estate) {
                         tstack.last().map(|x| x.code).unwrap_or(code)
                     };
                     if (WC_SUBLIST_FLAGS(scode) as i32 & WC_SUBLIST_SIMPLE as i32) != 0 {
+                        // Rust-only: the skipped word is the line (c:Src/parse.c:761).
+                        if crate::zwc_lineno::recording() {
+                            let field = state.prog.prog.get(state.pc).copied().unwrap_or(0);
+                            tbuf.with(|tb| crate::zwc_lineno::note(&tb.borrow(), field));
+                        }
                         state.pc = state.pc.saturating_add(1);
                     }
                 }
             }
             WC_PIPE => {
                 if !s_active && spopped.is_none() {
+                    // Rust-only: record the pipe line for zwc_lineno.
+                    if crate::zwc_lineno::recording() {
+                        tbuf.with(|tb| crate::zwc_lineno::note(&tb.borrow(), zsh_h::WC_PIPE_LINENO(code)));
+                    }
                     tstack.push(tstack {
                         code,
                         pop: if WC_PIPE_TYPE(code) == WC_PIPE_END {
@@ -552,6 +566,10 @@ pub fn gettext2(state: &mut estate) {
                         fr.code = state.prog.prog[state.pc];
                         state.pc += 1;
                         let end_next = WC_PIPE_TYPE(fr.code) == WC_PIPE_END;
+                        if crate::zwc_lineno::recording() {
+                            let field = zsh_h::WC_PIPE_LINENO(fr.code);
+                            tbuf.with(|tb| crate::zwc_lineno::note(&tb.borrow(), field));
+                        }
                         fr.pop = if end_next { 1 } else { 0 };
                         if !end_next {
                             state.pc += 1;

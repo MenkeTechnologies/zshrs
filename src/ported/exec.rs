@@ -760,6 +760,10 @@ pub fn loadautofn(
             resolved.from_wordcode,
             resolved.body.clone(),
         );
+        crate::zwc_lineno::note_autoload(
+            &name,
+            (!resolved.zwc_lines.is_empty()).then(|| resolved.zwc_lines.clone()),
+        );
         crate::autoload_cache::stage_hit(&name, resolved);
         hit
     } else {
@@ -911,7 +915,9 @@ pub fn loadautofn(
             // code. `zcompile f; print 'print FRESH' > f; touch f; autoload f; f`
             // ran FRESH where zsh runs the compiled body.
             Some((prog, _ksh)) => {
-                let dump_text = crate::ported::text::getpermtext(Box::new(prog), None, 0); // c:5753
+                // c:5753 — rendered with its pipeline line table, so the
+                // deparse arm below can still run at the dump's lines.
+                let (dump_text, dump_lines) = crate::zwc_lineno::deparse(prog);
                 // The equality test below LEXES the source file, and it is asking
                 // whether that file is the text the dump's wordcode was compiled
                 // from. `zcompile` resolved the dump with the lexer state C uses
@@ -935,9 +941,13 @@ pub fn loadautofn(
                             crate::ported::text::getpermtext(Box::new(p), None, 0) == dump_text
                         }) =>
                     {
+                        crate::zwc_lineno::note_autoload(&name, None);
                         t
                     }
-                    _ => dump_text,
+                    _ => {
+                        crate::zwc_lineno::note_autoload(&name, Some(dump_lines));
+                        dump_text
+                    }
                 }
             }
             // c:Src/exec.c:5745 `getfpfunc` reads the function file with
@@ -946,7 +956,10 @@ pub fn loadautofn(
             // non-UTF-8 byte and this arm returned 1, so an $fpath completer
             // carrying one legacy byte autoloaded to NOTHING, silently.
             None => match crate::script_bytes::read_script_file(&path) {
-                Ok(t) => t,
+                Ok(t) => {
+                    crate::zwc_lineno::note_autoload(&name, None);
+                    t
+                }
                 Err(_) => return 1,
             },
         };

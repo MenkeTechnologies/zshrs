@@ -131,6 +131,9 @@ pub mod signal_queue_guard;
 pub mod subscript_escape;
 /// `scalar_range_cut` submodule (Rust-only; see the module docs).
 pub mod scalar_range_cut;
+/// `zwc_lineno` submodule (Rust-only; see the module docs): original line
+/// numbers for code deparsed out of a `.zwc` dump.
+pub mod zwc_lineno;
 /// `test_util` submodule.
 #[cfg(test)]
 pub mod test_util;

@@ -78,7 +78,8 @@ pub const SHARD_MAGIC: u32 = 0x5A52414C;
 /// chunks hold the old U+0084..=U+00A2 tokens.
 /// v5: an entry can carry its [`ResolvedLoad`], so a load is served by name
 /// with no `$fpath` search.
-pub const SHARD_FORMAT_VERSION: u32 = 6;
+/// v7: [`ResolvedLoad`] carries the `.zwc` pipeline line table.
+pub const SHARD_FORMAT_VERSION: u32 = 7;
 /// `ShardHeader` — see fields for layout.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
@@ -147,6 +148,9 @@ pub struct ResolvedLoad {
     /// Every file in `source_dir` the resolution could have read
     /// ([`stamp_candidates`]), as it was then.
     pub stamps: Vec<FileStamp>,
+    /// The `.zwc` pipeline line table of a deparsed body
+    /// (`crate::zwc_lineno`); empty for a source-file body.
+    pub zwc_lines: Vec<crate::zwc_lineno::PipeLine>,
 }
 
 /// One file's identity at resolution time.
@@ -803,11 +807,11 @@ pub fn stamp_candidates(dir: &str, name: &str) -> Vec<FileStamp> {
 }
 
 /// The `source_sha` an entry for `r` carries: a `.zwc` deparse is hashed with
-/// a `\0zwc\0` prefix (vm_helper `autoload_source_key`), so it never shares
+/// a `\0zwc-lines\0` prefix (vm_helper `autoload_source_key`), so it never shares
 /// a key with a plain file of the same text.
 fn registered_digest(r: &ResolvedLoad) -> [u8; 32] {
     if r.from_wordcode {
-        source_digest(&format!("\0zwc\0{}", r.registered))
+        source_digest(&format!("\0zwc-lines\0{}", r.registered))
     } else {
         source_digest(&r.registered)
     }
@@ -900,6 +904,7 @@ pub fn record_port_probe(name: &str, dir: &str, body: &str) {
             parse_failed: false,
             ksh_style: false,
             stamps: stamp_candidates(dir, name),
+            zwc_lines: Vec::new(),
         },
     );
     let _ = cache.put_one(name, Vec::new(), dir, [0u8; 32]);
@@ -974,6 +979,13 @@ pub fn commit_search(name: &str, body: &str, registered: &str, parse_failed: boo
         return;
     }
     let stamps = stamp_candidates(&s.dir, name);
+    // The dump's pipeline lines, recorded by `loadautofn` when it installed
+    // the deparse rather than the source file.
+    let zwc_lines = if s.from_wordcode {
+        crate::zwc_lineno::autoload_lines(name).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     note_resolved(
         name,
         ResolvedLoad {
@@ -984,6 +996,7 @@ pub fn commit_search(name: &str, body: &str, registered: &str, parse_failed: boo
             parse_failed,
             ksh_style,
             stamps,
+            zwc_lines,
         },
     );
 }
@@ -1140,6 +1153,7 @@ mod tests {
             parse_failed: false,
             ksh_style: false,
             stamps: stamp_candidates(&fdir_s, "_foo"),
+            zwc_lines: Vec::new(),
         };
         let cache_path = tmp.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();

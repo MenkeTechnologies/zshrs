@@ -61395,3 +61395,38 @@ Fix (`src/extensions/history.rs`): the file is opened WAL with `synchronous=NORM
 `history_sqlite_flush`, which drains the queue (bounded at 3 s). The same benchmark under WAL + NORMAL: p95
 24 ms, max 0.76 s before the thread, and the prompt no longer waits on any of it. A failed thread start falls
 back to the old inline write.
+
+## #1183 — `$LINENO` and error lines inside code run from a `.zwc` came from the deparse, not the source — fixed
+
+**Status:** `fixed` 2026-10-17.
+
+```text
+$ print 'echo a $LINENO; echo b $LINENO\nif true; then\n echo c $LINENO\nfi' > fn/foo
+$ zcompile fn/foo; rm fn/foo
+$ zsh   -fc 'fpath=($PWD/fn); autoload foo; foo'   → a 1 / b 1 / c 3
+$ zshrs -fc '…same…'                               → a 1 / b 2 / c 4   (before)
+```
+
+Same for `source` of a file whose `.zwc` is newer (`zcompile ~/.zshrc`), for error prefixes
+(`foo:18: undefvar: boom` came out as `foo:20:`) and for `$funcfiletrace` / `$funcsourcetrace`.
+C executes the dump's wordcode, and every pipeline in it carries its source line
+(`WCB_PIPE(type, toklineno + 1)`, Src/parse.c:911/935/944; the simple-command forms keep it as a
+bare word, Src/parse.c:734-762), loaded back by `lineno = WC_PIPE_LINENO(pcode) - 1`
+(Src/exec.c:2057) and `lineno = code - 1` (Src/exec.c:1356). zshrs re-parses a `getpermtext`
+deparse, which joins/splits lines (`a; b` → two lines, `if X; then` → `if X` NEWLINE `then`) and
+drops blank lines and comments. The autoload path already preferred the source file when it still
+rendered to the dump's program; with no source (or a changed one) and for every sourced `.zwc`,
+the deparse's numbering won.
+
+Fix: `src/zwc_lineno.rs` (Rust-only). `gettext2` records each pipeline's stored line value and the
+deparse newlines before it; the re-parse of that text (`execute_zwc_program`, and the autoload
+compile in `run_autoload_definition`) rewrites `ZshPipe::lineno` in visit order, function bodies
+relative to their header as C counts them (`lineno = 0`, Src/parse.c:1679/2071). The table is kept
+in the autoload shard (`ResolvedLoad::zwc_lines`, format v7) and the chunk-cache key for dump bodies
+changed so chunks compiled with the old numbering are not served. Verified in all four directions
+(zsh/zshrs writing the dump × zsh/zshrs loading it). Tests: `tests/zwc_lineno.rs`.
+
+Residual, open: `zcompile -c` of a function defined on ONE line (`g(){ echo $LINENO }`) writes
+line 2 where zsh writes line 1 (`$LINENO` 1 vs 0 after loading it, in either shell).
+`cur_add_func` re-parses `shfunc::body`, which `funcdef_capture` trims, so the body's offset from
+its header is gone before the dump is written.

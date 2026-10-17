@@ -15756,8 +15756,7 @@ pub fn bin_dot(
     // It runs BEFORE `scriptname = s` (c:1591), so a load diagnostic
     // such as parse.c:3746 check_dump_file's "invalid description" is
     // prefixed with the CALLER's scriptname (`zsh:21:`), not the file's.
-    let zwc_src = crate::ported::parse::try_source_file(&path)
-        .map(|prog| crate::ported::text::getpermtext(Box::new(prog), None, 0));
+    let zwc_src = crate::ported::parse::try_source_file(&path).map(crate::zwc_lineno::deparse);
     let old_scriptname = crate::ported::utils::scriptname_get(); // c:1557
     let old_scriptfilename = crate::ported::utils::scriptfilename_get(); // c:1558
     crate::ported::utils::set_scriptname(Some(arg0.clone())); // c:1591
@@ -15920,7 +15919,7 @@ pub fn bin_dot(
             // c:1621 prog path — `execode(prog, 1, 0, "filecode")`. The
             // deparse is re-lexed, so it goes through the zwc entry point
             // that pins the lexer to the spelling `untokenize` produced.
-            Some(src) => crate::fusevm_bridge::execute_zwc_program(&src).unwrap_or(1),
+            Some((src, lines)) => crate::fusevm_bridge::execute_zwc_program(&src, lines).unwrap_or(1),
             // c:1626 — the sourced file is read as RAW BYTES; a non-UTF-8
             // byte in it is metafied (Src/utils.c:4856), never an error.
             // `read_to_string` failed the whole read instead, and this arm

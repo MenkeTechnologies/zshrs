@@ -1891,8 +1891,13 @@ pub fn source(s: &str) -> i32 {
     // read. Bridge wordcode → text via getpermtext (same as the
     // `.zwc` autoload path in exec.rs::loadautofn).
     let from_zwc = zwc_prog.is_some();
+    let mut zwc_lines = Vec::new();
     let contents = match zwc_prog {
-        Some(prog) => Ok(crate::ported::text::getpermtext(Box::new(prog), None, 0)),
+        Some(prog) => {
+            let (text, lines) = crate::zwc_lineno::deparse(prog);
+            zwc_lines = lines;
+            Ok(text)
+        }
         // c:1566/1626 — source() reads the file as raw bytes; a
         // non-UTF-8 byte is metafied, not an error (Src/utils.c:4856).
         None => crate::script_bytes::read_script_file(path),
@@ -1923,7 +1928,7 @@ pub fn source(s: &str) -> i32 {
             // already-compiled program is re-lexed here, so it needs the
             // lexer pinned to the spelling `untokenize` writes; see
             // ShellExecutor::execute_zwc_program.
-            let _ = crate::fusevm_bridge::execute_zwc_program(&body);
+            let _ = crate::fusevm_bridge::execute_zwc_program(&body, zwc_lines);
         } else {
             let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
         }

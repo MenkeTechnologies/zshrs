@@ -757,8 +757,14 @@ pub fn source_file_per_command(src: &str, path: &std::path::Path) -> Result<i32,
 /// `Ok(0)` with neither. See
 /// [`crate::vm_helper::ShellExecutor::execute_zwc_program`] for why the plain
 /// script entry point is wrong here.
-pub fn execute_zwc_program(src: &str) -> Result<i32, String> {
-    if let Some(r) = try_with_executor(|exec| exec.execute_zwc_program(src)) {
+pub fn execute_zwc_program(
+    src: &str,
+    lines: Vec<crate::zwc_lineno::PipeLine>,
+) -> Result<i32, String> {
+    let mut lines = Some(lines);
+    if let Some(r) =
+        try_with_executor(|exec| exec.execute_zwc_program(src, lines.take().unwrap_or_default()))
+    {
         return r;
     }
     let ptr = SESSION_EXECUTOR_PTR.with(|c| c.get());
@@ -766,7 +772,7 @@ pub fn execute_zwc_program(src: &str) -> Result<i32, String> {
         // SAFETY: per with_session_context.
         Some(ptr) => {
             let _ctx = ExecutorContext::enter(unsafe { &mut *ptr });
-            unsafe { (*ptr).execute_zwc_program(src) }
+            unsafe { (*ptr).execute_zwc_program(src, lines.unwrap_or_default()) }
         }
         None => Ok(0),
     }

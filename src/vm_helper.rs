@@ -4358,7 +4358,9 @@ impl ShellExecutor {
         // SHIN line into this nested program (e.g. `eval "x=5"` swallowed the
         // following `echo $x` off stdin). parse_isolated sets `strin` so the
         // string drains to EOF; execution below stays in the current shell.
-        let program = parse_isolated_at(script, lineno);
+        let mut program = parse_isolated_at(script, lineno);
+        // A `.zwc` deparse: put back the line each pipeline had in the dump.
+        crate::zwc_lineno::apply_armed(&mut program);
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
@@ -4703,9 +4705,17 @@ impl ShellExecutor {
     /// the previous value is restored before the chunk RUNS, not after. The
     /// same split applies to alias expansion: a function or `eval` body the
     /// program runs is lexed at RUNTIME and must see the live alias table.
-    pub fn execute_zwc_program(&mut self, script: &str) -> Result<i32, String> {
+    ///
+    /// `lines` is the dump's pipeline line table (`zwc_lineno::deparse`), so
+    /// the re-parse carries the lines C executes the wordcode at.
+    pub fn execute_zwc_program(
+        &mut self,
+        script: &str,
+        lines: Vec<crate::zwc_lineno::PipeLine>,
+    ) -> Result<i32, String> {
         let chunk = {
             let _relex = ZwcRelexGuard::enter();
+            let _lines = crate::zwc_lineno::Armed::new(Some(lines));
             self.compile_script_isolated(script)
         };
         self.run_chunk_with_exit_hooks(chunk?, "execute_zwc_program")
@@ -5170,6 +5180,10 @@ impl ShellExecutor {
             // which is what `compile_script_isolated` reads, so the load still
             // fails.
             let _muted = parse_failed.then(ZerrMute::enter);
+            // c:Src/exec.c:2057 — the dump's own pipeline lines, not the
+            // deparse's (see crate::zwc_lineno).
+            let _lines = from_wordcode
+                .then(|| crate::zwc_lineno::Armed::new(crate::zwc_lineno::autoload_lines(name)));
             self.compile_script_isolated(registered)?
         };
         if let Some((dir, sha)) = key.as_ref() {
@@ -8639,7 +8653,9 @@ fn autoload_source_key(
         .and_then(|f| f.filename)
         .filter(|d| d != "zsh")?;
     let sha = if from_wordcode {
-        crate::autoload_cache::source_digest(&format!("\0zwc\0{registered}"))
+        // `zwc-lines`: chunks compiled before the deparse carried the dump's
+        // pipeline lines (crate::zwc_lineno) must not be served.
+        crate::autoload_cache::source_digest(&format!("\0zwc-lines\0{registered}"))
     } else {
         crate::autoload_cache::source_digest(registered)
     };

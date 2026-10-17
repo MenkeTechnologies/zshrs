@@ -123,6 +123,7 @@ pub fn prewarm_fpath(dirs: &[PathBuf]) -> PrewarmStats {
                         parse_failed,
                         ksh_style: false,
                         stamps,
+                        zwc_lines: Vec::new(),
                     },
                 );
             }
