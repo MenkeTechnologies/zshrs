@@ -656,12 +656,27 @@ fn flush_range(out: &mut String, orig: &[char], cs: &[char], from: usize, to: us
 ///
 /// !!! RUST-ONLY HELPER !!! — no C counterpart.
 pub fn escape_quoted_splice(s: &str, from: usize, to: usize) -> (String, usize) {
+    escape_splice(s, from, to, true)
+}
+
+/// mksh reads a backslash in an unquoted variable value as a literal character of the
+/// pattern (`p='\*'; ${v%%$p}` strips a backslash and what follows), so only the
+/// backslash is escaped; the other metacharacters stay active.
+///
+/// !!! RUST-ONLY HELPER !!! — no C counterpart.
+pub fn escape_spliced_backslashes(s: &str, from: usize, to: usize) -> (String, usize) {
+    escape_splice(s, from, to, false)
+}
+
+fn escape_splice(s: &str, from: usize, to: usize, all_metas: bool) -> (String, usize) {
     let mut out = String::with_capacity(s.len() + 8);
     let mut added = 0usize;
     for (i, c) in s.chars().enumerate() {
         if i >= from
             && i < to
-            && matches!(c, '\\' | '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '^' | '#' | '~' | '!' | '-')
+            && (c == '\\'
+                || (all_metas
+                    && matches!(c, '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '^' | '#' | '~' | '!' | '-')))
         {
             out.push('\\');
             added += 1;

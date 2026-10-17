@@ -1273,12 +1273,18 @@ fn stringsubst(
                 // literal (see PAT_OPERAND_ESCAPE_QUOTED).
                 let mut new_pos = new_pos;
                 let mut new_nodes = new_nodes;
-                if qt && PAT_OPERAND_ESCAPE_QUOTED.with(|c| c.get()) {
+                // !!! PDKSH GATE (no C counterpart) !!! mksh keeps an unquoted value's backslash literal.
+                let mksh_literal_backslash = !qt && crate::dash_mode::pdksh_family();
+                if (qt || mksh_literal_backslash) && PAT_OPERAND_ESCAPE_QUOTED.with(|c| c.get()) {
                     let n = new_nodes.len();
                     for (i, node) in new_nodes.iter_mut().enumerate() {
                         let from = if i == 0 { pos } else { 0 };
                         let to = if i + 1 == n { new_pos } else { usize::MAX };
-                        let (escaped, added) = crate::pattern_data_escape::escape_quoted_splice(node, from, to);
+                        let (escaped, added) = if qt {
+                            crate::pattern_data_escape::escape_quoted_splice(node, from, to)
+                        } else {
+                            crate::pattern_data_escape::escape_spliced_backslashes(node, from, to)
+                        };
                         *node = escaped;
                         if i + 1 == n {
                             new_pos += added;
