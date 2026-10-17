@@ -24248,8 +24248,8 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| unquote_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if subscript.is_none() {
-                // Whole-array `${(Q)arr}` — per-element dequote
+            } else if subscript.is_none() || matches!(splat_sub!(), Some("@") | Some("*")) {
+                // Whole-array `${(Q)arr}` / `${(Q)arr[@]}` — per-element dequote
                 // (subst.c:2261 quotemod-- iterates aval). MUST be
                 // gated on no-subscript: `${(Q)a[1]}` already
                 // resolved the element into `value` above; the

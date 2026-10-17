@@ -460,4 +460,13 @@ mod ansi_c_escape_edges {
     fn unknown_escape_in_a_mixed_word_drops_the_backslash() {
         assert_parity(r#"print -rn -- x$'a\?b'y x$'a\qb'y x$'a\^ab'y | od -An -tx1"#);
     }
+
+    /// `(Q)` dequotes each element for the `[@]` and `[*]` subscripts too, not
+    /// only for the bare array name: zinit reads its hook table with
+    /// `"${(Q)${(z@)entry}[@]}"` and called the still-quoted words otherwise.
+    #[test]
+    fn dequote_applies_to_every_element_under_a_splat_subscript() {
+        assert_parity(r#"a=('a\ b' "'c d'"); print -r -- "${(Q)a[@]}" "${(Q)a[*]}" "${(Q)a}""#);
+        assert_parity(r#"x="1 a\\ b 'c d'"; arr=( "${(Q)${(z@)x}[@]}" ); print -rl -- $arr"#);
+    }
 }
