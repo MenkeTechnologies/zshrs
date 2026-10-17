@@ -5720,7 +5720,7 @@ impl ShellExecutor {
     /// when fewer than 256 KiB remain, on the same thread, so signals, job control
     /// and traps behave exactly as before.
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
-        stacker::maybe_grow(256 * 1024, 32 * 1024 * 1024, || {
+        stacker::maybe_grow(1024 * 1024, 64 * 1024 * 1024, || {
             self.dispatch_function_call_on_stack(name, args)
         })
     }
