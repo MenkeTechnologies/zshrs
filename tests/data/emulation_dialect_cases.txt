@@ -440,3 +440,5 @@ ksh	set -- a "" b "" "" ; IFS=; printf "<%s>" "$*"; x="$*"; printf "<%s>" "$x"; 
 ksh	set -- "" "" a; IFS=; printf "<%s>" "$*"; echo
 bash	mapfile -t -O 2 arr < <(printf "a\n"); readarray -t arr <<< $'x\ny'; declare -p arr; echo ${#arr[@]}
 bash	shopt -s nocasematch; case ABC in [[:upper:]]*) echo y;; *) echo n;; esac; case abc in [[:upper:]]*) echo y;; *) echo n;; esac; [[ abc == [[:upper:]]* ]] && echo y || echo n; case b in [A-C]) echo y;; *) echo n;; esac; case D in [a-c]) echo y;; *) echo n;; esac
+mksh	typeset -Ui v=255; typeset -u v=abc; typeset -p v; typeset -Ui k=9; typeset -l k; typeset -p k
+mksh	typeset -u -i w=7; typeset -p w; typeset -i q=7; typeset -u q; typeset -p q

@@ -4820,6 +4820,10 @@ pub fn bin_typeset(
     if (on & PM_INTEGER) != 0 {
         // c:2726
         off |= PM_UPPER | PM_ARRAY | PM_HASHED | PM_EFLOAT | PM_FFLOAT; // c:2727
+        // !!! PDKSH (no C counterpart) !!! mksh lists `-i -u` together: case conversion survives on an integer.
+        if crate::dash_mode::pdksh_family() {
+            off &= !PM_UPPER;
+        }
     }
     if (on & (PM_LEFT | PM_RIGHT_Z)) != 0 {
         // c:2731
@@ -4873,6 +4877,10 @@ pub fn bin_typeset(
         }
         if (on & PM_INTEGER) != 0 && (on & PM_UNIQUE) == 0 {
             off |= PM_UNIQUE;
+        }
+        // `typeset -u` / `-l` on a number makes it a plain upper- or lower-cased string.
+        if (on & (PM_LOWER | PM_UPPER)) != 0 && (on & PM_INTEGER) == 0 {
+            off |= PM_INTEGER | PM_UNIQUE;
         }
     }
     // !!! KSH93 (no C counterpart) !!! `typeset NAME=value` on an existing numeric or justified
