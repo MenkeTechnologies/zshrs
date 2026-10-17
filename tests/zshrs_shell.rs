@@ -3901,6 +3901,50 @@ fn test_zformat_width_padding() {
 }
 
 #[test]
+fn test_zformat_a_pads_keys_by_display_width() {
+    // Src/Modules/zutil.c:1101-1143 (MULTIBYTE_SUPPORT): `zformat -a` pads
+    // each key to the widest key in display COLUMNS, so `é` (1 column,
+    // 2 bytes) and `日本` (4 columns, 6 bytes) line up with `abc`. zsh 5.9.2
+    // output; zshrs padded by bytes and pushed `é` and `abc` two columns
+    // past `日本`.
+    let (_, output, _) = run_zshrs(
+        "LC_ALL=C.UTF-8; zformat -a r ' -- ' 'é:x' 'abc:y' '日本:z' 'a\\:b:w' 'e:' n; print -rl -- $r",
+    );
+    assert_eq!(output, "é    -- x\nabc  -- y\n日本 -- z\na:b  -- w\ne\nn\n");
+}
+
+#[test]
+fn test_zformat_a_pads_keys_by_bytes_in_c_locale() {
+    // A single-byte locale makes MB_METASTRWIDTH count bytes
+    // (Src/utils.c mb_metastrlenend), so the 2-byte `é` is the wider key.
+    let (_, output, _) = run_zshrs("LC_ALL=C; zformat -a r ' -- ' 'é:x' 'abc:y'; print -rl -- $r");
+    assert_eq!(output, "é  -- x\nabc -- y\n");
+}
+
+#[test]
+fn test_zformat_spec_letter_is_one_byte() {
+    // Src/Modules/zutil.c:1031-1034 tests `arg[1] != ':'` on the metafied
+    // bytes: a two-byte character is not a spec letter, a raw high byte is
+    // (Test/V13zformat.ztst "spec char longer than 1 byte" / "weird spec
+    // char").
+    let (st, _, err) = run_zshrs("LC_ALL=C.UTF-8; zformat -F REPLY '' é:");
+    assert_eq!(st, 1);
+    assert!(err.ends_with("zformat:1: invalid spec: é:\n"), "stderr: {err:?}");
+    let (st, out) =
+        run_zshrs_parity_bytes("zformat -F REPLY $'<%\\xff>' $'\\xff:\\xff' && print -rn -- $REPLY");
+    assert_eq!(st, 0);
+    assert_eq!(out, b"<\xff>");
+}
+
+#[test]
+fn test_zformat_width_counts_bytes() {
+    // Src/Modules/zutil.c:920-922 — `len = strlen(spec)`: the min width
+    // is a byte count, so `éé` (4 bytes) gets one pad space. zsh 5.9.2.
+    let (_, output, _) = run_zshrs("LC_ALL=C.UTF-8; zformat -f r '[%5d]' d:éé; print -r -- $r");
+    assert_eq!(output, "[éé ]\n");
+}
+
+#[test]
 fn test_getopts_unknown_uses_zsh_format() {
     // Zsh emits `zsh:1: bad option: -X` for unknown opts when the
     // optstring isn't quiet (no leading `:`). We mirror with `zshrs:1:`.
