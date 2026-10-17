@@ -1086,3 +1086,11 @@ pub fn ksh93_empty_ifs_join(elems: &[String]) -> String {
     }
     out
 }
+
+/// mksh implements these commands itself, so running one never enters the tracked-alias
+/// (command hash) table that `hash` / `alias -t` lists.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn mksh_builtin_command(name: &str) -> bool {
+    matches!(name, "cat" | "echo" | "kill" | "pwd" | "test" | "true" | "false" | "sleep")
+}

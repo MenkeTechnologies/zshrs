@@ -4612,7 +4612,7 @@ pub fn bin_typeset(
     }
     // !!! DROP-IN GATE (no C counterpart) !!! a bare `export`: mksh lists the exported
     // NAMES only; dash lists `export NAME='value'` lines, exactly like `export -p`.
-    if name == "export" && argv.is_empty() && crate::dash_mode::pdksh_family() {
+    if name == "export" && argv.is_empty() && crate::dash_mode::pdksh_family() && !OPT_ISSET(ops, b'p') {
         let mut names: Vec<String> = paramtab()
             .read()
             .map(|t| {
@@ -13341,19 +13341,14 @@ pub fn bin_alias(
             };
             return bin_hash(name, argv, &hash_ops, 0);
         }
-        // !!! PDKSH GATE (no C counterpart) !!! mksh tracks no commands in a non-interactive
-        // shell, so `alias -t` lists nothing; `-r` only clears the table.
-        if matches!(personality(), Personality::Mksh | Personality::Pdksh) {
-            if OPT_ISSET(ops, b'r') {
-                crate::ported::hashtable::emptycmdnamtable();
-            }
-            return 0;
-        }
         queue_signals();
         if let Ok(t) = cmdnamtab_lock().read() {
             let mut entries: Vec<_> = t.iter().collect();
             entries.sort_by(|a, b| hnamcmp(a.0, b.0));
             for (_n, cn) in entries {
+                if crate::dash_mode::pdksh_family() && crate::extensions::emulation_output::mksh_builtin_command(_n) {
+                    continue;
+                }
                 printcmdnamnode(cn, 0);
             }
         }
