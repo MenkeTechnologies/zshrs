@@ -1949,11 +1949,13 @@ fn normalize_subsystem(target: &str) -> std::result::Result<String, ErrPayload> 
 /// monospace look comes from fixed line height, not the glyph
 /// metrics — fine for the dump-style content).
 fn pdf_render(target: &str, body: &str) -> std::result::Result<Vec<u8>, String> {
-    use printpdf::{BuiltinFont, Mm, PdfDocument};
+    use printpdf::{
+        BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt, TextItem,
+    };
 
-    // Letter: 215.9mm × 279.4mm. Margins: 12.7mm (~0.5in). printpdf
-    // 0.7's `Mm` is `f32`, so all geometry constants are f32 to avoid
-    // a sea of `as f32` at every call site.
+    // Letter: 215.9mm × 279.4mm. Margins: 12.7mm (~0.5in). printpdf's
+    // `Mm` is `f32`, so all geometry constants are f32 to avoid a sea
+    // of `as f32` at every call site.
     const PAGE_W: f32 = 215.9;
     const PAGE_H: f32 = 279.4;
     const MARGIN: f32 = 12.7;
@@ -2002,49 +2004,66 @@ fn pdf_render(target: &str, body: &str) -> std::result::Result<Vec<u8>, String> 
     }
 
     let total_pages = display_lines.len().div_ceil(lines_per_page).max(1);
-    let (doc, first_page, first_layer) = PdfDocument::new(&title, Mm(PAGE_W), Mm(PAGE_H), "page-1");
-    let font = doc
-        .add_builtin_font(BuiltinFont::Helvetica)
-        .map_err(|e| format!("printpdf font: {e}"))?;
-    let bold = doc
-        .add_builtin_font(BuiltinFont::HelveticaBold)
-        .map_err(|e| format!("printpdf bold font: {e}"))?;
 
+    // One self-contained text section per string, positioned absolutely
+    // from the page's bottom-left corner (Mm), so no cursor state carries
+    // between lines.
+    let put = |ops: &mut Vec<Op>, text: &str, pt: f32, face: BuiltinFont, x: f32, y: f32| {
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(x), Mm(y)),
+        });
+        ops.push(Op::SetFont {
+            font: PdfFontHandle::Builtin(face),
+            size: Pt(pt),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(text.to_string())],
+        });
+        ops.push(Op::EndTextSection);
+    };
+
+    let mut pages: Vec<PdfPage> = Vec::with_capacity(total_pages);
     for (page_idx, chunk) in display_lines.chunks(lines_per_page).enumerate() {
-        let layer = if page_idx == 0 {
-            doc.get_page(first_page).get_layer(first_layer)
-        } else {
-            let (p, l) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), format!("page-{}", page_idx + 1));
-            doc.get_page(p).get_layer(l)
-        };
+        let mut ops: Vec<Op> = Vec::new();
 
         // Header (title + page number).
         let mut y = PAGE_H - MARGIN;
-        layer.use_text(&title, FONT_PT + 2.0, Mm(MARGIN), Mm(y), &bold);
+        put(&mut ops, &title, FONT_PT + 2.0, BuiltinFont::HelveticaBold, MARGIN, y);
         let pageno = format!("page {} / {}", page_idx + 1, total_pages);
-        layer.use_text(&pageno, FONT_PT, Mm(PAGE_W - MARGIN - 30.0), Mm(y), &font);
+        put(
+            &mut ops,
+            &pageno,
+            FONT_PT,
+            BuiltinFont::Helvetica,
+            PAGE_W - MARGIN - 30.0,
+            y,
+        );
         y -= LINE_H * 2.0;
 
         // Body lines.
         for line in chunk {
-            layer.use_text(line.as_str(), FONT_PT, Mm(MARGIN), Mm(y), &font);
+            put(&mut ops, line, FONT_PT, BuiltinFont::Helvetica, MARGIN, y);
             y -= LINE_H;
         }
 
         // Footer.
-        layer.use_text(
+        put(
+            &mut ops,
             &footer_template,
             FONT_PT - 2.0,
-            Mm(MARGIN),
-            Mm(MARGIN / 2.0),
-            &font,
+            BuiltinFont::Helvetica,
+            MARGIN,
+            MARGIN / 2.0,
         );
+
+        pages.push(PdfPage::new(Mm(PAGE_W), Mm(PAGE_H), ops));
     }
 
-    let mut buf: Vec<u8> = Vec::new();
-    doc.save(&mut std::io::BufWriter::new(&mut buf))
-        .map_err(|e| format!("printpdf save: {e}"))?;
-    Ok(buf)
+    let mut doc = PdfDocument::new(&title);
+    Ok(doc
+        .with_pages(pages)
+        .save(&PdfSaveOptions::default(), &mut Vec::new()))
 }
 
 #[cfg(test)]
@@ -2194,5 +2213,34 @@ mod tests {
         let body = r["body"].as_str().unwrap();
         assert!(body.contains("alias ll='ls -la'"), "{body}");
         assert!(!body.contains("alias ll='ls -l'\n"), "{body}");
+    }
+
+    /// Counts page objects in a serialized PDF (`/Type/Page` but not `/Type/Pages`).
+    fn page_object_count(pdf: &[u8]) -> usize {
+        let text = String::from_utf8_lossy(pdf);
+        text.split("/Type").skip(1).filter(|s| {
+            let s = s.trim_start();
+            s.starts_with("/Page") && !s.starts_with("/Pages")
+        }).count()
+    }
+
+    #[test]
+    fn pdf_render_paginates_and_emits_a_valid_container() {
+        let single = pdf_render("t", "one line").unwrap();
+        assert!(single.starts_with(b"%PDF-"));
+        assert!(single.trim_ascii_end().ends_with(b"%%EOF"));
+        assert_eq!(page_object_count(&single), 1);
+
+        let body: String = (0..200).map(|i| format!("row {i}\n")).collect();
+        let multi = pdf_render("t", &body).unwrap();
+        assert!(page_object_count(&multi) > 1, "200 rows must span pages");
+        assert!(multi.len() > single.len());
+    }
+
+    #[test]
+    fn pdf_render_handles_empty_body_and_overlong_lines() {
+        assert_eq!(page_object_count(&pdf_render("t", "").unwrap()), 1);
+        let long = "x".repeat(500);
+        assert!(pdf_render("t", &long).unwrap().starts_with(b"%PDF-"));
     }
 }

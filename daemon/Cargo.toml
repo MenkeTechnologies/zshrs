@@ -55,7 +55,7 @@ toml = "1"
 # native deps), foundational layer of the Rust PDF ecosystem (genpdf
 # and friends build on it). Used to render canonical state snapshots
 # as paginated documents — see daemon/export.rs::pdf_render.
-printpdf = { version = "0.7", default-features = false }
+printpdf = { version = "0.12", default-features = false }
 base64 = "0.22"
 # Cron-expression parsing for daemon.schedule.* ops. The `cron` crate
 # is the foundational Rust cron parser — small, no native deps, used
