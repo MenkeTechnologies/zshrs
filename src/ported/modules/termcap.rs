@@ -107,8 +107,7 @@ pub fn bin_echotc(
     // `me`/`r2`/`rs` (see ensure_termcap_loaded's doc comment).
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         // c:89
-        let interactive = isset(INTERACTIVE);
-        if interactive || crate::ported::init::init_term() == 0 {
+        if crate::ported::init::init_term() == 0 {
             // c:89-90
             return 1; // c:90
         }
@@ -297,7 +296,7 @@ pub fn gettermcap(
     // between `${termcap[me]}` and `${(kv)termcap}`.
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         // c:163
-        if isset(INTERACTIVE) || crate::ported::init::init_term() == 0 {
+        if crate::ported::init::init_term() == 0 {
             return None; // c:164
         }
     }

@@ -68,12 +68,11 @@ pub fn bin_echoti(
         // c:75
         return 1; // c:76
     }
-    let interactive = isset(INTERACTIVE); // c:77
     // c:77-78 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return 1;`
     // An unknown terminal that cannot be set up (no `$TERM`) is a silent status 1,
     // not a "no such capability" warning.
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0
-        && (interactive || crate::ported::init::init_term() == 0)
+        && crate::ported::init::init_term() == 0
     {
         return 1; // c:78
     }
@@ -231,7 +230,10 @@ pub fn getterminfo(
     }
     // c:144 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return NULL;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
-        if isset(INTERACTIVE) {
+        // An interactive shell reaches here with TERM_UNKNOWN still set when
+        // nothing ran `init_term` at startup (`zshrs -i -c`), so try it now;
+        // it fails only when `$TERM` is empty or has no terminfo entry.
+        if isset(INTERACTIVE) && crate::ported::init::init_term() == 0 {
             return None;
         }
     }

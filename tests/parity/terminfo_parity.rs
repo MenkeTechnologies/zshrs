@@ -233,3 +233,36 @@ fn the_binary_links_no_terminal_library() {
         );
     }
 }
+
+/// An interactive shell (`-i`) answers `$terminfo` and `echoti` from the
+/// terminal definition, like the reference shell. zinit gates its colour
+/// table on `$terminfo[colors]`, so an empty answer under `-i` left every
+/// `{info}`-style token in its log output unexpanded.
+#[test]
+fn interactive_shell_reads_the_terminal_definition() {
+    if !zsh_available() || !term_resolves("xterm-256color") {
+        return;
+    }
+    let script = r#"zmodload zsh/terminfo 2>/dev/null || exit 0
+print -r -- "colors=${terminfo[colors]} cols=${terminfo[cols]}"
+print -r -- "echoti colors=$(echoti colors)""#;
+    let run_i = |bin: &str| {
+        let mut c = Command::new(bin);
+        if bin != zsh_path() {
+            c.arg("--zsh");
+        }
+        let o = c
+            .args(["-f", "-i", "-c", script])
+            .env("TERM", "xterm-256color")
+            .env_remove("ZSHRS_CACHE")
+            .env_remove("LINES")
+            .env_remove("COLUMNS")
+            .output()
+            .expect("shell runs");
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let z = run_i(zsh_path());
+    let r = run_i(&zshrs_bin().display().to_string());
+    assert!(z.contains("colors=256"), "reference answer changed: {z:?}");
+    assert_eq!(z, r, "`-i` terminfo divergence");
+}
